@@ -10,6 +10,7 @@ import {
   getBody,
   getCallback,
   getCast,
+  inlineValues,
   isSameExpression,
   type Path,
   runLeadingCall,
@@ -29,7 +30,7 @@ import { type Formula, ifThenElse, leaf, letIn } from "./formula";
 import { getHeap } from "./heap";
 import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
-import { bindValues, type Receiver } from "./scope";
+import { type Receiver } from "./scope";
 import { apply, boolean, identifier, number, string, tuple } from "./tla";
 
 // The jobs and timers that a script queues, and the promises it makes, which tla-ts follows as it
@@ -374,57 +375,23 @@ const getHandler = (
     new Map([...runtime, ...[...kept].filter((entry) => captured.has(entry[0]))]);
   return {
     run: (current, value, onReturn, onThrow) =>
-      callHandler(
+      inlineValues(
         callee,
-        value,
+        [value],
+        ts.isArrowFunction(callee) ? made.receiver : undefined,
         {
           ...current,
           scope: {
             ...current.scope,
             bindings: keep(current.scope.bindings, made.bindings),
             functions: keep(current.scope.functions, made.functions),
-            receiver: ts.isArrowFunction(callee) ? made.receiver : undefined,
           },
         },
         context,
-        frame,
-        onReturn,
-        onThrow,
+        { ...frame, throwTo: (after, thrown) => onThrow(after, thrown.value) },
+        (after, result) => onReturn(after, result ?? getUndefined(context)),
       ),
   };
-};
-
-const callHandler = (
-  callee: FunctionNode,
-  value: Expression,
-  path: Path,
-  context: Context,
-  frame: Frame,
-  onReturn: (path: Path, result: Expression) => Formula,
-  onThrow: (path: Path, thrown: Expression) => Formula,
-): Formula => {
-  if (frame.inlining.has(callee)) {
-    throw new TlaTypeScriptError("Functions that change state can't call themselves", callee);
-  }
-  const bound = bindValues(callee.parameters, [value], path.scope, context);
-  const back = (after: Path, result?: Expression) =>
-    onReturn(
-      { ...after, scope: { ...after.scope, previous: path.scope.previous } },
-      result ?? getUndefined(context),
-    );
-  return letIn(
-    bound.definitions,
-    translateStatements(getBody(callee), { ...path, scope: bound.scope }, context, {
-      next: back,
-      exit: back,
-      breakTo: undefined,
-      continueTo: undefined,
-      throwTo: (after, thrown) => onThrow(after, thrown.value),
-      yieldTo: undefined,
-      awaitTo: undefined,
-      inlining: new Set([...frame.inlining, callee]),
-    }),
-  );
 };
 
 // Promise.resolve(value), Promise.reject(value), or a combinator such as Promise.all(values).

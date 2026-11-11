@@ -113,6 +113,8 @@ import {
   getHeap,
   getNewWrapper,
   isAllocation,
+  isNewProxy,
+  isRevoke,
   isObjectChange,
   getDateCall,
   getDateSetter,
@@ -146,10 +148,12 @@ import {
   isDescriptorRead,
   isDescriptorsRead,
   isGetterRead,
+  isProxyRead,
   readDescriptor,
   readDescriptors,
   readWith,
   runGetterRead,
+  runProxyRead,
 } from "./protocols";
 import {
   bindPattern,
@@ -1182,6 +1186,29 @@ export const translateCallStatement = (
       ),
     );
   }
+  // The function that Proxy.revocable gives, which revokes the proxy the first time it runs.
+  if (isRevoke(expression, context)) {
+    const heap = getHeap(path.scope, expression, context);
+    const revoker = context.names.getFresh("revoker");
+    const revoked = context.names.getFresh("heap");
+    return bindOnce(
+      path,
+      revoker,
+      translateExpression(expression.expression, path.scope, context),
+      ifThenElse(
+        useJavaScript("IsRevoker", [heap, identifier(revoker)], context),
+        bindOnce(
+          path,
+          revoked,
+          useJavaScript("Revoke", [heap, identifier(revoker)], context),
+          continueWith(withHeap(identifier(revoked)), getUndefined(context)),
+        ),
+        leaf(
+          apply("Assert", [boolean(false), string("tla-ts can't tell which function this calls")]),
+        ),
+      ),
+    );
+  }
   if (isObjectChange(expression, context) && heapSymbol !== undefined) {
     const translated = translateObjectChange(expression, path.scope, context);
     const name = context.names.getFresh(translated.isFallible ? "change" : "heap");
@@ -1628,6 +1655,43 @@ export const bindCall = (
         },
       },
       path,
+    ),
+  );
+};
+
+// Runs a function's body with the values that a call passes it, for a call that JavaScript makes,
+// such as a promise's reaction or a proxy's trap.
+export const inlineValues = (
+  callee: FunctionNode,
+  values: Expression[],
+  receiver: Receiver | undefined,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  if (frame.inlining.has(callee)) {
+    throw new TlaTypeScriptError("Functions that change state can't call themselves", callee);
+  }
+  const bound = bindValues(getParameters(callee), values, path.scope, context);
+  const back = (after: Path, result?: Expression) =>
+    continueWith({ ...after, scope: { ...after.scope, previous: path.scope.previous } }, result);
+  return letIn(
+    bound.definitions,
+    translateStatements(
+      getBody(callee),
+      { ...path, scope: { ...bound.scope, receiver } },
+      context,
+      {
+        next: back,
+        exit: back,
+        breakTo: undefined,
+        continueTo: undefined,
+        throwTo: frame.throwTo,
+        yieldTo: undefined,
+        awaitTo: undefined,
+        inlining: new Set([...frame.inlining, callee]),
+      },
     ),
   );
 };
@@ -3834,6 +3898,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
   getDateCall(node, context) !== undefined ||
   getStringCall(node, context) !== undefined ||
   isDescriptorsRead(node, context) ||
+  isRevoke(node, context) ||
   (isObjectChange(node, context) &&
     node.expression.name.text !== "construct" &&
     isHeapType(context.checker.getTypeAtLocation(node), node, context)) ||
@@ -4254,6 +4319,7 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
       ts.isObjectLiteralExpression(node) ||
       ts.isDeleteExpression(node) ||
       isObjectChange(node, context) ||
+      isRevoke(node, context) ||
       getDateCall(node, context) !== undefined ||
       isAllocation(node, context) ||
       (written !== undefined &&
@@ -5335,8 +5401,9 @@ interface LeadingCall {
   // The operation that converts an object to a primitive first, which runs code, so nothing after
   // it can run before it.
   conversion?: ts.Expression;
-  // The read that a getter which changes something may answer first, which runs as a statement.
-  read?: ts.PropertyAccessExpression | ts.ElementAccessExpression;
+  // The read that a getter which changes something may answer first, or that a proxy's trap may,
+  // which runs as a statement.
+  read?: ts.PropertyAccessExpression | ts.ElementAccessExpression | ts.BinaryExpression;
 }
 
 // The first call in a node's evaluation order that only statements can run, with the nodes that
@@ -5384,7 +5451,7 @@ const findLeadingCall = (
       ? findLeadingCall(node.expression, before, path, context)
       : inOrder([node.expression, node.argumentExpression]);
     if (found.call !== undefined || found.isBlocked) return found;
-    return isGetterRead(node, context)
+    return isGetterRead(node, context) || isProxyRead(node, context)
       ? { call: undefined, isBlocked: true, read: node }
       : evaluate(node);
   }
@@ -5447,11 +5514,17 @@ const findLeadingCall = (
         ? thenConverted(right)
         : blocked;
     }
-    return thenConverted(inOrder([node.left, node.right]));
+    const found = thenConverted(inOrder([node.left, node.right]));
+    return found.call === undefined && !found.isBlocked && isProxyRead(node, context)
+      ? { call: undefined, isBlocked: true, read: node }
+      : found;
   }
-  // A Boolean, Number, or String object runs no code where a statement makes it. Any other new
-  // runs a conversion among its arguments first, such as one in an error's message.
-  if (ts.isNewExpression(node) && getNewWrapper(node, context) !== undefined) {
+  // A Boolean, Number, or String object, or a proxy, runs no code where a statement makes it. Any
+  // other new runs a conversion among its arguments first, such as one in an error's message.
+  if (
+    ts.isNewExpression(node) &&
+    (getNewWrapper(node, context) !== undefined || isNewProxy(node, context))
+  ) {
     const found = inOrder(node.arguments ?? []);
     return found.call !== undefined || found.isBlocked ? found : evaluate(node);
   }
@@ -5635,7 +5708,8 @@ export const translateStatements = (
     ts.isExpressionStatement(statement) &&
     (ts.isAwaitExpression(skipCasts(statement.expression)) ||
       getConversion(skipCasts(statement.expression), context) !== undefined ||
-      isGetterRead(skipCasts(statement.expression), context)) &&
+      isGetterRead(skipCasts(statement.expression), context) ||
+      isProxyRead(skipCasts(statement.expression), context)) &&
     path.scope.results.has(skipCasts(statement.expression))
   ) {
     return continueWith(path);
@@ -5697,7 +5771,7 @@ export const translateStatements = (
   }
   const hoistedRead = getHoistedRead(statement, path, context);
   if (hoistedRead !== undefined) {
-    return runGetterRead(hoistedRead, path, context, frame, (after, value) =>
+    const withRead = (after: Path, value: Expression) =>
       translateStatements(
         statements,
         {
@@ -5709,8 +5783,10 @@ export const translateStatements = (
         },
         context,
         frame,
-      ),
-    );
+      );
+    return isProxyRead(hoistedRead, context)
+      ? runProxyRead(hoistedRead, path, context, frame, withRead)
+      : runGetterRead(hoistedRead, path, context, frame, withRead);
   }
   const converted = getHoistedConversion(statement, path, context);
   if (converted !== undefined) {

@@ -204,7 +204,7 @@ export const compile = (
       ts.isIdentifier(node.expression) &&
       ["Boolean", "Number", "String", "Date"].includes(node.expression.text)) ||
     (ts.isIdentifier(node) &&
-      ["arguments", "Symbol", "Promise", "setTimeout", "JSON"].includes(node.text)) ||
+      ["arguments", "Symbol", "Promise", "setTimeout", "JSON", "Proxy"].includes(node.text)) ||
     node.kind === ts.SyntaxKind.AsyncKeyword ||
     isHoleyArray(node) ||
     (ts.forEachChild(node, usesObjects) ?? false);

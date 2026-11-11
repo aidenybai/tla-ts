@@ -66,6 +66,8 @@ import {
   isFromEntries,
   isSymbolCall,
   isNewObject,
+  isNewProxy,
+  isRevocable,
   getNewWrapper,
   isNewDate,
   areDateFields,
@@ -752,6 +754,13 @@ const translateCall = (
     if (kind === "sequence" || kind === "set" || kind === "map") {
       return boolean(method === "isExtensible");
     }
+  }
+  if (isRevocable(node, context)) {
+    const revocable = scope.allocated.get(node);
+    if (revocable === undefined) {
+      throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
+    }
+    return revocable;
   }
   const isFromEntriesCall = isFromEntries(node, context);
   if (isCreation(node, context) || isFromEntriesCall) {
@@ -1897,6 +1906,7 @@ const translateNode = (
     getNewClass(node, context) !== undefined ||
     isNewObject(node, context) ||
     isNewDate(node, context) ||
+    isNewProxy(node, context) ||
     getNewWrapper(node, context) !== undefined;
   if (isHeapObject) {
     const allocated = scope.allocated.get(node);

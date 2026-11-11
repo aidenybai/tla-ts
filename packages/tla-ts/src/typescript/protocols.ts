@@ -5,6 +5,7 @@ import {
   bindOnce,
   type Frame,
   inlineBody,
+  inlineValues,
   type Path,
   throwError,
   throwTypeError,
@@ -23,8 +24,9 @@ import {
   isNestedFunction,
   skipCasts,
 } from "./context";
+import { translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf } from "./formula";
-import { getCandidateValue, getHeap, translateObjectValue } from "./heap";
+import { getCandidateValue, getHeap, isProxyValue, translateObjectValue } from "./heap";
 import { useJavaScript } from "./javascript";
 import { getKind } from "./types";
 import {
@@ -123,13 +125,14 @@ export const bind = (
   return bindOnce(path, fresh, value, continueWith(path, identifier(fresh)));
 };
 
-// Calls a value with a receiver and no arguments, branching on which of the candidates it is, or
+// Calls a value with a receiver and arguments, branching on which of the candidates it is, or
 // does what otherwise does with the call's continuation where it's none of them.
 export const callValue = (
   site: ts.Node,
   candidates: readonly FunctionNode[],
   value: Expression,
   receiver: Expression,
+  values: Expression[],
   path: Path,
   context: Context,
   frame: Frame,
@@ -145,21 +148,17 @@ export const callValue = (
       candidates.reduceRight((rest, candidate) => {
         const candidateValue = getCandidateValue(candidate, context);
         if (candidateValue === undefined || frame.inlining.has(candidate)) return rest;
+        const received = ts.isArrowFunction(candidate)
+          ? undefined
+          : { value: receiver, method: candidate };
         return ifThenElse(
           apply("=", [
             useJavaScript("CodeOf", [getHeap(path.scope, site, context), value], context),
             candidateValue,
           ]),
-          inlineBody(
-            site,
-            candidate,
-            [],
-            ts.isArrowFunction(candidate) ? undefined : { value: receiver, method: candidate },
-            path,
-            context,
-            frame,
-            next,
-          ),
+          values.length === 0
+            ? inlineBody(site, candidate, [], received, path, context, frame, next)
+            : inlineValues(candidate, values, received, path, context, frame, next),
           rest,
         );
       }, otherwise(next)),
@@ -182,6 +181,7 @@ export const callMethod = (
     getMethods(site, key, context),
     value,
     receiver,
+    [],
     path,
     context,
     frame,
@@ -224,6 +224,7 @@ export const readWith = (
         getters,
         getter,
         object,
+        [],
         bound,
         context,
         frame,
@@ -735,6 +736,22 @@ const getReadGetters = (node: ts.Node, context: Context) => [
   ]),
 ];
 
+// Whether an access writes, deletes, or calls what it names, rather than only reading it.
+const isWritten = (node: ts.Expression) => {
+  const parent = node.parent;
+  return (
+    (ts.isBinaryExpression(parent) &&
+      parent.left === node &&
+      parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+    (ts.isCallExpression(parent) && parent.expression === node) ||
+    ts.isDeleteExpression(parent) ||
+    ((ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+      (parent.operator === ts.SyntaxKind.PlusPlusToken ||
+        parent.operator === ts.SyntaxKind.MinusMinusToken))
+  );
+};
+
 // A read of a key that the script defines a getter under, on an object, where a getter that may
 // run changes something, so that the read runs as a statement. A read that a pure getter answers
 // runs as an expression.
@@ -749,18 +766,7 @@ export const isGetterRead = (
     return false;
   }
   const key = getAccessKey(node);
-  const parent = node.parent;
-  const isWritten =
-    (ts.isBinaryExpression(parent) &&
-      parent.left === node &&
-      parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-      parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
-    (ts.isCallExpression(parent) && parent.expression === node) ||
-    ts.isDeleteExpression(parent) ||
-    ((ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
-      (parent.operator === ts.SyntaxKind.PlusPlusToken ||
-        parent.operator === ts.SyntaxKind.MinusMinusToken));
-  if (key === undefined || isWritten || !getGetterKeys(node).has(key)) return false;
+  if (key === undefined || isWritten(node) || !getGetterKeys(node).has(key)) return false;
   if (getKind(node.expression, context) !== "object") return false;
   const pure = getGetters(node, context);
   const getters = getReadGetters(node, context);
@@ -799,5 +805,191 @@ export const runGetterRead = (
     ),
   );
 
-export const getReadFunctions = (node: ts.Node, context: Context) =>
-  isGetterRead(node, context) ? getReadGetters(node, context) : [];
+export const getReadFunctions = (node: ts.Node, context: Context) => [
+  ...(isGetterRead(node, context) ? getReadGetters(node, context) : []),
+  ...(isProxyRead(node, context)
+    ? getMethods(node, ts.isBinaryExpression(node) ? "has" : "get", context)
+    : []),
+];
+
+// The key of a read or an in of a proxy that the script makes, which runs a trap, so a statement
+// runs it.
+const getProxyKey = (node: ts.Node, context: Context) => {
+  if (context.heap === undefined) return undefined;
+  if (ts.isBinaryExpression(node)) {
+    const left = node.left;
+    return node.operatorToken.kind === ts.SyntaxKind.InKeyword &&
+      (ts.isStringLiteralLike(left) || ts.isNumericLiteral(left)) &&
+      isProxyValue(node.right, context)
+      ? String(ts.isNumericLiteral(left) ? Number(left.text) : left.text)
+      : undefined;
+  }
+  return (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+    !isWritten(node) &&
+    isProxyValue(node.expression, context)
+    ? getAccessKey(node)
+    : undefined;
+};
+
+export const isProxyRead = (
+  node: ts.Node,
+  context: Context,
+): node is ts.PropertyAccessExpression | ts.ElementAccessExpression | ts.BinaryExpression =>
+  getProxyKey(node, context) !== undefined;
+
+// Runs a proxy's internal method, as ECMAScript's proxy objects do: the handler's trap, called
+// with the target and the values, where the handler has one, or else what forward does with the
+// target. A revoked proxy, or a trap that isn't a function, throws a TypeError.
+const runTrap = (
+  site: ts.Node,
+  proxy: Expression,
+  trap: string,
+  values: Expression[],
+  path: Path,
+  context: Context,
+  frame: Frame,
+  forward: (path: Path, target: Expression) => Formula,
+  check: (path: Path, target: Expression, result: Expression) => Formula,
+) => {
+  const heap = getHeap(path.scope, site, context);
+  return bind(
+    path,
+    "handler",
+    useJavaScript("ProxyHandler", [heap, proxy], context),
+    context,
+    (withHandler, handler) =>
+      ifThenElse(
+        apply("=", [handler, identifier("Null")]),
+        throwTypeError(withHandler, site, context, frame),
+        bind(
+          withHandler,
+          "target",
+          useJavaScript("ProxyTarget", [heap, proxy], context),
+          context,
+          (withTarget, target) =>
+            bind(
+              withTarget,
+              "trap",
+              useJavaScript("Get", [heap, handler, string(trap)], context),
+              context,
+              (withTrap, method) =>
+                ifThenElse(
+                  isNullish(method, context),
+                  forward(withTrap, target),
+                  callValue(
+                    site,
+                    getMethods(site, trap, context),
+                    method,
+                    handler,
+                    [target, ...values],
+                    withTrap,
+                    context,
+                    frame,
+                    () =>
+                      ifThenElse(
+                        apply("=", [
+                          useJavaScript("TypeOfIn", [heap, method], context),
+                          string("function"),
+                        ]),
+                        leaf(
+                          apply("Assert", [
+                            boolean(false),
+                            string("tla-ts can't tell which function this trap calls"),
+                          ]),
+                        ),
+                        throwTypeError(withTrap, site, context, frame),
+                      ),
+                    (after, result) => check(after, target, result),
+                  ),
+                ),
+            ),
+        ),
+      ),
+  );
+};
+
+// Runs a read or an in of a value that may be a proxy. A proxy runs its get or has trap, and
+// throws a TypeError where what the trap gives disagrees with what the target can't change.
+export const runProxyRead = (
+  node: ts.PropertyAccessExpression | ts.ElementAccessExpression | ts.BinaryExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value: Expression) => Formula,
+): Formula => {
+  const key = string(getProxyKey(node, context) ?? "");
+  const isHas = ts.isBinaryExpression(node);
+  return allocate(node, path, context, (allocated) =>
+    translateJoined(
+      node,
+      allocated,
+      context,
+      (after, value) => continueWith(after, value ?? getUndefined(context)),
+      (next) =>
+        bind(
+          allocated,
+          "object",
+          translateObjectValue(isHas ? node.right : node.expression, allocated.scope, context),
+          context,
+          (bound, proxy) => {
+            const heap = getHeap(bound.scope, node, context);
+            const agrees = (after: Path, target: Expression, result: Expression) =>
+              useJavaScript(
+                isHas ? "ProxyCanLack" : "ProxyAgrees",
+                [
+                  getHeap(after.scope, node, context),
+                  target,
+                  key,
+                  ...(isHas ? [] : [result, string("get")]),
+                ],
+                context,
+              );
+            return ifThenElse(
+              useJavaScript("IsProxy", [heap, proxy], context),
+              runTrap(
+                node,
+                proxy,
+                isHas ? "has" : "get",
+                isHas ? [key] : [key, proxy],
+                bound,
+                context,
+                frame,
+                (forwarded, target) =>
+                  next(
+                    forwarded,
+                    useJavaScript(isHas ? "Has" : "Get", [heap, target, key], context),
+                  ),
+                (after, target, result) =>
+                  bind(
+                    after,
+                    "result",
+                    isHas ? useJavaScript("ToBoolean", [result], context) : result,
+                    context,
+                    (checked, value) =>
+                      ifThenElse(
+                        isHas
+                          ? apply("\\/", [value, agrees(checked, target, value)])
+                          : agrees(checked, target, value),
+                        next(checked, value),
+                        throwTypeError(checked, node, context, frame),
+                      ),
+                  ),
+              ),
+              !isHas && isGetterRead(node, context)
+                ? readWith(
+                    node,
+                    proxy,
+                    key,
+                    getReadGetters(node, context),
+                    bound,
+                    context,
+                    frame,
+                    next,
+                  )
+                : next(bound, translateExpression(node, bound.scope, context)),
+            );
+          },
+        ),
+    ),
+  );
+};

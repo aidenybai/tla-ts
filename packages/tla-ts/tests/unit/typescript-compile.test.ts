@@ -5336,3 +5336,81 @@ export const step = () => {
     ]);
   });
 });
+
+describe("proxies", () => {
+  it("runs a proxy's get and has traps with the target, the key, and the proxy", async () => {
+    const result = await checkModel(`
+      const target: { attr: number; other?: number } = { attr: 1 };
+      let seen: unknown[] = [];
+      const handler = {
+        get: function (this: unknown, inner: object, key: string | symbol, receiver: unknown) {
+          seen = [this, inner, key, receiver];
+          return 2;
+        },
+        has: function (inner: object, key: string | symbol) {
+          return key === "other";
+        },
+      };
+      const proxy = new Proxy<typeof target>(target, handler);
+      if (proxy.attr !== 2) throw new Error("get");
+      if (proxy["other"] !== 2) throw new Error("get");
+      if (seen[0] !== handler || seen[1] !== target || seen[2] !== "other" || seen[3] !== proxy) {
+        throw new Error("arguments");
+      }
+      if ("attr" in proxy) throw new Error("has");
+      if (!("other" in proxy)) throw new Error("has");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("forwards to the target where the handler has no trap", async () => {
+    const result = await checkModel(`
+      const target: { attr: number; other?: number } = { attr: 1 };
+      const proxy = new Proxy(target, {});
+      if (proxy.attr !== 1) throw new Error("get");
+      if (proxy.other !== undefined) throw new Error("get");
+      if (!("attr" in proxy)) throw new Error("has");
+      if ("other" in proxy) throw new Error("has");
+      if (typeof proxy !== "object" || typeof new Proxy(function () {}, {}) !== "function") {
+        throw new Error("typeof");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("throws a TypeError where a trap disagrees with a property the target can't change", async () => {
+    const result = await checkModel(`
+      const target: { fixed?: number } = {};
+      Object.defineProperty(target, "fixed", { value: 1 });
+      const getting = new Proxy(target, { get: () => 2 });
+      const hiding = new Proxy(target, { has: () => false });
+      let count = 0;
+      try { getting.fixed; } catch (error) { if (error instanceof TypeError) count += 1; }
+      try { "fixed" in hiding; } catch (error) { if (error instanceof TypeError) count += 1; }
+      if (count !== 2) throw new Error("missed");
+      if (new Proxy(target, { get: () => 1 }).fixed !== 1) throw new Error("same");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("throws a TypeError where a script reads a revoked proxy", async () => {
+    const result = await checkModel(`
+      const revocable = Proxy.revocable({ attr: 1 }, {});
+      if (revocable.proxy.attr !== 1) throw new Error("read");
+      revocable.revoke();
+      if (revocable.revoke() !== undefined) throw new Error("revoke");
+      let isThrown = false;
+      try { revocable.proxy.attr; } catch (error) { isThrown = error instanceof TypeError; }
+      if (!isThrown || typeof revocable.revoke !== "function") throw new Error("missed");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("stops the check where something else reads a proxy", async () => {
+    const result = await checkModel(`
+      const proxy = new Proxy({ attr: 1 }, {});
+      const keys = Object.keys(proxy);
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't run a proxy's internal method here");
+  });
+});

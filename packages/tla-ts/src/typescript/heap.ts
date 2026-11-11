@@ -5,6 +5,7 @@ import {
   type CalledMethod,
   type Context,
   type FunctionNode,
+  getCallee,
   getNewClass,
   isInertValue,
   getParameters,
@@ -33,6 +34,7 @@ import {
   isNullBased,
   getHeapClass,
   isNestedFunction,
+  skipCasts,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { getJsonText, parseJson } from "./json";
@@ -929,6 +931,37 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   if (isNewObject(node, context)) {
     return useJavaScript("Allocate", [heap, identifier("EmptyObject")], context);
   }
+  if (
+    (ts.isNewExpression(node) || ts.isCallExpression(node)) &&
+    (isNewProxy(node, context) || isRevocable(node, context))
+  ) {
+    const [target, handler] = node.arguments ?? [];
+    const values = [target, handler].map((argument) =>
+      translateExpression(argument, scope, context),
+    );
+    // A function that the script writes constructs where it isn't an arrow or a method.
+    const callee = getCallee(target, context);
+    const isConstructor =
+      callee === undefined
+        ? useJavaScript("IsConstructor", [heap, values[0]], context)
+        : boolean(ts.isFunctionExpression(callee) || ts.isFunctionDeclaration(callee));
+    return isRevocable(node, context)
+      ? useJavaScript(
+          "Revocable",
+          [
+            heap,
+            translateBuiltInValue("Function.prototype", node, context),
+            ...values,
+            isConstructor,
+          ],
+          context,
+        )
+      : useJavaScript(
+          "Allocate",
+          [heap, useJavaScript("ProxyObject", [heap, ...values, isConstructor], context)],
+          context,
+        );
+  }
   if (isNewDate(node, context)) {
     const values = node.arguments ?? [];
     const time = isClockDate(node, context)
@@ -1134,6 +1167,8 @@ export const isAllocation = (node: ts.Node, context: Context) =>
       isSymbolCall(node, context))) ||
   isNewObject(node, context) ||
   isNewDate(node, context) ||
+  isNewProxy(node, context) ||
+  isRevocable(node, context) ||
   getNewWrapper(node, context) !== undefined;
 
 // The primitive that new Boolean, new Number, or new String wraps in an object.
@@ -1343,6 +1378,62 @@ export const translateDateFields = (
     context,
   );
 
+// new Proxy of a target and a handler.
+export const isNewProxy = (node: ts.Node, context: Context): node is ts.NewExpression =>
+  context.heap !== undefined &&
+  ts.isNewExpression(node) &&
+  getBuiltIn(node.expression, context) === "Proxy" &&
+  node.arguments?.length === 2 &&
+  !node.arguments.some(ts.isSpreadElement);
+
+// Proxy.revocable of a target and a handler.
+export const isRevocable = (node: ts.Node, context: Context) =>
+  context.heap !== undefined &&
+  isMethodCall(node) &&
+  getBuiltIn(node.expression.expression, context) === "Proxy" &&
+  node.expression.name.text === "revocable" &&
+  node.arguments.length === 2 &&
+  !node.arguments.some(ts.isSpreadElement);
+
+// What a variable holds where its declaration gives its value, or else the expression itself.
+const getOrigin = (node: ts.Expression, context: Context): ts.Expression => {
+  const inner = skipCasts(node);
+  const declaration = ts.isIdentifier(inner)
+    ? getSymbol(inner, context.checker)?.valueDeclaration
+    : undefined;
+  return declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer !== undefined
+    ? getOrigin(declaration.initializer, context)
+    : inner;
+};
+
+// A read of the proxy or the revoke function that Proxy.revocable gives, as TypeScript declares it.
+const isRevocableMember = (node: ts.Expression, name: string, context: Context) => {
+  const method = getSymbol(node, context.checker)?.declarations?.at(0)?.parent.parent;
+  return (
+    ts.isPropertyAccessExpression(node) &&
+    node.name.text === name &&
+    method !== undefined &&
+    ts.isMethodSignature(method) &&
+    method.name.getText() === "revocable" &&
+    method.getSourceFile().isDeclarationFile
+  );
+};
+
+// A value that is a proxy that the script makes, where a statement that reads it runs its traps.
+export const isProxyValue = (node: ts.Expression, context: Context) => {
+  const origin = getOrigin(node, context);
+  return isNewProxy(origin, context) || isRevocableMember(origin, "proxy", context);
+};
+
+// A call of the function that revokes a proxy, which Proxy.revocable gives.
+export const isRevoke = (node: ts.Node, context: Context) =>
+  context.heap !== undefined &&
+  ts.isCallExpression(node) &&
+  node.arguments.length === 0 &&
+  isRevocableMember(getOrigin(node.expression, context), "revoke", context);
+
 // new Object() with no value, which makes an empty object as {} does.
 export const isNewObject = (node: ts.Node, context: Context) => {
   if (
@@ -1416,6 +1507,7 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
     (ts.isArrayLiteralExpression(node) && context.heapArrays.has(node)) ||
     isNewObject(node, context) ||
     isNewDate(node, context) ||
+    isNewProxy(node, context) ||
     getNewWrapper(node, context) !== undefined ||
     (!isSometimes && isAllocation(node, context)) ||
     (!isSometimes &&
@@ -1631,6 +1723,7 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
   }
   return isFallible ||
     (isObjectChange(node, context) && isConstruct(node)) ||
+    isRevocable(node, context) ||
     ts.isNewExpression(node) ||
     (isMethodCall(node) && node.expression.name.text.startsWith("reduce"))
     ? ["TypeError"]

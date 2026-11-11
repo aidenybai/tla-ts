@@ -391,8 +391,17 @@ LOCAL IsBuiltIn(ref) ==
   /\\ BuiltInKey(ref) \\in DOMAIN BuiltIns
   /\\ ~BuiltIns[BuiltInKey(ref)].isOpaque
 
+\\* A proxy, whose target and handler revoking it sets to null. Statements run its traps, and tla-ts
+\\* stops wherever anything else reads it.
+IsProxy(heap, value) == IsHeap(value) /\\ "handler" \\in DOMAIN heap.objects[value[Ref]]
+
+ProxyTarget(heap, ref) == heap.objects[ref[Ref]].target
+
+ProxyHandler(heap, ref) == heap.objects[ref[Ref]].handler
+
 Lookup(heap, ref) ==
-  CASE ref \\in {Undefined, Null} ->
+  CASE IsProxy(heap, ref) -> Assert(FALSE, "tla-ts can't run a proxy's internal method here")
+    [] ref \\in {Undefined, Null} ->
          Assert(FALSE, "tla-ts can't throw the TypeError of reading a property of " \\o ToString(ref))
     [] IsHeap(ref) /\\ heap.objects[ref[Ref]].isOpaque ->
          Assert(FALSE, "tla-ts can't read the properties of a generator or a promise")
@@ -497,6 +506,34 @@ CodeOf(heap, value) ==
   ELSE value
 
 IsObjectIn(heap, value) == value # Null /\\ TypeOfIn(heap, value) \\in {"object", "function"}
+
+\\* A proxy, which can call where its target can, and construct where its target, a constructor
+\\* where isConstructor holds, can.
+ProxyObject(heap, target, handler, isConstructor) ==
+  IF IsObjectIn(heap, target) /\\ IsObjectIn(heap, handler)
+  THEN [target |-> target, handler |-> handler]
+         @@ [EmptyObject EXCEPT !.isCallable = TypeOfIn(heap, target) = "function",
+                                !.isConstructor = TypeOfIn(heap, target) = "function" /\\ isConstructor]
+  ELSE Assert(FALSE, "tla-ts can't throw the TypeError of making a proxy of a primitive")
+
+\\* What Proxy.revocable gives: the proxy, then the function that revokes it, which it holds until
+\\* it does.
+Revocable(heap, functionPrototype, target, handler, isConstructor) ==
+  LET proxy == NextRef(heap, 1)
+      revoke == NextRef(heap, 2)
+  IN Allocate(Allocate(Allocate(heap, ProxyObject(heap, target, handler, isConstructor)),
+                       [revokes |-> proxy] @@ ArrowObject(functionPrototype, "", 0)),
+              Put(Put(EmptyObject, "proxy", proxy), "revoke", revoke))
+
+IsRevoker(heap, value) == IsHeap(value) /\\ "revokes" \\in DOMAIN heap.objects[value[Ref]]
+
+Revoke(heap, ref) ==
+  LET proxy == heap.objects[ref[Ref]].revokes
+  IN IF proxy = Null
+     THEN heap
+     ELSE [heap EXCEPT !.objects[ref[Ref]].revokes = Null,
+                       !.objects[proxy[Ref]].target = Null,
+                       !.objects[proxy[Ref]].handler = Null]
 
 \\* A function that bind makes, which has no prototype and constructs where its target does.
 BoundFunctionObject(functionPrototype, name, length, isConstructor) ==
@@ -911,6 +948,23 @@ SameValueZero(left, right) ==
   IF IsNumber(left) /\\ IsNumber(right)
   THEN Magnitude(left) = Magnitude(right)
   ELSE SameValue(left, right)
+
+\\* Whether a value that a proxy's get or set trap gives or takes agrees with a property that the
+\\* target can't change, whose accessor must then have the function the trap stands for.
+ProxyAgrees(heap, target, key, value, accessor) ==
+  LET object == Lookup(heap, target)
+      attributes == object.attributes[key]
+  IN CASE key \\notin DOMAIN object.values \\/ attributes.configurable -> TRUE
+       [] attributes.kind = "data" -> attributes.writable \\/ SameValue(value, object.values[key])
+       [] attributes.kind = "accessor" ->
+            object.values[key][accessor] # Undefined \\/ (accessor = "get" /\\ value = Undefined)
+       [] OTHER -> Assert(FALSE, "tla-ts can't compare a trap's value with the target's")
+
+\\* Whether a proxy's has or deleteProperty trap may say that it lacks a key: the target lacks it, or
+\\* can change it and can grow.
+ProxyCanLack(heap, target, key) ==
+  LET object == Lookup(heap, target)
+  IN key \\notin DOMAIN object.values \\/ (object.attributes[key].configurable /\\ object.extensible)
 
 StringOf(value) ==
   CASE value = Undefined -> "undefined"

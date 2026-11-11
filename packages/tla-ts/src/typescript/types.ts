@@ -123,6 +123,13 @@ const isPlainObject = (type: ts.Type, context: Context): boolean => {
       : (symbol.flags & ts.SymbolFlags.Class) === 0 &&
         (symbol.declarations ?? []).length > 0 &&
         (LIBRARY_OBJECTS.has(symbol.name) ||
+          // The object that Proxy.revocable gives, whose type its declaration writes in place.
+          (symbol.declarations ?? []).some(
+            (declaration) =>
+              ts.isTypeLiteralNode(declaration) &&
+              ts.isMethodSignature(declaration.parent) &&
+              declaration.parent.name.getText() === "revocable",
+          ) ||
           (symbol.declarations ?? []).every(
             (declaration) => !declaration.getSourceFile().isDeclarationFile,
           )))
