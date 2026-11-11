@@ -5,6 +5,7 @@ import { check, type CheckResult, formatValue } from "../../src";
 import { describe, expect, it } from "vite-plus/test";
 import { printModule } from "../../src/printer";
 import { compile } from "../../src/typescript/compile";
+import { printRegions } from "../../src/typescript/regions";
 
 const checkModel = (source: string) => check(compile(source));
 
@@ -2981,6 +2982,108 @@ describe("without a file system", () => {
   it("reports type errors", () => {
     expect(() => compile(`let count: number = "one";`, "spec.ts", libraries)).toThrow(
       "spec.ts(1,5): error TS2322: Type 'string' is not assignable to type 'number'.",
+    );
+  });
+});
+
+describe("regions", () => {
+  const getLinks = (source: string) => {
+    const printed = printRegions(compile(source));
+    return printed.regions.map((region) => [
+      region.kind,
+      region.name,
+      source.slice(region.source.start, region.source.end),
+      printed.text.slice(region.output.start, region.output.end),
+    ]);
+  };
+
+  it("links each definition to the statement it compiles from", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/examples/die-hard/die-hard.ts");
+    const links = getLinks(readFileSync(path, "utf8"));
+    expect(links).toContainEqual(["variable", "big", "big", "big"]);
+    expect(links).toContainEqual(["init", "small", "let small = 0;", "small = 0"]);
+    expect(links).toContainEqual([
+      "action",
+      "fillSmallJug",
+      "export const fillSmallJug = () => {\n  small = 3;\n};",
+      "fillSmallJug == /\\ small' = 3\n                /\\ UNCHANGED <<big>>",
+    ]);
+    expect(links).toContainEqual([
+      "next",
+      "fillSmallJug",
+      "export const fillSmallJug = () => {\n  small = 3;\n};",
+      "fillSmallJug",
+    ]);
+    expect(links).toContainEqual([
+      "predicate",
+      "notSolved",
+      "export const notSolved = () => big !== 4;",
+      "notSolved == big # 4",
+    ]);
+  });
+
+  it("links helpers, steps with parameters, and properties", () => {
+    const links = getLinks(`type Id = 1 | 2;
+let owner: Id = 1;
+const other = (id: Id): Id => (id === 1 ? 2 : 1);
+export const pass = (id: Id) => {
+  if (owner !== id) return;
+  owner = other(id);
+};
+/** @eventually */
+export const returns = () => owner === 1;
+`);
+    expect(links).toContainEqual([
+      "definition",
+      "other",
+      "const other = (id: Id): Id => (id === 1 ? 2 : 1);",
+      "other(id_1) == IF id_1 = 1 THEN 2 ELSE 1",
+    ]);
+    expect(links).toContainEqual([
+      "next",
+      "pass",
+      "export const pass = (id: Id) => {\n  if (owner !== id) return;\n  owner = other(id);\n};",
+      "\\E id \\in {1, 2} : pass(id)",
+    ]);
+    expect(links).toContainEqual([
+      "property",
+      "returns",
+      "export const returns = () => owner === 1;",
+      "returns == <>(owner = 1)",
+    ]);
+  });
+
+  it("links a step to its disjunct of Next, not to its fairness condition", () => {
+    const source = `let ticks = 0;
+/** @fair */
+export const tick = () => {
+  if (ticks >= 2) return;
+  ticks += 1;
+};
+/** @eventually */
+export const finishes = () => ticks === 2;
+`;
+    const printed = printRegions(compile(source));
+    const next = printed.regions.find((region) => region.kind === "next");
+    expect(next?.output.start).toBe(printed.text.indexOf("Next == tick") + "Next == ".length);
+  });
+
+  it("links each use of a state variable to its declaration", () => {
+    const source = `let count = 0;
+const limit = 3;
+export const step = () => {
+  if (count >= limit) return;
+  count = count + 1;
+};
+`;
+    const compiled = compile(source);
+    const declaration = compiled.regions.find((region) => region.kind === "variable");
+    const references = compiled.regions.filter((region) => region.kind === "reference");
+    expect(
+      references.map((region) => source.slice(region.source.start, region.source.end)),
+    ).toEqual(["count", "count", "count"]);
+    expect(references.map((region) => region.output)).toEqual(
+      references.map(() => declaration?.output),
     );
   });
 });

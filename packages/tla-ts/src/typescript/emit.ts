@@ -26,6 +26,7 @@ import {
   tuple,
 } from "./tla";
 import { JAVASCRIPT_MODULE, SPECIAL_NUMBERS } from "./javascript";
+import { getRegions, type Region } from "./regions";
 
 // The parts of a spec and its config, in the order that the model declares them.
 export interface Sections {
@@ -49,6 +50,7 @@ export interface CompiledSpec {
   source: Module;
   config: string;
   loadModule: (name: string) => string | undefined;
+  regions: Region[];
 }
 
 const getMagnitude = (value: Expression) =>
@@ -286,5 +288,6 @@ export const emit = (
     source,
     config,
     loadModule: (name) => (isJavaScript && name === "JavaScript" ? JAVASCRIPT_MODULE : undefined),
+    regions: getRegions(source, sourceFile, model, context),
   };
 };

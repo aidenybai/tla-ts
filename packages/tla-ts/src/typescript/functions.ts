@@ -45,6 +45,7 @@ import {
   tuple,
 } from "./tla";
 import { isBuiltInObject } from "./intrinsics";
+import { link } from "./regions";
 import { hasHeapType, translateUnknown } from "./types";
 
 // Whether a step has changed a state variable, so that helpers reading state must see the change.
@@ -136,7 +137,15 @@ export const getDefinition = (declaration: HelperDeclaration, context: Context):
   if (body === undefined) throw new TlaTypeScriptError("Give this a value", declaration);
   const value = translateBody(body, bindNames(createStateScope(context), parameters), context);
   context.inProgress.delete(declaration);
-  context.output.push(defineAt(declaration, definition.name, declared, value));
+  context.output.push(
+    link(
+      context,
+      "definition",
+      definition.name,
+      declaration,
+      defineAt(declaration, definition.name, declared, value),
+    ),
+  );
   return definition;
 };
 

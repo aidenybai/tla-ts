@@ -3,6 +3,7 @@ import type { Expression, OperatorDefinition, OperatorParam } from "../ast";
 import { JAVASCRIPT_OPERATORS } from "./javascript";
 import { TlaTypeScriptError } from "../errors";
 import { createNames, type Names } from "./names";
+import type { Link } from "./regions";
 import { apply, define, identifier, ifExpression, index, letExpression, string } from "./tla";
 
 export interface Definition {
@@ -21,6 +22,8 @@ export interface Context {
   inProgress: Set<ts.Node>;
   recursive: Set<ts.Declaration>;
   output: OperatorDefinition[];
+  // The TypeScript that each emitted definition or expression compiles from.
+  links: Link[];
   // String literals of @symmetric types, which become model values.
   modelValues: Map<string, string>;
   constructors: Map<ts.Symbol | ts.Node, string>;
@@ -79,6 +82,7 @@ export const createContext = (checker: ts.TypeChecker): Context => ({
   inProgress: new Set(),
   recursive: new Set(),
   output: [],
+  links: [],
   modelValues: new Map(),
   constructors: new Map(),
   prelude: new Set(),
