@@ -3016,6 +3016,14 @@ NewTypedArray(heap, type, prototype, bufferPrototype, arguments) ==
                                                  TypedElement(heap, first, position - 1)]))
        [] IsSequenceValue(first) ->
             withBytes(NumbersBytes(type, [position \\in DOMAIN first |-> ToNumber(first[position])]))
+       [] ~IsBuffer(heap, first) /\\ IsHeap(first) ->
+            LET method == Get(heap, first, WellKnownSymbol("iterator"))
+                count == ToLength(Get(heap, first, "length"))
+            IN IF \\/ method \\in {Undefined, Null}
+                  \\/ IsArray(heap, first) /\\ method = Ref :> "Array.prototype.values"
+               THEN withBytes(NumbersBytes(type, [position \\in 1..count |->
+                                                    ToNumber(Get(heap, first, ToString(position - 1)))]))
+               ELSE Assert(FALSE, "tla-ts can't make a typed array of this object")
        [] ~IsBuffer(heap, first) -> Assert(FALSE, "tla-ts can't make a typed array of this object")
        [] offset = -1 \\/ offset % size # 0 -> RangeError("an invalid offset")
        [] length = -1 -> RangeError("an invalid length")
@@ -3028,6 +3036,15 @@ NewTypedArray(heap, type, prototype, bufferPrototype, arguments) ==
             ELSE view(heap, first, offset, (byteLength - offset) \\div size)
        [] offset + length * size > byteLength -> RangeError("a length past the end")
        [] OTHER -> view(heap, first, offset, length)
+
+\\* Whether new of a typed array iterates an object through an @@iterator method that a script
+\\* gives, which only statements can call.
+IteratesScriptMethod(heap, value) ==
+  /\\ IsHeap(value)
+  /\\ ~IsTypedArray(heap, value)
+  /\\ ~IsBuffer(heap, value)
+  /\\ LET method == Get(heap, value, WellKnownSymbol("iterator"))
+     IN method \\notin {Undefined, Null} /\\ ~(IsRef(method) /\\ ~IsHeap(method))
 
 LOCAL Returned(heap, value) == [heap |-> heap, value |-> value, error |-> ""]
 

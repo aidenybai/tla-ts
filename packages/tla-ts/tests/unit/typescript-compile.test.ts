@@ -6548,6 +6548,74 @@ describe("buffers", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("makes a typed array of the values of an iterator that a script gives", async () => {
+    const result = await checkModel(`
+      interface ArrayValues {
+        src: unknown[];
+        index: number;
+        next: (this: ArrayValues) => IteratorResult<unknown>;
+      }
+      interface ArrayIterable {
+        src: unknown[];
+        [Symbol.iterator]: (this: ArrayIterable) => ArrayValues;
+      }
+      function stepValues(this: ArrayValues): IteratorResult<unknown> {
+        if (this.index < this.src.length) {
+          const value = this.src[this.index];
+          this.index += 1;
+          return { value, done: false };
+        }
+        return { value: undefined, done: true };
+      }
+      function openValues(this: ArrayIterable): ArrayValues {
+        return { src: this.src, index: 0, next: stepValues };
+      }
+      function make(elements: unknown[]): unknown {
+        return { src: elements, [Symbol.iterator]: openValues };
+      }
+      const constructors = [Int8Array, Float64Array];
+      let out = "";
+      for (const TA of constructors) {
+        const sample = new TA(make([1, -2, 3]) as never);
+        out += sample.length + ":" + sample[1] + ";";
+      }
+      if (out !== "3:-2;3:-2;") throw new Error(out);
+      const plain = new Uint8Array(make([]) as never);
+      if (plain.length !== 0) throw new Error("empty");
+      function failing(this: ArrayValues): IteratorResult<unknown> {
+        throw new RangeError("step");
+      }
+      function openFailing(this: ArrayIterable): ArrayValues {
+        return { src: this.src, index: 0, next: failing };
+      }
+      const failingIterable: unknown = { src: [], [Symbol.iterator]: openFailing };
+      let caught = "";
+      try {
+        const failed = new Int16Array(failingIterable as never);
+      } catch (error) {
+        caught = error instanceof RangeError ? "range" : "other";
+      }
+      if (caught !== "range") throw new Error("caught " + caught);
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("makes a typed array of an array-like object's elements", async () => {
+    const result = await checkModel(`
+      const like: { [index: number]: unknown; length: number } = { length: 3 };
+      like[0] = 4;
+      like[1] = "5";
+      const fromLike = new Int8Array(like as never);
+      if (fromLike.length !== 3 || fromLike[1] !== 5 || fromLike[2] !== 0) throw new Error("like");
+      const values: unknown[] = [];
+      values[0] = 1;
+      values[1] = 2;
+      const fromArray = new Uint16Array(values as never);
+      if (fromArray.length !== 2 || fromArray[1] !== 2) throw new Error("array");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops at a number a typed array's float can't hold exactly", async () => {
     const result = await checkModel(`
       const floats = new Float32Array(1);

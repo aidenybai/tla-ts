@@ -1027,27 +1027,11 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
           context,
         );
   }
-  const buffers = getNewBuffer(node, context);
-  if (buffers !== undefined && ts.isNewExpression(node)) {
+  if (getNewBuffer(node, context) !== undefined && ts.isNewExpression(node)) {
     const values = tuple(
       (node.arguments ?? []).map((value) => translateExpression(value, scope, context)),
     );
-    const callee = translateExpression(node.expression, scope, context);
-    return getBuiltIn(node.expression, context) === undefined
-      ? buffers.reduceRight<Expression>(
-          (rest, buffer) =>
-            ifExpression(
-              useJavaScript(
-                "SameValue",
-                [callee, translateBuiltInValue(buffer, node, context)],
-                context,
-              ),
-              translateNewBuffer(buffer, heap, values, node, context),
-              rest,
-            ),
-          apply("Assert", [boolean(false), string("tla-ts can't call this constructor")]),
-        )
-      : translateNewBuffer(buffers[0], heap, values, node, context);
+    return translateNewBufferOf(node, heap, values, scope, context);
   }
   if (isNewDate(node, context)) {
     const values = node.arguments ?? [];
@@ -1485,6 +1469,34 @@ export const getNewBuffer = (node: ts.Node, context: Context) => {
   );
   const candidates = names.filter(isBufferName).filter((inner) => TYPED_ARRAYS.has(inner));
   return candidates.length === names.length ? candidates : undefined;
+};
+
+// The heap after new of a buffer, a DataView, or a typed array, of the values of its arguments,
+// which branches on the constructor that its callee holds where it isn't the global.
+export const translateNewBufferOf = (
+  node: ts.NewExpression,
+  heap: Expression,
+  values: Expression,
+  scope: Scope,
+  context: Context,
+) => {
+  const buffers = getNewBuffer(node, context) ?? [];
+  const callee = translateExpression(node.expression, scope, context);
+  return getBuiltIn(node.expression, context) === undefined
+    ? buffers.reduceRight<Expression>(
+        (rest, buffer) =>
+          ifExpression(
+            useJavaScript(
+              "SameValue",
+              [callee, translateBuiltInValue(buffer, node, context)],
+              context,
+            ),
+            translateNewBuffer(buffer, heap, values, node, context),
+            rest,
+          ),
+        apply("Assert", [boolean(false), string("tla-ts can't call this constructor")]),
+      )
+    : translateNewBuffer(buffers[0], heap, values, node, context);
 };
 
 const translateNewBuffer = (

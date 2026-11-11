@@ -124,6 +124,7 @@ import {
   getNewBuffer,
   getViewCall,
   getGetterCall,
+  translateNewBufferOf,
   isRevoke,
   isObjectChange,
   getDateCall,
@@ -224,6 +225,7 @@ import {
   isGeneratorType,
   isSequenceType,
   rejectGeneratorUse,
+  TYPED_ARRAYS,
 } from "./types";
 
 export interface Path {
@@ -4574,6 +4576,119 @@ const isStatementCall = (node: ts.CallExpression, path: Path, context: Context) 
   );
 };
 
+// The values that new of a typed array takes from an iterator that a script gives, before tla-ts
+// stops following it.
+const TYPED_ARRAY_TAKE_LIMIT = 8;
+
+// new of a typed array of a value whose type doesn't tell whether it's an object that a script's
+// iterator iterates, which only statements can run.
+const isIteratedTypedArray = (node: ts.Expression, context: Context): node is ts.NewExpression => {
+  const first = ts.isNewExpression(node) ? node.arguments?.at(0) : undefined;
+  return (
+    first !== undefined &&
+    (getNewBuffer(node, context) ?? []).some((buffer) => TYPED_ARRAYS.has(buffer)) &&
+    (context.checker.getTypeAtLocation(getCast(first)).flags &
+      (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
+      0
+  );
+};
+
+// Makes a typed array of an object's iterator's values, as the constructor takes them through the
+// object's @@iterator method where a script gives it, or else of its first argument.
+const translateIteratedTypedArray = (
+  node: ts.NewExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value: Expression) => Formula,
+): Formula =>
+  allocateAll(
+    getAllocated(node, context).filter(
+      (inner) => inner !== node && !path.scope.allocated.has(inner),
+    ),
+    path,
+    context,
+    (allocated) => {
+      const values = (node.arguments ?? []).map((value) =>
+        translateExpression(value, allocated.scope, context),
+      );
+      const make = (current: Path, first: Expression) => {
+        const heapSymbol = context.heap;
+        const madeName = context.names.getFresh("heap");
+        const made = identifier(madeName);
+        const after =
+          heapSymbol === undefined
+            ? current
+            : {
+                ...current,
+                scope: {
+                  ...current.scope,
+                  bindings: new Map([...current.scope.bindings, [heapSymbol, made]]),
+                },
+              };
+        return bindOnce(
+          current,
+          madeName,
+          translateNewBufferOf(
+            node,
+            getHeap(current.scope, node, context),
+            tuple([first, ...values.slice(1)]),
+            current.scope,
+            context,
+          ),
+          continueWith(after, useJavaScript("Allocated", [made], context)),
+        );
+      };
+      const throwWith = (after: Path) => throwTypeError(after, node, context, frame);
+      const step = (
+        current: Path,
+        iterator: Expression,
+        next: Expression,
+        taken: Expression[],
+      ): Formula =>
+        taken.length > TYPED_ARRAY_TAKE_LIMIT
+          ? leaf(
+              apply("Assert", [
+                boolean(false),
+                string(
+                  `tla-ts can't take more than ${TYPED_ARRAY_TAKE_LIMIT} values into a typed array`,
+                ),
+              ]),
+            )
+          : stepIterator(
+              node,
+              iterator,
+              next,
+              current,
+              context,
+              frame,
+              throwWith,
+              (done) => make(done, tuple(taken)),
+              (stepped, result) =>
+                readValue(node, result, stepped, context, frame, (read, value) =>
+                  step(read, iterator, next, [...taken, value]),
+                ),
+            );
+      return ifThenElse(
+        useJavaScript(
+          "IteratesScriptMethod",
+          [getHeap(allocated.scope, node, context), values[0]],
+          context,
+        ),
+        openIterator(
+          node,
+          values[0],
+          allocated,
+          context,
+          frame,
+          throwWith,
+          (opened, iterator, next) => step(opened, iterator, next, []),
+        ),
+        make(allocated, values[0]),
+      );
+    },
+  );
+
 // Makes the objects that a node's object literals create, before the statement that evaluates
 // them runs, since an expression can't change the heap. A conversion or a call that ran already
 // made those of its operands.
@@ -4794,6 +4909,12 @@ const translateDeclarations = (
   if (defaults.length > 0) {
     return allocateAll(defaults, path, context, (allocated) =>
       translateDeclarations(declarations, allocated, context, frame, continueWith),
+    );
+  }
+  const iterated = initializer && skipCasts(initializer);
+  if (iterated !== undefined && isIteratedTypedArray(iterated, context)) {
+    return translateIteratedTypedArray(iterated, path, context, frame, (after, value) =>
+      bindDeclaration(declarations, value, after, context, frame, continueWith),
     );
   }
   return allocate(initializer, path, context, (allocated) => {
