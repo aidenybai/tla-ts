@@ -7,9 +7,9 @@ import { RunDrawer, RunProgress, RunStatus } from "./run-result";
 
 const COPIED_MS = 1500;
 
-const PURPLE = "text-[color(display-p3_0.391345_0.215644_0.853560)]";
-const GREEN = "text-[color(display-p3_0.259723_0.647032_0.276349)]";
-const GRAY = "text-gray-1000";
+const KEYWORD = "text-code-keyword";
+const STRING = "text-code-string";
+const COMMENT = "text-gray-1000";
 
 const PATTERNS = {
   shell: /^\S+/g,
@@ -35,7 +35,7 @@ const getTokens = (code: string, language: Language) => {
         { text: code.slice(state.end, match.index) },
         {
           text: match[0],
-          className: match.groups?.comment ? GRAY : match.groups?.string ? GREEN : PURPLE,
+          className: match.groups?.comment ? COMMENT : match.groups?.string ? STRING : KEYWORD,
         },
       ],
       end: match.index + match[0].length,
@@ -45,7 +45,7 @@ const getTokens = (code: string, language: Language) => {
   const rest = code.slice(highlighted.end);
   return [
     ...highlighted.tokens,
-    { text: rest, className: language === "shell" ? GREEN : undefined },
+    { text: rest, className: language === "shell" ? STRING : undefined },
   ];
 };
 
@@ -75,7 +75,7 @@ export const CodeBlock = (props: CodeBlockProps) => {
   return (
     <div
       className={cn(
-        "relative flex w-full gap-2 overflow-hidden rounded-xl bg-white pl-4 shadow-custom",
+        "relative flex w-full gap-2 overflow-hidden rounded-xl bg-surface pl-4 shadow-custom",
         isMultiline ? "py-3 pr-4" : "h-11 items-center pr-1",
       )}
     >
