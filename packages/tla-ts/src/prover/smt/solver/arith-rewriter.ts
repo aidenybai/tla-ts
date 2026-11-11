@@ -24,6 +24,7 @@ import {
   OP_LT,
   OP_MOD,
   OP_MUL,
+  OP_SEQ_LENGTH,
   OP_SUB,
   OP_TO_INT,
   OP_TO_REAL,
@@ -968,6 +969,7 @@ export class ArithRewriter extends PolyRewriter {
 
   // Counts each factor's occurrences by scanning the few factors rather than by sorting them.
   private isNonNegative(expr: number) {
+    if (this.isNonNegativeFactor(expr)) return true;
     if (!this.isMul(expr)) return false;
     const factors = this.factors;
     shrink(factors, 0);
@@ -975,6 +977,7 @@ export class ArithRewriter extends PolyRewriter {
     let isNegative = false;
     let numFactors = 0;
     for (const arg of factors) {
+      if (this.isNonNegativeFactor(arg)) continue;
       if (!this.manager.isNumeral(arg)) factors[numFactors++] = arg;
       else if (this.getValue(arg).isNegative()) isNegative = !isNegative;
     }
@@ -998,6 +1001,21 @@ export class ArithRewriter extends PolyRewriter {
     // not for a real one.
     if (numOdd !== 2 || !this.manager.isInt(expr)) return false;
     return this.isSuccessor(firstOdd, secondOdd) || this.isSuccessor(secondOdd, firstOdd);
+  }
+
+  private isNonNegativeFactor(expr: number) {
+    const manager = this.manager;
+    const op = manager.getOp(expr);
+    if (op === OP_SEQ_LENGTH) return true;
+    if (op !== OP_POWER) return false;
+    const base = manager.getArg(expr, 0);
+    const exponent = manager.getArg(expr, 1);
+    if (manager.isNumeral(exponent)) {
+      const value = this.getValue(exponent);
+      if (value.isInt() && value.num >= 0n && value.num < 2n ** 32n && value.num % 2n === 0n)
+        return true;
+    }
+    return manager.isNumeral(base) && this.getValue(base).isPositive();
   }
 
   private isSuccessor(base: number, sum: number) {
