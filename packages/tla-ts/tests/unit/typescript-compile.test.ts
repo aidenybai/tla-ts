@@ -2979,12 +2979,47 @@ export const step = () => {
 `;
     const compiled = compile(source);
     const declaration = compiled.regions.find((region) => region.kind === "variable");
-    const references = compiled.regions.filter((region) => region.kind === "reference");
+    const references = compiled.regions.filter(
+      (region) => region.kind === "read" || region.kind === "write",
+    );
     expect(
       references.map((region) => source.slice(region.source.start, region.source.end)),
     ).toEqual(["count", "count", "count"]);
     expect(references.map((region) => region.output)).toEqual(
       references.map(() => declaration?.output),
     );
+  });
+
+  it("tells the uses that assign, increment, or mutate a state variable from those that read it", () => {
+    const source = `let count = 0;
+let log: number[] = [];
+let pair = [0, 0];
+export const step = () => {
+  if (count >= 3) return;
+  count = count + 1;
+  log.push(count);
+};
+export const reset = () => {
+  count++;
+  log[0] = log.length;
+  [pair[0], count] = [count, 0];
+};
+`;
+    const references = compile(source)
+      .regions.filter((region) => region.kind === "read" || region.kind === "write")
+      .map((region) => [region.kind, source.slice(region.source.start, region.source.end)]);
+    expect(references).toEqual([
+      ["read", "count"],
+      ["write", "count"],
+      ["read", "count"],
+      ["write", "log"],
+      ["read", "count"],
+      ["write", "count"],
+      ["write", "log"],
+      ["read", "log"],
+      ["write", "pair"],
+      ["write", "count"],
+      ["read", "count"],
+    ]);
   });
 });

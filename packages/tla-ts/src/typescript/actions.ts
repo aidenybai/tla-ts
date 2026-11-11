@@ -4869,24 +4869,28 @@ export const getWritten = (node: ts.Node) => {
     : undefined;
 };
 
-const getWrittenSymbols = (target: ts.Expression, context: Context): ts.Symbol[] => {
-  if (ts.isArrayLiteralExpression(target)) {
-    return target.elements.flatMap((element) => getWrittenSymbols(element, context));
-  }
+// The variables or other root expressions that an assignment target writes, as a destructuring
+// target writes each of its elements.
+export const getWrittenRoots = (target: ts.Expression): ts.Expression[] => {
+  if (ts.isArrayLiteralExpression(target)) return target.elements.flatMap(getWrittenRoots);
   if (ts.isObjectLiteralExpression(target)) {
     return target.properties.flatMap((property) =>
       ts.isPropertyAssignment(property)
-        ? getWrittenSymbols(property.initializer, context)
+        ? getWrittenRoots(property.initializer)
         : ts.isShorthandPropertyAssignment(property)
-          ? getWrittenSymbols(property.name, context)
+          ? [property.name]
           : [],
     );
   }
-  if (ts.isSpreadElement(target)) return getWrittenSymbols(target.expression, context);
-  const root = getRoot(target);
-  const symbol = ts.isIdentifier(root) ? getSymbol(root, context.checker) : undefined;
-  return symbol === undefined ? [] : [symbol];
+  if (ts.isSpreadElement(target)) return getWrittenRoots(target.expression);
+  return [getRoot(target)];
 };
+
+const getWrittenSymbols = (target: ts.Expression, context: Context) =>
+  getWrittenRoots(target).flatMap((root) => {
+    const symbol = ts.isIdentifier(root) ? getSymbol(root, context.checker) : undefined;
+    return symbol === undefined ? [] : [symbol];
+  });
 
 // Whether a function assigns a state variable, directly or through a helper it calls.
 export const writesState = (
