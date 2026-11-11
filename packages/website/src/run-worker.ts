@@ -35,6 +35,7 @@ export interface RunResult {
 }
 
 interface RunRow {
+  id: number;
   title: string;
   // Shown while the row is the active step, such as the goal an obligation proves.
   detail: string;
@@ -108,6 +109,7 @@ const getProveResult = async (source: string): Promise<RunResult> => {
     trace: [],
     loopStart: undefined,
     rows: result.obligations.map((obligation) => ({
+      id: obligation.id,
       title: `Line ${obligation.location.split(":")[0]}, ${
         obligation.status === "proved"
           ? `proved by ${obligation.prover}`

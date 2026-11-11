@@ -179,7 +179,7 @@ export const RunDrawerRows = () => {
     <ol className="min-h-0 overflow-auto border-t font-mono text-sm">
       {drawer.result.rows.map((row, index) => (
         <li
-          key={index}
+          key={row.id}
           className={cn(
             "flex gap-4 border-b border-gray-300 px-4 py-1.5 transition-[opacity,background-color] duration-200",
             index > playback.stepIndex && "opacity-30",
