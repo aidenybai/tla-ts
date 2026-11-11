@@ -134,7 +134,14 @@ import {
   translateSwitch,
   translateThrow,
 } from "./functions";
-import { getDescriptorGetters, isDescriptorRead, readDescriptor } from "./protocols";
+import {
+  getDescriptorGetters,
+  getReadFunctions,
+  isDescriptorRead,
+  isGetterRead,
+  readDescriptor,
+  runGetterRead,
+} from "./protocols";
 import {
   bindPattern,
   bindPatternInline,
@@ -3869,8 +3876,10 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
         visit(called);
       });
     }
-    // A definition that reads its descriptor's fields runs their getters.
-    getDescriptorGetters(node, context).forEach((called) => {
+    // A definition that reads its descriptor's fields, or a read of a key with getters, runs them.
+    const getters = [...getDescriptorGetters(node, context), ...getReadFunctions(node, context)];
+    if (context.heap !== undefined && getters.length > 0) changed.add(context.heap);
+    getters.forEach((called) => {
       if (visited.has(called)) return;
       visited.add(called);
       visit(called);
@@ -4782,6 +4791,8 @@ interface LeadingCall {
   // The operation that converts an object to a primitive first, which runs code, so nothing after
   // it can run before it.
   conversion?: ts.Expression;
+  // The read that a getter which changes something may answer first, which runs as a statement.
+  read?: ts.PropertyAccessExpression | ts.ElementAccessExpression;
 }
 
 // The first call in a node's evaluation order that only statements can run, with the nodes that
@@ -4824,13 +4835,14 @@ const findLeadingCall = (
   ) {
     return findLeadingCall(node.expression, before, path, context);
   }
-  if (ts.isPropertyAccessExpression(node)) {
-    const found = findLeadingCall(node.expression, before, path, context);
-    return found.call !== undefined || found.isBlocked ? found : evaluate(node);
-  }
-  if (ts.isElementAccessExpression(node)) {
-    const found = inOrder([node.expression, node.argumentExpression]);
-    return found.call !== undefined || found.isBlocked ? found : evaluate(node);
+  if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+    const found = ts.isPropertyAccessExpression(node)
+      ? findLeadingCall(node.expression, before, path, context)
+      : inOrder([node.expression, node.argumentExpression]);
+    if (found.call !== undefined || found.isBlocked) return found;
+    return isGetterRead(node, context)
+      ? { call: undefined, isBlocked: true, read: node }
+      : evaluate(node);
   }
   if (ts.isPrefixUnaryExpression(node)) {
     return node.operator === ts.SyntaxKind.PlusPlusToken ||
@@ -4998,6 +5010,25 @@ const getHoistedConversion = (statement: ts.Statement, path: Path, context: Cont
   return { node, conversion };
 };
 
+// The read that a statement's expression evaluates first whose getter may change something, which
+// runs as its own statement. Nothing that the statement evaluates before it may read what the
+// getters change.
+const getHoistedRead = (statement: ts.Statement, path: Path, context: Context) => {
+  const evaluated = getEvaluated(statement);
+  if (evaluated === undefined) return undefined;
+  const before: ts.Node[] = [];
+  const node = findLeadingCall(evaluated, before, path, context).read;
+  if (node === undefined) return undefined;
+  rejectEarlyRun(
+    node,
+    getReadFunctions(node, context),
+    before.filter((inner) => ts.findAncestor(inner, (ancestor) => ancestor === node) === undefined),
+    path,
+    context,
+  );
+  return node;
+};
+
 // Runs the first call that a node evaluates that only statements can run, and then the rest with
 // its value, or gives undefined where there's none.
 export const runLeadingCall = (
@@ -5059,7 +5090,8 @@ export const translateStatements = (
   if (
     ts.isExpressionStatement(statement) &&
     (ts.isAwaitExpression(skipCasts(statement.expression)) ||
-      getConversion(skipCasts(statement.expression), context) !== undefined) &&
+      getConversion(skipCasts(statement.expression), context) !== undefined ||
+      isGetterRead(skipCasts(statement.expression), context)) &&
     path.scope.results.has(skipCasts(statement.expression))
   ) {
     return continueWith(path);
@@ -5118,6 +5150,23 @@ export const translateStatements = (
         frame,
       );
     });
+  }
+  const hoistedRead = getHoistedRead(statement, path, context);
+  if (hoistedRead !== undefined) {
+    return runGetterRead(hoistedRead, path, context, frame, (after, value) =>
+      translateStatements(
+        statements,
+        {
+          ...after,
+          scope: {
+            ...after.scope,
+            results: new Map([...after.scope.results, [hoistedRead, value]]),
+          },
+        },
+        context,
+        frame,
+      ),
+    );
   }
   const converted = getHoistedConversion(statement, path, context);
   if (converted !== undefined) {

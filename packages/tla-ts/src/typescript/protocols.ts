@@ -1,6 +1,7 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
 import {
+  allocate,
   bindOnce,
   type Frame,
   inlineBody,
@@ -13,14 +14,18 @@ import {
   type Context,
   findNodes,
   type FunctionNode,
+  getAccessKey,
   getAccessorFunctions,
+  getGetters,
   getCallee,
+  getReturnedFunctions,
   getUndefined,
   skipCasts,
 } from "./context";
 import { type Formula, ifThenElse, leaf } from "./formula";
-import { getCandidateValue, getHeap } from "./heap";
+import { getCandidateValue, getHeap, translateObjectValue } from "./heap";
 import { useJavaScript } from "./javascript";
+import { getKind } from "./types";
 import { apply, boolean, field, identifier, junction, not, record, string, tuple } from "./tla";
 
 // The key that a name writes, as @@name for Symbol.name.
@@ -468,3 +473,75 @@ export const readDescriptor = (
     ),
     throwTypeError(path, site, context, frame),
   );
+
+// The getters that a read may run where the script defines a getter under its key: the functions
+// that descriptors give as getters, and the function objects that functions return.
+const getReadGetters = (node: ts.Node, context: Context) => [
+  ...new Set([
+    ...getAccessorFunctions(node, "get", context),
+    ...getReturnedFunctions(node, context),
+  ]),
+];
+
+// A read of a key that the script defines a getter under, on an object, where a getter that may
+// run changes something, so that the read runs as a statement. A read that a pure getter answers
+// runs as an expression.
+export const isGetterRead = (
+  node: ts.Node,
+  context: Context,
+): node is ts.PropertyAccessExpression | ts.ElementAccessExpression => {
+  if (
+    context.heap === undefined ||
+    !(ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node))
+  ) {
+    return false;
+  }
+  const key = getAccessKey(node);
+  const parent = node.parent;
+  const isWritten =
+    (ts.isBinaryExpression(parent) &&
+      parent.left === node &&
+      parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+    (ts.isCallExpression(parent) && parent.expression === node) ||
+    ts.isDeleteExpression(parent) ||
+    ((ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+      (parent.operator === ts.SyntaxKind.PlusPlusToken ||
+        parent.operator === ts.SyntaxKind.MinusMinusToken));
+  if (key === undefined || isWritten || !getGetterKeys(node).has(key)) return false;
+  if (getKind(node.expression, context) !== "object") return false;
+  const pure = getGetters(node, context);
+  return getReadGetters(node, context).some((getter) => !pure.includes(getter));
+};
+
+// Runs a read that a getter may answer, which evaluates the object and then runs the getter that
+// it holds, of those that the script defines.
+export const runGetterRead = (
+  node: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value: Expression) => Formula,
+): Formula =>
+  allocate(node, path, context, (allocated) =>
+    bind(
+      allocated,
+      "object",
+      translateObjectValue(node.expression, allocated.scope, context),
+      context,
+      (bound, object) =>
+        readWith(
+          node,
+          object,
+          string(getAccessKey(node) ?? ""),
+          getReadGetters(node, context),
+          bound,
+          context,
+          frame,
+          continueWith,
+        ),
+    ),
+  );
+
+export const getReadFunctions = (node: ts.Node, context: Context) =>
+  isGetterRead(node, context) ? getReadGetters(node, context) : [];

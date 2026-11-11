@@ -1007,7 +1007,7 @@ const isMaking = (node: ts.Node): boolean =>
 const returnedFunctions = new WeakMap<ts.SourceFile, ts.FunctionExpression[]>();
 
 // The function objects that functions return, which a descriptor may give as a getter.
-const getReturnedFunctions = (node: ts.Node, context: Context) => {
+export const getReturnedFunctions = (node: ts.Node, context: Context) => {
   const file = node.getSourceFile();
   const known = returnedFunctions.get(file);
   if (known !== undefined) return known;

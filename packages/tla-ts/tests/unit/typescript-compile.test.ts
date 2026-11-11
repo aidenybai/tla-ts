@@ -475,7 +475,7 @@ describe("top-level statements", () => {
     expect(result.failure?.message).toContain("tla-ts can't call getters");
   });
 
-  it("stop the check at a getter that a call reads, though the statement drops its value", async () => {
+  it("throws a getter's error that a call reads, though the statement drops its value", async () => {
     const result = await checkModel(`
       const holder: { poisoned?: number } = {};
       Object.defineProperty(holder, "poisoned", {
@@ -488,10 +488,10 @@ describe("top-level statements", () => {
       }
       read();
     `);
-    expect(result.failure?.message).toContain("tla-ts can't call getters");
+    expect(result.failure?.message).toContain("new TypeError()");
   });
 
-  it("stop the check at a getter that a declaration reads, though nothing reads it", async () => {
+  it("throws a getter's error that a declaration reads, though nothing reads it", async () => {
     const result = await checkModel(`
       const holder: { poisoned?: number } = {};
       Object.defineProperty(holder, "poisoned", {
@@ -504,7 +504,7 @@ describe("top-level statements", () => {
       }
       read();
     `);
-    expect(result.failure?.message).toContain("tla-ts can't call getters");
+    expect(result.failure?.message).toContain("new TypeError()");
   });
 
   it("run the value of a call that a callback's statement drops", async () => {
@@ -1518,6 +1518,35 @@ describe("errors", () => {
         caught = error instanceof TypeError;
       }
       if (!caught || log.text !== "evg") throw new Error(log.text);
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("runs a getter that changes something where a statement reads its property", async () => {
+    const result = await checkModel(`
+      let count = 0;
+      const counted: { [key: string]: unknown } = { base: 5 };
+      Object.defineProperty(counted, "next", {
+        get: function () {
+          count += 1;
+          return count;
+        },
+      });
+      Object.defineProperty(counted, "boom", {
+        get: function () {
+          throw new RangeError("boom");
+        },
+      });
+      const first = counted.next;
+      const second = counted.next;
+      if (first !== 1 || second !== 2) throw new Error("count");
+      let caught = false;
+      try {
+        const value = counted.boom;
+      } catch (error) {
+        caught = error instanceof RangeError;
+      }
+      if (!caught) throw new Error("boom");
     `);
     expect(result.failure).toBeUndefined();
   });
@@ -2965,9 +2994,7 @@ describe("errors", () => {
       "const result = ignore(holder.poisoned) + 1",
       "const result = skip(holder.poisoned) + 1",
     ]) {
-      expect((await checkModel(getSource(call))).failure?.message).toContain(
-        "tla-ts can't call getters",
-      );
+      expect((await checkModel(getSource(call))).failure).toBeUndefined();
     }
   });
 
