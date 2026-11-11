@@ -6,10 +6,18 @@ import {
   OP_ADD,
   OP_AND,
   OP_DIV,
+  OP_DIV0,
+  OP_IDIV,
+  OP_IDIV0,
   OP_IMPLIES,
+  OP_MOD,
+  OP_MOD0,
   OP_MUL,
   OP_NOT,
   OP_OR,
+  OP_POWER,
+  OP_POWER0,
+  OP_REM,
   OP_SEQ_CONCAT,
   OP_SUB,
   OP_TO_INT,
@@ -199,4 +207,40 @@ export const getExtendedNumeral = (manager: AstManager, expr: number) => {
       todo.push({ term: manager.getArg(term, index), isVisited: false, isNegated: false });
   }
   return values[values.length - 1];
+};
+
+const isZeroNumeral = (manager: AstManager, expr: number) =>
+  manager.isNumeral(expr) && manager.getRationalValue(expr).isZero();
+
+// m.is_considered_uninterpreted and arith_util's.
+const isConsideredUninterpreted = (manager: AstManager, expr: number) => {
+  const op = manager.getOp(expr);
+  const args = manager.getArgs(expr);
+  if (manager.isUninterpreted(expr)) return true;
+  if (op === OP_DIV0 || op === OP_IDIV0 || op === OP_MOD0 || op === OP_POWER0) return true;
+  if ((op === OP_DIV || op === OP_IDIV || op === OP_MOD || op === OP_REM) && args.length === 2)
+    return isZeroNumeral(manager, args[1]);
+  return (
+    op === OP_POWER &&
+    args.length === 2 &&
+    isZeroNumeral(manager, args[0]) &&
+    isZeroNumeral(manager, args[1])
+  );
+};
+
+export const hasUninterpreted = (manager: AstManager, expr: number) => {
+  const visited = new Set<number>();
+  const todo = [expr];
+  for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
+    if (visited.has(current)) continue;
+    visited.add(current);
+    if (manager.kinds[current] === KIND_QUANTIFIER) {
+      todo.push(manager.getQuantifier(current).body);
+      continue;
+    }
+    if (manager.kinds[current] !== KIND_APP || manager.getNumArgs(current) === 0) continue;
+    if (isConsideredUninterpreted(manager, current)) return true;
+    manager.pushArgs(current, todo);
+  }
+  return false;
 };

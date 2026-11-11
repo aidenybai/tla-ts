@@ -18,6 +18,7 @@ import { parseSmtlib } from "./smtlib-parser";
 export interface KernelParams {
   isMbqi: boolean;
   isFindingMacros: boolean;
+  relevancyLevel?: 0 | 2;
 }
 
 const DEFAULT_KERNEL_PARAMS: KernelParams = { isMbqi: true, isFindingMacros: false };
