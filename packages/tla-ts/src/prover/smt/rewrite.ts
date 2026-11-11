@@ -55,6 +55,11 @@ export interface EncodingSession {
   caseErrors: number;
 }
 
+// The options of Smtlib.preprocess that tlapm's --debug flags set.
+export interface SmtEncoding {
+  isSetExtensional: boolean;
+}
+
 export interface Mode {
   isOmitted: boolean;
   polarity: Polarity;
@@ -95,7 +100,7 @@ const UNSUPPORTED_OPERANDS = new Set<Builtin>([
   "Irregular",
 ]);
 
-export const createEncoder = (session: EncodingSession) => {
+export const createEncoder = (session: EncodingSession, encoding: SmtEncoding) => {
   const flattener = createFlattener();
   const flatten = flattener.flatten;
   const anonymous = new Map<string, number>();
@@ -307,7 +312,7 @@ export const createEncoder = (session: EncodingSession) => {
     getEquality(
       encodeIdv(args[0], env, mode),
       encodeIdv(args[1], env, mode),
-      mode.polarity,
+      encoding.isSetExtensional ? mode.polarity : undefined,
       isNegated,
     );
 

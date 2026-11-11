@@ -29,7 +29,7 @@ import {
 import { FRONTENDS, findMethods, type Method } from "./prep/methods";
 import { encodePtl } from "./ptl/encode";
 import { encodeSmt } from "./smt/encode";
-import type { EncodingSession } from "./smt/rewrite";
+import type { EncodingSession, SmtEncoding } from "./smt/rewrite";
 import { encodeZenon } from "./zenon/encode";
 import type { TlapmResult } from "./tlapm/tlapm";
 import { TLAPM_LIBRARY } from "./tlapm-library";
@@ -160,12 +160,17 @@ const getLocation = (obligation: PrintedObligation) =>
 
 const encodeSmtProblem: Encoder = (input) => {
   const shipped = shipFirstOrder(input.sequent, input.settings.isFlattened);
-  const encoding = encodeSmt(shipped, input.session, {
-    version: TLAPM_VERSION,
-    id: input.obligation.id,
-    location: getLocation(input.obligation),
-    logic: input.settings.smtLogic,
-  });
+  const encoding = encodeSmt(
+    shipped,
+    input.session,
+    {
+      version: TLAPM_VERSION,
+      id: input.obligation.id,
+      location: getLocation(input.obligation),
+      logic: input.settings.smtLogic,
+    },
+    input.settings.smtEncoding,
+  );
   input.write(
     `;; Proof obligation:\n${renderDoc(printSequent(shipped)).replace(/^/gm, ";;\t")}\n${
       input.method.rlimit === undefined ? "" : `(set-option :rlimit ${input.method.rlimit})\n`
@@ -543,6 +548,7 @@ export interface BackendSettings {
   stretch: number;
   isFlattened: boolean;
   smtLogic: string;
+  smtEncoding: SmtEncoding;
 }
 
 interface ProverSettings extends BackendSettings {
@@ -550,7 +556,12 @@ interface ProverSettings extends BackendSettings {
   solveSmt?: (file: string, text: string, timeLimitMs: number) => Promise<Decision>;
 }
 
-const DEFAULT_SETTINGS: ProverSettings = { stretch: 1, isFlattened: true, smtLogic: "UFNIA" };
+const DEFAULT_SETTINGS: ProverSettings = {
+  stretch: 1,
+  isFlattened: true,
+  smtLogic: "UFNIA",
+  smtEncoding: { isSetExtensional: true },
+};
 
 interface ObligationsOptions extends Partial<ProverSettings> {
   workers?: number;
@@ -583,6 +594,7 @@ export const proveObligations = async (
       stretch: options.stretch ?? DEFAULT_SETTINGS.stretch,
       isFlattened: options.isFlattened ?? DEFAULT_SETTINGS.isFlattened,
       smtLogic: options.smtLogic ?? DEFAULT_SETTINGS.smtLogic,
+      smtEncoding: options.smtEncoding ?? DEFAULT_SETTINGS.smtEncoding,
       onInput: options.onInput,
       solveSmt: options.solveSmt,
     },

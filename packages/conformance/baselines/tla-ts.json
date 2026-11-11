@@ -130,7 +130,6 @@
   "tlapm/encodings/smt/arithmetic/smarter_types_range": "exit-mismatch",
   "tlapm/encodings/smt/arithmetic/smarter_types_shared_bound": "exit-mismatch",
   "tlapm/encodings/smt/functions/multiple_arguments": "exit-mismatch",
-  "tlapm/encodings/smt/sets/no_set_extensionality": "exit-mismatch",
   "tlapm/encodings/smt/sets/rewrite_enum": "exit-mismatch",
   "tlapm/encodings/smt/sets/rewrite_filter_and_map": "exit-mismatch",
   "tlapm/encodings/smt/sets/rewrite_set_extensionality": "exit-mismatch",

@@ -58,6 +58,7 @@ export interface SymbolSpec {
 }
 
 export interface CollectState {
+  isSetExtensional: boolean;
   recordFields: Map<string, string[]>;
   strings: string[];
   isFunConstr: boolean;
@@ -73,7 +74,7 @@ const getOmittedDeclaration = (name: string) =>
 
 const SEQUENCE_DEPS = ["Mem", "Seq", "Len", "FunApp", "NatSet", "Cast_Int", "Proj_Int"];
 
-// N_data.get_deps, with arithmetic and set extensionality as tlapm's SMT backend sets them.
+// N_data.get_deps, with arithmetic as tlapm's SMT backend sets it.
 export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => {
   const spec = (declaration: string | undefined, deps: string[], axioms: Axiom[]) => ({
     declaration,
@@ -89,12 +90,16 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
   const setOf = /^SetOf_(\d+)$/.exec(name);
   if (setOf) {
     const count = Number(setOf[1]);
+    const axioms = [
+      axiom("SetOfIntro", [count], undefined),
+      axiom("SetOfElim", [count], undefined),
+    ];
+    if (!state.isSetExtensional) return spec(getOmittedDeclaration(name), ["Mem"], axioms);
     return spec(
       getOmittedDeclaration(name),
       ["Mem", "IsSetOf"],
       [
-        axiom("SetOfIntro", [count], undefined),
-        axiom("SetOfElim", [count], undefined),
+        ...axioms,
         axiom("AssertIsSetOf", [count], undefined),
         axiom(
           "CompareSetOfTrigger",
@@ -205,6 +210,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
     case "Choose":
       return spec(getOmittedDeclaration(name), [], [axiom("ChooseDef", [], undefined)]);
     case "Mem":
+      if (!state.isSetExtensional) return fixed(2, [], [], "Bool");
       return fixed(
         2,
         ["SetExtTrigger"],
@@ -278,7 +284,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
         [],
         `(forall ((a Idv) (b Idv) (x Idv)) (! (= (${MEM} x (${symbol} a b)) ${condition.replaceAll("MEM", MEM)}) :pattern ((${MEM} x (${symbol} a b))) :pattern ((${MEM} x a) (${symbol} a b)) :pattern ((${MEM} x b) (${symbol} a b))))`,
       );
-      if (name !== "Cap") return fixed(2, ["Mem"], [definition]);
+      if (name !== "Cap" || !state.isSetExtensional) return fixed(2, ["Mem"], [definition]);
       return fixed(
         2,
         ["Mem", "SetEnum_0", "SetExtTrigger"],
@@ -293,6 +299,8 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
       );
     }
     case "SetSt":
+      if (!state.isSetExtensional)
+        return spec(getOmittedDeclaration(name), ["Mem"], [axiom("SetStDef", [], undefined)]);
       return spec(
         getOmittedDeclaration(name),
         ["Mem", "SetEnum_0", "SetExtTrigger"],
