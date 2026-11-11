@@ -1318,6 +1318,21 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("tla-ts can't call valueOf or toString");
   });
 
+  it("throws the TypeError of an Object.create that nothing reads", async () => {
+    const result = await checkModel(`
+      const properties = { a: { get: null } } as unknown as PropertyDescriptorMap;
+      Object.create(null);
+      let caught = false;
+      try {
+        Object.create({}, properties);
+      } catch (error) {
+        caught = error instanceof TypeError;
+      }
+      if (!caught) throw new Error("create");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("lists the own property names of an array that a sequence holds", async () => {
     const result = await checkModel(`
       const holder = { seen: 0 };

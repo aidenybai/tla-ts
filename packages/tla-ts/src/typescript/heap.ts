@@ -913,7 +913,8 @@ export const isCreation = (node: ts.Node, context: Context) => {
     !isMethodCall(node) ||
     node.expression.expression.getText() !== "Object" ||
     node.expression.name.text !== "create" ||
-    node.arguments.length === 0
+    node.arguments.length === 0 ||
+    ts.isExpressionStatement(node.parent)
   ) {
     return false;
   }
@@ -1221,6 +1222,7 @@ const OBJECT_CHANGES = new Map([
   ["preventExtensions", { operator: "PreventExtensions", arity: 1, objects: [0] }],
   ["setPrototypeOf", { operator: "SetPrototypeOf", arity: 2, objects: [0] }],
   ["assign", { operator: "Assign", arity: 1, objects: [0] }],
+  ["create", { operator: "CreateChange", arity: 1, objects: [] }],
 ]);
 
 // The changes that throw a TypeError where they fail.
@@ -1229,15 +1231,19 @@ const FALLIBLE_CHANGES = new Set([
   "defineProperties",
   "setPrototypeOf",
   "assign",
+  "create",
 ]);
 
 const isConstruct = (node: MethodCall) =>
   node.expression.expression.getText() === "Reflect" && node.expression.name.text === "construct";
 
+// Object.create runs as a change only where nothing reads the object it makes, so that it can
+// throw.
 export const isObjectChange = (node: ts.Node): node is MethodCall =>
   isMethodCall(node) &&
   ((node.expression.expression.getText() === "Object" &&
-    OBJECT_CHANGES.has(node.expression.name.text)) ||
+    OBJECT_CHANGES.has(node.expression.name.text) &&
+    (node.expression.name.text !== "create" || ts.isExpressionStatement(node.parent))) ||
     isConstruct(node));
 
 // The errors that JavaScript itself may throw where a node runs, which instanceof checks for: a
@@ -1328,11 +1334,13 @@ export const translateObjectChange = (node: MethodCall, scope: Scope, context: C
     !isBuiltInObject(argument, context) &&
     ["sequence", "set", "map"].includes(getKind(argument, context));
   const isAssign = method === "assign";
-  const used = isAssign ? node.arguments : node.arguments.slice(0, change?.arity);
+  const isCreate = method === "create";
+  const used = isAssign ? node.arguments : node.arguments.slice(0, isCreate ? 2 : change?.arity);
   if (
     change === undefined ||
     node.arguments.length < change.arity ||
     !change.objects.every(isObject) ||
+    (isCreate && used.length > 1 && !isObject(1)) ||
     used.some((argument) => ts.isSpreadElement(argument) || isOutside(argument))
   ) {
     throw new TlaTypeScriptError(`Unsupported statement: ${node.getText()}`, node);
@@ -1345,7 +1353,11 @@ export const translateObjectChange = (node: MethodCall, scope: Scope, context: C
   return {
     change: useJavaScript(
       change.operator,
-      [getHeap(scope, node, context), ...(isAssign ? [values[0], tuple(values.slice(1))] : values)],
+      [
+        getHeap(scope, node, context),
+        ...(isAssign ? [values[0], tuple(values.slice(1))] : values),
+        ...(isCreate && values.length === 1 ? [getUndefined(context)] : []),
+      ],
       context,
     ),
     isFallible: FALLIBLE_CHANGES.has(method),

@@ -1437,14 +1437,19 @@ DefineProperties(heap, ref, properties) ==
                    isRangeError |-> applied.isRangeError]
              ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE]
 
-Create(heap, prototype, properties) ==
+\\* Object.create as a change, which fails where it throws a TypeError.
+CreateChange(heap, prototype, properties) ==
   LET created == Allocate(heap, [EmptyObject EXCEPT !.prototype = prototype])
-      change == DefineProperties(created, Allocated(created), properties)
   IN CASE ~(prototype = Null \\/ IsObjectArgument(prototype)) ->
-            Assert(FALSE, "tla-ts can't throw the TypeError of Object.create")
-       [] properties = Undefined -> created
-       [] change.isDone -> change.heap
-       [] OTHER -> Assert(FALSE, "tla-ts can't throw the TypeError of Object.create")
+            [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE]
+       [] properties = Undefined -> [heap |-> created, isDone |-> TRUE, isRangeError |-> FALSE]
+       [] OTHER -> DefineProperties(created, Allocated(created), properties)
+
+Create(heap, prototype, properties) ==
+  LET change == CreateChange(heap, prototype, properties)
+  IN IF change.isDone
+     THEN change.heap
+     ELSE Assert(FALSE, "tla-ts can't throw the TypeError of Object.create")
 
 \\* The writes of Object.assign from one source, which reads each key's value before it writes it.
 RECURSIVE AssignKeys(_, _, _, _)
