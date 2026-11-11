@@ -5604,6 +5604,21 @@ describe("regular expressions", () => {
     expect(result.status).toBe("deadlock");
   });
 
+  it("throw the SyntaxError of new RegExp with a pattern that isn't valid", async () => {
+    const result = await checkModel(`
+      const holder: { tag?: string } = {};
+      holder.tag = "made";
+      let name = "none";
+      try {
+        throw new Error("made " + new RegExp("a**"));
+      } catch (error) {
+        name = error instanceof SyntaxError ? "SyntaxError" : "other";
+      }
+      if (name !== "SyntaxError") throw new Error(name);
+    `);
+    expect(result.status).toBe("deadlock");
+  });
+
   it("stop where a script changed what a regexp's method reads", async () => {
     const result = await checkModel(`
       const pattern = /a/;

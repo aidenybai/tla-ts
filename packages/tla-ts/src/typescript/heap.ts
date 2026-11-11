@@ -47,6 +47,7 @@ import {
   translateBuiltInObject,
   translateBuiltInValue,
   getMadeRegExp,
+  isInvalidRegExp,
   translateRegExpValue,
 } from "./intrinsics";
 import {
@@ -1749,8 +1750,8 @@ export const isObjectChange = (node: ts.Node, context: Context): node is MethodC
 // The errors that JavaScript itself may throw where a node runs, which instanceof checks for: a
 // failed definition or Reflect.construct, a new of a value that isn't a constructor, or a reduce
 // of an empty array, the RangeError of an array's invalid length, and a Date method's TypeError
-// on another receiver and toISOString's RangeError of an invalid date, and replaceAll's TypeError
-// of a regexp that isn't global.
+// on another receiver and toISOString's RangeError of an invalid date, replaceAll's TypeError of a
+// regexp that isn't global, and the SyntaxError of a pattern that isn't valid.
 export const getEngineErrors = (node: ts.Node, context: Context) => {
   const isDefinition =
     isObjectChange(node, context) && node.expression.name.text.startsWith("define");
@@ -1776,6 +1777,7 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
   if (context.heap !== undefined && getRegExpCall(node, context)?.method === "replaceAll") {
     return ["TypeError"];
   }
+  if (isInvalidRegExp(node, context)) return ["SyntaxError"];
   const created = ts.isNewExpression(node) ? getHeapClass(node.expression, context) : undefined;
   if (created !== undefined && ts.isClassLike(created) && isNullBased(created)) {
     return ["ReferenceError"];

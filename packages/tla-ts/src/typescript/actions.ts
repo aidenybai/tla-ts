@@ -89,6 +89,7 @@ import {
   translateKey,
   translateSetKey,
   translateToString,
+  ARITHMETIC_OPERATORS,
   BITWISE_OPERATORS,
 } from "./expressions";
 import { and, bindValue, DISABLED, type Formula, ifThenElse, letIn, leaf, render } from "./formula";
@@ -129,7 +130,13 @@ import {
   translateObjectValue,
   translatePropertyKey,
 } from "./heap";
-import { type Collection, getBuiltIn, isBuiltInObject, translateBuiltInValue } from "./intrinsics";
+import {
+  type Collection,
+  getBuiltIn,
+  isBuiltInObject,
+  isInvalidRegExp,
+  translateBuiltInValue,
+} from "./intrinsics";
 import { getTypeNames, translateToNumber, useJavaScript } from "./javascript";
 import {
   forceHeap,
@@ -5706,6 +5713,25 @@ const findLeadingCall = (
     : blocked;
 };
 
+// The new RegExp of literals that make no valid regexp in an expression, which throws a SyntaxError
+// where only names, literals, and the operands of arithmetic evaluate before it.
+const getInvalidRegExp = (node: ts.Node, context: Context): ts.Node | undefined => {
+  if (isInvalidRegExp(node, context)) return node;
+  const operands = ts.isParenthesizedExpression(node)
+    ? [node.expression]
+    : ts.isBinaryExpression(node) && ARITHMETIC_OPERATORS.has(node.operatorToken.kind)
+      ? [node.left, node.right]
+      : (ts.isNewExpression(node) || ts.isCallExpression(node)) && ts.isIdentifier(node.expression)
+        ? (node.arguments ?? [])
+        : ts.isTemplateExpression(node)
+          ? node.templateSpans.map((span) => span.expression)
+          : [];
+  const position = operands.findIndex(
+    (operand) => !ts.isIdentifier(operand) && !ts.isLiteralExpression(operand),
+  );
+  return position === -1 ? undefined : getInvalidRegExp(operands[position], context);
+};
+
 // The expression that a statement evaluates first, where it runs what the expression needs as
 // statements before it.
 const getEvaluated = (statement: ts.Statement) =>
@@ -5865,6 +5891,11 @@ export const translateStatements = (
     });
   }
   if (ts.isEmptyStatement(statement)) return continueWith(path);
+  const evaluated = getEvaluated(statement);
+  const invalidRegExp = evaluated === undefined ? undefined : getInvalidRegExp(evaluated, context);
+  if (invalidRegExp !== undefined) {
+    return throwError("SyntaxError", path, invalidRegExp, context, frame);
+  }
   // An await statement whose promise fulfilled, or a conversion that ran, drops the value.
   if (
     ts.isExpressionStatement(statement) &&

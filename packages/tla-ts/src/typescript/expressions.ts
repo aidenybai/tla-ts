@@ -179,7 +179,7 @@ const ORDERING_OPERATORS = new Set([
   ts.SyntaxKind.GreaterThanEqualsToken,
 ]);
 
-const ARITHMETIC_OPERATORS = new Set([
+export const ARITHMETIC_OPERATORS = new Set([
   ts.SyntaxKind.PlusToken,
   ts.SyntaxKind.MinusToken,
   ts.SyntaxKind.AsteriskToken,

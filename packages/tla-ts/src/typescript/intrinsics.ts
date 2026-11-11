@@ -1138,9 +1138,8 @@ const translateRegExp = (
   ]);
 };
 
-// new RegExp or RegExp of a pattern and flags that literals write and that make a valid regexp,
-// whose source the engine that tla-ts runs on escapes as the spec's EscapeRegExpPattern does.
-export const getMadeRegExp = (node: ts.Node, context: Context) => {
+// The pattern and flags of new RegExp or RegExp, where literals write them.
+const getRegExpTexts = (node: ts.Node, context: Context) => {
   if (
     (!ts.isNewExpression(node) && !ts.isCallExpression(node)) ||
     getBuiltIn(node.expression, context) !== "RegExp"
@@ -1149,19 +1148,31 @@ export const getMadeRegExp = (node: ts.Node, context: Context) => {
   }
   const values = node.arguments ?? [];
   const texts = values.flatMap((value) => (ts.isStringLiteralLike(value) ? [value.text] : []));
-  if (values.length > 2 || texts.length < values.length) return undefined;
-  const pattern = texts.at(0) ?? "";
-  const flags = texts.at(1) ?? "";
-  const made = getValidRegExp(pattern, flags);
-  return made === undefined ? undefined : { pattern, flags, source: made.source };
+  return values.length > 2 || texts.length < values.length
+    ? undefined
+    : { pattern: texts.at(0) ?? "", flags: texts.at(1) ?? "" };
 };
 
-const getValidRegExp = (pattern: string, flags: string) => {
+const getValidRegExp = (texts: { pattern: string; flags: string }) => {
   try {
-    return new RegExp(pattern, flags);
+    return new RegExp(texts.pattern, texts.flags);
   } catch {
     return undefined;
   }
+};
+
+// new RegExp or RegExp of literals that make a valid regexp, whose source the engine that tla-ts
+// runs on escapes as the spec's EscapeRegExpPattern does.
+export const getMadeRegExp = (node: ts.Node, context: Context) => {
+  const texts = getRegExpTexts(node, context);
+  const made = texts === undefined ? undefined : getValidRegExp(texts);
+  return texts === undefined || made === undefined ? undefined : { ...texts, source: made.source };
+};
+
+// new RegExp or RegExp of literals that make no valid regexp, which throws a SyntaxError.
+export const isInvalidRegExp = (node: ts.Node, context: Context) => {
+  const texts = getRegExpTexts(node, context);
+  return texts !== undefined && getValidRegExp(texts) === undefined;
 };
 
 // A regular expression literal, or a regexp that getMadeRegExp reads, as the record of its pattern,
