@@ -4,8 +4,10 @@ class Test262Error extends Error {}
 
 // TypeScript's lib types new Object() as Object, which primitives also have, and which has no
 // properties to write. new Object of an object gives the object, and of a primitive its wrapper.
+// Object.assign gives its target, which TypeScript types as the intersection of its arguments.
 declare global {
   interface ObjectConstructor {
+    assign<T extends object>(target: T, ...sources: unknown[]): T;
     new (value?: null): { [key: string]: unknown };
     new <T extends object>(value: T): T;
     // oxlint-disable-next-line typescript/no-wrapper-object-types
