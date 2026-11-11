@@ -2767,6 +2767,25 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("changes a constant's set or map in place in a script with objects", async () => {
+    const result = await checkModel(`
+      const box = { n: 0 };
+      const run = () => {
+        const seen = new Set<string>();
+        seen.add("a");
+        seen.add("a");
+        const counts = new Map<string, number>();
+        counts.set("a", 1);
+        counts.set("b", 2);
+        counts.delete("a");
+        if (seen.has("b") || counts.get("b") !== 2) throw new Error("has");
+        return seen.size * 10 + counts.size;
+      };
+      if (run() !== 11) throw new Error("run");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("changes a constant's array in place in a script with objects", async () => {
     const result = await checkModel(`
       const box = { n: 0 };

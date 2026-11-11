@@ -4555,7 +4555,8 @@ const bindDeclaration = (
   const isChangeable =
     (declaration.parent.flags & ts.NodeFlags.Const) === 0 ||
     context.heap === undefined ||
-    (ts.isIdentifier(declaration.name) && getKind(declaration.name, context) === "sequence");
+    (ts.isIdentifier(declaration.name) &&
+      ["sequence", "set", "map"].includes(getKind(declaration.name, context)));
   const mutable =
     isChangeable && symbol !== undefined ? new Set([...path.mutable, symbol]) : path.mutable;
   const rest = translateDeclarations(
