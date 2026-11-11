@@ -1858,6 +1858,14 @@ describe("errors", () => {
     ).toThrow("spec.ts:4:15 Unsupported expression: new.target");
   });
 
+  it("writes TLC's least integer as a literal", async () => {
+    const result = await checkModel(`
+      const least = -2147483648;
+      if (least + 2147483647 !== -1 || least >= -2147483647) throw new Error("least");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("rejects arguments that a new would drop where no constructor runs", async () => {
     expect(() =>
       compile(

@@ -1570,6 +1570,10 @@ const translateNode = (
     if (isLiteral && Number(node.operand.text) === 0 && !context.hasSpecialNumbers) {
       throw new TlaTypeScriptError("TLA+ integers have no negative zero", node);
     }
+    // TLC's least integer, whose negation would overflow, as TLC computes it without overflow.
+    if (isLiteral && Number(node.operand.text) === 2 ** 31) {
+      return apply("-", [apply("-.", [number(2 ** 31 - 1)]), number(1)]);
+    }
     const operand = isNumberLike(node.operand, context)
       ? translateExpression(node.operand, scope, context)
       : translateToNumber(node.operand, node, scope, context);
