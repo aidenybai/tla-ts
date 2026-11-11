@@ -479,9 +479,8 @@ Spread(object, heap, ref) ==
   LET source == Lookup(heap, ref)
   IN PutAll(object, [key \\in DOMAIN source.values |-> Value(source, key)], EnumerableOwnKeys(source))
 
-Describe(heap, ref, key) ==
-  LET object == Lookup(heap, ref)
-      attributes == object.attributes[key]
+LOCAL DescribeObject(object, key) ==
+  LET attributes == object.attributes[key]
       isAccessor == attributes.kind = "accessor"
       fields ==
         IF isAccessor
@@ -498,6 +497,8 @@ Describe(heap, ref, key) ==
   IN CASE key \\notin DOMAIN object.values -> EmptyObject
        [] isAccessor -> described
        [] OTHER -> [described EXCEPT !.attributes["value"].kind = attributes.kind]
+
+Describe(heap, ref, key) == DescribeObject(Lookup(heap, ref), key)
 
 HasOwn(heap, ref, key) == key \\in DOMAIN Own(heap, ref)
 
@@ -1198,6 +1199,11 @@ ArrayObject(prototype, elements) ==
                        ELSE Writable],
       extensible |-> TRUE, prototype |-> prototype, isCallable |-> FALSE, isConstructor |-> FALSE,
       isOpaque |-> FALSE, privates |-> <<>>, isArray |-> TRUE]
+
+\\* The description of a property of an array that a sequence holds.
+DescribeElement(elements, key) == DescribeObject(ArrayObject(Null, elements), key)
+
+HasOwnElement(elements, key) == key \\in DOMAIN ArrayObject(Null, elements).values
 
 \\* The arguments object of a call in strict mode, which holds the values the call gives under their
 \\* indices, its length, and a callee that throws.

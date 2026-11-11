@@ -1186,6 +1186,35 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("describes the properties of an array that a sequence holds", async () => {
+    const result = await checkModel(`
+      const holder = { seen: 0 };
+      const odd = [0, 1, 2, 3, 4].filter((value) => value % 2 === 1);
+      const element = Object.getOwnPropertyDescriptor(odd, 1);
+      if (
+        element === undefined ||
+        element.value !== 3 ||
+        element.writable !== true ||
+        element.enumerable !== true
+      ) {
+        throw new Error("element");
+      }
+      const length = Object.getOwnPropertyDescriptor(odd, "length");
+      if (
+        length === undefined ||
+        length.value !== 2 ||
+        length.enumerable !== false ||
+        length.configurable !== false
+      ) {
+        throw new Error("length");
+      }
+      const missing = Object.getOwnPropertyDescriptor(odd, 2);
+      if (missing !== undefined) throw new Error("missing");
+      holder.seen = 1;
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops where a callee holds a function that the script doesn't declare", async () => {
     const result = await checkModel(`
       const holder = {};

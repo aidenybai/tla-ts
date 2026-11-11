@@ -631,16 +631,23 @@ const translateCall = (
     if (described === undefined) {
       throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
     }
+    const key = translatePropertyKey(node.arguments[1], scope, context);
     return ifExpression(
-      useJavaScript(
-        "HasOwn",
-        [
-          getHeap(scope, node, context),
-          translateObjectValue(node.arguments[0], scope, context),
-          translatePropertyKey(node.arguments[1], scope, context),
-        ],
-        context,
-      ),
+      getKind(node.arguments[0], context) === "sequence"
+        ? useJavaScript(
+            "HasOwnElement",
+            [translateExpression(node.arguments[0], scope, context), key],
+            context,
+          )
+        : useJavaScript(
+            "HasOwn",
+            [
+              getHeap(scope, node, context),
+              translateObjectValue(node.arguments[0], scope, context),
+              key,
+            ],
+            context,
+          ),
       described,
       getUndefined(context),
     );

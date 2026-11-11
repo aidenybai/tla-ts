@@ -686,15 +686,19 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     );
   }
   if (ts.isCallExpression(node) && isDescription(node, context)) {
-    const described = useJavaScript(
-      "Describe",
-      [
-        heap,
-        translateObjectValue(node.arguments[0], scope, context),
-        translatePropertyKey(node.arguments[1], scope, context),
-      ],
-      context,
-    );
+    const key = translatePropertyKey(node.arguments[1], scope, context);
+    const described =
+      getKind(node.arguments[0], context) === "sequence"
+        ? useJavaScript(
+            "DescribeElement",
+            [translateExpression(node.arguments[0], scope, context), key],
+            context,
+          )
+        : useJavaScript(
+            "Describe",
+            [heap, translateObjectValue(node.arguments[0], scope, context), key],
+            context,
+          );
     return useJavaScript("Allocate", [heap, described], context);
   }
   if (!ts.isCallExpression(node) || !isCreation(node, context)) {
@@ -742,7 +746,8 @@ export const isDescription = (node: ts.Node, context: Context) =>
   ["Object", "Reflect"].includes(node.expression.expression.getText()) &&
   node.expression.name.text === "getOwnPropertyDescriptor" &&
   node.arguments.length >= 2 &&
-  (getKind(node.arguments[0], context) === "object" || isBuiltInObject(node.arguments[0], context));
+  (["object", "sequence"].includes(getKind(node.arguments[0], context)) ||
+    isBuiltInObject(node.arguments[0], context));
 
 // Object.create, with a prototype that tla-ts can tell is an object or null.
 export const isCreation = (node: ts.Node, context: Context) => {
