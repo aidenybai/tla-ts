@@ -40,6 +40,10 @@ import { findQuasiMacros } from "./quasi-macros";
 import { reduceArgs } from "./reduce-args";
 import { DefinedNames, NNF_FULL, NNF_QUANT, NNF_SKOLEM, Nnf } from "./nnf";
 import { normalizeBounds } from "./normalize-bounds";
+import { propagateIneqs } from "./bound-simplifier";
+import { diffNeq } from "./diff-neq";
+import { lia2pb } from "./lia2pb";
+import { runPb2Bv } from "./pb2bv-tactic";
 import { runNlsat } from "./nlsat-tactic";
 import { occf } from "./occf";
 import { propagateValues } from "./propagate-values";
@@ -174,6 +178,17 @@ const REWRITER_DESCRS = getDescrs("rewriter", [
   ["rewrite_patterns", PARAM_BOOL, false],
   ["ignore_patterns_on_ground_qbody", PARAM_BOOL, true],
 ]);
+
+const BOOL_REWRITER_PARAMS = [
+  "ite_extra_rules",
+  "flat_and_or",
+  "sort_disjunctions",
+  "elim_ite",
+  "local_ctx",
+  "local_ctx_limit",
+  "blast_distinct",
+  "blast_distinct_threshold",
+];
 
 const getBool = (params: TacticParams, name: string, defaultValue: boolean) => {
   const value = params.get(name);
@@ -699,6 +714,63 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     },
   ],
   [
+    "propagate-ineqs",
+    {
+      descrs: getDescrs("", [["bound_max_refinements", PARAM_UINT, 16, true]]),
+      build: (environment) => inPlace((goal) => propagateIneqs(environment.manager, goal)),
+    },
+  ],
+  [
+    "lia2pb",
+    {
+      descrs: new Map([
+        ...REWRITER_DESCRS,
+        ...getDescrs("", [
+          ["lia2pb_partial", PARAM_BOOL, false, true],
+          ["lia2pb_max_bits", PARAM_UINT, 32, true],
+          ["lia2pb_total_bits", PARAM_UINT, 2048, true],
+        ]),
+      ]),
+      build: (environment, params) =>
+        inPlace((goal) =>
+          lia2pb(environment.manager, goal, {
+            isPartial: getBool(params, "lia2pb_partial", false),
+            maxBits: getUint(params, "lia2pb_max_bits", 32),
+            totalBits: getUint(params, "lia2pb_total_bits", 2048),
+            rewriter: getRewriterOptions(environment.manager, params),
+          }),
+        ),
+    },
+  ],
+  [
+    "pb2bv",
+    {
+      descrs: new Map([
+        ...[...REWRITER_DESCRS].filter(([name]) => BOOL_REWRITER_PARAMS.includes(name)),
+        ...getDescrs("", [
+          ["max_memory", PARAM_UINT, UINT_MAX, true],
+          ["pb2bv_all_clauses_limit", PARAM_UINT, 8, true],
+          ["pb2bv_cardinality_limit", PARAM_UINT, UINT_MAX, true],
+          ["keep_cardinality_constraints", PARAM_BOOL, false, true],
+          ["pb.solver", PARAM_SYMBOL, "solver", true],
+          ["cardinality.encoding", PARAM_SYMBOL, "none", true],
+        ]),
+      ]),
+      build: (environment, params) =>
+        runPb2Bv(environment.manager, params, getRewriterOptions(environment.manager, params)),
+    },
+  ],
+  [
+    "diff-neq",
+    {
+      descrs: getDescrs("", [["diff_neq_max_k", PARAM_UINT, 1024, true]]),
+      build: (environment, params) =>
+        inPlace((goal) =>
+          diffNeq(environment.manager, goal, getUint(params, "diff_neq_max_k", 1024)),
+        ),
+    },
+  ],
+  [
     "fix-dl-var",
     {
       descrs: REWRITER_DESCRS,
@@ -957,12 +1029,12 @@ const UNPORTED_TACTICS = new Set(
   (
     "add-bounds blast-term-ite " +
     "bv-slice bvarray2uf cofactor-term-ite collect-statistics " +
-    "degree-shift demodulator diff-neq " +
+    "degree-shift demodulator " +
     "elim-predicates elim-uncnstr2 " +
     "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv fm " +
-    "fold-unfold fpa2bv horn horn-simplify injectivity lia2pb " +
-    "nla2bv nlqsat nra pb-preprocess pb2bv pqffd " +
-    "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psmt " +
+    "fold-unfold fpa2bv horn horn-simplify injectivity " +
+    "nla2bv nlqsat nra pb-preprocess pqffd " +
+    "propagate-bv-bounds propagate-bv-bounds2 propagate-values2 psmt " +
     "qe qe_rec qe2 qfbv-sls qffd qfnra " +
     "qfufbv qsat recover-01 reduce-args2 " +
     "sat-preprocess sls-smt smtfd solver-subsumption special-relations " +

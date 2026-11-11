@@ -22,7 +22,6 @@ import {
   OP_BUREM0,
   OP_BV_NUM,
   OP_CONCAT,
-  OP_DISTINCT,
   OP_DIV,
   OP_EQ,
   OP_EXTRACT,
@@ -48,6 +47,7 @@ import {
 } from "./ast";
 import { getAckrBound } from "./ackr-helper";
 import { BoundManager } from "./bound-manager";
+import { findNonPb } from "./pb2bv-tactic";
 import type { Goal } from "./goal";
 import { isSymbol, type SExpr, type SmtToken } from "./smtlib-parser";
 
@@ -341,35 +341,8 @@ const isQuasiPb: Probe = (goal) => {
   return Number(bounds.boundedVars.filter((variable) => !bounds.isZeroOne(variable)).length <= 1);
 };
 
-const isPb: Probe = (goal) => {
-  const manager = goal.manager;
-  const bounds = getBounds(goal);
-  const visited = new Set<number>();
-  const todo = [...goal.forms.items];
-  while (todo.length > 0) {
-    const expr = todo.pop() as number;
-    if (visited.has(expr)) continue;
-    visited.add(expr);
-    if (manager.kinds[expr] !== KIND_APP) return 0;
-    manager.pushArgs(expr, todo);
-    const family = manager.getFamily(expr);
-    if (family === FAMILY_BASIC) {
-      if (isTermIte(manager, expr) || manager.getOp(expr) === OP_DISTINCT) return 0;
-      continue;
-    }
-    if (family === FAMILY_ARITH) {
-      const op = manager.getOp(expr);
-      if (LINEAR_OPS.includes(op) || (op === OP_MUL && isLinearMul(manager, expr))) continue;
-      return 0;
-    }
-    if (manager.isUninterpretedConst(expr)) {
-      if (manager.sorts[expr] === SORT_BOOL) continue;
-      if (manager.sorts[expr] === SORT_INT && bounds.isZeroOne(expr)) continue;
-    }
-    return 0;
-  }
-  return 1;
-};
+const isPb: Probe = (goal) =>
+  Number(findNonPb(goal.manager, goal.forms.items, getBounds(goal)) === undefined);
 
 const hasQuantifiers: Probe = (goal) =>
   Number(!isNone(goal, (expr) => goal.manager.kinds[expr] === KIND_QUANTIFIER));
