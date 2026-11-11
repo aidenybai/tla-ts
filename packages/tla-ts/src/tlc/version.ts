@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
 
-// "master" stands for the master builds that tla-ts follows for any other tla2tools.jar.
 export type TlcVersion = "1.7.4" | "master";
 
 const MANIFEST = "META-INF/MANIFEST.MF";

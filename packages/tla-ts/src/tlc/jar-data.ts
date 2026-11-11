@@ -931,7 +931,6 @@ _PrintCounts == PrintT(_Counts)
   ],
 ]);
 
-// As java.lang.reflect.Method prints them in TLC's errors.
 export const TLC_JAVA_METHODS = new Map([
   [
     "Bags",

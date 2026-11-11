@@ -30,7 +30,6 @@ const getJavaHash = (text: string) => {
   return hash ^ (hash >>> 16);
 };
 
-// TLC lists the modules and the variables in the order a Java HashSet or HashMap iterates them.
 const getHashOrder = (names: string[]) => {
   const unique = [...new Set(names)];
   const capacity = 2 ** Math.max(4, Math.ceil(Math.log2(unique.length / 0.75)));
@@ -48,7 +47,6 @@ const formatJavaDate = (date: Date) => {
   return `${getPart({ weekday: "short" }, "weekday")} ${getPart({ month: "short" }, "month")} ${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())} ${getPart({ timeZoneName: "short" }, "timeZoneName")} ${date.getFullYear()}`;
 };
 
-// Java's String#split drops the empty strings at the end.
 const splitLines = (text: string) => {
   const lines = text.split("\n");
   while (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
@@ -199,8 +197,6 @@ ${lassoStep}${variables
 
 `;
   const statesWithoutLasso = trace.filter((state) => !state.isBackToState && !state.isStuttering);
-  // TLC adds a view when a state appears twice before the lasso closes, so that TLCGet("level")
-  // tells the copies apart.
   const isViewed =
     isLasso &&
     new Set(statesWithoutLasso.map((state) => JSON.stringify(state.values))).size <
