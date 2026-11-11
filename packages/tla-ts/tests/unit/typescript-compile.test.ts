@@ -4908,6 +4908,20 @@ describe("errors", () => {
     expect(result.status).toBe("deadlock");
   });
 
+  it("rejects running a call before a call whose function reads what it changes", () => {
+    expect(() =>
+      compile(`
+        let count = 0;
+        const getCount = (offset: number) => count + offset;
+        function counter() {
+          count += 1;
+          return count;
+        }
+        const total = getCount(0) + counter();
+      `),
+    ).toThrow("tla-ts can't run this before what reads what it changes");
+  });
+
   it("describes a property with Reflect.getOwnPropertyDescriptor", async () => {
     const result = await checkModel(`
       const object = {};

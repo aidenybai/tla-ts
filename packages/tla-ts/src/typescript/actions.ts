@@ -2647,11 +2647,17 @@ const getEarlyReads = (
         ts.isElementAccessExpression(found) ||
         found.kind === ts.SyntaxKind.ThisKeyword,
     ).length > 0;
-  return evaluated.filter(
-    (inner) =>
-      getSymbols(inner, context).some((symbol) => changed.has(symbol)) ||
-      (isHeapChanged && readsHeap(inner)),
-  );
+  // A call that evaluates before, and hasn't run yet, reads what its function's body reads.
+  const readsChanged = (inner: ts.Node, visited: Set<ts.Node>): boolean =>
+    getSymbols(inner, context).some((symbol) => changed.has(symbol)) ||
+    (isHeapChanged && readsHeap(inner)) ||
+    findNodes(inner, ts.isCallExpression).some((call) => {
+      const callee = path.scope.results.has(call) ? undefined : getCallee(call.expression, context);
+      if (callee?.body === undefined || visited.has(callee)) return false;
+      visited.add(callee);
+      return readsChanged(callee.body, visited);
+    });
+  return evaluated.filter((inner) => readsChanged(inner, new Set()));
 };
 
 const rejectEarlyRun = (
