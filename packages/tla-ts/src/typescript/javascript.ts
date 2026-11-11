@@ -1133,6 +1133,22 @@ EndsWith(value, search, position) ==
 \\* The characters whose codes are below 128, in order. tla-ts tells the codes of these only.
 LOCAL AsciiCharacters == ${formatString(String.fromCharCode(...Array.from({ length: 128 }, (_, code) => code)))}
 
+\\* String.fromCharCode, which takes each code modulo 2^16, or String.fromCodePoint, which throws a
+\\* RangeError for a number that isn't a code point. tla-ts makes the characters of ASCII only.
+RECURSIVE FromCharCodes(_, _)
+FromCharCodes(codes, isCodePoint) ==
+  IF codes = <<>>
+  THEN ""
+  ELSE LET code == Head(codes)
+           point == CASE code \\in {NaN, Infinity, NegativeInfinity, NegativeZero} -> 0
+                      [] isCodePoint -> code
+                      [] OTHER -> code % 65536
+       IN  CASE isCodePoint /\\ (code \\in {NaN, Infinity, NegativeInfinity} \\/ point < 0 \\/ point > 1114111) ->
+                  Assert(FALSE, "tla-ts can't throw the RangeError of String.fromCodePoint")
+             [] point >= 128 -> Assert(FALSE, "tla-ts can't make a character outside ASCII")
+             [] OTHER ->
+                  SubSeq(AsciiCharacters, point + 1, point + 1) \\o FromCharCodes(Tail(codes), isCodePoint)
+
 LOCAL AsciiCodes ==
   [character \\in CharactersOf(AsciiCharacters) |->
      CHOOSE code \\in 0..127 : SubSeq(AsciiCharacters, code + 1, code + 1) = character]

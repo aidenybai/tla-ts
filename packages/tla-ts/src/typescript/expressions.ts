@@ -583,6 +583,41 @@ const translateCall = (
     return apply("=", [value, identifier("NaN")]);
   }
   if (
+    getBuiltIn(receiver, context) === "String" &&
+    (method === "fromCharCode" || method === "fromCodePoint") &&
+    node.arguments.every(
+      (argument) => !ts.isSpreadElement(argument) && isNumberLike(argument, context),
+    )
+  ) {
+    const made = useJavaScript(
+      "FromCharCodes",
+      [
+        tuple(node.arguments.map((argument) => translateExpression(argument, scope, context))),
+        boolean(method === "fromCodePoint"),
+      ],
+      context,
+    );
+    return context.heap === undefined
+      ? made
+      : ifExpression(
+          useJavaScript(
+            "HoldsBuiltIn",
+            [
+              getHeap(scope, node, context),
+              translateBuiltInValue("String", node, context),
+              string(method),
+              string(`String.${method}`),
+            ],
+            context,
+          ),
+          made,
+          apply("Assert", [
+            boolean(false),
+            string(`tla-ts can't call String.${method} where a script replaced it`),
+          ]),
+        );
+  }
+  if (
     getBuiltIn(receiver, context) === "Date" &&
     method === "UTC" &&
     areDateFields(node.arguments, context)

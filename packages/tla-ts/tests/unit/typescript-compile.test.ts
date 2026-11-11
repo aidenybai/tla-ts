@@ -3028,6 +3028,23 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("makes a string of character codes", async () => {
+    const result = await checkModel(`
+      const box = { size: 0 };
+      const code: number = 66;
+      if (String.fromCharCode() !== "" || String.fromCharCode(65, code, 65601, -65471) !== "ABAA") throw new Error("char");
+      if (String.fromCharCode(NaN).charCodeAt(0) !== 0) throw new Error("special");
+      if (String.fromCodePoint(65, 90, -0) !== "AZ\\x00") throw new Error("point");
+    `);
+    expect(result.failure).toBeUndefined();
+    const outside = await checkModel(
+      `const box = { size: 0 };\nconst code: number = -1;\nconst made = String.fromCodePoint(code);`,
+    );
+    expect(outside.failure?.message).toContain(
+      "tla-ts can't throw the RangeError of String.fromCodePoint",
+    );
+  });
+
   it("splits and replaces at a string", async () => {
     const result = await checkModel(`
       const text: string = "one two  three";
