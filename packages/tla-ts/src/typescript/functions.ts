@@ -450,6 +450,7 @@ export const translateLiftedCall = (
   scope: Scope,
   context: Context,
 ) => {
+  rejectCaught(node, callee, scope, context);
   const found = getCaptured(callee, context);
   if (!isLiftable(callee, context) || callee.body === undefined) {
     throw new TlaTypeScriptError(

@@ -943,6 +943,27 @@ describe("calls", () => {
     ).toThrow("Only state variables and local lets can change: seen");
   });
 
+  it("rejects catching a throw from a local function that calls itself", () => {
+    expect(() =>
+      compile(`
+        const outer = (limit: number): number => {
+          const rec = (k: number): number => {
+            if (k > limit) throw new Error("big");
+            return rec(k + 1);
+          };
+          return rec(0);
+        };
+        let caught = false;
+        try {
+          outer(2);
+        } catch {
+          caught = true;
+        }
+        if (!caught) throw new Error("caught");
+      `),
+    ).toThrow("Inside try, call a function that throws as its own statement");
+  });
+
   it("ends a case with a block that returns", async () => {
     const getSource = (expected: string) => `
       const describe = (value: number): string => {
