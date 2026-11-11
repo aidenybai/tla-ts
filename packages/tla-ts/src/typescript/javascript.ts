@@ -1450,6 +1450,343 @@ StringTrim(value, isStart, isEnd) ==
   LET started == IF isStart THEN TrimStart(Text(value)) ELSE Text(value)
   IN  IF isEnd THEN TrimEnd(started) ELSE started
 
+\\* Regular expressions. The compiler gives a pattern as the tree of matchers that the spec's
+\\* CompilePattern makes, and RegExpStep runs a matcher with the continuation that a stack of frames
+\\* holds, backtracking where the spec's continuations fail.
+LOCAL RegExpFailure == [start |-> -1, end |-> -1, captures |-> <<>>]
+
+LOCAL UppercaseOf ==
+  [character \\in CharactersOf("abcdefghijklmnopqrstuvwxyz") |->
+     LET position == CHOOSE position \\in 1..26 :
+                       SubSeq("abcdefghijklmnopqrstuvwxyz", position, position) = character
+     IN  SubSeq("ABCDEFGHIJKLMNOPQRSTUVWXYZ", position, position)]
+
+\\* Canonicalize of a character that a backreference compares, which is in ASCII where the other
+\\* character is, as Canonicalize maps no character outside ASCII into it.
+LOCAL Canonical(regexp, character) ==
+  IF regexp.ignoreCase /\\ character \\in DOMAIN UppercaseOf THEN UppercaseOf[character] ELSE character
+
+LOCAL LineTerminators == {"\\n", "\\r", ${formatString(" ")}, ${formatString(" ")}}
+
+LOCAL WordCharacters == CharactersOf("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
+
+\\* The character at an index of a text, or the empty string outside it.
+LOCAL CharacterAt(text, index) ==
+  IF index >= 0 /\\ index < Len(text) THEN SubSeq(text, index + 1, index + 1) ELSE ""
+
+LOCAL IsWordAt(text, index) == CharacterAt(text, index) \\in WordCharacters
+
+\\* Whether a class matches a character, where the compiler lists the characters in ASCII that it
+\\* matches and, of those outside ASCII, the ones it matches where it matches none of the rest, or
+\\* the ones it doesn't where it matches all of the rest.
+LOCAL IsInClass(node, character) ==
+  CASE character \\in node.characters -> TRUE
+    [] character \\in node.excluded \\/ character \\in DOMAIN AsciiCodes -> FALSE
+    [] node.others = "unknown" ->
+         Assert(FALSE, "tla-ts can't tell whether a class matches a character outside ASCII")
+    [] OTHER -> node.others = "all"
+
+\\* Whether a backreference's characters are the same once canonicalized, which tla-ts tells for
+\\* characters that differ only where one is an ASCII letter, digit, or underscore.
+LOCAL IsSameCharacter(regexp, left, right) ==
+  CASE left = right -> TRUE
+    [] ~regexp.ignoreCase -> FALSE
+    [] left \\in WordCharacters \\/ right \\in WordCharacters ->
+         Canonical(regexp, left) = Canonical(regexp, right)
+    [] OTHER -> Assert(FALSE, "tla-ts can't compare the case of characters that aren't ASCII letters")
+
+RECURSIVE RegExpStep(_, _, _, _, _)
+RECURSIVE RegExpContinue(_, _, _, _)
+RECURSIVE RegExpRepeat(_, _, _, _, _, _, _)
+
+\\* The state that a matcher reaches from a state, then running the continuation that a stack
+\\* holds, or RegExpFailure.
+RegExpStep(regexp, text, node, state, stack) ==
+  CASE node.kind = "set" ->
+         IF state.end < Len(text) /\\ IsInClass(node, CharacterAt(text, state.end))
+         THEN RegExpContinue(regexp, text, [state EXCEPT !.end = @ + 1], stack)
+         ELSE RegExpFailure
+    [] node.kind = "sequence" ->
+         IF node.items = <<>>
+         THEN RegExpContinue(regexp, text, state, stack)
+         ELSE RegExpStep(regexp, text, Head(node.items), state,
+                         <<[kind |-> "match", node |-> [node EXCEPT !.items = Tail(@)]]>> \\o stack)
+    [] node.kind = "alternation" ->
+         IF node.items = <<>>
+         THEN RegExpFailure
+         ELSE LET first == RegExpStep(regexp, text, Head(node.items), state, stack)
+              IN  IF first.end # -1
+                  THEN first
+                  ELSE RegExpStep(regexp, text, [node EXCEPT !.items = Tail(@)], state, stack)
+    [] node.kind = "group" ->
+         RegExpStep(regexp, text, node.body, state,
+                    <<[kind |-> "close", index |-> node.index, start |-> state.end]>> \\o stack)
+    [] node.kind = "repeat" -> RegExpRepeat(regexp, text, node, node.min, node.max, state, stack)
+    [] node.kind = "start" ->
+         IF state.end = 0 \\/ (regexp.multiline /\\ CharacterAt(text, state.end - 1) \\in LineTerminators)
+         THEN RegExpContinue(regexp, text, state, stack)
+         ELSE RegExpFailure
+    [] node.kind = "end" ->
+         IF state.end = Len(text) \\/ (regexp.multiline /\\ CharacterAt(text, state.end) \\in LineTerminators)
+         THEN RegExpContinue(regexp, text, state, stack)
+         ELSE RegExpFailure
+    [] node.kind = "boundary" ->
+         IF (IsWordAt(text, state.end - 1) # IsWordAt(text, state.end)) # node.isInverted
+         THEN RegExpContinue(regexp, text, state, stack)
+         ELSE RegExpFailure
+    [] node.kind = "lookahead" ->
+         LET found == RegExpStep(regexp, text, node.body, state, <<>>)
+         IN  CASE node.isNegative /\\ found.end # -1 -> RegExpFailure
+               [] node.isNegative -> RegExpContinue(regexp, text, state, stack)
+               [] found.end = -1 -> RegExpFailure
+               [] OTHER -> RegExpContinue(regexp, text, [state EXCEPT !.captures = found.captures], stack)
+    [] node.kind = "backreference" ->
+         LET captured == state.captures[node.index]
+             length == IF captured = <<>> THEN 0 ELSE captured[2] - captured[1]
+         IN  IF /\\ state.end + length <= Len(text)
+                /\\ \\A offset \\in 0..(length - 1) :
+                     IsSameCharacter(regexp, CharacterAt(text, captured[1] + offset),
+                                     CharacterAt(text, state.end + offset))
+             THEN RegExpContinue(regexp, text, [state EXCEPT !.end = @ + length], stack)
+             ELSE RegExpFailure
+
+\\* The continuation that a stack holds, run on the state that a matcher reaches.
+RegExpContinue(regexp, text, state, stack) ==
+  IF stack = <<>>
+  THEN state
+  ELSE LET frame == Head(stack)
+       IN  CASE frame.kind = "match" -> RegExpStep(regexp, text, frame.node, state, Tail(stack))
+             [] frame.kind = "close" ->
+                  RegExpContinue(regexp, text,
+                                 [state EXCEPT !.captures[frame.index] = <<frame.start, state.end>>],
+                                 Tail(stack))
+             [] OTHER ->
+                  IF frame.min = 0 /\\ state.end = frame.start
+                  THEN RegExpFailure
+                  ELSE RegExpRepeat(regexp, text, frame.node,
+                                    IF frame.min = 0 THEN 0 ELSE frame.min - 1,
+                                    IF frame.max = -1 THEN -1 ELSE frame.max - 1,
+                                    state, Tail(stack))
+
+\\* RepeatMatcher, which matches a quantifier's atom at least min and at most max more times, where
+\\* max is -1 for no bound, clearing the captures inside the atom before each time.
+RegExpRepeat(regexp, text, node, min, max, state, stack) ==
+  IF max = 0
+  THEN RegExpContinue(regexp, text, state, stack)
+  ELSE LET next == <<[kind |-> "repeat", node |-> node, min |-> min, max |-> max,
+                      start |-> state.end]>> \\o stack
+           cleared == [state EXCEPT !.captures =
+                         [index \\in DOMAIN state.captures |->
+                            IF index > node.parenIndex /\\ index <= node.parenIndex + node.parenCount
+                            THEN <<>>
+                            ELSE state.captures[index]]]
+           taken == RegExpStep(regexp, text, node.body, cleared, next)
+           skipped == RegExpContinue(regexp, text, state, stack)
+       IN  CASE min # 0 -> taken
+             [] node.isGreedy -> IF taken.end # -1 THEN taken ELSE skipped
+             [] OTHER -> IF skipped.end # -1 THEN skipped ELSE taken
+
+\\* The match that a regexp's matcher finds starting at an index, or RegExpFailure.
+LOCAL RegExpAt(regexp, text, index) ==
+  RegExpStep(regexp, text, regexp.pattern,
+             [start |-> index, end |-> index,
+              captures |-> [position \\in 1..regexp.captures |-> <<>>]],
+             <<>>)
+
+RECURSIVE RegExpSearch(_, _, _)
+\\* The match that RegExpBuiltinExec finds from an index on: at that index alone for a sticky
+\\* regexp, and else at the first index where the matcher succeeds.
+RegExpSearch(regexp, text, index) ==
+  IF index > Len(text)
+  THEN RegExpFailure
+  ELSE LET found == RegExpAt(regexp, text, index)
+       IN  IF found.end # -1 \\/ regexp.sticky THEN found ELSE RegExpSearch(regexp, text, index + 1)
+
+\\* The text that a regexp matches. A regexp with the u flag matches code points, which are the code
+\\* units of text in ASCII, where tla-ts matches it only.
+LOCAL RegExpText(regexp, value) ==
+  IF regexp.unicode /\\ ~IsAscii(Text(value))
+  THEN Assert(FALSE, "tla-ts can't match a regexp with the u flag on text outside ASCII")
+  ELSE Text(value)
+
+\\* The text of a match's capture, where 0 is the whole match, or undefined where it took no part.
+LOCAL RegExpCapture(text, match, index) ==
+  CASE index = 0 -> SubSeq(text, match.start + 1, match.end)
+    [] match.captures[index] = <<>> -> Undefined
+    [] OTHER -> SubSeq(text, match.captures[index][1] + 1, match.captures[index][2])
+
+\\* The text of each named group of a match, by its name.
+LOCAL RegExpGroups(regexp, text, match) ==
+  [name \\in DOMAIN regexp.names |-> RegExpCapture(text, match, regexp.names[name])]
+
+RECURSIVE RegExpMatches(_, _, _)
+\\* The matches that a global regexp finds from an index on, where an empty match moves the next
+\\* search one index past it, as AdvanceStringIndex does.
+RegExpMatches(regexp, text, index) ==
+  LET found == RegExpSearch(regexp, text, index)
+  IN  IF found.end = -1
+      THEN <<>>
+      ELSE <<found>> \\o RegExpMatches(regexp, text, IF found.end = found.start THEN found.end + 1 ELSE found.end)
+
+RECURSIVE RegExpSubstitute(_, _, _, _)
+\\* GetSubstitution, which writes a replacement template with each $ pattern in it replaced by the
+\\* text it names.
+RegExpSubstitute(regexp, text, match, template) ==
+  LET first == CharacterAt(template, 0)
+      second == CharacterAt(template, 1)
+      third == CharacterAt(template, 2)
+      after(count) == RegExpSubstitute(regexp, text, match, SubSeq(template, count + 1, Len(template)))
+      capture(index) ==
+        LET captured == RegExpCapture(text, match, index) IN IF captured = Undefined THEN "" ELSE captured
+      digits == CharactersOf("0123456789")
+      hasTwoDigits ==
+        /\\ third \\in digits
+        /\\ DigitValue(second) * 10 + DigitValue(third) <= regexp.captures
+      reference ==
+        IF hasTwoDigits
+        THEN DigitValue(second) * 10 + DigitValue(third)
+        ELSE DigitValue(second)
+      width == IF hasTwoDigits THEN 3 ELSE 2
+      close == StringIndexOf(template, ">", 0)
+  IN  CASE template = "" -> ""
+        [] first # "$" \\/ Len(template) = 1 -> first \\o after(1)
+        [] second = "$" -> "$" \\o after(2)
+        [] second = "&" -> capture(0) \\o after(2)
+        [] second = "\`" -> SubSeq(text, 1, match.start) \\o after(2)
+        [] second = "'" -> SubSeq(text, match.end + 1, Len(text)) \\o after(2)
+        [] second \\in digits ->
+             (IF reference >= 1 /\\ reference <= regexp.captures
+              THEN capture(reference)
+              ELSE SubSeq(template, 1, width)) \\o after(width)
+        [] second = "<" /\\ close # -1 /\\ DOMAIN regexp.names # {} ->
+             LET name == SubSeq(template, 3, close)
+             IN  (IF name \\in DOMAIN regexp.names THEN capture(regexp.names[name]) ELSE "")
+                   \\o after(close + 1)
+        [] OTHER -> first \\o after(1)
+
+RECURSIVE RegExpAssemble(_, _, _, _)
+\\* The text that replace gives: the text between the matches, with each match's replacement in its
+\\* place.
+RegExpAssemble(text, matches, replacements, from) ==
+  IF matches = <<>>
+  THEN SubSeq(text, from + 1, Len(text))
+  ELSE SubSeq(text, from + 1, Head(matches).start) \\o Head(replacements)
+         \\o RegExpAssemble(text, Tail(matches), Tail(replacements), Head(matches).end)
+
+\\* The text that replace gives for matches with a replacement template.
+LOCAL RegExpReplaced(regexp, text, matches, template) ==
+  RegExpAssemble(text, matches,
+                 [position \\in DOMAIN matches |-> RegExpSubstitute(regexp, text, matches[position], template)],
+                 0)
+
+RECURSIVE RegExpSplitFrom(_, _, _, _)
+\\* The pieces that RegExp.prototype[@@split] cuts from p on, trying a sticky match at each q.
+RegExpSplitFrom(regexp, text, p, q) ==
+  IF q >= Len(text)
+  THEN <<SubSeq(text, p + 1, Len(text))>>
+  ELSE LET found == RegExpAt(regexp, text, q)
+       IN  IF found.end = -1 \\/ found.end = p
+           THEN RegExpSplitFrom(regexp, text, p, q + 1)
+           ELSE <<SubSeq(text, p + 1, q)>>
+                  \\o [position \\in 1..regexp.captures |-> RegExpCapture(text, found, position)]
+                  \\o RegExpSplitFrom(regexp, text, found.end, found.end)
+
+\\* The pieces that RegExp.prototype[@@split] gives, at most ToUint32 of a limit that is undefined or
+\\* a number, where -1 is no limit, as ToUint32 of a negative integer is past any length.
+LOCAL RegExpPieces(regexp, text, limit) ==
+  LET count == CASE limit = Undefined -> -1
+                 [] limit \\in {NaN, Infinity, NegativeInfinity, NegativeZero} -> 0
+                 [] limit < 0 -> -1
+                 [] OTHER -> limit
+      pieces == CASE count = 0 -> <<>>
+                  [] text = "" -> IF RegExpAt(regexp, text, 0).end # -1 THEN <<>> ELSE <<text>>
+                  [] OTHER -> RegExpSplitFrom(regexp, text, 0, 0)
+  IN  IF count = -1 \\/ count >= Len(pieces) THEN pieces ELSE SubSeq(pieces, 1, count)
+
+\\* The match that exec and test find in a script without objects, where a regexp's lastIndex stays
+\\* 0, as tla-ts can't keep what a global or sticky regexp sets it to.
+LOCAL RegExpFirst(regexp, text) ==
+  IF regexp.global \\/ regexp.sticky
+  THEN Assert(FALSE, "tla-ts can't keep the lastIndex of a global or sticky regexp without objects")
+  ELSE RegExpSearch(regexp, text, 0)
+
+\\* The array that exec gives for a match in a script without objects, as a function from its keys.
+LOCAL RegExpArray(regexp, text, match) ==
+  [key \\in {ToString(index) : index \\in 0..regexp.captures} \\cup {"length", "index", "input", "groups"} |->
+     CASE key = "length" -> regexp.captures + 1
+       [] key = "index" -> match.start
+       [] key = "input" -> text
+       [] key = "groups" ->
+            IF DOMAIN regexp.names = {} THEN Undefined ELSE RegExpGroups(regexp, text, match)
+       [] OTHER -> RegExpCapture(text, match, ToIndex(key))]
+
+\\* An element or a property of the array that exec or match gives, or undefined where it has none.
+RegExpElement(array, key) == IF key \\in DOMAIN array THEN array[key] ELSE Undefined
+
+\\* RegExp.prototype.exec: the array of the first match, or null.
+RegExpExec(regexp, value) ==
+  LET text == RegExpText(regexp, value)
+      found == RegExpFirst(regexp, text)
+  IN  IF found.end = -1 THEN Null ELSE RegExpArray(regexp, text, found)
+
+RegExpTest(regexp, value) == RegExpFirst(regexp, RegExpText(regexp, value)).end # -1
+
+\\* The matches that RegExp.prototype[@@replace] and [@@match] read: each for a global regexp, which
+\\* leaves lastIndex at 0, or else the first.
+LOCAL RegExpMatched(regexp, text) ==
+  IF regexp.global
+  THEN RegExpMatches(regexp, text, 0)
+  ELSE LET found == RegExpFirst(regexp, text) IN IF found.end = -1 THEN <<>> ELSE <<found>>
+
+\\* String.prototype.replace through RegExp.prototype[@@replace], with a replacement template.
+RegExpReplace(regexp, value, template) ==
+  LET text == RegExpText(regexp, value)
+  IN  RegExpReplaced(regexp, text, RegExpMatched(regexp, text), Text(template))
+
+\\* String.prototype.replaceAll, which throws a TypeError for a regexp that isn't global.
+RegExpReplaceAll(regexp, value, template) ==
+  IF regexp.global
+  THEN RegExpReplace(regexp, value, template)
+  ELSE Assert(FALSE, "tla-ts can't throw the TypeError of replaceAll with a regexp that isn't global here")
+
+\\* The matches that replace or replaceAll with a function calls it for.
+RegExpMatchesOf(regexp, value, isAll) ==
+  IF isAll /\\ ~regexp.global
+  THEN Assert(FALSE, "tla-ts can't throw the TypeError of replaceAll with a regexp that isn't global here")
+  ELSE RegExpMatched(regexp, RegExpText(regexp, value))
+
+\\* The argument at a position that replace calls a function with for a match: the matched text,
+\\* each capture, the match's position, the text, and the named groups where the regexp has them.
+RegExpArgument(regexp, text, match, position) ==
+  CASE position <= regexp.captures -> RegExpCapture(text, match, position)
+    [] position = regexp.captures + 1 -> match.start
+    [] position = regexp.captures + 2 -> text
+    [] position = regexp.captures + 3 /\\ DOMAIN regexp.names # {} -> RegExpGroups(regexp, text, match)
+    [] OTHER -> Undefined
+
+\\* The text that replace with a function gives, where each match's replacement is what the
+\\* function returns for it.
+RegExpReplaceWith(value, matches, replacements) == RegExpAssemble(Text(value), matches, replacements, 0)
+
+\\* String.prototype.match through RegExp.prototype[@@match]: the array of the first match, or for a
+\\* global regexp an array of each match's text, or null where nothing matches.
+RegExpMatch(regexp, value) ==
+  LET text == RegExpText(regexp, value)
+      matches == RegExpMatched(regexp, text)
+  IN  CASE matches = <<>> -> Null
+        [] regexp.global ->
+             [key \\in {ToString(position - 1) : position \\in DOMAIN matches} \\cup {"length"} |->
+                IF key = "length" THEN Len(matches) ELSE RegExpCapture(text, matches[ToIndex(key) + 1], 0)]
+        [] OTHER -> RegExpArray(regexp, text, Head(matches))
+
+\\* String.prototype.search through RegExp.prototype[@@search], which restores lastIndex.
+RegExpSearchIndex(regexp, value) ==
+  LET found == RegExpSearch(regexp, RegExpText(regexp, value), 0)
+  IN  IF found.end = -1 THEN -1 ELSE found.start
+
+\\* String.prototype.split through RegExp.prototype[@@split].
+RegExpSplit(regexp, value, limit) == RegExpPieces(regexp, RegExpText(regexp, value), limit)
+
 ToBoolean(value) ==
   CASE value \\in {Undefined, Null} -> FALSE
     [] TypeOf(value) = "boolean" -> value

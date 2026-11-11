@@ -5509,3 +5509,27 @@ describe("proxies", () => {
     expect(result.failure?.message).toContain("tla-ts can't run a proxy's internal method here");
   });
 });
+
+describe("regular expressions", () => {
+  it("stop where a regexp without objects would keep a lastIndex", async () => {
+    const result = await checkModel(`
+      const pattern = /a/g;
+      let found = pattern.test("aa");
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't keep the lastIndex");
+  });
+
+  it("stop where a class can't tell a character outside ASCII", async () => {
+    const result = await checkModel(`
+      let found = /[^\\u00e0-\\u05ff]/.test("é");
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't tell whether a class matches");
+  });
+
+  it("stop where a regexp with the u flag matches text outside ASCII", async () => {
+    const result = await checkModel(`
+      let found = /./u.test("😀");
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't match a regexp with the u flag");
+  });
+});

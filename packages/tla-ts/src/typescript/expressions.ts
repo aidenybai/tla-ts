@@ -85,6 +85,7 @@ import {
   translateBuiltInObject,
   translateIntrinsic,
   translateBuiltInValue,
+  translateRegExpLiteral,
   translateSymbolProperty,
 } from "./intrinsics";
 import {
@@ -113,6 +114,7 @@ import {
   junction,
   locate,
   not,
+  field,
   number,
   quantify,
   record,
@@ -134,6 +136,8 @@ import {
   rejectGeneratorUse,
   isNumericKey,
   isObject,
+  isEvery,
+  isRegExpArray,
   isSequenceType,
   translateUnknown,
 } from "./types";
@@ -1341,11 +1345,80 @@ const translatePrivateRead = (
   );
 };
 
+// The properties that a regexp's getters read from its record, and its lastIndex, which stays 0
+// without objects.
+const REGEXP_PROPERTIES = new Set([
+  "source",
+  "flags",
+  "hasIndices",
+  "global",
+  "ignoreCase",
+  "multiline",
+  "dotAll",
+  "unicode",
+  "unicodeSets",
+  "sticky",
+  "lastIndex",
+]);
+
+// A read of a regexp's property, or of an element or a property of the array that exec or match
+// gives, without objects. An optional read gives undefined where the array is null, though not for
+// the rest of a chain.
+const translateRegExpRead = (
+  node: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  getKey: () => Expression | undefined,
+  scope: Scope,
+  context: Context,
+) => {
+  if (context.heap !== undefined) return undefined;
+  const type = context.checker.getTypeAtLocation(node.expression);
+  const isRegExp = type.getSymbol()?.name === "RegExp";
+  if (!isRegExp && !isRegExpArray(context.checker.getNonNullableType(type))) return undefined;
+  const name = ts.isPropertyAccessExpression(node) ? node.name.text : undefined;
+  const key = getKey();
+  const parent = node.parent;
+  const isChainContinued =
+    node.questionDotToken !== undefined &&
+    (ts.isPropertyAccessExpression(parent) ||
+      ts.isElementAccessExpression(parent) ||
+      ts.isCallExpression(parent)) &&
+    parent.expression === node;
+  if (
+    key === undefined ||
+    isChainContinued ||
+    (isRegExp && (name === undefined || !REGEXP_PROPERTIES.has(name)))
+  ) {
+    throw new TlaTypeScriptError(`Unsupported property: ${node.getText()}`, node);
+  }
+  const value = translateExpression(node.expression, scope, context);
+  if (isRegExp) return name === "lastIndex" ? number(0) : field(value, name ?? "");
+  return node.questionDotToken === undefined
+    ? useJavaScript("RegExpElement", [value, key], context)
+    : share(value, "array", context, (shared) =>
+        ifExpression(
+          apply("=", [shared, identifier("Null")]),
+          getUndefined(context),
+          useJavaScript("RegExpElement", [shared, key], context),
+        ),
+      );
+};
+
+// The key that reads an element or a property of the array that exec or match gives: a string, or
+// a number that a literal writes, as the string that names it.
+const translateRegExpKey = (key: ts.Expression, scope: Scope, context: Context) =>
+  ts.isNumericLiteral(key)
+    ? string(String(Number(key.text)))
+    : isEvery(context.checker.getTypeAtLocation(key), ts.TypeFlags.StringLike)
+      ? translateExpression(key, scope, context)
+      : undefined;
+
 const translatePropertyAccess = (
   node: ts.PropertyAccessExpression,
   scope: Scope,
   context: Context,
 ) => {
+  const regExpRead = translateRegExpRead(node, () => string(node.name.text), scope, context);
+  if (regExpRead !== undefined) return regExpRead;
   if (node.questionDotToken !== undefined && !scope.results.has(node.expression)) {
     throw new TlaTypeScriptError("Optional chaining isn't supported", node);
   }
@@ -1511,6 +1584,13 @@ const translateElementAccess = (
       context,
     );
   }
+  const regExpRead = translateRegExpRead(
+    node,
+    () => translateRegExpKey(node.argumentExpression, scope, context),
+    scope,
+    context,
+  );
+  if (regExpRead !== undefined) return regExpRead;
   const getterRead = translateGetterRead(node, scope, context);
   if (getterRead !== undefined) return getterRead;
   const kind = getKind(node.expression, context);
@@ -1889,6 +1969,9 @@ const translateNode = (
       getUndefined(context),
       getUndefined(context),
     );
+  }
+  if (ts.isRegularExpressionLiteral(node) && context.heap === undefined) {
+    return translateRegExpLiteral(node, context);
   }
   const functionValue = getFunctionValue(node, context);
   if (functionValue !== undefined) return translateFunctionValue(functionValue, context);

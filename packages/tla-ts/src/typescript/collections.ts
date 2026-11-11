@@ -1114,6 +1114,9 @@ export const translateMethod = (
       context,
     );
   }
+  const regExpCall =
+    context.heap === undefined ? translateRegExpCall(node, scope, context) : undefined;
+  if (regExpCall !== undefined) return regExpCall;
   const primitiveCall = getPrimitiveCall(node, kind, context);
   const primitiveMethod = primitiveCall?.methods.get(primitiveCall.method);
   const isTyped =
@@ -1148,6 +1151,129 @@ export const translateMethod = (
         : useJavaScript(primitiveCall.converter, [translateOptional(primitiveCall.owner)], context),
     primitiveCall.methodArguments.map(translateOptional),
     context,
+  );
+};
+
+// A RegExp's exec or test, or a String method that calls a regexp's, without objects, where a
+// regexp is the record that translateRegExpLiteral makes.
+const translateRegExpCall = (node: MethodCall, scope: Scope, context: Context) => {
+  const receiver = node.expression.expression;
+  const method = node.expression.name.text;
+  const values = node.arguments;
+  const getType = (value: ts.Expression) => context.checker.getTypeAtLocation(value);
+  const isRegExp = (value: ts.Expression | undefined) =>
+    value !== undefined && getType(value).getSymbol()?.name === "RegExp";
+  const isText = (value: ts.Expression | undefined) =>
+    value !== undefined && isEvery(getType(value), ts.TypeFlags.StringLike);
+  const translate = (value: ts.Expression) => translateExpression(value, scope, context);
+  if (isRegExp(receiver) && (method === "exec" || method === "test")) {
+    return values.length === 1 && isText(values[0])
+      ? useJavaScript(
+          method === "exec" ? "RegExpExec" : "RegExpTest",
+          [translate(receiver), translate(values[0])],
+          context,
+        )
+      : undefined;
+  }
+  if (!isText(receiver) || !isRegExp(values[0])) return undefined;
+  const regexp = translate(values[0]);
+  if ((method === "match" || method === "search") && values.length === 1) {
+    return useJavaScript(
+      method === "match" ? "RegExpMatch" : "RegExpSearchIndex",
+      [regexp, translate(receiver)],
+      context,
+    );
+  }
+  if (method === "split" && (values[1] === undefined || isNumberLike(values[1], context))) {
+    return useJavaScript(
+      "RegExpSplit",
+      [
+        regexp,
+        translate(receiver),
+        values[1] === undefined ? getUndefined(context) : translate(values[1]),
+      ],
+      context,
+    );
+  }
+  if (
+    (method === "replace" || method === "replaceAll") &&
+    values.length === 2 &&
+    isText(values[1])
+  ) {
+    return useJavaScript(
+      method === "replace" ? "RegExpReplace" : "RegExpReplaceAll",
+      [regexp, translate(receiver), translate(values[1])],
+      context,
+    );
+  }
+  if ((method === "replace" || method === "replaceAll") && values.length === 2) {
+    return translateRegExpReplacer(node, regexp, scope, context);
+  }
+  return undefined;
+};
+
+// replace or replaceAll with a function, whose body gives each match's replacement with its
+// parameters bound to the matched text, the captures, the position, the text, and the groups.
+const translateRegExpReplacer = (
+  node: MethodCall,
+  regexp: Expression,
+  scope: Scope,
+  context: Context,
+) => {
+  const replacer = node.arguments[1];
+  const callback = getCallback(replacer, scope, context);
+  const callee = getCallee(replacer, context);
+  const signature = callee && context.checker.getSignatureFromDeclaration(callee);
+  const returned = signature?.getReturnType();
+  if (
+    returned === undefined ||
+    !isEvery(returned, ts.TypeFlags.StringLike) ||
+    callback.parameters.some((parameter) => !ts.isIdentifier(parameter.name))
+  ) {
+    throw new TlaTypeScriptError("Pass a function that returns a string here", replacer);
+  }
+  return share(regexp, "regexp", context, (sharedRegexp) =>
+    share(
+      translateExpression(node.expression.expression, scope, context),
+      "text",
+      context,
+      (text) =>
+        share(
+          useJavaScript(
+            "RegExpMatchesOf",
+            [sharedRegexp, text, boolean(node.expression.name.text === "replaceAll")],
+            context,
+          ),
+          "matches",
+          context,
+          (matches) => {
+            const position = context.names.getFresh("position");
+            const bodyScope = bindNames(
+              callback.scope(scope),
+              callback.parameters.map((parameter, argument) => ({
+                name: useJavaScript(
+                  "RegExpArgument",
+                  [sharedRegexp, text, index(matches, [identifier(position)]), number(argument)],
+                  context,
+                ),
+                symbol: getSymbol(parameter.name, context.checker),
+              })),
+            );
+            return useJavaScript(
+              "RegExpReplaceWith",
+              [
+                text,
+                matches,
+                functionOf(
+                  [bound(position, apply("DOMAIN", [matches]))],
+                  translateBody(callback.body, bodyScope, context),
+                ),
+              ],
+              context,
+            );
+          },
+        ),
+    ),
   );
 };
 

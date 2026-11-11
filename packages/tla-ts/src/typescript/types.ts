@@ -207,6 +207,11 @@ export const getCollection = (node: ts.Expression, context: Context) => {
       : undefined;
 };
 
+// The array that a RegExp's exec or a string's match gives, which without objects is a function
+// from its keys rather than a sequence.
+export const isRegExpArray = (type: ts.Type) =>
+  ["RegExpExecArray", "RegExpMatchArray"].includes(type.getSymbol()?.name ?? "");
+
 export const getKind = (node: ts.Expression, context: Context): Kind => {
   if (isHeapArray(node, context) || getBound(node, context) !== undefined) return "object";
   const checker = context.checker;
@@ -226,6 +231,7 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
     return "object";
   }
   const type = checker.getNonNullableType(checker.getTypeAtLocation(node));
+  if (context.heap === undefined && isRegExpArray(type)) return "other";
   if (isSequenceType(type, checker)) return "sequence";
   if (isSetType(type)) return "set";
   if (isMapType(type)) return "map";

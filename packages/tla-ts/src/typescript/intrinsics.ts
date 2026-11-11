@@ -16,6 +16,7 @@ import {
   ifExpression,
   number,
   record,
+  set,
   string,
   tuple,
 } from "./tla";
@@ -596,4 +597,543 @@ export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: C
     evaluate(node.arguments[0], scope, context);
   }
   return translateBuiltIn(name, node, scope, context);
+};
+
+// Whether a class in a pattern holds a code unit.
+type CharacterSet = (code: number) => boolean;
+
+// A matcher of a pattern, as the spec's CompilePattern makes it, which matches code units.
+type Matcher =
+  | { kind: "set"; set: CharacterSet; isInverted: boolean }
+  | { kind: "sequence" | "alternation"; items: Matcher[] }
+  | { kind: "group"; index: number; body: Matcher }
+  | {
+      kind: "repeat";
+      body: Matcher;
+      min: number;
+      max: number;
+      isGreedy: boolean;
+      parenIndex: number;
+      parenCount: number;
+    }
+  | { kind: "start" | "end" }
+  | { kind: "boundary"; isInverted: boolean }
+  | { kind: "lookahead"; body: Matcher; isNegative: boolean }
+  | { kind: "backreference"; index: number };
+
+const LINE_TERMINATORS = [0x0a, 0x0d, 0x2028, 0x2029];
+
+// WhiteSpace and LineTerminator, which \s matches.
+const WHITE_SPACE = [
+  0x09,
+  0x0b,
+  0x0c,
+  0x20,
+  0xa0,
+  0xfeff,
+  0x1680,
+  ...Array.from({ length: 11 }, (_, offset) => 0x2000 + offset),
+  0x202f,
+  0x205f,
+  0x3000,
+  ...LINE_TERMINATORS,
+];
+
+const isDigitCode = (code: number) => code >= 0x30 && code <= 0x39;
+
+const isWordCode = (code: number) =>
+  isDigitCode(code) ||
+  (code >= 0x41 && code <= 0x5a) ||
+  (code >= 0x61 && code <= 0x7a) ||
+  code === 0x5f;
+
+// The characters outside ASCII whose simple case folding is in it, which \w holds with the u and i
+// flags, and which Canonicalize maps to their folding.
+const UNICODE_FOLDS = new Map([
+  [0x17f, 0x73],
+  [0x212a, 0x6b],
+]);
+
+// The sets that \d, \s, \w, and their uppercase complements match, where \w with the u and i flags
+// holds the characters that fold into it.
+const getClassEscape = (letter: string, isUnicodeIgnoringCase: boolean) => {
+  const has = new Map<string, CharacterSet>([
+    ["d", isDigitCode],
+    ["s", (code) => WHITE_SPACE.includes(code)],
+    ["w", (code) => isWordCode(code) || (isUnicodeIgnoringCase && UNICODE_FOLDS.has(code))],
+  ]).get(letter.toLowerCase());
+  if (has === undefined) return undefined;
+  return letter === letter.toLowerCase() ? has : (code: number) => !has(code);
+};
+
+const CONTROL_ESCAPES = new Map([
+  ["f", 0x0c],
+  ["n", 0x0a],
+  ["r", 0x0d],
+  ["t", 0x09],
+  ["v", 0x0b],
+]);
+
+const unite =
+  (...sets: CharacterSet[]): CharacterSet =>
+  (code) =>
+    sets.some((has) => has(code));
+
+const getCharacterSet =
+  (...codes: number[]): CharacterSet =>
+  (code) =>
+    codes.includes(code);
+
+// The number of capturing groups that a pattern opens and the indices of its named groups, which a
+// backreference before a group may name.
+const getGroups = (source: string) => {
+  const names = new Map<string, number>();
+  const scan = { position: 0, count: 0, isInClass: false };
+  while (scan.position < source.length) {
+    const character = source[scan.position];
+    const rest = source.slice(scan.position);
+    if (character === "[") scan.isInClass = true;
+    if (character === "]") scan.isInClass = false;
+    if (character === "(" && !scan.isInClass && /^\((?!\?)|^\(\?<(?![=!])/.test(rest)) {
+      scan.count += 1;
+      const name = /^\(\?<([^>]*)>/.exec(rest)?.[1];
+      if (name !== undefined) names.set(name, scan.count);
+    }
+    scan.position += character === "\\" ? 2 : 1;
+  }
+  return { count: scan.count, names };
+};
+
+// Parses a pattern into its matchers, following the spec's grammar with Annex B's extensions for
+// patterns without the u flag. TypeScript checks a literal's syntax, which tla-ts reads as valid.
+const parsePattern = (source: string, flags: string, node: ts.Node) => {
+  const isUnicode = flags.includes("u");
+  const groups = getGroups(source);
+  const cursor = { position: 0, captures: 0 };
+  const peek = (offset = 0) => source.charAt(cursor.position + offset);
+  const isAt = (text: string) => source.startsWith(text, cursor.position);
+  const getRest = () => source.slice(cursor.position);
+  const invalid = () => new TlaTypeScriptError(`Invalid regular expression: /${source}/`, node);
+  const close = () => {
+    if (peek() !== ")") throw invalid();
+    cursor.position += 1;
+  };
+  // A character that the pattern writes, where tla-ts reads a pattern with the u flag by code units
+  // only while it writes no surrogate, as it matches one only on text in ASCII.
+  const getCode = (code: number) => {
+    if (isUnicode && code >= 0xd800 && code <= 0xdfff) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't match a character outside the Basic Multilingual Plane with the u flag",
+        node,
+      );
+    }
+    return code;
+  };
+  const getCharacter = (code: number): Matcher => ({
+    kind: "set",
+    set: getCharacterSet(getCode(code)),
+    isInverted: false,
+  });
+  const parseDisjunction = (): Matcher => {
+    const items = [parseAlternative()];
+    while (peek() === "|") {
+      cursor.position += 1;
+      items.push(parseAlternative());
+    }
+    return items.length === 1 ? items[0] : { kind: "alternation", items };
+  };
+  const parseAlternative = (): Matcher => {
+    const items: Matcher[] = [];
+    while (cursor.position < source.length && peek() !== "|" && peek() !== ")") {
+      items.push(parseTerm());
+    }
+    return items.length === 1 ? items[0] : { kind: "sequence", items };
+  };
+  const parseTerm = (): Matcher => {
+    const parenIndex = cursor.captures;
+    if (peek() === "^" || peek() === "$") {
+      cursor.position += 1;
+      return { kind: source.charAt(cursor.position - 1) === "^" ? "start" : "end" };
+    }
+    if (isAt("\\b") || isAt("\\B")) {
+      cursor.position += 2;
+      return { kind: "boundary", isInverted: source.charAt(cursor.position - 1) === "B" };
+    }
+    if (isAt("(?<=") || isAt("(?<!")) {
+      throw new TlaTypeScriptError("tla-ts can't match a lookbehind", node);
+    }
+    const atom = isAt("(?=") || isAt("(?!") ? parseLookahead() : parseAtom();
+    const bounds = parseBounds();
+    if (bounds === undefined) return atom;
+    const isGreedy = peek() !== "?";
+    if (!isGreedy) cursor.position += 1;
+    return {
+      kind: "repeat",
+      body: atom,
+      ...bounds,
+      isGreedy,
+      parenIndex,
+      parenCount: cursor.captures - parenIndex,
+    };
+  };
+  // A quantifier's bounds, where -1 is no upper bound, or undefined where a { starts no quantifier
+  // and so, as Annex B allows, stands for itself.
+  const parseBounds = () => {
+    const simple = new Map([
+      ["*", { min: 0, max: -1 }],
+      ["+", { min: 1, max: -1 }],
+      ["?", { min: 0, max: 1 }],
+    ]).get(peek());
+    if (simple !== undefined) {
+      cursor.position += 1;
+      return simple;
+    }
+    const braced = /^\{(\d+)(,(\d*))?\}/.exec(getRest());
+    if (braced === null) return undefined;
+    cursor.position += braced[0].length;
+    const min = Number(braced[1]);
+    const max = braced[2] === undefined ? min : braced[3] === "" ? Infinity : Number(braced[3]);
+    if (max < min) throw invalid();
+    if (min > 2 ** 31 - 1) {
+      throw new TlaTypeScriptError("tla-ts can't repeat an atom this many times", node);
+    }
+    return { min, max: max > 2 ** 31 - 1 ? -1 : max };
+  };
+  const parseLookahead = (): Matcher => {
+    const isNegative = peek(2) === "!";
+    cursor.position += 3;
+    const body = parseDisjunction();
+    close();
+    return { kind: "lookahead", body, isNegative };
+  };
+  const parseAtom = (): Matcher => {
+    const character = peek();
+    if (character === ".") {
+      cursor.position += 1;
+      return {
+        kind: "set",
+        set: flags.includes("s") ? () => true : (code) => !LINE_TERMINATORS.includes(code),
+        isInverted: false,
+      };
+    }
+    if (character === "(") return parseGroup();
+    if (character === "[") return parseClass();
+    if (character === "\\") return parseAtomEscape();
+    if ("*+?)".includes(character) || /^\{\d+(,\d*)?\}/.test(getRest())) throw invalid();
+    cursor.position += 1;
+    return getCharacter(character.charCodeAt(0));
+  };
+  const parseGroup = (): Matcher => {
+    if (isAt("(?:")) {
+      cursor.position += 3;
+      const body = parseDisjunction();
+      close();
+      return body;
+    }
+    const name = /^\(\?<([^>]*)>/.exec(getRest())?.[1];
+    if (peek(1) === "?" && name === undefined) {
+      throw new TlaTypeScriptError(`tla-ts can't match this group: /${source}/`, node);
+    }
+    if (name?.includes("\\")) {
+      throw new TlaTypeScriptError("tla-ts can't read an escape in a group's name", node);
+    }
+    cursor.position += name === undefined ? 1 : name.length + 4;
+    cursor.captures += 1;
+    const index = cursor.captures;
+    if (name !== undefined && groups.names.get(name) !== index) {
+      throw new TlaTypeScriptError("tla-ts can't match groups that share a name", node);
+    }
+    const body = parseDisjunction();
+    close();
+    return { kind: "group", index, body };
+  };
+  // \p or \P with the u flag, whose property tla-ts reads from the engine it runs on.
+  const parseProperty = (): CharacterSet | undefined => {
+    const property = isUnicode ? /^\\[pP]\{[^}]*\}/.exec(getRest())?.[0] : undefined;
+    if (property === undefined) return undefined;
+    cursor.position += property.length;
+    const matcher = new RegExp(`^${property}$`, "u");
+    return (code) => matcher.test(String.fromCharCode(code));
+  };
+  const parseAtomEscape = (): Matcher => {
+    const escaped = peek(1);
+    const decimal = /^[1-9]\d*/.exec(source.slice(cursor.position + 1))?.[0];
+    if (decimal !== undefined && Number(decimal) <= groups.count) {
+      cursor.position += 1 + decimal.length;
+      return { kind: "backreference", index: Number(decimal) };
+    }
+    if (escaped === "k" && (isUnicode || groups.names.size > 0)) {
+      const name = /^\\k<([^>]*)>/.exec(getRest())?.[1];
+      const index = name === undefined ? undefined : groups.names.get(name);
+      if (name === undefined || index === undefined) throw invalid();
+      cursor.position += name.length + 4;
+      return { kind: "backreference", index };
+    }
+    const classEscape = getClassEscape(escaped, isUnicode && flags.includes("i"));
+    if (classEscape !== undefined) {
+      cursor.position += 2;
+      return { kind: "set", set: classEscape, isInverted: false };
+    }
+    const property = parseProperty();
+    if (property !== undefined) return { kind: "set", set: property, isInverted: false };
+    // A \ that no control letter follows stands for itself, as Annex B allows.
+    if (escaped === "c" && !/^[a-zA-Z]$/.test(peek(2))) {
+      cursor.position += 1;
+      return getCharacter(0x5c);
+    }
+    return getCharacter(parseCharacterEscape(false));
+  };
+  // A character escape, with Annex B's legacy octal and identity escapes, as the code it stands
+  // for.
+  const parseCharacterEscape = (isInClass: boolean) => {
+    const rest = source.slice(cursor.position + 1);
+    if (rest === "") throw invalid();
+    const control = CONTROL_ESCAPES.get(rest[0]);
+    const letter = /^c([a-zA-Z])/.exec(rest) ?? (isInClass ? /^c([\d_])/.exec(rest) : null);
+    const octal = /^(?:[0-3][0-7]{0,2}|[4-7][0-7]?)/.exec(rest)?.[0];
+    const hex = /^x([\da-fA-F]{2})|^u([\da-fA-F]{4})|^u\{([\da-fA-F]+)\}/.exec(rest);
+    const point = hex?.[3] === undefined || !isUnicode ? undefined : Number.parseInt(hex[3], 16);
+    if (point !== undefined && point > 0xffff) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't match a character outside the Basic Multilingual Plane with the u flag",
+        node,
+      );
+    }
+    const escape =
+      control !== undefined
+        ? { length: 1, code: control }
+        : letter !== null
+          ? { length: 2, code: letter[1].charCodeAt(0) % 32 }
+          : octal !== undefined && !(isUnicode && octal !== "0")
+            ? { length: octal.length, code: Number.parseInt(octal, 8) }
+            : hex !== null && (hex[3] === undefined || point !== undefined)
+              ? { length: hex[0].length, code: point ?? Number.parseInt(hex[1] ?? hex[2], 16) }
+              : { length: 1, code: rest.charCodeAt(0) };
+    cursor.position += 1 + escape.length;
+    return getCode(escape.code);
+  };
+  const parseClassAtom = (): number | CharacterSet => {
+    const character = peek();
+    if (character === "") throw invalid();
+    if (character !== "\\") {
+      cursor.position += 1;
+      return getCode(character.charCodeAt(0));
+    }
+    const classEscape = getClassEscape(peek(1), isUnicode && flags.includes("i"));
+    if (classEscape !== undefined) {
+      cursor.position += 2;
+      return classEscape;
+    }
+    const property = parseProperty();
+    if (property !== undefined) return property;
+    if (peek(1) === "b") {
+      cursor.position += 2;
+      return 0x08;
+    }
+    if (peek(1) === "c" && !/^[a-zA-Z\d_]$/.test(peek(2))) {
+      cursor.position += 1;
+      return 0x5c;
+    }
+    return parseCharacterEscape(true);
+  };
+  const parseClass = (): Matcher => {
+    cursor.position += 1;
+    const isInverted = peek() === "^";
+    if (isInverted) cursor.position += 1;
+    const sets: CharacterSet[] = [];
+    while (peek() !== "]") {
+      const from = parseClassAtom();
+      const isRange = peek() === "-" && peek(1) !== "]" && peek(1) !== "";
+      if (isRange) cursor.position += 1;
+      const to = isRange ? parseClassAtom() : undefined;
+      const fromSet = typeof from === "number" ? getCharacterSet(from) : from;
+      if (to === undefined) {
+        sets.push(fromSet);
+        continue;
+      }
+      if (typeof from !== "number" || typeof to !== "number") {
+        // Annex B's range of a class escape, which holds both ends and the -.
+        sets.push(
+          fromSet,
+          typeof to === "number" ? getCharacterSet(to) : to,
+          getCharacterSet(0x2d),
+        );
+        continue;
+      }
+      if (from > to) throw invalid();
+      sets.push((code) => code >= from && code <= to);
+    }
+    cursor.position += 1;
+    return { kind: "set", set: unite(...sets), isInverted };
+  };
+  const pattern = parseDisjunction();
+  if (cursor.position < source.length) throw invalid();
+  return { pattern, count: groups.count, names: groups.names };
+};
+
+// Canonicalize without the u flag, which maps a code unit to its uppercase, unless that is longer
+// or would take a character outside ASCII into it.
+const canonicalize = (code: number) => {
+  const upper = String.fromCharCode(code).toUpperCase();
+  return upper.length !== 1 || (code >= 128 && upper.charCodeAt(0) < 128)
+    ? code
+    : upper.charCodeAt(0);
+};
+
+// Canonicalize with the u flag, as simple case folding, of the characters that fold into ASCII,
+// since tla-ts matches such a pattern only on text in ASCII.
+const foldCase = (code: number) =>
+  code >= 0x41 && code <= 0x5a ? code + 32 : (UNICODE_FOLDS.get(code) ?? code);
+
+const CODE_UNITS = Array.from({ length: 0x10000 }, (_, code) => code);
+
+// The characters outside ASCII that a class lists, where it holds most of them or few.
+const LISTED_LIMIT = 256;
+
+// A class as the characters in ASCII that it matches once Canonicalize maps them, with those
+// outside ASCII listed where it matches few of them or all but a few, or else unknown. A pattern
+// with the u flag matches only text in ASCII.
+const translateCharacters = (
+  matcher: { set: CharacterSet; isInverted: boolean },
+  flags: string,
+) => {
+  const isUnicode = flags.includes("u");
+  const fold = flags.includes("i") ? (isUnicode ? foldCase : canonicalize) : undefined;
+  const folded =
+    fold === undefined
+      ? undefined
+      : new Set(
+          (isUnicode ? [...CODE_UNITS.slice(0, 128), ...UNICODE_FOLDS.keys()] : CODE_UNITS)
+            .filter(matcher.set)
+            .map(fold),
+        );
+  const isMatched = (code: number) =>
+    (folded === undefined || fold === undefined ? matcher.set(code) : folded.has(fold(code))) !==
+    matcher.isInverted;
+  const outside = isUnicode ? [] : CODE_UNITS.slice(128);
+  const held = outside.filter(isMatched);
+  const missed = outside.filter((code) => !isMatched(code));
+  const isListable = (codes: number[]) =>
+    codes.length <= LISTED_LIMIT && !codes.some((code) => code >= 0xd800 && code <= 0xdfff);
+  const others = isUnicode
+    ? "unknown"
+    : missed.length === 0
+      ? "all"
+      : isListable(held)
+        ? "none"
+        : isListable(missed)
+          ? "all"
+          : "unknown";
+  const toStrings = (codes: number[]) =>
+    set(codes.map((code) => string(String.fromCharCode(code))));
+  return record("Record", [
+    { name: "kind", value: string("set") },
+    {
+      name: "characters",
+      value: toStrings([
+        ...CODE_UNITS.slice(0, 128).filter(isMatched),
+        ...(others === "none" ? held : []),
+      ]),
+    },
+    { name: "excluded", value: toStrings(others === "all" ? missed : []) },
+    { name: "others", value: string(others) },
+  ]);
+};
+
+const translateMatcher = (matcher: Matcher, flags: string): Expression => {
+  const kind = { name: "kind", value: string(matcher.kind) };
+  if (matcher.kind === "set") return translateCharacters(matcher, flags);
+  if (matcher.kind === "sequence" || matcher.kind === "alternation") {
+    return record("Record", [
+      kind,
+      { name: "items", value: tuple(matcher.items.map((item) => translateMatcher(item, flags))) },
+    ]);
+  }
+  if (matcher.kind === "group") {
+    return record("Record", [
+      kind,
+      { name: "index", value: number(matcher.index) },
+      { name: "body", value: translateMatcher(matcher.body, flags) },
+    ]);
+  }
+  if (matcher.kind === "repeat") {
+    return record("Record", [
+      kind,
+      { name: "body", value: translateMatcher(matcher.body, flags) },
+      { name: "min", value: number(matcher.min) },
+      { name: "max", value: number(matcher.max) },
+      { name: "isGreedy", value: boolean(matcher.isGreedy) },
+      { name: "parenIndex", value: number(matcher.parenIndex) },
+      { name: "parenCount", value: number(matcher.parenCount) },
+    ]);
+  }
+  if (matcher.kind === "boundary") {
+    return record("Record", [kind, { name: "isInverted", value: boolean(matcher.isInverted) }]);
+  }
+  if (matcher.kind === "lookahead") {
+    return record("Record", [
+      kind,
+      { name: "body", value: translateMatcher(matcher.body, flags) },
+      { name: "isNegative", value: boolean(matcher.isNegative) },
+    ]);
+  }
+  if (matcher.kind === "backreference") {
+    return record("Record", [kind, { name: "index", value: number(matcher.index) }]);
+  }
+  return record("Record", [kind]);
+};
+
+// The flags that a regular expression's flags getter gives, in its order, by the property that
+// reads each.
+const REGEXP_FLAGS = [
+  ["d", "hasIndices"],
+  ["g", "global"],
+  ["i", "ignoreCase"],
+  ["m", "multiline"],
+  ["s", "dotAll"],
+  ["u", "unicode"],
+  ["v", "unicodeSets"],
+  ["y", "sticky"],
+] as const;
+
+// A pattern and its flags as the record that the JavaScript module's RegExp operators read, which
+// holds its matchers, its groups, its source, and its flags.
+export const translateRegExp = (source: string, flags: string, node: ts.Node, context: Context) => {
+  if (/[dv]/.test(flags)) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't match a regular expression with the d or v flag",
+      node,
+    );
+  }
+  const parsed = parsePattern(source, flags, node);
+  context.prelude.add("JavaScript");
+  return record("Record", [
+    { name: "pattern", value: translateMatcher(parsed.pattern, flags) },
+    { name: "captures", value: number(parsed.count) },
+    {
+      name: "names",
+      value: functionFrom([...parsed.names].map(([name, index]) => [string(name), number(index)])),
+    },
+    { name: "groupNames", value: tuple([...parsed.names.keys()].map(string)) },
+    { name: "source", value: string(source) },
+    {
+      name: "flags",
+      value: string(
+        REGEXP_FLAGS.filter(([flag]) => flags.includes(flag))
+          .map(([flag]) => flag)
+          .join(""),
+      ),
+    },
+    ...REGEXP_FLAGS.map(([flag, property]) => ({
+      name: property,
+      value: boolean(flags.includes(flag)),
+    })),
+  ]);
+};
+
+// A regular expression literal, which without objects is the record of its pattern, whose
+// lastIndex stays 0.
+export const translateRegExpLiteral = (node: ts.RegularExpressionLiteral, context: Context) => {
+  const end = node.text.lastIndexOf("/");
+  return translateRegExp(node.text.slice(1, end), node.text.slice(end + 1), node, context);
 };

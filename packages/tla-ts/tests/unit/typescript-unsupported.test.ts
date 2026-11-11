@@ -38,6 +38,8 @@ const CASES: [string, string][] = [
     "const descriptor: PropertyDescriptor = []; count = descriptor.enumerable === true ? 1 : 0;",
   ],
   ["delegating a yield to a string", 'const make = function* () { yield* "ab"; }; make().next();'],
+  ["a regular expression's lookbehind", 'label = label.replace(/(?<=a)b/, "c");'],
+  ["a regular expression with the v flag", "count = /[a]/v.test(label) ? 1 : 0;"],
   ["calling an async function", "const run = async () => { count++; }; run();"],
   [
     "a var that redeclares a catch parameter",
