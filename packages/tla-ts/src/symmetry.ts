@@ -336,11 +336,17 @@ export const getRepresentative = (
   const smallest = state.slice();
   for (const index of order) {
     if (candidateCount === 0) break;
-    if (!isMovable(state[index], group.isMovedRank)) continue;
+    const value = state[index];
     let kept = 0;
     for (let candidate = 0; candidate < candidateCount; candidate++) {
       const images = candidates[candidate];
-      const permuted = permuteValue(state[index], images);
+      const permuted = permuteValue(value, images);
+      // A value the first permutation fixes may hold no model value the group moves, and then every
+      // permutation fixes it. A value the first permutation moves needs no such walk.
+      if (candidate === 0 && permuted === value && !isMovable(value, group.isMovedRank)) {
+        kept = candidateCount;
+        break;
+      }
       const comparison =
         kept === 0 && !isStateSmallest ? -1 : compareValues(permuted, smallest[index]);
       if (comparison < 0) {
