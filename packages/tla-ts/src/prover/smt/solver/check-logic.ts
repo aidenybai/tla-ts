@@ -134,9 +134,9 @@ export const createLogicChecker = (manager: AstManager, logic: string | undefine
   const known = logic === undefined ? undefined : LOGICS.get(logic);
   const flags = { ...NO_FLAGS, ...known };
 
+  // Z3 rejects only the uninterpreted sorts of its null family, but declare-sort makes the sorts of
+  // its user sort family, which every logic accepts.
   const checkSort = (sort: number): string | undefined => {
-    if (manager.isUninterpretedSort(sort))
-      return flags.isUf ? undefined : "logic does not support uninterpreted sorts";
     if (sort === SORT_BOOL) return undefined;
     if (sort === SORT_INT) return flags.isInts ? undefined : "logic does not support integers";
     if (sort === SORT_REAL) return flags.isReals ? undefined : "logic does not support reals";
