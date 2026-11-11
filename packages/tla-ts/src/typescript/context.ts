@@ -123,9 +123,11 @@ export const getArgumentsOwner = (node: ts.Node, checker: ts.TypeChecker) => {
 export const isUnresolved = (node: ts.Node, context: Context) =>
   ts.isIdentifier(node) && context.checker.getSymbolAtLocation(node) === undefined;
 
+// TypeScript gives new.target the symbol of the function it's in, which isn't its value.
 export const getSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
-  const symbol =
-    ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node
+  const symbol = ts.isMetaProperty(node)
+    ? undefined
+    : ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node
       ? checker.getShorthandAssignmentValueSymbol(node.parent)
       : checker.getSymbolAtLocation(node);
   return symbol !== undefined && symbol.flags & ts.SymbolFlags.Alias

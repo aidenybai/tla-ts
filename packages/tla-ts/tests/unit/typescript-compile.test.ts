@@ -1204,6 +1204,14 @@ describe("errors", () => {
     expect(result.status).toBe("deadlock");
   });
 
+  it("rejects new.target rather than read it as the function it's in", () => {
+    expect(() =>
+      compile(
+        "const box = { size: 1 };\nconst same = (actual: unknown) => actual === undefined;\nfunction run() {\n  return same(new.target);\n}\nconst result = run();",
+      ),
+    ).toThrow("spec.ts:4:15 Unsupported expression: new.target");
+  });
+
   it("rejects a class whose member names run code", () => {
     expect(() => compile(`let count = 0;\nclass Counter {\n  [count++]() {}\n}`)).toThrow(
       "spec.ts:3:4 Unsupported expression: count++",
