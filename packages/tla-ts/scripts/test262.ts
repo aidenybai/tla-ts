@@ -270,6 +270,29 @@ const loosen = () => {
       ) ?? node;
     return visit(sourceFile);
   };
+  // The untyped variable that a compound assignment around a node assigns. TypeScript keeps the
+  // type the variable had before, though the assignment may give it a value of another type, so a
+  // variable that one converts is any.
+  const getCompoundTarget = (node: ts.Node) => {
+    const compound = ts.findAncestor(
+      node,
+      (ancestor): ancestor is ts.BinaryExpression & { left: ts.Identifier } =>
+        ts.isBinaryExpression(ancestor) &&
+        COMPOUND_ASSIGNMENTS.has(ancestor.operatorToken.kind) &&
+        ts.isIdentifier(ancestor.left),
+    );
+    const declaration =
+      compound === undefined
+        ? undefined
+        : checker.getSymbolAtLocation(compound.left)?.valueDeclaration;
+    return declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      ts.isIdentifier(declaration.name) &&
+      declaration.type === undefined &&
+      declaration.getSourceFile() === sourceFile
+      ? { left: compound?.left, name: declaration.name }
+      : undefined;
+  };
   const edits = new Map<number, string>();
   service.getSemanticDiagnostics(PROGRAM_PATH).forEach((diagnostic) => {
     const node = getNode(diagnostic.start ?? 0);
@@ -290,7 +313,8 @@ const loosen = () => {
       ts.isExpression(nullable) &&
       nullable.kind !== ts.SyntaxKind.SuperKeyword &&
       !ts.isNonNullExpression(nullable) &&
-      !ts.isNonNullExpression(nullable.parent)
+      !ts.isNonNullExpression(nullable.parent) &&
+      getCompoundTarget(nullable)?.left !== nullable
     ) {
       const isOperand =
         ts.isIdentifier(nullable) ||
@@ -497,6 +521,8 @@ const loosen = () => {
       edits.set(node.getStart(), "(");
       edits.set(node.getEnd(), ` as unknown as ${described})`);
     }
+    const target = OPERAND_TYPE_ERRORS.has(diagnostic.code) ? getCompoundTarget(node) : undefined;
+    if (target !== undefined) edits.set(target.name.getEnd(), ": any");
   });
   const visit = (node: ts.Node) => {
     const initializer = ts.isVariableDeclaration(node) ? node.initializer : undefined;
@@ -622,9 +648,25 @@ const UNUSED_OPERAND_ERROR = 2695;
 const UNRESOLVED_NAME_ERROR = 2304;
 const NOT_ITERABLE_ERROR = 2488;
 
-// An operator's operand of a type that the operator doesn't take, which tla-ts converts to a
-// primitive where it's an object that the test declares, a wrapper, or a primitive.
-const OPERAND_TYPE_ERRORS = new Set([2362, 2363, 2365]);
+// An operator's operand of a type that the operator doesn't take, or that is null or undefined,
+// which tla-ts converts to a primitive where it's an object that the test declares, a wrapper, or a
+// primitive.
+const OPERAND_TYPE_ERRORS = new Set([2362, 2363, 2365, 18050]);
+
+const COMPOUND_ASSIGNMENTS = new Set([
+  ts.SyntaxKind.PlusEqualsToken,
+  ts.SyntaxKind.MinusEqualsToken,
+  ts.SyntaxKind.AsteriskEqualsToken,
+  ts.SyntaxKind.SlashEqualsToken,
+  ts.SyntaxKind.PercentEqualsToken,
+  ts.SyntaxKind.AsteriskAsteriskEqualsToken,
+  ts.SyntaxKind.AmpersandEqualsToken,
+  ts.SyntaxKind.BarEqualsToken,
+  ts.SyntaxKind.CaretEqualsToken,
+  ts.SyntaxKind.LessThanLessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanGreaterThanEqualsToken,
+  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
+]);
 
 // A comparison of types that don't overlap, which only misleads where TypeScript narrows an operand
 // by it.
@@ -760,9 +802,15 @@ const ignoreSoundErrors = () => {
     );
     if (operation === undefined) return false;
     const kind = operation.operatorToken.kind;
-    const operands = [operation.left, operation.right];
+    // A compound assignment converts what it reads from a variable of type any.
+    const isCompound =
+      COMPOUND_ASSIGNMENTS.has(kind) &&
+      ts.isIdentifier(operation.left) &&
+      (checker.getTypeAtLocation(operation.left).flags & ts.TypeFlags.Any) !== 0;
+    const operands = isCompound ? [operation.right] : [operation.left, operation.right];
     return (
-      !(kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment) &&
+      (isCompound ||
+        !(kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment)) &&
       operands.every(
         (operand) => isPlainObject(operand) || isWrapper(operand) || isPrimitive(operand),
       )
