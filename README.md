@@ -1,7 +1,7 @@
 <h1>
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="packages/website/public/logo-dark.svg">
-    <img src="packages/website/public/logo-light.svg" width="36" alt="" valign="middle" />
+    <img src="packages/website/public/logo-light.svg" width="33" alt="" valign="middle" />
   </picture>
   tla-ts
 </h1>
