@@ -58,6 +58,10 @@ const PORTED_INCLUDES = new Map([
     readFileSync(join(CONFORMANCE_DIRECTORY, "test262-is-constructor.ts"), "utf8"),
   ],
   [
+    "testTypedArray.js",
+    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-typed-array.ts"), "utf8"),
+  ],
+  [
     "promiseHelper.js",
     readFileSync(join(CONFORMANCE_DIRECTORY, "test262-promise-helper.ts"), "utf8"),
   ],
