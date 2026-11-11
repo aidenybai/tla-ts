@@ -56,6 +56,7 @@ import {
   getCandidateValue,
   getFunctionLength,
   getHeap,
+  getSuperLookup,
   isCreation,
   isDescription,
   isElementDescription,
@@ -1113,6 +1114,9 @@ const translatePropertyAccess = (
     throw new TlaTypeScriptError("Optional chaining isn't supported", node);
   }
   if (ts.isPrivateIdentifier(node.name)) return translatePrivateRead(node, scope, context);
+  if (node.expression.kind === ts.SyntaxKind.SuperKeyword) {
+    return translateSuperRead(node, string(node.name.text), scope, context);
+  }
   const declared = translateDeclared(node, getSymbol(node, context.checker), scope, context);
   if (declared !== undefined) return declared;
   const intrinsic = translateIntrinsic(node, scope, context);
@@ -1224,12 +1228,40 @@ const translatePropertyAccess = (
   return getField(translateExpression(receiver, scope, context), name);
 };
 
+// A read of super.key or super[key], which finds the key from the base of the class the read is
+// in, and runs a getter with the method's this.
+const translateSuperRead = (
+  node: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  key: Expression,
+  scope: Scope,
+  context: Context,
+) => {
+  const lookup = getSuperLookup(node.expression, scope, context);
+  return translateFoundGetter(
+    node,
+    getHeap(scope, node, context),
+    lookup.start,
+    key,
+    scope,
+    context,
+    lookup.receiver,
+  );
+};
+
 const translateElementAccess = (
   node: ts.ElementAccessExpression,
   scope: Scope,
   context: Context,
   isDefined: boolean,
 ) => {
+  if (node.expression.kind === ts.SyntaxKind.SuperKeyword) {
+    return translateSuperRead(
+      node,
+      translatePropertyKey(node.argumentExpression, scope, context),
+      scope,
+      context,
+    );
+  }
   const getterRead = translateGetterRead(node, scope, context);
   if (getterRead !== undefined) return getterRead;
   const kind = getKind(node.expression, context);

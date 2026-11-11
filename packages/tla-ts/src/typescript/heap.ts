@@ -24,6 +24,10 @@ import {
   type MethodCall,
   isUnresolved,
   getBinding,
+  getBaseClass,
+  isAmbient,
+  isNullBased,
+  getHeapClass,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { getConstructor } from "./exceptions";
@@ -246,7 +250,9 @@ export const translateHoldsMethod = (
           "Get",
           [
             getHeap(scope, called.receiver, context),
-            translateObjectValue(called.receiver, scope, context),
+            called.receiver.kind === ts.SyntaxKind.SuperKeyword
+              ? getSuperLookup(called.receiver, scope, context).start
+              : translateObjectValue(called.receiver, scope, context),
             string(called.key),
           ],
           context,
@@ -350,6 +356,50 @@ export const getFunctionLength = (parameters: readonly ts.ParameterDeclaration[]
   return index === -1 ? parameters.length : index;
 };
 
+// Where a super property's lookup starts: the prototype of the object that holds the method it's
+// in. The method's this receives what the lookup finds.
+export const getSuperLookup = (node: ts.Node, scope: Scope, context: Context) => {
+  const method = ts.findAncestor(
+    node.parent,
+    (ancestor) =>
+      (ts.isFunctionLike(ancestor) && !ts.isArrowFunction(ancestor)) ||
+      ts.isClassStaticBlockDeclaration(ancestor) ||
+      ts.isPropertyDeclaration(ancestor),
+  );
+  const owner = method?.parent;
+  const receiver = scope.receiver;
+  if (
+    method === undefined ||
+    owner === undefined ||
+    !ts.isClassLike(owner) ||
+    !isHeapClass(owner, context) ||
+    receiver === undefined ||
+    receiver.method !== method ||
+    (isNullBased(owner) && !isStatic(method))
+  ) {
+    throw new TlaTypeScriptError("Unsupported expression: super", node);
+  }
+  const heap = getHeap(scope, node, context);
+  const classRef = translateClassRef(owner, scope, context);
+  const home = isStatic(method)
+    ? classRef
+    : useJavaScript("Get", [heap, classRef, string("prototype")], context);
+  return { start: useJavaScript("Prototype", [heap, home], context), receiver: receiver.value };
+};
+
+// The value of a heap class, by the name its declaration binds.
+export const translateClassRef = (
+  node: ts.ClassLikeDeclaration,
+  scope: Scope,
+  context: Context,
+) => {
+  const name = ts.isVariableDeclaration(node.parent) ? node.parent.name : node.name;
+  if (name === undefined || !ts.isIdentifier(name)) {
+    throw new TlaTypeScriptError("Name this class", node);
+  }
+  return translateExpression(name, scope, context);
+};
+
 // The heap after a node from getAllocated adds the object it makes.
 // The constructor object and the prototype that a class makes, prototype first, so the
 // constructor object is the last on the heap.
@@ -386,8 +436,23 @@ const translateClass = (node: HeapClass, heap: Expression, scope: Scope, context
             [true, false, true],
           );
     }, object);
+  const base = ts.isClassLike(node) ? getBaseClass(node, context) : undefined;
+  const baseRef = base === undefined ? undefined : translateClassRef(base, scope, context);
+  const basePrototype =
+    baseRef !== undefined
+      ? useJavaScript("Get", [heap, baseRef, string("prototype")], context)
+      : ts.isClassLike(node) && isNullBased(node)
+        ? identifier("Null")
+        : undefined;
   const prototype = defineMethods(
-    define(identifier("EmptyObject"), string("constructor"), getRef(2), [true, false, true]),
+    define(
+      basePrototype === undefined
+        ? identifier("EmptyObject")
+        : useJavaScript("WithPrototype", [identifier("EmptyObject"), basePrototype], context),
+      string("constructor"),
+      getRef(2),
+      [true, false, true],
+    ),
     false,
   );
   const staticBranded = members.find(
@@ -399,7 +464,7 @@ const translateClass = (node: HeapClass, heap: Expression, scope: Scope, context
         define(
           useJavaScript(
             "ClassObject",
-            [translateBuiltInValue("Function.prototype", node, context)],
+            [baseRef ?? translateBuiltInValue("Function.prototype", node, context)],
             context,
           ),
           string("length"),
@@ -521,21 +586,38 @@ const translateInstance = (
   scope: Scope,
   context: Context,
 ) => {
-  const members = ts.isClassLike(created) ? created.members : [];
-  const branded = members.find(
-    (member) => isPrivateMember(member) && !ts.isPropertyDeclaration(member) && !isStatic(member),
+  const getChain = (current: HeapClass): HeapClass[] => {
+    const base = ts.isClassLike(current) ? getBaseClass(current, context) : undefined;
+    return base === undefined ? [current] : [...getChain(base), current];
+  };
+  const members = getChain(created).flatMap((current) =>
+    ts.isClassLike(current) ? [...current.members] : [],
   );
-  const empty =
-    branded === undefined
-      ? identifier("EmptyObject")
-      : useJavaScript(
-          "PrivateAdd",
-          [identifier("EmptyObject"), string(getPrivateKey(branded, context)), boolean(true)],
-          context,
-        );
+  const empty = members.reduce<Expression>(
+    (object, member) =>
+      isPrivateMember(member) &&
+      !ts.isPropertyDeclaration(member) &&
+      !isStatic(member) &&
+      members.find(
+        (other) =>
+          other.parent === member.parent &&
+          isPrivateMember(other) &&
+          !ts.isPropertyDeclaration(other) &&
+          !isStatic(other),
+      ) === member
+        ? useJavaScript(
+            "PrivateAdd",
+            [object, string(getPrivateKey(member, context)), boolean(true)],
+            context,
+          )
+        : object,
+    identifier("EmptyObject"),
+  );
   return members.reduce<Expression>(
     (object, member) => {
-      if (!ts.isPropertyDeclaration(member) || isStatic(member)) return object;
+      if (!ts.isPropertyDeclaration(member) || isStatic(member) || isAmbient(member)) {
+        return object;
+      }
       const value =
         member.initializer === undefined
           ? getUndefined(context)
@@ -960,7 +1042,7 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
     (!isSometimes &&
       created !== undefined &&
       ts.isNewExpression(node) &&
-      (getRunConstructor(created) === undefined || isStatementNew(node)));
+      (getRunConstructor(created, context) === undefined || isStatementNew(node)));
   return isAllocated ? [...nested, node] : nested;
 };
 
@@ -1120,6 +1202,10 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
     return ["TypeError", "RangeError"];
   }
   if (isUnresolved(node, context)) return ["ReferenceError"];
+  const created = ts.isNewExpression(node) ? getHeapClass(node.expression, context) : undefined;
+  if (created !== undefined && ts.isClassLike(created) && isNullBased(created)) {
+    return ["ReferenceError"];
+  }
   return isDefinition ||
     (isObjectChange(node) && isConstruct(node)) ||
     ts.isNewExpression(node) ||

@@ -52,6 +52,9 @@ import {
   getFunctionOfKind,
   isUnresolved,
   getBound,
+  getBaseClass,
+  getSuperCall,
+  isNullBased,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import {
@@ -753,6 +756,9 @@ export const translateCallStatement = (
   frame: Frame,
   continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
+  if (expression.expression.kind === ts.SyntaxKind.SuperKeyword) {
+    return translateSuperCall(expression, path, context, frame, continueWith);
+  }
   const loop = getLoopCall(expression, path, context);
   if (loop !== undefined) {
     return translateLoopCall(expression, loop, path, context, frame, continueWith);
@@ -2473,12 +2479,13 @@ const translateLoopCall = (
 const getConstructorRun = (node: ts.Expression, context: Context) => {
   const created = getNewClass(node, context);
   return created !== undefined && ts.isNewExpression(node) && isStatementNew(node)
-    ? getRunConstructor(created)
+    ? getRunConstructor(created, context)
     : undefined;
 };
 
 // A new of a heap class whose constructor runs statements, which runs them with the instance
-// that the statement allocated as this, and gives the instance.
+// that the statement allocated as this, and gives the instance, or the object the constructor
+// returns. A derived class's constructor throws a TypeError where it returns anything else.
 const translateConstruction = (
   expression: ts.NewExpression,
   constructor: ts.ConstructorDeclaration | HeapFunction,
@@ -2488,6 +2495,16 @@ const translateConstruction = (
   continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const instance = translateObjectValue(expression, path.scope, context);
+  const isNullBase = ts.isConstructorDeclaration(constructor) && isNullBased(constructor.parent);
+  const isDerived =
+    isNullBase ||
+    (ts.isConstructorDeclaration(constructor) &&
+      getBaseClass(constructor.parent, context) !== undefined);
+  // A class that extends null never gets a this, so its constructor must return an object.
+  const giveInstance = (after: Path) =>
+    isNullBase
+      ? throwError("ReferenceError", after, expression, context, frame)
+      : continueWith(after, instance);
   return inlineBody(
     expression,
     constructor,
@@ -2496,7 +2513,91 @@ const translateConstruction = (
     path,
     context,
     frame,
-    (after) => continueWith(after, instance),
+    (after, value) => {
+      if (value === undefined) return giveInstance(after);
+      const name = context.names.getFresh("returned");
+      const returned = identifier(name);
+      context.prelude.add("Null");
+      const type = useJavaScript("TypeOf", [returned], context);
+      return letIn(
+        [define(name, [], value)],
+        ifThenElse(
+          apply("=", [returned, getUndefined(context)]),
+          giveInstance(after),
+          ifThenElse(
+            apply("\\/", [
+              apply("/\\", [
+                apply("=", [type, string("object")]),
+                apply("#", [returned, identifier("Null")]),
+              ]),
+              apply("=", [type, string("function")]),
+            ]),
+            continueWith(after, returned),
+            isDerived
+              ? throwTypeError(after, expression, context, frame)
+              : continueWith(after, instance),
+          ),
+        ),
+      );
+    },
+  );
+};
+
+// The constructor that a class's super(...) runs: the nearest base that declares one.
+const getSuperConstructor = (
+  node: ts.ClassLikeDeclaration,
+  context: Context,
+): ts.ConstructorDeclaration | undefined => {
+  const base = getBaseClass(node, context);
+  return base === undefined
+    ? undefined
+    : (base.members.find(ts.isConstructorDeclaration) ?? getSuperConstructor(base, context));
+};
+
+// A derived constructor's super(...), which runs the base's constructor on the instance that the
+// new allocated, and gives it.
+const translateSuperCall = (
+  expression: ts.CallExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  const constructor = ts.findAncestor(expression, ts.isConstructorDeclaration);
+  const receiver = path.scope.receiver;
+  if (
+    constructor === undefined ||
+    receiver?.method !== constructor ||
+    getSuperCall(constructor) !== expression
+  ) {
+    throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
+  }
+  const called = getSuperConstructor(constructor.parent, context);
+  const isReturning =
+    called?.body !== undefined &&
+    findNodes(called.body, ts.isReturnStatement).some(
+      (statement) =>
+        statement.expression !== undefined &&
+        ts.findAncestor(statement.parent, ts.isFunctionLike) === called,
+    );
+  if (isReturning) {
+    throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
+  }
+  if (called === undefined || called.body === undefined) {
+    if (expression.arguments.length > 0) {
+      throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
+    }
+    return continueWith(path, receiver.value);
+  }
+  return inlineBody(
+    expression,
+    called,
+    expression.arguments,
+    { value: receiver.value, method: called },
+    path,
+    context,
+    frame,
+    (after) => continueWith({ ...after, scope: { ...after.scope, receiver } }, receiver.value),
   );
 };
 

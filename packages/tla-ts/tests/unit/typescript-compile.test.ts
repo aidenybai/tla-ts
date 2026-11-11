@@ -1317,6 +1317,135 @@ describe("errors", () => {
     ).toThrow("spec.ts:4:15 Unsupported expression: new.target");
   });
 
+  it("runs a derived class's constructor through super", async () => {
+    const result = await checkModel(`
+      const log = { text: "" };
+      class Base {
+        declare value: number;
+        constructor(value: number) {
+          log.text += "B";
+          this.value = value;
+        }
+        read() {
+          return this.value;
+        }
+      }
+      class Middle extends Base {}
+      class Derived extends Middle {
+        declare doubled: number;
+        constructor(value: number, extra: number) {
+          super(value + extra);
+          log.text += "D";
+          this.doubled = this.read() * 2;
+        }
+      }
+      const made = new Derived(1, 2);
+      if (made.value !== 3 || made.doubled !== 6 || log.text !== "BD") throw new Error("derived");
+      const middle = new Middle(5);
+      if (middle.value !== 5) throw new Error("implicit");
+      if (Object.getPrototypeOf(Derived.prototype) !== Middle.prototype) throw new Error("chain");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("looks up super properties from the base of the class a method is in", async () => {
+    const result = await checkModel(`
+      const box = { size: 1 };
+      class Base {
+        method() {
+          return 1;
+        }
+        get x() {
+          return 2;
+        }
+        static make() {
+          return 5;
+        }
+      }
+      class Derived extends Base {
+        method() {
+          return super.method() + super.x * 10;
+        }
+        static make() {
+          return super.make() + 1;
+        }
+      }
+      const made = new Derived();
+      if (made.method() !== 21 || Derived.make() !== 6) throw new Error("super");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("rejects a derived constructor that runs code before super", () => {
+    expect(() =>
+      compile(
+        "const box = { size: 1 };\nclass Base {}\nclass Derived extends Base {\n  constructor() {\n    box.size = 2;\n    super();\n  }\n}\nconst made = new Derived();",
+      ),
+    ).toThrow("Unsupported");
+  });
+
+  it("gives what a constructor returns where it returns an object", async () => {
+    const result = await checkModel(`
+      const box = { size: 1 };
+      class Replaced {
+        constructor() {
+          return box;
+        }
+      }
+      class Kept {
+        constructor() {
+          return 5;
+        }
+      }
+      class Base {}
+      class Derived extends Base {
+        constructor() {
+          super();
+          return true as unknown as Derived;
+        }
+      }
+      const replaced = new Replaced();
+      const kept = new Kept();
+      if (replaced !== box || !(kept instanceof Kept)) throw new Error("returned");
+      let isTypeError = false;
+      try {
+        const derived = new Derived();
+      } catch (error) {
+        isTypeError = error instanceof TypeError;
+      }
+      if (!isTypeError) throw new Error("derived");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("throws a ReferenceError where a class that extends null gives no object", async () => {
+    const result = await checkModel(`
+      const holder = { made: {} };
+      class Returning extends null {
+        constructor() {
+          const fresh = {};
+          holder.made = fresh;
+          return fresh as Returning;
+        }
+      }
+      class Empty extends null {
+        constructor() {}
+      }
+      const returned = new Returning();
+      if (returned !== holder.made || Object.getPrototypeOf(Empty.prototype) !== null) {
+        throw new Error("returned");
+      }
+      let isReferenceError = false;
+      try {
+        const empty = new Empty();
+      } catch (error) {
+        isReferenceError = error instanceof ReferenceError;
+      }
+      if (!isReferenceError) throw new Error("empty");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("rejects a class whose member names run code", () => {
     expect(() => compile(`let count = 0;\nclass Counter {\n  [count++]() {}\n}`)).toThrow(
       "spec.ts:3:4 Unsupported expression: count++",

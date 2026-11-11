@@ -18,7 +18,7 @@ import {
 import { TlaTypeScriptError } from "../errors";
 import { translateCondition, translateExpression, translateNegatedCondition } from "./expressions";
 import { type Formula, ifThenElse, letIn, render, leaf } from "./formula";
-import { translateFunctionValue, translateObjectValue } from "./heap";
+import { getSuperLookup, translateFunctionValue, translateObjectValue } from "./heap";
 import { mayBeNumber, useJavaScript } from "./javascript";
 import {
   type Bound,
@@ -155,7 +155,13 @@ export const getDefinition = (declaration: HelperDeclaration, context: Context):
 export const getReceiver = (scope: Scope, context: Context, called?: CalledMethod) =>
   called === undefined
     ? scope.receiver
-    : { value: translateObjectValue(called.receiver, scope, context), method: called.method };
+    : {
+        value:
+          called.receiver.kind === ts.SyntaxKind.SuperKeyword
+            ? getSuperLookup(called.receiver, scope, context).receiver
+            : translateObjectValue(called.receiver, scope, context),
+        method: called.method,
+      };
 
 // In a script with objects, a call evaluates its arguments before its body, though the body may
 // not read them, so that an argument tla-ts can't evaluate stops the check. The call reads the
@@ -357,6 +363,7 @@ export const translateFoundGetter = (
   key: Expression,
   scope: Scope,
   context: Context,
+  receiver?: Expression,
 ) => {
   const getters = getGetters(node, context).filter(
     (getter) => !context.inProgress.has(getter) && !(scope.isCatching && mayThrow(getter, context)),
@@ -371,7 +378,7 @@ export const translateFoundGetter = (
             context.inProgress.add(getter);
             const value = translateBody(
               getter.body,
-              { ...scope, receiver: { value: sharedObject, method: getter } },
+              { ...scope, receiver: { value: receiver ?? sharedObject, method: getter } },
               context,
             );
             context.inProgress.delete(getter);

@@ -383,6 +383,11 @@ export const getAssignedSetter = (node: ts.Node, context: Context) =>
     ? getObjectAccessor(node.left, ts.isSetAccessorDeclaration, context)
     : undefined;
 
+// A field that only types the instance, which JavaScript never defines.
+export const isAmbient = (node: ts.Node) =>
+  ts.canHaveModifiers(node) &&
+  (ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword);
+
 export const isStatic = (node: ts.Node) =>
   ts.canHaveModifiers(node) &&
   (ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword);
@@ -581,12 +586,131 @@ export const getBound = (node: ts.Expression, context: Context) => {
   return getBinding(skipCasts(value), context);
 };
 
+const hasExtends = (node: ts.ClassLikeDeclaration) =>
+  (node.heritageClauses ?? []).some((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword);
+
+// A class that extends null, whose constructor has no this to give and can't call super.
+export const isNullBased = (node: ts.ClassLikeDeclaration) =>
+  node.heritageClauses?.find((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword)?.types[0]
+    ?.expression.kind === ts.SyntaxKind.NullKeyword;
+
+// A class that extends null, whose constructor never reads this or super, or that nothing
+// constructs, as its constructor without a body throws. Its instance fields never initialize.
+const isNullSafe = (node: ts.ClassLikeDeclaration, context: Context) => {
+  const isFielded = node.members.some(
+    (member) => ts.isPropertyDeclaration(member) && !isStatic(member) && !isAmbient(member),
+  );
+  if (!isNullBased(node) || isFielded) return false;
+  const constructor = node.members.find(ts.isConstructorDeclaration);
+  if (constructor?.body !== undefined) {
+    return (
+      findNodes(
+        constructor,
+        (inner): inner is ts.Node =>
+          inner.kind === ts.SyntaxKind.ThisKeyword || inner.kind === ts.SyntaxKind.SuperKeyword,
+      ).length === 0
+    );
+  }
+  const declared = ts.isClassExpression(node) ? node.parent : node;
+  const name = ts.isVariableDeclaration(declared) ? declared.name : node.name;
+  const symbol = name === undefined ? undefined : getSymbol(name, context.checker);
+  return (
+    constructor === undefined &&
+    symbol !== undefined &&
+    findNodes(node.getSourceFile(), ts.isIdentifier).every(
+      (identifier) =>
+        identifier === name ||
+        getSymbol(identifier, context.checker) !== symbol ||
+        !(ts.isNewExpression(identifier.parent) && identifier.parent.expression === identifier),
+    )
+  );
+};
+
+// The class that a class extends, which the script defines before it.
+export const getBaseClass = (node: ts.ClassLikeDeclaration, context: Context) => {
+  const heritage = node.heritageClauses?.find(
+    (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
+  )?.types[0]?.expression;
+  const declaration =
+    heritage === undefined || !ts.isIdentifier(heritage)
+      ? undefined
+      : getSymbol(heritage, context.checker)?.valueDeclaration;
+  const found =
+    declaration !== undefined && ts.isVariableDeclaration(declaration)
+      ? declaration.initializer
+      : declaration;
+  return found !== undefined && ts.isClassLike(found) && found.end < node.getStart()
+    ? found
+    : undefined;
+};
+
+// Whether an expression that runs before a derived constructor's super(...) changes nothing and
+// can't read this, since tla-ts starts the classes' fields first.
+const isBeforeThis = (node: ts.Node) =>
+  findNodes(
+    node,
+    (inner): inner is ts.Node =>
+      ts.isCallExpression(inner) ||
+      ts.isNewExpression(inner) ||
+      ts.isPrefixUnaryExpression(inner) ||
+      ts.isPostfixUnaryExpression(inner) ||
+      ts.isDeleteExpression(inner) ||
+      (ts.isBinaryExpression(inner) &&
+        inner.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        inner.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+      inner.kind === ts.SyntaxKind.ThisKeyword ||
+      inner.kind === ts.SyntaxKind.SuperKeyword,
+  ).length === 0;
+
+// The super(...) that a derived class's constructor starts with, after parameters and before
+// arguments that change nothing and can't read this.
+export const getSuperCall = (constructor: ts.ConstructorDeclaration) => {
+  const first = constructor.body?.statements[0];
+  const call =
+    first !== undefined && ts.isExpressionStatement(first) && ts.isCallExpression(first.expression)
+      ? first.expression
+      : undefined;
+  return call !== undefined &&
+    call.expression.kind === ts.SyntaxKind.SuperKeyword &&
+    findNodes(
+      constructor.body ?? constructor,
+      (node): node is ts.CallExpression =>
+        ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.SuperKeyword,
+    ).length === 1 &&
+    constructor.parameters.every(isBeforeThis) &&
+    call.arguments.every(isBeforeThis)
+    ? call
+    : undefined;
+};
+
+// A derived class whose constructor starts with super(...), so its instance needs only the fields
+// of each class in order. A class that adds fields or private names to the instance needs bases
+// that run no constructor, since a base's constructor would see them before they exist.
+const isDerivedSafe = (
+  node: ts.ClassLikeDeclaration,
+  base: ts.ClassLikeDeclaration,
+  context: Context,
+) => {
+  const constructor = node.members.find(ts.isConstructorDeclaration);
+  const isAdding = node.members.some(
+    (member) =>
+      !isStatic(member) &&
+      ((ts.isPropertyDeclaration(member) && !isAmbient(member)) ||
+        (isPrivateMember(member) && !ts.isConstructorDeclaration(member))),
+  );
+  return (
+    (constructor === undefined ||
+      (constructor.body !== undefined && getSuperCall(constructor) !== undefined)) &&
+    (!isAdding || getRunConstructor(base, context) === undefined)
+  );
+};
+
 const heapClasses = new WeakMap<ts.ClassLikeDeclaration, boolean>();
 
 // A class that a script evaluates once into objects on the heap: a constructor object with the
 // static methods, and its prototype with the other methods. Its name never changes, so a new or
 // a method call can find the class it names.
-export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context) => {
+export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): boolean => {
   if (context.heap === undefined) return false;
   const known = heapClasses.get(node);
   if (known !== undefined) return known;
@@ -597,8 +721,11 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context) => 
     nameNode === undefined || !ts.isIdentifier(nameNode)
       ? undefined
       : getSymbol(nameNode, context.checker);
+  const base = getBaseClass(node, context);
   const isHeap =
-    node.heritageClauses === undefined &&
+    (base === undefined
+      ? !hasExtends(node) || isNullSafe(node, context)
+      : isHeapClass(base, context) && !isNullBased(base) && isDerivedSafe(node, base, context)) &&
     symbol !== undefined &&
     (ts.isClassDeclaration(node) || ts.isVariableDeclaration(declared)) &&
     isOnce(node) &&
@@ -842,16 +969,22 @@ export const getHeapClass = (node: ts.Expression, context: Context): HeapClass |
 export const getNewClass = (node: ts.Node, context: Context) =>
   ts.isNewExpression(node) ? getHeapClass(node.expression, context) : undefined;
 
-// A class's constructor, or a function, when its body runs statements.
-export const getRunConstructor = (node: HeapClass) =>
-  ts.isClassLike(node)
-    ? node.members.find(
-        (member): member is ts.ConstructorDeclaration =>
-          ts.isConstructorDeclaration(member) && (member.body?.statements.length ?? 0) > 0,
-      )
-    : (node.body?.statements.length ?? 0) > 0
-      ? node
-      : undefined;
+// A class's constructor, or a function, when its body runs statements. A derived class without
+// a constructor runs its base's.
+export const getRunConstructor = (
+  node: HeapClass,
+  context: Context,
+): ts.ConstructorDeclaration | HeapFunction | undefined => {
+  if (!ts.isClassLike(node)) return (node.body?.statements.length ?? 0) > 0 ? node : undefined;
+  const constructor = node.members.find(ts.isConstructorDeclaration);
+  const base = getBaseClass(node, context);
+  if (constructor === undefined) {
+    return base === undefined ? undefined : getRunConstructor(base, context);
+  }
+  return (constructor.body?.statements.length ?? 0) > 0 || isNullBased(node)
+    ? constructor
+    : undefined;
+};
 
 // Whether a new is all that a statement evaluates, besides the variable it initializes or
 // assigns, so the statement can run the constructor.
