@@ -415,6 +415,25 @@ const isWrittenBy = (target: ts.Node, symbol: ts.Symbol, context: Context): bool
   );
 };
 
+// The name of the variable that an object literal initializes, where the script evaluates it once
+// and never assigns the variable again, so the name gives the object.
+export const getLiteralName = (node: ts.ObjectLiteralExpression, context: Context) => {
+  const declaration = node.parent;
+  const symbol =
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer === node &&
+    ts.isIdentifier(declaration.name)
+      ? getSymbol(declaration.name, context.checker)
+      : undefined;
+  return ts.isVariableDeclaration(declaration) &&
+    ts.isIdentifier(declaration.name) &&
+    symbol !== undefined &&
+    isOnce(node) &&
+    !isAssigned(symbol, node.getSourceFile(), context)
+    ? declaration.name
+    : undefined;
+};
+
 // Whether a script assigns to a name anywhere.
 const isAssigned = (symbol: ts.Symbol, node: ts.Node, context: Context): boolean => {
   const target =

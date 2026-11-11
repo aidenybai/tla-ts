@@ -1956,6 +1956,28 @@ describe("errors", () => {
     expect(failed.failure?.message).toContain("not two");
   });
 
+  it("reads super from the prototype of an object literal's method", async () => {
+    const result = await check(
+      compile(
+        `let fromA = "";\nlet fromB = "";\nconst A = { fromA: "a", fromB: "a" };\nconst B = { fromB: "b" };\nObject.setPrototypeOf(B, A);\nconst obj = {\n  fromA: "c",\n  fromB: "c",\n  method() {\n    const read = () => super.fromA;\n    fromA = read();\n    fromB = super["fromB"];\n  },\n};\nObject.setPrototypeOf(obj, B);\nobj.method();\nif (fromA !== "a" || fromB !== "b") throw new Error("missed");`,
+      ),
+    );
+    expect(result.failure).toBeUndefined();
+    const failed = await check(
+      compile(
+        `const obj = {\n  method() {\n    return super.x;\n  },\n};\nObject.setPrototypeOf(obj, null);\nobj.method();`,
+      ),
+    );
+    expect(failed.failure?.message).toContain(
+      "tla-ts can't read super of an object without a prototype",
+    );
+    expect(() =>
+      compile(
+        `let obj = {\n  method() {\n    return super.x;\n  },\n};\nobj = { method: obj.method };\nobj.method();`,
+      ),
+    ).toThrow("Unsupported expression: super");
+  });
+
   it("runs the defaults that a call or a declaration certainly evaluates", async () => {
     const result = await check(
       compile(

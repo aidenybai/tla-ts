@@ -26,6 +26,7 @@ import {
   getBinding,
   getBaseClass,
   getBuiltInBase,
+  getLiteralName,
   isAmbient,
   isNullBased,
   getHeapClass,
@@ -370,18 +371,46 @@ export const getSuperLookup = (node: ts.Node, scope: Scope, context: Context) =>
   );
   const owner = method?.parent;
   const receiver = scope.receiver;
+  const literalName =
+    owner !== undefined &&
+    ts.isObjectLiteralExpression(owner) &&
+    method !== undefined &&
+    (ts.isMethodDeclaration(method) || ts.isAccessor(method)) &&
+    isObjectValue(owner, context)
+      ? getLiteralName(owner, context)
+      : undefined;
   if (
     method === undefined ||
     owner === undefined ||
-    !ts.isClassLike(owner) ||
-    !isHeapClass(owner, context) ||
+    (literalName === undefined &&
+      (!ts.isClassLike(owner) ||
+        !isHeapClass(owner, context) ||
+        (isNullBased(owner) && !isStatic(method)))) ||
     receiver === undefined ||
-    receiver.method !== method ||
-    (isNullBased(owner) && !isStatic(method))
+    receiver.method !== method
   ) {
     throw new TlaTypeScriptError("Unsupported expression: super", node);
   }
   const heap = getHeap(scope, node, context);
+  if (literalName !== undefined) {
+    const start = useJavaScript(
+      "Prototype",
+      [heap, translateExpression(literalName, scope, context)],
+      context,
+    );
+    return {
+      start: ifExpression(
+        apply("=", [start, identifier("Null")]),
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't read super of an object without a prototype"),
+        ]),
+        start,
+      ),
+      receiver: receiver.value,
+    };
+  }
+  if (!ts.isClassLike(owner)) throw new TlaTypeScriptError("Unsupported expression: super", node);
   const classRef = translateClassRef(owner, scope, context);
   const home = isStatic(method)
     ? classRef
