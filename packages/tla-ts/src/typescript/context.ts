@@ -832,19 +832,26 @@ export const isFunctionObject = (
   (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0 &&
   isDefault(node);
 
-// A function expression that another function makes as the value of an object's property each
-// time it runs, which is an object of its own each time. It reads no name that the functions around
-// it bind, so it runs the same wherever tla-ts inlines it.
-export const isNestedFunction = (node: ts.Node, context: Context): node is ts.FunctionExpression =>
+// A function expression or a method that another function makes as the value of an object's
+// property each time it runs, which is an object of its own each time. It reads no name that the
+// functions around it bind, so it runs the same wherever tla-ts inlines it.
+export const isNestedFunction = (
+  node: ts.Node,
+  context: Context,
+): node is ts.FunctionExpression | ts.MethodDeclaration =>
   context.heap !== undefined &&
-  ts.isFunctionExpression(node) &&
-  ts.isPropertyAssignment(node.parent) &&
-  node.parent.initializer === node &&
+  ((ts.isFunctionExpression(node) &&
+    ts.isPropertyAssignment(node.parent) &&
+    node.parent.initializer === node &&
+    !isFunctionObject(node, context) &&
+    getFunctionValue(node, context) === undefined) ||
+    (ts.isMethodDeclaration(node) &&
+      node.body !== undefined &&
+      ts.isObjectLiteralExpression(node.parent) &&
+      !isOnce(node.parent))) &&
   node.asteriskToken === undefined &&
   (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0 &&
   ts.findAncestor(node.parent, ts.isFunctionLike) !== undefined &&
-  !isFunctionObject(node, context) &&
-  getFunctionValue(node, context) === undefined &&
   findNodes(node, ts.isIdentifier).every((name) => {
     const declaration = getSymbol(name, context.checker)?.valueDeclaration;
     return (

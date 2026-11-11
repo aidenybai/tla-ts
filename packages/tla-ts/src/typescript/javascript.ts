@@ -401,6 +401,10 @@ ArrowObject(functionPrototype, name, length) ==
 FunctionObject(functionPrototype, code) ==
   [code |-> code] @@ [ClassObject(functionPrototype) EXCEPT !.isOpaque = TRUE]
 
+\\* A method that a function makes each time it runs, which can't construct.
+MethodObject(functionPrototype, code) ==
+  [FunctionObject(functionPrototype, code) EXCEPT !.isConstructor = FALSE]
+
 \\* The code that a value runs where a script calls it.
 CodeOf(heap, value) ==
   IF IsHeap(value) /\\ "code" \\in DOMAIN heap.objects[value[Ref]]

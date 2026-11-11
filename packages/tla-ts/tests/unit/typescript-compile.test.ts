@@ -2165,6 +2165,47 @@ describe("errors", () => {
     expect((await checkModel(getSource(0))).failure?.message).toContain("call");
   });
 
+  it("makes a method object each time a function's object literal runs", async () => {
+    const getSource = (second: number) => `
+      let closed = 0;
+      let steps = 0;
+      const iterable = {
+        [Symbol.iterator]() {
+          return {
+            next() {
+              steps += 1;
+              return { value: steps * 10, done: false };
+            },
+            return() {
+              closed += 1;
+              return { value: 0, done: true };
+            },
+          };
+        },
+      };
+      const [first, second] = iterable;
+      if (first !== 10 || second !== ${second} || closed !== 1) throw new Error("pattern");
+      const make = () => ({
+        run() {
+          return 1;
+        },
+      });
+      const made = make();
+      const other = make();
+      if (made.run === other.run || typeof made.run !== "function") throw new Error("fresh");
+      let caught = false;
+      try {
+        // @ts-ignore
+        new made.run();
+      } catch (error) {
+        caught = error instanceof TypeError;
+      }
+      if (!caught) throw new Error("construct");
+    `;
+    expect((await checkModel(getSource(20))).failure).toBeUndefined();
+    expect((await checkModel(getSource(30))).failure?.message).toContain("pattern");
+  });
+
   it("rejects an array pattern whose value's type doesn't tell an array from an object", () => {
     expect(() =>
       compile(`

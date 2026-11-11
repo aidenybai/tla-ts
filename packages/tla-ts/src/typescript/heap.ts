@@ -316,6 +316,17 @@ export const translateObject = (
         context,
       );
     }
+    if (isNestedFunction(property, context)) {
+      const allocated = scope.allocated.get(property);
+      if (allocated === undefined) {
+        throw new TlaTypeScriptError("Make objects only where a statement always runs", property);
+      }
+      return useJavaScript(
+        "Put",
+        [object, translateMemberKey(property.name, scope, context), allocated],
+        context,
+      );
+    }
     const method = getObjectMethod(property, context);
     if (method !== undefined) {
       return useJavaScript(
@@ -766,15 +777,16 @@ export const translateHasPrivate = (
 export const translateAllocated = (node: ts.Node, scope: Scope, context: Context) => {
   const heap = getHeap(scope, node, context);
   if (isNestedFunction(node, context)) {
+    const isMethod = ts.isMethodDeclaration(node);
     return useJavaScript(
       "Allocate",
       [
         heap,
         useJavaScript(
-          "FunctionObject",
+          isMethod ? "MethodObject" : "FunctionObject",
           [
             translateBuiltInValue("Function.prototype", node, context),
-            translateFunctionValue(node, context),
+            isMethod ? getMethodValue(node, context) : translateFunctionValue(node, context),
           ],
           context,
         ),
