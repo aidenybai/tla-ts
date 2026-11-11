@@ -6616,6 +6616,25 @@ describe("buffers", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("assigns a typed array of an iterator's values or an array-like object's elements", async () => {
+    const result = await checkModel(`
+      function openNone(this: unknown) {
+        return { next: stepNone };
+      }
+      function stepNone(this: unknown) {
+        return { value: 7, done: true };
+      }
+      const like: unknown = { length: 2, 0: 3, 1: 4 };
+      let sample = new Int8Array(1);
+      sample = new Int8Array(like as never);
+      if (sample.length !== 2 || sample[1] !== 4) throw new Error("assigned");
+      const empty: unknown = { [Symbol.iterator]: openNone };
+      sample = new Int8Array(empty as never);
+      if (sample.length !== 0) throw new Error("empty");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops at a number a typed array's float can't hold exactly", async () => {
     const result = await checkModel(`
       const floats = new Float32Array(1);

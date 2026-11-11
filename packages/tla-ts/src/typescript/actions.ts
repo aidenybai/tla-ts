@@ -7025,6 +7025,27 @@ export const translateStatements = (
       ),
     );
   }
+  const assignment =
+    ts.isExpressionStatement(statement) &&
+    ts.isBinaryExpression(statement.expression) &&
+    statement.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isIdentifier(statement.expression.left)
+      ? statement.expression
+      : undefined;
+  const assigned = assignment && skipCasts(assignment.right);
+  if (
+    assignment !== undefined &&
+    assigned !== undefined &&
+    isIteratedTypedArray(assigned, context)
+  ) {
+    return translateIteratedTypedArray(assigned, path, context, frame, (after, value) =>
+      shareHeap(
+        assign(assignment.left, after, context, () => value),
+        context,
+        continueWith,
+      ),
+    );
+  }
   if (ts.isExpressionStatement(statement)) {
     return allocate(statement.expression, path, context, (inner) =>
       translateExpressionStatement(statement.expression, inner, context, frame, (after) =>
