@@ -9,12 +9,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/spinner";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Link } from "@/lib/navigation";
 import { getRouteHref } from "@/lib/route";
 import { getFileTitle } from "@/lib/source";
 import { cn } from "@/lib/utils";
-import { isViewMode } from "@/lib/view-mode";
 import { useViewerStore } from "@/store/viewer";
 import { useViewer } from "./context";
 
@@ -46,14 +44,12 @@ const Run = () => {
 };
 
 const Arrows = () => {
-  const { mode } = useViewer();
   const isShowingAllArcs = useViewerStore((state) => state.isShowingAllArcs);
   const setShowingAllArcs = useViewerStore((state) => state.setShowingAllArcs);
   return (
     <button
       type="button"
       aria-pressed={isShowingAllArcs}
-      disabled={mode !== "code"}
       onClick={() => setShowingAllArcs(!isShowingAllArcs)}
       className={cn(
         buttonVariants({ variant: "ghost" }),
@@ -66,24 +62,8 @@ const Arrows = () => {
   );
 };
 
-const Modes = () => {
-  const { mode, setMode } = useViewer();
-  return (
-    <Tabs
-      value={mode}
-      onValueChange={(value) => isViewMode(value) && setMode(value)}
-      className="max-sm:w-full sm:ml-1"
-    >
-      <TabsList aria-label="View" className="max-sm:w-full">
-        <TabsTrigger value="code">Code</TabsTrigger>
-        <TabsTrigger value="json">JSON</TabsTrigger>
-      </TabsList>
-    </Tabs>
-  );
-};
-
 const FileMenu = () => {
-  const { examples, name, mode, view } = useViewer();
+  const { examples, name, view } = useViewer();
   return (
     <div className="flex h-8 min-w-0 flex-1 items-center">
       <DropdownMenu>
@@ -97,7 +77,7 @@ const FileMenu = () => {
           {examples.map((example) => (
             <DropdownMenuLinkItem
               key={example.name}
-              render={<Link href={getRouteHref(example.name, mode)} />}
+              render={<Link href={getRouteHref(example.name)} />}
               aria-current={example.name === name ? "page" : undefined}
               className="font-mono"
             >
@@ -133,4 +113,4 @@ const Brand = () => (
   </div>
 );
 
-export const Toolbar = Object.assign(Root, { Brand, FileMenu, Run, Arrows, Modes });
+export const Toolbar = Object.assign(Root, { Brand, FileMenu, Run, Arrows });
