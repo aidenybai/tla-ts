@@ -2630,6 +2630,15 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("reads and writes an object that a Record type holds", async () => {
+    const result = await checkModel(`
+      const counts: Record<string, number> = { a: 1 };
+      counts.b = counts.a + 4;
+      if (counts.b !== 5 || counts.c !== undefined) throw new Error("counts");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`
