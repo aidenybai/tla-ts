@@ -21,11 +21,11 @@ import {
   TlaStackOverflowError,
   UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
+  formatRange,
 } from "./errors";
 import {
   createTracingEnvironment,
   describeRange,
-  formatRange,
   getDefinition,
   isImpure,
   type CallStack,
@@ -130,30 +130,30 @@ export interface CheckOptions {
   makeDirectory?: (path: string) => void;
   seed?: bigint;
   workers?: number;
-  // TLC's -lncheck: "final" checks liveness only on the complete graph, "off" never looks for a cycle.
+  /** TLC's -lncheck: "final" checks liveness only on the complete graph, "off" never looks for a cycle. */
   livenessCheck?: "default" | "final" | "off";
-  // TLC's -fp: the index of the polynomial in TLC's FP64.Polys that fingerprints states.
+  /** TLC's -fp: the index of the polynomial in TLC's FP64.Polys that fingerprints states. */
   fingerprintPolynomial?: number;
-  // False for TLC's -terse, which prints a lazy value, such as SUBSET S, without enumerating it.
+  /** False for TLC's -terse, which prints a lazy value, such as SUBSET S, without enumerating it. */
   isLazyValueExpanded?: boolean;
-  // TLC's -view: prints each state as the value of the configuration's VIEW.
+  /** TLC's -view: prints each state as the value of the configuration's VIEW. */
   isViewPrinted?: boolean;
-  // TLC's -maxSetSize: the most elements TLC enumerates into a set, or states into a list of them.
+  /** TLC's -maxSetSize: the most elements TLC enumerates into a set, or states into a list of them. */
   maxSetSize?: number;
-  // TLC's -dump: writes the reachable states, or with `dot` the state graph, through writeFile.
+  /** TLC's -dump: writes the reachable states, or with `dot` the state graph, through writeFile. */
   dump?: StateDump;
-  // TLC's -tool, which changes the messages of TLC's errors.
+  /** TLC's -tool, which changes the messages of TLC's errors. */
   isTool?: boolean;
-  // TLC's -continue: reports each violation through onProgress and goes on.
+  /** TLC's -continue: reports each violation through onProgress and goes on. */
   isContinued?: boolean;
   moduleOperators?: ModuleOperator[];
-  // TLC's trace exploration spec, and the binary trace TLC records for it unless -noTEBin.
+  /** TLC's trace exploration spec, and the binary trace TLC records for it unless -noTEBin. */
   traceSpec?: TraceSpecOptions;
-  // Whether the caller printed SANY's report, its warnings included, before the check.
+  /** Whether the caller printed SANY's report, its warnings included, before the check. */
   isSanyReported?: boolean;
-  // False for TLC's -nowarning, which changes how TLC computes some successors.
+  /** False for TLC's -nowarning, which changes how TLC computes some successors. */
   isWarningEnabled?: boolean;
-  // TLC's -coverage, in minutes.
+  /** TLC's -coverage, in minutes. */
   coverage?: number;
   version?: TlcVersion;
   onProgress?: (progress: CheckProgress) => void;
@@ -176,7 +176,6 @@ export interface InitialStatesProgress {
   count: number;
 }
 
-// A check TLC reports as violated before it stops replaying the initial states.
 export interface InitialStateViolation {
   kind: "initial-state-violation";
   status: "invariant-violation" | "liveness-violation";
@@ -184,7 +183,6 @@ export interface InitialStateViolation {
   state: Record<string, Value>;
 }
 
-// A line the spec prints, or what TLC reports as it replays the initial states.
 export type OutputLine = string | InitialStatesProgress | InitialStateViolation;
 
 export type CheckProgress =
@@ -200,17 +198,16 @@ export type CheckProgress =
   | {
       kind: "liveness-started";
       branches: number;
-      // Whether TLC checks the complete state graph, and how many states of it each branch has.
+      /** Whether TLC checks the complete state graph. */
       isComplete: boolean;
+      /** How many states of the graph each branch has. */
       states: number;
       statistics: SearchStatistics;
     }
   | { kind: "liveness-finished" }
   | { kind: "sequential-fallback"; string: string }
   | { kind: "warning"; code: number; text: string }
-  // A violation that the search goes on past with -continue.
   | { kind: "violation"; status: CheckStatus; violation: Violation }
-  // A method of the class named after a module, which TLC reports as it loads the class.
   | ({ kind: "java-override" } & JavaOverride);
 
 export interface SearchStatistics extends Pick<
@@ -230,30 +227,30 @@ export type CheckStatus =
 
 export interface TraceStep {
   action: string | undefined;
-  // TLC's name, parameters and location for the action that took this step.
+  /** TLC's name, parameters and location for the action that took this step. */
   label: string | undefined;
   state: Record<string, Value>;
-  // What the spec prints before this step as TLC rebuilds the trace, and before it for the first.
+  /** What the spec prints before this step as TLC rebuilds the trace, and before it for the first. */
   output?: OutputLine[];
 }
 
 export interface Violation {
   name: string;
-  // Every temporal property that a liveness counterexample violates, in the configuration's order.
+  /** Every temporal property that a liveness counterexample violates, in the configuration's order. */
   properties?: string[];
   trace: TraceStep[];
-  // What the spec prints after the trace, as TLC finds the lasso's step back or rebuilds the trace.
+  /** What the spec prints after the trace, as TLC finds the lasso's step back or rebuilds the trace. */
   traceOutput?: OutputLine[];
-  // What the postconditions print, which TLC checks after the lasso's step back.
+  /** What the postconditions print, which TLC checks after the lasso's step back. */
   postconditionOutput?: OutputLine[];
   loopStart: number | undefined;
   loopLabel?: string;
   message?: string;
   counts?: string;
   unwitnessed?: Postcondition;
-  // A POSTCONDITION that is false or fails, which TLC checks as it prints the counterexample.
+  /** A POSTCONDITION that is false or fails, which TLC checks as it prints the counterexample. */
   postcondition?: Postcondition;
-  // What TLC warns about after a counterexample, with its code.
+  /** What TLC warns about after a counterexample, with its code. */
   warning?: { code: number; text: string };
 }
 
@@ -264,7 +261,7 @@ export interface Postcondition {
   counts?: string;
 }
 
-// An evaluation that failed during the search, with the behavior up to the state TLC was working on.
+/** An evaluation that failed during the search, with the behavior up to the state TLC was working on. */
 export interface EvaluationFailure {
   code: number;
   message: string;
@@ -273,17 +270,17 @@ export interface EvaluationFailure {
   traceOutput?: OutputLine[];
   initialState: Record<string, Value> | undefined;
   exitCode: number;
-  // The expressions TLC was evaluating, outermost first, when its replay finds them.
+  /** The expressions TLC was evaluating, outermost first, when its replay finds them. */
   callStack: Expression[] | undefined;
-  // Whether TLC prints the call stack before the error, as it does for a failed liveness check.
+  /** Whether TLC prints the call stack before the error, as it does for a failed liveness check. */
   isCallStackFirst?: boolean;
-  // The FingerprintException the replay raises, which TLC reports in place of the call stack.
+  /** The FingerprintException the replay raises, which TLC reports in place of the call stack. */
   fingerprint?: FingerprintFailure;
-  // How TLC reports failing again as it prints the trace, since it can't fingerprint the state.
+  /** How TLC reports failing again as it prints the trace, since it can't fingerprint the state. */
   traceFailure?: FailureMessage;
-  // A POSTCONDITION that is false or fails after the trace, which TLC checks as it prints one.
+  /** A POSTCONDITION that is false or fails after the trace, which TLC checks as it prints one. */
   postcondition?: Postcondition;
-  // Whether TLC stops before it prints the statistics, as it does for an illegal initial state.
+  /** Whether TLC stops before it prints the statistics, as it does for an illegal initial state. */
   isWithoutStatistics?: boolean;
 }
 
@@ -306,17 +303,17 @@ export interface CheckResult {
   distinctStates: number;
   queuedStates: number;
   depth: number;
-  // Once TLC computed all the initial states without a violation or an error.
+  /** Once TLC computed all the initial states without a violation or an error. */
   initialStates: InitialStates | undefined;
-  // How many expanded states found each number of new states, when TLC prints the outdegree.
+  /** How many expanded states found each number of new states, when TLC prints the outdegree. */
   outDegrees: number[] | undefined;
-  // The smallest distance between two fingerprints, when TLC estimates a collision from them.
+  /** The smallest distance between two fingerprints, when TLC estimates a collision from them. */
   fingerprintDistance: bigint | undefined;
-  // A temporal property TLC finds violated as it adds a deadlocked state, reported after.
+  /** A temporal property TLC finds violated as it adds a deadlocked state, reported after. */
   additionalViolation?: Violation;
-  // Where TLC's worker fails to add the state to the behavior graph after it reports a violation.
+  /** Where TLC's worker fails to add the state to the behavior graph after it reports a violation. */
   liveCallStack?: Expression[];
-  // The outdegrees when TLC's workers stop on a violation that TLC 1.7.4 reports as a success.
+  /** The outdegrees when TLC's workers stop on a violation that TLC 1.7.4 reports as a success. */
   violationOutDegrees?: number[];
   traceSpec?: string;
   coverage?: CoverageReport;
@@ -336,6 +333,24 @@ interface TraceOptions {
   known?: number;
 }
 
+interface ReportedViolation extends Omit<Violation, "loopStart"> {
+  loopStart?: number;
+}
+
+interface RebuiltState {
+  state: Value[];
+  level: number;
+}
+
+interface SearchPosition {
+  index: number;
+  isExpanding: boolean;
+  candidate: Value[] | undefined;
+  candidateLevel: number;
+  livenessSource: number;
+  rebuilt: RebuiltState | undefined;
+}
+
 interface FailureOptions {
   initialState?: Value[];
   isInitial?: boolean;
@@ -346,7 +361,6 @@ interface FailureOptions {
   isNextState?: boolean;
   isCallStackFirst?: boolean;
   traceFailure?: FailureMessage;
-  // Whether TLC prints the call stack of adding the state to the behavior graph, not a replay.
   isLiveCallStack?: boolean;
 }
 
@@ -358,11 +372,9 @@ const appendTraceOutput = <Traced extends Behavior>(behavior: Traced, lines: Out
 const INITIAL_RECOVERY_FAILURE = "Failed to recover the initial state from its fingerprint.";
 const NEXT_RECOVERY_FAILURE = "Failed to recover the next state from its fingerprint.";
 
-// Stops a replay where TLC stops it without a failure, as at a violated invariant.
 const STOP_REPLAY = new Error("The replay stopped");
 const STOP_WALK = new Error("The walk stopped");
 
-// When TLC's replay of the initial states doesn't fail again, it exits with the error's code.
 const getInitialExitCode = (error: TlaEvaluationError) => {
   const coded = getCodedMessage(error.message);
   return coded &&
@@ -372,15 +384,12 @@ const getInitialExitCode = (error: TlaEvaluationError) => {
     : getErrorExitCode(error);
 };
 
-// When the replay fails again, a standard module's EvalException decides the exit status, and
-// any other failure exits as a nested expression failure. A heading or wrapping error defers.
 const getReplayExitCode = (error: TlaEvaluationError): number => {
   const inner = error.cause;
   if (inner instanceof TlaEvaluationError) return getReplayExitCode(inner);
   return error instanceof TlaModuleError ? error.exitCode : EXIT_STATUS.specEvaluationFailure;
 };
 
-// TLC finishes the -dump file whether or not the search finds a violation.
 export const checkSequentially = (options: CheckOptions): CheckResult => {
   const stateWriter =
     options.dump && createStateWriter(options.dump, options.writeFile, options.version);
@@ -393,8 +402,6 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   }
 };
 
-// TLC checks liveness on the graph so far after 3 seconds and then every minute, once the graph
-// has grown by a tenth and liveness checking has taken at most a fifth of the time.
 const PERIODIC_START = 3000;
 const PROGRESS_INTERVAL = 60_000;
 const LIVENESS_GROWTH = 0.1;
@@ -406,20 +413,19 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       ? parseConfig(options.config, options.version)
       : options.config;
   const onPrint = options.onPrint ?? console.log;
-  // TLC prints again while it rebuilds a trace, so rebuilding keeps what it prints for the trace.
-  const capturedOutput = { lines: undefined as OutputLine[] | undefined };
+  let capturedLines: OutputLine[] | undefined;
   const print = (text: string) => {
-    if (capturedOutput.lines) capturedOutput.lines.push(text);
+    if (capturedLines) capturedLines.push(text);
     else onPrint(text);
   };
   const captureOutput = <Result>(rebuild: () => Result) => {
-    const outer = capturedOutput.lines;
+    const outer = capturedLines;
     const lines: OutputLine[] = [];
-    capturedOutput.lines = lines;
+    capturedLines = lines;
     try {
       return { result: rebuild(), lines };
     } finally {
-      capturedOutput.lines = outer;
+      capturedLines = outer;
     }
   };
   const order = createTlcOrder(options.source, options.loadModule);
@@ -469,7 +475,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       specification.variableLocations,
       specification.instanceActions,
     );
-  const statistics = { depth: 0, initialStates: undefined as InitialStates | undefined };
+  let searchDepth = 0;
+  let computedInitialStates: InitialStates | undefined;
   const getTraceSpec = (trace: TraceStep[], loopStart: number | undefined) =>
     options.traceSpec &&
     writeTraceSpec({
@@ -488,10 +495,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     });
   const createResult = (
     status: CheckStatus,
-    violation?: Omit<Violation, "loopStart"> & { loopStart?: number },
+    violation?: ReportedViolation,
     failure?: EvaluationFailure,
   ): CheckResult => {
-    // TLC writes the trace it printed, and a safety property's counterexample doesn't loop back.
     const traceSpec = getTraceSpec(
       violation?.trace ?? failure?.trace ?? [],
       status === "property-violation" ? undefined : violation?.loopStart,
@@ -503,8 +509,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       generatedStates: runtime.generatedStates,
       distinctStates: runtime.distinctStates,
       queuedStates: runtime.queueSize,
-      depth: runtime.generatedStates === 0 ? 0 : Math.max(statistics.depth, 1),
-      initialStates: statistics.initialStates,
+      depth: runtime.generatedStates === 0 ? 0 : Math.max(searchDepth, 1),
+      initialStates: computedInitialStates,
       outDegrees: undefined,
       fingerprintDistance: undefined,
       coverage: coverage?.relations.some((relation) => relation.kind === "next")
@@ -519,16 +525,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     };
   };
   const outDegrees = Array.from({ length: OUT_DEGREE_BUCKETS }, () => 0);
-  const expansion = { newStates: 0 };
-  const getOutDegreeBucket = () => Math.min(expansion.newStates, OUT_DEGREE_BUCKETS - 1);
-  // TLC counts the state it was expanding when an evaluation failed, except TLC 1.7.4.
+  let newStateCount = 0;
+  const getOutDegreeBucket = () => Math.min(newStateCount, OUT_DEGREE_BUCKETS - 1);
   const getPartialOutDegrees = () =>
     outDegrees.map((count, degree) => (degree === getOutDegreeBucket() ? count + 1 : count));
   const getFailureOutDegrees = () => (is174 ? [...outDegrees] : getPartialOutDegrees());
-  // TLC 1.7.4 doesn't name the properties a counterexample violates, so it evaluates none of them.
   const getViolatedProperties = (checker: LivenessChecker, path: Value[][], cycleStart: number) =>
     is174 ? [] : checker.getViolatedProperties(path, cycleStart);
-  // A violation in a successor ends the expansion of a state before TLC counts it.
   const withOutDegrees = (result: CheckResult, degrees = [...outDegrees]): CheckResult => ({
     ...result,
     violationOutDegrees: degrees,
@@ -560,12 +563,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     runtime.isStarted = true;
     const assumptionViolation = findViolatedAssumption();
     if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
-    // TLC computes the initial states of a spec without variables, of which there are none.
-    statistics.initialStates = { generated: 0, distinct: 0 };
+    computedInitialStates = { generated: 0, distinct: 0 };
     options.onProgress?.({ kind: "initial-states-started" });
     options.onProgress?.({
       kind: "initial-states-computed",
-      initialStates: statistics.initialStates,
+      initialStates: computedInitialStates,
     });
     return createSuccess();
   }
@@ -573,7 +575,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     config.postconditions.length > 0 ||
     config.possible.length > 0 ||
     specification.moduleOperators.some((operator) => operator.kind === "postcondition");
-  // The state of each step without the alias, and its action, which CounterExample records.
   const traceSteps = new WeakMap<
     TraceStep,
     { state: Record<string, Value>; action: SpecAction | undefined }
@@ -583,7 +584,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const action = traceSteps.get(step)?.action;
     return action ? toActionValue(action) : createActionRecord(step.action);
   };
-  // TLC checks the postconditions on each trace it prints, so what they print follows the trace.
   const checkTracePostconditions = (
     trace: TraceStep[],
     loop: { start: number; action: Value } | undefined,
@@ -603,7 +603,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   };
   const reportViolation = (
     status: CheckStatus,
-    violation: Omit<Violation, "loopStart"> & { loopStart?: number },
+    violation: ReportedViolation,
     getLoopAction?: () => Value,
   ) => {
     const start = violation.loopStart;
@@ -618,15 +618,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       ...(checked.postcondition && { postcondition: checked.postcondition }),
     });
   };
-  // With -continue, TLC prints the trace of a violation without checking the postconditions. It
-  // never records the violation, and reports a success at the end, where tla-ts ends with the
-  // status of the first violation, as -dfid and -simulate do.
-  const continued = { status: undefined as CheckStatus | undefined };
+  // Deviation from TLC: -continue ends with the status of the first violation, not a success.
+  let continuedStatus: CheckStatus | undefined;
   const reportContinuedViolation = (
     status: CheckStatus,
     violation: Omit<Violation, "loopStart">,
   ) => {
-    continued.status ??= status;
+    continuedStatus ??= status;
     options.onProgress?.({
       kind: "violation",
       status,
@@ -635,9 +633,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   };
   const spec = search.spec;
   const getFingerprintState = search.getFingerprintState;
-  const specNextActions = { value: undefined as SpecAction[] | undefined };
+  let specNextActions: SpecAction[] | undefined;
   const getSpecNextActions = () =>
-    (specNextActions.value ??= getNextActions(config, environment, specification.instanceActions));
+    (specNextActions ??= getNextActions(config, environment, specification.instanceActions));
   // Tool's constructor splits the next-state relation into actions before TLC checks anything.
   getSpecNextActions();
   runtime.getSuccessorAction = (state, next) =>
@@ -680,7 +678,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         onState(successor);
       },
       (partial) => {
-        const missing = environment.variables.filter((_, index) => partial[index] === undefined);
+        const missing = environment.variables.filter(
+          (_variable, index) => partial[index] === undefined,
+        );
         throw new TlaIncompleteSuccessorError(
           `Successor state is not completely specified by action ${action.name}. The following variables are not assigned: ${missing.join(", ")}`,
           partial,
@@ -715,7 +715,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       replay(tracing);
       return undefined;
     } catch (error) {
-      // A replay that overflows the stack again has an empty call stack.
       if (isStackOverflow(error)) return { callStack: [], fingerprint: undefined };
       if (!(error instanceof TlaEvaluationError) || !callStack) return undefined;
       return {
@@ -725,7 +724,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       };
     }
   };
-  // Outermost first: each value fails as it fingerprints a value it holds.
   const findFailedSources = (value: Value, sources: CallStack["sources"]): Expression[] => {
     if (typeof value !== "object") return [];
     const source = sources.get(value);
@@ -735,13 +733,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       ...(failed === undefined ? [] : findFailedSources(failed, sources)),
     ];
   };
-  // A value the replay built raises a FingerprintException when TLC fails to fingerprint it.
   const fingerprintReplayed = (state: Value[], callStack: CallStack | undefined) => {
     for (const value of getFingerprintState(state)) {
       const error = getFingerprintError(value);
       if (!error) continue;
       const sources = callStack ? findFailedSources(value, callStack.sources) : [];
-      // TLC fingerprints a state outside any evaluation, so its call stack is empty.
       if (callStack && sources.length > 0) {
         callStack.expressions.length = 0;
         callStack.isFrozen = true;
@@ -751,9 +747,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     }
     state.forEach(markFingerprinted);
   };
-  // TLC's set of states already holds the state that failed.
   const createReplayedStates = () => {
-    const replayed = unstoredState.fingerprint ? [unstoredState.fingerprint] : [];
+    const replayed = unstoredFingerprint ? [unstoredFingerprint] : [];
     return (state: Value[], callStack: CallStack | undefined) => {
       fingerprintReplayed(state, callStack);
       const fingerprintState = getFingerprintState(state);
@@ -766,10 +761,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       return true;
     };
   };
-  // TLC reports its progress again as it replays the initial states. After a FingerprintException
-  // or a StackOverflowError, it only counts the states left, then throws the error.
   const replayInit = () => {
-    const replayed = { count: 0 };
+    let replayedCount = 0;
     const deferred: unknown[] = [];
     const addReplayed = createReplayedStates();
     return getReplayFailure((tracing) => {
@@ -777,11 +770,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         getInitActions(config, environment, specification.instanceActions),
         tracing,
         (state) => {
-          reportInitialStatesProgress(replayed.count, (progress) =>
-            capturedOutput.lines?.push(progress),
-          );
-          replayed.count++;
-          runtime.generatedStates = replayed.count;
+          reportInitialStatesProgress(replayedCount, (progress) => capturedLines?.push(progress));
+          replayedCount++;
+          runtime.generatedStates = replayedCount;
           if (deferred.length > 0) return;
           try {
             const addFingerprint = () => {
@@ -792,7 +783,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
             const violation = search.checkReplayedInitialState(state, tracing, addFingerprint);
             if (violation) {
               const traced = toTrace([{ action: undefined, state }], []).trace[0].state;
-              capturedOutput.lines?.push({
+              capturedLines?.push({
                 kind: "initial-state-violation",
                 ...violation,
                 state: traced,
@@ -810,7 +801,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       if (deferred.length > 0) throw deferred[0];
     });
   };
-  // TLC's replay writes each successor in the model to the -dump state graph again.
   const replayNext = (index: number) =>
     getReplayFailure((tracing) => {
       const state = states[index];
@@ -836,7 +826,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     });
   const isReducing = config.view !== undefined || config.symmetry !== undefined;
   const tlcFingerprints: number[] = [];
-  // TLC warns about the liveness checker before it builds it.
   if (search.properties.liveness.length > 0) {
     options.onProgress?.({
       kind: "liveness-initializing",
@@ -847,12 +836,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const liveness = withLivenessExitCode(() =>
     withUnexpectedException(() =>
       createLivenessChecker(search.properties.liveness, spec.temporals, environment, {
-        getFingerprint: ({ index, state }) =>
-          (tlcFingerprints[index] ??= Number(BigInt.asIntN(32, runtime.getFingerprint(state)))),
+        getFingerprint: (successor) =>
+          (tlcFingerprints[successor.index] ??= Number(
+            BigInt.asIntN(32, runtime.getFingerprint(successor.state)),
+          )),
         getSuccessors: (source, state) => {
           const successors: LiveSuccessor[] = [];
           if (spec.next === undefined) return successors;
-          // The constraints read the level of the state whose successors they check.
           const livenessSource = current.livenessSource;
           current.livenessSource = source;
           try {
@@ -881,9 +871,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       }),
     ),
   );
-  // ModelChecker rejects a temporal property whose negation has no solution.
   if (liveness?.branches === 0) throw createTautologyError();
-  // TLC 1.7.4 creates its model checker, which TLCGet reads, once it has built the liveness checker.
   runtime.isStarted = true;
   const isCanonicalizedFirst = search.isSymmetric || liveness !== undefined;
 
@@ -903,8 +891,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     position: number,
     loopStart: number | undefined,
   ) => {
-    // TLC evaluates TLCGet("level") and Trace in an alias at the state's position in the trace. The
-    // search reads them again once the alias is evaluated, as it goes on with -continue.
     const searchLevel = runtime.getLevel;
     const searchBehavior = runtime.getBehavior;
     runtime.getLevel = () => position + 1;
@@ -922,8 +908,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   };
   const evaluateAlias = (alias: string, state: Value[], next: Value[] | undefined) =>
     search.evaluateAlias(alias, state, next, options.isTool ?? false);
-  // TLC finds the action of a step as the first that takes it, evaluated as when the search
-  // expanded the previous state, by a held successor's values and otherwise by fingerprint.
   const findStepAction = (index: number, previous: Value[], state: Value[], isHeld: boolean) => {
     const actions = getSpecNextActions();
     const expanding = { ...current };
@@ -951,9 +935,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       Object.assign(current, expanding);
     }
   };
-  // TLC rebuilds the states it doesn't keep, all but the last `known`, from the initial predicate,
-  // finds the action of each later step, and then rebuilds the trace once more, unless it is a
-  // liveness counterexample or TLC is 1.7.4.
   const toTrace = (
     steps: Successor[],
     path: number[],
@@ -961,9 +942,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   ): Behavior => {
     const alias = config.alias;
     const known = traceOptions.known ?? 1;
-    // Rebuilding the trace from the initial predicate can reset what TLCSet stored.
     const initialOutput = steps.length > 1 ? captureOutput(getSpecInitialStates).lines : [];
-    // TLC finds the action that takes each step before it evaluates the alias.
     const stepActions = steps.map((step, position) =>
       position === 0 || step.action === "Stuttering"
         ? { result: undefined, lines: [] }
@@ -978,9 +957,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     );
     const outputs = stepActions.map((step) => step.lines);
     const loopStart = traceOptions.loopStart;
-    // TLC 1.7.4 rebuilds a lasso up to its cycle at once, then each cycle state as it prints it.
     const rebuilt = is174 && loopStart !== undefined ? loopStart + 1 : steps.length - known;
-    // What the trace prints once comes from each time TLC rebuilds it, which coverage counts.
     if (coverage && steps.length > 1) {
       const isRebuiltAgain = known > 0 && !is174;
       if (rebuilt > 0 && isRebuiltAgain) captureOutput(getSpecInitialStates);
@@ -1023,8 +1000,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     if (coverage) return getCoveredInitialStates();
     return spec.init === undefined ? [] : getInitialStates(spec.init, environment, spec.scope);
   };
-  // TLC rebuilds a successor action by action, up to the first that generates it. A trace keeps
-  // what the spec prints as TLC rebuilds it, so finding its states prints nothing.
   const findTraceSuccessor = (state: Value[], isMatch: (successor: Successor) => boolean) =>
     captureOutput(() => {
       for (const action of getSpecNextActions()) {
@@ -1053,7 +1028,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         steps.push({ state: previous, action: "Stuttering" });
         continue;
       }
-      // TLC rebuilds each state at its level, which TLCGet reads.
       const rebuilt = current.rebuilt;
       current.rebuilt = { state: previous, level: depths[path[position - 1]] };
       const successor = findSuccessorWithFingerprint(previous, path[position]);
@@ -1080,8 +1054,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       : lastSuccessor.action;
     return toTrace([...steps, { state: lastSuccessor.state, action }], path, { known: 2 });
   };
-  // TLC rebuilds a lone initial state, unlike TLC 1.7.4. TLCTrace#printTrace prints it without the
-  // alias, where tla-ts applies the alias as it does to every other trace.
+  // Deviation from TLC: TLCTrace#printTrace prints a lone initial state without the alias.
   const getStateTrace = (index: number): Behavior =>
     parents[index] === -1
       ? {
@@ -1103,8 +1076,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           traceOutput: is174 ? [] : captureOutput(getSpecInitialStates).lines,
         }
       : getTrace(index);
-  // TLC rebuilds the trace for the postcondition after a violation, but not after a failure.
-  // TLC fails again to fingerprint the successor in the trace, as an unexpected exception.
   const isUnfingerprintable = (state: Value[]) => {
     try {
       return getFingerprintState(state).some((value) => getFingerprintError(value) !== undefined);
@@ -1116,9 +1087,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const getFailedTrace = (index: number, successor: Successor): Behavior => ({
     trace: getTrace(index, successor).trace,
   });
-  // TLC names the initial state it was checking unless a standard module's Java code failed.
   const getFailureExitCode = (error: TlaEvaluationError, failureOptions: FailureOptions) => {
-    // TLC 1.7.4 exits with the result of replaying the initial states, which fails again only here.
     if (
       failureOptions.isInitial &&
       !failureOptions.callStack &&
@@ -1131,13 +1100,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       return failureOptions.isInitial ? getInitialExitCode(error) : getErrorExitCode(error);
     }
     if (failureOptions.isCallStackFirst) return getErrorExitCode(error);
-    // Without a replay, TLC exits with the code of the error, as for any error it didn't expect.
     if (failureOptions.isLiveCallStack) {
       return (
         getExitCode(error) ?? (error instanceof TlaModuleError ? error.exitCode : EXIT_STATUS.error)
       );
     }
-    // TLC exits with the code of a failed initial replay whatever the error, as for a fingerprint.
     return failureOptions.isInitial || failureOptions.fingerprint
       ? EXIT_STATUS.specEvaluationFailure
       : getReplayExitCode(failureOptions.replayError ?? error);
@@ -1174,13 +1141,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       outDegrees: failureOptions.outDegrees,
     };
   };
-  // TLC reports a partial successor with the trace to it, naming the action if there are several.
   const reportIncompleteSuccessor = (index: number, error: TlaIncompleteSuccessorError) => {
     runtime.generatedStates++;
     const actions = getSpecNextActions();
     const named =
       actions.length === 1 ? actions : actions.filter((item) => item.name === error.action);
-    // Inline disjuncts of the next-state relation share its name, so TLC's is the one that failed.
     const action =
       named.length === 1
         ? named[0]
@@ -1234,7 +1199,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       hash = combineHash(hash, getValueHash(state[index]));
     return hash & 0x3fffffff;
   };
-  // TLC fingerprints a state once it finds the state in the model.
   const fingerprintModelState = (state: Value[]) => {
     for (const value of state) {
       const error = getFingerprintError(value);
@@ -1277,11 +1241,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     }
     insertSeen(hash, index + 1);
   };
-  // TLC adds a new successor to its states before it checks it, which the check stores after.
-  const unstoredState = { fingerprint: undefined as Value[] | undefined };
+  let unstoredFingerprint: Value[] | undefined;
   const countDistinctState = (depth: number) => {
     runtime.distinctStates = states.length + 1;
-    statistics.depth = Math.max(statistics.depth, depth);
+    searchDepth = Math.max(searchDepth, depth);
     runtime.diameter = Math.max(runtime.diameter, depth);
   };
   const addState = (
@@ -1298,13 +1261,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     depths.push(depth);
   };
 
-  const current = {
+  const current: SearchPosition = {
     index: -1,
     isExpanding: false,
-    candidate: undefined as Value[] | undefined,
+    candidate: undefined,
     candidateLevel: 0,
     livenessSource: -1,
-    rebuilt: undefined as { state: Value[]; level: number } | undefined,
+    rebuilt: undefined,
   };
   const getPath = (index: number): Value[][] =>
     index === -1 ? [] : [...getPath(parents[index]), states[index]];
@@ -1322,7 +1285,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   };
   runtime.getLevel = (state) => {
     const source = current.livenessSource;
-    // TLC 1.7.4 reads the level of the state its worker explores, whichever state it evaluates.
     if (is174) {
       const explored = source !== -1 ? source : current.isExpanding ? current.index : -1;
       return explored === -1 ? 0 : depths[explored];
@@ -1368,7 +1330,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     }
     const isSeen = isInModel && findStateIndex(hash, fingerprintState) !== -1;
     if (isSeen) return undefined;
-    unstoredState.fingerprint = isInModel ? fingerprintState : undefined;
+    unstoredFingerprint = isInModel ? fingerprintState : undefined;
     if (isInModel) {
       countDistinctState(1);
       runtime.queueSize++;
@@ -1453,13 +1415,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       liveSuccessors.push({ index: existing, state: isStored ? stored : successor.state });
     }
     const isNew = isInModel && existing === -1;
-    // TLC adds a new state to the behavior graph's successors before it checks the invariants.
     if (isNew && liveness) liveSuccessors.push({ index: states.length, state: successor.state });
-    unstoredState.fingerprint = isNew ? fingerprintState : undefined;
+    unstoredFingerprint = isNew ? fingerprintState : undefined;
     if (isNew) {
       countDistinctState(depths[index] + 1);
-      expansion.newStates++;
-      if (coverage) coverage.secondary[coveredAction.node]++;
+      newStateCount++;
+      if (coverage) coverage.secondary[coveredNode]++;
     }
     if (existing === -1) {
       try {
@@ -1471,8 +1432,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         if (violation) reportContinuedViolation("invariant-violation", violation);
       } catch (error) {
         if (isStackOverflow(error)) throw error;
-        // TLC replays the expansion and skips the invariants of a seen state, the failed one
-        // included unless the constraints exclude it. A failed replay leaves out the outdegree.
         const replay = captureOutput(() => replayNext(index));
         return createFailureResult(
           error,
@@ -1499,18 +1458,16 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     return undefined;
   };
 
-  const outcome: { result: CheckResult | undefined } = { result: undefined };
-  const coveredAction = { node: -1 };
+  let outcome: CheckResult | undefined;
+  let coveredNode = -1;
   if (liveness) {
     options.onProgress?.({ kind: "liveness-prepared", branches: liveness.branches });
   }
-  // TLC checks the assumptions once it has built the liveness checker.
   const assumptionViolation = findViolatedAssumption();
   if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
   options.onProgress?.({ kind: "initial-states-started" });
   if (spec.init !== undefined) {
-    // TLC keeps an initial state's StackOverflowError, counts the states after it, then reports it.
-    const overflow: { state: Value[] | undefined } = { state: undefined };
+    let overflowState: Value[] | undefined;
     const reportInitialFailure = (error: unknown, state: Value[]) => {
       const replay = captureOutput(replayInit);
       return createFailureResult(
@@ -1522,18 +1479,18 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     try {
       const onInitialState = (state: Value[]) => {
         reportInitialStatesProgress(runtime.initialStates, options.onProgress);
-        if (overflow.state) {
+        if (overflowState) {
           runtime.generatedStates++;
           runtime.initialStates++;
           return false;
         }
         try {
-          outcome.result = visitInitialState(state);
+          outcome = visitInitialState(state);
         } catch (error) {
-          if (isStackOverflow(error)) overflow.state = state;
-          else outcome.result = reportInitialFailure(error, state);
+          if (isStackOverflow(error)) overflowState = state;
+          else outcome = reportInitialFailure(error, state);
         }
-        return outcome.result !== undefined;
+        return outcome !== undefined;
       };
       if (coverage) {
         try {
@@ -1553,11 +1510,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       } else {
         forEachInitialState(spec.init, environment, onInitialState, spec.scope);
       }
-      if (overflow.state) {
-        outcome.result = reportInitialFailure(createStackOverflowError(), overflow.state);
+      if (overflowState) {
+        outcome = reportInitialFailure(createStackOverflowError(), overflowState);
       }
     } catch (error) {
-      // TLC prints null for each undefined variable and stops before the statistics.
       if (error instanceof TlaIllegalStateError) {
         const illegal = createFailureResult(
           error,
@@ -1569,7 +1525,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           failure: illegal.failure && { ...illegal.failure, isWithoutStatistics: true },
         };
       }
-      // TLC prints the error before it replays the initial predicate with its call stack.
       const replay = captureOutput(replayInit);
       return createFailureResult(
         error,
@@ -1578,14 +1533,14 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       );
     }
   }
-  if (outcome.result) return outcome.result;
-  statistics.initialStates = {
+  if (outcome) return outcome;
+  computedInitialStates = {
     generated: runtime.initialStates,
     distinct: runtime.distinctStates,
   };
   options.onProgress?.({
     kind: "initial-states-computed",
-    initialStates: statistics.initialStates,
+    initialStates: computedInitialStates,
   });
 
   const next = spec.next;
@@ -1597,8 +1552,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     }
     return createSuccess();
   }
-  // TLC labels and colors a -dump edge by its action, so a graph that names its edges generates
-  // successors action by action.
   const isNamingEdges = Boolean(
     options.dump?.dot && (options.dump.actionLabels || options.dump.colorize),
   );
@@ -1610,19 +1563,19 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     onSuccessor: (successor: Successor, action: SpecAction | undefined) => boolean,
   ) => {
     if (coverage) {
-      const progress = { count: 0 };
+      let successorCount = 0;
       try {
         coverageActions.forEach((action) => {
-          coveredAction.node = action.node;
+          coveredNode = action.node;
           walkCoveredSuccessors(action, state, (successor) => {
-            progress.count++;
+            successorCount++;
             if (onSuccessor({ state: successor, action: action.name }, action)) throw STOP_WALK;
           });
         });
       } catch (error) {
         if (error !== STOP_WALK) throw error;
       }
-      return progress.count;
+      return successorCount;
     }
     if (!isNamingEdges) {
       return forEachSuccessor(
@@ -1635,9 +1588,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         onUnsatisfied,
       );
     }
-    const progress = { isStopped: false };
+    let isStopped = false;
     return getSpecNextActions().reduce((count, action) => {
-      if (progress.isStopped) return count;
+      if (isStopped) return count;
       return (
         count +
         forEachSuccessor(
@@ -1645,8 +1598,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           state,
           environment,
           (successor) => {
-            progress.isStopped = onSuccessor(successor, action);
-            return progress.isStopped;
+            isStopped = onSuccessor(successor, action);
+            return isStopped;
           },
           action.scope,
           undefined,
@@ -1655,8 +1608,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       );
     }, 0);
   };
-  // TLC's worker adds a state to the behavior graph even after its next states fail, and prints
-  // the call stack of an error in that, unless it is a FingerprintException. TLC 1.7.4 prints none.
   const getLiveCallStack = (index: number, liveSuccessors: LiveSuccessor[]) => {
     if (!liveness || is174) return undefined;
     const replay = getReplayFailure((tracing) =>
@@ -1664,8 +1615,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     );
     return replay?.callStack.length && !replay.fingerprint ? replay.callStack : undefined;
   };
-  // On an error in adding the state after the trace, TLC adds it again to print the call stack
-  // instead of replaying the next-state relation, which TLC 1.7.4 doesn't.
   const addFailedLiveState = (index: number, liveSuccessors: LiveSuccessor[]) => {
     try {
       liveness?.addState(index, states[index], liveSuccessors);
@@ -1684,10 +1633,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const replay = captureOutput(() => replayNext(index));
     return { result: replay.result, lines: [...live.lines, ...replay.lines] };
   };
-  // TLC reports a stack overflow in the next states without a replay, up to the state it expands.
   const reportNextStateOverflow = (index: number) =>
     createFailureResult(createStackOverflowError(), getStateTrace(index), { isNextState: true });
-  // After the trace, TLC replays the next-state relation with its call stack, printing again.
   const reportNextStateFailure = (
     error: unknown,
     index: number,
@@ -1716,19 +1663,17 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         : undefined;
     const successorCount = forEachActionSuccessor(state, writeUnsatisfied, (successor, action) => {
       try {
-        outcome.result = visitSuccessor(index, successor, liveSuccessors, source, action);
+        outcome = visitSuccessor(index, successor, liveSuccessors, source, action);
       } catch (error) {
         if (isStackOverflow(error)) {
-          outcome.result = reportNextStateOverflow(index);
+          outcome = reportNextStateOverflow(index);
           return true;
         }
-        // TLC 1.7.4 reports the wrapped error without the trace, except for a failed property, and
-        // stops its worker before it adds the state to the behavior graph.
         const replay = is174
           ? captureOutput(() => replayNext(index))
           : replayFailedNext(index, liveSuccessors);
         if (is174 && error instanceof TlaEvaluationError && !isHeadedError(error)) {
-          outcome.result = createFailureResult(
+          outcome = createFailureResult(
             new TlaEvaluationError(`${getWrappedException(error)}${error.message}`, error),
             appendTraceOutput({ trace: [] }, replay.lines),
             { isNextState: true, ...replay.result },
@@ -1745,7 +1690,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
                 true,
               )
             : undefined;
-        outcome.result = createFailureResult(
+        outcome = createFailureResult(
           error,
           appendTraceOutput(
             traceFailure ? getStateTrace(index) : getFailedTrace(index, successor),
@@ -1754,11 +1699,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           { isNextState: true, ...replay.result, traceFailure },
         );
       }
-      return outcome.result !== undefined;
+      return outcome !== undefined;
     });
     current.isExpanding = false;
-    const result = outcome.result;
-    // TLC 1.7.4's worker stops at a violation.
+    const result = outcome;
     if (result?.violation && !is174) {
       const live = captureOutput(() => addFailedLiveState(index, liveSuccessors));
       return {
@@ -1788,8 +1732,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     };
     if (successorCount === 0 && config.checkDeadlock) {
       const deadlock = reportViolation("deadlock", { name: "deadlock", ...getStateTrace(index) });
-      // TLC's worker still adds the deadlocked state to the behavior graph, reports a temporal
-      // property that violates, and then counts the state as expanded.
       const live = captureOutput(() => {
         try {
           return { additional: addLiveState()?.violation };
@@ -1801,7 +1743,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       const reported = deadlock.violation
         ? { ...deadlock, violation: appendTraceOutput(deadlock.violation, live.lines) }
         : deadlock;
-      // An error in adding the state stops TLC 1.7.4's worker before it counts the state.
       const counted = withOutDegrees(
         reported,
         live.result.isFailed ? getFailureOutDegrees() : getPartialOutDegrees(),
@@ -1813,7 +1754,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     try {
       return addLiveState();
     } catch (error) {
-      // TLC 1.7.4 reports this as an unexpected exception, without the trace or a call stack.
       if (is174 && error instanceof TlaEvaluationError) {
         const unexpected = new TlaEvaluationError(
           `${isEvalException(error) ? UNEXPECTED_EVAL_EXCEPTION : UNEXPECTED_EXCEPTION}${error.message}`,
@@ -1824,7 +1764,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           { outDegrees: getFailureOutDegrees() },
         );
       }
-      // TLC adds the state again for the call stack, prints it first, and blames the next states.
       const replay = getReplayFailure((tracing) =>
         liveness?.addState(index, state, liveSuccessors, tracing),
       );
@@ -1853,7 +1792,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       text: `The stuttering counterexample above may be caused by the absence of a fairness constraint in the behavior specification ${name} defined at ${formatRange(range)}. To rule out such counterexamples, conjoin a suitable fairness constraint to ${name} ${book}`,
     };
   };
-  // TLC names the properties and the step back into the cycle from the states it prints.
   const reportLasso = (checker: LivenessChecker, lasso: Lasso) => {
     const path = [...lasso.prefix, ...lasso.cycle];
     const loopStart = lasso.prefix.length;
@@ -1924,22 +1862,20 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     current.isExpanding = true;
     const liveSuccessors: LiveSuccessor[] = [];
     try {
-      outcome.result = expandState(index, liveSuccessors);
+      outcome = expandState(index, liveSuccessors);
     } catch (error) {
-      outcome.result =
+      outcome =
         error instanceof TlaIncompleteSuccessorError
           ? reportIncompleteSuccessor(index, error)
           : reportNextStateFailure(error, index, liveSuccessors);
     }
-    if (outcome.result) return outcome.result;
+    if (outcome) return outcome;
     outDegrees[getOutDegreeBucket()]++;
-    expansion.newStates = 0;
-    // TLC checks liveness on the graph so far, then reports how far the search got.
+    newStateCount = 0;
     if ((isPeriodic || options.onProgress) && performance.now() >= periodic.at) {
       periodic.at = performance.now() + PROGRESS_INTERVAL;
       const lasso = isPeriodic ? findPeriodicViolation(index + 1) : undefined;
       if (liveness && lasso) return reportLasso(liveness, lasso);
-      // TLC reports the coverage with every report after the first `coverage` reports since the last.
       const isCoverageDue = options.coverage !== undefined && periodic.coverageCount === 0;
       periodic.coverageCount = isCoverageDue
         ? Math.trunc(options.coverage ?? 0)
@@ -1967,7 +1903,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const lasso = finalLiveness?.findViolation();
   if (finalLiveness && lasso) return reportLasso(finalLiveness, lasso);
 
-  // TLC finishes the check of the temporal properties before it checks the postconditions.
   if (finalLiveness) options.onProgress?.({ kind: "liveness-finished" });
   const missingPostcondition = specification.moduleOperators.find(
     (operator) => operator.kind === "postcondition" && operator.key === undefined,
@@ -1985,5 +1920,5 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       postcondition,
     });
   }
-  return continued.status ? createResult(continued.status) : createSuccess();
+  return continuedStatus ? createResult(continuedStatus) : createSuccess();
 };

@@ -20,11 +20,7 @@ export interface CheckerRuntime {
   evaluateAtStartup: <Result>(evaluate: () => Result) => Result;
   pause: (() => void) | undefined;
   warn: (code: number, text: string) => void;
-  // TLC's -nowarning turns the warnings off, and with them the shortcut that evaluates the rest
-  // of an action once it assigns every variable, since that shortcut skips a warning.
   isWarningEnabled: boolean;
-  // TLC's -tool, under which the message of an error that TLC raises with a code holds the
-  // code's markers, which AssertError compares with.
   isTool: boolean;
   version: TlcVersion;
   seed: bigint;
@@ -45,14 +41,11 @@ export interface CheckerRuntime {
   startedAt: number;
 }
 
-// TLC's RandomEnumerableValues keeps one java.util.Random per thread, seeded with -seed. The
-// main thread evaluates constants, assumptions, and initial states with it. A worker reseeds
-// its Random with the fingerprint of each state it expands, XORed with the seed, so a state's
-// successors are the same whatever order the workers expand states in.
 export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime => {
   const startupRandom = createJavaRandom(seed);
-  const worker = { random: createJavaRandom(seed), seededState: undefined as Value[] | undefined };
-  const phase = { isStartup: false };
+  const workerRandom = createJavaRandom(seed);
+  let seededState: Value[] | undefined;
+  let isStartup = false;
   const runtime: CheckerRuntime = {
     getLevel: () => 0,
     getBehavior: () => [],
@@ -66,21 +59,21 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     getFingerprint: getTlcFingerprint,
     getSimulationValue: undefined,
     getRandom: () => {
-      const state = phase.isStartup ? undefined : runtime.getCurrentState();
+      const state = isStartup ? undefined : runtime.getCurrentState();
       if (state === undefined) return startupRandom;
-      if (state !== worker.seededState) {
-        worker.random.setSeed(runtime.getFingerprint(state) ^ BigInt.asUintN(64, seed));
-        worker.seededState = state;
+      if (state !== seededState) {
+        workerRandom.setSeed(runtime.getFingerprint(state) ^ BigInt.asUintN(64, seed));
+        seededState = state;
       }
-      return worker.random;
+      return workerRandom;
     },
     evaluateAtStartup: (evaluate) => {
-      const wasStartup = phase.isStartup;
-      phase.isStartup = true;
+      const wasStartup = isStartup;
+      isStartup = true;
       try {
         return evaluate();
       } finally {
-        phase.isStartup = wasStartup;
+        isStartup = wasStartup;
       }
     },
     pause: undefined,

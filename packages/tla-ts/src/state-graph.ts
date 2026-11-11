@@ -52,8 +52,6 @@ const INITIAL_CAPACITY = 16;
 const getCapacity = (size: number, capacity = INITIAL_CAPACITY): number =>
   size <= capacity * LOAD_FACTOR ? capacity : getCapacity(size, capacity * 2);
 
-// The order in which a java.util.HashMap iterates over keys put in this order: by bucket, and in
-// insertion order within a bucket. A bucket only becomes a tree once 8 keys collide in it.
 const getJavaHashOrder = <Key>(keys: Key[], getHash: (key: Key) => number) => {
   const mask = getCapacity(keys.length) - 1;
   const getBucket = (key: Key) => {
@@ -90,14 +88,11 @@ const createPlainWriter = (dump: StateDump, writeFile: WriteFile): StateWriter =
       if (!isSeen) writeState(successor);
     },
     writeConstrained: () => {},
-    // TLC 1.7.4 writes the state again, as it takes the stuttering step for one to a new state.
     writeStuttering: writeState,
     close: () => writeFile?.(dump.path, states.join("")),
   };
 };
 
-// TLC 1.7.4 draws its nodes as ellipses, gives them no tooltip, and labels an edge with the name
-// of its action alone.
 const createDotWriter = (
   dump: StateDump,
   writeFile: WriteFile,
@@ -114,8 +109,7 @@ const createDotWriter = (
   ];
   const ranks = new Map<number, Set<bigint>>();
   const colors = new Map<string, number>();
-  // TLC's DotStateWriter keys an edge by the XOR of its fingerprints, which merges every
-  // stuttering step and an edge with its reverse, so tla-ts keys it by both.
+  // Deviation from TLC: it keys an edge by the XOR of its fingerprints, which merges distinct edges.
   const edges = new Set<string>();
   const isDuplicate = (state: GraphState, successor: GraphState) => {
     if (!dump.strict) return false;
@@ -128,7 +122,6 @@ const createDotWriter = (
     const rank = ranks.get(state.level) ?? new Set();
     ranks.set(state.level, rank.add(state.fingerprint));
   };
-  // TLC colors an edge by the name of its action, numbering the names from 2 as it finds them.
   const getColor = (action: GraphAction | undefined) => {
     if (!action) return 1;
     const color = colors.get(action.name) ?? colors.size + 2;

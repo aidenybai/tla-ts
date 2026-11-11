@@ -78,8 +78,7 @@ const NON_EXECUTE_PREFIX = ")]}'\n";
 const MALFORMED_JSON_GUIDE =
   "\nSee https://github.com/google/gson/blob/main/Troubleshooting.md#malformed-json";
 
-// Gson's JsonParser.parseReader: a lenient JsonReader reads one element, and the reader, strict
-// again, then rejects anything but whitespace after it. An empty document reads as JSON null.
+// Gson's JsonParser.parseReader: a lenient JsonReader reads one element, then, strict again, rejects anything but whitespace after it.
 export const readJson = (text: string): JsonElement => {
   const byteOrderMarkLength = text.startsWith("﻿") ? 1 : 0;
   let pos = byteOrderMarkLength;

@@ -111,8 +111,6 @@ export const simulate = (options: SimulationOptions): number => {
   const search = prepared.search;
   const seed = options.seed ?? 0n;
   const traceDepth = options.traceDepth === -1 ? INFINITE_DEPTH : options.traceDepth;
-  // TLC.process seeds its RandomGenerator and draws -aril doubles, and each worker's generator is
-  // seeded with the next long of it.
   const random = createJavaRandom(seed);
   for (let index = 0n; index < options.aril; index++) random.nextDouble();
   const workerRandom = createJavaRandom(random.nextLong());
@@ -124,13 +122,14 @@ export const simulate = (options: SimulationOptions): number => {
     seed,
     aril: options.aril,
   };
-  const message = (code: number, text: string, toolText = text, isError = true) =>
+  const reportMessage = (code: number, text: string, toolText = text, isError = true) =>
     output({ kind: "message", code, isError, message: text, toolMessage: toolText });
   const printSummary = () => output({ kind: "summary", statistics: { ...statistics } });
   const nodes = new WeakMap<(Value | undefined)[], TraceNode>();
   const initActions = getInitActions(config, environment, specification.instanceActions);
   const nextActions = getNextActions(config, environment, specification.instanceActions);
-  const worker = { traceCount: 0, currentTrace: 0 };
+  let traceCount = 0;
+  let currentTrace = 0;
   runtime.getLevel = (state) => nodes.get(state)?.level ?? 0;
   runtime.getBehavior = (state) => {
     const node = nodes.get(state);
@@ -140,7 +139,7 @@ export const simulate = (options: SimulationOptions): number => {
     const node = state && nodes.get(state);
     switch (key) {
       case "diameter":
-        return worker.currentTrace === 0 ? 0 : worker.traceCount + 1;
+        return currentTrace === 0 ? 0 : traceCount + 1;
       case "generated":
       case "distinct":
       case "queue":
@@ -172,7 +171,7 @@ export const simulate = (options: SimulationOptions): number => {
             "behavior",
             createRecord([
               ["actions", createRecord([...actions])],
-              ["id", worker.currentTrace],
+              ["id", currentTrace],
             ]),
           ],
           ["worker", 0],
@@ -195,7 +194,7 @@ export const simulate = (options: SimulationOptions): number => {
     const postcondition = search.findPostconditionViolation(isAfterViolation);
     if (!postcondition) return undefined;
     if (postcondition.counts !== undefined) (options.onPrint ?? console.log)(postcondition.counts);
-    message(
+    reportMessage(
       postcondition.code,
       postcondition.message,
       formatInnerMessage(postcondition.code, postcondition.message, true),
@@ -219,7 +218,7 @@ export const simulate = (options: SimulationOptions): number => {
   const assumptionStatus = reportAssumptionViolation(
     specification.assumptions,
     environment,
-    message,
+    reportMessage,
   );
   if (assumptionStatus !== undefined) return assumptionStatus;
   const initAction = initActions[initActions.length - 1];
@@ -243,8 +242,6 @@ export const simulate = (options: SimulationOptions): number => {
   };
   const toRecord = (state: (Value | undefined)[]) =>
     search.toRecord(state.map((value) => value ?? createModelValue("null")));
-  // Simulator.printBehavior evaluates the alias of each state with its successor, the last state
-  // with itself.
   const toTraceSteps = (trace: TraceNode[]): TraceStep[] =>
     trace.map((node, index) => ({
       action: node.action.name,
@@ -273,7 +270,7 @@ export const simulate = (options: SimulationOptions): number => {
   const reportInitialException = (error: unknown, state: Value[] | undefined) => {
     const failure = toEvaluationError(error);
     if (!state) {
-      message(
+      reportMessage(
         MESSAGE_CODE.general,
         `${getUnexpectedPrefix(failure)}${failure.message}`,
         `${getUnexpectedPrefix(failure)}${formatNestedMessage(failure.message, true)}`,
@@ -283,7 +280,7 @@ export const simulate = (options: SimulationOptions): number => {
     }
     const text = getFailureMessage(failure, false);
     const initial = `While working on the initial state:\n${formatState(toRecord(state))}`;
-    message(
+    reportMessage(
       MESSAGE_CODE.initialState,
       `${text.message}\n${initial}`,
       `${text.toolMessage}\n${initial}`,
@@ -303,7 +300,7 @@ export const simulate = (options: SimulationOptions): number => {
     return reportInitialException(error, undefined);
   }
   statistics.generatedStates = generated.length;
-  message(
+  reportMessage(
     MESSAGE_CODE.computingInitProgress,
     `Computed ${generated.length} initial states...`,
     undefined,
@@ -311,7 +308,7 @@ export const simulate = (options: SimulationOptions): number => {
   );
   for (const state of generated) {
     if (!isComplete(state)) {
-      message(
+      reportMessage(
         MESSAGE_CODE.initialStateIncomplete,
         `State is not completely specified by the initial predicate:\n${formatState(toRecord(state))}`,
       );
@@ -322,7 +319,7 @@ export const simulate = (options: SimulationOptions): number => {
       const violated = search.findViolatedInvariant(state);
       if (violated) {
         const alias = toTraceSteps([node])[0].state;
-        message(
+        reportMessage(
           MESSAGE_CODE.invariantViolatedInitial,
           `Invariant ${violated.name} is violated by the initial state:\n${formatState(alias)}`,
         );
@@ -330,12 +327,11 @@ export const simulate = (options: SimulationOptions): number => {
         reportPostcondition(true);
         return EXIT_STATUS.safetyViolation;
       }
-      // Simulator#simulate checks no implied init, where tla-ts checks them as the model checker
-      // does, after the invariants.
+      // Deviation from TLC: its simulator checks no implied init, tla-ts checks them after invariants.
       const predicate = search.findFailedInitialPredicate(state);
       if (predicate) {
         const alias = toTraceSteps([node])[0].state;
-        message(
+        reportMessage(
           MESSAGE_CODE.propertyViolatedInitial,
           `Property ${predicate.name} is violated by the initial state:\n${formatState(alias)}`,
         );
@@ -352,20 +348,20 @@ export const simulate = (options: SimulationOptions): number => {
     }
   }
   if (generated.length === 0) {
-    message(
+    reportMessage(
       MESSAGE_CODE.noInitialStates,
       "There is no state satisfying the initial state predicate.",
     );
     return EXIT_STATUS.error;
   }
   if (initialStates.length === 0) {
-    message(
+    reportMessage(
       MESSAGE_CODE.noInitialStatesInModel,
       "There is no state satisfying the initial state predicate and the state-constraint(s).",
     );
     return EXIT_STATUS.error;
   }
-  message(
+  reportMessage(
     MESSAGE_CODE.initGenerated1,
     `Finished computing initial states: ${initialStates.length} distinct state generated at ${formatTlcDate(new Date())}.`,
     undefined,
@@ -404,8 +400,6 @@ export const simulate = (options: SimulationOptions): number => {
     );
     const lasso = checker.findViolation();
     if (!lasso) return undefined;
-    // StateTraceResolver recovers the states of the counterexample by their position in the
-    // behavior, so TLC prints as many states of the behavior as the counterexample has.
     const getLength = (path: number[]) =>
       path.filter((index, position) => position === 0 || index !== path[position - 1]).length;
     const path = [...lasso.prefix, ...lasso.cycle];
@@ -438,7 +432,7 @@ export const simulate = (options: SimulationOptions): number => {
   });
   const getSuccessors = (current: TraceNode, action: SpecAction) => {
     const successors: TraceNode[] = [];
-    const failure: { error: WorkerError | undefined } = { error: undefined };
+    let failure: WorkerError | undefined;
     runtime.deferred = undefined;
     try {
       forEachSuccessor(
@@ -453,7 +447,7 @@ export const simulate = (options: SimulationOptions): number => {
           try {
             const violated = search.findViolatedInvariant(node.state, current.state);
             if (violated) {
-              failure.error = toWorkerError(
+              failure = toWorkerError(
                 MESSAGE_CODE.invariantViolatedBehavior,
                 `Invariant ${violated.name} is violated.`,
                 node,
@@ -462,7 +456,7 @@ export const simulate = (options: SimulationOptions): number => {
             }
             const property = search.findViolatedActionProperty(current.state, node.state);
             if (property) {
-              failure.error = toWorkerError(
+              failure = toWorkerError(
                 MESSAGE_CODE.actionPropertyViolatedBehavior,
                 `Action property ${property.name} is violated.`,
                 node,
@@ -472,7 +466,7 @@ export const simulate = (options: SimulationOptions): number => {
           } catch (error) {
             if (!(error instanceof TlaEvaluationError) || !isHeadedError(error)) throw error;
             const text = getFailureMessage(error, true);
-            failure.error = {
+            failure = {
               ...toWorkerError(text.code, text.message, node),
               toolMessage: text.toolMessage,
             };
@@ -504,9 +498,9 @@ export const simulate = (options: SimulationOptions): number => {
       );
       return { successors, error: toWorkerError(MESSAGE_CODE.incompleteSuccessor, text, node) };
     }
-    return { successors, error: failure.error };
+    return { successors, error: failure };
   };
-  const current = { node: initialStates[0] };
+  let currentNode = initialStates[0];
   const qualities = nextActions.map(() => new Map<bigint | SpecAction, number>());
   const getQualityKey = (node: TraceNode) =>
     options.scheduler === "rlaction" ? node.action : runtime.getFingerprint(node.state);
@@ -525,11 +519,11 @@ export const simulate = (options: SimulationOptions): number => {
     const ranked = weights
       .map((weight, index) => ({ index, weight: weight / total }))
       .sort((left, right) => right.weight - left.weight);
-    const random = workerRandom.nextDouble();
-    const cumulative = { weight: 0 };
+    const threshold = workerRandom.nextDouble();
+    let cumulativeWeight = 0;
     const chosen = ranked.find((item, position) => {
-      cumulative.weight = position === 0 ? item.weight : cumulative.weight + item.weight;
-      return cumulative.weight >= random;
+      cumulativeWeight = position === 0 ? item.weight : cumulativeWeight + item.weight;
+      return cumulativeWeight >= threshold;
     });
     return (chosen ?? ranked[ranked.length - 1]).index;
   };
@@ -556,44 +550,43 @@ export const simulate = (options: SimulationOptions): number => {
     }
   };
   const simulateTrace = (): WorkerError | "stopped" | undefined => {
-    current.node = initialStates[Math.floor(workerRandom.nextDouble() * initialStates.length)];
+    currentNode = initialStates[Math.floor(workerRandom.nextDouble() * initialStates.length)];
     for (let depth = 0; depth < traceDepth; depth++) {
       if (runtime.isStopped) return "stopped";
-      const choice = { index: getNextActionIndex(current.node) };
+      let actionIndex = getNextActionIndex(currentNode);
       const prime = nextPrime(workerRandom);
-      const found: { successors: TraceNode[] } = { successors: [] };
+      let successors: TraceNode[] = [];
       for (let attempt = 0; attempt < nextActions.length; attempt++) {
-        const result = getSuccessors(current.node, nextActions[choice.index]);
+        const result = getSuccessors(currentNode, nextActions[actionIndex]);
         if (result.error) return result.error;
-        found.successors = result.successors;
-        if (found.successors.length > 0) break;
-        markDisabled(choice.index, current.node);
-        choice.index = (choice.index + prime) % nextActions.length;
+        successors = result.successors;
+        if (successors.length > 0) break;
+        markDisabled(actionIndex, currentNode);
+        actionIndex = (actionIndex + prime) % nextActions.length;
       }
-      if (found.successors.length === 0) {
+      if (successors.length === 0) {
         if (config.checkDeadlock) {
-          return toWorkerError(MESSAGE_CODE.deadlockReached, "Deadlock reached.", current.node);
+          return toWorkerError(MESSAGE_CODE.deadlockReached, "Deadlock reached.", currentNode);
         }
         break;
       }
-      current.node =
-        found.successors[Math.floor(workerRandom.nextDouble() * found.successors.length)];
-      current.node.deferred?.(current.node.state);
+      currentNode = successors[Math.floor(workerRandom.nextDouble() * successors.length)];
+      currentNode.deferred?.(currentNode.state);
     }
     if (runtime.isStopped) return "stopped";
-    const violation = findTemporalViolation(current.node);
+    const violation = findTemporalViolation(currentNode);
     if (violation) {
       return {
-        ...toWorkerError(MESSAGE_CODE.temporalPropertyViolated, "", current.node),
+        ...toWorkerError(MESSAGE_CODE.temporalPropertyViolated, "", currentNode),
         isException: true,
         violation,
       };
     }
-    const length = Math.min(traceDepth, current.node.level);
+    const length = Math.min(traceDepth, currentNode.level);
     const delta = length - statistics.levelMean;
     statistics.levelMean += Math.trunc(delta / Math.max(statistics.traces, 1));
     statistics.levelM2 += delta * (length - statistics.levelMean);
-    if (options.scheduler === "rl") learnTrace(current.node);
+    if (options.scheduler === "rl") learnTrace(currentNode);
     return undefined;
   };
   const toException = (error: unknown, node: TraceNode): WorkerError => {
@@ -627,21 +620,20 @@ export const simulate = (options: SimulationOptions): number => {
   const traceLimit = options.traceCount ?? (1n << 63n) - 1n;
   while (true) {
     statistics.traces++;
-    worker.currentTrace = statistics.traces;
+    currentTrace = statistics.traces;
     const outcome = (() => {
       try {
         return simulateTrace();
       } catch (error) {
-        return toException(error, current.node);
+        return toException(error, currentNode);
       }
     })();
     if (outcome === "stopped") break;
-    worker.traceCount++;
+    traceCount++;
     if (outcome) errors.push(outcome);
     if (outcome?.isException) break;
-    if (BigInt(worker.traceCount) >= traceLimit) break;
-    // The worker runs on through its behaviors while the Simulator prints an error that stops it.
-    // Without a bound on them, it starts the next before the Simulator stops it.
+    if (BigInt(traceCount) >= traceLimit) break;
+    // TLC's worker starts one more behavior before the Simulator stops it, unless traces are bounded.
     const isStopping = outcome !== undefined && (!isContinued || FATAL_CODES.has(outcome.code));
     if (isStopping && options.traceCount === undefined) {
       statistics.traces++;
@@ -662,11 +654,10 @@ export const simulate = (options: SimulationOptions): number => {
       printSummary();
       return;
     }
-    message(error.code, error.message, error.toolMessage);
-    const nodes = getTrace(error.node);
+    reportMessage(error.code, error.message, error.toolMessage);
     output({
       kind: "behavior",
-      trace: toTraceSteps(nodes),
+      trace: toTraceSteps(getTrace(error.node)),
       isLastStateOnly: traceDepth === INFINITE_DEPTH,
     });
     if (error.isSummarized) printSummary();

@@ -12,7 +12,6 @@ type TokenKind =
   | "ModuleEnd"
   | "End";
 
-// spelling holds the text of an operator written as a synonym, such as (+) for \oplus.
 export interface Token {
   kind: TokenKind;
   text: string;
@@ -319,7 +318,6 @@ const NUMBER_BASES = new Map([
   ["h", 16],
 ]);
 
-// A numeral token keeps its text, such as \hFF, so errors can quote it as TLC does.
 export const getNumeralValue = (text: string) =>
   text.startsWith("\\")
     ? parseInt(text.slice(2), NUMBER_BASES.get(text[1].toLowerCase()))
@@ -365,7 +363,6 @@ new Map([
   }
 });
 
-// charCodeAt past the end of a source gives NaN, which is in no class.
 const isInClass = (code: number, characterClass: number) =>
   code < 128 && (CHARACTER_CLASSES[code] & characterClass) !== 0;
 
@@ -380,7 +377,6 @@ interface OperatorMatch {
   length: number;
 }
 
-// In the order of SYMBOL_OPERATORS, which lists a longer operator before its prefixes.
 const SYMBOL_OPERATORS_BY_START = new Map<number, string[]>();
 SYMBOL_OPERATORS.forEach((symbol) => {
   const start = symbol.charCodeAt(0);
@@ -410,13 +406,10 @@ export const matchOperator = (source: string, index: number): OperatorMatch | un
   const code = source.charCodeAt(index);
   if (code === CODE_BACKSLASH && isInClass(source.charCodeAt(index + 1), LETTER)) {
     const word = source.slice(index + 1, skipClass(source, index + 1, LETTER));
-    // Like SANY, read the longest operator that the word starts with, so S\used is S \ used.
-    const length = { value: word.length };
-    while (length.value > 0 && !BACKSLASH_OPERATORS.has(word.slice(0, length.value))) {
-      length.value--;
-    }
-    const operator = BACKSLASH_OPERATORS.get(word.slice(0, length.value));
-    return { text: operator ?? "\\", length: operator === undefined ? 1 : length.value + 1 };
+    let length = word.length;
+    while (length > 0 && !BACKSLASH_OPERATORS.has(word.slice(0, length))) length--;
+    const operator = BACKSLASH_OPERATORS.get(word.slice(0, length));
+    return { text: operator ?? "\\", length: operator === undefined ? 1 : length + 1 };
   }
   const unicodeSymbol = matchUnicodeOperator(source, index);
   if (unicodeSymbol !== undefined) {
@@ -427,7 +420,6 @@ export const matchOperator = (source: string, index: number): OperatorMatch | un
   return code === CODE_BACKSLASH ? { text: "\\", length: 1 } : undefined;
 };
 
-// TLC's config parser reads ℕ, ℤ, ℝ, or a Unicode operator as one token, compared as written.
 const UNICODE_NAMES = new Set(["ℕ", "ℤ", "ℝ"]);
 export const matchUnicodeToken = (source: string, index: number): OperatorMatch | undefined => {
   const token = [source.slice(index, index + 2), source[index]].find(
@@ -441,12 +433,11 @@ export const skipWhile = (
   index: number,
   isMatch: (character: string) => boolean,
 ) => {
-  const end = { value: index };
-  while (end.value < source.length && isMatch(source[end.value])) end.value++;
-  return end.value;
+  let end = index;
+  while (end < source.length && isMatch(source[end])) end++;
+  return end;
 };
 
-// SANY reads a step number as one token anywhere, and tlapm reads no name after <*> or <+>.
 const matchStep = (source: string, index: number, isTlapm: boolean) => {
   const isImplicit = source[index + 1] === "+" || source[index + 1] === "*";
   const levelEnd = isImplicit ? index + 2 : skipClass(source, index + 1, DIGIT);
@@ -460,7 +451,6 @@ const matchStep = (source: string, index: number, isTlapm: boolean) => {
   );
 };
 
-// SANY's lexer reads @ as an identifier, which stands for the value an EXCEPT changes only alone.
 export const readAtAsIdentifier = (token: Token): Token =>
   token.kind === "Operator" && token.text === "@" ? { ...token, kind: "Identifier" } : token;
 
@@ -493,24 +483,24 @@ export const tokenize = (source: string, isTlapm = false): Token[] => {
   // Each name is one string object, so looking a name up in a scope compares pointers.
   const names = new Map<string, string>();
   const prefixLines = source.slice(0, headerMatch.index).split("\n");
-  const cursor = {
-    index: headerMatch.index,
-    line: prefixLines.length,
-    lineStart: headerMatch.index - prefixLines[prefixLines.length - 1].length,
-    moduleDepth: 0,
-  };
+  let index = headerMatch.index;
+  let line = prefixLines.length;
+  let lineStart = headerMatch.index - prefixLines[prefixLines.length - 1].length;
+  let moduleDepth = 0;
 
-  const scan = { lineStart: -1, position: 0, width: 0 };
+  let scanLineStart = -1;
+  let scanPosition = 0;
+  let scanWidth = 0;
   const getColumn = () => {
-    if (scan.lineStart !== cursor.lineStart || scan.position > cursor.index) {
-      scan.lineStart = cursor.lineStart;
-      scan.position = cursor.lineStart;
-      scan.width = 0;
+    if (scanLineStart !== lineStart || scanPosition > index) {
+      scanLineStart = lineStart;
+      scanPosition = lineStart;
+      scanWidth = 0;
     }
-    for (; scan.position < cursor.index; scan.position++) {
-      scan.width = getWidthAfter(scan.width, source.charCodeAt(scan.position));
+    for (; scanPosition < index; scanPosition++) {
+      scanWidth = getWidthAfter(scanWidth, source.charCodeAt(scanPosition));
     }
-    return getWidthAfter(scan.width, source.charCodeAt(cursor.index));
+    return getWidthAfter(scanWidth, source.charCodeAt(index));
   };
   const pushToken = (kind: TokenKind, text: string, length: number, spelling?: string) => {
     const column = getColumn();
@@ -518,83 +508,83 @@ export const tokenize = (source: string, isTlapm = false): Token[] => {
       kind,
       text,
       spelling,
-      line: cursor.line,
+      line,
       column,
       endColumn: column + length - 1,
     });
-    cursor.index += length;
+    index += length;
   };
   const advanceOver = (length: number) => {
     for (let offset = 0; offset < length; offset++) {
-      if (source.charCodeAt(cursor.index) === CODE_NEWLINE) {
-        cursor.line++;
-        cursor.lineStart = cursor.index + 1;
+      if (source.charCodeAt(index) === CODE_NEWLINE) {
+        line++;
+        lineStart = index + 1;
       }
-      cursor.index++;
+      index++;
     }
   };
   const createError = (message: string) =>
-    new TlaSyntaxError(`${message} at line ${cursor.line}, column ${getColumn()}`, undefined, {
+    new TlaSyntaxError(`${message} at line ${line}, column ${getColumn()}`, undefined, {
       reason: message,
-      line: cursor.line,
+      line,
       column: getColumn(),
-      isEnd: cursor.index >= source.length,
+      isEnd: index >= source.length,
     });
 
-  while (cursor.index < source.length) {
-    const code = source.charCodeAt(cursor.index);
+  while (index < source.length) {
+    const code = source.charCodeAt(index);
 
     if (code === CODE_NEWLINE || code === CODE_SPACE || code === CODE_TAB || code === CODE_RETURN) {
       advanceOver(1);
       continue;
     }
-    if (code === CODE_BACKSLASH && source.charCodeAt(cursor.index + 1) === CODE_STAR) {
-      const lineEnd = skipWhile(source, cursor.index, (next) => next !== "\n" && next !== "\r");
-      advanceOver(lineEnd - cursor.index);
+    if (code === CODE_BACKSLASH && source.charCodeAt(index + 1) === CODE_STAR) {
+      const lineEnd = skipWhile(source, index, (next) => next !== "\n" && next !== "\r");
+      advanceOver(lineEnd - index);
       continue;
     }
-    if (code === CODE_OPEN_PAREN && source.charCodeAt(cursor.index + 1) === CODE_STAR) {
-      const depth = { value: 0 };
+    if (code === CODE_OPEN_PAREN && source.charCodeAt(index + 1) === CODE_STAR) {
+      let depth = 0;
       do {
-        if (cursor.index >= source.length) throw createError("Unterminated comment");
-        if (source.startsWith("(*", cursor.index)) {
-          depth.value++;
+        if (index >= source.length) throw createError("Unterminated comment");
+        if (source.startsWith("(*", index)) {
+          depth++;
           advanceOver(2);
-        } else if (source.startsWith("*)", cursor.index)) {
-          depth.value--;
+        } else if (source.startsWith("*)", index)) {
+          depth--;
           advanceOver(2);
         } else {
           advanceOver(1);
         }
-      } while (depth.value > 0);
+      } while (depth > 0);
       continue;
     }
-    if (code === CODE_DASH && source.startsWith("----", cursor.index)) {
-      const length = skipWhile(source, cursor.index, (next) => next === "-") - cursor.index;
-      const keyword = skipWhile(source, cursor.index + length, (next) => next === " ");
-      if (source.startsWith("MODULE", keyword)) cursor.moduleDepth++;
+    if (code === CODE_DASH && source.startsWith("----", index)) {
+      const length = skipWhile(source, index, (next) => next === "-") - index;
+      const keyword = skipWhile(source, index + length, (next) => next === " ");
+      if (source.startsWith("MODULE", keyword)) moduleDepth++;
       pushToken("Separator", "----", length);
       continue;
     }
-    if (code === CODE_EQUALS && source.startsWith("====", cursor.index)) {
-      const length = skipWhile(source, cursor.index, (next) => next === "=") - cursor.index;
+    if (code === CODE_EQUALS && source.startsWith("====", index)) {
+      const length = skipWhile(source, index, (next) => next === "=") - index;
       pushToken("ModuleEnd", "====", length);
-      cursor.moduleDepth--;
-      if (cursor.moduleDepth <= 0) break;
+      moduleDepth--;
+      if (moduleDepth <= 0) break;
       continue;
     }
     if (code === CODE_QUOTE) {
-      const line = cursor.line;
+      const startLine = line;
       const column = getColumn();
       const characters: string[] = [];
       advanceOver(1);
-      while (source.charCodeAt(cursor.index) !== CODE_QUOTE) {
-        const next = source.charCodeAt(cursor.index);
-        if (cursor.index >= source.length || next === CODE_NEWLINE || next === CODE_RETURN) {
+      while (source.charCodeAt(index) !== CODE_QUOTE) {
+        const next = source.charCodeAt(index);
+        if (index >= source.length || next === CODE_NEWLINE || next === CODE_RETURN) {
           throw createError("Unterminated string");
         }
         if (next === CODE_BACKSLASH) {
-          const escaped = source[cursor.index + 1];
+          const escaped = source[index + 1];
           if (escaped === undefined || !'ntrf\\"'.includes(escaped)) {
             throw createError("Invalid escape in string");
           }
@@ -602,39 +592,38 @@ export const tokenize = (source: string, isTlapm = false): Token[] => {
           advanceOver(2);
           continue;
         }
-        characters.push(source[cursor.index]);
+        characters.push(source[index]);
         advanceOver(1);
       }
       advanceOver(1);
       tokens.push({
         kind: "String",
         text: characters.join(""),
-        line,
+        line: startLine,
         column,
         endColumn: getColumn() - 1,
       });
       continue;
     }
-    const basedLength = matchBasedNumber(source, cursor.index);
+    const basedLength = matchBasedNumber(source, index);
     if (basedLength > 0) {
-      pushToken("Number", source.slice(cursor.index, cursor.index + basedLength), basedLength);
+      pushToken("Number", source.slice(index, index + basedLength), basedLength);
       continue;
     }
     if (isInClass(code, IDENTIFIER)) {
-      const wordEnd = skipClass(source, cursor.index, IDENTIFIER);
-      const word = source.slice(cursor.index, wordEnd);
-      const digitsEnd = skipClass(source, cursor.index, DIGIT);
+      const wordEnd = skipClass(source, index, IDENTIFIER);
+      const word = source.slice(index, wordEnd);
+      const digitsEnd = skipClass(source, index, DIGIT);
       if (digitsEnd === wordEnd) {
         const fractionEnd =
           source.charCodeAt(wordEnd) === CODE_DOT ? skipClass(source, wordEnd + 1, DIGIT) : wordEnd;
         const isDecimal = fractionEnd > wordEnd + 1;
-        const number = isDecimal ? source.slice(cursor.index, fractionEnd) : word;
+        const number = isDecimal ? source.slice(index, fractionEnd) : word;
         pushToken(isDecimal ? "Decimal" : "Number", number, number.length);
         continue;
       }
-      // A word needs a letter to be a name, so SANY reads one without as underscores and numbers.
       if (!/[A-Za-z]/.test(word)) {
-        const part = code === CODE_UNDERSCORE ? "_" : source.slice(cursor.index, digitsEnd);
+        const part = code === CODE_UNDERSCORE ? "_" : source.slice(index, digitsEnd);
         pushToken(part === "_" ? "Operator" : "Number", part, part.length);
         continue;
       }
@@ -647,22 +636,22 @@ export const tokenize = (source: string, isTlapm = false): Token[] => {
       pushToken(KEYWORDS.has(word) ? "Keyword" : "Identifier", name, word.length);
       continue;
     }
-    const character = source[cursor.index];
+    const character = source[index];
     if (code >= 128 && UNICODE_NAMES.has(character)) {
       pushToken("Identifier", names.get(character) ?? character, 1);
       names.set(character, character);
       continue;
     }
     if (code === CODE_LESS_THAN) {
-      const stepLength = matchStep(source, cursor.index, isTlapm);
+      const stepLength = matchStep(source, index, isTlapm);
       if (stepLength > 0) {
-        pushToken("Step", source.slice(cursor.index, cursor.index + stepLength), stepLength);
+        pushToken("Step", source.slice(index, index + stepLength), stepLength);
         continue;
       }
     }
-    const operator = matchOperator(source, cursor.index);
+    const operator = matchOperator(source, index);
     if (operator) {
-      const spelling = source.slice(cursor.index, cursor.index + operator.length);
+      const spelling = source.slice(index, index + operator.length);
       pushToken(
         "Operator",
         operator.text,
@@ -675,6 +664,6 @@ export const tokenize = (source: string, isTlapm = false): Token[] => {
   }
 
   const endColumn = getColumn();
-  tokens.push({ kind: "End", text: "", line: cursor.line, column: endColumn, endColumn });
+  tokens.push({ kind: "End", text: "", line, column: endColumn, endColumn });
   return tokens;
 };

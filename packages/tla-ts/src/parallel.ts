@@ -85,7 +85,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       ? parseConfig(options.config, options.version)
       : options.config;
   const print = options.onPrint ?? console.log;
-  const printed = { count: 0 };
+  let printedCount = 0;
   const getKey = (progress: CheckProgress) =>
     [
       progress.kind,
@@ -98,26 +98,21 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     reported.add(getKey(progress));
     options.onProgress?.(progress);
   };
-  // The search on the calling thread prints and reports what this one did while it started, so it
-  // skips that.
   const fallBack = (createdString?: string) => {
     if (createdString !== undefined) {
       options.onProgress?.({ kind: "sequential-fallback", string: createdString });
     }
-    const skipped = { count: printed.count };
+    let skippedCount = printedCount;
     return checkSequentially({
       ...options,
       config,
-      onPrint: (text) => (skipped.count-- > 0 ? undefined : print(text)),
+      onPrint: (text) => (skippedCount-- > 0 ? undefined : print(text)),
       onProgress: (progress) => {
         if (!reported.has(getKey(progress))) options.onProgress?.(progress);
       },
     });
   };
   const workerCount = options.workers ?? 1;
-  // TLC's workers write the -dump state graph, and print the violations -continue goes on past, in
-  // whichever order they find them, so one worker does what a single TLC worker does. The
-  // coverage counts live in one worker's evaluators.
   const isSequential =
     workerCount < 2 ||
     typeof SharedArrayBuffer !== "function" ||
@@ -152,7 +147,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     order,
     loadClass,
     print: (text) => {
-      printed.count++;
+      printedCount++;
       print(text);
     },
     files: {
@@ -187,7 +182,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   }
 
   const canonicalize = createCanonicalizer();
-  const shared = { fingerprints: createSharedFingerprints() };
+  let sharedFingerprints = createSharedFingerprints();
   const fingerprint = new Int32Array(2);
   const seeds = Array.from({ length: workerCount }, createStateEncoder);
   const statistics = {
@@ -224,10 +219,10 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       canonicalize(state);
       statistics.generatedStates++;
       writeStateFingerprint(search.getFingerprintState(state), fingerprint);
-      if (isSharedFingerprintsFull(shared.fingerprints)) {
-        shared.fingerprints = growSharedFingerprints(shared.fingerprints);
+      if (isSharedFingerprintsFull(sharedFingerprints)) {
+        sharedFingerprints = growSharedFingerprints(sharedFingerprints);
       }
-      if (!insertSharedFingerprint(shared.fingerprints, fingerprint[0], fingerprint[1])) continue;
+      if (!insertSharedFingerprint(sharedFingerprints, fingerprint[0], fingerprint[1])) continue;
       if (search.findViolatedInvariant(state) || search.findFailedInitialPredicate(state)) {
         return false;
       }
@@ -241,7 +236,6 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     );
     return true;
   };
-  // The sequential search reports a violation or a failed evaluation in the initial states.
   report({ kind: "initial-states-started" });
   try {
     if (!seedInitialStates(search.spec.init)) return fallBack();
@@ -260,17 +254,18 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   if (statistics.distinctStates === 0) return createSuccess();
 
   const reports: WorkerMessage[] = [];
-  const pending = { count: workerCount, resolve: (_reports: WorkerMessage[]) => {} };
+  let pendingCount = workerCount;
+  let resolvePending = (_reports: WorkerMessage[]) => {};
   const onMessage = (message: WorkerMessage) => {
     reports.push(message);
-    if (message.type === "abort" || reports.length === pending.count) {
-      pending.resolve(reports.splice(0));
+    if (message.type === "abort" || reports.length === pendingCount) {
+      resolvePending(reports.splice(0));
     }
   };
   const waitForReports = (expected: number) =>
     new Promise<WorkerMessage[]>((resolve) => {
-      pending.count = expected;
-      pending.resolve = resolve;
+      pendingCount = expected;
+      resolvePending = resolve;
     });
   const ready = waitForReports(workerCount);
   const requests = new Int32Array(new SharedArrayBuffer(workerCount * 4));
@@ -293,7 +288,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     return (from < to ? channel.port1 : channel.port2) as unknown as Port;
   };
   workers.forEach((worker, index) => {
-    const ports = Array.from({ length: workerCount }, (_, peer) =>
+    const ports = Array.from({ length: workerCount }, (_value, peer) =>
       peer === index ? undefined : getPort(index, peer),
     );
     const seed = seeds[index].finish();
@@ -313,7 +308,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       fingerprintPolynomial: options.fingerprintPolynomial,
       maxSetSize: options.maxSetSize,
       isLazyValueExpanded: options.isLazyValueExpanded,
-      fingerprints: shared.fingerprints,
+      fingerprints: sharedFingerprints,
       requests,
       remaining,
     };
@@ -323,26 +318,24 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     messages.some((message) => message.type === "abort");
   const send = (message: CoordinatorMessage) =>
     workers.forEach((worker) => worker.postMessage(message));
-  // Workers pause when the shared table needs to grow, and resume once it has.
   const collectLevels = async (messages: WorkerMessage[]): Promise<WorkerMessage[]> => {
-    const paused = messages.filter((message) => message.type === "paused").length;
-    if (paused === 0 || isAborted(messages)) return messages;
-    shared.fingerprints = growSharedFingerprints(shared.fingerprints);
-    const resumed = waitForReports(paused);
-    send({ type: "resize", fingerprints: shared.fingerprints });
-    const reported = messages.filter((message) => message.type !== "paused");
-    return [...reported, ...(await collectLevels(await resumed))];
+    const pausedCount = messages.filter((message) => message.type === "paused").length;
+    if (pausedCount === 0 || isAborted(messages)) return messages;
+    sharedFingerprints = growSharedFingerprints(sharedFingerprints);
+    const resumed = waitForReports(pausedCount);
+    send({ type: "resize", fingerprints: sharedFingerprints });
+    const unpaused = messages.filter((message) => message.type !== "paused");
+    return [...unpaused, ...(await collectLevels(await resumed))];
   };
   if (isAborted(await ready)) {
     terminate();
     return fallBack();
   }
   for (;;) {
-    const reported = waitForReports(workerCount);
-    // Every worker is idle, so peers can ask any of them for states once the level starts.
-    requests.forEach((_, index) => Atomics.store(requests, index, 0));
+    const levelReports = waitForReports(workerCount);
+    requests.forEach((_request, index) => Atomics.store(requests, index, 0));
     send({ type: "level" });
-    const messages = await collectLevels(await reported);
+    const messages = await collectLevels(await levelReports);
     if (isAborted(messages)) {
       terminate();
       const aborted = messages.find(

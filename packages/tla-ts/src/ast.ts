@@ -42,8 +42,6 @@ export interface IdentifierExpression {
   resolution?: LocalResolution;
 }
 
-// spelling holds the text of an operator written as a synonym, such as (+) for \oplus, which SANY
-// reports as written.
 export interface ApplyExpression {
   kind: "Apply";
   operator: string;
@@ -77,8 +75,6 @@ export interface JunctionExpression {
   kind: "And" | "Or";
   operands: Expression[];
   isBulleted?: boolean;
-  // SANY parses A /\ B /\ C as (A /\ B) /\ C, whose node of each prefix of two or more operands ends
-  // after the parentheses of its last operand.
   prefixEnds?: SourceLocation[];
   location: SourceLocation;
 }
@@ -245,7 +241,6 @@ export interface FunctionApplicationExpression {
   location: SourceLocation;
 }
 
-// SANY parses [e1, ..., en] as a function application without the function, and rejects it.
 export interface BracketExpression {
   kind: "Bracket";
   args: Expression[];

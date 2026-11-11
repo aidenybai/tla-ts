@@ -98,12 +98,9 @@ const toJson = (value: Value): string => {
   if (typeof value === "string") return toJsonString(value);
   if (typeof value !== "object") return String(value);
   if (value.kind === "ModelValue") return toJsonString(value.name);
-  const className = getJavaClassName(value);
-  if (className === "RecordValue") return toObjectJson(toFiniteFunction(value));
-  if (className === "TupleValue") return toArrayJson(toFiniteFunction(value).range);
-  if (isFunctionClass(className)) return toFunctionJson(value);
-  if (isTlcEnumerable(value)) return toArrayJson(toFiniteSet(value).elements);
-  throw createUnsupportedError(value);
+  return getJavaClassName(value) === "RecordValue"
+    ? toObjectJson(toFiniteFunction(value))
+    : toJsonArray(value);
 };
 
 const toJsonArray = (value: Value) => {
@@ -174,8 +171,7 @@ const checkCharset = (charset: string) => {
   );
 };
 
-// Files.newBufferedWriter with the given StandardOpenOption names, which writes the text over the
-// start of a file that it neither truncates nor appends to.
+// Files.newBufferedWriter writes the text over the start of a file that it neither truncates nor appends to.
 const writeWithOptions = (files: FileSystem, path: string, names: string[], text: string) => {
   const unknown = names.find((name) => !OPEN_OPTIONS.has(name));
   if (unknown !== undefined) {
@@ -212,7 +208,6 @@ const writeWithOptions = (files: FileSystem, path: string, names: string[], text
   );
 };
 
-// Java's File#getParentFile has no parent for a file name without a directory.
 const makeParentDirectory = (files: FileSystem, path: string) => {
   const separator = path.lastIndexOf("/");
   if (separator !== -1) files.makeDirectory?.(path.slice(0, Math.max(separator, 1)));
@@ -289,8 +284,6 @@ export const createJsonOperators = (files: FileSystem): Builtin[] => [
   ),
 ];
 
-// TLC's Json overrides IOUtils!Serialize, as the CommunityModules define it, for the NDJSON format
-// and falls back to its definition for any other.
 export const createIoUtilsOperators = (
   files: FileSystem,
   evaluateReplaced: (name: string, args: BuiltinArgument[], context: Context | undefined) => Value,

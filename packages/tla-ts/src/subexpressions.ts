@@ -149,9 +149,6 @@ const applyDefinition = (definition: Definition, selection: Selection) => {
   return createApplication({ ...selection, params: [...selection.params, ...params] }, reference);
 };
 
-// Generator.selectorToNode reports the first part of a name that selects nothing, after it analyzes
-// the arguments of the parts before, and goes on after the name. An operator or a label must be given
-// all its arguments, except in a name that an operator argument may select whole.
 const selectSubexpression = (
   selectors: Selector[],
   lookup: Lookup,
@@ -160,25 +157,27 @@ const selectSubexpression = (
 ): Expression => {
   const location = reference.location;
   const selection: Selection = { params: [], args: [], lets: [], location };
-  const state = { index: 0, current: undefined as Expression | undefined, isFailed: false };
+  let selectorIndex = 0;
+  let current = undefined as Expression | undefined;
+  let isFailed = false;
 
   const report = (range: SourceRange | undefined, message: string) => {
     if (!range) throw createError(message, location);
     selectionErrors.set(reference, {
       args: selectors
-        .slice(0, state.index)
+        .slice(0, selectorIndex)
         .flatMap((selector) => ("args" in selector ? selector.args : [])),
       error: { location: formatRange(range), message },
     });
-    state.isFailed = true;
+    isFailed = true;
     return undefined;
   };
 
   const findDefinition = (local: Definition[] | undefined) => {
     const names: string[] = [];
     const args: Expression[] = [];
-    while (state.index < selectors.length) {
-      const selector = selectors[state.index];
+    while (selectorIndex < selectors.length) {
+      const selector = selectors[selectorIndex];
       if (selector.kind !== "Name") throw createError("Expected an operator name", location);
       names.push(selector.name);
       args.push(...selector.args);
@@ -188,7 +187,7 @@ const selectSubexpression = (
         : lookup(name);
       if (definition)
         return { definition, name, args, earlier: args.length - selector.args.length };
-      state.index++;
+      selectorIndex++;
     }
     throw createError(`Unknown operator ${names.join("!")}`, location);
   };
@@ -197,10 +196,10 @@ const selectSubexpression = (
     const found = findDefinition(local);
     const definition = found.definition;
     const arity = getArity(definition);
-    const isLast = state.index === selectors.length - 1;
+    const isLast = selectorIndex === selectors.length - 1;
     if (found.args.length !== arity && (!isOperator || found.args.length !== 0)) {
       return report(
-        reference.argumentRanges?.[state.index] ?? location.range,
+        reference.argumentRanges?.[selectorIndex] ?? location.range,
         `The operator ${found.name} requires ${arity - found.earlier} arguments.`,
       );
     }
@@ -210,17 +209,17 @@ const selectSubexpression = (
     }
     selection.params.push(...definition.params);
     selection.args.push(...found.args);
-    state.current = definition.body;
-    state.index++;
+    current = definition.body;
+    selectorIndex++;
     return undefined;
   };
 
   const followLabels = () => {
-    while (state.index < selectors.length && !state.isFailed) {
-      const selector = selectors[state.index];
+    while (selectorIndex < selectors.length && !isFailed) {
+      const selector = selectors[selectorIndex];
       if (selector.kind !== "Name") return;
-      const range = reference.selectorRanges?.[state.index];
-      const found = state.current && findLabel(state.current, selector.name, []);
+      const range = reference.selectorRanges?.[selectorIndex];
+      const found = current && findLabel(current, selector.name, []);
       if (!found) return report(range, `Cannot find label \`${selector.name}'.`);
       const params = found.label.params;
       if (!isOperator && selector.args.length !== params.length) {
@@ -229,17 +228,16 @@ const selectSubexpression = (
       selection.lets.push(...found.lets);
       selection.params.push(...params.map((name) => ({ name, arity: 0 })));
       selection.args.push(...selector.args);
-      state.current = found.label.body;
-      state.index++;
+      current = found.label.body;
+      selectorIndex++;
     }
   };
 
   const selectOperand = (selector: Selector) => {
-    const current = state.current;
     if (!current) throw createError("Subexpression selection failed", location);
     if (selector.kind === "Colon") return;
     if (current.kind === "Label") {
-      state.current = current.body;
+      current = current.body;
       selectOperand(selector);
       return;
     }
@@ -248,14 +246,14 @@ const selectSubexpression = (
         throw createError("A LET/IN expression has only one operand", location);
       }
       selection.lets.push(current.definitions);
-      state.current = current.body;
+      current = current.body;
       return;
     }
     const binder = getBinder(current);
     if (binder && (selector.kind === "Bound" || selector.kind === "At")) {
       selection.params.push(...binder.names.map((name) => ({ name, arity: 0 })));
       if (selector.kind === "Bound") selection.args.push(...selector.args);
-      state.current = binder.body;
+      current = binder.body;
       return;
     }
     if (current.kind === "Case" && selector.kind === "Operand") {
@@ -264,15 +262,15 @@ const selectSubexpression = (
         ...(current.other ? [{ condition: undefined, body: current.other }] : []),
       ];
       const arm = arms[getOperandIndex(selector.operand, arms.length)];
-      const next = selectors[state.index + 1];
+      const next = selectors[selectorIndex + 1];
       if (!arm || next?.kind !== "Operand") {
         throw createError("A subexpression of CASE must have the form !i!j", location);
       }
-      state.index++;
+      selectorIndex++;
       const part = getOperandIndex(next.operand, 2);
       const chosen = part === 0 ? arm.condition : part === 1 ? arm.body : undefined;
       if (!chosen) throw createError("Nonexistent CASE operand", location);
-      state.current = chosen;
+      current = chosen;
       return;
     }
     if (selector.kind !== "Operand")
@@ -280,23 +278,23 @@ const selectSubexpression = (
     const operands = binder ? binder.sets : getOperands(current);
     const operand = operands?.[getOperandIndex(selector.operand, operands.length)];
     if (!operand) throw createError("Nonexistent operand specified by the selector", location);
-    state.current = operand;
+    current = operand;
   };
 
   const first = enterDefinition(undefined);
-  if (state.isFailed) return reference;
+  if (isFailed) return reference;
   if (first) return applyDefinition(first.definition, { ...selection, args: first.args });
   followLabels();
-  while (state.index < selectors.length && !state.isFailed) {
-    const selector = selectors[state.index];
+  while (selectorIndex < selectors.length && !isFailed) {
+    const selector = selectors[selectorIndex];
     if (selector.kind === "Name") {
-      while (state.current?.kind === "Label") state.current = state.current.body;
-      if (state.current?.kind !== "Let") {
+      while (current?.kind === "Label") current = current.body;
+      if (current?.kind !== "Let") {
         throw createError("A name selector here must be from a LET clause", location);
       }
-      selection.lets.push(state.current.definitions);
-      const last = enterDefinition(state.current.definitions);
-      if (state.isFailed) return reference;
+      selection.lets.push(current.definitions);
+      const last = enterDefinition(current.definitions);
+      if (isFailed) return reference;
       if (last) {
         return applyDefinition(last.definition, {
           ...selection,
@@ -307,11 +305,11 @@ const selectSubexpression = (
       continue;
     }
     selectOperand(selector);
-    state.index++;
+    selectorIndex++;
   }
-  if (state.isFailed) return reference;
-  if (!state.current) throw createError("Subexpression selection failed", location);
-  return createApplication(selection, state.current);
+  if (isFailed) return reference;
+  if (!current) throw createError("Subexpression selection failed", location);
+  return createApplication(selection, current);
 };
 
 const getQualifiedSelectors = (
@@ -322,7 +320,7 @@ const getQualifiedSelectors = (
 ) => {
   if (!name.includes("!") || lookup(name)) return undefined;
   const parts = name.split("!");
-  if (!parts.some((_, index) => lookup(parts.slice(0, index + 1).join("!")))) return undefined;
+  if (!parts.some((_part, index) => lookup(parts.slice(0, index + 1).join("!")))) return undefined;
   return getNameSelectors(name, args, counts);
 };
 
@@ -332,9 +330,6 @@ const containsReference = (expression: Expression): boolean =>
   (expression.kind === "Apply" && expression.operator.includes("!")) ||
   getChildren(expression).some(containsReference);
 
-// A reference that starts with a name isGoal holds for, such as a theorem whose statement is an
-// ASSUME/PROVE, stays for name resolution to check. isOperator holds where an operator may be given,
-// as the argument of an operator that may take one.
 const resolveSubexpressions = (
   expression: Expression,
   lookup: Lookup,
@@ -403,7 +398,6 @@ const createLookup = (definitions: Definition[]): Lookup => {
 export const resolveInstanceSubexpressions = (instance: Instance, module: Module): Instance =>
   resolveInstance(instance, createLookup(module.definitions), () => false);
 
-// Generator.selectorToNode resolves a name in a theorem, a proof, or a fact as it does in a definition.
 export const resolveModuleSubexpressions = (module: Module, available: Definition[]): Module => {
   const goals = new Set(
     module.theorems.flatMap((theorem) =>
@@ -442,8 +436,6 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
       definitionLookup,
       (name) => isGoal(name) && clauses.every((clause) => clause.name !== name),
     );
-  // A name in a theorem, a proof, or a fact may also start with a step, a theorem, or a symbol that
-  // no definition names.
   const isProofGoal = (name: string) => isGoal(name) || !lookup(name);
   const resolveInProof = (expression: Expression) =>
     resolveSubexpressions(expression, lookup, isProofGoal);
@@ -509,7 +501,6 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
         : proof;
   const resolved = {
     ...module,
-    // A named theorem's statement is resolved as its definition.
     theorems: module.theorems.map((theorem) => ({
       ...theorem,
       statement:
