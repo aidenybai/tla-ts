@@ -287,7 +287,8 @@ export const compile = (
           (declaration) =>
             ts.isIdentifier(declaration.name) &&
             // Only a script runs a declaration that nothing reads, which may throw.
-            (declaration.initializer === undefined ||
+            (!isScript(sourceFile) ||
+              declaration.initializer === undefined ||
               (statement.declarationList.flags & ts.NodeFlags.Const) === 0 ||
               isInertValue(declaration.initializer)),
         ),
