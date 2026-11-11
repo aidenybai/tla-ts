@@ -1276,7 +1276,8 @@ export const bindCall = (
     );
   if (taken !== undefined) return taken;
   // A first parameter's array pattern that takes its default, an object, from the object's iterator,
-  // which it does before the body runs and after the arguments, which are all undefined.
+  // which it does before the body runs and after the arguments, which are all undefined. A generator
+  // binds its parameters as the call makes it, and an async function rejects rather than throws.
   const first = parameters.at(0);
   const initializer = first?.initializer;
   const iterated =
@@ -1286,7 +1287,7 @@ export const bindCall = (
     isIteratedPattern(first.name, context) &&
     !path.scope.results.has(initializer) &&
     argumentNodes.every((argument) => isUndefinedLiteral(argument, context)) &&
-    isPlain(callee)
+    !isAsyncFunction(callee)
       ? takeFromIterator(
           first.name,
           translateExpression(initializer, path.scope, context),

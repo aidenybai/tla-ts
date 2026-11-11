@@ -2133,6 +2133,38 @@ describe("errors", () => {
     ).toThrow("tla-ts can't destructure this object through its iterator");
   });
 
+  it("binds a generator's parameter through an iterator as the call makes the generator", async () => {
+    const getSource = (closedAtCall: number) => `
+      let closed = 0;
+      let seen: number = 0;
+      const iterable = {
+        [Symbol.iterator]: function () {
+          return {
+            next: function () {
+              return { value: 7, done: false };
+            },
+            return: function () {
+              closed += 1;
+              return { value: 0, done: true };
+            },
+          };
+        },
+      };
+      function* make([value] = iterable) {
+        seen = value;
+      }
+      async function* later([value] = iterable) {}
+      const made = make();
+      const other = later();
+      const read = (): number => seen;
+      if (closed !== ${closedAtCall} || read() !== 0) throw new Error("call");
+      made.next();
+      if (read() !== 7) throw new Error("body");
+    `;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(0))).failure?.message).toContain("call");
+  });
+
   it("resumes generators that an untyped variable holds", async () => {
     const result = await check(
       compile(
