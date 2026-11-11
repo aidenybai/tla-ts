@@ -336,6 +336,23 @@ const CASES: Record<string, Case[]> = {
       setup: "const table: Record<string, Record<string, number>> = { a: { b: 1, zero: 0 } };",
     },
   ],
+  truthiness: [
+    {
+      variables: "result: unknown = 0",
+      statements: 'const name: string = ""; result = [name || "default", name && "set"];',
+    },
+    {
+      variables: "result: unknown = 0",
+      statements:
+        'const one = table["a"]["b"]; const zero = table["a"]["zero"]; result = [one && one + 1, zero || 5, zero && 5];',
+      setup: "const table: Record<string, Record<string, number>> = { a: { b: 1, zero: 0 } };",
+    },
+    {
+      variables: "result: unknown = 0",
+      statements: 'const inner = table["z"]; result = [inner ? 1 : 2, !inner, !table["a"]];',
+      setup: "const table: Record<string, Record<string, number>> = { a: { b: 1, zero: 0 } };",
+    },
+  ],
 };
 
 describe.each(Object.entries(CASES))("%s", (_, cases) => {

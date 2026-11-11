@@ -859,13 +859,17 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
   }
   const logical = LOGICAL_OPERATORS.get(kind);
   if (logical !== undefined) {
-    if (!isBooleanLike(node.left, context) || !isBooleanLike(node.right, context)) {
-      throw new TlaTypeScriptError(
-        `${node.operatorToken.getText()} needs booleans, so compare explicitly`,
-        node,
-      );
+    if (isBooleanLike(node.left, context) && isBooleanLike(node.right, context)) {
+      return junction(logical, [translate(node.left), translate(node.right)]);
     }
-    return junction(logical, [translate(node.left), translate(node.right)]);
+    // The operand that decides is the value, as JavaScript gives it.
+    return share(translate(node.left), "left", context, (left) => {
+      const isTruthy = translateTruthy(node.left, left, context);
+      const right = translate(node.right);
+      return logical === "And"
+        ? ifExpression(isTruthy, right, left)
+        : ifExpression(isTruthy, left, right);
+    });
   }
   if (kind === ts.SyntaxKind.PlusToken && isString) {
     return apply("\\o", [
@@ -1452,15 +1456,53 @@ const translateElementAccess = (
   );
 };
 
-// A condition, which a script converts to a boolean as JavaScript does, while a spec compares
-// explicitly.
-export const translateCondition = (node: ts.Expression, scope: Scope, context: Context) => {
-  if (isBooleanLike(node, context)) return translateExpression(node, scope, context);
-  if (context.heap === undefined) {
+// Whether a value is truthy, which a script's heap tells at run time. Otherwise the value's type
+// tells: undefined and null are falsy, an object truthy, and a string, a number, or a boolean is
+// truthy unless it's "", 0, or false. Undefined and null compare first, as TLC compares them with
+// any value.
+const translateTruthy = (node: ts.Expression, value: Expression, context: Context) => {
+  if (context.heap !== undefined) return useJavaScript("ToBoolean", [value], context);
+  const type = context.checker.getTypeAtLocation(node);
+  const members = type.isUnion() ? type.types : [type];
+  const getTruthKind = (member: ts.Type) =>
+    (member.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0
+      ? "undefined"
+      : (member.flags & ts.TypeFlags.Null) !== 0
+        ? "null"
+        : (member.flags & (ts.TypeFlags.Object | ts.TypeFlags.NonPrimitive)) !== 0
+          ? "object"
+          : (member.flags & ts.TypeFlags.StringLike) !== 0
+            ? "string"
+            : (member.flags & ts.TypeFlags.NumberLike) !== 0 && !context.hasSpecialNumbers
+              ? "number"
+              : (member.flags & ts.TypeFlags.BooleanLike) !== 0
+                ? "boolean"
+                : undefined;
+  const kinds = new Set(members.map(getTruthKind));
+  const defined = [...kinds].filter((kind) => kind !== "undefined" && kind !== "null");
+  if (kinds.has(undefined) || defined.length > 1) {
     throw new TlaTypeScriptError("Conditions must be booleans, so compare explicitly", node);
   }
-  return useJavaScript("ToBoolean", [translateExpression(node, scope, context)], context);
+  // A read through an index signature may give undefined whatever the type says.
+  context.prelude.add("Null");
+  const tests = [
+    apply("\\notin", [value, set([identifier("Null"), getUndefined(context)])]),
+    ...(defined[0] === "string" ? [apply("#", [value, string("")])] : []),
+    ...(defined[0] === "number" ? [apply("#", [value, number(0)])] : []),
+    ...(defined[0] === "boolean" ? [value] : []),
+  ];
+  return defined.length === 0
+    ? boolean(false)
+    : tests.length === 1
+      ? tests[0]
+      : junction("And", tests);
 };
+
+// A condition, which converts to a boolean as JavaScript does.
+export const translateCondition = (node: ts.Expression, scope: Scope, context: Context) =>
+  isBooleanLike(node, context)
+    ? translateExpression(node, scope, context)
+    : translateTruthy(node, translateExpression(node, scope, context), context);
 
 // Negates a condition, cancelling ! and turning a negated || into a conjunction of guards, so that
 // TLC sees the same formula as a hand-written spec and counts the same successors.
@@ -1584,9 +1626,6 @@ const translateNode = (
   }
   if (ts.isIdentifier(node)) return translateIdentifier(node, scope, context);
   if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
-    if (!isBooleanLike(node.operand, context) && context.heap === undefined) {
-      throw new TlaTypeScriptError("! needs a boolean, so compare explicitly", node);
-    }
     return not(translateCondition(node.operand, scope, context));
   }
   if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.MinusToken) {
