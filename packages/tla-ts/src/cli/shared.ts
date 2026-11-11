@@ -86,18 +86,14 @@ export const reportErrors = async (
   }
 };
 
-// TLC 1.7.4 names the last file SimpleFilenameToStream looked for, and the directories it looked
-// in, the jar's standard modules last.
 export const printMissingFile174 = (path: string, libraries: string[], jar: string | undefined) =>
   console.error(
     `File does not exist: ${isAbsolute(path) ? path : `${process.cwd()}/${path}`} while looking in these directories: ${[...libraries, ...(jar === undefined ? [] : [getStandardModulesUrl(jar)])].join(", ")}`,
   );
 
-// SimpleFilenameToStream ends a library directory with a separator.
 export const toLibraryPath = (directory: string) =>
   directory.endsWith("/") ? directory : `${directory}/`;
 
-// TLC 1.7.4's SANY reports each module it can't find as it looks for it.
 export const reportMissingModules174 =
   (loadModule: (name: string) => string | undefined, onMissing: (fileName: string) => void) =>
   (name: string) => {

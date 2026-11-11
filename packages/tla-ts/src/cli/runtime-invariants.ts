@@ -50,7 +50,8 @@ const getDebuggerExpressionLevel = (
     if (!(error instanceof TlaSyntaxError)) throw error;
     throw createParsingFailure(`Syntax error while parsing breakpoint expression "${expression}"`);
   }
-  const result = { isSemanticCorrect: false, isLevelCorrect: false };
+  let isSemanticCorrect = false;
+  let isLevelCorrect = false;
   const specification = (() => {
     try {
       return generateSanySpecification(text, loadModule, {
@@ -58,13 +59,13 @@ const getDebuggerExpressionLevel = (
         onModule: (module, messages) => {
           const isCorrect = () => messages.every((message) => message.isWarning);
           if (!isCorrect()) return;
-          const isLevelCorrect = checkModuleLevels(module, {
+          const isLevelChecked = checkModuleLevels(module, {
             messages,
             isTlc174: version === "1.7.4",
           });
           if (module.name !== moduleName) return;
-          result.isSemanticCorrect = true;
-          result.isLevelCorrect = isLevelCorrect && isCorrect();
+          isSemanticCorrect = true;
+          isLevelCorrect = isLevelChecked && isCorrect();
         },
       });
     } catch (error) {
@@ -72,8 +73,8 @@ const getDebuggerExpressionLevel = (
       throw createFailure("Semantic error");
     }
   })();
-  if (!result.isSemanticCorrect) throw createFailure("Semantic error");
-  if (!result.isLevelCorrect) throw createFailure("Level-checking error");
+  if (!isSemanticCorrect) throw createFailure("Semantic error");
+  if (!isLevelCorrect) throw createFailure("Level-checking error");
   const level = findDefinition(specification.root, name)?.level ?? CONSTANT_LEVEL;
   if (level === TEMPORAL_LEVEL) {
     throw createParsingFailure(
@@ -83,7 +84,7 @@ const getDebuggerExpressionLevel = (
   return level;
 };
 
-// TLC puts a generated operator in a module that extends the root module; tla-ts appends it instead.
+// Deviation from TLC: TLC puts a generated operator in a module that extends the root module.
 export const addRuntimeInvariants = (
   source: string,
   root: ModuleNode,

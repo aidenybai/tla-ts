@@ -322,7 +322,6 @@ const getVariantSynopsis = (variant: UsageArgument[]) => {
   ].join(" ");
 };
 
-// TLC names its build by its UTC timestamp, or by the current time when it has no manifest.
 const getBuildVersion = () =>
   new Date()
     .toISOString()
@@ -330,8 +329,8 @@ const getBuildVersion = () =>
 
 export const getTlcUsage = () => {
   const options = [
-    ...new Map(
-      COMMAND_VARIANTS.flat().map((argument) => [argument.name, argument] as const),
+    ...new Map<string, UsageArgument>(
+      COMMAND_VARIANTS.flat().map((argument) => [argument.name, argument]),
     ).values(),
   ]
     .sort(compareNames)
