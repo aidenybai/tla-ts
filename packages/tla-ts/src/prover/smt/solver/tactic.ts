@@ -640,7 +640,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "lia2card",
     {
-      descrs: getDescrs("", [["compile_equality", PARAM_BOOL, true]]),
+      descrs: getDescrs("", [["compile_equality", PARAM_BOOL, true, true]]),
       build: (environment, params) =>
         inPlace((goal) =>
           lia2card(
@@ -648,6 +648,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
             goal,
             getUint(params, "lia2card.max_range", 100),
             getUint(params, "lia2card.max_ite_nesting", 4),
+            getBool(params, "compile_equality", true),
           ),
         ),
     },

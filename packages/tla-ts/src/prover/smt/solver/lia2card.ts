@@ -39,6 +39,7 @@ class PbRewriter extends RewriterTpl {
     manager: AstManager,
     private terms: RefVector,
     private maxIteNesting: number,
+    private isCompilingEquality: boolean,
   ) {
     super(manager);
   }
@@ -134,10 +135,24 @@ class PbRewriter extends RewriterTpl {
     throw new SmtUnsupportedError("pseudo-Boolean constraints");
   }
 
+  // Only mkEq uses it, so a single 0-1 term at least zero is its negation, as in Z3.
+  private mkGe(sum: PbSum) {
+    const manager = this.manager;
+    const bound = sum.coeff.neg();
+    if (sum.args.length === 0) return bound.isPositive() ? manager.falseExpr : manager.trueExpr;
+    const isSingleOne = sum.args.length === 1 && sum.coeffs[0].equals(Rational.one);
+    if (isSingleOne && bound.equals(Rational.one)) return sum.args[0];
+    if (isSingleOne && bound.isZero()) return manager.mkApp(OP_NOT, [sum.args[0]], SORT_BOOL);
+    if (bound.isNegative()) return manager.trueExpr;
+    throw new SmtUnsupportedError("pseudo-Boolean constraints");
+  }
+
   private mkEq(sum: PbSum) {
     const manager = this.manager;
     const bound = sum.coeff.neg();
     if (bound.isNegative()) return manager.falseExpr;
+    if (!this.isCompilingEquality)
+      return manager.mkAnd([this.pin(this.mkGe(sum)), this.pin(this.mkLe(sum))]);
     const scale = sum.coeffs.reduce((lcm, coeff) => {
       const den = coeff.den;
       let [first, second] = [lcm, den];
@@ -177,6 +192,7 @@ export const lia2card = (
   goal: Goal,
   maxRange: number,
   maxIteNesting: number,
+  isCompilingEquality: boolean,
 ) => {
   const terms = new RefVector(manager);
   const pin = (expr: number) => {
@@ -233,7 +249,7 @@ export const lia2card = (
     definitions.push({ decl, def: sum });
     replace.insert(variable, sum);
   }
-  const rewriter = new PbRewriter(manager, terms, maxIteNesting);
+  const rewriter = new PbRewriter(manager, terms, maxIteNesting, isCompilingEquality);
   for (let index = 0; !goal.isInconsistent && index < goal.forms.size; index++) {
     manager.limit.checkpoint();
     const replaced = replace.apply(goal.forms.items[index]);
