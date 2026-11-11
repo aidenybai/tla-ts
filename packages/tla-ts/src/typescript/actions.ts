@@ -58,7 +58,12 @@ import {
   isNullBased,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
-import { getConversion, getConversionFunctions, runConversion } from "./conversions";
+import {
+  getConversion,
+  getConversionFunctions,
+  isCompoundAssignment,
+  runConversion,
+} from "./conversions";
 import { getJsonText, parseJson, translateHoldsJson } from "./json";
 import {
   closeIterator,
@@ -4863,7 +4868,17 @@ const findLeadingCall = (
     }
     const isAssignment =
       kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
-    return isAssignment ? blocked : thenConverted(inOrder([node.left, node.right]));
+    // A compound assignment reads its variable before it evaluates its right operand, so it
+    // converts first only where that operand runs nothing.
+    if (isAssignment) {
+      const right = isCompoundAssignment(node)
+        ? findLeadingCall(node.right, [], path, context)
+        : none;
+      return isCompoundAssignment(node) && right.call === undefined && !right.isBlocked
+        ? thenConverted(right)
+        : blocked;
+    }
+    return thenConverted(inOrder([node.left, node.right]));
   }
   // A Boolean, Number, or String object runs no code where a statement makes it. Any other new
   // runs a conversion among its arguments first, such as one in an error's message.
@@ -4953,6 +4968,13 @@ const getHoistedConversion = (statement: ts.Statement, path: Path, context: Cont
   const node = findLeadingCall(evaluated, before, path, context).conversion;
   const conversion = node === undefined ? undefined : getConversion(node, context);
   if (node === undefined || conversion === undefined) return undefined;
+  // A compound assignment assigns where it's all that the statement evaluates.
+  if (
+    isCompoundAssignment(node) &&
+    !(ts.isExpressionStatement(statement) && skipCasts(statement.expression) === node)
+  ) {
+    return undefined;
+  }
   rejectEarlyRun(
     node,
     getConversionFunctions(node, context),
@@ -5086,26 +5108,24 @@ export const translateStatements = (
   }
   const converted = getHoistedConversion(statement, path, context);
   if (converted !== undefined) {
-    return runConversion(
-      converted.node,
-      converted.conversion,
-      path,
-      context,
-      frame,
-      (after, value) =>
-        translateStatements(
-          statements,
-          {
-            ...after,
-            scope: {
-              ...after.scope,
-              results: new Map([...after.scope.results, [converted.node, value]]),
-            },
+    const node = converted.node;
+    return runConversion(node, converted.conversion, path, context, frame, (after, value) => {
+      const assigned = isCompoundAssignment(node)
+        ? assign(node.left, after, context, () => value)
+        : after;
+      return translateStatements(
+        statements,
+        {
+          ...assigned,
+          scope: {
+            ...assigned.scope,
+            results: new Map([...assigned.scope.results, [node, value]]),
           },
-          context,
-          frame,
-        ),
-    );
+        },
+        context,
+        frame,
+      );
+    });
   }
 
   if (

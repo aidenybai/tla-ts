@@ -41,6 +41,34 @@ const NUMBER_OPERATIONS = new Map([
 
 const WRAPPERS = new Set(["Boolean", "Number", "String"]);
 
+// The operator that each compound assignment applies.
+const COMPOUND_OPERATORS = new Map([
+  [ts.SyntaxKind.PlusEqualsToken, ts.SyntaxKind.PlusToken],
+  [ts.SyntaxKind.MinusEqualsToken, ts.SyntaxKind.MinusToken],
+  [ts.SyntaxKind.AsteriskEqualsToken, ts.SyntaxKind.AsteriskToken],
+  [ts.SyntaxKind.SlashEqualsToken, ts.SyntaxKind.SlashToken],
+  [ts.SyntaxKind.PercentEqualsToken, ts.SyntaxKind.PercentToken],
+  [ts.SyntaxKind.AsteriskAsteriskEqualsToken, ts.SyntaxKind.AsteriskAsteriskToken],
+  [ts.SyntaxKind.AmpersandEqualsToken, ts.SyntaxKind.AmpersandToken],
+  [ts.SyntaxKind.BarEqualsToken, ts.SyntaxKind.BarToken],
+  [ts.SyntaxKind.CaretEqualsToken, ts.SyntaxKind.CaretToken],
+  [ts.SyntaxKind.LessThanLessThanEqualsToken, ts.SyntaxKind.LessThanLessThanToken],
+  [ts.SyntaxKind.GreaterThanGreaterThanEqualsToken, ts.SyntaxKind.GreaterThanGreaterThanToken],
+  [
+    ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
+    ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
+  ],
+]);
+
+// A compound assignment to a variable, which converts its operands as its operator does and then
+// assigns the result.
+export const isCompoundAssignment = (
+  node: ts.Node,
+): node is ts.BinaryExpression & { left: ts.Identifier } =>
+  ts.isBinaryExpression(node) &&
+  COMPOUND_OPERATORS.has(node.operatorToken.kind) &&
+  ts.isIdentifier(node.left);
+
 // An object that a script declares, or a Boolean, Number, or String, which ToPrimitive converts
 // through its methods. ToPrimitive gives back a primitive that a wrapper's type also takes.
 const isObjectOperand = (node: ts.Expression, context: Context) => {
@@ -62,6 +90,11 @@ const hasFlags = (node: ts.Expression, flags: ts.TypeFlags, context: Context) =>
   (context.checker.getTypeAtLocation(skipCasts(node)).flags & flags) !== 0;
 
 // A primitive operand, which ToPrimitive gives back.
+// A value of type any, which the conversion tells apart as it runs: ToPrimitive converts an object
+// that the heap holds, and gives back a primitive. Any other value stops the check.
+const isAnyOperand = (node: ts.Expression, context: Context) =>
+  hasFlags(node, ts.TypeFlags.Any, context);
+
 const isPrimitiveOperand = (node: ts.Expression, context: Context) =>
   hasFlags(
     node,
@@ -94,14 +127,19 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
     hint: Hint,
     combine: Conversion["combine"],
     isOnNumbers = false,
+    isAnyConverted = isOnNumbers,
   ): Conversion | undefined =>
     operands.some(
       (operand) =>
         isObjectOperand(operand, context) ||
-        (isOnNumbers && isConvertedPrimitive(operand, context)),
+        (isOnNumbers && isConvertedPrimitive(operand, context)) ||
+        (isAnyConverted && isAnyOperand(operand, context)),
     ) &&
     operands.every(
-      (operand) => isObjectOperand(operand, context) || isPrimitiveOperand(operand, context),
+      (operand) =>
+        isObjectOperand(operand, context) ||
+        isPrimitiveOperand(operand, context) ||
+        (isAnyConverted && isAnyOperand(operand, context)),
     )
       ? { operands, hint, combine }
       : undefined;
@@ -112,6 +150,8 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
   ) {
     const method = node.expression.name.text;
     const operands = node.arguments;
+    // A value of type any that Math reads converts as ToNumber does, without the heap.
+    if (operands.some((operand) => isAnyOperand(operand, context))) return undefined;
     const toNumbers = (primitives: readonly Expression[]) =>
       primitives.map((primitive) => useJavaScript("ToNumber", [primitive], context));
     if (operands.some(ts.isSpreadElement)) return undefined;
@@ -196,15 +236,23 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
     );
   }
   if (!ts.isBinaryExpression(node)) return undefined;
-  const kind = node.operatorToken.kind;
+  if (COMPOUND_OPERATORS.has(node.operatorToken.kind) && !isCompoundAssignment(node)) {
+    return undefined;
+  }
+  const kind = COMPOUND_OPERATORS.get(node.operatorToken.kind) ?? node.operatorToken.kind;
   const operands = [node.left, node.right];
   // + joins strings, which tla-ts does without converting.
   if (kind === ts.SyntaxKind.PlusToken) {
+    const isOnNumbers = !operands.some((operand) =>
+      hasFlags(operand, ts.TypeFlags.StringLike, context),
+    );
+    // + joins a string with a value of type any as it is, but += must convert the value it reads.
     return make(
       operands,
       "default",
       (primitives) => plain(useJavaScript("AddPrimitives", [...primitives], context)),
-      !operands.some((operand) => hasFlags(operand, ts.TypeFlags.StringLike, context)),
+      isOnNumbers,
+      isOnNumbers || isCompoundAssignment(node),
     );
   }
   const operation = NUMBER_OPERATIONS.get(kind) ?? BITWISE_OPERATORS.get(kind);
@@ -238,10 +286,11 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
       return kind === ts.SyntaxKind.EqualsEqualsToken ? isEqual : not(isEqual);
     });
   }
-  // a > b and a <= b compare b with a, though they convert a first. Two strings don't convert.
-  const isOrdered = !operands.every((operand) =>
-    hasFlags(operand, ts.TypeFlags.StringLike, context),
-  );
+  // a > b and a <= b compare b with a, though they convert a first. Two strings don't convert, and
+  // a value of type any compares as it is.
+  const isOrdered =
+    !operands.every((operand) => hasFlags(operand, ts.TypeFlags.StringLike, context)) &&
+    !operands.some((operand) => isAnyOperand(operand, context));
   const compare = (name: string, left: Expression, right: Expression) =>
     useJavaScript(name, [left, right], context);
   if (kind === ts.SyntaxKind.LessThanToken || kind === ts.SyntaxKind.GreaterThanToken) {

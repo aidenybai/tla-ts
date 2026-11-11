@@ -719,6 +719,30 @@ describe("values", () => {
     `);
     expect(result.failure?.message).toContain("got 2");
   });
+
+  it("converts what a compound assignment reads from a variable of type any", async () => {
+    const result = await checkModel(`
+      const marker = NaN;
+      let value: any = true;
+      // @ts-ignore
+      value *= true;
+      if (value !== 1) throw new Error("boolean");
+      value = new String("3");
+      value >>>= 1;
+      if (value !== 1) throw new Error("wrapper");
+      value = 1;
+      value += "a";
+      if (value !== "1a") throw new Error("string");
+      value = { valueOf: () => 7 };
+      value <<= 2;
+      if (value !== 28) throw new Error("object");
+      value = null;
+      // @ts-ignore
+      value -= undefined;
+      if (value === value) throw new Error("NaN");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
 });
 
 describe("bounds", () => {
