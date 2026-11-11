@@ -1,16 +1,7 @@
-// Reads the theories tlapm writes (Isabelle.thy_temp in isabelle.ml):
-//
-//   theory NAME imports Constant Zenon begin
-//   consts "name" :: type ...
-//   lemma NAME: fixes ... assumes NAME: "prop" ... shows "prop" (is "PROP ?NAME")
-//   proof - show "PROP ?NAME" [using assms] by METHOD [METHOD] qed
-//   end
-//
-// and theories of lemmas proved by a method, such as tlapm's isabelle/tests/Tests.thy, with text
-// between them:
-//
-//   lemma [NAME:] fixes x y :: "type" and z assumes [NAME:] "prop" and "prop" shows "prop"
-//   [using assms] by METHOD [METHOD]
+// Reads the outer syntax of a theory into its commands, which decide.ts then runs one after the
+// other, as Isabelle's toplevel does. It covers the theories tlapm writes (Isabelle.thy_temp in
+// isabelle.ml), the structured proofs Zenon writes into them, and theories of lemmas, definitions
+// and structured proofs such as tlapm's isabelle/examples.
 
 import { TlaIsabelleError } from "../../../errors";
 
@@ -25,21 +16,81 @@ export interface FixedVariable {
   readonly type: string | undefined;
 }
 
+export interface AttributeSource {
+  readonly name: string;
+  readonly args: readonly OuterToken[];
+}
+
+export interface FactReference {
+  readonly name: string;
+  readonly attributes: readonly AttributeSource[];
+}
+
+// A proposition with the patterns of its (is ...) term bindings.
+export interface Propp {
+  readonly text: string;
+  readonly patterns: readonly string[];
+}
+
+export interface StatementPart {
+  readonly name: string | undefined;
+  readonly attributes: readonly AttributeSource[];
+  readonly props: readonly Propp[];
+}
+
 export type StatementElement =
   | { readonly kind: "fixes"; readonly variables: readonly FixedVariable[] }
-  | { readonly kind: "assumes"; readonly props: readonly string[] };
+  | { readonly kind: "assumes"; readonly parts: readonly StatementPart[] };
 
-export interface LemmaText {
-  readonly elements: readonly StatementElement[];
-  readonly shows: string;
-  readonly isUsingAssms: boolean;
-  readonly method: readonly OuterToken[];
-}
+export type MethodText =
+  | { readonly kind: "source"; readonly name: string; readonly args: readonly OuterToken[] }
+  | {
+      readonly kind: "then" | "thenAllNew" | "orelse" | "try" | "repeat1";
+      readonly texts: readonly MethodText[];
+    }
+  | { readonly kind: "select"; readonly count: number; readonly text: MethodText };
+
+export type Command =
+  | {
+      readonly kind: "consts";
+      readonly consts: readonly { readonly name: string; readonly type: string }[];
+    }
+  | {
+      readonly kind: "definition";
+      readonly name: string | undefined;
+      readonly type: string | undefined;
+      readonly part: StatementPart;
+    }
+  | { readonly kind: "declare"; readonly facts: readonly FactReference[] }
+  | {
+      readonly kind: "theorem";
+      readonly name: string | undefined;
+      readonly attributes: readonly AttributeSource[];
+      readonly elements: readonly StatementElement[];
+      readonly shows: readonly StatementPart[];
+      readonly isLong: boolean;
+    }
+  | { readonly kind: "proof"; readonly method: MethodText | undefined }
+  | { readonly kind: "qed"; readonly method: MethodText | undefined }
+  | { readonly kind: "by"; readonly initial: MethodText; readonly terminal: MethodText | undefined }
+  | { readonly kind: "next" | "then" | "moreover" | "ultimately" }
+  | {
+      readonly kind: "goal";
+      readonly command: "have" | "show" | "hence" | "thus";
+      readonly parts: readonly StatementPart[];
+    }
+  | { readonly kind: "assume"; readonly parts: readonly StatementPart[] }
+  | { readonly kind: "fix"; readonly variables: readonly FixedVariable[] }
+  | {
+      readonly kind: "facts";
+      readonly command: "from" | "with" | "using" | "unfolding";
+      readonly facts: readonly FactReference[];
+    }
+  | { readonly kind: "case"; readonly name: string };
 
 export interface TheoryText {
   readonly name: string;
-  readonly consts: readonly { readonly name: string; readonly type: string }[];
-  readonly lemmas: readonly LemmaText[];
+  readonly commands: readonly Command[];
 }
 
 const isWordChar = (char: string) => /[A-Za-z0-9_'.]/.test(char);
@@ -139,49 +190,89 @@ const DOCUMENT_COMMANDS = new Set([
   "paragraph",
   "subparagraph",
   "text",
+  "txt",
   "text_raw",
+  "ML_command",
+]);
+
+const THEOREM_COMMANDS = new Set(["lemma", "theorem", "corollary", "proposition"]);
+
+const COMMANDS = new Set([
+  ...DOCUMENT_COMMANDS,
+  ...THEOREM_COMMANDS,
+  "consts",
+  "definition",
+  "declare",
+  "proof",
+  "qed",
+  "by",
+  "next",
+  "then",
+  "moreover",
+  "ultimately",
+  "have",
+  "show",
+  "hence",
+  "thus",
+  "assume",
+  "fix",
+  "from",
+  "with",
+  "using",
+  "unfolding",
+  "case",
+  "end",
 ]);
 
 const KEYWORDS = new Set([
+  ...COMMANDS,
   "fixes",
   "assumes",
   "shows",
   "and",
   "is",
-  "lemma",
-  "proof",
-  "show",
-  "using",
-  "by",
-  "qed",
-  "end",
-  "consts",
-  ...DOCUMENT_COMMANDS,
+  "where",
+  "imports",
+  "begin",
 ]);
+
+// Method.parser: a method name takes the arguments up to a separator, Parse.args1.
+const isArgumentSeparator = (token: OuterToken, isBlock: boolean) =>
+  token.kind === "symbol" &&
+  (token.text === "|" ||
+    token.text === "?" ||
+    token.text === "+" ||
+    token.text === ";" ||
+    token.text === ")" ||
+    token.text === "]" ||
+    (!isBlock && token.text === ","));
 
 export const parseTheory = (text: string): TheoryText => {
   const tokens = tokenize(text);
   let position = 0;
-  const peek = () => tokens[position];
-  const isWord = (word: string) => peek()?.kind === "word" && peek().text === word;
+  const peek = (offset = 0): OuterToken | undefined => tokens[position + offset];
+  const isWord = (word: string, offset = 0) =>
+    peek(offset)?.kind === "word" && peek(offset)?.text === word;
+  const isSymbol = (symbol: string, offset = 0) =>
+    peek(offset)?.kind === "symbol" && peek(offset)?.text === symbol;
   const syntaxError = () =>
-    new TlaIsabelleError(
-      "ERROR",
-      `Outer syntax error at: ${peek() === undefined ? "end of input" : peek().text}`,
-    );
+    new TlaIsabelleError("ERROR", `Outer syntax error at: ${peek()?.text ?? "end of input"}`);
   const expectWord = (word: string) => {
     if (!isWord(word)) throw syntaxError();
     position += 1;
   };
   const expectSymbol = (symbol: string) => {
-    if (peek()?.kind !== "symbol" || peek().text !== symbol) throw syntaxError();
+    if (!isSymbol(symbol)) throw syntaxError();
     position += 1;
   };
+  const isName = (offset = 0) => {
+    const token = peek(offset);
+    return token?.kind === "word" && !KEYWORDS.has(token.text);
+  };
   const name = () => {
-    const token = peek();
-    if (token?.kind !== "word" || KEYWORDS.has(token.text)) throw syntaxError();
+    if (!isName()) throw syntaxError();
     position += 1;
-    return token.text;
+    return tokens[position - 1].text;
   };
   const string = () => {
     const token = peek();
@@ -189,26 +280,17 @@ export const parseTheory = (text: string): TheoryText => {
     position += 1;
     return token.text;
   };
-  const nameOrString = () => (peek()?.kind === "string" ? string() : name());
-
-  expectWord("theory");
-  const theoryName = name();
-  expectWord("imports");
-  while (!isWord("begin")) name();
-  expectWord("begin");
-  const consts: { name: string; type: string }[] = [];
-  if (isWord("consts")) {
-    position += 1;
-    while (peek()?.kind === "string") {
-      const constName = string();
-      expectSymbol(":");
-      expectSymbol(":");
-      consts.push({ name: constName, type: nameOrString() });
+  // Parse.term and Parse.typ: an inner text is a string, a cartouche or a single name.
+  const isInner = () => peek()?.kind === "string" || peek()?.kind === "cartouche" || isName();
+  const inner = () => {
+    const token = peek();
+    if (token?.kind === "cartouche") {
+      position += 1;
+      return token.text.slice("\\<open>".length, -"\\<close>".length);
     }
-  }
-  const isSymbol = (symbol: string) => peek()?.kind === "symbol" && peek().text === symbol;
-  const isName = () => peek()?.kind === "word" && !KEYWORDS.has(peek().text);
-  const andList = <T>(read: () => T) => {
+    return token?.kind === "string" ? string() : name();
+  };
+  const andList = <Item>(read: () => Item) => {
     const items = [read()];
     while (isWord("and")) {
       position += 1;
@@ -216,87 +298,264 @@ export const parseTheory = (text: string): TheoryText => {
     }
     return items;
   };
-  const variables = () => {
-    const names = [name()];
-    while (isName()) names.push(name());
-    if (!isSymbol(":")) return names.map((variable) => ({ name: variable, type: undefined }));
-    expectSymbol(":");
-    expectSymbol(":");
-    const type = nameOrString();
-    return names.map((variable) => ({ name: variable, type }));
+  // A balanced group of tokens, as the arguments of a method or an attribute.
+  const args = (isBlock: boolean): OuterToken[] => {
+    const found: OuterToken[] = [];
+    for (;;) {
+      const token = peek();
+      if (token === undefined || isArgumentSeparator(token, isBlock)) return found;
+      if (token.kind === "word" && COMMANDS.has(token.text)) return found;
+      position += 1;
+      found.push(token);
+      if (token.kind === "symbol" && (token.text === "(" || token.text === "[")) {
+        found.push(...args(true));
+        const close = token.text === "(" ? ")" : "]";
+        found.push(tokens[position]);
+        expectSymbol(close);
+      }
+    }
   };
-  // Parse_Spec.opt_thm_name ":" followed by the propositions it names.
-  const props = () => {
-    if (isName() && tokens[position + 1]?.kind === "symbol" && tokens[position + 1].text === ":")
-      position += 2;
-    const found = [string()];
-    while (peek()?.kind === "string") found.push(string());
+  const attributes = (): AttributeSource[] => {
+    if (!isSymbol("[")) return [];
+    position += 1;
+    if (isSymbol("]")) {
+      position += 1;
+      return [];
+    }
+    const found: AttributeSource[] = [];
+    for (;;) {
+      const attribute = name();
+      found.push({ name: attribute, args: args(false) });
+      if (isSymbol("]")) break;
+      expectSymbol(",");
+    }
+    position += 1;
     return found;
   };
-  const isDocument = () => peek()?.kind === "word" && DOCUMENT_COMMANDS.has(peek().text);
-  // A method runs to the next command.
-  const method = () => {
-    const methodStart = position;
-    let depth = 0;
-    while (
-      position < tokens.length &&
-      !(depth === 0 && (isWord("qed") || isWord("lemma") || isWord("end") || isDocument()))
-    ) {
-      if (isSymbol("(")) depth += 1;
-      if (isSymbol(")")) depth -= 1;
-      position += 1;
+  const facts = (): FactReference[] => {
+    const found: FactReference[] = [];
+    while (isName() || (isWord("and") && isName(1))) {
+      if (isWord("and")) position += 1;
+      found.push({ name: name(), attributes: attributes() });
     }
-    return tokens.slice(methodStart, position);
+    return found;
   };
-  const proof = () => {
-    const isUsingAssms = isWord("using");
-    if (isUsingAssms) {
-      position += 1;
-      expectWord("assms");
+  // Parse_Spec.opt_thm_name ":".
+  const thmName = (): { name: string | undefined; attributes: AttributeSource[] } => {
+    if (isName() && (isSymbol(":", 1) || isSymbol("[", 1))) {
+      const start = position;
+      const found = { name: name(), attributes: attributes() };
+      if (isSymbol(":") && !isSymbol(":", 1)) {
+        position += 1;
+        return found;
+      }
+      position = start;
     }
-    expectWord("by");
-    return { isUsingAssms, method: method() };
+    if (isSymbol("[")) {
+      const start = position;
+      const found = attributes();
+      if (isSymbol(":")) {
+        position += 1;
+        return { name: undefined, attributes: found };
+      }
+      position = start;
+    }
+    return { name: undefined, attributes: [] };
   };
-  const lemma = (): LemmaText => {
-    expectWord("lemma");
-    if (isName()) {
-      name();
-      expectSymbol(":");
+  const propp = (): Propp => {
+    const prop = inner();
+    if (!(isSymbol("(") && isWord("is", 1))) return { text: prop, patterns: [] };
+    position += 2;
+    const patterns = [inner()];
+    while (isInner()) patterns.push(inner());
+    expectSymbol(")");
+    return { text: prop, patterns };
+  };
+  const statementPart = (): StatementPart => {
+    const header = thmName();
+    const props = [propp()];
+    while (isInner()) props.push(propp());
+    return { ...header, props };
+  };
+  const statement = () => andList(statementPart);
+  const variables = (): FixedVariable[] => {
+    const names = [name()];
+    while (isName() && !isSymbol(":", 1)) names.push(name());
+    if (!(isSymbol(":") && isSymbol(":", 1)))
+      return names.map((variable) => ({ name: variable, type: undefined }));
+    position += 2;
+    const type = inner();
+    return names.map((variable) => ({ name: variable, type }));
+  };
+  const fixes = () => andList(variables).flat();
+
+  const methodName = (): string => {
+    const token = peek();
+    if (token?.kind === "word" && !COMMANDS.has(token.text)) {
+      position += 1;
+      return token.text;
     }
+    if (token?.kind === "symbol" && token.text === "-") {
+      position += 1;
+      return "-";
+    }
+    throw syntaxError();
+  };
+  const method5 = (): MethodText => {
+    if (!isSymbol("(")) return { kind: "source", name: methodName(), args: [] };
+    position += 1;
+    const text = method0();
+    expectSymbol(")");
+    return text;
+  };
+  const method4 = (): MethodText => {
+    const text = method5();
+    if (isSymbol("?")) {
+      position += 1;
+      return { kind: "try", texts: [text] };
+    }
+    if (isSymbol("+")) {
+      position += 1;
+      return { kind: "repeat1", texts: [text] };
+    }
+    if (isSymbol("[")) {
+      position += 1;
+      const count = isSymbol("]") ? 1 : Number(name());
+      expectSymbol("]");
+      return { kind: "select", count, text };
+    }
+    return text;
+  };
+  const method3 = (): MethodText => {
+    if (isSymbol("(")) return method4();
+    const start = position;
+    const methodSource = methodName();
+    const found = args(false);
+    if (found.length === 0) {
+      position = start;
+      return method4();
+    }
+    return { kind: "source", name: methodSource, args: found };
+  };
+  const enumeration = (
+    separator: string,
+    kind: "then" | "thenAllNew" | "orelse",
+    read: () => MethodText,
+  ): MethodText => {
+    const texts = [read()];
+    while (isSymbol(separator)) {
+      position += 1;
+      texts.push(read());
+    }
+    return texts.length === 1 ? texts[0] : { kind, texts };
+  };
+  const method2 = () => enumeration(",", "then", method3);
+  const method1 = () => enumeration(";", "thenAllNew", method2);
+  const method0 = (): MethodText => enumeration("|", "orelse", method1);
+  const isMethodStart = () =>
+    isSymbol("(") ||
+    isSymbol("-") ||
+    (peek()?.kind === "word" && !COMMANDS.has(peek()?.text ?? ""));
+  const optionalMethod = () => (isMethodStart() ? method4() : undefined);
+
+  const theoremCommand = (): Command => {
+    position += 1;
+    const header = thmName();
+    const isLong = isWord("fixes") || isWord("assumes") || isWord("shows");
+    if (!isLong) return { kind: "theorem", ...header, elements: [], shows: statement(), isLong };
     const elements: StatementElement[] = [];
     while (isWord("fixes") || isWord("assumes")) {
       const isFixes = isWord("fixes");
       position += 1;
       elements.push(
-        isFixes
-          ? { kind: "fixes", variables: andList(variables).flat() }
-          : { kind: "assumes", props: andList(props).flat() },
+        isFixes ? { kind: "fixes", variables: fixes() } : { kind: "assumes", parts: statement() },
       );
     }
     expectWord("shows");
-    const shows = string();
-    if (!isSymbol("(")) return { elements, shows, ...proof() };
-    expectSymbol("(");
-    expectWord("is");
-    string();
-    expectSymbol(")");
-    expectWord("proof");
-    expectSymbol("-");
-    expectWord("show");
-    string();
-    const found = proof();
-    expectWord("qed");
-    return { elements, shows, ...found };
+    return { kind: "theorem", ...header, elements, shows: statement(), isLong };
   };
-  const lemmas: LemmaText[] = [];
-  while (!isWord("end")) {
-    if (isDocument()) {
+  const definitionCommand = (): Command => {
+    position += 1;
+    const isDeclaration =
+      isName() && (isWord("where", 1) || (isSymbol(":", 1) && isSymbol(":", 2)));
+    const declared = isDeclaration ? name() : undefined;
+    const type = declared !== undefined && isSymbol(":") ? ((position += 2), inner()) : undefined;
+    if (declared !== undefined) expectWord("where");
+    return { kind: "definition", name: declared, type, part: statementPart() };
+  };
+  const command = (): Command | undefined => {
+    const token = peek();
+    if (token?.kind !== "word") throw syntaxError();
+    if (DOCUMENT_COMMANDS.has(token.text)) {
       position += 1;
       if (peek()?.kind !== "cartouche" && peek()?.kind !== "string") throw syntaxError();
       position += 1;
-    } else lemmas.push(lemma());
+      return undefined;
+    }
+    if (THEOREM_COMMANDS.has(token.text)) return theoremCommand();
+    position += 1;
+    switch (token.text) {
+      case "consts": {
+        const consts: { name: string; type: string }[] = [];
+        while (isName() || peek()?.kind === "string") {
+          const constName = inner();
+          expectSymbol(":");
+          expectSymbol(":");
+          consts.push({ name: constName, type: inner() });
+        }
+        return { kind: "consts", consts };
+      }
+      case "definition":
+        position -= 1;
+        return definitionCommand();
+      case "declare":
+        return { kind: "declare", facts: facts() };
+      case "proof":
+        return { kind: "proof", method: optionalMethod() };
+      case "qed":
+        return { kind: "qed", method: optionalMethod() };
+      case "by":
+        return { kind: "by", initial: method4(), terminal: optionalMethod() };
+      case "next":
+      case "then":
+      case "moreover":
+      case "ultimately":
+        return { kind: token.text };
+      case "have":
+      case "show":
+      case "hence":
+      case "thus":
+        return { kind: "goal", command: token.text, parts: statement() };
+      case "assume":
+        return { kind: "assume", parts: statement() };
+      case "fix":
+        return { kind: "fix", variables: fixes() };
+      case "from":
+      case "with":
+      case "using":
+      case "unfolding":
+        return { kind: "facts", command: token.text, facts: facts() };
+      case "case":
+        return { kind: "case", name: name() };
+      default:
+        position -= 1;
+        throw syntaxError();
+    }
+  };
+
+  // Document commands may precede the theory header.
+  while (peek()?.kind === "word" && DOCUMENT_COMMANDS.has(peek()?.text ?? "")) command();
+  expectWord("theory");
+  const theoryName = name();
+  expectWord("imports");
+  while (!isWord("begin")) name();
+  expectWord("begin");
+  const commands: Command[] = [];
+  while (!isWord("end") || position + 1 < tokens.length) {
+    if (isWord("end")) throw syntaxError();
+    const parsed = command();
+    if (parsed !== undefined) commands.push(parsed);
   }
   expectWord("end");
-  if (position !== tokens.length) throw syntaxError();
-  return { name: theoryName, consts, lemmas };
+  return { name: theoryName, commands };
 };

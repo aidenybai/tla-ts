@@ -2,9 +2,10 @@
 // 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see
 // LICENSE.
 
-import { genAll, isNormHhf, normHhfEq } from "./drule";
+import { genAll, isNormHhf, normHhfEq, protectCong } from "./drule";
 import { preferGoal } from "./goal";
-import { addSimps, emptySimpset, type SimpContext, type Solver } from "./raw-simplifier";
+import { addSimps, congKey, emptySimpset, type SimpContext, type Solver } from "./raw-simplifier";
+import { updateTable } from "./table";
 import { fconvRule } from "./conv";
 import {
   genericRewriteGoalTac,
@@ -83,10 +84,23 @@ export const simplify = (context: SimpContext, thm: Thm) =>
 
 // Drule.sort_constraint_eq, the other rule of hhf_ss, never applies: tlapm's terms carry no sort
 // constraints.
-export const normHhf = (limits: Limits, thm: Thm): Thm => {
-  if (isNormHhf(false, thm.prop)) return genAll(thm);
+const genNormHhf = (isProtecting: boolean, limits: Limits, thm: Thm): Thm => {
+  if (isNormHhf(isProtecting, thm.prop)) return genAll(thm);
   const empty = { limits, simpset: emptySimpset, bounds: 0 };
-  const context = { ...empty, simpset: addSimps(empty, [normHhfEq]) };
+  const simpset = addSimps(empty, [normHhfEq]);
+  const context = {
+    ...empty,
+    simpset: isProtecting
+      ? {
+          ...simpset,
+          congs: updateTable(
+            simpset.congs,
+            congKey({ isConst: true, name: "Pure.prop" }),
+            protectCong,
+          ),
+        }
+      : simpset,
+  };
   return genAll(
     fconvRule(
       (term) =>
@@ -100,3 +114,8 @@ export const normHhf = (limits: Limits, thm: Thm): Thm => {
     ),
   );
 };
+
+export const normHhf = (limits: Limits, thm: Thm) => genNormHhf(false, limits, thm);
+
+// Raw_Simplifier.norm_hhf_protect leaves protected propositions alone.
+export const normHhfProtect = (limits: Limits, thm: Thm) => genNormHhf(true, limits, thm);

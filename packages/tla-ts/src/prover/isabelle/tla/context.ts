@@ -1,8 +1,10 @@
 import { TlaIsabelleError } from "../../../errors";
 import type { ProofContext } from "../isar/method";
+import { normHhfEq } from "../pure/drule";
 import { emptyNet } from "../pure/net";
 import type { Limits } from "../pure/interrupt";
 import { insertTaggedBrl, type NetPair } from "../pure/tactic";
+import { symmetric } from "../pure/thm";
 import { blastDepthTac, blastTac, type BlastContext } from "../provers/blast/blast";
 import type { ClassicalContext } from "../provers/classical";
 import { blastHypSubstTac } from "../provers/hypsubst";
@@ -20,6 +22,16 @@ const ATOMIZE_RULES = [
   "PredicateLogic.atomize_not",
   "PredicateLogic.atomize_imp",
   "PredicateLogic.atomize_all",
+];
+
+// PredicateLogic.thy declares these [symmetric, rulify], newest first, after Pure's norm_hhf_eq.
+const RULIFY_RULES = ["PredicateLogic.atomize_imp", "PredicateLogic.atomize_all"];
+
+// PredicateLogic.thy declares these [symmetric, defn].
+const DEFN_RULES = [
+  "PredicateLogic.atomize_all",
+  "PredicateLogic.atomize_imp",
+  "PredicateLogic.atomize_eq",
 ];
 
 // Net.content lists a leaf's items newest first, so inserting them in reverse rebuilds the leaf.
@@ -60,12 +72,15 @@ export const getProofContext = (logic: TlaLogic, limits: Limits): ProofContext =
       rules: toNetPair(logic.contextRules.plain),
     },
     atomizeRules,
+    defnRules: DEFN_RULES.map((name) => symmetric(getFact(logic, name))),
+    rulifyRules: [...RULIFY_RULES.map((name) => symmetric(getFact(logic, name))), normHhfEq],
     blastDepthTac: (context, limit) => blastDepthTac(toBlastContext(context), limit),
     blastTac: (context) => blastTac(toBlastContext(context)),
-    getFact: (name) => {
-      const facts = logic.facts.get(logic.factNames.get(name) ?? name);
-      if (facts === undefined) throw new TlaIsabelleError("ERROR", `Undefined fact: ${name}`);
-      return facts;
-    },
   };
+};
+
+export const getLogicFact = (logic: TlaLogic, name: string) => {
+  const facts = logic.facts.get(logic.factNames.get(name) ?? name);
+  if (facts === undefined) throw new TlaIsabelleError("ERROR", `Undefined fact: ${name}`);
+  return facts;
 };
