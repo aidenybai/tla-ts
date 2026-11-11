@@ -945,6 +945,17 @@ ASSUME TLCFP(a) = -887695703
     expect(result.distinctStates).toBe(20);
   });
 
+  it("permutes a variable after one that holds only model values the symmetry fixes", async () => {
+    // y never moves, while x's range does, so the classes are whether x maps 0 and 1 to the same
+    // element, verified with TLC.
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nCONSTANTS a, b, c, g\nVARIABLES y, x\nS == {a, b, c}\nInit == y = [k \\in {g} |-> g] /\\ x \\in [{0, 1} -> S]\nNext == UNCHANGED <<y, x>>\nSym == Permutations(S)\n====",
+      config: "CONSTANTS a = a b = b c = c g = g\nINIT Init\nNEXT Next\nSYMMETRY Sym",
+    });
+    expect(result.distinctStates).toBe(2);
+  });
+
   it("warns about a permuted set with fewer than two elements", async () => {
     const warnings: CheckProgress[] = [];
     const result = await check({

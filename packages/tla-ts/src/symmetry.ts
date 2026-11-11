@@ -24,6 +24,12 @@ type Images = Map<string, ModelValue>;
 // The same images by the rank of each model value, which permuting a value looks up.
 type RankedImages = (ModelValue | undefined)[];
 
+interface SymmetryGroup {
+  permutations: RankedImages[];
+  // Whether some permutation moves the model value of each rank.
+  isMovedRank: boolean[];
+}
+
 const getPermutationKey = (permutation: Images) =>
   [...permutation]
     .map(([name, image]) => `${name}>${image.name}`)
@@ -104,7 +110,7 @@ export const getSymmetryGroup = (
   name: string,
   environment: Environment,
   substitutions: Substitution[],
-): RankedImages[] | undefined => {
+): SymmetryGroup | undefined => {
   const definition = environment.definitions.get(name);
   if (definition === undefined && !environment.constants.has(name)) {
     throw new TlaConfigError(
@@ -188,13 +194,34 @@ export const getSymmetryGroup = (
     }),
   );
   if (group.size === 0) return undefined;
-  return [...group.values()].map((images) => {
+  const isMovedRank: boolean[] = [];
+  const permutations = [...group.values()].map((images) => {
     const ranked: (ModelValue | undefined)[] = [];
     images.forEach((image, name) => {
-      ranked[createModelValue(name).rank] = image;
+      const rank = createModelValue(name).rank;
+      ranked[rank] = image;
+      isMovedRank[rank] = true;
     });
     return ranked;
   });
+  return { permutations, isMovedRank };
+};
+
+// Whether a value may hold a model value that the group moves. A value that doesn't is its own
+// image under every permutation.
+const isMovable = (value: Value, isMovedRank: boolean[]): boolean => {
+  if (typeof value !== "object") return false;
+  if (value.kind === "ModelValue") return isMovedRank[value.rank] === true;
+  if (value.kind === "Set") return areMovable(value.elements, isMovedRank);
+  if (value.kind === "Function") {
+    return areMovable(value.domain, isMovedRank) || areMovable(value.range, isMovedRank);
+  }
+  return value.kind !== "Interval";
+};
+
+const areMovable = (values: Value[], isMovedRank: boolean[]) => {
+  for (const value of values) if (isMovable(value, isMovedRank)) return true;
+  return false;
 };
 
 const permuteElements = (elements: Value[], images: RankedImages) => {
@@ -297,22 +324,29 @@ const permuteValue = (value: Value, images: RankedImages): Value => {
 // permutation as soon as a variable's image is larger than the smallest state's.
 export const getRepresentative = (
   state: Value[],
-  permutations: RankedImages[],
+  group: SymmetryGroup,
   order: number[],
 ): Value[] => {
   // Narrows the permutations one variable at a time to those whose images tie for the smallest so
   // far, so each variable is permuted only by permutations that can still give the smallest state.
   // The state itself stays a candidate until a permutation makes a variable smaller.
-  const candidates = permutations.slice();
+  const candidates = group.permutations.slice();
   let candidateCount = candidates.length;
   let isStateSmallest = true;
   const smallest = state.slice();
   for (const index of order) {
     if (candidateCount === 0) break;
+    const value = state[index];
     let kept = 0;
     for (let candidate = 0; candidate < candidateCount; candidate++) {
       const images = candidates[candidate];
-      const permuted = permuteValue(state[index], images);
+      const permuted = permuteValue(value, images);
+      // A value the first permutation fixes may hold no model value the group moves, and then every
+      // permutation fixes it. A value the first permutation moves needs no such walk.
+      if (candidate === 0 && permuted === value && !isMovable(value, group.isMovedRank)) {
+        kept = candidateCount;
+        break;
+      }
       const comparison =
         kept === 0 && !isStateSmallest ? -1 : compareValues(permuted, smallest[index]);
       if (comparison < 0) {
