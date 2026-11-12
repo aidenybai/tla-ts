@@ -97,6 +97,7 @@ import {
   translateFunctionValue,
   translateObjectValue,
   translateFunctionObject,
+  getOwnFunctionKeys,
   translatePropertyKey,
 } from "./heap";
 import {
@@ -1164,13 +1165,42 @@ export const translateCall = (
       : node.arguments.length === 1
         ? [receiver, node.arguments[0]]
         : [];
-  const isOwner =
-    (ownMethod === "hasOwnProperty" || ownMethod === "propertyIsEnumerable") &&
-    owned.length === 2 &&
+  const isOwnMethod =
+    (ownMethod === "hasOwnProperty" || ownMethod === "propertyIsEnumerable") && owned.length === 2;
+  // A function that the heap doesn't hold owns its keys, none of them enumerable.
+  const ownFunctionKeys = isOwnMethod ? getOwnFunctionKeys(owned[0], context) : undefined;
+  if (ownFunctionKeys !== undefined) {
+    return share(translateExpression(owned[0], scope, context), "function", context, (value) =>
+      share(translatePropertyKey(owned[1], scope, context), "key", context, (key) =>
+        ifExpression(
+          useJavaScript("IsRef", [value], context),
+          useJavaScript(
+            ownMethod === "hasOwnProperty" ? "HasOwn" : "IsEnumerableOwn",
+            [getHeap(scope, node, context), value, key],
+            context,
+          ),
+          ownMethod === "propertyIsEnumerable"
+            ? boolean(false)
+            : ifExpression(
+                apply("\\in", [key, set([string("arguments"), string("caller")])]),
+                apply("Assert", [
+                  boolean(false),
+                  string(
+                    "tla-ts can't tell whether this function has its own arguments and caller",
+                  ),
+                ]),
+                apply("\\in", [key, set(ownFunctionKeys.map(string))]),
+              ),
+        ),
+      ),
+    );
+  }
+  if (
+    isOwnMethod &&
     (getKind(owned[0], context) === "object" ||
       (context.heap !== undefined && isBuiltInObject(owned[0], context)) ||
-      isFunctionValue(owned[0], context));
-  if (isOwner) {
+      isFunctionValue(owned[0], context))
+  ) {
     return useJavaScript(
       ownMethod === "hasOwnProperty" ? "HasOwn" : "IsEnumerableOwn",
       [

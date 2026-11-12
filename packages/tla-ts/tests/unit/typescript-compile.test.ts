@@ -15630,6 +15630,49 @@ ${call}
     );
   });
 
+  it("answers hasOwnProperty and propertyIsEnumerable on a function that a script makes", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      Object.defineProperty(Function.prototype, "prop", { value: 1, enumerable: true, configurable: true });
+      const made = function () {};
+      const arrow = () => 1;
+      const defined = function () {};
+      Object.defineProperty(defined, "prop", { value: 2, enumerable: false, configurable: true });
+      if (made.hasOwnProperty("prop") || !made.hasOwnProperty("prototype") || !made.hasOwnProperty("length")) {
+        throw new Error("made");
+      }
+      if (arrow.hasOwnProperty("prototype") || !Object.prototype.hasOwnProperty.call(arrow, "name")) {
+        throw new Error("arrow");
+      }
+      if (made.propertyIsEnumerable("prop") || made.propertyIsEnumerable("name")) throw new Error("enumerable");
+      if (!defined.hasOwnProperty("prop") || defined.propertyIsEnumerable("prop")) throw new Error("defined");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = [
+      ['if (made.hasOwnProperty("prop") ||', 'if (!made.hasOwnProperty("prop") ||', '"made"'],
+      ['!made.hasOwnProperty("prototype")', 'made.hasOwnProperty("prototype")', '"made"'],
+      [
+        'if (arrow.hasOwnProperty("prototype")',
+        'if (!arrow.hasOwnProperty("prototype")',
+        '"arrow"',
+      ],
+      ['made.propertyIsEnumerable("name")', '!made.propertyIsEnumerable("name")', '"enumerable"'],
+      ['!defined.hasOwnProperty("prop")', 'defined.hasOwnProperty("prop")', '"defined"'],
+    ];
+    for (const [from, to, message] of wrong) {
+      expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
+    }
+    const caller = `
+      const holder = { seen: 0 };
+      const made = function () {};
+      if (made.hasOwnProperty("caller")) holder.seen = 1;
+    `;
+    expect((await checkModel(caller)).failure?.message).toContain(
+      "tla-ts can't tell whether this function has its own arguments and caller",
+    );
+  });
+
   it("destructures a rest element into an object pattern", async () => {
     const source = `
       let x: unknown = null;
