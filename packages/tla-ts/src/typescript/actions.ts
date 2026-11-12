@@ -222,7 +222,6 @@ import {
   readProxyPattern,
   isGetterRead,
   getGetterKeys,
-  getWrittenFunctions,
   getTrapFunctions,
   isProxyOperation,
   readDescriptor,
@@ -8282,8 +8281,10 @@ const getEffects = (
       isIteratedValue(node.expression, context));
   // A DisposableStack's method may run the functions that the stacks dispose with.
   const isStackCall = getStackCall(node, context) !== undefined;
-  // A using declaration runs the dispose methods, and their getters, that the script writes.
-  const isUsing = ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0;
+  // A using declaration runs the dispose methods, and their getters, that the script writes, and
+  // what the DisposableStacks it may hold dispose.
+  const list = ts.isVariableDeclaration(node) ? node.parent : node;
+  const isUsing = ts.isVariableDeclarationList(list) && (list.flags & ts.NodeFlags.Using) !== 0;
   const isHeapChanged =
     getArgumentsOwner(node, context.checker) !== undefined ||
     (isObjectMade && !isErrorMade) ||
@@ -8319,13 +8320,7 @@ const getEffects = (
       ...(conversions ?? []),
       ...getters,
       ...(isIterated ? getIteratorFunctions(node, context) : []),
-      ...(isStackCall ? getStackFunctions(node, context) : []),
-      ...(isUsing
-        ? [
-            ...getWrittenFunctions(node, "@@dispose", context),
-            ...getWrittenFunctions(node, "@@asyncDispose", context),
-          ]
-        : []),
+      ...(isStackCall || isUsing ? getStackFunctions(node, context) : []),
       ...callees.flatMap((callee) => getFunctionNode(callee) ?? []),
       ...(ts.isCallExpression(node) && getFunctionNode(node.expression) === undefined
         ? (getDispatched(node, functions, context) ?? [])

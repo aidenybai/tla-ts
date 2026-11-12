@@ -10678,6 +10678,58 @@ describe("errors", () => {
     expect(wrong.failure?.message).toContain("reenter,second,first");
   });
 
+  it("disposes the AsyncDisposableStack that an await using declaration holds", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      const order: string[] = [];
+      const run = async () => {
+        {
+          await using stack = new AsyncDisposableStack();
+          stack.defer(() => { order.push("defer"); });
+        }
+        order.push("after");
+      };
+      run();
+      order.push("called");
+      Promise.resolve()
+        .then(() => order.push("tick 1"))
+        .then(() => order.push("tick 2"));
+      setTimeout(() => {
+        if (order.join() !== "${expected}") throw new Error(order.join());
+      });
+    `;
+    const result = await checkModel(source("defer,called,tick 1,after,tick 2"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("defer,called,after,tick 1,tick 2"));
+    expect(wrong.failure).toBeDefined();
+  });
+
+  it("awaits once as it disposes the DisposableStack that an await using declaration holds", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      const order: string[] = [];
+      const run = async () => {
+        {
+          await using stack = new DisposableStack();
+          stack.defer(() => { order.push("defer"); });
+        }
+        order.push("after");
+      };
+      run();
+      order.push("called");
+      Promise.resolve()
+        .then(() => order.push("tick 1"))
+        .then(() => order.push("tick 2"));
+      setTimeout(() => {
+        if (order.join() !== "${expected}") throw new Error(order.join());
+      });
+    `;
+    const result = await checkModel(source("defer,called,after,tick 1,tick 2"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("defer,called,tick 1,after,tick 2"));
+    expect(wrong.failure).toBeDefined();
+  });
+
   it("awaits what an AsyncDisposableStack disposes, as Node does", async () => {
     const source = (expected: string) => `
       declare function setTimeout(callback: () => void): void;

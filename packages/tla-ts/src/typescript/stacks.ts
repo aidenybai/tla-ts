@@ -1,6 +1,13 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
-import { bindOnce, type Frame, type Path, throwError, throwTypeError } from "./actions";
+import {
+  bindOnce,
+  type Frame,
+  isSameExpression,
+  type Path,
+  throwError,
+  throwTypeError,
+} from "./actions";
 import { type Context, findNodes, getUndefined, skipCasts } from "./context";
 import { disposeAll, readResource, type Resource } from "./disposal";
 import { TlaTypeScriptError } from "../errors";
@@ -176,13 +183,57 @@ export const translateStackCall = (
 ): Formula => {
   const stackCall = getStackCall(node, context);
   if (stackCall === undefined) throw new TlaTypeScriptError("Unsupported call", node);
-  const method = stackCall.method;
-  const receiver = translateExpression(stackCall.receiver, path.scope, context);
-  const values = stackCall.values.map((value) => {
-    if (ts.isSpreadElement(value)) throw new TlaTypeScriptError("Unsupported spread", value);
-    return translateExpression(value, path.scope, context);
-  });
-  const value = values.at(0) ?? getUndefined(context);
+  return runStackMethod(
+    node,
+    stackCall.method,
+    stackCall.isAsync,
+    translateExpression(stackCall.receiver, path.scope, context),
+    stackCall.values.map((value) => {
+      if (ts.isSpreadElement(value)) throw new TlaTypeScriptError("Unsupported spread", value);
+      return { node: value, value: translateExpression(value, path.scope, context) };
+    }),
+    path,
+    context,
+    frame,
+    continueWith,
+  );
+};
+
+// Disposes the DisposableStack or the AsyncDisposableStack that a using declaration holds, which
+// runs its dispose or its disposeAsync.
+export const disposeStack = (
+  node: ts.Node,
+  receiver: Expression,
+  isAsync: boolean,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+) =>
+  runStackMethod(
+    node,
+    isAsync ? "disposeAsync" : "dispose",
+    isAsync,
+    receiver,
+    [],
+    path,
+    context,
+    frame,
+    continueWith,
+  );
+
+const runStackMethod = (
+  node: ts.Node,
+  method: string,
+  isAsync: boolean,
+  receiver: Expression,
+  values: readonly { node: ts.Expression; value: Expression }[],
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  const value = values.at(0)?.value ?? getUndefined(context);
   const run = (
     name: string,
     stack: TrackedStack,
@@ -238,6 +289,7 @@ export const translateStackCall = (
                 candidates: [],
                 isAsync: true,
                 isWrapped: false,
+                isCallback: false,
               }),
               value,
             )
@@ -248,48 +300,53 @@ export const translateStackCall = (
       );
     }
     const isAdopt = method === "adopt";
-    const onDispose = (isAdopt ? values.at(1) : values.at(0)) ?? getUndefined(context);
-    const onDisposeNode = isAdopt ? stackCall.values.at(1) : stackCall.values.at(0);
+    const onDispose = isAdopt ? values.at(1) : values.at(0);
     return ifThenElse(
-      apply("=", [useJavaScript("TypeOfIn", [heap, onDispose], context), string("function")]),
+      apply("=", [
+        useJavaScript("TypeOfIn", [heap, onDispose?.value ?? getUndefined(context)], context),
+        string("function"),
+      ]),
       finish(
         add(current, {
           site: node,
           receiver: getUndefined(context),
           values: isAdopt ? [value] : [],
-          method: onDispose,
-          candidates:
-            onDisposeNode === undefined ? [] : getFunctionCandidates(onDisposeNode, context),
+          method: onDispose?.value ?? getUndefined(context),
+          candidates: onDispose === undefined ? [] : getFunctionCandidates(onDispose.node, context),
           isAsync: stack.isAsync,
           isWrapped: false,
+          isCallback: true,
         }),
         isAdopt ? value : getUndefined(context),
       ),
       throwTypeError(current, node, context, currentFrame),
     );
   };
+  // The stack that the receiver's expression names, or any that the path made.
   const dispatch = (
     current: Path,
     currentFrame: Frame,
     finish: (path: Path, value?: Expression) => Formula,
-  ) =>
-    [...getStacks(current, node).stacks]
-      .filter((entry) => entry[1].isAsync === stackCall.isAsync)
-      .reduceRight(
-        (rest, entry) =>
-          ifThenElse(
-            useJavaScript("SameValue", [receiver, entry[1].ref], context),
-            run(entry[0], entry[1], current, currentFrame, finish),
-            rest,
-          ),
+  ) => {
+    const stacks = [...getStacks(current, node).stacks].filter(
+      (entry) => entry[1].isAsync === isAsync,
+    );
+    const named = stacks.find((entry) => isSameExpression(entry[1].ref, receiver));
+    if (named !== undefined) return run(named[0], named[1], current, currentFrame, finish);
+    return stacks.reduceRight(
+      (rest, entry) =>
         ifThenElse(
-          useJavaScript("IsStack", [getHeap(current.scope, node, context), receiver], context),
-          leaf(
-            apply("Assert", [boolean(false), string("tla-ts can't follow this DisposableStack")]),
-          ),
-          throwTypeError(current, node, context, currentFrame),
+          useJavaScript("SameValue", [receiver, entry[1].ref], context),
+          run(entry[0], entry[1], current, currentFrame, finish),
+          rest,
         ),
-      );
+      ifThenElse(
+        useJavaScript("IsStack", [getHeap(current.scope, node, context), receiver], context),
+        leaf(apply("Assert", [boolean(false), string("tla-ts can't follow this DisposableStack")])),
+        throwTypeError(current, node, context, currentFrame),
+      ),
+    );
+  };
   return method === "disposeAsync"
     ? translateAsyncBuiltIn(node, path, context, frame, continueWith, (start, bodyFrame) =>
         dispatch(start, bodyFrame, (after) => bodyFrame.next(after)),
