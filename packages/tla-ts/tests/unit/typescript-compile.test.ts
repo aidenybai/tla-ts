@@ -985,6 +985,31 @@ describe("values", () => {
     expect(await getMessage(getSource(-3, 3))).toContain("void");
   });
 
+  it("throws the TypeError of writing a property of null to a value off the heap", async () => {
+    const getSource = (caught: string, written: number) => `
+      type Box = { prop?: number };
+      const empty = null as Box | null;
+      const full = { prop: 0 } as Box | null;
+      let caught = "";
+      try {
+        empty!.prop = 1;
+      } catch (error) {
+        caught = error instanceof TypeError ? "type" : "other";
+      }
+      full!.prop = 2;
+      if (caught !== "${caught}") throw new Error("caught " + caught);
+      if (full!.prop !== ${written}) throw new Error("written");
+    `;
+    const getMessage = (source: string) =>
+      checkModel(source).then(
+        (result) => result.failure?.message,
+        (error: Error) => error.message,
+      );
+    expect(await getMessage(getSource("type", 2))).toBeUndefined();
+    expect(await getMessage(getSource("", 2))).toContain("caught type");
+    expect(await getMessage(getSource("type", 0))).toContain("written");
+  });
+
   it("gives what a compound assignment to a property writes, as its value", async () => {
     const getSource = (field: number, property: number, element: number, typed: number) => `
       class Counter {

@@ -6188,20 +6188,37 @@ const translateWriteStatement = (
       ? expression.operand
       : undefined;
   const write = written === undefined ? undefined : getHeapWrite(written, path, context);
+  // A write to a property of null or undefined throws a TypeError.
+  const receiver =
+    written !== undefined &&
+    (ts.isPropertyAccessExpression(written) || ts.isElementAccessExpression(written)) &&
+    isMaybeNullish(context.checker.getTypeAtLocation(skipCasts(written.expression)))
+      ? skipCasts(written.expression)
+      : undefined;
+  const throwOnNullish = (rest: Formula) => {
+    if (receiver === undefined) return rest;
+    context.prelude.add("Null");
+    return ifThenElse(
+      apply("\\in", [
+        write?.ref ?? translateExpression(receiver, path.scope, context),
+        set([getUndefined(context), identifier("Null")]),
+      ]),
+      throwTypeError(path, expression, context, frame),
+      rest,
+    );
+  };
   if (write === undefined) {
-    return forceHeap(
-      path.scope,
-      assigned.scope,
-      continueWith(assigned),
-      leaf(boolean(false)),
-      context,
+    return throwOnNullish(
+      forceHeap(path.scope, assigned.scope, continueWith(assigned), leaf(boolean(false)), context),
     );
   }
   const translateWrite = (next: (path: Path) => Formula) =>
-    ifThenElse(
-      useJavaScript("CanPut", [write.heap, write.ref, write.key], context),
-      shareHeap(assigned, context, next),
-      throwTypeError(path, expression, context, frame),
+    throwOnNullish(
+      ifThenElse(
+        useJavaScript("CanPut", [write.heap, write.ref, write.key], context),
+        shareHeap(assigned, context, next),
+        throwTypeError(path, expression, context, frame),
+      ),
     );
   // A write of __proto__ runs Object.prototype's setter where the object inherits it.
   const heapSymbol = context.heap;
@@ -6285,6 +6302,17 @@ const translateWriteStatement = (
     }, translateWrite(next)),
   );
 };
+
+const isMaybeNullish = (type: ts.Type): boolean =>
+  type.isUnion()
+    ? type.types.some(isMaybeNullish)
+    : (type.flags &
+        (ts.TypeFlags.Null |
+          ts.TypeFlags.Undefined |
+          ts.TypeFlags.Void |
+          ts.TypeFlags.Any |
+          ts.TypeFlags.Unknown)) !==
+      0;
 
 const isCatchParameter = (node: ts.Node, name: string): boolean => {
   if (ts.isSourceFile(node) || ts.isFunctionLike(node)) return false;
