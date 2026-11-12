@@ -6184,6 +6184,29 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("throws a TypeError where a Promise function's this can't make a promise", async () => {
+    const result = await checkModel(`
+      function ZeroArgConstructor() {}
+      const arrow = () => {};
+      let log = "";
+      const attempt = (run: () => void) => {
+        try {
+          run();
+          log += "n";
+        } catch (error) {
+          log += error instanceof TypeError ? "t" : "x";
+        }
+      };
+      attempt(() => Promise.all.call(undefined, []));
+      attempt(() => Promise.race.call(86, [3]));
+      attempt(() => Promise.any.call(Symbol(), []));
+      attempt(() => Promise.allSettled.call(ZeroArgConstructor, []));
+      attempt(() => Promise.reject.call(arrow, 4));
+      if (log !== "ttttt") throw new Error(log);
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("rejects new AggregateError, whose first argument isn't a message", () => {
     expect(() => compile(`const error = new AggregateError([1], "message");`)).toThrow(
       "Unsupported constructor: new AggregateError",

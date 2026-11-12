@@ -14,6 +14,7 @@ import {
   isSameExpression,
   type Path,
   runLeadingCall,
+  throwError,
   translateCallStatement,
   translateStatements,
 } from "./actions";
@@ -1050,7 +1051,72 @@ export const translatePromiseConstruction = (
   );
 };
 
+// The Promise function that Promise.resolve.call(C, value) and the like call with C as this.
+const PROMISE_STATICS = ["all", "allSettled", "any", "race", "reject", "resolve", "try"];
+
+const getCalledPromiseFunction = (node: ts.CallExpression, context: Context) => {
+  const callee = node.expression;
+  return ts.isPropertyAccessExpression(callee) &&
+    callee.name.text === "call" &&
+    ts.isPropertyAccessExpression(callee.expression) &&
+    getBuiltIn(callee.expression.expression, context) === "Promise" &&
+    PROMISE_STATICS.includes(callee.expression.name.text)
+    ? callee.expression.name.text
+    : undefined;
+};
+
+// A value that reading has no effect on, as an argument that a TypeError makes unread.
+const isInert = (node: ts.Expression): boolean =>
+  ts.isLiteralExpression(node) ||
+  (ts.isIdentifier(node) && node.text === "undefined") ||
+  [ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword, ts.SyntaxKind.NullKeyword].includes(
+    node.kind,
+  ) ||
+  (ts.isArrayLiteralExpression(node) && node.elements.every(isInert));
+
+// Whether NewPromiseCapability(C) throws a TypeError before it runs any code: C isn't an object or
+// a constructor, or its body is empty, so it never calls the executor.
+const isIncapable = (node: ts.Expression | undefined, path: Path, context: Context) => {
+  if (node === undefined) return true;
+  const isRead =
+    isInert(node) ||
+    (ts.isIdentifier(node) && getSymbol(node, context.checker)?.valueDeclaration !== undefined) ||
+    (ts.isCallExpression(node) &&
+      getBuiltIn(node.expression, context) === "Symbol" &&
+      node.arguments.every(isInert));
+  if (!isRead) return false;
+  const type = context.checker.getTypeAtLocation(node);
+  const isPrimitive = (type.isUnion() ? type.types : [type]).every(
+    (member) =>
+      (member.flags &
+        (ts.TypeFlags.Undefined |
+          ts.TypeFlags.Null |
+          ts.TypeFlags.Void |
+          ts.TypeFlags.NumberLike |
+          ts.TypeFlags.StringLike |
+          ts.TypeFlags.BooleanLike |
+          ts.TypeFlags.BigIntLike |
+          ts.TypeFlags.ESSymbolLike)) !==
+      0,
+  );
+  if (isPrimitive) return true;
+  const callee = getCallback(getCast(node), path, context);
+  return (
+    callee !== undefined &&
+    (ts.isArrowFunction(callee) ||
+      ((ts.isFunctionDeclaration(callee) || ts.isFunctionExpression(callee)) &&
+        !callee.asteriskToken &&
+        !(ts.getCombinedModifierFlags(callee) & ts.ModifierFlags.Async) &&
+        callee.body !== undefined &&
+        callee.body.statements.length === 0 &&
+        callee.parameters.every(
+          (parameter) => ts.isIdentifier(parameter.name) && parameter.initializer === undefined,
+        )))
+  );
+};
+
 export const isPromiseCall = (node: ts.CallExpression, context: Context) =>
+  getCalledPromiseFunction(node, context) !== undefined ||
   isResolver(node.expression, context) ||
   getPromiseFunction(node, context) !== undefined ||
   getPromiseMethod(node, context) !== undefined ||
@@ -1059,7 +1125,7 @@ export const isPromiseCall = (node: ts.CallExpression, context: Context) =>
 // Runs the rest where the built-in functions that a call runs are still where it reads them.
 const guardBuiltIns = (
   node: ts.Node,
-  owner: "Promise" | "Promise.prototype",
+  owner: "Function.prototype" | "Promise" | "Promise.prototype",
   keys: string[],
   path: Path,
   context: Context,
@@ -1107,6 +1173,27 @@ export const translatePromiseCall = (
   const argument = node.arguments.at(0);
   if (node.arguments.some(ts.isSpreadElement)) {
     throw new TlaTypeScriptError("Pass a promise's functions without spreads", node);
+  }
+  const called = getCalledPromiseFunction(node, context);
+  if (called !== undefined) {
+    if (!isIncapable(argument, path, context) || !node.arguments.slice(1).every(isInert)) {
+      throw new TlaTypeScriptError(`Unsupported call: Promise.${called}.call`, node);
+    }
+    return guardBuiltIns(
+      node,
+      "Promise",
+      [called],
+      path,
+      context,
+      guardBuiltIns(
+        node,
+        "Function.prototype",
+        ["call"],
+        path,
+        context,
+        throwError("TypeError", path, node, context, frame),
+      ),
+    );
   }
   if (isResolver(node.expression, context)) {
     return callResolver(
