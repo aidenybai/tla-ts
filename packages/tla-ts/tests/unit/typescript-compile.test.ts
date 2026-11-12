@@ -6541,6 +6541,27 @@ describe("errors", () => {
     }
   });
 
+  it("steps only the generator that an iterator helper wraps", async () => {
+    const source = `
+      const holder = { count: 0 };
+      function* count() {
+        for (let index = 0; index < 5; ++index) {
+          yield index;
+        }
+      }
+      const first = Array.from(count().map((value) => value));
+      const second = Array.from(count().map((value) => value * 2));
+      const third = Array.from(count().map(() => holder));
+      if (first.join() !== "0,1,2,3,4" || second.join() !== "0,2,4,6,8" || third.length !== 5) {
+        throw new Error("wrong");
+      }
+      holder.count = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = await checkModel(source.replace('"0,2,4,6,8"', '"0,2,4,6"'));
+    expect(wrong.failure?.message).toContain("wrong");
+  });
+
   it("gathers a generator into an array with Array.from", async () => {
     const result = await checkModel(`
       function* g(): Generator<number> {

@@ -3651,7 +3651,6 @@ const translateIteratorHelper = (
       ? record("Record", [{ name: "generator", value: string(name) }])
       : useJavaScript("Allocated", [identifier(name)], context);
   const underlyingName = context.names.getFresh("underlying");
-  const underlying = identifier(underlyingName);
   const callbackReceiver =
     callback !== undefined && !ts.isArrowFunction(callback)
       ? { value: getUndefined(context), method: callback }
@@ -3680,6 +3679,8 @@ const translateIteratorHelper = (
   // The generator that a next runs, which patterns check, where the receiver may hold only one.
   const suspensions = [...path.generators.values()];
   const exact = suspensions.filter((suspension) => isSameExpression(suspension.ref, translated));
+  // A step resumes only the generator that the receiver holds, where it can only hold one.
+  const underlying = exact.length === 1 ? exact[0].ref : identifier(underlyingName);
   const candidates = new Set(
     (exact.length > 0 ? exact : suspensions).map((suspension) => suspension.generator),
   );
