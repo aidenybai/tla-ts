@@ -192,6 +192,9 @@ export const getUnitSpan = (file: SourceFile, location: SourceLocation) =>
     ? getRangeSpan(file, location.range)
     : { start: getTokenIndex(file, location), end: getTokenIndex(file, location) };
 
+export const getUnitLocation = (file: SourceFile, location: SourceLocation) =>
+  getSpanLocation(file, getUnitSpan(file, location));
+
 export const resolveModule = (generation: ModuleGeneration, name: string) => {
   for (let index = generation.contexts.length - 1; index >= 0; index--) {
     const module = getContextModule(generation.contexts[index], name);

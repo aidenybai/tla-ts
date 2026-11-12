@@ -26,6 +26,7 @@ import {
   type SanyLocation,
   type Subst,
   type SubstInNode,
+  type SymbolNode,
   type ThmOrAssumpDefNode,
   VARIABLE_DECL_KIND,
 } from "./nodes";
@@ -51,6 +52,7 @@ import {
   createOpDef,
   getLocation,
   getModule,
+  getUnitLocation,
   getUnitSpan,
   isParameterFree,
   matchArguments,
@@ -535,6 +537,11 @@ export const processModuleDefinition = (
   if (generation.version !== "1.7.4") definitions?.push(moduleDefinition);
 };
 
+const reuseSymbol = <Node extends SymbolNode>(generation: ModuleGeneration, symbol: Node) => {
+  addSymbol(generation, symbol);
+  return symbol;
+};
+
 export const generateInstance = (
   generation: ModuleGeneration,
   instance: Instance,
@@ -566,16 +573,12 @@ export const generateInstance = (
       addSymbol(generation, node);
       return node;
     };
-    const reuse = () => {
-      addSymbol(generation, symbol);
-      return symbol;
-    };
     const isOriginParameterFree = symbol.module === undefined || isParameterFree(symbol.module);
     const node =
       isInstanceeParameterFree || isOriginParameterFree
         ? isLocal
           ? copyFrom(symbol.module, symbol.body)
-          : reuse()
+          : reuseSymbol(generation, symbol)
         : copyFrom(
             generation.currentModule,
             symbol.body &&
@@ -599,10 +602,6 @@ export const generateInstance = (
       addSymbol(generation, node);
       return node;
     };
-    const reuse = () => {
-      addSymbol(generation, symbol);
-      return symbol;
-    };
     const node = !isInstanceeParameterFree
       ? isParameterFree(symbol.module)
         ? isLocal
@@ -614,7 +613,7 @@ export const generateInstance = (
           )
       : isLocal
         ? copyFrom(symbol.module, symbol.body)
-        : reuse();
+        : reuseSymbol(generation, symbol);
     if (isTopLevel) generation.currentModule.definitions.push(node);
   });
   const instanceNode: InstanceNode = {
@@ -681,7 +680,7 @@ export const checkRecursiveSection = (
 ) => {
   if (generation.unresolvedSum === 0) return;
   generation.addError(
-    getSpanLocation(generation.file, getUnitSpan(generation.file, location)),
+    getUnitLocation(generation.file, location),
     `${type} may not appear within a recursive definition section.`,
   );
 };

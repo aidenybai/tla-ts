@@ -59,6 +59,7 @@ import {
   endProof,
   getLocation,
   getTopContext,
+  getUnitLocation,
   getUnitSpan,
   type ModuleGeneration,
   popLabels,
@@ -149,7 +150,7 @@ const checkKeywordOnly = (
 };
 
 export const generateUseOrHide = (generation: ModuleGeneration, use: UseOrHide): UseOrHideNode => {
-  const location = getSpanLocation(generation.file, getUnitSpan(generation.file, use.location));
+  const location = getUnitLocation(generation.file, use.location);
   checkKeywordOnly(generation, use, location);
   const facts = generateFacts(generation, use.facts);
   const defs = generateDefs(generation, use.defs);
@@ -316,7 +317,7 @@ const generateLeafProof = (
   generation: ModuleGeneration,
   proof: Exclude<Proof, { kind: "Steps" }>,
 ): LeafProofNode => {
-  const location = getSpanLocation(generation.file, getUnitSpan(generation.file, proof.location));
+  const location = getUnitLocation(generation.file, proof.location);
   if (proof.kind === "By") checkKeywordOnly(generation, proof, location);
   const facts = proof.kind === "By" ? generateFacts(generation, proof.facts) : [];
   const defs = proof.kind === "By" ? generateDefs(generation, proof.defs) : [];
@@ -578,12 +579,12 @@ const generateProof = (
     steps,
     instances,
     proofLevel: proof.level,
-    location: getSpanLocation(generation.file, getUnitSpan(generation.file, proof.location)),
+    location: getUnitLocation(generation.file, proof.location),
   };
 };
 
 export const processTheorem = (generation: ModuleGeneration, theorem: Theorem) => {
-  const location = getSpanLocation(generation.file, getUnitSpan(generation.file, theorem.location));
+  const location = getUnitLocation(generation.file, theorem.location);
   const statement = theorem.statement;
   const assumeContext = createContext();
   if (theorem.name !== undefined) pushLabelScope(generation);
@@ -631,8 +632,7 @@ export const processTheorem = (generation: ModuleGeneration, theorem: Theorem) =
 };
 
 export const processAssumption = (generation: ModuleGeneration, assumption: Assumption) => {
-  const span = getUnitSpan(generation.file, assumption.location);
-  const location = getSpanLocation(generation.file, span);
+  const location = getUnitLocation(generation.file, assumption.location);
   if (assumption.name !== undefined) pushLabelScope(generation);
   const body = generateExpression(generation, assumption.expression);
   const definition =
