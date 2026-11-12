@@ -10796,7 +10796,7 @@ const getEvaluated = (statement: ts.Statement) =>
     ? statement.expression
     : ts.isVariableStatement(statement)
       ? statement.declarationList.declarations[0]?.initializer
-      : ts.isIfStatement(statement)
+      : ts.isIfStatement(statement) || ts.isSwitchStatement(statement)
         ? statement.expression
         : ts.isReturnStatement(statement) || ts.isThrowStatement(statement)
           ? statement.expression
@@ -10811,8 +10811,8 @@ const getHoistedCall = (statement: ts.Statement, path: Path, context: Context) =
   return getLeadingCall(
     evaluated,
     (call) =>
-      // An if statement evaluates its condition, and runs no call of it.
-      (call !== outer || ts.isIfStatement(statement)) &&
+      // An if or a switch statement evaluates its expression, and runs no call of it.
+      (call !== outer || ts.isIfStatement(statement) || ts.isSwitchStatement(statement)) &&
       !(
         ts.isBinaryExpression(outer) &&
         outer.operatorToken.kind === ts.SyntaxKind.EqualsToken &&

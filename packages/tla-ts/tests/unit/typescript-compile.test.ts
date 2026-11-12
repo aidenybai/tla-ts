@@ -1625,6 +1625,65 @@ describe("values", () => {
     expect((await checkModel(getSource("21,3,4"))).failure?.message).toContain("outcomes 12,3,4");
   });
 
+  it("runs the calls of a switch's expression that change state before it compares", async () => {
+    const getSource = (expected: string) => `
+      let n: number = 0;
+      const step = () => {
+        n++;
+        return n;
+      };
+      let log = "";
+      switch (step()) {
+        case 1:
+          log += "one";
+          break;
+        default:
+          log += "other";
+      }
+      switch (step() + step()) {
+        case 5:
+          log += "five";
+          break;
+        default:
+          log += "other";
+      }
+      const outcomes = [log, n].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("onefive,3"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("oneother,3"))).failure?.message).toContain(
+      "outcomes onefive,3",
+    );
+  });
+
+  it("runs a switch's expression in order where a call in it changes what it reads", async () => {
+    const getSource = (expected: string) => `
+      const box = { v: 1 };
+      const grow = () => {
+        box.v = 5;
+        return box.v;
+      };
+      let log = "";
+      switch (box.v + grow()) {
+        case 6:
+          log += "six";
+          break;
+        default:
+          log += "other";
+      }
+      let flag = false;
+      switch (flag || (flag = true)) {
+        case true:
+          log += "!";
+          break;
+      }
+      const outcomes = [log, box.v].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("six!,5"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("other!,5"))).failure?.message).toContain("outcomes six!,5");
+  });
+
   it("assigns where a short-circuit evaluates an assignment", async () => {
     const getSource = (expected: string) => `
       let x = false;
