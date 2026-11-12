@@ -7061,7 +7061,17 @@ export const getChanged = (
     if (written !== undefined) {
       getWrittenRoots(written).forEach((root) => {
         const symbol = ts.isIdentifier(root) ? getSymbol(root, context.checker) : undefined;
-        const isProperty = root !== written && getKind(root, context) === "object";
+        const access = ts.findAncestor(
+          root,
+          (ancestor) =>
+            ts.isPropertyAccessExpression(ancestor) ||
+            ts.isElementAccessExpression(ancestor) ||
+            ancestor === written,
+        );
+        const isProperty =
+          access !== undefined &&
+          (ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) &&
+          getKind(root, context) === "object";
         if (symbol !== undefined && !isProperty) changed.add(symbol);
       });
     }
@@ -9989,7 +9999,9 @@ export const getWrittenRoots = (target: ts.Expression): ts.Expression[] => {
         ? getWrittenRoots(property.initializer)
         : ts.isShorthandPropertyAssignment(property)
           ? [property.name]
-          : [],
+          : ts.isSpreadAssignment(property)
+            ? getWrittenRoots(property.expression)
+            : [],
     );
   }
   if (ts.isSpreadElement(target)) return getWrittenRoots(target.expression);

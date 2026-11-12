@@ -5479,6 +5479,17 @@ describe("errors", () => {
     expect((await checkModel(getSource(13))).failure?.message).toContain("total");
   });
 
+  it("keeps the objects that a for-of's assignment pattern writes after the loop", async () => {
+    const getSource = (count: number) => `
+      let held: { n: number } | undefined;
+      let rest: object | undefined;
+      for ({ held, ...rest } of [{ held: { n: 1 } }, { held: { n: 2 }, a: 1, b: 2 }]) {}
+      if (held?.n !== 2 || Object.keys(rest!).length !== ${count}) throw new Error("after");
+    `;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(0))).failure?.message).toContain("after");
+  });
+
   it("stops at a getter that a for-of's assignment runs before the body runs", async () => {
     const result = await checkModel(`
       let count = 0;
