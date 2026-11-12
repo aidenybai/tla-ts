@@ -5,6 +5,7 @@ import {
   type AstManager,
   FAMILY_BASIC,
   FAMILY_BV,
+  FAMILY_PB,
   OP_ADD,
   KIND_APP,
   OP_GE,
@@ -29,6 +30,7 @@ import { canReuseNlsatSolver, giaPareto, ParetoNlsatSolver, type ParetoSolver } 
 import type { ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
+import { IncSatSolver } from "./sat/inc-sat-solver";
 import { InfEps } from "./inf-eps";
 import { getModelValueBound, OptParetoSolver, OptSolver } from "./opt-solver";
 import { ObjectiveValue } from "./opt-value";
@@ -102,6 +104,7 @@ const isFiniteDomain = (manager: AstManager, formulas: readonly number[]) => {
     const sort = manager.sorts[expr];
     if (
       family !== FAMILY_BASIC &&
+      family !== FAMILY_PB &&
       family !== FAMILY_BV &&
       (!manager.isUninterpretedConst(expr) || (sort !== SORT_BOOL && !manager.isBvSort(sort)))
     )
@@ -134,6 +137,7 @@ export class OptContext {
   private normalizedTerms: RefVector;
   private hiddenDecls: number[] = [];
   private optSolver: OptSolver | null = null;
+  private satSolver: IncSatSolver | null = null;
   private optsmt: Optsmt | null = null;
   private rawModel: ProtoModel | null = null;
   private fixedModels = new Map<ProtoModel, ProtoModel>();
@@ -238,17 +242,21 @@ export class OptContext {
     return this.execute(normalized, options);
   }
 
-  private getMaxsatContext(solver: OptSolver, options: OptOptions): MaxsatContext {
+  private getMaxsatContext(optSolver: OptSolver, options: OptOptions): MaxsatContext {
+    const getSolver = () => this.satSolver ?? optSolver;
+    const isSatEnabled = () => this.satSolver !== null;
     return {
       manager: this.manager,
       params: options.maxsat,
-      isSatEnabled: false,
+      get isSatEnabled() {
+        return isSatEnabled();
+      },
       getSolver: () => ({
-        assertExpr: (expr) => solver.assertExpr(expr),
-        checkSat: (assumptions) => solver.check(assumptions),
-        getModel: () => solver.getModel(),
-        getUnsatCore: () => solver.getUnsatCore(),
-        findMutexes: (vars) => ({ status: L_TRUE, mutexes: solver.findMutexes(vars) }),
+        assertExpr: (expr) => getSolver().assertExpr(expr),
+        checkSat: (assumptions) => getSolver().check(assumptions),
+        getModel: () => getSolver().getModel(),
+        getUnsatCore: () => getSolver().getUnsatCore(),
+        findMutexes: (vars) => ({ status: L_TRUE, mutexes: getSolver().findMutexes(vars) }),
       }),
       getBaseModel: () => this.rawModel,
       hide: (decl) => {
@@ -331,10 +339,11 @@ export class OptContext {
           : this.pin(manager.mkApp(OP_UMINUS, [term], manager.sorts[term])),
       );
     }
-    this.updateSolver(hard, options);
-    for (const form of hard) solver.assertExpr(form);
-    const checked = solver.check();
-    this.rawModel = checked === L_FALSE ? null : solver.getModel();
+    this.satSolver = this.updateSolver(hard, options) ? new IncSatSolver(manager, new Map()) : null;
+    const checkSolver = this.satSolver ?? solver;
+    for (const form of hard) checkSolver.assertExpr(form);
+    const checked = checkSolver.check();
+    this.rawModel = checked === L_FALSE ? null : checkSolver.getModel();
     const status = checked !== L_FALSE && this.rawModel === null ? L_UNDEF : checked;
     if (status !== L_TRUE) {
       this.setModel(this.rawModel);
@@ -358,18 +367,16 @@ export class OptContext {
             ? this.executeBox(optsmt)
             : this.executeLex(optsmt, options);
     this.setModel(this.rawModel);
-    return result === L_TRUE && solver.wasUnknown ? L_UNDEF : result;
+    return result === L_TRUE && checkSolver.wasUnknown ? L_UNDEF : result;
   }
 
   // Z3 moves a MaxSAT query over finite domains to the SAT core.
   private updateSolver(hard: readonly number[], options: OptOptions) {
-    if (!options.isSatEnabled) return;
-    if (this.internal.some((objective) => objective.type !== O_MAXSMT)) return;
+    if (!options.isSatEnabled) return false;
+    if (this.internal.some((objective) => objective.type !== O_MAXSMT)) return false;
     const soft = this.internal.flatMap((objective) => objective.terms);
-    if (!isFiniteDomain(this.manager, [...soft, ...hard])) return;
-    if (!SAT_MAXSAT_ENGINES.has(options.maxsat.maxsatEngine) || options.priority === "pareto")
-      return;
-    throw new SmtUnsupportedError("the SAT core for MaxSAT");
+    if (!isFiniteDomain(this.manager, [...soft, ...hard])) return false;
+    return SAT_MAXSAT_ENGINES.has(options.maxsat.maxsatEngine) && options.priority !== "pareto";
   }
 
   // The model's objective values are lower bounds, or upper bounds.
@@ -408,7 +415,7 @@ export class OptContext {
   }
 
   private executeMaxsat(objective: Objective, isCommitted: boolean, isScoped: boolean) {
-    const solver = this.optSolver;
+    const solver = this.satSolver ?? this.optSolver;
     const maxsmt = objective.maxsmt;
     if (solver === null || maxsmt === null)
       throw new SmtUnsupportedError("MaxSMT without a solver");
@@ -479,7 +486,7 @@ export class OptContext {
   }
 
   private executeBox(optsmt: Optsmt) {
-    const solver = this.optSolver;
+    const solver = this.satSolver ?? this.optSolver;
     if (solver === null) throw new SmtUnsupportedError("optimization without a solver");
     this.boxIndex = 1;
     let status = optsmt.box();
@@ -774,5 +781,7 @@ export class OptContext {
     this.normalized = [];
     this.optSolver?.release();
     this.optSolver = null;
+    this.satSolver?.release();
+    this.satSolver = null;
   }
 }

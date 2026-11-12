@@ -1,9 +1,10 @@
 // Ported from Z3 (src/sat/tactic/goal2sat.h, src/sat/tactic/goal2sat.cpp,
 // src/ast/expr2var.cpp), MIT license, see z3-license.txt.
-import { SmtCanceledError, SmtTacticError } from "../../../../errors";
+import { SmtCanceledError, SmtTacticError, SmtUnsupportedError } from "../../../../errors";
 import {
   type AstManager,
   FAMILY_BASIC,
+  FAMILY_PB,
   OP_AND,
   OP_DISTINCT,
   OP_EQ,
@@ -13,7 +14,6 @@ import {
   OP_OR,
   OP_XOR,
 } from "../ast";
-import type { Goal } from "../goal";
 import { DEFAULT_PRINT_OPTIONS, printExpr } from "../smt2-printer";
 import type { Solver } from "./solver";
 
@@ -105,6 +105,8 @@ export class Goal2Sat {
       return true;
     }
     if (this.processCached(expr, isRoot, isSign)) return true;
+    if (manager.getFamily(expr) === FAMILY_PB)
+      throw new SmtUnsupportedError("pseudo-Boolean constraints in the SAT solver");
     if (manager.getFamily(expr) !== FAMILY_BASIC) {
       this.convertAtom(expr, isRoot, isSign);
       return true;
@@ -323,9 +325,18 @@ export class Goal2Sat {
     }
   }
 
-  run(goal: Goal) {
+  // insert_dep on an assumption, an uninterpreted constant or its negation.
+  getAssumptionLit(assumption: number) {
+    const manager = this.manager;
+    const isNot = manager.isNot(assumption);
+    this.convertAtom(isNot ? manager.getArg(assumption, 0) : assumption, false, false);
+    const lit = this.results.pop() as number;
+    return isNot ? lit ^ 1 : lit;
+  }
+
+  run(forms: readonly number[]) {
     try {
-      for (const form of goal.forms.items) this.process(form);
+      for (const form of forms) this.process(form);
     } finally {
       this.frames = [];
       this.results = [];
