@@ -10697,7 +10697,11 @@ export const translateStatements = (
   }
   // A statement that reads a name that no declaration binds, before anything else it evaluates
   // runs, throws a ReferenceError there.
-  const unresolved = evaluated === undefined ? undefined : getUnresolvedRead(evaluated, context);
+  const unresolved = ts.isClassDeclaration(statement)
+    ? getUnresolvedRead(statement, context)
+    : evaluated === undefined
+      ? undefined
+      : getUnresolvedRead(evaluated, context);
   if (unresolved !== undefined)
     return throwError("ReferenceError", path, unresolved, context, frame);
   // An await statement whose promise fulfilled, or a conversion that ran, drops the value.
