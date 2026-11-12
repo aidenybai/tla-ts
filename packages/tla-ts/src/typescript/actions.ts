@@ -254,6 +254,8 @@ import {
   isNumberLike,
   isGeneratorType,
   mayBeGeneratorType,
+  ITERATOR_CONSUMERS,
+  ITERATOR_HELPERS,
   isSequenceType,
   rejectGeneratorUse,
   TYPED_ARRAYS,
@@ -1280,33 +1282,42 @@ export const translateCallStatement = (
   if (isPromiseCall(expression, context)) {
     return translatePromiseCall(expression, path, context, frame, continueWith);
   }
-  if (isGeneratorStep(expression, context)) {
-    const receiver = getCast(expression.expression.expression);
+  const consumer = getGeneratorMethod(expression, context);
+  const stepped = isGeneratorStep(expression, context) ? expression : undefined;
+  const translateStep =
+    consumer !== undefined
+      ? (current: Path) =>
+          (ITERATOR_HELPERS.has(consumer.method)
+            ? translateIteratorHelper
+            : translateGeneratorConsumer)(
+            expression,
+            consumer,
+            current,
+            context,
+            frame,
+            continueWith,
+          )
+      : stepped &&
+        ((current: Path) => translateGeneratorStep(stepped, current, context, frame, continueWith));
+  const generator = consumer?.receiver ?? stepped?.expression.expression;
+  if (translateStep !== undefined && generator !== undefined) {
+    const receiver = getCast(generator);
     if (
       ts.isCallExpression(receiver) &&
       !path.scope.results.has(receiver) &&
       isStatementCall(receiver, path, context)
     ) {
       return translateCallStatement(receiver, path, context, frame, (after, value) =>
-        translateGeneratorStep(
-          expression,
-          {
-            ...after,
-            scope: {
-              ...after.scope,
-              results: new Map([
-                ...after.scope.results,
-                [receiver, value ?? getUndefined(context)],
-              ]),
-            },
+        translateStep({
+          ...after,
+          scope: {
+            ...after.scope,
+            results: new Map([...after.scope.results, [receiver, value ?? getUndefined(context)]]),
           },
-          context,
-          frame,
-          continueWith,
-        ),
+        }),
       );
     }
-    return translateGeneratorStep(expression, path, context, frame, continueWith);
+    return translateStep(path);
   }
   const created = getCreatedGenerator(expression, path, context);
   if (created !== undefined) {
@@ -3092,6 +3103,383 @@ const makeGenerator = (
     );
   });
 
+// A call of a method of Iterator.prototype that steps a generator to its end, or until its
+// callback decides, then closes the generator as the method's IteratorClose does.
+const translateGeneratorConsumer = (
+  node: ts.CallExpression,
+  consumer: NonNullable<ReturnType<typeof getGeneratorMethod>>,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  const method = consumer.method;
+  const argument = consumer.values.at(0);
+  const callback = argument && getCallback(argument, path, context);
+  if (method !== "toArray" && callback?.body === undefined) {
+    throw new TlaTypeScriptError(
+      `Give ${method} a function that tla-ts can tell`,
+      argument ?? node,
+    );
+  }
+  const receiver = translateExpression(consumer.receiver, path.scope, context);
+  const close = (current: Path, finish: (after: Path) => Formula) =>
+    resumeGenerator(node, receiver, "return", undefined, current, context, frame, (after) =>
+      finish(after),
+    );
+  // A callback that throws closes the generator before the error leaves the method.
+  const callbackFrame = {
+    ...frame,
+    throwTo: (current: Path, thrown: Thrown) =>
+      close(current, (after) =>
+        frame.throwTo === undefined ? leaf(thrown.uncaught) : frame.throwTo(after, thrown),
+      ),
+  };
+  const callbackReceiver =
+    callback !== undefined && !ts.isArrowFunction(callback)
+      ? { value: getUndefined(context), method: callback }
+      : path.scope.receiver;
+  const run = (
+    current: Path,
+    values: Expression[],
+    after: (path: Path, result: Expression) => Formula,
+  ) =>
+    callback === undefined
+      ? after(current, getUndefined(context))
+      : inlineValues(
+          callback,
+          values,
+          callbackReceiver,
+          current,
+          context,
+          callbackFrame,
+          (done, result) => {
+            const name = context.names.getFresh("result");
+            return bindOnce(
+              done,
+              name,
+              result ?? getUndefined(context),
+              after(done, identifier(name)),
+            );
+          },
+        );
+  const getLoop = (finish: (path: Path, value?: Expression) => Formula) => {
+    const loop = (current: Path, counter: number, kept: Expression[]): Formula =>
+      resumeGenerator(
+        node,
+        receiver,
+        "next",
+        undefined,
+        current,
+        context,
+        frame,
+        (stepped, value, isDone, isResult) => {
+          if (isResult) {
+            throw new TlaTypeScriptError(
+              `tla-ts can't run ${method} on a generator that delegates with yield*`,
+              node,
+            );
+          }
+          const isReduce = method === "reduce";
+          if (isDone) {
+            if (isReduce && kept.length === 0) return throwTypeError(stepped, node, context, frame);
+            return finish(
+              stepped,
+              method === "toArray"
+                ? tuple(kept)
+                : method === "some"
+                  ? boolean(false)
+                  : method === "every"
+                    ? boolean(true)
+                    : isReduce
+                      ? kept[0]
+                      : getUndefined(context),
+            );
+          }
+          const element = value ?? getUndefined(context);
+          if (method === "toArray") return loop(stepped, counter + 1, [...kept, element]);
+          // reduce without an initial value takes the first element as its accumulator.
+          if (isReduce && kept.length === 0) return loop(stepped, counter + 1, [element]);
+          const elementName = context.names.getFresh("element");
+          const bound = identifier(elementName);
+          const values = isReduce ? [kept[0], bound, number(counter)] : [bound, number(counter)];
+          return bindOnce(
+            stepped,
+            elementName,
+            element,
+            run(stepped, values, (after, result) => {
+              const isTruthy = useJavaScript("ToBoolean", [result], context);
+              const rest = loop(after, counter + 1, isReduce ? [result] : kept);
+              if (method === "some") {
+                return ifThenElse(
+                  isTruthy,
+                  close(after, (closed) => finish(closed, boolean(true))),
+                  rest,
+                );
+              }
+              if (method === "every") {
+                return ifThenElse(
+                  isTruthy,
+                  rest,
+                  close(after, (closed) => finish(closed, boolean(false))),
+                );
+              }
+              if (method === "find") {
+                return ifThenElse(
+                  isTruthy,
+                  close(after, (closed) => finish(closed, bound)),
+                  rest,
+                );
+              }
+              return rest;
+            }),
+          );
+        },
+      );
+    return loop;
+  };
+  const initial = method === "reduce" ? consumer.values.at(1) : undefined;
+  const kept = initial === undefined ? [] : [translateExpression(initial, path.scope, context)];
+  // The exits of the method leave the generator completed, so the code after it joins them.
+  const consume = translateJoined(node, path, context, continueWith, (next) => {
+    const exits: Path["generators"][] = [];
+    const finish = (current: Path, value?: Expression) => {
+      const settled = exits.find(
+        (generators) =>
+          isCompletedFrom(current.generators, path.generators) &&
+          isCompletedFrom(generators, path.generators) &&
+          [...generators].every(
+            (entry) =>
+              entry[1] === current.generators.get(entry[0]) ||
+              entry[1].resume === current.generators.get(entry[0])?.resume,
+          ),
+      );
+      if (settled === undefined) exits.push(current.generators);
+      return next({ ...current, generators: settled ?? current.generators }, value);
+    };
+    return getLoop(finish)(path, 0, kept);
+  });
+  return translateHoldsIteratorPrototype(method, node, path, context, consume);
+};
+
+// Runs what follows where Iterator.prototype still holds the built-in method that a call reads.
+const translateHoldsIteratorPrototype = (
+  method: string,
+  node: ts.Node,
+  path: Path,
+  context: Context,
+  rest: Formula,
+) =>
+  context.heap === undefined
+    ? rest
+    : ifThenElse(
+        useJavaScript(
+          "HoldsBuiltIn",
+          [
+            getHeap(path.scope, node, context),
+            translateBuiltInValue("Iterator.prototype", node, context),
+            string(method),
+            string(`Iterator.prototype.${method}`),
+          ],
+          context,
+        ),
+        rest,
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string(`tla-ts can't call Iterator.prototype.${method} where a script replaced it`),
+          ]),
+        ),
+      );
+
+// A call of Iterator.prototype's map, filter, take, or drop on a generator object, which makes an
+// iterator helper. tla-ts follows the helper as a generator: each next steps the generator it
+// wraps, through the callback, until the limit.
+const translateIteratorHelper = (
+  node: ts.CallExpression,
+  helper: NonNullable<ReturnType<typeof getGeneratorMethod>>,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  const method = helper.method;
+  const argument = helper.values.at(0);
+  const isCounted = method === "take" || method === "drop";
+  const callback =
+    !isCounted && argument !== undefined ? getCallback(argument, path, context) : undefined;
+  const limit =
+    isCounted && argument !== undefined && ts.isNumericLiteral(argument)
+      ? Number(argument.text)
+      : undefined;
+  if (isCounted ? limit === undefined || !Number.isInteger(limit) : callback?.body === undefined) {
+    throw new TlaTypeScriptError(
+      isCounted
+        ? `Give ${method} a whole number literal`
+        : `Give ${method} a function that tla-ts can tell`,
+      argument ?? node,
+    );
+  }
+  const name = context.names.getFresh("helper");
+  const heapSymbol = context.heap;
+  const ref =
+    heapSymbol === undefined
+      ? record("Record", [{ name: "generator", value: string(name) }])
+      : useJavaScript("Allocated", [identifier(name)], context);
+  const underlyingName = context.names.getFresh("underlying");
+  const underlying = identifier(underlyingName);
+  const callbackReceiver =
+    callback !== undefined && !ts.isArrowFunction(callback)
+      ? { value: getUndefined(context), method: callback }
+      : path.scope.receiver;
+  const getCaller = (current: Path) => {
+    const caller = current.generators.get(name)?.caller;
+    if (caller === undefined) throw new TlaTypeScriptError("Unsupported iterator helper", node);
+    return caller;
+  };
+  // A helper's return closes the generator it wraps, which tla-ts doesn't follow, so a return
+  // stops as one of a generator that suspended in try does.
+  const translated = translateExpression(helper.receiver, path.scope, context);
+  // The generator that a next runs, which patterns check, where the receiver may hold only one.
+  const suspensions = [...path.generators.values()];
+  const exact = suspensions.filter((suspension) => isSameExpression(suspension.ref, translated));
+  const candidates = new Set(
+    (exact.length > 0 ? exact : suspensions).map((suspension) => suspension.generator),
+  );
+  const generator = candidates.size === 1 ? [...candidates][0] : undefined;
+  if (generator === undefined) {
+    throw new TlaTypeScriptError("tla-ts can't tell which generator this helper wraps", node);
+  }
+  const getSuspension = (resume: Suspension["resume"]): Suspension => ({
+    ref,
+    generator,
+    resume,
+    isStarted: true,
+    isGuarded: true,
+    isAsync: false,
+    queue: [],
+  });
+  const leave = (current: Path, resume: Suspension["resume"]): Path => ({
+    ...current,
+    generators: new Map([...current.generators, [name, getSuspension(resume)]]),
+  });
+  const getFrame = (caller: Caller): Frame => ({
+    ...frame,
+    // A callback that throws closes the generator before the error leaves next.
+    throwTo: (current, thrown) =>
+      resumeGenerator(node, underlying, "return", undefined, current, context, frame, (after) => {
+        const left = leave(after, undefined);
+        return caller.throwTo === undefined ? leaf(thrown.uncaught) : caller.throwTo(left, thrown);
+      }),
+  });
+  const stepFrom =
+    (counter: number) =>
+    (resumer: Path): Formula => {
+      const caller = getCaller(resumer);
+      const give = (current: Path, value: Expression | undefined, isDone: boolean) =>
+        caller.step(leave(current, isDone ? undefined : stepFrom(counter + 1)), value, isDone);
+      if (method === "take" && counter >= (limit ?? 0)) {
+        return resumeGenerator(
+          node,
+          underlying,
+          "return",
+          undefined,
+          resumer,
+          context,
+          frame,
+          (after) => give(after, undefined, true),
+        );
+      }
+      return resumeGenerator(
+        node,
+        underlying,
+        "next",
+        undefined,
+        resumer,
+        context,
+        getFrame(caller),
+        (after, value, isDone, isResult) => {
+          if (isResult) {
+            throw new TlaTypeScriptError(
+              `tla-ts can't run ${method} on a generator that delegates with yield*`,
+              node,
+            );
+          }
+          if (isDone) return give(after, undefined, true);
+          const element = value ?? getUndefined(context);
+          if (method === "take") return give(after, element, false);
+          if (method === "drop") {
+            return counter < (limit ?? 0)
+              ? stepFrom(counter + 1)(after)
+              : give(after, element, false);
+          }
+          if (callback === undefined) throw new TlaTypeScriptError("Give this a body", node);
+          const elementName = context.names.getFresh("element");
+          const bound = identifier(elementName);
+          return bindOnce(
+            after,
+            elementName,
+            element,
+            inlineValues(
+              callback,
+              [bound, number(counter)],
+              callbackReceiver,
+              after,
+              context,
+              getFrame(caller),
+              (done, result) => {
+                const resultName = context.names.getFresh("result");
+                const mapped = identifier(resultName);
+                return bindOnce(
+                  done,
+                  resultName,
+                  result ?? getUndefined(context),
+                  method === "map"
+                    ? give(done, mapped, false)
+                    : ifThenElse(
+                        useJavaScript("ToBoolean", [mapped], context),
+                        give(done, bound, false),
+                        stepFrom(counter + 1)(done),
+                      ),
+                );
+              },
+            ),
+          );
+        },
+      );
+    };
+  const made = leave(path, stepFrom(0));
+  const created =
+    heapSymbol === undefined
+      ? continueWith(made, ref)
+      : bindOnce(
+          path,
+          name,
+          useJavaScript(
+            "Allocate",
+            [getHeap(path.scope, node, context), identifier("GeneratorObject")],
+            context,
+          ),
+          continueWith(
+            {
+              ...made,
+              scope: {
+                ...made.scope,
+                bindings: new Map([...made.scope.bindings, [heapSymbol, identifier(name)]]),
+              },
+            },
+            ref,
+          ),
+        );
+  return translateHoldsIteratorPrototype(
+    method,
+    node,
+    path,
+    context,
+    bindOnce(path, underlyingName, translated, created),
+  );
+};
+
 // A call to a generator's next, return, or throw, which gives an object with what the generator
 // yields or returns.
 const translateGeneratorStep = (
@@ -3718,6 +4106,25 @@ const isGeneratorStep = (node: ts.CallExpression, context: Context): node is Met
   isMethodCall(node) &&
   ["next", "return", "throw"].includes(node.expression.name.text) &&
   isGeneratorType(node.expression.expression, context);
+
+// A call of a method of Iterator.prototype that consumes a generator object or wraps it in a
+// helper, or of the method's call with the generator object.
+const getGeneratorMethod = (node: ts.CallExpression, context: Context) => {
+  if (!isMethodCall(node) || node.arguments.some(ts.isSpreadElement)) return undefined;
+  const accessed = node.expression;
+  const owner = accessed.expression;
+  const isCall =
+    accessed.name.text === "call" &&
+    ts.isPropertyAccessExpression(owner) &&
+    owner.expression.getText() === "Iterator.prototype";
+  const method = isCall ? owner.name.text : accessed.name.text;
+  const receiver = isCall ? node.arguments.at(0) : owner;
+  return (ITERATOR_CONSUMERS.has(method) || ITERATOR_HELPERS.has(method)) &&
+    receiver !== undefined &&
+    isGeneratorType(receiver, context)
+    ? { method, receiver, values: isCall ? node.arguments.slice(1) : node.arguments }
+    : undefined;
+};
 
 // The generator that a call makes a generator object of, with the method it calls, if any.
 const getCreatedGenerator = (node: ts.CallExpression, path: Path, context: Context) => {
@@ -5566,6 +5973,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     node.expression.name.text !== "construct" &&
     isHeapType(context.checker.getTypeAtLocation(node), context)) ||
   isGeneratorStep(node, context) ||
+  getGeneratorMethod(node, context) !== undefined ||
   isPromiseCall(node, context) ||
   getCreatedGenerator(node, path, context) !== undefined ||
   getAsyncCallee(node.expression, path, context) !== undefined ||
@@ -6239,6 +6647,23 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
 // what follows once, as an operator of what the statement changes and the value it gives, instead
 // of once for each path. A path that changes what the operator can't take, such as a var it
 // declares, falls back to translating what follows on each path.
+// Whether generators are those from before, where each is the same or has since completed, so that
+// code after a join, outside the branches, can still name each one.
+const isCompletedFrom = (generators: Path["generators"], before: Path["generators"]) =>
+  generators === before ||
+  (generators.size === before.size &&
+    [...generators].every((entry) => {
+      const previous = before.get(entry[0]);
+      return (
+        previous !== undefined &&
+        (entry[1] === previous ||
+          (entry[1].ref === previous.ref &&
+            entry[1].resume === undefined &&
+            entry[1].caller === undefined &&
+            entry[1].queue.length === 0))
+      );
+    }));
+
 export const translateJoined = (
   node: ts.Node,
   path: Path,
@@ -6301,7 +6726,9 @@ export const translateJoined = (
   const isJoinable = exits.every(
     (exit) =>
       changed.every((symbol) => exit.path.scope.bindings.has(symbol)) &&
-      exit.path.generators === path.generators &&
+      // Each exit leaves the generators as the first does, which may have completed them.
+      exit.path.generators === exits[0].path.generators &&
+      isCompletedFrom(exit.path.generators, path.generators) &&
       exit.path.tasks === path.tasks &&
       isKept(exit.path.scope.bindings, path.scope.bindings) &&
       isKept(exit.path.scope.functions, path.scope.functions),
@@ -6312,6 +6739,7 @@ export const translateJoined = (
   const rest = continueWith(
     {
       ...path,
+      generators: exits[0].path.generators,
       scope: {
         ...path.scope,
         bindings: new Map([

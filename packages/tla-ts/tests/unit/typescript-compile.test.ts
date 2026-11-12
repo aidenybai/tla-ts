@@ -5063,6 +5063,120 @@ describe("errors", () => {
     ).toThrow("Iterate values() only in a for-of or a spread");
   });
 
+  it("consumes a generator with Iterator.prototype's methods, and closes it", async () => {
+    const programs = [
+      `
+        let calls = 0;
+        const iter = g();
+        const found = iter.some((value) => {
+          calls += 1;
+          return value === 2;
+        });
+        const after = iter.next();
+        if (!found || calls !== 2 || !after.done) throw new Error("some");
+      `,
+      `
+        const all = Iterator.prototype.toArray.call(g());
+        const sum = g().reduce((total, value) => total + value, 10);
+        if (all.join() !== "1,2,3" || sum !== 16) throw new Error("gathered");
+      `,
+      `
+        let seen = "";
+        g().forEach((value, index) => {
+          seen += value + ":" + index + ",";
+        });
+        const product = g().reduce((total, value) => total * value);
+        if (seen !== "1:0,2:1,3:2," || product !== 6) throw new Error("visited");
+      `,
+      `
+        const thrown = g();
+        let caught = "";
+        try {
+          thrown.every(() => {
+            throw new Error("stop");
+          });
+        } catch (error) {
+          caught = (error as Error).message;
+        }
+        const closed = thrown.next();
+        if (caught !== "stop" || !closed.done) throw new Error("closed");
+      `,
+      `
+        const every = g().every((value) => value < 3);
+        const first = g().find((value) => value > 1);
+        if (every || first !== 2) throw new Error("searched");
+      `,
+    ];
+    for (const program of programs) {
+      const result = await checkModel(`
+      function* g(): Generator<number> {
+        yield 1;
+        yield 2;
+        yield 3;
+      }
+        ${program}
+      `);
+      expect(result.failure).toBeUndefined();
+    }
+    await expect(
+      checkModel(`
+        function* g(): Generator<number> {}
+        g().reduce((total, value) => total + value);
+      `),
+    ).rejects.toThrow("TypeError");
+  });
+
+  it("steps a generator through Iterator.prototype's map, filter, take, and drop", async () => {
+    const programs = [
+      `
+        let calls = 0;
+        const mapped = g().map((value, index) => {
+          calls += 1;
+          return value * 10 + index;
+        });
+        const first = mapped.next();
+        const callsAfterFirst = calls;
+        const second = mapped.next();
+        mapped.next();
+        const end = mapped.next();
+        if (first.value !== 10 || callsAfterFirst !== 1 || second.value !== 21 || !end.done) {
+          throw new Error("mapped");
+        }
+      `,
+      `
+        const odds = g().filter((value) => value % 2 === 1);
+        const first = odds.next();
+        const second = odds.next();
+        const end = odds.next();
+        if (first.value !== 1 || second.value !== 3 || !end.done) throw new Error("filtered");
+      `,
+      `
+        const taken = g().take(2).toArray();
+        const dropped = g().drop(2).toArray();
+        if (taken.join() !== "1,2" || dropped.join() !== "3") throw new Error("counted");
+      `,
+      `
+        const source = g();
+        const limited = source.take(1);
+        limited.next();
+        const end = limited.next();
+        const after = source.next();
+        if (!end.done || !after.done) throw new Error("closed");
+      `,
+    ];
+    for (const program of programs) {
+      const result = await checkModel(`
+      function* g(): Generator<number> {
+        yield 1;
+        yield 2;
+        yield 3;
+      }
+        ${program}
+      `);
+      expect(result.failure).toBeUndefined();
+    }
+  });
+
   it("steps an array's iterator with next as the array changes", async () => {
     const result = await checkModel(`
       const arr = ["a", "b"];

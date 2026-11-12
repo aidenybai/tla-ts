@@ -514,8 +514,10 @@ const getMembers = (node: ts.Node, context: Context) => {
   return type.isUnion() ? type.types : [type];
 };
 
+// An iterator helper, which Iterator.prototype's methods type as an IteratorObject, steps as a
+// generator does.
 const isGeneratorMember = (type: ts.Type) =>
-  ["Generator", "AsyncGenerator"].includes(type.getSymbol()?.name ?? "");
+  ["Generator", "AsyncGenerator", "IteratorObject"].includes(type.getSymbol()?.name ?? "");
 
 export const isGeneratorType = (node: ts.Node, context: Context) =>
   getMembers(node, context).every(isGeneratorMember);
@@ -618,9 +620,23 @@ const isComparedArgument = (node: ts.Expression, call: ts.CallExpression, contex
   });
 };
 
+// The methods of Iterator.prototype that consume what an iterator gives.
+export const ITERATOR_CONSUMERS = new Set([
+  "toArray",
+  "forEach",
+  "some",
+  "every",
+  "find",
+  "reduce",
+]);
+
+// The methods of Iterator.prototype that make an iterator helper, which tla-ts follows.
+export const ITERATOR_HELPERS = new Set(["map", "filter", "take", "drop"]);
+
 // A generator object goes only where tla-ts follows it: into a variable that holds generators, to a
-// call of its methods, into a comparison, or into a for-of or a for await. Elsewhere, such as an array pattern, a spread, or a
-// function's parameter, code would iterate it in ways that tla-ts doesn't follow.
+// call of its methods or Iterator.prototype's, into a comparison, or into a for-of or a for await.
+// Elsewhere, such as an array pattern, a spread, or a function's parameter, code would iterate it
+// in ways that tla-ts doesn't follow.
 export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
   if (!getMembers(node, context).some(isGeneratorMember)) return;
   const outer = ts.findAncestor(node.parent, (ancestor) => !ts.isParenthesizedExpression(ancestor));
@@ -656,7 +672,15 @@ export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
       ts.isExpressionStatement(outer) ||
       (ts.isCallExpression(outer) && isComparedArgument(node, outer, context)) ||
       (ts.isArrayLiteralExpression(outer) && isAsyncDelegated(outer)) ||
-      (ts.isReturnStatement(outer) && isPatternDefaultReturn(outer)));
+      (ts.isReturnStatement(outer) && isPatternDefaultReturn(outer)) ||
+      (ts.isCallExpression(outer) &&
+        outer.arguments.at(0) === node &&
+        ts.isPropertyAccessExpression(outer.expression) &&
+        outer.expression.name.text === "call" &&
+        ts.isPropertyAccessExpression(outer.expression.expression) &&
+        outer.expression.expression.expression.getText() === "Iterator.prototype" &&
+        (ITERATOR_CONSUMERS.has(outer.expression.expression.name.text) ||
+          ITERATOR_HELPERS.has(outer.expression.expression.name.text))));
   if (!isHeld) throw new TlaTypeScriptError("tla-ts can't follow a generator here", node);
 };
 
