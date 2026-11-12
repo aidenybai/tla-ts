@@ -290,34 +290,35 @@ const getMatchLength = (pattern: RegExp, source: string, offset: number) => {
   return pattern.exec(source)?.[0].length ?? 0;
 };
 
+interface TokenMatch {
+  kind: number;
+  length: number;
+}
+
+const getLongerMatch = (best: TokenMatch, match: TokenMatch) =>
+  match.length > best.length || (match.length === best.length && match.kind < best.kind)
+    ? match
+    : best;
+
 const matchPatterns = (patterns: [string, RegExp[]][], source: string, offset: number) =>
   patterns
     .map(([name, regexes]) => ({
       kind: getKind(name),
       length: Math.max(...regexes.map((regex) => getMatchLength(regex, source, offset))),
     }))
-    .reduce(
-      (best, match) =>
-        match.length > best.length || (match.length === best.length && match.kind < best.kind)
-          ? match
-          : best,
-      { kind: -1, length: 0 },
-    );
+    .reduce(getLongerMatch, { kind: -1, length: 0 });
 
 const matchSpecToken = (source: string, offset: number) => {
   const literalLength = LITERAL_LENGTHS.find((length) =>
     LITERALS.has(source.slice(offset, offset + length)),
   );
   const pattern = matchPatterns(SPEC_PATTERNS, source, offset);
-  if (literalLength === undefined) return pattern;
-  const literal = {
-    kind: LITERALS.get(source.slice(offset, offset + literalLength)) ?? -1,
-    length: literalLength,
-  };
-  return literal.length > pattern.length ||
-    (literal.length === pattern.length && literal.kind < pattern.kind)
-    ? literal
-    : pattern;
+  return literalLength === undefined
+    ? pattern
+    : getLongerMatch(pattern, {
+        kind: LITERALS.get(source.slice(offset, offset + literalLength)) ?? -1,
+        length: literalLength,
+      });
 };
 
 export const getTabStop = (column: number) => column + 8 - (column % 8);
