@@ -676,41 +676,64 @@ const translateClassObject = (node: ts.ClassExpression, heap: Expression, contex
   const getRef = (offset: number) => useJavaScript("NextRef", [heap, number(offset)], context);
   const define = (object: Expression, key: string, value: Expression, flags: boolean[]) =>
     useJavaScript("Define", [object, string(key), value, ...flags.map(boolean)], context);
+  // Each method takes the next object, after the prototype that a generator method makes first.
+  const refs = methods.reduce<number[]>(
+    (taken, method) => [
+      ...taken,
+      (taken.at(-1) ?? 0) + (method.asteriskToken === undefined ? 1 : 2),
+    ],
+    [],
+  );
+  const count = refs.at(-1) ?? 0;
   const defineMethods = (object: Expression, isStaticObject: boolean) =>
     methods.reduce(
       (current, method, position) =>
         isStatic(method) === isStaticObject
-          ? define(current, getName(method), getRef(position + 1), [true, false, true])
+          ? define(current, getName(method), getRef(refs[position]), [true, false, true])
           : current,
       object,
     );
   const functionPrototype = translateBuiltInValue("Function.prototype", node, context);
-  const withMethods = methods.reduce(
-    (current, method) =>
-      useJavaScript(
-        "Allocate",
-        [
-          current,
-          useJavaScript(
-            "ArrowObject",
-            [
-              functionPrototype,
-              string(getName(method)),
-              number(getFunctionLength(getParameters(method))),
-            ],
-            context,
-          ),
-        ],
-        context,
-      ),
-    heap,
-  );
+  const withMethods = methods.reduce((current, method, position) => {
+    const name = string(getName(method));
+    const length = number(getFunctionLength(getParameters(method)));
+    return method.asteriskToken === undefined
+      ? useJavaScript(
+          "Allocate",
+          [current, useJavaScript("ArrowObject", [functionPrototype, name, length], context)],
+          context,
+        )
+      : useJavaScript(
+          "Allocate",
+          [
+            useJavaScript(
+              "Allocate",
+              [
+                current,
+                useJavaScript(
+                  "GeneratorPrototypeObject",
+                  [translateBuiltInValue("%GeneratorFunction%.prototype.prototype", node, context)],
+                  context,
+                ),
+              ],
+              context,
+            ),
+            useJavaScript(
+              "GeneratorFunctionObject",
+              [
+                translateBuiltInValue("%GeneratorFunction%.prototype", node, context),
+                name,
+                length,
+                getRef(refs[position] - 1),
+              ],
+              context,
+            ),
+          ],
+          context,
+        );
+  }, heap);
   const prototype = defineMethods(
-    define(identifier("EmptyObject"), "constructor", getRef(methods.length + 2), [
-      true,
-      false,
-      true,
-    ]),
+    define(identifier("EmptyObject"), "constructor", getRef(count + 2), [true, false, true]),
     false,
   );
   const length = getFunctionLength(
@@ -730,7 +753,7 @@ const translateClassObject = (node: ts.ClassExpression, heap: Expression, contex
         [false, false, true],
       ),
       "prototype",
-      getRef(methods.length + 1),
+      getRef(count + 1),
       [false, false, false],
     ),
     true,

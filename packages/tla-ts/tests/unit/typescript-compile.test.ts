@@ -7712,6 +7712,25 @@ describe("errors", () => {
     expect((await checkModel(getSource(2))).failure?.message).toContain("classes");
   });
 
+  it("makes the generator methods of a class expression that a script only reads", async () => {
+    const getSource = (lengths: string) => `
+      const describe = (made: object, key: string) => Object.getOwnPropertyDescriptor(made, key)!.value;
+      const prototype = class { a() {} *g(x: number, y = 1) {} static *h() {} b(x: number) {} }.prototype;
+      const generator: object = prototype.g;
+      const isGenerator = Object.getPrototypeOf(generator) === Object.getPrototypeOf(function* () {});
+      const generated: object = describe(generator, "prototype");
+      const isGenerated =
+        Object.getPrototypeOf(generated) === Object.getPrototypeOf(function* () {}).prototype;
+      const made: { h: object } = describe(prototype, "constructor");
+      const lengths = [describe(generator, "length"), describe(prototype.b, "length")].join();
+      if (lengths !== "${lengths}" || !isGenerator || !isGenerated || describe(made.h, "name") !== "h") {
+        throw new Error("generator");
+      }
+    `;
+    expect((await checkModel(getSource("1,1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1,0"))).failure?.message).toContain("generator");
+  });
+
   it("stops at a call of a class expression that a script only reads", () => {
     expect(() =>
       compile(`
