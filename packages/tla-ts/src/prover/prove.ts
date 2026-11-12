@@ -97,7 +97,7 @@ interface ProveRun {
 
 interface Encoder {
   encode: (id: number, sequent: Sequent, method: Method, session: EncodingSession) => string;
-  isCaseNumbered: boolean;
+  isCaseNumbered?: boolean;
 }
 
 const shipFirstOrder = (sequent: Sequent) => flatten(processObligation(sequent));
@@ -112,16 +112,12 @@ const SMT_ENCODER: Encoder = {
 const ENCODERS: Record<Backend, Encoder> = {
   smt: SMT_ENCODER,
   z3: SMT_ENCODER,
-  zenon: {
-    encode: (id, sequent) => encodeZenon(id, shipFirstOrder(sequent)),
-    isCaseNumbered: false,
-  },
+  zenon: { encode: (id, sequent) => encodeZenon(id, shipFirstOrder(sequent)) },
   isabelle: {
     encode: (id, sequent, method) =>
       encodeIsabelle(id, shipFirstOrder(sequent), method.tactic ?? "auto"),
-    isCaseNumbered: false,
   },
-  ls4: { encode: (_id, sequent) => encodePtl(sequent), isCaseNumbered: false },
+  ls4: { encode: (_id, sequent) => encodePtl(sequent) },
 };
 
 const hasIncompleteCase = (expression: Expr): boolean =>
