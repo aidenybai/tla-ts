@@ -18,6 +18,7 @@ export const NATIVE_ERRORS = new Set([
   "ReferenceError",
   "EvalError",
   "URIError",
+  "SuppressedError",
 ]);
 
 const isNative = (symbol: ts.Symbol) =>
@@ -109,17 +110,40 @@ export const translateEngineError = (name: string, node: ts.Node, context: Conte
   ]);
 };
 
+// The SuppressedError that disposing a resource throws where an error already completed the
+// statements, which holds both.
+export const translateSuppressedError = (
+  error: Expression,
+  suppressed: Expression,
+  node: ts.Node,
+  context: Context,
+) => {
+  const symbol = getNative("SuppressedError", node, context);
+  includeError("SuppressedError", context);
+  return record("Record", [
+    { name: "constructor", value: getConstructor(symbol, context) },
+    { name: "message", value: string("") },
+    { name: "name", value: string("SuppressedError") },
+    { name: "error", value: error },
+    { name: "suppressed", value: suppressed },
+  ]);
+};
+
 export const translateNewError = (
   node: ts.NewExpression,
   classes: ts.Symbol[],
   scope: Scope,
   context: Context,
 ) => {
+  const native = classes.find(isNative);
+  if (native === undefined) throw new TlaTypeScriptError("Unknown error class", node);
+  // A SuppressedError takes the error and the suppressed error before its message.
+  const held = native.name === "SuppressedError" ? ["error", "suppressed"] : [];
   const argumentNodes = node.arguments ?? [];
-  if (argumentNodes.length > 1) {
+  if (argumentNodes.length > held.length + 1) {
     throw new TlaTypeScriptError("Error options aren't supported", node);
   }
-  const message = argumentNodes.at(0);
+  const message = argumentNodes.at(held.length);
   const value =
     message === undefined
       ? string("")
@@ -130,18 +154,37 @@ export const translateNewError = (
             ifExpression(apply("=", [shared, getUndefined(context)]), string(""), shared),
           )
         : translateExpression(message, scope, context);
-  const native = classes.find(isNative);
-  if (native === undefined) throw new TlaTypeScriptError("Unknown error class", node);
   if (native === classes[0]) includeError(native.name, context);
   return record("Record", [
     { name: "constructor", value: getConstructor(classes[0], context) },
     { name: "message", value },
     { name: "name", value: string(native.name) },
+    ...held.map((name, position) => {
+      const argument = argumentNodes.at(position);
+      return {
+        name,
+        value:
+          argument === undefined
+            ? getUndefined(context)
+            : translateExpression(argument, scope, context),
+      };
+    }),
   ]);
 };
 
-const isCaught = (node: ts.Expression, context: Context) => {
+// A caught value, or what a SuppressedError holds, which may be any value.
+const isCaught = (node: ts.Expression, context: Context): boolean => {
   const declaration = getSymbol(node, context.checker)?.valueDeclaration;
+  if (
+    ts.isPropertyAccessExpression(node) &&
+    ["error", "suppressed"].includes(node.name.text) &&
+    getErrorClass(
+      context.checker.getTypeAtLocation(node.expression).getSymbol(),
+      context.checker,
+    )?.at(-2)?.name === "SuppressedError"
+  ) {
+    return true;
+  }
   return (
     ts.isIdentifier(node) &&
     declaration !== undefined &&

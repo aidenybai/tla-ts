@@ -384,6 +384,17 @@ export const BUILT_INS: Record<string, [string | null, boolean, boolean, string[
     ],
     true,
   ],
+  SuppressedError: [
+    "Error",
+    true,
+    true,
+    [
+      ["length", "c", "n3"],
+      ["name", "c", "sSuppressedError"],
+      ["prototype", "", "oSuppressedError.prototype"],
+    ],
+    true,
+  ],
   Map: [
     "Function.prototype",
     true,
@@ -2551,6 +2562,17 @@ export const BUILT_INS: Record<string, [string | null, boolean, boolean, string[
     [
       ["constructor", "wc", "oAggregateError"],
       ["name", "wc", "sAggregateError"],
+      ["message", "wc", "s"],
+    ],
+    false,
+  ],
+  "SuppressedError.prototype": [
+    "Error.prototype",
+    false,
+    true,
+    [
+      ["constructor", "wc", "oSuppressedError"],
+      ["name", "wc", "sSuppressedError"],
       ["message", "wc", "s"],
     ],
     false,

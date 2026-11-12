@@ -952,9 +952,12 @@ Has(heap, ref, key) ==
 \\* A promise that tla-ts follows as it compiles, whose properties the heap doesn't hold.
 PromiseObject == [EmptyObject EXCEPT !.prototype = Ref :> "Promise.prototype", !.isOpaque = TRUE]
 
-\\* An error is a record of its constructor, its message and its name.
+\\* An error is a record of its constructor, its message and its name, and a SuppressedError's also
+\\* of its error and the error it suppressed.
 LOCAL IsError(value) ==
-  SubSeq(ToString(value), 1, 1) = "[" /\\ DOMAIN value = {"constructor", "message", "name"}
+  /\\ SubSeq(ToString(value), 1, 1) = "["
+  /\\ DOMAIN value \\in {{"constructor", "message", "name"},
+                      {"constructor", "message", "name", "error", "suppressed"}}
 
 \\* An error inherits its other properties from its constructor's prototype. The message of an error
 \\* that JavaScript throws differs between engines, and tla-ts gives it none. A script can't read or
@@ -990,6 +993,7 @@ Get(heap, ref, key) ==
          [] key = "message" -> Assert(FALSE, "tla-ts can't read the message of this error")
          [] key = "constructor" /\\ ~IsHeap(ref.constructor) /\\ ~IsBuiltIn(ref.constructor) ->
               ref.constructor
+         [] key \\in {"error", "suppressed"} /\\ key \\in DOMAIN ref -> ref[key]
          [] OTHER -> Get(heap, Get(heap, ref.constructor, "prototype"), key)
   ELSE GetFrom(heap, ref, key, ref)
 

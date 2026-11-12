@@ -28,6 +28,7 @@ const GLOBALS = [
   "EvalError",
   "URIError",
   "AggregateError",
+  "SuppressedError",
   "Map",
   "Set",
   "WeakMap",

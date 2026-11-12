@@ -327,9 +327,17 @@ export const compile = (
     (node.kind === ts.SyntaxKind.NullKeyword ||
       (ts.isIdentifier(node) && node.text === "undefined") ||
       (ts.isArrayLiteralExpression(node) && node.elements.length === 0));
+  // A script disposes the resources of a using declaration that a block or a for holds.
+  const isDisposed = (node: ts.VariableDeclarationList) =>
+    context.heap !== undefined &&
+    (node.flags & ts.NodeFlags.AwaitUsing) !== ts.NodeFlags.AwaitUsing &&
+    ((ts.isVariableStatement(node.parent) &&
+      (ts.isBlock(node.parent.parent) || ts.isSourceFile(node.parent.parent))) ||
+      (ts.isForStatement(node.parent) && node.parent.initializer === node));
   const findUsing = (node: ts.Node): ts.Node | undefined =>
     ts.isVariableDeclarationList(node) &&
     (node.flags & ts.NodeFlags.Using) !== 0 &&
+    !isDisposed(node) &&
     !(ts.isForOfStatement(node.parent)
       ? isNothing(node.parent.expression)
       : node.declarations.every((declaration) => isNothing(declaration.initializer)))

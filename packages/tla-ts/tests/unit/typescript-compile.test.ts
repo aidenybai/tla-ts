@@ -5383,9 +5383,77 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("rejects a using declaration, whose resource it doesn't dispose", () => {
+  it("disposes a block's resources last first as it leaves the block", async () => {
+    const source = (expected: string) => `
+      const order: string[] = [];
+      const make = (name: string) => ({
+        name,
+        [Symbol.dispose]() {
+          order.push(this.name);
+        },
+      });
+      {
+        using first = make("a"), second = make("b");
+        using third = make("c");
+        using nothing = null;
+        order.push("body");
+      }
+      const run = (): number => {
+        using held = make("run");
+        return 1;
+      };
+      if (run() !== 1) throw new Error("result");
+      for (let step = 0; step < 3; step++) {
+        using held = make(String(step));
+        if (step === 1) break;
+      }
+      let index = 0;
+      for (using held = make("for"); index < 2; index++) order.push("loop");
+      if (order.join() !== "${expected}") throw new Error(order.join());
+    `;
+    const result = await checkModel(source("body,c,b,a,run,0,1,loop,loop,for"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("body,a,b,c,run,0,1,loop,loop,for"));
+    expect(wrong.failure?.message).toContain("body,c,b,a,run,0,1,loop,loop,for");
+  });
+
+  it("throws what disposing a resource throws, suppressing the error before it", async () => {
+    const source = (expected: number) => `
+      let count = 0;
+      try {
+        using held = { [Symbol.dispose]() { count += 1; } };
+        throw new RangeError("body");
+      } catch (error) {
+        if (error instanceof RangeError) count += 10;
+      }
+      try {
+        using held = { [Symbol.dispose]() { throw new TypeError("dispose"); } };
+        throw new RangeError("body");
+      } catch (error) {
+        if (error instanceof SuppressedError) count += 100;
+        if (error instanceof SuppressedError && error.error instanceof TypeError) count += 1000;
+        if (error instanceof SuppressedError && error.suppressed instanceof RangeError) {
+          count += 10000;
+        }
+      }
+      try {
+        using held = {} as Disposable;
+      } catch (error) {
+        if (error instanceof TypeError) count += 100000;
+      }
+      if (count !== ${expected}) throw new Error(String(count));
+    `;
+    const result = await checkModel(source(111111));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source(11111));
+    expect(wrong.failure?.message).toContain("111111");
+  });
+
+  it("rejects an await using declaration, whose resource it doesn't dispose", () => {
     expect(() =>
-      compile("const holder = {};\n{\n  using resource = { [Symbol.dispose]() {} };\n}"),
+      compile(
+        "const holder = {};\nconst run = async () => {\n  await using resource = { async [Symbol.asyncDispose]() {} };\n};",
+      ),
     ).toThrow("tla-ts can't dispose what a using declaration holds");
   });
 

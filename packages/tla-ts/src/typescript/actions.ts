@@ -175,6 +175,7 @@ import {
   isGetterPattern,
   isGetterRead,
   getGetterKeys,
+  getWrittenFunctions,
   isProxyOperation,
   readDescriptor,
   readDescriptors,
@@ -184,6 +185,7 @@ import {
   runGetterRead,
   runProxyOperation,
 } from "./protocols";
+import { type Disposal, translateUsing } from "./disposal";
 import {
   bindPattern,
   bindPatternInline,
@@ -249,6 +251,8 @@ export interface Path {
   generators: ReadonlyMap<string, Suspension>;
   // The jobs and promises that the statements queued and made, or undefined in a loop's body.
   tasks: Tasks | undefined;
+  // The resources that the using declarations of the block that runs added.
+  disposal?: Disposal;
 }
 
 interface KnownDefault {
@@ -357,7 +361,7 @@ interface Removed {
   path: Path;
 }
 
-interface Thrown {
+export interface Thrown {
   value: Expression;
   uncaught: Expression;
 }
@@ -373,7 +377,7 @@ interface YieldMode {
 }
 
 // A frame whose yields a return or a throw can't complete.
-const guardYields = (frame: Frame): Frame => {
+export const guardYields = (frame: Frame): Frame => {
   const yieldTo = frame.yieldTo;
   return {
     ...frame,
@@ -5056,7 +5060,7 @@ const translateForeignNew = (
     throwTypeError(path, expression, context, frame),
   );
 
-const translateDeclarations = (
+export const translateDeclarations = (
   declarations: readonly ts.VariableDeclaration[],
   path: Path,
   context: Context,
@@ -5370,6 +5374,15 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
     ) {
       if (context.heap !== undefined) changed.add(context.heap);
       getIteratorFunctions(node, context).forEach((called) => {
+        if (visited.has(called)) return;
+        visited.add(called);
+        visit(called);
+      });
+    }
+    // A using declaration runs the dispose methods, and their getters, that the script writes.
+    if (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) {
+      if (context.heap !== undefined) changed.add(context.heap);
+      getWrittenFunctions(node, "@@dispose", context).forEach((called) => {
         if (visited.has(called)) return;
         visited.add(called);
         visit(called);
@@ -5975,6 +5988,17 @@ const translateLoop = (
   }
   const initializer = ts.isForStatement(loop) ? loop.initializer : undefined;
   if (initializer === undefined) return runLoop(path);
+  // A for's using declaration disposes its resources once the loop completes.
+  if (ts.isVariableDeclarationList(initializer) && (initializer.flags & ts.NodeFlags.Using) !== 0) {
+    return translateUsing(
+      loop,
+      initializer.declarations,
+      path,
+      context,
+      { ...frame, next: continueWith },
+      (inner, innerFrame) => translateIterations(loop, inner, context, innerFrame, innerFrame.next),
+    );
+  }
   return ts.isVariableDeclarationList(initializer)
     ? translateDeclarations(initializer.declarations, path, context, frame, runLoop)
     : translateExpressionStatement(initializer, path, context, frame, runLoop);
@@ -7282,6 +7306,16 @@ export const translateStatements = (
     });
   }
   if (ts.isVariableStatement(statement)) {
+    if ((statement.declarationList.flags & ts.NodeFlags.Using) !== 0) {
+      return translateUsing(
+        statement.parent,
+        statement.declarationList.declarations,
+        path,
+        context,
+        frame,
+        (inner, innerFrame) => translateStatements(statements.slice(1), inner, context, innerFrame),
+      );
+    }
     return translateDeclarations(
       statement.declarationList.declarations,
       path,

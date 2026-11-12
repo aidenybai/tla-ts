@@ -2625,6 +2625,11 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
     return ["TypeError", "RangeError"];
   }
   if (isUnresolved(node, context)) return ["ReferenceError"];
+  // A using declaration throws a TypeError for a value that isn't disposable, and a SuppressedError
+  // where disposing throws after an error.
+  if (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) {
+    return ["TypeError", "SuppressedError"];
+  }
   const jsonText = getJsonText(node, context);
   if (jsonText !== undefined) return "error" in parseJson(jsonText) ? ["SyntaxError"] : [];
   const dateCall = getDateCall(node, context);

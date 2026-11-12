@@ -89,7 +89,14 @@ export const mayThrow = (
   context: Context,
   visited = new Set<ts.Node>(),
 ): boolean => {
-  if (ts.isThrowStatement(node)) return true;
+  // A using declaration throws a TypeError for a value that isn't disposable, and runs dispose
+  // methods.
+  if (
+    ts.isThrowStatement(node) ||
+    (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0)
+  ) {
+    return true;
+  }
   if (ts.isCallExpression(node)) {
     const callee = getCallee(node.expression, context);
     if (callee !== undefined && !visited.has(callee)) {
