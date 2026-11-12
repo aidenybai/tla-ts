@@ -2300,6 +2300,43 @@ describe("errors", () => {
     expect((await checkModel(getSource(1))).failure?.message).toContain("unexpected");
   });
 
+  it("assigns a rest element to an object pattern, or to a property through its setter", async () => {
+    const getSource = (expected: number) => `
+      let x: unknown;
+      let length: unknown;
+      let other: unknown;
+      let seen: unknown;
+      const vals = [1, 2, 3];
+      const target = {
+        set y(value: unknown) {
+          seen = value;
+        },
+      };
+      const holder: { list?: number[] } = {};
+      [...{ 1: x }] = vals;
+      for ([, ...{ 0: other, length }] of [[null, 5]]) target.y = 0;
+      [...target.y] = [1, 2];
+      [, ...holder.list] = [1, 2, 3];
+      const getX = (): unknown => x;
+      const getOther = (): unknown => other;
+      const getLength = (): unknown => length;
+      const getSeen = (): unknown => seen;
+      const seenList = getSeen() as number[];
+      if (
+        getX() !== ${expected} ||
+        getOther() !== 5 ||
+        getLength() !== 1 ||
+        seenList.length !== 2 ||
+        holder.list === undefined ||
+        holder.list[0] !== 2
+      ) {
+        throw new Error("unexpected");
+      }
+    `;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(3))).failure?.message).toContain("unexpected");
+  });
+
   it("runs the setter of an object literal or a class that a computed key picks", async () => {
     const getSource = (written: string) => `
       let log = "";

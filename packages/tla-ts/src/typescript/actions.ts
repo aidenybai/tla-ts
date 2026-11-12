@@ -762,8 +762,17 @@ const assignPattern = <Result>(
       if (ts.isSpreadElement(element)) {
         const restTarget = element.expression;
         const rest = apply("SubSeq", [value, number(position + 1), apply("Len", [value])]);
+        const heapSymbol = context.heap;
+        const isProperty =
+          (ts.isPropertyAccessExpression(restTarget) || ts.isElementAccessExpression(restTarget)) &&
+          heapSymbol !== undefined;
         if (
-          !(ts.isIdentifier(restTarget) || ts.isArrayLiteralExpression(restTarget)) ||
+          !(
+            ts.isIdentifier(restTarget) ||
+            ts.isArrayLiteralExpression(restTarget) ||
+            ts.isObjectLiteralExpression(restTarget) ||
+            isProperty
+          ) ||
           position !== target.elements.length - 1 ||
           context.checker.getTypeOfAssignmentPattern(target).flags & ts.TypeFlags.StringLike
         ) {
@@ -772,6 +781,47 @@ const assignPattern = <Result>(
         if (ts.isArrayLiteralExpression(restTarget)) {
           return assignPattern(restTarget, undefined, rest, current, context, assignTarget, next);
         }
+        // An object pattern reads the indices and the length of the array that the rest makes.
+        if (ts.isObjectLiteralExpression(restTarget)) {
+          const assignKeys = (at: number, inner: Path): Result => {
+            if (at === restTarget.properties.length) return next(inner);
+            const property = restTarget.properties[at];
+            const defaulted = ts.isShorthandPropertyAssignment(property)
+              ? { target: property.name, initializer: property.objectAssignmentInitializer }
+              : ts.isPropertyAssignment(property)
+                ? getDefaultedTarget(property.initializer)
+                : undefined;
+            const name = property.name;
+            const key =
+              name !== undefined &&
+              (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name))
+                ? name.text
+                : undefined;
+            const isIndex = key !== undefined && /^(0|[1-9][0-9]*)$/.test(key);
+            if (defaulted === undefined || (key !== "length" && !isIndex)) {
+              throw new TlaTypeScriptError(
+                "tla-ts can't read this key of the array that a rest element makes",
+                property,
+              );
+            }
+            return assignPattern(
+              defaulted.target,
+              undefined,
+              getDefaulted(
+                isIndex ? getElement(rest, number(Number(key) + 1), context) : apply("Len", [rest]),
+                defaulted.initializer,
+                inner.scope,
+                context,
+              ),
+              inner,
+              context,
+              assignTarget,
+              (after) => assignKeys(at + 1, after),
+            );
+          };
+          return assignKeys(0, current);
+        }
+        if (isProperty) return assignTarget(restTarget, rest, current, next);
         // An array that a rest element makes is new, which a script that reads it only through
         // its properties can't tell from a list.
         const symbol = getSymbol(restTarget, context.checker);
