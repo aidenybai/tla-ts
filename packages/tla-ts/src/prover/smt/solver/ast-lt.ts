@@ -243,7 +243,7 @@ const compareDecls = (manager: AstManager, first: number, second: number) => {
   return compareSorts(manager, firstKey.range, secondKey.range);
 };
 
-const compareAsts = (manager: AstManager, first: number, second: number): number => {
+export const compareAsts = (manager: AstManager, first: number, second: number): number => {
   if (first === second) return 0;
   const byKind = compareValues(manager.kinds[first], manager.kinds[second]);
   if (byKind !== 0) return byKind;

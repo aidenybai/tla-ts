@@ -13,6 +13,7 @@ import {
 import { isAppOf } from "./ast-util";
 import { RefVector } from "./ref-vector";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
+import { ExprSafeReplace } from "./expr-safe-replace";
 import { InvVarShifter } from "./rewriter-tpl";
 import { VarSubst } from "./var-subst";
 
@@ -64,6 +65,45 @@ export class QuantifierHoister {
     const result = this.pull(formula, { value: isForall ? Q_FORALL_POS : Q_EXISTS_POS }, vars);
     this.manager.incRef(result);
     this.trail.reset();
+    return result;
+  }
+
+  // The overload with sorts and names: the variables of the pulled quantifiers stay bound, numbered
+  // after the free ones, and their sorts and names go in front of those of the prefix. The result
+  // comes with a reference, which the caller releases.
+  pullQuantifierBound(isForall: boolean, formula: number, sorts: number[], names: string[]) {
+    const manager = this.manager;
+    let index = manager.freeVarBounds[formula];
+    let current = formula;
+    while (
+      manager.kinds[current] === KIND_QUANTIFIER &&
+      manager.getQuantifier(current).isForall === isForall
+    ) {
+      const data = manager.getQuantifier(current);
+      index += data.sorts.length;
+      names.push(...data.names.map(String));
+      sorts.push(...data.sorts);
+      current = data.body;
+    }
+    if (!manager.hasQuantifierFlags[current]) {
+      manager.incRef(current);
+      return current;
+    }
+    const vars = new RefVector(manager);
+    const pulled = this.pullQuantifier(isForall, current, vars);
+    if (vars.size === 0) {
+      vars.reset();
+      return pulled;
+    }
+    const replace = new ExprSafeReplace(manager);
+    for (const variable of vars.items)
+      replace.insert(variable, manager.mkVar(index++, manager.sorts[variable]));
+    const result = replace.apply(pulled);
+    replace.release();
+    manager.decRef(pulled);
+    names.unshift(...vars.items.map((variable) => manager.getDeclName(variable)).reverse());
+    sorts.unshift(...vars.items.map((variable) => manager.sorts[variable]).reverse());
+    vars.reset();
     return result;
   }
 

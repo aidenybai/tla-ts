@@ -84,7 +84,8 @@ class QeLite {
     const data = manager.getQuantifier(expr);
     let result = assign(manager, -1, body);
     if (data.isForall) result = assign(manager, result, manager.mkApp(OP_NOT, [result], SORT_BOOL));
-    result = this.reduceFormula(data.sorts.length, result);
+    const numVars = data.sorts.length;
+    result = this.reduceFormula((index) => index < numVars, result);
     result = this.eliminateDiseqVars(data.sorts, result);
     let expanded = this.tryExpandBoundedQuantifier(data.sorts, result);
     if (expanded !== -1) {
@@ -101,7 +102,7 @@ class QeLite {
   }
 
   // The formula comes with a reference, and so does the result.
-  private reduceFormula(numVars: number, formula: number) {
+  private reduceFormula(isVariableIndex: (index: number) => boolean, formula: number) {
     const manager = this.manager;
     const disjs = new RefVector(manager);
     const conjs = new RefVector(manager);
@@ -112,7 +113,7 @@ class QeLite {
     for (let index = 0; index < size; index++) {
       conjs.reset();
       conjs.push(disjs.items[index]);
-      this.reduceConjs(numVars, conjs);
+      this.reduceConjs(isVariableIndex, conjs);
       result = assignOwned(manager, result, this.mkAnd(conjs.items));
       disjs.setOwned(index, result);
       result = -1;
@@ -123,19 +124,19 @@ class QeLite {
     return result;
   }
 
-  private reduceConjs(numVars: number, fmls: RefVector) {
+  reduceConjs(isVariableIndex: (index: number) => boolean, fmls: RefVector) {
     const manager = this.manager;
     flattenAndVector(manager, fmls);
     const nonGround = fmls.items.flatMap((fml, index) => (manager.isGroundApp(fml) ? [] : [index]));
     if (fmls.size > 1 && nonGround.length === 1) {
       const index = nonGround[0];
-      const reduced = this.reduceFormula(numVars, assign(manager, -1, fmls.items[index]));
+      const reduced = this.reduceFormula(isVariableIndex, assign(manager, -1, fmls.items[index]));
       fmls.set(index, reduced);
       manager.decRef(reduced);
       return;
     }
-    this.der.numVars = numVars;
-    this.fm.numVars = numVars;
+    this.der.isVariableIndex = isVariableIndex;
+    this.fm.isVariableIndex = isVariableIndex;
     this.der.apply(fmls);
     this.fm.apply(fmls);
     // ar_der checks the limit for each formula. tlapm's formulas have no arrays for it to solve.
@@ -332,6 +333,18 @@ class QeLite {
     return result;
   }
 }
+
+// qe_lite over a vector of conjuncts, with the variables isVariableIndex picks as the eliminable
+// ones.
+export const applyQeLiteToConjuncts = (
+  manager: AstManager,
+  isVariableIndex: (index: number) => boolean,
+  conjs: RefVector,
+) => {
+  const qe = new QeLite(manager);
+  qe.reduceConjs(isVariableIndex, conjs);
+  qe.release();
+};
 
 // The tactic's m_dep holds the formula it read last, until the tactic is done.
 export const applyQeLite = (manager: AstManager, goal: Goal) => {

@@ -2472,6 +2472,8 @@ export const createSmtlibReader = (
 
   return {
     declareCommand,
+    insertFunc,
+    getFuncs: (name: string) => funcs.get(name) ?? [],
     parseTerm,
     parseSort: (sexpr: SExpr) => parseSort(sexpr, ""),
     parseFormula,

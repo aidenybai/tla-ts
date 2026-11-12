@@ -55,6 +55,8 @@ import { InvVarShifter } from "./rewriter-tpl";
 import { elimUnusedVars, getFreeVarSorts, VarSubst } from "./var-subst";
 import { type Context, MBQI_MAX_ITERATIONS } from "./context";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
+import type { DatalogContext } from "./muz/dl-context";
+import { createDatalogContext } from "./muz/horn-tactic";
 import { printModel } from "./model-printer";
 import { FuncInterp, getManagerSomeValue, ProtoModel } from "./proto-model";
 import {
@@ -78,6 +80,9 @@ const SILENT_COMMANDS = new Set([
   "minimize",
   "maximize",
   "assert-soft",
+  "declare-rel",
+  "declare-var",
+  "rule",
 ]);
 
 type PrintOptionOf<Value> = {
@@ -283,6 +288,8 @@ interface ScriptState {
   isProofsEnabled: boolean | undefined;
   isIncremental: boolean;
   hasChecked: boolean;
+  // The datalog context of the declare-rel, declare-var, rule and query commands.
+  datalog: DatalogContext | undefined;
 }
 
 // Z3 fixes the proof mode at the first command that needs terms.
@@ -341,6 +348,7 @@ export const runSmtlibScript = (
       isProofsEnabled: undefined,
       isIncremental: false,
       hasChecked: false,
+      datalog: undefined,
     };
   };
   const script = { state: createState() };
@@ -400,6 +408,7 @@ export const runSmtlibScript = (
         isFindingMacros: settings.isFindingMacros,
         setup: getSetup(),
         write: () => {},
+        parameters: settings.parameters,
       },
       objectives,
     );
@@ -578,7 +587,17 @@ export const runSmtlibScript = (
     isFindingMacros: settings.isFindingMacros,
     setup: getSetup(),
     write,
+    parameters: settings.parameters,
   });
+  const getDatalog = () => {
+    const state = script.state;
+    state.datalog ??= createDatalogContext(
+      state.manager,
+      settings.parameters,
+      getRewriterOptions(state.manager, new Map()),
+    );
+    return state.datalog;
+  };
   const getTactic = (sexpr: SExpr, end: SmtList["end"]) =>
     compileTactic(getTacticEnvironment(), sexpr, end);
   const getGoal = () => {
@@ -684,6 +703,65 @@ export const runSmtlibScript = (
       clearCheck();
     },
     "check-sat": (list) => checkSat(parseFormulas(list.items.slice(1))),
+    "declare-rel": (list) => {
+      const state = script.state;
+      const name = list.items[1];
+      const domain = list.items[2];
+      if (!isSymbol(name) || domain?.kind !== "list")
+        throw new SmtParseError("at least 2 arguments expected", list.end);
+      const decl = state.manager.mkFuncDecl(
+        name.text,
+        domain.items.map((sort) => state.reader.parseSort(sort)),
+        SORT_BOOL,
+      );
+      state.reader.insertFunc(decl, list.end);
+      getDatalog().registerPredicate(decl);
+    },
+    "declare-var": (list) => {
+      const state = script.state;
+      const name = list.items[1];
+      const sort = list.items[2];
+      if (!isSymbol(name) || sort === undefined)
+        throw new SmtParseError("invalid declare-var command, symbol and sort expected", list.end);
+      const manager = state.manager;
+      const range = state.reader.parseSort(sort);
+      const decl = manager.mkFuncDecl(name.text, [], range);
+      state.reader.insertFunc(decl, list.end);
+      getDatalog().registerVariable(manager.mkApp(decl, [], range));
+    },
+    rule: (list) => {
+      const rule = list.items[1];
+      if (rule === undefined) throw new SmtParseError("invalid rule, expected formula", list.end);
+      const name = list.items[2];
+      getDatalog().addRule(script.state.reader.parseFormula(rule), isSymbol(name) ? name.text : "");
+    },
+    query: (list) => {
+      const state = script.state;
+      const target = list.items[1];
+      if (!isSymbol(target))
+        throw new SmtParseError("invalid query command, argument expected", list.end);
+      const decls = state.reader.getFuncs(target.text);
+      if (decls.length !== 1)
+        throw new SmtParseError(
+          `invalid function declaration reference, unknown function ${target.text}`,
+          target,
+        );
+      const datalog = getDatalog();
+      const relation = decls[0];
+      if (!datalog.isPredicateDecl(relation))
+        throw new SmtParseError(
+          "Invalid query argument, expected a predicate registered as a relation",
+          target,
+        );
+      for (const assertion of state.assertions) datalog.assertExpr(assertion);
+      state.manager.limit.restart(Date.now() + options.timeLimitMs);
+      state.manager.limit.push(settings.rlimit);
+      try {
+        print(getVerdict(datalog.relQuery(relation)));
+      } finally {
+        state.manager.limit.pop();
+      }
+    },
     "check-sat-using": (list) => {
       const state = script.state;
       const params = getCommandParams(list.items, CHECK_SAT_USING_PARAMETERS);
