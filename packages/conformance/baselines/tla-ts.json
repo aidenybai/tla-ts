@@ -1,5 +1,4 @@
 {
-  "tlapm/backends/z3/z3test/old-regressions/smt2/t220.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/issues/5420.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/issues/5429.smt2": "text-mismatch",
   "tlapm/backends/z3/z3test/regressions/issues/5482.smt2": "message-mismatch",
@@ -10,7 +9,6 @@
   "tlapm/backends/z3/z3test/regressions/smt2/3458.smt2": "text-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/3473.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/issue-2416-2.smt2": "text-mismatch",
-  "tlapm/backends/z3/z3test/regressions/smt2/macro-finder-cores.smt2": "text-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/opt_nlsat_uf_fallback.smt2": "text-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/pb.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/seq_foldl_nth_model_validation.smt2": "text-mismatch",

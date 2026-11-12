@@ -236,7 +236,6 @@ class QuasiMacros {
 }
 
 export const findQuasiMacros = (manager: AstManager, goal: Goal) => {
-  if (manager.recFunDefs.size > 0) return;
   const macros = new MacroManager(manager);
   const quasiMacros = new QuasiMacros(manager, macros);
   const forms = new RefVector(manager);

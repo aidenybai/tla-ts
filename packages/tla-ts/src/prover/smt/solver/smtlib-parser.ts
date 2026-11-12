@@ -2562,10 +2562,16 @@ export const createSmtlibReader = (
     return [...table.keys()];
   };
 
+  // Z3 registers each named term and defined function as a recursive function definition.
+  const hasDefinitions = () =>
+    macros.size > 0 ||
+    [...funcs.values()].some((decls) => decls.some((decl) => manager.recFunDefs.has(decl)));
+
   return {
     declareCommand,
     insertFunc,
     getFuncs: (name: string) => funcs.get(name) ?? [],
+    hasDefinitions,
     parseTerm,
     parseSort: (sexpr: SExpr) => parseSort(sexpr, ""),
     parseFormula,
