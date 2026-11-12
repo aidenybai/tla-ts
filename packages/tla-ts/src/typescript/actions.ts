@@ -2449,10 +2449,22 @@ export const inlineBody = (
     ? continueWith(path, translateLiftedCall(callee, node, path.scope, context))
     : frame.inlining.has(callee) && !isAction(callee)
       ? translateSelfCall(node, callee, argumentNodes, receiver, path, context, frame, continueWith)
-      : bindCall(node, callee, argumentNodes, receiver, path, context, frame, (bound, inner) =>
-          translateJoined(node, inner, context, continueWith, (next) => {
-            const afterCall = (after: Path, value?: Expression) =>
-              next({ ...after, scope: { ...after.scope, previous: inner.scope.previous } }, value);
+      : bindCall(node, callee, argumentNodes, receiver, path, context, frame, (bound, inner) => {
+          // What the call evaluated or made of the function's own code, such as a default that it
+          // skipped or an object that a default made, belongs to that call, not to a later one.
+          const isOwn = (entry: [ts.Node, Expression]) =>
+            ts.findAncestor(entry[0], (ancestor) => ancestor === callee) !== undefined;
+          const getCaller = (current: Path): Path => ({
+            ...current,
+            scope: {
+              ...current.scope,
+              previous: inner.scope.previous,
+              results: new Map([...current.scope.results].filter((entry) => !isOwn(entry))),
+              allocated: new Map([...current.scope.allocated].filter((entry) => !isOwn(entry))),
+            },
+          });
+          return translateJoined(node, getCaller(inner), context, continueWith, (next) => {
+            const afterCall = (after: Path, value?: Expression) => next(getCaller(after), value);
             return letIn(
               bound.definitions,
               forceHeap(
@@ -2472,8 +2484,8 @@ export const inlineBody = (
                 context,
               ),
             );
-          }),
-        );
+          });
+        });
 
 // The path of the code that resumed a function's body, with what the body changed outside itself.
 export const leaveBody = (

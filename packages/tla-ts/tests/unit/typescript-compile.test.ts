@@ -3213,6 +3213,34 @@ describe("errors", () => {
     );
   });
 
+  it("gives each call of a function its own defaults", async () => {
+    const getSource = (second: string, isSame: string) => `
+      interface Box { size: number }
+      const box: Box = { size: 0 };
+      const boxes: Box[] = [];
+      const grow = (value: number, step = 1): number => {
+        box.size += step;
+        return value + step;
+      };
+      const make = (made: Box = { size: 1 }): Box => {
+        boxes.push(made);
+        return made;
+      };
+      const first = grow(1, 2);
+      const second = grow(1);
+      const firstBox = make();
+      const secondBox = make();
+      firstBox.size = 5;
+      if (first !== 3 || second !== ${second} || box.size !== 3) throw new Error("grow");
+      if (firstBox ${isSame} secondBox || secondBox.size !== 1 || boxes.length !== 2) {
+        throw new Error("make");
+      }
+    `;
+    expect((await checkModel(getSource("2", "==="))).failure).toBeUndefined();
+    expect((await checkModel(getSource("3", "==="))).failure?.message).toContain('"grow"');
+    expect((await checkModel(getSource("2", "!=="))).failure?.message).toContain('"make"');
+  });
+
   it("gives the number an increment reads or writes", async () => {
     const result = await checkModel(`
       let x = 5;
