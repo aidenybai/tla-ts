@@ -642,13 +642,19 @@ const isWrittenBy = (target: ts.Node, symbol: ts.Symbol, context: Context): bool
   }
   if (!ts.isObjectLiteralExpression(target)) return false;
   return target.properties.some((property) =>
-    ts.isPropertyAssignment(property)
-      ? isWrittenBy(property.initializer, symbol, context)
-      : ts.isShorthandPropertyAssignment(property)
-        ? isWrittenBy(property.name, symbol, context)
-        : ts.isSpreadAssignment(property) && isWrittenBy(property.expression, symbol, context),
+    isWrittenBy(getPropertyTarget(property), symbol, context),
   );
 };
+
+// What a property of an object pattern assigns.
+const getPropertyTarget = (property: ts.ObjectLiteralElementLike) =>
+  ts.isPropertyAssignment(property)
+    ? property.initializer
+    : ts.isShorthandPropertyAssignment(property)
+      ? property.name
+      : ts.isSpreadAssignment(property)
+        ? property.expression
+        : property;
 
 // The name of the variable that an object literal initializes, where the script evaluates it once
 // and never assigns the variable again, so the name gives the object.
@@ -669,24 +675,61 @@ export const getLiteralName = (node: ts.ObjectLiteralExpression, context: Contex
     : undefined;
 };
 
+// The target that an assignment, an increment, or a for-in or for-of without a declaration writes.
+const getAssignedTarget = (node: ts.Node) =>
+  ts.isBinaryExpression(node) &&
+  node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+  node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+    ? node.left
+    : (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+        (node.operator === ts.SyntaxKind.PlusPlusToken ||
+          node.operator === ts.SyntaxKind.MinusMinusToken)
+      ? node.operand
+      : (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
+          !ts.isVariableDeclarationList(node.initializer)
+        ? node.initializer
+        : undefined;
+
 // Whether a script assigns to a name anywhere.
 export const isAssigned = (symbol: ts.Symbol, node: ts.Node, context: Context): boolean => {
-  const target =
-    ts.isBinaryExpression(node) &&
-    node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-    node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-      ? node.left
-      : (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
-          (node.operator === ts.SyntaxKind.PlusPlusToken ||
-            node.operator === ts.SyntaxKind.MinusMinusToken)
-        ? node.operand
-        : (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
-            !ts.isVariableDeclarationList(node.initializer)
-          ? node.initializer
-          : undefined;
+  const target = getAssignedTarget(node);
   return (
     (target !== undefined && isWrittenBy(target, symbol, context)) ||
     (ts.forEachChild(node, (child) => isAssigned(symbol, child, context) || undefined) ?? false)
+  );
+};
+
+// Whether a variable that a script declares without a type or a value is assigned only as the
+// rest of object patterns, so that it holds undefined or an object.
+export const isRestOnly = (symbol: ts.Symbol, context: Context) => {
+  const declaration = symbol.valueDeclaration;
+  if (
+    declaration === undefined ||
+    !ts.isVariableDeclaration(declaration) ||
+    declaration.type !== undefined ||
+    declaration.initializer !== undefined
+  ) {
+    return false;
+  }
+  const targets = findNodes(declaration.getSourceFile(), (inner): inner is ts.Node => {
+    const target = getAssignedTarget(inner);
+    return target !== undefined && isWrittenBy(target, symbol, context);
+  }).map(getAssignedTarget);
+  return (
+    targets.length > 0 &&
+    targets.every((target) => {
+      if (target === undefined || !ts.isObjectLiteralExpression(target)) return false;
+      const rest = target.properties.at(-1);
+      return (
+        rest !== undefined &&
+        ts.isSpreadAssignment(rest) &&
+        ts.isIdentifier(rest.expression) &&
+        getSymbol(rest.expression, context.checker) === symbol &&
+        !target.properties
+          .slice(0, -1)
+          .some((property) => isWrittenBy(getPropertyTarget(property), symbol, context))
+      );
+    })
   );
 };
 

@@ -15,6 +15,7 @@ import {
   getBound,
   isHeldErrorName,
   isNestedFunction,
+  isRestOnly,
 } from "./context";
 import { isHeldBuiltInObject } from "./intrinsics";
 import { KEYWORDS } from "../lexer";
@@ -483,6 +484,14 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
   if (
     declaredMembers.length > 0 &&
     declaredMembers.every((member) => isPlainObject(member, context))
+  ) {
+    return "object";
+  }
+  if (
+    declared !== undefined &&
+    symbol !== undefined &&
+    (declared.flags & ts.TypeFlags.Any) !== 0 &&
+    isRestOnly(symbol, context)
   ) {
     return "object";
   }

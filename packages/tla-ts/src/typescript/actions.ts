@@ -765,6 +765,13 @@ interface TargetAssigner<Result> {
   ): Result;
 }
 
+const PRIMITIVE_TYPES =
+  ts.TypeFlags.StringLike |
+  ts.TypeFlags.NumberLike |
+  ts.TypeFlags.BooleanLike |
+  ts.TypeFlags.ESSymbolLike |
+  ts.TypeFlags.BigIntLike;
+
 // Assigns a value to a target, or to each target in a destructuring pattern. Every value is read
 // before any target changes, so [a, b] = [b, a] swaps.
 const getDefaultedTarget = (node: ts.Expression) =>
@@ -957,11 +964,21 @@ const assignPattern = <Result>(
     );
   }
   if (ts.isObjectLiteralExpression(target)) {
-    const isHeapObject = isHeapPattern(
-      context.checker.getNonNullableType(context.checker.getTypeAtLocation(target)),
-      target,
-      context,
+    // A pattern that spreads into a name of type any has type any, unlike the value it reads.
+    const patternType = context.checker.getTypeAtLocation(target);
+    const type = context.checker.getNonNullableType(
+      (patternType.flags & ts.TypeFlags.Any) === 0
+        ? patternType
+        : context.checker.getTypeOfAssignmentPattern(target),
     );
+    const isHeapObject = isHeapPattern(type, target, context);
+    // A rest alone of a primitive copies what the object that wraps it owns.
+    const isPrimitiveRest =
+      !isHeapObject &&
+      target.properties.length === 1 &&
+      (type.isUnion() ? type.types : [type]).every(
+        (member) => (member.flags & PRIMITIVE_TYPES) !== 0,
+      );
     // The heap after the pattern reads its properties, which the statement evaluates.
     const keys = target.properties.flatMap((property) =>
       property.name !== undefined && ts.isIdentifier(property.name)
@@ -998,7 +1015,7 @@ const assignPattern = <Result>(
         ts.isSpreadAssignment(property) &&
         ts.isIdentifier(property.expression) &&
         position === target.properties.length - 1 &&
-        isHeapObject &&
+        (isHeapObject || isPrimitiveRest) &&
         heapSymbol !== undefined
       ) {
         const excluded = target.properties.flatMap((other) =>
@@ -1009,7 +1026,12 @@ const assignPattern = <Result>(
         const heap = getHeap(current.scope, property, context);
         const allocated = useJavaScript(
           "Allocate",
-          [heap, useJavaScript("RestObject", [heap, value, set(excluded), tuple([])], context)],
+          [
+            heap,
+            isHeapObject
+              ? useJavaScript("RestObject", [heap, value, set(excluded), tuple([])], context)
+              : useJavaScript("RestPrimitive", [value], context),
+          ],
           context,
         );
         return assignTarget(

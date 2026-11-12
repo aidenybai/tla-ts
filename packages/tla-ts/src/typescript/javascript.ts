@@ -1217,6 +1217,18 @@ RestObject(heap, ref, excluded, read) ==
                                            ELSE Get(heap, ref, key)]),
                          !.attributes = [key \\in kept |-> Writable]]
 
+\\* The rest of a primitive, which holds what the object that wraps it owns: a string's characters
+\\* under their indices, and nothing for another primitive.
+RestPrimitive(value) ==
+  IF value \\in {Undefined, Null}
+  THEN Assert(FALSE, "tla-ts can't throw the TypeError of destructuring " \\o ToString(value))
+  ELSE LET length == IF TypeOf(value) = "string" THEN Len(value) ELSE 0
+           keys == {ToString(position - 1) : position \\in 1..length}
+       IN [EmptyObject EXCEPT !.keys = [position \\in 1..length |-> ToString(position - 1)],
+                              !.values = [key \\in keys |->
+                                           SubSeq(value, ToIndex(key) + 1, ToIndex(key) + 1)],
+                              !.attributes = [key \\in keys |-> Writable]]
+
 ObjectEntries(heap, ref) ==
   LET keys == ObjectKeys(heap, ref)
   IN  Read([position \\in DOMAIN keys |-> <<keys[position], Get(heap, ref, keys[position])>>])

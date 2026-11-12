@@ -5479,6 +5479,24 @@ describe("errors", () => {
     expect((await checkModel(getSource(13))).failure?.message).toContain("total");
   });
 
+  it("copies a primitive's own properties into a rest that a variable without a type takes", async () => {
+    const getSource = (text: string) => `
+      var rest;
+      var result;
+      result = { ...rest } = 51;
+      const empty = Object.keys(rest).length;
+      result = { ...rest } = "foo";
+      const text = rest["0"] + rest["1"] + rest["2"] + Object.keys(rest).join("");
+      const vals = { x: 1, y: 2 };
+      result = { ...rest } = vals;
+      if (empty !== 0 || text !== "${text}" || rest === vals || rest.y !== 2 || result !== vals) {
+        throw new Error("rest");
+      }
+    `;
+    expect((await checkModel(getSource("foo012"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("foo"))).failure?.message).toContain("rest");
+  });
+
   it("keeps the objects that a for-of's assignment pattern writes after the loop", async () => {
     const getSource = (count: number) => `
       let held: { n: number } | undefined;
