@@ -112,6 +112,7 @@ import {
   translateSetKey,
   translateBigInt,
   translateToString,
+  getHoleChecks,
   ARITHMETIC_OPERATORS,
   BIGINT_OPERATORS,
   BITWISE_OPERATORS,
@@ -7503,7 +7504,19 @@ const translateForAwait = (
       ts.isOmittedExpression(element) ? undefined : element,
       (fulfilled, value) =>
         tick(fulfilled, (resumed) =>
-          runBody(resumed, value, ts.isOmittedExpression(element) ? undefined : element, bodyFrame),
+          keepHoles(
+            loop,
+            value,
+            position,
+            resumed,
+            context,
+            runBody(
+              resumed,
+              value,
+              ts.isOmittedExpression(element) ? undefined : element,
+              bodyFrame,
+            ),
+          ),
         ),
       (rejected, reason) => tick(rejected, (resumed) => throwWith(resumed, reason)),
     );
@@ -7526,6 +7539,78 @@ const translateForAwait = (
         ),
       ],
       iterate(inner, 0),
+    ),
+  );
+};
+
+// Whether a for-of's pattern takes the elements before a position without running code, as a
+// default that calls a function, a nested pattern, or a setter would.
+const isInertBefore = (initializer: ts.ForInitializer, count: number) => {
+  const pattern = ts.isVariableDeclarationList(initializer)
+    ? initializer.declarations.at(0)?.name
+    : initializer;
+  const elements =
+    pattern !== undefined &&
+    (ts.isArrayBindingPattern(pattern) || ts.isArrayLiteralExpression(pattern))
+      ? pattern.elements
+      : [];
+  return elements
+    .slice(0, count)
+    .every(
+      (element) =>
+        ts.isOmittedExpression(element) ||
+        ts.isIdentifier(element) ||
+        (ts.isBindingElement(element) &&
+          element.dotDotDotToken === undefined &&
+          ts.isIdentifier(element.name) &&
+          (element.initializer === undefined || isInertValue(element.initializer))) ||
+        (ts.isBinaryExpression(element) &&
+          element.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          ts.isIdentifier(element.left) &&
+          isInertValue(element.right)),
+    );
+};
+
+// Runs an iteration of a for-of over a literal with holes, which the literal read from
+// Array.prototype when it was made, where Array.prototype still gives the same values, and stops
+// otherwise. The pattern reads the holes of each element in order, so nothing it runs before the
+// last of them may change Array.prototype either.
+const keepHoles = (
+  loop: ts.ForOfStatement,
+  element: Expression,
+  position: Expression | number,
+  path: Path,
+  context: Context,
+  run: Formula,
+): Formula => {
+  const checks = getHoleChecks(loop.expression, () => getHeap(path.scope, loop, context), context);
+  const kept = checks.flatMap((check) =>
+    typeof position === "number"
+      ? check.position === position
+        ? [check.isKept(element)]
+        : []
+      : [
+          junction("Or", [
+            apply("#", [position, number(check.position + 1)]),
+            check.isKept(element),
+          ]),
+        ],
+  );
+  if (kept.length === 0) return run;
+  if (!isInertBefore(loop.initializer, Math.max(0, ...checks.flatMap((check) => check.holes)))) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't read the holes of an element after a pattern runs code",
+      loop.initializer,
+    );
+  }
+  return ifThenElse(
+    junction("And", kept),
+    run,
+    leaf(
+      apply("Assert", [
+        boolean(false),
+        string("tla-ts can't read a hole from Array.prototype after a script changes it"),
+      ]),
     ),
   );
 };
@@ -7787,15 +7872,19 @@ const translateIterations = (
       if (opened !== undefined) {
         return translateStep(iterated, opened, current, bodyFrame, done);
       }
-      return bindIteration(
+      const element = index(identifier(sequence), [identifier(position)]);
+      const run = bindIteration(
         iterated.initializer,
-        index(identifier(sequence), [identifier(position)]),
+        element,
         undefined,
         current,
         context,
         bodyFrame,
         (bound) => translateStatements([loop.statement], bound, context, bodyFrame),
       );
+      return ts.isForOfStatement(iterated)
+        ? keepHoles(iterated, element, identifier(position), current, context, run)
+        : run;
     };
     const inner = {
       ...bindValues(

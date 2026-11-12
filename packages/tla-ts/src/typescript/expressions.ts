@@ -297,6 +297,61 @@ const isIteratedOnly = (node: ts.ArrayLiteralExpression): boolean => {
   );
 };
 
+// A literal whose holes give what Array.prototype holds at their indices.
+const isPrototypeHoled = (node: ts.ArrayLiteralExpression) =>
+  isIteratedOnly(node) && !node.elements.some(ts.isSpreadElement);
+
+// The positions of a for-of's literal whose element reads a hole from Array.prototype, each with
+// whether Array.prototype still gives what the literal read when it was made, as the iterator
+// reads a hole only once it reaches it: the element itself, or each hole of the element there.
+export const getHoleChecks = (
+  literal: ts.Expression,
+  getHeapValue: () => Expression,
+  context: Context,
+) => {
+  const inner = skipCasts(literal);
+  if (context.heap === undefined || !ts.isArrayLiteralExpression(inner)) return [];
+  const isKept = (value: Expression, position: number) =>
+    useJavaScript(
+      "SameValue",
+      [
+        value,
+        useJavaScript(
+          "Get",
+          [
+            getHeapValue(),
+            translateBuiltInValue("Array.prototype", literal, context),
+            string(String(position)),
+          ],
+          context,
+        ),
+      ],
+      context,
+    );
+  return inner.elements.flatMap((element, position) => {
+    if (ts.isOmittedExpression(element) && isPrototypeHoled(inner)) {
+      return [{ position, holes: [], isKept: (value: Expression) => isKept(value, position) }];
+    }
+    const holes =
+      ts.isArrayLiteralExpression(element) && isPrototypeHoled(element)
+        ? element.elements.flatMap((part, hole) => (ts.isOmittedExpression(part) ? [hole] : []))
+        : [];
+    return holes.length === 0
+      ? []
+      : [
+          {
+            position,
+            holes,
+            isKept: (value: Expression) =>
+              junction(
+                "And",
+                holes.map((hole) => isKept(index(value, [number(hole + 1)]), hole)),
+              ),
+          },
+        ];
+  });
+};
+
 // The elements that an array literal or a call's arguments list, where runs of plain elements become
 // tuples, and each spread array stays a sequence of its own. A hole of a literal that only an
 // iterator reads gives what Array.prototype holds at its index.
@@ -309,10 +364,7 @@ export const translateElements = (
   const parts = elements.reduce<(Expression | Expression[])[]>((result, element, position) => {
     if (!ts.isSpreadElement(element)) {
       const isHole =
-        literal !== undefined &&
-        ts.isOmittedExpression(element) &&
-        isIteratedOnly(literal) &&
-        !literal.elements.some(ts.isSpreadElement);
+        literal !== undefined && ts.isOmittedExpression(element) && isPrototypeHoled(literal);
       const value = !isHole
         ? translateExpression(element, scope, context)
         : context.heap === undefined

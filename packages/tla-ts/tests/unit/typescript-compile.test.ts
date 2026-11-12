@@ -2564,6 +2564,50 @@ describe("errors", () => {
     expect((await checkModel(getSource("default"))).failure?.message).toContain("unexpected");
   });
 
+  it("stops where a for-of reads a hole from Array.prototype after the loop changes it", async () => {
+    // Node reads "late" at each hole, as the first iteration writes Array.prototype[1].
+    const getSource = (iterated: string, pattern: string) => `
+      let count = 0;
+      for (const ${pattern} of ${iterated}) {
+        count++;
+        Array.prototype[1] = "late";
+      }
+    `;
+    expect((await checkModel(getSource("[0, , 2]", "value"))).failure?.message).toContain(
+      "tla-ts can't read a hole from Array.prototype after a script changes it",
+    );
+    expect(
+      (await checkModel(getSource("[[1, 2], [3, ,]]", "[first, second]"))).failure?.message,
+    ).toContain("tla-ts can't read a hole from Array.prototype after a script changes it");
+    expect(() =>
+      compile(`
+        const change = () => {
+          Array.prototype[1] = "late";
+          return 0;
+        };
+        for (const [first = change(), second] of [[, ,]]) {
+        }
+      `),
+    ).toThrow("tla-ts can't read the holes of an element after a pattern runs code");
+  });
+
+  it("reads a hole that a for-of reaches after the loop makes objects", async () => {
+    const getSource = (expected: string) => `
+      let seen: unknown = 0;
+      let count = 0;
+      const boxes: unknown[] = [];
+      for (const value of [0, , 2]) {
+        if (count === 1) seen = value;
+        count++;
+        boxes.push({ count });
+      }
+      const getSeen = (): unknown => seen;
+      if (getSeen() !== ${expected}) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource("undefined"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("0"))).failure?.message).toContain("unexpected");
+  });
+
   it("runs the setter of an object literal or a class that a computed key picks", async () => {
     const getSource = (written: string) => `
       let log = "";
