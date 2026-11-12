@@ -5002,6 +5002,46 @@ const translateExpressionStatement = (
       shareHeap(assigned, context, next),
       throwTypeError(path, expression, context, frame),
     );
+  // A write of __proto__ runs Object.prototype's setter where the object inherits it.
+  const heapSymbol = context.heap;
+  if (
+    ts.isBinaryExpression(expression) &&
+    expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    written !== undefined &&
+    getAccessKey(written) === "__proto__" &&
+    heapSymbol !== undefined
+  ) {
+    const changeName = context.names.getFresh("change");
+    const change = identifier(changeName);
+    return ifThenElse(
+      useJavaScript("IsProtoWrite", [write.heap, write.ref, write.key], context),
+      bindOnce(
+        path,
+        changeName,
+        useJavaScript(
+          "ProtoSet",
+          [write.heap, write.ref, translateExpression(expression.right, path.scope, context)],
+          context,
+        ),
+        ifThenElse(
+          apply("=", [field(change, "error"), string("")]),
+          shareHeap(
+            {
+              ...path,
+              scope: {
+                ...path.scope,
+                bindings: new Map([...path.scope.bindings, [heapSymbol, field(change, "heap")]]),
+              },
+            },
+            context,
+            continueWith,
+          ),
+          throwTypeError(path, expression, context, frame),
+        ),
+      ),
+      translateWrite(continueWith),
+    );
+  }
   // A write to a property whose setter tla-ts can't resolve runs the setter it finds there.
   const setters = getSetters(expression, context).filter((setter) => !frame.inlining.has(setter));
   if (

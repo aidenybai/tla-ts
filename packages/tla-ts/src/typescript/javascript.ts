@@ -1260,6 +1260,9 @@ GetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "get")
 
 SetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "set")
 
+\\* Whether a write runs the __proto__ setter of Object.prototype.
+IsProtoWrite(heap, ref, key) == GetterPath(SetterOf(heap, ref, key)) = "set Object.prototype.__proto__"
+
 RECURSIVE IsWritable(_, _, _)
 IsWritable(heap, ref, key) ==
   LET object == PropertiesOf(heap, ref, key)
@@ -3694,6 +3697,15 @@ SetPrototypeOf(heap, ref, prototype) ==
        [] SameValue(ref, ObjectPrototype) \\/ ~object.extensible -> result(FALSE, FALSE)
        [] ChainHas(heap, prototype, ref) -> result(FALSE, FALSE)
        [] OTHER -> result(TRUE, TRUE)
+
+\\* The heap after the __proto__ setter of Object.prototype sets a receiver's prototype, which it
+\\* leaves where the value isn't an object or null or the receiver isn't an object, and the error
+\\* that it throws where the receiver refuses, or "".
+ProtoSet(heap, ref, prototype) ==
+  IF ~(prototype = Null \\/ IsObjectArgument(prototype)) \\/ ~IsObjectArgument(ref)
+  THEN [heap |-> heap, error |-> ""]
+  ELSE LET set == SetPrototypeOf(heap, ref, prototype)
+       IN [heap |-> set.heap, error |-> IF set.isDone THEN "" ELSE "TypeError"]
 
 LOCAL Restrict(heap, ref, isFrozen) ==
   LET object == Lookup(heap, ref)

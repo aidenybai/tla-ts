@@ -2150,6 +2150,52 @@ describe("errors", () => {
     expect((await checkModel(getSource(2))).failure?.message).toContain("unexpected");
   });
 
+  it("sets a prototype through the __proto__ setter, which throws where the object refuses", async () => {
+    const getSource = (isCycle: string) => `
+      type Proto = { __proto__?: unknown };
+      const proto = {};
+      const subject: Proto = {};
+      subject.__proto__ = proto;
+      if (Object.getPrototypeOf(subject) !== proto) throw new Error("set");
+      subject.__proto__ = 3;
+      if (Object.getPrototypeOf(subject) !== proto) throw new Error("primitive");
+      const root: Proto = {};
+      const middle: Proto = Object.create(root);
+      const leaf: Proto = Object.create(middle);
+      let isCycle = false;
+      try {
+        root.__proto__ = leaf;
+      } catch (error) {
+        isCycle = error instanceof TypeError;
+      }
+      if (${isCycle} || Object.getPrototypeOf(root) !== Object.prototype) throw new Error("unexpected");
+      const fixed: Proto = Object.create(proto);
+      Object.preventExtensions(fixed);
+      fixed.__proto__ = proto;
+      let isFixed = false;
+      try {
+        fixed.__proto__ = {};
+      } catch (error) {
+        isFixed = error instanceof TypeError;
+      }
+      if (!isFixed) throw new Error("fixed");
+    `;
+    expect((await checkModel(getSource("!isCycle"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("isCycle"))).failure?.message).toContain("unexpected");
+    const immutable = await checkModel(`
+      (Object.prototype as { __proto__?: unknown }).__proto__ = null;
+      let isImmutable = false;
+      try {
+        (Object.prototype as { __proto__?: unknown }).__proto__ = {};
+      } catch (error) {
+        isImmutable = error instanceof TypeError;
+      }
+      if (!isImmutable) throw new Error("immutable");
+      if (Object.getPrototypeOf(Object.prototype) !== null) throw new Error("null");
+    `);
+    expect(immutable.failure).toBeUndefined();
+  });
+
   it("reads each element of an array-like object as its method visits it, running getters", async () => {
     const result = await checkModel(`
       let isFirstRead = false;
