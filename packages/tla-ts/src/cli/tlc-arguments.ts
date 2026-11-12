@@ -57,6 +57,8 @@ interface MessageCodes {
 
 const FINGERPRINT_POLYNOMIALS = 131;
 
+const MAXIMUM_LONG = (1n << 63n) - 1n;
+
 const TLC_MESSAGE_CODES = [
   [-123456, -123456],
   [-1, 0],
@@ -482,7 +484,8 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
           };
         }
       }
-      if (parsed.traceCount === undefined && hasFile) {
+      // TLC's default trace count is Long.MAX_VALUE, so it takes that num for a missing one.
+      if ((parsed.traceCount ?? MAXIMUM_LONG) === MAXIMUM_LONG && hasFile) {
         return reject(
           `Error: You need to specify a 'num' argument when using the 'file' argument, for example: '"num=5,file=test.txt"'.`,
         );
