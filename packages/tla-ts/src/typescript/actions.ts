@@ -2500,6 +2500,74 @@ export const getAsyncCallee = (node: ts.Expression, path: Path, context: Context
     : getFunctionOfKind(node, context, isAsyncFunction);
 };
 
+// A parameter and the elements of its pattern, in the order that binding it evaluates their defaults.
+const getBindings = (
+  binding: ts.ParameterDeclaration | ts.BindingElement,
+): (ts.ParameterDeclaration | ts.BindingElement)[] => [
+  binding,
+  ...(ts.isIdentifier(binding.name)
+    ? []
+    : binding.name.elements.flatMap((element) =>
+        ts.isOmittedExpression(element) ? [] : getBindings(element),
+      )),
+];
+
+// A default that assigns runs as its own statement, after what the bindings up to its own evaluate,
+// which must not read what it changes, as they take what they read as the call binds the
+// parameters. It writes a variable, not a property that a binding before it may have read, and
+// no getter that a pattern reads after it runs before it, as getters do here.
+const rejectDefaultRun = (
+  assigning: ts.ParameterDeclaration | ts.BindingElement,
+  assignment: ts.BinaryExpression | Increment,
+  parameters: readonly ts.ParameterDeclaration[],
+  argumentNodes: readonly ts.Expression[],
+  path: Path,
+  context: Context,
+) => {
+  const bindings = parameters.flatMap(getBindings);
+  const earlier = bindings.slice(0, bindings.indexOf(assigning) + 1);
+  if (!ts.isIdentifier(skipCasts(getWritten(assignment) ?? assignment))) {
+    throw new TlaTypeScriptError("tla-ts can't run a default that writes a property", assignment);
+  }
+  if (!ts.isIdentifier(assigning.name)) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't run a default that assigns where a nested pattern takes its value",
+      assignment,
+    );
+  }
+  const later = bindings.slice(earlier.length);
+  if (later.some((binding) => ts.isBindingElement(binding) && path.scope.read?.has(binding))) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't run a default that assigns before the getters that follow it",
+      assignment,
+    );
+  }
+  const bound = new Set(
+    bindings.flatMap((binding) =>
+      ts.isIdentifier(binding.name) ? (getSymbol(binding.name, context.checker) ?? []) : [],
+    ),
+  );
+  if (getSymbols(assignment, context).some((symbol) => bound.has(symbol))) {
+    throw new TlaTypeScriptError("tla-ts can't run this default before what it binds", assignment);
+  }
+  rejectEarlyRun(
+    assignment,
+    [assignment],
+    [
+      ...argumentNodes,
+      ...earlier.flatMap((binding) =>
+        binding === assigning ||
+        binding.initializer === undefined ||
+        path.scope.results.has(skipCasts(binding.initializer))
+          ? []
+          : [binding.initializer],
+      ),
+    ],
+    path,
+    context,
+  );
+};
+
 // Binds a call's arguments to its callee's parameters. A parameter's default makes its objects
 // whether or not the call passes the parameter, as making an object that nothing reads can't be
 // seen.
@@ -2716,18 +2784,82 @@ export const bindCall = (
     context,
   );
   const valueParameters = parameters.filter((_, position) => isValue(position));
-  const bound = bindValues(
-    valueParameters,
-    values.shared,
-    ts.isCallExpression(node)
-      ? bindFactory(
-          getSymbol(node.expression, context.checker)?.valueDeclaration,
-          made.scope,
-          context,
-        )
-      : made.scope,
-    context,
+  const parameterScope = ts.isCallExpression(node)
+    ? bindFactory(
+        getSymbol(node.expression, context.checker)?.valueDeclaration,
+        made.scope,
+        context,
+      )
+    : made.scope;
+  // A default that assigns runs as a statement where the value that its binding takes is undefined,
+  // which binding the parameters with the default skipped gives.
+  const pending = valueParameters.flatMap((parameter) =>
+    getBindings(parameter).flatMap((binding) => {
+      const assignment = binding.initializer && skipCasts(binding.initializer);
+      return assignment !== undefined &&
+        isAssignment(assignment) &&
+        !path.scope.results.has(assignment)
+        ? [{ binding, assignment }]
+        : [];
+    }),
   );
+  const assigning = pending.at(0);
+  if (assigning !== undefined) {
+    const assignment = assigning.assignment;
+    rejectDefaultRun(assigning.binding, assignment, valueParameters, argumentNodes, path, context);
+    const symbol = getSymbol(assigning.binding.name, context.checker);
+    const skipped = bindValues(
+      valueParameters,
+      values.shared,
+      {
+        ...parameterScope,
+        results: new Map([
+          ...parameterScope.results,
+          ...pending.map((entry): [ts.Expression, Expression] => [
+            entry.assignment,
+            getUndefined(context),
+          ]),
+        ]),
+      },
+      context,
+    );
+    const part = symbol && skipped.scope.bindings.get(symbol);
+    if (part === undefined) throw new TlaTypeScriptError("Unsupported default", assignment);
+    const withDefault = (after: Path, value: Expression) =>
+      bindCall(
+        node,
+        callee,
+        argumentNodes,
+        receiver,
+        {
+          ...after,
+          scope: {
+            ...after.scope,
+            results: new Map([...after.scope.results, [assignment, value]]),
+          },
+        },
+        context,
+        frame,
+        continueWith,
+      );
+    return evaluateArguments(
+      letIn(
+        [...made.definitions, ...skipped.definitions],
+        throwOnDestructured(
+          skipped.scope,
+          path,
+          context,
+          frame,
+          ifThenElse(
+            apply("=", [part, getUndefined(context)]),
+            runAssignment(assignment, path, context, frame, withDefault),
+            withDefault(path, getUndefined(context)),
+          ),
+        ),
+      ),
+    );
+  }
+  const bound = bindValues(valueParameters, values.shared, parameterScope, context);
   if (!passed.some(ts.isSpreadElement)) {
     valueParameters.forEach((parameter, position) => {
       const argument = passed.at(position);
@@ -6998,8 +7130,8 @@ const getDispatched = (
   return dispatched.length > 0 ? dispatched : undefined;
 };
 
-// A call to a function or a method that changes state, which inlines as statements that give its
-// result.
+// A call to a function or a method whose body or parameters' defaults change state, which inlines
+// as statements that give its result.
 const isStateCall = (node: ts.CallExpression, path: Path, context: Context) => {
   const symbol = getSymbol(node.expression, context.checker);
   const callee =
@@ -7007,7 +7139,10 @@ const isStateCall = (node: ts.CallExpression, path: Path, context: Context) => {
     getCallee(node.expression, context) ??
     getCalledMethod(node.expression, context)?.method;
   return (
-    callee?.body !== undefined && changesState(callee, callee.body, context, new Set([callee]))
+    callee?.body !== undefined &&
+    [callee.body, ...callee.parameters].some((part) =>
+      changesState(callee, part, context, new Set([callee])),
+    )
   );
 };
 
@@ -9539,6 +9674,10 @@ type Increment = ts.PrefixUnaryExpression | ts.PostfixUnaryExpression;
 const isIncrement = (node: ts.Node): node is Increment =>
   (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
   INCREMENT_OPERATORS.has(node.operator);
+
+// An assignment or an increment, which only a statement can run.
+const isAssignment = (node: ts.Node): node is ts.BinaryExpression | Increment =>
+  isIncrement(node) || (ts.isBinaryExpression(node) && getWritten(node) !== undefined);
 
 // A variable, or a property of an object that a name holds, whose key no getter has, which reads
 // and writes a number without running code.
