@@ -492,6 +492,30 @@ export const createLocalIdentifier = (name: string, location: SourceLocation): E
 export const createLocalArguments = (params: OperatorParam[], location: SourceLocation) =>
   params.map((param) => createLocalIdentifier(param.name, location));
 
+export const createLocalAlias = (
+  name: string,
+  key: string,
+  params: OperatorParam[],
+  forwarded: OperatorParam[],
+  location: SourceLocation,
+): Definition => ({
+  kind: "Operator",
+  name,
+  params,
+  body:
+    forwarded.length === 0
+      ? { kind: "Identifier", name: key, location }
+      : {
+          kind: "Apply",
+          operator: key,
+          args: createLocalArguments(forwarded, location),
+          location,
+        },
+  isLocal: true,
+  isRecursive: false,
+  location,
+});
+
 const getInstanceOperator = (
   key: string,
   params: OperatorParam[],
