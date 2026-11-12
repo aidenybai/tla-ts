@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { fileSystem } from "../file-system";
 import { dirname, join } from "node:path";
 import { availableParallelism } from "node:os";
 import { TlaProofError } from "../errors";
@@ -37,8 +37,8 @@ const TLAPM_INTEGER_OPTIONS = new Set(["--toolbox", "--line", "--threads", "--no
 const getLibraryDirectories = (parsed: ParsedArgs) => [
   ".",
   ...getTlapmPaths()
-    .map((path) => join(dirname(dirname(realpathSync(path))), "lib/tlapm/stdlib"))
-    .filter((path) => existsSync(path))
+    .map((path) => join(dirname(dirname(fileSystem.realpathSync(path))), "lib/tlapm/stdlib"))
+    .filter((path) => fileSystem.existsSync(path))
     .slice(0, 1),
   ...parsed.options.flatMap((option) => (option.name === "-I" ? option.values : [])).toReversed(),
 ];
@@ -175,7 +175,7 @@ const proveModule = async (
       report.attempts.forEach((attempt) => printAttempt(obligation, attempt));
     },
   });
-  writeFileSync(theoryPath, encodeProofTheory(module.name, reports, module.obligations));
+  fileSystem.writeFileSync(theoryPath, encodeProofTheory(module.name, reports, module.obligations));
   console.log(`(* created new ${JSON.stringify(theoryPath)} *)`);
   knownResults.save(fingerprintsPath);
   console.log(`(* fingerprints written in ${JSON.stringify(fingerprintsPath)} *)`);
@@ -257,20 +257,23 @@ export const runTlapm = async (args: string[]) => {
   );
   const moduleNames = new Set<string>();
   const modules = generateObligations(() => {
-    const missingIndex = modulePaths.findIndex((path) => !existsSync(path));
+    const missingIndex = modulePaths.findIndex((path) => !fileSystem.existsSync(path));
     if (missingIndex !== -1) {
       const missing = files[missingIndex];
       console.error(`File "<unknown>":\nError: File ${JSON.stringify(missing)} not found`);
       throw new TlaProofError(`File ${missing} not found`, { failure: "Module.Parser.parse_file" });
     }
     return getObligations(
-      modulePaths.map((path) => ({ file: `./${path}`, source: readFileSync(path, "utf8") })),
+      modulePaths.map((path) => ({
+        file: `./${path}`,
+        source: fileSystem.readFileSync(path, "utf8"),
+      })),
       (name) => {
         moduleNames.add(name);
         const file = directories
           .map((directory) => `${directory}/${name}.tla`)
-          .find((path) => existsSync(path));
-        if (file !== undefined) return { file, source: readFileSync(file, "utf8") };
+          .find((path) => fileSystem.existsSync(path));
+        if (file !== undefined) return { file, source: fileSystem.readFileSync(file, "utf8") };
         return name === "TLAPS" ? { file: "TLAPS.tla", source: TLAPS_MODULE } : undefined;
       },
       {
@@ -308,12 +311,16 @@ export const runTlapm = async (args: string[]) => {
     const directory = `${cacheDirectory}/${module.name}.tlaps`;
     const fingerprintsPath = `${directory}/fingerprints`;
     const loadedPath = parsed.get("--usefp")?.[0] ?? fingerprintsPath;
-    mkdirSync(directory, { recursive: true });
-    if (parsed.has("--cleanfp") && existsSync(fingerprintsPath)) {
-      rmSync(fingerprintsPath);
+    fileSystem.mkdirSync(directory, { recursive: true });
+    if (parsed.has("--cleanfp") && fileSystem.existsSync(fingerprintsPath)) {
+      fileSystem.rmSync(fingerprintsPath);
       console.log(`(* fingerprints file ${JSON.stringify(fingerprintsPath)} removed *)`);
     }
-    if (!parsed.has("--cleanfp") && existsSync(loadedPath) && module.summary.total !== 0) {
+    if (
+      !parsed.has("--cleanfp") &&
+      fileSystem.existsSync(loadedPath) &&
+      module.summary.total !== 0
+    ) {
       console.log(
         parsed.has("--nofp")
           ? `(* will not use fingerprints (because of option \`--nofp\`), but will now load fingerprints from the file \`${loadedPath}\`, in order to overwrite with the new fingerprints, and then save the results at the end. *)`

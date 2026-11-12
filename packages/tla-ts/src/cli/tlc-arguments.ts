@@ -1,4 +1,4 @@
-import { closeSync, openSync } from "node:fs";
+import { fileSystem } from "../file-system";
 import { availableParallelism } from "node:os";
 import type { ModuleOperator } from "../check";
 
@@ -340,7 +340,7 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
       const path = take();
       if (path === undefined) return reject("Error: need to specify the full qualified file.");
       try {
-        closeSync(openSync(path, "w"));
+        fileSystem.closeSync(fileSystem.openSync(path, "w"));
       } catch {
         return reject("Error: Failed to create user output log file.");
       }

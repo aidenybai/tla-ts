@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { fileSystem } from "../file-system";
 import { basename, resolve } from "node:path";
 import { getErrorExitCode, TlaJavaException, TlaUnsupportedError } from "../errors";
 import { EXIT_STATUS } from "../exit-codes";
@@ -125,7 +125,9 @@ export const exportXml = (args: string[]) => {
   }
   const fileName = name.endsWith(".tla") ? name : `${name}.tla`;
   const directories = [".", ...parsed.includes];
-  const path = directories.map((directory) => resolve(directory, fileName)).find(existsSync);
+  const path = directories
+    .map((directory) => resolve(directory, fileName))
+    .find(fileSystem.existsSync);
   if (path === undefined && !SANY_STANDARD_MODULES.has(fileName.slice(0, -".tla".length))) {
     printMissingFile(process.cwd(), `./${fileName}`, parsed.includes);
   }
@@ -179,7 +181,9 @@ export const exportXml174 = (args: string[], jar: string | undefined) => {
   const directories = [".", ...libraries];
   const printMissingFile = (moduleFileName: string) =>
     printMissingFile174(`${libraries[libraries.length - 1]}${moduleFileName}`, libraries, jar);
-  const path = directories.map((directory) => resolve(directory, fileName)).find(existsSync);
+  const path = directories
+    .map((directory) => resolve(directory, fileName))
+    .find(fileSystem.existsSync);
   if (path === undefined && !SANY_174_STANDARD_MODULES.has(basename(fileName, ".tla"))) {
     printMissingFile(fileName);
     return EXIT_STATUS.success;
@@ -196,7 +200,7 @@ export const exportXml174 = (args: string[], jar: string | undefined) => {
   process.stderr.write(sany.text);
   if (sany.specification === undefined) {
     return printXmlExporterException(
-      `tla2sany.xml.XMLExportingException: spec ${(path && getSanyModuleName(readFileSync(path, "utf8"), "1.7.4")) ?? "null"} is malformed - does not have a root module`,
+      `tla2sany.xml.XMLExportingException: spec ${(path && getSanyModuleName(fileSystem.readFileSync(path, "utf8"), "1.7.4")) ?? "null"} is malformed - does not have a root module`,
       110,
     );
   }
