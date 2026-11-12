@@ -198,11 +198,15 @@ export const getUnresolvedRead = (
   }
   if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
     if (isUnresolved(node.expression, context)) return node.expression;
-    // A function declaration binds its name before any code runs, so reading it can't throw.
+    // A function declaration binds its name before any code runs, so reading it can't throw, and
+    // a class declaration that comes before binds its name, or reading it throws a ReferenceError
+    // too. A new evaluates its arguments before the class runs any code.
     const declaration = ts.isIdentifier(node.expression)
       ? context.checker.getSymbolAtLocation(node.expression)?.valueDeclaration
       : undefined;
-    return declaration !== undefined && ts.isFunctionDeclaration(declaration)
+    return declaration !== undefined &&
+      (ts.isFunctionDeclaration(declaration) ||
+        (ts.isClassDeclaration(declaration) && declaration.end <= node.getStart()))
       ? readInOrder(node.arguments ?? [])
       : undefined;
   }

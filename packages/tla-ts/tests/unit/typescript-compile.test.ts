@@ -9604,6 +9604,41 @@ describe("errors", () => {
     );
   });
 
+  it("throws the ReferenceError of a name that no declaration binds where the read runs", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      class Failure extends Error {}
+      let value: unknown = 2;
+      let other: unknown = 0;
+      let logical = "";
+      let made = "";
+      try {
+        // @ts-ignore
+        value &&= unresolvedName;
+      } catch (error) {
+        logical = error instanceof ReferenceError ? "ref" : "other";
+      }
+      // @ts-ignore
+      other &&= unresolvedName;
+      try {
+        // @ts-ignore
+        throw new Failure("a" + (unresolvedName + 1));
+      } catch (error) {
+        made = error instanceof ReferenceError ? "ref" : "other";
+      }
+      if (logical !== "ref" || value !== 2 || other !== 0) throw new Error("logical");
+      if (made !== "ref") throw new Error("new");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    for (const [from, to, message] of [
+      ["let value: unknown = 2;", "let value: unknown = 0;", "logical"],
+      ['made !== "ref"', 'made === "ref"', "new"],
+    ]) {
+      expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
+    }
+  });
+
   it("indexes a list with a key that may not be a number as the index it names", async () => {
     const source = `
       const holder = { seen: "" };

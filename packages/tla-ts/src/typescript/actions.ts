@@ -5529,6 +5529,31 @@ const translateExpressionStatement = (
   if (isUnresolved(expression, context)) {
     return throwError("ReferenceError", path, expression, context, frame);
   }
+  // A logical assignment reads its value, here a name that no declaration binds, only where its
+  // target's value doesn't decide it.
+  if (
+    ts.isBinaryExpression(expression) &&
+    LOGICAL_OPERATORS.has(expression.operatorToken.kind) &&
+    ts.isIdentifier(expression.left) &&
+    !isUnresolved(expression.left, context) &&
+    isUnresolved(expression.right, context)
+  ) {
+    const kind = expression.operatorToken.kind;
+    const current = translateExpression(expression.left, path.scope, context);
+    const isTruthy = isBooleanLike(expression.left, context)
+      ? current
+      : useJavaScript("ToBoolean", [current], context);
+    context.prelude.add("Null");
+    return ifThenElse(
+      kind === ts.SyntaxKind.QuestionQuestionEqualsToken
+        ? apply("\\in", [current, set([getUndefined(context), identifier("Null")])])
+        : kind === ts.SyntaxKind.BarBarEqualsToken
+          ? not(isTruthy)
+          : isTruthy,
+      throwError("ReferenceError", path, expression.right, context, frame),
+      continueWith(path),
+    );
+  }
   // An assignment of what a call like stack.pop() removes, as a declaration takes it.
   const removed =
     ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.EqualsToken
