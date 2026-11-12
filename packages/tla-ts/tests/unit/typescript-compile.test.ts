@@ -11784,6 +11784,50 @@ describe("buffers", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("makes a typed array's subarray, which views the same buffer", async () => {
+    const result = await checkModel(`
+      const check = (actual: unknown, expected: unknown, label: string) => {
+        if (!Object.is(actual, expected)) throw new Error(label);
+      };
+      const sample = new Int16Array([1, 2, 3, 4, 5]);
+      const middle = sample.subarray(1, -1);
+      check(middle.length, 3, "length");
+      check(middle.byteOffset, 2, "offset");
+      check(middle.buffer, sample.buffer, "shares");
+      middle[0] = 9;
+      check(sample[1], 9, "writes through");
+      const rest = sample.subarray(-2);
+      check(rest.join(), "4,5", "rest");
+      const none = sample.subarray(4, 1);
+      check(none.length, 0, "empty");
+      check(none.byteOffset, 8, "empty offset");
+      const buffer = new ArrayBuffer(4, { maxByteLength: 8 });
+      const tracking = new Int8Array(buffer);
+      const tail = tracking.subarray(1);
+      const fixed = tracking.subarray(1, undefined);
+      check(tail.length, 3, "tail");
+      buffer.resize(6);
+      check(tail.length, 5, "tail tracks");
+      check(fixed.length, 5, "explicit undefined tracks");
+      const bounded = tracking.subarray(1, 3);
+      buffer.resize(8);
+      check(bounded.length, 2, "bounded stays");
+      const fixedView = new Int8Array(buffer, 0, 8);
+      const later = new Int8Array(buffer, 4, 4);
+      buffer.resize(2);
+      const outOfBounds = fixedView.subarray(1, 2);
+      check(outOfBounds.length, 0, "zero view");
+      let thrown = "";
+      try {
+        later.subarray(1, 2);
+      } catch (error) {
+        thrown = error instanceof RangeError ? "RangeError" : "other";
+      }
+      check(thrown, "RangeError", "past the end");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops at a number a typed array's float can't hold exactly", async () => {
     const result = await checkModel(`
       const floats = new Float32Array(1);

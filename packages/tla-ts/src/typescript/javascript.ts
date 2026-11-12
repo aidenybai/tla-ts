@@ -3549,9 +3549,9 @@ BufferSlice(heap, ref, start, end, isShared, constructor) ==
             IN Returned(made, Allocated(made))
 
 \\* %TypedArray%.prototype's methods that read and write a typed array's elements, which give the
-\\* heap after them, their value, and the error they throw, if any. slice makes its typed array
-\\* through the receiver's constructor, of those that constructors holds by their element types,
-\\* where tla-ts follows only the built-in one.
+\\* heap after them, their value, and the error they throw, if any. slice and subarray make their
+\\* typed array through the receiver's constructor, of those that constructors holds by their element
+\\* types, where tla-ts follows only the built-in one.
 TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
   LET argument(position) == IF Len(arguments) >= position THEN arguments[position] ELSE Undefined
       integer(position) == ToIntegerOrInfinity(ToNumber(argument(position)))
@@ -3599,7 +3599,22 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
             result == Allocate(allocated, [elementType |-> view.elementType]
                                             @@ ViewObject(prototype, Allocated(allocated), 0, Len(kept)))
         IN Returned(result, Allocated(result))
-  IN CASE ~IsTypedArray(heap, ref) \\/ IsOutOfBounds(heap, view) -> Thrown(heap, "TypeError")
+  IN CASE ~IsTypedArray(heap, ref) -> Thrown(heap, "TypeError")
+       [] method = "subarray" ->
+            LET buffer == heap.objects[view.viewed[Ref]]
+                first == start(1)
+                count == IF end(2) > first THEN end(2) - first ELSE 0
+                begin == view.byteOffset + first * ElementSize(view.elementType)
+                isTracking == view.viewLength = -1 /\\ argument(2) = Undefined
+                viewing == NewTypedArray(heap, view.elementType, Get(heap, species, "prototype"),
+                                      bufferPrototype,
+                                      IF isTracking THEN <<view.viewed, begin>>
+                                      ELSE <<view.viewed, begin, count>>)
+            IN CASE buffer.isDetached -> Thrown(heap, "TypeError")
+                 [] begin + (IF isTracking THEN 0 ELSE count * ElementSize(view.elementType))
+                      > Len(buffer.bytes) -> Thrown(heap, "RangeError")
+                 [] OTHER -> Returned(viewing, Allocated(viewing))
+       [] IsOutOfBounds(heap, view) -> Thrown(heap, "TypeError")
        [] method = "at" ->
             Returned(heap, IF at \\in 0..(length - 1) THEN elements[at + 1] ELSE Undefined)
        [] method = "includes" ->

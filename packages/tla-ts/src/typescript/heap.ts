@@ -1721,6 +1721,7 @@ const TYPED_ARRAY_METHODS = new Set([
   "fill",
   "reverse",
   "slice",
+  "subarray",
 ]);
 
 const VIEW_ACCESSOR = /^[gs]et(?:Int8|Uint8|Int16|Uint16|Int32|Uint32|Float16|Float32|Float64)$/;
