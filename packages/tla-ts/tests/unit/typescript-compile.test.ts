@@ -5948,6 +5948,40 @@ describe("errors", () => {
     ).toThrow("Unsupported statement");
   });
 
+  it("keeps the identity of a set that a field holds and changes in place", async () => {
+    const result = await checkModel(`
+      interface Unit { kinds: Set<number> }
+      interface Analysis { first: Set<number>; isNullable: boolean }
+      const analyses = new Map<Unit, Analysis>();
+      const tokens = (kinds: number[]): Unit => ({ kinds: new Set(kinds) });
+      const has = (kinds: Set<number>, kind: number) => kinds.has(kind);
+      const analyze = (units: Unit[]): Analysis => {
+        const analysis = { first: new Set<number>(), isNullable: true };
+        if (units.length === 1) {
+          const cached = analyses.get(units[0]);
+          if (cached) return cached;
+          analysis.first = units[0].kinds;
+          analyses.set(units[0], analysis);
+          return analysis;
+        }
+        for (const unit of units) {
+          const inner = analyze([unit]);
+          for (const kind of inner.first) analysis.first.add(kind);
+        }
+        return analysis;
+      };
+      const a = tokens([1, 2]);
+      const b = tokens([2, 3]);
+      const both = analyze([a, b]);
+      const again = analyze([a]);
+      again.first.add(4);
+      if (both.first.size !== 3 || a.kinds.size !== 3 || !has(b.kinds, 3) || has(b.kinds, 4)) {
+        throw new Error("first");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("pushes the elements that a spread gives onto an array that the heap holds", async () => {
     const result = await checkModel(`
       interface Module { constants: string[]; units: { names: string[] }[] }

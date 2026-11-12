@@ -2363,7 +2363,8 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       (ts.isPropertyAccessExpression(parent) &&
         parent.name.text === "length" &&
         isAssigned(parent)) ||
-      (ts.isElementAccessExpression(parent) && parent.expression === use && isAssigned(parent))
+      (ts.isElementAccessExpression(parent) && parent.expression === use && isAssigned(parent)) ||
+      isSetOrMapChange(use)
     );
   };
   const isSetOrMap = (node: ts.Expression) => ["set", "map"].includes(getKind(node, context));
@@ -2884,46 +2885,51 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         getUses(outer).every(isElementUse)
       );
     };
-    while (pending.length > 0 || returns.length > 0 || outers.length > 0) {
-      const owner = returns.pop();
-      if (owner !== undefined) {
-        if (group.has(owner)) continue;
-        group.add(owner);
-        if (!isReturned(owner)) return [];
-        continue;
+    const isGrown = () => {
+      while (pending.length > 0 || returns.length > 0 || outers.length > 0) {
+        const owner = returns.pop();
+        if (owner !== undefined) {
+          if (group.has(owner)) continue;
+          group.add(owner);
+          if (!isReturned(owner)) return false;
+          continue;
+        }
+        const outer = outers.pop();
+        if (outer !== undefined) {
+          const key = outer.declarations?.[0];
+          if (key === undefined || outerKeys.has(key)) continue;
+          outerKeys.add(key);
+          if (!isOuter(outer)) return false;
+          continue;
+        }
+        const symbol = pending.pop();
+        if (symbol === undefined || (symbol.declarations ?? []).every((node) => group.has(node))) {
+          continue;
+        }
+        (symbol.declarations ?? []).forEach((node) => group.add(node));
+        if (!isHolder(symbol) || !getUses(symbol).every((use) => addHolder(use) && isUse(use))) {
+          return false;
+        }
       }
-      const outer = outers.pop();
-      if (outer !== undefined) {
-        const key = outer.declarations?.[0];
-        if (key === undefined || outerKeys.has(key)) continue;
-        outerKeys.add(key);
-        if (!isOuter(outer)) return [];
-        continue;
-      }
-      const symbol = pending.pop();
-      if (symbol === undefined || (symbol.declarations ?? []).every((node) => group.has(node))) {
-        continue;
-      }
-      (symbol.declarations ?? []).forEach((node) => group.add(node));
-      if (!isHolder(symbol) || !getUses(symbol).every((use) => addHolder(use) && isUse(use))) {
-        return [];
-      }
-    }
+      return true;
+    };
     const holdsField = (type: ts.Type) =>
       [...names].some((name) => getFields(type, name).some(isInGroup));
-    // Whether an object of one type keeps the group's fields where it goes as another type.
+    // Whether an object of one type keeps the group's fields where it goes as another type, whose
+    // fields of the same names then join the group.
     const keepsFields = (from: ts.Type, to: ts.Type) =>
       [...names].every((name) => {
         const fields = getFields(to, name);
-        return (
-          !getFields(from, name).some(isInGroup) || (fields.length > 0 && fields.every(isInGroup))
-        );
+        const isHeld = getFields(from, name).some(isInGroup);
+        if (isHeld) pending.push(...fields.filter((field) => !isInGroup(field)));
+        return !isHeld || fields.length > 0;
       });
     // An object that holds one of the group's fields goes only where its fields keep their names,
     // as an operation that reads every field, such as a spread, would read an array as a value.
     const isKept = (node: ts.Expression): boolean => {
       const parent = node.parent;
       const type = checker.getTypeAtLocation(node);
+      if (ts.isTypeOfExpression(parent)) return true;
       if (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) {
         return parent.expression !== node || getAccessedFields(parent, checker) !== undefined;
       }
@@ -3017,9 +3023,11 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       }
       return ts.isExpressionStatement(parent);
     };
-    return expressions.every((node) => !holdsField(checker.getTypeAtLocation(node)) || isKept(node))
-      ? [...nodes, ...group]
-      : [];
+    const isSettled = (): boolean =>
+      isGrown() &&
+      expressions.every((node) => !holdsField(checker.getTypeAtLocation(node)) || isKept(node)) &&
+      (pending.length === 0 || isSettled());
+    return isSettled() ? [...nodes, ...group] : [];
   };
   const isReachedNode = (node: ts.Node) =>
     ts.findAncestor(node, (ancestor) => isReached.has(ancestor)) !== undefined;
