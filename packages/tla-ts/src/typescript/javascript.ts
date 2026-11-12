@@ -1178,10 +1178,19 @@ ObjectValues(heap, ref) ==
   LET keys == ObjectKeys(heap, ref)
   IN  Read([position \\in DOMAIN keys |-> Get(heap, ref, keys[position])])
 
+\\* The object of keys and values that a spread or a rest element copies from a proxy.
+RECURSIVE PutPairs(_, _)
+PutPairs(object, pairs) ==
+  IF pairs = <<>> THEN object ELSE PutPairs(Put(object, Head(pairs)[1], Head(pairs)[2]), Tail(pairs))
+
+PairsObject(pairs) == PutPairs(EmptyObject, pairs)
+
 \\* The object that an object pattern's rest element makes, which holds the enumerable own properties
 \\* of the object that the pattern reads, except those it names, in their order.
-\\* The rest of an object, where read holds the values that its getters gave.
+\\* The rest of an object, where read holds the values that its getters gave, or of a proxy, the
+\\* keys and values that its traps gave.
 RestObject(heap, ref, excluded, read) ==
+  IF IsProxy(heap, ref) THEN PairsObject(read) ELSE
   LET keys == SelectSeq(EnumerableOwnKeys(Lookup(heap, ref)), LAMBDA key : key \\notin excluded)
       kept == {keys[position] : position \\in DOMAIN keys}
   IN [EmptyObject EXCEPT !.keys = keys,
@@ -4113,13 +4122,6 @@ OwnDescriptor(heap, ref, key) ==
                                 [] field \\in {"get", "set"} -> object.values[key][field]
                                 [] OTHER -> attributes[field]])
   ELSE Undefined
-
-\\* The object of keys and values that a spread or a rest element copies from a proxy.
-RECURSIVE PutPairs(_, _)
-PutPairs(object, pairs) ==
-  IF pairs = <<>> THEN object ELSE PutPairs(Put(object, Head(pairs)[1], Head(pairs)[2]), Tail(pairs))
-
-PairsObject(pairs) == PutPairs(EmptyObject, pairs)
 
 \\* Object.getOwnPropertyDescriptors of a proxy, which makes the object of each descriptor that it
 \\* gathered, and then the object that holds them under their keys, last, so that Allocated names it.

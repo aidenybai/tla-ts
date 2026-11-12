@@ -11513,6 +11513,39 @@ describe("proxies", () => {
     expect((await checkModel(getSource(0))).failure?.message).toContain("unexpected");
   });
 
+  it("reads each key that a pattern names through a proxy's traps, in order", async () => {
+    const getSource = (expected: string) => `
+      const log: (string | symbol)[] = [];
+      const getCount = (): number => log.length;
+      const proxy = new Proxy<Record<string | symbol, number>>(
+        { attr: 1, other: 2, 0: 3, last: 4 },
+        {
+          get(innerTarget, key) {
+            log.push(key);
+            return innerTarget[key];
+          },
+          getOwnPropertyDescriptor(innerTarget, key) {
+            log.push(typeof key === "string" ? \`d:\${key}\` : key);
+            return Reflect.getOwnPropertyDescriptor(innerTarget, key);
+          },
+        },
+      );
+      const { attr } = proxy;
+      if (attr !== 1 || getCount() !== 1) throw new Error("attr");
+      const { other, 0: zero, missing = 9, ...rest } = proxy;
+      if (other !== 2 || zero !== 3 || missing !== 9) throw new Error("values");
+      if (log[1] !== "other" || log[2] !== "0" || log[3] !== "missing") throw new Error("order");
+      if (rest.attr !== 1 || rest.last !== 4 || "other" in rest || "0" in rest) {
+        throw new Error("rest");
+      }
+      if (getCount() !== 8 || log[4] !== "d:attr" || log[5] !== "${expected}") {
+        throw new Error("unexpected");
+      }
+    `;
+    expect((await checkModel(getSource("attr"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("last"))).failure?.message).toContain("unexpected");
+  });
+
   it("stops the check where something else reads a proxy", async () => {
     const result = await checkModel(`
       const proxy = new Proxy({ attr: { value: 1 } }, {});

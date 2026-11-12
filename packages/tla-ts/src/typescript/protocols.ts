@@ -1336,23 +1336,47 @@ const getSpread = (node: ts.ObjectLiteralExpression) => {
   return spreads.length === 1 && isPlain ? spreads[0] : undefined;
 };
 
-const getOperation = (node: ts.Node, context: Context): ProxyOperation | undefined => {
-  // An object's spread beside plain properties, or a rest element alone in a declaration's
-  // pattern, copies a proxy's enumerable keys to a new object.
-  const parent = node.parent;
-  const copied = ts.isObjectLiteralExpression(node)
-    ? getSpread(node)?.expression
-    : ts.isExpression(node) &&
-        parent !== undefined &&
-        ts.isVariableDeclaration(parent) &&
-        parent.initializer === node &&
-        ts.isObjectBindingPattern(parent.name) &&
-        parent.name.elements.length === 1 &&
-        parent.name.elements[0].dotDotDotToken !== undefined
-      ? node
+// The key that an object pattern's element reads, where tla-ts can tell it.
+const getBindingKey = (element: ts.BindingElement) => {
+  const name = element.propertyName ?? element.name;
+  return ts.isIdentifier(name) || ts.isStringLiteral(name)
+    ? name.text
+    : ts.isNumericLiteral(name)
+      ? String(Number(name.text))
       : undefined;
+};
+
+const getOperation = (node: ts.Node, context: Context): ProxyOperation | undefined => {
+  // An object's spread beside plain properties copies a proxy's enumerable keys to a new object.
+  const copied = ts.isObjectLiteralExpression(node) ? getSpread(node)?.expression : undefined;
   if (copied !== undefined) {
     return { trap: "ownKeys", object: copied, key: undefined, method: "copy", isReflected: false };
+  }
+  // An element of a declaration's object pattern on a name reads its key, and a rest element
+  // gathers the enumerable keys that the others don't name.
+  const declaration = ts.isBindingElement(node) ? node.parent.parent : undefined;
+  if (
+    ts.isBindingElement(node) &&
+    ts.isObjectBindingPattern(node.parent) &&
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer !== undefined &&
+    ts.isIdentifier(declaration.initializer)
+  ) {
+    return node.dotDotDotToken === undefined
+      ? {
+          trap: "get",
+          object: declaration.initializer,
+          key: getBindingKey(node),
+          isReflected: false,
+        }
+      : {
+          trap: "ownKeys",
+          object: declaration.initializer,
+          key: undefined,
+          method: "rest",
+          isReflected: false,
+        };
   }
   if (
     (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
@@ -1485,8 +1509,48 @@ const getProxyOperation = (node: ts.Node, context: Context) => {
     : undefined;
 };
 
-export const isProxyOperation = (node: ts.Node, context: Context): node is ts.Expression =>
-  getProxyOperation(node, context) !== undefined;
+export const isProxyOperation = (
+  node: ts.Node,
+  context: Context,
+): node is ts.Expression | ts.BindingElement => getProxyOperation(node, context) !== undefined;
+
+// A declaration's object pattern on a proxy, whose elements read their keys through its traps in
+// order before it binds them, where every element reads a key that tla-ts can tell.
+export const isProxyPattern = (name: ts.BindingName, path: Path, context: Context) =>
+  ts.isObjectBindingPattern(name) &&
+  name.elements.length > 0 &&
+  name.elements.every(
+    (element) => isProxyOperation(element, context) && !path.scope.read?.has(element),
+  );
+
+// Reads the keys of a pattern's elements through a proxy's traps, in order, so that binding the
+// pattern takes the values that they gave.
+export const readProxyPattern = (
+  name: ts.ObjectBindingPattern,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const readFrom = (current: Path, position: number): Formula => {
+    const element = name.elements.at(position);
+    return element === undefined
+      ? continueWith(current)
+      : runProxyOperation(element, current, context, frame, (after, value) =>
+          readFrom(
+            {
+              ...after,
+              scope: {
+                ...after.scope,
+                read: new Map([...(after.scope.read ?? []), [element, value]]),
+              },
+            },
+            position + 1,
+          ),
+        );
+  };
+  return readFrom(path, 0);
+};
 
 const TRAPS = [
   "get",
@@ -1661,7 +1725,7 @@ const runTrap = (
   frame: Frame,
   forward: (path: Path, target: Expression) => Formula,
   check: (path: Path, target: Expression, result: Expression) => Formula,
-) => {
+): Formula => {
   const heap = getHeap(path.scope, site, context);
   return bind(
     path,
@@ -1699,7 +1763,11 @@ const runTrap = (
                     () =>
                       ifThenElse(
                         apply("=", [
-                          useJavaScript("TypeOfIn", [heap, method], context),
+                          useJavaScript(
+                            "TypeOfIn",
+                            [getHeap(withTrap.scope, site, context), method],
+                            context,
+                          ),
                           string("function"),
                         ]),
                         leaf(
@@ -1723,7 +1791,7 @@ const runTrap = (
 // where what the trap gives disagrees with what the target can't change. A change that fails
 // throws a TypeError, as scripts run in strict mode, where Reflect's gives false.
 export const runProxyOperation = (
-  node: ts.Expression,
+  node: ts.Expression | ts.BindingElement,
   path: Path,
   context: Context,
   frame: Frame,
@@ -2067,6 +2135,7 @@ export const runProxyOperation = (
           "entries",
           "assign",
           "copy",
+          "rest",
           "getOwnPropertyDescriptors",
           "defineProperties",
         ].includes(listing)
@@ -2152,8 +2221,20 @@ export const runProxyOperation = (
                       ),
                   again(described, gathered),
                 );
+          // A rest element skips the keys that the pattern's other elements read.
+          const excluded =
+            ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent)
+              ? node.parent.elements.flatMap((other) => {
+                  const otherKey = other === node ? undefined : getBindingKey(other);
+                  return otherKey === undefined ? [] : [string(otherKey)];
+                })
+              : [];
           return isSymbolKept
-            ? describeKey(current, key, inner, gather)
+            ? ifThenElse(
+                apply("\\in", [key, set(excluded)]),
+                again(current, gathered),
+                describeKey(current, key, inner, gather),
+              )
             : ifThenElse(
                 javaScript("IsSymbol", [key]),
                 again(current, gathered),
@@ -2441,11 +2522,16 @@ export const runProxyOperation = (
       return runTrap(node, current, trap, values, path, context, frame, forward, check);
     };
     const heap = getHeap(path.scope, node, context);
+    // What the operation gives where nothing traps it, as a pattern's element reads its key.
+    const getUntrapped = () =>
+      ts.isBindingElement(node)
+        ? javaScript("Get", [heap, proxy, key])
+        : translateExpression(node, path.scope, context);
     if (trap === "isArray") {
       return ifThenElse(
         javaScript("IsRevokedProxy", [heap, proxy]),
         throwWith(path),
-        next(path, translateExpression(node, path.scope, context)),
+        next(path, getUntrapped()),
       );
     }
     // Object.defineProperty converts the descriptor first, and gives the trap a copy of it.
@@ -2542,7 +2628,7 @@ export const runProxyOperation = (
           )
         : trap === "get" && isGetterRead(node, context)
           ? readWith(node, proxy, key, getReadGetters(node, context), path, context, frame, next)
-          : next(path, translateExpression(node, path.scope, context)),
+          : next(path, getUntrapped()),
     );
   };
   return allocate(node, path, context, (allocated) =>

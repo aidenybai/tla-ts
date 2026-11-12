@@ -199,6 +199,8 @@ import {
   getOwnValuesGetters,
   readOwnValues,
   isGetterPattern,
+  isProxyPattern,
+  readProxyPattern,
   isGetterRead,
   getGetterKeys,
   getWrittenFunctions,
@@ -6754,6 +6756,15 @@ const bindDeclaration = (
   continueWith: (path: Path) => Formula,
 ): Formula => {
   const declaration = declarations[0];
+  // A pattern on a proxy runs its traps for each key it reads before it binds them.
+  if (
+    ts.isObjectBindingPattern(declaration.name) &&
+    isProxyPattern(declaration.name, path, context)
+  ) {
+    return readProxyPattern(declaration.name, path, context, frame, (after) =>
+      bindDeclaration(declarations, value, after, context, frame, continueWith),
+    );
+  }
   // A pattern runs the getters of the properties it reads before it binds them.
   if (isGetterPattern(declaration.name, path, context)) {
     const name = context.names.getFresh("value");
@@ -8662,11 +8673,8 @@ const findLeadingCall = (
         ? { call: undefined, isBlocked: true, conversion: node }
         : none;
   if (ts.isExpression(node) && path.scope.results.has(node)) return none;
-  // A proxy that a rest element copies, or an object that only spreads one, runs its traps.
-  if (
-    (ts.isIdentifier(node) || ts.isObjectLiteralExpression(node)) &&
-    isProxyOperation(node, context)
-  ) {
+  // An object that spreads a proxy runs its traps.
+  if (ts.isObjectLiteralExpression(node) && isProxyOperation(node, context)) {
     return { call: undefined, isBlocked: true, read: node };
   }
   if (
