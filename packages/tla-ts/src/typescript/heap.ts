@@ -18,7 +18,9 @@ import {
   getRunFields,
   getSymbol,
   getUndefined,
+  getClassKey,
   getPrivateKey,
+  isOnceField,
   isPlain,
   isPlainAccessor,
   isPrivateMember,
@@ -652,7 +654,7 @@ const translateClass = (
     ),
     true,
   );
-  const object =
+  const branded =
     staticBranded === undefined
       ? methods
       : useJavaScript(
@@ -660,6 +662,14 @@ const translateClass = (
           [methods, string(getPrivateKey(staticBranded, context)), boolean(true)],
           context,
         );
+  const object =
+    ts.isClassLike(node) && isOnceField(node)
+      ? useJavaScript(
+          "PrivateAdd",
+          [branded, string(getClassKey(node, context)), boolean(true)],
+          context,
+        )
+      : branded;
   return useJavaScript(
     "Allocate",
     [useJavaScript("Allocate", [heap, prototype], context), object],
@@ -867,7 +877,7 @@ const translateInstance = (
         ]
       : [],
   );
-  return fields.reduce<Expression>(
+  const instance = fields.reduce<Expression>(
     (object, member) => {
       if (ts.isParameter(member)) {
         return ts.isIdentifier(member.name)
@@ -906,6 +916,21 @@ const translateInstance = (
       context,
     ),
   );
+  return ts.isClassLike(created) && isOnceField(created)
+    ? ifExpression(
+        useJavaScript(
+          "HasPrivate",
+          [
+            heap,
+            translateExpression(construction.callee, scope, context),
+            string(getClassKey(created, context)),
+          ],
+          context,
+        ),
+        instance,
+        apply("Assert", [boolean(false), string("tla-ts can't tell which class this value holds")]),
+      )
+    : instance;
 };
 
 // Whether an object has the private names of a private member's class, so that it holds the field,

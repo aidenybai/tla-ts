@@ -7710,6 +7710,50 @@ describe("errors", () => {
     expect((await checkModel(getSource("other"))).failure?.message).toContain("caught");
   });
 
+  it("constructs a class that a field of a class constructed once holds", async () => {
+    const getSource = (own: number) => `
+      class C {
+        #m = 1;
+        get #g() { return 2; }
+        B = class {
+          #own = 3;
+          read(o: C) { return o.#m + o.#g; }
+          own() { return this.#own; }
+        };
+      }
+      const c = new C();
+      const inner = new c.B();
+      const other = new c.B();
+      const isShared = Object.getPrototypeOf(inner) === Object.getPrototypeOf(other);
+      if (inner.read(c) !== 3 || inner.own() !== ${own} || !isShared) throw new Error("nested");
+    `;
+    expect((await checkModel(getSource(3))).failure).toBeUndefined();
+    expect((await checkModel(getSource(4))).failure?.message).toContain("nested");
+  });
+
+  it("stops at a new of a field whose class a script replaced", async () => {
+    const result = await checkModel(`
+      class D { m() { return 2; } }
+      class C { B = class { m() { return 1; } }; }
+      const c = new C();
+      Object.defineProperty(c, "B", { value: D });
+      const inner = new c.B();
+      if (inner.m() !== 2) throw new Error("replaced");
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't tell which class this value holds");
+  });
+
+  it("stops at a class that a field of a class constructed twice holds", () => {
+    expect(() =>
+      compile(`
+        class C { B = class { m() { return 1; } }; }
+        const one = new C();
+        const two = new C();
+        if (new one.B().m() !== new two.B().m()) throw new Error("twice");
+      `),
+    ).toThrow("Unsupported expression");
+  });
+
   it("makes a class expression that a script only reads where it runs", async () => {
     const getSource = (length: number) => `
       const describe = (made: object, key: string) => Object.getOwnPropertyDescriptor(made, key)!.value;
