@@ -3295,6 +3295,33 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("tla-ts can't");
   });
 
+  it("assigns a constructor's parameter properties before its body runs", async () => {
+    const getSource = (keys: string, extra: number) => `
+      class Base {
+        label = "base";
+      }
+      class Item extends Base {
+        extra = 1;
+        constructor(private price: number, readonly count = price * 2) {
+          super();
+          this.extra = this.price + this.count;
+        }
+        get total() { return this.price * this.count; }
+      }
+      const item = new Item(3);
+      const keys = Object.keys(item).join(",");
+      if (keys !== "${keys}") throw new Error("keys");
+      if (item.total !== 18 || item.extra !== ${extra}) throw new Error("values");
+    `;
+    expect((await checkModel(getSource("label,price,count,extra", 9))).failure).toBeUndefined();
+    expect((await checkModel(getSource("label,extra,price,count", 9))).failure?.message).toContain(
+      "keys",
+    );
+    expect((await checkModel(getSource("label,price,count,extra", 8))).failure?.message).toContain(
+      "values",
+    );
+  });
+
   it("tells whether a value of type unknown inherits from a built-in constructor", async () => {
     const result = await checkModel(`
       const isDate = (value: unknown) => value instanceof Date;

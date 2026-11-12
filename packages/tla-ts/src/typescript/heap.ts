@@ -771,8 +771,24 @@ const translateInstance = (
       ? identifier("EmptyObject")
       : translateWrapperObject(node, builtInBase, identifier("Null"), scope, context),
   );
-  return members.reduce<Expression>(
+  // TypeScript defines a class's parameter properties before its other fields.
+  const fields = getChain(created).flatMap((current) =>
+    ts.isClassLike(current)
+      ? [
+          ...(current.members.find(ts.isConstructorDeclaration)?.parameters ?? []).filter(
+            (parameter) => ts.isParameterPropertyDeclaration(parameter, parameter.parent),
+          ),
+          ...current.members,
+        ]
+      : [],
+  );
+  return fields.reduce<Expression>(
     (object, member) => {
+      if (ts.isParameter(member)) {
+        return ts.isIdentifier(member.name)
+          ? useJavaScript("Put", [object, string(member.name.text), getUndefined(context)], context)
+          : object;
+      }
       if (!ts.isPropertyDeclaration(member) || isStatic(member) || isAmbient(member)) {
         return object;
       }

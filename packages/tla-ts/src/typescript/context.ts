@@ -214,11 +214,19 @@ export const getUnresolvedRead = (
 
 // TypeScript gives new.target the symbol of the function it's in, which isn't its value.
 export const getSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
+  const parent = node.parent;
+  // A parameter property's name names the property, where the constructor's body reads the
+  // parameter.
   const symbol = ts.isMetaProperty(node)
     ? undefined
-    : ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node
-      ? checker.getShorthandAssignmentValueSymbol(node.parent)
-      : checker.getSymbolAtLocation(node);
+    : ts.isShorthandPropertyAssignment(parent) && parent.name === node
+      ? checker.getShorthandAssignmentValueSymbol(parent)
+      : ts.isIdentifier(node) &&
+          ts.isParameter(parent) &&
+          parent.name === node &&
+          ts.isParameterPropertyDeclaration(parent, parent.parent)
+        ? checker.getSymbolsOfParameterPropertyDeclaration(parent, node.text)[0]
+        : checker.getSymbolAtLocation(node);
   return symbol !== undefined && symbol.flags & ts.SymbolFlags.Alias
     ? checker.getAliasedSymbol(symbol)
     : symbol;
@@ -870,12 +878,17 @@ const isDerivedSafe = (
   context: Context,
 ) => {
   const constructor = node.members.find(ts.isConstructorDeclaration);
-  const isAdding = node.members.some(
-    (member) =>
-      !isStatic(member) &&
-      ((ts.isPropertyDeclaration(member) && !isAmbient(member)) ||
-        (isPrivateMember(member) && !ts.isConstructorDeclaration(member))),
-  );
+  const isAdding =
+    node.members.some(
+      (member) =>
+        !isStatic(member) &&
+        ((ts.isPropertyDeclaration(member) && !isAmbient(member)) ||
+          (isPrivateMember(member) && !ts.isConstructorDeclaration(member))),
+    ) ||
+    (constructor?.parameters.some((parameter) =>
+      ts.isParameterPropertyDeclaration(parameter, constructor),
+    ) ??
+      false);
   return (
     (constructor === undefined ||
       (constructor.body !== undefined && getSuperCall(constructor) !== undefined)) &&
