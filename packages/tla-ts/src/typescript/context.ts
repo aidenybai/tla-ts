@@ -1342,9 +1342,23 @@ export const getCaptures = (node: ts.FunctionExpression, context: Context) => {
   });
   captures.forEach((capture) => {
     const declaration = capture.declaration;
-    if (isAssigned(capture.symbol, node.getSourceFile(), context)) {
+    // A local that changes lives in the environment once the closure is made, so nothing but the
+    // closure may name it after that.
+    if (
+      isAssigned(capture.symbol, node.getSourceFile(), context) &&
+      maker !== undefined &&
+      !findNodes(maker, ts.isIdentifier).every(
+        (name) =>
+          (ts.isShorthandPropertyAssignment(name.parent)
+            ? context.checker.getShorthandAssignmentValueSymbol(name.parent)
+            : getSymbol(name, context.checker)) !== capture.symbol ||
+          ts.findAncestor(name, (ancestor) => ancestor === node) !== undefined ||
+          (name.end <= node.getStart() &&
+            ts.findAncestor(name.parent, ts.isFunctionLike) === maker),
+      )
+    ) {
       throw new TlaTypeScriptError(
-        "tla-ts can't follow a function that outlives its call and reads a local that changes",
+        "tla-ts can't follow a function that outlives its call and shares a local that changes",
         capture.name,
       );
     }

@@ -2524,7 +2524,7 @@ export const translateCallStatement = (
           ]),
           !isAnyGenerator(candidate) && !isAsyncFunction(candidate)
             ? isClosure(candidate, context)
-              ? enterClosure(candidate, value, path, context, (inner, leave) =>
+              ? enterClosure(candidate, value, path, context, frame, (inner, innerFrame, leave) =>
                   inlineBody(
                     expression,
                     candidate,
@@ -2532,7 +2532,7 @@ export const translateCallStatement = (
                     candidateReceiver,
                     inner,
                     context,
-                    frame,
+                    innerFrame,
                     (after, result) => continueWith(leave(after), result),
                   ),
                 )
@@ -3496,18 +3496,24 @@ const isAction = (callee: FunctionNode, context: Context) =>
     0;
 
 // Binds the locals that a closure reads to those its environment holds, for a call of the closure
-// that a value holds, and leaves them as they were once the call returns.
+// that a value holds. Once the call returns or throws, the environment holds the locals that the
+// closure changed, and the caller's bindings are as they were.
 const enterClosure = (
   closure: ts.FunctionExpression,
   value: Expression,
   path: Path,
   context: Context,
-  run: (inner: Path, leave: (after: Path) => Path) => Formula,
+  frame: Frame,
+  run: (inner: Path, innerFrame: Frame, leave: (after: Path) => Path) => Formula,
 ) => {
   const captures = getCaptures(closure, context);
-  const heap = getHeap(path.scope, closure, context);
-  const leave = (after: Path) => ({
+  const written = captures.filter((symbol) => isAssigned(symbol, closure, context));
+  const heapSymbol = context.heap;
+  const leave = (after: Path): Path => ({
     ...after,
+    mutable: new Set(
+      [...after.mutable].filter((symbol) => !written.includes(symbol) || path.mutable.has(symbol)),
+    ),
     scope: {
       ...after.scope,
       bindings: new Map([
@@ -3516,12 +3522,36 @@ const enterClosure = (
           const kept = path.scope.bindings.get(symbol);
           return kept === undefined ? [] : [[symbol, kept]];
         }),
+        ...(heapSymbol === undefined || written.length === 0
+          ? []
+          : [
+              [
+                heapSymbol,
+                written
+                  .flatMap((symbol) => {
+                    const changed = after.scope.bindings.get(symbol);
+                    return changed === undefined ? [] : [{ symbol, changed }];
+                  })
+                  .reduce(
+                    (heap, entry) =>
+                      useJavaScript(
+                        "SetCaptured",
+                        [heap, value, string(entry.symbol.name), entry.changed],
+                        context,
+                      ),
+                    getHeap(after.scope, closure, context),
+                  ),
+              ] satisfies [ts.Symbol, Expression],
+            ]),
       ]),
     },
   });
+  const heap = getHeap(path.scope, closure, context);
+  const throwTo = frame.throwTo;
   return run(
     {
       ...path,
+      mutable: new Set([...path.mutable, ...written]),
       scope: {
         ...path.scope,
         bindings: new Map([
@@ -3532,6 +3562,10 @@ const enterClosure = (
           ]),
         ]),
       },
+    },
+    {
+      ...frame,
+      throwTo: throwTo && ((after, thrown) => throwTo(leave(after), thrown)),
     },
     leave,
   );
