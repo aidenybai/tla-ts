@@ -1887,10 +1887,14 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
     nested.push(...getAllocated(child, context, isSometimes));
   });
   const created = getNewClass(node, context);
-  // The objects that the fields of a new's instance make, before the instance that holds them. Only
-  // a statement's one new makes them, as each instance needs its own.
+  const isNewInstance =
+    !isSometimes &&
+    created !== undefined &&
+    ts.isNewExpression(node) &&
+    (getRunConstructor(created, context) === undefined || isStatementNew(node));
+  // The objects that the fields of a new's instance make, before the instance that holds them.
   const fields =
-    created !== undefined && !isSometimes && ts.isNewExpression(node) && isStatementNew(node)
+    created !== undefined && isNewInstance
       ? getChain(created, context).flatMap((current) =>
           ts.isClassLike(current)
             ? current.members.flatMap((member) =>
@@ -1916,10 +1920,7 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
     getNewWrapper(node, context) !== undefined ||
     (!isSometimes && isAllocation(node, context)) ||
     (!isSometimes && isNewError(node, context)) ||
-    (!isSometimes &&
-      created !== undefined &&
-      ts.isNewExpression(node) &&
-      (getRunConstructor(created, context) === undefined || isStatementNew(node)));
+    isNewInstance;
   return isAllocated ? [...nested, ...fields, node] : [...nested, ...fields];
 };
 
@@ -2299,6 +2300,9 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         return (
           ts.isIdentifier(parent.name) && keepsFields(type, checker.getTypeAtLocation(parent.name))
         );
+      }
+      if (ts.isPropertyDeclaration(parent) && parent.initializer === node) {
+        return keepsFields(type, checker.getTypeAtLocation(parent.name));
       }
       if (
         ts.isParenthesizedExpression(parent) ||

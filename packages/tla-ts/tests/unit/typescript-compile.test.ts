@@ -4989,6 +4989,38 @@ describe("errors", () => {
     );
   });
 
+  it("gives each instance that a class's field makes its own arrays on the heap", async () => {
+    const getSource = (check: string) => `
+      class Table {
+        keys: number[] = [];
+        alias() {
+          const held = this.keys;
+          held.push(9);
+        }
+        rebuild() {
+          const old = this.keys;
+          this.keys = [];
+          for (let slot = 0; slot < old.length; slot++) this.keys[slot] = old[slot] + 1;
+        }
+      }
+      class Owner {
+        readonly table = new Table();
+      }
+      const first = new Owner();
+      const second = new Owner();
+      first.table.alias();
+      first.table.rebuild();
+      const keys = first.table.keys.join(",");
+      if (${check}) throw new Error("Owner");
+    `;
+    const passing = 'keys !== "10" || second.table.keys.length !== 0';
+    expect((await checkModel(getSource(passing))).failure).toBeUndefined();
+    expect((await checkModel(getSource('keys === "10"'))).failure?.message).toContain("Owner");
+    expect(
+      (await checkModel(getSource("second.table.keys.length === 0"))).failure?.message,
+    ).toContain("Owner");
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`
