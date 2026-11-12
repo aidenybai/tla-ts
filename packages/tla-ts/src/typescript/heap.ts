@@ -891,10 +891,13 @@ const translateInstance = (
       if (!ts.isPropertyDeclaration(member) || isStatic(member) || isAmbient(member)) {
         return object;
       }
+      // A field that takes this holds the ref that the instance gets as the heap allocates it.
       const value =
         member.initializer === undefined
           ? getUndefined(context)
-          : translateExpression(member.initializer, scope, context);
+          : skipCasts(member.initializer).kind === ts.SyntaxKind.ThisKeyword
+            ? useJavaScript("NextRef", [heap, number(1)], context)
+            : translateExpression(member.initializer, scope, context);
       return ts.isPrivateIdentifier(member.name)
         ? useJavaScript(
             "PrivateAdd",

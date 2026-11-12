@@ -1985,6 +1985,36 @@ describe("values", () => {
     expect((await checkModel(getSource("7,0;7,1,1"))).failure?.message).toContain("7,0;1,1,1");
   });
 
+  it("gives a field that takes this the instance that the class makes", async () => {
+    const getSource = (expected: string) => `
+      class Node {
+        root: Node = this;
+      }
+      const first = new Node();
+      const second = new Node();
+      second.root = first;
+      const result = [first.root === first, second.root === first].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("true,true"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("true,false"))).failure?.message).toContain("true,true");
+  });
+
+  it("gives a field that takes this the instance after a field whose array the heap holds", async () => {
+    const getSource = (expected: string) => `
+      class Node {
+        parents: Node[] = [];
+        root: Node = this;
+      }
+      const node = new Node();
+      node.parents.push(node);
+      const result = [node.root === node, node.parents[0].root === node].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("true,true"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("true,false"))).failure?.message).toContain("true,true");
+  });
+
   it("changes a field's array through a local that names it", async () => {
     const getSource = (expected: string) => `
       const shrink = (values: number[], size: number) => {
