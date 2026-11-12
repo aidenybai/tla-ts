@@ -1965,6 +1965,62 @@ export const isStatementNew = (node: ts.Expression) => {
 };
 
 // The member of a heap class that a private name names.
+// The private name that a statement's expression reads, writes, or calls on this or a name before
+// it evaluates anything else, which throws a TypeError where the object lacks it.
+export const getLeadingPrivate = (node: ts.Expression): ts.PropertyAccessExpression | undefined => {
+  if (
+    ts.isPropertyAccessExpression(node) &&
+    ts.isPrivateIdentifier(node.name) &&
+    (node.expression.kind === ts.SyntaxKind.ThisKeyword || ts.isIdentifier(node.expression))
+  ) {
+    return node;
+  }
+  if (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isNonNullExpression(node) ||
+    ts.isPropertyAccessExpression(node) ||
+    ts.isElementAccessExpression(node) ||
+    ts.isCallExpression(node) ||
+    ts.isAwaitExpression(node) ||
+    ts.isTypeOfExpression(node) ||
+    ts.isVoidExpression(node)
+  ) {
+    return getLeadingPrivate(node.expression);
+  }
+  if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
+    return getLeadingPrivate(node.operand);
+  }
+  if (!ts.isBinaryExpression(node)) return undefined;
+  if (node.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return getLeadingPrivate(node.left);
+  // A plain assignment checks its target only after it evaluates its value, and a pattern its
+  // first target after it reads the value's first element or property.
+  const right = skipCasts(node.right);
+  const first = ts.isArrayLiteralExpression(node.left)
+    ? node.left.elements.at(0)
+    : ts.isObjectLiteralExpression(node.left)
+      ? node.left.properties.at(0)
+      : node.left;
+  const target =
+    first === undefined
+      ? undefined
+      : ts.isSpreadElement(first)
+        ? first.expression
+        : ts.isPropertyAssignment(first)
+          ? ts.isObjectLiteralExpression(right) &&
+            right.properties.some((property) => property.name?.getText() === first.name.getText())
+            ? first.initializer
+            : undefined
+          : ts.isExpression(first)
+            ? first
+            : undefined;
+  return isInertValue(right) &&
+    target !== undefined &&
+    (target === node.left || !ts.isBinaryExpression(target))
+    ? getLeadingPrivate(target)
+    : undefined;
+};
+
 export const getPrivateMember = (name: ts.PrivateIdentifier, context: Context) => {
   const declaration = getSymbol(name, context.checker)?.valueDeclaration;
   return declaration !== undefined &&

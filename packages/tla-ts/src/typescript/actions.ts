@@ -90,6 +90,7 @@ import {
   isInlined,
   getFunctionOfKind,
   getUnresolvedRead,
+  getLeadingPrivate,
   isUnresolved,
   getBound,
   getBaseClass,
@@ -10731,6 +10732,15 @@ export const translateStatements = (
       translateStatements(statements, checked, context, frame),
     );
   }
+  // A statement after the one whose private name ran checked checks its own.
+  if (path.scope.brandChecked !== undefined && path.scope.brandChecked !== statements[0]) {
+    return translateStatements(
+      statements,
+      { ...path, scope: { ...path.scope, brandChecked: undefined } },
+      context,
+      frame,
+    );
+  }
   if (statements.length === 0) return frame.next(path);
   const statement = statements[0];
   const continueWith = (inner: Path) =>
@@ -10756,6 +10766,66 @@ export const translateStatements = (
       : getUnresolvedRead(evaluated, context);
   if (unresolved !== undefined)
     return throwError("ReferenceError", path, unresolved, context, frame);
+  // A statement that first uses a private name of an object that lacks it throws a TypeError. A
+  // for-of over an array written in place assigns its first element first.
+  const loopTarget =
+    ts.isForOfStatement(statement) && !ts.isVariableDeclarationList(statement.initializer)
+      ? statement.initializer
+      : undefined;
+  const iterated =
+    loopTarget !== undefined && ts.isForOfStatement(statement)
+      ? skipCasts(statement.expression)
+      : undefined;
+  const leadingPrivate =
+    loopTarget !== undefined && iterated !== undefined
+      ? ts.isArrayLiteralExpression(iterated) &&
+        iterated.elements.length > 0 &&
+        isInertValue(iterated)
+        ? getLeadingPrivate(loopTarget)
+        : undefined
+      : evaluated === undefined
+        ? undefined
+        : getLeadingPrivate(evaluated);
+  const privateMember =
+    leadingPrivate !== undefined && ts.isPrivateIdentifier(leadingPrivate.name)
+      ? getPrivateMember(leadingPrivate.name, context)
+      : undefined;
+  if (
+    leadingPrivate !== undefined &&
+    privateMember !== undefined &&
+    path.scope.brandChecked !== statement
+  ) {
+    const checked = translateStatements(
+      statements,
+      { ...path, scope: { ...path.scope, brandChecked: statement } },
+      context,
+      frame,
+    );
+    // An array pattern or a for-of iterates the array before it writes the private name.
+    const assigned = evaluated && skipCasts(evaluated);
+    const isIterating =
+      iterated !== undefined ||
+      (assigned !== undefined &&
+        ts.isBinaryExpression(assigned) &&
+        ts.isArrayLiteralExpression(assigned.left));
+    const thrown = throwTypeError(path, leadingPrivate, context, frame);
+    return ifThenElse(
+      translateHasPrivate(privateMember, leadingPrivate.expression, path.scope, context),
+      checked,
+      isIterating
+        ? ifThenElse(
+            translateArrayIteration(
+              boolean(true),
+              getHeap(path.scope, statement, context),
+              statement,
+              context,
+            ),
+            thrown,
+            leaf(boolean(false)),
+          )
+        : thrown,
+    );
+  }
   // An await statement whose promise fulfilled, or a conversion that ran, drops the value.
   if (
     ts.isExpressionStatement(statement) &&
