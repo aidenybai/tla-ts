@@ -6872,6 +6872,32 @@ describe("errors", () => {
     expect((await checkModel(getSource("7,6"))).failure?.message).toContain("7,5");
   });
 
+  it("runs as statements a method that calls a method that makes objects", async () => {
+    const getSource = (expected: number) => `
+      class Table {
+        sorts = [5, 6, 7];
+        saved: number[][] = [];
+        signature(args: number[]) {
+          const domain = args.map((arg) => this.sorts[arg]);
+          return { name: "f", domain };
+        }
+        hash(args: number[]) {
+          const signature = this.signature(args);
+          return signature.domain[0] + signature.name.length;
+        }
+        keep(domain: number[]) {
+          this.saved.push(domain);
+        }
+      }
+      const table = new Table();
+      table.keep([1]);
+      const total = 1 + table.hash([2, 0]);
+      if (total !== ${expected}) throw new Error(String(total));
+    `;
+    expect((await checkModel(getSource(9))).failure).toBeUndefined();
+    expect((await checkModel(getSource(8))).failure?.message).toContain("9");
+  });
+
   it("makes the objects of a callback that an array literal's method calls", async () => {
     const getSource = (expected: number) => `
       const size = [1].map((value) => ({ value })).length;

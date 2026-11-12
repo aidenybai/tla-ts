@@ -6281,10 +6281,21 @@ const isHeapCall = (
   context: Context,
 ): node is ts.CallExpression => {
   if (context.heap === undefined || !ts.isCallExpression(node)) return false;
-  // A method runs as statements only where it makes objects, as a statement allocates them.
+  // A method runs as statements only where it, or what it calls, makes objects, as a statement
+  // allocates them.
+  const isMaking = (body: ts.Node, visited: Set<ts.Node>): boolean =>
+    getAllocated(body, context).length > 0 ||
+    findNodes(body, ts.isCallExpression).some((call) => {
+      const callee = isMethodCall(call)
+        ? getCalledMethod(call.expression, context)?.method
+        : getCallee(call.expression, context);
+      if (callee?.body === undefined || visited.has(callee)) return false;
+      visited.add(callee);
+      return isMaking(callee.body, visited);
+    });
   if (isMethodCall(node)) {
     const method = getCalledMethod(node.expression, context)?.method;
-    return method?.body !== undefined && getAllocated(method.body, context).length > 0;
+    return method?.body !== undefined && isMaking(method.body, new Set([method]));
   }
   const symbol = getSymbol(node.expression, context.checker);
   const callee =
