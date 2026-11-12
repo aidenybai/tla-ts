@@ -147,6 +147,7 @@ import {
 import {
   getAccessorValue,
   getAllocated,
+  isMade,
   isNewError,
   getCandidateValue,
   getHeap,
@@ -7430,8 +7431,7 @@ export const getChanged = (
     }
     const isHeapChanged =
       getArgumentsOwner(node, context.checker) !== undefined ||
-      (getAllocated(node, context).includes(node) &&
-        !(isIdentityIgnored && isNewError(node, context))) ||
+      (isMade(node, context) && !(isIdentityIgnored && isNewError(node, context))) ||
       (ts.isBindingElement(node) &&
         (context.heapCollections.has(node) ||
           (node.dotDotDotToken !== undefined && ts.isObjectBindingPattern(node.parent)))) ||

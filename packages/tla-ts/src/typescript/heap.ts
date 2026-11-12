@@ -2161,6 +2161,51 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
   return isAllocated ? [...nested, ...fields, node] : [...nested, ...fields];
 };
 
+// Whether a node itself makes an object, as getAllocated(node).includes(node) tells, without
+// collecting what its operands make.
+export const isMade = (node: ts.Node, context: Context, isSometimes = false): boolean => {
+  if (context.heap === undefined) return false;
+  if (
+    isHeapFunction(node, context) ||
+    isFunctionObject(node, context) ||
+    isNestedFunction(node, context)
+  ) {
+    return !isSometimes;
+  }
+  if (ts.isFunctionLike(node)) return false;
+  if (ts.isClassLike(node)) return isHeapClass(node, context) && !isSometimes;
+  if (ts.isOptionalChain(node) || ts.isConditionalExpression(node) || ts.isBinaryExpression(node)) {
+    return false;
+  }
+  const created = getNewClass(node, context);
+  const isNewInstance =
+    !isSometimes &&
+    created !== undefined &&
+    ts.isExpression(node) &&
+    (getRunConstructor(created, context) === undefined || isStatementNew(node));
+  return (
+    (ts.isObjectLiteralExpression(node) &&
+      isObjectValue(node, context) &&
+      !isProxyOperation(node, context)) ||
+    ((ts.isArrayLiteralExpression(node) ||
+      isHoleyNewArray(node) ||
+      ts.isCallExpression(node) ||
+      ts.isNewExpression(node)) &&
+      context.heapCollections.has(node)) ||
+    ts.isRegularExpressionLiteral(node) ||
+    getMadeRegExp(node, context) !== undefined ||
+    isNewObject(node, context) ||
+    isNewDate(node, context) ||
+    isNewProxy(node, context) ||
+    getNewBuffer(node, context) !== undefined ||
+    getNewWrapper(node, context) !== undefined ||
+    isHeldError(node, context) ||
+    (!isSometimes && isAllocation(node, context)) ||
+    (!isSometimes && isNewError(node, context)) ||
+    isNewInstance
+  );
+};
+
 // The Object functions that treat an array as an object, so that the heap holds the array.
 const ARRAY_OBJECT_USES = new Set([
   "defineProperty",
