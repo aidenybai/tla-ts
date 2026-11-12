@@ -86,7 +86,6 @@ import {
   isModuleFile,
   getSymbol,
   isAssigned,
-  getFunctionValue,
   getTopLevelDeclaration,
   getUndefined,
   isHeapClass,
@@ -191,6 +190,7 @@ import {
   translateObjectChange,
   translateObjectValue,
   isFunctionValue,
+  getOwnFunctionKeys,
   translatePropertyKey,
 } from "./heap";
 import {
@@ -10174,18 +10174,10 @@ const translateIterations = (
     isIteratedValue(iterated.expression, context);
   // A for-in over a function that a script makes and the heap doesn't hold visits the enumerable
   // keys that it inherits from Function.prototype, but not its own length, name, and prototype.
-  const iteratedFunction =
-    iterated !== undefined && ts.isForInStatement(iterated) && context.heap !== undefined
-      ? getFunctionValue(skipCasts(iterated.expression), context)
-      : undefined;
   const ownFunctionKeys =
-    iteratedFunction === undefined ||
-    isAnyGenerator(iteratedFunction) ||
-    isAsyncFunction(iteratedFunction)
-      ? undefined
-      : ts.isArrowFunction(iteratedFunction)
-        ? ["length", "name"]
-        : ["length", "name", "prototype"];
+    iterated !== undefined && ts.isForInStatement(iterated)
+      ? getOwnFunctionKeys(iterated.expression, context)
+      : undefined;
   // A variable that only ever holds a built-in object, such as JSON.
   const heldSymbol =
     iterated !== undefined && ts.isIdentifier(iterated.expression)

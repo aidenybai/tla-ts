@@ -49,6 +49,8 @@ import {
   skipCasts,
   isAssigned,
   getFunctionValue,
+  isAnyGenerator,
+  isAsyncFunction,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import {
@@ -149,6 +151,17 @@ export const isFunctionValue = (node: ts.Expression, context: Context) => {
     names?.includes("function") === true &&
     names.every((name) => name === "function" || name === "undefined")
   );
+};
+
+// The own keys of a function that a script makes where the heap doesn't hold it, besides the
+// arguments and caller of a sloppy function.
+export const getOwnFunctionKeys = (node: ts.Expression, context: Context) => {
+  const made = getFunctionValue(skipCasts(node), context);
+  return made === undefined || isAnyGenerator(made) || isAsyncFunction(made)
+    ? undefined
+    : ts.isArrowFunction(made)
+      ? ["length", "name"]
+      : ["length", "name", "prototype"];
 };
 
 // An object, which may be a built-in one such as Math or Array.prototype.
