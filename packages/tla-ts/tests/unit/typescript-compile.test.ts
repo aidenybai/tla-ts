@@ -1608,6 +1608,23 @@ describe("values", () => {
     );
   });
 
+  it("runs each call that changes state among the arguments of a declaration's call", async () => {
+    const getSource = (expected: string) => `
+      let n: number = 0;
+      const step = () => {
+        n++;
+        return n;
+      };
+      const pair = (a: number, b: number) => a * 10 + b;
+      const first = pair(step(), step());
+      const second = Math.max(step(), step() - 5);
+      const outcomes = [first, second, n].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("12,3,4"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("21,3,4"))).failure?.message).toContain("outcomes 12,3,4");
+  });
+
   it("gives what a compound assignment to a property writes, as its value", async () => {
     const getSource = (field: number, property: number, element: number, typed: number) => `
       class Counter {

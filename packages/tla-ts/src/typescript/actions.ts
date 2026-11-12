@@ -10776,9 +10776,7 @@ const getHoistedCall = (statement: ts.Statement, path: Path, context: Context) =
         ts.isBinaryExpression(outer) &&
         outer.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
         skipCasts(outer.right) === call
-      ) &&
-      // A call's first argument already runs first.
-      !(ts.isCallExpression(outer) && outer.arguments.at(0) === call),
+      ),
     path,
     context,
   );
