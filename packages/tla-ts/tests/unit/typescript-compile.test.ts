@@ -470,7 +470,7 @@ describe("top-level statements", () => {
           return 3;
         },
       });
-      let found = Array.prototype.indexOf.call(holder, "two");
+      let joined = Array.prototype.join.call(holder, ",");
     `);
     expect(result.failure?.message).toContain("tla-ts can't call getters");
   });
@@ -2088,6 +2088,27 @@ describe("errors", () => {
     `;
     expect((await checkModel(getSource(3))).failure).toBeUndefined();
     expect((await checkModel(getSource(2))).failure?.message).toContain("unexpected");
+  });
+
+  it("runs a getter that a descriptor writes as a method", async () => {
+    const getSource = (expected: string) => `
+      const source = {};
+      let log = "";
+      const getLog = (): string => log;
+      Object.defineProperty(source, "a", {
+        get() {
+          log += "a";
+          return 1;
+        },
+        enumerable: true,
+      });
+      const values = Object.values(source);
+      if (values[0] !== 1 || log !== "a") throw new Error("values");
+      const direct = (source as { a: number }).a;
+      if (direct !== 1 || getLog() !== "${expected}") throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource("aa"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("a"))).failure?.message).toContain("unexpected");
   });
 
   it("reads each element of an array-like object as its method visits it, running getters", async () => {

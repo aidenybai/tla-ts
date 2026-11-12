@@ -31,7 +31,7 @@ import {
 import { TlaTypeScriptError } from "../errors";
 import { translateCondition, translateExpression, translateNegatedCondition } from "./expressions";
 import { type Formula, ifThenElse, letIn, render, leaf } from "./formula";
-import { getSuperLookup, translateFunctionValue, translateObjectValue } from "./heap";
+import { getCandidateValue, getSuperLookup, translateObjectValue } from "./heap";
 import { mayBeNumber, useJavaScript } from "./javascript";
 import {
   type Bound,
@@ -775,7 +775,8 @@ export const translateFoundGetter = (
       share(key, "key", context, (sharedKey) =>
         getters.reduceRight(
           (rest, getter) => {
-            if (getter.body === undefined) return rest;
+            const candidate = getCandidateValue(getter, context);
+            if (getter.body === undefined || candidate === undefined) return rest;
             context.inProgress.add(getter);
             const value = translateBody(
               getter.body,
@@ -795,7 +796,7 @@ export const translateFoundGetter = (
                     ],
                     context,
                   ),
-                  translateFunctionValue(getter, context),
+                  candidate,
                 ]),
               ]),
               value,

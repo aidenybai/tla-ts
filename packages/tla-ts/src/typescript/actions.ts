@@ -145,7 +145,6 @@ import {
   translateHoldsMethod,
   translateMemberKey,
   translateObjectChange,
-  translateFunctionValue,
   translateObjectValue,
   translatePropertyKey,
 } from "./heap";
@@ -5014,31 +5013,35 @@ const translateExpressionStatement = (
   }
   const right = expression.right;
   return translateJoined(expression, path, context, continueWith, (next) =>
-    setters.reduceRight(
-      (rest, setter) =>
-        ifThenElse(
-          apply("=", [
-            useJavaScript(
-              "CodeOf",
-              [write.heap, useJavaScript("SetterOf", [write.heap, write.ref, write.key], context)],
+    setters.reduceRight((rest, setter) => {
+      const value = getCandidateValue(setter, context);
+      return value === undefined
+        ? rest
+        : ifThenElse(
+            apply("=", [
+              useJavaScript(
+                "CodeOf",
+                [
+                  write.heap,
+                  useJavaScript("SetterOf", [write.heap, write.ref, write.key], context),
+                ],
+                context,
+              ),
+              value,
+            ]),
+            inlineBody(
+              expression,
+              setter,
+              [right],
+              { value: write.ref, method: setter },
+              path,
               context,
+              frame,
+              next,
             ),
-            translateFunctionValue(setter, context),
-          ]),
-          inlineBody(
-            expression,
-            setter,
-            [right],
-            { value: write.ref, method: setter },
-            path,
-            context,
-            frame,
-            next,
-          ),
-          rest,
-        ),
-      translateWrite(next),
-    ),
+            rest,
+          );
+    }, translateWrite(next)),
   );
 };
 

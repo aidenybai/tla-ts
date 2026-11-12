@@ -1043,6 +1043,10 @@ const isDefault = (node: ts.Node): boolean =>
 
 export type HeapFunction = ts.FunctionDeclaration | ts.FunctionExpression;
 
+// A function that a descriptor gives as its get or set, which an object literal may write as a
+// method.
+export type AccessorFunction = HeapFunction | ts.MethodDeclaration;
+
 export type HeapClass = ts.ClassLikeDeclaration | HeapFunction;
 
 const heapFunctions = new WeakMap<ts.Node, boolean>();
@@ -1111,7 +1115,7 @@ export const changesState = (
   );
 };
 
-const accessorFunctions = new WeakMap<ts.SourceFile, Map<string, HeapFunction[]>>();
+const accessorFunctions = new WeakMap<ts.SourceFile, Map<string, AccessorFunction[]>>();
 
 // The functions that a script writes as the get or the set of a property descriptor, which a read
 // or a write of a property that tla-ts can't resolve may run.
@@ -1119,12 +1123,12 @@ export const getAccessorFunctions = (node: ts.Node, field: "get" | "set", contex
   const file = node.getSourceFile();
   const known = accessorFunctions.get(file);
   if (known !== undefined) return known.get(field) ?? [];
-  const found = new Map<string, HeapFunction[]>([
+  const found = new Map<string, AccessorFunction[]>([
     ["get", []],
     ["set", []],
   ]);
-  // A descriptor's get or set, which an object literal, an assignment, or a definition's value
-  // gives it.
+  // A descriptor's get or set, which an object literal, as a property or a method, an assignment,
+  // or a definition's value gives it.
   const visit = (child: ts.Node) => {
     const isAssigned =
       ts.isBinaryExpression(child) &&
@@ -1146,13 +1150,15 @@ export const getAccessorFunctions = (node: ts.Node, field: "get" | "set", contex
               property.name.text === "value",
           )
         : undefined;
-    const name = ts.isPropertyAssignment(child)
-      ? child.name
-      : isAssigned && ts.isPropertyAccessExpression(child.left)
-        ? child.left.name
-        : defined === undefined
-          ? undefined
-          : definition?.at(1);
+    const name =
+      ts.isPropertyAssignment(child) ||
+      (ts.isMethodDeclaration(child) && ts.isObjectLiteralExpression(child.parent))
+        ? child.name
+        : isAssigned && ts.isPropertyAccessExpression(child.left)
+          ? child.left.name
+          : defined === undefined
+            ? undefined
+            : definition?.at(1);
     const list =
       name !== undefined && (ts.isIdentifier(name) || ts.isStringLiteral(name))
         ? found.get(name.text)
@@ -1162,12 +1168,17 @@ export const getAccessorFunctions = (node: ts.Node, field: "get" | "set", contex
       : ts.isBinaryExpression(child)
         ? child.right
         : defined?.initializer;
-    const accessor =
-      list === undefined || value === undefined ? undefined : getCallee(value, context);
+    const accessor = ts.isMethodDeclaration(child)
+      ? child
+      : list === undefined || value === undefined
+        ? undefined
+        : getCallee(value, context);
     if (
       list !== undefined &&
       accessor !== undefined &&
-      (ts.isFunctionDeclaration(accessor) || ts.isFunctionExpression(accessor)) &&
+      (ts.isFunctionDeclaration(accessor) ||
+        ts.isFunctionExpression(accessor) ||
+        ts.isMethodDeclaration(accessor)) &&
       getParameters(accessor).every((parameter) => parameter.dotDotDotToken === undefined) &&
       !list.includes(accessor)
     ) {
