@@ -505,13 +505,10 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     }
     return printCommandLineError(parsed.isTool, version, parsed.error);
   }
-  const dump =
-    parsed.dump &&
-    getStateDump(
-      parsed.dump.map((value) =>
-        value.includes("${metadir}") ? value.replace("${metadir}", createMetadir(parsed)) : value,
-      ),
-    );
+  const dump = parsed.dump && getStateDump(parsed.dump);
+  if (dump?.path.startsWith("${metadir}")) {
+    dump.path = dump.path.replaceAll("${metadir}", createMetadir(parsed));
+  }
   const dumpPath = dump?.path;
   if (dumpPath !== undefined) {
     try {
