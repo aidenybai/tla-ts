@@ -4,7 +4,6 @@
   "tlapm/backends/z3/z3test/regressions/issues/5429.smt2": "text-mismatch",
   "tlapm/backends/z3/z3test/regressions/issues/5482.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/longrunning/6117-3.smt2": "time-limit",
-  "tlapm/backends/z3/z3test/regressions/smt2/2935.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/3042.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/issue-2416-2.smt2": "text-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/macro-finder-cores.smt2": "text-mismatch",

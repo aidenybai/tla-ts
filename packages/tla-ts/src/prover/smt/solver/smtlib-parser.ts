@@ -948,6 +948,28 @@ export const createSmtlibReader = (
     return instantiateSort(decl, parameters, sexpr);
   };
 
+  // parse_psort: Z3 makes the leaves and the indexed sorts of a sort definition, and an application
+  // of a builtin sort, which takes any number of parameters, only when the definition is used.
+  const checkPsort = (sexpr: SExpr, bindings: ReadonlyMap<string, number>) => {
+    const head = sexpr.kind === "list" ? sexpr.items[0] : undefined;
+    if (
+      head === undefined ||
+      !isSymbol(head) ||
+      head.text === "_" ||
+      sortDecls.has(head.text) ||
+      !isBuiltinParametricSort(head.text)
+    ) {
+      parseSort(sexpr, "", bindings);
+      return;
+    }
+    for (const item of (sexpr as SmtList).items.slice(1)) checkPsort(item, bindings);
+  };
+
+  const isBuiltinParametricSort = (name: string) =>
+    (hasArrays && (ARRAY_SORT_NAMES.has(name) || (name === "Set" && hasArrayExtensions))) ||
+    (hasSeq && (name === "Seq" || name === "RegEx")) ||
+    (hasFpa && FPA_SORT_NAMES.has(name));
+
   const mkFloatSort = (indices: SExpr[], at: SExpr) => {
     const ebitsIndex = indices[0];
     const sbitsIndex = indices[1];
@@ -2452,14 +2474,7 @@ export const createSmtlibReader = (
         list,
       );
       const body = list.items[3] ?? list.end;
-      if (parameters.length === 0) {
-        declare(sortDecls, symbol.text, {
-          kind: "sort",
-          sort: parseSort(body, "invalid sort definition"),
-        });
-        return;
-      }
-      parseSort(body, "", bindTypeParameters(parameters));
+      checkPsort(body, bindTypeParameters(parameters));
       declare(sortDecls, symbol.text, { kind: "definition", parameters, body });
       return;
     }
