@@ -1234,7 +1234,6 @@ export const isDescriptionOfAll = (node: ts.Node, context: Context) =>
     isBuiltInObject(node.arguments[0], context) ||
     getDescribedPrimitive(node.arguments[0], context) !== undefined);
 
-
 // Object.create, with a prototype that tla-ts can tell is an object or null.
 export const isCreation = (node: ts.Node, context: Context) => {
   if (
@@ -1690,9 +1689,7 @@ export const getGetterCall = (node: ts.Node, context: Context) => {
       : undefined;
   const key = ts.isCallExpression(descriptor) ? descriptor.arguments.at(1) : undefined;
   const builtIn =
-    owner !== undefined &&
-    ts.isPropertyAccessExpression(owner) &&
-    owner.name.text === "prototype"
+    owner !== undefined && ts.isPropertyAccessExpression(owner) && owner.name.text === "prototype"
       ? getBuiltIn(owner.expression, context)
       : undefined;
   return ts.isPropertyAccessExpression(origin) &&

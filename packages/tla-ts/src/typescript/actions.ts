@@ -1478,26 +1478,28 @@ export const translateCallStatement = (
       (ts.isArrowFunction(receiver) || ts.isFunctionExpression(receiver)) &&
       getterCall.path !== "get Object.prototype.__proto__" &&
       getterCall.path !== "get RegExp.prototype.flags";
-    const run = isFunctionReceiver ? throwTypeError(path, expression, context, frame) : bindOnce(
-      path,
-      resultName,
-      useJavaScript(
-        "GetterCall",
-        [
-          heap,
-          getter,
-          receiver === undefined
-            ? getUndefined(context)
-            : translateExpression(receiver, path.scope, context),
-        ],
-        context,
-      ),
-      ifThenElse(
-        apply("=", [field(result, "error"), string("")]),
-        continueWith(path, field(result, "value")),
-        throwTypeError(path, expression, context, frame),
-      ),
-    );
+    const run = isFunctionReceiver
+      ? throwTypeError(path, expression, context, frame)
+      : bindOnce(
+          path,
+          resultName,
+          useJavaScript(
+            "GetterCall",
+            [
+              heap,
+              getter,
+              receiver === undefined
+                ? getUndefined(context)
+                : translateExpression(receiver, path.scope, context),
+            ],
+            context,
+          ),
+          ifThenElse(
+            apply("=", [field(result, "error"), string("")]),
+            continueWith(path, field(result, "value")),
+            throwTypeError(path, expression, context, frame),
+          ),
+        );
     const builtIn = translateBuiltInValue(getterCall.path, expression, context);
     return ifThenElse(
       apply("/\\", [

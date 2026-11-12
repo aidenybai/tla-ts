@@ -2525,7 +2525,10 @@ describe("errors", () => {
     `;
     expect((await checkModel(source)).failure).toBeUndefined();
     // Freezing a typed array with elements throws a TypeError.
-    const frozen = source.replace("Object.seal(new Uint8Array());", "Object.freeze(new Uint8Array(1));");
+    const frozen = source.replace(
+      "Object.seal(new Uint8Array());",
+      "Object.freeze(new Uint8Array(1));",
+    );
     expect((await checkModel(frozen)).failure).toBeDefined();
   });
 
@@ -2613,7 +2616,7 @@ describe("errors", () => {
     expect((await checkModel(source)).failure).toBeUndefined();
     const wrong = [
       ['"key,c", "keys"', '"c,key", "keys"'],
-      ['result.c.writable, false', 'result.c.writable, true'],
+      ["result.c.writable, false", "result.c.writable, true"],
       ["result[enumSym].value, value", "result[enumSym].value, undefined"],
       ['"0,1,length", "string"', '"0,1", "string"'],
     ];
@@ -2673,7 +2676,7 @@ describe("errors", () => {
     const wrong = [
       ['check(typeof count, "object"', 'check(typeof count, "number"'],
       ["check(count.valueOf(), 5,", "check(count.valueOf(), 6,"],
-      ['check(Object(5) === count, false', 'check(Object(5) === count, true'],
+      ["check(Object(5) === count, false", "check(Object(5) === count, true"],
     ];
     for (const [from, to] of wrong) {
       expect((await checkModel(source.replace(from, to))).failure).toBeDefined();
