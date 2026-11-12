@@ -5594,9 +5594,9 @@ const translateLoopCall = (
         : compare;
   const replacedName = context.names.getFresh("replaced");
   // map keeps a hole where the array that it visits lacks an element, which only an array that the
-  // heap holds can.
+  // heap holds can, unless nothing reads the array.
   const keepHole = () =>
-    isHeapMap
+    isHeapMap || ts.isExpressionStatement(expression.parent)
       ? repeat(inner, getMapped(getUndefined(context), true))
       : leaf(
           apply("Assert", [
