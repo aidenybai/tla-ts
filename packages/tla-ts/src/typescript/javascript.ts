@@ -729,6 +729,10 @@ EnvironmentObject(bindings) == [bindings |-> bindings] @@ [EmptyObject EXCEPT !.
 Captured(heap, closure, key) ==
   heap.objects[heap.objects[closure[Ref]].environment[Ref]].bindings[key]
 
+\\* A heap where a closure's environment holds a new value of a local that the closure changed.
+SetCaptured(heap, closure, key, value) ==
+  [heap EXCEPT !.objects[heap.objects[closure[Ref]].environment[Ref]].bindings[key] = value]
+
 \\* The code that a value runs where a script calls it.
 CodeOf(heap, value) ==
   IF IsHeap(value) /\\ "code" \\in DOMAIN heap.objects[value[Ref]]

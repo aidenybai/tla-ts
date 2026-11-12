@@ -8104,6 +8104,49 @@ describe("errors", () => {
     ).toThrow("tla-ts can't follow a function that outlives its call");
   });
 
+  it("keeps the locals that a closure changes in its environment", async () => {
+    const getSource = (expected: string) => `
+      const seen = { count: 0 };
+      let next: (() => number) | undefined;
+      let other: (() => number) | undefined;
+      function counter(start: number) {
+        let count = start;
+        next = function () {
+          count += 1;
+          if (count === 3) throw new Error("three");
+          return count;
+        };
+      }
+      counter(0);
+      other = next;
+      counter(10);
+      let thrown = 0;
+      const first = other!();
+      const second = other!();
+      try { other!(); } catch (error) { thrown += 1; }
+      const third = other!();
+      const fourth = next!();
+      if ([first, second, third, fourth, thrown].join() !== "${expected}") {
+        throw new Error("counters");
+      }
+    `;
+    expect((await checkModel(getSource("1,2,4,11,1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1,2,3,11,1"))).failure?.message).toContain("counters");
+    expect(() =>
+      compile(`
+        const seen = { count: 0 };
+        let next: (() => number) | undefined;
+        function counter() {
+          let count = 0;
+          next = function () { count += 1; return count; };
+          return count;
+        }
+        counter();
+        if (next!() !== 1) throw new Error("counters");
+      `),
+    ).toThrow("tla-ts can't follow a function that outlives its call and shares a local");
+  });
+
   it("makes a class expression that a script only reads where it runs", async () => {
     const getSource = (length: number) => `
       const describe = (made: object, key: string) => Object.getOwnPropertyDescriptor(made, key)!.value;
