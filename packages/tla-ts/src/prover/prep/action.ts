@@ -40,7 +40,10 @@ const getHyp = (scope: Scope | undefined, index: number) => {
 const getLevel = (scope: Scope | undefined, expression: Expr) =>
   getLevelInfo(scope, expression).level;
 
-const isBuiltin = (expression: Expr, builtins: Builtin[]) =>
+const isBuiltin = (
+  expression: Expr,
+  builtins: Builtin[],
+): expression is Extract<Expr, { kind: "Apply" }> =>
   expression.kind === "Apply" &&
   expression.operator.kind === "Internal" &&
   builtins.includes(expression.operator.builtin);
@@ -72,9 +75,7 @@ const expandAction: Rewrite = (scope, expression) => {
 };
 
 const expandUnchanged: Rewrite = (scope, expression) =>
-  expression.kind === "Apply" &&
-  isBuiltin(expression, ["UNCHANGED"]) &&
-  expression.args.length === 1
+  isBuiltin(expression, ["UNCHANGED"]) && expression.args.length === 1
     ? rewriteUnchanged(expression.args[0])
     : mapScoped(scope, expression, expandUnchanged, adjoin, "all");
 
@@ -201,20 +202,15 @@ const renameHyp = (scope: Scope | undefined, hyp: Hyp, level?: number): Hyp => {
 const getOriginalLevel = (scope: Scope | undefined, hyp: Hyp) => {
   if (hyp.kind !== "Defn" || hyp.definition.kind !== "Operator") return undefined;
   const getNodeLevel = (expression: Expr) => {
-    if (!isBuiltin(expression, ["UNCHANGED"]) || expression.kind !== "Apply") {
-      return getLevel(scope, expression);
-    }
+    if (!isBuiltin(expression, ["UNCHANGED"])) return getLevel(scope, expression);
     const flatten = (inner: Expr): Expr[] =>
       inner.kind === "Tuple" ? inner.elements.flatMap(flatten) : [inner];
     const items = flatten(expression.args[0]);
     return getLevel(scope, items.length === 1 ? items[0] : expression.args[0]);
   };
   const body = hyp.definition.body;
-  const isCommuted =
-    isBuiltin(body, ["Prime", "BoxTrue", "Diamond"]) &&
-    body.kind === "Apply" &&
-    body.args.length === 1;
-  return getNodeLevel(isCommuted && body.kind === "Apply" ? body.args[0] : body);
+  const isCommuted = isBuiltin(body, ["Prime", "BoxTrue", "Diamond"]) && body.args.length === 1;
+  return getNodeLevel(isCommuted ? body.args[0] : body);
 };
 
 const renameContext = createContextMap<RenameState>(
@@ -417,12 +413,9 @@ const MODAL_BUILTINS: Builtin[] = [
 const coalesceModal: Rewrite = (scope, expression) => {
   if (expression.kind !== "Apply") return mapScoped(scope, expression, coalesceModal, adjoin);
   const operator = expression.operator;
-  const arg = expression.args[0];
-  if (
-    isBuiltin(expression, ["Prime", "StrongPrime"]) &&
-    expression.args.length === 1 &&
-    arg.kind === "Ix"
-  ) {
+  const args = expression.args;
+  const arg = args[0];
+  if (isBuiltin(expression, ["Prime", "StrongPrime"]) && args.length === 1 && arg.kind === "Ix") {
     const hyp = getHyp(scope, arg.index);
     if (hyp.kind === "Fresh" || hyp.kind === "Flex") {
       return at({ kind: "Opaque", name: `${hyp.name}#prime` }, expression);
@@ -433,7 +426,6 @@ const coalesceModal: Rewrite = (scope, expression) => {
   const hypScope = getScopeAt(scope, operator.index - 1);
   const hyp = hypScope?.hyp;
   if (!hyp) throw new TlapmBugError();
-  const args = expression.args;
   if (hyp.kind === "Defn" && hyp.definition.kind === "Operator") {
     const substitutive = getSubstitutiveArgs(hypScope.rest, hyp.definition);
     const isKept = args.every(
