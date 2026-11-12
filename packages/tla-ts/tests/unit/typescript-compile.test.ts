@@ -7692,6 +7692,35 @@ describe("errors", () => {
     expect((await checkModel(getSource("15,x,2"))).failure?.message).toContain("fields");
   });
 
+  it("makes a class expression that a script only reads where it runs", async () => {
+    const getSource = (length: number) => `
+      const describe = (made: object, key: string) => Object.getOwnPropertyDescriptor(made, key)!.value;
+      const method = class { m(x = 42, y?: number) {} }.prototype.m;
+      const length = describe(method, "length");
+      const staticMethod = class { static n(x: number, y = 1) {} }.n;
+      const staticLength = describe(staticMethod, "length");
+      let value: { name: string } | undefined = undefined;
+      value ??= class {};
+      const assigned = describe(value, "name");
+      const anonymous = describe(class {}, "name");
+      const named = describe(class cls {}, "name");
+      if (length !== 0 || staticLength !== ${length} || assigned !== "value" || anonymous !== "" || named !== "cls") {
+        throw new Error("classes");
+      }
+    `;
+    expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    expect((await checkModel(getSource(2))).failure?.message).toContain("classes");
+  });
+
+  it("stops at a call of a class expression that a script only reads", () => {
+    expect(() =>
+      compile(`
+        const got = class { m() { return 1; } }.prototype.m();
+        if (got !== 1) throw new Error("called");
+      `),
+    ).toThrow("Unsupported call");
+  });
+
   it("makes the instances that a class's static fields hold", async () => {
     const getSource = (check: string) => `
       class Point {
