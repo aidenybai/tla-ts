@@ -4346,6 +4346,31 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("tla-ts can't reorder an array in place");
   });
 
+  it("holds the holes that new Array makes", async () => {
+    const result = await checkModel(`
+      let calls = 0;
+      const arr = new Array(10);
+      arr[1] = undefined;
+      arr.forEach(() => {
+        calls++;
+      });
+      const sorted = new Array(3);
+      sorted[0] = "b";
+      sorted[2] = "a";
+      sorted.sort();
+      if (
+        calls !== 1 ||
+        sorted[0] !== "a" ||
+        sorted[1] !== "b" ||
+        sorted.hasOwnProperty(2) ||
+        new Array(2).fill(false).join(",") !== "false,false"
+      ) {
+        throw new Error("holes");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs the getters of an object literal that a method makes on each call", async () => {
     const getSource = (expected: string) => `
       const log: string[] = [];

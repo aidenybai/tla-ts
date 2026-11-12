@@ -223,6 +223,37 @@ export const rejectAnyReceiver = (node: ts.Expression, context: Context) => {
 };
 
 // The array literal that an expression is, or that the variable it names holds.
+// new Array(length), which makes an array of holes, for a length short enough to list them.
+export const isHoleyNewArray = (node: ts.Node): node is ts.NewExpression => {
+  const length = ts.isNewExpression(node) ? node.arguments?.at(0) : undefined;
+  return (
+    ts.isNewExpression(node) &&
+    node.expression.getText() === "Array" &&
+    node.arguments?.length === 1 &&
+    length !== undefined &&
+    ts.isNumericLiteral(length) &&
+    Number.isInteger(Number(length.text)) &&
+    Number(length.text) > 0 &&
+    Number(length.text) <= 64
+  );
+};
+
+// The array literal, or the new Array of holes, that an expression or the variable it names holds.
+export const getArraySource = (node: ts.Expression, context: Context) => {
+  const declaration = ts.isIdentifier(node)
+    ? getSymbol(node, context.checker)?.valueDeclaration
+    : undefined;
+  const initializer =
+    declaration !== undefined && ts.isVariableDeclaration(declaration)
+      ? declaration.initializer
+      : undefined;
+  return (
+    getArrayLiteral(node, context) ??
+    (isHoleyNewArray(node) ? node : undefined) ??
+    (initializer !== undefined && isHoleyNewArray(initializer) ? initializer : undefined)
+  );
+};
+
 export const getArrayLiteral = (node: ts.Expression, context: Context) => {
   if (ts.isArrayLiteralExpression(node)) return node;
   const declaration = ts.isIdentifier(node)
@@ -261,7 +292,7 @@ export const isHeapArray = (node: ts.Expression, context: Context): boolean => {
   if (ts.isConditionalExpression(node)) {
     return isHeapArray(node.whenTrue, context) && isHeapArray(node.whenFalse, context);
   }
-  const literal = getArrayLiteral(node, context);
+  const literal = getArraySource(node, context);
   const declaration = ts.isIdentifier(node)
     ? getSymbol(node, context.checker)?.valueDeclaration
     : undefined;

@@ -151,6 +151,7 @@ import {
   isRegExpArray,
   isSequenceType,
   translateUnknown,
+  isHoleyNewArray,
 } from "./types";
 
 interface Field {
@@ -2326,7 +2327,8 @@ const translateNode = (
       : undefined;
   if (errorClass !== undefined) return getConstructor(errorClass, context);
   const isHeapObject =
-    (ts.isArrayLiteralExpression(node) && context.heapArrays.has(node)) ||
+    ((ts.isArrayLiteralExpression(node) || isHoleyNewArray(node)) &&
+      context.heapArrays.has(node)) ||
     (ts.isClassExpression(node) && isHeapClass(node, context)) ||
     isHeapFunction(node, context) ||
     isFunctionObject(node, context) ||

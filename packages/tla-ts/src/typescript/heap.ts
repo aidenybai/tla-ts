@@ -87,6 +87,8 @@ import {
   isNumberLike,
   isSequenceType,
   TYPED_ARRAYS,
+  isHoleyNewArray,
+  getArraySource,
 } from "./types";
 
 const SHORT_CIRCUITS = new Set([
@@ -1011,6 +1013,26 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   if (ts.isObjectLiteralExpression(node)) {
     return useJavaScript("Allocate", [heap, translateObject(node, scope, context)], context);
   }
+  if (isHoleyNewArray(node)) {
+    const length = Number(node.arguments?.[0]?.getText());
+    const positions = Array.from({ length }, (_, offset) => number(offset + 1));
+    return useJavaScript(
+      "Allocate",
+      [
+        heap,
+        useJavaScript(
+          "ArrayObjectWithHoles",
+          [
+            translateBuiltInValue("Array.prototype", node, context),
+            tuple(positions.map(() => getUndefined(context))),
+            set(positions),
+          ],
+          context,
+        ),
+      ],
+      context,
+    );
+  }
   if (ts.isArrayLiteralExpression(node)) {
     // An elision is a hole, which the array has no element for, though its length counts it.
     const holes = node.elements.flatMap((element, position) =>
@@ -1863,7 +1885,8 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
   const created = getNewClass(node, context);
   const isAllocated =
     (ts.isObjectLiteralExpression(node) && isObjectValue(node, context)) ||
-    (ts.isArrayLiteralExpression(node) && context.heapArrays.has(node)) ||
+    ((ts.isArrayLiteralExpression(node) || isHoleyNewArray(node)) &&
+      context.heapArrays.has(node)) ||
     ts.isRegularExpressionLiteral(node) ||
     getMadeRegExp(node, context) !== undefined ||
     isNewObject(node, context) ||
@@ -1935,14 +1958,21 @@ const isArrayObjectUse = (node: ts.Identifier, context: Context) => {
 // Each use of a variable that holds one must read it as an object.
 // An array literal with holes, which a sequence can't hold, where a variable that only reads it as
 // an object holds it, or a method reads it.
-export const isHoleyArray = (node: ts.Node): node is ts.ArrayLiteralExpression =>
-  ts.isArrayLiteralExpression(node) &&
-  node.elements.some(ts.isOmittedExpression) &&
-  !node.elements.some(ts.isSpreadElement) &&
-  ((ts.isVariableDeclaration(node.parent) &&
+export const isHoleyArray = (node: ts.Node) => {
+  const isHeld =
+    node.parent !== undefined &&
+    ts.isVariableDeclaration(node.parent) &&
     node.parent.initializer === node &&
-    ts.isIdentifier(node.parent.name)) ||
-    (ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node));
+    ts.isIdentifier(node.parent.name);
+  // new Array(length) that a method reads at once, as in new Array(2).fill(0), stays a sequence.
+  return (
+    (isHoleyNewArray(node) && isHeld) ||
+    (ts.isArrayLiteralExpression(node) &&
+      node.elements.some(ts.isOmittedExpression) &&
+      !node.elements.some(ts.isSpreadElement) &&
+      (isHeld || (ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node)))
+  );
+};
 
 const isAssigned = (node: ts.Node) =>
   ts.isBinaryExpression(node.parent) &&
@@ -2467,7 +2497,7 @@ export const findHeapArrays = (
       !(ts.isVariableDeclaration(node.parent) && node.parent.name === node) &&
       !isArrayObjectUse(node, context)
     ) {
-      const literal = getArrayLiteral(node, context);
+      const literal = getArraySource(node, context);
       if (literal !== undefined && arrays.has(literal) && !changed.includes(literal)) {
         throw new TlaTypeScriptError(
           "Use an array that tla-ts holds as an object only through its properties",
