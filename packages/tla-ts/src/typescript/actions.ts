@@ -226,11 +226,13 @@ import {
   set,
   apply,
   boolean,
+  bound,
   call,
   define,
   except,
   exceptAt,
   field,
+  functionOf,
   getLocation,
   identifier,
   ifExpression,
@@ -7568,7 +7570,13 @@ const translateIterations = (
     ts.isForInStatement(iterated) &&
     (getKind(iterated.expression, context) === "object" ||
       (context.heap !== undefined && isBuiltInObject(iterated.expression, context)));
-  if (ts.isForInStatement(loop) && !isForIn) {
+  // A for-in over a list visits its indices, as strings in order.
+  const isListKeys =
+    iterated !== undefined &&
+    ts.isForInStatement(iterated) &&
+    !isForIn &&
+    getKind(iterated.expression, context) === "sequence";
+  if (ts.isForInStatement(loop) && !isForIn && !isListKeys) {
     throw new TlaTypeScriptError("for-in iterates only objects", loop.expression);
   }
   // A for-of over a string visits its characters.
@@ -7579,6 +7587,7 @@ const translateIterations = (
   if (
     iterated !== undefined &&
     !isForIn &&
+    !isListKeys &&
     !isIterator &&
     !isStringIteration &&
     !isHeapIteration &&
@@ -7845,15 +7854,26 @@ const translateIterations = (
                       ],
                       context,
                     )
-                  : isStringIteration
-                    ? useJavaScript(
-                        "StringCharacters",
-                        [translateExpression(iterated.expression, path.scope, context)],
+                  : isListKeys
+                    ? share(
+                        translateExpression(iterated.expression, path.scope, context),
+                        "list",
                         context,
+                        (list) =>
+                          functionOf(
+                            [bound("index", apply("DOMAIN", [list]))],
+                            apply("ToString", [apply("-", [identifier("index"), number(1)])]),
+                          ),
                       )
-                    : isHeapIteration
-                      ? translateHeapElements(iterated.expression, path.scope, context)
-                      : translateExpression(iterated.expression, path.scope, context),
+                    : isStringIteration
+                      ? useJavaScript(
+                          "StringCharacters",
+                          [translateExpression(iterated.expression, path.scope, context)],
+                          context,
+                        )
+                      : isHeapIteration
+                        ? translateHeapElements(iterated.expression, path.scope, context)
+                        : translateExpression(iterated.expression, path.scope, context),
               ),
             ]),
         operator,

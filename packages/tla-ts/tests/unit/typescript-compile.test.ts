@@ -9625,6 +9625,29 @@ describe("errors", () => {
     );
   });
 
+  it("visits a list's indices as strings in a for-in, and indexes the list with them", async () => {
+    const source = `
+      const holder = { seen: "" };
+      const list = Object.keys({ a: 1, b: 2, c: 3 });
+      let keys = "";
+      let joined = "";
+      for (const key in list) {
+        keys += key;
+        joined += list[key as unknown as number];
+      }
+      if (keys !== "012") throw new Error("keys " + keys);
+      if (joined !== "abc") throw new Error("joined " + joined);
+      holder.seen = keys;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    for (const [from, to, message] of [
+      ['keys !== "012"', 'keys !== "123"', "keys"],
+      ['joined !== "abc"', 'joined !== "bca"', "joined"],
+    ]) {
+      expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
+    }
+  });
+
   it("reads an array that the heap holds through for-in, instanceof, and a cast", async () => {
     const source = `
       const holder: { seen: string } = { seen: "" };
