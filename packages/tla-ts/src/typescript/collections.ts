@@ -1131,6 +1131,31 @@ export const MUTATING_METHODS = new Set([
 
 // The value of a collection after a mutating method call, or undefined if the method doesn't
 // mutate.
+// A method of an array value, which runs only where the prototype still holds the built-in method,
+// as a script that writes Array.prototype or Object.prototype may replace it.
+const checkArrayMethod = (value: Expression, node: MethodCall, scope: Scope, context: Context) => {
+  const method = node.expression.name.text;
+  return context.hasInheritedElements && context.heap !== undefined
+    ? ifExpression(
+        useJavaScript(
+          "HoldsBuiltIn",
+          [
+            getHeap(scope, node, context),
+            translateBuiltInValue("Array.prototype", node, context),
+            string(method),
+            string(`${method === "hasOwnProperty" ? "Object" : "Array"}.prototype.${method}`),
+          ],
+          context,
+        ),
+        value,
+        apply("Assert", [
+          boolean(false),
+          string(`tla-ts can't call the ${method} that a script put on a prototype`),
+        ]),
+      )
+    : value;
+};
+
 export const getUpdatedValue = (
   current: Expression,
   kind: Kind,
@@ -1139,14 +1164,17 @@ export const getUpdatedValue = (
   context: Context,
 ) => {
   if (kind === "sequence" && REORDER_METHODS.has(node.expression.name.text)) {
-    return translateReorder(current, node, scope, context);
+    return checkArrayMethod(translateReorder(current, node, scope, context), node, scope, context);
   }
   const values = node.arguments.map((argument, position) =>
     position === 0 && (kind === "set" || kind === "map")
       ? translateSetKey(argument, scope, context)
       : translateExpression(argument, scope, context),
   );
-  return UPDATES.get(kind)?.get(node.expression.name.text)?.(current, values, context);
+  const updated = UPDATES.get(kind)?.get(node.expression.name.text)?.(current, values, context);
+  return kind === "sequence" && updated !== undefined
+    ? checkArrayMethod(updated, node, scope, context)
+    : updated;
 };
 
 export const translateMethod = (
@@ -1177,7 +1205,12 @@ export const translateMethod = (
     REORDER_METHODS.has(node.expression.name.text) &&
     ts.isArrayLiteralExpression(skipCasts(receiver))
   ) {
-    return translateReorder(translateExpression(receiver, scope, context), node, scope, context);
+    return checkArrayMethod(
+      translateReorder(translateExpression(receiver, scope, context), node, scope, context),
+      node,
+      scope,
+      context,
+    );
   }
   if (kind === "sequence") {
     const method = node.expression.name.text;
@@ -1201,9 +1234,14 @@ export const translateMethod = (
     };
     const translateWith = (shared: Expression) =>
       translateSequenceOperation(call, shared, scope, context, isDefined);
-    return SINGLE_USE_METHODS.has(method)
-      ? translateWith(sequence)
-      : share(sequence, "sequence", context, translateWith);
+    return checkArrayMethod(
+      SINGLE_USE_METHODS.has(method)
+        ? translateWith(sequence)
+        : share(sequence, "sequence", context, translateWith),
+      node,
+      scope,
+      context,
+    );
   }
   if (kind === "set") return translateSetMethod(node, scope, context);
   if (kind === "map") return translateMapMethod(node, scope, context, isDefined);

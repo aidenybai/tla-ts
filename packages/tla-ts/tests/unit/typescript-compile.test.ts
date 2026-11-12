@@ -3389,6 +3389,15 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("stops at an array method that a script replaced", async () => {
+    const result = await checkModel(`
+      // @ts-ignore
+      Array.prototype.at = () => 5;
+      if ([1].at(0) !== 5) throw new Error("replaced");
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't call the at that a script put");
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`
