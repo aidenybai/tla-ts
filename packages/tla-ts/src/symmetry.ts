@@ -340,6 +340,34 @@ const permuteValue = (value: Value, images: RankedImages): Value => {
         : permuteElements(functionValue.domain, images);
     const range = permuteElements(functionValue.range, images) ?? functionValue.range;
     if (domain) {
+      // A domain of model values with consecutive ranks that the permutation maps onto itself,
+      // such as the symmetric set, stays in place: each value moves to its key's image.
+      const original = functionValue.domain;
+      const first = original[0];
+      const firstRank = typeof first === "object" && first.kind === "ModelValue" ? first.rank : -1;
+      let isInPlace = firstRank !== -1;
+      for (let index = 0; isInPlace && index < domain.length; index++) {
+        const key = original[index];
+        const image = domain[index];
+        isInPlace =
+          typeof key === "object" &&
+          key.kind === "ModelValue" &&
+          key.rank === firstRank + index &&
+          typeof image === "object" &&
+          image.kind === "ModelValue" &&
+          image.rank >= firstRank &&
+          image.rank < firstRank + domain.length;
+      }
+      if (isInPlace) {
+        const placed = range.slice();
+        for (let index = 0; index < domain.length; index++) {
+          const image = domain[index];
+          if (typeof image === "object" && image.kind === "ModelValue") {
+            placed[image.rank - firstRank] = range[index];
+          }
+        }
+        return createSortedFunction(original, placed);
+      }
       // Sorts the keys and their values together by binary insertion, since a permuted domain is
       // usually a few model values.
       const values = range === functionValue.range ? range.slice() : range;
