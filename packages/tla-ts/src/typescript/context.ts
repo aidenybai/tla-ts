@@ -1526,11 +1526,15 @@ export const isLiteral = (node: ts.Expression) =>
 interface FactoryCall {
   closure: FunctionNode;
   bindings: [ts.Symbol, ts.Expression][];
+  variables: ts.VariableDeclaration[];
 }
 
 // The function that a call to a factory returns, where the factory only declares functions before
 // it returns one, and the call passes it literals. A constant that the call initializes stands for
 // that function, which reads each parameter of the factory as the literal that the call passes.
+// The factory may also declare variables that a literal or a parameter initializes, where a script
+// calls it once, in a constant that it declares outside any function or block, so that the call's
+// variables are the only ones.
 export const getFactoryCall = (
   node: ts.Node | undefined,
   context: Context,
@@ -1542,17 +1546,49 @@ export const getFactoryCall = (
     return undefined;
   }
   const returned = body.statements.at(-1);
-  const isDeclaringFunctions = body.statements
-    .slice(0, -1)
-    .every((statement) =>
-      ts.isVariableStatement(statement)
-        ? (statement.declarationList.flags & ts.NodeFlags.Const) !== 0 &&
-          statement.declarationList.declarations.every(
-            (declaration) =>
-              ts.isIdentifier(declaration.name) && getAnyFunction(declaration) !== undefined,
+  const statements = body.statements.slice(0, -1);
+  const variables = statements.flatMap((statement) =>
+    ts.isVariableStatement(statement)
+      ? statement.declarationList.declarations.filter(
+          (declaration) =>
+            (statement.declarationList.flags & ts.NodeFlags.Const) === 0 ||
+            getAnyFunction(declaration) === undefined,
+        )
+      : [],
+  );
+  const parameters = factory.parameters.map((parameter) =>
+    getSymbol(parameter.name, context.checker),
+  );
+  const factorySymbol = getSymbol(node.expression, context.checker);
+  const statement = node.parent.parent?.parent;
+  const isDeclaringFunctions =
+    statements.every((inner) =>
+      ts.isVariableStatement(inner)
+        ? inner.declarationList.declarations.every((declaration) =>
+            ts.isIdentifier(declaration.name),
           )
-        : ts.isFunctionDeclaration(statement) && statement.body !== undefined,
-    );
+        : ts.isFunctionDeclaration(inner) && inner.body !== undefined,
+    ) &&
+    variables.every(
+      (variable) =>
+        variable.initializer !== undefined &&
+        (isLiteral(variable.initializer) ||
+          (ts.isIdentifier(variable.initializer) &&
+            parameters.includes(getSymbol(variable.initializer, context.checker)))),
+    ) &&
+    (variables.length === 0 ||
+      (isScript(node.getSourceFile()) &&
+        factory.getSourceFile() === node.getSourceFile() &&
+        ts.isVariableDeclaration(node.parent) &&
+        node.parent.initializer === node &&
+        statement !== undefined &&
+        ts.isVariableStatement(statement) &&
+        ts.isSourceFile(statement.parent) &&
+        findNodes(
+          node.getSourceFile(),
+          (inner): inner is ts.Identifier =>
+            ts.isIdentifier(inner) && getSymbol(inner, context.checker) === factorySymbol,
+        ).length === 2));
   const expression =
     returned !== undefined && ts.isReturnStatement(returned) ? returned.expression : undefined;
   const closure =
@@ -1583,7 +1619,7 @@ export const getFactoryCall = (
         parameter.initializer === undefined &&
         parameter.dotDotDotToken === undefined,
     )
-    ? { closure, bindings }
+    ? { closure, bindings, variables }
     : undefined;
 };
 

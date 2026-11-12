@@ -3756,6 +3756,41 @@ describe("errors", () => {
     expect((await check(compile(wrong, path))).failure?.message).toContain('"marked"');
   });
 
+  it("runs the function that a factory returns, which changes the factory's variables", async () => {
+    const getSource = (bumped: string, total: string) => `
+      interface Box { total: number }
+      const box: Box = { total: 0 };
+      const createCount = (start: number) => {
+        let count = start;
+        const step = 2;
+        function next() {
+          count += step;
+          box.total += count;
+          return count;
+        }
+        return next;
+      };
+      const next = createCount(1);
+      const bump = () => next() * 10;
+      for (let index = 0; index < 2; index++) next();
+      if (bump() !== ${bumped} || box.total !== ${total}) throw new Error("count");
+    `;
+    expect((await checkModel(getSource("70", "15"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("50", "15"))).failure?.message).toContain('"count"');
+    expect((await checkModel(getSource("70", "8"))).failure?.message).toContain('"count"');
+    expect(() =>
+      compile(`
+        const createCount = (start: number) => {
+          let count = start;
+          return () => ++count;
+        };
+        const first = createCount(0);
+        const second = createCount(10);
+        if (first() !== 1 || second() !== 11) throw new Error("count");
+      `),
+    ).toThrow("Unsupported expression");
+  });
+
   it("runs a call in an operand that runs only sometimes inside another", async () => {
     const getSource = (kind: string) => `
       interface Leaf { kind: "leaf"; size: number }

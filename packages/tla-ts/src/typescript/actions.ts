@@ -34,6 +34,7 @@ import {
   getCallee,
   getElement,
   getAnyFunction,
+  getFactoryCall,
   isAsyncFunction,
   isAsyncGenerator,
   isAnyGenerator,
@@ -5811,13 +5812,29 @@ export const translateDeclarations = (
     }
   }
   if (isInlined(initializer, context)) {
-    return translateDeclarations(
-      declarations.slice(1),
-      { ...path, scope: initialize(path.scope, declaration, context) },
-      context,
-      frame,
-      continueWith,
-    );
+    // The variables that a factory call makes, which the function that it returns reads.
+    const factoryScope = bindFactory(declaration, path.scope, context);
+    return (getFactoryCall(initializer, context)?.variables ?? []).reduceRight(
+      (next: (current: Path) => Formula, variable) => (current: Path) =>
+        bindDeclaration(
+          [variable],
+          variable.initializer === undefined
+            ? getUndefined(context)
+            : translateExpression(variable.initializer, factoryScope, context),
+          current,
+          context,
+          frame,
+          next,
+        ),
+      (current: Path) =>
+        translateDeclarations(
+          declarations.slice(1),
+          { ...current, scope: initialize(current.scope, declaration, context) },
+          context,
+          frame,
+          continueWith,
+        ),
+    )(path);
   }
   if (
     initializer !== undefined &&
