@@ -186,6 +186,7 @@ import {
   isGetterRead,
   getGetterKeys,
   getWrittenFunctions,
+  getTrapFunctions,
   isProxyOperation,
   readDescriptor,
   readDescriptors,
@@ -6056,8 +6057,10 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
         visit(called);
       });
     }
-    // A definition that reads its descriptor's fields, or a read of a key with getters, runs them.
+    // A definition that reads its descriptor's fields, a read of a key with getters, or an
+    // operation on a proxy, which runs its traps, runs them.
     const getters = [
+      ...getTrapFunctions(node, context),
       ...getDescriptorGetters(node, context),
       ...getOwnValuesGetters(node, context),
       ...getReadFunctions(node, context),

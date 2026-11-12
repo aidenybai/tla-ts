@@ -3857,17 +3857,32 @@ ProxyDefinitionAgrees(heap, target, key, descriptor) ==
               /\\ current.writable
               /\\ "writable" \\in descriptor.fields) => descriptor.writable
 
-\\* Object.seal or Object.freeze of a proxy that can't grow, which restricts the keys of the target
-\\* that its handlers forward keys and definitions to.
-ProxyRestrict(heap, ref, isFrozen) ==
-  Restrict(heap, ForwardTarget(heap, ref, {"ownKeys", "getOwnPropertyDescriptor", "defineProperty"}),
-           isFrozen)
+\\* The descriptor that Object.seal defines on each key, and that Object.freeze defines on each
+\\* where it also makes data read-only.
+IntegrityDescriptor(heap, isData) ==
+  FieldsDescriptor(heap, IF isData THEN {"configurable", "writable"} ELSE {"configurable"},
+                   [field \\in {"configurable", "writable"} |-> FALSE])
 
-\\* Object.isSealed or Object.isFrozen of a proxy that can't grow, which reads the keys of the target
-\\* that its handlers forward keys and descriptors to.
-ProxyIsRestricted(heap, ref, isFrozen) ==
-  LET target == ForwardTarget(heap, ref, {"ownKeys", "getOwnPropertyDescriptor"})
-  IN IF isFrozen THEN IsFrozen(heap, target) ELSE IsSealed(heap, target)
+\\* The completed descriptor that a proxy's getOwnPropertyDescriptor trap gives, or Undefined.
+TrappedDescriptor(heap, result) ==
+  IF result = Undefined THEN Undefined ELSE CompleteDescriptor(ToDescriptor(heap, result))
+
+\\* The completed descriptor of an object's own property, or Undefined where it has none.
+OwnDescriptor(heap, ref, key) ==
+  IF HasOwn(heap, ref, key)
+  THEN LET object == Lookup(heap, ref)
+           attributes == object.attributes[key]
+           fields == IF attributes.kind = "accessor"
+                     THEN {"get", "set", "enumerable", "configurable"}
+                     ELSE {"value", "writable", "enumerable", "configurable"}
+       IN FieldsDescriptor(heap, fields,
+                           [field \\in fields |->
+                              CASE field = "value" -> object.values[key]
+                                [] field \\in {"get", "set"} -> object.values[key][field]
+                                [] OTHER -> attributes[field]])
+  ELSE Undefined
+
+\
 
 \\* The prototype of a proxy's target, where an array outside the heap has Array.prototype, which it
 \\* holds there since nothing can change it.

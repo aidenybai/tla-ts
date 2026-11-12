@@ -1,8 +1,9 @@
 import ts from "@typescript/typescript6";
-import type { Expression } from "../ast";
+import type { Expression, OperatorDefinition } from "../ast";
 import {
   allocate,
   bindOnce,
+  getChanged,
   type Frame,
   inlineBody,
   inlineValues,
@@ -29,7 +30,7 @@ import {
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
-import { type Formula, ifThenElse, leaf } from "./formula";
+import { type Formula, ifThenElse, leaf, letIn, render } from "./formula";
 import { getBuiltIn } from "./intrinsics";
 import {
   getCandidateValue,
@@ -44,9 +45,10 @@ import { getKind, isHeapPattern } from "./types";
 import {
   apply,
   boolean,
+  call,
+  define,
   field,
   identifier,
-  ifExpression,
   index,
   junction,
   not,
@@ -677,7 +679,7 @@ const readFields = (
 
 // Defines the keys with the descriptors that the statement read, which throws the TypeError or the
 // RangeError of a definition that fails.
-const define = (
+const defineAll = (
   site: ts.CallExpression,
   target: Expression,
   keys: Expression,
@@ -723,7 +725,7 @@ export const readDescriptor = (
   ifThenElse(
     isObjectArgument(values[0], context),
     readFields(site, values[2], path, context, frame, (after, descriptor) =>
-      define(
+      defineAll(
         site,
         values[0],
         tuple([values[1]]),
@@ -778,7 +780,7 @@ export const readDescriptors = (
   ): Formula => {
     const key = literalKeys?.[index];
     if (key === undefined) {
-      return define(
+      return defineAll(
         site,
         target,
         tuple((literalKeys ?? []).map(string)),
@@ -815,7 +817,7 @@ export const readDescriptors = (
     if (position > KEYS_LIMIT) {
       return ifThenElse(
         apply("<=", [apply("Len", [keys]), number(KEYS_LIMIT)]),
-        define(
+        defineAll(
           site,
           target,
           index(read, [number(1)]),
@@ -1319,6 +1321,17 @@ const getOperation = (node: ts.Node, context: Context): ProxyOperation | undefin
   if (!isMethodCall(node)) return undefined;
   const global = getBuiltIn(node.expression.expression, context);
   const method = node.expression.name.text;
+  // Object.assign of one source runs the source's internal methods on each of its keys.
+  if (global === "Object" && method === "assign" && node.arguments.length === 2) {
+    return {
+      trap: "ownKeys",
+      object: node.arguments[1],
+      key: undefined,
+      value: node.arguments[0],
+      method,
+      isReflected: false,
+    };
+  }
   // Reflect.apply and Reflect.construct of an array that the script writes call or construct.
   const listed = node.arguments.at(method === "apply" ? 2 : 1);
   if (
@@ -1383,6 +1396,153 @@ const getProxyOperation = (node: ts.Node, context: Context) => {
 
 export const isProxyOperation = (node: ts.Node, context: Context): node is ts.Expression =>
   getProxyOperation(node, context) !== undefined;
+
+const TRAPS = [
+  "get",
+  "has",
+  "set",
+  "deleteProperty",
+  "getOwnPropertyDescriptor",
+  "defineProperty",
+  "getPrototypeOf",
+  "setPrototypeOf",
+  "isExtensible",
+  "preventExtensions",
+  "ownKeys",
+  "apply",
+  "construct",
+];
+
+// The traps that an operation on a proxy may run, through each target too.
+export const getTrapFunctions = (node: ts.Node, context: Context) =>
+  getProxyOperation(node, context) === undefined
+    ? []
+    : TRAPS.flatMap((trap) => getMethods(node, trap, context));
+
+// Runs visit on each key of a list, in a recursive operator, as a loop's iterations run, that
+// carries the values that the traps it runs can change and what it gathers. A visit goes on to
+// the next key, or stops with a result, and a throw leaves the operator to reach what catches it.
+const loopKeys = (
+  site: ts.Node,
+  keys: Expression,
+  seed: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  visit: (
+    current: Path,
+    key: Expression,
+    gathered: Expression,
+    inner: Frame,
+    again: (current: Path, gathered: Expression) => Formula,
+    stop: (current: Path, result: Expression) => Formula,
+  ) => Formula,
+  continueWith: (path: Path, result: Expression) => Formula,
+): Formula => {
+  const changed = getChanged(site, path, context);
+  const name = context.names.getFresh("Keys");
+  const position = context.names.getFresh("position");
+  const gathered = context.names.getFresh("gathered");
+  const parameters = changed.map((symbol) => {
+    const binding = path.scope.bindings.get(symbol);
+    return context.names.getFresh(binding?.kind === "Identifier" ? binding.name : "value");
+  });
+  const getValues = (current: Path) =>
+    changed.flatMap((symbol) => current.scope.bindings.get(symbol) ?? []);
+  const withValues = (current: Path, values: Expression[]): Path => ({
+    ...current,
+    scope: {
+      ...current.scope,
+      bindings: new Map([
+        ...current.scope.bindings,
+        ...changed.map((symbol, offset): [ts.Symbol, Expression] => [symbol, values[offset]]),
+      ]),
+    },
+  });
+  const end = (current: Path, kind: string, result: Expression, message: Expression) =>
+    leaf(tuple([string(kind), result, message, ...getValues(current)]));
+  const inner: Path = {
+    ...withValues(
+      path,
+      parameters.map((parameter) => identifier(parameter)),
+    ),
+    isLooping: true,
+    generators: new Map(),
+    tasks: undefined,
+  };
+  const throwTo = frame.throwTo;
+  const innerFrame: Frame = {
+    ...frame,
+    breakTo: undefined,
+    continueTo: undefined,
+    throwTo:
+      throwTo &&
+      ((current, thrown) =>
+        end(
+          current,
+          "throw",
+          thrown.value,
+          thrown.uncaught.kind === "Apply" && thrown.uncaught.operator === "Assert"
+            ? (thrown.uncaught.args[1] ?? string(""))
+            : string(site.getText()),
+        )),
+  };
+  const operator: OperatorDefinition = {
+    ...define(
+      name,
+      [position, gathered, ...parameters].map((parameter) => ({ name: parameter, arity: 0 })),
+      render(
+        ifThenElse(
+          apply("<=", [identifier(position), apply("Len", [keys])]),
+          visit(
+            inner,
+            index(keys, [identifier(position)]),
+            identifier(gathered),
+            innerFrame,
+            (current, next) =>
+              leaf(
+                call(name, [
+                  apply("+", [identifier(position), number(1)]),
+                  next,
+                  ...getValues(current),
+                ]),
+              ),
+            (current, result) => end(current, "next", result, string("")),
+          ),
+          end(inner, "next", identifier(gathered), string("")),
+        ),
+      ),
+    ),
+    isRecursive: true,
+  };
+  const result = context.names.getFresh("keyed");
+  const after = {
+    ...withValues(
+      path,
+      changed.map((_, offset) => index(identifier(result), [number(offset + 4)])),
+    ),
+    isAssigned: path.isAssigned || changed.some((symbol) => context.variables.has(symbol)),
+  };
+  const value = index(identifier(result), [number(2)]);
+  return letIn(
+    [operator],
+    bindOnce(
+      path,
+      result,
+      call(name, [number(1), seed, ...getValues(path)]),
+      throwTo === undefined
+        ? continueWith(after, value)
+        : ifThenElse(
+            apply("=", [index(identifier(result), [number(1)]), string("throw")]),
+            throwTo(after, {
+              value,
+              uncaught: apply("Assert", [boolean(false), index(identifier(result), [number(3)])]),
+            }),
+            continueWith(after, value),
+          ),
+    ),
+  );
+};
 
 // The targets of a proxy that the script makes, through each target that is such a proxy too.
 const getTargets = (
@@ -1522,31 +1682,259 @@ export const runProxyOperation = (
         ? proxy
         : translateExpression(operation.newTarget, path.scope, context);
     const throwWith = (after: Path) => throwTypeError(after, node, context, frame);
-    // Object.seal and Object.freeze restrict the keys of a proxy that stops growing, and
-    // Object.isSealed and Object.isFrozen test them where it can't grow.
-    const isFrozen = boolean(operation.method === "freeze" || operation.method === "isFrozen");
+    // The proxy's internal methods that a function of Object runs on each of its keys, each as
+    // the handler's trap or, where it has none, as the target's.
+    const getOwnKeys = (
+      current: Path,
+      inner: Frame,
+      then: (path: Path, keys: Expression) => Formula,
+    ) =>
+      runTrap(
+        node,
+        proxy,
+        "ownKeys",
+        [],
+        current,
+        context,
+        inner,
+        (after, target) => {
+          const heap = getHeap(after.scope, node, context);
+          return then(
+            after,
+            javaScript("PropertyKeysOf", [
+              heap,
+              javaScript("ForwardTarget", [heap, target, set([string("ownKeys")])]),
+            ]),
+          );
+        },
+        (after, target, result) => {
+          const heap = getHeap(after.scope, node, context);
+          return ifThenElse(
+            javaScript("IsObjectIn", [heap, result]),
+            bind(after, "keys", javaScript("ProxyKeys", [heap, result]), context, (listed, keys) =>
+              ifThenElse(
+                javaScript("ProxyKeysAgree", [heap, target, keys]),
+                then(listed, keys),
+                throwTypeError(listed, node, context, inner),
+              ),
+            ),
+            throwTypeError(after, node, context, inner),
+          );
+        },
+      );
+    // Gives the completed descriptor of a key, or undefined.
+    const describeKey = (
+      current: Path,
+      key: Expression,
+      inner: Frame,
+      then: (path: Path, descriptor: Expression) => Formula,
+    ) =>
+      runTrap(
+        node,
+        proxy,
+        "getOwnPropertyDescriptor",
+        [key],
+        current,
+        context,
+        inner,
+        (after, target) => {
+          const heap = getHeap(after.scope, node, context);
+          return then(
+            after,
+            javaScript("OwnDescriptor", [
+              heap,
+              javaScript("ForwardTarget", [
+                heap,
+                target,
+                set([string("getOwnPropertyDescriptor")]),
+              ]),
+              key,
+            ]),
+          );
+        },
+        (after, target, result) => {
+          const heap = getHeap(after.scope, node, context);
+          return ifThenElse(
+            javaScript("ProxyDescriptorAgrees", [heap, target, key, result]),
+            then(after, javaScript("TrappedDescriptor", [heap, result])),
+            throwTypeError(after, node, context, inner),
+          );
+        },
+      );
+    const readKey = (
+      current: Path,
+      key: Expression,
+      inner: Frame,
+      then: (path: Path, value: Expression) => Formula,
+    ) =>
+      runTrap(
+        node,
+        proxy,
+        "get",
+        [key, proxy],
+        current,
+        context,
+        inner,
+        (after, target) => {
+          const heap = getHeap(after.scope, node, context);
+          return then(
+            after,
+            javaScript("Get", [
+              heap,
+              javaScript("ForwardTarget", [heap, target, set([string("get")])]),
+              key,
+            ]),
+          );
+        },
+        (after, target, result) =>
+          ifThenElse(
+            javaScript("ProxyAgrees", [
+              getHeap(after.scope, node, context),
+              target,
+              key,
+              result,
+              string("get"),
+            ]),
+            then(after, result),
+            throwTypeError(after, node, context, inner),
+          ),
+      );
+    // DefinePropertyOrThrow of a descriptor, which the trap gets as an object.
+    const defineKey = (
+      current: Path,
+      key: Expression,
+      descriptor: Expression,
+      inner: Frame,
+      then: (path: Path) => Formula,
+    ) =>
+      bind(
+        current,
+        "heap",
+        javaScript("Allocate", [
+          getHeap(current.scope, node, context),
+          javaScript("DescriptorObject", [descriptor]),
+        ]),
+        context,
+        (bound, allocated) =>
+          runTrap(
+            node,
+            proxy,
+            "defineProperty",
+            [key, javaScript("Allocated", [allocated])],
+            withHeap(bound, allocated, context),
+            context,
+            inner,
+            (after, target) => {
+              const heap = getHeap(after.scope, node, context);
+              return bind(
+                after,
+                "change",
+                javaScript("DefineConverted", [
+                  heap,
+                  javaScript("ForwardTarget", [heap, target, set([string("defineProperty")])]),
+                  key,
+                  descriptor,
+                ]),
+                context,
+                (changed, change) =>
+                  ifThenElse(
+                    field(change, "isDone"),
+                    then(withHeap(changed, field(change, "heap"), context)),
+                    throwTypeError(changed, node, context, inner),
+                  ),
+              );
+            },
+            (after, target, result) =>
+              ifThenElse(
+                junction("And", [
+                  javaScript("ToBoolean", [result]),
+                  javaScript("ProxyDefinitionAgrees", [
+                    getHeap(after.scope, node, context),
+                    target,
+                    key,
+                    descriptor,
+                  ]),
+                ]),
+                then(after),
+                throwTypeError(after, node, context, inner),
+              ),
+          ),
+      );
+    const isPresent = (descriptor: Expression) => apply("#", [descriptor, getUndefined(context)]);
+    const isEnumerable = (descriptor: Expression) =>
+      junction("And", [isPresent(descriptor), field(descriptor, "enumerable")]);
+    // Object.seal and Object.freeze restrict each key of a proxy that stops growing, and
+    // Object.isSealed and Object.isFrozen test each where it can't grow.
+    const isFrozen = operation.method === "freeze" || operation.method === "isFrozen";
     const next = (after: Path, result?: Expression): Formula => {
-      const heap = getHeap(after.scope, node, context);
       if (operation.method === "seal" || operation.method === "freeze") {
-        return bind(
-          after,
-          "heap",
-          javaScript("ProxyRestrict", [heap, proxy, isFrozen]),
-          context,
-          (bound, restricted) => given(withHeap(bound, restricted, context), result),
+        return getOwnKeys(after, frame, (listed, keys) =>
+          loopKeys(
+            node,
+            keys,
+            getUndefined(context),
+            listed,
+            context,
+            frame,
+            (current, key, gathered, inner, again) => {
+              const restrict = (described: Path, isData: Expression) =>
+                defineKey(
+                  described,
+                  key,
+                  javaScript("IntegrityDescriptor", [
+                    getHeap(described.scope, node, context),
+                    isData,
+                  ]),
+                  inner,
+                  (defined) => again(defined, gathered),
+                );
+              return isFrozen
+                ? describeKey(current, key, inner, (described, descriptor) =>
+                    ifThenElse(
+                      isPresent(descriptor),
+                      restrict(described, not(field(descriptor, "isAccessor"))),
+                      again(described, gathered),
+                    ),
+                  )
+                : restrict(current, boolean(false));
+            },
+            (looped) => given(looped, result),
+          ),
         );
       }
       return operation.method === "isSealed" || operation.method === "isFrozen"
-        ? bind(
-            after,
-            "result",
-            ifExpression(
-              result ?? boolean(true),
-              boolean(false),
-              javaScript("ProxyIsRestricted", [heap, proxy, isFrozen]),
+        ? ifThenElse(
+            result ?? boolean(true),
+            given(after, boolean(false)),
+            getOwnKeys(after, frame, (listed, keys) =>
+              loopKeys(
+                node,
+                keys,
+                boolean(true),
+                listed,
+                context,
+                frame,
+                (current, key, gathered, inner, again, stop) =>
+                  describeKey(current, key, inner, (described, descriptor) =>
+                    ifThenElse(
+                      junction("And", [
+                        isPresent(descriptor),
+                        junction("Or", [
+                          field(descriptor, "configurable"),
+                          junction("And", [
+                            boolean(isFrozen),
+                            field(descriptor, "isData"),
+                            field(descriptor, "writable"),
+                          ]),
+                        ]),
+                      ]),
+                      stop(described, boolean(false)),
+                      again(described, gathered),
+                    ),
+                  ),
+                given,
+              ),
             ),
-            context,
-            given,
           )
         : given(after, result);
     };
@@ -1573,19 +1961,84 @@ export const runProxyOperation = (
         (bound, allocated) =>
           next(withHeap(bound, allocated, context), javaScript("Allocated", [allocated])),
       );
-    // Object.keys, values, and entries ask the proxy which keys are enumerable, and the last two
-    // read their values, which tla-ts follows where no handler on the way traps those.
+    // Object.keys, values, entries, and assign ask the proxy for each key's descriptor, and all
+    // but the first read each enumerable key's value, which Object.assign writes to the object it
+    // takes. Each key runs in turn where a handler may trap those, and only assign reads symbols.
     const giveKeys = (after: Path, keys: Expression) => {
       const heap = getHeap(after.scope, node, context);
-      const traps = ["getOwnPropertyDescriptor", ...(operation.method === "keys" ? [] : ["get"])];
-      return next(
+      const listing = operation.method ?? "";
+      if (!["keys", "values", "entries", "assign"].includes(listing)) {
+        return next(after, javaScript("ProxyKeysOf", [heap, proxy, keys, method]));
+      }
+      const traps = ["getOwnPropertyDescriptor", ...(listing === "keys" ? [] : ["get"])];
+      if (
+        ["keys", "values", "entries"].includes(listing) &&
+        traps.every((trap) => getMethods(node, trap, context).length === 0)
+      ) {
+        return next(
+          after,
+          javaScript("ProxyKeysOf", [
+            heap,
+            javaScript("ForwardTarget", [heap, proxy, set(traps.map((name) => string(name)))]),
+            keys,
+            method,
+          ]),
+        );
+      }
+      // What the loop gathers of a key's value, which Object.assign writes instead.
+      const gatherValue = (
+        valued: Path,
+        key: Expression,
+        property: Expression,
+        gathered: Expression,
+        inner: Frame,
+        again: (current: Path, gathered: Expression) => Formula,
+      ) => {
+        const changed = getHeap(valued.scope, node, context);
+        return listing !== "assign"
+          ? again(
+              valued,
+              apply("Append", [gathered, listing === "values" ? property : tuple([key, property])]),
+            )
+          : ifThenElse(
+              javaScript("CanPut", [changed, value, key]),
+              bind(
+                valued,
+                "heap",
+                javaScript("SetProperty", [changed, value, key, property]),
+                context,
+                (bound, written) => again(withHeap(bound, written, context), gathered),
+              ),
+              throwTypeError(valued, node, context, inner),
+            );
+      };
+      return loopKeys(
+        node,
+        keys,
+        tuple([]),
         after,
-        javaScript("ProxyKeysOf", [
-          heap,
-          javaScript("ForwardTarget", [heap, proxy, set(traps.map((name) => string(name)))]),
-          keys,
-          method,
-        ]),
+        context,
+        frame,
+        (current, key, gathered, inner, again) => {
+          const gather = (described: Path, descriptor: Expression) =>
+            ifThenElse(
+              isEnumerable(descriptor),
+              listing === "keys"
+                ? again(described, apply("Append", [gathered, key]))
+                : readKey(described, key, inner, (valued, property) =>
+                    gatherValue(valued, key, property, gathered, inner, again),
+                  ),
+              again(described, gathered),
+            );
+          return listing === "assign"
+            ? describeKey(current, key, inner, gather)
+            : ifThenElse(
+                javaScript("IsSymbol", [key]),
+                again(current, gathered),
+                describeKey(current, key, inner, gather),
+              );
+        },
+        (looped, result) => next(looped, listing === "assign" ? value : result),
       );
     };
     // Runs the internal method of a proxy on the way, as its handler's trap or, where it has none,

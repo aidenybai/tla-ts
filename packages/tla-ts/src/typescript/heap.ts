@@ -63,7 +63,7 @@ import {
   translateToNumber,
   useJavaScript,
 } from "./javascript";
-import { isDescriptorsRead } from "./protocols";
+import { isDescriptorsRead, isProxyOperation } from "./protocols";
 import { createStateScope, type Scope } from "./scope";
 import {
   apply,
@@ -2589,15 +2589,6 @@ const FALLIBLE_CHANGES = new Set([
   "create",
 ]);
 
-// The changes that a proxy's traps run instead.
-const PROXY_CHANGES = new Set([
-  "defineProperty",
-  "preventExtensions",
-  "setPrototypeOf",
-  "freeze",
-  "seal",
-]);
-
 const isConstruct = (node: MethodCall) =>
   node.expression.expression.getText() === "Reflect" && node.expression.name.text === "construct";
 
@@ -2610,11 +2601,7 @@ export const isObjectChange = (node: ts.Node, context: Context): node is MethodC
     (node.expression.name.text !== "create" ||
       ts.isExpressionStatement(node.parent) ||
       isDescriptorsRead(node, context)) &&
-    !(
-      PROXY_CHANGES.has(node.expression.name.text) &&
-      node.arguments.length > 0 &&
-      isProxyValue(node.arguments[0], context)
-    )) ||
+    !isProxyOperation(node, context)) ||
     isConstruct(node));
 
 // The Object functions that convert their first argument to an object, which throws a TypeError for

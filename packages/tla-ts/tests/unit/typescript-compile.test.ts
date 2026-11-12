@@ -8944,10 +8944,92 @@ describe("proxies", () => {
     expect((await checkModel(getSource(3))).failure?.message).toContain("unexpected");
   });
 
+  it("runs a proxy's traps on each key that Object's functions read", async () => {
+    const getSource = (expected: number) => `
+      const log: unknown[] = [];
+      const getCount = (): number => log.length;
+      const symbol = Symbol();
+      const target: Record<string | symbol, number> = {};
+      target[symbol] = 1;
+      target.foo = 2;
+      target[0] = 3;
+      const proxy = new Proxy(target, {
+        getOwnPropertyDescriptor(innerTarget, key) {
+          log.push(key);
+          return Reflect.getOwnPropertyDescriptor(innerTarget, key);
+        },
+      });
+      const keys = Object.keys(proxy);
+      if (keys.length !== 2 || keys[0] !== "0" || keys[1] !== "foo") throw new Error("keys");
+      if (getCount() !== 2 || log[1] !== "foo") throw new Error("log");
+      const values = Object.values(proxy);
+      if (values.length !== 2 || values[1] !== 2 || getCount() !== 4) throw new Error("values");
+      const copy: Record<string | symbol, number> = {};
+      Object.assign(copy, proxy);
+      if (copy.foo !== 2 || copy[symbol] !== 1 || getCount() !== 7 || log[6] !== symbol) {
+        throw new Error("assign");
+      }
+      if (Object.isFrozen(proxy)) throw new Error("isFrozen");
+      Object.freeze(proxy);
+      if (getCount() !== 10 || !Object.isFrozen(target)) throw new Error("freeze");
+      if (!Object.isFrozen(proxy) || getCount() !== ${expected}) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(13))).failure).toBeUndefined();
+    expect((await checkModel(getSource(10))).failure?.message).toContain("unexpected");
+  });
+
+  it("throws what a trap on a key throws, and a TypeError where it disagrees", async () => {
+    const getSource = (isExtensible: boolean) => `
+      const seen: (string | symbol)[] = [];
+      const listed = [Symbol(), "foo", "0"];
+      class Marked extends Error {}
+      const source = new Proxy<{ attr: number | null }>({ attr: null }, {
+        getOwnPropertyDescriptor() {
+          throw new Marked();
+        },
+      });
+      let isMarked = false;
+      try {
+        Object.assign({}, source);
+      } catch (error) {
+        isMarked = error instanceof Marked;
+      }
+      if (!isMarked) throw new Error("marked");
+      const listing = new Proxy({}, {
+        getOwnPropertyDescriptor(innerTarget, key) {
+          seen.push(key);
+          return undefined;
+        },
+        ownKeys() {
+          return listed;
+        },
+      });
+      Object.assign({}, listing);
+      if (seen.length !== 3 || seen[0] !== listed[0] || seen[2] !== "0") throw new Error("order");
+      const fixed = {};
+      Object.defineProperty(fixed, "kept", { value: 1 });
+      const lying = new Proxy(fixed, {
+        getOwnPropertyDescriptor() {
+          return undefined;
+        },
+      });
+      ${isExtensible ? "" : "Object.preventExtensions(fixed);"}
+      let isTypeError = false;
+      try {
+        Object.isFrozen(lying);
+      } catch (error) {
+        isTypeError = error instanceof TypeError;
+      }
+      if (!isTypeError) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(false))).failure).toBeUndefined();
+    expect((await checkModel(getSource(true))).failure?.message).toContain("unexpected");
+  });
+
   it("stops the check where something else reads a proxy", async () => {
     const result = await checkModel(`
-      const proxy = new Proxy({ attr: 1 }, {});
-      const described = Object.getOwnPropertyDescriptors(proxy);
+      const proxy = new Proxy({ attr: { value: 1 } }, {});
+      Object.defineProperties({}, proxy);
     `);
     expect(result.failure?.message).toContain("tla-ts can't run a proxy's internal method here");
   });
