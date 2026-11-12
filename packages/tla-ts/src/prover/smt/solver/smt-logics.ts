@@ -41,6 +41,9 @@ const logicHasStr = (logic: string) =>
 
 export const logicHasSeq = (logic: string) => logic === "QF_BVRE" || logicHasStr(logic);
 
+export const logicHasPb = (logic: string) =>
+  logic === "QF_FD" || isAllLogic(logic) || logic === "HORN";
+
 const logicHasUf = (logic: string) => logic.includes("UF") || logic === "SMTFD";
 
 const logicHasDatatype = (logic: string) =>
