@@ -431,6 +431,8 @@ interface Target {
 interface Removed {
   value: Expression;
   path: Path;
+  // Where a call without ?. finds its receiver undefined or null, so throws a TypeError.
+  missing?: Expression;
 }
 
 export interface Thrown {
@@ -1258,6 +1260,50 @@ const getRemovedValue = (
   const method = node.expression.name.text;
   const receiver = node.expression.expression;
   const kind = getKind(receiver, context);
+  const removed = getRemoved(node, method, receiver, kind, path, context);
+  // A receiver that may be undefined or null gives undefined to ?. and changes nothing. Without
+  // ?., the caller throws a TypeError, and a chain that ?. cuts short earlier stops.
+  const held = getCast(ts.isNonNullExpression(receiver) ? receiver.expression : receiver);
+  const heldType = context.checker.getTypeAtLocation(held);
+  if (context.checker.getNonNullableType(heldType) === heldType) return removed;
+  context.prelude.add("Null");
+  const isMissing = (value: Expression) =>
+    apply("\\in", [value, set([getUndefined(context), identifier("Null")])]);
+  const missing = isMissing(translateExpression(held, path.scope, context));
+  const isOptional = node.expression.questionDotToken !== undefined;
+  return {
+    value: ifExpression(
+      missing,
+      isOptional
+        ? getUndefined(context)
+        : apply("Assert", [
+            boolean(false),
+            string("tla-ts can't call a method on undefined or null in this expression"),
+          ]),
+      removed.value,
+    ),
+    path: assign(receiver, path, context, (current) =>
+      share(current, "current", context, (shared) =>
+        ifExpression(
+          isMissing(shared),
+          shared,
+          getUpdatedValue(shared, kind, node, path.scope, context) ?? shared,
+        ),
+      ),
+    ),
+    missing: isOptional || ts.isOptionalChain(node) ? undefined : missing,
+  };
+};
+
+// What a call like queue.shift() returns, and the path after it changes its receiver.
+const getRemoved = (
+  node: ts.CallExpression & { expression: ts.PropertyAccessExpression },
+  method: string,
+  receiver: ts.Expression,
+  kind: ReturnType<typeof getKind>,
+  path: Path,
+  context: Context,
+): Removed => {
   // A set's or a map's delete gives whether it held the key.
   if (method === "delete") {
     const collection = translateExpression(receiver, path.scope, context);
@@ -6835,7 +6881,16 @@ const translateExpressionStatement = (
       ? getRemovedValue(expression.right, path, context)
       : undefined;
   if (removed !== undefined && ts.isBinaryExpression(expression)) {
-    return continueWith(assign(expression.left, removed.path, context, () => removed.value));
+    const assigned = continueWith(
+      assign(expression.left, removed.path, context, () => removed.value),
+    );
+    return removed.missing === undefined
+      ? assigned
+      : ifThenElse(
+          removed.missing,
+          throwTypeError(path, expression.right, context, frame),
+          assigned,
+        );
   }
   // JSON.parse of a literal that isn't JSON throws a SyntaxError, and of one that is makes objects
   // that nothing reads.
@@ -8144,12 +8199,19 @@ export const translateDeclarations = (
     if (initializer !== undefined && !isInertValue(initializer)) {
       const name = context.names.getFresh("value");
       const after = removed?.path ?? allocated;
-      return bindOnce(
+      const bound = bindOnce(
         after,
         name,
         value,
         bindDeclaration(declarations, identifier(name), after, context, frame, continueWith),
       );
+      return removed?.missing === undefined
+        ? bound
+        : ifThenElse(
+            removed.missing,
+            throwTypeError(allocated, initializer, context, frame),
+            bound,
+          );
     }
     return bindDeclaration(
       declarations,
