@@ -3,6 +3,7 @@
 import { SmtInvariantError, SmtUnsupportedError } from "../../../errors";
 import {
   FAMILY_BV,
+  OP_ADD,
   OP_BADD,
   OP_BAND,
   OP_BASHR,
@@ -42,19 +43,26 @@ import {
   OP_EXT_ROTATE_LEFT,
   OP_EXT_ROTATE_RIGHT,
   OP_EXTRACT,
+  OP_GE,
+  OP_IDIV,
+  OP_INT2BV,
   OP_ITE,
   OP_MKBV,
+  OP_MOD,
   OP_ROTATE_LEFT,
   OP_ROTATE_RIGHT,
   OP_SIGN_EXT,
   OP_SLEQ,
+  OP_UBV2INT,
   OP_ULEQ,
   OP_ZERO_EXT,
+  SORT_BOOL,
+  SORT_INT,
 } from "./ast";
 import { BitBlaster } from "./bit-blaster";
 import { mkBvApp } from "./bv-decl-plugin";
 import type { Context } from "./context";
-import { type Antecedents, Enode, Justification } from "./enode";
+import { type Antecedents, Enode, Justification, TheoryJustification } from "./enode";
 import { combineHash, hashU } from "./hash";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import {
@@ -68,6 +76,7 @@ import {
   TRUE_BOOL_VAR,
   TRUE_LITERAL,
 } from "./literal";
+import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { Theory } from "./theory";
 
 const NULL_THEORY_ID = -1;
@@ -235,6 +244,7 @@ export class TheoryBv extends Theory {
   private propDiseqsHead = 0;
   private propQueue: number[] = [];
   private mergeAux: [number[], number[]] = [[], []];
+  private bv2ints: Enode[] = [];
 
   constructor(context: Context) {
     super(context, FAMILY_BV);
@@ -675,6 +685,88 @@ export class TheoryBv extends Theory {
     this.dropAll(bits);
   }
 
+  private internalizeBv2int(term: number) {
+    this.processArgs(term);
+    const node = this.mkEnode(term);
+    this.bv2ints.push(node);
+    this.context.pushTrail(() => {
+      this.bv2ints.pop();
+    });
+    if (!this.context.relevancy.isEnabled) this.assertBv2intAxiom(term);
+  }
+
+  private assertBv2intAxiom(term: number) {
+    const context = this.context;
+    const manager = this.manager;
+    const word = manager.getArg(term, 0);
+    const wordBits = this.getBits(this.getVar(this.getInternalizedEnode(word)));
+    const zero = manager.mkNumeral(0n);
+    const terms = wordBits.map((bit, index) =>
+      manager.mkApp(OP_ITE, [bit, manager.mkNumeral(1n << BigInt(index)), zero], SORT_INT),
+    );
+    const sum = terms.length === 1 ? terms[0] : manager.mkApp(OP_ADD, terms, SORT_INT);
+    manager.incRef(sum);
+    const rewritten = new Rewriter(manager, TACTIC_REWRITER_OPTIONS).rewrite(sum);
+    const literal = this.mkEq(term, rewritten, false);
+    context.markLiteralAsRelevant(literal);
+    context.mkThAxiom([literal]);
+    manager.decRef(rewritten);
+    manager.decRef(sum);
+    this.dropAll(wordBits);
+  }
+
+  private internalizeInt2bv(term: number) {
+    this.processArgs(term);
+    const node = this.mkEnode(term);
+    this.mkBits(node.getThVar(this.id));
+    const arg = node.getArg(0);
+    if (!this.isAttachedToVar(arg)) this.mkVar(arg);
+    if (!this.context.relevancy.isEnabled) this.assertInt2bvAxiom(term);
+  }
+
+  private assertInt2bvAxiom(term: number) {
+    const context = this.context;
+    const manager = this.manager;
+    const arg = manager.getArg(term, 0);
+    const size = manager.getBvSize(manager.sorts[term]);
+    const mkMod = (dividend: number, divisor: bigint) =>
+      manager.mkApp(OP_MOD, [dividend, manager.mkNumeral(divisor)], SORT_INT);
+    const value = mkBvApp(manager, OP_UBV2INT, [term]);
+    manager.incRef(value);
+    const remainder = mkMod(arg, 1n << BigInt(size));
+    manager.incRef(remainder);
+    const literal = this.mkEq(value, remainder, false);
+    context.markLiteralAsRelevant(literal);
+    context.mkThAxiom([literal]);
+    manager.decRef(remainder);
+    manager.decRef(value);
+    const termBits = this.getBits(this.getVar(this.getInternalizedEnode(term)));
+    for (let index = 0; index < size; index++) {
+      const divisor = 1n << BigInt(index);
+      const quotient =
+        index === 0 ? arg : manager.mkApp(OP_IDIV, [arg, manager.mkNumeral(divisor)], SORT_INT);
+      manager.incRef(quotient);
+      const isOne = context.mkEqAtom(mkMod(quotient, 2n), manager.mkNumeral(1n));
+      manager.incRef(isOne);
+      const bitLiteral = this.mkEq(termBits[index], isOne, false);
+      context.markLiteralAsRelevant(bitLiteral);
+      context.mkThAxiom([bitLiteral]);
+      manager.decRef(isOne);
+      const zero = manager.mkNumeral(0n);
+      manager.incRef(zero);
+      const isAbove = this.mkLiteral(
+        manager.mkApp(OP_GE, [arg, manager.mkNumeral(divisor)], SORT_BOOL),
+      );
+      const isNonNegative = this.mkLiteral(manager.mkApp(OP_GE, [arg, zero], SORT_BOOL));
+      const isZero = this.mkEq(quotient, zero, false);
+      for (const bound of [isAbove, isNonNegative, isZero]) context.markLiteralAsRelevant(bound);
+      context.mkThAxiom([isAbove, negate(isNonNegative), isZero]);
+      manager.decRef(zero);
+      manager.decRef(quotient);
+    }
+    this.dropAll(termBits);
+  }
+
   internalizeTerm(term: number) {
     const manager = this.manager;
     const op = manager.getOp(term);
@@ -699,6 +791,8 @@ export class TheoryBv extends Theory {
     else if (op === OP_CONCAT) this.internalizeConcat(term);
     else if (op === OP_EXTRACT) this.internalizeExtract(term);
     else if (op === OP_MKBV) this.internalizeMkbv(term);
+    else if (op === OP_INT2BV) this.internalizeInt2bv(term);
+    else if (op === OP_UBV2INT) this.internalizeBv2int(term);
     else {
       const acBlast = AC_BLASTS.get(op);
       const blast = acBlast ?? UNARY_BLASTS.get(op) ?? BINARY_BLASTS.get(op);
@@ -905,6 +999,13 @@ export class TheoryBv extends Theory {
       if (atom !== undefined && !atom.isBit) context.markLiteralAsRelevant(atom.def);
       return;
     }
+    const op = manager.getOp(expr);
+    if (op === OP_UBV2INT || op === OP_INT2BV) {
+      context.markAsRelevant(manager.getArg(expr, 0));
+      if (op === OP_UBV2INT) this.assertBv2intAxiom(expr);
+      else this.assertInt2bvAxiom(expr);
+      return;
+    }
     if (!context.isEInternalized(expr)) return;
     const thVar = this.getInternalizedEnode(expr).getThVar(this.id);
     if (thVar < 0) return;
@@ -938,6 +1039,7 @@ export class TheoryBv extends Theory {
     const context = this.context;
     this.propQueue.length = 0;
     const size = this.bits[first].length;
+    if (size === 0 && this.bv2ints.length > 0) this.propagateBv2int(firstRoot);
     let isChanged = true;
     while (isChanged) {
       isChanged = false;
@@ -978,6 +1080,39 @@ export class TheoryBv extends Theory {
       }
     }
     this.propagateBits();
+  }
+
+  // int2bv(bv2int(x)) = x when the int2bv has the sort of x.
+  private propagateBv2int(rootVar: number) {
+    const manager = this.manager;
+    const node = this.getEnode(rootVar);
+    const propagate = (bv2int: Enode) => {
+      const word = bv2int.getArg(0);
+      for (const parent of node.root.parents) {
+        if (
+          manager.getOp(parent.owner) !== OP_INT2BV ||
+          parent.root === word.root ||
+          manager.sorts[parent.owner] !== manager.sorts[word.owner]
+        )
+          continue;
+        const justification = new TheoryJustification(
+          this.id,
+          [],
+          [node, parent.getArg(0), node, bv2int],
+        );
+        this.context.pushEq(parent, word, { kind: "justification", justification });
+        return;
+      }
+    };
+    if (this.bv2ints.length < node.classSize) {
+      for (const bv2int of this.bv2ints) if (bv2int.root === node.root) propagate(bv2int);
+      return;
+    }
+    let member = node;
+    do {
+      if (manager.getOp(member.owner) === OP_UBV2INT) propagate(member);
+      member = member.next;
+    } while (member !== node);
   }
 
   private mergeZeroOneBits(firstRoot: number, secondRoot: number) {
