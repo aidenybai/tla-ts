@@ -7635,10 +7635,9 @@ const findLeadingCall = (
   if (ts.isTemplateExpression(node)) {
     return thenConverted(inOrder(node.templateSpans.map((span) => span.expression)));
   }
-  const isBranchCall = (operand: ts.Expression) => {
-    const call = skipCasts(operand);
-    return ts.isCallExpression(call) && findLeadingCall(call, [], path, context).call === call;
-  };
+  // An operand that runs a call that only statements can run.
+  const isBranchCall = (operand: ts.Expression) =>
+    findLeadingCall(operand, [], path, context).call !== undefined;
   // A condition or a short-circuit's left operand always runs first, so a read that it runs first
   // runs before the operand that runs only sometimes.
   if (ts.isConditionalExpression(node)) {
@@ -8039,21 +8038,30 @@ export const translateStatements = (
         context,
         frame,
       );
-    const evaluate = (operand: ts.Expression) => {
+    // An operand runs the calls in it that only statements can run, in order, before the rest.
+    const evaluate = (operand: ts.Expression, current: Path): Formula => {
       const call = skipCasts(operand);
-      return ts.isCallExpression(call) && !path.scope.results.has(call)
-        ? allocate(call, path, context, (allocated) =>
-            translateCallStatement(call, allocated, context, frame, (after, value) =>
-              withValue(after, value ?? getUndefined(context)),
+      if (ts.isCallExpression(call) && !current.scope.results.has(call)) {
+        return allocate(call, current, context, (allocated) =>
+          translateCallStatement(call, allocated, context, frame, (after, value) =>
+            withValue(after, value ?? getUndefined(context)),
+          ),
+        );
+      }
+      const leading = getLeadingCall(operand, () => true, current, context);
+      return leading === undefined
+        ? withValue(current, translateExpression(operand, current.scope, context))
+        : allocate(leading.call, current, context, (allocated) =>
+            translateCallStatement(leading.call, allocated, context, frame, (after, value) =>
+              evaluate(operand, withLeadingResults(leading, allocated, after, value, context)),
             ),
-          )
-        : withValue(path, translateExpression(operand, path.scope, context));
+          );
     };
     if (ts.isConditionalExpression(branch)) {
       return ifThenElse(
         translateCondition(branch.condition, path.scope, context),
-        evaluate(branch.whenTrue),
-        evaluate(branch.whenFalse),
+        evaluate(branch.whenTrue, path),
+        evaluate(branch.whenFalse, path),
       );
     }
     const kind = branch.operatorToken.kind;
@@ -8068,7 +8076,7 @@ export const translateStatements = (
         : kind === ts.SyntaxKind.AmpersandAmpersandToken
           ? translateCondition(branch.left, path.scope, context)
           : not(translateCondition(branch.left, path.scope, context));
-    return ifThenElse(isRight, evaluate(branch.right), evaluate(branch.left));
+    return ifThenElse(isRight, evaluate(branch.right, path), evaluate(branch.left, path));
   }
   const hoisted = getHoistedAssignment(statement, path, context);
   // An increment gives its operand's number from before, or after, as its prefix form does.

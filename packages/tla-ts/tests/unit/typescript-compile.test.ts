@@ -3735,6 +3735,19 @@ describe("errors", () => {
     expect((await checkModel(getSource("18 24 12"))).failure?.message).toContain('"total"');
   });
 
+  it("runs a function that calls itself in a conditional where a statement changed what it reads", async () => {
+    const getSource = (expected: string) => `
+      interface Box { size: number }
+      const box: Box = { size: 3 };
+      const total = (depth: number): number =>
+        depth <= 0 ? box.size : box.size + total(depth - 1);
+      box.size = 4;
+      if (total(2) !== ${expected}) throw new Error("total");
+    `;
+    expect((await checkModel(getSource("12"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("9"))).failure?.message).toContain('"total"');
+  });
+
   it("runs an exported function that a script imports, which calls itself", async () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/marking.ts");
     const source = readFileSync(path, "utf8");
