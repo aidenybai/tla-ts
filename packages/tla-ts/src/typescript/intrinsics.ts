@@ -289,7 +289,7 @@ export const translateBuiltInValue = (
     | "Array.prototype"
     | "Object.prototype"
     | "Array"
-    | "get Function.prototype.arguments"
+    | `get ${string}`
     | "Object"
     | "Boolean"
     | "Number"

@@ -6447,6 +6447,55 @@ describe("buffers", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("calls RegExp.prototype's getters that a descriptor holds on any receiver", async () => {
+    const getSource = (expected: string) => `
+      const global = Object.getOwnPropertyDescriptor(RegExp.prototype, "global")!.get!;
+      const flags = Object.getOwnPropertyDescriptor(RegExp.prototype, "flags")!.get!;
+      const source = Object.getOwnPropertyDescriptor(RegExp.prototype, "source")!.get!;
+      if (global.call(/a/g) !== true) throw new Error("global");
+      if (global.call(/a/) !== false) throw new Error("not global");
+      if (global.call(RegExp.prototype) !== undefined) throw new Error("prototype");
+      if (source.call(RegExp.prototype) !== "(?:)") throw new Error("source");
+      if (flags.call(/a/gimsuy) !== "gimsuy") throw new Error("flags");
+      if (flags.call(RegExp.prototype) !== "") throw new Error("no flags");
+      const flagged: Record<string, unknown> = { global: 1, multiline: 0, sticky: "y" };
+      if (flags.call(flagged) !== "${expected}") throw new Error("unexpected");
+      for (const receiver of [undefined, 3, {}, []]) {
+        let isTypeError = false;
+        try { global.call(receiver); } catch (error) { isTypeError = error instanceof TypeError; }
+        if (!isTypeError) throw new Error("receiver");
+      }
+      let isTypeError = false;
+      try { global.call(() => {}); } catch (error) { isTypeError = error instanceof TypeError; }
+      if (!isTypeError) throw new Error("function");
+    `;
+    expect((await checkModel(getSource("gy"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("gmy"))).failure?.message).toContain("unexpected");
+  });
+
+  it("calls the getters of a symbol's description and an object's __proto__", async () => {
+    const result = await checkModel(`
+      const description = Object.getOwnPropertyDescriptor(Symbol.prototype, "description")!.get!;
+      const proto = Object.getOwnPropertyDescriptor(Object.prototype, "__proto__")!.get!;
+      const symbol = Symbol("test");
+      const empty = Symbol();
+      if (description.call(symbol) !== "test") throw new Error("description");
+      if (description.call(empty) !== undefined) throw new Error("empty");
+      let isTypeError = false;
+      try { description.call("test"); } catch (error) { isTypeError = error instanceof TypeError; }
+      if (!isTypeError) throw new Error("string");
+      const parent = {};
+      const plain = {};
+      if (proto.call(plain) !== Object.prototype) throw new Error("object");
+      const child: object = Object.create(parent);
+      if (proto.call(child) !== parent) throw new Error("parent");
+      isTypeError = false;
+      try { proto.call(null); } catch (error) { isTypeError = error instanceof TypeError; }
+      if (!isTypeError) throw new Error("null");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("slices a buffer's bytes into a new buffer", async () => {
     const result = await checkModel(`
       const buffer = new ArrayBuffer(6);

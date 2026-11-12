@@ -123,6 +123,7 @@ import {
   isNewProxy,
   getNewBuffer,
   getViewCall,
+  getGetterCall,
   isRevoke,
   isObjectChange,
   getDateCall,
@@ -1412,6 +1413,61 @@ export const translateCallStatement = (
             ),
           ]),
         ),
+      ),
+    );
+  }
+  const getterCall = getGetterCall(expression, context);
+  if (getterCall !== undefined) {
+    const heap = getHeap(path.scope, expression, context);
+    const resultName = context.names.getFresh("result");
+    const result = identifier(resultName);
+    const getter = translateExpression(getterCall.getter, path.scope, context);
+    const receiver = getterCall.receiver;
+    // A function that a literal makes is neither a regexp nor a symbol, which the getters other
+    // than flags and __proto__ check for.
+    const isFunctionReceiver =
+      receiver !== undefined &&
+      (ts.isArrowFunction(receiver) || ts.isFunctionExpression(receiver)) &&
+      getterCall.path !== "get Object.prototype.__proto__" &&
+      getterCall.path !== "get RegExp.prototype.flags";
+    const run = isFunctionReceiver ? throwTypeError(path, expression, context, frame) : bindOnce(
+      path,
+      resultName,
+      useJavaScript(
+        "GetterCall",
+        [
+          heap,
+          getter,
+          receiver === undefined
+            ? getUndefined(context)
+            : translateExpression(receiver, path.scope, context),
+        ],
+        context,
+      ),
+      ifThenElse(
+        apply("=", [field(result, "error"), string("")]),
+        continueWith(path, field(result, "value")),
+        throwTypeError(path, expression, context, frame),
+      ),
+    );
+    const builtIn = translateBuiltInValue(getterCall.path, expression, context);
+    return ifThenElse(
+      apply("/\\", [
+        useJavaScript("SameValue", [getter, builtIn], context),
+        getterCall.isCall
+          ? useJavaScript(
+              "HoldsBuiltIn",
+              [heap, builtIn, string("call"), string("Function.prototype.call")],
+              context,
+            )
+          : boolean(true),
+      ]),
+      run,
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't call a getter that a script replaced"),
+        ]),
       ),
     );
   }
@@ -4481,6 +4537,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
   getDateCall(node, context) !== undefined ||
   getHeapRegExpCall(node, context) !== undefined ||
   getViewCall(node, context) !== undefined ||
+  getGetterCall(node, context) !== undefined ||
   getHeapArrayChange(node, context) !== undefined ||
   getStringCall(node, context) !== undefined ||
   isDescriptorsRead(node, context) ||

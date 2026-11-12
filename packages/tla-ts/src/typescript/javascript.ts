@@ -2635,6 +2635,49 @@ RegExpFresh(heap, regexp, changeable) ==
   THEN regexp
   ELSE Assert(FALSE, "tla-ts can't call a regexp's method where a script changed what it reads")
 
+LOCAL IsRegExpPrototype(value) == IsRef(value) /\\ ~IsHeap(value) /\\ value[Ref] = "RegExp.prototype"
+
+\\* The flags that RegExp.prototype's flags getter gives, which reads each flag from the receiver.
+LOCAL FlagsOf(heap, receiver) ==
+  LET flags == << <<"d", "hasIndices">>, <<"g", "global">>, <<"i", "ignoreCase">>,
+                 <<"m", "multiline">>, <<"s", "dotAll">>, <<"u", "unicode">>,
+                 <<"v", "unicodeSets">>, <<"y", "sticky">> >>
+      set == SelectSeq(flags, LAMBDA flag : ToBoolean(Get(heap, receiver, flag[2])))
+      RECURSIVE Join(_)
+      Join(rest) == IF rest = <<>> THEN "" ELSE Head(rest)[1] \\o Join(Tail(rest))
+  IN CASE IsRegExp(heap, receiver) -> RegExpOf(heap, receiver, {"RegExp.prototype"}).flags
+       [] IsRegExpPrototype(receiver) /\\ "RegExp.prototype" \\notin DOMAIN heap.changed -> ""
+       [] IsRef(receiver) -> Join(set)
+       [] OTHER -> Assert(FALSE, "tla-ts can't read the flags of " \\o ToString(receiver))
+
+\\* A call of a built-in getter that a script took from a descriptor, as the error that it throws,
+\\* or "", and the value that it gives.
+GetterCall(heap, getter, receiver) ==
+  LET path == GetterPath(getter)
+      flag == SubSeq(path, Len("get RegExp.prototype.") + 1, Len(path))
+      give(value) == [error |-> "", value |-> value]
+      typeError == [error |-> "TypeError", value |-> Undefined]
+      object == IF IsHeap(receiver) THEN heap.objects[receiver[Ref]] ELSE EmptyObject
+  IN CASE HasPrefix(path, "get RegExp.prototype.") /\\ ~IsObjectIn(heap, receiver) -> typeError
+       [] path = "get RegExp.prototype.flags" -> give(FlagsOf(heap, receiver))
+       [] HasPrefix(path, "get RegExp.prototype.") /\\ IsRegExp(heap, receiver) ->
+            give(object.regexp[flag])
+       [] HasPrefix(path, "get RegExp.prototype.") /\\ IsRegExpPrototype(receiver) ->
+            give(IF flag = "source" THEN "(?:)" ELSE Undefined)
+       [] HasPrefix(path, "get RegExp.prototype.") -> typeError
+       [] path = "get Symbol.prototype.description" ->
+            CASE IsSymbol(receiver) -> give(SymbolDescription(heap, receiver))
+              [] "primitive" \\in DOMAIN object /\\ IsSymbol(object.primitive) ->
+                   give(SymbolDescription(heap, object.primitive))
+              [] OTHER -> typeError
+       [] path = "get Object.prototype.__proto__" ->
+            CASE receiver \\in {Undefined, Null} -> typeError
+              [] IsProxy(heap, receiver) ->
+                   Assert(FALSE, "tla-ts can't run a proxy's internal method here")
+              [] IsRef(receiver) -> give(Prototype(heap, receiver))
+              [] OTHER -> Assert(FALSE, "tla-ts can't read the prototype of " \\o ToString(receiver))
+       [] OTHER -> Assert(FALSE, "tla-ts can't tell which function this value holds")
+
 LOCAL LastIndexValue(heap, ref) == heap.objects[ref[Ref]].values["lastIndex"]
 
 \\* The heap after Set of a regexp's lastIndex, which throws a TypeError where it isn't writable.
