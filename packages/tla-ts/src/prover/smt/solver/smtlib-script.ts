@@ -21,7 +21,7 @@ import {
   SORT_INT,
   SORT_REAL,
 } from "./ast";
-import { Goal, PRECISION_NAMES } from "./goal";
+import { Goal, getDependencyValues, mkDependencyLeaf, PRECISION_NAMES } from "./goal";
 import { Rational } from "./rational";
 import { Rewriter } from "./rewriter";
 import { ResourceLimit } from "./rlimit";
@@ -412,6 +412,7 @@ export const runSmtlibScript = (
         setup: getSetup(),
         write: () => {},
         parameters: settings.parameters,
+        hasDefinitions: () => script.state.reader.hasDefinitions(),
       },
       objectives,
     );
@@ -513,8 +514,13 @@ export const runSmtlibScript = (
       const isAssuming = isNamed || extra.length > 0;
       if (isAssuming) state.isIncremental = true;
       if (!isOptimizing) state.hasChecked = true;
+      // mk_special_solver_for_logic gives these logics the finite-domain solver, incremental or not.
+      const isFd =
+        (state.logic === "QF_FD" || state.logic === "SAT") &&
+        !settings.isProducingProofs &&
+        !settings.parameters.has("tactic.default_tactic");
       const kernel =
-        isAssuming || (state.isIncremental && !isOptimizing)
+        isAssuming || (state.isIncremental && !isOptimizing && !isFd)
           ? solveAssuming(manager, getNamedAssertions(), isNamed ? [...names, ...extra] : extra, {
               isMbqi: settings.isMbqi || isMbqiByLogic(getSetup()),
               mbqiMaxIterations: settings.mbqiMaxIterations,
@@ -591,6 +597,7 @@ export const runSmtlibScript = (
     setup: getSetup(),
     write,
     parameters: settings.parameters,
+    hasDefinitions: () => script.state.reader.hasDefinitions(),
   });
   const getDatalog = () => {
     const state = script.state;
@@ -603,13 +610,21 @@ export const runSmtlibScript = (
   };
   const getTactic = (sexpr: SExpr, end: SmtList["end"]) =>
     compileTactic(getTacticEnvironment(), sexpr, end);
-  const getGoal = () => {
-    const goal = new Goal(script.state.manager);
-    goal.isProofsEnabled = settings.isProducingProofs || script.state.isProofsEnabled === true;
+  const getGoal = (isTrackingDependencies = false) => {
+    const state = script.state;
+    const goal = new Goal(state.manager);
+    goal.isProofsEnabled = settings.isProducingProofs || state.isProofsEnabled === true;
     goal.isCoresEnabled = settings.isProducingUnsatCores;
-    for (const assertion of script.state.assertions) goal.assert(assertion);
+    for (const [index, assertion] of state.assertions.entries())
+      goal.assert(
+        assertion,
+        isTrackingDependencies && state.names[index] !== -1
+          ? mkDependencyLeaf(state.names[index])
+          : undefined,
+      );
     return goal;
   };
+  const hasNames = () => script.state.names.some((name) => name !== -1);
   const parseFormulas = (items: SmtList["items"]) =>
     items.map((literal) => script.state.reader.parseFormula(literal));
   const addObjective = (list: SmtList, isMax: boolean) => {
@@ -770,19 +785,23 @@ export const runSmtlibScript = (
       const params = getCommandParams(list.items, CHECK_SAT_USING_PARAMETERS);
       if (list.items[1] === undefined)
         throw new SmtParseError("check-sat-using needs a tactic argument", list.end);
-      const tactic = getTactic(list.items[1], list.end).build(params);
+      const builder = getTactic(list.items[1], list.end);
+      const tactic = builder.build(params);
       clearCheck();
       state.manager.limit.restart(Date.now() + options.timeLimitMs);
       state.manager.limit.push(settings.rlimit);
       try {
-        const checked = checkSatUsing(tactic, getGoal());
+        const checked = checkSatUsing(tactic, getGoal(builder.isTrackingDependencies));
         checked.model?.incRef();
         state.check = {
           status: checked.status,
           context: undefined,
           isOptimizing: false,
           model: checked.model,
-          core: state.names.some((name) => name !== -1) ? undefined : [],
+          core:
+            builder.isTrackingDependencies || !hasNames()
+              ? getDependencyValues(checked.core)
+              : undefined,
         };
         print(getVerdict(checked.status));
       } finally {
@@ -979,11 +998,13 @@ export const runSmtlibScript = (
       const params = getCommandParams(list.items, APPLY_PARAMETERS);
       if (list.items[1] === undefined)
         throw new SmtParseError("apply needs a tactic argument", list.end);
-      const tactic = getTactic(list.items[1], list.end).build(params);
-      if (params.get("print_dependencies") === true)
-        throw new SmtUnsupportedError("the parameter :print_dependencies");
+      const builder = getTactic(list.items[1], list.end);
+      const tactic = builder.build(params);
+      const isPrintingDependencies = params.get("print_dependencies") === true;
+      if (isPrintingDependencies && !builder.isTrackingDependencies && hasNames())
+        throw new SmtUnsupportedError("the dependencies of a tactic that drops dependencies");
       state.manager.limit.restart(Date.now() + options.timeLimitMs);
-      const input = getGoal();
+      const input = getGoal(builder.isTrackingDependencies);
       const goals = (() => {
         try {
           return applyTactic(tactic, input);
@@ -1003,9 +1024,17 @@ export const runSmtlibScript = (
             ...goals.map((goal) =>
               [
                 "(goal",
-                ...goal.forms.items.map(
-                  (form) => `  ${printExpr(state.manager, environment, form, 2)}`,
-                ),
+                ...goal.forms.items.flatMap((form, index) => [
+                  ...(isPrintingDependencies
+                    ? [
+                        [
+                          "  |-",
+                          ...getDependencyValues(goal.getDependency(index)).map(format),
+                        ].join(" "),
+                      ]
+                    : []),
+                  `  ${printExpr(state.manager, environment, form, 2)}`,
+                ]),
                 `  :precision ${PRECISION_NAMES[goal.precision]} :depth ${goal.depth})`,
               ].join("\n"),
             ),
@@ -1084,7 +1113,8 @@ export const runSmtlibScript = (
       const check = script.state.check;
       if (check === undefined || check.status !== L_FALSE)
         throw new SmtParseError("unsat core is not available", list.end);
-      if (check.core === undefined) throw new SmtUnsupportedError("the unsat cores of tactics");
+      if (check.core === undefined)
+        throw new SmtUnsupportedError("the unsat core of a tactic that drops dependencies");
       print(`(${check.core.map(format).join(" ")})`);
     },
     eval: (list) => {

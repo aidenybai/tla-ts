@@ -1,7 +1,7 @@
 // Ported from Z3 (src/tactic/core/propagate_values_tactic.cpp, src/ast/shared_occs.cpp), MIT license,
 // see z3-license.txt.
 import { KIND_APP, KIND_QUANTIFIER, OP_EQ, type AstManager } from "./ast";
-import type { Goal } from "./goal";
+import { type Dependency, type Goal, joinDependencies } from "./goal";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 
 // Quantifier bodies are included and patterns excluded.
@@ -26,7 +26,17 @@ export const propagateValues = (manager: AstManager, goal: Goal, maxRounds = 4) 
   if (goal.isInconsistent) return;
   const rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
   const substitution = new Map<number, number>();
-  rewriter.setSubstitution(substitution);
+  const dependencies = new Map<number, Dependency | undefined>();
+  rewriter.setSubstitution(substitution, dependencies);
+  const insert = (expr: number, value: number, dependency: Dependency | undefined) => {
+    substitution.set(expr, value);
+    dependencies.set(expr, dependency);
+  };
+  const clear = () => {
+    substitution.clear();
+    dependencies.clear();
+    rewriter.setSubstitution(substitution, dependencies);
+  };
   let occs = getSharedOccs(manager, goal.forms.items);
   let isModified = false;
   const process = (index: number) => {
@@ -34,19 +44,26 @@ export const propagateValues = (manager: AstManager, goal: Goal, maxRounds = 4) 
     const isRewriting = substitution.size !== 0;
     const rewritten = isRewriting ? rewriter.rewrite(current) : current;
     if (rewritten !== current) isModified = true;
-    goal.update(index, rewritten);
+    const used = goal.isCoresEnabled ? rewriter.usedDependencies : undefined;
+    const dependency = joinDependencies(goal.getDependency(index), used);
+    // Forgetting the used dependencies drops the cache, whose results would hide them next time.
+    if (used !== undefined) {
+      rewriter.usedDependencies = undefined;
+      rewriter.setSubstitution(substitution, dependencies);
+    }
+    goal.update(index, rewritten, dependency);
     if (isRewriting) manager.decRef(rewritten);
-    if (occs.has(rewritten)) substitution.set(rewritten, manager.trueExpr);
+    if (occs.has(rewritten)) insert(rewritten, manager.trueExpr, dependency);
     if (manager.isNot(rewritten) && occs.has(manager.getArg(rewritten, 0)))
-      substitution.set(manager.getArg(rewritten, 0), manager.falseExpr);
+      insert(manager.getArg(rewritten, 0), manager.falseExpr, dependency);
     if (manager.getOp(rewritten) !== OP_EQ) return;
     if (manager.isValue(manager.getArg(rewritten, 0)) && occs.has(manager.getArg(rewritten, 1)))
-      substitution.set(manager.getArg(rewritten, 1), manager.getArg(rewritten, 0));
+      insert(manager.getArg(rewritten, 1), manager.getArg(rewritten, 0), dependency);
     else if (
       manager.isValue(manager.getArg(rewritten, 1)) &&
       occs.has(manager.getArg(rewritten, 0))
     )
-      substitution.set(manager.getArg(rewritten, 0), manager.getArg(rewritten, 1));
+      insert(manager.getArg(rewritten, 0), manager.getArg(rewritten, 1), dependency);
   };
   // Each pass is a round: a forward pass, which stops when it found nothing, then a backward pass,
   // which stops when it changed nothing.
@@ -57,16 +74,15 @@ export const propagateValues = (manager: AstManager, goal: Goal, maxRounds = 4) 
       if (goal.isInconsistent) return;
     }
     if (substitution.size === 0 && !isModified) break;
+    if (round + 1 >= maxRounds) break;
     occs = getSharedOccs(manager, goal.forms.items);
-    substitution.clear();
-    rewriter.setSubstitution(substitution);
+    clear();
     for (let index = goal.forms.size - 1; index >= 0; index--) {
       process(index);
       if (goal.isInconsistent) return;
     }
     if (!isModified) break;
-    substitution.clear();
-    rewriter.setSubstitution(substitution);
+    clear();
     isModified = false;
     occs = getSharedOccs(manager, goal.forms.items);
   }

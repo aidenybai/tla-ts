@@ -53,6 +53,7 @@ import { TheoryChar } from "./theory-char";
 import { TheorySeq } from "./theory-seq";
 import { TheoryDatatype } from "./theory-datatype";
 import { TheoryFiniteSet } from "./theory-finite-set";
+import { TheoryPb } from "./theory-pb";
 import { TheoryLra } from "./theory-lra";
 import { shrink } from "./array";
 
@@ -166,6 +167,7 @@ export class Context extends Internalizer {
     this.registerPlugin(new TheoryChar(this));
     this.registerPlugin(new TheoryFpa(this));
     this.registerPlugin(new TheoryFiniteSet(this));
+    this.registerPlugin(new TheoryPb(this));
   }
 
   private registerPlugin(theory: Theory) {

@@ -4,7 +4,6 @@ import { SmtInvariantError, SmtUnsupportedError } from "../../../errors";
 import {
   AstManager,
   FAMILY_BASIC,
-  FAMILY_PB,
   FAMILY_USER,
   KIND_APP,
   KIND_QUANTIFIER,
@@ -824,8 +823,6 @@ export abstract class Internalizer {
   private internalizeRec(expr: number, isGateContext: boolean) {
     const manager = this.manager;
     if (manager.isLambda(expr)) throw new SmtUnsupportedError("lambdas in the array theory");
-    if (manager.getFamily(expr) === FAMILY_PB)
-      throw new SmtUnsupportedError("theory_pb, which pseudo-Boolean constraints need");
     if (manager.sorts[expr] === SORT_BOOL) this.internalizeFormula(expr, isGateContext);
     else this.internalizeTerm(expr);
   }

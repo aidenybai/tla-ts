@@ -3,6 +3,42 @@ import { OP_AND, OP_NOT, OP_OR, SORT_BOOL, type AstManager } from "./ast";
 import type { ProtoModel } from "./proto-model";
 import { RefVector } from "./ref-vector";
 
+// A dependency is a leaf, which holds an expression, or the join of two dependencies.
+export interface Dependency {
+  value: number;
+  children: Dependency[];
+}
+
+export const mkDependencyLeaf = (value: number): Dependency => ({ value, children: [] });
+
+export const joinDependencies = (
+  first: Dependency | undefined,
+  second: Dependency | undefined,
+): Dependency | undefined =>
+  first === undefined
+    ? second
+    : second === undefined || first === second
+      ? first
+      : { value: -1, children: [first, second] };
+
+// Breadth first and once per node, so a value that two leaves hold is listed twice.
+export const getDependencyValues = (dependency: Dependency | undefined) => {
+  if (dependency === undefined) return [];
+  const todo = [dependency];
+  const marked = new Set(todo);
+  const values: number[] = [];
+  for (let head = 0; head < todo.length; head++) {
+    const current = todo[head];
+    if (current.children.length === 0) values.push(current.value);
+    for (const child of current.children)
+      if (!marked.has(child)) {
+        marked.add(child);
+        todo.push(child);
+      }
+  }
+  return values;
+};
+
 interface Polarized {
   expr: number;
   isPositive: boolean;
@@ -38,6 +74,8 @@ interface ModelConversion {
 
 export class Goal {
   readonly forms: RefVector;
+  // Kept only while unsat cores are enabled.
+  dependencies: (Dependency | undefined)[] = [];
   isInconsistent = false;
   depth = 0;
   precision = PRECISE;
@@ -60,6 +98,7 @@ export class Goal {
     if (source === this) return;
     this.forms.reset();
     for (const form of source.forms.items) this.forms.push(form);
+    this.dependencies = [...source.dependencies];
     this.depth = Math.max(this.depth, source.depth);
     this.isInconsistent = source.isInconsistent;
     this.precision = getPrecisionUnion(source.precision, this.precision);
@@ -70,6 +109,7 @@ export class Goal {
 
   reset() {
     this.forms.reset();
+    this.dependencies = [];
     this.isInconsistent = false;
   }
 
@@ -100,6 +140,10 @@ export class Goal {
     this.converters = [...this.converters, { convert }];
   }
 
+  getDependency(index: number) {
+    return this.dependencies[index];
+  }
+
   isDecidedSat() {
     return this.forms.size === 0 && (this.precision === PRECISE || this.precision === UNDER);
   }
@@ -112,26 +156,28 @@ export class Goal {
     return this.isDecidedSat() || this.isDecidedUnsat();
   }
 
-  private pushBack(form: number) {
+  private pushBack(form: number, dependency: Dependency | undefined) {
     const manager = this.manager;
     if (manager.isTrue(form)) return;
     if (manager.isFalse(form)) {
       this.forms.reset();
+      this.dependencies = [];
       this.isInconsistent = true;
     }
     this.forms.push(form);
+    if (this.isCoresEnabled) this.dependencies.push(dependency);
   }
 
   // The formula comes with a reference, and so does the result. The negations it creates are held
   // until it returns.
-  private quickProcess(form: number, isSavingFirst: boolean) {
+  private quickProcess(form: number, isSavingFirst: boolean, dependency: Dependency | undefined) {
     const manager = this.manager;
     const op = manager.getOp(form);
     if (
       op !== OP_AND &&
       !(manager.isNot(form) && manager.getOp(manager.getArg(form, 0)) === OP_OR)
     ) {
-      if (!isSavingFirst) this.pushBack(form);
+      if (!isSavingFirst) this.pushBack(form, dependency);
       return form;
     }
     let first = form;
@@ -153,19 +199,19 @@ export class Goal {
           manager.decRef(first);
           first = leaf;
           isSaving = false;
-        } else this.pushBack(leaf);
+        } else this.pushBack(leaf, dependency);
       }
     }
     created.reset();
     return first;
   }
 
-  assert(form: number) {
+  assert(form: number, dependency?: Dependency) {
     const manager = this.manager;
     manager.incRef(form);
     if (!this.isInconsistent) {
       manager.incRef(form);
-      manager.decRef(this.quickProcess(form, false));
+      manager.decRef(this.quickProcess(form, false, dependency));
     }
     manager.decRef(form);
   }
@@ -173,14 +219,17 @@ export class Goal {
   // update: the first conjunct replaces the formula and the others are added at the end. When the
   // first conjunct is false, Z3 adds the whole formula (goal.cpp:312), and this adds false, so the
   // goal becomes inconsistent.
-  update(index: number, form: number) {
+  update(index: number, form: number, dependency?: Dependency) {
     const manager = this.manager;
     if (this.isInconsistent) return;
     manager.incRef(form);
-    const first = this.quickProcess(form, true);
+    const first = this.quickProcess(form, true, dependency);
     if (!this.isInconsistent) {
-      if (manager.isFalse(first)) this.pushBack(first);
-      else this.forms.set(index, first);
+      if (manager.isFalse(first)) this.pushBack(first, dependency);
+      else {
+        this.forms.set(index, first);
+        if (this.isCoresEnabled) this.dependencies[index] = dependency;
+      }
     }
     manager.decRef(first);
   }
@@ -188,6 +237,7 @@ export class Goal {
   // shrink: drops the formulas from size on, the last one first.
   private shrink(size: number) {
     while (this.forms.size > size) this.forms.pop();
+    this.dependencies.length = Math.min(this.dependencies.length, size);
   }
 
   elimTrue() {
@@ -195,10 +245,15 @@ export class Goal {
     let kept = 0;
     for (const [index, form] of [...this.forms.items].entries()) {
       if (manager.isTrue(form)) continue;
-      if (index !== kept) this.forms.set(kept, form);
+      if (index !== kept) this.move(index, kept, form);
       kept++;
     }
     this.shrink(kept);
+  }
+
+  private move(from: number, to: number, form: number) {
+    this.forms.set(to, form);
+    if (this.isCoresEnabled) this.dependencies[to] = this.dependencies[from];
   }
 
   // The marks hold the literals until it returns.
@@ -215,11 +270,17 @@ export class Goal {
       const same = isNegated ? negatives : positives;
       if (same.items.includes(atom)) continue;
       if ((isNegated ? positives : negatives).items.includes(atom)) {
-        this.pushBack(manager.falseExpr);
+        const complement = this.forms.items.findIndex((other) =>
+          isNegated ? other === atom : manager.isNot(other) && manager.getArg(other, 0) === atom,
+        );
+        this.pushBack(
+          manager.falseExpr,
+          joinDependencies(this.dependencies[complement], this.dependencies[index]),
+        );
         break;
       }
       same.push(atom);
-      if (index !== kept) this.forms.set(kept, form);
+      if (index !== kept) this.move(index, kept, form);
       kept++;
     }
     if (!this.isInconsistent) this.shrink(kept);
