@@ -1901,6 +1901,24 @@ describe("values", () => {
     expect((await checkModel(getSource("5;4,5"))).failure?.message).toContain("5;4");
   });
 
+  it("iterates what a splice removes from a field's array", async () => {
+    const getSource = (expected: string) => `
+      class Vector {
+        items = [1, 2, 3];
+        released = 0;
+        shrink(size: number) {
+          for (const value of this.items.splice(size)) this.released += value;
+        }
+      }
+      const vector = new Vector();
+      vector.shrink(1);
+      const result = [vector.items.join(","), vector.released].join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("1;5"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1,2;3"))).failure?.message).toContain("1;5");
+  });
+
   it("reorders in place the new array that a method gives", async () => {
     const getSource = (expected: string) => `
       const doubled = [1, 2].map((value) => value * 2).reverse();

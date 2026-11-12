@@ -2390,11 +2390,15 @@ export const translateArrayChange = (
       ]);
 };
 
-// A splice whose result nothing reads, as tla-ts doesn't make the array of what it removes.
-export const isSpliceStatement = (node: ts.CallExpression, context: Context) =>
+// A splice whose result nothing holds, as a statement drops it and a for-of only iterates it, as
+// tla-ts makes no array of what it removes.
+export const isUnheldSplice = (node: ts.CallExpression, context: Context) =>
   ts.isPropertyAccessExpression(node.expression) &&
   node.expression.name.text === "splice" &&
-  ts.isExpressionStatement(node.parent) &&
+  (ts.isExpressionStatement(node.parent) ||
+    (ts.isForOfStatement(node.parent) &&
+      node.parent.expression === node &&
+      node.parent.awaitModifier === undefined)) &&
   node.arguments.length > 0 &&
   node.arguments.slice(0, 2).every((argument) => isNumberLike(argument, context));
 
@@ -2418,7 +2422,7 @@ export const getHeapSetOrMapChange = (node: ts.Node, context: Context) =>
 export const getHeapArrayChange = (node: ts.Node, context: Context) =>
   ts.isCallExpression(node) &&
   ts.isPropertyAccessExpression(node.expression) &&
-  (IN_PLACE_METHODS.has(node.expression.name.text) || isSpliceStatement(node, context)) &&
+  (IN_PLACE_METHODS.has(node.expression.name.text) || isUnheldSplice(node, context)) &&
   isHeapArray(node.expression.expression, context) &&
   (["push", "unshift"].includes(node.expression.name.text) ||
     !node.arguments.some(ts.isSpreadElement))

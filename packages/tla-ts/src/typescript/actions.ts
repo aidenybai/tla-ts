@@ -10991,7 +10991,9 @@ const getEvaluated = (statement: ts.Statement) =>
         ? statement.expression
         : ts.isReturnStatement(statement) || ts.isThrowStatement(statement)
           ? statement.expression
-          : undefined;
+          : ts.isForOfStatement(statement)
+            ? statement.expression
+            : undefined;
 
 // The call inside a statement's expression that runs as its own statement first, other than one
 // that the statement itself runs.
@@ -11002,11 +11004,13 @@ const getHoistedCall = (statement: ts.Statement, path: Path, context: Context) =
   return getLeadingCall(
     evaluated,
     (call) =>
-      // An if, a switch, or a throw statement evaluates its expression, and runs no call of it.
+      // An if, a switch, or a throw statement evaluates its expression, and a for-of what it
+      // iterates, and runs no call of it.
       (call !== outer ||
         ts.isIfStatement(statement) ||
         ts.isSwitchStatement(statement) ||
-        ts.isThrowStatement(statement)) &&
+        ts.isThrowStatement(statement) ||
+        ts.isForOfStatement(statement)) &&
       !(
         ts.isBinaryExpression(outer) &&
         outer.operatorToken.kind === ts.SyntaxKind.EqualsToken &&

@@ -4091,8 +4091,8 @@ SetToSequence(set) ==
   ELSE LET element == CHOOSE element \\in set : TRUE
        IN <<element>> \\o SetToSequence(set \\ {element})
 
-\\* What a splice whose result nothing reads does to an array that the heap holds, which makes that
-\\* result through the array's constructor, where tla-ts follows only Array.
+\\* What a splice does to an array that the heap holds, and the elements that it removes, where it
+\\* makes the array of them through the array's constructor, which tla-ts follows only for Array.
 ArraySplice(heap, ref, start, hasCount, count, items, array) ==
   LET object == Lookup(heap, ref)
       elements == DenseElements(heap, ref)
@@ -4115,7 +4115,7 @@ ArraySplice(heap, ref, start, hasCount, count, items, array) ==
                              \\o SubSeq(elements, first + deleted + 1, length)
             IN Species(Get(heap, ref, "constructor"), array,
                        [heap |-> WithElements(heap, ref, changed, Len(changed)),
-                        value |-> Undefined,
+                        value |-> SubSeq(elements, first + 1, first + deleted),
                         isThrown |-> FALSE])
 
 RECURSIVE ApplyAll(_, _, _)
