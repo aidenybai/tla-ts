@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { join } from "node:path";
-import { createProgress } from "../scripts/hosts";
+import { createProgress, getHost } from "../scripts/hosts";
 import {
   getContexts,
   getCorrection,
@@ -126,6 +126,20 @@ describe("normalizeTranscript", () => {
 describe("getMessageCodes", () => {
   it("ignores printed lines and message text", () => {
     expect(getMessageCodes("| 2190:0 printed\n2190:0 a\nb\n2199:0 c")).toBe("2190 2199");
+  });
+});
+
+describe("getHost", () => {
+  it("splits a custom host command into its arguments", () => {
+    expect(getHost("node --stack-size=8000 cli.js")).toEqual({
+      tlc: ["node", "--stack-size=8000", "cli.js"],
+    });
+  });
+
+  it("keeps a quoted path with a space as one argument", () => {
+    expect(getHost(`node "/my tools/cli.js" --library='/a b'  -deadlock`)).toEqual({
+      tlc: ["node", "/my tools/cli.js", "--library=/a b", "-deadlock"],
+    });
   });
 });
 

@@ -62,9 +62,13 @@ export const HOSTS: Record<string, Host> = {
   "tla-ts": { tlc: TLA_TS },
 };
 
+const QUOTED = /"([^"]*)"|'([^']*)'/g;
+const ARGUMENT = /(?:"[^"]*"|'[^']*'|[^\s"'])+/g;
+
 export const getHost = (name: string): Host => {
   const host = HOSTS[name];
-  if (!host) return { tlc: name.split(" ") };
+  if (!host)
+    return { tlc: (name.match(ARGUMENT) ?? []).map((part) => part.replace(QUOTED, "$1$2")) };
   if (host.tlc === HOSTS.tlc.tlc && !existsSync(TLC_JAR)) {
     console.error("Run `pnpm fetch-tlc` first");
     process.exit(1);
