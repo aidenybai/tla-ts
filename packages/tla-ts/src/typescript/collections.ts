@@ -16,7 +16,13 @@ import {
 import type { Expression } from "../ast";
 import { TlaTypeScriptError } from "../errors";
 import { translateElements, translateExpression, translateSetKey } from "./expressions";
-import { callStateOperator, mayThrow, translateBody } from "./functions";
+import {
+  callStateOperator,
+  getStoredToStringReceiver,
+  mayThrow,
+  translateBody,
+  translateLocalCall,
+} from "./functions";
 import { DATE_FIELDS, getHeap, getPrototypeMethod, isDateType, TIME_METHODS } from "./heap";
 import {
   isBuiltInObject,
@@ -1737,6 +1743,13 @@ export const translateMethod = (
           isEvery(context.checker.getTypeAtLocation(argument), ts.TypeFlags.Undefined)
         : isEvery(context.checker.getTypeAtLocation(argument), ts.TypeFlags.StringLike),
     );
+  if (
+    primitiveCall === undefined &&
+    kind === "object" &&
+    getStoredToStringReceiver(node, context) !== undefined
+  ) {
+    return translateLocalCall(node, scope, context);
+  }
   if (primitiveCall === undefined || primitiveMethod === undefined || !isTyped) {
     return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
   }

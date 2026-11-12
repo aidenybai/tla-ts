@@ -8217,6 +8217,23 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs Object.prototype.toString that a script stores under a key", async () => {
+    const stored = (expected: string) => `
+      const object: { getClass?: () => string } = {};
+      object.getClass = Object.prototype.toString;
+      const list = [0, 1];
+      // @ts-ignore
+      list.getClass = Object.prototype.toString;
+      // @ts-ignore
+      const kinds = object.getClass() + list.getClass();
+      if (kinds !== "${expected}") throw new Error(kinds);
+    `;
+    expect((await check(compile(stored("[object Object][object Array]")))).failure).toBeUndefined();
+    expect(
+      (await check(compile(stored("[object Object][object Object]")))).failure?.message,
+    ).toContain("[object Object][object Array]");
+  });
+
   it("tests numbers through the global isNaN and isFinite", async () => {
     const result = await check(
       compile(
