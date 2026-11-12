@@ -4127,15 +4127,15 @@ describe("errors", () => {
       if (read.x !== "third") throw new Error("default");
     `);
     expect(result.failure).toBeUndefined();
-    expect(() =>
-      compile(`
-        const box = { seen: 0 };
-        function all(...rest: unknown[]) {
-          return arguments;
-        }
-        if (all(1).length !== 1) throw new Error("length " + all(1).length);
-      `),
-    ).toThrow("Unsupported arguments object");
+    const getEscaped = (expected: number) => `
+      const box = { seen: 0 };
+      function all(...rest: unknown[]) {
+        return arguments;
+      }
+      if (all(1).length !== ${expected}) throw new Error("length " + all(1).length);
+    `;
+    expect((await checkModel(getEscaped(1))).failure).toBeUndefined();
+    expect((await checkModel(getEscaped(2))).failure?.message).toContain("length 1");
   });
 
   it("rejects a sort comparator that may throw", () => {
