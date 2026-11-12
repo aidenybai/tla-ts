@@ -67,6 +67,12 @@ const getQfnraNlsat = (isFactoring: boolean) =>
   "(using-params simplify :elim_and true :blast_distinct true) tseitin-cnf-core " +
   "(using-params simplify :elim_and true :blast_distinct true) nlsat))";
 
+const NRA =
+  "(and-then simplify propagate-values qe-light simplify (if is-qfnra (or-else (try-for " +
+  `${getQfnraNlsat(true)} 5000) (try-for (using-params ${getQfnraNlsat(false)} :seed 11 ` +
+  `:factor false) 10000) (using-params ${getQfnraNlsat(false)} :seed 13 :factor false)) ` +
+  "(or-else nlqsat smt)))";
+
 const QFNIA_BV_SOLVER =
   "(using-params (and-then simplify propagate-values (using-params simplify :local_ctx true " +
   ":local_ctx_limit 10000000) max-bv-sharing (using-params bit-blast :max_memory 100 " +
@@ -167,6 +173,7 @@ export const LOGIC_TACTICS: ReadonlyMap<string, string> = new Map([
   ["qfidl", QFIDL],
   ["qfnia", QFNIA],
   ["qfnra-nlsat", getQfnraNlsat(true)],
+  ["nra", NRA],
   ["qflra", "(using-params smt :arith.greatest_error_pivot true)"],
   ["lra", LRA],
   ["lia", LRA],

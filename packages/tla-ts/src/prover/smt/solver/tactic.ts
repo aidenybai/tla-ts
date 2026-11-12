@@ -343,6 +343,11 @@ const NNF_DESCRS = getDescrs("nnf", [
   ["ignore_labels", PARAM_BOOL, false, true],
 ]);
 
+const NLSAT_DESCRS = getDescrs("nlsat", [
+  ["seed", PARAM_UINT, 0, true],
+  ["factor", PARAM_BOOL, true, true],
+]);
+
 const TSEITIN_DESCRS = getDescrs("", [
   ["max_memory", PARAM_UINT, UINT_MAX, true],
   ["common_patterns", PARAM_BOOL, true],
@@ -894,9 +899,10 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "nlsat",
     {
-      descrs: new Map(),
+      descrs: NLSAT_DESCRS,
       isRejectingUnknown: false,
-      build: (environment) => runNlsat(environment.manager),
+      build: (environment, params) =>
+        runNlsat(environment.manager, getUint(params, "seed", 0), getBool(params, "factor", true)),
     },
   ],
   [
@@ -1008,7 +1014,7 @@ const UNPORTED_TACTICS = new Set(
     "elim-predicates elim-uncnstr2 " +
     "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv fm " +
     "fold-unfold fpa2bv horn horn-simplify injectivity lia2pb " +
-    "nla2bv nra pb-preprocess pb2bv pqffd " +
+    "nla2bv pb-preprocess pb2bv pqffd " +
     "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psmt " +
     "qfbv-sls qffd qfnra " +
     "qfufbv recover-01 reduce-args2 " +

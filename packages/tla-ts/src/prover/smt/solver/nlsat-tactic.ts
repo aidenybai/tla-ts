@@ -41,22 +41,24 @@ const mkModel = (
   return model;
 };
 
-export const runNlsat = (manager: AstManager) => (goal: Goal) => {
-  if (goal.isDecided()) return [goal];
-  if (goal.isProofsEnabled) throw new SmtTacticError("nlsat does not support proof production");
-  const solver = new NlsatSolver(manager.limit);
-  const t2x = new Map<number, number>();
-  const a2b = new Map<number, number>();
-  goal2nlsat(manager, goal.forms.items, solver, t2x, a2b, null);
-  const status = solver.check();
-  if (status === L_TRUE && !containsUnsupported(manager, t2x, a2b)) {
-    const model = mkModel(manager, solver, t2x, a2b);
-    if (model !== undefined) {
-      goal.reset();
-      goal.model = model;
+export const runNlsat =
+  (manager: AstManager, seed: number, isFactoring: boolean) => (goal: Goal) => {
+    if (goal.isDecided()) return [goal];
+    if (goal.isProofsEnabled) throw new SmtTacticError("nlsat does not support proof production");
+    const solver = new NlsatSolver(manager.limit);
+    solver.updtParams(seed, isFactoring);
+    const t2x = new Map<number, number>();
+    const a2b = new Map<number, number>();
+    goal2nlsat(manager, goal.forms.items, solver, t2x, a2b, null, isFactoring);
+    const status = solver.check();
+    if (status === L_TRUE && !containsUnsupported(manager, t2x, a2b)) {
+      const model = mkModel(manager, solver, t2x, a2b);
+      if (model !== undefined) {
+        goal.reset();
+        goal.model = model;
+      }
     }
-  }
-  if (status === L_FALSE) goal.assert(manager.falseExpr);
-  goal.depth++;
-  return [goal];
-};
+    if (status === L_FALSE) goal.assert(manager.falseExpr);
+    goal.depth++;
+    return [goal];
+  };

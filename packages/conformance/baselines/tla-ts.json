@@ -10,7 +10,6 @@
   "tlapm/backends/z3/z3test/regressions/longrunning/6079-7.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/longrunning/6117-3.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/opt_bug.smt2": "text-mismatch",
-  "tlapm/backends/z3/z3test/regressions/smt2/2546.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/2561.smt2": "text-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/2935.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/3010.smt2": "message-mismatch",
