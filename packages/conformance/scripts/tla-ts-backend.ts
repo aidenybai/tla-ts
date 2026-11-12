@@ -12,10 +12,10 @@ const backend = process.argv[2];
 const text = readFileSync(process.argv[3], "utf8");
 const options = { timeLimitMs: TIME_LIMITS[backend] * 1000 };
 
-// The oracle records Z3's stdout followed by its stderr.
+// The oracle records Z3's stdout followed by its stderr, and runs a script with no time limit.
 if (isSmtScript(process.argv[3])) {
   const diagnostics: string[] = [];
-  runSmtlibScript(text, options, (line, isDiagnostic) =>
+  runSmtlibScript(text, { timeLimitMs: Infinity }, (line, isDiagnostic) =>
     isDiagnostic ? diagnostics.push(line) : console.log(line),
   );
   for (const line of diagnostics) console.log(line);
