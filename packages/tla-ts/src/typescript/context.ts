@@ -196,17 +196,37 @@ export const getUnresolvedRead = (
       ? getUnresolvedRead(node.condition, context)
       : getUnresolvedRead(truth ? node.whenTrue : node.whenFalse, context);
   }
+  if (ts.isArrayLiteralExpression(node)) return readInOrder(node.elements);
+  // An object literal evaluates its values and spreads in order, and a spread reads its
+  // expression before it copies anything.
+  if (ts.isObjectLiteralExpression(node)) {
+    const values = node.properties.map((property) =>
+      ts.isPropertyAssignment(property) && !ts.isComputedPropertyName(property.name)
+        ? [property.initializer]
+        : ts.isShorthandPropertyAssignment(property)
+          ? [property.name]
+          : ts.isSpreadAssignment(property)
+            ? [property.expression]
+            : [],
+    );
+    const end = values.findIndex((value) => value.length === 0);
+    return readInOrder(values.slice(0, end === -1 ? undefined : end).flat());
+  }
   if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
     if (isUnresolved(node.expression, context)) return node.expression;
     // A function declaration binds its name before any code runs, so reading it can't throw, and
     // a class declaration that comes before binds its name, or reading it throws a ReferenceError
-    // too. A new evaluates its arguments before the class runs any code.
-    const declaration = ts.isIdentifier(node.expression)
-      ? context.checker.getSymbolAtLocation(node.expression)?.valueDeclaration
+    // too. A new evaluates its arguments before the class runs any code, and a function written
+    // in place, or super, evaluates nothing that can throw before them.
+    const callee = skipCasts(node.expression);
+    const declaration = ts.isIdentifier(callee)
+      ? context.checker.getSymbolAtLocation(callee)?.valueDeclaration
       : undefined;
-    return declaration !== undefined &&
-      (ts.isFunctionDeclaration(declaration) ||
-        (ts.isClassDeclaration(declaration) && declaration.end <= node.getStart()))
+    return ts.isFunctionExpression(callee) ||
+      callee.kind === ts.SyntaxKind.SuperKeyword ||
+      (declaration !== undefined &&
+        (ts.isFunctionDeclaration(declaration) ||
+          (ts.isClassDeclaration(declaration) && declaration.end <= node.getStart())))
       ? readInOrder(node.arguments ?? [])
       : undefined;
   }

@@ -5336,6 +5336,32 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("throws the ReferenceError of a name that an object literal spreads", async () => {
+    const getSource = (expected: number) => `
+      let caught = 0;
+      const expectThrown = (run: () => void) => {
+        try {
+          run();
+        } catch (error) {
+          if (error instanceof ReferenceError) caught += 1;
+        }
+      };
+      // @ts-ignore
+      expectThrown(() => { [{ a: 0, ...unresolvable }]; });
+      // @ts-ignore
+      expectThrown(() => { (function (...rest: unknown[]) {})({ ...unresolvable }); });
+      class Parent { constructor(...rest: unknown[]) {} }
+      class Child extends Parent {
+        // @ts-ignore
+        constructor() { super({ a: 0, ...unresolvable }); }
+      }
+      expectThrown(() => { new Child(); });
+      if (caught !== ${expected}) throw new Error("caught");
+    `;
+    expect((await checkModel(getSource(3))).failure).toBeUndefined();
+    expect((await checkModel(getSource(2))).failure?.message).toContain("caught");
+  });
+
   it("sorts, reverses, fills, and copies within an array in place", async () => {
     const result = await checkModel(`
       const letters = ["z", "B", "a", "A"];
