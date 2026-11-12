@@ -2825,6 +2825,20 @@ const translateSelfCall = (
 ): Formula => {
   const parameters = getParameters(callee);
   const body = callee.body;
+  // A parameter that takes a function runs the one that the call passes, or that its default
+  // writes, which the recursive operator holds rather than takes.
+  const functions = parameters.map((parameter, position) => {
+    if (context.checker.getTypeAtLocation(parameter.name).getCallSignatures().length === 0) {
+      return undefined;
+    }
+    const argument = argumentNodes.at(position);
+    return argument === undefined
+      ? position < (argumentValues ?? []).length
+        ? undefined
+        : getAnyFunction(parameter.initializer)
+      : getCallback(argument, path, context);
+  });
+  const defined = context.selfCalls.get(callee);
   if (
     body === undefined ||
     isAnyGenerator(callee) ||
@@ -2836,11 +2850,13 @@ const translateSelfCall = (
       (inner): inner is ts.Identifier => getArgumentsOwner(inner, context.checker) === callee,
     ).length > 0 ||
     parameters.some(
-      (parameter) =>
+      (parameter, position) =>
         !ts.isIdentifier(parameter.name) ||
-        (parameter.initializer !== undefined && !isLiteral(parameter.initializer)) ||
         parameter.dotDotDotToken !== undefined ||
-        context.checker.getTypeAtLocation(parameter.name).getCallSignatures().length > 0,
+        (context.checker.getTypeAtLocation(parameter.name).getCallSignatures().length > 0
+          ? functions[position]?.body === undefined ||
+            (defined !== undefined && defined.functions[position] !== functions[position])
+          : parameter.initializer !== undefined && !isLiteral(parameter.initializer)),
     )
   ) {
     throw new TlaTypeScriptError(
@@ -2854,11 +2870,12 @@ const translateSelfCall = (
         ts.findAncestor(declaration, (ancestor) => ancestor === callee) !== undefined,
     );
   const isMethod = receiver !== undefined && !ts.isArrowFunction(callee);
-  const defined = context.selfCalls.get(callee);
   const selfCall = defined ?? {
     name: context.names.getFresh("Call"),
     changed: getChanged(callee, path, context).filter(isOuter),
+    functions,
   };
+  const valueParameters = parameters.filter((_, position) => functions[position] === undefined);
   const changed = selfCall.changed;
   const getValues = (current: Path) =>
     changed.map((symbol) => current.scope.bindings.get(symbol) ?? getUndefined(context));
@@ -2873,8 +2890,10 @@ const translateSelfCall = (
     },
   });
   const values = shareArguments(
-    argumentValues ??
-      argumentNodes.map((argument) => translateExpression(argument, path.scope, context)),
+    argumentValues?.filter((_, position) => functions[position] === undefined) ??
+      argumentNodes
+        .filter((_, position) => functions[position] === undefined)
+        .map((argument) => translateExpression(argument, path.scope, context)),
     context,
   );
   const result = context.names.getFresh("result");
@@ -2911,7 +2930,9 @@ const translateSelfCall = (
       path,
       result,
       call(selfCall.name, [
-        ...parameters.map((_, position) => values.shared.at(position) ?? getUndefined(context)),
+        ...valueParameters.map(
+          (_, position) => values.shared.at(position) ?? getUndefined(context),
+        ),
         ...(isMethod ? [receiver.value] : []),
         ...getValues(path),
       ]),
@@ -2921,7 +2942,7 @@ const translateSelfCall = (
   );
   if (defined !== undefined) return called;
   const parameterNames = [
-    ...parameters.map((parameter) => context.names.getFresh(parameter.name.getText())),
+    ...valueParameters.map((parameter) => context.names.getFresh(parameter.name.getText())),
     ...(isMethod ? [context.names.getFresh("this")] : []),
   ];
   const changedNames = changed.map((symbol) => {
@@ -2935,15 +2956,23 @@ const translateSelfCall = (
     changedNames.map((name) => identifier(name)),
   );
   const bound = bindValues(
-    parameters,
+    valueParameters,
     parameterNames.map((name) => identifier(name)),
     {
       ...outer.scope,
       // What the call's own statements evaluated belongs to that call, not this one.
       results: new Map([...outer.scope.results].filter((entry) => !isInside(entry[0]))),
       allocated: new Map([...outer.scope.allocated].filter((entry) => !isInside(entry[0]))),
+      functions: new Map([
+        ...outer.scope.functions,
+        ...parameters.flatMap((parameter, position): [ts.Symbol, FunctionNode][] => {
+          const symbol = getSymbol(parameter.name, context.checker);
+          const called = functions[position];
+          return symbol === undefined || called === undefined ? [] : [[symbol, called]];
+        }),
+      ]),
       receiver: isMethod
-        ? { ...receiver, value: identifier(parameterNames[parameters.length]) }
+        ? { ...receiver, value: identifier(parameterNames[valueParameters.length]) }
         : receiver,
     },
     context,
@@ -2953,7 +2982,7 @@ const translateSelfCall = (
     scope: bound.scope,
     mutable: new Set([
       ...path.mutable,
-      ...parameters.flatMap((parameter) => getSymbol(parameter.name, context.checker) ?? []),
+      ...valueParameters.flatMap((parameter) => getSymbol(parameter.name, context.checker) ?? []),
     ]),
     isLooping: true,
     isLast: false,

@@ -4703,6 +4703,36 @@ describe("errors", () => {
     expect((await checkModel(getSource("3"))).failure?.message).toContain('"apply"');
   });
 
+  it("runs a function that calls itself and passes a function", async () => {
+    const getSource = (passed: string, summed: string) => `
+      interface Branch { kind: "branch"; items: Value[]; seen: number }
+      type Value = number | Branch;
+      const double = (leaf: number) => leaf * 2;
+      const getItems = (value: Branch) => value.items;
+      const sum = (
+        value: Value,
+        weigh: (leaf: number) => number = (leaf) => leaf,
+        getChildren = (inner: Branch) => getItems(inner),
+      ): number => {
+        if (typeof value === "number") return weigh(value);
+        value.seen += 1;
+        let result = 0;
+        for (const item of getChildren(value)) result = result + sum(item, ${passed});
+        return result;
+      };
+      const inner: Branch = { kind: "branch", items: [2, 3], seen: 0 };
+      const tree: Branch = { kind: "branch", items: [1, inner], seen: 0 };
+      const summed = sum(tree);
+      if (summed !== ${summed} || inner.seen !== 1) throw new Error("sum");
+    `;
+    expect((await checkModel(getSource("weigh", "6"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("double", "12"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("double", "6"))).failure?.message).toContain('"sum"');
+    expect(() => compile(getSource("double) + sum(item, weigh", "12"))).toThrow(
+      "tla-ts can't run this call of a function from inside itself",
+    );
+  });
+
   it("stops where something besides its one call names a factory with variables", () => {
     expect(() =>
       compile(`

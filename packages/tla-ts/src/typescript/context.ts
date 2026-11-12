@@ -18,6 +18,8 @@ export interface Definition {
 export interface SelfCall {
   name: string;
   changed: ts.Symbol[];
+  // The function that each parameter that takes one runs, the same in every call.
+  functions: (FunctionNode | undefined)[];
 }
 
 export interface Context {
