@@ -122,6 +122,10 @@ export class BitBlasterRewriter extends RewriterTpl {
     return result;
   }
 
+  getConstBits(decl: number) {
+    return this.const2bits.get(decl);
+  }
+
   private mkConst(decl: number) {
     const manager = this.manager;
     const existing = this.const2bits.get(decl);

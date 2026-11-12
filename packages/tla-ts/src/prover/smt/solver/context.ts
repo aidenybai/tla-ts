@@ -831,7 +831,7 @@ export class Context extends Internalizer {
     this.caseSplitQueue.activityIncreased(boolVar);
   }
 
-  private pushScope() {
+  pushScope() {
     this.scopeLevel++;
     this.scopeAssignedLimits.push(this.assignedLiterals.length);
     this.scopeAuxClauseLimits.push(this.auxClauses.length);
@@ -925,7 +925,7 @@ export class Context extends Internalizer {
     return numBoolVars;
   }
 
-  private popScope(numScopes: number) {
+  popScope(numScopes: number) {
     this.popScopeCore(numScopes, new Set());
     this.cachedGeneration.clear();
   }
@@ -1053,7 +1053,7 @@ export class Context extends Internalizer {
     return true;
   }
 
-  private resolveConflict() {
+  resolveConflict() {
     this.numConflicts++;
     this.numConflictsSinceRestart++;
     this.numConflictsSinceLemmaGc++;
@@ -1138,7 +1138,7 @@ export class Context extends Internalizer {
     return result;
   }
 
-  private boundedSearch() {
+  boundedSearch() {
     for (;;) {
       while (!this.propagate()) {
         if (!this.resolveConflict()) return L_FALSE;
@@ -1285,14 +1285,7 @@ export class Context extends Internalizer {
         return L_UNDEF;
       }
     }
-    if (this.numConflictsSinceRestart >= this.restartThreshold) {
-      this.restartThreshold = Math.trunc(this.restartThreshold * RESTART_FACTOR);
-      if (this.restartThreshold > this.restartOuterThreshold) {
-        this.restartThreshold = RESTART_INITIAL;
-        this.restartOuterThreshold = Math.trunc(this.restartOuterThreshold * RESTART_FACTOR);
-      }
-    }
-    this.numConflictsSinceRestart = 0;
+    this.incLimits();
     if (isForcedRestart || status === L_TRUE || this.agility < RESTART_AGILITY_THRESHOLD) {
       if (this.scopeLevel > currentLevel) this.popScope(this.scopeLevel - currentLevel);
       for (const theory of this.theories) if (!this.isInconsistent()) theory.restartEh();
@@ -1303,6 +1296,17 @@ export class Context extends Internalizer {
       }
     }
     return undefined;
+  }
+
+  incLimits() {
+    if (this.numConflictsSinceRestart >= this.restartThreshold) {
+      this.restartThreshold = Math.trunc(this.restartThreshold * RESTART_FACTOR);
+      if (this.restartThreshold > this.restartOuterThreshold) {
+        this.restartThreshold = RESTART_INITIAL;
+        this.restartOuterThreshold = Math.trunc(this.restartOuterThreshold * RESTART_FACTOR);
+      }
+    }
+    this.numConflictsSinceRestart = 0;
   }
 
   private isDeletable(clause: Clause) {
@@ -1366,6 +1370,18 @@ export class Context extends Internalizer {
 
   popToBaseLevel() {
     if (this.scopeLevel > this.baseLevel) this.popScope(this.scopeLevel - this.baseLevel);
+  }
+
+  popToSearchLevel() {
+    if (this.scopeLevel > this.searchLevel) this.popScope(this.scopeLevel - this.searchLevel);
+  }
+
+  hasSearchFailure() {
+    return this.lastSearchFailure !== FAILURE_OK;
+  }
+
+  resetConflict() {
+    this.conflict = null;
   }
 
   internalizeAssertions(asserted: AssertedFormulas) {

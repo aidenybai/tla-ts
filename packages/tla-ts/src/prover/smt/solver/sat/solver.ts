@@ -843,20 +843,20 @@ export class Solver {
     }
   }
 
-  private checkInconsistent() {
+  checkInconsistent() {
     if (!this.isInconsistent) return false;
     if (this.trackingAssumptions() && this.scopeLvl === this.searchLvl) this.resolveConflict();
     return true;
   }
 
-  private resolveConflict() {
+  resolveConflict() {
     for (;;) {
       if (this.resolveConflictCore() === L_FALSE) return false;
       if (!this.isInconsistent) return true;
     }
   }
 
-  private initAssumptions(lits: readonly number[]) {
+  initAssumptions(lits: readonly number[]) {
     if (lits.length === 0) return;
     this.resetAssumptions();
     this.push();
@@ -876,7 +876,7 @@ export class Solver {
     this.assumptionSet.clear();
   }
 
-  private addAssumption(lit: number) {
+  addAssumption(lit: number) {
     this.assumptionSet.add(lit);
     this.assumptions.push(lit);
     this.setExternal(lit >> 1);
@@ -1037,7 +1037,7 @@ export class Solver {
     return true;
   }
 
-  private boundedSearch() {
+  boundedSearch() {
     this.isSimplifyEnabled = false;
     this.isRestartEnabled = false;
     try {
@@ -1068,7 +1068,7 @@ export class Solver {
     return result;
   }
 
-  private initSearch() {
+  initSearch() {
     this.isModelCurrent = false;
     this.phaseCounter = 0;
     this.searchState = S_UNSAT;
@@ -1150,7 +1150,7 @@ export class Solver {
     );
   }
 
-  private doRestart(isToBase: boolean) {
+  doRestart(isToBase: boolean) {
     this.restarts++;
     this.popReinit(this.restartLevel(isToBase));
     this.setNextRestart();
