@@ -24,14 +24,19 @@ import {
   OP_FPA_FP,
   OP_FPA_MAX,
   OP_FPA_MIN,
+  OP_FPA_TO_REAL,
   OP_ITE,
   OP_ADD,
   OP_DIV,
+  OP_GE,
   OP_GT,
   OP_IMPLIES,
+  OP_LE,
   OP_LT,
   OP_MUL,
   OP_POWER,
+  OP_SUB,
+  OP_TO_REAL,
   OP_UMINUS,
   OP_SIGN_EXT,
   OP_SLEQ,
@@ -1405,8 +1410,7 @@ export class Fpa2BvConverter {
     const manager = this.manager;
     const ebits = manager.getEbits(sort);
     const sbits = manager.getSbits(sort);
-    if (manager.getOp(x) !== OP_NUM)
-      throw new SmtUnsupportedError("floating-point conversion of a non-numeral real");
+    if (manager.getOp(x) !== OP_NUM) return this.mkToFpSymbolicReal(sort, rm, x);
     const value = manager.getRationalValue(x);
     if (value.isZero()) return this.mkPzero(sort);
     if (manager.isBvNumeral(rm))
@@ -1427,6 +1431,131 @@ export class Fpa2BvConverter {
     const r3 = this.mkIte(rmTp, v3, r4);
     const r2 = this.mkIte(rmNte, v2, r3);
     return this.mkIte(rmNta, v1, r2);
+  }
+
+  private mkToFpSymbolicReal(sort: number, rm: number, input: number) {
+    const manager = this.manager;
+    const ebits = manager.getEbits(sort);
+    const sbits = manager.getSbits(sort);
+    const x =
+      manager.sorts[input] === SORT_INT ? manager.mkApp(OP_TO_REAL, [input], SORT_REAL) : input;
+    const real = (op: number, ...args: number[]) => manager.mkApp(op, args, SORT_REAL);
+    const bool = (op: number, ...args: number[]) => manager.mkApp(op, args, SORT_BOOL);
+    const mkReal = (value: Rational) => manager.mkRealNumeral(value);
+    const mkAbs = (expr: number) =>
+      this.mkRawIte(bool(OP_LT, expr, zero), real(OP_UMINUS, expr), expr);
+    const bv0 = this.num(0, 1);
+    const bv1 = this.num(1, 1);
+    const zero = mkReal(Rational.of(0n));
+    const two = mkReal(Rational.of(2n));
+    const result = this.round(
+      sort,
+      rm,
+      manager.mkFreshConst("fpa2bv_to_fp_real_sgn", manager.mkBvSort(1)),
+      manager.mkFreshConst("fpa2bv_to_fp_real_sig", manager.mkBvSort(sbits + 4)),
+      manager.mkFreshConst("fpa2bv_to_fp_real_exp", manager.mkBvSort(ebits + 2)),
+    );
+    const rIsNan = this.mkIsNan(result);
+    this.extraAssertions.push(manager.mkNot(rIsNan));
+    const maxExp = getPowerOfTwoMinusOne(ebits - 1);
+    const maxReal = Rational.of(getPowerOfTwoMinusOne(sbits) << maxExp, 1n << BigInt(sbits - 1));
+    const nearestMaxReal = Rational.of(1n << maxExp, 1n << BigInt(sbits)).add(maxReal);
+    const rIsPinf = this.mkIsPinf(result);
+    const rIsNinf = this.mkIsNinf(result);
+    const eMaxReal = mkReal(maxReal);
+    const eMaxRealNeg = mkReal(maxReal.neg());
+    const eNearestMaxReal = mkReal(nearestMaxReal);
+    const eNearestMaxRealNeg = mkReal(nearestMaxReal.neg());
+    const rmNta = this.mkIsRm(rm, BV_RM_TIES_TO_AWAY);
+    const rmNte = this.mkIsRm(rm, BV_RM_TIES_TO_EVEN);
+    const rmTp = this.mkIsRm(rm, BV_RM_TO_POSITIVE);
+    const rmTn = this.mkIsRm(rm, BV_RM_TO_NEGATIVE);
+    this.mkIsRm(rm, BV_RM_TO_ZERO);
+    const [rSgn, rExp, rSig] = this.splitFp(result);
+    let sigField = zero;
+    for (let index = 0; index < sbits - 1; index++) {
+      const isOne = manager.mkEq(this.extract(index, index, rSig), bv1);
+      const weight = mkReal(Rational.of(1n << BigInt(index)));
+      sigField = real(OP_ADD, sigField, this.mkRawIte(isOne, weight, zero));
+    }
+    const expIsZero = manager.mkEq(rExp, this.num(0, ebits));
+    const expIsOne = manager.mkEq(rExp, this.num(1, ebits));
+    const sigIsZero = manager.mkEq(rSig, this.num(0, sbits - 1));
+    const sigIsEven = manager.mkEq(this.extract(0, 0, rSig), bv0);
+    const minSubnormal = Rational.of(1n, (1n << maxExp) << BigInt(sbits - 2));
+    const sigValue = real(OP_ADD, mkReal(Rational.of(1n << BigInt(sbits - 1))), sigField);
+    const absR = mkAbs(mkFpaApp(manager, OP_FPA_TO_REAL, [result]));
+    const absX = mkAbs(x);
+    const gapUp = this.mkRawIte(expIsZero, mkReal(minSubnormal), real(OP_DIV, absR, sigValue));
+    const gapDown = this.mkRawIte(
+      this.mkOr(expIsZero, expIsOne, manager.mkNot(sigIsZero)),
+      gapUp,
+      real(OP_DIV, gapUp, two),
+    );
+    const lowerMid = real(OP_SUB, absR, real(OP_DIV, gapDown, two));
+    const upperMid = real(OP_ADD, absR, real(OP_DIV, gapUp, two));
+    const inNearestRange = this.mkAnd(bool(OP_LE, lowerMid, absX), bool(OP_LE, absX, upperMid));
+    const tieLo = manager.mkEq(absX, lowerMid);
+    const tieHi = manager.mkEq(absX, upperMid);
+    const nteCond = this.mkAnd(
+      inNearestRange,
+      bool(OP_IMPLIES, this.mkOr(tieLo, tieHi), sigIsEven),
+    );
+    const ntaCond = this.mkAnd(inNearestRange, manager.mkNot(tieHi));
+    const isMaxFinite = this.mkAnd(
+      manager.mkEq(rExp, this.num((1n << BigInt(ebits)) - 2n, ebits)),
+      manager.mkEq(rSig, this.num(getPowerOfTwoMinusOne(sbits - 1), sbits - 1)),
+    );
+    const awayCond = this.mkAnd(
+      bool(OP_LE, absX, absR),
+      bool(OP_LT, real(OP_SUB, absR, gapDown), absX),
+    );
+    const toZeroCond = this.mkAnd(
+      bool(OP_LE, absR, absX),
+      this.mkOr(bool(OP_LT, absX, real(OP_ADD, absR, gapUp)), isMaxFinite),
+    );
+    const xIsNonneg = bool(OP_GE, x, zero);
+    const tpCond = this.mkRawIte(xIsNonneg, awayCond, toZeroCond);
+    const tnCond = this.mkRawIte(xIsNonneg, toZeroCond, awayCond);
+    const roundingCond = this.mkRawIte(
+      rmNta,
+      ntaCond,
+      this.mkRawIte(
+        rmNte,
+        nteCond,
+        this.mkRawIte(rmTp, tpCond, this.mkRawIte(rmTn, tnCond, toZeroCond)),
+      ),
+    );
+    const rIsInf = this.mkIsInf(result);
+    this.extraAssertions.push(
+      bool(OP_IMPLIES, manager.mkNot(this.mkOr(rIsNan, rIsInf)), roundingCond),
+    );
+    const xIsPos = bool(OP_GT, x, zero);
+    const xIsNeg = bool(OP_LT, x, zero);
+    this.extraAssertions.push(bool(OP_IMPLIES, xIsPos, manager.mkEq(rSgn, bv0)));
+    this.extraAssertions.push(bool(OP_IMPLIES, xIsNeg, manager.mkEq(rSgn, bv1)));
+    const roundsToNearest = this.mkOr(rmNte, rmNta);
+    const impliesGtMaxReal = bool(
+      OP_IMPLIES,
+      rIsPinf,
+      this.mkOr(
+        this.mkAnd(rmTp, bool(OP_GT, x, eMaxReal)),
+        this.mkAnd(roundsToNearest, bool(OP_GE, x, eNearestMaxReal)),
+      ),
+    );
+    const impliesLtMinReal = bool(
+      OP_IMPLIES,
+      rIsNinf,
+      this.mkOr(
+        this.mkAnd(rmTn, bool(OP_LT, x, eMaxRealNeg)),
+        this.mkAnd(roundsToNearest, bool(OP_LE, x, eNearestMaxRealNeg)),
+      ),
+    );
+    this.extraAssertions.push(impliesGtMaxReal);
+    this.extraAssertions.push(impliesLtMinReal);
+    const pzero = this.mkPzero(sort);
+    this.extraAssertions.push(bool(OP_IMPLIES, manager.mkEq(x, zero), manager.mkEq(result, pzero)));
+    return result;
   }
 
   private mkToFpRealInt(sort: number, rm: number, exponent: bigint, significand: Rational) {
