@@ -1875,6 +1875,17 @@ describe("values", () => {
     expect((await checkModel(getSource(3, 5, 2, 300))).failure?.message).toContain("element");
     expect((await checkModel(getSource(3, 5, -2, 44))).failure?.message).toContain("typed");
   });
+
+  it("spreads a string's code points into an array", async () => {
+    const getSource = (expected: string) => `
+      const word = "hi";
+      const letters = ["a", ..."≈𝔸", ...word];
+      const result = [letters.join(","), letters.length].join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("a,≈,𝔸,h,i;5"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("a,≈,𝔸,h,i;6"))).rejects.toThrow("a,≈,𝔸,h,i;5");
+  });
 });
 
 describe("bounds", () => {
