@@ -28,6 +28,8 @@ export interface Method {
   tactic?: string;
 }
 
+export const getBudget = (method: Method) => method.rlimit ?? method.timeLimitMs / 1000;
+
 const FRONTENDS = new Set<Prover>([
   "expandenabled",
   "expandcdot",

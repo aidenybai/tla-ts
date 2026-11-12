@@ -15,7 +15,7 @@ import {
   normalizeExpand,
   normalizeSequent,
 } from "./prep/normalize";
-import { findMethods, type Method } from "./prep/methods";
+import { findMethods, getBudget, type Method } from "./prep/methods";
 import { encodePtl } from "./ptl/encode";
 import { encodeSmt } from "./smt/encode";
 import type { EncodingSession } from "./smt/rewrite";
@@ -266,7 +266,6 @@ const proveWithBackends = async (
     const prior = run.results.get(fingerprint)?.get(method.prover);
     return prior?.method.tactic === method.tactic ? prior : undefined;
   };
-  const getBudget = (method: Method) => method.rlimit ?? method.timeLimitMs / 1000;
   const reuse = (prior: ProofAttempt) =>
     attempts.push({
       kind: "reused",

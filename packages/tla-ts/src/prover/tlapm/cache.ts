@@ -19,6 +19,7 @@ import {
   writeMarshaled,
   type OcamlValue,
 } from "./ocaml-marshal";
+import { getBudget } from "../prep/methods";
 import { getFailureReason, isProvedAttempt, type ProofAttempt } from "../prove";
 import { BACKENDS, type Backend } from "../verdict";
 
@@ -132,7 +133,7 @@ const decodeResult = (
 const encodeResult = (prover: Backend, attempt: ProofAttempt) => {
   const now = new Date();
   const method = attempt.method;
-  const timeout = { float: method.rlimit ?? method.timeLimitMs / 1000 };
+  const timeout = { float: getBudget(method) };
   const argument =
     prover === "zenon"
       ? createBlock(0, timeout, FAIL_METHOD)
