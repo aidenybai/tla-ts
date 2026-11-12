@@ -4902,6 +4902,34 @@ describe("errors", () => {
     expect((await checkModel(getSource("third !== fourth"))).failure?.message).toContain("Point");
   });
 
+  it("runs a call that a later argument or a receiver makes before the call", async () => {
+    const getSource = (check: string) => `
+      class Point {
+        constructor(readonly x: number) {}
+        static of(x: number) {
+          return new Point(x * 2);
+        }
+        add(other: Point) {
+          return new Point(this.x + other.x);
+        }
+      }
+      let count = 1;
+      const bump = () => {
+        count++;
+        return Point.of(count * 5);
+      };
+      const add = (left: number, right: Point) => Point.of(left + right.x);
+      const chained = Point.of(3).add(Point.of(1));
+      const ordered = add(count, bump());
+      if (${check}) throw new Error("Point");
+    `;
+    expect(
+      (await checkModel(getSource("chained.x !== 8 || ordered.x !== 42"))).failure,
+    ).toBeUndefined();
+    expect((await checkModel(getSource("chained.x === 8"))).failure?.message).toContain("Point");
+    expect((await checkModel(getSource("ordered.x === 42"))).failure?.message).toContain("Point");
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`

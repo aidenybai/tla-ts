@@ -1202,6 +1202,20 @@ export const translateCallStatement = (
       ),
     );
   }
+  // A later argument that only statements can run runs first too, where what evaluates before it
+  // doesn't read what it changes.
+  const leading = getLeadingCall(expression, (call) => call !== expression, path, context);
+  if (leading !== undefined) {
+    return translateCallStatement(leading.call, path, context, frame, (after, value) =>
+      translateCallStatement(
+        expression,
+        withLeadingResults(leading, path, after, value, context),
+        context,
+        frame,
+        continueWith,
+      ),
+    );
+  }
   if (isPromiseCall(expression, context)) {
     return translatePromiseCall(expression, path, context, frame, continueWith);
   }
@@ -7117,8 +7131,13 @@ const translateTry = (
   );
 };
 
-// A callee like f or assert.sameValue, whose evaluation reads no getter.
-const isPlainCallee = (node: ts.Expression, context: Context): boolean =>
+// A callee like f or assert.sameValue, whose evaluation reads no getter, or a method of a call's
+// result that ran first.
+const isPlainCallee = (
+  node: ts.Expression,
+  context: Context,
+  results?: Scope["results"],
+): boolean =>
   ts.isIdentifier(node) ||
   ts.isLiteralExpression(node) ||
   (ts.isPropertyAccessExpression(node) &&
@@ -7127,7 +7146,7 @@ const isPlainCallee = (node: ts.Expression, context: Context): boolean =>
     !(getSymbol(node.name, context.checker)?.declarations ?? []).some(
       ts.isGetAccessorDeclaration,
     ) &&
-    isPlainCallee(node.expression, context));
+    isPlainCallee(getCast(node.expression), context, results));
 
 type Increment = ts.PrefixUnaryExpression | ts.PostfixUnaryExpression;
 
@@ -7139,6 +7158,7 @@ const isIncrement = (node: ts.Node): node is Increment =>
 // and writes a number without running code.
 const isPlainIncrement = (node: Increment, context: Context) => {
   const operand = node.operand;
+  (results?.has(node) ?? false) ||
   const names = getTypeNames(context.checker.getTypeAtLocation(operand), context.checker);
   const isNumeric =
     names !== undefined && names.every((name) => name === "number" || name === "bigint");
@@ -7515,7 +7535,16 @@ const findLeadingCall = (
     return found.call !== undefined || found.isBlocked ? found : blocked;
   }
   if (ts.isCallExpression(node)) {
-    if (!isPlainCallee(node.expression, context)) return blocked;
+    // A method of a call's result runs the call first.
+    const receiver = ts.isPropertyAccessExpression(node.expression)
+      ? getCast(node.expression.expression)
+      : undefined;
+    const fromReceiver =
+      receiver !== undefined && ts.isCallExpression(receiver)
+        ? findLeadingCall(receiver, before, path, context)
+        : none;
+    if (fromReceiver.call !== undefined || fromReceiver.isBlocked) return fromReceiver;
+    if (!isPlainCallee(node.expression, context, path.scope.results)) return blocked;
     const found = thenConverted(inOrder(node.arguments));
     if (found.call !== undefined || found.isBlocked) return found;
     if (isGeneratorType(node, context)) return blocked;
