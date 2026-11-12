@@ -111,6 +111,7 @@ import {
   isSequenceType,
   TYPED_ARRAYS,
   isHoleyNewArray,
+  isNewArrayOfElements,
   getArraySource,
   getKeptIterator,
 } from "./types";
@@ -1144,6 +1145,17 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
           context,
         ),
       ],
+      context,
+    );
+  }
+  if (isNewArrayOfElements(node) && context.heapCollections.has(node)) {
+    const elements = tuple(
+      (node.arguments ?? []).map((element) => translateExpression(element, scope, context)),
+    );
+    const prototype = translateBuiltInValue("Array.prototype", node, context);
+    return useJavaScript(
+      "Allocate",
+      [heap, useJavaScript("ArrayObject", [prototype, elements], context)],
       context,
     );
   }
@@ -2258,6 +2270,16 @@ const isArrayObjectUse = (node: ts.Expression, context: Context): boolean => {
 // Each use of a variable that holds one must read it as an object.
 // An array literal with holes, which a sequence can't hold, where a variable that only reads it as
 // an object holds it, or a method reads it.
+// An array that a script makes the prototype of a function's instances, which they share.
+export const isPrototypeArray = (node: ts.Node) =>
+  ((ts.isArrayLiteralExpression(node) && !node.elements.some(ts.isSpreadElement)) ||
+    isNewArrayOfElements(node)) &&
+  ts.isBinaryExpression(node.parent) &&
+  node.parent.right === node &&
+  node.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+  ts.isPropertyAccessExpression(node.parent.left) &&
+  node.parent.left.name.text === "prototype";
+
 export const isHoleyArray = (node: ts.Node) => {
   const isHeld =
     node.parent !== undefined &&
@@ -3166,6 +3188,7 @@ export const findHeapArrays = (
       arrays.add(literal);
     }
     if (isHoleyArray(node)) arrays.add(node);
+    if (isPrototypeArray(node)) arrays.add(node);
     ts.forEachChild(node, find);
   };
   roots.forEach(find);

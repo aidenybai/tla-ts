@@ -17,6 +17,7 @@ import {
   findChangedArrays,
   findHeapArrays,
   isHoleyArray,
+  isPrototypeArray,
   translateConstantFunctions,
 } from "./heap";
 import { translateBuiltIns } from "./intrinsics";
@@ -248,6 +249,7 @@ export const compile = (
     (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) ||
     node.kind === ts.SyntaxKind.AsyncKeyword ||
     isHoleyArray(node) ||
+    isPrototypeArray(node) ||
     getKeptIterator(node, context) !== undefined ||
     // An array that a script gives a named property, which only an object can hold.
     (ts.isBinaryExpression(node) &&
