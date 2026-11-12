@@ -2185,6 +2185,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
     const addResult = (owner: ts.SignatureDeclaration): boolean => {
       if (results.has(owner)) return true;
       results.add(owner);
+      nodes.push(owner);
       const name = getCalledName(owner);
       const called = name === undefined ? undefined : getSymbol(name, checker);
       const body =

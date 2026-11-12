@@ -297,7 +297,13 @@ export const isHeapArray = (node: ts.Expression, context: Context): boolean => {
     ? getSymbol(node, context.checker)?.valueDeclaration
     : undefined;
   const fields = getAccessedFields(node, context.checker);
+  const called = ts.isCallExpression(node)
+    ? getSymbol(node.expression, context.checker)?.valueDeclaration
+    : undefined;
+  const returning =
+    called !== undefined && ts.isVariableDeclaration(called) ? called.initializer : called;
   return (
+    (returning !== undefined && context.heapArrays.has(returning)) ||
     (literal !== undefined && context.heapArrays.has(literal)) ||
     (declaration !== undefined &&
       (ts.isBindingElement(declaration) ||

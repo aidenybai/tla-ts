@@ -989,21 +989,21 @@ describe("calls", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("rejects a local function that calls itself and changes a name around it", () => {
-    expect(() =>
-      compile(`
-        const outer = (limit: number): number => {
-          const seen = [0];
-          const add = (index: number): number => {
-            seen.push(index);
-            return index >= limit ? seen.length : add(index + 1);
-          };
-          return add(0);
+  it("changes an array around a local function that calls itself", async () => {
+    const getSource = (expected: number) => `
+      const outer = (limit: number): number => {
+        const seen = [0];
+        const add = (index: number): number => {
+          seen.push(index);
+          return index >= limit ? seen.length : add(index + 1);
         };
-        const total = outer(2);
-        if (total !== 4) throw new Error("total");
-      `),
-    ).toThrow("Only state variables and local lets can change: seen");
+        return add(0);
+      };
+      const total = outer(2);
+      if (total !== ${expected}) throw new Error("total");
+    `;
+    expect((await checkModel(getSource(4))).failure).toBeUndefined();
+    await expect(checkModel(getSource(5))).rejects.toThrow("total");
   });
 
   it("rejects catching a throw from a local function that calls itself", () => {
@@ -1552,10 +1552,6 @@ describe("errors", () => {
     [
       "a local that a function returns and then changes in a finally block",
       "const make = () => {\n  const items: number[] = [];\n  try {\n    return items;\n  } finally {\n    items.push(1);\n  }\n};\nlet size = make().length;",
-    ],
-    [
-      "a parameter that a function changes and returns",
-      "const fill = (items: number[]) => {\n  items.push(1);\n  return items;\n};\nconst list: number[] = [];\nlet size = fill(list).length + list.length;",
     ],
     [
       "a local of an outer function that an inner function returns",
@@ -3862,16 +3858,6 @@ describe("errors", () => {
       }
     `);
     expect(result.failure).toBeUndefined();
-    // The caller's array, which a copy that the parameter changes in place would miss.
-    expect(() =>
-      checkModel(`
-        const fill = (names: string[]) => {
-          names.push("a");
-        };
-        const names = "b,c".split(",");
-        fill(names);
-      `),
-    ).toThrow("Only state variables and local lets can change: names");
   });
 
   it("holds an array that a script gives a named property as an object", async () => {
@@ -4035,15 +4021,28 @@ describe("errors", () => {
       if (size !== 2 || other !== 3 || kept.join("") !== "abc") throw new Error("parameter");
     `);
     expect(result.failure).toBeUndefined();
-    expect(() =>
-      checkModel(`
-        const add = (items: number[]) => {
-          items.push(1);
-        };
-        const list: number[] = [];
-        add(list.slice());
-      `),
-    ).toThrow("Only state variables and local lets can change: items");
+  });
+
+  it("changes through a parameter an array that a function returns", async () => {
+    const getSource = (expected: string) => `
+      const fill = (items: string[]) => {
+        items.push("a");
+        return items;
+      };
+      const add = (items: string[]) => {
+        items.push("a");
+      };
+      const names = "b,c".split(",");
+      const list: string[] = [];
+      const copy = list.slice();
+      add(copy);
+      add(list.slice());
+      const size = fill(names).length + names.length;
+      const result = [names.join(""), copy.join(""), list.length, size].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("bca,a,0,6"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("bc,a,0,6"))).failure?.message).toContain("bca,a,0,6");
   });
 
   it("changes an array that a field holds through a parameter", async () => {
