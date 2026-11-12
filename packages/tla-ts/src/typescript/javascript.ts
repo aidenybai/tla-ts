@@ -459,6 +459,18 @@ ElementPosition(value) ==
 \\* The value that a Set or a Map keeps as a key, where -0 is 0.
 KeyOf(value) == IF value = NegativeZero THEN 0 ELSE value
 
+\\* The map that new Map makes from an array of entries, each a key and its value, where a later
+\\* entry of a key replaces an earlier one's value.
+MapOf(entries) ==
+  [key \\in {entries[index][1] : index \\in DOMAIN entries} |->
+     entries[CHOOSE index \\in DOMAIN entries :
+               /\\ entries[index][1] = key
+               /\\ \\A later \\in index + 1..Len(entries) : entries[later][1] # key][2]]
+
+\\* MapOf, where the keys may be -0, which a map keeps as 0.
+KeyedMapOf(entries) ==
+  MapOf([index \\in DOMAIN entries |-> <<KeyOf(entries[index][1]), entries[index][2]>>])
+
 \\* The length of new Array(length), which throws a RangeError unless length is an array index.
 ArrayLength(value) ==
   IF value = NegativeZero \\/ (IsInteger(value) /\\ value >= 0)
