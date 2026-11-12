@@ -1876,6 +1876,82 @@ describe("values", () => {
     expect((await checkModel(getSource(3, 5, -2, 44))).failure?.message).toContain("typed");
   });
 
+  it("returns a value whose calls read state", async () => {
+    const getSource = (expected: string) => `
+      let count = 1;
+      const read = () => count;
+      const bump = () => {
+        count++;
+        return [read(), count].join(",");
+      };
+      const result = bump();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("2,2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1,2"))).failure?.message).toContain("2,2");
+  });
+
+  it("returns a value whose calls change state", async () => {
+    const getSource = (expected: string) => `
+      let count = 0;
+      const bump = () => {
+        count++;
+        return count;
+      };
+      const twice = () => {
+        return bump() * 10 + bump();
+      };
+      const first = twice();
+      const result = [first, count].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("12,2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("21,2"))).failure?.message).toContain("12,2");
+  });
+
+  it("returns a call's value before finally changes what the call changed", async () => {
+    const getSource = (expected: string) => `
+      let count = 0;
+      const bump = () => {
+        count++;
+        return count;
+      };
+      const guarded = () => {
+        try {
+          return bump();
+        } finally {
+          count *= 10;
+        }
+      };
+      const first = guarded();
+      const result = [first, count].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("1,10"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("10,10"))).failure?.message).toContain("1,10");
+  });
+
+  it("returns a call's value from inside a loop", async () => {
+    const getSource = (expected: string) => `
+      let count = 0;
+      const bump = () => {
+        count++;
+        return count;
+      };
+      const find = (values: number[]) => {
+        for (const value of values) {
+          if (value > 1) return bump() * value;
+        }
+        return 0;
+      };
+      const found = find([1, 5]);
+      const result = [found, count].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("5,1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("5,0"))).failure?.message).toContain("5,1");
+  });
+
   it("changes a field's array through a local that names it", async () => {
     const getSource = (expected: string) => `
       const shrink = (values: number[], size: number) => {

@@ -10182,38 +10182,11 @@ const isLibraryCall = (node: ts.CallExpression, context: Context) =>
 
 // Whether evaluating a node calls a function, which a function's body doesn't, as it only runs
 // where something calls it.
-// Whether each call that a value makes is to a local function that an expression can run, as one
-// that reads no state and changes nothing outside it.
-const hasOnlyLiftableCalls = (node: ts.Node, path: Path, context: Context): boolean => {
-  // A call that ran as its own statement first has its value.
-  if (ts.isFunctionLike(node) || (ts.isExpression(node) && path.scope.results.has(node))) {
-    return true;
-  }
-  if (ts.isNewExpression(node)) return false;
-  if (ts.isCallExpression(node) && !isLibraryCall(node, context)) {
-    const symbol = getSymbol(node.expression, context.checker);
-    const callee =
-      (symbol && path.scope.functions.get(symbol)) ?? getCallee(node.expression, context);
-    if (callee === undefined || !isLiftable(callee, context)) return false;
-  }
-  return !(
-    ts.forEachChild(node, (child) =>
-      hasOnlyLiftableCalls(child, path, context) ? undefined : true,
-    ) ?? false
-  );
-};
-
-// A call or a new that a node evaluates, besides the objects that statements made before it.
-const hasCall = (
-  node: ts.Node,
-  context: Context,
-  allocated: ReadonlyMap<ts.Node, Expression> = new Map(),
-): boolean =>
+const hasCall = (node: ts.Node, context: Context): boolean =>
   !ts.isFunctionLike(node) &&
-  !allocated.has(node) &&
   ((ts.isCallExpression(node) && !isLibraryCall(node, context)) ||
     ts.isNewExpression(node) ||
-    (ts.forEachChild(node, (child) => hasCall(child, context, allocated) || undefined) ?? false));
+    (ts.forEachChild(node, (child) => hasCall(child, context) || undefined) ?? false));
 
 const translateTry = (
   statement: ts.TryStatement,
@@ -11550,13 +11523,6 @@ export const translateStatements = (
           isRemoving(returned, context))
       ) {
         return translateCallStatement(returned, inner, context, frame, frame.exit);
-      }
-      if (
-        hasCall(returned, context, inner.scope.allocated) &&
-        !inner.scope.results.has(skipCasts(returned)) &&
-        !hasOnlyLiftableCalls(returned, inner, context)
-      ) {
-        throw new TlaTypeScriptError("Unsupported return", statement);
       }
       return frame.exit(inner, translateExpression(returned, inner.scope, context));
     });
