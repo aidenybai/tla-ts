@@ -186,31 +186,37 @@ LessOrEqual(left, right) == left # NaN /\\ right # NaN /\\ ~LessThan(right, left
 \\* would leave them.
 LOCAL MaxInteger == 2147483647
 
+\\* The integer that a BigInt holds, where TypeScript's types may let another value through.
+LOCAL IntegerOfBigInt(value) ==
+  IF IsBigInt(value)
+  THEN value[Big]
+  ELSE Assert(FALSE, "tla-ts can't compute with a value that isn't a BigInt")
+
 LOCAL TooBig == Assert(FALSE, "tla-ts can't hold a BigInt beyond 32 bits")
 
 BigIntAdd(left, right) ==
-  LET augend == left[Big]
-      addend == right[Big]
+  LET augend == IntegerOfBigInt(left)
+      addend == IntegerOfBigInt(right)
   IN IF \\/ addend > 0 /\\ augend > MaxInteger - addend
         \\/ addend < 0 /\\ augend < -MaxInteger - addend
      THEN TooBig
      ELSE Big :> augend + addend
 
-BigIntNegate(value) == Big :> -value[Big]
+BigIntNegate(value) == Big :> -IntegerOfBigInt(value)
 
 BigIntSubtract(left, right) == BigIntAdd(left, BigIntNegate(right))
 
 BigIntMultiply(left, right) ==
-  LET multiplicand == left[Big]
-      multiplier == right[Big]
+  LET multiplicand == IntegerOfBigInt(left)
+      multiplier == IntegerOfBigInt(right)
   IN IF multiplicand # 0 /\\ Absolute(multiplier) > MaxInteger \\div Absolute(multiplicand)
      THEN TooBig
      ELSE Big :> multiplicand * multiplier
 
 \\* BigInt's /, which rounds toward zero.
 BigIntDivide(left, right) ==
-  LET dividend == left[Big]
-      divisor == right[Big]
+  LET dividend == IntegerOfBigInt(left)
+      divisor == IntegerOfBigInt(right)
       quotient == Absolute(dividend) \\div Absolute(divisor)
   IN IF divisor = 0
      THEN Assert(FALSE, "tla-ts can't throw the RangeError of dividing a BigInt by zero")
@@ -218,8 +224,8 @@ BigIntDivide(left, right) ==
 
 \\* BigInt's %, whose result has the sign of the dividend.
 BigIntRemainder(left, right) ==
-  LET dividend == left[Big]
-      divisor == right[Big]
+  LET dividend == IntegerOfBigInt(left)
+      divisor == IntegerOfBigInt(right)
       remainder == Absolute(dividend) % Absolute(divisor)
   IN IF divisor = 0
      THEN Assert(FALSE, "tla-ts can't throw the RangeError of dividing a BigInt by zero")
@@ -230,11 +236,11 @@ BigIntPowerOf(base, exponent) ==
   IF exponent = 0 THEN Big :> 1 ELSE BigIntMultiply(base, BigIntPowerOf(base, exponent - 1))
 
 BigIntPower(base, exponent) ==
-  LET magnitude == Absolute(base[Big])
-      count == exponent[Big]
+  LET magnitude == Absolute(IntegerOfBigInt(base))
+      count == IntegerOfBigInt(exponent)
   IN CASE count < 0 ->
             Assert(FALSE, "tla-ts can't throw the RangeError of a BigInt's negative exponent")
-       [] count = 0 \\/ base[Big] = 1 -> Big :> 1
+       [] count = 0 \\/ IntegerOfBigInt(base) = 1 -> Big :> 1
        [] magnitude = 1 -> Big :> IF count % 2 = 0 THEN 1 ELSE -1
        [] magnitude = 0 -> Big :> 0
        [] count > 31 -> TooBig
@@ -1379,7 +1385,7 @@ ToBigInt(value) ==
     [] OTHER -> Assert(FALSE, "tla-ts can't convert this value to a BigInt")
 
 \\* Number(value) of a BigInt.
-NumberOfBigInt(value) == value[Big]
+NumberOfBigInt(value) == IntegerOfBigInt(value)
 
 \\* ToIntegerOrInfinity of a number or undefined.
 LOCAL IntegerOf(value) == IF value \\in {Undefined, NaN, NegativeZero} THEN 0 ELSE value
@@ -1699,7 +1705,7 @@ NumberToString(value, radix) ==
 
 BigIntToString(value, radix) ==
   LET base == IF radix = Undefined THEN 10 ELSE IntegerOf(radix)
-      integer == value[Big]
+      integer == IntegerOfBigInt(ThisBigInt(value))
   IN  CASE ~IsInteger(base) \\/ base < 2 \\/ base > 36 ->
              Assert(FALSE, "tla-ts can't throw the RangeError of a radix outside 2 to 36")
         [] integer < 0 -> "-" \\o RadixDigits(-integer, base)
