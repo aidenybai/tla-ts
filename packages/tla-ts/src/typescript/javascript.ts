@@ -1294,11 +1294,23 @@ Delete(heap, ref, key) ==
                                            !.attributes = [other \\in kept |-> @[other]]])
      ELSE heap
 
+\\* Whether a value is one that only itself equals: anything but an object outside the heap, or an
+\\* error that a script made, whose record holds its identity.
+HasIdentity(value) ==
+  \\/ TypeOf(value) # "object"
+  \\/ value = Null
+  \\/ IsRef(value)
+  \\/ SubSeq(ToString(value), 1, 1) = "[" /\\ "identity" \\in DOMAIN value
+
+\\* Whether two values that a script compares are one, where two equal objects outside the heap may
+\\* still be two objects.
+IsIdentical(left, right) ==
+  /\\ left = right
+  /\\ Assert(HasIdentity(left), "tla-ts can't tell whether two equal objects are the same object")
+
 SameValue(left, right) ==
   /\\ TypeOf(left) = TypeOf(right)
-  /\\ Assert(TypeOf(left) # "object" \\/ left = Null \\/ right = Null
-              \\/ IsRef(left) \\/ IsRef(right),
-            "tla-ts can't compare objects by identity")
+  /\\ Assert(HasIdentity(left) \\/ HasIdentity(right), "tla-ts can't compare objects by identity")
   /\\ IF IsRef(left) \\/ IsRef(right) THEN ToString(left) = ToString(right) ELSE left = right
 
 \\* JavaScript's ===, where NaN differs from itself and -0 equals 0.

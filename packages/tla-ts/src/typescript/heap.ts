@@ -39,7 +39,7 @@ import {
 import { TlaTypeScriptError } from "../errors";
 import { ARRAY_LIKE_METHODS, getHeapRegExpCall, IN_PLACE_METHODS } from "./collections";
 import { getJsonText, parseJson } from "./json";
-import { getConstructor } from "./exceptions";
+import { getConstructor, getErrorClass } from "./exceptions";
 import {
   translateArrayLiteral,
   translateCondition,
@@ -849,8 +849,16 @@ export const translateHasPrivate = (
     context,
   );
 
+// A script's error outside the heap, which takes an empty object on the heap as its identity.
+const isNewError = (node: ts.Node, context: Context) =>
+  ts.isNewExpression(node) &&
+  getErrorClass(getSymbol(node.expression, context.checker), context.checker) !== undefined;
+
 export const translateAllocated = (node: ts.Node, scope: Scope, context: Context) => {
   const heap = getHeap(scope, node, context);
+  if (isNewError(node, context)) {
+    return useJavaScript("Allocate", [heap, identifier("EmptyObject")], context);
+  }
   if (ts.isRegularExpressionLiteral(node) || getMadeRegExp(node, context) !== undefined) {
     // The constructor, which the prototype's constructor property holds.
     context.builtIns.add("RegExp");
@@ -1863,6 +1871,7 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
     getNewBuffer(node, context) !== undefined ||
     getNewWrapper(node, context) !== undefined ||
     (!isSometimes && isAllocation(node, context)) ||
+    (!isSometimes && isNewError(node, context)) ||
     (!isSometimes &&
       created !== undefined &&
       ts.isNewExpression(node) &&

@@ -174,8 +174,10 @@ export const translateNewError = (
           )
         : translateExpression(message, scope, context);
   if (native === classes[0]) includeError(native.name, context);
+  const identity = scope.allocated.get(node);
   return record("Record", [
     { name: "constructor", value: getConstructor(classes[0], context) },
+    ...(identity === undefined ? [] : [{ name: "identity", value: identity }]),
     { name: "message", value },
     { name: "name", value: string(native.name) },
     ...held.map((name, position) => {

@@ -4043,6 +4043,31 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("tells a script's errors apart by the identity that made them", async () => {
+    const result = await checkModel(`
+      const box = { seen: 0 };
+      const error = new Error("a");
+      const other = new Error("a");
+      let caught: unknown;
+      try {
+        throw error;
+      } catch (thrown) {
+        caught = thrown;
+      }
+      if (caught !== error || error === other) throw new Error("identity");
+    `);
+    expect(result.failure).toBeUndefined();
+    const stopped = await checkModel(`
+      const box = { seen: 0 };
+      const first = new Set<number>();
+      const second = new Set<number>();
+      if (first === second) throw new Error("distinct");
+    `);
+    expect(stopped.failure?.message).toContain(
+      "tla-ts can't tell whether two equal objects are the same object",
+    );
+  });
+
   it("rejects a sort comparator that may throw", () => {
     expect(() =>
       compile(`

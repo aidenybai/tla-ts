@@ -1043,6 +1043,31 @@ const translateTemplate = (node: ts.TemplateExpression, scope: Scope, context: C
   ]);
 };
 
+// Both sides name one variable, which holds one value at a time.
+const isSameName = (left: ts.Expression, right: ts.Expression, context: Context) =>
+  ts.isIdentifier(left) &&
+  ts.isIdentifier(right) &&
+  getSymbol(left, context.checker) === getSymbol(right, context.checker);
+
+const OBJECT_FLAGS =
+  ts.TypeFlags.Object |
+  ts.TypeFlags.NonPrimitive |
+  ts.TypeFlags.Any |
+  ts.TypeFlags.Unknown |
+  ts.TypeFlags.TypeParameter;
+
+// A value that may be an object that the heap doesn't hold.
+const mayBeValueObject = (node: ts.Expression, context: Context) => {
+  const kind = getKind(node, context);
+  const type = context.checker.getTypeAtLocation(node);
+  return (
+    kind === "set" ||
+    kind === "map" ||
+    (kind === "other" &&
+      (type.isUnion() ? type.types : [type]).some((member) => (member.flags & OBJECT_FLAGS) !== 0))
+  );
+};
+
 const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Context) => {
   const kind = node.operatorToken.kind;
   const translate = (inner: ts.Expression) => translateExpression(inner, scope, context);
@@ -1207,11 +1232,7 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
     isScript(node.getSourceFile()) &&
     getKind(node.left, context) === "sequence" &&
     getKind(node.right, context) === "sequence" &&
-    !(
-      ts.isIdentifier(node.left) &&
-      ts.isIdentifier(node.right) &&
-      getSymbol(node.left, context.checker) === getSymbol(node.right, context.checker)
-    )
+    !isSameName(node.left, node.right, context)
   ) {
     return ifExpression(
       apply("=", [translate(node.left), translate(node.right)]),
@@ -1221,6 +1242,22 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
       ]),
       boolean(!isPositive),
     );
+  }
+  // A script's other objects outside the heap, such as a Set or an error that JavaScript throws,
+  // compare by value too, unless they hold the identity that made them.
+  if (
+    isEquality &&
+    isScript(node.getSourceFile()) &&
+    mayBeValueObject(node.left, context) &&
+    mayBeValueObject(node.right, context) &&
+    !isSameName(node.left, node.right, context)
+  ) {
+    const isSame = useJavaScript(
+      "IsIdentical",
+      [translate(node.left), translate(node.right)],
+      context,
+    );
+    return isPositive ? isSame : not(isSame);
   }
   if (kind === ts.SyntaxKind.InKeyword) {
     if (ts.isPrivateIdentifier(node.left)) {
