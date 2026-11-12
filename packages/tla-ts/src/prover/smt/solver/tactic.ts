@@ -27,6 +27,7 @@ import { runBvDivremBounds } from "./bv-divrem-bounds";
 import { runBv1Blast } from "./bv1-blast";
 import { runReduceBvSize } from "./reduce-bv-size";
 import { createSatTactic } from "./sat/sat-tactic";
+import { createFdTactic } from "./fd-solver";
 import { elimUncnstr } from "./elim-uncnstr";
 import { rewriteUfbv } from "./demodulator";
 import { distributeForall } from "./distribute-forall";
@@ -1167,6 +1168,14 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     },
   ],
   [
+    "qffd",
+    {
+      descrs: SAT_DESCRS,
+      isRejectingUnknown: false,
+      build: (environment, params) => createFdTactic(environment.manager, params),
+    },
+  ],
+  [
     "psat",
     {
       descrs: SAT_DESCRS,
@@ -1223,7 +1232,7 @@ const UNPORTED_TACTICS = new Set(
     "elim-predicates elim-uncnstr2 " +
     "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv fold-unfold fpa2bv " +
     "horn-simplify injectivity pb-preprocess pqffd propagate-bv-bounds " +
-    "propagate-bv-bounds2 propagate-values2 psmt qfbv-sls qffd qfufbv recover-01 reduce-args2 " +
+    "propagate-bv-bounds2 propagate-values2 psmt qfbv-sls qfufbv recover-01 reduce-args2 " +
     "sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
     "split-clause subpaving symmetry-reduce"
   ).split(" "),
