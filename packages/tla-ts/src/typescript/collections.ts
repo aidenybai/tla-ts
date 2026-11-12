@@ -1407,7 +1407,8 @@ export const translateMethod = (
     primitiveCall.methodArguments.length <= primitiveMethod.parameters.length &&
     primitiveCall.methodArguments.every((argument, position) =>
       primitiveMethod.parameters[position] === "number"
-        ? isNumberLike(argument, context)
+        ? isNumberLike(argument, context) ||
+          isEvery(context.checker.getTypeAtLocation(argument), ts.TypeFlags.Undefined)
         : isEvery(context.checker.getTypeAtLocation(argument), ts.TypeFlags.StringLike),
     );
   if (primitiveCall === undefined || primitiveMethod === undefined || !isTyped) {
@@ -1745,6 +1746,7 @@ export const translatePrimitiveMethod = (
       text,
       ...method.parameters.map((_, position) => values[position] ?? getUndefined(context)),
       ...(method.trimmed ?? []).map(boolean),
+      ...(method.tag === undefined ? [] : [string(method.tag)]),
     ],
     context,
   );
@@ -1762,6 +1764,8 @@ interface PrimitiveMethod {
   // The kinds of the arguments, where one that a call omits is undefined.
   parameters: ("number" | "string")[];
   trimmed?: [boolean, boolean];
+  // The element that an HTML method wraps the string in.
+  tag?: string;
   isNaNable?: boolean;
 }
 
@@ -1772,6 +1776,7 @@ const STRING_METHODS = new Map<string, PrimitiveMethod>([
   ["codePointAt", { operator: "CodePointAt", parameters: ["number"] }],
   ["slice", { operator: "StringSlice", parameters: ["number", "number"] }],
   ["substring", { operator: "Substring", parameters: ["number", "number"] }],
+  ["substr", { operator: "Substr", parameters: ["number", "number"] }],
   ["indexOf", { operator: "StringIndexOf", parameters: ["string", "number"] }],
   ["lastIndexOf", { operator: "StringLastIndexOf", parameters: ["string", "number"] }],
   ["includes", { operator: "StringIncludes", parameters: ["string", "number"] }],
@@ -1793,6 +1798,15 @@ const STRING_METHODS = new Map<string, PrimitiveMethod>([
   ["toWellFormed", { operator: "ToWellFormed", parameters: [] }],
   ["normalize", { operator: "StringNormalize", parameters: ["string"] }],
   ["localeCompare", { operator: "LocaleCompare", parameters: ["string"] }],
+  ["big", { operator: "CreateHTML", parameters: [], tag: "big" }],
+  ["blink", { operator: "CreateHTML", parameters: [], tag: "blink" }],
+  ["bold", { operator: "CreateHTML", parameters: [], tag: "b" }],
+  ["fixed", { operator: "CreateHTML", parameters: [], tag: "tt" }],
+  ["italics", { operator: "CreateHTML", parameters: [], tag: "i" }],
+  ["small", { operator: "CreateHTML", parameters: [], tag: "small" }],
+  ["strike", { operator: "CreateHTML", parameters: [], tag: "strike" }],
+  ["sub", { operator: "CreateHTML", parameters: [], tag: "sub" }],
+  ["sup", { operator: "CreateHTML", parameters: [], tag: "sup" }],
 ]);
 
 // The methods that give a string itself, which only a string or a String object has, so that

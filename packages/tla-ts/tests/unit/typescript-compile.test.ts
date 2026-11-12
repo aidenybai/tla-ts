@@ -5172,6 +5172,43 @@ describe("errors", () => {
     ).rejects.toThrow("tla-ts can't make a character outside ASCII");
   });
 
+  it("takes a substring by its length", async () => {
+    const result = await checkModel(`
+      const text: string = "abcdef";
+      if (text.substr(1, 2) !== "bc" || text.substr(-2) !== "ef" || text.substr(-10, 3) !== "abc") {
+        throw new Error("substr");
+      }
+      if (text.substr(4, 10) !== "ef" || text.substr(2, -1) !== "" || text.substr(0, undefined) !== text) {
+        throw new Error("length");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+    await expect(
+      checkModel(`if ("abcdef".substr(-2, 1) !== "ef") throw new Error("wrong");`),
+    ).rejects.toThrow("wrong");
+  });
+
+  it("wraps a string in the element of an HTML method", async () => {
+    const result = await checkModel(`
+      const box = { size: 0 };
+      if ("_".big() !== "<big>_</big>" || "<".bold() !== "<b><</b>" || "x".fixed() !== "<tt>x</tt>") {
+        throw new Error("html");
+      }
+      if (String.prototype.sup.call(42) !== "<sup>42</sup>") throw new Error("call");
+      let isThrown = false;
+      try {
+        String.prototype.sub.call(undefined);
+      } catch (error) {
+        isThrown = error instanceof TypeError;
+      }
+      if (!isThrown) throw new Error("TypeError");
+    `);
+    expect(result.failure).toBeUndefined();
+    await expect(
+      checkModel(`if ("_".italics() !== "<italics>_</italics>") throw new Error("wrong");`),
+    ).rejects.toThrow("wrong");
+  });
+
   it("converts a value that may be a number or undefined to a string", async () => {
     const result = await checkModel(`
       const found = "Boston, MA 02134".match(/\\d{5}/);

@@ -1562,6 +1562,14 @@ Substring(value, start, end) ==
       to == IF end = Undefined THEN Len(text) ELSE Clamp(IntegerOf(end), Len(text))
   IN  IF from < to THEN SubSeq(text, from + 1, to) ELSE SubSeq(text, to + 1, from)
 
+\\* String.prototype.substr, which takes length characters from start, where a negative start counts
+\\* from the end.
+Substr(value, start, length) ==
+  LET text == Text(value)
+      from == ClampedIndex(IntegerOf(start), Len(text))
+      count == IF length = Undefined THEN Len(text) ELSE Clamp(IntegerOf(length), Len(text))
+  IN  SubSeq(text, from + 1, IF from + count > Len(text) THEN Len(text) ELSE from + count)
+
 StringIndexOf(value, search, position) ==
   LET text == Text(value)
       found == {index \\in Occurrences(text, Text(search)) :
@@ -1760,6 +1768,9 @@ LocaleCompare(value, that) ==
   IF Text(value) = (IF that = Undefined THEN "undefined" ELSE that)
   THEN 0
   ELSE Assert(FALSE, "tla-ts can't compare different strings by locale")
+
+\\* An HTML method of String.prototype, which wraps the string in an element without attributes.
+CreateHTML(value, tag) == "<" \\o tag \\o ">" \\o Text(value) \\o "</" \\o tag \\o ">"
 
 LOCAL HexDigits == "0123456789ABCDEF"
 
