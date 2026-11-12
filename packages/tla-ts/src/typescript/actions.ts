@@ -189,6 +189,7 @@ import {
   translateMemberKey,
   translateObjectChange,
   translateObjectValue,
+  isFunctionValue,
   translatePropertyKey,
 } from "./heap";
 import {
@@ -2801,6 +2802,34 @@ export const translateCallStatement = (
   if (callee === undefined && getLoopTarget(expression, context) !== undefined) {
     const value = translateExpression(expression, path.scope, context);
     return ifThenElse(apply("=", [value, value]), continueWith(path, value), leaf(boolean(false)));
+  }
+  // A call of a function value that tla-ts can't name throws the TypeError where the value is
+  // undefined or %ThrowTypeError%, and stops where it's another function.
+  const target = getCast(expression.expression);
+  if (
+    callee === undefined &&
+    expression.questionDotToken === undefined &&
+    ts.isIdentifier(skipCasts(target)) &&
+    isFunctionValue(target, context) &&
+    expression.arguments.every(isInertValue)
+  ) {
+    const value = translateExpression(target, path.scope, context);
+    return ifThenElse(
+      apply("\\in", [
+        value,
+        set([
+          getUndefined(context),
+          translateBuiltInValue("get Function.prototype.arguments", expression, context),
+        ]),
+      ]),
+      throwTypeError(path, expression, context, frame),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't tell which function this call runs"),
+        ]),
+      ),
+    );
   }
   if (callee?.body === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
