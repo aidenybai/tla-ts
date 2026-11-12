@@ -1,6 +1,6 @@
 // Ported from Isabelle2025's Pure/tactical.ML and Pure/search.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
-import { TlaIsabelleError } from "../../../errors";
+import { isIsabelleError } from "../../../errors";
 import {
   appendSeq,
   emptySeq,
@@ -182,9 +182,6 @@ export const firstGoalTac =
     return find(1)(state);
   };
 
-const isThmError = (error: unknown) =>
-  error instanceof TlaIsabelleError && error.exception === "THM";
-
 export const subgoal =
   (build: (goal: Term, index: number) => Tactic): GoalTactic =>
   (index) =>
@@ -215,7 +212,7 @@ export const primSeq =
     try {
       return apply(state);
     } catch (error) {
-      if (isThmError(error)) return emptySeq;
+      if (isIsabelleError(error, "THM")) return emptySeq;
       throw error;
     }
   };

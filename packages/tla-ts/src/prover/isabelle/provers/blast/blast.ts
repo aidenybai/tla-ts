@@ -1,6 +1,6 @@
 // Ported from Isabelle2025's Provers/blast.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
-import { TlaIsabelleError } from "../../../../errors";
+import { isIsabelleError, TlaIsabelleError } from "../../../../errors";
 import { selectGoal } from "../../pure/goal";
 import { destImplies, stripParams } from "../../pure/logic";
 import { makeNameContext } from "../../pure/name";
@@ -41,9 +41,6 @@ export type { BlastContext } from "./state";
 const DEPTH_LIMIT = 20;
 
 class Trans extends Error {}
-
-const isTermError = (error: unknown) =>
-  error instanceof TlaIsabelleError && error.exception === "TERM";
 
 const initialize = (context: BlastContext, state: Thm): BlastState => {
   for (const name of [GOAL_NAME, FALSE_NAME])
@@ -187,7 +184,7 @@ const rawBlast =
             replay.push(current.head(1));
           return everyTac(replay.reverse())(goalState).pull();
         } catch (error) {
-          if (isTermError(error)) return backtrack(choices);
+          if (isIsabelleError(error, "TERM")) return backtrack(choices);
           throw error;
         }
       })();

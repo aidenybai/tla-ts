@@ -1,6 +1,6 @@
 // Ported from Isabelle2025's Pure/thm.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
-import { TlaIsabelleError } from "../../../errors";
+import { isIsabelleError, TlaIsabelleError } from "../../../errors";
 import {
   betaNorm,
   emptyEnvir,
@@ -631,8 +631,7 @@ const bicomposeAux = (
     try {
       return stripPrems(compose.subgoals, [], orule.prop);
     } catch (error) {
-      if (error instanceof TlaIsabelleError && error.exception === "TERM")
-        throw new TlaIsabelleError("THM", "bicompose: rule");
+      if (isIsabelleError(error, "TERM")) throw new TlaIsabelleError("THM", "bicompose: rule");
       throw error;
     }
   })();
@@ -652,7 +651,7 @@ const bicomposeAux = (
     try {
       return flags.flatten ? renamed.map((premise) => flattenParams(index, premise)) : renamed;
     } catch (error) {
-      if (error instanceof TlaIsabelleError && error.exception === "TERM")
+      if (isIsabelleError(error, "TERM"))
         throw new TlaIsabelleError("THM", "bicompose: 1st premise");
       throw error;
     }
@@ -758,3 +757,12 @@ export const rsn = (rule: Thm, index: number, state: Thm): Thm => {
 };
 
 export const rs = (rule: Thm, state: Thm) => rsn(rule, 1, state);
+
+export const catchThm = <Result>(derive: () => Result): Result | undefined => {
+  try {
+    return derive();
+  } catch (error) {
+    if (isIsabelleError(error, "THM")) return undefined;
+    throw error;
+  }
+};

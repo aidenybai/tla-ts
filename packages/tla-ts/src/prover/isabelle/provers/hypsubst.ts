@@ -1,6 +1,6 @@
 // Ported from Isabelle2025's Provers/hypsubst.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
-import { TlaIsabelleError } from "../../../errors";
+import { isIsabelleError, TlaIsabelleError } from "../../../errors";
 import { asmRl, compIncr, revcutRl, thinRl, zeroVarIndexes } from "../pure/drule";
 import { aeconv, etaContract } from "../pure/envir";
 import { occs, stripAssumsConcl, stripAssumsHyp, stripParams } from "../pure/logic";
@@ -76,11 +76,6 @@ interface HypsubstContext {
 
 class NoMatch {}
 class EqVar {}
-
-const isTermError = (error: unknown) =>
-  error instanceof TlaIsabelleError && error.exception === "TERM";
-const isThmError = (error: unknown) =>
-  error instanceof TlaIsabelleError && error.exception === "THM";
 
 const inspectContract = (term: Term) => {
   const contracted = etaContract(term);
@@ -161,7 +156,7 @@ const eqVar = (
         const [orientation, variable] = inspectPair(isBound, isNoVars, left, right);
         return [count, checkFree([conclusion, ...hyps], orientation, variable)];
       } catch (error) {
-        if (!isTermError(error) && !(error instanceof NoMatch)) throw error;
+        if (!isIsabelleError(error, "TERM") && !(error instanceof NoMatch)) throw error;
         return visit(count + 1, conclusion, [premise, ...hyps]);
       }
     }
@@ -175,7 +170,7 @@ const withEqVar = (build: (goal: Term, index: number) => Tactic): GoalTactic =>
     try {
       return build(goal, index);
     } catch (error) {
-      if (error instanceof EqVar || isThmError(error)) return noTac;
+      if (error instanceof EqVar || isIsabelleError(error, "THM")) return noTac;
       throw error;
     }
   });
@@ -187,7 +182,7 @@ const mkEqs = (data: HypsubstData, isBound: boolean, thm: Thm): Thm[] => {
       ? [rs(thm, data.eqReflection)]
       : [symmetric(rs(thm, data.eqReflection))];
   } catch (error) {
-    if (isTermError(error) || error instanceof NoMatch) return [];
+    if (isIsabelleError(error, "TERM") || error instanceof NoMatch) return [];
     throw error;
   }
 };
@@ -228,7 +223,7 @@ const instSubstTac = (context: HypsubstContext, isLeft: boolean, rule: Thm): Goa
         const [left, right] = data.destEq(data.destTrueprop(hyp));
         return [etaContract(left), etaContract(right)] as const;
       } catch (error) {
-        if (isTermError(error)) return undefined;
+        if (isIsabelleError(error, "TERM")) return undefined;
         throw error;
       }
     })();

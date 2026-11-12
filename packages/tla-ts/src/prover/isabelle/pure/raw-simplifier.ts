@@ -20,7 +20,7 @@ import {
   type Typ,
   type Var,
 } from "./term";
-import { rs, type Thm } from "./thm";
+import { catchThm, rs, type Thm } from "./thm";
 import { eqThmProp, noTac, type GoalTactic } from "./tactical";
 import type { Limits } from "./interrupt";
 
@@ -227,14 +227,7 @@ const orientRrule = (context: SimpContext, thm: Thm): RawRrule[] => {
     return rruleEqTrue(context, thm, decomposed.lhs, decomposed.elhs, decomposed.rhs, thm);
   if (defaultReorient(decomposed.prems, decomposed.rhs, decomposed.lhs))
     return mkEqTrue(context, thm);
-  const symmetric = (() => {
-    try {
-      return rs(thm, symmetricThm);
-    } catch (error) {
-      if (error instanceof TlaIsabelleError && error.exception === "THM") return undefined;
-      throw error;
-    }
-  })();
+  const symmetric = catchThm(() => rs(thm, symmetricThm));
   if (symmetric === undefined) return [];
   const flipped = decompSimp(symmetric);
   return rruleEqTrue(context, symmetric, flipped.lhs, flipped.elhs, flipped.rhs, thm);
