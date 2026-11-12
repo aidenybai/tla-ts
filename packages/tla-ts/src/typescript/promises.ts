@@ -8,6 +8,7 @@ import {
   getChanged,
   leaveBody,
   getBody,
+  allocate,
   getCallback,
   getCast,
   inlineValues,
@@ -25,7 +26,9 @@ import {
   getLocalCaptures,
   getSymbol,
   getUndefined,
+  isPlain,
 } from "./context";
+import { getCallbackReceiver } from "./collections";
 import { TlaTypeScriptError } from "../errors";
 import { translateEngineError } from "./exceptions";
 import { translateExpression } from "./expressions";
@@ -34,7 +37,18 @@ import { getCandidateValue, getHeap, translateFunctionValue } from "./heap";
 import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { type Receiver } from "./scope";
-import { apply, boolean, identifier, number, string, tuple } from "./tla";
+import {
+  apply,
+  boolean,
+  define,
+  identifier,
+  index,
+  junction,
+  not,
+  number,
+  string,
+  tuple,
+} from "./tla";
 
 // The jobs and timers that a script queues, and the promises it makes, which tla-ts follows as it
 // compiles, as JavaScript runs each job once the script and the jobs before it finish.
@@ -605,30 +619,220 @@ const getHandler = (
   if (callee === undefined) {
     throw new TlaTypeScriptError("Pass then a function that tla-ts can follow", node);
   }
-  const captured = getLocalCaptures(callee, context);
-  const made = path.scope;
-  const keep = <Value>(runtime: Map<ts.Symbol, Value>, kept: Map<ts.Symbol, Value>) =>
-    new Map([...runtime, ...[...kept].filter((entry) => captured.has(entry[0]))]);
+  const runCallback = getCallbackRunner(
+    callee,
+    ts.isArrowFunction(callee) ? path.scope.receiver : undefined,
+    path,
+    context,
+    frame,
+  );
   return {
-    run: (current, value, onReturn, onThrow) =>
-      inlineValues(
-        callee,
-        [value],
-        ts.isArrowFunction(callee) ? made.receiver : undefined,
-        {
-          ...current,
-          scope: {
-            ...current.scope,
-            bindings: keep(current.scope.bindings, made.bindings),
-            functions: keep(current.scope.functions, made.functions),
-          },
-        },
-        context,
-        { ...frame, throwTo: (after, thrown) => onThrow(after, thrown.value) },
-        (after, result) => onReturn(after, result ?? getUndefined(context)),
-      ),
+    run: (current, value, onReturn, onThrow) => runCallback(current, [value], onReturn, onThrow),
   };
 };
+
+// Runs a callback in a later job, where the variables it captures hold what they held where the
+// script passed it.
+const getCallbackRunner =
+  (
+    callee: FunctionNode,
+    receiver: Receiver | undefined,
+    path: Path,
+    context: Context,
+    frame: Frame,
+  ) =>
+  (
+    current: Path,
+    values: Expression[],
+    onReturn: (path: Path, result: Expression) => Formula,
+    onThrow: (path: Path, thrown: Expression) => Formula,
+  ) => {
+    const captured = getLocalCaptures(callee, context);
+    const keep = <Value>(runtime: Map<ts.Symbol, Value>, kept: Map<ts.Symbol, Value>) =>
+      new Map([...runtime, ...[...kept].filter((entry) => captured.has(entry[0]))]);
+    return inlineValues(
+      callee,
+      values,
+      receiver,
+      {
+        ...current,
+        scope: {
+          ...current.scope,
+          bindings: keep(current.scope.bindings, path.scope.bindings),
+          functions: keep(current.scope.functions, path.scope.functions),
+        },
+      },
+      context,
+      { ...frame, throwTo: (after, thrown) => onThrow(after, thrown.value) },
+      (after, result) => onReturn(after, result ?? getUndefined(context)),
+    );
+  };
+
+// Array.fromAsync of an array written in place, which reads the elements through an
+// async-from-sync iterator: each element takes a job to settle the iterator's result and another
+// to await it, as does the end. A mapping function's result takes a job to await, and a throw
+// from it or a rejection of it another, to await the iterator's return.
+const translateFromAsync = (
+  node: ts.CallExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  const argument = node.arguments.at(0);
+  const elements = argument && getCast(argument);
+  const mapping = node.arguments.at(1);
+  const callee = mapping && getCallback(getCast(mapping), path, context);
+  if (
+    elements === undefined ||
+    !ts.isArrayLiteralExpression(elements) ||
+    elements.elements.some(ts.isSpreadElement) ||
+    (mapping !== undefined && (callee === undefined || !isPlain(callee)))
+  ) {
+    throw new TlaTypeScriptError(
+      "Pass Array.fromAsync an array written in place and a function that tla-ts can follow",
+      node,
+    );
+  }
+  const ran = runLeadingCall(elements, path, context, frame, (after) =>
+    translateFromAsync(node, after, context, frame, continueWith),
+  );
+  if (ran !== undefined) return ran;
+  const sequence = context.names.getFresh("sequence");
+  return allocate(elements, path, context, (allocated) =>
+    makePromise(allocated, node, context, (made, name) => {
+      const runMapping =
+        mapping === undefined || callee === undefined
+          ? undefined
+          : getCallbackRunner(
+              callee,
+              getCallbackReceiver(mapping, callee, made.scope, context),
+              made,
+              context,
+              frame,
+            );
+      const tick = (
+        current: Path,
+        next: (path: Path, onReturn: (path: Path) => Formula) => Formula,
+        exit: (path: Path) => Formula,
+      ) =>
+        awaitIn(
+          current,
+          node,
+          getUndefined(context),
+          undefined,
+          context,
+          (resumer, _settled, _isRejected, onReturn) => next(resumer, onReturn),
+          exit,
+        );
+      const reject = (current: Path, reason: Expression, exit: (path: Path) => Formula) =>
+        tick(
+          current,
+          (closed, onReturn) => onReturn(settle(closed, node, name, reason, true, context)),
+          exit,
+        );
+      const take = (
+        current: Path,
+        position: number,
+        values: Expression[],
+        exit: (path: Path) => Formula,
+      ): Formula => {
+        const isDone = position === elements.elements.length;
+        const element = elements.elements[position];
+        return awaitIn(
+          current,
+          node,
+          isDone ? getUndefined(context) : index(identifier(sequence), [number(position + 1)]),
+          isDone || ts.isOmittedExpression(element) ? undefined : element,
+          context,
+          (resumer, settled, isRejected, onReturn) =>
+            tick(
+              resumer,
+              (resumed, back) =>
+                isRejected
+                  ? back(settle(resumed, node, name, settled, true, context))
+                  : isDone
+                    ? resolve(resumed, node, name, tuple(values), undefined, context, back)
+                    : runMapping === undefined
+                      ? take(resumed, position + 1, [...values, settled], back)
+                      : runMapping(
+                          resumed,
+                          [settled, number(position)],
+                          (mapped, result) =>
+                            awaitIn(
+                              mapped,
+                              node,
+                              result,
+                              undefined,
+                              context,
+                              (awaited, value, isMappedRejected, onAwaited) =>
+                                isMappedRejected
+                                  ? reject(awaited, value, onAwaited)
+                                  : take(awaited, position + 1, [...values, value], onAwaited),
+                              back,
+                            ),
+                          (thrown, reason) => reject(thrown, reason, back),
+                        ),
+              onReturn,
+            ),
+          exit,
+        );
+      };
+      const heap = getHeap(made.scope, node, context);
+      const prototype = translateBuiltInValue("Array.prototype", node, context);
+      return letIn(
+        [define(sequence, [], translateExpression(elements, made.scope, context))],
+        ifThenElse(
+          junction("And", [
+            useJavaScript(
+              "HoldsBuiltIn",
+              [
+                heap,
+                translateBuiltInValue("Array", node, context),
+                string("fromAsync"),
+                string("Array.fromAsync"),
+              ],
+              context,
+            ),
+            useJavaScript(
+              "HoldsBuiltIn",
+              [
+                heap,
+                prototype,
+                useJavaScript("WellKnownSymbol", [string("iterator")], context),
+                string("Array.prototype.values"),
+              ],
+              context,
+            ),
+            not(
+              useJavaScript(
+                "Has",
+                [
+                  heap,
+                  prototype,
+                  useJavaScript("WellKnownSymbol", [string("asyncIterator")], context),
+                ],
+                context,
+              ),
+            ),
+          ]),
+          take(made, 0, [], (after) => continueWith(after, getPromise(after, node, name).ref)),
+          leaf(
+            apply("Assert", [
+              boolean(false),
+              string("tla-ts can't run Array.fromAsync where a script changed what it reads"),
+            ]),
+          ),
+        ),
+      );
+    }),
+  );
+};
+
+const isFromAsync = (node: ts.CallExpression, context: Context) =>
+  ts.isPropertyAccessExpression(node.expression) &&
+  node.expression.name.text === "fromAsync" &&
+  getBuiltIn(node.expression.expression, context) === "Array";
 
 // Promise.resolve(value), Promise.reject(value), or a combinator such as Promise.all(values).
 const getPromiseFunction = (node: ts.CallExpression, context: Context) => {
@@ -1322,6 +1526,7 @@ const callExecutor = (
 };
 
 export const isPromiseCall = (node: ts.CallExpression, context: Context) =>
+  isFromAsync(node, context) ||
   getCalledPromiseFunction(node, context) !== undefined ||
   isCapabilityExecutor(node.expression, context) ||
   isResolver(node.expression, context) ||
@@ -1384,6 +1589,8 @@ export const translatePromiseCall = (
   if (isCapabilityExecutor(node.expression, context)) {
     return callExecutor(node, path, context, frame, continueWith);
   }
+  if (isFromAsync(node, context))
+    return translateFromAsync(node, path, context, frame, continueWith);
   const called = getCalledPromiseFunction(node, context);
   if (called !== undefined) {
     const constructor = argument && getCapabilityConstructor(argument, context);

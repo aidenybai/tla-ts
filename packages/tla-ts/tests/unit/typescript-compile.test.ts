@@ -6914,6 +6914,92 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("takes Array.fromAsync's elements and mapped values a job apart", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      Array.fromAsync([1, Promise.resolve(2)], (value: number, k: number) => {
+        log += "m";
+        return value * 10 + k;
+      }).then((values) => {
+        log += "[" + values.join(",") + "]";
+      });
+      Promise.resolve()
+        .then(() => {
+          log += "0";
+        })
+        .then(() => {
+          log += "1";
+        })
+        .then(() => {
+          log += "2";
+        })
+        .then(() => {
+          log += "3";
+        })
+        .then(() => {
+          log += "4";
+        })
+        .then(() => {
+          log += "5";
+        })
+        .then(() => {
+          log += "6";
+        })
+        .then(() => {
+          log += "7";
+        });
+      setTimeout(() => {
+        if (log !== "0m123m4567[10,21]") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("rejects Array.fromAsync with an element's reason or a mapping function's throw", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      Array.fromAsync([1, Promise.reject("r"), 3]).catch((error) => {
+        log += "<" + String(error) + ">";
+      });
+      Array.fromAsync([1], () => {
+        throw "t";
+      }).catch((error) => {
+        log += "(" + String(error) + ")";
+      });
+      Promise.resolve()
+        .then(() => {
+          log += "0";
+        })
+        .then(() => {
+          log += "1";
+        })
+        .then(() => {
+          log += "2";
+        })
+        .then(() => {
+          log += "3";
+        })
+        .then(() => {
+          log += "4";
+        })
+        .then(() => {
+          log += "5";
+        })
+        .then(() => {
+          log += "6";
+        })
+        .then(() => {
+          log += "7";
+        });
+      setTimeout(() => {
+        if (log !== "012(t)3<r>4567") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("reads the properties of a promise's reason without a type", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;

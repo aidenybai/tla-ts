@@ -2314,8 +2314,15 @@ const translateNode = (
         member === undefined ||
         (member.flags & (ts.TypeFlags.Object | ts.TypeFlags.Intersection)) === 0 ||
         isSequenceType(member, checker) ||
-        // An iterable, such as a generator that a pattern takes, reads an array only as one.
-        member.getProperties().some((property) => property.name.startsWith("__@iterator"))
+        // An iterable, such as a generator that a pattern takes, or an async iterable, reads an
+        // array only as one.
+        member
+          .getProperties()
+          .some(
+            (property) =>
+              property.name.startsWith("__@iterator") ||
+              property.name.startsWith("__@asyncIterator"),
+          )
           ? []
           : member.getProperties().map((property) => property.name),
     );

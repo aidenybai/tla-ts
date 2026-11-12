@@ -82,6 +82,7 @@ interface Update {
 
 const THIS_ARGUMENT_METHODS = new Set([
   "every",
+  "fromAsync",
   "filter",
   "find",
   "findIndex",
