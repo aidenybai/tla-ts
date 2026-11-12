@@ -1,5 +1,6 @@
 // Ported from Z3 (src/smt/smt_setup.cpp), MIT license, see z3-license.txt. Of the parameters each
-// setup picks, the port only takes the MBQI that setup_AUFLIA and setup_AUFLIRA turn on.
+// setup picks, the port only takes the MBQI that setup_AUFLIA and setup_AUFLIRA turn on, and of the
+// theories, only whether setup_unknown makes them.
 const AUFLIA_LOGICS = new Set([
   "AUFLIA",
   "AUFLIA+",
@@ -53,3 +54,11 @@ export const isMbqiByFeatures = (setup: SmtSetup, hasQuantifiers: boolean) =>
   setup.isAutoConfig &&
   (AUFLIA_LOGICS.has(setup.logic ?? "") ||
     (!STATIC_FEATURE_LOGICS.has(setup.logic ?? "") && hasQuantifiers));
+
+// setup_auto_config. The port has no static_features, so a quantifier-free problem without a logic
+// is taken to reach setup_unknown, as the problems with sequences do.
+export const isSetupUnknownByFeatures = (setup: SmtSetup) =>
+  !setup.isAutoConfig ||
+  setup.logic === "QF_S" ||
+  setup.logic === "QF_SLIA" ||
+  !STATIC_FEATURE_LOGICS.has(setup.logic ?? "");

@@ -3,6 +3,7 @@ import type { AssertedFormulas } from "./asserted-formulas";
 import {
   AstManager,
   FAMILY_BASIC,
+  FAMILY_POLY,
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -54,6 +55,7 @@ import { TheorySeq } from "./theory-seq";
 import { TheoryDatatype } from "./theory-datatype";
 import { TheoryFiniteSet } from "./theory-finite-set";
 import { TheoryPb } from "./theory-pb";
+import { TheoryPolymorphism } from "./theory-polymorphism";
 import { TheoryLra } from "./theory-lra";
 import { shrink } from "./array";
 
@@ -108,6 +110,9 @@ export interface SmtParams {
   isMbqi: boolean;
   mbqiMaxIterations: number;
   relevancyLevel: 0 | 2;
+  // Whether the setup reaches setup_unknown, the only one that makes the finite set and
+  // polymorphism theories.
+  isSetupUnknown: boolean;
 }
 
 export class Context extends Internalizer {
@@ -145,6 +150,7 @@ export class Context extends Internalizer {
   private hasCaseSplit = true;
   private incompleteTheories: Theory[] = [];
   private modelState: ModelState = { kind: "none" };
+  private asserted: AssertedFormulas | undefined;
   macros: MacroManager | undefined;
   hasQuantifiers = false;
 
@@ -166,7 +172,10 @@ export class Context extends Internalizer {
     this.registerPlugin(new TheorySeq(this));
     this.registerPlugin(new TheoryChar(this));
     this.registerPlugin(new TheoryFpa(this));
-    this.registerPlugin(new TheoryFiniteSet(this));
+    if (this.params.isSetupUnknown) {
+      this.registerPlugin(new TheoryFiniteSet(this));
+      if (this.manager.hasTypeVars) this.registerPolymorphism();
+    }
     this.registerPlugin(new TheoryPb(this));
   }
 
@@ -174,6 +183,12 @@ export class Context extends Internalizer {
     this.theories.push(theory);
     this.theoryByFamily[theory.id] = theory;
     theory.init();
+    for (let level = 0; level < this.scopeLevel; level++) theory.pushScopeEh();
+  }
+
+  registerPolymorphism() {
+    if (this.getTheory(FAMILY_POLY) === undefined)
+      this.registerPlugin(new TheoryPolymorphism(this));
   }
 
   getTheory(family: number) {
@@ -1387,7 +1402,12 @@ export class Context extends Internalizer {
     this.conflict = null;
   }
 
+  getNumAssertedFormulas() {
+    return this.asserted?.getNumFormulas() ?? 0;
+  }
+
   internalizeAssertions(asserted: AssertedFormulas) {
+    this.asserted = asserted;
     this.macros = asserted.macros;
     this.hasQuantifiers = asserted.hasQuantifiers;
     const formulas = asserted.reduce();
@@ -1513,6 +1533,7 @@ export class Context extends Internalizer {
     this.agility = 0;
     this.finalCheckIndex = 0;
     this.lastSearchFailure = FAILURE_OK;
+    if (this.manager.hasTypeVars) this.registerPolymorphism();
     this.isSearching = true;
     const currentLevel = this.scopeLevel;
     let result: number | undefined;

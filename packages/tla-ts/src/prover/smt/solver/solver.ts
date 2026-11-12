@@ -20,6 +20,8 @@ export interface KernelParams {
   mbqiMaxIterations: number;
   isFindingMacros: boolean;
   relevancyLevel?: 0 | 2;
+  // A kernel without a logic sets up its context with setup_unknown.
+  isSetupUnknown?: boolean;
 }
 
 const DEFAULT_KERNEL_PARAMS: KernelParams = {
@@ -41,6 +43,7 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
     isMbqi: params.isMbqi,
     mbqiMaxIterations: params.mbqiMaxIterations,
     relevancyLevel: 2,
+    isSetupUnknown: params.isSetupUnknown ?? true,
   });
   for (const form of forms) asserted.assertExpr(form);
   context.setupContext();
@@ -79,6 +82,7 @@ export const solveAssuming = (
     isMbqi: params.isMbqi,
     mbqiMaxIterations: params.mbqiMaxIterations,
     relevancyLevel: 2,
+    isSetupUnknown: params.isSetupUnknown ?? true,
   });
   for (const assertion of assertions) asserted.assertExpr(assertion);
   context.setupContext();

@@ -64,7 +64,7 @@ import { propagateValues } from "./propagate-values";
 import { purifyArith } from "./purify-arith";
 import { ModelEvaluator } from "./model-evaluator";
 import { FuncInterp, ProtoModel } from "./proto-model";
-import { isMbqiByFeatures, type SmtSetup } from "./smt-setup";
+import { isMbqiByFeatures, isSetupUnknownByFeatures, type SmtSetup } from "./smt-setup";
 import { compileProbe, formatProbeValue, isQfufbv, type Probe } from "./probes";
 import { runHorn } from "./muz/horn-tactic";
 import { runQe } from "./qe";
@@ -285,6 +285,7 @@ const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: 
       isMbqiByFeatures(environment.setup, hasQuantifiers),
     mbqiMaxIterations: getUint(params, "mbqi.max_iterations", environment.mbqiMaxIterations),
     isFindingMacros: environment.isFindingMacros,
+    isSetupUnknown: isSetupUnknownByFeatures(environment.setup),
   };
   const assumptions: number[] = [];
   const clauses = new RefVector(manager);
@@ -352,6 +353,7 @@ const runUnitSubsume = (environment: TacticEnvironment) => (goal: Goal) => {
       isMbqi: environment.isMbqi,
       mbqiMaxIterations: environment.mbqiMaxIterations,
       relevancyLevel: 2,
+      isSetupUnknown: true,
     });
     for (const definition of definitions) asserted.assertExpr(definition);
     for (const [other, otherClause] of clauses.entries())

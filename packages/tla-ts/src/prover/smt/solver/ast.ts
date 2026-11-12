@@ -36,6 +36,7 @@ export const FAMILY_SEQ = 10;
 export const FAMILY_LABEL = 11;
 export const FAMILY_PB = 12;
 export const FAMILY_RECFUN = 13;
+export const FAMILY_POLY = 14;
 
 export const OP_TRUE = 0;
 export const OP_FALSE = 1;
@@ -758,7 +759,8 @@ export class AstManager {
   private argBuffer: number[] = [];
   private smallInts: number[] = [];
   private smallReals: number[] = [];
-  private isFiniteSetPluginInitialized = false;
+  // The finite set plugin makes the only type variables, so this is set once it is initialized.
+  hasTypeVars = false;
   readonly trueExpr: number;
   readonly falseExpr: number;
   readonly piExpr: number;
@@ -816,8 +818,8 @@ export class AstManager {
   // makes a set.range declaration: the plugin makes the sorts A and B, three FiniteSet sorts and two
   // Array sorts, which the manager keeps. The set.range declaration is released at once.
   initFiniteSetPlugin() {
-    if (this.isFiniteSetPluginInitialized) return;
-    this.isFiniteSetPluginInitialized = true;
+    if (this.hasTypeVars) return;
+    this.hasTypeVars = true;
     for (let index = 0; index < NUM_FINITE_SET_PLUGIN_SORTS; index++) this.mkSmallId();
     this.freeSmallIds.push(this.mkSmallId());
     this.numDecls--;

@@ -1,8 +1,8 @@
 // Ported from Z3 (src/smt/smt_model_checker.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
-import { KIND_APP, OP_NOT, OP_OR, SORT_BOOL, type AstManager } from "./ast";
+import { FAMILY_POLY, KIND_APP, OP_NOT, OP_OR, SORT_BOOL } from "./ast";
 import { AssertedFormulas } from "./asserted-formulas";
-import { Context, type SmtParams } from "./context";
+import { Context } from "./context";
 import type { Enode } from "./enode";
 import { L_FALSE, L_TRUE } from "./lbool";
 import type { ModelFinder } from "./model-finder";
@@ -24,21 +24,15 @@ interface Instance {
 class AuxContext {
   private context: Context;
   private asserted: AssertedFormulas;
-  // theory_polymorphism's m_qhead: the number of formulas when it last added an assumption. Its
-  // trail restores it when the scope is popped, and no formula is asserted outside the scopes.
-  private polyQhead = 0;
-  private polyAssumption = -1;
 
   // The context makes its asserted formulas first. Its theories hold only constants that exist by
-  // now, so setup_context can run at once. init_aux_context copies the kernel's smt_params, so the
-  // context has a model finder too, though it never sees a quantifier.
-  constructor(
-    private manager: AstManager,
-    params: SmtParams,
-  ) {
-    this.asserted = new AssertedFormulas(manager);
-    this.context = new Context(manager, { ...params, relevancyLevel: 0 });
+  // now, so setup_context can run at once. init_aux_context copies the kernel's smt_params and
+  // theories, so the context has a model finder too, though it never sees a quantifier.
+  constructor(parent: Context) {
+    this.asserted = new AssertedFormulas(parent.manager);
+    this.context = new Context(parent.manager, { ...parent.params, relevancyLevel: 0 });
     this.context.setupContext();
+    if (parent.getTheory(FAMILY_POLY) !== undefined) this.context.registerPolymorphism();
   }
 
   push() {
@@ -49,7 +43,6 @@ class AuxContext {
   pop() {
     this.context.pop(1);
     this.asserted.pop();
-    this.polyQhead = 0;
   }
 
   assert(formula: number) {
@@ -57,24 +50,10 @@ class AuxContext {
     this.asserted.assertExpr(formula);
   }
 
-  // Z3 registers theory_polymorphism, which assumes a fresh constant whenever formulas were
-  // asserted since its last assumption.
   check() {
     const context = this.context;
     context.popToBaseLevel();
-    context.internalizeAssertions(this.asserted);
-    const manager = this.manager;
-    const numFormulas = this.asserted.getNumFormulas();
-    const isAssuming = numFormulas !== this.polyQhead;
-    this.polyQhead = numFormulas;
-    if (isAssuming) {
-      const assumption = manager.mkFreshConst("poly", SORT_BOOL);
-      manager.incRef(assumption);
-      if (this.polyAssumption !== -1) manager.decRef(this.polyAssumption);
-      this.polyAssumption = assumption;
-    }
-    context.initAssumptions(isAssuming ? [this.polyAssumption] : [], this.asserted);
-    const result = context.mkUnsatCore(context.search());
+    const result = context.checkResearching(this.asserted, []);
     return result === L_TRUE ? context.getModel() : result === L_FALSE ? "unsat" : "unknown";
   }
 }
@@ -214,7 +193,7 @@ export class ModelChecker {
 
   private checkQuantifier(quantifier: number, model: ProtoModel) {
     const manager = this.manager;
-    const aux = this.aux ?? new AuxContext(manager, this.context.params);
+    const aux = this.aux ?? new AuxContext(this.context);
     this.aux = aux;
     aux.push();
     // The fresh constants are released before the scope is popped.

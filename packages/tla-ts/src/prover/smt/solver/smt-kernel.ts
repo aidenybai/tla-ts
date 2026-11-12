@@ -17,6 +17,7 @@ export class SmtKernel {
       isMbqi: params.isMbqi,
       mbqiMaxIterations: params.mbqiMaxIterations,
       relevancyLevel: params.relevancyLevel ?? 2,
+      isSetupUnknown: params.isSetupUnknown ?? true,
     });
   }
 
