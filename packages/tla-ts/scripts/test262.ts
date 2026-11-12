@@ -960,6 +960,23 @@ const runSyntaxTest = (id: string, source: string, metadata: Metadata): TestRun 
       };
 };
 
+// A script's this at its top level, and in the arrow functions there, is the global object, which
+// TypeScript types as undefined, as tla-ts compiles each file as a module, so the test names it.
+const nameGlobalObject = (source: string) => {
+  const sourceFile = ts.createSourceFile(PROGRAM_PATH, source, ts.ScriptTarget.Latest, true);
+  const starts: number[] = [];
+  const visit = (node: ts.Node) => {
+    if (node.kind === ts.SyntaxKind.ThisKeyword) starts.push(node.getStart(sourceFile));
+    if ((ts.isFunctionLike(node) && !ts.isArrowFunction(node)) || ts.isClassLike(node)) return;
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return starts.reduceRight(
+    (text, start) => `${text.slice(0, start)}globalThis${text.slice(start + "this".length)}`,
+    source,
+  );
+};
+
 const runTest = async (path: string): Promise<TestRun> => {
   const id = relative(TEST_DIRECTORY, path);
   const source = readFileSync(path, "utf8");
@@ -973,7 +990,9 @@ const runTest = async (path: string): Promise<TestRun> => {
   // TypeScript itself fails on some syntax, such as import defer.
   const annotated = (() => {
     try {
-      return annotate(`${getHarness(metadata)}\n${source}`);
+      return annotate(
+        `${getHarness(metadata)}\n${metadata.isModule ? source : nameGlobalObject(source)}`,
+      );
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("Debug Failure.")) return undefined;
       throw error;
