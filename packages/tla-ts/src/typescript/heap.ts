@@ -1727,11 +1727,34 @@ const TYPED_ARRAY_METHODS = new Set([
 const VIEW_ACCESSOR = /^[gs]et(?:Int8|Uint8|Int16|Uint16|Int32|Uint32|Float16|Float32|Float64)$/;
 
 // A DataView's get or set method, a buffer's resize, grow, or slice, or a typed array's method,
-// which a statement runs, as each may throw.
+// which a statement runs, as each may throw. A typed array's method may also run through call, on
+// any receiver, where the callee must hold the built-in method.
 export const getViewCall = (node: ts.Node, context: Context) => {
   if (context.heap === undefined || !isMethodCall(node)) return undefined;
   const receiver = node.expression.expression;
   const method = node.expression.name.text;
+  const declaration = context.checker
+    .getTypeAtLocation(receiver)
+    .getCallSignatures()
+    .at(0)?.declaration;
+  if (
+    method === "call" &&
+    declaration !== undefined &&
+    ts.isMethodSignature(declaration) &&
+    ts.isInterfaceDeclaration(declaration.parent) &&
+    TYPED_ARRAYS.has(declaration.parent.name.text) &&
+    declaration.getSourceFile().isDeclarationFile &&
+    node.arguments.length > 0 &&
+    !node.arguments.some(ts.isSpreadElement)
+  ) {
+    return {
+      owner: "TypedArray",
+      method: declaration.name.getText(),
+      receiver: node.arguments[0],
+      values: node.arguments.slice(1),
+      callee: receiver,
+    };
+  }
   const type = context.checker.getTypeAtLocation(receiver);
   const isTypedArray = (type.isUnion() ? type.types : [type]).every((member) =>
     TYPED_ARRAYS.has(member.getSymbol()?.name ?? ""),

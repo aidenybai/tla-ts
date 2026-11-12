@@ -3551,7 +3551,8 @@ BufferSlice(heap, ref, start, end, isShared, constructor) ==
 \\* %TypedArray%.prototype's methods that read and write a typed array's elements, which give the
 \\* heap after them, their value, and the error they throw, if any. slice and subarray make their
 \\* typed array through the receiver's constructor, of those that constructors holds by their element
-\\* types, where tla-ts follows only the built-in one.
+\\* types, where tla-ts follows only the built-in one. Any method throws a TypeError for a receiver
+\\* that isn't a typed array.
 TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
   LET argument(position) == IF Len(arguments) >= position THEN arguments[position] ELSE Undefined
       integer(position) == ToIntegerOrInfinity(ToNumber(argument(position)))
@@ -3600,6 +3601,9 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
                                             @@ ViewObject(prototype, Allocated(allocated), 0, Len(kept)))
         IN Returned(result, Allocated(result))
   IN CASE ~IsTypedArray(heap, ref) -> Thrown(heap, "TypeError")
+       [] method \\notin {"at", "includes", "indexOf", "lastIndexOf", "join", "fill", "reverse", "slice",
+                         "subarray"} ->
+            Assert(FALSE, "tla-ts can't run this typed array method")
        [] method = "subarray" ->
             LET buffer == heap.objects[view.viewed[Ref]]
                 first == start(1)
@@ -3640,7 +3644,6 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
             LET first == start(1)
                 final == end(2)
             IN made(heap, IF final > first THEN SubSeq(elements, first + 1, final) ELSE <<>>)
-       [] OTHER -> Assert(FALSE, "tla-ts can't run this typed array method")
 
 SetProperty(heap, ref, key, value) ==
   LET accessor == AccessorOf(heap, ref, key)

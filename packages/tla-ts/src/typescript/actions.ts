@@ -1824,11 +1824,24 @@ export const translateCallStatement = (
       receiver,
       translateExpression(viewCall.receiver, path.scope, context),
       ifThenElse(
-        useJavaScript(
-          "HoldsBuiltIn",
-          [heap, ref, string(method), string(`${prototypePath}.${method}`)],
-          context,
-        ),
+        viewCall.callee === undefined
+          ? useJavaScript(
+              "HoldsBuiltIn",
+              [heap, ref, string(method), string(`${prototypePath}.${method}`)],
+              context,
+            )
+          : useJavaScript(
+              "SameValue",
+              [
+                translateExpression(viewCall.callee, path.scope, context),
+                useJavaScript(
+                  ":>",
+                  [identifier("Ref"), string(`${prototypePath}.${method}`)],
+                  context,
+                ),
+              ],
+              context,
+            ),
         viewCall.owner === "DataView"
           ? ifThenElse(
               useJavaScript("IsDataView", [heap, ref], context),
@@ -1839,7 +1852,11 @@ export const translateCallStatement = (
         leaf(
           apply("Assert", [
             boolean(false),
-            string(`tla-ts can't call ${prototypePath}.${method} where a script replaced it`),
+            string(
+              viewCall.callee === undefined
+                ? `tla-ts can't call ${prototypePath}.${method} where a script replaced it`
+                : "tla-ts can't tell which function this call runs",
+            ),
           ]),
         ),
       ),

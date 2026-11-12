@@ -11828,6 +11828,44 @@ describe("buffers", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("throws a TypeError where a typed array's method runs through call on another value", async () => {
+    const result = await checkModel(`
+      function throws(expected: Function, func: () => unknown, message: string) {
+        try {
+          func();
+        } catch (thrown) {
+          if (typeof thrown !== "object" || thrown === null) throw new Error(message);
+          if (thrown.constructor !== expected) throw new Error(message);
+          return;
+        }
+        throw new Error(message);
+      }
+      const TypedArray: Int8ArrayConstructor = Object.getPrototypeOf(Int8Array);
+      const copyWithin = TypedArray.prototype.copyWithin;
+      const fill = TypedArray.prototype.fill;
+      throws(TypeError, function () {
+        copyWithin.call({}, 0, 0);
+      }, "object");
+      throws(TypeError, function () {
+        copyWithin.call([], 0, 0);
+      }, "array");
+      const buffer = new ArrayBuffer(8);
+      throws(TypeError, function () {
+        copyWithin.call(buffer, 0, 0);
+      }, "buffer");
+      throws(TypeError, function () {
+        fill.call(undefined, 0);
+      }, "undefined");
+      throws(TypeError, function () {
+        fill.call(42, 0);
+      }, "number");
+      const sample = new Int8Array(2);
+      fill.call(sample, 3);
+      if (sample[1] !== 3) throw new Error("fill");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops at a number a typed array's float can't hold exactly", async () => {
     const result = await checkModel(`
       const floats = new Float32Array(1);
