@@ -1,5 +1,6 @@
 import {
   getChildren,
+  getReferencedName,
   type Assumption,
   type Declaration,
   type Definition,
@@ -284,10 +285,13 @@ const createOperatorTable = (name: string, arity: number, rows: [Value[], Value]
   };
 };
 
-const mentionsName = (expression: Expression, names: Set<string>): boolean =>
-  (expression.kind === "Identifier" && names.has(expression.name)) ||
-  (expression.kind === "Apply" && names.has(expression.operator)) ||
-  getChildren(expression).some((child) => mentionsName(child, names));
+const mentionsName = (expression: Expression, names: Set<string>): boolean => {
+  const name = getReferencedName(expression);
+  return (
+    (name !== undefined && names.has(name)) ||
+    getChildren(expression).some((child) => mentionsName(child, names))
+  );
+};
 
 const createReusedTargetError = (target: string) =>
   new TlaConfigError(
