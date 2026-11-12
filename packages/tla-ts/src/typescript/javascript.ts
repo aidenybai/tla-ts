@@ -3579,6 +3579,11 @@ ProxyDefinitionAgrees(heap, target, key, descriptor) ==
               /\\ current.writable
               /\\ "writable" \\in descriptor.fields) => descriptor.writable
 
+\\* The prototype of a proxy's target, where an array outside the heap has Array.prototype, which it
+\\* holds there since nothing can change it.
+TargetPrototype(heap, ref) ==
+  IF IsSequenceValue(ref) THEN Ref :> "Array.prototype" ELSE Prototype(heap, ref)
+
 \\* Whether a prototype that a proxy's getPrototypeOf trap gives, or that its setPrototypeOf trap
 \\* says it set, agrees with the target's, which a target that can't grow fixes.
 ProxyPrototypeAgrees(heap, target, prototype) ==

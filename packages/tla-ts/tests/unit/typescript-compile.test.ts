@@ -6961,6 +6961,8 @@ describe("proxies", () => {
       Object.defineProperty(target, "hidden", { value: 2 });
       const outer = new Proxy(new Proxy(target, {}), {});
       if (Object.getPrototypeOf(outer) !== Object.prototype) throw new Error("getPrototypeOf");
+      const array = new Proxy(new Proxy([], {}), {});
+      if (Object.getPrototypeOf(array) !== Array.prototype) throw new Error("array");
       if (!Object.isExtensible(outer)) throw new Error("isExtensible");
       if (outer.attr !== 1) throw new Error("get");
       if (!("hidden" in outer)) throw new Error("has");

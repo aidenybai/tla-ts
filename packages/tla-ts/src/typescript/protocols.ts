@@ -1390,7 +1390,7 @@ export const runProxyOperation = (
         if (trap === "getPrototypeOf" || trap === "isExtensible") {
           return next(
             after,
-            javaScript(trap === "getPrototypeOf" ? "Prototype" : "IsExtensible", [
+            javaScript(trap === "getPrototypeOf" ? "TargetPrototype" : "IsExtensible", [
               heap,
               forwarded(trap),
             ]),
