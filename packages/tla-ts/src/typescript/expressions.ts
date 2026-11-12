@@ -981,12 +981,22 @@ export const translateCall = (
   if (global === "Object" && test !== undefined && node.arguments.length > 0) {
     const argument = node.arguments[0];
     const names = getTypeNames(context.checker.getTypeAtLocation(argument), context.checker);
-    // A function that the heap doesn't hold stays extensible, as only freeze, seal, and
-    // preventExtensions of objects on the heap make an object inextensible.
+    // A function that a script makes and the heap doesn't hold stays extensible, as only freeze,
+    // seal, and preventExtensions of objects on the heap make an object inextensible. A built-in
+    // function, which a variable may hold, may be frozen.
+    const declaration = ts.isIdentifier(argument)
+      ? getSymbol(argument, context.checker)?.valueDeclaration
+      : undefined;
     const isFunction =
       ts.isArrowFunction(argument) ||
       ts.isFunctionExpression(argument) ||
       (ts.isIdentifier(argument) &&
+        declaration !== undefined &&
+        (ts.isFunctionDeclaration(declaration) ||
+          (ts.isVariableDeclaration(declaration) &&
+            declaration.initializer !== undefined &&
+            (ts.isArrowFunction(skipCasts(declaration.initializer)) ||
+              ts.isFunctionExpression(skipCasts(declaration.initializer))))) &&
         names?.every((name) => name === "function") &&
         getKind(argument, context) !== "object");
     const isBuiltIn = isBuiltInObject(argument, context);

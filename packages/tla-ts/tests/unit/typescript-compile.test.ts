@@ -3575,6 +3575,24 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain("frozen");
   });
 
+  it("stops rather than take a built-in function that a variable holds as extensible", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const made = () => 1;
+      function declared() {}
+      if (!Object.isExtensible(made) || Object.isFrozen(declared)) throw new Error("made");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("!Object.isExtensible(made)", "Object.isExtensible(made)");
+    expect((await checkModel(wrong)).failure?.message).toContain('"made"');
+    expect(() =>
+      compile(
+        'const holder = { seen: 0 };\nconst thrower = Object.getOwnPropertyDescriptor(Function.prototype, "caller")!.get!;\nif (Object.isExtensible(thrower)) holder.seen = 1;',
+      ),
+    ).toThrow("spec.ts:3:5 Unsupported call: Object.isExtensible");
+  });
+
   it("reads an object through Reflect as in and Object's functions do", async () => {
     const source = `
       const check = (actual: unknown, expected: unknown, message: string) => {
