@@ -5,21 +5,11 @@ import { describe, expect, it } from "vite-plus/test";
 import { FIXTURES } from "./check-harness";
 import { getToolSequence, JAR_174, runCliWith } from "./cli-harness";
 
+const tlcArgs = ["tlc2.TLC", "-tool", "-workers", "1", "-fp", "0"];
+
 describe("the CLI checks a spec like TLC 1.7.4 when its jar is on the class path", () => {
   const check174 = (name: string) =>
-    runCliWith("tlc-174", [
-      "-cp",
-      JAR_174,
-      "tlc2.TLC",
-      "-tool",
-      "-workers",
-      "1",
-      "-fp",
-      "0",
-      "-lncheck",
-      "final",
-      `${name}.tla`,
-    ]);
+    runCliWith("tlc-174", ["-cp", JAR_174, ...tlcArgs, "-lncheck", "final", `${name}.tla`]);
 
   it("reports the depth and outdegree after an invariant violation, labels actions without their parameters, and doesn't warn about a constant invariant", () => {
     const result = check174("Climb");
@@ -166,8 +156,6 @@ describe("the CLI checks a spec like TLC 1.7.4 when its jar is on the class path
 });
 
 describe("the CLI reproduces the TLC that -Dtla-ts.tlc names without a jar", () => {
-  const tlcArgs = ["tlc2.TLC", "-tool", "-workers", "1", "-fp", "0"];
-
   it.each(["Climb", "Cycle", "Aliased"])(
     "checks %s like TLC 1.7.4 with its jar on the class path",
     (name) => {
