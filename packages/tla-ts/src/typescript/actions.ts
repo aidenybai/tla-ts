@@ -1,5 +1,5 @@
 import ts from "@typescript/typescript6";
-import { getUpdatedValue, MUTATING_METHODS } from "./collections";
+import { getUpdatedValue, MUTATING_METHODS, REMOVALS } from "./collections";
 import {
   type Context,
   getFunction,
@@ -177,9 +177,7 @@ const getRemovedValue = (
   const sequence = translateExpression(receiver, path.scope, context);
   return {
     value: method === "shift" ? `Head(${sequence})` : `${wrap(sequence)}[Len(${sequence})]`,
-    path: assign(receiver, path, context, (current) =>
-      method === "shift" ? `Tail(${current})` : `SubSeq(${current}, 1, Len(${current}) - 1)`,
-    ),
+    path: assign(receiver, path, context, REMOVALS[method]),
   };
 };
 

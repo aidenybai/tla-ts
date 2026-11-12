@@ -66,9 +66,8 @@ const getTags = (node: ts.Node) =>
 const isExported = (node: ts.Declaration) =>
   (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Export) !== 0;
 
-const isLet = (declared: Declared) =>
-  ts.isVariableDeclaration(declared.declaration) &&
-  (declared.declaration.parent.flags & ts.NodeFlags.Let) !== 0;
+const isLet = (declaration: ts.Declaration): declaration is ts.VariableDeclaration =>
+  ts.isVariableDeclaration(declaration) && (declaration.parent.flags & ts.NodeFlags.Let) !== 0;
 
 const declareModelValues = (statement: ts.TypeAliasDeclaration, context: Context) => {
   const type = context.checker.getTypeAtLocation(statement.name);
@@ -126,7 +125,7 @@ export const readModel = (sourceFile: ts.SourceFile, context: Context): Model =>
   const declarations = statements.flatMap(getDeclarations);
   const variables = declarations.flatMap((declared) => {
     const declaration = declared.declaration;
-    if (!isLet(declared) || !ts.isVariableDeclaration(declaration)) return [];
+    if (!isLet(declaration)) return [];
     const symbol = getSymbol(declaration.name, context.checker);
     if (isExported(declaration) || symbol === undefined) {
       throw new TlaTypeScriptError("State variables can't be exported", declaration);
@@ -135,7 +134,7 @@ export const readModel = (sourceFile: ts.SourceFile, context: Context): Model =>
     context.variables.set(symbol, name);
     return [{ name, declaration }];
   });
-  const helpers = declarations.filter((declared) => !isLet(declared));
+  const helpers = declarations.filter((declared) => !isLet(declared.declaration));
   const exported = helpers.flatMap((declared) => {
     const declaration = declared.declaration;
     const node = getFunction(declaration);
