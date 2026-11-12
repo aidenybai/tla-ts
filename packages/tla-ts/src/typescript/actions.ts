@@ -5033,7 +5033,8 @@ const isForeignNew = (node: ts.Node, context: Context): node is ts.NewExpression
   getNewClass(node, context) === undefined &&
   getErrorClass(getSymbol(node.expression, context.checker), context.checker) === undefined &&
   !["Set", "Map"].includes(node.expression.getText()) &&
-  (node.arguments ?? []).every(isInertValue);
+  (node.arguments ?? []).every(isInertValue) &&
+  !isProxyOperation(node, context);
 
 const translateForeignNew = (
   expression: ts.NewExpression,
@@ -6711,10 +6712,10 @@ const findLeadingCall = (
   }
   if (
     isProxyOperation(node, context) &&
-    (ts.isDeleteExpression(node) || ts.isCallExpression(node))
+    (ts.isDeleteExpression(node) || ts.isCallExpression(node) || ts.isNewExpression(node))
   ) {
-    const found = ts.isCallExpression(node)
-      ? inOrder(node.arguments)
+    const found = !ts.isDeleteExpression(node)
+      ? inOrder(node.arguments ?? [])
       : findLeadingCall(getCast(node.expression), before, path, context);
     return found.call !== undefined || found.isBlocked
       ? found

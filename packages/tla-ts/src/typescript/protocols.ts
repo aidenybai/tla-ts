@@ -960,10 +960,28 @@ export const getReadFunctions = (node: ts.Node, context: Context) => {
 };
 
 interface ProxyOperation {
-  trap: "get" | "has" | "set" | "deleteProperty";
+  trap:
+    | "get"
+    | "has"
+    | "set"
+    | "deleteProperty"
+    | "getOwnPropertyDescriptor"
+    | "defineProperty"
+    | "getPrototypeOf"
+    | "setPrototypeOf"
+    | "isExtensible"
+    | "preventExtensions"
+    | "ownKeys"
+    | "apply"
+    | "construct";
   object: ts.Expression;
   key: string | undefined;
   value?: ts.Expression;
+  // The arguments of a call or a new, and the object that a call reads its function from.
+  arguments?: readonly ts.Expression[];
+  receiver?: ts.Expression;
+  // The function of Object or Reflect that runs it.
+  method?: string;
   // Whether Reflect runs it, which gives whether it succeeded rather than throwing a TypeError.
   isReflected: boolean;
 }
@@ -973,12 +991,40 @@ const getLiteralKey = (node: ts.Expression | undefined) =>
     ? String(ts.isNumericLiteral(node) ? Number(node.text) : node.text)
     : undefined;
 
-const REFLECTED_TRAPS = new Map([
-  ["get", 2],
-  ["has", 2],
-  ["set", 3],
-  ["deleteProperty", 2],
+// The functions of Object and Reflect that run a proxy's internal methods, with the trap that each
+// runs and how many arguments it takes.
+const TRAP_CALLS = new Map([
+  ["Reflect.get", { trap: "get", arity: 2 }],
+  ["Reflect.has", { trap: "has", arity: 2 }],
+  ["Reflect.set", { trap: "set", arity: 3 }],
+  ["Reflect.deleteProperty", { trap: "deleteProperty", arity: 2 }],
+  ["Reflect.getOwnPropertyDescriptor", { trap: "getOwnPropertyDescriptor", arity: 2 }],
+  ["Object.getOwnPropertyDescriptor", { trap: "getOwnPropertyDescriptor", arity: 2 }],
+  ["Reflect.defineProperty", { trap: "defineProperty", arity: 3 }],
+  ["Object.defineProperty", { trap: "defineProperty", arity: 3 }],
+  ["Reflect.getPrototypeOf", { trap: "getPrototypeOf", arity: 1 }],
+  ["Object.getPrototypeOf", { trap: "getPrototypeOf", arity: 1 }],
+  ["Reflect.setPrototypeOf", { trap: "setPrototypeOf", arity: 2 }],
+  ["Object.setPrototypeOf", { trap: "setPrototypeOf", arity: 2 }],
+  ["Reflect.isExtensible", { trap: "isExtensible", arity: 1 }],
+  ["Object.isExtensible", { trap: "isExtensible", arity: 1 }],
+  ["Reflect.preventExtensions", { trap: "preventExtensions", arity: 1 }],
+  ["Object.preventExtensions", { trap: "preventExtensions", arity: 1 }],
+  ["Reflect.ownKeys", { trap: "ownKeys", arity: 1 }],
+  ["Object.keys", { trap: "ownKeys", arity: 1 }],
+  ["Object.getOwnPropertyNames", { trap: "ownKeys", arity: 1 }],
+  ["Object.getOwnPropertySymbols", { trap: "ownKeys", arity: 1 }],
 ] as const);
+
+// The traps that take a key, which the script must write.
+const KEYED_TRAPS = new Set([
+  "get",
+  "has",
+  "set",
+  "deleteProperty",
+  "getOwnPropertyDescriptor",
+  "defineProperty",
+]);
 
 const getOperation = (node: ts.Node, context: Context): ProxyOperation | undefined => {
   if (
@@ -1012,29 +1058,52 @@ const getOperation = (node: ts.Node, context: Context): ProxyOperation | undefin
     const key = getAccessKey(node.expression);
     return { trap: "deleteProperty", object: node.expression.expression, key, isReflected: false };
   }
-  if (!isMethodCall(node) || getBuiltIn(node.expression.expression, context) !== "Reflect") {
+  if (
+    (ts.isNewExpression(node) || ts.isCallExpression(node)) &&
+    !(node.arguments ?? []).some(ts.isSpreadElement)
+  ) {
+    const callee = skipCasts(node.expression);
+    if (ts.isNewExpression(node) || isProxyValue(callee, context)) {
+      return {
+        trap: ts.isNewExpression(node) ? "construct" : "apply",
+        object: callee,
+        key: undefined,
+        arguments: node.arguments ?? [],
+        receiver:
+          ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)
+            ? callee.expression
+            : undefined,
+        isReflected: false,
+      };
+    }
+  }
+  if (!isMethodCall(node)) return undefined;
+  const global = getBuiltIn(node.expression.expression, context);
+  const method = node.expression.name.text;
+  const call = [...TRAP_CALLS].find((entry) => entry[0] === `${global}.${method}`)?.[1];
+  const values = node.arguments;
+  if (call === undefined || values.length !== call.arity || values.some(ts.isSpreadElement)) {
     return undefined;
   }
-  const trap = [...REFLECTED_TRAPS.keys()].find((name) => name === node.expression.name.text);
-  const values = node.arguments;
-  return trap !== undefined &&
-    values.length === REFLECTED_TRAPS.get(trap) &&
-    !values.some(ts.isSpreadElement)
-    ? {
-        trap,
-        object: values[0],
-        key: getLiteralKey(values[1]),
-        value: values.at(2),
-        isReflected: true,
-      }
-    : undefined;
+  const isKeyed = KEYED_TRAPS.has(call.trap);
+  return {
+    trap: call.trap,
+    object: values[0],
+    key: isKeyed ? getLiteralKey(values[1]) : undefined,
+    value: values.at(isKeyed ? 2 : 1),
+    method,
+    isReflected: global === "Reflect",
+  };
 };
 
 // An operation on a proxy that the script makes, which runs a trap, so a statement runs it: a
-// read, an in, an assignment, or a delete of a key that the script writes, or Reflect's.
+// read, an in, an assignment, or a delete of a key that the script writes, or a function of Object
+// or Reflect that runs an internal method.
 const getProxyOperation = (node: ts.Node, context: Context) => {
   const operation = context.heap === undefined ? undefined : getOperation(node, context);
-  return operation?.key !== undefined && isProxyValue(operation.object, context)
+  return operation !== undefined &&
+    (operation.key !== undefined || !KEYED_TRAPS.has(operation.trap)) &&
+    isProxyValue(operation.object, context)
     ? operation
     : undefined;
 };
@@ -1054,7 +1123,7 @@ const runTrap = (
   context: Context,
   frame: Frame,
   forward: (path: Path, target: Expression, handler: Expression) => Formula,
-  check: (path: Path, target: Expression, result: Expression) => Formula,
+  check: (path: Path, target: Expression, result: Expression, handler: Expression) => Formula,
 ) => {
   const heap = getHeap(path.scope, site, context);
   return bind(
@@ -1104,7 +1173,7 @@ const runTrap = (
                         ),
                         throwTypeError(withTrap, site, context, frame),
                       ),
-                    (after, result) => check(after, target, result),
+                    (after, result) => check(after, target, result, handler),
                   ),
                 ),
             ),
@@ -1114,8 +1183,8 @@ const runTrap = (
 };
 
 // Runs an operation on a value that may be a proxy. A proxy runs its trap, and throws a TypeError
-// where what the trap gives disagrees with what the target can't change. A set or a delete that
-// fails throws a TypeError, as scripts run in strict mode, where Reflect's gives false.
+// where what the trap gives disagrees with what the target can't change. A change that fails
+// throws a TypeError, as scripts run in strict mode, where Reflect's gives false.
 export const runProxyOperation = (
   node: ts.Expression,
   path: Path,
@@ -1127,92 +1196,325 @@ export const runProxyOperation = (
   if (operation === undefined) throw new TlaTypeScriptError("Unsupported proxy operation", node);
   const trap = operation.trap;
   const key = string(operation.key ?? "");
+  const method = string(operation.method ?? "");
   const javaScript = (name: string, values: Expression[]) => useJavaScript(name, values, context);
+  // Evaluates the value that the operation takes, or the arguments of a call or a new, in order.
+  const evaluate = (
+    path: Path,
+    expressions: readonly ts.Expression[],
+    values: Expression[],
+    then: (path: Path, values: Expression[]) => Formula,
+  ): Formula =>
+    expressions.length === 0
+      ? then(path, values)
+      : bind(
+          path,
+          "value",
+          translateExpression(expressions[0], path.scope, context),
+          context,
+          (bound, value) => evaluate(bound, expressions.slice(1), [...values, value], then),
+        );
   const run = (
     path: Path,
     proxy: Expression,
     value: Expression,
     next: (path: Path, value?: Expression) => Formula,
   ) => {
-    const heap = getHeap(path.scope, node, context);
     const throwWith = (after: Path) => throwTypeError(after, node, context, frame);
-    // What a set or a delete gives where it succeeds, or else where it fails.
+    // What a change gives where it succeeds: the value that an assignment writes, the proxy that
+    // Object's functions give, or true.
     const succeed = (after: Path) =>
-      next(after, trap === "set" && !operation.isReflected ? value : boolean(true));
+      next(
+        after,
+        operation.isReflected || trap === "deleteProperty"
+          ? boolean(true)
+          : trap === "set"
+            ? value
+            : proxy,
+      );
     const fail = (after: Path) =>
       operation.isReflected ? next(after, boolean(false)) : throwWith(after);
-    const check = (after: Path, target: Expression, result: Expression) => {
-      const changed = getHeap(after.scope, node, context);
-      if (trap === "get") {
-        return ifThenElse(
-          javaScript("ProxyAgrees", [changed, target, key, result, string("get")]),
-          next(after, result),
-          throwWith(after),
-        );
-      }
-      const agrees =
-        trap === "set"
-          ? javaScript("ProxyAgrees", [changed, target, key, value, string("set")])
-          : javaScript("ProxyCanLack", [changed, target, key]);
-      return bind(after, "result", javaScript("ToBoolean", [result]), context, (checked, isDone) =>
-        trap === "has"
-          ? ifThenElse(apply("\\/", [isDone, agrees]), next(checked, isDone), throwWith(checked))
-          : ifThenElse(
+    // Gives an object that the operation makes, such as a descriptor.
+    const give = (after: Path, object: Expression) =>
+      bind(
+        after,
+        "heap",
+        javaScript("Allocate", [getHeap(after.scope, node, context), object]),
+        context,
+        (bound, allocated) =>
+          next(withHeap(bound, allocated, context), javaScript("Allocated", [allocated])),
+      );
+    // Object.keys asks the proxy which keys are enumerable, which runs a getOwnPropertyDescriptor
+    // trap that tla-ts follows only where the handler has none.
+    const giveKeys = (after: Path, target: Expression, handler: Expression, keys: Expression) => {
+      const heap = getHeap(after.scope, node, context);
+      const given = next(after, javaScript("ProxyKeysOf", [heap, target, keys, method]));
+      return operation.method !== "keys"
+        ? given
+        : ifThenElse(
+            isNullish(
+              javaScript("Get", [heap, handler, string("getOwnPropertyDescriptor")]),
+              context,
+            ),
+            given,
+            leaf(
+              apply("Assert", [
+                boolean(false),
+                string("tla-ts can't run the getOwnPropertyDescriptor trap that Object.keys runs"),
+              ]),
+            ),
+          );
+    };
+    const runWith = (path: Path, values: Expression[], descriptor: Expression) => {
+      const heap = getHeap(path.scope, node, context);
+      const check = (after: Path, target: Expression, result: Expression, handler: Expression) => {
+        const changed = getHeap(after.scope, node, context);
+        const agreeing = (isAgreed: Expression, then: Formula) =>
+          ifThenElse(isAgreed, then, throwWith(after));
+        if (trap === "get") {
+          return agreeing(
+            javaScript("ProxyAgrees", [changed, target, key, result, string("get")]),
+            next(after, result),
+          );
+        }
+        if (trap === "apply") return next(after, result);
+        if (trap === "construct") {
+          return agreeing(javaScript("IsObjectIn", [changed, result]), next(after, result));
+        }
+        if (trap === "getOwnPropertyDescriptor") {
+          return agreeing(
+            javaScript("ProxyDescriptorAgrees", [changed, target, key, result]),
+            ifThenElse(
+              apply("=", [result, getUndefined(context)]),
+              next(after, result),
+              give(after, javaScript("ProxyDescriptor", [changed, result])),
+            ),
+          );
+        }
+        if (trap === "getPrototypeOf") {
+          return agreeing(
+            apply("/\\", [
+              apply("\\/", [
+                apply("=", [result, identifier("Null")]),
+                javaScript("IsObjectIn", [changed, result]),
+              ]),
+              javaScript("ProxyPrototypeAgrees", [changed, target, result]),
+            ]),
+            next(after, result),
+          );
+        }
+        if (trap === "ownKeys") {
+          return agreeing(
+            javaScript("IsObjectIn", [changed, result]),
+            bind(
+              after,
+              "keys",
+              javaScript("ProxyKeys", [changed, result]),
+              context,
+              (listed, keys) =>
+                ifThenElse(
+                  javaScript("ProxyKeysAgree", [changed, target, keys]),
+                  giveKeys(listed, target, handler, keys),
+                  throwWith(listed),
+                ),
+            ),
+          );
+        }
+        return bind(
+          after,
+          "result",
+          javaScript("ToBoolean", [result]),
+          context,
+          (checked, isDone) => {
+            if (trap === "has") {
+              return ifThenElse(
+                apply("\\/", [isDone, javaScript("ProxyCanLack", [changed, target, key])]),
+                next(checked, isDone),
+                throwWith(checked),
+              );
+            }
+            if (trap === "isExtensible") {
+              return ifThenElse(
+                apply("=", [isDone, javaScript("IsExtensible", [changed, target])]),
+                next(checked, isDone),
+                throwWith(checked),
+              );
+            }
+            const agrees =
+              trap === "set"
+                ? javaScript("ProxyAgrees", [changed, target, key, value, string("set")])
+                : trap === "deleteProperty"
+                  ? javaScript("ProxyCanLack", [changed, target, key])
+                  : trap === "defineProperty"
+                    ? javaScript("ProxyDefinitionAgrees", [changed, target, key, descriptor])
+                    : trap === "setPrototypeOf"
+                      ? javaScript("ProxyPrototypeAgrees", [changed, target, value])
+                      : not(javaScript("IsExtensible", [changed, target]));
+            return ifThenElse(
               isDone,
               ifThenElse(agrees, succeed(checked), throwWith(checked)),
               fail(checked),
-            ),
-      );
-    };
-    // What the target does where the handler has no trap. A set reads and defines the proxy's own
-    // property, which tla-ts follows only where the handler can't trap those either.
-    const forward = (after: Path, target: Expression, handler: Expression) => {
-      if (trap === "get" || trap === "has") {
-        return next(after, javaScript(trap === "get" ? "Get" : "Has", [heap, target, key]));
-      }
-      const change = (canChange: string, changed: Expression) =>
-        ifThenElse(
-          javaScript(canChange, [heap, target, key]),
-          bind(after, "heap", changed, context, (bound, written) =>
-            succeed(withHeap(bound, written, context)),
-          ),
-          fail(after),
+            );
+          },
         );
-      if (trap === "deleteProperty") {
-        return change("CanDelete", javaScript("Delete", [heap, target, key]));
-      }
-      return ifThenElse(
-        apply("/\\", [
-          isNullish(
-            javaScript("Get", [heap, handler, string("getOwnPropertyDescriptor")]),
+      };
+      // What the target does where the handler has no trap. A set reads and defines the proxy's
+      // own property, which tla-ts follows only where the handler can't trap those either.
+      const forward = (after: Path, target: Expression, handler: Expression) => {
+        if (trap === "apply" || trap === "construct") {
+          return leaf(
+            apply("Assert", [boolean(false), string("tla-ts can't call the target of a proxy")]),
+          );
+        }
+        if (trap === "get" || trap === "has") {
+          return next(after, javaScript(trap === "get" ? "Get" : "Has", [heap, target, key]));
+        }
+        if (trap === "getOwnPropertyDescriptor") {
+          return ifThenElse(
+            javaScript("HasOwn", [heap, target, key]),
+            give(after, javaScript("Describe", [heap, target, key])),
+            next(after, getUndefined(context)),
+          );
+        }
+        if (trap === "getPrototypeOf") return next(after, javaScript("Prototype", [heap, target]));
+        if (trap === "isExtensible") return next(after, javaScript("IsExtensible", [heap, target]));
+        if (trap === "ownKeys") {
+          return giveKeys(after, target, handler, javaScript("PropertyKeysOf", [heap, target]));
+        }
+        if (trap === "preventExtensions") {
+          return bind(
+            after,
+            "heap",
+            javaScript("PreventExtensions", [heap, target]),
             context,
-          ),
-          isNullish(javaScript("Get", [heap, handler, string("defineProperty")]), context),
-        ]),
-        change("CanPut", javaScript("SetProperty", [heap, target, key, value])),
-        leaf(
-          apply("Assert", [
-            boolean(false),
-            string("tla-ts can't run the traps that a set through a proxy runs"),
+            (bound, changed) => succeed(withHeap(bound, changed, context)),
+          );
+        }
+        if (trap === "defineProperty" || trap === "setPrototypeOf") {
+          return bind(
+            after,
+            "change",
+            trap === "defineProperty"
+              ? javaScript("DefineConverted", [heap, target, key, descriptor])
+              : javaScript("SetPrototypeOf", [heap, target, value]),
+            context,
+            (bound, change) =>
+              ifThenElse(
+                field(change, "isRangeError"),
+                throwError("RangeError", bound, node, context, frame),
+                ifThenElse(
+                  field(change, "isDone"),
+                  succeed(withHeap(bound, field(change, "heap"), context)),
+                  fail(bound),
+                ),
+              ),
+          );
+        }
+        const change = (canChange: string, changed: Expression) =>
+          ifThenElse(
+            javaScript(canChange, [heap, target, key]),
+            bind(after, "heap", changed, context, (bound, written) =>
+              succeed(withHeap(bound, written, context)),
+            ),
+            fail(after),
+          );
+        if (trap === "deleteProperty") {
+          return change("CanDelete", javaScript("Delete", [heap, target, key]));
+        }
+        return ifThenElse(
+          apply("/\\", [
+            isNullish(
+              javaScript("Get", [heap, handler, string("getOwnPropertyDescriptor")]),
+              context,
+            ),
+            isNullish(javaScript("Get", [heap, handler, string("defineProperty")]), context),
           ]),
-        ),
-      );
+          change("CanPut", javaScript("SetProperty", [heap, target, key, value])),
+          leaf(
+            apply("Assert", [
+              boolean(false),
+              string("tla-ts can't run the traps that a set through a proxy runs"),
+            ]),
+          ),
+        );
+      };
+      return runTrap(node, proxy, trap, values, path, context, frame, forward, check);
     };
+    const heap = getHeap(path.scope, node, context);
+    // Object.defineProperty converts the descriptor first, and gives the trap a copy of it.
+    const trapped =
+      trap === "defineProperty"
+        ? ifThenElse(
+            javaScript("IsObjectIn", [heap, value]),
+            bind(
+              path,
+              "descriptor",
+              javaScript("ToDescriptor", [heap, value]),
+              context,
+              (converted, descriptor) =>
+                ifThenElse(
+                  field(descriptor, "isValid"),
+                  bind(
+                    converted,
+                    "heap",
+                    javaScript("Allocate", [heap, javaScript("DescriptorObject", [descriptor])]),
+                    context,
+                    (bound, allocated) =>
+                      runWith(
+                        withHeap(bound, allocated, context),
+                        [key, javaScript("Allocated", [allocated])],
+                        descriptor,
+                      ),
+                  ),
+                  throwWith(converted),
+                ),
+            ),
+            throwWith(path),
+          )
+        : trap === "apply" || trap === "construct"
+          ? ifThenElse(
+              trap === "apply"
+                ? apply("=", [javaScript("TypeOfIn", [heap, proxy]), string("function")])
+                : javaScript("IsConstructor", [heap, proxy]),
+              runWith(
+                path,
+                trap === "apply"
+                  ? [
+                      operation.receiver === undefined
+                        ? getUndefined(context)
+                        : translateExpression(operation.receiver, path.scope, context),
+                      value,
+                    ]
+                  : [value, proxy],
+                getUndefined(context),
+              ),
+              throwWith(path),
+            )
+          : trap === "setPrototypeOf"
+            ? ifThenElse(
+                apply("\\/", [
+                  apply("=", [value, identifier("Null")]),
+                  javaScript("IsObjectIn", [heap, value]),
+                ]),
+                runWith(path, [value], getUndefined(context)),
+                throwWith(path),
+              )
+            : runWith(
+                path,
+                trap === "get"
+                  ? [key, proxy]
+                  : trap === "set"
+                    ? [key, value, proxy]
+                    : KEYED_TRAPS.has(trap)
+                      ? [key]
+                      : [],
+                getUndefined(context),
+              );
     // A read or an in of a value that isn't a proxy reads it as JavaScript does elsewhere.
     const isPlain = !operation.isReflected && (trap === "get" || trap === "has");
     return ifThenElse(
       javaScript("IsProxy", [heap, proxy]),
-      runTrap(
-        node,
-        proxy,
-        trap,
-        trap === "get" ? [key, proxy] : trap === "set" ? [key, value, proxy] : [key],
-        path,
-        context,
-        frame,
-        forward,
-        check,
-      ),
+      trapped,
       !isPlain
         ? leaf(
             apply("Assert", [
@@ -1238,15 +1540,20 @@ export const runProxyOperation = (
           translateObjectValue(operation.object, allocated.scope, context),
           context,
           (bound, proxy) =>
-            operation.value === undefined
-              ? run(bound, proxy, getUndefined(context), next)
-              : bind(
-                  bound,
-                  "value",
-                  translateExpression(operation.value, bound.scope, context),
-                  context,
-                  (valued, value) => run(valued, proxy, value, next),
+            evaluate(
+              bound,
+              operation.arguments ?? (operation.value === undefined ? [] : [operation.value]),
+              [],
+              (valued, values) =>
+                run(
+                  valued,
+                  proxy,
+                  operation.arguments === undefined
+                    ? (values[0] ?? getUndefined(context))
+                    : tuple(values),
+                  next,
                 ),
+            ),
         ),
     ),
   );

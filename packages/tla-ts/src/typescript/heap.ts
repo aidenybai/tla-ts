@@ -1204,6 +1204,7 @@ export const isDescription = (node: ts.Node, context: Context) =>
   ["Object", "Reflect"].includes(node.expression.expression.getText()) &&
   node.expression.name.text === "getOwnPropertyDescriptor" &&
   node.arguments.length >= 2 &&
+  !isProxyValue(node.arguments[0], context) &&
   (["object", "sequence"].includes(getKind(node.arguments[0], context)) ||
     isBuiltInObject(node.arguments[0], context) ||
     (node.expression.expression.getText() === "Object" &&
@@ -2480,6 +2481,9 @@ const FALLIBLE_CHANGES = new Set([
   "create",
 ]);
 
+// The changes that a proxy's traps run instead.
+const PROXY_CHANGES = new Set(["defineProperty", "preventExtensions", "setPrototypeOf"]);
+
 const isConstruct = (node: MethodCall) =>
   node.expression.expression.getText() === "Reflect" && node.expression.name.text === "construct";
 
@@ -2491,7 +2495,12 @@ export const isObjectChange = (node: ts.Node, context: Context): node is MethodC
     OBJECT_CHANGES.has(node.expression.name.text) &&
     (node.expression.name.text !== "create" ||
       ts.isExpressionStatement(node.parent) ||
-      isDescriptorsRead(node, context))) ||
+      isDescriptorsRead(node, context)) &&
+    !(
+      PROXY_CHANGES.has(node.expression.name.text) &&
+      node.arguments.length > 0 &&
+      isProxyValue(node.arguments[0], context)
+    )) ||
     isConstruct(node));
 
 // The Object functions that convert their first argument to an object, which throws a TypeError for

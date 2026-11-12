@@ -2192,7 +2192,7 @@ LOCAL FieldsDescriptor(heap, fields, values) ==
 \\* each.
 ReadDescriptor(heap, has, values) == FieldsDescriptor(heap, {field \\in Fields : has[field]}, values)
 
-LOCAL ToDescriptor(heap, ref) ==
+ToDescriptor(heap, ref) ==
   LET fields == {field \\in Fields : Has(heap, ref, field)}
   IN FieldsDescriptor(heap, fields, [field \\in fields |-> Get(heap, ref, field)])
 
@@ -3518,6 +3518,84 @@ IsFrozen(heap, ref) ==
   IN /\\ IsSealed(heap, ref)
      /\\ \\A key \\in DOMAIN object.attributes :
           object.attributes[key].kind # "data" \\/ ~object.attributes[key].writable
+
+\\* FromPropertyDescriptor, the object of a descriptor's fields.
+DescriptorObject(descriptor) ==
+  PutAll(EmptyObject, [field \\in descriptor.fields |-> descriptor[field]],
+         SelectSeq(<<"value", "writable", "get", "set", "enumerable", "configurable">>,
+                   LAMBDA field : field \\in descriptor.fields))
+
+\\* CompletePropertyDescriptor, which gives a descriptor without get or set the fields of data.
+LOCAL CompleteDescriptor(descriptor) ==
+  [descriptor EXCEPT
+     !.fields = @ \\cup {"enumerable", "configurable"}
+                  \\cup IF descriptor.isAccessor THEN {"get", "set"} ELSE {"value", "writable"},
+     !.isData = ~descriptor.isAccessor]
+
+\\* The object of the completed descriptor that a proxy's getOwnPropertyDescriptor trap gives.
+ProxyDescriptor(heap, result) == DescriptorObject(CompleteDescriptor(ToDescriptor(heap, result)))
+
+\\* Whether what a proxy's getOwnPropertyDescriptor trap gives agrees with the target's property:
+\\* undefined where the target can lack it, or else a valid descriptor that the target could hold,
+\\* unconfigurable or read-only only where the target's property is.
+ProxyDescriptorAgrees(heap, target, key, result) ==
+  LET object == Lookup(heap, target)
+      read == ToDescriptor(heap, result)
+      described == CompleteDescriptor(read)
+      current == object.attributes[key]
+  IN CASE result = Undefined -> ProxyCanLack(heap, target, key)
+       [] ~IsObjectIn(heap, result) -> FALSE
+       [] OTHER ->
+            /\\ read.isValid
+            /\\ CanApply(object, key, described)
+            /\\ \\/ described.configurable
+               \\/ /\\ key \\in DOMAIN object.values
+                  /\\ ~current.configurable
+                  /\\ described.isAccessor \\/ described.writable \\/ ~current.writable
+
+\\* Whether a definition that a proxy's defineProperty trap says it made agrees with the target's
+\\* property, which it must be able to hold, unconfigurable or read-only only where the target's is.
+ProxyDefinitionAgrees(heap, target, key, descriptor) ==
+  LET object == Lookup(heap, target)
+      current == object.attributes[key]
+      isUnconfigurable == "configurable" \\in descriptor.fields /\\ ~descriptor.configurable
+  IN IF key \\notin DOMAIN object.values
+     THEN object.extensible /\\ ~isUnconfigurable
+     ELSE /\\ CanApply(object, key, descriptor)
+          /\\ isUnconfigurable => ~current.configurable
+          /\\ (/\\ current.kind # "accessor"
+              /\\ ~current.configurable
+              /\\ current.writable
+              /\\ "writable" \\in descriptor.fields) => descriptor.writable
+
+\\* Whether a prototype that a proxy's getPrototypeOf trap gives, or that its setPrototypeOf trap
+\\* says it set, agrees with the target's, which a target that can't grow fixes.
+ProxyPrototypeAgrees(heap, target, prototype) ==
+  IsExtensible(heap, target) \\/ SameValue(prototype, Prototype(heap, target))
+
+\\* The keys that a proxy's ownKeys trap gives, as CreateListFromArrayLike reads them.
+ProxyKeys(heap, result) == IF IsRef(result) THEN ArrayLike(heap, result) ELSE result
+
+\\* Whether the keys that a proxy's ownKeys trap gives are strings and symbols, each once, that hold
+\\* each key the target can't lose, and only the target's keys where it can't grow.
+ProxyKeysAgree(heap, target, keys) ==
+  LET object == Lookup(heap, target)
+      isListed(key) == \\E position \\in DOMAIN keys : keys[position] = key
+  IN /\\ \\A position \\in DOMAIN keys : TypeOf(keys[position]) \\in {"string", "symbol"}
+     /\\ \\A left, right \\in DOMAIN keys : left # right => keys[left] # keys[right]
+     /\\ \\A key \\in DOMAIN object.values : ~object.attributes[key].configurable => isListed(key)
+     /\\ \\/ object.extensible
+        \\/ /\\ \\A key \\in DOMAIN object.values : isListed(key)
+           /\\ \\A position \\in DOMAIN keys : keys[position] \\in DOMAIN object.values
+
+\\* What Object.keys, Object.getOwnPropertyNames, Object.getOwnPropertySymbols, or Reflect.ownKeys
+\\* gives of a proxy's keys, where Object.keys asks the target which of them are enumerable.
+ProxyKeysOf(heap, target, keys, method) ==
+  CASE method = "keys" ->
+         SelectSeq(keys, LAMBDA key : ~IsSymbol(key) /\\ IsEnumerableOwn(heap, target, key))
+    [] method = "getOwnPropertyNames" -> SelectSeq(keys, LAMBDA key : ~IsSymbol(key))
+    [] method = "getOwnPropertySymbols" -> SelectSeq(keys, IsSymbol)
+    [] OTHER -> keys
 
 \\* Whether a code unit is a surrogate that JSON.stringify escapes, where escapes maps each code unit
 \\* that it escapes to its escape.

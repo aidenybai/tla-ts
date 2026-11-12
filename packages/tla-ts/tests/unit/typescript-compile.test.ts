@@ -6757,10 +6757,208 @@ describe("proxies", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs a proxy's getOwnPropertyDescriptor trap and checks the descriptor it gives", async () => {
+    const getSource = (expected: number) => `
+      const target: { attr?: number; fixed?: number } = { attr: 1 };
+      Object.defineProperty(target, "fixed", { value: 2 });
+      let seen: unknown[] = [];
+      const handler = {
+        getOwnPropertyDescriptor: function (this: unknown, inner: object, key: string | symbol) {
+          seen = [this, inner, key];
+          return key === "attr" ? { value: 5, configurable: true } : undefined;
+        },
+      };
+      const proxy = new Proxy(target, handler);
+      const described = Object.getOwnPropertyDescriptor(proxy, "attr");
+      if (described === undefined || described.value !== ${expected}) throw new Error("unexpected");
+      if (described.writable !== false || described.enumerable !== false) throw new Error("fields");
+      if (seen[0] !== handler || seen[1] !== target || seen[2] !== "attr") throw new Error("seen");
+      if (Reflect.getOwnPropertyDescriptor(proxy, "other") !== undefined) throw new Error("other");
+      let count = 0;
+      try { Object.getOwnPropertyDescriptor(proxy, "fixed"); } catch (error) { if (error instanceof TypeError) count += 1; }
+      if (count !== 1) throw new Error("fixed");
+      const forwarding = new Proxy(target, {});
+      const forwarded = Object.getOwnPropertyDescriptor(forwarding, "fixed");
+      if (forwarded === undefined || forwarded.value !== 2 || forwarded.configurable) {
+        throw new Error("forward");
+      }
+    `;
+    expect((await checkModel(getSource(5))).failure).toBeUndefined();
+    expect((await checkModel(getSource(1))).failure?.message).toContain("unexpected");
+  });
+
+  it("runs a proxy's ownKeys trap and checks the keys it gives", async () => {
+    const getSource = (expected: string) => `
+      const target: { attr?: number; hidden?: number } = { attr: 1 };
+      Object.defineProperty(target, "hidden", { value: 2, configurable: true });
+      let seen: unknown[] = [];
+      const handler = {
+        ownKeys: function (this: unknown, inner: object) {
+          seen = [this, inner];
+          return ["hidden", "attr", "extra"];
+        },
+      };
+      const proxy = new Proxy(target, handler);
+      const keys = Object.keys(proxy);
+      if (keys.length !== 1 || keys[0] !== "${expected}") throw new Error("unexpected");
+      if (seen[0] !== handler || seen[1] !== target) throw new Error("seen");
+      const names = Object.getOwnPropertyNames(proxy);
+      if (names.length !== 3 || names[0] !== "hidden" || names[2] !== "extra") throw new Error("names");
+      const forwarded = Reflect.ownKeys(new Proxy(target, {}));
+      if (forwarded.length !== 2 || forwarded[1] !== "hidden") throw new Error("forward");
+      let count = 0;
+      try { Object.keys(new Proxy({}, { ownKeys: () => ["a", "a"] })); } catch (error) { if (error instanceof TypeError) count += 1; }
+      try { Object.keys(new Proxy({}, { ownKeys: () => [1] as unknown as string[] })); } catch (error) { if (error instanceof TypeError) count += 1; }
+      const fixed: { fixed?: number } = {};
+      Object.defineProperty(fixed, "fixed", { value: 1 });
+      try { Object.keys(new Proxy(fixed, { ownKeys: () => [] })); } catch (error) { if (error instanceof TypeError) count += 1; }
+      const closed = {};
+      Object.preventExtensions(closed);
+      try { Object.keys(new Proxy(closed, { ownKeys: () => ["new"] })); } catch (error) { if (error instanceof TypeError) count += 1; }
+      if (count !== 4) throw new Error("checks");
+    `;
+    expect((await checkModel(getSource("attr"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("hidden"))).failure?.message).toContain("unexpected");
+  });
+
+  it("runs a proxy's prototype and extensibility traps and checks what they give", async () => {
+    const getSource = (expected: number) => `
+      const parent = {};
+      const target = {};
+      let seen: unknown[] = [];
+      const handler = {
+        getPrototypeOf: function (this: unknown, inner: object) {
+          seen = [this, inner];
+          return parent;
+        },
+        setPrototypeOf: function (inner: object, prototype: object | null) {
+          seen = [inner, prototype];
+          return true;
+        },
+        isExtensible: function (inner: object) {
+          return true;
+        },
+        preventExtensions: function (inner: object) {
+          return false;
+        },
+      };
+      const proxy = new Proxy(target, handler);
+      if (Object.getPrototypeOf(proxy) !== parent) throw new Error("getPrototypeOf");
+      if (seen[0] !== handler || seen[1] !== target) throw new Error("seen");
+      if (Object.setPrototypeOf(proxy, null) !== proxy) throw new Error("setPrototypeOf");
+      if (seen[0] !== target || seen[1] !== null) throw new Error("set seen");
+      if (Object.getPrototypeOf(target) !== Object.prototype) throw new Error("unchanged");
+      if (!Object.isExtensible(proxy)) throw new Error("isExtensible");
+      if (Reflect.preventExtensions(proxy) !== false) throw new Error("preventExtensions");
+      let count = 0;
+      try { Object.preventExtensions(proxy); } catch (error) { if (error instanceof TypeError) count += 1; }
+      try { Object.isExtensible(new Proxy({}, { isExtensible: () => false })); } catch (error) { if (error instanceof TypeError) count += 1; }
+      try { Object.preventExtensions(new Proxy({}, { preventExtensions: () => true })); } catch (error) { if (error instanceof TypeError) count += 1; }
+      const closed = {};
+      Object.preventExtensions(closed);
+      try { Object.getPrototypeOf(new Proxy(closed, { getPrototypeOf: () => parent })); } catch (error) { if (error instanceof TypeError) count += 1; }
+      try { Object.setPrototypeOf(new Proxy(closed, { setPrototypeOf: () => true }), parent); } catch (error) { if (error instanceof TypeError) count += 1; }
+      try { Object.getPrototypeOf(new Proxy({}, { getPrototypeOf: () => 1 as unknown as object })); } catch (error) { if (error instanceof TypeError) count += 1; }
+      if (count !== ${expected}) throw new Error("unexpected");
+      const forwarding = new Proxy(target, {});
+      if (Object.setPrototypeOf(forwarding, parent) !== forwarding) throw new Error("forward set");
+      if (Reflect.getPrototypeOf(forwarding) !== parent) throw new Error("forward get");
+      if (Object.preventExtensions(forwarding) !== forwarding) throw new Error("forward prevent");
+      if (Reflect.isExtensible(forwarding) !== false) throw new Error("forward isExtensible");
+      if (Reflect.setPrototypeOf(forwarding, null) !== false) throw new Error("forward refuse");
+    `;
+    expect((await checkModel(getSource(6))).failure).toBeUndefined();
+    expect((await checkModel(getSource(5))).failure?.message).toContain("unexpected");
+  });
+
+  it("runs a proxy's defineProperty trap with a copy of the descriptor and checks it", async () => {
+    const getSource = (expected: boolean) => `
+      const target: { attr?: number; fixed?: number } = {};
+      Object.defineProperty(target, "fixed", { value: 1, writable: true });
+      let seen: unknown[] = [];
+      const handler = {
+        defineProperty: function (
+          this: unknown,
+          inner: object,
+          key: string | symbol,
+          descriptor: PropertyDescriptor,
+        ) {
+          seen = [this, inner, key, descriptor.value, descriptor.enumerable, "writable" in descriptor];
+          return true;
+        },
+      };
+      const proxy = new Proxy(target, handler);
+      if (Object.defineProperty(proxy, "attr", { value: 3, enumerable: true }) !== proxy) {
+        throw new Error("define");
+      }
+      if (seen[0] !== handler || seen[1] !== target || seen[2] !== "attr" || seen[3] !== 3) {
+        throw new Error("seen");
+      }
+      if (seen[4] !== true || seen[5] !== ${expected}) throw new Error("unexpected");
+      if ("attr" in target) throw new Error("trapped");
+      const refusing = new Proxy(target, { defineProperty: () => false });
+      if (Reflect.defineProperty(refusing, "attr", { value: 1 }) !== false) throw new Error("refuse");
+      let count = 0;
+      try { Object.defineProperty(refusing, "attr", { value: 1 }); } catch (error) { if (error instanceof TypeError) count += 1; }
+      try { Object.defineProperty(proxy, "attr", { value: 1, configurable: false }); } catch (error) { if (error instanceof TypeError) count += 1; }
+      try { Object.defineProperty(proxy, "fixed", { value: 1, writable: false }); } catch (error) { if (error instanceof TypeError) count += 1; }
+      try { Object.defineProperty(proxy, "fixed", { value: 1, configurable: true }); } catch (error) { if (error instanceof TypeError) count += 1; }
+      if (count !== 4) throw new Error("checks");
+      const forwarding = new Proxy(target, {});
+      Object.defineProperty(forwarding, "attr", { value: 4, configurable: true });
+      if (target.attr !== 4) throw new Error("forward");
+      if (Reflect.defineProperty(forwarding, "fixed", { get: () => 1 }) !== false) {
+        throw new Error("forward refuse");
+      }
+    `;
+    expect((await checkModel(getSource(false))).failure).toBeUndefined();
+    expect((await checkModel(getSource(true))).failure?.message).toContain("unexpected");
+  });
+
+  it("runs a proxy's apply and construct traps and checks what construct gives", async () => {
+    const getSource = (expected: number) => `
+      const target = function (value: number) { return value + 1; };
+      let seen: unknown[] = [];
+      const handler = {
+        apply: function (this: unknown, inner: object, receiver: unknown, values: unknown[]) {
+          seen = [this, inner, receiver, values.length, values[0]];
+          return 7;
+        },
+      };
+      const proxy = new Proxy<typeof target>(target, handler);
+      if (proxy(3) !== ${expected}) throw new Error("unexpected");
+      if (seen[0] !== handler || seen[1] !== target || seen[2] !== undefined || seen[4] !== 3) {
+        throw new Error("seen");
+      }
+      class Point { x = 0; constructor(left?: number, right?: number) {} }
+      const made = { x: 2 };
+      const constructing = new Proxy<typeof Point>(Point, {
+        construct: function (inner: object, values: unknown[], newTarget: unknown) {
+          seen = [inner, values.length, newTarget];
+          return made;
+        },
+      });
+      const point: unknown = new constructing(1, 2);
+      if (point !== made) throw new Error("construct");
+      if (seen[0] !== Point || seen[1] !== (2 as unknown) || seen[2] !== constructing) {
+        throw new Error("construct seen");
+      }
+      let count = 0;
+      const revocable = Proxy.revocable(function () {}, {});
+      revocable.revoke();
+      try { revocable.proxy(); } catch (error) { if (error instanceof TypeError) count += 1; }
+      const primitive = new Proxy<typeof Point>(Point, { construct: () => 1 as unknown as object });
+      try { new primitive(); } catch (error) { if (error instanceof TypeError) count += 1; }
+      if (count !== 2) throw new Error("checks");
+    `;
+    expect((await checkModel(getSource(7))).failure).toBeUndefined();
+    expect((await checkModel(getSource(8))).failure?.message).toContain("unexpected");
+  });
+
   it("stops the check where something else reads a proxy", async () => {
     const result = await checkModel(`
       const proxy = new Proxy({ attr: 1 }, {});
-      const keys = Object.keys(proxy);
+      const values = Object.values(proxy);
     `);
     expect(result.failure?.message).toContain("tla-ts can't run a proxy's internal method here");
   });
