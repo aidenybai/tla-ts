@@ -5935,6 +5935,19 @@ const translateExpressionStatement = (
   if (isForeignNew(expression, context)) {
     return translateForeignNew(expression, path, context, frame);
   }
+  // An object that a statement makes and drops, whose members evaluate nothing, changes nothing.
+  if (
+    ts.isObjectLiteralExpression(expression) &&
+    expression.properties.every(
+      (property) =>
+        (ts.isMethodDeclaration(property) ||
+          ts.isAccessor(property) ||
+          (ts.isPropertyAssignment(property) && isLiteral(property.initializer))) &&
+        !ts.isComputedPropertyName(property.name),
+    )
+  ) {
+    return continueWith(path);
+  }
   // A statement that only reads, such as void await x once x settles, evaluates its value and drops
   // it, so that a getter it reads, which tla-ts can't call, stops the check.
   if (isRead(expression, path.scope.results)) {

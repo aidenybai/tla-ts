@@ -5362,6 +5362,20 @@ describe("errors", () => {
     expect((await checkModel(getSource(2))).failure?.message).toContain("caught");
   });
 
+  it("drops an object that a statement makes from members that evaluate nothing", async () => {
+    const getSource = (done: boolean) => `
+      const holder = {
+        *make() {
+          ({ get yield() { return 1; }, count: 2, method() {} });
+        },
+      };
+      const result = holder.make().next();
+      if (result.value !== undefined || result.done !== ${done}) throw new Error("result");
+    `;
+    expect((await checkModel(getSource(true))).failure).toBeUndefined();
+    expect((await checkModel(getSource(false))).failure?.message).toContain("result");
+  });
+
   it("sorts, reverses, fills, and copies within an array in place", async () => {
     const result = await checkModel(`
       const letters = ["z", "B", "a", "A"];
