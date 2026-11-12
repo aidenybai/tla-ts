@@ -114,7 +114,11 @@ export class ElimEqs {
     for (const boolVar of toElim) {
       const lit = 2 * boolVar;
       const root = roots[boolVar];
-      if (solver.isAssumption(boolVar) || (solver.isExternal(boolVar) && solver.isIncremental())) {
+      const isRootSet = solver.ext === null || solver.ext.setRoot(lit, root);
+      if (
+        solver.isAssumption(boolVar) ||
+        (solver.isExternal(boolVar) && (solver.isIncremental() || !isRootSet))
+      ) {
         solver.mkBinClause(lit ^ 1, root, false);
         solver.mkBinClause(lit, root ^ 1, false);
         continue;
@@ -124,6 +128,7 @@ export class ElimEqs {
       solver.mc.insert(entry, [lit ^ 1, root]);
       solver.mc.insert(entry, [lit, root ^ 1]);
     }
+    solver.ext?.flushRoots();
   }
 
   run(roots: number[], toElim: number[]) {

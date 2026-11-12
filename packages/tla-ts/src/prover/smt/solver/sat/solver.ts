@@ -32,11 +32,27 @@ import { Probing } from "./probing";
 import { Scc } from "./scc";
 import { Simplifier } from "./simplifier";
 import { VarQueue } from "./var-queue";
-import { WATCH_BINARY, WatchList, mkClauseWatch } from "./watch-list";
+import { WATCH_BINARY, WATCH_EXT_CONSTRAINT, WatchList, mkClauseWatch } from "./watch-list";
 
 export const JUSTIFICATION_NONE = 0;
 export const JUSTIFICATION_BINARY = 1;
 export const JUSTIFICATION_CLAUSE = 2;
+export const JUSTIFICATION_EXT = 3;
+
+export interface SatExtension {
+  propagated(lit: number, index: number): boolean;
+  getAntecedents(lit: number, index: number, antecedents: number[]): void;
+  resolveConflict(): number;
+  push(): void;
+  pop(numScopes: number): void;
+  popReinit(): void;
+  simplify(): void;
+  gc(): void;
+  setRoot(lit: number, root: number): boolean;
+  flushRoots(): void;
+  initUseList(useVars: Set<number>): void;
+  findMutexes(lits: number[], mutexes: number[][]): void;
+}
 
 const UINT_MAX = 4294967295;
 const RANDOM_MAX_VALUE = 0x7fff;
@@ -100,6 +116,7 @@ export class Solver {
   scc: Scc;
   asymmBranch: AsymmBranch;
   probing: Probing;
+  ext: SatExtension | null = null;
   isProbing = false;
   model = new Int8Array(0);
   isModelCurrent = false;
@@ -281,6 +298,10 @@ export class Solver {
 
   isVisited(lit: number) {
     return this.visited[lit] === this.visitedTimestamp;
+  }
+
+  markVisited(lit: number) {
+    this.visited[lit] = this.visitedTimestamp;
   }
 
   checkpoint() {
@@ -698,7 +719,7 @@ export class Solver {
     const currLevel = justLevel[lit >> 1];
     const notL = lit ^ 1;
     const wlist = this.watches[lit];
-    const data = wlist.data;
+    let data = wlist.data;
     this.asymmBranch.dec(wlist.size);
     this.probing.dec(wlist.size);
     const end = wlist.size;
@@ -718,6 +739,22 @@ export class Solver {
         data[2 * target] = val1;
         data[2 * target + 1] = val2;
         target++;
+        continue;
+      }
+      if ((val2 & 3) === WATCH_EXT_CONSTRAINT) {
+        const isKept = (this.ext as SatExtension).propagated(lit, val1);
+        data = wlist.data;
+        if (this.isInconsistent) {
+          if (!isKept) index++;
+          for (; index < end; index++, target++) wlist.copy(target, index);
+          wlist.setEnd(target);
+          return false;
+        }
+        if (isKept) {
+          data[2 * target] = val1;
+          data[2 * target + 1] = val2;
+          target++;
+        }
         continue;
       }
       if (assignment[val2 >> 2] === L_TRUE) {
@@ -906,6 +943,11 @@ export class Solver {
       this.processAntecedentForUnsatCore(val ^ 1);
       return;
     }
+    if (kind === JUSTIFICATION_EXT) {
+      for (const lit of this.getExtAntecedents(consequent, val))
+        this.processAntecedentForUnsatCore(lit);
+      return;
+    }
     if (kind !== JUSTIFICATION_CLAUSE) return;
     const arena = this.arena;
     let position = 0;
@@ -959,6 +1001,9 @@ export class Solver {
 
   // max_cliques over the binary clauses, the largest mutexes first.
   findMutexes(lits: readonly number[]) {
+    const remaining = [...lits];
+    const extMutexes: number[][] = [];
+    this.ext?.findMutexes(remaining, extMutexes);
     const cliques = new MaxCliques((index) => index ^ 1);
     const seen = new Set<string>();
     for (let index = 0; index < this.watches.length; index++) {
@@ -973,10 +1018,10 @@ export class Solver {
         cliques.addEdge(first, second);
       }
     }
-    const mutexes = cliques.cliques2(lits);
+    const mutexes = cliques.cliques2(remaining);
     const sorted: number[][][] = [];
     for (const mutex of mutexes) (sorted[mutex.length] ??= []).push(mutex);
-    const result: number[][] = [];
+    const result = extMutexes;
     for (let size = sorted.length; size-- > 0;) result.push(...(sorted[size] ?? []));
     return result;
   }
@@ -1109,6 +1154,7 @@ export class Solver {
     this.simplifier.run(false);
     if (this.learned.length > 0) this.simplifier.run(true);
     this.sortWatchLits();
+    this.ext?.simplify();
     this.probing.run(false);
     this.asymmBranch.run(false);
     this.reinitAssumptions();
@@ -1203,6 +1249,14 @@ export class Solver {
     }
     this.isForcingConflictAnalysis = false;
     this.updatePhaseOfVars();
+    if (this.ext !== null) {
+      const result = this.ext.resolveConflict();
+      if (result === L_TRUE) {
+        this.learnLemmaAndBackjump();
+        return L_UNDEF;
+      }
+      if (result === L_FALSE) return L_UNDEF;
+    }
     this.lemma = [NULL_LITERAL];
     let index = this.skipLiteralsAboveConflictLevel();
     let numMarks = 0;
@@ -1227,7 +1281,9 @@ export class Solver {
         }
         for (; position < arena.size[val]; position++)
           numMarks = this.processAntecedent(arena.get(val, position) ^ 1, numMarks);
-      }
+      } else if (kind === JUSTIFICATION_EXT)
+        for (const lit of this.getExtAntecedents(consequent, val))
+          numMarks = this.processAntecedent(lit, numMarks);
       let boolVar: number;
       for (;;) {
         consequent = this.trail[index];
@@ -1288,7 +1344,7 @@ export class Solver {
     return this.conflictsSinceInit > this.config.backtrackInitConflicts;
   }
 
-  private getMaxLvl(notL: number, kind: number, val: number) {
+  getMaxLvl(notL: number, kind: number, val: number) {
     let isUniqueMax = true;
     let level = notL !== NULL_LITERAL ? this.lvl(notL) : 0;
     const update = (lit: number) => {
@@ -1299,9 +1355,18 @@ export class Solver {
     };
     if (kind === JUSTIFICATION_NONE) level = Math.max(level, this.conflictJustLevel);
     else if (kind === JUSTIFICATION_BINARY) update(val);
+    else if (kind === JUSTIFICATION_EXT)
+      for (const lit of this.getExtAntecedents(notL === NULL_LITERAL ? notL : notL ^ 1, val))
+        update(lit);
     else
       for (let index = 0; index < this.arena.size[val]; index++) update(this.arena.get(val, index));
     return { level, isUniqueMax };
+  }
+
+  private getExtAntecedents(consequent: number, index: number) {
+    const antecedents: number[] = [];
+    (this.ext as SatExtension).getAntecedents(consequent, index, antecedents);
+    return antecedents;
   }
 
   private skipLiteralsAboveConflictLevel() {
@@ -1417,7 +1482,7 @@ export class Solver {
     if (this.shouldToggleSearchState()) this.doToggleSearchState();
   }
 
-  private numDiffLevels(lits: number[]) {
+  numDiffLevels(lits: number[]) {
     let result = 0;
     for (const lit of lits) {
       const litLvl = this.lvl(lit);
@@ -1428,6 +1493,22 @@ export class Solver {
     }
     for (const lit of lits) this.diffLevels[this.lvl(lit)] = false;
     return result;
+  }
+
+  numDiffFalseLevelsBelow(lits: number[], maxGlue: number) {
+    let glue = 0;
+    let index = 0;
+    for (; index < lits.length && glue < maxGlue; index++) {
+      if (this.value(lits[index]) !== L_FALSE) continue;
+      const litLvl = this.lvl(lits[index]);
+      if (!this.diffLevels[litLvl]) {
+        this.diffLevels[litLvl] = true;
+        glue++;
+      }
+    }
+    while (index-- > 0)
+      if (this.value(lits[index]) === L_FALSE) this.diffLevels[this.lvl(lits[index])] = false;
+    return glue < maxGlue ? glue : -1;
   }
 
   private numDiffLevelsBelow(clause: number, maxGlue: number) {
@@ -1468,7 +1549,11 @@ export class Solver {
       if (kind === JUSTIFICATION_NONE) isImplied = this.lvlVar(boolVar) <= 0;
       else if (kind === JUSTIFICATION_BINARY)
         isImplied = this.processAntecedentForMinimization(val ^ 1);
-      else {
+      else if (kind === JUSTIFICATION_EXT) {
+        const consequent = 2 * boolVar + (this.valueVar(boolVar) === L_FALSE ? 1 : 0);
+        for (const lit of this.getExtAntecedents(consequent, val))
+          if (!(isImplied = this.processAntecedentForMinimization(lit))) break;
+      } else {
         const arena = this.arena;
         let position = 1;
         if (arena.get(val, 0) >> 1 !== boolVar) {
@@ -1531,6 +1616,8 @@ export class Solver {
       else if (kind === JUSTIFICATION_CLAUSE)
         for (let position = 0; position < this.arena.size[val]; position++)
           reason(this.arena.get(val, position));
+      else if (kind === JUSTIFICATION_EXT)
+        for (const lit of this.getExtAntecedents(lemma[index] ^ 1, val)) reason(lit);
     }
     this.mark[lemma[0] >> 1] = false;
     for (let index = lemma.length; index-- > size;) this.mark[lemma[index] >> 1] = false;
@@ -1572,6 +1659,7 @@ export class Solver {
       clausesToReinitLim: this.clausesToReinit.length,
     });
     this.scopeLvl++;
+    this.ext?.push();
   }
 
   popReinit(numScopes: number) {
@@ -1581,6 +1669,7 @@ export class Solver {
 
   pop(numScopes: number) {
     if (numScopes === 0) return;
+    this.ext?.pop(numScopes);
     const newLvl = this.scopeLvl - numScopes;
     const scope = this.scopes[newLvl];
     this.isInconsistent = false;
@@ -1588,6 +1677,7 @@ export class Solver {
     this.scopeLvl -= numScopes;
     this.reinitClauses(scope.clausesToReinitLim);
     this.scopes.length = newLvl;
+    this.ext?.popReinit();
   }
 
   private unassignVars(oldSize: number, newLvl: number) {
@@ -1720,6 +1810,7 @@ export class Solver {
         this.gcDynPsm();
         break;
     }
+    this.ext?.gc();
     if (gc > 0 && this.shouldDefrag()) this.defragClauses();
   }
 
@@ -1741,7 +1832,7 @@ export class Solver {
     this.learned.length = next;
   }
 
-  private canDelete(clause: number) {
+  canDelete(clause: number) {
     if (this.arena.isOnReinitStack(clause)) return false;
     const first = this.arena.get(clause, 0);
     if (this.value(first) !== L_TRUE) return true;

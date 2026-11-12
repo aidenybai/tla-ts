@@ -1,6 +1,6 @@
 // Ported from Z3 (src/sat/tactic/goal2sat.h, src/sat/tactic/goal2sat.cpp,
 // src/ast/expr2var.cpp), MIT license, see z3-license.txt.
-import { SmtCanceledError, SmtTacticError, SmtUnsupportedError } from "../../../../errors";
+import { SmtCanceledError, SmtTacticError } from "../../../../errors";
 import {
   type AstManager,
   FAMILY_BASIC,
@@ -15,6 +15,8 @@ import {
   OP_XOR,
 } from "../ast";
 import { DEFAULT_PRINT_OPTIONS, printExpr } from "../smt2-printer";
+import { NULL_LITERAL } from "./clause";
+import { PbSolver, type SatInternalizer } from "./pb-solver";
 import type { Solver } from "./solver";
 
 const PRINT_ENVIRONMENT = {
@@ -30,12 +32,12 @@ interface Frame {
   index: number;
 }
 
-export class Goal2Sat {
+export class Goal2Sat implements SatInternalizer {
   readonly atoms = new Map<number, number>();
   readonly unhandledFuns: number[] = [];
   private frames: Frame[] = [];
   private results: number[] = [];
-  private cache = new Map<number, number>();
+  private app2lit = new Map<number, number>();
 
   constructor(
     private manager: AstManager,
@@ -90,7 +92,7 @@ export class Goal2Sat {
   }
 
   private processCached(expr: number, isRoot: boolean, isSign: boolean) {
-    const cached = this.cache.get(expr);
+    const cached = this.app2lit.get(expr);
     if (cached === undefined) return false;
     const lit = isSign ? cached ^ 1 : cached;
     if (isRoot) this.mkClause([lit]);
@@ -105,8 +107,10 @@ export class Goal2Sat {
       return true;
     }
     if (this.processCached(expr, isRoot, isSign)) return true;
-    if (manager.getFamily(expr) === FAMILY_PB)
-      throw new SmtUnsupportedError("pseudo-Boolean constraints in the SAT solver");
+    if (manager.getFamily(expr) === FAMILY_PB) {
+      this.frames.push({ expr, isRoot, isSign, index: 0 });
+      return false;
+    }
     if (manager.getFamily(expr) !== FAMILY_BASIC) {
       this.convertAtom(expr, isRoot, isSign);
       return true;
@@ -137,7 +141,7 @@ export class Goal2Sat {
 
   private mkTseitinVar(expr: number) {
     const lit = 2 * this.addVar(false);
-    this.cache.set(expr, lit);
+    this.app2lit.set(expr, lit);
     return lit;
   }
 
@@ -271,11 +275,26 @@ export class Goal2Sat {
     this.mkClause([lit ^ 1, first ^ 1, second]);
     this.mkClause([lit, first, second]);
     this.mkClause([lit, first ^ 1, second ^ 1]);
-    this.cache.set(expr, lit);
+    this.app2lit.set(expr, lit);
     results.push(isSign ? lit ^ 1 : lit);
   }
 
+  private convertBa(expr: number, isRoot: boolean, isSign: boolean) {
+    const solver = this.solver;
+    if (solver.ext === null) {
+      const ext = new PbSolver(this.manager, this, solver);
+      solver.ext = ext;
+      for (let index = 0; index < solver.scopeLvl; index++) ext.push();
+    }
+    const lit = (solver.ext as PbSolver).internalize(expr, isSign, isRoot);
+    this.results.length -= this.manager.getNumArgs(expr);
+    if (lit === NULL_LITERAL) return;
+    if (isRoot) this.mkClause([lit]);
+    else this.results.push(lit);
+  }
+
   private convert(expr: number, isRoot: boolean, isSign: boolean) {
+    if (this.manager.getFamily(expr) === FAMILY_PB) return this.convertBa(expr, isRoot, isSign);
     switch (this.manager.getOp(expr)) {
       case OP_OR:
         return this.convertOr(expr, isRoot, isSign);
@@ -293,11 +312,12 @@ export class Goal2Sat {
     }
   }
 
-  private process(form: number) {
+  private process(form: number, isRoot: boolean) {
     const manager = this.manager;
     const frames = this.frames;
-    if (this.visit(form, true, false)) return;
-    loop: while (frames.length > 0) {
+    const baseSize = frames.length;
+    if (this.visit(form, isRoot, false)) return;
+    loop: while (frames.length > baseSize) {
       if (!manager.limit.inc()) throw new SmtCanceledError();
       const size = frames.length;
       const frame = frames[size - 1];
@@ -307,8 +327,8 @@ export class Goal2Sat {
         continue;
       }
       if (
-        manager.getOp(expr) === OP_NOT &&
-        (frame.isRoot || (!manager.isNot(manager.getArg(expr, 0)) && size !== 1))
+        manager.isNot(expr) &&
+        (frame.isRoot || (!manager.isNot(manager.getArg(expr, 0)) && size !== baseSize + 1))
       ) {
         frames.pop();
         this.visit(manager.getArg(expr, 0), frame.isRoot, !frame.isSign);
@@ -325,6 +345,27 @@ export class Goal2Sat {
     }
   }
 
+  internalize(expr: number) {
+    const manager = this.manager;
+    const isNot = manager.isNot(expr);
+    const atom = isNot ? manager.getArg(expr, 0) : expr;
+    this.process(atom, false);
+    const result = this.results.pop() as number;
+    if ((result & 1) === 0 && !this.atoms.has(atom)) {
+      this.atoms.set(atom, result >> 1);
+      this.solver.setExternal(result >> 1);
+    }
+    return isNot ? result ^ 1 : result;
+  }
+
+  getCached(expr: number) {
+    return this.app2lit.get(expr) ?? NULL_LITERAL;
+  }
+
+  cache(expr: number, lit: number) {
+    this.app2lit.set(expr, lit);
+  }
+
   // insert_dep on an assumption, an uninterpreted constant or its negation.
   getAssumptionLit(assumption: number) {
     const manager = this.manager;
@@ -336,11 +377,11 @@ export class Goal2Sat {
 
   run(forms: readonly number[]) {
     try {
-      for (const form of forms) this.process(form);
+      for (const form of forms) this.process(form, true);
     } finally {
       this.frames = [];
       this.results = [];
-      this.cache = new Map();
+      this.app2lit = new Map();
     }
   }
 }
