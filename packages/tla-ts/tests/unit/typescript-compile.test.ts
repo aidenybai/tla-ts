@@ -8183,6 +8183,47 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("throws from a generator's pattern default to the code that resumes the generator", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      const fail = (): number => {
+        throw new Error("e");
+      };
+      function* sync() {
+        const [x = fail()] = [undefined];
+        log += x;
+      }
+      const iterator = sync();
+      try {
+        iterator.next();
+      } catch (error) {
+        log += "<" + (error as Error).message + ">";
+      }
+      async function* declared() {
+        const [x = fail()] = [undefined];
+        log += x;
+      }
+      declared().next().then(
+        () => { log += "resolved"; },
+        (error) => { log += "(" + (error as Error).message + ")"; },
+      );
+      async function* looped() {
+        for await (const [x = fail()] of [[undefined]]) {
+          log += x;
+        }
+      }
+      looped().next().then(
+        () => { log += "resolved"; },
+        (error) => { log += "[" + (error as Error).message + "]"; },
+      );
+      setTimeout(() => {
+        if (log !== "<e>(e)[e]") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("closes a generator that suspended in try through its finally and catch", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;

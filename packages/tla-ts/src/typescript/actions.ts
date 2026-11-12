@@ -3100,7 +3100,7 @@ export const makeGenerator = (
       // An async generator's return awaits its value.
       exit: (current, value) => {
         if (!isAsync || value === undefined) return finish(current, value);
-        if (current.scope.isCatching) {
+        if (bound.scope.isCatching) {
           throw new TlaTypeScriptError(
             "tla-ts can't return a value inside try in an async generator",
             callee,
@@ -3160,7 +3160,8 @@ export const makeGenerator = (
         : undefined,
       inlining: new Set([...frame.inlining, callee]),
     };
-    const start = { ...inner, scope: bound.scope };
+    // The body runs for whatever next resumes it, which may catch what it throws.
+    const start = { ...inner, scope: { ...bound.scope, isCatching: true } };
     const suspension: Suspension = {
       ref,
       generator: callee,
