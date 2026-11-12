@@ -3285,6 +3285,26 @@ describe("errors", () => {
     expect((await checkModel(instance)).failure?.message).toContain("instanceof");
   });
 
+  it("converts a property key that may be a symbol to a string", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const check = (actual: unknown, expected: unknown, message: string) => {
+        if (actual !== expected) throw new Error(message);
+      };
+      const label = (name: PropertyKey) => String(name) + "!";
+      check(label(Symbol("tag")), "Symbol(tag)!", "symbol");
+      check(label(Symbol.toStringTag), "Symbol(Symbol.toStringTag)!", "well-known");
+      check(label("plain"), "plain!", "string");
+      check(label(3), "3!", "number");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const symbol = source.replace('"Symbol(tag)!"', '"tag!"');
+    expect((await checkModel(symbol)).failure?.message).toContain('"symbol"');
+    const number = source.replace('"3!", "number"', '"3.0!", "number"');
+    expect((await checkModel(number)).failure?.message).toContain('"number"');
+  });
+
   it("gives an object to Object back", async () => {
     const source = `
       declare global {

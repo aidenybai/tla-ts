@@ -1,6 +1,6 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
-import { type Context, getSymbol, getUndefined } from "./context";
+import { type Context, getSymbol, getUndefined, share } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { formatString } from "../printer";
 import { getNumberValue, translateBigInt, translateExpression } from "./expressions";
@@ -4542,6 +4542,21 @@ export const translateConversion = (node: ts.CallExpression, scope: Scope, conte
     const heap = context.heap === undefined ? undefined : scope.bindings.get(context.heap);
     if (kind === "symbol" && heap !== undefined) {
       return useJavaScript("SymbolString", [heap, value], context);
+    }
+    // A property key, which may be a symbol.
+    if (
+      heap !== undefined &&
+      names !== undefined &&
+      names.includes("symbol") &&
+      names.every((inner) => ["string", "number", "symbol"].includes(inner))
+    ) {
+      return share(value, "key", context, (shared) =>
+        ifExpression(
+          useJavaScript("IsSymbol", [shared], context),
+          useJavaScript("SymbolString", [heap, shared], context),
+          useJavaScript("StringOf", [shared], context),
+        ),
+      );
     }
     if (names === undefined) return useJavaScript("StringOf", [value], context);
   }
