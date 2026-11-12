@@ -5147,6 +5147,31 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("encodes and decodes URIs of ASCII", async () => {
+    const result = await checkModel(`
+      if (encodeURIComponent("a b&c/d") !== "a%20b%26c%2Fd") throw new Error("component");
+      if (encodeURI("a b&c/d#?") !== "a%20b&c/d#?") throw new Error("encode");
+      if (decodeURI("%3B%41%2f") !== "%3BA%2f") throw new Error("decode");
+      if (decodeURIComponent("%3B%41%2f") !== ";A/") throw new Error("decode component");
+      const thrown: string[] = [];
+      for (const text of ["%", "%4", "%G1", "%C0%80", "%ED%A0%80", "%F4%90%80%80", "%E0%A0"]) {
+        try {
+          decodeURIComponent(text);
+        } catch (error) {
+          if (error instanceof URIError) thrown.push(text);
+        }
+      }
+      if (thrown.length !== 7) throw new Error("thrown " + thrown.length);
+    `);
+    expect(result.failure).toBeUndefined();
+    await expect(
+      checkModel(`if (decodeURIComponent("%41%42") !== "AC") throw new Error("wrong");`),
+    ).rejects.toThrow("wrong");
+    await expect(
+      checkModel(`if (decodeURI("%C3%A9") === "") throw new Error("never");`),
+    ).rejects.toThrow("tla-ts can't make a character outside ASCII");
+  });
+
   it("converts a value that may be a number or undefined to a string", async () => {
     const result = await checkModel(`
       const found = "Boston, MA 02134".match(/\\d{5}/);

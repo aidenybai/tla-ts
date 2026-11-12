@@ -57,6 +57,7 @@ import {
 } from "./intrinsics";
 import {
   getTypeNames,
+  getURICall,
   translateNumberString,
   translateToNumber,
   useJavaScript,
@@ -2633,7 +2634,8 @@ export const isUnreachableChange = (node: ts.Node, context: Context) =>
 // failed definition or Reflect.construct, a new of a value that isn't a constructor, or a reduce
 // of an empty array, the RangeError of an array's invalid length, and a Date method's TypeError
 // on another receiver and toISOString's RangeError of an invalid date, replaceAll's TypeError of a
-// regexp that isn't global, and the SyntaxError of a pattern that isn't valid.
+// regexp that isn't global, the SyntaxError of a pattern that isn't valid, and the URIError of a
+// malformed URI.
 export const getEngineErrors = (node: ts.Node, context: Context) => {
   const isDefinition =
     isObjectChange(node, context) && node.expression.name.text.startsWith("define");
@@ -2673,6 +2675,7 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
     return ["TypeError"];
   }
   if (getViewCall(node, context) !== undefined) return ["TypeError", "RangeError"];
+  if (getURICall(node, context)?.isDecode === true) return ["URIError"];
   if (getGetterCall(node, context) !== undefined) return ["TypeError"];
   if (isInvalidRegExp(node, context)) return ["SyntaxError"];
   const created = ts.isNewExpression(node) ? getHeapClass(node.expression, context) : undefined;

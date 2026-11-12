@@ -96,6 +96,7 @@ import {
 } from "./intrinsics";
 import {
   getTypeNames,
+  getURICall,
   isComparable,
   mayBeNumber,
   translateConversion,
@@ -556,6 +557,15 @@ const translateCall = (
     translateIntrinsic(node, scope, context) ??
     translateJsonCall(node, scope, context);
   if (converted !== undefined) return converted;
+  // decodeURI and decodeURIComponent may throw, so only a statement runs them.
+  const uriCall = getURICall(node, context);
+  if (uriCall !== undefined && !uriCall.isDecode) {
+    return useJavaScript(
+      "EncodeURI",
+      [translateExpression(uriCall.text, scope, context), uriCall.kept],
+      context,
+    );
+  }
   const symbol = getSymbol(node.expression, context.checker);
   const helper = getTopLevelDeclaration(symbol);
   if (helper?.getSourceFile().isDeclarationFile) {

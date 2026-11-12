@@ -6,7 +6,7 @@ import { formatString } from "../printer";
 import { translateBigInt, translateExpression } from "./expressions";
 import type { Scope } from "./scope";
 import { getKind, isBigIntLike } from "./types";
-import { apply, boolean, identifier, ifExpression, number, string } from "./tla";
+import { apply, boolean, identifier, ifExpression, number, set, string } from "./tla";
 
 // The names of the well-known symbols, such as iterator for Symbol.iterator.
 export const WELL_KNOWN_SYMBOLS = [
@@ -1760,6 +1760,74 @@ LocaleCompare(value, that) ==
   IF Text(value) = (IF that = Undefined THEN "undefined" ELSE that)
   THEN 0
   ELSE Assert(FALSE, "tla-ts can't compare different strings by locale")
+
+LOCAL HexDigits == "0123456789ABCDEF"
+
+\\* encodeURI and encodeURIComponent, which escape each character but those in kept as the bytes of
+\\* its UTF-8, where a character of ASCII is one byte.
+RECURSIVE EncodeURI(_, _)
+EncodeURI(text, kept) ==
+  IF text = ""
+  THEN ""
+  ELSE LET character == SubSeq(text, 1, 1)
+           code == CharacterCode(character)
+       IN  (IF character \\in kept
+            THEN character
+            ELSE "%" \\o SubSeq(HexDigits, code \\div 16 + 1, code \\div 16 + 1)
+                     \\o SubSeq(HexDigits, (code % 16) + 1, (code % 16) + 1))
+             \\o EncodeURI(Tail(text), kept)
+
+LOCAL IsEscapeAt(text, position) ==
+  /\\ position + 2 <= Len(text)
+  /\\ SubSeq(text, position, position) = "%"
+  /\\ \\A offset \\in 1..2 : SubSeq(text, position + offset, position + offset) \\in DigitsOf(16)
+
+LOCAL ByteAt(text, position) ==
+  DigitValue(SubSeq(text, position + 1, position + 1)) * 16
+    + DigitValue(SubSeq(text, position + 2, position + 2))
+
+\\* The bytes of UTF-8 that a code point takes after its first byte, or 0 where no code point starts
+\\* with that byte.
+LOCAL UTF8Length(first) ==
+  CASE first < 128 -> 1 [] first \\in 194..223 -> 2 [] first \\in 224..239 -> 3 [] first \\in 240..244 -> 4
+    [] OTHER -> 0
+
+\\* Whether text starts with count escapes whose bytes are the UTF-8 of one code point, which
+\\* excludes surrogates, overlong forms, and code points past 10FFFF.
+LOCAL IsUTF8(text, count) ==
+  /\\ count > 0
+  /\\ \\A index \\in 1..count : IsEscapeAt(text, 3 * index - 2)
+  /\\ \\A index \\in 2..count : ByteAt(text, 3 * index - 2) \\in 128..191
+  /\\ LET first == ByteAt(text, 1)
+         second == ByteAt(text, 4)
+     IN  CASE first = 224 -> second >= 160
+           [] first = 237 -> second < 160
+           [] first = 240 -> second >= 144
+           [] first = 244 -> second < 144
+           [] OTHER -> TRUE
+
+\\* Whether decodeURI or decodeURIComponent throws a URIError for text, where a % doesn't start the
+\\* escapes of a code point's UTF-8.
+RECURSIVE IsMalformedURI(_)
+IsMalformedURI(text) ==
+  CASE text = "" -> FALSE
+    [] SubSeq(text, 1, 1) # "%" -> IsMalformedURI(Tail(text))
+    [] ~IsEscapeAt(text, 1) -> TRUE
+    [] OTHER ->
+         LET count == UTF8Length(ByteAt(text, 1))
+         IN  ~IsUTF8(text, count) \\/ IsMalformedURI(SubSeq(text, 3 * count + 1, Len(text)))
+
+\\* decodeURI and decodeURIComponent of text that isn't malformed, which keep the escape of a
+\\* character in reserved.
+RECURSIVE DecodeURI(_, _)
+DecodeURI(text, reserved) ==
+  CASE text = "" -> ""
+    [] SubSeq(text, 1, 1) # "%" -> SubSeq(text, 1, 1) \\o DecodeURI(Tail(text), reserved)
+    [] ByteAt(text, 1) >= 128 -> Assert(FALSE, "tla-ts can't make a character outside ASCII")
+    [] OTHER ->
+         LET character == SubSeq(AsciiCharacters, ByteAt(text, 1) + 1, ByteAt(text, 1) + 1)
+         IN  (IF character \\in reserved THEN SubSeq(text, 1, 3) ELSE character)
+               \\o DecodeURI(SubSeq(text, 4, Len(text)), reserved)
 
 LOCAL Lowercase == "abcdefghijklmnopqrstuvwxyz"
 
@@ -3992,6 +4060,37 @@ export const translateParseInt = (node: ts.CallExpression, scope: Scope, context
 
 // A call to Boolean, String, Number, parseInt, parseFloat, isNaN, or isFinite, or undefined for any
 // other call.
+const URI_ALPHANUMERICS = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+// The characters that each URI function keeps: those that encodeURI and encodeURIComponent don't
+// escape, and those whose escapes decodeURI and decodeURIComponent don't decode.
+const URI_FUNCTIONS = new Map([
+  ["encodeURI", `${URI_ALPHANUMERICS}-_.!~*'();/?:@&=+$,#`],
+  ["encodeURIComponent", `${URI_ALPHANUMERICS}-_.!~*'()`],
+  ["decodeURI", ";/?:@&=+$,#"],
+  ["decodeURIComponent", ""],
+]);
+
+// A call of a URI function on a string.
+export const getURICall = (node: ts.Node, context: Context) => {
+  if (!ts.isCallExpression(node) || !ts.isIdentifier(node.expression)) return undefined;
+  const kept = URI_FUNCTIONS.get(node.expression.text);
+  const declarations = getSymbol(node.expression, context.checker)?.declarations ?? [];
+  const text = node.arguments.at(0);
+  return kept !== undefined &&
+    declarations.length > 0 &&
+    declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile) &&
+    node.arguments.length === 1 &&
+    text !== undefined &&
+    getKind(text, context) === "string"
+    ? {
+        isDecode: node.expression.text.startsWith("decode"),
+        text,
+        kept: set([...kept].map(string)),
+      }
+    : undefined;
+};
+
 export const translateConversion = (node: ts.CallExpression, scope: Scope, context: Context) => {
   const callee = node.expression;
   const declarations = getSymbol(callee, context.checker)?.declarations ?? [];

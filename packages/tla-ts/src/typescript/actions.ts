@@ -152,7 +152,7 @@ import {
   isInvalidRegExp,
   translateBuiltInValue,
 } from "./intrinsics";
-import { getTypeNames, translateToNumber, useJavaScript } from "./javascript";
+import { getTypeNames, getURICall, translateToNumber, useJavaScript } from "./javascript";
 import {
   forceHeap,
   getReceiver,
@@ -1235,6 +1235,21 @@ export const translateCallStatement = (
               ]),
             ),
           ),
+    );
+  }
+  // decodeURI and decodeURIComponent throw a URIError where a % doesn't start an escape of UTF-8.
+  const uriCall = getURICall(expression, context);
+  if (uriCall?.isDecode === true) {
+    const text = context.names.getFresh("text");
+    return bindOnce(
+      path,
+      text,
+      translateExpression(uriCall.text, path.scope, context),
+      ifThenElse(
+        useJavaScript("IsMalformedURI", [identifier(text)], context),
+        throwError("URIError", path, expression, context, frame),
+        continueWith(path, useJavaScript("DecodeURI", [identifier(text), uriCall.kept], context)),
+      ),
     );
   }
   const regExpCall = getHeapRegExpCall(expression, context);
@@ -4988,6 +5003,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
   getBound(node.expression, context) !== undefined ||
   getDateCall(node, context) !== undefined ||
   getHeapRegExpCall(node, context) !== undefined ||
+  getURICall(node, context)?.isDecode === true ||
   getViewCall(node, context) !== undefined ||
   getGetterCall(node, context) !== undefined ||
   getHeapArrayChange(node, context) !== undefined ||
@@ -5214,7 +5230,7 @@ export const bindOnce = (path: Path, name: string, value: Expression, rest: Form
 
 // Throws the TypeError that JavaScript throws where a change to an object fails.
 export const throwError = (
-  name: "TypeError" | "RangeError" | "ReferenceError" | "SyntaxError",
+  name: "TypeError" | "RangeError" | "ReferenceError" | "SyntaxError" | "URIError",
   path: Path,
   node: ts.Node,
   context: Context,
