@@ -556,6 +556,18 @@ const loosen = () => {
     }
     const target = OPERAND_TYPE_ERRORS.has(diagnostic.code) ? getCompoundTarget(node) : undefined;
     if (target !== undefined) edits.set(target.name.getEnd(), ": any");
+    // A test may assign an accessor's this, which a descriptor types as an object, to a variable
+    // that holds a number until then.
+    if (
+      diagnostic.code === 2322 &&
+      ts.isBinaryExpression(parent) &&
+      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      parent.left === node &&
+      parent.right.kind === ts.SyntaxKind.ThisKeyword
+    ) {
+      edits.set(parent.right.getStart(), "(");
+      edits.set(parent.right.getEnd(), " as any)");
+    }
   });
   const visit = (node: ts.Node) => {
     const initializer = ts.isVariableDeclaration(node) ? node.initializer : undefined;
