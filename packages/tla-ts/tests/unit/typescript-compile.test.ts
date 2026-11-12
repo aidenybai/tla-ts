@@ -4132,6 +4132,33 @@ describe("errors", () => {
     expect((await checkModel(getSource("value1"))).failure?.message).toContain("values");
   });
 
+  it("throws an object on the heap as itself", async () => {
+    const getSource = (check: string) => `
+      class Poison extends Error {}
+      const reason = {};
+      const coded = { code: 3 };
+      let same = false;
+      let isPoison = true;
+      let code = 0;
+      try {
+        throw reason;
+      } catch (error) {
+        same = error === reason;
+        isPoison = error instanceof Poison;
+      }
+      try {
+        throw coded;
+      } catch (error) {
+        code = (error as { code: number }).code;
+      }
+      if (${check}) throw new Error("caught");
+    `;
+    expect(
+      (await checkModel(getSource("!same || isPoison || code !== 3"))).failure,
+    ).toBeUndefined();
+    expect((await checkModel(getSource("same"))).failure?.message).toContain("caught");
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`

@@ -1,6 +1,14 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
-import { type Context, getHeapClass, getSymbol, getUndefined, isOnce, share } from "./context";
+import {
+  type Context,
+  getHeapClass,
+  getLiteralName,
+  getSymbol,
+  getUndefined,
+  isOnce,
+  share,
+} from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
 import { getEngineErrors, getHeap, translateObjectValue } from "./heap";
@@ -8,7 +16,7 @@ import { translateBuiltInInstanceOf } from "./intrinsics";
 import { getTypeNames, useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
 import { getKind } from "./types";
-import { apply, field, identifier, ifExpression, junction, record, set, string } from "./tla";
+import { apply, field, identifier, ifExpression, junction, not, record, set, string } from "./tla";
 
 export const NATIVE_ERRORS = new Set([
   "Error",
@@ -242,10 +250,12 @@ export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, con
   if (!isCaught(node.left, context)) {
     throw new TlaTypeScriptError("instanceof needs an error or a caught value", node);
   }
+  // An error is a record, so an object on the heap is never one.
   return share(value, "caught", context, (caught) =>
     junction("And", [
       apply("=", [useJavaScript("TypeOf", [caught], context), string("object")]),
       apply("#", [caught, identifier("Null")]),
+      not(useJavaScript("IsRef", [caught], context)),
       apply("\\in", [field(caught, "constructor"), subclasses]),
     ]),
   );
@@ -255,8 +265,24 @@ export const translateThrown = (node: ts.Expression, scope: Scope, context: Cont
   const type = context.checker.getTypeAtLocation(node);
   const names = getTypeNames(type, context.checker);
   const isPrimitive = names?.every((name) => name !== "object" && name !== "function") === true;
+  // An object on the heap keeps its identity as a thrown value, as its ref. A name that only an
+  // object literal gives holds one, though its type, such as {}, may fit primitives.
+  const declaration = ts.isIdentifier(node)
+    ? getSymbol(node, context.checker)?.valueDeclaration
+    : undefined;
+  const initializer =
+    declaration !== undefined && ts.isVariableDeclaration(declaration)
+      ? declaration.initializer
+      : undefined;
+  const isHeapObject =
+    getKind(node, context) === "object" &&
+    (names?.every((name) => name === "object") === true ||
+      (initializer !== undefined &&
+        ts.isObjectLiteralExpression(initializer) &&
+        getLiteralName(initializer, context) !== undefined));
   if (
     !isPrimitive &&
+    !isHeapObject &&
     getErrorClass(type.getSymbol(), context.checker) === undefined &&
     !isCaught(node, context)
   ) {
