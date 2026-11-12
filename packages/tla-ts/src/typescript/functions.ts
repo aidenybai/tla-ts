@@ -16,6 +16,7 @@ import {
   getUndefined,
   type HelperDeclaration,
   isInlined,
+  isLiteral,
   isPlain,
   share,
 } from "./context";
@@ -412,6 +413,107 @@ const translateOperatorArgument = (
 };
 
 // A call to a top-level helper, or a reference to a top-level constant when node is undefined.
+// A call to a helper that calls itself where a statement changed the state that it reads, which
+// runs an operator that takes that state, so that each call reads the state as it is there. A
+// parameter's default stands where the call passes undefined.
+const translateStateCall = (
+  declaration: HelperDeclaration,
+  callee: FunctionNode,
+  node: ts.CallExpression,
+  scope: Scope,
+  context: Context,
+) => {
+  const body = callee.body;
+  if (body === undefined) throw new TlaTypeScriptError("Give this a body", callee);
+  if (node.arguments.some(ts.isSpreadElement)) {
+    throw new TlaTypeScriptError("tla-ts can't spread the arguments of a call to itself", node);
+  }
+  const variables = [...context.variables];
+  const definition =
+    context.stateCalls.get(callee) ??
+    (() => {
+      const states = variables.map((entry) => ({
+        symbol: entry[0],
+        name: context.names.getFresh(entry[0].name),
+      }));
+      const parameters = callee.parameters.map((parameter) => {
+        if (
+          !ts.isIdentifier(parameter.name) ||
+          parameter.dotDotDotToken !== undefined ||
+          (parameter.initializer !== undefined && !isLiteral(parameter.initializer))
+        ) {
+          throw new TlaTypeScriptError(
+            "A function whose parameters have patterns, rest, or defaults other than literals can't call itself",
+            parameter,
+          );
+        }
+        return {
+          initializer: parameter.initializer,
+          name: context.names.getFresh(parameter.name.text),
+          symbol: getSymbol(parameter.name, context.checker),
+        };
+      });
+      const made: Definition = {
+        name: context.names.getFresh(`${declaration.name?.getText() ?? "helper"}At`),
+        parameters: [...states, ...parameters].map((parameter) => ({
+          name: parameter.name,
+          arity: 0,
+        })),
+        readsState: false,
+      };
+      context.stateCalls.set(callee, made);
+      const named = bindNames(bindFactory(declaration, createStateScope(context), context), [
+        ...states,
+        ...parameters,
+      ]);
+      const defaulted = {
+        ...named,
+        bindings: new Map([
+          ...named.bindings,
+          ...parameters.flatMap((parameter): [ts.Symbol, Expression][] =>
+            parameter.initializer === undefined || parameter.symbol === undefined
+              ? []
+              : [
+                  [
+                    parameter.symbol,
+                    ifExpression(
+                      apply("=", [identifier(parameter.name), getUndefined(context)]),
+                      translateExpression(parameter.initializer, named, context),
+                      identifier(parameter.name),
+                    ),
+                  ],
+                ],
+          ),
+        ]),
+      };
+      const outer = context.inProgress;
+      context.inProgress = new Set([callee]);
+      const value = translateBody(body, defaulted, context);
+      context.inProgress = outer;
+      context.output.push(
+        link(
+          context,
+          "definition",
+          made.name,
+          callee,
+          defineAt(callee, made.name, made.parameters, value),
+        ),
+      );
+      return made;
+    })();
+  const values = shareArguments(
+    node.arguments.map((argument) => translateExpression(argument, scope, context)),
+    context,
+  );
+  const operands = [
+    ...variables.map((entry) => scope.bindings.get(entry[0]) ?? entry[1]),
+    ...callee.parameters.map((_, position) => values.shared[position] ?? getUndefined(context)),
+  ];
+  return render(
+    values.evaluate(leaf(call(definition.name, operands)), leaf(getUndefined(context))),
+  );
+};
+
 // A helper that reads state after the step has changed it is inlined, so it reads the new values,
 // as is one whose parameters a TLA+ operator can't declare, such as one with a default.
 export const translateHelperCall = (
@@ -434,21 +536,15 @@ export const translateHelperCall = (
     )
   ) {
     if (context.inProgress.has(helper)) {
-      throw new TlaTypeScriptError(
-        "A function whose parameters have defaults, patterns, or rest can't call itself",
-        node,
-      );
+      return translateStateCall(declaration, helper, node, scope, context);
     }
     return inlineCall(helper, node.arguments, helperScope, context);
   }
   const definition = getDefinition(declaration, context);
   const argumentNodes = node?.arguments ?? [];
   if (definition.readsState && isStateModified(scope, context)) {
-    if (helper !== undefined && context.inProgress.has(helper)) {
-      throw new TlaTypeScriptError(
-        "tla-ts can't call a function that calls itself where a statement changed what it reads",
-        node ?? declaration,
-      );
+    if (helper !== undefined && node !== undefined && context.inProgress.has(helper)) {
+      return translateStateCall(declaration, helper, node, scope, context);
     }
     if (helper !== undefined) return inlineCall(helper, argumentNodes, helperScope, context);
     const initializer = getInitializer(declaration);

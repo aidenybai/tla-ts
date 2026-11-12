@@ -24,6 +24,9 @@ export interface Context {
   variables: Map<ts.Symbol, Expression>;
   // Helper functions and constants, compiled when first referenced.
   definitions: Map<ts.Declaration, Definition>;
+  // The operator of each helper that calls itself where a statement changed the state that it
+  // reads, which takes that state.
+  stateCalls: Map<ts.Node, Definition>;
   // Helpers being compiled or inlined, to detect recursion.
   inProgress: Set<ts.Node>;
   recursive: Set<ts.Declaration>;
@@ -90,6 +93,7 @@ export const createContext = (checker: ts.TypeChecker): Context => ({
   names: createNames(JAVASCRIPT_OPERATORS),
   variables: new Map(),
   definitions: new Map(),
+  stateCalls: new Map(),
   inProgress: new Set(),
   recursive: new Set(),
   selfCalls: new Map(),
@@ -1396,6 +1400,13 @@ export const getCalledMethod = (
     : { method, receiver: node.expression, key: name.text, getter };
 };
 
+// A value that a literal writes, which reads the same wherever it runs.
+export const isLiteral = (node: ts.Expression) =>
+  ts.isLiteralExpression(node) ||
+  [ts.SyntaxKind.NullKeyword, ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword].includes(
+    node.kind,
+  );
+
 interface FactoryCall {
   closure: FunctionNode;
   bindings: [ts.Symbol, ts.Expression][];
@@ -1433,11 +1444,6 @@ export const getFactoryCall = (
       ? undefined
       : (getAnyFunction(expression) ??
         getAnyFunction(getSymbol(expression, context.checker)?.valueDeclaration));
-  const isLiteral = (argument: ts.Expression) =>
-    ts.isLiteralExpression(argument) ||
-    [ts.SyntaxKind.NullKeyword, ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword].includes(
-      argument.kind,
-    );
   if (
     !isDeclaringFunctions ||
     closure === undefined ||

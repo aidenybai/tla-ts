@@ -3191,21 +3191,25 @@ describe("errors", () => {
     ).toThrow("tla-ts can't use a function that a factory returns as a value");
   });
 
-  it("stops where a recursive function runs after a statement changes what it reads", () => {
-    expect(() =>
-      compile(`
-        interface Leaf { kind: "leaf"; value: number }
-        interface Pair { kind: "pair"; left: Item; right: Item }
-        type Item = Leaf | Pair;
-        const sum = (item: Item): number => {
-          if (item.kind === "pair") return sum(item.left) + sum(item.right);
-          return item.value;
-        };
-        const tree: Item = { kind: "pair", left: { kind: "leaf", value: 4 }, right: { kind: "leaf", value: 5 } };
-        if (sum(tree) !== 8) throw new Error(\`sum \${sum(tree)}\`);
-      `),
-    ).toThrow(
-      "tla-ts can't call a function that calls itself where a statement changed what it reads",
+  it("runs a function that calls itself where a statement changed what it reads", async () => {
+    const getSource = (expected: string) => `
+      interface Branch { kind: "branch"; items: Value[] }
+      type Value = number | Branch;
+      let scale = 1;
+      const show = (value: Value, isStrict = false): string => {
+        const format = (inner: Value) => show(inner, isStrict);
+        if (typeof value === "number") return isStrict ? \`n\${value * scale}\` : \`\${value * scale}\`;
+        return \`[\${value.items.map(format).join(",")}]\`;
+      };
+      const tree: Branch = { kind: "branch", items: [1, { kind: "branch", items: [2, 3] }] };
+      scale = 2;
+      const loose = show(tree);
+      tree.items.push(4);
+      if (\`\${loose} \${show(tree, true)}\` !== "${expected}") throw new Error(\`\${show(tree)}\`);
+    `;
+    expect((await checkModel(getSource("[2,[4,6]] [n2,[n4,n6],n8]"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("[2,[4,6]] [n2,[n4,n6]]"))).failure?.message).toContain(
+      '"[2,[4,6],8]"',
     );
   });
 
