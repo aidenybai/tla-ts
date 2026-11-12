@@ -2662,6 +2662,19 @@ describe("errors", () => {
     ).toThrow("Unsupported expression: box.i++");
   });
 
+  it("names a function's model value so that TLC doesn't type it", async () => {
+    const result = await checkModel(`
+      function __make(this: { [key: string]: unknown }, value: string, ...rest: unknown[]) {
+        this.value = value;
+        return true;
+        this.extra = arguments[1];
+      }
+      const made = new (__make as unknown as new (...args: unknown[]) => { value: string })("x", "y");
+      if (made.value !== "x") throw new Error("made");
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't");
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`

@@ -77,7 +77,9 @@ export const getConstructor = (
 ) => {
   const existing = context.constructors.get(key);
   if (existing !== undefined) return identifier(existing);
-  const name = context.names.getFresh(preferred);
+  // TLC types a model value whose name has _ second, and such a value can't meet a string.
+  const fresh = context.names.getFresh(preferred);
+  const name = fresh[1] === "_" ? context.names.getFresh(`fn${preferred}`) : fresh;
   context.constructors.set(key, name);
   return identifier(name);
 };
