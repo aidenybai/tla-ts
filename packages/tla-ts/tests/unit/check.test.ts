@@ -217,11 +217,7 @@ describe("check matches TLC", () => {
   it("checks _POSSIBLE predicates and postconditions after the search", async () => {
     const results = await Promise.all(
       ["Holds", "Unwitnessed", "False"].map((name) =>
-        check({
-          source: readFileSync(join(FIXTURES, "postconditions", "Postconditions.tla"), "utf8"),
-          config: readFileSync(join(FIXTURES, "postconditions", `${name}.cfg`), "utf8"),
-          onPrint: () => {},
-        }),
+        checkFixture("postconditions", "Postconditions", name, { onPrint: () => {} }),
       ),
     );
     expect(
@@ -546,9 +542,7 @@ describe("check matches TLC", () => {
 
   it("orders strings, record fields, and model values by when TLC interns them", async () => {
     const printed: string[] = [];
-    const result = await check({
-      source: readFileSync(join(FIXTURES, "strings", "StringOrder.tla"), "utf8"),
-      config: readFileSync(join(FIXTURES, "strings", "StringOrder.cfg"), "utf8"),
+    const result = await checkFixture("strings", "StringOrder", "StringOrder", {
       onPrint: (text) => printed.push(text),
     });
     expect(printed).toEqual([
@@ -1191,9 +1185,7 @@ ASSUME TLCFP(a) = -887695703
 describe("formatValue matches TLC", () => {
   it("prints functions as records only when every key is a field name", async () => {
     const printed: string[] = [];
-    const result = await check({
-      source: readFileSync(join(FIXTURES, "formatting", "Format.tla"), "utf8"),
-      config: readFileSync(join(FIXTURES, "formatting", "Format.cfg"), "utf8"),
+    const result = await checkFixture("formatting", "Format", "Format", {
       onPrint: (text) => printed.push(text),
     });
     expect(result.status).toBe("success");

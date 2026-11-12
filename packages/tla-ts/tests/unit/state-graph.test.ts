@@ -1,11 +1,10 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check, type CheckOptions } from "../../src";
-
-const FIXTURES = join(import.meta.dirname, "../fixtures");
+import type { CheckOptions } from "../../src";
+import { checkFixture, FIXTURES, getModuleLoader } from "./check-harness";
 
 const readTlcDump = (name: string) => readFileSync(join(FIXTURES, "state-graph", name), "utf8");
 
@@ -16,13 +15,8 @@ const dumpFixture = async (
   options: Partial<CheckOptions> = {},
 ) => {
   const written = new Map<string, string>();
-  const result = await check({
-    source: readFileSync(join(FIXTURES, directory, `${name}.tla`), "utf8"),
-    config: readFileSync(join(FIXTURES, directory, `${name}.cfg`), "utf8"),
-    loadModule: (module) => {
-      const path = join(FIXTURES, directory, `${module}.tla`);
-      return existsSync(path) ? readFileSync(path, "utf8") : undefined;
-    },
+  const result = await checkFixture(directory, name, name, {
+    loadModule: getModuleLoader(directory),
     onPrint: () => {},
     writeFile: (path, content) => written.set(path, String(content)),
     dump,

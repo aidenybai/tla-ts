@@ -1,16 +1,9 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check, formatValue } from "../../src";
-
-const DIRECTORY = join(import.meta.dirname, "../fixtures/randomization");
+import { checkFixture } from "./check-harness";
 
 const checkWithSeed = (name: string, seed: bigint) =>
-  check({
-    source: readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
-    config: readFileSync(join(DIRECTORY, `${name}.cfg`), "utf8"),
-    seed,
-  });
+  checkFixture("randomization", name, name, { seed });
 
 const getSummary = async (name: string, seed: bigint) => {
   const result = await checkWithSeed(name, seed);
@@ -139,9 +132,7 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
 
 describe("random choices match TLC 1.7.4", () => {
   it("draws RandomSubset as TLC 1.7.4 does, and refuses to enumerate a large set of tuples", async () => {
-    const result = await check({
-      source: readFileSync(join(DIRECTORY, "RandomSubsetNext.tla"), "utf8"),
-      config: readFileSync(join(DIRECTORY, "RandomSubsetNext.cfg"), "utf8"),
+    const result = await checkFixture("randomization", "RandomSubsetNext", "RandomSubsetNext", {
       seed: 4n,
       version: "1.7.4",
     });
