@@ -18,6 +18,7 @@ import {
   getAccessKey,
   getAccessorFunctions,
   getGetters,
+  getSetters,
   getCallee,
   getReturnedFunctions,
   getUndefined,
@@ -234,6 +235,52 @@ export const readWith = (
         frame,
         (next) => next(bound, got),
         (after, value) => bind(after, "property", value, context, continueWith),
+      ),
+  );
+};
+
+// Writes a property, running the setter it holds where that's one of the candidates.
+export const writeWith = (
+  site: ts.Node,
+  object: Expression,
+  property: Expression,
+  value: Expression,
+  setters: readonly FunctionNode[],
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const put = (current: Path, next: (path: Path) => Formula) =>
+    bind(
+      current,
+      "heap",
+      useJavaScript(
+        "SetProperty",
+        [getHeap(current.scope, site, context), object, property, value],
+        context,
+      ),
+      context,
+      (written, heap) => next(withHeap(written, heap, context)),
+    );
+  if (setters.length === 0) return put(path, continueWith);
+  return bind(
+    path,
+    "setter",
+    useJavaScript("SetterOf", [getHeap(path.scope, site, context), object, property], context),
+    context,
+    (bound, setter) =>
+      callValue(
+        site,
+        setters,
+        setter,
+        object,
+        [value],
+        bound,
+        context,
+        frame,
+        (next) => put(bound, (after) => next(after)),
+        (after) => continueWith(after),
       ),
   );
 };
@@ -858,8 +905,15 @@ const getOwnValueGetters = (node: ts.Node, context: Context) => [
   ...new Set([...getGetterKeys(node)].flatMap((key) => getKeyGetters(node, key, context))),
 ];
 
+// The getters that reading an object's values may run, and the setters that Object.assign may run
+// as it writes them.
+const getOwnValueFunctions = (node: ts.CallExpression, context: Context) => [
+  ...getOwnValueGetters(node, context),
+  ...(getCallName(node) === "assign" ? getSetters(node, context) : []),
+];
+
 // Object.values or Object.entries of an object, or Object.assign from one source, where a getter
-// that tla-ts can run may answer a key.
+// or setter that tla-ts can run may answer a key.
 export const isOwnValuesRead = (node: ts.Node, context: Context) =>
   context.heap !== undefined &&
   ts.isCallExpression(node) &&
@@ -869,11 +923,13 @@ export const isOwnValuesRead = (node: ts.Node, context: Context) =>
     node.arguments.length === 1) ||
     (getCallName(node) === "assign" && node.arguments.length === 2)) &&
   !node.arguments.some(ts.isSpreadElement) &&
-  getOwnValueGetters(node, context).length > 0 &&
+  getOwnValueFunctions(node, context).length > 0 &&
   getOwnValueGetters(node, context).every((getter) => isRunnableGetter(getter, context));
 
 export const getOwnValuesGetters = (node: ts.Node, context: Context) =>
-  isOwnValuesRead(node, context) ? getOwnValueGetters(node, context) : [];
+  ts.isCallExpression(node) && isOwnValuesRead(node, context)
+    ? getOwnValueFunctions(node, context)
+    : [];
 
 // Object.values, Object.entries, or Object.assign, which lists an object's own keys, and then
 // reads each that is still an enumerable own property in turn, running its getter. values and
@@ -915,16 +971,16 @@ export const readOwnValues = (
       next: (inner: Path, read: Expression) => Formula,
     ) =>
       method === "assign"
-        ? bind(
+        ? writeWith(
+            site,
+            target,
+            key,
+            value,
+            getSetters(site, context),
             after,
-            "heap",
-            useJavaScript(
-              "SetProperty",
-              [getHeap(after.scope, site, context), target, key, value],
-              context,
-            ),
             context,
-            (written, heap) => next(withHeap(written, heap, context), read),
+            frame,
+            (written) => next(written, read),
           )
         : next(after, apply("Append", [read, method === "entries" ? tuple([key, value]) : value]));
     return translateJoined(

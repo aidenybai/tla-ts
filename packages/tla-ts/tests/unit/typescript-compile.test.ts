@@ -2111,6 +2111,45 @@ describe("errors", () => {
     expect((await checkModel(getSource("a"))).failure?.message).toContain("unexpected");
   });
 
+  it("runs the setters that Object.assign writes through, and a setter's extra parameters", async () => {
+    const getSource = (expected: number) => `
+      const target = {};
+      let seen: unknown = 0;
+      let firstArg: unknown = 12;
+      let secondArg: unknown = 12;
+      Object.defineProperty(target, "attr", {
+        set: function (value: unknown) {
+          seen = value;
+        },
+      });
+      Object.assign(target, { attr: 1 });
+      if (seen !== ${expected}) throw new Error("unexpected");
+      const thrower = {};
+      Object.defineProperty(thrower, "attr", {
+        set: function (_: unknown) {
+          throw new RangeError("set");
+        },
+      });
+      let isThrown = false;
+      try {
+        Object.assign(thrower, { attr: 1 });
+      } catch (error) {
+        isThrown = error instanceof RangeError;
+      }
+      if (!isThrown) throw new Error("thrown");
+      const obj: Record<string, number> = {};
+      const setFunc = function (a: unknown, b?: unknown) {
+        firstArg = a;
+        secondArg = b;
+      };
+      Object.defineProperty(obj, "prop", { set: setFunc });
+      obj.prop = 100;
+      if (firstArg !== 100 || secondArg !== undefined) throw new Error("parameters");
+    `;
+    expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    expect((await checkModel(getSource(2))).failure?.message).toContain("unexpected");
+  });
+
   it("reads each element of an array-like object as its method visits it, running getters", async () => {
     const result = await checkModel(`
       let isFirstRead = false;

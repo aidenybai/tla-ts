@@ -1193,9 +1193,19 @@ export const getAccessorFunctions = (node: ts.Node, field: "get" | "set", contex
 
 // A setter takes one argument, so a function that declares more parameters would hold undefined
 // in ones its types say it can't.
+// The setters that a write may run, which take the value as their first parameter. A parameter
+// after it holds undefined, which one that TypeScript types as given can't.
 export const getSetters = (node: ts.Node, context: Context) =>
   [...getAccessorFunctions(node, "set", context), ...getReturnedFunctions(node, context)].filter(
-    (setter) => getParameters(setter).length <= 1,
+    (setter) =>
+      getParameters(setter)
+        .slice(1)
+        .every(
+          (parameter) =>
+            parameter.type === undefined ||
+            parameter.questionToken !== undefined ||
+            parameter.initializer !== undefined,
+        ),
   );
 
 // Whether a node makes a function or an object, which only a statement can.
