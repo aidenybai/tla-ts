@@ -938,17 +938,6 @@ Has(heap, ref, key) ==
 \\* A promise that tla-ts follows as it compiles, whose properties the heap doesn't hold.
 PromiseObject == [EmptyObject EXCEPT !.prototype = Ref :> "Promise.prototype", !.isOpaque = TRUE]
 
-\\* Whether resolving a promise with a value would call the value's then, which tla-ts doesn't, or
-\\* follow a promise that tla-ts can't tell.
-\\* An object that tla-ts keeps outside the heap, such as an array, inherits from Array.prototype or
-\\* Object.prototype, which a script may give a then.
-IsThenable(heap, value, arrayPrototype, objectPrototype) ==
-  IF IsRef(value)
-  THEN IF IsHeap(value) /\\ heap.objects[value[Ref]].isOpaque THEN TRUE ELSE Has(heap, value, "then")
-  ELSE /\\ value # Null
-       /\\ TypeOf(value) = "object"
-       /\\ Has(heap, arrayPrototype, "then") \\/ Has(heap, objectPrototype, "then")
-
 \\* An error is a record of its constructor, its message and its name.
 LOCAL IsError(value) ==
   SubSeq(ToString(value), 1, 1) = "[" /\\ DOMAIN value = {"constructor", "message", "name"}
@@ -989,6 +978,20 @@ Get(heap, ref, key) ==
               ref.constructor
          [] OTHER -> Get(heap, Get(heap, ref.constructor, "prototype"), key)
   ELSE GetFrom(heap, ref, key, ref)
+
+\\* Whether resolving a promise with a value would call the value's then, which tla-ts doesn't, or
+\\* follow a promise that tla-ts can't tell. A then that isn't callable leaves the value a value, and
+\\* a getter that tla-ts can't call stops the check.
+\\* An object that tla-ts keeps outside the heap, such as an array, inherits from Array.prototype or
+\\* Object.prototype, which a script may give a then.
+IsThenable(heap, value, arrayPrototype, objectPrototype) ==
+  IF IsRef(value)
+  THEN IF IsHeap(value) /\\ heap.objects[value[Ref]].isOpaque
+       THEN TRUE
+       ELSE TypeOfIn(heap, Get(heap, value, "then")) = "function"
+  ELSE /\\ value # Null
+       /\\ TypeOf(value) = "object"
+       /\\ Has(heap, arrayPrototype, "then") \\/ Has(heap, objectPrototype, "then")
 
 \\* The heap after a pattern reads keys of an object, which TLC would read only where something
 \\* reads what the pattern binds, so that a getter that tla-ts can't call stops the check.

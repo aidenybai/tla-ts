@@ -5062,6 +5062,21 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("fulfills a promise with an object whose then isn't callable", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      const nonThenable = { then: null as unknown };
+      let seen: unknown = undefined;
+      Promise.resolve(nonThenable).then((value) => {
+        seen = value;
+      });
+      setTimeout(() => {
+        if (seen !== nonThenable) throw new Error("seen");
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("gives a promise's callback the locals of the call that made it", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;
