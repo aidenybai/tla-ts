@@ -801,15 +801,19 @@ export const getBinding = (node: ts.Node, context: Context): Binding | undefined
 export const getBound = (node: ts.Expression, context: Context) => {
   const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
   const declaration = symbol?.valueDeclaration;
-  const value =
-    symbol !== undefined &&
-    declaration !== undefined &&
-    ts.isVariableDeclaration(declaration) &&
-    declaration.initializer !== undefined &&
-    !isAssigned(symbol, node.getSourceFile(), context)
-      ? declaration.initializer
-      : node;
-  return getBinding(skipCasts(value), context);
+  if (
+    symbol === undefined ||
+    declaration === undefined ||
+    !ts.isVariableDeclaration(declaration) ||
+    declaration.initializer === undefined
+  ) {
+    return getBinding(skipCasts(node), context);
+  }
+  // Only a name that a binding initializes needs the scan for assignments.
+  const binding = getBinding(skipCasts(declaration.initializer), context);
+  return binding !== undefined && !isAssigned(symbol, node.getSourceFile(), context)
+    ? binding
+    : undefined;
 };
 
 const hasExtends = (node: ts.ClassLikeDeclaration) =>
