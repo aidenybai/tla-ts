@@ -513,8 +513,13 @@ export const runSmtlibScript = (
       const isAssuming = isNamed || extra.length > 0;
       if (isAssuming) state.isIncremental = true;
       if (!isOptimizing) state.hasChecked = true;
+      // mk_special_solver_for_logic gives these logics the finite-domain solver, incremental or not.
+      const isFd =
+        (state.logic === "QF_FD" || state.logic === "SAT") &&
+        !settings.isProducingProofs &&
+        !settings.parameters.has("tactic.default_tactic");
       const kernel =
-        isAssuming || (state.isIncremental && !isOptimizing)
+        isAssuming || (state.isIncremental && !isOptimizing && !isFd)
           ? solveAssuming(manager, getNamedAssertions(), isNamed ? [...names, ...extra] : extra, {
               isMbqi: settings.isMbqi || isMbqiByLogic(getSetup()),
               mbqiMaxIterations: settings.mbqiMaxIterations,
