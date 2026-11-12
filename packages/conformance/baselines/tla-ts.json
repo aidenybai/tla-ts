@@ -15,7 +15,7 @@
   "tlapm/backends/z3/z3test/regressions/smt2/3473.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/3732.smt2": "text-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/3733.smt2": "message-mismatch",
-  "tlapm/backends/z3/z3test/regressions/smt2/3759.smt2": "message-mismatch",
+  "tlapm/backends/z3/z3test/regressions/smt2/3759.smt2": "time-limit",
   "tlapm/backends/z3/z3test/regressions/smt2/3775.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/3811.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/3816.smt2": "message-mismatch",
