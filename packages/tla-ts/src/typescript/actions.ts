@@ -4672,9 +4672,88 @@ interface LoopCall {
   // The initial value of reduce, or the index that a search starts from.
   initial: ts.Expression | undefined;
   isArrayLike: boolean;
+  // Whether the receiver is a set, which the method visits in an order that TLC picks.
+  isUnordered: boolean;
 }
 
 // An array method that calls back for each element, on an array or an array-like object.
+// Whether a loop's body adds each element of a set to a set that the loop doesn't otherwise read,
+// and does nothing else, so that it ends the same in any order, as a set that TLC holds keeps no
+// insertion order.
+const isOrderFree = (body: ts.Node | undefined, element: ts.Node | undefined, context: Context) => {
+  const statement =
+    body !== undefined && ts.isBlock(body) && body.statements.length === 1
+      ? body.statements[0]
+      : body;
+  const added =
+    statement !== undefined && ts.isExpressionStatement(statement)
+      ? statement.expression
+      : statement;
+  // A receiver that reads only what adding to a set leaves alone.
+  const isSteady = (node: ts.Expression): boolean => {
+    if (ts.isIdentifier(node) || ts.isNumericLiteral(node)) return true;
+    if (ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node)) {
+      return isSteady(node.expression);
+    }
+    if (ts.isPropertyAccessExpression(node)) {
+      return (
+        node.name.text !== "size" &&
+        getDefinedGetters(node.expression, node.name.text, context).length === 0 &&
+        isSteady(node.expression)
+      );
+    }
+    if (ts.isElementAccessExpression(node)) {
+      return isSteady(node.expression) && isSteady(node.argumentExpression);
+    }
+    return (
+      ts.isBinaryExpression(node) &&
+      [ts.SyntaxKind.PlusToken, ts.SyntaxKind.MinusToken].includes(node.operatorToken.kind) &&
+      isSteady(node.left) &&
+      isSteady(node.right)
+    );
+  };
+  const value = added !== undefined && ts.isCallExpression(added) ? added.arguments[0] : undefined;
+  return (
+    added !== undefined &&
+    ts.isCallExpression(added) &&
+    ts.isPropertyAccessExpression(added.expression) &&
+    added.expression.name.text === "add" &&
+    getKind(added.expression.expression, context) === "set" &&
+    isSteady(added.expression.expression) &&
+    added.arguments.length === 1 &&
+    value !== undefined &&
+    ts.isIdentifier(value) &&
+    element !== undefined &&
+    getSymbol(value, context.checker) === getSymbol(element, context.checker)
+  );
+};
+
+// A set's forEach whose callback ends the same in any order.
+const isOrderFreeForEach = (node: ts.CallExpression, receiver: ts.Expression, context: Context) => {
+  const argument = node.arguments.length === 1 ? node.arguments[0] : undefined;
+  const callback = argument === undefined ? undefined : getCallee(argument, context);
+  return (
+    getKind(receiver, context) === "set" &&
+    callback !== undefined &&
+    (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback)) &&
+    callback.parameters.length === 1 &&
+    isOrderFree(callback.body, callback.parameters[0].name, context)
+  );
+};
+
+// A for-of over a set whose body ends the same in any order.
+const isOrderFreeForOf = (node: ts.ForOfStatement, context: Context) => {
+  const initializer = node.initializer;
+  const declaration =
+    ts.isVariableDeclarationList(initializer) && initializer.declarations.length === 1
+      ? initializer.declarations[0]
+      : undefined;
+  return (
+    getKind(node.expression, context) === "set" &&
+    isOrderFree(node.statement, declaration?.name, context)
+  );
+};
+
 const getLoopTarget = (node: ts.Node, context: Context) => {
   if (!isMethodCall(node)) return undefined;
   const target = node.expression.expression;
@@ -4688,13 +4767,15 @@ const getLoopTarget = (node: ts.Node, context: Context) => {
   const method =
     isCall && ts.isPropertyAccessExpression(target) ? target.name.text : node.expression.name.text;
   const receiver = isCall ? node.arguments[0] : target;
+  const isUnordered = method === "forEach" && isOrderFreeForEach(node, receiver, context);
   return (LOOP_METHODS.has(method) || UNCALLED_METHODS.has(method)) &&
-    (isArrayLike || getKind(receiver, context) === "sequence")
+    (isArrayLike || isUnordered || getKind(receiver, context) === "sequence")
     ? {
         method,
         receiver,
         callbackArguments: isCall ? node.arguments.slice(1) : node.arguments,
         isArrayLike,
+        isUnordered,
       }
     : undefined;
 };
@@ -4733,6 +4814,7 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
           argument,
           initial: target.callbackArguments.at(1),
           isArrayLike: target.isArrayLike,
+          isUnordered: target.isUnordered,
         }
       : undefined;
   }
@@ -4750,6 +4832,7 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
         argument,
         initial: target.callbackArguments.at(1),
         isArrayLike: target.isArrayLike,
+        isUnordered: target.isUnordered,
       }
     : undefined;
 };
@@ -5265,7 +5348,17 @@ const translateLoopCall = (
   }
   return letIn(
     [
-      define(ownerName, [], translateExpression(receiver, path.scope, context)),
+      define(
+        ownerName,
+        [],
+        loop.isUnordered
+          ? useJavaScript(
+              "SetToSequence",
+              [translateExpression(receiver, path.scope, context)],
+              context,
+            )
+          : translateExpression(receiver, path.scope, context),
+      ),
       ...(isSkippingHoles
         ? [
             define(
@@ -8550,9 +8643,12 @@ const translateIterations = (
     ts.isForOfStatement(iterated) &&
     isHeapArray(iterated.expression, context);
   // A for-of over an object that a script declares iterates through the object's iterator.
+  const isUnordered =
+    iterated !== undefined && ts.isForOfStatement(iterated) && isOrderFreeForOf(iterated, context);
   const isSequence =
     iterated !== undefined &&
     (getKind(iterated.expression, context) === "sequence" ||
+      isUnordered ||
       isArrayIteration(iterated.expression, context));
   const isIterator =
     iterated !== undefined &&
@@ -8876,15 +8972,21 @@ const translateIterations = (
                         )
                       : isHeapIteration
                         ? translateHeapElements(iterated.expression, path.scope, context)
-                        : context.heap !== undefined &&
-                            getKind(iterated.expression, context) === "sequence"
-                          ? translateArrayIteration(
-                              translateExpression(iterated.expression, path.scope, context),
-                              getHeap(path.scope, iterated.expression, context),
-                              iterated.expression,
+                        : isUnordered
+                          ? useJavaScript(
+                              "SetToSequence",
+                              [translateExpression(iterated.expression, path.scope, context)],
                               context,
                             )
-                          : translateExpression(iterated.expression, path.scope, context),
+                          : context.heap !== undefined &&
+                              getKind(iterated.expression, context) === "sequence"
+                            ? translateArrayIteration(
+                                translateExpression(iterated.expression, path.scope, context),
+                                getHeap(path.scope, iterated.expression, context),
+                                iterated.expression,
+                                context,
+                              )
+                            : translateExpression(iterated.expression, path.scope, context),
               ),
             ]),
         operator,

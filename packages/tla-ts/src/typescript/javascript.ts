@@ -3999,6 +3999,15 @@ CollectionData(heap, ref) == IF ref \\in {Undefined, Null} THEN ref ELSE heap.ob
 
 WithCollectionData(heap, ref, data) == [heap EXCEPT !.objects[ref[Ref]].data = data]
 
+\\* The elements of a set in an order that TLC picks, which only a loop that ends the same in any
+\\* order visits, as a set that TLC holds keeps no insertion order.
+RECURSIVE SetToSequence(_)
+SetToSequence(set) ==
+  IF set = {}
+  THEN <<>>
+  ELSE LET element == CHOOSE element \\in set : TRUE
+       IN <<element>> \\o SetToSequence(set \\ {element})
+
 \\* What a splice whose result nothing reads does to an array that the heap holds, which makes that
 \\* result through the array's constructor, where tla-ts follows only Array.
 ArraySplice(heap, ref, start, hasCount, count, items, array) ==

@@ -5911,6 +5911,43 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("visits a set in any order where the loop only adds each element to a set", async () => {
+    const result = await checkModel(`
+      const seen = new Set<string>();
+      const box = { names: new Set<string>() };
+      const record = (name: string) => box.names.add(name);
+      const source = new Set(["b", "a", "c"]);
+      source.forEach(record);
+      for (const name of source) seen.add(name);
+      if (box.names.size !== 3 || seen.size !== 3 || !seen.has("c")) throw new Error("each");
+    `);
+    expect(result.failure).toBeUndefined();
+    expect(() =>
+      checkModel(`
+        const out: string[] = [];
+        const source = new Set(["b", "a"]);
+        source.forEach((name) => {
+          out.push(name);
+        });
+      `),
+    ).toThrow("Unsupported statement");
+    expect(() =>
+      checkModel(`
+        const sets = [new Set<string>(), new Set<string>()];
+        const source = new Set(["b", "a"]);
+        const counted = new Set<string>();
+        for (const name of source) sets[counted.size].add(name);
+      `),
+    ).toThrow("Only arrays have an order to iterate in");
+    expect(() =>
+      checkModel(`
+        const source = new Set(["b", "a"]);
+        const kept = new Set<string>();
+        source.forEach((name, again) => kept.add(again));
+      `),
+    ).toThrow("Unsupported statement");
+  });
+
   it("pushes the elements that a spread gives onto an array that the heap holds", async () => {
     const result = await checkModel(`
       interface Module { constants: string[]; units: { names: string[] }[] }
