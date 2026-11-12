@@ -2368,7 +2368,7 @@ export const getIteration = (path: Path, node: ts.Node, request: Expression) => 
 // body settles once it returns or throws. The body leaves to the code that last ran it: the call,
 // and then the job that resumed it once a promise it awaited settled.
 export const translateAsyncCall = (
-  node: ts.CallExpression,
+  node: ts.Node,
   callee: FunctionNode,
   receiver: Receiver | undefined,
   path: Path,
@@ -2383,7 +2383,16 @@ export const translateAsyncCall = (
     context,
     frame,
     (made, rejectFrame, bindWith) =>
-      bindCall(node, callee, node.arguments, receiver, made, context, rejectFrame, bindWith),
+      bindCall(
+        node,
+        callee,
+        ts.isCallExpression(node) ? node.arguments : [],
+        receiver,
+        made,
+        context,
+        rejectFrame,
+        bindWith,
+      ),
     continueWith,
   );
 

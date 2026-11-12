@@ -109,11 +109,9 @@ const disposeAll = (
   const uncaught = apply("Assert", [boolean(false), string("await using")]);
   return callValue(
     site,
-    getMethods(
-      site,
-      resource.isAsync && !resource.isWrapped ? "@@asyncDispose" : "@@dispose",
-      context,
-    ),
+    resource.isAsync && !resource.isWrapped
+      ? getMethods(site, "@@asyncDispose", context, true)
+      : getMethods(site, "@@dispose", context),
     method,
     resource.value,
     [],

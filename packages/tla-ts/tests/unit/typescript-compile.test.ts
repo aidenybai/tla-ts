@@ -7959,6 +7959,44 @@ describe("errors", () => {
     expect(wrong.failure).toBeDefined();
   });
 
+  it("awaits an async dispose method, which a function's object literal may hold", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      const order: string[] = [];
+      const asyncTest = (testFunc: () => Promise<void>) => {
+        testFunc().then(() => order.push("done"));
+      };
+      asyncTest(async function () {
+        const resource = {
+          async [Symbol.asyncDispose]() {
+            order.push("dispose");
+            await null;
+            order.push("disposed");
+          },
+        };
+        {
+          await using held = resource;
+          order.push("body");
+        }
+        order.push("left");
+      });
+      order.push("after call");
+      Promise.resolve()
+        .then(() => order.push("tick 1"))
+        .then(() => order.push("tick 2"))
+        .then(() => order.push("tick 3"))
+        .then(() => order.push("tick 4"));
+      setTimeout(() => {
+        if (order.join() !== "${expected}") throw new Error(order.join());
+      });
+    `;
+    const expected = "body,dispose,after call,disposed,tick 1,left,tick 2,done,tick 3,tick 4";
+    const result = await checkModel(source(expected));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source(expected.replace("disposed,tick 1", "tick 1,disposed")));
+    expect(wrong.failure).toBeDefined();
+  });
+
   it("rejects what an async function returns where disposing throws", async () => {
     const source = (expected: number) => `
       declare function setTimeout(callback: () => void): void;

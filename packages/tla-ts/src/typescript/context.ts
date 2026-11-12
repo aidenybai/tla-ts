@@ -1022,7 +1022,9 @@ export const isNestedFunction = (
           node.parent.expression === node &&
           findNodes(node, ts.isIdentifier).every((name) => name.text !== "arguments"))))) &&
   node.asteriskToken === undefined &&
-  (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0 &&
+  // Of async functions, only methods, which a protocol such as await using calls.
+  ((ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0 ||
+    ts.isMethodDeclaration(node)) &&
   ts.findAncestor(node.parent, ts.isFunctionLike) !== undefined &&
   findNodes(node, ts.isIdentifier).every((name) => {
     const declaration = getSymbol(name, context.checker)?.valueDeclaration;

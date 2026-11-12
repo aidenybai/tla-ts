@@ -41,6 +41,7 @@ import {
   translateObjectValue,
   translatePropertyKey,
 } from "./heap";
+import { translateAsyncCall } from "./promises";
 import { useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
 import { getKind, isHeapPattern } from "./types";
@@ -82,8 +83,10 @@ const isRunnable = (node: ts.Node): node is FunctionNode =>
   node.body !== undefined &&
   (ts.isArrowFunction(node) ||
     ts.isGetAccessorDeclaration(node) ||
-    node.asteriskToken === undefined) &&
-  (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0;
+    node.asteriskToken === undefined);
+
+const isAsync = (node: FunctionNode) =>
+  (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) !== 0;
 
 const written = new WeakMap<ts.SourceFile, Map<string, FunctionNode[]>>();
 
@@ -116,9 +119,11 @@ export const getWrittenFunctions = (node: ts.Node, key: string, context: Context
   return found.get(key) ?? [];
 };
 
-export const getMethods = (node: ts.Node, key: string, context: Context) =>
+// The methods that a script writes under a key, which are async only where the caller awaits
+// what they give.
+export const getMethods = (node: ts.Node, key: string, context: Context, isAwaited = false) =>
   getWrittenFunctions(node, key, context).filter(
-    (candidate) => !ts.isGetAccessorDeclaration(candidate),
+    (candidate) => !ts.isGetAccessorDeclaration(candidate) && (isAwaited || !isAsync(candidate)),
   );
 
 const getKeyGetters = (node: ts.Node, key: string, context: Context) => [
@@ -166,6 +171,9 @@ export const callValue = (
       candidates.reduceRight((rest, candidate) => {
         const candidateValue = getCandidateValue(candidate, context);
         if (candidateValue === undefined || frame.inlining.has(candidate)) return rest;
+        if (isAsync(candidate) && values.length > 0) {
+          throw new TlaTypeScriptError("tla-ts can't pass arguments to this async function", site);
+        }
         const received = ts.isArrowFunction(candidate)
           ? undefined
           : { value: receiver, method: candidate };
@@ -174,9 +182,11 @@ export const callValue = (
             useJavaScript("CodeOf", [getHeap(path.scope, site, context), value], context),
             candidateValue,
           ]),
-          values.length === 0
-            ? inlineBody(site, candidate, [], received, path, context, frame, next)
-            : inlineValues(candidate, values, received, path, context, frame, next),
+          isAsync(candidate)
+            ? translateAsyncCall(site, candidate, received, path, context, frame, next)
+            : values.length === 0
+              ? inlineBody(site, candidate, [], received, path, context, frame, next)
+              : inlineValues(candidate, values, received, path, context, frame, next),
           rest,
         );
       }, otherwise(next)),

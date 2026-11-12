@@ -6962,6 +6962,7 @@ export const translateJoined = (
       exit.path.generators === exits[0].path.generators &&
       isCompletedFrom(exit.path.generators, path.generators) &&
       exit.path.tasks === path.tasks &&
+      exit.path.disposal === path.disposal &&
       isKept(exit.path.scope.bindings, path.scope.bindings) &&
       isKept(exit.path.scope.functions, path.scope.functions),
   );
