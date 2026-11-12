@@ -182,6 +182,9 @@ const IMPLICIT_ANY_ERRORS = new Set([
 // TypeScript's errors for a value that may be null or undefined.
 const NULLABLE_ERRORS = new Set([2531, 2532, 2533, 2721, 2722, 18047, 18048, 18049]);
 
+// TypeScript's error for a use of a value of type unknown.
+const UNKNOWN_VALUE_ERROR = 18046;
+
 const PROGRAM_PATH = "/test262.ts";
 
 const file = { text: "", version: 0 };
@@ -461,6 +464,25 @@ const loosen = () => {
         created.expression.getEnd(),
         " as unknown as new (...args: unknown[]) => { [key: string | symbol]: unknown })",
       );
+    }
+    // A test may call a value of an unknown type, such as a built-in method that it stores under a
+    // key, which gives a value of an unknown type.
+    const unknownCallee =
+      diagnostic.code === UNKNOWN_VALUE_ERROR
+        ? ts.findAncestor(
+            node,
+            (ancestor) =>
+              ancestor.getStart() === diagnostic.start &&
+              ancestor.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0),
+          )
+        : undefined;
+    if (
+      unknownCallee !== undefined &&
+      ts.isCallExpression(unknownCallee.parent) &&
+      unknownCallee.parent.expression === unknownCallee
+    ) {
+      edits.set(unknownCallee.getStart(), "(");
+      edits.set(unknownCallee.getEnd(), " as (...args: unknown[]) => unknown)");
     }
     // A test may call a function with fewer arguments than it declares, which leaves the others
     // undefined, or with more, which only its arguments object holds. A rest parameter takes the
