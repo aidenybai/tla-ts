@@ -1083,7 +1083,11 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
       context,
     );
   }
-  if (ts.isNewExpression(node) && context.heapCollections.has(node)) {
+  if (
+    ts.isNewExpression(node) &&
+    context.heapCollections.has(node) &&
+    isFreshCollection(node, context)
+  ) {
     return useJavaScript(
       "Allocate",
       [

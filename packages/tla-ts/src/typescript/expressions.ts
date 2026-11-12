@@ -3075,7 +3075,11 @@ const translateNode = (
     return translateExpression(passed, scope, context);
   }
   // A set or a map that the heap holds, which a statement makes.
-  if (ts.isNewExpression(node) && context.heapCollections.has(node)) {
+  if (
+    ts.isNewExpression(node) &&
+    context.heapCollections.has(node) &&
+    ["Set", "Map"].includes(getBuiltIn(node.expression, context) ?? "")
+  ) {
     const made = scope.allocated.get(node);
     if (made === undefined) {
       throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
