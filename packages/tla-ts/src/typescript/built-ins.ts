@@ -832,6 +832,37 @@ export const BUILT_INS: Record<string, [string | null, boolean, boolean, string[
     ],
     false,
   ],
+  "%ArrayIteratorPrototype%": [
+    "Iterator.prototype",
+    false,
+    true,
+    [
+      ["next", "wc", "o%ArrayIteratorPrototype%.next"],
+      ["@@toStringTag", "c", "sArray Iterator"],
+    ],
+    false,
+  ],
+  "%IteratorHelperPrototype%": [
+    "Iterator.prototype",
+    false,
+    true,
+    [
+      ["next", "wc", "o%IteratorHelperPrototype%.next"],
+      ["return", "wc", "o%IteratorHelperPrototype%.return"],
+      ["@@toStringTag", "c", "sIterator Helper"],
+    ],
+    false,
+  ],
+  "%WrapForValidIteratorPrototype%": [
+    "Iterator.prototype",
+    false,
+    true,
+    [
+      ["next", "wc", "o%WrapForValidIteratorPrototype%.next"],
+      ["return", "wc", "o%WrapForValidIteratorPrototype%.return"],
+    ],
+    false,
+  ],
   "Object.prototype": [
     null,
     false,
@@ -3272,6 +3303,56 @@ export const BUILT_INS: Record<string, [string | null, boolean, boolean, string[
     [
       ["constructor", "wc", "oBigUint64Array"],
       ["BYTES_PER_ELEMENT", "", "n8"],
+    ],
+    false,
+  ],
+  "%ArrayIteratorPrototype%.next": [
+    "Function.prototype",
+    true,
+    true,
+    [
+      ["length", "c", "n0"],
+      ["name", "c", "snext"],
+    ],
+    false,
+  ],
+  "%IteratorHelperPrototype%.next": [
+    "Function.prototype",
+    true,
+    true,
+    [
+      ["length", "c", "n0"],
+      ["name", "c", "snext"],
+    ],
+    false,
+  ],
+  "%IteratorHelperPrototype%.return": [
+    "Function.prototype",
+    true,
+    true,
+    [
+      ["length", "c", "n0"],
+      ["name", "c", "sreturn"],
+    ],
+    false,
+  ],
+  "%WrapForValidIteratorPrototype%.next": [
+    "Function.prototype",
+    true,
+    true,
+    [
+      ["length", "c", "n0"],
+      ["name", "c", "snext"],
+    ],
+    false,
+  ],
+  "%WrapForValidIteratorPrototype%.return": [
+    "Function.prototype",
+    true,
+    true,
+    [
+      ["length", "c", "n0"],
+      ["name", "c", "sreturn"],
     ],
     false,
   ],

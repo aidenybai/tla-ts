@@ -88,6 +88,13 @@ const visit = (value: unknown, name: string) => {
 };
 const globals = new Map(Object.entries(Object.getOwnPropertyDescriptors(globalThis)));
 GLOBALS.forEach((name) => visit(globals.get(name)?.value, name));
+// The prototypes that only the objects a built-in makes inherit, which no global reaches.
+visit(Object.getPrototypeOf([][Symbol.iterator]()), "%ArrayIteratorPrototype%");
+visit(Object.getPrototypeOf(Iterator.from([]).map((value) => value)), "%IteratorHelperPrototype%");
+visit(
+  Object.getPrototypeOf(Iterator.from({ next: () => ({ done: true, value: undefined }) })),
+  "%WrapForValidIteratorPrototype%",
+);
 
 const getValue = (value: unknown) => {
   if (value === undefined) return "u";
