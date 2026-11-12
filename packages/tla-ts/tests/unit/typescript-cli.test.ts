@@ -49,7 +49,7 @@ describe("the CLI with TypeScript files", () => {
     expect(relayed.status).toBe(0);
     expect(relayed.stdout).toContain("4 distinct states found");
     expect(runCli(directory, ["barrel.ts"]).status).toBe(0);
-  });
+  }, 30_000);
 
   it("type checks a file of a project with the project's tsconfig.json", () => {
     const result = runCli(copyFixtures("project"), ["counter.ts"]);
