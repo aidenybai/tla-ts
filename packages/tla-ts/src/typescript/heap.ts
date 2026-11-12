@@ -441,6 +441,14 @@ export const translateObject = (
 
 // A function's or a class's name: its own, or that of the binding its definition initializes,
 // through parentheses but not through a comma.
+// The assignments that name an anonymous function or class that they assign to a name.
+const NAMING_ASSIGNMENTS = new Set([
+  ts.SyntaxKind.EqualsToken,
+  ts.SyntaxKind.QuestionQuestionEqualsToken,
+  ts.SyntaxKind.BarBarEqualsToken,
+  ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+]);
+
 const getFunctionName = (node: HeapClass | ts.ArrowFunction) => {
   const named = ts.findAncestor(node.parent, (parent) => !ts.isParenthesizedExpression(parent));
   return (
@@ -449,7 +457,12 @@ const getFunctionName = (node: HeapClass | ts.ArrowFunction) => {
     (ts.isVariableDeclaration(named) || ts.isBindingElement(named) || ts.isParameter(named)) &&
     ts.isIdentifier(named.name)
       ? named.name.text
-      : "")
+      : named !== undefined &&
+          ts.isBinaryExpression(named) &&
+          ts.isIdentifier(named.left) &&
+          NAMING_ASSIGNMENTS.has(named.operatorToken.kind)
+        ? named.left.text
+        : "")
   );
 };
 

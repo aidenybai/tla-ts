@@ -6999,6 +6999,25 @@ const translateExpressionStatement = (
       continueWith,
     );
   }
+  // A logical assignment to a name makes the objects of its value only where it writes the name.
+  if (
+    ts.isBinaryExpression(expression) &&
+    LOGICAL_OPERATORS.has(expression.operatorToken.kind) &&
+    getAllocated(expression.right, context).length > 0
+  ) {
+    const right = expression.right;
+    return ifThenElse(
+      isLogicallyWritten(
+        expression,
+        translateExpression(expression.left, path.scope, context),
+        context,
+      ),
+      allocate(right, path, context, (allocated) =>
+        translateWriteStatement(expression, allocated, context, frame, continueWith),
+      ),
+      continueWith(path),
+    );
+  }
   return translateWriteStatement(expression, path, context, frame, continueWith);
 };
 

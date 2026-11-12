@@ -1128,7 +1128,28 @@ export const isFunctionObject = (
           (ts.isPropertyDeclaration(member) && !isStatic(member) && ts.isIdentifier(member.name)),
       ))) &&
   (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0 &&
-  isDefault(node);
+  (isDefault(node) || (ts.isClassExpression(node) && isReadClass(node)));
+
+// Whether a class expression is only read where it runs: the object of a property access, a
+// call's argument, or the value of a logical assignment to a name.
+const isReadClass = (node: ts.Node): boolean => {
+  const parent = node.parent;
+  if (ts.isParenthesizedExpression(parent)) return isReadClass(parent);
+  return (
+    (ts.isPropertyAccessExpression(parent) && parent.expression === node) ||
+    (ts.isCallExpression(parent) && parent.arguments.some((argument) => argument === node)) ||
+    (ts.isBinaryExpression(parent) &&
+      parent.right === node &&
+      ts.isIdentifier(parent.left) &&
+      LOGICAL_ASSIGNMENTS.has(parent.operatorToken.kind))
+  );
+};
+
+const LOGICAL_ASSIGNMENTS = new Set([
+  ts.SyntaxKind.QuestionQuestionEqualsToken,
+  ts.SyntaxKind.BarBarEqualsToken,
+  ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+]);
 
 // A function expression or a method that another function makes as the value of an object's
 // property, or a function expression that it returns, each time it runs, which is an object of its
