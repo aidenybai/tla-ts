@@ -17,6 +17,7 @@ import {
   addSanyMessage,
   addToContext,
   CONSTANT_DECL_KIND,
+  type Context,
   createContext,
   formatSanyLocation,
   getContextModule,
@@ -52,7 +53,6 @@ import {
   resolveModule,
   resolveSymbol,
   resolveSynonym,
-  type SymbolTable,
 } from "./generation";
 import {
   checkForUndefinedRecursiveOps,
@@ -320,7 +320,7 @@ export const generateSanySpecification = (
     ast: Module,
     file: SourceFile,
     parent: ModuleNode | undefined,
-    symbolTable: SymbolTable,
+    contexts: Context[],
   ): ModuleNode => {
     const currentModule: ModuleNode = {
       kind: "Module",
@@ -328,7 +328,7 @@ export const generateSanySpecification = (
       name: ast.name,
       location: getSpanLocation(file, getUnitSpan(file, ast.location)),
       extendees: [],
-      context: getTopContext(symbolTable),
+      context: getTopContext(contexts),
       topLevel: [],
       definitions: [],
       opDefsInRecursiveSection: [],
@@ -349,7 +349,7 @@ export const generateSanySpecification = (
       externalModules,
       nullApplicationId,
       file,
-      symbolTable,
+      contexts,
       currentModule,
       curLevel: 0,
       unresolvedCount: [0],
@@ -371,7 +371,7 @@ export const generateSanySpecification = (
       recursiveDeclarations: [],
       selectorToNode: createSelectorResolver({
         version: options.version,
-        resolveSymbol: (name) => resolveSymbol(symbolTable, name),
+        resolveSymbol: (name) => resolveSymbol(contexts, name),
         resolveSynonym,
         generateExpression: (expression) => generateExpression(generation, expression),
         generateArgument: (operator, index, argument, location) =>
@@ -432,7 +432,7 @@ export const generateSanySpecification = (
     ast.extends.forEach((name) => {
       const extendee = getModule(generation, name);
       currentModule.extendees.push(extendee);
-      const context = getTopContext(symbolTable);
+      const context = getTopContext(contexts);
       extendee.context.symbols.forEach((symbol) => {
         if (
           symbol.kind !== "Module" &&
@@ -503,10 +503,12 @@ export const generateSanySpecification = (
           break;
         case "Module": {
           checkRecursiveSection(generation, unit.module.location, "A MODULE ");
-          const innerTable = { contexts: [...symbolTable.contexts, createContext()] };
-          const inner = generateModule(unit.module, file, currentModule, innerTable);
+          const inner = generateModule(unit.module, file, currentModule, [
+            ...contexts,
+            createContext(),
+          ]);
           const binding = resolveModule(generation, inner.name);
-          if (binding === undefined) addToContext(getTopContext(symbolTable), inner);
+          if (binding === undefined) addToContext(getTopContext(contexts), inner);
           else if (binding !== inner) {
             addError(
               inner.location,
@@ -530,9 +532,7 @@ export const generateSanySpecification = (
     const entry = getSource(name, undefined);
     const context = createContext();
     builtins.toReversed().forEach((builtin) => addToContext(context, builtin));
-    const module = generateModule(entry.module, entry.file, undefined, {
-      contexts: [context],
-    });
+    const module = generateModule(entry.module, entry.file, undefined, [context]);
     externalModules.set(name, module);
     options.onModule?.(module, messages);
     return module;

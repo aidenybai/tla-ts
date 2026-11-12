@@ -67,10 +67,6 @@ interface LabelGoal {
   clause: number;
 }
 
-export interface SymbolTable {
-  contexts: Context[];
-}
-
 interface OpApplBinding {
   unbounded?: FormalParamNode[];
   bounded?: FormalParamNode[][];
@@ -78,11 +74,11 @@ interface OpApplBinding {
   ranges?: ExprNode[];
 }
 
-export const getTopContext = (table: SymbolTable) => table.contexts[table.contexts.length - 1];
+export const getTopContext = (contexts: Context[]) => contexts[contexts.length - 1];
 
-export const resolveSymbol = (table: SymbolTable, name: string) => {
-  for (let index = table.contexts.length - 1; index >= 0; index--) {
-    const symbol = getContextSymbol(table.contexts[index], name);
+export const resolveSymbol = (contexts: Context[], name: string) => {
+  for (let index = contexts.length - 1; index >= 0; index--) {
+    const symbol = getContextSymbol(contexts[index], name);
     if (symbol) return symbol;
   }
   return undefined;
@@ -126,7 +122,7 @@ export interface ModuleGeneration {
   externalModules: Map<string, ModuleNode>;
   nullApplicationId: number;
   file: SourceFile;
-  symbolTable: SymbolTable;
+  contexts: Context[];
   currentModule: ModuleNode;
   curLevel: number;
   unresolvedCount: number[];
@@ -145,10 +141,10 @@ export interface ModuleGeneration {
 }
 
 export const addSymbol = (generation: ModuleGeneration, symbol: SymbolNode) => {
-  const binding = resolveSymbol(generation.symbolTable, symbol.name);
+  const binding = resolveSymbol(generation.contexts, symbol.name);
   if (binding === symbol) return;
   if (binding === undefined) {
-    addToContext(getTopContext(generation.symbolTable), symbol);
+    addToContext(getTopContext(generation.contexts), symbol);
     return;
   }
   const isConflict =
@@ -197,8 +193,8 @@ export const getUnitSpan = (file: SourceFile, location: SourceLocation) =>
     : { start: getTokenIndex(file, location), end: getTokenIndex(file, location) };
 
 export const resolveModule = (generation: ModuleGeneration, name: string) => {
-  for (let index = generation.symbolTable.contexts.length - 1; index >= 0; index--) {
-    const module = getContextModule(generation.symbolTable.contexts[index], name);
+  for (let index = generation.contexts.length - 1; index >= 0; index--) {
+    const module = getContextModule(generation.contexts[index], name);
     if (module?.kind === "Module") return module;
   }
   return generation.externalModules.get(name);
@@ -215,9 +211,9 @@ export const withContext = <Result>(
   context: Context,
   generate: () => Result,
 ) => {
-  generation.symbolTable.contexts.push(context);
+  generation.contexts.push(context);
   const result = generate();
-  generation.symbolTable.contexts.pop();
+  generation.contexts.pop();
   return result;
 };
 
@@ -346,7 +342,7 @@ export const createOpArg = (
 });
 
 export const resolveName = (generation: ModuleGeneration, name: string, location: SanyLocation) => {
-  const symbol = resolveSymbol(generation.symbolTable, resolveSynonym(name));
+  const symbol = resolveSymbol(generation.contexts, resolveSynonym(name));
   if (symbol === undefined || symbol.kind === "Module") {
     throw new TlaSyntaxError(
       `Unknown operator: \`${name}' at line ${location.beginLine}, column ${location.beginColumn} of module ${location.file}`,

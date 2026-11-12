@@ -119,7 +119,7 @@ export const processOperator = (
   const paramsSpan = { start: definition.isLocal ? span.start + 1 : span.start, end: span.end };
   const generated = withContext(generation, createContext(), () => {
     const params = getParams(generation, definition, paramsSpan, true);
-    const existing = resolveSymbol(generation.symbolTable, name);
+    const existing = resolveSymbol(generation.contexts, name);
     if (existing?.kind === "OpDef" && existing.inRecursive && !existing.isDefined) {
       const isMatching =
         existing.params?.length === params.length && params.every((param) => param.arity === 0);
@@ -204,7 +204,7 @@ export const processFunction = (
     generateBounds(generation, definition.bounds, nameIndex + 1),
   );
   const existing = withContext(generation, context, () =>
-    resolveSymbol(generation.symbolTable, definition.name),
+    resolveSymbol(generation.contexts, definition.name),
   );
   const recursionParam = withContext(generation, context, () =>
     createFormalParam(generation, definition.name, 0, location, existing === undefined),
@@ -322,7 +322,7 @@ const processSubstitutions = (
     (symbol): symbol is OpDeclNode => symbol.kind === "OpDecl",
   );
   const substs: Subst[] = declarations.flatMap((declaration) => {
-    const symbol = resolveSymbol(generation.symbolTable, declaration.name);
+    const symbol = resolveSymbol(generation.contexts, declaration.name);
     if (symbol === undefined) return [];
     const isExpression =
       declaration.declKind === VARIABLE_DECL_KIND ||
@@ -432,7 +432,7 @@ export const processModuleDefinition = (
   const name = instance.name ?? "";
   const parameterContext = createContext();
   const nameIndex = instance.isLocal ? span.start + 1 : span.start;
-  if (instance.params.length > 0) generation.symbolTable.contexts.push(parameterContext);
+  if (instance.params.length > 0) generation.contexts.push(parameterContext);
   const args = getParams(
     generation,
     instance,
@@ -442,7 +442,7 @@ export const processModuleDefinition = (
   const instanceeModule = getModule(generation, instance.module);
   const instanceeContext = instanceeModule.context;
   const substs = processSubstitutions(generation, instance, instanceeContext, location);
-  if (instance.params.length > 0) generation.symbolTable.contexts.pop();
+  if (instance.params.length > 0) generation.contexts.pop();
   getHashtableValues(instanceeContext.table).forEach((symbol) => {
     if (symbol.kind !== "OpDef" || symbol.isLocal) return;
     if (symbol.defKind !== "UserDefined" && symbol.defKind !== "ModuleInstance") return;

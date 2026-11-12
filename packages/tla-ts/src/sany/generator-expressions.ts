@@ -323,7 +323,7 @@ export const generateArgument = (
     return createNullNode(generation);
   }
   const name = getOperatorArgumentName(generation.file, argument);
-  const symbol = resolveSymbol(generation.symbolTable, resolveSynonym(name));
+  const symbol = resolveSymbol(generation.contexts, resolveSynonym(name));
   if (symbol === undefined) {
     generation.addError(location, `Could not find declaration or definition of symbol '${name}'.`);
     return createNullNode(generation);
@@ -640,7 +640,7 @@ const getUnresolvedOperator = (
   ) {
     return undefined;
   }
-  if (resolveSymbol(generation.symbolTable, resolveSynonym(expression.operator)) !== undefined) {
+  if (resolveSymbol(generation.contexts, resolveSynonym(expression.operator)) !== undefined) {
     return undefined;
   }
   const span = getExpressionSpan(generation.file, expression);
@@ -1049,7 +1049,7 @@ const generateLabel = (
     expression.params,
   );
   const params = expression.params.map((name, index) => {
-    const symbol = resolveSymbol(generation.symbolTable, name);
+    const symbol = resolveSymbol(generation.contexts, name);
     if (symbol?.kind === "FormalParam") return symbol;
     const paramLocation = getTokenLocation(generation.file, paramIndexes[index]);
     generation.addError(paramLocation, `Illegal parameter ${name} of label \`${expression.name}'.`);

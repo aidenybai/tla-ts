@@ -231,17 +231,14 @@ const generateAssumeProve = (
   }
   // SANY numbers the AssumeProveNode before it generates its clauses.
   const id = generation.getId();
-  if (depth > 1) generation.symbolTable.contexts.push(createContext());
-  if (
-    isBoxed &&
-    generation.symbolTable.contexts.some((context) => generation.assumeContexts.has(context))
-  ) {
+  if (depth > 1) generation.contexts.push(createContext());
+  if (isBoxed && generation.contexts.some((context) => generation.assumeContexts.has(context))) {
     generation.addError(
       assumeLocation,
       "[]ASSUME used within the scope of an ordinary ASSUME's assumptions",
     );
   }
-  if (!isBoxed) generation.assumeContexts.add(getTopContext(generation.symbolTable));
+  if (!isBoxed) generation.assumeContexts.add(getTopContext(generation.contexts));
   const scope: AssumeProveScope = {
     isDeclaredBefore: [false],
     hasGoal: goal !== undefined,
@@ -269,7 +266,7 @@ const generateAssumeProve = (
     return node;
   });
   const conclusion = generateExpression(generation, assumeProve.conclusion);
-  if (depth > 1) generation.symbolTable.contexts.pop();
+  if (depth > 1) generation.contexts.pop();
   generation.assumeProveState.depth = depth - 1;
   if (depth === 1) generation.assumeProveState.goal = undefined;
   const node: AssumeProveNode = {
@@ -372,7 +369,7 @@ const generateStepBody = (
     case "Pick": {
       const isPick = body.kind === "Pick";
       const name = isPick ? "$Pick" : "$Take";
-      if (isPick) generation.symbolTable.contexts.push(createContext());
+      if (isPick) generation.contexts.push(createContext());
       const getOperands = (params: FormalParamNode[]) =>
         body.kind === "Pick" ? [generateWithParams(generation, params, body.body)] : [];
       if (body.bounds.length > 0) {
@@ -412,7 +409,7 @@ const generateProof = (
 ): LeafProofNode | NonLeafProofNode => {
   if (proof.kind !== "Steps") return generateLeafProof(generation, proof);
   const proofContext = createContext();
-  generation.symbolTable.contexts.push(proofContext);
+  generation.contexts.push(proofContext);
   const instances: InstanceNode[] = [];
   const sufficesContexts: Context[] = [];
   let previousRight: ExprOrOpArgNode | undefined;
@@ -538,7 +535,7 @@ const generateProof = (
         ? generateAssertion(body.statement)
         : generateStepBody(generation, body, bodySpan);
     if (stepBody === undefined) throw new TlaSyntaxError(`Unexpected proof step ${body.kind}`);
-    const pickContext = body.kind === "Pick" ? generation.symbolTable.contexts.pop() : undefined;
+    const pickContext = body.kind === "Pick" ? generation.contexts.pop() : undefined;
     const definition =
       step.name === undefined || definitionId === undefined
         ? undefined
@@ -552,13 +549,13 @@ const generateProof = (
           );
     if (definition) addSymbol(generation, definition);
     const isScoped = isAssumeProve && !isSuffices;
-    if (isScoped) generation.symbolTable.contexts.push(assumeContext);
+    if (isScoped) generation.contexts.push(assumeContext);
     const stepProof = step.proof && generateProof(generation, step.proof);
-    if (isScoped) generation.symbolTable.contexts.pop();
+    if (isScoped) generation.contexts.pop();
     endProof(generation, stepBody);
     if (isAssumeProve && isSuffices) {
       sufficesContexts.push(assumeContext);
-      generation.symbolTable.contexts.push(assumeContext);
+      generation.contexts.push(assumeContext);
     }
     pickContext?.symbols.forEach((symbol) => addSymbol(generation, symbol));
     return {
@@ -572,11 +569,9 @@ const generateProof = (
     };
   });
   sufficesContexts.forEach(() => {
-    generation.symbolTable.contexts
-      .pop()
-      ?.symbols.forEach((symbol) => addToContext(proofContext, symbol));
+    generation.contexts.pop()?.symbols.forEach((symbol) => addToContext(proofContext, symbol));
   });
-  generation.symbolTable.contexts.pop();
+  generation.contexts.pop();
   return {
     ...createLevelFields(generation.getId()),
     kind: "NonLeafProof",
@@ -593,7 +588,7 @@ export const processTheorem = (generation: ModuleGeneration, theorem: Theorem) =
   const assumeContext = createContext();
   if (theorem.name !== undefined) pushLabelScope(generation);
   const definitionId = theorem.name === undefined ? undefined : generation.getId();
-  if (statement.kind === "AssumeProve") generation.symbolTable.contexts.push(assumeContext);
+  if (statement.kind === "AssumeProve") generation.contexts.push(assumeContext);
   const body =
     statement.kind === "AssumeProve"
       ? generateAssumeProve(
@@ -615,13 +610,13 @@ export const processTheorem = (generation: ModuleGeneration, theorem: Theorem) =
           popLabels(generation),
         );
   if (definition) {
-    if (statement.kind === "AssumeProve") generation.symbolTable.contexts.pop();
+    if (statement.kind === "AssumeProve") generation.contexts.pop();
     addSymbol(generation, definition);
     generation.currentModule.definitions.push(definition);
-    if (statement.kind === "AssumeProve") generation.symbolTable.contexts.push(assumeContext);
+    if (statement.kind === "AssumeProve") generation.contexts.push(assumeContext);
   }
   const proof = theorem.proof && generateProof(generation, theorem.proof);
-  if (statement.kind === "AssumeProve") generation.symbolTable.contexts.pop();
+  if (statement.kind === "AssumeProve") generation.contexts.pop();
   endProof(generation, body);
   const node: TheoremNode = {
     ...createLevelFields(generation.getId()),
