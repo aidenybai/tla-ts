@@ -989,20 +989,23 @@ export const isFunctionObject = (
 export const isNestedFunction = (
   node: ts.Node,
   context: Context,
-): node is ts.FunctionExpression | ts.MethodDeclaration =>
+): node is
+  | ts.FunctionExpression
+  | ts.MethodDeclaration
+  | ts.GetAccessorDeclaration
+  | ts.SetAccessorDeclaration =>
   context.heap !== undefined &&
-  ((ts.isFunctionExpression(node) &&
-    ((ts.isPropertyAssignment(node.parent) &&
-      node.parent.initializer === node &&
-      !isFunctionObject(node, context) &&
-      getFunctionValue(node, context) === undefined) ||
-      (ts.isReturnStatement(node.parent) &&
-        node.parent.expression === node &&
-        findNodes(node, ts.isIdentifier).every((name) => name.text !== "arguments")))) ||
-    (ts.isMethodDeclaration(node) &&
-      node.body !== undefined &&
-      ts.isObjectLiteralExpression(node.parent) &&
-      !isOnce(node.parent))) &&
+  (((isPlainAccessor(node) || (ts.isMethodDeclaration(node) && node.body !== undefined)) &&
+    ts.isObjectLiteralExpression(node.parent) &&
+    !isOnce(node.parent)) ||
+    (ts.isFunctionExpression(node) &&
+      ((ts.isPropertyAssignment(node.parent) &&
+        node.parent.initializer === node &&
+        !isFunctionObject(node, context) &&
+        getFunctionValue(node, context) === undefined) ||
+        (ts.isReturnStatement(node.parent) &&
+          node.parent.expression === node &&
+          findNodes(node, ts.isIdentifier).every((name) => name.text !== "arguments"))))) &&
   node.asteriskToken === undefined &&
   (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0 &&
   ts.findAncestor(node.parent, ts.isFunctionLike) !== undefined &&

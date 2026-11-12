@@ -3582,13 +3582,13 @@ describe("errors", () => {
       if (made.v !== 2) throw new Error("v");
     `);
     expect(result.failure).toBeUndefined();
-    expect(() =>
-      checkModel(`
-        const make = () => ({ get v() { return 2; } });
-        const first = make();
-        const second = make();
-      `),
-    ).toThrow("Unsupported object member");
+    const twice = await checkModel(`
+      const make = () => ({ get v() { return 2; } });
+      const first = make();
+      const second = make();
+      if (first.v + second.v !== 4) throw new Error("v");
+    `);
+    expect(twice.failure?.message).toContain("tla-ts can't call getters");
   });
 
   it("runs the getters of a parameter's default object that a pattern reads", async () => {
@@ -4096,6 +4096,40 @@ describe("errors", () => {
     expect((await checkModel(getSource(42, "a,next,b"))).failure).toBeUndefined();
     expect((await checkModel(getSource(43, "a,next,b"))).failure?.message).toContain("values");
     expect((await checkModel(getSource(42, "a,b,next"))).failure?.message).toContain("order");
+  });
+
+  it("runs the getters of an object literal that a method makes on each call", async () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      let step = 0;
+      const source = {
+        [Symbol.asyncIterator]() {
+          return {
+            next() {
+              step = step + 1;
+              return {
+                done: step > 1,
+                get value() {
+                  log.push(\`value\${step}\`);
+                  return step;
+                },
+              };
+            },
+          };
+        },
+      };
+      async function* gen() {
+        yield* source;
+      }
+      const iter = gen();
+      const first = await iter.next();
+      const second = await iter.next();
+      if (first.value !== 1 || second.done !== true || log.join(",") !== "${expected}") {
+        throw new Error("values");
+      }
+    `;
+    expect((await checkModel(getSource("value1,value2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("value1"))).failure?.message).toContain("values");
   });
 
   it("evaluates a declaration that nothing reads where it runs", async () => {

@@ -338,11 +338,20 @@ export const translateObject = (
       if (allocated === undefined) {
         throw new TlaTypeScriptError("Make objects only where a statement always runs", property);
       }
-      return useJavaScript(
-        "Put",
-        [object, translateMemberKey(property.name, scope, context), allocated],
-        context,
-      );
+      const key = translateMemberKey(property.name, scope, context);
+      return ts.isMethodDeclaration(property)
+        ? useJavaScript("Put", [object, key, allocated], context)
+        : useJavaScript(
+            "DefineAccessor",
+            [
+              object,
+              key,
+              string(ts.isGetAccessorDeclaration(property) ? "get" : "set"),
+              allocated,
+              boolean(true),
+            ],
+            context,
+          );
     }
     const method = getObjectMethod(property, context);
     if (method !== undefined) {
@@ -862,16 +871,20 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     );
   }
   if (isNestedFunction(node, context)) {
-    const isMethod = ts.isMethodDeclaration(node);
+    const isFunction = ts.isFunctionExpression(node);
     return useJavaScript(
       "Allocate",
       [
         heap,
         useJavaScript(
-          isMethod ? "MethodObject" : "FunctionObject",
+          isFunction ? "FunctionObject" : "MethodObject",
           [
             translateBuiltInValue("Function.prototype", node, context),
-            isMethod ? getMethodValue(node, context) : translateFunctionValue(node, context),
+            isFunction
+              ? translateFunctionValue(node, context)
+              : ts.isMethodDeclaration(node)
+                ? getMethodValue(node, context)
+                : getAccessorValue(node, context),
           ],
           context,
         ),
