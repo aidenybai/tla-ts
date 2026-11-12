@@ -1952,6 +1952,23 @@ describe("values", () => {
     expect((await checkModel(getSource("5,0"))).failure?.message).toContain("5,1");
   });
 
+  it("tells an instance of a class from a number or an object of its shape", async () => {
+    const getSource = (expected: string) => `
+      class Ratio {
+        num = 1;
+      }
+      const isRatio = (value: number | Ratio) => value instanceof Ratio;
+      const ratio = new Ratio();
+      const shaped: Ratio = { num: 1 };
+      const result = [isRatio(ratio), isRatio(2), isRatio(shaped)].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("true,false,false"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("true,false,true"))).failure?.message).toContain(
+      "true,false,false",
+    );
+  });
+
   it("changes a field's array through a local that names it", async () => {
     const getSource = (expected: string) => `
       const shrink = (values: number[], size: number) => {
