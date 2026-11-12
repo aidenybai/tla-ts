@@ -67,6 +67,7 @@ import {
   getWrittenProperties,
   changesState,
   getArgumentsOwner,
+  isModuleFile,
   getSymbol,
   isAssigned,
   getTopLevelDeclaration,
@@ -2649,19 +2650,8 @@ const hasStrictDirective = (statements: readonly ts.Statement[]) =>
       statement.expression.getText().slice(1, -1) === "use strict",
   );
 
-const isModuleSyntax = (statement: ts.Statement) =>
-  ts.isImportDeclaration(statement) ||
-  ts.isImportEqualsDeclaration(statement) ||
-  ts.isExportDeclaration(statement) ||
-  ts.isExportAssignment(statement) ||
-  (ts.canHaveModifiers(statement) &&
-    (ts.getModifiers(statement) ?? []).some(
-      (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
-    ));
-
 // Code that runs in strict mode wherever it runs: in a class, under a "use strict" directive, or in
-// a file that imports or exports, which runs only as a module. Node runs another file as a script
-// where it strips its types.
+// a module.
 const isStrictCode = (node: ts.Node): boolean =>
   ts.findAncestor(
     node,
@@ -2673,7 +2663,7 @@ const isStrictCode = (node: ts.Node): boolean =>
         ts.isBlock(ancestor.body) &&
         hasStrictDirective(ancestor.body.statements)) ||
       (ts.isSourceFile(ancestor) &&
-        (hasStrictDirective(ancestor.statements) || ancestor.statements.some(isModuleSyntax))),
+        (hasStrictDirective(ancestor.statements) || isModuleFile(ancestor))),
   ) !== undefined;
 
 // Outside strict mode, a function with simple parameters has an arguments object that maps them,

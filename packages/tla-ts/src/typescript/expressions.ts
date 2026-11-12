@@ -30,6 +30,7 @@ import {
   isHeldError,
   isHeldErrorName,
   getArgumentsOwner,
+  isModuleFile,
   getSymbol,
   skipCasts,
   isScript,
@@ -2529,6 +2530,22 @@ const translateNode = (
     if (ts.isConstructorDeclaration(owner)) {
       throw new TlaTypeScriptError(`Unsupported expression: ${node.getText()}`, node);
     }
+    return getUndefined(context);
+  }
+  // A module's this is undefined, which an arrow function outside any other function reads too.
+  if (
+    node.kind === ts.SyntaxKind.ThisKeyword &&
+    ts.isSourceFile(
+      ts.findAncestor(
+        node.parent,
+        (ancestor) =>
+          ts.isSourceFile(ancestor) ||
+          (ts.isFunctionLike(ancestor) && !ts.isArrowFunction(ancestor)) ||
+          ts.isClassLike(ancestor),
+      ) ?? node,
+    ) &&
+    isModuleFile(node.getSourceFile())
+  ) {
     return getUndefined(context);
   }
   if (ts.isBigIntLiteral(node)) {

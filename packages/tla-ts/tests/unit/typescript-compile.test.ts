@@ -8297,6 +8297,24 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("reads a module's this as undefined, and stops on a script's", async () => {
+    const source = `
+      const box = { seen: 0 };
+      const read = () => this;
+      const value: unknown = await this;
+      if (value !== undefined || read() !== undefined || typeof this !== "undefined") throw new Error("this");
+      box.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("value !== undefined ||", "value === undefined ||");
+    expect((await checkModel(wrong)).failure?.message).toContain('"this"');
+    expect(() =>
+      compile(
+        "const box = { seen: 0 };\nconst read = () => this;\nif (read() !== undefined) box.seen = 1;",
+      ),
+    ).toThrow("spec.ts:2:20 Unsupported expression: this");
+  });
+
   it("runs a call that makes an object before a declaration reads it through another call", async () => {
     const source = `
       const box = { seen: 0 };

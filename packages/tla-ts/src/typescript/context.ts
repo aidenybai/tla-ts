@@ -126,6 +126,27 @@ export const hasObjectLiteral = (node: ts.Node): boolean =>
 // The function whose arguments object a reference to arguments names. tla-ts follows only a
 // reference that no arrow function holds, since an arrow function names the arguments of the
 // function around it, which a later call may have replaced.
+const isModuleSyntax = (statement: ts.Statement) =>
+  ts.isImportDeclaration(statement) ||
+  ts.isImportEqualsDeclaration(statement) ||
+  ts.isExportDeclaration(statement) ||
+  ts.isExportAssignment(statement) ||
+  (ts.canHaveModifiers(statement) &&
+    (ts.getModifiers(statement) ?? []).some(
+      (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
+    ));
+
+// An await that no function encloses.
+const hasTopLevelAwait = (node: ts.Node): boolean =>
+  ts.isAwaitExpression(node) ||
+  (ts.isForOfStatement(node) && node.awaitModifier !== undefined) ||
+  (!ts.isFunctionLike(node) && (ts.forEachChild(node, hasTopLevelAwait) ?? false));
+
+// A file that imports, exports, or awaits outside a function, which Node runs only as a module.
+// Node runs another file as a script where it strips its types.
+export const isModuleFile = (file: ts.SourceFile) =>
+  file.statements.some(isModuleSyntax) || hasTopLevelAwait(file);
+
 export const getArgumentsOwner = (node: ts.Node, checker: ts.TypeChecker) => {
   if (!ts.isIdentifier(node) || node.text !== "arguments") return undefined;
   const symbol = checker.getSymbolAtLocation(node);
