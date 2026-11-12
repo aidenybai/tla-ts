@@ -1,5 +1,6 @@
 import {
   getChildren,
+  getDefinitionExpressions,
   getReferencedName,
   type Assumption,
   type Declaration,
@@ -419,11 +420,7 @@ export const createEnvironment = (
 
   const rejectModuleLiterals = (module: Module): Module => {
     rejectLiterals([
-      ...module.definitions.flatMap((definition) =>
-        definition.kind === "Function"
-          ? [...definition.bounds.map((bound) => bound.set), definition.body]
-          : [definition.body],
-      ),
+      ...module.definitions.flatMap(getDefinitionExpressions),
       ...module.assumptions.map((assumption) => assumption.expression),
       ...module.theorems.flatMap((theorem) =>
         theorem.statement.kind === "AssumeProve" ? [] : [theorem.statement],

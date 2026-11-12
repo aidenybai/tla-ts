@@ -1,5 +1,6 @@
 import {
   getChildren,
+  getDefinitionExpressions,
   getReferencedName,
   isLocallyResolved,
   type Definition,
@@ -150,11 +151,6 @@ const collectLocalFacts = (
   expressions.forEach((expression) => visit(expression, true));
   return { row, edges };
 };
-
-const getDefinitionExpressions = (definition: Definition) =>
-  definition.kind === "Function"
-    ? [...definition.bounds.map((bound) => bound.set), definition.body]
-    : [definition.body];
 
 const closeRows = (local: Uint32Array, words: number, edges: Int32Array[], mask: number) => {
   const count = edges.length;

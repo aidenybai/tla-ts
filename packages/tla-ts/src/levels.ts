@@ -16,7 +16,7 @@ import {
   TlaSyntaxError,
   type SanyError,
 } from "./errors";
-import { mapChildren } from "./instances";
+import { forEachChild } from "./instances";
 import { collectSemanticErrors, getBoundNames, getPatternNames } from "./resolve";
 import { STANDARD_LEVELS } from "./standard-definitions";
 
@@ -753,10 +753,9 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         );
         return names;
       default:
-        mapChildren(expression, (child, bound) => {
-          visit(child, isNonLeibniz, bindFormals(scope, toFormals(bound)));
-          return child;
-        });
+        forEachChild(expression, (child, bound) =>
+          visit(child, isNonLeibniz, bindFormals(scope, toFormals(bound))),
+        );
         return names;
     }
   };

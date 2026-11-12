@@ -517,6 +517,11 @@ export interface Module {
   units: ModuleUnit[];
 }
 
+export const getDefinitionExpressions = (definition: Definition) =>
+  definition.kind === "Function"
+    ? [...definition.bounds.map((bound) => bound.set), definition.body]
+    : [definition.body];
+
 export const getChildren = (expression: Expression): Expression[] => {
   switch (expression.kind) {
     case "Number":
@@ -547,14 +552,7 @@ export const getChildren = (expression: Expression): Expression[] => {
         ...(expression.other ? [expression.other] : []),
       ];
     case "Let":
-      return [
-        ...expression.definitions.flatMap((definition) =>
-          definition.kind === "Function"
-            ? [...definition.bounds.map((bound) => bound.set), definition.body]
-            : [definition.body],
-        ),
-        expression.body,
-      ];
+      return [...expression.definitions.flatMap(getDefinitionExpressions), expression.body];
     case "Forall":
     case "Exists":
       return [...expression.bounds.map((bound) => bound.set), expression.body];

@@ -229,6 +229,16 @@ export const mapChildren = (
   }
 };
 
+export const forEachChild = (
+  expression: Expression,
+  visit: (child: Expression, bound: string[]) => void,
+): void => {
+  mapChildren(expression, (child, bound) => {
+    visit(child, bound);
+    return child;
+  });
+};
+
 interface Instantiation {
   params: OperatorParam[];
   substitutions: Map<string, Expression>;
@@ -283,12 +293,11 @@ const isBoundOnce = (replacement: Expression, instantiation: Instantiation) => {
 const getFreeNames = (expression: Expression, bound = new Set<string>()): string[] => {
   const name = getReferencedName(expression);
   const names = name === undefined || bound.has(name) ? [] : [name];
-  mapChildren(expression, (child, childBound) => {
+  forEachChild(expression, (child, childBound) =>
     names.push(
       ...getFreeNames(child, childBound.length === 0 ? bound : new Set([...bound, ...childBound])),
-    );
-    return child;
-  });
+    ),
+  );
   return names;
 };
 
