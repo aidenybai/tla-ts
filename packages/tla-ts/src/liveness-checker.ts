@@ -386,37 +386,40 @@ export const createLivenessChecker = (
 
   // TLC iterates a state's successors and the state itself in the slot order of a SetOfStates, a hash set whose capacity grows with every set that outgrows it.
   const getSuccessorSet = (index: number, state: Value[], successors: LiveSuccessor[]) => {
-    let successorSlots = new Array<LiveSuccessor | undefined>(
-      SUCCESSOR_CAPACITY * capacityMultiplier,
-    ).fill(undefined);
+    const source = { index, state };
+    // Slots hold positions in successors, where successors.length stands for the source state.
+    const getEntry = (position: number) =>
+      position === successors.length ? source : successors[position];
+    let successorSlots = new Int32Array(SUCCESSOR_CAPACITY * capacityMultiplier).fill(-1);
     let successorCount = 0;
-    const insertSuccessor = (slots: (LiveSuccessor | undefined)[], successor: LiveSuccessor) => {
+    const insertSuccessor = (slots: Int32Array, position: number) => {
+      const successor = getEntry(position);
       for (
         let slot = (search.getFingerprint(successor) & 0x7fffffff) % slots.length;
         ;
         slot = (slot + 1) % slots.length
       ) {
-        const entry = slots[slot];
-        if (entry === undefined) {
-          slots[slot] = successor;
+        if (slots[slot] === -1) {
+          slots[slot] = position;
           return true;
         }
+        const entry = getEntry(slots[slot]);
         if (entry.index === successor.index && isSameState(entry.state, successor.state))
           return false;
       }
     };
-    const addSuccessor = (successor: LiveSuccessor) => {
+    for (let position = 0; position <= successors.length; position++) {
       if (successorCount >= successorSlots.length >> 1) {
         const old = successorSlots;
-        successorSlots = new Array<LiveSuccessor | undefined>(2 * old.length + 1).fill(undefined);
-        for (const entry of old) if (entry) insertSuccessor(successorSlots, entry);
+        successorSlots = new Int32Array(2 * old.length + 1).fill(-1);
+        for (const entry of old) if (entry !== -1) insertSuccessor(successorSlots, entry);
       }
-      if (insertSuccessor(successorSlots, successor)) successorCount++;
-    };
-    successors.forEach(addSuccessor);
-    addSuccessor({ index, state });
+      if (insertSuccessor(successorSlots, position)) successorCount++;
+    }
     if (successorSlots.length > SUCCESSOR_CAPACITY * capacityMultiplier) capacityMultiplier++;
-    return successorSlots.filter((entry): entry is LiveSuccessor => entry !== undefined);
+    const set: LiveSuccessor[] = [];
+    for (const entry of successorSlots) if (entry !== -1) set.push(getEntry(entry));
+    return set;
   };
 
   const expandLate = (
