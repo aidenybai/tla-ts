@@ -615,6 +615,22 @@ const readsThis = (node: ts.Node): boolean =>
   (!(ts.isFunctionLike(node) && !ts.isArrowFunction(node)) &&
     (ts.forEachChild(node, (child) => readsThis(child) || undefined) ?? false));
 
+// The array methods that pass the array they visit to their callback.
+const ARRAY_CALLBACK_METHODS = new Set([
+  "every",
+  "filter",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+  "flatMap",
+  "forEach",
+  "map",
+  "reduce",
+  "reduceRight",
+  "some",
+]);
+
 // A function that a test declares and passes by name, once, takes the parameter types of the
 // callback it's passed as, such as an array method's (value, index, array), which usage alone
 // doesn't give.
@@ -648,6 +664,49 @@ const typeCallbacks = () => {
       !passed.parent.arguments?.includes(passed)
     ) {
       return;
+    }
+    // An array method that a test calls on an object passes that object as the callback's array
+    // parameter, as reduce's fourth and the others' third, which takes the object's type.
+    const call = passed.parent;
+    const callee = call.expression;
+    const method =
+      ts.isCallExpression(call) &&
+      call.arguments[1] === passed &&
+      ts.isPropertyAccessExpression(callee) &&
+      callee.name.text === "call" &&
+      ts.isPropertyAccessExpression(callee.expression) &&
+      /^(?:Array\.prototype|\[\])$/.test(callee.expression.expression.getText())
+        ? callee.expression.name.text
+        : undefined;
+    const arrayParameter =
+      method === undefined || !ARRAY_CALLBACK_METHODS.has(method)
+        ? undefined
+        : declaration.parameters.at(method.startsWith("reduce") ? 3 : 2);
+    const receiver = ts.isCallExpression(call) ? call.arguments[0] : undefined;
+    const receiverType =
+      receiver === undefined
+        ? "any"
+        : ts.isIdentifier(receiver) &&
+            receiver.text !== "arguments" &&
+            declaration.parameters.every((parameter) => parameter.name.getText() !== receiver.text)
+          ? `typeof ${receiver.text}`
+          : checker
+              .typeToString(
+                checker.getTypeAtLocation(receiver),
+                undefined,
+                ts.TypeFormatFlags.NoTruncation,
+              )
+              // An empty object literal gets properties after it's made.
+              .replace(/^\{\}$/, "{ [key: string | symbol]: unknown }");
+    if (
+      arrayParameter !== undefined &&
+      arrayParameter.type === undefined &&
+      ts.isIdentifier(arrayParameter.name) &&
+      !/\bany\b/.test(receiverType)
+    ) {
+      edits.set(arrayParameter.name.getEnd(), `: ${receiverType}`);
+      // The method's own type takes an array there, which the object isn't.
+      edits.set(passed.getEnd(), " as (...args: unknown[]) => unknown");
     }
     const signatures = checker.getContextualType(passed)?.getCallSignatures() ?? [];
     if (signatures.length !== 1) return;
