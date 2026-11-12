@@ -4687,6 +4687,21 @@ describe("errors", () => {
     expect((await checkModel(getSource("!=="))).failure?.message).toContain('"small"');
   });
 
+  it("stops where something besides its one call names a factory with variables", () => {
+    expect(() =>
+      compile(`
+        const createCount = (start: number) => {
+          let count = start;
+          return () => ++count;
+        };
+        const first = createCount(0);
+        const tools = { createCount };
+        const second = tools.createCount(10);
+        if (first() !== 1 || second() !== 11) throw new Error("count");
+      `),
+    ).toThrow("Unsupported expression");
+  });
+
   it("gives the number an increment reads or writes", async () => {
     const result = await checkModel(`
       let x = 5;

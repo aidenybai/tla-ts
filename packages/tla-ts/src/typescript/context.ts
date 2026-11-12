@@ -1895,11 +1895,17 @@ export const getFactoryCall = (
         statement !== undefined &&
         ts.isVariableStatement(statement) &&
         ts.isSourceFile(statement.parent) &&
-        findNodes(
-          node.getSourceFile(),
-          (inner): inner is ts.Identifier =>
-            ts.isIdentifier(inner) && getSymbol(inner, context.checker) === factorySymbol,
-        ).length === 2));
+        // Nothing else names the factory, not even a shorthand property, so nothing calls it again.
+        findNodes(node.getSourceFile(), ts.isIdentifier).every(
+          (inner) =>
+            inner === node.expression ||
+            (factorySymbol?.declarations ?? []).some(
+              (declaration) => ts.getNameOfDeclaration(declaration) === inner,
+            ) ||
+            (ts.isShorthandPropertyAssignment(inner.parent)
+              ? context.checker.getShorthandAssignmentValueSymbol(inner.parent)
+              : getSymbol(inner, context.checker)) !== factorySymbol,
+        )));
   const expression =
     returned !== undefined && ts.isReturnStatement(returned) ? returned.expression : undefined;
   const closure =
