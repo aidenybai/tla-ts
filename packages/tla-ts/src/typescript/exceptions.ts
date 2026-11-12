@@ -274,9 +274,14 @@ export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, con
   if (!isCaught(node.left, context)) {
     throw new TlaTypeScriptError("instanceof needs an error or a caught value", node);
   }
-  // A caught object on the heap may inherit from an error's prototype, which tla-ts doesn't tell.
+  // Every error class's prototype inherits from Error.prototype, so a caught object on the heap that
+  // doesn't is no error's instance. tla-ts doesn't tell the class of one that does.
   return share(value, "caught", context, (caught) =>
-    useJavaScript("IsInstanceOfError", [caught, subclasses, string(node.right.getText())], context),
+    useJavaScript(
+      "IsInstanceOfError",
+      [getHeap(scope, node, context), caught, subclasses, string(node.right.getText())],
+      context,
+    ),
   );
 };
 

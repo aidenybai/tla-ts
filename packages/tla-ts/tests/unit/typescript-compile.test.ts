@@ -6272,13 +6272,26 @@ describe("errors", () => {
 
   it("stops where it can't tell whether a promise's reason is an instance of an error", async () => {
     const result = await checkModel(`
-      Promise.reject({}).catch((error) => {
+      const reason: object = Object.create(TypeError.prototype);
+      Promise.reject(reason).catch((error) => {
         if (error instanceof TypeError) throw new Error("no");
       });
     `);
     expect(result.failure?.message).toContain(
       "tla-ts can't tell whether this object is an instance",
     );
+    const getSource = (expected: string) => `
+      let seen = "";
+      Promise.reject({})
+        .catch((error) => {
+          seen = error instanceof TypeError ? "type" : "plain";
+        })
+        .then(() => {
+          if (seen !== "${expected}") throw new Error(seen);
+        });
+    `;
+    expect((await checkModel(getSource("plain"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("type"))).failure).toBeDefined();
   });
 
   it("runs a script's constructor with the executor of a promise capability", async () => {

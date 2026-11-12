@@ -967,13 +967,6 @@ IsError(value) ==
                                      {"constructor", "errors", "message", "name"},
                                      {"constructor", "message", "name", "error", "suppressed"}}
 
-\\* Whether a value that may be any value is an error that one of the constructors made.
-IsInstanceOfError(value, constructors, name) ==
-  CASE IsRef(value) ->
-         Assert(FALSE, "tla-ts can't tell whether this object is an instance of " \\o name)
-    [] IsError(value) -> value.constructor \\in constructors
-    [] OTHER -> FALSE
-
 \\* An error inherits its other properties from its constructor's prototype. The message of an error
 \\* that JavaScript throws differs between engines, and tla-ts gives it none. A script can't read or
 \\* change the prototype of an error class that isn't an object tla-ts holds, so its constructor
@@ -1288,6 +1281,14 @@ InheritsFrom(heap, owner, value) ==
   CASE IsRef(value) -> IsPrototypeOf(heap, owner, value)
     [] value = Null \\/ TypeOf(value) \\notin {"object", "function"} -> FALSE
     [] OTHER -> Assert(FALSE, "tla-ts can't tell what this value inherits from")
+
+\\* Whether a value that may be any value is an error that one of the constructors made.
+IsInstanceOfError(heap, value, constructors, name) ==
+  CASE IsRef(value) /\\ ~IsPrototypeOf(heap, Ref :> "Error.prototype", value) -> FALSE
+    [] IsRef(value) ->
+         Assert(FALSE, "tla-ts can't tell whether this object is an instance of " \\o name)
+    [] IsError(value) -> value.constructor \\in constructors
+    [] OTHER -> FALSE
 
 CanDelete(heap, ref, key) ==
   LET object == Lookup(heap, ref)
