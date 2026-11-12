@@ -16,7 +16,7 @@ import {
 import type { Expression } from "../ast";
 import { TlaTypeScriptError } from "../errors";
 import { translateElements, translateExpression, translateSetKey } from "./expressions";
-import { mayThrow, translateBody } from "./functions";
+import { callStateOperator, mayThrow, translateBody } from "./functions";
 import { DATE_FIELDS, getHeap, getPrototypeMethod, isDateType, TIME_METHODS } from "./heap";
 import {
   isBuiltInObject,
@@ -158,8 +158,50 @@ const getCallback = (callback: ts.Expression, outer: Scope, context: Context) =>
   };
 };
 
-const translateCallback = (callback: ts.Expression, scope: Scope, context: Context) =>
-  translateBody(getCallback(callback, scope, context).body, scope, context);
+const translateCallback = (callback: ts.Expression, scope: Scope, context: Context) => {
+  const found = getCallback(callback, scope, context);
+  const callee = getCallbackFunction(callback, scope, context);
+  const declaration =
+    callee === undefined || ts.isFunctionDeclaration(callee)
+      ? callee
+      : ts.isVariableDeclaration(callee.parent)
+        ? callee.parent
+        : undefined;
+  if (
+    callee === undefined ||
+    declaration === undefined ||
+    ts.findAncestor(declaration.parent, ts.isFunctionLike) !== undefined
+  ) {
+    return translateBody(found.body, scope, context);
+  }
+  if (!context.inProgress.has(callee)) {
+    context.inProgress.add(callee);
+    const value = translateBody(found.body, scope, context);
+    context.inProgress.delete(callee);
+    return value;
+  }
+  // A top-level function that runs from inside itself as a callback calls itself, as a call in its
+  // body would.
+  const values = found.parameters.map((parameter) =>
+    ts.isIdentifier(parameter.name) &&
+    context.checker.getTypeAtLocation(parameter.name).getCallSignatures().length === 0
+      ? translateExpression(parameter.name, scope, context)
+      : undefined,
+  );
+  if (values.includes(undefined)) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't pass this function to an array method from inside itself",
+      callback,
+    );
+  }
+  return callStateOperator(
+    declaration,
+    callee,
+    values.flatMap((value) => value ?? []),
+    scope,
+    context,
+  );
+};
 
 const translateTest = (callback: ts.Expression, scope: Scope, context: Context) => {
   const callee = getCallbackFunction(callback, scope, context);

@@ -405,18 +405,17 @@ const translateOperatorArgument = (
 // A call to a helper that calls itself where a statement changed the state that it reads, which
 // runs an operator that takes that state, so that each call reads the state as it is there. A
 // parameter's default stands where the call passes undefined.
-const translateStateCall = (
+// A call of a function from inside itself, as a recursive operator that takes the state that the
+// call reads and the values that it passes.
+export const callStateOperator = (
   declaration: HelperDeclaration,
   callee: FunctionNode,
-  node: ts.CallExpression,
+  values: readonly Expression[],
   scope: Scope,
   context: Context,
 ) => {
   const body = callee.body;
   if (body === undefined) throw new TlaTypeScriptError("Give this a body", callee);
-  if (node.arguments.some(ts.isSpreadElement)) {
-    throw new TlaTypeScriptError("tla-ts can't spread the arguments of a call to itself", node);
-  }
   const variables = [...context.variables];
   const definition =
     context.stateCalls.get(callee) ??
@@ -490,16 +489,31 @@ const translateStateCall = (
       );
       return made;
     })();
+  return call(definition.name, [
+    ...variables.map((entry) => scope.bindings.get(entry[0]) ?? entry[1]),
+    ...callee.parameters.map((_, position) => values[position] ?? getUndefined(context)),
+  ]);
+};
+
+const translateStateCall = (
+  declaration: HelperDeclaration,
+  callee: FunctionNode,
+  node: ts.CallExpression,
+  scope: Scope,
+  context: Context,
+) => {
+  if (node.arguments.some(ts.isSpreadElement)) {
+    throw new TlaTypeScriptError("tla-ts can't spread the arguments of a call to itself", node);
+  }
   const values = shareArguments(
     node.arguments.map((argument) => translateExpression(argument, scope, context)),
     context,
   );
-  const operands = [
-    ...variables.map((entry) => scope.bindings.get(entry[0]) ?? entry[1]),
-    ...callee.parameters.map((_, position) => values.shared[position] ?? getUndefined(context)),
-  ];
   return render(
-    values.evaluate(leaf(call(definition.name, operands)), leaf(getUndefined(context))),
+    values.evaluate(
+      leaf(callStateOperator(declaration, callee, values.shared, scope, context)),
+      leaf(getUndefined(context)),
+    ),
   );
 };
 

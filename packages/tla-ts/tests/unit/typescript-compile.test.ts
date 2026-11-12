@@ -4733,6 +4733,33 @@ describe("errors", () => {
     );
   });
 
+  it("runs a function that passes itself to an array method", async () => {
+    const getSource = (limit: string) => `
+      interface Branch { kind: "branch"; items: Value[] }
+      type Value = number | Branch;
+      const isSmall = (value: Value): boolean => {
+        if (typeof value === "number") return value < ${limit};
+        switch (value.kind) {
+          case "branch":
+            return value.items.every(isSmall);
+        }
+      };
+      const tree: Branch = { kind: "branch", items: [1, { kind: "branch", items: [2, 3] }] };
+      if (!isSmall(tree)) throw new Error("small");
+    `;
+    expect((await checkModel(getSource("5"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("3"))).failure?.message).toContain('"small"');
+    expect(() =>
+      compile(`
+        interface Branch { value: number; children: Branch[] }
+        const isSmall = ({ value, children }: Branch): boolean =>
+          value < 5 && children.every(isSmall);
+        const tree: Branch = { value: 1, children: [{ value: 2, children: [] }] };
+        if (!isSmall(tree)) throw new Error("small");
+      `),
+    ).toThrow("tla-ts can't pass this function to an array method from inside itself");
+  });
+
   it("stops where something besides its one call names a factory with variables", () => {
     expect(() =>
       compile(`
