@@ -450,12 +450,12 @@ describe("top-level statements", () => {
           count = 2;
         },
       });
-      Object.defineProperty(holder, "pair", {
-        set: function (first: unknown, second?: unknown) {
+      Object.defineProperty(holder, "arrow", {
+        set: (value: unknown) => {
           count = 1;
         },
       });
-      holder.pair = 1;
+      holder.arrow = 1;
       if (count !== 1) throw new Error("the setter didn't run");
     `);
     expect(result.failure?.message).toContain("tla-ts can't call setters");
