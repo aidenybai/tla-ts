@@ -2536,6 +2536,7 @@ const translateSelfCall = (
   context: Context,
   frame: Frame,
   continueWith: (path: Path, value?: Expression) => Formula,
+  argumentValues?: Expression[],
 ): Formula => {
   const parameters = getParameters(callee);
   const body = callee.body;
@@ -2587,7 +2588,8 @@ const translateSelfCall = (
     },
   });
   const values = shareArguments(
-    argumentNodes.map((argument) => translateExpression(argument, path.scope, context)),
+    argumentValues ??
+      argumentNodes.map((argument) => translateExpression(argument, path.scope, context)),
     context,
   );
   const result = context.names.getFresh("result");
@@ -3985,6 +3987,22 @@ const translateLoopCall = (
           ? translateExpression(receiver, current.scope, context)
           : sequence,
     ];
+    const afterCallback = getAfterCallback(element);
+    const callbackReceiver = getCallbackReceiver(loop.argument, callback, current.scope, context);
+    // A callback that the method runs from inside itself calls itself, as a call in it would.
+    if (frame.inlining.has(callback)) {
+      return translateSelfCall(
+        loop.argument,
+        callback,
+        [],
+        callbackReceiver,
+        current,
+        context,
+        { ...frame, throwTo },
+        afterCallback,
+        passed.slice(0, callbackParameters.length),
+      );
+    }
     const bound = allocateArguments(
       callback,
       passed,
@@ -3992,17 +4010,13 @@ const translateLoopCall = (
       bindValues(callbackParameters, passed, current.scope, context),
       context,
     );
-    const afterCallback = getAfterCallback(element);
     return letIn(
       bound.definitions,
       translateStatements(
         statements,
         {
           ...current,
-          scope: {
-            ...bound.scope,
-            receiver: getCallbackReceiver(loop.argument, callback, current.scope, context),
-          },
+          scope: { ...bound.scope, receiver: callbackReceiver },
         },
         context,
         {
@@ -6026,8 +6040,13 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
       ts.isForOfStatement(node) && !ts.isVariableDeclarationList(node.initializer)
         ? node.initializer
         : getWritten(node);
+    // A write to a property of an object in the heap changes the heap, not the name that holds it.
     if (written !== undefined) {
-      getWrittenSymbols(written, context).forEach((symbol) => changed.add(symbol));
+      getWrittenRoots(written).forEach((root) => {
+        const symbol = ts.isIdentifier(root) ? getSymbol(root, context.checker) : undefined;
+        const isProperty = root !== written && getKind(root, context) === "object";
+        if (symbol !== undefined && !isProperty) changed.add(symbol);
+      });
     }
     const isHeapChanged =
       getArgumentsOwner(node, context.checker) !== undefined ||
@@ -8207,7 +8226,9 @@ export const translateStatements = (
       }
       if (
         ts.isCallExpression(returned) &&
-        (!isLibraryCall(returned, context) || isPromiseCall(returned, context))
+        (!isLibraryCall(returned, context) ||
+          isPromiseCall(returned, context) ||
+          getLoopCall(returned, inner, context) !== undefined)
       ) {
         return translateCallStatement(returned, inner, context, frame, frame.exit);
       }

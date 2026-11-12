@@ -3598,6 +3598,24 @@ describe("errors", () => {
     );
   });
 
+  it("returns what an array method gives whose callback calls the function it's in", async () => {
+    const getSource = (isInnerMarked: string) => `
+      interface Branch { kind: "branch"; items: Value[]; marked: boolean }
+      type Value = number | Branch;
+      const mark = (value: Value): void => {
+        if (typeof value !== "object") return;
+        value.marked = true;
+        return value.items.forEach(mark);
+      };
+      const inner: Branch = { kind: "branch", items: [2], marked: false };
+      const tree: Branch = { kind: "branch", items: [1, inner], marked: false };
+      mark(tree);
+      if (!tree.marked || ${isInnerMarked}inner.marked) throw new Error("marked");
+    `;
+    expect((await checkModel(getSource("!"))).failure).toBeUndefined();
+    expect((await checkModel(getSource(""))).failure?.message).toContain('"marked"');
+  });
+
   it("evaluates a function's defaults on each call", async () => {
     const getSource = (check: string) => `
       let count = 0;
