@@ -50,6 +50,8 @@ import {
   getParameters,
   getRunConstructor,
   getSetters,
+  getPropertySetters,
+  getWrittenProperties,
   changesState,
   getArgumentsOwner,
   getSymbol,
@@ -190,6 +192,7 @@ import {
   read,
   readPatternGetters,
   readWith,
+  writeWith,
   runGetterRead,
   runProxyOperation,
 } from "./protocols";
@@ -711,6 +714,16 @@ const assign = (
   };
 };
 
+// Writes one target of a pattern, then continues.
+interface TargetAssigner<Result> {
+  (
+    target: ts.Expression,
+    value: Expression,
+    path: Path,
+    continueWith: (path: Path) => Result,
+  ): Result;
+}
+
 // Assigns a value to a target, or to each target in a destructuring pattern. Every value is read
 // before any target changes, so [a, b] = [b, a] swaps.
 const getDefaultedTarget = (node: ts.Expression) =>
@@ -718,13 +731,15 @@ const getDefaultedTarget = (node: ts.Expression) =>
     ? { target: node.left, initializer: node.right }
     : { target: node, initializer: undefined };
 
-const assignPattern = (
+const assignPattern = <Result>(
   target: ts.Expression,
   source: ts.Expression | undefined,
   value: Expression,
   path: Path,
   context: Context,
-): Path => {
+  assignTarget: TargetAssigner<Result>,
+  continueWith: (path: Path) => Result,
+): Result => {
   if (ts.isArrayLiteralExpression(target)) {
     // A pattern destructures a list where it took values from an iterator, or where a rest element
     // made the array.
@@ -738,8 +753,11 @@ const assignPattern = (
     if (!isList && isUntypedPattern(target, context)) {
       throw new TlaTypeScriptError("Give this pattern's value an array type", target);
     }
-    return target.elements.reduce((current, element, position) => {
-      if (ts.isOmittedExpression(element)) return current;
+    const assignFrom = (position: number, current: Path): Result => {
+      if (position === target.elements.length) return continueWith(current);
+      const element = target.elements[position];
+      const next = (after: Path) => assignFrom(position + 1, after);
+      if (ts.isOmittedExpression(element)) return next(current);
       if (ts.isSpreadElement(element)) {
         const restTarget = element.expression;
         const rest = apply("SubSeq", [value, number(position + 1), apply("Len", [value])]);
@@ -751,7 +769,7 @@ const assignPattern = (
           throw new TlaTypeScriptError("Rest elements can't be assigned", element);
         }
         if (ts.isArrayLiteralExpression(restTarget)) {
-          return assignPattern(restTarget, undefined, rest, current, context);
+          return assignPattern(restTarget, undefined, rest, current, context, assignTarget, next);
         }
         // An array that a rest element makes is new, which a script that reads it only through
         // its properties can't tell from a list.
@@ -779,7 +797,7 @@ const assignPattern = (
             element,
           );
         }
-        return assign(restTarget, current, context, () => rest);
+        return assignTarget(restTarget, rest, current, next);
       }
       const defaulted = getDefaultedTarget(element);
       const sourceElement =
@@ -800,8 +818,11 @@ const assignPattern = (
         ),
         current,
         context,
+        assignTarget,
+        next,
       );
-    }, path);
+    };
+    return assignFrom(0, path);
   }
   if (ts.isObjectLiteralExpression(target)) {
     const isHeapObject = isHeapPattern(
@@ -809,8 +830,37 @@ const assignPattern = (
       target,
       context,
     );
-    const assigned = target.properties.reduce((current, property, position) => {
-      const heapSymbol = context.heap;
+    // The heap after the pattern reads its properties, which the statement evaluates.
+    const keys = target.properties.flatMap((property) =>
+      property.name !== undefined && ts.isIdentifier(property.name)
+        ? [string(property.name.text)]
+        : [],
+    );
+    const heapSymbol = context.heap;
+    const assignFrom = (position: number, current: Path): Result => {
+      if (position === target.properties.length) {
+        return heapSymbol === undefined || !isHeapObject
+          ? continueWith(current)
+          : continueWith({
+              ...current,
+              scope: {
+                ...current.scope,
+                bindings: new Map([
+                  ...current.scope.bindings,
+                  [
+                    heapSymbol,
+                    useJavaScript(
+                      "ReadKeys",
+                      [getHeap(current.scope, target, context), value, set(keys)],
+                      context,
+                    ),
+                  ],
+                ]),
+              },
+            });
+      }
+      const property = target.properties[position];
+      const next = (after: Path) => assignFrom(position + 1, after);
       // A new object with the properties that the other properties don't name.
       if (
         ts.isSpreadAssignment(property) &&
@@ -830,8 +880,9 @@ const assignPattern = (
           [heap, useJavaScript("RestObject", [heap, value, set(excluded), tuple([])], context)],
           context,
         );
-        return assign(
+        return assignTarget(
           property.expression,
+          useJavaScript("Allocated", [allocated], context),
           {
             ...current,
             scope: {
@@ -839,8 +890,7 @@ const assignPattern = (
               bindings: new Map([...current.scope.bindings, [heapSymbol, allocated]]),
             },
           },
-          context,
-          () => useJavaScript("Allocated", [allocated], context),
+          next,
         );
       }
       if (
@@ -868,31 +918,76 @@ const assignPattern = (
         getDefaulted(part, defaulted.initializer, current.scope, context),
         current,
         context,
+        assignTarget,
+        next,
       );
-    }, path);
-    // The heap after the pattern reads its properties, which the statement evaluates.
-    const heapSymbol = context.heap;
-    if (heapSymbol === undefined || !isHeapObject) return assigned;
-    const keys = target.properties.flatMap((property) =>
-      property.name !== undefined && ts.isIdentifier(property.name)
-        ? [string(property.name.text)]
-        : [],
-    );
-    const read = useJavaScript(
-      "ReadKeys",
-      [getHeap(assigned.scope, target, context), value, set(keys)],
-      context,
-    );
-    return {
-      ...assigned,
-      scope: {
-        ...assigned.scope,
-        bindings: new Map([...assigned.scope.bindings, [heapSymbol, read]]),
-      },
     };
+    return assignFrom(0, path);
   }
-  return assign(target, path, context, () => value);
+  return assignTarget(target, value, path, continueWith);
 };
+
+// Assigns a value to a target, or to each target in a pattern, where no setter runs.
+const assignAll = (
+  target: ts.Expression,
+  source: ts.Expression | undefined,
+  value: Expression,
+  path: Path,
+  context: Context,
+) =>
+  assignPattern<Path>(
+    target,
+    source,
+    value,
+    path,
+    context,
+    (inner, innerValue, current, next) => next(assign(inner, current, context, () => innerValue)),
+    (after) => after,
+  );
+
+// Assigns as assignAll does, and runs the setter that a property it writes holds.
+const assignPatternWith = (
+  site: ts.Node,
+  target: ts.Expression,
+  source: ts.Expression | undefined,
+  value: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+) =>
+  assignPattern(
+    target,
+    source,
+    value,
+    path,
+    context,
+    (inner, innerValue, current, next) => {
+      const setters =
+        ts.isPropertyAccessExpression(inner) || ts.isElementAccessExpression(inner)
+          ? getPropertySetters(inner, context).filter((setter) => !frame.inlining.has(setter))
+          : [];
+      const write = setters.length === 0 ? undefined : getHeapWrite(inner, current, context);
+      return write === undefined
+        ? next(assign(inner, current, context, () => innerValue))
+        : writeWith(
+            site,
+            write.ref,
+            write.key,
+            innerValue,
+            setters,
+            current,
+            context,
+            frame,
+            (after) =>
+              next({
+                ...after,
+                isAssigned: after.isAssigned || context.variables.has(write.symbol),
+              }),
+          );
+    },
+    continueWith,
+  );
 
 // The value that a call like queue.shift() returns, before it changes the queue.
 const getRemovedValue = (
@@ -988,7 +1083,7 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
       return { ...path, scope: { ...path.scope, functions } };
     }
     const value = translateExpression(expression.right, path.scope, context);
-    const after = assignPattern(expression.left, expression.right, value, path, context);
+    const after = assignAll(expression.left, expression.right, value, path, context);
     if (symbol === undefined || !after.scope.functions.has(symbol)) return after;
     const functions = new Map(after.scope.functions);
     functions.delete(symbol);
@@ -4878,8 +4973,15 @@ const translateExpressionStatement = (
     ts.isBinaryExpression(expression)
   ) {
     return translatePromiseConstruction(newAssigned, path, context, frame, (after, value) =>
-      continueWith(
-        assignPattern(expression.left, newAssigned, value ?? getUndefined(context), after, context),
+      assignPatternWith(
+        expression,
+        expression.left,
+        newAssigned,
+        value ?? getUndefined(context),
+        after,
+        context,
+        frame,
+        continueWith,
       ),
     );
   }
@@ -4896,14 +4998,15 @@ const translateExpressionStatement = (
       context,
       frame,
       (after, value) =>
-        continueWith(
-          assignPattern(
-            expression.left,
-            newAssigned,
-            value ?? getUndefined(context),
-            after,
-            context,
-          ),
+        assignPatternWith(
+          expression,
+          expression.left,
+          newAssigned,
+          value ?? getUndefined(context),
+          after,
+          context,
+          frame,
+          continueWith,
         ),
     );
   }
@@ -4921,7 +5024,8 @@ const translateExpressionStatement = (
       path,
       context,
       frame,
-      (after, values) => continueWith(assignPattern(left, undefined, values, after, context)),
+      (after, values) =>
+        assignPatternWith(expression, left, undefined, values, after, context, frame, continueWith),
     );
     if (taken !== undefined) return taken;
   }
@@ -4937,8 +5041,15 @@ const translateExpressionStatement = (
   ) {
     const right = assignedCall;
     return translateCallStatement(right, path, context, frame, (after, value) =>
-      continueWith(
-        assignPattern(expression.left, right, value ?? getUndefined(context), after, context),
+      assignPatternWith(
+        expression,
+        expression.left,
+        right,
+        value ?? getUndefined(context),
+        after,
+        context,
+        frame,
+        continueWith,
       ),
     );
   }
@@ -4975,6 +5086,27 @@ const translateExpressionStatement = (
     return context.heap === undefined
       ? continueWith(path)
       : ifThenElse(apply("=", [value, value]), continueWith(path), leaf(boolean(false)));
+  }
+  // A pattern that writes a property runs the setter that the property holds.
+  if (
+    ts.isBinaryExpression(expression) &&
+    expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    (ts.isArrayLiteralExpression(expression.left) ||
+      ts.isObjectLiteralExpression(expression.left)) &&
+    getWrittenProperties(expression.left).some(
+      (property) => getPropertySetters(property, context).length > 0,
+    )
+  ) {
+    return assignPatternWith(
+      expression,
+      expression.left,
+      expression.right,
+      translateExpression(expression.right, path.scope, context),
+      path,
+      context,
+      frame,
+      continueWith,
+    );
   }
   const assigned = getAssignedPath(expression, path, context);
   if (assigned === undefined) {
@@ -5834,10 +5966,11 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
       });
     }
     const setters =
-      written !== undefined &&
-      (ts.isPropertyAccessExpression(written) || ts.isElementAccessExpression(written))
-        ? [getAssignedSetter(node, context) ?? [], getSetters(node, context)].flat()
-        : [];
+      written === undefined
+        ? []
+        : getWrittenProperties(written).flatMap((property) =>
+            getPropertySetters(property, context),
+          );
     setters.forEach((setter) => {
       if (visited.has(setter)) return;
       visited.add(setter);
@@ -5964,7 +6097,16 @@ const bindIteration = (
   continueWith: (path: Path) => Formula,
 ): Formula => {
   if (!ts.isVariableDeclarationList(declared)) {
-    return continueWith(assignPattern(declared, undefined, element, path, context));
+    return assignPatternWith(
+      declared.parent,
+      declared,
+      undefined,
+      element,
+      path,
+      context,
+      frame,
+      continueWith,
+    );
   }
   if (declared.declarations.length !== 1) {
     throw new TlaTypeScriptError("Declare one element of a for-of", declared);

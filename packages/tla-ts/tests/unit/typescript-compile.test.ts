@@ -2218,6 +2218,42 @@ describe("errors", () => {
     expect((await checkModel(getSource("data"))).failure?.message).toContain("unexpected");
   });
 
+  it("runs the setters of the properties that a pattern or a for-of head writes", async () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const x = {
+        set y(value: unknown) {
+          log += "y" + String(value);
+        },
+        set z(value: unknown) {
+          log += "z" + String(value);
+        },
+      };
+      const plain: { w?: number } = {};
+      const thrower = {
+        set y(_: unknown) {
+          throw new RangeError("set");
+        },
+      };
+      [x.y, { a: x.z = 7 }, plain.w] = [1, {}, 3] as [number, { a?: number }, number];
+      for (x.y of [2]) log += "-";
+      let counter = 0;
+      let isThrown = false;
+      try {
+        for ({ a: thrower.y } of [{ a: 23 }]) counter += 1;
+        counter += 1;
+      } catch (error) {
+        isThrown = error instanceof RangeError;
+      }
+      const getLog = (): string => log;
+      if (getLog() !== "${expected}" || plain.w !== 3 || counter !== 0 || !isThrown) {
+        throw new Error("unexpected");
+      }
+    `;
+    expect((await checkModel(getSource("y1z7y2-"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("z7y1y2-"))).failure?.message).toContain("unexpected");
+  });
+
   it("runs the setter of an object literal or a class that a computed key picks", async () => {
     const getSource = (written: string) => `
       let log = "";

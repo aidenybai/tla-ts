@@ -1216,7 +1216,11 @@ const getNameKey = (name: ts.Node) =>
 
 // The keys that a write may pick, or undefined where its key's type allows any.
 const getWrittenKeys = (node: ts.Node, context: Context) => {
-  const target = ts.isBinaryExpression(node) ? skipCasts(node.left) : undefined;
+  const target = ts.isBinaryExpression(node)
+    ? skipCasts(node.left)
+    : ts.isExpression(node)
+      ? skipCasts(node)
+      : undefined;
   if (target !== undefined && ts.isPropertyAccessExpression(target)) return [target.name.text];
   const key =
     target !== undefined && ts.isElementAccessExpression(target)
@@ -1250,6 +1254,38 @@ export const getSetters = (node: ts.Node, context: Context) => {
       ),
   );
 };
+
+// The properties that an assignment's target writes, alone or in a pattern.
+export const getWrittenProperties = (
+  target: ts.Node,
+): (ts.PropertyAccessExpression | ts.ElementAccessExpression)[] =>
+  ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)
+    ? [target]
+    : ts.isParenthesizedExpression(target) ||
+        ts.isSpreadElement(target) ||
+        ts.isSpreadAssignment(target)
+      ? getWrittenProperties(target.expression)
+      : ts.isBinaryExpression(target) && target.operatorToken.kind === ts.SyntaxKind.EqualsToken
+        ? getWrittenProperties(target.left)
+        : ts.isArrayLiteralExpression(target)
+          ? target.elements.flatMap(getWrittenProperties)
+          : ts.isObjectLiteralExpression(target)
+            ? target.properties.flatMap((property) =>
+                ts.isPropertyAssignment(property) || ts.isSpreadAssignment(property)
+                  ? getWrittenProperties(
+                      ts.isPropertyAssignment(property) ? property.initializer : property,
+                    )
+                  : [],
+              )
+            : [];
+
+// The setters that a write of a property may run: the one its type names, and those the script
+// defines that it may find there.
+export const getPropertySetters = (target: ts.Expression, context: Context) =>
+  [
+    getObjectAccessor(target, ts.isSetAccessorDeclaration, context) ?? [],
+    getSetters(target, context),
+  ].flat();
 
 // Whether a node makes a function or an object, which only a statement can. A type, such as one
 // with an index signature, makes nothing.
