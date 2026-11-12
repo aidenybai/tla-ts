@@ -187,24 +187,38 @@ export const hasHeapType = (type: ts.Type, context: Context) =>
   context.heap !== undefined &&
   (type.isUnion() ? type.types : [type]).some((member) => isPlainObject(member, context));
 
-export const isHeapType = (type: ts.Type, node: ts.Node | undefined, context: Context) => {
-  if (context.heap === undefined) return false;
-  const members = type.isUnion() ? type.types : [type];
-  const objects = members.filter((member) => isPlainObject(member, context));
-  if (objects.length > 0 && objects.length < members.length) {
-    throw new TlaTypeScriptError("Give this either objects or other values", node);
+// Whether every value of a type is an object in the heap. A union that mixes objects with other
+// values holds references beside them, which TypeOf tells apart, and which a script narrows to
+// read a property.
+export const isHeapType = (type: ts.Type, context: Context) =>
+  context.heap !== undefined &&
+  (type.isUnion() ? type.types : [type]).every((member) => isPlainObject(member, context));
+
+// Whether a pattern reads the properties of an object in the heap rather than the fields of a
+// value, which it can't tell where the value may be either.
+export const isHeapPattern = (type: ts.Type, pattern: ts.Node, context: Context) => {
+  if (hasHeapType(type, context) && !isHeapType(type, context)) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't destructure a value that may be an object or another value",
+      pattern,
+    );
   }
-  return objects.length > 0;
+  return isHeapType(type, context);
 };
 
-// In a script with objects, a value of type any may be an object, so its properties are unknown.
+// In a script with objects, a value of type any may be an object, so its properties are unknown,
+// as are those of a value that a union types as an object or another value.
 export const rejectAnyReceiver = (node: ts.Expression, context: Context) => {
-  if (
-    context.heap !== undefined &&
-    (context.checker.getTypeAtLocation(node).flags & ts.TypeFlags.Any) !== 0 &&
-    getKind(node, context) !== "object"
-  ) {
+  if (context.heap === undefined || getKind(node, context) === "object") return;
+  const type = context.checker.getTypeAtLocation(node);
+  if ((type.flags & ts.TypeFlags.Any) !== 0) {
     throw new TlaTypeScriptError("Give this value a type to use its properties", node);
+  }
+  if (hasHeapType(type, context)) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't read a property of a value that may be an object or another value",
+      node,
+    );
   }
 };
 
@@ -337,7 +351,7 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
     ts.isPropertyAccessExpression(node) &&
     node.name.text === "prototype" &&
     getHeapClass(node.expression, context) !== undefined;
-  return isFunctionPrototype || isHeapType(type, node, context) ? "object" : "other";
+  return isFunctionPrototype || isHeapType(type, context) ? "object" : "other";
 };
 
 const getMembers = (node: ts.Node, context: Context) => {

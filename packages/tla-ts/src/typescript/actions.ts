@@ -228,6 +228,7 @@ import {
   getKind,
   isHeapArray,
   getPathStep,
+  isHeapPattern,
   isHeapType,
   isBigIntLike,
   isNumberLike,
@@ -756,7 +757,7 @@ const assignPattern = (
     }, path);
   }
   if (ts.isObjectLiteralExpression(target)) {
-    const isHeapObject = isHeapType(
+    const isHeapObject = isHeapPattern(
       context.checker.getNonNullableType(context.checker.getTypeAtLocation(target)),
       target,
       context,
@@ -4686,7 +4687,7 @@ const usesHeap = (node: ts.Node, context: Context, visited: Set<ts.Node>): boole
       node.operatorToken.kind === ts.SyntaxKind.InKeyword &&
       getKind(node.right, context) === "object") ||
     (ts.isObjectBindingPattern(node) &&
-      isHeapType(context.checker.getTypeAtLocation(node), node, context));
+      isHeapPattern(context.checker.getTypeAtLocation(node), node, context));
   if (isRead) return true;
   if (ts.isCallExpression(node)) {
     const callee = getCallee(node.expression, context);
@@ -4770,7 +4771,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
   isRevoke(node, context) ||
   (isObjectChange(node, context) &&
     node.expression.name.text !== "construct" &&
-    isHeapType(context.checker.getTypeAtLocation(node), node, context)) ||
+    isHeapType(context.checker.getTypeAtLocation(node), context)) ||
   isGeneratorStep(node, context) ||
   isPromiseCall(node, context) ||
   getCreatedGenerator(node, path, context) !== undefined ||
@@ -5558,7 +5559,7 @@ const bindIteration = (
   // the pattern binds. A call that changes the heap would change the properties that the pattern
   // read before it.
   const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(name));
-  const isHeapObject = ts.isObjectBindingPattern(name) && isHeapType(type, name, context);
+  const isHeapObject = ts.isObjectBindingPattern(name) && isHeapPattern(type, name, context);
   const getPart = (inner: ts.BindingElement, position: number) => {
     if (ts.isArrayBindingPattern(name)) {
       return getElement(element, number(position + 1), context);

@@ -16,7 +16,7 @@ import { apply, define, identifier, ifExpression, number, set, string, tuple } f
 import { getHeap } from "./heap";
 import { translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
-import { getField, getPathStep, getPropertyKey, isHeapType, isSequenceType } from "./types";
+import { getField, getPathStep, getPropertyKey, isHeapPattern, isSequenceType } from "./types";
 
 export interface Scope {
   // The TLA+ expression for each variable, parameter, and local in scope.
@@ -257,7 +257,7 @@ export const bindPatternInline = (
         }
         return [string(otherKey)];
       });
-      if (heapSymbol === undefined || !isHeapType(type, pattern, context)) {
+      if (heapSymbol === undefined || !isHeapPattern(type, pattern, context)) {
         throw new TlaTypeScriptError("Object rest elements need an object in a script", element);
       }
       const heap = getHeap(current, element, context);
@@ -293,7 +293,7 @@ export const bindPatternInline = (
         ? undefined
         : getPropertyKey(name);
     if (key === undefined) throw new TlaTypeScriptError("Unsupported key", element);
-    if (isHeapType(type, pattern, context)) {
+    if (isHeapPattern(type, pattern, context)) {
       const got = current.read?.get(element);
       const part =
         got ??
@@ -325,7 +325,7 @@ export const bindPatternInline = (
     return bindPatternInline(element.name, withDefault(part), current, context);
   }, scope);
   if (heapSymbol === undefined) return bound;
-  const isHeapObject = ts.isObjectBindingPattern(pattern) && isHeapType(type, pattern, context);
+  const isHeapObject = ts.isObjectBindingPattern(pattern) && isHeapPattern(type, pattern, context);
   // A nested pattern may destructure an element that an array lacks, which throws a TypeError
   // that TLC would find only where something reads what the pattern binds.
   if (!isHeapObject && !ts.isBindingElement(pattern.parent)) return bound;

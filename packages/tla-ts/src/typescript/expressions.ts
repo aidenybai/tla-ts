@@ -138,6 +138,7 @@ import {
   isBooleanLike,
   isFieldName,
   isHeapArray,
+  hasHeapType,
   isHeapType,
   isBigIntLike,
   isNumberLike,
@@ -867,7 +868,7 @@ const translateCall = (
     const contextual = context.checker.getContextualType(node);
     const isTyped =
       contextual !== undefined &&
-      ((contextual.flags & ts.TypeFlags.Unknown) !== 0 || isHeapType(contextual, node, context));
+      ((contextual.flags & ts.TypeFlags.Unknown) !== 0 || hasHeapType(contextual, context));
     if (!isTyped) {
       throw new TlaTypeScriptError(
         `Give the object Object.${isFromEntriesCall ? "fromEntries" : "create"} makes an object type`,
@@ -2224,7 +2225,7 @@ const translateNode = (
     isObjectConversion(node, context) &&
     passed !== undefined &&
     node.arguments?.length === 1 &&
-    isHeapType(context.checker.getTypeAtLocation(node), node, context) &&
+    isHeapType(context.checker.getTypeAtLocation(node), context) &&
     (getKind(passed, context) === "object" || isBuiltInObject(passed, context))
   ) {
     return translateObjectValue(passed, scope, context);

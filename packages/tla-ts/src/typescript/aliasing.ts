@@ -74,7 +74,7 @@ const holdsObject = (type: ts.Type, context: Context): boolean =>
     : (type.flags & ts.TypeFlags.Object) !== 0 &&
       type.getCallSignatures().length === 0 &&
       type.getConstructSignatures().length === 0 &&
-      !isHeapType(type, undefined, context);
+      !isHeapType(type, context);
 
 const holdsObjectAt = (type: ts.Type, depth: number, context: Context): boolean => {
   const checker = context.checker;
@@ -82,7 +82,7 @@ const holdsObjectAt = (type: ts.Type, depth: number, context: Context): boolean 
   if (type.isUnion() || type.isIntersection()) {
     return type.types.some((member) => holdsObjectAt(member, depth, context));
   }
-  if (isHeapType(type, undefined, context)) return false;
+  if (isHeapType(type, context)) return false;
   const typeArguments =
     (type.flags & ts.TypeFlags.Object) !== 0 &&
     ((type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference) !== 0

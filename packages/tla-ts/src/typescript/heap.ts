@@ -81,6 +81,7 @@ import {
   getArrayLiteral,
   getKind,
   isEvery,
+  hasHeapType,
   isHeapType,
   isNumberLike,
   isSequenceType,
@@ -1184,7 +1185,7 @@ const isObjectValue = (node: ts.ObjectLiteralExpression, context: Context) => {
     contextual === undefined ||
     (contextual.flags & (ts.TypeFlags.Unknown | ts.TypeFlags.Any)) !== 0 ||
     checker.isTypeAssignableTo(checker.getNumberType(), contextual) ||
-    isHeapType(checker.getNonNullableType(contextual), node, context)
+    hasHeapType(checker.getNonNullableType(contextual), context)
   );
 };
 
@@ -1332,7 +1333,7 @@ export const getNewWrapper = (node: ts.Node, context: Context) => {
   const names =
     called === "Object" &&
     argument !== undefined &&
-    isHeapType(context.checker.getTypeAtLocation(node), node, context)
+    isHeapType(context.checker.getTypeAtLocation(node), context)
       ? getTypeNames(context.checker.getTypeAtLocation(argument), context.checker)
       : undefined;
   const primitive = names?.length === 1 ? names[0] : undefined;

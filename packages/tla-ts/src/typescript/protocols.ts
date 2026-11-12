@@ -32,7 +32,7 @@ import { type Formula, ifThenElse, leaf } from "./formula";
 import { getBuiltIn } from "./intrinsics";
 import { getCandidateValue, getHeap, isProxyValue, translateObjectValue } from "./heap";
 import { useJavaScript } from "./javascript";
-import { getKind, isHeapType } from "./types";
+import { getKind, isHeapPattern } from "./types";
 import {
   apply,
   boolean,
@@ -284,7 +284,7 @@ const isRunning = (name: ts.BindingName): boolean =>
 const getGetterElements = (pattern: ts.BindingName, context: Context) => {
   if (!ts.isObjectBindingPattern(pattern) || context.heap === undefined) return [];
   const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(pattern));
-  if (!isHeapType(type, pattern, context)) return [];
+  if (!isHeapPattern(type, pattern, context)) return [];
   const stop = pattern.elements.findIndex(
     (element) => element.dotDotDotToken !== undefined || getElementKey(element) === undefined,
   );
@@ -309,7 +309,7 @@ const getRestGetter = (pattern: ts.BindingName, context: Context) => {
   const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(pattern));
   if (
     element?.dotDotDotToken === undefined ||
-    !isHeapType(type, pattern, context) ||
+    !isHeapPattern(type, pattern, context) ||
     others.some(
       (other) =>
         getElementKey(other) === undefined ||

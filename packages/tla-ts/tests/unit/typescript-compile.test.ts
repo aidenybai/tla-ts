@@ -2894,6 +2894,66 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("holds objects and other values in one union", async () => {
+    const getSource = (aliased: number, isSame: string) => `
+      interface Leaf { kind: "leaf"; value: number }
+      interface Pair { kind: "pair"; left: Item; right: Item }
+      class Counter {
+        count = 2;
+      }
+      type Item = number | string | null | Leaf | Pair | Counter;
+      const sum = (item: Item): number => {
+        if (item === null) return -1;
+        if (typeof item === "number") return item;
+        if (typeof item === "string") return item.length;
+        if (item instanceof Counter) return item.count * 100;
+        if (item.kind === "pair") return sum(item.left) + sum(item.right);
+        return item.value;
+      };
+      let current: Item = { kind: "leaf", value: 4 };
+      const tree: Item = { kind: "pair", left: current, right: { kind: "pair", left: "abc", right: new Counter() } };
+      if (typeof current === "object" && current.kind === "leaf") current.value = 10;
+      current = 5;
+      if (sum(tree) !== ${aliased}) throw new Error("aliased");
+      const items: Item[] = [tree, 1, null];
+      const copy: Leaf = { kind: "leaf", value: 10 };
+      if (${isSame} || items.includes(copy) || items.filter((item) => item).length !== 2) {
+        throw new Error("same");
+      }
+    `;
+    const result = await checkModel(getSource(213, "items[0] !== tree || items[1] === tree"));
+    expect(result.failure).toBeUndefined();
+    const wrong = [
+      [getSource(207, "false"), '"aliased"'],
+      [getSource(213, "items[0] === tree"), '"same"'],
+    ];
+    for (const [source, message] of wrong) {
+      expect((await checkModel(source)).failure?.message).toContain(message);
+    }
+  });
+
+  it("stops where a script reads a property of an object or another value", () => {
+    expect(() =>
+      compile(`
+        interface Sized { length: number }
+        const read = (value: string | Sized) => value.length;
+        const sized: Sized = { length: 4 };
+        if (read(sized) !== 4) throw new Error("length");
+      `),
+    ).toThrow("tla-ts can't read a property of a value that may be an object or another value");
+    expect(() =>
+      compile(`
+        interface Sized { length: number }
+        const read = (value: string | Sized) => {
+          const { length } = value;
+          return length;
+        };
+        const sized: Sized = { length: 4 };
+        if (read(sized) !== 4) throw new Error("length");
+      `),
+    ).toThrow("tla-ts can't destructure a value that may be an object or another value");
+  });
+
   it("gives the number an increment reads or writes", async () => {
     const result = await checkModel(`
       let x = 5;
