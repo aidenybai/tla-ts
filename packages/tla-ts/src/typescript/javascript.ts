@@ -1725,6 +1725,10 @@ ValueOf(heap, value, prototypes) ==
                                                  [] TypeOf(Lookup(heap, value).primitive) = "number" -> 2
                                                  [] OTHER -> 3], "valueOf")
        [] /\\ IsHeap(value)
+          /\\ "symbol" \\in DOMAIN Lookup(heap, value)
+          /\\ Get(heap, value, "valueOf") = Ref :> "Symbol.prototype.valueOf" ->
+            Lookup(heap, value).symbol
+       [] /\\ IsHeap(value)
           /\\ IsRef(Get(heap, value, "valueOf"))
           /\\ ~IsHeap(Get(heap, value, "valueOf"))
           /\\ Get(heap, value, "valueOf")[Ref] = "Object.prototype.valueOf" -> value
@@ -1743,6 +1747,15 @@ ThisNumber(value) ==
   IF TypeOf(value) = "number"
   THEN value
   ELSE Assert(FALSE, "tla-ts can't call a Number.prototype method on a value that isn't a number")
+
+\\* The symbol that Symbol.prototype.valueOf reads from the value that it calls the method on, a
+\\* symbol or a Symbol object, while Symbol.prototype holds the built-in method.
+ThisSymbol(heap, value) ==
+  CASE Get(heap, Ref :> "Symbol.prototype", "valueOf") # Ref :> "Symbol.prototype.valueOf" ->
+         Assert(FALSE, "tla-ts can't call Symbol.prototype.valueOf where a script replaced it")
+    [] IsSymbol(value) -> value
+    [] IsHeap(value) /\\ "symbol" \\in DOMAIN Lookup(heap, value) -> Lookup(heap, value).symbol
+    [] OTHER -> Assert(FALSE, "tla-ts can't call a Symbol.prototype method on a value that isn't a symbol")
 
 \\* The BigInt that BigInt.prototype.method.call reads from the value that it calls the method on.
 ThisBigInt(value) ==

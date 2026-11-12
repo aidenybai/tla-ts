@@ -1751,6 +1751,20 @@ export const translateMethod = (
   }
   if (kind === "set") return translateSetMethod(node, scope, context);
   if (kind === "map") return translateMapMethod(node, scope, context, isDefined);
+  // Symbol.prototype.valueOf through call reads the symbol of a symbol or of a Symbol object.
+  if (
+    context.heap !== undefined &&
+    node.expression.name.text === "call" &&
+    node.arguments.length === 1 &&
+    getPrototypeMethod(receiver, "Symbol", context) === "valueOf"
+  ) {
+    context.builtIns.add("Symbol.prototype");
+    return useJavaScript(
+      "ThisSymbol",
+      [getHeap(scope, node, context), translateExpression(node.arguments[0], scope, context)],
+      context,
+    );
+  }
   const symbolMethod = node.expression.name.text;
   const receiverNames = getTypeNames(context.checker.getTypeAtLocation(receiver), context.checker);
   if (
