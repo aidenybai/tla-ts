@@ -3332,6 +3332,43 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("visits an array as its method's callback changes it", async () => {
+    const result = await checkModel(`
+      const arr = [1, 2, 3, 4, 5];
+      const isSmall = (value: number) => {
+        arr[4] = 6;
+        return value < 6;
+      };
+      const shrinking = [1, 2, 3, 4];
+      let visited = 0;
+      shrinking.forEach((value: number) => {
+        visited += value;
+        if (shrinking.length > 2) shrinking.pop();
+      });
+      const growing = [1, 2];
+      let count = 0;
+      growing.forEach(() => {
+        count += 1;
+        growing.push(9);
+      });
+      const found = [1, 2, 3];
+      const result = found.find((value: number) => {
+        found.pop();
+        return value === 3;
+      });
+      if (
+        arr.every(isSmall) !== false ||
+        visited !== 3 ||
+        count !== 2 ||
+        growing.length !== 4 ||
+        result !== undefined
+      ) {
+        throw new Error("visits");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`

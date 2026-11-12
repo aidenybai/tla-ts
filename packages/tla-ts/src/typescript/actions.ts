@@ -3363,7 +3363,13 @@ const translateLoopCall = (
     (ts.isIdentifier(node) &&
       changed.some((symbol) => symbol === getSymbol(node, context.checker))) ||
     (ts.forEachChild(node, (child) => isReceiverChanged(child) || undefined) ?? false);
-  if (isReceiverChanged(receiver)) {
+  // A callback that changes the array that it visits, which the method reads at each index as it
+  // visits it, after it reads the length once.
+  const isLive =
+    !loop.isArrayLike &&
+    ts.isIdentifier(receiver) &&
+    changed.some((symbol) => symbol === getSymbol(receiver, context.checker));
+  if (!isLive && isReceiverChanged(receiver)) {
     throw new TlaTypeScriptError("Don't change an array while its method calls back", receiver);
   }
   if (changed.some((symbol) => path.scope.functions.has(symbol))) {
@@ -3500,7 +3506,11 @@ const translateLoopCall = (
         isSkippingHoles
           ? index(field(identifier(presentName), "indices"), [identifier(position)])
           : apply("-", [identifier(position), number(1)]),
-        loop.isArrayLike ? owner : sequence,
+        loop.isArrayLike
+          ? owner
+          : isLive
+            ? translateExpression(receiver, current.scope, context)
+            : sequence,
       ],
       current.scope,
       context,
@@ -3561,6 +3571,27 @@ const translateLoopCall = (
             : repeat(inner, kept),
         );
   };
+  // Reads the element at a position of the array as the callback left it, where the array still
+  // reaches the position, as for a hole.
+  const visitLive = () => {
+    const current = translateExpression(receiver, inner.scope, context);
+    const isPresent = apply("<=", [identifier(position), apply("Len", [current])]);
+    const missing = EVERY_INDEX_METHODS.has(method)
+      ? runCallback(inner, getUndefined(context))
+      : method === "map"
+        ? leaf(
+            apply("Assert", [
+              boolean(false),
+              string("tla-ts can't keep a hole in the array that map makes"),
+            ]),
+          )
+        : repeat(inner, kept);
+    return ifThenElse(
+      isPresent,
+      runCallback(inner, index(current, [identifier(position)])),
+      missing,
+    );
+  };
   const length = getters === undefined ? apply("Len", [sequence]) : identifier(lengthName);
   const isInRange = isReversed
     ? apply(">=", [identifier(position), number(1)])
@@ -3572,9 +3603,11 @@ const translateLoopCall = (
       render(
         ifThenElse(
           isInRange,
-          getters === undefined
-            ? runCallback(inner, index(sequence, [identifier(position)]))
-            : visitLazily(getters),
+          getters !== undefined
+            ? visitLazily(getters)
+            : isLive
+              ? visitLive()
+              : runCallback(inner, index(sequence, [identifier(position)])),
           done(inner, finished),
         ),
       ),
