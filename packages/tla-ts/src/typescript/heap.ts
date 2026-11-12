@@ -41,6 +41,8 @@ import {
   isInlineBase,
   isNullBased,
   isNestedFunction,
+  isClosure,
+  getCaptures,
   skipCasts,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
@@ -974,6 +976,38 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
           [
             translateBuiltInValue("RegExp.prototype", node, context),
             translateRegExpValue(node, context),
+          ],
+          context,
+        ),
+      ],
+      context,
+    );
+  }
+  if (isClosure(node, context)) {
+    const bindings = getCaptures(node, context).map((symbol): [Expression, Expression] => {
+      const value = scope.bindings.get(symbol);
+      if (value === undefined) {
+        throw new TlaTypeScriptError(
+          `tla-ts can't follow a function that outlives its call and reads ${symbol.name}`,
+          node,
+        );
+      }
+      return [string(symbol.name), value];
+    });
+    return useJavaScript(
+      "Allocate",
+      [
+        useJavaScript(
+          "Allocate",
+          [heap, useJavaScript("EnvironmentObject", [functionFrom(bindings)], context)],
+          context,
+        ),
+        useJavaScript(
+          "ClosureObject",
+          [
+            translateBuiltInValue("Function.prototype", node, context),
+            translateFunctionValue(node, context),
+            useJavaScript("NextRef", [heap, number(1)], context),
           ],
           context,
         ),
@@ -2221,7 +2255,8 @@ export const isMade = (node: ts.Node, context: Context, isSometimes = false): bo
   if (
     isHeapFunction(node, context) ||
     isFunctionObject(node, context) ||
-    isNestedFunction(node, context)
+    isNestedFunction(node, context) ||
+    isClosure(node, context)
   ) {
     return !isSometimes;
   }

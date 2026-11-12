@@ -51,6 +51,7 @@ import {
   share,
   translateString,
   isNestedFunction,
+  isClosure,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateJsonCall } from "./json";
@@ -3032,6 +3033,7 @@ const translateNode = (
     isHeapFunction(node, context) ||
     isFunctionObject(node, context) ||
     isNestedFunction(node, context) ||
+    isClosure(node, context) ||
     getNewClass(node, context) !== undefined ||
     isHeldError(node, context) ||
     isNewObject(node, context) ||

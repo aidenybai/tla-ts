@@ -8067,6 +8067,43 @@ describe("errors", () => {
     expect((await checkModel(getSource("tttt"))).failure?.message).toContain("brand");
   });
 
+  it("calls a function that outlives the call that made it with the locals of that call", async () => {
+    const getSource = (expected: string) => `
+      const seen = { count: 0 };
+      let probe: (() => { greeting: string }) | undefined;
+      let kept: (() => { greeting: string }) | undefined;
+      let read = "";
+      function make(name: string) {
+        var greeting = "hi " + name;
+        probe = function () { seen.count += 1; return { greeting }; };
+        if (kept !== undefined) read = kept().greeting;
+      }
+      make("a");
+      kept = probe;
+      make("b");
+      var greeting = "outside";
+      const both = read + probe!().greeting;
+      if (both !== "${expected}" || seen.count !== 2 || greeting !== "outside") {
+        throw new Error("closures");
+      }
+    `;
+    expect((await checkModel(getSource("hi ahi b"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("hi bhi b"))).failure?.message).toContain("closures");
+    expect(() =>
+      compile(`
+        const seen = { count: 0 };
+        let probe: (() => number) | undefined;
+        function make() {
+          let count = 0;
+          probe = function () { return count; };
+          count += 1;
+        }
+        make();
+        if (probe!() !== 1) throw new Error("closures");
+      `),
+    ).toThrow("tla-ts can't follow a function that outlives its call");
+  });
+
   it("makes a class expression that a script only reads where it runs", async () => {
     const getSource = (length: number) => `
       const describe = (made: object, key: string) => Object.getOwnPropertyDescriptor(made, key)!.value;
