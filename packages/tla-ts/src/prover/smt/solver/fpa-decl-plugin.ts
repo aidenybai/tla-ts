@@ -74,6 +74,7 @@ import {
   mkMpf,
   mkNan,
   mkZero,
+  mpfToSbv,
   unbiasExp,
 } from "./mpf";
 
@@ -580,4 +581,39 @@ export const getRmNumeral = (manager: AstManager, expr: number) => {
           : op === OP_FPA_RM_TOWARD_ZERO
             ? MPF_ROUND_TOWARD_ZERO
             : undefined;
+};
+
+// fpa_util::is_considered_uninterpreted: the applications whose value the standard leaves open.
+export const isConsideredUninterpreted = (manager: AstManager, decl: number, args: number[]) => {
+  const funcDecl = manager.funcDecls[decl];
+  if (funcDecl.family !== FAMILY_FPA) return false;
+  switch (funcDecl.op) {
+    case OP_FPA_TO_IEEE_BV:
+    case OP_FPA_TO_IEEE_BV_I: {
+      const value = getFpNumeral(manager, args[0]);
+      return value !== undefined && isNan(value);
+    }
+    case OP_FPA_TO_SBV:
+    case OP_FPA_TO_UBV:
+    case OP_FPA_TO_SBV_I:
+    case OP_FPA_TO_UBV_I: {
+      const isSigned = funcDecl.op === OP_FPA_TO_SBV || funcDecl.op === OP_FPA_TO_SBV_I;
+      const size = funcDecl.parameters[0];
+      const rm = getRmNumeral(manager, args[0]);
+      const value = getFpNumeral(manager, args[1]);
+      if (rm === undefined || value === undefined) return false;
+      if (isNan(value) || isInf(value)) return true;
+      if (value.exponent >= size) return true;
+      const integer = mpfToSbv(rm, value);
+      const bitSize = (integer < 0n ? -integer : integer).toString(2).length;
+      return isSigned ? bitSize >= size : integer < 0n || bitSize > size;
+    }
+    case OP_FPA_TO_REAL:
+    case OP_FPA_TO_REAL_I: {
+      const value = getFpNumeral(manager, args[0]);
+      return value !== undefined && (isNan(value) || isInf(value));
+    }
+    default:
+      return false;
+  }
 };

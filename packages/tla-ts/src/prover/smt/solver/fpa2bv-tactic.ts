@@ -1,19 +1,13 @@
 // Ported from Z3 (src/tactic/fpa/fpa2bv_tactic.cpp, src/tactic/fpa/fpa2bv_model_converter.cpp,
 // src/ast/fpa/bv2fpa_converter.cpp), MIT license, see z3-license.txt.
-import { SmtUnsupportedError } from "../../../errors";
-import { type AstManager, FAMILY_FPA, OP_FPA_MAX_I, OP_FPA_MIN, OP_FPA_MIN_I } from "./ast";
+import type { AstManager } from "./ast";
 import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
-import {
-  BV_RM_TO_ZERO,
-  getFpaSignature,
-  mkFpNumeral,
-  mkFpNumeralOfBits,
-  mkRmNumeral,
-} from "./fpa-decl-plugin";
+import { convertMinMaxSpecials, convertUf2BvUf } from "./bv2fpa-converter";
+import { BV_RM_TO_ZERO, mkFpNumeralOfBits, mkRmNumeral } from "./fpa-decl-plugin";
 import { Fpa2BvConverter } from "./fpa2bv-converter";
 import { Fpa2BvRewriter } from "./fpa2bv-rewriter";
 import type { Goal } from "./goal";
-import { mkZero } from "./mpf";
+import { ObjHashtable } from "./hashtable";
 import { FuncInterp, ProtoModel } from "./proto-model";
 import { Rewriter } from "./rewriter";
 
@@ -23,7 +17,7 @@ const getConstValue = (model: ProtoModel, expr: number) =>
 const convertModel = (converter: Fpa2BvConverter, source: ProtoModel) => {
   const manager = source.manager;
   const target = new ProtoModel(manager).mkModel();
-  const seen = new Set<number>();
+  const seen = new ObjHashtable((decl) => manager.getDeclHash(decl));
   for (const entry of converter.constants) {
     const sort = manager.funcDecls[entry[0]].range;
     const bv = manager.getArg(manager.getArg(entry[1], 0), 0);
@@ -41,46 +35,8 @@ const convertModel = (converter: Fpa2BvConverter, source: ProtoModel) => {
     seen.add(manager.decls[bv]);
     target.registerConst(entry[0], mkRmNumeral(manager, rm <= 3 ? rm : BV_RM_TO_ZERO));
   }
-  for (const entry of converter.minMaxUfs) {
-    const info = manager.funcDecls[entry[0]];
-    const sort = info.range;
-    const ebits = manager.getEbits(sort);
-    const sbits = manager.getSbits(sort);
-    const pzero = mkFpNumeral(manager, mkZero(ebits, sbits, false));
-    const nzero = mkFpNumeral(manager, mkZero(ebits, sbits, true));
-    const isNegativeZero = entry[1].map((special) => {
-      const value = getConstValue(source, special);
-      seen.add(manager.decls[special]);
-      return value !== undefined && manager.getBvNumeralValue(value) === 1n;
-    });
-    const interp = new FuncInterp(manager, info.domain.length);
-    interp.insertNewEntry([pzero, nzero], isNegativeZero[0] ? nzero : pzero);
-    interp.insertNewEntry([nzero, pzero], isNegativeZero[1] ? nzero : pzero);
-    const signature = getFpaSignature(
-      manager,
-      info.op === OP_FPA_MIN ? OP_FPA_MIN_I : OP_FPA_MAX_I,
-      [],
-      [sort, sort],
-    );
-    if (typeof signature === "string") throw new SmtUnsupportedError(signature);
-    const minMax = manager.mkFpaDecl(
-      signature.op,
-      signature.name,
-      signature.parameters,
-      signature.domain,
-      signature.range,
-    );
-    interp.setElse(manager.mkApp(minMax, [manager.mkVar(0, sort), manager.mkVar(1, sort)], sort));
-    target.registerFunc(entry[0], interp);
-  }
-  for (const entry of converter.uf2BvUf) {
-    seen.add(entry[1]);
-    if (
-      manager.funcDecls[entry[0]].family === FAMILY_FPA &&
-      source.funcInterps.get(entry[1]) !== undefined
-    )
-      throw new SmtUnsupportedError("models of unspecified floating-point functions");
-  }
+  convertMinMaxSpecials(converter, source, target, seen);
+  convertUf2BvUf(converter, source, target, seen);
   for (const decl of source.getConstDecls())
     if (!seen.has(decl)) target.registerConst(decl, source.constInterps.get(decl) as number);
   for (const decl of source.getFuncDecls()) {

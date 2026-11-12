@@ -5,6 +5,7 @@ import {
   FAMILY_ARITH,
   FAMILY_LABEL,
   FAMILY_ARRAY,
+  FAMILY_FPA,
   FAMILY_USER,
   KIND_APP,
   KIND_QUANTIFIER,
@@ -26,7 +27,8 @@ import {
   SORT_BOOL,
 } from "./ast";
 import type { AstManager } from "./ast";
-import { FuncInterp } from "./proto-model";
+import { isConsideredUninterpreted } from "./fpa-decl-plugin";
+import { FuncInterp, getManagerSomeValue } from "./proto-model";
 import type { ProtoModel } from "./proto-model";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
@@ -109,9 +111,13 @@ export class ModelEvaluator extends RewriterTpl {
     if (family === FAMILY_LABEL && args.length === 1) return args[0];
     const rewritten = this.rewriter.reduceAppCore(decl, args);
     const reduced =
-      rewritten === -1 && family === FAMILY_ARITH
-        ? this.evaluatePartialTheoryFunc(decl, args, sort)
-        : rewritten;
+      rewritten !== -1
+        ? rewritten
+        : family === FAMILY_ARITH
+          ? this.evaluatePartialTheoryFunc(decl, args, sort)
+          : family === FAMILY_FPA
+            ? this.evaluateUnspecifiedFpaFunc(decl, args, sort)
+            : rewritten;
     if (
       family !== FAMILY_ARITH ||
       typeof reduced !== "number" ||
@@ -165,6 +171,17 @@ export class ModelEvaluator extends RewriterTpl {
       if (interp === undefined) return manager.mkNumeralOfSort(Rational.zero, sort);
     }
     if (interp.isPartial()) interp.setElse(model.getSomeValue(sort));
+    return { expr: this.substitute(interp.getInterp() as number, args), depth: Infinity };
+  }
+
+  // evaluate_partial_theory_func on a floating-point function: an application the standard leaves
+  // open takes the function's interpretation, or some value without one.
+  private evaluateUnspecifiedFpaFunc(decl: number, args: number[], sort: number): number | Rewrite {
+    const manager = this.manager;
+    if (!isConsideredUninterpreted(manager, decl, args)) return -1;
+    const interp = this.model.funcInterps.get(decl);
+    if (interp === undefined) return getManagerSomeValue(manager, sort);
+    if (interp.isPartial()) interp.setElse(getManagerSomeValue(manager, sort));
     return { expr: this.substitute(interp.getInterp() as number, args), depth: Infinity };
   }
 

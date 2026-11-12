@@ -18,6 +18,7 @@ import {
 } from "./ast";
 import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import { mkBvApp } from "./bv-decl-plugin";
+import { convertMinMaxSpecials, convertUf2BvUf } from "./bv2fpa-converter";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
 import {
@@ -29,8 +30,10 @@ import {
 } from "./fpa-decl-plugin";
 import { WrappedFpa2BvConverter } from "./fpa2bv-converter";
 import { Fpa2BvRewriter } from "./fpa2bv-rewriter";
+import { ObjHashtable } from "./hashtable";
 import type { BoolVar } from "./literal";
 import { mkZero } from "./mpf";
+import { ProtoModel } from "./proto-model";
 import { Rewriter } from "./rewriter";
 import { type DependentValue, Theory } from "./theory";
 
@@ -50,6 +53,7 @@ export class TheoryFpa extends Theory {
   private conversions = new Map<number, number>();
   private trail: number[] = [];
   private trailLimits: number[] = [];
+  private model: ProtoModel | undefined;
 
   constructor(context: Context) {
     super(context, FAMILY_FPA);
@@ -353,6 +357,29 @@ export class TheoryFpa extends Theory {
           manager.isRmSort(sort) ? this.mkRmValue(values[0]) : this.mkFpValue(sort, values),
       };
     return mkFpNumeral(manager, mkZero(manager.getEbits(sort), manager.getSbits(sort), false));
+  }
+
+  override initModel(model: ProtoModel) {
+    this.model = model;
+  }
+
+  override finalizeModel() {
+    const manager = this.manager;
+    const model = this.model;
+    if (model === undefined) throw new SmtInvariantError("the model was not initialized");
+    const target = new ProtoModel(manager);
+    target.incRef();
+    const seen = new ObjHashtable((decl) => manager.getDeclHash(decl));
+    convertMinMaxSpecials(this.converter, model, target, seen);
+    convertUf2BvUf(this.converter, model, target, seen);
+    for (const decl of seen) model.unregisterDecl(decl);
+    for (const decl of target.getConstDecls())
+      model.registerConst(decl, target.getSomeConstInterp(decl));
+    for (const decl of target.getFuncDecls()) {
+      const interp = target.funcInterps.get(decl);
+      if (interp !== undefined) model.registerFunc(decl, interp.copy());
+    }
+    target.decRef();
   }
 
   private mkRmValue(value: number) {
