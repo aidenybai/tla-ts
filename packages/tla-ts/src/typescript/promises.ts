@@ -30,7 +30,7 @@ import { TlaTypeScriptError } from "../errors";
 import { translateEngineError } from "./exceptions";
 import { translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf, letIn } from "./formula";
-import { getCandidateValue, getHeap } from "./heap";
+import { getCandidateValue, getHeap, translateFunctionValue } from "./heap";
 import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { type Receiver } from "./scope";
@@ -45,6 +45,9 @@ export interface Tasks {
   // The code that last ran each async function's body, by the body's promise, which the body
   // leaves to when it awaits or finishes: the call, and then the job that resumed it.
   callers: ReadonlyMap<string, Caller>;
+  // What the executor that NewPromiseCapability passes a script's constructor took, by the
+  // executor's parameter, while the constructor's body runs.
+  capabilities: ReadonlyMap<ts.Symbol, { resolve: Expression; reject: Expression }>;
 }
 
 interface Caller {
@@ -97,7 +100,13 @@ interface Handler {
   ) => Formula;
 }
 
-export const EMPTY_TASKS: Tasks = { jobs: [], timers: [], promises: new Map(), callers: new Map() };
+export const EMPTY_TASKS: Tasks = {
+  jobs: [],
+  timers: [],
+  promises: new Map(),
+  callers: new Map(),
+  capabilities: new Map(),
+};
 
 const getTasks = (path: Path, node: ts.Node) => {
   if (path.tasks === undefined) {
@@ -1052,7 +1061,16 @@ export const translatePromiseConstruction = (
 };
 
 // The Promise function that Promise.resolve.call(C, value) and the like call with C as this.
-const PROMISE_STATICS = ["all", "allSettled", "any", "race", "reject", "resolve", "try"];
+const PROMISE_STATICS = [
+  "all",
+  "allSettled",
+  "any",
+  "race",
+  "reject",
+  "resolve",
+  "try",
+  "withResolvers",
+];
 
 const getCalledPromiseFunction = (node: ts.CallExpression, context: Context) => {
   const callee = node.expression;
@@ -1072,7 +1090,8 @@ const isInert = (node: ts.Expression): boolean =>
   [ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword, ts.SyntaxKind.NullKeyword].includes(
     node.kind,
   ) ||
-  (ts.isArrayLiteralExpression(node) && node.elements.every(isInert));
+  (ts.isArrayLiteralExpression(node) && node.elements.every(isInert)) ||
+  (ts.isObjectLiteralExpression(node) && node.properties.length === 0);
 
 // Whether NewPromiseCapability(C) throws a TypeError before it runs any code: C isn't an object or
 // a constructor, or its body is empty, so it never calls the executor.
@@ -1101,22 +1120,206 @@ const isIncapable = (node: ts.Expression | undefined, path: Path, context: Conte
   );
   if (isPrimitive) return true;
   const callee = getCallback(getCast(node), path, context);
+  return callee !== undefined && ts.isArrowFunction(callee);
+};
+
+// A function that the code passes only as the this of Promise.resolve.call and the like, which
+// NewPromiseCapability constructs with an executor that the function only calls.
+const getCapabilityConstructor = (node: ts.Expression, context: Context) => {
+  const callee = ts.isIdentifier(node)
+    ? getSymbol(node, context.checker)?.valueDeclaration
+    : getCast(node);
+  const constructor =
+    callee !== undefined && ts.isVariableDeclaration(callee) && callee.initializer !== undefined
+      ? getCast(callee.initializer)
+      : callee;
+  if (
+    constructor === undefined ||
+    !(ts.isFunctionDeclaration(constructor) || ts.isFunctionExpression(constructor)) ||
+    constructor.asteriskToken !== undefined ||
+    (ts.getCombinedModifierFlags(constructor) & ts.ModifierFlags.Async) !== 0 ||
+    constructor.body === undefined ||
+    constructor.parameters.length > 1 ||
+    constructor.parameters.some(
+      (parameter) => !ts.isIdentifier(parameter.name) || parameter.initializer !== undefined,
+    ) ||
+    findNodes(
+      constructor.body,
+      (inner): inner is ts.Node =>
+        inner.kind === ts.SyntaxKind.ThisKeyword ||
+        (ts.isIdentifier(inner) && inner.text === "arguments") ||
+        ts.isMetaProperty(inner),
+    ).length > 0
+  ) {
+    return undefined;
+  }
+  const name = ts.isFunctionExpression(constructor)
+    ? constructor.name
+    : (constructor.name ??
+      (callee !== undefined && ts.isVariableDeclaration(callee) && ts.isIdentifier(callee.name)
+        ? callee.name
+        : undefined));
+  const symbol = name && getSymbol(name, context.checker);
+  const isPassedOnly =
+    ts.isFunctionExpression(constructor) && constructor === getCast(node)
+      ? constructor.name === undefined
+      : symbol !== undefined &&
+        findNodes(
+          constructor.getSourceFile(),
+          (inner): inner is ts.Identifier =>
+            ts.isIdentifier(inner) &&
+            inner !== name &&
+            getSymbol(inner, context.checker) === symbol,
+        ).every((reference) => {
+          const call = reference.parent;
+          return (
+            ts.isCallExpression(call) &&
+            call.arguments[0] === reference &&
+            getCalledPromiseFunction(call, context) !== undefined
+          );
+        });
+  return isPassedOnly ? constructor : undefined;
+};
+
+// The parameter of a capability constructor, which names its executor.
+const isCapabilityExecutor = (node: ts.Expression, context: Context) => {
+  const declaration = getSymbol(node, context.checker)?.valueDeclaration;
+  if (declaration === undefined || !ts.isParameter(declaration)) return false;
+  const constructor = declaration.parent;
+  if (!ts.isFunctionDeclaration(constructor) && !ts.isFunctionExpression(constructor)) {
+    return false;
+  }
+  const declared = constructor.parent;
+  const source = ts.isFunctionDeclaration(constructor)
+    ? constructor.name
+    : ts.isVariableDeclaration(declared) && ts.isIdentifier(declared.name)
+      ? declared.name
+      : constructor;
   return (
-    callee !== undefined &&
-    (ts.isArrowFunction(callee) ||
-      ((ts.isFunctionDeclaration(callee) || ts.isFunctionExpression(callee)) &&
-        !callee.asteriskToken &&
-        !(ts.getCombinedModifierFlags(callee) & ts.ModifierFlags.Async) &&
-        callee.body !== undefined &&
-        callee.body.statements.length === 0 &&
-        callee.parameters.every(
-          (parameter) => ts.isIdentifier(parameter.name) && parameter.initializer === undefined,
-        )))
+    ts.isIdentifier(node) &&
+    source !== undefined &&
+    getCapabilityConstructor(source, context) === constructor
+  );
+};
+
+// NewPromiseCapability(C), where C's body runs with an executor that keeps what C passes it, and
+// a TypeError follows where C doesn't pass it two functions. tla-ts doesn't follow a capability
+// that a script's constructor makes.
+const translateCapability = (
+  node: ts.CallExpression,
+  constructor: ts.FunctionDeclaration | ts.FunctionExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+): Formula => {
+  const executor = constructor.parameters[0];
+  const symbol = executor && getSymbol(executor.name, context.checker);
+  const tasks = getTasks(path, node);
+  const start =
+    symbol === undefined
+      ? path
+      : withTasks(path, {
+          ...tasks,
+          capabilities: new Map([
+            ...tasks.capabilities,
+            [symbol, { resolve: getUndefined(context), reject: getUndefined(context) }],
+          ]),
+        });
+  const finish = (after: Path) => {
+    const taken = symbol && getTasks(after, node).capabilities.get(symbol);
+    const isCallable = (value: Expression) =>
+      apply("=", [
+        useJavaScript("TypeOfIn", [getHeap(after.scope, node, context), value], context),
+        string("function"),
+      ]);
+    const left = {
+      ...after,
+      scope: {
+        ...after.scope,
+        previous: path.scope.previous,
+        isCatching: path.scope.isCatching,
+        receiver: path.scope.receiver,
+      },
+    };
+    return taken === undefined
+      ? throwError("TypeError", left, node, context, frame)
+      : ifThenElse(
+          apply("/\\", [isCallable(taken.resolve), isCallable(taken.reject)]),
+          leaf(
+            apply("Assert", [
+              boolean(false),
+              string("tla-ts can't follow a promise that a script's constructor makes"),
+            ]),
+          ),
+          throwError("TypeError", left, node, context, frame),
+        );
+  };
+  return translateStatements(
+    getBody(constructor),
+    {
+      ...start,
+      scope: { ...start.scope, isCatching: true, receiver: undefined },
+    },
+    context,
+    {
+      next: finish,
+      exit: finish,
+      breakTo: undefined,
+      continueTo: undefined,
+      throwTo: frame.throwTo,
+      yieldTo: undefined,
+      awaitTo: undefined,
+      inlining: new Set([...frame.inlining, constructor]),
+    },
+  );
+};
+
+// A call of a capability constructor's executor, which takes the functions it gets, or throws a
+// TypeError where it took some already.
+const callExecutor = (
+  node: ts.CallExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  const symbol = getSymbol(node.expression, context.checker);
+  const tasks = getTasks(path, node);
+  const taken = symbol && tasks.capabilities.get(symbol);
+  if (symbol === undefined || taken === undefined) {
+    throw new TlaTypeScriptError("tla-ts can't follow this executor", node);
+  }
+  // Only whether a function that the executor takes is callable matters.
+  const values = [0, 1].map((position) => {
+    const argument = node.arguments.at(position);
+    const cast = argument && getCast(argument);
+    return cast === undefined
+      ? getUndefined(context)
+      : ts.isFunctionExpression(cast) || ts.isArrowFunction(cast)
+        ? translateFunctionValue(cast, context)
+        : translateExpression(cast, path.scope, context);
+  });
+  const isSet = (value: Expression) =>
+    apply("~", [useJavaScript("SameValue", [value, getUndefined(context)], context)]);
+  return ifThenElse(
+    apply("\\/", [isSet(taken.resolve), isSet(taken.reject)]),
+    throwError("TypeError", path, node, context, frame),
+    continueWith(
+      withTasks(path, {
+        ...tasks,
+        capabilities: new Map([
+          ...tasks.capabilities,
+          [symbol, { resolve: values[0], reject: values[1] }],
+        ]),
+      }),
+      getUndefined(context),
+    ),
   );
 };
 
 export const isPromiseCall = (node: ts.CallExpression, context: Context) =>
   getCalledPromiseFunction(node, context) !== undefined ||
+  isCapabilityExecutor(node.expression, context) ||
   isResolver(node.expression, context) ||
   getPromiseFunction(node, context) !== undefined ||
   getPromiseMethod(node, context) !== undefined ||
@@ -1174,9 +1377,16 @@ export const translatePromiseCall = (
   if (node.arguments.some(ts.isSpreadElement)) {
     throw new TlaTypeScriptError("Pass a promise's functions without spreads", node);
   }
+  if (isCapabilityExecutor(node.expression, context)) {
+    return callExecutor(node, path, context, frame, continueWith);
+  }
   const called = getCalledPromiseFunction(node, context);
   if (called !== undefined) {
-    if (!isIncapable(argument, path, context) || !node.arguments.slice(1).every(isInert)) {
+    const constructor = argument && getCapabilityConstructor(argument, context);
+    if (
+      (constructor === undefined && !isIncapable(argument, path, context)) ||
+      !node.arguments.slice(1).every(isInert)
+    ) {
       throw new TlaTypeScriptError(`Unsupported call: Promise.${called}.call`, node);
     }
     return guardBuiltIns(
@@ -1191,7 +1401,9 @@ export const translatePromiseCall = (
         ["call"],
         path,
         context,
-        throwError("TypeError", path, node, context, frame),
+        constructor === undefined
+          ? throwError("TypeError", path, node, context, frame)
+          : translateCapability(node, constructor, path, context, frame),
       ),
     );
   }

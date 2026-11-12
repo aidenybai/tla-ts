@@ -6235,6 +6235,42 @@ describe("errors", () => {
     );
   });
 
+  it("runs a script's constructor with the executor of a promise capability", async () => {
+    const result = await checkModel(`
+      let log = "";
+      const attempt = (run: () => void) => {
+        try {
+          run();
+          log += "n";
+        } catch (error) {
+          log += error instanceof TypeError ? "t" : error instanceof RangeError ? "r" : "x";
+        }
+      };
+      function Thrower() {
+        throw new RangeError("c");
+      }
+      attempt(() => Promise.reject.call(Thrower, 1));
+      attempt(() =>
+        Promise.resolve.call(function (executor: (resolve: unknown, reject: unknown) => void) {
+          log += "a";
+          executor(123, "invalid value");
+          log += "b";
+        }, {}),
+      );
+      attempt(() =>
+        Promise.all.call(function (executor: (resolve: unknown, reject: unknown) => void) {
+          executor(function () {}, undefined);
+          log += "e";
+          executor(undefined, function () {});
+          log += "f";
+        }, []),
+      );
+      attempt(() => Promise.withResolvers.call(undefined));
+      if (log !== "rabtett") throw new Error(log);
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("rejects new AggregateError, whose first argument isn't a message", () => {
     expect(() => compile(`const error = new AggregateError([1], "message");`)).toThrow(
       "Unsupported constructor: new AggregateError",
