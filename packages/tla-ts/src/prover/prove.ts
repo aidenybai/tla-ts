@@ -80,7 +80,9 @@ interface MethodFailure {
 }
 
 interface ObligationTask {
+  report: Promise<ProofReport>;
   done: Promise<void>;
+  isSettled: boolean;
   session: { initial: number; current: EncodingSession } | undefined;
 }
 
@@ -89,7 +91,7 @@ interface ProveRun {
   results: Map<string, Map<string, ProofAttempt>>;
   isFingerprinted: (obligation: PrintedObligation) => boolean;
   isProving: boolean;
-  lastByFingerprint: Map<string, Promise<void>>;
+  lastByFingerprint: Map<string, number>;
   decide: DecidePool["decide"];
 }
 
@@ -251,8 +253,8 @@ const proveWithBackends = async (
   const methods = findMethods(obligation);
   const fingerprint = getFingerprint(obligation.sequent);
   const earlier = run.lastByFingerprint.get(fingerprint);
-  run.lastByFingerprint.set(fingerprint, run.tasks[index].done);
-  await earlier;
+  run.lastByFingerprint.set(fingerprint, index);
+  await (earlier === undefined ? undefined : run.tasks[earlier].done);
   const attempts: ProofAttempt[] = [];
   const failures: MethodFailure[] = [];
   const getProvedReport = (prover: string): ProofReport => ({
@@ -383,14 +385,12 @@ export const proveObligations = async (
       pool?.decide ?? (async (prover, text, decideOptions) => decide(prover, text, decideOptions)),
   };
   const limit = pool ? workerCount * 4 : 1;
-  const pending: Promise<ProofReport>[] = [];
-  const isSettled: boolean[] = [];
   const running = new Set<Promise<void>>();
   const reports: ProofReport[] = [];
   const reportSettled = async () => {
-    while (isSettled[reports.length]) {
+    while (reports.length < run.tasks.length && run.tasks[reports.length].isSettled) {
       options.signal?.throwIfAborted();
-      const report = await pending[reports.length];
+      const report = await run.tasks[reports.length].report;
       reports.push(report);
       options.onReport?.(report, obligations[reports.length - 1]);
       // HACK: backends on this thread run synchronously, so yield to let an abort land.
@@ -400,19 +400,21 @@ export const proveObligations = async (
   try {
     for (const [index, obligation] of obligations.entries()) {
       options.signal?.throwIfAborted();
-      const done = Promise.withResolvers<void>();
-      run.tasks.push({ done: done.promise, session: undefined });
       const report = proveWithBackends(obligation, index, run, options.signal).catch(
         (error: unknown) => getErrorReport(obligation, error),
       );
-      pending.push(report);
-      running.add(done.promise);
       const settle = () => {
-        isSettled[index] = true;
-        running.delete(done.promise);
-        done.resolve();
+        task.isSettled = true;
+        running.delete(task.done);
       };
-      void report.then(settle, settle);
+      const task: ObligationTask = {
+        report,
+        done: report.then(settle, settle),
+        isSettled: false,
+        session: undefined,
+      };
+      run.tasks.push(task);
+      running.add(task.done);
       if (running.size >= limit) await Promise.race(running);
       await reportSettled();
     }
