@@ -8856,6 +8856,22 @@ describe("errors", () => {
     );
   });
 
+  it("names an array after each removal, so that later removals read the name", async () => {
+    const getSource = (count: number, expected: number) => `
+      const queues: number[][] = [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]];
+      ${Array.from({ length: count }, (_, position) =>
+        position % 2 === 0 ? `const removed${position} = queues[0].pop();` : "queues[0].shift();",
+      ).join("\n")}
+      const last = removed${Math.floor((count - 1) / 2) * 2};
+      if (queues[0].length !== ${12 - count} || last !== ${expected}) throw new Error("removed");
+    `;
+    const getSize = (count: number) =>
+      printModule(compile(getSource(count, 0), "spec.ts").source).length;
+    expect(getSize(10)).toBeLessThan(3 * getSize(5));
+    expect((await checkModel(getSource(10, 8))).failure).toBeUndefined();
+    expect((await checkModel(getSource(10, 7))).failure?.message).toContain("removed");
+  });
+
   it("gives undefined where an optional chain removes from an array that is missing", async () => {
     const declared = await checkModel(`
       const pops: (number[] | undefined)[] = [undefined];

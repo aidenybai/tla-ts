@@ -431,6 +431,8 @@ interface Target {
 interface Removed {
   value: Expression;
   path: Path;
+  // The name whose value the call changes.
+  symbol: ts.Symbol;
   // Where a call without ?. finds its receiver undefined or null, so throws a TypeError.
   missing?: Expression;
 }
@@ -1291,6 +1293,7 @@ const getRemovedValue = (
         ),
       ),
     ),
+    symbol: removed.symbol,
     missing: isOptional || ts.isOptionalChain(node) ? undefined : missing,
   };
 };
@@ -1316,6 +1319,7 @@ const getRemoved = (
         context,
         (current) => getUpdatedValue(current, kind, node, path.scope, context) ?? current,
       ),
+      symbol: getTarget(receiver, path, context).symbol,
     };
   }
   const sequence = translateExpression(receiver, path.scope, context);
@@ -1342,6 +1346,7 @@ const getRemoved = (
       context,
       (current) => getUpdatedValue(current, kind, node, path.scope, context) ?? current,
     ),
+    symbol: getTarget(receiver, path, context).symbol,
   };
 };
 
@@ -1589,7 +1594,14 @@ export const translateCallStatement = (
     const name = context.names.getFresh("removed");
     return guardReceiver(
       expression.expression.expression,
-      bindOnce(removed.path, name, removed.value, continueWith(removed.path, identifier(name))),
+      bindOnce(
+        removed.path,
+        name,
+        removed.value,
+        shareBinding(removed.path, removed.symbol, "changed", context, (shared) =>
+          continueWith(shared, identifier(name)),
+        ),
+      ),
     );
   }
   if (isPromiseCall(expression, context)) {
@@ -6881,8 +6893,8 @@ const translateExpressionStatement = (
       ? getRemovedValue(expression.right, path, context)
       : undefined;
   if (removed !== undefined && ts.isBinaryExpression(expression)) {
-    const assigned = continueWith(
-      assign(expression.left, removed.path, context, () => removed.value),
+    const assigned = shareBinding(removed.path, removed.symbol, "changed", context, (shared) =>
+      continueWith(assign(expression.left, shared, context, () => removed.value)),
     );
     return removed.missing === undefined
       ? assigned
@@ -7924,18 +7936,24 @@ export const throwError = (
 export const throwTypeError = (path: Path, node: ts.Node, context: Context, frame: Frame) =>
   throwError("TypeError", path, node, context, frame);
 
-// Names the heap after a statement changes it, so that later statements share it.
-const shareHeap = (path: Path, context: Context, continueWith: (path: Path) => Formula) => {
-  const symbol = context.heap;
-  const heap = symbol === undefined ? undefined : path.scope.bindings.get(symbol);
-  if (symbol === undefined || heap === undefined || heap.kind === "Identifier") {
+// Names a value after a statement changes it, so that later statements read the name rather than
+// repeat what made the value.
+const shareBinding = (
+  path: Path,
+  symbol: ts.Symbol | undefined,
+  base: string,
+  context: Context,
+  continueWith: (path: Path) => Formula,
+) => {
+  const value = symbol === undefined ? undefined : path.scope.bindings.get(symbol);
+  if (symbol === undefined || value === undefined || value.kind === "Identifier") {
     return continueWith(path);
   }
-  const name = context.names.getFresh("heap");
+  const name = context.names.getFresh(base);
   return bindOnce(
     path,
     name,
-    heap,
+    value,
     continueWith({
       ...path,
       scope: {
@@ -7945,6 +7963,10 @@ const shareHeap = (path: Path, context: Context, continueWith: (path: Path) => F
     }),
   );
 };
+
+// Names the heap after a statement changes it, so that later statements share it.
+const shareHeap = (path: Path, context: Context, continueWith: (path: Path) => Formula) =>
+  shareBinding(path, context.heap, "heap", context, continueWith);
 
 // A new of a value that isn't a class that the script declares, such as a built-in method, which
 // throws a TypeError if the value isn't a constructor. tla-ts can't call one that is. Its arguments
@@ -8203,7 +8225,9 @@ export const translateDeclarations = (
         after,
         name,
         value,
-        bindDeclaration(declarations, identifier(name), after, context, frame, continueWith),
+        shareBinding(after, removed?.symbol, "changed", context, (shared) =>
+          bindDeclaration(declarations, identifier(name), shared, context, frame, continueWith),
+        ),
       );
       return removed?.missing === undefined
         ? bound
