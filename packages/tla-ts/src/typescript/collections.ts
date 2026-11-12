@@ -18,7 +18,14 @@ import type { Expression } from "../ast";
 import { TlaTypeScriptError } from "../errors";
 import { translateElements, translateExpression, translateSetKey } from "./expressions";
 import { callStateOperator, mayThrow, translateBody, translateLocalCall } from "./functions";
-import { DATE_FIELDS, getHeap, getPrototypeMethod, isDateType, TIME_METHODS } from "./heap";
+import {
+  DATE_FIELDS,
+  getHeap,
+  getPrototypeMethod,
+  isDateType,
+  isPrototypeArray,
+  TIME_METHODS,
+} from "./heap";
 import {
   getStoredBuiltIn,
   isBuiltInObject,
@@ -2515,7 +2522,16 @@ export const translateArrayLikeCall = (
 
 // The array methods that read an array-like object, and those that change it in place, which a
 // call runs on an object where a script stores them under a key.
-const STORED_ARRAY_READS = new Set(["join", "slice", "indexOf", "lastIndexOf"]);
+const STORED_ARRAY_READS = new Set([
+  "join",
+  "slice",
+  "indexOf",
+  "lastIndexOf",
+  "every",
+  "some",
+  "reduce",
+  "reduceRight",
+]);
 const STORED_ARRAY_CHANGES = new Set(["push", "pop", "shift", "unshift", "reverse"]);
 
 type StoredBuiltIn = "Object.prototype.toString" | `Array.prototype.${string}`;
@@ -2552,10 +2568,17 @@ export const getStoredCall = (node: ts.Node, context: Context): StoredCall | und
             (STORED_ARRAY_READS.has(method) &&
               (!method.endsWith("ndexOf") || node.arguments.length > 0)));
   };
+  // An object whose prototype is an array that the script makes inherits the array's methods.
+  const inherited = [...context.heapCollections].some(isPrototypeArray)
+    ? [`Array.prototype.${callee.name.text}`]
+    : [];
   const builtIns = new Set(
-    findNodes(node.getSourceFile(), ts.isPropertyAccessExpression)
-      .map((inner) => getStoredBuiltIn(inner, context))
-      .filter(isRunnable),
+    [
+      ...findNodes(node.getSourceFile(), ts.isPropertyAccessExpression).map((inner) =>
+        getStoredBuiltIn(inner, context),
+      ),
+      ...inherited,
+    ].filter(isRunnable),
   );
   return builtIns.size === 0
     ? undefined

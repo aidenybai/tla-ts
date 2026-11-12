@@ -165,6 +165,7 @@ import {
   isSequenceType,
   translateUnknown,
   isHoleyNewArray,
+  isNewArrayOfElements,
 } from "./types";
 
 interface Field {
@@ -3023,7 +3024,7 @@ const translateNode = (
       : undefined;
   if (errorClass !== undefined) return getConstructor(errorClass, context);
   const isHeapObject =
-    ((ts.isArrayLiteralExpression(node) || isHoleyNewArray(node)) &&
+    ((ts.isArrayLiteralExpression(node) || isHoleyNewArray(node) || isNewArrayOfElements(node)) &&
       context.heapCollections.has(node)) ||
     (ts.isClassExpression(node) && isHeapClass(node, context)) ||
     isHeapFunction(node, context) ||

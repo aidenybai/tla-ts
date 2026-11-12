@@ -8974,6 +8974,31 @@ describe("errors", () => {
     );
   });
 
+  it("runs the array methods that an object inherits from an array that is its prototype", async () => {
+    const inherited = (expected: string) => `
+      type Method = (...args: unknown[]) => unknown;
+      type Made = new () => { [key: string | symbol]: unknown };
+      function Holder() {}
+      Holder.prototype = new Array(1, 2, 3);
+      function Letters() {}
+      Letters.prototype = ["a", "b", "c"];
+      const numbers = new (Holder as unknown as Made)();
+      numbers.length = 2;
+      const letters = new (Letters as unknown as Made)();
+      letters.length = 3;
+      const every = (numbers.every as Method)((value: number) => value < 3);
+      const some = (numbers.some as Method)((value: number) => value > 2);
+      const sum = (numbers.reduce as Method)((total: number, value: number) => total + value, 10);
+      const joined = (letters.join as Method)("-");
+      const result = [every, some, sum, joined].join(" ");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await check(compile(inherited("true false 13 a-b-c")))).failure).toBeUndefined();
+    expect((await check(compile(inherited("true false 16 a-b-c")))).failure?.message).toContain(
+      "true false 13 a-b-c",
+    );
+  });
+
   it("stops where a key that stores an array method holds another function", async () => {
     const result = await check(
       compile(`
