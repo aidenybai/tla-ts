@@ -636,6 +636,14 @@ const substitute = (
     };
   }
   if (expression.kind === "OperatorReference" && isFree(expression.operator)) {
+    const replacement = instantiation.substitutions.get(expression.operator);
+    if (
+      replacement?.kind === "Identifier" ||
+      replacement?.kind === "OperatorReference" ||
+      replacement?.kind === "Lambda"
+    ) {
+      return withSubstitutionFrames(replacement, [expression]);
+    }
     const copy = getCopy(rewrite, expression.operator);
     if (copy === undefined) return expression;
     const definition = instantiation.getDefinition(expression.operator);

@@ -30,4 +30,15 @@ Nested == LET I(_ ** _) == INSTANCE Inner WITH ++ <- **, c <- 2
     );
     expect(result.status).toBe("success");
   });
+
+  it("substitutes a constant operator symbol that is passed as an operator argument", async () => {
+    const result = await checkAssumption(
+      `Named == INSTANCE Inner WITH ++ <- %, c <- 2
+Implicit == INSTANCE Inner WITH c <- 2
+Local == LET Q == INSTANCE Inner WITH ++ <- \\div, c <- 2 IN Q!K
+Lambda == INSTANCE Inner WITH ++ <- LAMBDA x, y : x * y, c <- 2`,
+      "<<Named!K, Implicit!K, Local, Lambda!K>> = <<1, 113, 2, 36>>",
+    );
+    expect(result.status).toBe("success");
+  });
 });
