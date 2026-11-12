@@ -2850,13 +2850,36 @@ export const findHeapArrays = (
     ts.isBinaryExpression(use.parent.parent) &&
     use.parent.parent.left === use.parent &&
     use.parent.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken;
-  // A pattern assignment gives the array that it destructures, whose identity a script may see.
-  const isPatternResult = (use: ts.Identifier) =>
-    ts.isBinaryExpression(use.parent) &&
-    use.parent.right === use &&
-    use.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-    ts.isArrayLiteralExpression(use.parent.left) &&
-    !ts.isExpressionStatement(use.parent.parent);
+  // A pattern assignment gives the array that it destructures to a variable, which a script that
+  // only compares the variable or passes it on can tell apart from a copy.
+  const isPatternResult = (use: ts.Identifier) => {
+    const assignment = use.parent;
+    const holder = assignment.parent;
+    if (
+      !ts.isBinaryExpression(assignment) ||
+      assignment.right !== use ||
+      assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+      !ts.isArrayLiteralExpression(assignment.left) ||
+      !ts.isBinaryExpression(holder) ||
+      holder.right !== assignment ||
+      holder.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+      !ts.isIdentifier(holder.left) ||
+      isSequenceType(context.checker.getTypeAtLocation(holder.left), context.checker)
+    ) {
+      return false;
+    }
+    const symbol = getSymbol(holder.left, context.checker);
+    return (symbol === undefined ? [] : (references.get(symbol) ?? [])).every(
+      (reference) =>
+        (ts.isBinaryExpression(reference.parent) &&
+          reference.parent.left === reference &&
+          reference.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken) ||
+        (ts.isVariableDeclaration(reference.parent) && reference.parent.name === reference) ||
+        (!ts.isPropertyAccessExpression(reference.parent) &&
+          !ts.isElementAccessExpression(reference.parent) &&
+          isArrayObjectUse(reference, context)),
+    );
+  };
   references.forEach((uses, symbol) => {
     const declaration = symbol.valueDeclaration;
     const literal =
