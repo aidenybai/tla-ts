@@ -3756,6 +3756,26 @@ describe("errors", () => {
     expect((await check(compile(wrong, path))).failure?.message).toContain('"marked"');
   });
 
+  it("runs a call in an operand that runs only sometimes inside another", async () => {
+    const getSource = (kind: string) => `
+      interface Leaf { kind: "leaf"; size: number }
+      interface Pair { kind: "pair"; left: Node; right: Node }
+      type Node = Leaf | Pair;
+      interface Box { count: number }
+      const box: Box = { count: 0 };
+      const isSmall = (node: Node): boolean => {
+        box.count += 1;
+        if (node.kind === "leaf") return node.size < 3;
+        return (isSmall(node.left) && isSmall(node.right)) || node.left.kind ${kind} "leaf";
+      };
+      const left: Node = { kind: "leaf", size: 0 };
+      const tree: Node = { kind: "pair", left, right: { kind: "leaf", size: 5 } };
+      if (!isSmall(tree) || box.count !== 3) throw new Error("small");
+    `;
+    expect((await checkModel(getSource("==="))).failure).toBeUndefined();
+    expect((await checkModel(getSource("!=="))).failure?.message).toContain('"small"');
+  });
+
   it("gives the number an increment reads or writes", async () => {
     const result = await checkModel(`
       let x = 5;

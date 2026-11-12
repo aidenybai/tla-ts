@@ -7642,7 +7642,7 @@ const findLeadingCall = (
   // runs before the operand that runs only sometimes.
   if (ts.isConditionalExpression(node)) {
     const found = findLeadingCall(node.condition, before, path, context);
-    return found.call !== undefined || found.read !== undefined
+    return found.call !== undefined || found.read !== undefined || found.branch !== undefined
       ? found
       : !found.isBlocked && (isBranchCall(node.whenTrue) || isBranchCall(node.whenFalse))
         ? { ...blocked, branch: node }
@@ -7656,7 +7656,7 @@ const findLeadingCall = (
       kind === ts.SyntaxKind.QuestionQuestionToken
     ) {
       const found = findLeadingCall(node.left, before, path, context);
-      return found.call !== undefined || found.read !== undefined
+      return found.call !== undefined || found.read !== undefined || found.branch !== undefined
         ? found
         : !found.isBlocked && isBranchCall(node.right)
           ? { ...blocked, branch: node }

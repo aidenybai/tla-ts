@@ -2076,6 +2076,8 @@ export const translateNegatedCondition = (
   if (ts.isParenthesizedExpression(node)) {
     return translateNegatedCondition(node.expression, scope, context);
   }
+  // A condition that a statement evaluated first has its value.
+  if (scope.results.has(node)) return not(translateCondition(node, scope, context));
   if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
     return translateCondition(node.operand, scope, context);
   }
