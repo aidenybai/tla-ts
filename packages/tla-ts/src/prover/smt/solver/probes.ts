@@ -427,7 +427,16 @@ const NAMED_PROBES = new Map<string, Probe>([
   ["is-qfufnra", isQfufnra],
   ["is-qffp", mkTest(mkNonQffp(false))],
   ["is-qffpbv", mkTest(mkNonQffp(false))],
-  ["is-qffplra", mkTest(mkNonQffp(true))],
+  [
+    "is-qffplra",
+    (goal) =>
+      Number(
+        !isNone(
+          goal,
+          (expr) => isApp(goal.manager, expr) && goal.manager.getFamily(expr) === FAMILY_FPA,
+        ) && mkTest(mkNonQffp(true))(goal) === 1,
+      ),
+  ],
   ["ackr-bound-probe", getAckrBound],
 ]);
 
