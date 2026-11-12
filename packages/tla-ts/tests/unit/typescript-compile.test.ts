@@ -3369,6 +3369,26 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("copies an array-like object sorted or spliced", async () => {
+    const result = await checkModel(`
+      const arrayLike = { length: 3, 0: "c", 1: "a", 2: "b" };
+      const sorted = Array.prototype.toSorted.call(arrayLike);
+      // @ts-ignore
+      const spliced = Array.prototype.toSpliced.call(arrayLike, 1, 1, "x");
+      const withHoles = Array.prototype.toSorted.call({ length: 3, 0: "b" });
+      if (
+        sorted.join(",") !== "a,b,c" ||
+        spliced.join(",") !== "c,x,b" ||
+        withHoles.length !== 3 ||
+        withHoles[0] !== "b" ||
+        withHoles[1] !== undefined
+      ) {
+        throw new Error("copies");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`
