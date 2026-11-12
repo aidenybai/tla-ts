@@ -1876,6 +1876,31 @@ describe("values", () => {
     expect((await checkModel(getSource(3, 5, -2, 44))).failure?.message).toContain("typed");
   });
 
+  it("changes a field's array through a local that names it", async () => {
+    const getSource = (expected: string) => `
+      const shrink = (values: number[], size: number) => {
+        while (values.length > size) values.pop();
+      };
+      class Pool {
+        temporaries: number[] = [];
+        end(mark: number) {
+          const temporaries = this.temporaries;
+          let total = 0;
+          for (let index = temporaries.length - 1; index >= mark; index--) total += temporaries[index];
+          shrink(temporaries, mark);
+          return total;
+        }
+      }
+      const pool = new Pool();
+      pool.temporaries.push(4, 5);
+      const total = pool.end(1);
+      const result = [total, pool.temporaries.join(",")].join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("5;4"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("5;4,5"))).failure?.message).toContain("5;4");
+  });
+
   it("reorders in place the new array that a method gives", async () => {
     const getSource = (expected: string) => `
       const doubled = [1, 2].map((value) => value * 2).reverse();
