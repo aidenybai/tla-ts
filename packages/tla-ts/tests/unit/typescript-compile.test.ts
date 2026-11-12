@@ -868,6 +868,29 @@ describe("values", () => {
     expect((await checkModel(getSource(1, 4, 0))).failure?.message).toContain("fixed");
   });
 
+  it("runs a function whose statements assign its parameters in its expressions", async () => {
+    const getSource = (compound: number, increment: number, declared: number) => `
+      function increment(value: number) {
+        return (value += 1);
+      }
+      function after(value: number) {
+        return value++;
+      }
+      function doubled(value: number) {
+        const twice = (value *= 2);
+        return twice + value;
+      }
+      const expected: number[] = [${compound}, ${increment}, ${declared}];
+      if (increment(1) !== expected[0]) throw new Error("compound");
+      if (after(1) !== expected[1]) throw new Error("increment");
+      if (doubled(2) !== expected[2]) throw new Error("declared");
+    `;
+    expect((await checkModel(getSource(2, 1, 8))).failure).toBeUndefined();
+    await expect(checkModel(getSource(1, 1, 8))).rejects.toThrow("compound");
+    await expect(checkModel(getSource(2, 2, 8))).rejects.toThrow("increment");
+    await expect(checkModel(getSource(2, 1, 4))).rejects.toThrow("declared");
+  });
+
   it("gives what a compound assignment to a property writes, as its value", async () => {
     const getSource = (field: number, property: number, element: number, typed: number) => `
       class Counter {

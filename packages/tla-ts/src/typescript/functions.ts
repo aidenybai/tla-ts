@@ -878,12 +878,25 @@ const isPureStatement = (statement: ts.Statement): boolean => {
     );
   }
   return (
-    (ts.isVariableStatement(statement) &&
+    ((ts.isVariableStatement(statement) &&
       (statement.declarationList.flags & ts.NodeFlags.Const) !== 0) ||
-    ts.isReturnStatement(statement) ||
-    ts.isThrowStatement(statement)
+      ts.isReturnStatement(statement) ||
+      ts.isThrowStatement(statement)) &&
+    !isAssigning(statement)
   );
 };
+
+// Whether a node assigns or increments, outside the functions it defines, which only statements
+// that run in order can do before the rest of their expression.
+const isAssigning = (node: ts.Node): boolean =>
+  (ts.isBinaryExpression(node) &&
+    node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    node.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+  ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+    (node.operator === ts.SyntaxKind.PlusPlusToken ||
+      node.operator === ts.SyntaxKind.MinusMinusToken)) ||
+  (!ts.isFunctionLike(node) &&
+    (ts.forEachChild(node, (child) => isAssigning(child) || undefined) ?? false));
 
 // A body of loops and assignments runs as statements that change only its locals.
 export const translateBody = (body: ts.ConciseBody, scope: Scope, context: Context): Expression => {
