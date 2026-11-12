@@ -5684,6 +5684,10 @@ const translateExpressionStatement = (
   }
   // A call's value runs though the statement drops it, so that a getter it reads, which tla-ts
   // can't call, stops the check: TLC would read only a value that something uses.
+  const constructor = getConstructorRun(expression, context);
+  if (constructor !== undefined) {
+    return translateConstruction(expression, constructor, path, context, frame, continueWith);
+  }
   if (ts.isCallExpression(expression)) {
     return translateCallStatement(expression, path, context, frame, (after, value) =>
       value === undefined || context.heap === undefined
@@ -5696,10 +5700,6 @@ const translateExpressionStatement = (
   }
   if (isStackConstruction(expression, context)) {
     return translateStackConstruction(expression, path, context, continueWith);
-  }
-  const constructor = getConstructorRun(expression, context);
-  if (constructor !== undefined) {
-    return translateConstruction(expression, constructor, path, context, frame, continueWith);
   }
   if (ts.isYieldExpression(expression) && expression.asteriskToken !== undefined) {
     return translateDelegatedYield(expression, path, context, frame, continueWith);

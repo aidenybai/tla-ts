@@ -3728,6 +3728,8 @@ describe("errors", () => {
       }
       const array: object = Reflect.construct(other, [], Array);
       if (Object.getPrototypeOf(array) !== Array.prototype) throw new Error("newTarget");
+      seen.isArray = false;
+      Reflect.construct(other, [], Array);
       if (!seen.isArray) throw new Error("inner");
       const pointed: object = Reflect.construct(other, [], Point);
       if (!(pointed instanceof Point)) throw new Error("Point newTarget");
