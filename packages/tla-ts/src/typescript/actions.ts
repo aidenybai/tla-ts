@@ -5122,6 +5122,17 @@ const bindIteration = (
   }
   rejectCatchRedeclaration(declared.declarations[0]);
   const name = declared.declarations[0].name;
+  if (isGetterPattern(name, path, context)) {
+    const value = context.names.getFresh("value");
+    return bindOnce(
+      path,
+      value,
+      element,
+      readPatternGetters(name, identifier(value), path, context, frame, (after) =>
+        bindIteration(declared, identifier(value), source, after, context, frame, continueWith),
+      ),
+    );
+  }
   const defaulted =
     source &&
     runCertainDefault(

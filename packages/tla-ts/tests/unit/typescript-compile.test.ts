@@ -4644,14 +4644,13 @@ describe("errors", () => {
     for (const statements of [
       "const { v } = source;",
       "function take({ v }: { v: number }) { return 1; } const taken = take(source);",
+      "for (const { v } of [source]) {}",
     ]) {
       expect((await checkModel(getSource(statements))).failure).toBeUndefined();
     }
-    for (const statements of ["for (const { v } of [source]) {}", "let v = 0; ({ v } = source);"]) {
-      expect((await checkModel(getSource(statements))).failure?.message).toContain(
-        "tla-ts can't call getters",
-      );
-    }
+    expect(
+      (await checkModel(getSource("let v = 0; ({ v } = source);"))).failure?.message,
+    ).toContain("tla-ts can't call getters");
   });
 
   it("makes an object of the properties that an object pattern's rest element takes", async () => {
