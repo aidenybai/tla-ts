@@ -94,39 +94,49 @@ export const eqThmProp = (left: Thm, right: Thm) => aconv(left.prop, right.prop)
 interface Trail {
   readonly state: Thm;
   readonly rest: Seq<Thm>;
-  readonly tactics: readonly Tactic[];
+  readonly position: number;
+  readonly next: Trail | undefined;
 }
 
-export const every = (tactics: readonly Tactic[]): Tactic => {
-  const evy = (trail: readonly Trail[], remaining: readonly Tactic[], state: Thm): Seq<Thm> => {
-    if (remaining.length === 0) return makeSeq(() => [state, makeSeq(() => evyBack(trail).pull())]);
-    const cell = remaining[0](state).pull();
-    if (cell === undefined) return evyBack(trail);
-    return evy(
-      [{ state: cell[0], rest: cell[1], tactics: remaining.slice(1) }, ...trail],
-      remaining.slice(1),
-      cell[0],
-    );
+// EVY and evyBack as one loop: blast replays thousands of tactics, too deep for mutual recursion.
+export const every =
+  (tactics: readonly Tactic[]): Tactic =>
+  (start) => {
+    const evy = (
+      initialTrail: Trail | undefined,
+      initialPosition: number,
+      initialState: Thm | undefined,
+    ): Cell<Thm> => {
+      let trail = initialTrail;
+      let position = initialPosition;
+      let state = initialState;
+      for (;;) {
+        if (state === undefined) {
+          if (trail === undefined) return undefined;
+          const cell = trail.rest.pull();
+          if (cell === undefined) trail = trail.next;
+          else if (eqThm(trail.state, cell[0])) trail = { ...trail, rest: cell[1] };
+          else {
+            trail = { state: cell[0], rest: cell[1], position: trail.position, next: trail.next };
+            position = trail.position;
+            state = cell[0];
+          }
+        } else if (position === tactics.length) {
+          const saved = trail;
+          return [state, makeSeq(() => evy(saved, 0, undefined))];
+        } else {
+          const cell = tactics[position](state).pull();
+          if (cell === undefined) state = undefined;
+          else {
+            trail = { state: cell[0], rest: cell[1], position: position + 1, next: trail };
+            position += 1;
+            state = cell[0];
+          }
+        }
+      }
+    };
+    return ofCell(evy(undefined, 0, start));
   };
-  const evyBack = (trail: readonly Trail[]): Seq<Thm> => {
-    let current = trail;
-    while (current.length > 0) {
-      const top = current[0];
-      const cell = top.rest.pull();
-      if (cell === undefined) current = current.slice(1);
-      else if (eqThm(top.state, cell[0]))
-        current = [{ ...top, rest: cell[1] }, ...current.slice(1)];
-      else
-        return evy(
-          [{ state: cell[0], rest: cell[1], tactics: top.tactics }, ...current.slice(1)],
-          top.tactics,
-          cell[0],
-        );
-    }
-    return emptySeq;
-  };
-  return (state) => evy([], tactics, state);
-};
 
 export const first = (tactics: readonly Tactic[]): Tactic =>
   tactics.reduceRight((rest, tactic) => orElse(tactic, rest), noTac);

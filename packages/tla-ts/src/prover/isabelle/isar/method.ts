@@ -46,7 +46,7 @@ import {
 } from "../provers/classical";
 import { proverTac, type IntuitionisticContext } from "../tools/intuitionistic";
 import { insertTac } from "./proof";
-import type { OuterToken } from "./theory";
+import { syntaxError, type OuterToken } from "./theory";
 
 interface Modifier {
   readonly kind: "intro" | "dest";
@@ -78,12 +78,6 @@ export interface ProofContext {
   readonly blastTac: (context: ClassicalContext) => GoalTactic;
   readonly getFact: (name: string) => readonly Thm[];
 }
-
-const syntaxError = (token: OuterToken | undefined) =>
-  new TlaIsabelleError(
-    "ERROR",
-    `Outer syntax error at: ${token === undefined ? "end of input" : token.text}`,
-  );
 
 export const parseProofText = (tokens: readonly OuterToken[]): ProofText => {
   let position = 0;

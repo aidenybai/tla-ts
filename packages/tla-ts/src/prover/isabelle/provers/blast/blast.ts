@@ -4,8 +4,8 @@ import { isIsabelleError, TlaIsabelleError } from "../../../../errors";
 import { selectGoal } from "../../pure/goal";
 import { destImplies, stripParams } from "../../pure/logic";
 import { makeNameContext } from "../../pure/name";
-import { emptySeq, makeSeq, ofCell, type Cell, type Seq } from "../../pure/seq";
-import { eqThm, orElse, thenTac, type GoalTactic, type Tactic } from "../../pure/tactical";
+import { emptySeq, ofCell, type Seq } from "../../pure/seq";
+import { every, orElse, thenTac, type GoalTactic, type Tactic } from "../../pure/tactical";
 import { addFreeNames, stripComb, type Term } from "../../pure/term";
 import { nprems, type Thm } from "../../pure/thm";
 import { atomizePremsTac } from "../../pure/object-logic";
@@ -35,8 +35,6 @@ import {
   type VarEntry,
   type VarRef,
 } from "./term";
-
-export type { BlastContext } from "./state";
 
 const DEPTH_LIMIT = 20;
 
@@ -119,52 +117,6 @@ const fromSubgoal = (state: BlastState, term: Term): BlastTerm => {
   return result;
 };
 
-interface EveryTrail {
-  readonly state: Thm;
-  readonly rest: Seq<Thm>;
-  readonly position: number;
-  readonly next: EveryTrail | undefined;
-}
-
-const everyTac =
-  (tactics: readonly Tactic[]): Tactic =>
-  (start) => {
-    const advance = (
-      initialTrail: EveryTrail | undefined,
-      initialPosition: number,
-      initialState: Thm | undefined,
-    ): Cell<Thm> => {
-      let trail = initialTrail;
-      let position = initialPosition;
-      let state = initialState;
-      for (;;) {
-        if (state === undefined) {
-          if (trail === undefined) return undefined;
-          const cell = trail.rest.pull();
-          if (cell === undefined) trail = trail.next;
-          else if (eqThm(trail.state, cell[0])) trail = { ...trail, rest: cell[1] };
-          else {
-            trail = { state: cell[0], rest: cell[1], position: trail.position, next: trail.next };
-            position = trail.position;
-            state = cell[0];
-          }
-        } else if (position === tactics.length) {
-          const saved = trail;
-          return [state, makeSeq(() => advance(saved, 0, undefined))];
-        } else {
-          const cell = tactics[position](state).pull();
-          if (cell === undefined) state = undefined;
-          else {
-            trail = { state: cell[0], rest: cell[1], position: position + 1, next: trail };
-            position += 1;
-            state = cell[0];
-          }
-        }
-      }
-    };
-    return makeSeq(() => advance(undefined, 0, start));
-  };
-
 const initBranch = (terms: readonly BlastTerm[], lim: number): Branch => ({
   pairs: [{ safe: terms.map((term) => ({ term, md: true })), unsafe: [] }],
   lits: [],
@@ -182,7 +134,7 @@ const rawBlast =
           const replay: Tactic[] = [];
           for (let current = tactics; current !== undefined; current = current.tail)
             replay.push(current.head(1));
-          return everyTac(replay.reverse())(goalState).pull();
+          return every(replay.reverse())(goalState).pull();
         } catch (error) {
           if (isIsabelleError(error, "TERM")) return backtrack(choices);
           throw error;

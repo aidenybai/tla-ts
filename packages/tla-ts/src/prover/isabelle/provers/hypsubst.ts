@@ -6,7 +6,7 @@ import { aeconv, etaContract } from "../pure/envir";
 import { occs, stripAssumsConcl, stripAssumsHyp, stripParams } from "../pure/logic";
 import { isBoundName } from "../pure/name";
 import { emptySimpset, type SimpContext } from "../pure/raw-simplifier";
-import { listOfSeq } from "../pure/seq";
+import { seqHead } from "../pure/seq";
 import { asmLrSimpTac } from "../pure/simplifier";
 import {
   determ,
@@ -335,7 +335,7 @@ const varsGenHypSubstTac = (context: HypsubstContext, isBound: boolean): GoalTac
   });
 
 const revDupElim = (thm: Thm) => {
-  const result = listOfSeq(assumption(undefined, 2, rsn(thm, 2, revcutRl)))[0];
+  const result = seqHead(assumption(undefined, 2, rsn(thm, 2, revcutRl)));
   if (result === undefined) throw new TlaIsabelleError("THM", "rev_dup_elim");
   return result;
 };

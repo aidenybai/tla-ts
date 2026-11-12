@@ -6,7 +6,7 @@ import { symmetricThm } from "./drule";
 import { destEquals, isEquals, occs, stripImpConcl, stripImpPrems } from "./logic";
 import { emptyNet, insertNet, keyOfTerm, type Net } from "./net";
 import { isFirstOrder, isPattern, matches } from "./pattern";
-import { emptyTable, type Table } from "./table";
+import { emptyTable, stringOrd, type Table } from "./table";
 import { emptyTyEnv } from "./type";
 import {
   aconv,
@@ -268,9 +268,7 @@ export const rulesFromEntries = (thms: readonly Thm[]): Net<Rrule> =>
     return insertNet(() => false, keyOfTerm(rrule.elhs), rrule, net) ?? net;
   }, emptyNet);
 
-export const emptyCongs: Table<string, Thm> = emptyTable((left: string, right: string) =>
-  left === right ? 0 : left < right ? -1 : 1,
-);
+export const emptyCongs: Table<string, Thm> = emptyTable(stringOrd);
 
 export const emptySimpset: Simpset = {
   rules: emptyNet,

@@ -1,6 +1,13 @@
 // Ported from Isabelle2025's Pure/drule.ML, Pure/term_subst.ML and Pure/Pure.thy. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
-import { cleanName, emptyNameContext, variantList, variantName, type NameContext } from "./name";
+import {
+  cleanName,
+  emptyNameContext,
+  isBoundName,
+  variantList,
+  variantName,
+  type NameContext,
+} from "./name";
 import {
   emptyTable,
   fastIndexnameOrd,
@@ -157,7 +164,7 @@ export const forallIntrVars = (thm: Thm) => {
 };
 
 const variantBound = (name: string, used: NameContext) =>
-  variantName(name.startsWith(":") ? "u" : name, used);
+  variantName(isBoundName(name) ? "u" : name, used);
 
 const fullProps = (thm: Thm) => [...thm.tpairs.flatMap((pair) => [pair[0], pair[1]]), thm.prop];
 
