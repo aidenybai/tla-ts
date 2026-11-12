@@ -391,7 +391,7 @@ export const formatNestedMessage = (text: string, isTool: boolean): string => {
     : `@!@!@STARTMSG ${code}:${MESSAGE_LEVEL.none} @!@!@\n${formatInnerMessage(code, text, isTool)}\n@!@!@ENDMSG ${code} @!@!@`;
 };
 
-const zeroPad = (value: number) => String(value).padStart(2, "0");
+export const zeroPad = (value: number, length = 2) => String(value).padStart(length, "0");
 
 export const formatTlcDuration = (milliseconds: number) => {
   const seconds = Math.floor(milliseconds / 1000) % 60;

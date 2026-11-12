@@ -46,6 +46,7 @@ import {
   MESSAGE_CODE,
   MESSAGE_LEVEL,
   type MessagePrinter,
+  zeroPad,
 } from "../tlc/messages";
 import { addRuntimeInvariants } from "./runtime-invariants";
 import { parseTlcArguments, type TlcArguments } from "./tlc-arguments";
@@ -222,8 +223,7 @@ const makeJavaDirectory = (path: string) => {
 
 const createMetadir = (args: TlcArguments) => {
   const now = new Date();
-  const pad = (value: number, length = 2) => String(value).padStart(length, "0");
-  const name = `${pad(now.getFullYear() % 100)}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}.${pad(now.getMilliseconds(), 3)}`;
+  const name = `${zeroPad(now.getFullYear() % 100)}-${zeroPad(now.getMonth() + 1)}-${zeroPad(now.getDate())}-${zeroPad(now.getHours())}-${zeroPad(now.getMinutes())}-${zeroPad(now.getSeconds())}.${zeroPad(now.getMilliseconds(), 3)}`;
   const directory = join(args.metadir ?? "states", name);
   mkdirSync(directory, { recursive: true });
   return directory;

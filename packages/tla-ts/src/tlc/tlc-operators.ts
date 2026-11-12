@@ -37,11 +37,10 @@ import {
   setFunctionClass,
 } from "../values";
 import { getFingerprintPolynomial } from "./fingerprint";
-
-const padTime = (value: number) => String(value).padStart(2, "0");
+import { zeroPad } from "./messages";
 
 const formatCalendarVersion = (date: Date) =>
-  `${date.getUTCFullYear()}.${padTime(date.getUTCMonth() + 1)}.${padTime(date.getUTCDate())}.${padTime(date.getUTCHours())}${padTime(date.getUTCMinutes())}${padTime(date.getUTCSeconds())}`;
+  `${date.getUTCFullYear()}.${zeroPad(date.getUTCMonth() + 1)}.${zeroPad(date.getUTCDate())}.${zeroPad(date.getUTCHours())}${zeroPad(date.getUTCMinutes())}${zeroPad(date.getUTCSeconds())}`;
 
 const getRegisterFunction = <Key extends Value>(registers: Map<Key, Value>) =>
   createFunction([...registers].map(([key, value]): [Value, Value] => [key, createTuple([value])]));

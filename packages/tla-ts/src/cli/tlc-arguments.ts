@@ -1,6 +1,7 @@
 import { closeSync, openSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import type { ModuleOperator } from "../check";
+import { MAXIMUM_INTEGER } from "../values";
 
 export interface TlcArguments {
   specs: string[];
@@ -55,7 +56,6 @@ interface MessageCodes {
 }
 
 const FINGERPRINT_POLYNOMIALS = 131;
-const MAXIMUM_INT = 2147483647n;
 
 const TLC_MESSAGE_CODES = [
   [-123456, -123456],
@@ -331,7 +331,7 @@ const VALUE_FLAGS: Record<string, ValueFlag> = {
     missing: "Error: maxSetSize required.",
     apply: applyInteger(32, "Error: An integer for maxSetSize required.", (parsed, bound, text) => {
       if (bound < 1n) {
-        return `Error: Value in interval [0, ${MAXIMUM_INT}] for maxSetSize required. But encountered ${text}`;
+        return `Error: Value in interval [0, ${MAXIMUM_INTEGER}] for maxSetSize required. But encountered ${text}`;
       }
       parsed.maxSetSize = Number(bound);
     }),

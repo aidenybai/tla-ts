@@ -1,5 +1,6 @@
 import { getJavaHashCode } from "../java-hash";
 import { formatValue, type Value } from "../values";
+import { zeroPad } from "./messages";
 
 interface TraceSpecInput {
   module: string;
@@ -32,11 +33,10 @@ const getHashOrder = (names: string[]) => {
 };
 
 const formatJavaDate = (date: Date) => {
-  const pad = (value: number) => String(value).padStart(2, "0");
   const getPart = (options: Intl.DateTimeFormatOptions, type: Intl.DateTimeFormatPartTypes) =>
     new Intl.DateTimeFormat("en-US", options).formatToParts(date).find((part) => part.type === type)
       ?.value;
-  return `${getPart({ weekday: "short" }, "weekday")} ${getPart({ month: "short" }, "month")} ${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())} ${getPart({ timeZoneName: "short" }, "timeZoneName")} ${date.getFullYear()}`;
+  return `${getPart({ weekday: "short" }, "weekday")} ${getPart({ month: "short" }, "month")} ${zeroPad(date.getDate())} ${zeroPad(date.getHours())}:${zeroPad(date.getMinutes())}:${zeroPad(date.getSeconds())} ${getPart({ timeZoneName: "short" }, "timeZoneName")} ${date.getFullYear()}`;
 };
 
 const splitLines = (text: string) => {
