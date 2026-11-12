@@ -262,7 +262,7 @@ const TIPS = [
   "When using more than one worker, the reported depth might differ across runs. For small models, use a single worker. For large models, the diameter will almost always appear deterministic.",
 ];
 
-const getBold = (word: string) => `\u001b[1m${word}\u001b[0m`;
+export const getBold = (word: string) => `\u001b[1m${word}\u001b[0m`;
 
 const getItalic = (word: string) => `\u001b[3m${word}\u001b[0m`;
 
