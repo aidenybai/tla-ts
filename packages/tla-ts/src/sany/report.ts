@@ -238,6 +238,10 @@ export const getSanyReport = (
         rootFilePath: options.isXmlExport ? `${name.replace(/\.tla$/, "")}.tla` : undefined,
         version: options.version,
         rootExtendees: options.rootExtendees,
+        getParsedModule: (moduleName, text) => {
+          const loaded = loadedModules.get(moduleName);
+          return loaded?.text === text ? loaded.module : undefined;
+        },
         onParse: (moduleName) => {
           if (describeFile) {
             log(`Parsing file ${describeFile(moduleName, origins.get(moduleName) ?? "file")}`);

@@ -160,6 +160,8 @@ interface SanyGenerationOptions {
   onModule?: (module: ModuleNode, messages: SanyMessage[]) => void;
   version?: TlcVersion;
   rootExtendees?: string[];
+  /** The module the caller already parsed from a module's text, so SANY doesn't parse it again. */
+  getParsedModule?: (name: string, text: string) => Module | undefined;
 }
 
 interface SymbolTable {
@@ -464,6 +466,8 @@ export const generateSanySpecification = (
       new TlaSanyFatalError(`Could not parse module ${name} from file ${file}`, name, parseError);
     const lexicalError = options.version === "1.7.4" ? getSany174LexicalError(text) : undefined;
     if (lexicalError !== undefined) throw getParseFailure(lexicalError);
+    const parsed = options.getParsedModule?.(name, text);
+    if (parsed !== undefined) return parsed;
     // HACK: the parser's errors are not SANY's, so a module that fails to parse gets the report of
     // SANY's parser, or the parser's own where SANY's parser would accept the module.
     try {
