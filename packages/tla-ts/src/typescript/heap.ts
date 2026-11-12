@@ -73,6 +73,7 @@ import {
 } from "./javascript";
 import { isDescriptorsRead, isProxyOperation } from "./protocols";
 import { createStateScope, type Scope } from "./scope";
+import { getStackCall } from "./stacks";
 import {
   apply,
   ifExpression,
@@ -3128,6 +3129,9 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
   // where disposing throws after an error.
   if (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) {
     return ["TypeError", "SuppressedError"];
+  }
+  if (getStackCall(node, context) !== undefined) {
+    return ["TypeError", "ReferenceError", "SuppressedError"];
   }
   if (
     ts.isCallExpression(node) &&

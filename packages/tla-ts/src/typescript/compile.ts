@@ -241,8 +241,11 @@ export const compile = (
         "ArrayBuffer",
         "SharedArrayBuffer",
         "DataView",
+        "DisposableStack",
+        "AsyncDisposableStack",
         ...TYPED_ARRAYS.keys(),
       ].includes(node.text)) ||
+    (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) ||
     node.kind === ts.SyntaxKind.AsyncKeyword ||
     isHoleyArray(node) ||
     getKeptIterator(node, context) !== undefined ||

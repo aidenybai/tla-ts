@@ -111,6 +111,8 @@ const LIBRARY_OBJECTS = new Set([
   "ArrayBuffer",
   "SharedArrayBuffer",
   "DataView",
+  "DisposableStack",
+  "AsyncDisposableStack",
   "Int8Array",
   "Uint8Array",
   "Uint8ClampedArray",

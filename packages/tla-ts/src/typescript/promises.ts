@@ -46,6 +46,7 @@ import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { getKeptIterator } from "./types";
 import { type Bound, bindValues, type Receiver } from "./scope";
+import type { TrackedStack } from "./stacks";
 import { apply, boolean, define, identifier, index, junction, number, string, tuple } from "./tla";
 
 // The jobs and timers that a script queues, and the promises it makes, which tla-ts follows as it
@@ -60,6 +61,8 @@ export interface Tasks {
   // What the executor that NewPromiseCapability passes a script's constructor took, by the
   // executor's parameter, while the constructor's body runs.
   capabilities: ReadonlyMap<ts.Symbol, { resolve: Expression; reject: Expression }>;
+  // The DisposableStacks that the code made, by the name of the heap that made each.
+  stacks: ReadonlyMap<string, TrackedStack>;
 }
 
 interface Caller {
@@ -120,6 +123,7 @@ export const EMPTY_TASKS: Tasks = {
   promises: new Map(),
   callers: new Map(),
   capabilities: new Map(),
+  stacks: new Map(),
 };
 
 const getTasks = (path: Path, node: ts.Node) => {
@@ -2396,10 +2400,31 @@ export const translateAsyncCall = (
     continueWith,
   );
 
+// Runs a built-in async function's body, such as an AsyncDisposableStack's disposeAsync, which
+// gives a promise that settles as the body returns or throws.
+export const translateAsyncBuiltIn = (
+  node: ts.Node,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+  run: (path: Path, frame: Frame) => Formula,
+): Formula =>
+  runAsyncBody(
+    node,
+    run,
+    path,
+    context,
+    frame,
+    (made, _rejectFrame, bindWith) => bindWith({ definitions: [], scope: made.scope }, made),
+    continueWith,
+  );
+
 // Runs an async function's body once a call binds its parameters, and gives its promise.
 const runAsyncBody = (
   node: ts.Node,
-  callee: FunctionNode,
+  // The async function, or the body of a built-in one.
+  body: FunctionNode | ((path: Path, frame: Frame) => Formula),
   path: Path,
   context: Context,
   frame: Frame,
@@ -2408,7 +2433,8 @@ const runAsyncBody = (
 ): Formula =>
   makePromise(path, node, context, (made, name) => {
     const ref = getPromise(made, node, name).ref;
-    const captured = getLocalCaptures(callee, context);
+    const callee = typeof body === "function" ? undefined : body;
+    const captured = callee === undefined ? new Set() : getLocalCaptures(callee, context);
     const isOuter = (symbol: ts.Symbol) =>
       !(symbol.declarations ?? []).some(
         (declaration) =>
@@ -2436,7 +2462,7 @@ const runAsyncBody = (
       // The heap changes as the body awaits, which makes promises.
       const changed = [
         ...new Set([
-          ...getChanged(callee, inner, context),
+          ...getChanged(callee ?? node, inner, context),
           ...(context.heap === undefined ? [] : [context.heap]),
         ]),
       ];
@@ -2476,19 +2502,17 @@ const runAsyncBody = (
             left.caller.resume,
           );
         },
-        inlining: new Set([...frame.inlining, callee]),
+        inlining: callee === undefined ? frame.inlining : new Set([...frame.inlining, callee]),
       };
+      const start = setCaller(
+        { ...inner, scope: bound.scope },
+        { path: made, resume: (after) => continueWith(after, ref) },
+      );
       return letIn(
         bound.definitions,
-        translateStatements(
-          getBody(callee),
-          setCaller(
-            { ...inner, scope: bound.scope },
-            { path: made, resume: (after) => continueWith(after, ref) },
-          ),
-          context,
-          bodyFrame,
-        ),
+        typeof body === "function"
+          ? body(start, bodyFrame)
+          : translateStatements(getBody(body), start, context, bodyFrame),
       );
     });
   });

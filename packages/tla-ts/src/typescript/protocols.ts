@@ -88,6 +88,12 @@ const isRunnable = (node: ts.Node): node is FunctionNode =>
 const isAsync = (node: FunctionNode) =>
   (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) !== 0;
 
+// The function that a value is, where it's one that a protocol can run.
+export const getFunctionCandidates = (value: ts.Expression, context: Context): FunctionNode[] => {
+  const candidate = getCallee(skipCasts(value), context) ?? skipCasts(value);
+  return isRunnable(candidate) ? [candidate] : [];
+};
+
 const written = new WeakMap<ts.SourceFile, Map<string, FunctionNode[]>>();
 
 // The functions that a script writes under a key, as methods and as getters, by key. A call of what
@@ -100,12 +106,16 @@ export const getWrittenFunctions = (node: ts.Node, key: string, context: Context
   const found = new Map<string, FunctionNode[]>();
   const add = (name: ts.Node, value: ts.Node) => {
     const role = getKey(name);
-    const candidate = ts.isExpression(value)
-      ? (getCallee(skipCasts(value), context) ?? skipCasts(value))
-      : value;
-    if (role === undefined || !isRunnable(candidate)) return;
-    const known = found.get(role) ?? [];
-    if (!known.includes(candidate)) found.set(role, [...known, candidate]);
+    const candidates = ts.isExpression(value)
+      ? getFunctionCandidates(value, context)
+      : isRunnable(value)
+        ? [value]
+        : [];
+    if (role === undefined) return;
+    candidates.forEach((candidate) => {
+      const known = found.get(role) ?? [];
+      if (!known.includes(candidate)) found.set(role, [...known, candidate]);
+    });
   };
   findNodes(file, (inner): inner is ts.Node => {
     if (ts.isPropertyAssignment(inner)) add(inner.name, inner.initializer);

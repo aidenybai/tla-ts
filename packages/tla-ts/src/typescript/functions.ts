@@ -60,6 +60,7 @@ import {
 } from "./tla";
 import { isBuiltInObject } from "./intrinsics";
 import { link } from "./regions";
+import { getStackCall } from "./stacks";
 import { hasHeapType, translateUnknown } from "./types";
 
 // Whether a step has changed a state variable, so that helpers reading state must see the change.
@@ -99,11 +100,12 @@ export const mayThrow = (
   context: Context,
   visited = new Set<ts.Node>(),
 ): boolean => {
-  // A using declaration throws a TypeError for a value that isn't disposable, and runs dispose
-  // methods.
+  // A using declaration throws a TypeError for a value that isn't disposable, and it and a
+  // DisposableStack's methods run dispose methods.
   if (
     ts.isThrowStatement(node) ||
-    (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0)
+    (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) ||
+    getStackCall(node, context) !== undefined
   ) {
     return true;
   }

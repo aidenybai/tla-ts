@@ -213,6 +213,13 @@ import {
 } from "./protocols";
 import { addResource, type Disposal, isAwaitUsing, translateUsing } from "./disposal";
 import {
+  getStackCall,
+  getStackFunctions,
+  isStackConstruction,
+  translateStackCall,
+  translateStackConstruction,
+} from "./stacks";
+import {
   bindPattern,
   bindPatternInline,
   type Bound,
@@ -1837,6 +1844,9 @@ export const translateCallStatement = (
         ),
       ),
     );
+  }
+  if (getStackCall(expression, context) !== undefined) {
+    return translateStackCall(expression, path, context, frame, continueWith);
   }
   const getterCall = getGetterCall(expression, context);
   if (getterCall !== undefined) {
@@ -5667,6 +5677,9 @@ const translateExpressionStatement = (
   if (isPromiseConstruction(expression, context)) {
     return translatePromiseConstruction(expression, path, context, frame, continueWith);
   }
+  if (isStackConstruction(expression, context)) {
+    return translateStackConstruction(expression, path, context, continueWith);
+  }
   const constructor = getConstructorRun(expression, context);
   if (constructor !== undefined) {
     return translateConstruction(expression, constructor, path, context, frame, continueWith);
@@ -6182,6 +6195,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getURICall(node, context)?.isDecode === true ||
     getViewCall(node, context) !== undefined ||
     getGetterCall(node, context) !== undefined ||
+    getStackCall(node, context) !== undefined ||
     getHeapArrayChange(node, context) !== undefined ||
     getArrayIteratorCall(node, context) !== undefined ||
     getStringCall(node, context) !== undefined ||
@@ -6582,6 +6596,18 @@ export const translateDeclarations = (
   }
   return allocate(initializer, path, context, (allocated) => {
     const constructed = initializer && skipCasts(initializer);
+    if (constructed !== undefined && isStackConstruction(constructed, context)) {
+      return translateStackConstruction(constructed, allocated, context, (after, value) =>
+        bindDeclaration(
+          declarations,
+          value ?? getUndefined(context),
+          after,
+          context,
+          frame,
+          continueWith,
+        ),
+      );
+    }
     if (constructed !== undefined && isPromiseConstruction(constructed, context)) {
       return translatePromiseConstruction(constructed, allocated, context, frame, (after, value) =>
         bindDeclaration(
@@ -6828,6 +6854,18 @@ export const getChanged = (
         visited.add(called);
         visit(called);
       });
+    }
+    // A DisposableStack's method may run the functions that the stacks dispose with.
+    if (getStackCall(node, context) !== undefined) {
+      if (context.heap !== undefined) changed.add(context.heap);
+      getStackFunctions(node, context).forEach((called) => {
+        if (visited.has(called)) return;
+        visited.add(called);
+        visit(called);
+      });
+    }
+    if (isStackConstruction(node, context) && context.heap !== undefined) {
+      changed.add(context.heap);
     }
     // A using declaration runs the dispose methods, and their getters, that the script writes.
     if (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) {

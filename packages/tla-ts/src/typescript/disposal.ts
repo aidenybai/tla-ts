@@ -8,7 +8,7 @@ import {
   throwTypeError,
   translateDeclarations,
 } from "./actions";
-import { type Context, getUndefined } from "./context";
+import { type Context, type FunctionNode, getUndefined } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateSuppressedError } from "./exceptions";
 import { translateExpression } from "./expressions";
@@ -18,11 +18,15 @@ import { useJavaScript } from "./javascript";
 import { callValue, getMethods, isNullish, read } from "./protocols";
 import { apply, boolean, set, string } from "./tla";
 
-interface Resource {
+export interface Resource {
   site: ts.Node;
-  value: Expression;
+  // What the method runs with as this, and the arguments it takes.
+  receiver: Expression;
+  values: Expression[];
   // The dispose method, or undefined for null or undefined that an await using declaration holds.
   method: Expression | undefined;
+  // The functions that the method may be.
+  candidates: readonly FunctionNode[];
   // Whether an await using declaration added it, which awaits what the method returns.
   isAsync: boolean;
   // Whether the method is Symbol.dispose that an await using declaration calls in place of
@@ -49,7 +53,7 @@ interface Disposing {
 
 // Calls the dispose methods of a block's resources, last first, with each resource as this. An
 // error that a method throws replaces the completion, or suppresses the error that it threw.
-const disposeAll = (
+export const disposeAll = (
   resources: readonly Resource[],
   disposing: Disposing,
   path: Path,
@@ -109,12 +113,10 @@ const disposeAll = (
   const uncaught = apply("Assert", [boolean(false), string("await using")]);
   return callValue(
     site,
-    resource.isAsync && !resource.isWrapped
-      ? getMethods(site, "@@asyncDispose", context, true)
-      : getMethods(site, "@@dispose", context),
+    resource.candidates,
     method,
-    resource.value,
-    [],
+    resource.receiver,
+    resource.values,
     path,
     context,
     {
@@ -182,10 +184,67 @@ const getDisposingFrame = (disposal: Disposal, context: Context): Frame => {
   };
 };
 
+// Reads the dispose method of a value that a using declaration or a DisposableStack's use adds:
+// Symbol.dispose, or for an await using declaration Symbol.asyncDispose, or else Symbol.dispose,
+// which throws a TypeError where the value isn't an object or the method isn't a function.
+export const readResource = (
+  site: ts.Node,
+  value: Expression,
+  isAsync: boolean,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, resource: Resource) => Formula,
+): Formula => {
+  const isFunction = (inner: Path, method: Expression) =>
+    apply("=", [
+      useJavaScript("TypeOfIn", [getHeap(inner.scope, site, context), method], context),
+      string("function"),
+    ]);
+  const resource = (method: Expression, isWrapped: boolean): Resource => ({
+    site,
+    receiver: value,
+    values: [],
+    method,
+    candidates:
+      isAsync && !isWrapped
+        ? getMethods(site, "@@asyncDispose", context, true)
+        : getMethods(site, "@@dispose", context),
+    isAsync,
+    isWrapped,
+  });
+  const readDispose = (inner: Path, isWrapped: boolean) =>
+    read(site, value, "@@dispose", inner, context, frame, (got, method) =>
+      ifThenElse(
+        isFunction(got, method),
+        continueWith(got, resource(method, isWrapped)),
+        throwTypeError(got, site, context, frame),
+      ),
+    );
+  return ifThenElse(
+    apply("\\in", [
+      useJavaScript("TypeOfIn", [getHeap(path.scope, site, context), value], context),
+      set([string("object"), string("function")]),
+    ]),
+    isAsync
+      ? read(site, value, "@@asyncDispose", path, context, frame, (got, method) =>
+          ifThenElse(
+            isNullish(method, context),
+            readDispose(got, true),
+            ifThenElse(
+              isFunction(got, method),
+              continueWith(got, resource(method, false)),
+              throwTypeError(got, site, context, frame),
+            ),
+          ),
+        )
+      : readDispose(path, false),
+    throwTypeError(path, site, context, frame),
+  );
+};
+
 // Adds a value that a using declaration binds to its block's resources, which the code after it
-// disposes. A resource is null, undefined, or an object whose Symbol.dispose method the declaration
-// reads once, or for an await using declaration its Symbol.asyncDispose method, or else its
-// Symbol.dispose method.
+// disposes. A resource is null, undefined, or an object with a dispose method.
 export const addResource = (
   block: ts.Node,
   site: ts.Node,
@@ -205,44 +264,20 @@ export const addResource = (
       getDisposingFrame(disposal, context),
     );
   };
-  const isFunction = (inner: Path, method: Expression) =>
-    apply("=", [
-      useJavaScript("TypeOfIn", [getHeap(inner.scope, site, context), method], context),
-      string("function"),
-    ]);
-  const readDispose = (inner: Path, isWrapped: boolean) =>
-    read(site, value, "@@dispose", inner, context, frame, (got, method) =>
-      ifThenElse(
-        isFunction(got, method),
-        add(got, { site, value, method, isAsync, isWrapped }),
-        throwTypeError(got, site, context, frame),
-      ),
-    );
   return ifThenElse(
     isNullish(value, context),
     isAsync
-      ? add(path, { site, value, method: undefined, isAsync, isWrapped: false })
+      ? add(path, {
+          site,
+          receiver: value,
+          values: [],
+          method: undefined,
+          candidates: [],
+          isAsync,
+          isWrapped: false,
+        })
       : continueWith(path, frame),
-    ifThenElse(
-      apply("\\in", [
-        useJavaScript("TypeOfIn", [getHeap(path.scope, site, context), value], context),
-        set([string("object"), string("function")]),
-      ]),
-      isAsync
-        ? read(site, value, "@@asyncDispose", path, context, frame, (got, method) =>
-            ifThenElse(
-              isNullish(method, context),
-              readDispose(got, true),
-              ifThenElse(
-                isFunction(got, method),
-                add(got, { site, value, method, isAsync, isWrapped: false }),
-                throwTypeError(got, site, context, frame),
-              ),
-            ),
-          )
-        : readDispose(path, false),
-      throwTypeError(path, site, context, frame),
-    ),
+    readResource(site, value, isAsync, path, context, frame, add),
   );
 };
 

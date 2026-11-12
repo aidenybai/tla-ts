@@ -7926,6 +7926,89 @@ describe("errors", () => {
     expect(wrong.failure?.message).toContain("adopt");
   });
 
+  it("runs a DisposableStack's methods, disposing last first", async () => {
+    const source = (expected: string) => `
+      const order: string[] = [];
+      const stack = new DisposableStack();
+      const resource = { [Symbol.dispose]() { order.push("use"); } };
+      function onAdopt(value: string) { order.push("adopt " + value); }
+      function onDefer() { order.push("defer"); }
+      if (stack.use(resource) !== resource) throw new Error("use");
+      if (stack.adopt("x", onAdopt) !== "x") throw new Error("adopt");
+      stack.defer(onDefer);
+      const moved = stack.move();
+      if (!stack.disposed || moved.disposed) throw new Error("move");
+      try { stack.defer(onDefer); } catch (error) { if (error instanceof ReferenceError) order.push("disposed"); }
+      stack.dispose();
+      moved[Symbol.dispose]();
+      moved.dispose();
+      if (order.join() !== "${expected}") throw new Error(order.join());
+    `;
+    const result = await checkModel(source("disposed,defer,adopt x,use"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("disposed,use,adopt x,defer"));
+    expect(wrong.failure?.message).toContain("disposed,defer,adopt x,use");
+  });
+
+  it("suppresses the errors that disposing a DisposableStack throws, and ignores re-entry", async () => {
+    const source = (expected: string) => `
+      const order: string[] = [];
+      const stack = new DisposableStack();
+      function first() { order.push("first"); throw new RangeError("first"); }
+      function second() { order.push("second"); throw new TypeError("second"); }
+      function reenter() { order.push("reenter"); stack.dispose(); }
+      stack.defer(first);
+      stack.defer(second);
+      stack.defer(reenter);
+      try {
+        stack.dispose();
+      } catch (error) {
+        if (error instanceof SuppressedError && error.error instanceof ${expected}) {
+          order.push("suppressed");
+        }
+      }
+      if (order.join() !== "reenter,second,first,suppressed") throw new Error(order.join());
+    `;
+    const result = await checkModel(source("RangeError"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("TypeError"));
+    expect(wrong.failure?.message).toContain("reenter,second,first");
+  });
+
+  it("awaits what an AsyncDisposableStack disposes, as Node does", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      const order: string[] = [];
+      const stack = new AsyncDisposableStack();
+      const resource = { async [Symbol.asyncDispose]() { order.push("async"); } };
+      const syncResource = { [Symbol.dispose]() { order.push("sync"); } };
+      function onDefer() { order.push("defer"); }
+      stack.use(resource);
+      stack.use(null);
+      stack.use(syncResource);
+      stack.defer(onDefer);
+      const done = stack.disposeAsync();
+      order.push("after call");
+      Promise.resolve()
+        .then(() => order.push("tick 1"))
+        .then(() => order.push("tick 2"))
+        .then(() => order.push("tick 3"))
+        .then(() => order.push("tick 4"));
+      done.then((value) => order.push("done " + String(value) + " " + String(stack.disposed)));
+      setTimeout(() => {
+        if (order.join() !== "${expected}") throw new Error(order.join());
+      });
+    `;
+    const result = await checkModel(
+      source("defer,after call,sync,tick 1,async,tick 2,tick 3,done undefined true,tick 4"),
+    );
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(
+      source("defer,after call,sync,tick 1,tick 2,async,tick 3,done undefined true,tick 4"),
+    );
+    expect(wrong.failure).toBeDefined();
+  });
+
   it("awaits what an await using declaration disposes, as Node does", async () => {
     const source = (expected: string) => `
       declare function setTimeout(callback: () => void): void;

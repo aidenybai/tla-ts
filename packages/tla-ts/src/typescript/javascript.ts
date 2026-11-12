@@ -964,12 +964,22 @@ TypedElement(heap, ref, index) ==
 
 LOCAL TypedArrayGetter == "get %Int8Array.prototype.[[Prototype]]%."
 
-\\* The paths of the getters that read a buffer's or a view's internal slots.
+\\* A DisposableStack or an AsyncDisposableStack, whose resources tla-ts follows as it compiles, and which holds whether it's
+\\* disposed for its disposed getter.
+StackObject(prototype, isAsync) ==
+  [EmptyObject EXCEPT !.prototype = prototype] @@ [isDisposed |-> FALSE, isAsync |-> isAsync]
+
+IsStack(heap, value) == IsHeap(value) /\\ "isDisposed" \\in DOMAIN Lookup(heap, value)
+
+SetDisposed(heap, ref) == [heap EXCEPT !.objects[ref[Ref]].isDisposed = TRUE]
+
+\\* The paths of the getters that read a buffer's, a view's, or a DisposableStack's internal slots.
 LOCAL ViewGetters ==
   {"get ArrayBuffer.prototype." \\o name : name \\in {"byteLength", "maxByteLength", "resizable", "detached"}}
     \\cup {"get SharedArrayBuffer.prototype." \\o name : name \\in {"byteLength", "maxByteLength", "growable"}}
     \\cup {"get DataView.prototype." \\o name : name \\in {"buffer", "byteLength", "byteOffset"}}
     \\cup {TypedArrayGetter \\o name : name \\in {"buffer", "byteLength", "byteOffset", "length", "@@toStringTag"}}
+    \\cup {"get DisposableStack.prototype.disposed", "get AsyncDisposableStack.prototype.disposed"}
 
 LOCAL HasPrefix(text, prefix) == Len(text) >= Len(prefix) /\\ SubSeq(text, 1, Len(prefix)) = prefix
 
@@ -981,7 +991,11 @@ LOCAL ViewGet(heap, path, receiver) ==
       name(prefix) == SubSeq(path, Len(prefix) + 1, Len(path))
       wrong == Assert(FALSE, "tla-ts can't throw the TypeError of a getter on another kind of object")
       isShared == HasPrefix(path, "get Shared")
-  IN CASE path = TypedArrayGetter \\o "@@toStringTag" ->
+  IN CASE path \\in {"get DisposableStack.prototype.disposed", "get AsyncDisposableStack.prototype.disposed"} ->
+            IF IsStack(heap, receiver) /\\ object.isAsync = HasPrefix(path, "get Async")
+            THEN object.isDisposed
+            ELSE wrong
+       [] path = TypedArrayGetter \\o "@@toStringTag" ->
             IF IsTypedArray(heap, receiver) THEN object.elementType \\o "Array" ELSE Undefined
        [] HasPrefix(path, TypedArrayGetter) ->
             CASE ~IsTypedArray(heap, receiver) -> wrong
