@@ -499,7 +499,7 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     return 1;
   }
   if ("error" in parsed) {
-    if (parsed.isUncaught) {
+    if (parsed.kind === "uncaught") {
       console.error(`Exception in thread "main" ${parsed.error}`);
       return 1;
     }

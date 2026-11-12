@@ -44,9 +44,9 @@ export interface RuntimeInvariant {
 }
 
 export interface TlcArgumentsError {
+  kind: "command-line" | "uncaught";
   error: string;
   isTool: boolean;
-  isUncaught?: boolean;
 }
 
 interface MessageCodes {
@@ -428,11 +428,15 @@ const TRACE_FLAGS: Record<string, TraceFlag> = {
 export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsError | "usage" => {
   const parsed = createDefaults();
   let argumentIndex = 0;
-  const reject = (error: string): TlcArgumentsError => ({ error, isTool: parsed.isTool });
+  const reject = (error: string): TlcArgumentsError => ({
+    kind: "command-line",
+    error,
+    isTool: parsed.isTool,
+  });
   const getMissing = (): TlcArgumentsError => ({
+    kind: "uncaught",
     error: `java.lang.ArrayIndexOutOfBoundsException: Index ${args.length} out of bounds for length ${args.length}`,
     isTool: parsed.isTool,
-    isUncaught: true,
   });
   const suppressedCodes: MessageCodes = { tlc: [], sany: [] };
   const errorCodes: MessageCodes = { tlc: [], sany: [] };
@@ -472,9 +476,9 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
         parsed.traceCount = parseJavaInteger(count, 64);
         if (parsed.traceCount === undefined) {
           return {
+            kind: "uncaught",
             error: `java.lang.NumberFormatException: For input string: "${count}"`,
             isTool: parsed.isTool,
-            isUncaught: true,
           };
         }
       }
