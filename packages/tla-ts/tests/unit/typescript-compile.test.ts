@@ -3501,6 +3501,25 @@ describe("errors", () => {
     expect((await checkModel(getSource(true))).failure?.message).toContain("unexpected");
   });
 
+  it("runs a definition with a descriptor written in place before the rest of its statement", async () => {
+    const getSource = (expected: number) => `
+      const object: Record<string, number> = {};
+      let count = 0;
+      if (!Reflect.defineProperty(object, "attr", { value: count, configurable: false })) {
+        throw new Error("first");
+      }
+      count = 1;
+      if (Reflect.defineProperty(object, "attr", { value: count }) === true) throw new Error("again");
+      if (Object.defineProperty(object, "other", { value: 2 }) !== object || object.other !== 2) {
+        throw new Error("other");
+      }
+      const isDone = Reflect.defineProperty(object, "late", { value: 3 }) && object.late === 3;
+      if (!isDone || object.attr !== ${expected}) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(0))).failure).toBeUndefined();
+    expect((await checkModel(getSource(1))).failure?.message).toContain("unexpected");
+  });
+
   it("describes each own property that Object.getOwnPropertyDescriptors reads", async () => {
     const source = `
       const check = (actual: unknown, expected: unknown, message: string) => {
