@@ -14,6 +14,7 @@ import {
   getParameters,
   getObjectMethod,
   getRunConstructor,
+  getRunFields,
   getSymbol,
   getUndefined,
   getPrivateKey,
@@ -773,8 +774,9 @@ const translateInstance = (
       : current.parameters
     ).flatMap((parameter) => (parameter.initializer === undefined ? [] : [parameter.initializer])),
   );
+  const run = getRunConstructor(created, context);
   if (
-    getRunConstructor(created, context) === undefined &&
+    (run === undefined || ts.isClassLike(run)) &&
     ![...dropped, ...defaults].every(isInertValue)
   ) {
     throw new TlaTypeScriptError("Unsupported arguments to a constructor that runs no code", node);
@@ -804,14 +806,18 @@ const translateInstance = (
       ? translateWrapperObject(node, builtInBase, identifier("Null"), scope, context)
       : identifier("EmptyObject"),
   );
-  // TypeScript defines a class's parameter properties before its other fields.
+  // TypeScript defines a class's parameter properties before its other fields. The construction
+  // defines the fields that run a constructor, and those after them.
   const fields = getChain(created, context).flatMap((current) =>
     ts.isClassLike(current)
       ? [
           ...(current.members.find(ts.isConstructorDeclaration)?.parameters ?? []).filter(
             (parameter) => ts.isParameterPropertyDeclaration(parameter, parameter.parent),
           ),
-          ...current.members,
+          ...current.members.filter(
+            (member) =>
+              !ts.isPropertyDeclaration(member) || !getRunFields(current, context).includes(member),
+          ),
         ]
       : [],
   );
@@ -2056,7 +2062,8 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
             ? current.members.flatMap((member) =>
                 ts.isPropertyDeclaration(member) &&
                 !isStatic(member) &&
-                member.initializer !== undefined
+                member.initializer !== undefined &&
+                !getRunFields(current, context).includes(member)
                   ? getAllocated(member.initializer, context)
                   : [],
               )

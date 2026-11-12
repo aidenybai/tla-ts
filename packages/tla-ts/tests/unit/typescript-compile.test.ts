@@ -6705,6 +6705,59 @@ describe("errors", () => {
     );
   });
 
+  it("constructs the objects that a class's fields make with constructors, in order", async () => {
+    const getSource = (expected: string) => `
+      class Marks {
+        readonly list: number[] = [];
+        constructor(readonly owner: Store) {
+          this.list.push(owner.base);
+          this.list.push(owner.later === undefined ? 1 : 2);
+        }
+      }
+      class Store {
+        readonly base = 10;
+        readonly marks = new Marks(this);
+        readonly later: number | undefined = 5;
+        readonly count = this.marks.list.length;
+        readonly filled = new Int32Array(2).fill(-1);
+        readonly keys: string[];
+        constructor() {
+          this.keys = Object.keys(this);
+        }
+      }
+      const store = new Store();
+      const other = new Store();
+      other.marks.list.push(7);
+      const result = [
+        store.marks.list.join(","),
+        store.count,
+        store.keys.join(","),
+        other.marks.list.length,
+        store.marks.owner === store,
+        store.filled[1],
+      ].join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect(
+      (await checkModel(getSource("10,1;2;base,marks,later,count,filled,keys;3;true;-1"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("10,2;2;base,marks,later,count,filled,keys;3;true;-1"))).failure
+        ?.message,
+    ).toContain("10,1;");
+    expect(() =>
+      compile(`
+        class Marks {
+          constructor(readonly owner: Store) {}
+        }
+        class Store {
+          readonly marks = new Marks(this);
+        }
+        const stores = [new Store()];
+      `),
+    ).toThrow("Make objects only where a statement always runs");
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`

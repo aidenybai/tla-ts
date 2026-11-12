@@ -32,7 +32,7 @@ import {
   findNodes,
   getFunctionCandidates,
   getObjectGetter,
-  type HeapFunction,
+  type HeapClass,
   type Context,
   type FunctionNode,
   getAccessKey,
@@ -61,6 +61,7 @@ import {
   getPrivateKey,
   getParameters,
   getRunConstructor,
+  getRunFields,
   getSetters,
   getPropertySetters,
   getWrittenProperties,
@@ -5023,7 +5024,7 @@ const getConstructorRun = (node: ts.Expression, context: Context) => {
 // returns. A derived class's constructor throws a TypeError where it returns anything else.
 const translateConstruction = (
   expression: ts.Expression,
-  constructor: ts.ConstructorDeclaration | HeapFunction,
+  constructor: ts.ConstructorDeclaration | HeapClass,
   path: Path,
   context: Context,
   frame: Frame,
@@ -5041,46 +5042,54 @@ const translateConstruction = (
     isNullBase
       ? throwError("ReferenceError", after, expression, context, frame)
       : continueWith(after, instance);
-  return inlineBody(
-    expression,
-    constructor,
-    getConstruction(expression, context)?.arguments ?? [],
-    {
-      value: instance,
-      method: constructor,
-      newTarget:
-        newTarget === undefined ? undefined : translateExpression(newTarget, path.scope, context),
-    },
-    path,
-    context,
-    frame,
-    (after, value) => {
-      if (value === undefined) return giveInstance(after);
-      const name = context.names.getFresh("returned");
-      const returned = identifier(name);
-      context.prelude.add("Null");
-      const type = useJavaScript("TypeOf", [returned], context);
-      return letIn(
-        [define(name, [], value)],
-        ifThenElse(
-          apply("=", [returned, getUndefined(context)]),
-          giveInstance(after),
-          ifThenElse(
-            apply("\\/", [
-              apply("/\\", [
-                apply("=", [type, string("object")]),
-                apply("#", [returned, identifier("Null")]),
-              ]),
-              apply("=", [type, string("function")]),
-            ]),
-            continueWith(after, returned),
-            isDerived
-              ? throwTypeError(after, expression, context, frame)
-              : continueWith(after, instance),
-          ),
+  const created = getNewClass(expression, context);
+  const fields = created === undefined ? [] : getRunFields(created, context);
+  return translateElements(fields, instance, path, context, frame, (defined) =>
+    ts.isClassLike(constructor)
+      ? giveInstance(defined)
+      : inlineBody(
+          expression,
+          constructor,
+          getConstruction(expression, context)?.arguments ?? [],
+          {
+            value: instance,
+            method: constructor,
+            newTarget:
+              newTarget === undefined
+                ? undefined
+                : translateExpression(newTarget, defined.scope, context),
+          },
+          defined,
+          context,
+          frame,
+          (after, value) => {
+            if (value === undefined) return giveInstance(after);
+            const name = context.names.getFresh("returned");
+            const returned = identifier(name);
+            context.prelude.add("Null");
+            const type = useJavaScript("TypeOf", [returned], context);
+            return letIn(
+              [define(name, [], value)],
+              ifThenElse(
+                apply("=", [returned, getUndefined(context)]),
+                giveInstance(after),
+                ifThenElse(
+                  apply("\\/", [
+                    apply("/\\", [
+                      apply("=", [type, string("object")]),
+                      apply("#", [returned, identifier("Null")]),
+                    ]),
+                    apply("=", [type, string("function")]),
+                  ]),
+                  continueWith(after, returned),
+                  isDerived
+                    ? throwTypeError(after, expression, context, frame)
+                    : continueWith(after, instance),
+                ),
+              ),
+            );
+          },
         ),
-      );
-    },
   );
 };
 
@@ -5142,23 +5151,23 @@ const translateSuperCall = (
   );
 };
 
-// A class's static fields and blocks, which run in order once the class exists, with the class
-// as this.
-const translateStaticElements = (
-  node: ts.Node,
+// A class's static fields and blocks.
+const getStaticElements = (node: ts.ClassLikeDeclaration) =>
+  node.members.filter(
+    (member): member is ts.ClassStaticBlockDeclaration | ts.PropertyDeclaration =>
+      ts.isClassStaticBlockDeclaration(member) ||
+      (ts.isPropertyDeclaration(member) && isStatic(member)),
+  );
+
+// Fields and static blocks, which run in order on the object that ref names, as this.
+const translateElements = (
+  elements: (ts.ClassStaticBlockDeclaration | ts.PropertyDeclaration)[],
   ref: Expression,
   path: Path,
   context: Context,
   frame: Frame,
   continueWith: (path: Path) => Formula,
 ): Formula => {
-  const elements = ts.isClassLike(node)
-    ? node.members.filter(
-        (member): member is ts.ClassStaticBlockDeclaration | ts.PropertyDeclaration =>
-          ts.isClassStaticBlockDeclaration(member) ||
-          (ts.isPropertyDeclaration(member) && isStatic(member)),
-      )
-    : [];
   const heapSymbol = context.heap;
   if (heapSymbol === undefined) return continueWith(path);
   return elements.reduceRight<(path: Path) => Formula>(
@@ -5263,6 +5272,16 @@ const translateStaticElements = (
             context,
             frame,
             (after, constructed) => define(after, constructed ?? getUndefined(context)),
+          );
+        }
+        const called = initializer && skipCasts(initializer);
+        if (
+          called !== undefined &&
+          ts.isCallExpression(called) &&
+          isStatementResult(called, withReceiver, context)
+        ) {
+          return translateCallStatement(called, withReceiver, context, frame, (after, value) =>
+            define(after, value ?? getUndefined(context)),
           );
         }
         return define(
@@ -6661,8 +6680,13 @@ export const translateDeclarations = (
     return allocate(initializer, path, context, (allocated) => {
       const ref = allocated.scope.allocated.get(initializer);
       if (ref === undefined) throw new TlaTypeScriptError("Unsupported class", initializer);
-      return translateStaticElements(initializer, ref, allocated, context, frame, (after) =>
-        bindDeclaration(declarations, ref, after, context, frame, continueWith),
+      return translateElements(
+        getStaticElements(initializer),
+        ref,
+        allocated,
+        context,
+        frame,
+        (after) => bindDeclaration(declarations, ref, after, context, frame, continueWith),
       );
     });
   }
@@ -9374,8 +9398,8 @@ export const translateStatements = (
       if (symbol === undefined || ref === undefined) {
         throw new TlaTypeScriptError("Name this class", statement);
       }
-      return translateStaticElements(
-        statement,
+      return translateElements(
+        ts.isClassLike(statement) ? getStaticElements(statement) : [],
         ref,
         {
           ...inner,

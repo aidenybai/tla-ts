@@ -1701,21 +1701,43 @@ export const getNewClass = (node: ts.Node, context: Context) => {
     : undefined;
 };
 
-// A class's constructor, or a function, when its body runs statements. A derived class without
-// a constructor runs its base's.
+// A class's constructor, or a function, when its body runs statements, and else a class whose
+// fields run a constructor. A derived class without a constructor runs its base's.
 export const getRunConstructor = (
   node: HeapClass,
   context: Context,
-): ts.ConstructorDeclaration | HeapFunction | undefined => {
+): ts.ConstructorDeclaration | HeapClass | undefined => {
   if (!ts.isClassLike(node)) return (node.body?.statements.length ?? 0) > 0 ? node : undefined;
   const constructor = node.members.find(ts.isConstructorDeclaration);
   const base = getBaseClass(node, context);
-  if (constructor === undefined) {
-    return base === undefined ? undefined : getRunConstructor(base, context);
+  const run =
+    constructor === undefined
+      ? base && getRunConstructor(base, context)
+      : (constructor.body?.statements.length ?? 0) > 0 || isNullBased(node)
+        ? constructor
+        : undefined;
+  if (base !== undefined && run !== undefined && ts.isClassLike(run)) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't extend a class whose fields run a constructor",
+      node,
+    );
   }
-  return (constructor.body?.statements.length ?? 0) > 0 || isNullBased(node)
-    ? constructor
-    : undefined;
+  return run ?? (getRunFields(node, context).length > 0 ? node : undefined);
+};
+
+// The fields of a class without a base that a new defines one at a time, as statements, from the
+// first that runs a constructor.
+export const getRunFields = (node: HeapClass, context: Context) => {
+  if (!ts.isClassLike(node) || hasExtends(node)) return [];
+  const fields = node.members.filter(
+    (member): member is ts.PropertyDeclaration =>
+      ts.isPropertyDeclaration(member) && !isStatic(member) && !isAmbient(member),
+  );
+  const first = fields.findIndex((field) => {
+    const created = field.initializer && getNewClass(field.initializer, context);
+    return created !== undefined && getRunConstructor(created, context) !== undefined;
+  });
+  return first === -1 ? [] : fields.slice(first);
 };
 
 // Whether a new is all that a statement evaluates, besides the variable it initializes or
@@ -1725,7 +1747,9 @@ export const isStatementNew = (node: ts.Expression) => {
   return (
     ts.isExpressionStatement(parent) ||
     ts.isReturnStatement(parent) ||
-    (ts.isPropertyDeclaration(parent) && parent.initializer === node && isStatic(parent)) ||
+    (ts.isPropertyDeclaration(parent) &&
+      parent.initializer === node &&
+      (isStatic(parent) || !hasExtends(parent.parent))) ||
     (ts.isVariableDeclaration(parent) &&
       parent.initializer === node &&
       ts.isIdentifier(parent.name) &&
