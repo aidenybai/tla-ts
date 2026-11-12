@@ -8183,6 +8183,82 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("closes a generator that suspended in try through its finally and catch", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      function* guarded(): Generator<number, number | void> {
+        try {
+          log += "a";
+          yield 1;
+          log += "x";
+        } finally {
+          log += "f";
+        }
+        log += "y";
+      }
+      const first = guarded();
+      first.next();
+      const returned = first.return(5);
+      log += "(" + returned.value + "," + returned.done + ")";
+      const after = first.next();
+      log += after.done;
+      function* caught() {
+        try {
+          yield 1;
+          log += "x";
+        } catch (error) {
+          log += "<" + String(error) + ">";
+          yield 2;
+          log += "b";
+        }
+        return 3;
+      }
+      const second = caught();
+      second.next();
+      const thrown = second.throw("t");
+      log += "(" + thrown.value + "," + thrown.done + ")";
+      const ended = second.next();
+      log += "(" + ended.value + "," + ended.done + ")";
+      function* yielding(): Generator<number, number | void> {
+        try {
+          yield 1;
+        } finally {
+          yield 2;
+          log += "g";
+        }
+      }
+      const third = yielding();
+      third.next();
+      const again = third.return(7);
+      log += "(" + again.value + "," + again.done + ")";
+      const last = third.next();
+      log += "(" + last.value + "," + last.done + ")";
+      function* rethrowing() {
+        try {
+          yield 1;
+        } finally {
+          log += "h";
+        }
+      }
+      const fourth = rethrowing();
+      fourth.next();
+      try {
+        fourth.throw("u");
+      } catch (error) {
+        log += "[" + String(error) + "]";
+      }
+      for (const value of guarded()) {
+        log += value;
+        break;
+      }
+      setTimeout(() => {
+        if (log !== "af(5,true)true<t>(2,false)b(3,true)(2,false)g(7,true)h[u]a1f") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs Array.fromAsync of an array-like object and of a string", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;
@@ -8677,7 +8753,7 @@ describe("errors", () => {
         iterator.next();
         iterator.return();
       `),
-    ).rejects.toThrow("tla-ts can't close a generator that suspended in try or yield*");
+    ).rejects.toThrow("tla-ts can't close a generator that suspended in yield* or a helper");
   });
 
   it("throws and returns from inside loops", async () => {

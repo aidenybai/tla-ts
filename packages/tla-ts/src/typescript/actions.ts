@@ -294,6 +294,9 @@ interface Suspension {
   isStarted: boolean;
   // Whether it suspended inside a try or a yield*, which a return or a throw would have to run.
   isGuarded: boolean;
+  // Runs the rest of the body from a yield as a return or a throw there would, through the finally
+  // blocks and catch clauses around it, where a sync generator's plain yield suspended it.
+  abort?: (path: Path, method: string, value: Expression | undefined) => Formula;
   isAsync: boolean;
   // The promises of the nexts that called an async generator while its body ran, which it settles
   // in order once it yields or completes.
@@ -399,6 +402,8 @@ interface YieldMode {
   isGuarded: boolean;
   // A generator's yield* passes on the result object of the iterator it delegates to.
   isResult?: boolean;
+  // What a return at a plain yield does: the exit of the yield's frame.
+  returnRest?: (path: Path, value: Expression | undefined) => Formula;
 }
 
 // A frame whose yields a return or a throw can't complete.
@@ -3018,7 +3023,12 @@ export const makeGenerator = (
       if (caller === undefined) throw new TlaTypeScriptError("Unsupported generator", node);
       return caller;
     };
-    const leave = (current: Path, resume: Suspension["resume"], isGuarded = false): Path => ({
+    const leave = (
+      current: Path,
+      resume: Suspension["resume"],
+      isGuarded = false,
+      abort?: Suspension["abort"],
+    ): Path => ({
       ...leaveBody(current, getCaller(current).path, changed, isOuter),
       generators: new Map([
         ...current.generators,
@@ -3030,6 +3040,7 @@ export const makeGenerator = (
             resume,
             isStarted: true,
             isGuarded,
+            abort,
             isAsync,
             queue: current.generators.get(name)?.queue ?? [],
           },
@@ -3114,9 +3125,19 @@ export const makeGenerator = (
       },
       // An async generator's yield awaits its value.
       yieldTo: (current, value, rest, throwRest, mode) => {
+        const returnRest = isAsync ? undefined : mode?.returnRest;
         const step = (resumed: Path, settled: Expression | undefined) =>
           getCaller(resumed).step(
-            leave(resumed, (resumer) => rest(enter(resumer, resumed)), mode?.isGuarded),
+            leave(
+              resumed,
+              (resumer) => rest(enter(resumer, resumed)),
+              mode?.isGuarded,
+              returnRest &&
+                ((resumer, method, abrupt) =>
+                  method === "throw"
+                    ? throwRest(enter(resumer, resumed), abrupt ?? getUndefined(context))
+                    : returnRest(enter(resumer, resumed), abrupt)),
+            ),
             settled,
             false,
             mode?.isResult,
@@ -3411,7 +3432,7 @@ const translateIteratorHelper = (
     return caller;
   };
   // A helper's return closes the generator it wraps, which tla-ts doesn't follow, so a return
-  // stops as one of a generator that suspended in try does.
+  // stops.
   const translated = translateExpression(helper.receiver, path.scope, context);
   // The generator that a next runs, which patterns check, where the receiver may hold only one.
   const suspensions = [...path.generators.values()];
@@ -3608,9 +3629,9 @@ const translateGeneratorStep = (
   );
 };
 
-// Resumes the generator whose object a receiver holds, for its next, return, or throw. Only a next
-// runs the body; a return or a throw completes a generator that suspended outside try statements,
-// which would otherwise run their finally blocks.
+// Resumes the generator whose object a receiver holds, for its next, return, or throw. A return or
+// a throw completes a generator that suspended outside try statements, and otherwise runs the body
+// from the yield as a return or a throw there would, through its finally blocks and catch clauses.
 export const resumeGenerator = (
   node: ts.Node,
   receiver: Expression,
@@ -3758,11 +3779,27 @@ export const resumeGenerator = (
       });
     }
     if (resume !== undefined && suspension.isStarted && suspension.isGuarded) {
-      return leaf(
-        apply("Assert", [
-          boolean(false),
-          string("tla-ts can't close a generator that suspended in try or yield*"),
-        ]),
+      if (suspension.abort === undefined) {
+        return leaf(
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't close a generator that suspended in yield* or a helper"),
+          ]),
+        );
+      }
+      return suspension.abort(
+        {
+          ...path,
+          generators: new Map([
+            ...path.generators,
+            [name, { ...suspension, caller: { path, step, throwTo: frame.throwTo } }],
+          ]),
+        },
+        method,
+        argument &&
+          (method === "throw"
+            ? translateThrown(argument, path.scope, context)
+            : translateExpression(argument, path.scope, context)),
       );
     }
     if (method === "return") {
@@ -5580,8 +5617,13 @@ const translateExpressionStatement = (
     const throwTo = frame.throwTo;
     const uncaught = apply("Assert", [boolean(false), string(expression.getText())]);
     const yieldWith = (current: Path, value: Expression | undefined) =>
-      yieldTo(current, value, continueWith, (rejected, thrown) =>
-        throwTo === undefined ? leaf(uncaught) : throwTo(rejected, { value: thrown, uncaught }),
+      yieldTo(
+        current,
+        value,
+        continueWith,
+        (rejected, thrown) =>
+          throwTo === undefined ? leaf(uncaught) : throwTo(rejected, { value: thrown, uncaught }),
+        { isDelegated: false, isGuarded: false, returnRest: frame.exit },
       );
     // A yield of a call yields what the call gives.
     if (isCalled && ts.isCallExpression(called)) {
