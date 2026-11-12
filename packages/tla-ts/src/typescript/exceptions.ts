@@ -16,7 +16,7 @@ import { translateBuiltInInstanceOf } from "./intrinsics";
 import { getTypeNames, useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
 import { getKind } from "./types";
-import { apply, field, identifier, ifExpression, junction, not, record, set, string } from "./tla";
+import { apply, field, identifier, ifExpression, record, set, string } from "./tla";
 
 export const NATIVE_ERRORS = new Set([
   "Error",
@@ -206,11 +206,22 @@ const isCaught = (node: ts.Expression, context: Context): boolean => {
   ) {
     return true;
   }
+  if (!ts.isIdentifier(node) || declaration === undefined) return false;
+  if (ts.isVariableDeclaration(declaration)) return ts.isCatchClause(declaration.parent);
+  // A promise's value or reason, which a handler that then or catch takes gets.
+  const handler = declaration.parent;
+  const call = ts.findAncestor(
+    handler.parent,
+    (ancestor) => !ts.isParenthesizedExpression(ancestor) && !ts.isAsExpression(ancestor),
+  );
   return (
-    ts.isIdentifier(node) &&
-    declaration !== undefined &&
-    ts.isVariableDeclaration(declaration) &&
-    ts.isCatchClause(declaration.parent)
+    ts.isParameter(declaration) &&
+    (ts.isArrowFunction(handler) || ts.isFunctionExpression(handler)) &&
+    call !== undefined &&
+    ts.isCallExpression(call) &&
+    ts.isPropertyAccessExpression(call.expression) &&
+    ["then", "catch"].includes(call.expression.name.text) &&
+    context.checker.getTypeAtLocation(call.expression.expression).getSymbol()?.name === "Promise"
   );
 };
 
@@ -263,14 +274,9 @@ export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, con
   if (!isCaught(node.left, context)) {
     throw new TlaTypeScriptError("instanceof needs an error or a caught value", node);
   }
-  // An error is a record, so an object on the heap is never one.
+  // A caught object on the heap may inherit from an error's prototype, which tla-ts doesn't tell.
   return share(value, "caught", context, (caught) =>
-    junction("And", [
-      apply("=", [useJavaScript("TypeOf", [caught], context), string("object")]),
-      apply("#", [caught, identifier("Null")]),
-      not(useJavaScript("IsRef", [caught], context)),
-      apply("\\in", [field(caught, "constructor"), subclasses]),
-    ]),
+    useJavaScript("IsInstanceOfError", [caught, subclasses, string(node.right.getText())], context),
   );
 };
 

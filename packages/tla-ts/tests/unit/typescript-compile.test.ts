@@ -6207,6 +6207,34 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("tells which error class made a promise's reason", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      Promise.reject(new TypeError("t")).catch((error) => {
+        log += String(error instanceof TypeError) + String(error instanceof RangeError);
+      });
+      Promise.reject(3).catch((error) => {
+        log += String(error instanceof TypeError);
+      });
+      setTimeout(() => {
+        if (log !== "truefalsefalse") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("stops where it can't tell whether a promise's reason is an instance of an error", async () => {
+    const result = await checkModel(`
+      Promise.reject({}).catch((error) => {
+        if (error instanceof TypeError) throw new Error("no");
+      });
+    `);
+    expect(result.failure?.message).toContain(
+      "tla-ts can't tell whether this object is an instance",
+    );
+  });
+
   it("rejects new AggregateError, whose first argument isn't a message", () => {
     expect(() => compile(`const error = new AggregateError([1], "message");`)).toThrow(
       "Unsupported constructor: new AggregateError",
