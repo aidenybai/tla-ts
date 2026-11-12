@@ -1297,12 +1297,15 @@ InheritsFrom(heap, owner, value) ==
     [] OTHER -> Assert(FALSE, "tla-ts can't tell what this value inherits from")
 
 \\* Whether a value that may be any value is an error that one of the constructors made.
+IsErrorOf(value, constructors) == IsError(value) /\\ value.constructor \\in constructors
+
+\\* Whether a value that may be any value, or an object on the heap, is an error that one of the
+\\* constructors made.
 IsInstanceOfError(heap, value, constructors, name) ==
   CASE IsRef(value) /\\ ~IsPrototypeOf(heap, Ref :> "Error.prototype", value) -> FALSE
     [] IsRef(value) ->
          Assert(FALSE, "tla-ts can't tell whether this object is an instance of " \\o name)
-    [] IsError(value) -> value.constructor \\in constructors
-    [] OTHER -> FALSE
+    [] OTHER -> IsErrorOf(value, constructors)
 
 CanDelete(heap, ref, key) ==
   LET object == Lookup(heap, ref)
