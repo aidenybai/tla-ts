@@ -361,7 +361,7 @@ export class OptContext {
     return result === L_TRUE && solver.wasUnknown ? L_UNDEF : result;
   }
 
-  // update_solver: Z3 moves a MaxSAT query over finite domains to the SAT core.
+  // Z3 moves a MaxSAT query over finite domains to the SAT core.
   private updateSolver(hard: readonly number[], options: OptOptions) {
     if (!options.isSatEnabled) return;
     if (this.internal.some((objective) => objective.type !== O_MAXSMT)) return;
@@ -372,7 +372,7 @@ export class OptContext {
     throw new SmtUnsupportedError("the SAT core for MaxSAT");
   }
 
-  // update_bound: the model's objective values are lower bounds, or upper bounds.
+  // The model's objective values are lower bounds, or upper bounds.
   private updateBound(optsmt: Optsmt, isLower: boolean) {
     const manager = this.manager;
     const model = this.rawModel;

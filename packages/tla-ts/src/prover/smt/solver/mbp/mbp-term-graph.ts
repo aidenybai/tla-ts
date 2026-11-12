@@ -87,7 +87,7 @@ class Term {
   }
 }
 
-// is_variable_proc: with isExclude, the declarations are those of the variables.
+// With isExclude, the declarations are those of the variables.
 class IsVariableProc {
   private isExclude = true;
   private readonly decls = new Set<number>();

@@ -97,8 +97,7 @@ export class EqDer {
     return this.removeUnconstrained(conjs) || isReduced;
   }
 
-  // find_definitions: one definition per variable, preferring values, then ground terms, then
-  // constants.
+  // One definition per variable, preferring values, then ground terms, then constants.
   private findDefinitions(args: number[]) {
     const manager = this.manager;
     let numDefs = 0;
