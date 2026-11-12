@@ -64,6 +64,7 @@ import {
   getSuperLookup,
   isCreation,
   isDescription,
+  isDescriptionOfAll,
   getDescribedValue,
   isFromEntries,
   isSymbolCall,
@@ -893,6 +894,13 @@ const translateCall = (
       isEvery(context.checker.getTypeAtLocation(target), ts.TypeFlags.ESSymbolLike))
   ) {
     return getUndefined(context);
+  }
+  if (isDescriptionOfAll(node, context)) {
+    const described = scope.allocated.get(node);
+    if (described === undefined) {
+      throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
+    }
+    return described;
   }
   if (isDescription(node, context)) {
     const described = scope.allocated.get(node);

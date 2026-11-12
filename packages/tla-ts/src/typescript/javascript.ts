@@ -782,6 +782,17 @@ LOCAL DescribeObject(object, key) ==
 
 Describe(heap, ref, key) == DescribeObject(Lookup(heap, ref), key)
 
+\\* Object.getOwnPropertyDescriptors, which makes a description of each own property of an object,
+\\* and then the object that holds them under their keys, last, so that Allocated names it.
+DescribeAll(heap, object) ==
+  LET keys == OwnKeys(object) \\o SelectSeq(object.keys, IsSymbol)
+      first == Len(heap.objects)
+      described == [heap EXCEPT !.objects =
+                      @ \\o [position \\in DOMAIN keys |-> DescribeObject(object, keys[position])]]
+      refs == [key \\in {keys[position] : position \\in DOMAIN keys} |->
+                Ref :> (first + CHOOSE position \\in DOMAIN keys : keys[position] = key)]
+  IN Allocate(described, PutAll(EmptyObject, refs, keys))
+
 HasOwn(heap, ref, key) == key \\in DOMAIN Own(heap, ref)
 
 IsEnumerableOwn(heap, ref, key) ==

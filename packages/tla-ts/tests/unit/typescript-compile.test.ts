@@ -2585,6 +2585,43 @@ describe("errors", () => {
     }
   });
 
+  it("describes each own property that Object.getOwnPropertyDescriptors reads", async () => {
+    const source = `
+      const check = (actual: unknown, expected: unknown, message: string) => {
+        if (actual !== expected) throw new Error(message);
+      };
+      const value = {};
+      const enumSym = Symbol("enum");
+      const nonEnumSym = Symbol("nonenum");
+      const obj: { [key: string | symbol]: unknown } = { key: 1 };
+      obj[enumSym] = value;
+      Object.defineProperty(obj, nonEnumSym, { writable: true, enumerable: false, configurable: true, value });
+      Object.defineProperty(obj, "c", { enumerable: false, configurable: true, writable: false, value: 2 });
+      const result: { [key: string | symbol]: PropertyDescriptor } = Object.getOwnPropertyDescriptors(obj);
+      check(Object.keys(result).join(), "key,c", "keys");
+      check(Object.getOwnPropertySymbols(result).length, 2, "symbols");
+      check(result.key.value, 1, "key value");
+      check(result.c.writable, false, "c writable");
+      check(result[enumSym].value, value, "symbol value");
+      check(result[nonEnumSym].enumerable, false, "symbol enumerable");
+      const truthy: { [key: string]: PropertyDescriptor } = Object.getOwnPropertyDescriptors(true);
+      check(Object.keys(truthy).length, 0, "boolean");
+      const text: { [key: string]: PropertyDescriptor } = Object.getOwnPropertyDescriptors("ab");
+      check(Object.keys(text).join(), "0,1,length", "string");
+      check(text[1].value, "b", "character");
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = [
+      ['"key,c", "keys"', '"c,key", "keys"'],
+      ['result.c.writable, false', 'result.c.writable, true'],
+      ["result[enumSym].value, value", "result[enumSym].value, undefined"],
+      ['"0,1,length", "string"', '"0,1", "string"'],
+    ];
+    for (const [from, to] of wrong) {
+      expect((await checkModel(source.replace(from, to))).failure).toBeDefined();
+    }
+  });
+
   it("gives new Object's object argument back and wraps a primitive one", async () => {
     const result = await checkModel(`
       declare global {

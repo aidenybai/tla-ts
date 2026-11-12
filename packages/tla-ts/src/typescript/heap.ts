@@ -1118,6 +1118,31 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
           );
     return useJavaScript("Allocate", [heap, described], context);
   }
+  if (ts.isCallExpression(node) && isDescriptionOfAll(node, context)) {
+    const described = node.arguments[0];
+    const primitive = getDescribedPrimitive(described, context);
+    if (primitive === "string") context.prelude.add("Null");
+    return useJavaScript(
+      "DescribeAll",
+      [
+        heap,
+        primitive === "empty"
+          ? identifier("EmptyObject")
+          : primitive === "string"
+            ? useJavaScript(
+                "WrapperObject",
+                [identifier("Null"), translateExpression(described, scope, context)],
+                context,
+              )
+            : useJavaScript(
+                "Lookup",
+                [heap, translateObjectValue(described, scope, context)],
+                context,
+              ),
+      ],
+      context,
+    );
+  }
   if (ts.isCallExpression(node) && isFromEntries(node, context)) {
     return useJavaScript(
       "FromEntries",
@@ -1183,6 +1208,32 @@ export const isDescription = (node: ts.Node, context: Context) =>
     isBuiltInObject(node.arguments[0], context) ||
     (node.expression.expression.getText() === "Object" &&
       getKind(node.arguments[0], context) === "string"));
+
+// The kind of primitive that a description converts to an object: a string, whose object holds
+// its characters, or a number, a boolean, or a symbol, whose object holds no properties.
+const getDescribedPrimitive = (node: ts.Expression, context: Context) => {
+  const names = getTypeNames(context.checker.getTypeAtLocation(node), context.checker);
+  const isInert = isInertValue(node) || isSymbolCall(node, context);
+  return !isInert || names === undefined || names.length !== 1
+    ? undefined
+    : names[0] === "string"
+      ? "string"
+      : ["number", "boolean", "symbol"].includes(names[0])
+        ? "empty"
+        : undefined;
+};
+
+// Object.getOwnPropertyDescriptors of an object, or of a primitive that it converts to one, which
+// makes a description of each own property.
+export const isDescriptionOfAll = (node: ts.Node, context: Context) =>
+  isMethodCall(node) &&
+  getBuiltIn(node.expression.expression, context) === "Object" &&
+  node.expression.name.text === "getOwnPropertyDescriptors" &&
+  node.arguments.length === 1 &&
+  (getKind(node.arguments[0], context) === "object" ||
+    isBuiltInObject(node.arguments[0], context) ||
+    getDescribedPrimitive(node.arguments[0], context) !== undefined);
+
 
 // Object.create, with a prototype that tla-ts can tell is an object or null.
 export const isCreation = (node: ts.Node, context: Context) => {
@@ -1257,6 +1308,7 @@ export const isAllocation = (node: ts.Node, context: Context) =>
   getBinding(node, context) !== undefined ||
   (ts.isCallExpression(node) &&
     (isDescription(node, context) ||
+      isDescriptionOfAll(node, context) ||
       isCreation(node, context) ||
       isFromEntries(node, context) ||
       isSymbolCall(node, context))) ||
