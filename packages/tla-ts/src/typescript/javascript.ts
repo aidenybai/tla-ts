@@ -957,6 +957,7 @@ PromiseObject == [EmptyObject EXCEPT !.prototype = Ref :> "Promise.prototype", !
 LOCAL IsError(value) ==
   /\\ SubSeq(ToString(value), 1, 1) = "["
   /\\ DOMAIN value \\in {{"constructor", "message", "name"},
+                      {"constructor", "errors", "message", "name"},
                       {"constructor", "message", "name", "error", "suppressed"}}
 
 \\* An error inherits its other properties from its constructor's prototype. The message of an error
@@ -1013,6 +1014,7 @@ Get(heap, ref, key) ==
          [] key = "constructor" /\\ ~IsHeap(ref.constructor) /\\ ~IsBuiltIn(ref.constructor) ->
               ref.constructor
          [] key \\in {"error", "suppressed"} /\\ key \\in DOMAIN ref -> ref[key]
+         [] key = "errors" /\\ "errors" \\in DOMAIN ref -> ref.errors
          [] OTHER -> Get(heap, Get(heap, ref.constructor, "prototype"), key)
   ELSE GetFrom(heap, ref, key, ref)
 

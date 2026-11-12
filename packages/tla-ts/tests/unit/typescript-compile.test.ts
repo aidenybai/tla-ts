@@ -5883,6 +5883,43 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("fulfills Promise.any with the first value, or rejects it with an AggregateError", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      Promise.any([Promise.reject(1), Promise.resolve(2)]).then((value) => {
+        log += "a" + value;
+      });
+      Promise.any([Promise.reject(3), Promise.reject(4)]).catch((error: AggregateError) => {
+        log += "b" + error.errors.length + error.errors[0] + error.errors[1];
+        log += String(error instanceof AggregateError) + String(error instanceof TypeError);
+      });
+      Promise.any([]).catch((error: AggregateError) => {
+        log += "c" + error.errors.length;
+      });
+      Promise.resolve(0)
+        .then(() => {
+          log += "1";
+        })
+        .then(() => {
+          log += "2";
+        })
+        .then(() => {
+          log += "3";
+        });
+      setTimeout(() => {
+        if (log !== "c01a2b234truefalse23") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("rejects new AggregateError, whose first argument isn't a message", () => {
+    expect(() => compile(`const error = new AggregateError([1], "message");`)).toThrow(
+      "Unsupported constructor: new AggregateError",
+    );
+  });
+
   it("stops where a promise's callback reads a local that changes", () => {
     expect(() =>
       compile(`

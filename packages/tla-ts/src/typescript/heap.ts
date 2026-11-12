@@ -2643,6 +2643,14 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
   if (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) {
     return ["TypeError", "SuppressedError"];
   }
+  if (
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    node.expression.name.text === "any" &&
+    getBuiltIn(node.expression.expression, context) === "Promise"
+  ) {
+    return ["AggregateError"];
+  }
   const jsonText = getJsonText(node, context);
   if (jsonText !== undefined) return "error" in parseJson(jsonText) ? ["SyntaxError"] : [];
   const dateCall = getDateCall(node, context);

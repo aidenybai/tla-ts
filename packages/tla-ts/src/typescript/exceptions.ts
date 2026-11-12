@@ -27,6 +27,7 @@ export const NATIVE_ERRORS = new Set([
   "EvalError",
   "URIError",
   "SuppressedError",
+  "AggregateError",
 ]);
 
 const isNative = (symbol: ts.Symbol) =>
@@ -108,11 +109,18 @@ const includeError = (name: string, context: Context) => {
 };
 
 // An error that JavaScript itself throws, such as the TypeError of a failed defineProperty.
-export const translateEngineError = (name: string, node: ts.Node, context: Context) => {
+// An AggregateError also holds its errors.
+export const translateEngineError = (
+  name: string,
+  node: ts.Node,
+  context: Context,
+  errors?: Expression,
+) => {
   const symbol = getNative(name, node, context);
   includeError(name, context);
   return record("Record", [
     { name: "constructor", value: getConstructor(symbol, context) },
+    ...(errors === undefined ? [] : [{ name: "errors", value: errors }]),
     { name: "message", value: string("") },
     { name: "name", value: string(name) },
   ]);
@@ -148,6 +156,9 @@ export const translateNewError = (
   // A SuppressedError takes the error and the suppressed error before its message.
   const held = native.name === "SuppressedError" ? ["error", "suppressed"] : [];
   const argumentNodes = node.arguments ?? [];
+  if (classes.some((symbol) => isNative(symbol) && symbol.name === "AggregateError")) {
+    throw new TlaTypeScriptError("Unsupported constructor: new AggregateError", node);
+  }
   if (argumentNodes.length > held.length + 1) {
     throw new TlaTypeScriptError("Error options aren't supported", node);
   }

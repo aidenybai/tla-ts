@@ -26,6 +26,7 @@ import {
   getUndefined,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
+import { translateEngineError } from "./exceptions";
 import { translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf, letIn } from "./formula";
 import { getCandidateValue, getHeap } from "./heap";
@@ -625,12 +626,13 @@ const getPromiseFunction = (node: ts.CallExpression, context: Context) => {
     : undefined;
 };
 
-const COMBINATORS = ["all", "allSettled", "race"];
+const COMBINATORS = ["all", "allSettled", "any", "race"];
 
 // A combinator of an array written in place, which follows the promises that PromiseResolve gives
 // for the elements. Promise.all fulfills with their values once each fulfills, or rejects with the
-// first reason. Promise.allSettled fulfills with an object for each once all settle. Promise.race
-// settles as the first does.
+// first reason. Promise.allSettled fulfills with an object for each once all settle. Promise.any
+// fulfills with the first value, or rejects with an AggregateError of the reasons once each
+// rejects. Promise.race settles as the first does.
 const translatePromiseCombinator = (
   node: ts.CallExpression,
   combinator: string,
@@ -675,9 +677,22 @@ const translatePromiseCombinator = (
         ...promise,
         combined: { values, remaining },
       });
-      return remaining === 0
-        ? resolve(taken, node, name, tuple(values), undefined, context, next)
-        : next(taken);
+      return remaining > 0
+        ? next(taken)
+        : combinator === "any"
+          ? next(
+              promise.isResolved
+                ? taken
+                : settle(
+                    taken,
+                    node,
+                    name,
+                    translateEngineError("AggregateError", node, context, tuple(values)),
+                    true,
+                    context,
+                  ),
+            )
+          : resolve(taken, node, name, tuple(values), undefined, context, next);
     };
     // Resolves or rejects the promise once, as Promise.race does with each element's value.
     const settleOnce =
@@ -710,21 +725,26 @@ const translatePromiseCombinator = (
           take(allocated, position, ref, (after) => onReturn(after, getUndefined(context))),
         );
       };
+    const takeValue =
+      (position: number): Handler["run"] =>
+      (current, value, onReturn) =>
+        take(current, position, value, (after) => onReturn(after, getUndefined(context)));
     const getReaction = (position: number): Reaction => ({
       onFulfilled: {
         run:
           combinator === "allSettled"
             ? takeSettled(position, "value", "fulfilled")
-            : combinator === "race"
+            : combinator === "race" || combinator === "any"
               ? settleOnce(false)
-              : (current, value, onReturn) =>
-                  take(current, position, value, (after) => onReturn(after, getUndefined(context))),
+              : takeValue(position),
       },
       onRejected: {
         run:
           combinator === "allSettled"
             ? takeSettled(position, "reason", "rejected")
-            : settleOnce(true),
+            : combinator === "any"
+              ? takeValue(position)
+              : settleOnce(true),
       },
       derived: undefined,
     });
