@@ -136,13 +136,19 @@ export const translateBuiltInInstanceOf = (
       0;
   const isObject = getKind(left, context) === "object";
   const parent = isPrimitive || isObject ? undefined : getPrototype(left, context);
-  if (!isPrimitive && !isObject && (parent === undefined || parent === "null")) return undefined;
+  // A value of type unknown or any may be anything, which only the run can tell.
+  const isUnknown =
+    !isPrimitive && !isObject && (type.flags & (ts.TypeFlags.Unknown | ts.TypeFlags.Any)) !== 0;
+  if (!isPrimitive && !isObject && !isUnknown && (parent === undefined || parent === "null")) {
+    return undefined;
+  }
   const heap = getHeap(scope, node, context);
   const constructor = translateBuiltIn(name, node.right, scope, context);
   const prototype = useJavaScript("Get", [heap, constructor, string("prototype")], context);
   const found = (value: Expression) => {
     if (isPrimitive) return boolean(false);
     if (isObject) return useJavaScript("IsPrototypeOf", [heap, prototype, value], context);
+    if (isUnknown) return useJavaScript("InheritsFrom", [heap, prototype, value], context);
     const inherited = translateBuiltIn(parent ?? "null", left, scope, context);
     return apply("\\/", [
       useJavaScript("SameValue", [inherited, prototype], context),

@@ -3281,6 +3281,25 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("tla-ts can't");
   });
 
+  it("tells whether a value of type unknown inherits from a built-in constructor", async () => {
+    const result = await checkModel(`
+      const isDate = (value: unknown) => value instanceof Date;
+      const isBool = (value: unknown) => value instanceof Boolean;
+      const boxed = new Boolean(true);
+      const date = new Date(0);
+      if (!isBool(boxed) || isBool(true) || isBool(null) || isDate(boxed) || !isDate(date)) {
+        throw new Error("instanceof");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+    const stopped = await checkModel(`
+      const isObject = (value: unknown) => value instanceof Object;
+      const date = new Date(0);
+      if (!isObject([1, 2])) throw new Error("array");
+    `);
+    expect(stopped.failure?.message).toContain("tla-ts can't tell what this value inherits from");
+  });
+
   it("sorts, reverses, fills, and copies within an array in place", async () => {
     const result = await checkModel(`
       const letters = ["z", "B", "a", "A"];

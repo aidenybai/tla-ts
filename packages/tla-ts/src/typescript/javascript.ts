@@ -1221,6 +1221,12 @@ IsPrototypeOf(heap, owner, ref) ==
      /\\ \\/ ToString(prototype) = ToString(owner)
         \\/ IsPrototypeOf(heap, owner, prototype)
 
+\\* Whether a value of any type inherits from a prototype, where only an object can.
+InheritsFrom(heap, owner, value) ==
+  CASE IsRef(value) -> IsPrototypeOf(heap, owner, value)
+    [] value = Null \\/ TypeOf(value) \\notin {"object", "function"} -> FALSE
+    [] OTHER -> Assert(FALSE, "tla-ts can't tell what this value inherits from")
+
 CanDelete(heap, ref, key) ==
   LET object == Lookup(heap, ref)
   IN key \\notin DOMAIN object.values \\/ object.attributes[key].configurable
