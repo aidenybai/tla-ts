@@ -4052,11 +4052,17 @@ IsObjectArgument(value) ==
 
 \\* The values that tla-ts keeps outside the heap never read a built-in's accessors, but for an
 \\* array, which reads Array.prototype past its end. Function.prototype is the one built-in function
-\\* that inherits from Object.prototype, and only functions that the heap holds read it.
-LOCAL CanDefineOn(ref, descriptor) ==
+\\* that inherits from Object.prototype, and only functions that the heap holds read it. A primitive
+\\* reads only the built-in keys of its prototype as tla-ts compiles, and stops at any other key, so a
+\\* script may define an accessor under a string key that is neither of those nor an index.
+LOCAL CanDefineOn(ref, key, descriptor) ==
   Assert(\\/ IsHeap(ref)
          \\/ ~descriptor.isAccessor
          \\/ BuiltInKey(ref) \\in {"Array.prototype", "Object.prototype"}
+         \\/ /\\ BuiltInKey(ref) \\in {"Boolean.prototype", "Number.prototype", "String.prototype"}
+            /\\ ~IsSymbol(key)
+            /\\ TypedKey(key) = "property"
+            /\\ key \\notin DOMAIN BuiltIns[BuiltInKey(ref)].values
          \\/ /\\ ~IsRef(ref)
             /\\ IsBuiltIn(ref)
             /\\ BuiltIns[ref].isCallable
@@ -4067,7 +4073,7 @@ LOCAL CanDefineOn(ref, descriptor) ==
 DefineConvertedAll(heap, ref, keys, descriptors) ==
   LET applied == ApplyAll(Lookup(heap, ref), keys, descriptors)
   IN IF \\A position \\in DOMAIN keys :
-          descriptors[position].isValid /\\ CanDefineOn(ref, descriptors[position])
+          descriptors[position].isValid /\\ CanDefineOn(ref, keys[position], descriptors[position])
      THEN [heap |-> Update(heap, ref, applied.object), isDone |-> applied.isDone,
            isRangeError |-> applied.isRangeError]
      ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE]
