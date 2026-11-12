@@ -2941,23 +2941,25 @@ const translateNode = (
         .getProperties()
         .map((property) => property.name),
     );
-    const contextualKeys = (contextual?.isUnion() ? contextual.types : [contextual]).flatMap(
-      (member) =>
-        member === undefined ||
-        (member.flags & (ts.TypeFlags.Object | ts.TypeFlags.Intersection)) === 0 ||
-        isSequenceType(member, checker) ||
-        // An iterable, such as a generator that a pattern takes, or an async iterable, reads an
-        // array only as one.
-        member
-          .getProperties()
-          .some(
-            (property) =>
-              property.name.startsWith("__@iterator") ||
-              property.name.startsWith("__@asyncIterator"),
-          )
-          ? []
-          : member.getProperties().map((property) => property.name),
-    );
+    const members = contextual?.isUnion() ? contextual.types : [contextual];
+    // An iterable, such as a generator that a pattern takes, an async iterable, or what flatMap's
+    // mapper may return, reads an array only as one.
+    const isIterable = (member: ts.Type) =>
+      member
+        .getProperties()
+        .some(
+          (property) =>
+            property.name.startsWith("__@iterator") || property.name.startsWith("__@asyncIterator"),
+        );
+    const contextualKeys = members.some((member) => member !== undefined && isIterable(member))
+      ? []
+      : members.flatMap((member) =>
+          member === undefined ||
+          (member.flags & (ts.TypeFlags.Object | ts.TypeFlags.Intersection)) === 0 ||
+          isSequenceType(member, checker)
+            ? []
+            : member.getProperties().map((property) => property.name),
+        );
     if (contextualKeys.some((key) => !arrayKeys.has(key))) {
       throw new TlaTypeScriptError("Use an array only as an array, not as an object", node);
     }

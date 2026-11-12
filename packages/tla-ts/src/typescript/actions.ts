@@ -18,6 +18,8 @@ import {
   getHeapSetOrMapChange,
   translateHeapElements,
   translateArrayIteration,
+  holdsArrayIteration,
+  ARRAY_ITERATOR_REPLACED,
   getHeapRegExpCall,
   translateRegExpText,
   getStringCall,
@@ -3768,8 +3770,33 @@ const translateHoldsIteratorPrototype = (
       );
 };
 
-// A call of Iterator.prototype's map, filter, take, or drop on a generator object, which makes an
-// iterator helper. tla-ts follows the helper as a generator: each next steps the generator it
+// The most steps of an iterator helper that tla-ts translates, across the paths through its
+// callback.
+const HELPER_STEP_LIMIT = 512;
+
+// Whether a function returns only primitives.
+const isPrimitiveReturn = (callback: FunctionNode, context: Context) => {
+  const signature = context.checker.getSignatureFromDeclaration(callback);
+  const returned = signature && context.checker.getReturnTypeOfSignature(signature);
+  return (
+    returned !== undefined &&
+    (returned.isUnion() ? returned.types : [returned]).every(
+      (type) =>
+        (type.flags &
+          (ts.TypeFlags.StringLike |
+            ts.TypeFlags.NumberLike |
+            ts.TypeFlags.BooleanLike |
+            ts.TypeFlags.BigIntLike |
+            ts.TypeFlags.Undefined |
+            ts.TypeFlags.Null |
+            ts.TypeFlags.Void)) !==
+        0,
+    )
+  );
+};
+
+// A call of Iterator.prototype's map, filter, flatMap, take, or drop on a generator object, which
+// makes an iterator helper. tla-ts follows the helper as a generator: each next steps the generator it
 // wraps, through the callback, until the limit.
 const translateIteratorHelper = (
   node: ts.CallExpression,
@@ -3863,9 +3890,41 @@ const translateIteratorHelper = (
         return caller.throwTo === undefined ? leaf(thrown.uncaught) : caller.throwTo(left, thrown);
       }),
   });
+  const translatedSteps = { count: 0 };
+  // flatMap gives each element of the array that the mapper returns, as the array's iterator steps
+  // it, before it maps the next element.
+  const flattenFrom =
+    (counter: number, elements: Expression[], position: number) =>
+    (resumer: Path): Formula => {
+      const caller = getCaller(resumer);
+      const stepped =
+        position < elements.length
+          ? caller.step(
+              leave(resumer, flattenFrom(counter, elements, position + 1)),
+              elements[position],
+              false,
+            )
+          : stepFrom(counter + 1)(resumer);
+      return context.heap === undefined
+        ? stepped
+        : ifThenElse(
+            holdsArrayIteration(getHeap(resumer.scope, node, context), node, context),
+            stepped,
+            leaf(apply("Assert", [boolean(false), string(ARRAY_ITERATOR_REPLACED)])),
+          );
+    };
   const stepFrom =
     (counter: number) =>
     (resumer: Path): Formula => {
+      // Each path through the callback translates the steps after it again, so a callback that
+      // returns from several places multiplies them.
+      translatedSteps.count += 1;
+      if (translatedSteps.count > HELPER_STEP_LIMIT) {
+        throw new TlaTypeScriptError(
+          "tla-ts can't follow this many paths through an iterator helper's callback",
+          node,
+        );
+      }
       const caller = getCaller(resumer);
       const give = (current: Path, value: Expression | undefined, isDone: boolean) =>
         caller.step(leave(current, isDone ? undefined : stepFrom(counter + 1)), value, isDone);
@@ -3928,6 +3987,29 @@ const translateIteratorHelper = (
               context,
               getFrame(caller),
               (done, result) => {
+                if (method === "flatMap") {
+                  // A primitive isn't an iterator or an iterable that flatMap takes.
+                  if (isPrimitiveReturn(callback, context)) {
+                    return throwTypeError(done, node, context, getFrame(caller));
+                  }
+                  const flatten = (returned: Expression | undefined): Formula => {
+                    if (returned?.kind === "Tuple") {
+                      return flattenFrom(counter, returned.elements, 0)(done);
+                    }
+                    if (returned?.kind === "If") {
+                      return ifThenElse(
+                        returned.condition,
+                        flatten(returned.consequent),
+                        flatten(returned.alternative),
+                      );
+                    }
+                    throw new TlaTypeScriptError(
+                      "tla-ts can flatten only an array literal that the mapper returns",
+                      callback,
+                    );
+                  };
+                  return flatten(result);
+                }
                 const resultName = context.names.getFresh("result");
                 const mapped = identifier(resultName);
                 return bindOnce(

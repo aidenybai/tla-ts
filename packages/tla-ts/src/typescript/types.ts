@@ -678,7 +678,7 @@ export const ITERATOR_CONSUMERS = new Set([
 ]);
 
 // The methods of Iterator.prototype that make an iterator helper, which tla-ts follows.
-export const ITERATOR_HELPERS = new Set(["map", "filter", "take", "drop"]);
+export const ITERATOR_HELPERS = new Set(["map", "filter", "flatMap", "take", "drop"]);
 
 // A generator object goes only where tla-ts follows it: into a variable that holds generators, to a
 // call of its methods or Iterator.prototype's, into a comparison, or into a for-of or a for await.
