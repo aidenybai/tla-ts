@@ -395,7 +395,7 @@ export const isPlainAccessor = (
   node.body !== undefined &&
   (ts.isIdentifier(node.name) ||
     isLiteralKey(node.name) ||
-    (ts.isPrivateIdentifier(node.name) && !isStatic(node)) ||
+    ts.isPrivateIdentifier(node.name) ||
     (ts.isComputedPropertyName(node.name) && isLiteralKey(node.name.expression)));
 
 // The key that obj.name, obj["name"], or obj[0] reads, as a property key.

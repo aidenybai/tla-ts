@@ -3144,6 +3144,22 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs a class's static private accessors", async () => {
+    const result = await checkModel(`
+      let stringSet = "";
+      class C {
+        static get #name() { return "get string"; }
+        static set #name(param: string) { stringSet = param; }
+        static getPrivateReference() { return this.#name; }
+        static setPrivateReference(value: string) { this.#name = value; }
+      }
+      if (C.getPrivateReference() !== "get string") throw new Error("get");
+      C.setPrivateReference("set string");
+      if (stringSet !== "set string") throw new Error("set");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("shares an array that a field holds and changes in place", async () => {
     const result = await checkModel(`
       interface Tree {
