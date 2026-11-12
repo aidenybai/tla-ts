@@ -3613,6 +3613,45 @@ describe("errors", () => {
     ).toThrow("Unsupported comparator: one that may throw");
   });
 
+  it("delegates an async generator's yield* to an object's async iterator", async () => {
+    const getSource = (value: number, order: string) => `
+      const log: string[] = [];
+      let step = 0;
+      const source = {
+        get [Symbol.iterator](): () => Iterator<number> {
+          throw new Error("sync");
+        },
+        [Symbol.asyncIterator]() {
+          return {
+            next() {
+              step = step + 1;
+              return step === 1 ? { then: 39, value: 42, done: false } : { value: 7, done: true };
+            },
+          };
+        },
+      };
+      async function* gen() {
+        yield* source;
+        yield 9;
+      }
+      const iter = gen();
+      const first = iter.next().then((result) => {
+        log.push("next");
+        return result;
+      });
+      Promise.resolve()
+        .then(() => { log.push("a"); })
+        .then(() => { log.push("b"); });
+      const result = await first;
+      const second = await iter.next();
+      if (result.value !== ${value} || second.value !== 9 || step !== 2) throw new Error("values");
+      if (log.join(",") !== "${order}") throw new Error("order");
+    `;
+    expect((await checkModel(getSource(42, "a,next,b"))).failure).toBeUndefined();
+    expect((await checkModel(getSource(43, "a,next,b"))).failure?.message).toContain("values");
+    expect((await checkModel(getSource(42, "a,b,next"))).failure?.message).toContain("order");
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`

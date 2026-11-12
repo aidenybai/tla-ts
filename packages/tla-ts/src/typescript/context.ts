@@ -477,7 +477,14 @@ export const isPlainAccessor = (
   (ts.isIdentifier(node.name) ||
     isLiteralKey(node.name) ||
     ts.isPrivateIdentifier(node.name) ||
-    (ts.isComputedPropertyName(node.name) && isLiteralKey(node.name.expression)));
+    (ts.isComputedPropertyName(node.name) &&
+      (isLiteralKey(node.name.expression) || isWellKnownSymbol(node.name.expression))));
+
+// A well-known symbol, such as Symbol.iterator.
+const isWellKnownSymbol = (node: ts.Expression) =>
+  ts.isPropertyAccessExpression(node) &&
+  ts.isIdentifier(node.expression) &&
+  node.expression.text === "Symbol";
 
 // The key that obj.name, obj["name"], or obj[0] reads, as a property key.
 export const getAccessKey = (node: ts.Expression) => {

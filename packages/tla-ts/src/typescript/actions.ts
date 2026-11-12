@@ -83,6 +83,7 @@ import {
   isIteratedValue,
   isTaken,
   isUntypedPattern,
+  openAsyncIterator,
   openIterator,
   readValue,
   stepIterator,
@@ -162,6 +163,8 @@ import {
   translateThrow,
 } from "./functions";
 import {
+  bind,
+  callMethod,
   getDescriptorGetters,
   getElementGetters,
   getReadFunctions,
@@ -173,6 +176,7 @@ import {
   isProxyOperation,
   readDescriptor,
   readDescriptors,
+  read,
   readPatternGetters,
   readWith,
   runGetterRead,
@@ -4009,6 +4013,25 @@ const translateDelegatedYield = (
     return delegateToIterator(node, iterated, yieldTo, path, context, frame, continueWith);
   }
   if (
+    yieldTo !== undefined &&
+    awaitTo !== undefined &&
+    iterated !== undefined &&
+    getKind(iterated, context) !== "sequence" &&
+    isIteratedValue(iterated, context) &&
+    !hasCall(iterated, context)
+  ) {
+    return delegateToAsyncIterator(
+      node,
+      iterated,
+      yieldTo,
+      awaitTo,
+      path,
+      context,
+      frame,
+      continueWith,
+    );
+  }
+  if (
     yieldTo === undefined ||
     iterated === undefined ||
     !ts.isArrayLiteralExpression(iterated) ||
@@ -4105,6 +4128,98 @@ const delegateToIterator = (
         );
   return allocate(iterated, path, context, (inner) =>
     openIterator(
+      node,
+      translateExpression(iterated, inner.scope, context),
+      inner,
+      context,
+      frame,
+      failWith,
+      (opened, iterator, next) => delegate(opened, iterator, next, 0),
+    ),
+  );
+};
+
+// An async generator's yield* over an object's async iterator, which awaits each of the
+// iterator's results and yields its value, without awaiting it again, until one is done. A return
+// or a throw while it delegates would call the iterator's return or throw, which tla-ts doesn't
+// follow.
+const delegateToAsyncIterator = (
+  node: ts.YieldExpression,
+  iterated: ts.Expression,
+  yieldTo: NonNullable<Frame["yieldTo"]>,
+  awaitTo: NonNullable<Frame["awaitTo"]>,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const uncaught = apply("Assert", [boolean(false), string(node.getText())]);
+  const throwTo = frame.throwTo;
+  const throwWith = (current: Path, value: Expression) =>
+    throwTo === undefined ? leaf(uncaught) : throwTo(current, { value, uncaught });
+  const failWith = (failed: Path) => throwTypeError(failed, node, context, frame);
+  const delegate = (
+    current: Path,
+    iterator: Expression,
+    next: Expression,
+    count: number,
+  ): Formula =>
+    count > DELEGATION_LIMIT
+      ? leaf(
+          apply("Assert", [
+            boolean(false),
+            string(`tla-ts can't follow more than ${DELEGATION_LIMIT} values of a yield*`),
+          ]),
+        )
+      : callMethod(
+          node,
+          "next",
+          next,
+          iterator,
+          current,
+          context,
+          frame,
+          failWith,
+          (called, result) =>
+            awaitTo(
+              called,
+              result,
+              undefined,
+              (awaited, settled) =>
+                bind(awaited, "result", settled, context, (bound, held) =>
+                  ifThenElse(
+                    useJavaScript(
+                      "IsObjectIn",
+                      [getHeap(bound.scope, node, context), held],
+                      context,
+                    ),
+                    read(node, held, "done", bound, context, frame, (checked, done) =>
+                      readValue(node, held, checked, context, frame, (taken, value) =>
+                        ifThenElse(
+                          useJavaScript("ToBoolean", [done], context),
+                          ifThenElse(
+                            apply("=", [value, value]),
+                            continueWith(taken),
+                            leaf(boolean(false)),
+                          ),
+                          yieldTo(
+                            taken,
+                            value,
+                            (resumed) => delegate(resumed, iterator, next, count + 1),
+                            throwWith,
+                            { isDelegated: true, isGuarded: true },
+                          ),
+                        ),
+                      ),
+                    ),
+                    failWith(bound),
+                  ),
+                ),
+              throwWith,
+            ),
+        );
+  return allocate(iterated, path, context, (inner) =>
+    openAsyncIterator(
       node,
       translateExpression(iterated, inner.scope, context),
       inner,

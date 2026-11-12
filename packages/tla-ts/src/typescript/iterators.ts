@@ -28,7 +28,10 @@ const TAKE_LIMIT = 3;
 // The key of the method that makes an object's iterator, Symbol.iterator, as protocols name it.
 const ITERATOR_KEY = "@@iterator";
 
-const ITERATOR_KEYS = [ITERATOR_KEY, "next", "return", "value", "done"];
+// The key of the method that makes an object's async iterator, Symbol.asyncIterator.
+const ASYNC_ITERATOR_KEY = "@@asyncIterator";
+
+const ITERATOR_KEYS = [ITERATOR_KEY, ASYNC_ITERATOR_KEY, "next", "return", "value", "done"];
 
 // An array pattern that destructures an object that a script declares, which isn't an array or a
 // generator, through the iterator that the object's Symbol.iterator method makes.
@@ -151,31 +154,25 @@ export const takeFromIterator = (
 const isObject = (site: ts.Node, path: Path, value: Expression, context: Context) =>
   useJavaScript("IsObjectIn", [getHeap(path.scope, site, context), value], context);
 
-// Calls an object's Symbol.iterator method, and reads the next method of the iterator it makes.
-export const openIterator = (
-  site: ts.Node,
-  iterable: Expression,
-  path: Path,
-  context: Context,
-  frame: Frame,
-  throwWith: (path: Path) => Formula,
-  continueWith: (path: Path, iterator: Expression, next: Expression) => Formula,
-) =>
-  bind(path, "iterable", iterable, context, (current, held) =>
-    read(site, held, ITERATOR_KEY, current, context, frame, (found, method) =>
-      ifThenElse(
-        isNullish(method, context),
-        throwWith(found),
-        callMethod(
-          site,
-          ITERATOR_KEY,
-          method,
-          held,
-          found,
-          context,
-          frame,
-          throwWith,
-          (made, result) =>
+// Calls an object's method under a key, and reads the next method of the iterator it makes, where
+// missingWith goes on without the method.
+const openWith =
+  (key: string, missingWith: (path: Path, throwWith: (path: Path) => Formula) => Formula) =>
+  (
+    site: ts.Node,
+    iterable: Expression,
+    path: Path,
+    context: Context,
+    frame: Frame,
+    throwWith: (path: Path) => Formula,
+    continueWith: (path: Path, iterator: Expression, next: Expression) => Formula,
+  ) =>
+    bind(path, "iterable", iterable, context, (current, held) =>
+      read(site, held, key, current, context, frame, (found, method) =>
+        ifThenElse(
+          isNullish(method, context),
+          missingWith(found, throwWith),
+          callMethod(site, key, method, held, found, context, frame, throwWith, (made, result) =>
             bind(made, "iterator", result, context, (bound, iterator) =>
               ifThenElse(
                 isObject(site, bound, iterator, context),
@@ -185,10 +182,24 @@ export const openIterator = (
                 throwWith(bound),
               ),
             ),
+          ),
         ),
       ),
-    ),
-  );
+    );
+
+// Calls an object's Symbol.iterator method, and reads the next method of the iterator it makes.
+export const openIterator = openWith(ITERATOR_KEY, (found, throwWith) => throwWith(found));
+
+// Calls an object's Symbol.asyncIterator method, and reads the next method of the iterator it makes.
+// An object without one iterates through an async-from-sync iterator, which tla-ts doesn't follow.
+export const openAsyncIterator = openWith(ASYNC_ITERATOR_KEY, () =>
+  leaf(
+    apply("Assert", [
+      boolean(false),
+      string("tla-ts can't iterate an object without Symbol.asyncIterator asynchronously"),
+    ]),
+  ),
+);
 
 // Calls an iterator's next, and goes on with the result where the iterator isn't done.
 export const stepIterator = (
