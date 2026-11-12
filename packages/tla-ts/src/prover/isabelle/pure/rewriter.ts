@@ -325,9 +325,8 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
       return inner === undefined ? undefined : abstractRule(term.name, variable, inner);
     }
     if (term.kind !== "App") return undefined;
+    if (isImplies(term)) return impc(term, context);
     const head = term.fun;
-    if (head.kind === "App" && head.fun.kind === "Const" && head.fun.name === "Pure.imp")
-      return impc(term, context);
     if (head.kind === "Abs") {
       const beta = betaConversion(false, term);
       const rest = subc(SKEL0, context, rhsOf(beta));

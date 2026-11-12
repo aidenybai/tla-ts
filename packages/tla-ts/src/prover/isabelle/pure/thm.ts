@@ -20,6 +20,7 @@ import {
   liftAll,
   listAll,
   listImplies,
+  isImplies,
   mkEquals,
   mkImplies,
   occs,
@@ -142,13 +143,7 @@ export const impliesIntr = (premise: Term, thm: Thm): Thm => {
 
 export const impliesElim = (major: Thm, minor: Thm): Thm => {
   const prop = major.prop;
-  if (
-    prop.kind !== "App" ||
-    prop.fun.kind !== "App" ||
-    prop.fun.fun.kind !== "Const" ||
-    prop.fun.fun.name !== "Pure.imp" ||
-    !aconv(prop.fun.arg, minor.prop)
-  )
+  if (!isImplies(prop) || !aconv(prop.fun.arg, minor.prop))
     throw new TlaIsabelleError("THM", "implies_elim: major premise");
   return makeThm(
     Math.max(major.maxidx, minor.maxidx),
