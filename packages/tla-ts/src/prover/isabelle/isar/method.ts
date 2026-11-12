@@ -13,16 +13,23 @@ import {
   reflexiveThm,
   termI,
 } from "../pure/drule";
-import { isEquals, stripImpPrems, stripAssumsConcl } from "../pure/logic";
+import { isEquals, listImplies, stripImpPrems, stripAssumsConcl } from "../pure/logic";
 import { addSimps, congKey, emptySimpset, type Simpset } from "../pure/raw-simplifier";
 import { updateTable } from "../pure/table";
 import { genericRewriteGoalTac, rewriteCterm, simpleProver } from "../pure/rewriter";
-import { appendSeq, mapsSeq, singleSeq, type Seq } from "../pure/seq";
+import { appendSeq, emptySeq, mapsSeq, singleSeq, type Seq } from "../pure/seq";
 import { fconvRule, premsConv } from "../pure/conv";
 import { atomizePremsTac } from "../pure/object-logic";
 import { asmFullSimpTac, normHhf } from "../pure/simplifier";
 import type { Limits } from "../pure/interrupt";
-import { assumeTac, eresolveTac, flexflexTac, matchTac, resolveTac } from "../pure/tactic";
+import {
+  assumeTac,
+  eresolveTac,
+  flexflexTac,
+  matchTac,
+  resolveTac,
+  type NetPair,
+} from "../pure/tactic";
 import {
   allGoals,
   appendGoal,
@@ -50,16 +57,23 @@ import {
   mkVar,
   stripAllBody,
   stripAllVars,
+  stripComb,
   substBounds,
+  aconv,
   type Term,
   type Var,
 } from "../pure/term";
 import {
+  assume,
   bicompose,
+  conclOf,
   forallIntr,
+  impliesElim,
+  impliesIntr,
   incrIndexesThm,
   instantiate,
   nprems,
+  premsOf,
   trivial,
   type Thm,
 } from "../pure/thm";
@@ -73,7 +87,12 @@ import {
   withClaset,
   type ClassicalContext,
 } from "../provers/classical";
-import { proverTac, type IntuitionisticContext } from "../tools/intuitionistic";
+import {
+  findRulesNetpair,
+  proverTac,
+  type ContextRule,
+  type IntuitionisticContext,
+} from "../tools/intuitionistic";
 import { getThms, parseFactReferences } from "./attrib";
 import type { IsarContext } from "./context";
 import { insertTac } from "./proof";
@@ -90,6 +109,8 @@ export interface ProofContext {
   readonly rulifyRules: readonly Thm[];
   readonly blastDepthTac: (context: ClassicalContext, limit: number) => GoalTactic;
   readonly blastTac: (context: ClassicalContext) => GoalTactic;
+  // Context_Rules' netpairs: of the rules declared with "!", without a mark and with "?".
+  readonly contextRules: readonly NetPair<ContextRule>[];
 }
 
 export type Method = (facts: readonly Thm[]) => Tactic;
@@ -208,6 +229,53 @@ const ruleTac = (limits: Limits, rules: readonly Thm[], facts: readonly Thm[]): 
           ),
     normHhfTac(limits),
   );
+
+// Classical.some_rule_tac: the rules of the context and the claset's extra rules that fit the
+// goal, or the first fact as an elimination rule.
+const someRuleTac = (context: ProofContext, facts: readonly Thm[]): GoalTactic =>
+  thenAllNew(
+    subgoal((goal, index) => {
+      const [bang, plain, query] = context.contextRules.map((netpair) =>
+        findRulesNetpair(false, facts, goal, netpair),
+      );
+      const extra = findRulesNetpair(true, facts, goal, context.classical.claset.extra);
+      return (state) =>
+        mapsSeq(
+          (rule) => resolveTac(context.limits, [rule])(index)(state),
+          multiResolves(context.limits, facts, [...bang, ...plain, ...extra, ...query]),
+        );
+    }),
+    normHhfTac(context.limits),
+  );
+
+// Tactic.distinct_subgoals_tac: a subgoal that occurs again is solved by its first occurrence.
+const distinctSubgoalsTac: Tactic = (state) => {
+  const prems = premsOf(state);
+  const distinct = prems.filter(
+    (prem, index) => prems.findIndex((other) => aconv(other, prem)) === index,
+  );
+  if (distinct.length === prems.length) return singleSeq(state);
+  const template = listImplies(prems, conclOf(state));
+  const rule = impliesIntr(
+    template,
+    distinct.reduceRight(
+      (result, prem) => impliesIntr(prem, result),
+      prems.reduce((result, prem) => impliesElim(result, assume(prem)), assume(template)),
+    ),
+  );
+  return singleSeq(impliesElim(rule, state));
+};
+
+// Class.standard_intro_classes_tac: without facts, intro_classes_tac, whose rules conclude
+// OFCLASS, so they resolve with no TLA+ goal unless its conclusion is a variable.
+const standardIntroClassesTac =
+  (facts: readonly Thm[]): Tactic =>
+  (state) => {
+    if (facts.length > 0 || nprems(state) === 0) return emptySeq;
+    if (premsOf(state).some((prem) => stripComb(stripAssumsConcl(prem))[0].kind === "Var"))
+      throw new TlaIsabelleError("ERROR", "Unsupported intro_classes on a flexible goal");
+    return distinctSubgoalsTac(state);
+  };
 
 // Proof_Context.fact_tac: a fact closes the goal by composition, lifted over its parameters.
 const factTac = (limits: Limits, facts: readonly Thm[]): GoalTactic =>
@@ -511,9 +579,14 @@ const methodSource = (
     }
     case "rule": {
       const rules = thms();
-      if (rules.length === 0) throw new TlaIsabelleError("ERROR", "Unsupported method: rule");
-      return (facts) => ruleTac(context.limits, rules, facts)(1);
+      return (facts) =>
+        rules.length === 0
+          ? someRuleTac(context, facts)(1)
+          : ruleTac(context.limits, rules, facts)(1);
     }
+    case "standard":
+      noArgs();
+      return (facts) => orElse(someRuleTac(context, facts)(1), standardIntroClassesTac(facts));
     case "fact": {
       const rules = thms();
       if (rules.length === 0) throw new TlaIsabelleError("ERROR", "Unsupported method: fact");

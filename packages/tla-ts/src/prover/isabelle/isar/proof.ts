@@ -136,16 +136,17 @@ const refine = (state: State, text: MethodText): Seq<State> => {
   return mapSeq((thm: Thm) => provideGoal(state, thm), method(goal.using)(goal.goal));
 };
 
+const STANDARD_TEXT: MethodText = { kind: "source", name: "standard", args: [] };
+
 export const proof = (state: State, text: MethodText | undefined): Seq<State> => {
   assertMode(state, ["backward"]);
-  if (text === undefined) throw error("Unsupported default proof method");
   return mapSeq(
     (result: State) =>
       mapTop(openBlock(putMode(usingFacts(result, []), "forward")), (node) => ({
         ...node,
         goal: undefined,
       })),
-    refine(state, text),
+    refine(state, text ?? STANDARD_TEXT),
   );
 };
 

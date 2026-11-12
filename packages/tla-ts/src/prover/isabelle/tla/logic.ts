@@ -52,7 +52,11 @@ interface LogicJson {
     dup: [NetItem[], NetItem[]];
     extra: [ExtraNetItem[], ExtraNetItem[]];
   };
-  contextRules: { bang: [ExtraNetItem[], ExtraNetItem[]]; plain: [ExtraNetItem[], ExtraNetItem[]] };
+  contextRules: {
+    bang: [ExtraNetItem[], ExtraNetItem[]];
+    plain: [ExtraNetItem[], ExtraNetItem[]];
+    query: [number[], number[]];
+  };
 }
 
 export interface ConstInfo {
@@ -99,10 +103,12 @@ export interface TlaLogic {
     readonly safep: LogicNetPair<LogicNetItem>;
     readonly unsafe: LogicNetPair<LogicNetItem>;
     readonly dup: LogicNetPair<LogicNetItem>;
+    readonly extra: LogicNetPair<LogicExtraNetItem>;
   };
   readonly contextRules: {
     readonly bang: LogicNetPair<LogicExtraNetItem>;
     readonly plain: LogicNetPair<LogicExtraNetItem>;
+    readonly query: LogicNetPair<LogicExtraNetItem>;
   };
 }
 
@@ -169,6 +175,14 @@ const parseLogic = (): TlaLogic => {
     );
     return { intro, elim };
   };
+  // Isabelle hides the weights of the rules declared with "?", so their order stands in for their
+  // tags, which is all their unweighted retrieval reads.
+  const toOrderedItems = (pair: [number[], number[]]): LogicNetPair<LogicExtraNetItem> => {
+    const [intro, elim] = pair.map((side, isElim) =>
+      side.map((id, tag) => ({ weight: 0, tag, isElim: isElim === 1, rule: thms[id] })),
+    );
+    return { intro, elim };
+  };
   return {
     consts: new Map(
       data.consts.map((entry) => [
@@ -196,10 +210,12 @@ const parseLogic = (): TlaLogic => {
       safep: toItems(data.claset.safep),
       unsafe: toItems(data.claset.unsafe),
       dup: toItems(data.claset.dup),
+      extra: toExtraItems(data.claset.extra),
     },
     contextRules: {
       bang: toExtraItems(data.contextRules.bang),
       plain: toExtraItems(data.contextRules.plain),
+      query: toOrderedItems(data.contextRules.query),
     },
   };
 };

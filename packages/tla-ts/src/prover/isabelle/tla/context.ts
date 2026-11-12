@@ -1,16 +1,19 @@
 import { TlaIsabelleError } from "../../../errors";
 import type { ProofContext } from "../isar/method";
 import { normHhfEq } from "../pure/drule";
-import { emptyNet } from "../pure/net";
 import type { Limits } from "../pure/interrupt";
-import { insertTaggedBrl, type NetPair } from "../pure/tactic";
 import { symmetric } from "../pure/thm";
 import { blastDepthTac, blastTac, type BlastContext } from "../provers/blast/blast";
 import type { ClassicalContext } from "../provers/classical";
 import { blastHypSubstTac } from "../provers/hypsubst";
-import type { ContextRule } from "../tools/intuitionistic";
-import { getClaset, getClassicalData, getFact, getHypsubstData } from "./classical-setup";
-import type { LogicExtraNetItem, LogicNetPair, TlaLogic } from "./logic";
+import {
+  getClaset,
+  getClassicalData,
+  getFact,
+  getHypsubstData,
+  toNetPair,
+} from "./classical-setup";
+import type { TlaLogic } from "./logic";
 import { getSimpset } from "./simpdata";
 
 // The atomize rules, newest first as Object_Logic keeps them.
@@ -34,13 +37,6 @@ const DEFN_RULES = [
   "PredicateLogic.atomize_eq",
 ];
 
-// Net.content lists a leaf's items newest first, so inserting them in reverse rebuilds the leaf.
-const toNetPair = (pair: LogicNetPair<LogicExtraNetItem>): NetPair<ContextRule> => {
-  const insertAll = (items: readonly LogicExtraNetItem[], netpair: NetPair<ContextRule>) =>
-    items.reduceRight((result, item) => insertTaggedBrl(item, result), netpair);
-  return insertAll(pair.elim, insertAll(pair.intro, { intro: emptyNet, elim: emptyNet }));
-};
-
 export const getProofContext = (logic: TlaLogic, limits: Limits): ProofContext => {
   const atomizeRules = ATOMIZE_RULES.map((name) => getFact(logic, name));
   const classical = { limits, claset: getClaset(logic, limits), data: getClassicalData(logic) };
@@ -62,20 +58,22 @@ export const getProofContext = (logic: TlaLogic, limits: Limits): ProofContext =
       atomize: atomizeRules,
     },
   });
+  const contextRules = [
+    toNetPair(logic.contextRules.bang),
+    toNetPair(logic.contextRules.plain),
+    toNetPair(logic.contextRules.query),
+  ];
   return {
     limits,
     simpset: getSimpset(logic),
     classical,
-    intuitionistic: {
-      limits,
-      safeRules: toNetPair(logic.contextRules.bang),
-      rules: toNetPair(logic.contextRules.plain),
-    },
+    intuitionistic: { limits, safeRules: contextRules[0], rules: contextRules[1] },
     atomizeRules,
     defnRules: DEFN_RULES.map((name) => symmetric(getFact(logic, name))),
     rulifyRules: [...RULIFY_RULES.map((name) => symmetric(getFact(logic, name))), normHhfEq],
     blastDepthTac: (context, limit) => blastDepthTac(toBlastContext(context), limit),
     blastTac: (context) => blastTac(toBlastContext(context)),
+    contextRules,
   };
 };
 

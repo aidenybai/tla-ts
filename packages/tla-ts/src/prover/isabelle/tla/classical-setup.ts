@@ -5,13 +5,7 @@ import { TlaIsabelleError } from "../../../errors";
 import { emptyNet } from "../pure/net";
 import { thenGoal, type GoalTactic } from "../pure/tactical";
 import type { Limits } from "../pure/interrupt";
-import {
-  assumeTac,
-  dresolveTac,
-  insertTaggedBrl,
-  type NetPair,
-  type TaggedRule,
-} from "../pure/tactic";
+import { assumeTac, dresolveTac, insertTaggedBrl, type NetPair } from "../pure/tactic";
 import type { Term } from "../pure/term";
 import type { Thm } from "../pure/thm";
 import { addbefore, type Claset, type ClassicalData } from "../provers/classical";
@@ -72,8 +66,8 @@ export const getClassicalData = (logic: TlaLogic): ClassicalData => {
 };
 
 // Net.content lists a leaf's items newest first, so inserting them in reverse rebuilds the leaf.
-const toNetPair = (pair: LogicNetPair<LogicNetItem>): NetPair<TaggedRule> => {
-  const insertAll = (items: readonly LogicNetItem[], netpair: NetPair<TaggedRule>) =>
+export const toNetPair = <Item extends LogicNetItem>(pair: LogicNetPair<Item>): NetPair<Item> => {
+  const insertAll = (items: readonly Item[], netpair: NetPair<Item>) =>
     items.reduceRight((result, item) => insertTaggedBrl(item, result), netpair);
   return insertAll(pair.elim, insertAll(pair.intro, { intro: emptyNet, elim: emptyNet }));
 };
@@ -90,6 +84,7 @@ export const getClaset = (logic: TlaLogic, limits: Limits): Claset => {
     safep: toNetPair(logic.claset.safep),
     unsafe: toNetPair(logic.claset.unsafe),
     dup: toNetPair(logic.claset.dup),
+    extra: toNetPair(logic.claset.extra),
   };
   const bspec: GoalTactic = thenGoal(
     dresolveTac(limits, [getFact(logic, "SetTheory.bspec")]),

@@ -46,6 +46,7 @@ import {
   type TaggedRule,
 } from "../pure/tactic";
 import { assumption, biresolution, nprems, premsOf, rs, rsn, type Thm } from "../pure/thm";
+import type { ContextRule } from "../tools/intuitionistic";
 
 export interface ClassicalRule {
   readonly rule: Thm;
@@ -72,6 +73,7 @@ export interface Claset {
   readonly safep: NetPair<TaggedRule>;
   readonly unsafe: NetPair<TaggedRule>;
   readonly dup: NetPair<TaggedRule>;
+  readonly extra: NetPair<ContextRule>;
 }
 
 export interface ClassicalData {
@@ -166,6 +168,14 @@ const insertRules = (
     ...intros.map((rule) => ({ isElim: false, rule })),
   ]).reduceRight((result, tagged) => insertTaggedBrl(tagged, result), netpair);
 
+// insert' with the default weight of an unsafe rule.
+const insertExtra = (
+  counts: readonly [number, number],
+  isElim: boolean,
+  rule: Thm,
+  netpair: NetPair<ContextRule>,
+) => insertTaggedBrl({ weight: 1, tag: -(counts[0] + counts[1]), isElim, rule }, netpair);
+
 const isMember = (rules: readonly ClassicalRule[], rule: ClassicalRule) =>
   rules.some((other) => aconv(other.rule.prop, rule.rule.prop));
 
@@ -191,6 +201,7 @@ export const addUnsafeIntro = (
     unsafeIs: [entry, ...claset.unsafeIs],
     unsafe: insertRules(counts, [entry.internal], entry.swapped, claset.unsafe),
     dup: insertRules(counts, [entry.dup], entry.dupSwapped, claset.dup),
+    extra: insertExtra(counts, false, rule, claset.extra),
   };
 };
 
@@ -220,6 +231,7 @@ const addUnsafeElim = (
     unsafeEs: [entry, ...claset.unsafeEs],
     unsafe: insertRules(counts, [], [entry.internal], claset.unsafe),
     dup: insertRules(counts, [], [entry.dup], claset.dup),
+    extra: insertExtra(counts, true, rule, claset.extra),
   };
 };
 
