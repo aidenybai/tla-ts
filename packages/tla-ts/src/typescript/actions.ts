@@ -9748,21 +9748,48 @@ const translateIterations = (
           ...getValues(current),
         ]),
       );
-    const test = (current: Path) => {
-      if (iterated !== undefined) {
-        return apply("<=", [identifier(position), apply("Len", [identifier(sequence)])]);
+    const condition =
+      ts.isWhileStatement(loop) || ts.isDoStatement(loop)
+        ? loop.expression
+        : ts.isForStatement(loop)
+          ? loop.condition
+          : undefined;
+    // The condition runs the calls in it that only statements can run, in order, before it tests,
+    // and each test runs them again.
+    const test = (
+      current: Path,
+      whenTrue: (path: Path) => Formula,
+      whenFalse: (path: Path) => Formula,
+      tested = current,
+    ): Formula => {
+      const leading =
+        condition === undefined
+          ? undefined
+          : getLeadingCall(condition, () => true, current, context);
+      if (leading !== undefined) {
+        return allocate(leading.call, current, context, (allocated) =>
+          translateCallStatement(leading.call, allocated, context, bodyFrame, (after, value) =>
+            test(
+              withLeadingResults(leading, allocated, after, value, context),
+              whenTrue,
+              whenFalse,
+              tested,
+            ),
+          ),
+        );
       }
-      const condition =
-        ts.isWhileStatement(loop) || ts.isDoStatement(loop)
-          ? loop.expression
-          : ts.isForStatement(loop)
-            ? loop.condition
-            : undefined;
-      return condition === undefined
-        ? boolean(true)
-        : translateCondition(condition, current.scope, context);
+      const untested = { ...current, scope: { ...current.scope, results: tested.scope.results } };
+      return ifThenElse(
+        iterated !== undefined
+          ? apply("<=", [identifier(position), apply("Len", [identifier(sequence)])])
+          : condition === undefined
+            ? boolean(true)
+            : translateCondition(condition, current.scope, context),
+        whenTrue(untested),
+        whenFalse(untested),
+      );
     };
-    const testAgain = (current: Path) => ifThenElse(test(current), repeat(current), done(current));
+    const testAgain = (current: Path) => test(current, repeat, done);
     const advance = (current: Path) =>
       ts.isForStatement(loop) && loop.incrementor !== undefined
         ? translateExpressionStatement(loop.incrementor, current, context, frame, repeat)
@@ -9833,7 +9860,7 @@ const translateIterations = (
             apply("=", [carriedValues, carriedValues]),
             ts.isDoStatement(loop) || opened !== undefined
               ? translateBody(inner)
-              : ifThenElse(test(inner), translateBody(inner), done(inner)),
+              : test(inner, translateBody, done),
             leaf(boolean(false)),
           ),
         ),

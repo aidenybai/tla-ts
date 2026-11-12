@@ -1534,6 +1534,80 @@ describe("values", () => {
     }
   });
 
+  it("runs the calls of a while's or a do-while's condition before each test", async () => {
+    const getSource = (expected: string) => `
+      let n: number = 0;
+      let log = "";
+      const step = () => {
+        n++;
+        log += "f";
+        return n;
+      };
+      let a = 0;
+      while (n + step() < 6) {
+        a++;
+        log += "b";
+      }
+      let b = 0;
+      do {
+        b++;
+        log += "d";
+      } while (step() < 5);
+      const outcomes = [n, a, b, log].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("5,3,1,fbfbfbfdf"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("5,3,1,fbfbfbfd"))).failure?.message).toContain(
+      "outcomes 5,3,1,fbfbfbfdf",
+    );
+  });
+
+  it("runs the calls of a for's condition before each test", async () => {
+    const getSource = (expected: string) => `
+      let n: number = 0;
+      const step = () => {
+        n++;
+        return n;
+      };
+      let c = 0;
+      for (let i = 0; i < step(); i += 1) {
+        c++;
+        if (c > 1) break;
+      }
+      const outcomes = [n, c].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("2,2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1,2"))).failure?.message).toContain("outcomes 2,2");
+  });
+
+  it("throws where a call of a loop's condition throws", async () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const check = (limit: number) => {
+        log += "g";
+        if (limit > 2) throw new Error("far");
+        return limit;
+      };
+      let caught = "none";
+      let k = 0;
+      try {
+        while (check(k) < 5) {
+          k++;
+          continue;
+        }
+      } catch (error) {
+        caught = (error as Error).message;
+      }
+      const outcomes = [k, caught, log].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("3,far,gggg"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("3,none,gggg"))).failure?.message).toContain(
+      "outcomes 3,far,gggg",
+    );
+  });
+
   it("gives what a compound assignment to a property writes, as its value", async () => {
     const getSource = (field: number, property: number, element: number, typed: number) => `
       class Counter {
