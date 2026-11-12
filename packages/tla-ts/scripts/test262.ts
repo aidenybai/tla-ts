@@ -548,12 +548,38 @@ const loosen = () => {
     ) {
       edits.set(node.name.getEnd(), ": { [key: string | symbol]: unknown }");
     }
+    // An accessor that a descriptor gives reads this, which ThisType<any> leaves untyped, as the
+    // object that it's defined on.
+    const isFunction = ts.isMethodDeclaration(node) || ts.isFunctionExpression(node);
+    const holder =
+      isFunction && ts.isPropertyAssignment(node.parent) ? node.parent.parent : node.parent;
+    if (
+      isFunction &&
+      node.body !== undefined &&
+      !node.parameters.some((parameter) => parameter.name.getText() === "this") &&
+      readsThis(node.body) &&
+      ts.isObjectLiteralExpression(holder) &&
+      isDescriptor(checker.getContextualType(holder))
+    ) {
+      edits.set(
+        node.parameters.pos,
+        node.parameters.length === 0
+          ? "this: { [key: string | symbol]: unknown }"
+          : "this: { [key: string | symbol]: unknown }, ",
+      );
+    }
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);
   if (edits.size > 0) applyEdits(edits);
   return edits.size > 0;
 };
+
+// Whether a function's body reads this, outside the functions it makes that have their own.
+const readsThis = (node: ts.Node): boolean =>
+  node.kind === ts.SyntaxKind.ThisKeyword ||
+  (!(ts.isFunctionLike(node) && !ts.isArrowFunction(node)) &&
+    (ts.forEachChild(node, (child) => readsThis(child) || undefined) ?? false));
 
 // A function that a test declares and passes by name, once, takes the parameter types of the
 // callback it's passed as, such as an array method's (value, index, array), which usage alone
