@@ -1330,13 +1330,21 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
         ),
       );
     }
-    if (operator !== undefined && !isNumberLike(expression.operand, context)) {
+    if (
+      operator !== undefined &&
+      !isNumberLike(skipCasts(expression.operand), context) &&
+      !isConvertedOperand(expression.operand, context)
+    ) {
       throw new TlaTypeScriptError(`${expression.getText()} needs a number`, expression);
     }
     return operator === undefined
       ? undefined
       : assign(expression.operand, path, context, (current) =>
-          applyArithmetic(operator, [current, number(1)], context),
+          applyArithmetic(
+            operator,
+            [getIncremented(expression.operand, current, context), number(1)],
+            context,
+          ),
         );
   }
   if (!ts.isBinaryExpression(expression)) return undefined;
@@ -10120,6 +10128,29 @@ const isIncrement = (node: ts.Node): node is Increment =>
   (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
   INCREMENT_OPERATORS.has(node.operator);
 
+// An increment's operand that holds a primitive other than a number, or a value of type any, which
+// the increment converts to a number as it reads it, as other conversions do, where a script makes
+// objects.
+const isConvertedOperand = (operand: ts.Expression, context: Context) =>
+  context.heap !== undefined &&
+  !isNumberLike(skipCasts(operand), context) &&
+  isEvery(
+    context.checker.getTypeAtLocation(skipCasts(operand)),
+    ts.TypeFlags.NumberLike |
+      ts.TypeFlags.StringLike |
+      ts.TypeFlags.BooleanLike |
+      ts.TypeFlags.Undefined |
+      ts.TypeFlags.Null |
+      ts.TypeFlags.Any,
+  );
+
+// The number that an increment reads from its operand's value.
+const getIncremented = (operand: ts.Expression, value: Expression, context: Context) => {
+  if (!isConvertedOperand(operand, context)) return value;
+  const converted = useJavaScript("ToNumber", [value], context);
+  return context.hasSpecialNumbers ? converted : useJavaScript("PlainNumber", [converted], context);
+};
+
 // An assignment or an increment, which only a statement can run.
 const isAssignment = (node: ts.Node): node is ts.BinaryExpression | Increment =>
   isIncrement(node) || (ts.isBinaryExpression(node) && getWritten(node) !== undefined);
@@ -10128,10 +10159,11 @@ const isAssignment = (node: ts.Node): node is ts.BinaryExpression | Increment =>
 // and writes a number without running code.
 // The boolean type keeps TypeScript from narrowing the increment as a proxy's operation.
 const isPlainIncrement = (node: Increment, context: Context): boolean => {
-  const operand = node.operand;
+  const operand = skipCasts(node.operand);
   const names = getTypeNames(context.checker.getTypeAtLocation(operand), context.checker);
   const isNumeric =
-    names !== undefined && names.every((name) => name === "number" || name === "bigint");
+    (names !== undefined && names.every((name) => name === "number" || name === "bigint")) ||
+    isConvertedOperand(operand, context);
   const isPlainObject = (object: ts.Expression): boolean =>
     ts.isIdentifier(object) ||
     object.kind === ts.SyntaxKind.ThisKeyword ||
@@ -10214,7 +10246,11 @@ const runAssignment = (
 ): Formula => {
   // An increment gives its operand's number from before, or after, as its prefix form does.
   if (isIncrement(node)) {
-    const before = translateExpression(node.operand, path.scope, context);
+    const before = getIncremented(
+      node.operand,
+      translateExpression(node.operand, path.scope, context),
+      context,
+    );
     return translateExpressionStatement(node, path, context, frame, (after) =>
       continueWith(
         after,

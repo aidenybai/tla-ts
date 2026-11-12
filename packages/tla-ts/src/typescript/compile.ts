@@ -274,6 +274,7 @@ export const compile = (
       (ts.isIdentifier(node) &&
         [
           "NaN",
+          "isNaN",
           "Infinity",
           "POSITIVE_INFINITY",
           "NEGATIVE_INFINITY",
