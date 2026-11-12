@@ -36,6 +36,7 @@ const createLibraryHost = (libraries: ReadonlyMap<string, string>): ts.CompilerH
   readFile: (fileName) => libraries.get(fileName),
 });
 
+// HACK: TypeScript checks a parameter property's assignment only in its emit, so the text gains it.
 // A file's text where each constructor assigns its parameter properties, as TypeScript does once
 // its base's constructor returns, after the super call that a derived class must make first. The
 // text stays on the same lines.
