@@ -185,12 +185,16 @@ export const translateBuiltInObject = (node: ts.Expression, scope: Scope, contex
   return name === undefined ? undefined : translateBuiltIn(name, node, scope, context);
 };
 
+// Object.getPrototypeOf, or Reflect's of an object, which only differs where the value isn't one.
 const isPrototypeCall = (node: ts.Node, context: Context): node is ts.CallExpression =>
   ts.isCallExpression(node) &&
   ts.isPropertyAccessExpression(node.expression) &&
-  getBuiltIn(node.expression.expression, context) === "Object" &&
   node.expression.name.text === "getPrototypeOf" &&
-  node.arguments.length === 1;
+  node.arguments.length === 1 &&
+  (getBuiltIn(node.expression.expression, context) === "Object" ||
+    (getBuiltIn(node.expression.expression, context) === "Reflect" &&
+      (getKind(node.arguments[0], context) === "object" ||
+        isBuiltInObject(node.arguments[0], context))));
 
 const isPrototypeOfCall = (node: ts.Node): node is ts.CallExpression =>
   ts.isCallExpression(node) &&

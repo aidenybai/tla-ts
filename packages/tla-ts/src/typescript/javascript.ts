@@ -748,6 +748,9 @@ OwnPropertyNames(heap, ref) == OwnKeys(Lookup(heap, ref))
 
 OwnPropertySymbols(heap, ref) == SelectSeq(Lookup(heap, ref).keys, IsSymbol)
 
+\\* Reflect.ownKeys, which gives the strings that key an object's properties and then its symbols.
+OwnPropertyKeys(heap, ref) == OwnPropertyNames(heap, ref) \\o OwnPropertySymbols(heap, ref)
+
 RECURSIVE PutAll(_, _, _)
 PutAll(object, values, keys) ==
   IF keys = <<>>

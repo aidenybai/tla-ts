@@ -2546,6 +2546,45 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain("frozen");
   });
 
+  it("reads an object through Reflect as in and Object's functions do", async () => {
+    const source = `
+      const check = (actual: unknown, expected: unknown, message: string) => {
+        if (actual !== expected) throw new Error(message);
+      };
+      const o1: { p: number; z?: number } = { p: 42 };
+      check(Reflect.has(o1, "p"), true, "own");
+      check(Reflect.has(o1, "z"), false, "missing");
+      const o2: { p?: number } = Object.create({ p: 42 });
+      check(Reflect.has(o2, "p"), true, "inherited");
+      const o: { [key: string | symbol]: number } = {};
+      o.p1 = 42;
+      const s1 = Symbol("1");
+      o[s1] = 44;
+      o[2] = 46;
+      o[0] = 47;
+      const keys = Reflect.ownKeys(o);
+      check(keys.join === undefined, false, "array");
+      check(keys.length, 4, "length");
+      check(keys[1], "2", "second");
+      check(keys[3], s1, "symbol");
+      check(Reflect.ownKeys([]).join(), "length", "array keys");
+      check(Reflect.isExtensible(o), true, "extensible");
+      Object.preventExtensions(o);
+      check(Reflect.isExtensible(o), false, "inextensible");
+      const bare: object = Object.create(null);
+      check(Reflect.getPrototypeOf(bare), null, "null");
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = [
+      ['"z"), false', '"z"), true'],
+      ['keys[1], "2"', 'keys[1], "0"'],
+      ['false, "inextensible"', 'true, "inextensible"'],
+    ];
+    for (const [from, to] of wrong) {
+      expect((await checkModel(source.replace(from, to))).failure).toBeDefined();
+    }
+  });
+
   it("gives new Object's object argument back and wraps a primitive one", async () => {
     const result = await checkModel(`
       declare global {

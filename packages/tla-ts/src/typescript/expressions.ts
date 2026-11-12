@@ -682,6 +682,48 @@ const translateCall = (
     }
     throw new TlaTypeScriptError("Array.isArray needs a value whose type tells", node);
   }
+  // Reflect's functions on an object do what in and Object's functions do, and throw a TypeError
+  // only where the value isn't one.
+  const reflected = global === "Reflect" ? node.arguments.at(0) : undefined;
+  const reflectedKind = reflected === undefined ? undefined : getKind(reflected, context);
+  const isReflectedObject =
+    reflected !== undefined &&
+    context.heap !== undefined &&
+    (reflectedKind === "object" || isBuiltInObject(reflected, context));
+  if (isReflectedObject && method === "has" && node.arguments.length === 2) {
+    return useJavaScript(
+      "Has",
+      [
+        getHeap(scope, node, context),
+        translateObjectValue(reflected, scope, context),
+        translatePropertyKey(node.arguments[1], scope, context),
+      ],
+      context,
+    );
+  }
+  if (isReflectedObject && method === "isExtensible" && node.arguments.length === 1) {
+    return useJavaScript(
+      "IsExtensible",
+      [getHeap(scope, node, context), translateObjectValue(reflected, scope, context)],
+      context,
+    );
+  }
+  if (method === "ownKeys" && node.arguments.length === 1 && reflected !== undefined) {
+    if (isReflectedObject) {
+      return useJavaScript(
+        "OwnPropertyKeys",
+        [getHeap(scope, node, context), translateObjectValue(reflected, scope, context)],
+        context,
+      );
+    }
+    if (reflectedKind === "sequence") {
+      return useJavaScript(
+        "ElementNames",
+        [translateExpression(reflected, scope, context)],
+        context,
+      );
+    }
+  }
   const ownKeys = global === "Object" ? OWN_KEYS.get(method) : undefined;
   if (ownKeys !== undefined && node.arguments.length === 1 && context.heap !== undefined) {
     const argument = node.arguments[0];
