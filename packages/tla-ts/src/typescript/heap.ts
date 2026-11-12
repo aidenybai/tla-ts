@@ -2078,16 +2078,9 @@ export const isNewObject = (node: ts.Node, context: Context) => {
 // making an object that nothing reads can't be seen, but not its descriptions and creations,
 // which may stop the run.
 export const getAllocated = (node: ts.Node, context: Context, isSometimes = false): ts.Node[] => {
-  if (context.heap === undefined) return [];
-  if (
-    isHeapFunction(node, context) ||
-    isFunctionObject(node, context) ||
-    isNestedFunction(node, context)
-  ) {
-    return isSometimes ? [] : [node];
+  if (context.heap === undefined || ts.isFunctionLike(node) || ts.isClassLike(node)) {
+    return isMade(node, context, isSometimes) ? [node] : [];
   }
-  if (ts.isFunctionLike(node)) return [];
-  if (ts.isClassLike(node)) return isHeapClass(node, context) && !isSometimes ? [node] : [];
   if (ts.isOptionalChain(node)) return [];
   if (ts.isConditionalExpression(node)) {
     return [
@@ -2138,27 +2131,7 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
             : [],
         )
       : [];
-  const isAllocated =
-    (ts.isObjectLiteralExpression(node) &&
-      isObjectValue(node, context) &&
-      !isProxyOperation(node, context)) ||
-    ((ts.isArrayLiteralExpression(node) ||
-      isHoleyNewArray(node) ||
-      ts.isCallExpression(node) ||
-      ts.isNewExpression(node)) &&
-      context.heapCollections.has(node)) ||
-    ts.isRegularExpressionLiteral(node) ||
-    getMadeRegExp(node, context) !== undefined ||
-    isNewObject(node, context) ||
-    isNewDate(node, context) ||
-    isNewProxy(node, context) ||
-    getNewBuffer(node, context) !== undefined ||
-    getNewWrapper(node, context) !== undefined ||
-    isHeldError(node, context) ||
-    (!isSometimes && isAllocation(node, context)) ||
-    (!isSometimes && isNewError(node, context)) ||
-    isNewInstance;
-  return isAllocated ? [...nested, ...fields, node] : [...nested, ...fields];
+  return isMade(node, context, isSometimes) ? [...nested, ...fields, node] : [...nested, ...fields];
 };
 
 // Whether a node itself makes an object, as getAllocated(node).includes(node) tells, without
