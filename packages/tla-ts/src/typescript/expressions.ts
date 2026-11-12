@@ -2152,7 +2152,98 @@ const translateSuperRead = (
   );
 };
 
+// The operators that convert an operand to a number, as + does where both operands are numbers.
+const NUMERIC_OPERATORS = new Set([
+  ts.SyntaxKind.MinusToken,
+  ts.SyntaxKind.AsteriskToken,
+  ts.SyntaxKind.SlashToken,
+  ts.SyntaxKind.PercentToken,
+  ts.SyntaxKind.AsteriskAsteriskToken,
+  ts.SyntaxKind.LessThanToken,
+  ts.SyntaxKind.GreaterThanToken,
+  ts.SyntaxKind.LessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanEqualsToken,
+  ts.SyntaxKind.AmpersandToken,
+  ts.SyntaxKind.BarToken,
+  ts.SyntaxKind.CaretToken,
+  ts.SyntaxKind.LessThanLessThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
+  ts.SyntaxKind.MinusEqualsToken,
+  ts.SyntaxKind.AsteriskEqualsToken,
+  ts.SyntaxKind.SlashEqualsToken,
+  ts.SyntaxKind.PercentEqualsToken,
+  ts.SyntaxKind.AsteriskAsteriskEqualsToken,
+  ts.SyntaxKind.AmpersandEqualsToken,
+  ts.SyntaxKind.BarEqualsToken,
+  ts.SyntaxKind.CaretEqualsToken,
+  ts.SyntaxKind.LessThanLessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanGreaterThanEqualsToken,
+  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
+]);
+
+// Whether an operator or a Math function converts a value to a number, which takes undefined as
+// NaN.
+const isNumericOperand = (node: ts.Expression, context: Context): boolean => {
+  const parent = node.parent;
+  if (ts.isParenthesizedExpression(parent) || ts.isAsExpression(parent)) {
+    return isNumericOperand(parent, context);
+  }
+  if (ts.isPrefixUnaryExpression(parent)) {
+    return [ts.SyntaxKind.MinusToken, ts.SyntaxKind.PlusToken, ts.SyntaxKind.TildeToken].includes(
+      parent.operator,
+    );
+  }
+  if (ts.isCallExpression(parent)) {
+    return (
+      parent.arguments.includes(node) &&
+      ts.isPropertyAccessExpression(parent.expression) &&
+      parent.expression.expression.getText() === "Math"
+    );
+  }
+  if (!ts.isBinaryExpression(parent)) return false;
+  const kind = parent.operatorToken.kind;
+  const isAssigned = kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
+  return (
+    !(isAssigned && parent.left === node) &&
+    (NUMERIC_OPERATORS.has(kind) ||
+      ([ts.SyntaxKind.PlusToken, ts.SyntaxKind.PlusEqualsToken].includes(kind) &&
+        isNumberLike(parent.left, context) &&
+        isNumberLike(parent.right, context)))
+  );
+};
+
+// A read that an operator converts to a number, where a read past an array's end, or of a key that
+// an index signature lacks, gives undefined, though TypeScript types it as the value: NaN in a
+// script that has special numbers, and otherwise a stop, as tla-ts holds no NaN there.
+const toNumericRead = (node: ts.Expression, read: Expression, context: Context) => {
+  if (!isNumberLike(node, context) || !isNumericOperand(node, context)) return read;
+  context.prelude.add("JavaScript");
+  return share(read, "element", context, (element) =>
+    ifExpression(
+      apply("=", [element, getUndefined(context)]),
+      context.hasSpecialNumbers
+        ? identifier("NaN")
+        : apply("Assert", [
+            boolean(false),
+            string("tla-ts can't compute with the undefined that a read past an array's end gives"),
+          ]),
+      element,
+    ),
+  );
+};
+
 const translateElementAccess = (
+  node: ts.ElementAccessExpression,
+  scope: Scope,
+  context: Context,
+  isDefined: boolean,
+) => {
+  const read = translateElementRead(node, scope, context, isDefined);
+  return isDefined ? read : toNumericRead(node, read, context);
+};
+
+const translateElementRead = (
   node: ts.ElementAccessExpression,
   scope: Scope,
   context: Context,
@@ -2732,7 +2823,16 @@ const translateNode = (
     return translateElements(node.elements, scope, context, node);
   }
   if (ts.isObjectLiteralExpression(node)) return translateObjectLiteral(node, scope, context);
-  if (ts.isPropertyAccessExpression(node)) return translatePropertyAccess(node, scope, context);
+  if (ts.isPropertyAccessExpression(node)) {
+    const read = translatePropertyAccess(node, scope, context);
+    // A property that the type doesn't declare comes from an index signature, which may lack it.
+    const checker = context.checker;
+    return checker
+      .getNonNullableType(checker.getTypeAtLocation(node.expression))
+      .getProperty(node.name.text) === undefined
+      ? toNumericRead(node, read, context)
+      : read;
+  }
   if (ts.isElementAccessExpression(node)) {
     return translateElementAccess(node, scope, context, isDefined);
   }
