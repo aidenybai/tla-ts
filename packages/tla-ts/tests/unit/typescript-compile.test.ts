@@ -2196,6 +2196,28 @@ describe("errors", () => {
     expect((await checkModel(getSource(1))).failure?.message).toContain("unexpected");
   });
 
+  it("runs a setter that a descriptor's getter returns by name", async () => {
+    const getSource = (expected: string) => `
+      let data = "data";
+      const setFun = function (value: string) {
+        data = value;
+      };
+      const descriptor = {};
+      Object.defineProperty(descriptor, "set", {
+        get: function () {
+          return setFun;
+        },
+      });
+      const obj: Record<string, unknown> = {};
+      Object.defineProperties(obj, { prop: descriptor });
+      obj.prop = "written";
+      const getData = (): string => data;
+      if (getData() !== "${expected}") throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource("written"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("data"))).failure?.message).toContain("unexpected");
+  });
+
   it("runs the setter of an object literal or a class that a computed key picks", async () => {
     const getSource = (written: string) => `
       let log = "";

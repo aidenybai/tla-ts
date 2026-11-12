@@ -1261,22 +1261,31 @@ const isMaking = (node: ts.Node): boolean =>
     ts.isNewExpression(node) ||
     (ts.forEachChild(node, (child) => isMaking(child) || undefined) ?? false));
 
-const returnedFunctions = new WeakMap<ts.SourceFile, ts.FunctionExpression[]>();
+const returnedFunctions = new WeakMap<ts.SourceFile, HeapFunction[]>();
 
-// The function objects that functions return, which a descriptor may give as a getter.
+// The function objects that functions return, as a function they make or one a name holds, which a
+// descriptor may give as a getter or a setter.
 export const getReturnedFunctions = (node: ts.Node, context: Context) => {
   const file = node.getSourceFile();
   const known = returnedFunctions.get(file);
   if (known !== undefined) return known;
-  const found = findNodes(
-    file,
-    (inner): inner is ts.FunctionExpression =>
-      ts.isFunctionExpression(inner) &&
-      ts.isReturnStatement(inner.parent) &&
-      isNestedFunction(inner, context),
-  );
-  returnedFunctions.set(file, found);
-  return found;
+  const found = findNodes(file, ts.isReturnStatement).flatMap((statement) => {
+    const returned = statement.expression;
+    const named =
+      returned !== undefined && ts.isIdentifier(returned)
+        ? getCallee(returned, context)
+        : undefined;
+    return returned !== undefined &&
+      ts.isFunctionExpression(returned) &&
+      isNestedFunction(returned, context)
+      ? [returned]
+      : named !== undefined && (ts.isFunctionExpression(named) || ts.isFunctionDeclaration(named))
+        ? [named]
+        : [];
+  });
+  const unique = [...new Set(found)];
+  returnedFunctions.set(file, unique);
+  return unique;
 };
 
 // The getters that a read can run as an expression, which take no argument, change nothing, and
