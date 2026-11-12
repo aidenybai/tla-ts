@@ -1248,7 +1248,12 @@ export const runProxyOperation = (
     // trap that tla-ts follows only where the handler has none.
     const giveKeys = (after: Path, target: Expression, handler: Expression, keys: Expression) => {
       const heap = getHeap(after.scope, node, context);
-      const given = next(after, javaScript("ProxyKeysOf", [heap, target, keys, method]));
+      const described = javaScript("ForwardTarget", [
+        heap,
+        target,
+        string("getOwnPropertyDescriptor"),
+      ]);
+      const given = next(after, javaScript("ProxyKeysOf", [heap, described, keys, method]));
       return operation.method !== "keys"
         ? given
         : ifThenElse(
@@ -1361,25 +1366,43 @@ export const runProxyOperation = (
       // What the target does where the handler has no trap. A set reads and defines the proxy's
       // own property, which tla-ts follows only where the handler can't trap those either.
       const forward = (after: Path, target: Expression, handler: Expression) => {
+        // What reads the target goes on through proxy targets that have no trap for it.
+        const forwarded = (name: string) =>
+          javaScript("ForwardTarget", [heap, target, string(name)]);
         if (trap === "apply" || trap === "construct") {
           return leaf(
             apply("Assert", [boolean(false), string("tla-ts can't call the target of a proxy")]),
           );
         }
         if (trap === "get" || trap === "has") {
-          return next(after, javaScript(trap === "get" ? "Get" : "Has", [heap, target, key]));
+          return next(
+            after,
+            javaScript(trap === "get" ? "Get" : "Has", [heap, forwarded(trap), key]),
+          );
         }
         if (trap === "getOwnPropertyDescriptor") {
           return ifThenElse(
-            javaScript("HasOwn", [heap, target, key]),
-            give(after, javaScript("Describe", [heap, target, key])),
+            javaScript("HasOwn", [heap, forwarded(trap), key]),
+            give(after, javaScript("Describe", [heap, forwarded(trap), key])),
             next(after, getUndefined(context)),
           );
         }
-        if (trap === "getPrototypeOf") return next(after, javaScript("Prototype", [heap, target]));
-        if (trap === "isExtensible") return next(after, javaScript("IsExtensible", [heap, target]));
+        if (trap === "getPrototypeOf" || trap === "isExtensible") {
+          return next(
+            after,
+            javaScript(trap === "getPrototypeOf" ? "Prototype" : "IsExtensible", [
+              heap,
+              forwarded(trap),
+            ]),
+          );
+        }
         if (trap === "ownKeys") {
-          return giveKeys(after, target, handler, javaScript("PropertyKeysOf", [heap, target]));
+          return giveKeys(
+            after,
+            target,
+            handler,
+            javaScript("PropertyKeysOf", [heap, forwarded(trap)]),
+          );
         }
         if (trap === "preventExtensions") {
           return bind(

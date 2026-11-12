@@ -6955,6 +6955,27 @@ describe("proxies", () => {
     expect((await checkModel(getSource(8))).failure?.message).toContain("unexpected");
   });
 
+  it("forwards through a proxy target whose handler has no trap either", async () => {
+    const getSource = (expected: number) => `
+      const target: { attr?: number; hidden?: number } = { attr: 1 };
+      Object.defineProperty(target, "hidden", { value: 2 });
+      const outer = new Proxy(new Proxy(target, {}), {});
+      if (Object.getPrototypeOf(outer) !== Object.prototype) throw new Error("getPrototypeOf");
+      if (!Object.isExtensible(outer)) throw new Error("isExtensible");
+      if (outer.attr !== 1) throw new Error("get");
+      if (!("hidden" in outer)) throw new Error("has");
+      const described = Object.getOwnPropertyDescriptor(outer, "hidden");
+      if (described === undefined || described.value !== 2 || described.enumerable) {
+        throw new Error("describe");
+      }
+      const keys = Object.keys(outer);
+      if (keys.length !== 1 || keys[0] !== "attr") throw new Error("keys");
+      if (Reflect.ownKeys(outer).length !== ${expected}) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(3))).failure?.message).toContain("unexpected");
+  });
+
   it("stops the check where something else reads a proxy", async () => {
     const result = await checkModel(`
       const proxy = new Proxy({ attr: 1 }, {});

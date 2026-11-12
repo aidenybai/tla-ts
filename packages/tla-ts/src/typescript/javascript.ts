@@ -3519,6 +3519,17 @@ IsFrozen(heap, ref) ==
      /\\ \\A key \\in DOMAIN object.attributes :
           object.attributes[key].kind # "data" \\/ ~object.attributes[key].writable
 
+\\* The object that a proxy's internal method reads where the handler has no trap for it, which goes
+\\* on through each proxy target whose handler has none either.
+RECURSIVE ForwardTarget(_, _, _)
+ForwardTarget(heap, ref, trap) ==
+  CASE ~IsProxy(heap, ref) -> ref
+    [] ProxyHandler(heap, ref) = Null ->
+         Assert(FALSE, "tla-ts can't throw the TypeError of a revoked proxy's target")
+    [] Get(heap, ProxyHandler(heap, ref), trap) \\in {Undefined, Null} ->
+         ForwardTarget(heap, ProxyTarget(heap, ref), trap)
+    [] OTHER -> Assert(FALSE, "tla-ts can't run the trap of a proxy's target")
+
 \\* FromPropertyDescriptor, the object of a descriptor's fields.
 DescriptorObject(descriptor) ==
   PutAll(EmptyObject, [field \\in descriptor.fields |-> descriptor[field]],
