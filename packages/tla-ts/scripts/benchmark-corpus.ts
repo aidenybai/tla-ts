@@ -1,7 +1,14 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CONFORMANCE_DIRECTORY, findModels, getTlcArgs, getToolPath, runProcess } from "./corpora";
+import {
+  CONFORMANCE_DIRECTORY,
+  findModels,
+  getMedian,
+  getTlcArgs,
+  getToolPath,
+  runProcess,
+} from "./corpora";
 
 interface ConformanceResult {
   id: string;
@@ -76,7 +83,7 @@ console.log(
   `total: TLC ${(totalTlc / 1000).toFixed(1)}s, tla-ts ${(totalTlaTs / 1000).toFixed(1)}s (${(totalTlc / totalTlaTs).toFixed(2)}x)`,
 );
 console.log(
-  `speedup: geometric mean ${geometricMean.toFixed(2)}x, median ${ratios[Math.floor(ratios.length / 2)].toFixed(2)}x, slowest ${ratios[0].toFixed(2)}x`,
+  `speedup: geometric mean ${geometricMean.toFixed(2)}x, median ${getMedian(ratios).toFixed(2)}x, slowest ${ratios[0].toFixed(2)}x`,
 );
 console.log(`tla-ts slower than TLC on ${slower.length} models`);
 slower

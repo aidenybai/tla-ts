@@ -229,3 +229,9 @@ export const reportModuleResults = (path: string, results: { verdict: string }[]
   );
   console.log(`modules: ${results.length} (${basename(path)} has the details)`);
 };
+
+export const getMedian = (values: number[]) =>
+  values.toSorted((left, right) => left - right)[Math.floor(values.length / 2)] ?? 0;
+
+export const formatSeconds = (milliseconds: number, digits = 2) =>
+  `${(milliseconds / 1000).toFixed(digits)} s`;
