@@ -980,7 +980,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
           "RegExpObject",
           [
             translateBuiltInValue("RegExp.prototype", node, context),
-            translateRegExpValue(node, context),
+            translateRegExpValue(node, scope, context),
           ],
           context,
         ),
