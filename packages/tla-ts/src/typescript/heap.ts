@@ -1218,13 +1218,22 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
       "Allocate",
       [
         heap,
-        translateWrapperObject(
-          node,
-          wrapper,
-          translateBuiltInValue(`${wrapper}.prototype`, node, context),
-          scope,
-          context,
-        ),
+        wrapper === "Symbol"
+          ? useJavaScript(
+              "SymbolObject",
+              [
+                translateBuiltInValue("Symbol.prototype", node, context),
+                translateExpression((node.arguments ?? [])[0], scope, context),
+              ],
+              context,
+            )
+          : translateWrapperObject(
+              node,
+              wrapper,
+              translateBuiltInValue(`${wrapper}.prototype`, node, context),
+              scope,
+              context,
+            ),
       ],
       context,
     );
@@ -1448,7 +1457,8 @@ export const isAllocation = (node: ts.Node, context: Context) =>
   isRevocable(node, context) ||
   getNewWrapper(node, context) !== undefined;
 
-// The primitive that new Boolean, new Number, or new String wraps in an object.
+// The primitive that new Boolean, new Number, or new String wraps in an object, or that Object
+// wraps in a Symbol object.
 export const getNewWrapper = (node: ts.Node, context: Context) => {
   const called =
     context.heap !== undefined && ts.isNewExpression(node)
@@ -1472,8 +1482,13 @@ export const getNewWrapper = (node: ts.Node, context: Context) => {
         ? "Number"
         : primitive === "boolean"
           ? "Boolean"
-          : called;
-  return (name === "Boolean" || name === "Number" || name === "String") &&
+          : primitive === "symbol"
+            ? "Symbol"
+            : called;
+  return (name === "Boolean" ||
+    name === "Number" ||
+    name === "String" ||
+    (name === "Symbol" && primitive === "symbol")) &&
     (ts.isNewExpression(node) || ts.isCallExpression(node)) &&
     (node.arguments ?? []).length <= 1 &&
     !(node.arguments ?? []).some(ts.isSpreadElement)

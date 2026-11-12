@@ -61,6 +61,12 @@ LOCAL Truncate(value) == IF Floor(value) < 0 THEN Floor(value) + 1 ELSE Floor(va
 
 LOCAL SymbolPosition(symbol) == CHOOSE position \\in DOMAIN Symbols : Symbols[position] = symbol
 
+SymbolDescription(heap, symbol) ==
+  LET position == SymbolPosition(symbol)
+  IN IF position <= Len(WellKnownSymbols)
+     THEN "Symbol." \\o WellKnownSymbols[position]
+     ELSE heap.symbols[position - Len(WellKnownSymbols)]
+
 \\* A BigInt, which tla-ts holds as its integer under the model value Big.
 IsBigInt(value) ==
   LET text == ToString(value)
@@ -1108,6 +1114,12 @@ GetFrom(heap, ref, key, receiver) ==
                    /\\ path \\in ViewGetters -> ViewGet(heap, path, receiver)
               [] key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
                    /\\ path \\in RegExpGetters -> RegExpGet(heap, path, receiver)
+              [] key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
+                   /\\ path = "get Symbol.prototype.description" ->
+                   CASE IsSymbol(receiver) -> SymbolDescription(heap, receiver)
+                     [] IsHeap(receiver) /\\ "symbol" \\in DOMAIN Lookup(heap, receiver) ->
+                          SymbolDescription(heap, Lookup(heap, receiver).symbol)
+                     [] OTHER -> Assert(FALSE, "tla-ts can't throw the TypeError of this getter")
               [] key \\in DOMAIN object.values -> Value(object, key)
               [] object.prototype = Null -> Undefined
               [] OTHER -> GetFrom(heap, object.prototype, key, receiver)
@@ -1547,12 +1559,6 @@ NewestSymbol(heap) == Symbols[Len(WellKnownSymbols) + Len(heap.symbols)]
 
 WellKnownSymbol(name) ==
   Symbols[CHOOSE position \\in DOMAIN WellKnownSymbols : WellKnownSymbols[position] = name]
-
-SymbolDescription(heap, symbol) ==
-  LET position == SymbolPosition(symbol)
-  IN IF position <= Len(WellKnownSymbols)
-     THEN "Symbol." \\o WellKnownSymbols[position]
-     ELSE heap.symbols[position - Len(WellKnownSymbols)]
 
 \\* The heap after Symbol.for(key), which makes a symbol for the key where the registry holds none.
 RegisterSymbol(heap, key) ==
@@ -2862,6 +2868,10 @@ WrapperObject(prototype, primitive) ==
       extensible |-> TRUE, prototype |-> prototype, isCallable |-> FALSE, isConstructor |-> FALSE,
       isOpaque |-> FALSE, privates |-> <<>>, primitive |-> primitive]
 
+\\* The object that Object makes of a symbol, which holds the symbol in a slot of its own rather than
+\\* the primitive slot of a Boolean, Number, or String object.
+SymbolObject(prototype, symbol) == [EmptyObject EXCEPT !.prototype = prototype] @@ [symbol |-> symbol]
+
 \\* The description of a property of the String object that a string converts to.
 DescribeString(text, key) == DescribeObject(WrapperObject(Null, text), key)
 
@@ -3115,8 +3125,7 @@ GetterCall(heap, getter, receiver) ==
        [] HasPrefix(path, "get RegExp.prototype.") -> typeError
        [] path = "get Symbol.prototype.description" ->
             CASE IsSymbol(receiver) -> give(SymbolDescription(heap, receiver))
-              [] "primitive" \\in DOMAIN object /\\ IsSymbol(object.primitive) ->
-                   give(SymbolDescription(heap, object.primitive))
+              [] "symbol" \\in DOMAIN object -> give(SymbolDescription(heap, object.symbol))
               [] OTHER -> typeError
        [] path = "get Object.prototype.__proto__" ->
             CASE receiver \\in {Undefined, Null} -> typeError

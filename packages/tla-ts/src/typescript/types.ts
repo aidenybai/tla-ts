@@ -130,6 +130,7 @@ const LIBRARY_OBJECTS = new Set([
   "Boolean",
   "Number",
   "String",
+  "Symbol",
 ]);
 
 // An object type, or the object type, which any object may have.

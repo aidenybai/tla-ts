@@ -4109,6 +4109,37 @@ describe("errors", () => {
     }
   });
 
+  it("makes a Symbol object where a script calls Object on a symbol", async () => {
+    const source = `
+      declare global {
+        interface ObjectConstructor {
+          // oxlint-disable-next-line typescript/no-wrapper-object-types
+          (value: symbol): Symbol;
+        }
+      }
+      const box = { seen: 0 };
+      const symbol = Symbol("test");
+      const wrapped = Object(symbol);
+      const empty = Object(Symbol());
+      if (typeof wrapped !== "object" || wrapped === symbol) throw new Error("object");
+      if (wrapped.description !== "test" || empty.description !== undefined) throw new Error("description");
+      if (Object.prototype.toString.call(wrapped) !== "[object Symbol]") throw new Error("tag");
+      if (Object.getPrototypeOf(wrapped) !== Symbol.prototype) throw new Error("prototype");
+      if (JSON.stringify(wrapped) !== "{}") throw new Error("json");
+      box.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = [
+      ['"test" ||', '"other" ||', '"description"'],
+      ['"[object Symbol]"', '"[object Object]"', '"tag"'],
+      ['!== "{}"', '=== "{}"', '"json"'],
+      ["wrapped === symbol", "wrapped !== symbol", '"object"'],
+    ];
+    for (const [from, to, message] of wrong) {
+      expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
+    }
+  });
+
   it("rejects new Object of a value whose type doesn't tell the object", () => {
     expect(() =>
       compile("const box = { prop: 1 };\nconst same: Object = new Object(box);"),
