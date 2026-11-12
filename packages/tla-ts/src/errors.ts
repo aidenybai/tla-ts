@@ -216,8 +216,6 @@ export class TlaWarningAsError extends TlaEvaluationError {
   }
 }
 
-export class TlaNullPointerError extends TlaEvaluationError {}
-
 export class TlaIllegalStateError extends TlaEvaluationError {
   state: (Value | undefined)[];
 

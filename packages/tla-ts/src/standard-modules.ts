@@ -35,7 +35,6 @@ import {
   createSet,
   createSortedSet,
   compareValues,
-  describeKind,
   createTuple,
   getSortedDifference,
   formatValue,
@@ -501,16 +500,7 @@ const createSequencesOperators = (version: TlcVersion) =>
 
 const createFiniteSetsOperators = (version: TlcVersion) =>
   withJavaMethods("FiniteSets", [
-    defineOperator("IsFiniteSet", 1, (args) => {
-      const value = getValue(args, 0, "IsFiniteSet");
-      if (isSetValue(value)) return isFiniteSet(value);
-      if (typeof value === "object" && value.kind === "Function") return true;
-      throw new TlaEvaluationError(
-        typeof value === "object" && value.kind === "LazyFunction"
-          ? `Attempted to check if the function:\n${formatValue(value)}\nis a finite set.`
-          : `Attempted to check if the ${describeKind(value)} ${formatValue(value)} is a finite set.`,
-      );
-    }),
+    defineOperator("IsFiniteSet", 1, (args) => isFiniteSet(getValue(args, 0, "IsFiniteSet"))),
     defineOperator("Cardinality", 1, (args) => {
       const set = getValue(args, 0, "Cardinality");
       if (

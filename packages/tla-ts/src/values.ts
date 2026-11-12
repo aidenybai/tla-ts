@@ -2895,14 +2895,7 @@ const PRINTED_ESCAPES: Record<string, string> = {
 const formatString = (value: string) =>
   `"${value.replace(/["\\\t\n\f\r]/g, (character) => PRINTED_ESCAPES[character])}"`;
 
-type LazySetValue =
-  | SubsetValue
-  | FunctionSetValue
-  | RecordSetValue
-  | ProductSetValue
-  | SetOperationValue
-  | FilteredSetValue
-  | UnionValue;
+type LazySetValue = Exclude<ConvertibleSetValue, MixedSetValue | SequenceSetValue>;
 
 const MAXIMUM_EXPANDED_SUBSET_BASE = 6;
 const MAXIMUM_EXPANDED_PRODUCT = 1999;

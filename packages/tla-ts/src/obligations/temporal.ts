@@ -8,6 +8,7 @@ import {
   getFresh,
   getLocalDefn,
   getScopeAt,
+  isBuiltinApply,
   mapChildren,
   type Builtin,
   type Expr,
@@ -43,7 +44,7 @@ const rewrite =
   };
 
 export const expandLeadsto = rewrite((expression, recurse) =>
-  expression.kind === "Apply" && isApplied(expression, ["Leadsto"])
+  isBuiltinApply(expression, "Leadsto")
     ? applyBuiltin(
         "BoxTrue",
         [
@@ -103,9 +104,7 @@ export const expandAction = rewrite((expression, recurse) => {
 });
 
 const expandUnchanged = rewrite((expression) =>
-  expression.kind === "Apply" && isApplied(expression, ["UNCHANGED"])
-    ? rewriteUnchanged(expression.args[0])
-    : undefined,
+  isBuiltinApply(expression, "UNCHANGED") ? rewriteUnchanged(expression.args[0]) : undefined,
 );
 
 const TEMPORAL_BUILTINS: Builtin[] = [

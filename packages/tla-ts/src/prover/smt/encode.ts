@@ -220,7 +220,7 @@ export const encodeSmt = (prepared: Sequent, session: EncodingSession) => {
         `(assert (! (not ${encoder.encodeBool(sequent.active, context.env, { ...HYPOTHESIS, polarity: "Positive" })}) :named |Goal|))`,
       );
   const entries = [...context.entries, ...goal];
-  const printer = createPrinter(encoder.declared);
+  const resolve = createPrinter(encoder.declared);
   const collected = collectSymbols(entries, encoder);
   const declarations = [...collected.symbols]
     .toSorted((left, right) => compareStrings(left[0], right[0]))
@@ -248,7 +248,7 @@ export const encodeSmt = (prepared: Sequent, session: EncodingSession) => {
         !isExpanded(hyp),
     );
   return ["(set-logic UFNIA)", ...(isIdvUsed ? ["(declare-sort Idv 0)"] : []), ...lines]
-    .map(printer.resolve)
+    .map(resolve)
     .concat("(check-sat)", "(exit)")
     .join("\n");
 };

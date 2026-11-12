@@ -367,6 +367,10 @@ export interface XmlExportOptions {
   isTerse: boolean;
 }
 
+interface LocatedLevelFields extends LevelFields {
+  location: SanyLocation | undefined;
+}
+
 const exportSpecification = (
   modules: ModuleNode[],
   root: ModuleNode,
@@ -424,13 +428,9 @@ const exportSpecification = (
     return createElement(getReferenceTag(node), [createText("UID", node.id)]);
   };
 
-  const withLevel = (
-    element: XmlElement,
-    node: LevelFields,
-    location: SanyLocation | undefined,
-  ) => {
+  const withLevel = (element: XmlElement, node: LocatedLevelFields) => {
     const level = node.levelChecked === 0 ? [] : [createText("level", node.level)];
-    const head = location ? [getLocationElement(location), ...level] : level;
+    const head = node.location ? [getLocationElement(node.location), ...level] : level;
     return { ...element, children: [...head, ...element.children] };
   };
 
@@ -467,7 +467,6 @@ const exportSpecification = (
             createText("arity", node.arity),
           ]),
           node,
-          node.location,
         );
       case "OpDecl":
         return withLevel(
@@ -477,7 +476,6 @@ const exportSpecification = (
             createText("kind", node.declKind),
           ]),
           node,
-          node.location,
         );
       case "OpDef": {
         if (node.defKind === "NumberedProofStep") {
@@ -495,7 +493,6 @@ const exportSpecification = (
               ...(node.isLocal && !isTlc174 ? [createElement("local")] : []),
             ]),
             node,
-            node.location,
           );
         }
         const params = node.params ?? [];
@@ -509,7 +506,6 @@ const exportSpecification = (
                 : []),
             ]),
             node,
-            node.location,
           );
         }
         const body = node.body;
@@ -530,7 +526,6 @@ const exportSpecification = (
               ...(node.inRecursive ? [createElement("recursive")] : []),
             ]),
             node,
-            node.location,
           );
         }
         return withLevel(
@@ -549,7 +544,6 @@ const exportSpecification = (
             ...(node.isLocal ? [createElement("local")] : []),
           ]),
           node,
-          node.location,
         );
       }
       case "ThmOrAssumpDef":
@@ -559,7 +553,6 @@ const exportSpecification = (
             exportExpression(node.body, JAVA_CALLS.theoremDefinitionBody),
           ]),
           node,
-          node.location,
         );
       case "Module":
         return createElement("ModuleNode", [
@@ -581,7 +574,6 @@ const exportSpecification = (
             ...(node.isSuffices ? [createElement("suffices")] : []),
           ]),
           node,
-          node.location,
         );
       case "Assume":
         return createElement("AssumeNode", [
@@ -722,18 +714,13 @@ const exportSpecification = (
   const exportLevelNode = (node: ExportedNode): XmlElement => {
     switch (node.kind) {
       case "OpAppl":
-        return withLevel(exportApplication(node), node, node.location);
+        return withLevel(exportApplication(node), node);
       case "Numeral":
-        return withLevel(
-          createElement("NumeralNode", [createText("IntValue", node.value)]),
-          node,
-          node.location,
-        );
+        return withLevel(createElement("NumeralNode", [createText("IntValue", node.value)]), node);
       case "String":
         return withLevel(
           createElement("StringNode", [createText("StringValue", node.value)]),
           node,
-          node.location,
         );
       case "Decimal":
         return withLevel(
@@ -748,7 +735,6 @@ const exportSpecification = (
                 ]),
           ]),
           node,
-          node.location,
         );
       case "LetIn": {
         const body = exportExpression(node.body, JAVA_CALLS.letBody);
@@ -761,7 +747,6 @@ const exportSpecification = (
             ),
           ]),
           node,
-          node.location,
         );
       }
       case "Label":
@@ -776,7 +761,6 @@ const exportSpecification = (
             ),
           ]),
           node,
-          node.location,
         );
       case "OpArg":
         return withLevel(
@@ -784,7 +768,6 @@ const exportSpecification = (
             createElement("argument", [getReference(node.op, JAVA_CALLS.argument)]),
           ]),
           node,
-          node.location,
         );
       case "At": {
         const object = node.except.operands[0];
@@ -798,7 +781,6 @@ const exportSpecification = (
             exportExpression(components, JAVA_CALLS.exceptComponents),
           ]),
           node,
-          node.location,
         );
       }
       case "SubstIn":
@@ -814,7 +796,6 @@ const exportSpecification = (
             createElement("instTo", [getReference(node.instantiatedModule, calls.to)]),
           ]),
           node,
-          node.location,
         );
       }
       case "Instance": {
@@ -845,7 +826,6 @@ const exportSpecification = (
             ...(node.isHide ? [createElement("hide")] : []),
           ]),
           node,
-          node.location,
         );
       case "NewSymb":
         return withLevel(
@@ -856,7 +836,6 @@ const exportSpecification = (
               : []),
           ]),
           node,
-          node.location,
         );
       case "AssumeProve":
         return withLevel(
@@ -872,7 +851,6 @@ const exportSpecification = (
             ...(node.isBoxed ? [createElement("boxed")] : []),
           ]),
           node,
-          node.location,
         );
       case "LeafProof": {
         const isObvious = node.facts.length === 0 && node.defs.length === 0;
@@ -891,7 +869,7 @@ const exportSpecification = (
                 ),
                 ...(node.isOnly ? [createElement("only")] : []),
               ]);
-        return withLevel(element, node, node.location);
+        return withLevel(element, node);
       }
       case "NonLeafProof":
         return withLevel(
@@ -904,7 +882,6 @@ const exportSpecification = (
             ),
           ]),
           node,
-          node.location,
         );
       case "DefStep":
         return withLevel(
@@ -913,7 +890,6 @@ const exportSpecification = (
             node.defs.map((definition) => getReference(definition, JAVA_CALLS.defStep)),
           ),
           node,
-          node.location,
         );
     }
   };

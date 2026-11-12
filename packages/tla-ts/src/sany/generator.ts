@@ -1075,7 +1075,7 @@ export const generateSanySpecification = (
       const name = expression.kind === "And" ? "\\land" : "\\lor";
       const [first, ...rest] = expression.operands;
       return rest.reduce<ExprNode>((left, operand, index) => {
-        const operandSpan = getParenthesizedSpan(file, getExpressionSpan(file, operand));
+        const operandSpan = getOperandSpan(operand);
         const end = index === rest.length - 1 ? span.end : operandSpan.end;
         return applyBuiltin(
           name,
@@ -1088,9 +1088,9 @@ export const generateSanySpecification = (
     const generateCase = (expression: Expression & { kind: "Case" }) => {
       const span = getExpressionSpan(file, expression);
       const arms = expression.arms.map((arm, index) => {
-        const condition = getParenthesizedSpan(file, getExpressionSpan(file, arm.condition));
+        const condition = getOperandSpan(arm.condition);
         const isLast = index === expression.arms.length - 1 && expression.other === undefined;
-        const body = getParenthesizedSpan(file, getExpressionSpan(file, arm.body));
+        const body = getOperandSpan(arm.body);
         const operands = [generateExpression(arm.condition), generateExpression(arm.body)];
         return applyBuiltin(
           "$Pair",
@@ -1100,7 +1100,7 @@ export const generateSanySpecification = (
       });
       const other = expression.other;
       if (other) {
-        const body = getParenthesizedSpan(file, getExpressionSpan(file, other));
+        const body = getOperandSpan(other);
         const otherIndex = findTokenBefore(body.start, "OTHER");
         arms.push(
           applyBuiltin(
@@ -1129,7 +1129,7 @@ export const generateSanySpecification = (
       let cursor = findToken(file, functionSpan.end + 1, span.end, "EXCEPT") + 1;
       expression.updates.forEach((update) => {
         const bang = findToken(file, cursor, span.end, "!");
-        const valueSpan = getParenthesizedSpan(file, getExpressionSpan(file, update.value));
+        const valueSpan = getOperandSpan(update.value);
         const specLocation = getSpanLocation(file, { start: bang, end: valueSpan.end });
         let pathCursor = bang + 1;
         const components = update.path.map((step): ExprNode => {
@@ -1176,7 +1176,7 @@ export const generateSanySpecification = (
       let cursor = span.start + 1;
       const pairs = expression.fields.map((field, fieldIndex) => {
         const nameIndex = findNameOrKeyword(cursor, field.name);
-        const valueSpan = getParenthesizedSpan(file, getExpressionSpan(file, field.value));
+        const valueSpan = getOperandSpan(field.value);
         cursor = valueSpan.end + 1;
         if (expression.fields.slice(0, fieldIndex).some((other) => other.name === field.name)) {
           addError(getTokenLocation(file, nameIndex), "Non-unique fields in constructor.");
@@ -1238,7 +1238,7 @@ export const generateSanySpecification = (
         })),
       ];
       const letStart = getExpressionSpan(file, expression).start;
-      const bodyStart = getParenthesizedSpan(file, getExpressionSpan(file, expression.body)).start;
+      const bodyStart = getOperandSpan(expression.body).start;
       const recursives: { unit: LetUnit; span: TokenSpan }[] = [];
       for (let index = letStart + 1; index < bodyStart; index++) {
         const isInUnit = units.some(
@@ -1338,7 +1338,7 @@ export const generateSanySpecification = (
       ) {
         return undefined;
       }
-      const firstSpan = getParenthesizedSpan(file, getExpressionSpan(file, expression.args[0]));
+      const firstSpan = getOperandSpan(expression.args[0]);
       const isPrefix = expression.args.length === 1 && firstSpan.start !== span.start;
       const index = isPrefix ? span.start : firstSpan.end + 1;
       const text = getTokenSource(file, index);
@@ -2353,7 +2353,7 @@ export const generateSanySpecification = (
       return undefined;
     };
     const reportDefEntry = (expression: Expression) => {
-      const span = getParenthesizedSpan(file, getExpressionSpan(file, expression));
+      const span = getOperandSpan(expression);
       const isName =
         expression.kind === "Identifier" ||
         expression.kind === "Subexpression" ||
@@ -2583,27 +2583,17 @@ export const generateSanySpecification = (
       };
     };
 
-    const generateStepBody = (step: ProofStep, bodySpan: TokenSpan) => {
-      const body = step.body;
+    const generateStepBody = (body: ProofStep["body"], bodySpan: TokenSpan) => {
       const bodyLocation = getSpanLocation(file, bodySpan);
       switch (body.kind) {
         case "Have":
-          return {
-            node: applyBuiltin("$Have", [generateExpression(body.expression)], bodyLocation),
-            isPick: false,
-          };
+          return applyBuiltin("$Have", [generateExpression(body.expression)], bodyLocation);
         case "Case":
-          return {
-            node: applyBuiltin("$Pfcase", [generateExpression(body.expression)], bodyLocation),
-            isPick: false,
-          };
+          return applyBuiltin("$Pfcase", [generateExpression(body.expression)], bodyLocation);
         case "Witness":
-          return {
-            node: applyBuiltin("$Witness", body.expressions.map(generateExpression), bodyLocation),
-            isPick: false,
-          };
+          return applyBuiltin("$Witness", body.expressions.map(generateExpression), bodyLocation);
         case "Qed":
-          return { node: applyBuiltin("$Qed", [], bodyLocation), isPick: false };
+          return applyBuiltin("$Qed", [], bodyLocation);
         case "Take":
         case "Pick": {
           const isPick = body.kind === "Pick";
@@ -2614,14 +2604,14 @@ export const generateSanySpecification = (
           if (body.bounds.length > 0) {
             const bounds = generateBounds(body.bounds, bodySpan.start);
             const operands = getOperands(bounds.bounded.flat());
-            return { node: applyBuiltin(name, operands, bodyLocation, bounds), isPick };
+            return applyBuiltin(name, operands, bodyLocation, bounds);
           }
           const indexes = findNameTokens(file, bodySpan.start, bodySpan.end + 1, body.names);
           const unbounded = body.names.map((paramName, index) =>
             createFormalParam(paramName, 0, getTokenLocation(file, indexes[index]), true),
           );
           const operands = getOperands(unbounded);
-          return { node: applyBuiltin(name, operands, bodyLocation, { unbounded }), isPick };
+          return applyBuiltin(name, operands, bodyLocation, { unbounded });
         }
       }
       return undefined;
@@ -2631,7 +2621,7 @@ export const generateSanySpecification = (
       if ((expression.kind === "And" || expression.kind === "Or") && !expression.isBulleted)
         return true;
       if (expression.kind !== "Apply" || expression.args.length !== 2) return false;
-      const left = getParenthesizedSpan(file, getExpressionSpan(file, expression.args[0]));
+      const left = getOperandSpan(expression.args[0]);
       const start = getExpressionSpan(file, expression).start;
       return left.start === start && !isToken(file, left.end + 1, "(");
     };
@@ -2743,19 +2733,19 @@ export const generateSanySpecification = (
           previousRight = isInfixExpression(statement) ? right : undefined;
           return expression;
         };
-        const generated =
+        const stepBody =
           body.kind === "Assert"
-            ? { node: generateAssertion(body.statement), isPick: false }
-            : generateStepBody(step, bodySpan);
-        if (generated === undefined) throw new TlaSyntaxError(`Unexpected proof step ${body.kind}`);
-        const pickContext = generated.isPick ? symbolTable.contexts.pop() : undefined;
+            ? generateAssertion(body.statement)
+            : generateStepBody(body, bodySpan);
+        if (stepBody === undefined) throw new TlaSyntaxError(`Unexpected proof step ${body.kind}`);
+        const pickContext = body.kind === "Pick" ? symbolTable.contexts.pop() : undefined;
         const definition =
           step.name === undefined || definitionId === undefined
             ? undefined
             : createTheoremDefinition(
                 definitionId,
                 step.name,
-                generated.node,
+                stepBody,
                 getTokenLocation(file, getTokenIndex(file, step.location)),
                 popLabels(),
               );
@@ -2764,7 +2754,7 @@ export const generateSanySpecification = (
         if (isScoped) symbolTable.contexts.push(assumeContext);
         const stepProof = step.proof && generateProof(step.proof);
         if (isScoped) symbolTable.contexts.pop();
-        endProof(generated.node);
+        endProof(stepBody);
         if (isAssumeProve && isSuffices) {
           sufficesContexts.push(assumeContext);
           symbolTable.contexts.push(assumeContext);
@@ -2774,7 +2764,7 @@ export const generateSanySpecification = (
           ...createLevelFields(getId()),
           kind: "Theorem",
           definition,
-          body: generated.node,
+          body: stepBody,
           proof: stepProof,
           isSuffices,
           location: getSpanLocation(file, stepSpan),

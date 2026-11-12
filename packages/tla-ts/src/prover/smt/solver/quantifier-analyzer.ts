@@ -23,8 +23,6 @@ import { Rational } from "./rational";
 import { Rewriter } from "./rewriter";
 import { AufSolver, type Evaluate, InstantiationSet, Node } from "./auf-solver";
 
-export const MBQI_FORCE_TEMPLATE = 10;
-
 type QInfo =
   | { kind: "f_var"; decl: number; argIndex: number; varIndex: number }
   | { kind: "f_var_plus_offset"; decl: number; argIndex: number; varIndex: number; offset: number }
@@ -262,10 +260,6 @@ export class QuantifierAnalyzer {
     return { variable, term, isInverted };
   }
 
-  private mkSub(first: number, second: number) {
-    return this.rewriter.mkSub(first, second);
-  }
-
   private mkAdd(first: number, second: number) {
     return this.rewriter.mkAdd([first, second]);
   }
@@ -279,14 +273,18 @@ export class QuantifierAnalyzer {
     if (left !== undefined && this.manager.isGround(rhs))
       return {
         variable: left.variable,
-        term: left.isInverted ? this.mkSub(left.term, rhs) : this.mkSub(rhs, left.term),
+        term: left.isInverted
+          ? this.rewriter.mkSub(left.term, rhs)
+          : this.rewriter.mkSub(rhs, left.term),
         isInverted: left.isInverted,
       };
     const right = this.isVarPlusGround(rhs);
     if (right !== undefined && this.manager.isGround(lhs))
       return {
         variable: right.variable,
-        term: right.isInverted ? this.mkSub(right.term, lhs) : this.mkSub(lhs, right.term),
+        term: right.isInverted
+          ? this.rewriter.mkSub(right.term, lhs)
+          : this.rewriter.mkSub(lhs, right.term),
         isInverted: right.isInverted,
       };
     return undefined;
@@ -332,7 +330,7 @@ export class QuantifierAnalyzer {
     const one = manager.mkNumeralOfSort(Rational.one, manager.sorts[found.term]);
     return {
       variable: found.variable,
-      term: isLe ? this.mkAdd(found.term, one) : this.mkSub(found.term, one),
+      term: isLe ? this.mkAdd(found.term, one) : this.rewriter.mkSub(found.term, one),
     };
   }
 

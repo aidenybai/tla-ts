@@ -524,7 +524,7 @@ describe("the CLI reports results like TLC", () => {
   it.each(["Continue", "DoInitFunctorInvariantContinue", "ContinueSuccessors", "ContinueAlias"])(
     "goes on past each violation in %s with -continue like TLC",
     (name) => {
-      const result = runCliWith("tlc-continue", [`${name}.tla`, "-continue"]);
+      const result = runCli("tlc-continue", name, ["-continue"]);
       expect(result.status).toBe(12);
       expect(getSteadyLines(result.stdout)).toEqual(
         readFileSync(join(FIXTURES, "tlc-continue", `${name}.out`), "utf8").split("\n"),

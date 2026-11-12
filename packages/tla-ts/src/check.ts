@@ -696,15 +696,16 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     );
     return successors;
   };
+  const rejectIncompleteInitialState = (partial: (Value | undefined)[]) => {
+    throw setExitCode(new TlaIllegalStateError([...partial]), EXIT_STATUS.error);
+  };
   const getCoveredInitialStates = () => {
     const initialStates: Value[][] = [];
     replayInitialStates(
       coverageInits,
       environment,
       (state) => initialStates.push(state),
-      (partial) => {
-        throw setExitCode(new TlaIllegalStateError([...partial]), EXIT_STATUS.error);
-      },
+      rejectIncompleteInitialState,
     );
     return initialStates;
   };
@@ -1500,9 +1501,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
             (state) => {
               if (onInitialState(state)) throw STOP_WALK;
             },
-            (partial) => {
-              throw setExitCode(new TlaIllegalStateError([...partial]), EXIT_STATUS.error);
-            },
+            rejectIncompleteInitialState,
           );
         } catch (error) {
           if (error !== STOP_WALK) throw error;

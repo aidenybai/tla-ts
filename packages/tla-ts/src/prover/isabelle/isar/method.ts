@@ -12,6 +12,7 @@ import type { Limits } from "../pure/interrupt";
 import { assumeTac, eresolveTac, flexflexTac, matchTac, resolveTac } from "../pure/tactic";
 import {
   allGoals,
+  allTac,
   appendGoal,
   changedProp,
   noTac,
@@ -21,6 +22,7 @@ import {
   thenAllNew,
   thenGoal,
   thenTac,
+  tryTac,
   type GoalTactic,
   type Tactic,
 } from "../pure/tactical";
@@ -138,22 +140,18 @@ export const parseProofText = (tokens: readonly OuterToken[]): ProofText => {
   };
   const readParenthesized = (): MethodText => {
     expectSymbol("(");
-    const elements = [
-      readSuffixed(isSymbol("(") ? readParenthesized() : readMethod(readWord(), true)),
-    ];
+    const elements = [readElement(true)];
     while (isSymbol(",")) {
       position += 1;
-      elements.push(
-        readSuffixed(isSymbol("(") ? readParenthesized() : readMethod(readWord(), true)),
-      );
+      elements.push(readElement(true));
     }
     expectSymbol(")");
     return elements.length === 1 ? elements[0] : { kind: "then", methods: elements };
   };
-  const readAtom = () =>
-    readSuffixed(isSymbol("(") ? readParenthesized() : readMethod(readWord(), false));
-  const initial = readAtom();
-  const terminal = position < tokens.length ? readAtom() : undefined;
+  const readElement = (hasArgs: boolean) =>
+    readSuffixed(isSymbol("(") ? readParenthesized() : readMethod(readWord(), hasArgs));
+  const initial = readElement(false);
+  const terminal = position < tokens.length ? readElement(false) : undefined;
   if (position !== tokens.length) throw syntaxError(peek());
   return { initial, terminal };
 };
@@ -246,7 +244,7 @@ const evaluate = (context: ProofContext, text: MethodText): Method => {
     }
     case "try": {
       const method = evaluate(context, text.method);
-      return (facts) => orElse(method(facts), (state) => singleSeq(state));
+      return (facts) => tryTac(method(facts));
     }
   }
 };
@@ -257,7 +255,7 @@ const normHhfTac = (limits: Limits): GoalTactic => {
     resolveTac(limits, [asmRl]),
     subgoal((goal, index) =>
       isNormHhf(false, goal)
-        ? (state) => singleSeq(state)
+        ? allTac
         : genericRewriteGoalTac(
             { simprem: true, useprem: false, mutsimp: false },
             () => undefined,

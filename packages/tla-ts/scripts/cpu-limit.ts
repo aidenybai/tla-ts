@@ -4,6 +4,7 @@ import { scheduler } from "node:timers/promises";
 import { Worker } from "node:worker_threads";
 import type { DecideResponse } from "../src/prover/decide-pool";
 import type { Verdict } from "../src/prover/verdict";
+import { MAIN_THREAD_STACK_MB } from "./corpora";
 import { DIST_DIRECTORY } from "./dist";
 
 interface CpuLimitedRun {
@@ -19,7 +20,7 @@ let warmWorker: Worker | undefined;
 const startWorker = async () => {
   // Node keeps 192 KB of a worker's stack in reserve, so this matches the main thread's stack.
   const worker = new Worker(join(DIST_DIRECTORY, "prove-worker.js"), {
-    resourceLimits: { stackSizeMb: 1.15 },
+    resourceLimits: { stackSizeMb: MAIN_THREAD_STACK_MB },
   });
   worker.postMessage({ prover: "smt", text: "", timeLimitMs: Number.POSITIVE_INFINITY });
   await once(worker, "message");

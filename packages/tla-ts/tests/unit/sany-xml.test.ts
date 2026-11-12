@@ -69,8 +69,6 @@ Instantiated(e) == I(NotLeibniz)!D(e)
 Lambda(f) == Apply(LAMBDA z : ENABLED z, f)
 ====`;
 
-const getRoot = (source: string) => generate(source).root;
-
 const getDefinition = (module: ModuleNode, name: string) => {
   const definition = getOpDefs(module).find((candidate) => candidate.name === name);
   if (definition === undefined) throw new Error(`No definition ${name}`);
@@ -158,7 +156,7 @@ describe("SANY XML export", () => {
   });
 
   it("resolves subexpression references as SANY's selectorToNode does", () => {
-    const root = getRoot(SUBEXPRESSIONS);
+    const root = generate(SUBEXPRESSIONS).root;
     const getBody = (name: string) => {
       const body = getDefinition(root, name).body;
       if (body?.kind !== "OpAppl") throw new Error(`${name} is not an application`);
@@ -177,7 +175,7 @@ describe("SANY XML export", () => {
   });
 
   it("finds parameters that a higher-order operator makes non-Leibniz", () => {
-    const root = getRoot(HIGHER_ORDER);
+    const root = generate(HIGHER_ORDER).root;
     expect(
       ["Apply", "Direct", "Passed", "Indirect", "Let", "Instantiated", "Lambda"].map(
         (name) => getDefinition(root, name).isLeibnizArg,

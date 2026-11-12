@@ -7,6 +7,7 @@ import {
   exprifySequent,
   getErrorNote,
   getFact,
+  getLocalDefn,
   isBuiltinApply,
   mapAccumulate,
   type Expr,
@@ -301,11 +302,7 @@ export const createGenerator = (inputFiles: Set<string>, lines: LineRange, onWar
             context: [
               ...sequent.context,
               ...step.definitions.map((definition): Hyp => ({
-                kind: "Defn",
-                definition,
-                whereDefined: "User",
-                visibility: "Visible",
-                isLocal: true,
+                ...getLocalDefn(definition),
                 location: definition.location,
               })),
             ],

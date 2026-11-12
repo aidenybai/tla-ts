@@ -145,7 +145,7 @@ const printLemma = (sequent: Sequent) => {
       case "Ix": {
         const name = getBoundName(context, operator.index);
         if (operator.index <= 0 || name === undefined) throw new TlapmBugError();
-        return args.length === 0 ? name : `(${name} (${printDelimited(args)}))`;
+        return args.length === 0 ? name : printNonfix(name, args);
       }
       case "Opaque": {
         const name = pickle(operator.name);

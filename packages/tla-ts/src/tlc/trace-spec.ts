@@ -11,13 +11,6 @@ interface TraceSpecInput {
   isDefined: (name: string) => boolean;
 }
 
-interface TraceState {
-  values: [string, string][];
-  number: number;
-  isStuttering: boolean;
-  isBackToState: boolean;
-}
-
 const INDENT = "    ";
 const SEPARATOR = "\n----\n";
 const CLOSING_TAG = `${"=".repeat(77)}\n`;
@@ -60,11 +53,11 @@ const indent = (text: string, depth: number) => {
 const getPrimer = (module: string, extendedModules: string[]) =>
   `---- MODULE ${module} ----\nEXTENDS ${extendedModules.join(", ")}\n\n`;
 
-const getConjunction = (state: TraceState, prefix?: string) =>
+const getConjunction = (state: [string, string][], prefix?: string) =>
   indent(
     [
       ...(prefix === undefined ? [] : [prefix]),
-      ...state.values.map(([name, value]) => `${name} = (${value})`),
+      ...state.map(([name, value]) => `${name} = (${value})`),
     ].join("\n/\\\n"),
     2,
   );
@@ -108,26 +101,18 @@ ${examples}`;
 
 export const writeTraceSpec = (input: TraceSpecInput) => {
   const loopStart = input.loopStart;
-  const states = input.states.map((state, index): TraceState => ({
-    values: getHashOrder(Object.keys(state)).map((name) => [name, formatValue(state[name])]),
-    number: index + 1,
-    isStuttering: false,
-    isBackToState: false,
-  }));
-  const trace =
-    loopStart === undefined
-      ? states
-      : [
-          ...states,
-          loopStart === states.length - 1
-            ? { ...states[loopStart], isStuttering: true }
-            : { ...states[loopStart], isBackToState: true },
-        ];
-  if (trace.length <= 1) return undefined;
+  const states = input.states.map((state) =>
+    getHashOrder(Object.keys(state)).map((name): [string, string] => [
+      name,
+      formatValue(state[name]),
+    ]),
+  );
+  if (states.length + (loopStart === undefined ? 0 : 1) <= 1) return undefined;
   const variables = Object.keys(input.states[0]);
   const specName = input.specName;
-  const final = trace[trace.length - 1];
-  const isLasso = final.isBackToState;
+  const final = states[states.length - 1];
+  const isStuttering = loopStart === states.length - 1;
+  const isLasso = loopStart !== undefined && !isStuttering;
 
   const declaredNames = new Set(input.rawConstants.map((line) => line.split(" = ")[0]));
   const constantLines = [
@@ -135,7 +120,7 @@ export const writeTraceSpec = (input: TraceSpecInput) => {
     ...input.modelValues
       .filter((name) => !declaredNames.has(name))
       .map((name) => indent(`${name} = ${name}`, 1)),
-    ...(isLasso ? [`${LASSO_START} = ${final.number}`, `${LASSO_END} = ${trace.length - 1}`] : []),
+    ...(isLasso ? [`${LASSO_START} = ${loopStart + 1}`, `${LASSO_END} = ${states.length}`] : []),
   ];
   const teConstants = [
     ...input.modelValues.filter((name) => !input.isDefined(name)),
@@ -157,16 +142,16 @@ export const writeTraceSpec = (input: TraceSpecInput) => {
   const expressionModule = `${specName}_TEExpression`;
   const traceModule = `${specName}_TETrace`;
 
-  const property = final.isStuttering
+  const property = isStuttering
     ? {
         config: "\nPROPERTY\n    _prop\n",
-        definition: `\n_prop ==\n${INDENT}~<>[](\n${getConjunction(trace[trace.length - 2])}\n${INDENT})`,
+        definition: `\n_prop ==\n${INDENT}~<>[](\n${getConjunction(final)}\n${INDENT})`,
       }
     : isLasso
       ? {
           config: "\nPROPERTY\n    _prop\n",
           definition: `\n_prop ==\n${indent(
-            `~(([]<>(\n${getConjunction(trace[trace.length - 2])}\n))/\\([]<>(\n${getConjunction(trace[final.number - 1])}\n)))`,
+            `~(([]<>(\n${getConjunction(final)}\n))/\\([]<>(\n${getConjunction(states[loopStart])}\n)))`,
             1,
           )}`,
         }
@@ -195,11 +180,8 @@ ${lassoStep}${variables
     \\*         IN J!JsonSerialize("${input.module}.json", _TETrace)
 
 `;
-  const statesWithoutLasso = trace.filter((state) => !state.isBackToState && !state.isStuttering);
   const isViewed =
-    isLasso &&
-    new Set(statesWithoutLasso.map((state) => JSON.stringify(state.values))).size <
-      statesWithoutLasso.length;
+    isLasso && new Set(states.map((state) => JSON.stringify(state))).size < states.length;
   const view = isViewed
     ? {
         config: "\nVIEW\n    _view\n",
@@ -207,10 +189,9 @@ ${lassoStep}${variables
       }
     : { config: "", definition: "" };
   const deserializedTrace = `\n${getPrimer(traceModule, getHashOrder(["IOUtils", ...constantModules, specName]))}trace == IODeserialize("${input.module}.bin", TRUE)\n\n${CLOSING_TAG}`;
-  const traceFunction = `${INDENT}<<\n${statesWithoutLasso
+  const traceFunction = `${INDENT}<<\n${states
     .map(
-      (state) =>
-        `${INDENT}([${state.values.map(([name, value]) => `${name} |-> ${value}`).join(",")}])`,
+      (state) => `${INDENT}([${state.map(([name, value]) => `${name} |-> ${value}`).join(",")}])`,
     )
     .join(",\n")}\n${INDENT}>>${SEPARATOR}\n`;
 

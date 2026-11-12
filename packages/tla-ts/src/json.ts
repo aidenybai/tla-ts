@@ -111,6 +111,8 @@ const toJsonArray = (value: Value) => {
   throw createUnsupportedError(value);
 };
 
+const toNdJson = (elements: Value[]) => elements.map((element) => `${toJson(element)}\n`).join("");
+
 const toJsonObject = (value: Value) => {
   const className = getJavaClassName(value);
   if (className === "RecordValue") return toObjectJson(toFiniteFunction(value));
@@ -258,7 +260,7 @@ export const createJsonOperators = (files: FileSystem): Builtin[] => [
         throw createModuleArgumentError("second", "ndJsonSerialize", "sequence", value);
       }
       makeParentDirectory(files, path);
-      files.writeFile?.(path, elements.map((element) => `${toJson(element)}\n`).join(""));
+      files.writeFile?.(path, toNdJson(elements));
       return true;
     }),
     "public static synchronized tlc2.value.impl.BoolValue tlc2.module.Json.ndSerialize(tlc2.value.impl.StringValue,tlc2.value.impl.Value) throws java.io.IOException",
@@ -313,12 +315,7 @@ export const createIoUtilsOperators = (
         return option;
       });
       checkCharset(charset);
-      writeWithOptions(
-        files,
-        path,
-        names,
-        elements.map((element) => `${toJson(element)}\n`).join(""),
-      );
+      writeWithOptions(files, path, names, toNdJson(elements));
       return true;
     }),
     "public static synchronized tlc2.value.impl.Value tlc2.module.Json.textSerialize(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",

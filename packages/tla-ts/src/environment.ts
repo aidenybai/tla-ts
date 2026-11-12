@@ -289,6 +289,11 @@ const mentionsName = (expression: Expression, names: Set<string>): boolean =>
   (expression.kind === "Apply" && names.has(expression.operator)) ||
   getChildren(expression).some((child) => mentionsName(child, names));
 
+const createReusedTargetError = (target: string) =>
+  new TlaConfigError(
+    `In the configuration file, the identifier ${target} appears\non the right-hand side of a <- after already appearing on the\nleft-hand side of one.`,
+  );
+
 const getVariableIndex = (variables: string[], declared: string[]) => {
   const index = new Map(variables.map((name, position) => [name, position]));
   new Set(declared).forEach((name) =>
@@ -1272,9 +1277,7 @@ export const createEnvironment = (
         );
       }
       if (config.substitutions.some((other) => other.name === target)) {
-        throw new TlaConfigError(
-          `In the configuration file, the identifier ${target} appears\non the right-hand side of a <- after already appearing on the\nleft-hand side of one.`,
-        );
+        throw createReusedTargetError(target);
       }
       checkSubstitutionTarget(
         name,
@@ -1292,9 +1295,7 @@ export const createEnvironment = (
       const symbol = getScopedSymbol(substitution);
       if (!symbol) return;
       if (inModule.some((other) => other.name === substitution.target)) {
-        throw new TlaConfigError(
-          `In the configuration file, the identifier ${substitution.target} appears\non the right-hand side of a <- after already appearing on the\nleft-hand side of one.`,
-        );
+        throw createReusedTargetError(substitution.target);
       }
       checkSubstitutionTarget(substitution.name, substitution.target, symbol.arity);
     });

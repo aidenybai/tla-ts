@@ -34,7 +34,6 @@ export interface TlcArguments {
   suppressedCodes: number[];
   errorCodes: number[];
   userFile: string | undefined;
-  isUsage: boolean;
   invariants: RuntimeInvariant[];
   moduleOperators: ModuleOperator[];
 }
@@ -200,7 +199,6 @@ const createDefaults = (): TlcArguments => ({
   suppressedCodes: [],
   errorCodes: [],
   userFile: undefined,
-  isUsage: false,
   invariants: [],
   moduleOperators: [],
 });
@@ -233,7 +231,7 @@ const SWITCHES: Record<string, (parsed: TlcArguments) => void> = {
   },
 };
 
-export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsError => {
+export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsError | "usage" => {
   const parsed = createDefaults();
   let argumentIndex = 0;
   const reject = (error: string): TlcArgumentsError => ({ error, isTool: parsed.isTool });
@@ -384,7 +382,7 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
       parsed.isTraceBinaryDisabled = true;
       continue;
     }
-    if (flag === "-help" || flag === "-h") return { ...parsed, isUsage: true };
+    if (flag === "-help" || flag === "-h") return "usage";
     if (flag === "-lncheck") {
       const strategy = take();
       if (strategy === undefined) {

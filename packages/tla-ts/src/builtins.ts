@@ -1,9 +1,4 @@
-import {
-  TlaEndOfInputError,
-  TlaEvaluationError,
-  TlaModuleError,
-  TlaNullPointerError,
-} from "./errors";
+import { TlaEndOfInputError, TlaEvaluationError, TlaModuleError } from "./errors";
 import type { Builtin, BuiltinArgument, Context, OperatorValue } from "./evaluate";
 import {
   formatValue,
@@ -224,11 +219,10 @@ export const getJavaClassName = (value: Value) => {
 
 export const getKindString = (value: Value) => KIND_STRINGS[getJavaClassName(value)];
 
-const getJavaOverrideMessage = (signature: string, message: string) =>
-  `Attempted to apply the operator overridden by the Java method\n${signature},\nbut it produced the following error:\n${message}`;
-
 const createJavaOverrideError = (signature: string, message: string) =>
-  new TlaEvaluationError(getJavaOverrideMessage(signature, message));
+  new TlaEvaluationError(
+    `Attempted to apply the operator overridden by the Java method\n${signature},\nbut it produced the following error:\n${message}`,
+  );
 
 export const overrideWithJava = (builtin: Builtin, signature: string): Builtin => {
   const reportAsJavaFailure =
@@ -246,9 +240,6 @@ export const overrideWithJava = (builtin: Builtin, signature: string): Builtin =
         const isWrapped =
           builtin.isLazy === true || !(error instanceof TlaModuleError) || isFingerprinted;
         if (!isWrapped) throw error;
-        if (builtin.isLazy !== true && error instanceof TlaNullPointerError) {
-          throw new TlaModuleError(getJavaOverrideMessage(signature, error.message));
-        }
         throw createJavaOverrideError(signature, error.message);
       }
     };

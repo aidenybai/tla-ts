@@ -121,11 +121,7 @@ const SHAPES: Record<string, Shape> = {
     if (third === undefined) throw getShapeError(name);
     return [`zenon_${name}`, rest, [conclusion], [[first, second, third]]];
   },
-  except_notin_funcset: (name, args) => {
-    const [conclusion, first, second, ...rest] = args;
-    if (second === undefined) throw getShapeError(name);
-    return [`zenon_${name}`, rest, [conclusion], [[first], [second]]];
-  },
+  except_notin_funcset: beta,
   notin_funcset: (name, args) => {
     const [conclusion, first, second, third, ...rest] = args;
     if (third === undefined) throw getShapeError(name);

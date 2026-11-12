@@ -38,7 +38,7 @@ const getLibraryDirectories = (parsed: ParsedArgs) => [
   ".",
   ...getTlapmPaths()
     .map((path) => join(dirname(dirname(realpathSync(path))), "lib/tlapm/stdlib"))
-    .filter((path) => existsSync(path))
+    .filter(existsSync)
     .slice(0, 1),
   ...parsed.options.flatMap((option) => (option.name === "-I" ? option.values : [])).toReversed(),
 ];
@@ -267,9 +267,7 @@ export const runTlapm = async (args: string[]) => {
       modulePaths.map((path) => ({ file: `./${path}`, source: readFileSync(path, "utf8") })),
       (name) => {
         moduleNames.add(name);
-        const file = directories
-          .map((directory) => `${directory}/${name}.tla`)
-          .find((path) => existsSync(path));
+        const file = directories.map((directory) => `${directory}/${name}.tla`).find(existsSync);
         if (file !== undefined) return { file, source: readFileSync(file, "utf8") };
         return name === "TLAPS" ? { file: "TLAPS.tla", source: TLAPS_MODULE } : undefined;
       },

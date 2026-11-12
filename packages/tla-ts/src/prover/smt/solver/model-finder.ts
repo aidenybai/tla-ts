@@ -6,7 +6,7 @@ import { solveMacros } from "./model-macro-solver";
 import type { ProtoModel } from "./proto-model";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { AufSolver } from "./auf-solver";
-import { MBQI_FORCE_TEMPLATE, QuantifierAnalyzer, QuantifierInfo } from "./quantifier-analyzer";
+import { QuantifierAnalyzer, QuantifierInfo } from "./quantifier-analyzer";
 import { RefVector } from "./ref-vector";
 import { shrink } from "./array";
 
@@ -65,12 +65,8 @@ export class ModelFinder {
     );
     if (quantifiers.length === 0) return;
     for (const quantifier of quantifiers) this.getQuantifierInfo(quantifier).resetTheOne();
-    const residue = solveMacros(
-      this.manager,
-      model,
-      quantifiers,
-      (quantifier) => this.getQuantifierInfo(quantifier),
-      MBQI_FORCE_TEMPLATE,
+    const residue = solveMacros(this.manager, model, quantifiers, (quantifier) =>
+      this.getQuantifierInfo(quantifier),
     );
     const solver = this.aufSolver;
     solver.reset();

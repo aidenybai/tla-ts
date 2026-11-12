@@ -152,7 +152,7 @@ const spawnRun = (run: Run) =>
           exit: exitCode ?? (signal ? -1 : 0),
           stdout: Buffer.concat(stdout).toString("utf8"),
           stderr: Buffer.concat(stderr).toString("utf8"),
-          ...(exceeded ? { exceeded } : {}),
+          exceeded,
         });
       });
     },

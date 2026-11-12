@@ -615,11 +615,10 @@ const compileFunctionAction = (
 };
 
 const compileUnchanged = (expression: Expression, environment: Environment): Runner => {
-  if (getUnchangedVariables(expression, environment))
-    return compileConjunction([getUnchangedWrapper(expression)], environment, false);
-  if (expression.kind === "Tuple")
-    return getRunner(getUnchangedWrapper(expression), environment, false);
   const unchanged = getUnchangedWrapper(expression);
+  if (getUnchangedVariables(expression, environment))
+    return compileConjunction([unchanged], environment, false);
+  if (expression.kind === "Tuple") return getRunner(unchanged, environment, false);
   return (run, scope, partial, action, isFixed, onComplete) => {
     const binding =
       expression.kind === "Identifier" ? lookupScope(scope, expression.name) : undefined;

@@ -1156,16 +1156,16 @@ const formatSanyErrors = (error: TlaSyntaxError, specName: string) => {
 export const checkSpecs = async (args: string[], java: JavaProperties) => {
   const version = java.tlcVersion ?? "master";
   const parsed = parseTlcArguments(args);
+  if (parsed === "usage") {
+    console.log(getTlcUsage());
+    return 1;
+  }
   if ("error" in parsed) {
     if (parsed.isUncaught) {
       console.error(`Exception in thread "main" ${parsed.error}`);
       return 1;
     }
     return printCommandLineError(parsed.isTool, version, parsed.error);
-  }
-  if (parsed.isUsage) {
-    console.log(getTlcUsage());
-    return 1;
   }
   const dump =
     parsed.dump &&

@@ -178,14 +178,14 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
         addMessage(getLevelMessage(item.name, maximum));
       const operator = item.operator;
       if (!operator) return;
-      Array.from({ length: item.arity }, (_, index) => {
+      for (let index = 0; index < item.arity; index++) {
         const minimum = levels.argConstraints.get(getArgumentKey(item.name, index));
         if (minimum !== undefined && getMaxLevel(operator, index) < minimum) {
           addMessage(
             `Level error in instantiating module '${check.module}':\nThe level of the argument ${index + 1} of the operator ${operator.name} \nmust be at least ${minimum}.`,
           );
         }
-      });
+      }
     });
     levels.argParams.forEach((key) => {
       const parameter = parseArgumentParamKey(key);

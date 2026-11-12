@@ -101,7 +101,6 @@ const isSameState = (left: Value[], right: Value[]) =>
   left.every((value, index) => isSameValue(value, right[index]));
 
 export const simulate = (options: SimulationOptions): number => {
-  const isTool = options.isTool ?? false;
   const output = options.onSimulation;
   const prepared = prepareSearch(options);
   const config = prepared.config;
@@ -111,6 +110,7 @@ export const simulate = (options: SimulationOptions): number => {
   const search = prepared.search;
   const seed = options.seed ?? 0n;
   const traceDepth = options.traceDepth === -1 ? INFINITE_DEPTH : options.traceDepth;
+  const traceLimit = options.traceCount ?? (1n << 63n) - 1n;
   const random = createJavaRandom(seed);
   for (let index = 0n; index < options.aril; index++) random.nextDouble();
   const workerRandom = createJavaRandom(random.nextLong());
@@ -150,7 +150,7 @@ export const simulate = (options: SimulationOptions): number => {
         return createRecord([
           ["mode", options.isGenerating ? "generate" : "simulate"],
           ["depth", traceDepth === INFINITE_DEPTH ? -1 : traceDepth],
-          ["traces", Number(BigInt.asIntN(32, options.traceCount ?? (1n << 63n) - 1n))],
+          ["traces", Number(BigInt.asIntN(32, traceLimit))],
           ["deadlock", config.checkDeadlock],
           ["seed", String(seed)],
           ["aril", String(options.aril)],
@@ -253,7 +253,7 @@ export const simulate = (options: SimulationOptions): number => {
               config.alias,
               node.state,
               (trace[index + 1] ?? node).state,
-              isTool,
+              options.isTool ?? false,
             ),
     }));
   const getCounterExample = (trace: TraceNode[]) =>
@@ -617,7 +617,6 @@ export const simulate = (options: SimulationOptions): number => {
   runtime.getRandom = () => enumerableRandom;
   const errors: WorkerError[] = [];
   const isContinued = options.isContinued ?? false;
-  const traceLimit = options.traceCount ?? (1n << 63n) - 1n;
   while (true) {
     statistics.traces++;
     currentTrace = statistics.traces;

@@ -1316,17 +1316,11 @@ const parse = (
             location,
           };
         case "[]":
-          advance();
-          return { kind: "Always", expression: parsePrefixOperand(token, 4, 15), location };
         case "<>":
-          advance();
-          return { kind: "Eventually", expression: parsePrefixOperand(token, 4, 15), location };
         case "ENABLED":
-          advance();
-          return { kind: "Enabled", expression: parsePrefixOperand(token, 4, 15), location };
         case "UNCHANGED":
           advance();
-          return { kind: "Unchanged", expression: parsePrefixOperand(token, 4, 15), location };
+          return getOperatorApplication(token.text, parsePrefixOperand(token, 4, 15), location);
         case "SUBSET":
         case "UNION":
         case "DOMAIN":

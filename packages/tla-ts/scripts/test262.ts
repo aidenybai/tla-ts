@@ -44,6 +44,8 @@ const PARSE_NODE_PATH = join(
   "../node_modules/@engine262/engine262/src/parser/ParseNode.mts",
 );
 
+const getTestId = (path: string) => relative(join(TEST262_DIRECTORY, "test"), path);
+
 interface ParseNode {
   type: string;
   [field: string]: unknown;
@@ -866,7 +868,7 @@ const createRunner = () => {
   };
 
   return (path: string): TestRun => {
-    const id = relative(join(TEST262_DIRECTORY, "test"), path);
+    const id = getTestId(path);
     const source = readFileSync(path, "utf8");
     const metadata = getMetadata(source);
     const modes = metadata.flags.some((flag) => flag === "onlyStrict" || flag === "module")
@@ -947,7 +949,7 @@ if (!isMainThread) {
   const paths = listFiles(join(TEST262_DIRECTORY, "test"))
     .filter((path) => path.endsWith(".js") && !path.includes("_FIXTURE"))
     .filter((path) => {
-      const id = relative(join(TEST262_DIRECTORY, "test"), path);
+      const id = getTestId(path);
       return (
         prefixes.length === 0 ||
         prefixes.some((prefix) => id.startsWith(prefix.replace(/^test\//, "")))
@@ -997,7 +999,7 @@ if (!isMainThread) {
       await new Promise((resolve) => host.on("exit", resolve));
       if (currentPath !== "") {
         report({
-          id: relative(join(TEST262_DIRECTORY, "test"), currentPath),
+          id: getTestId(currentPath),
           isPassed: false,
           reason: exitReason,
         });

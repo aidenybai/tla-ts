@@ -87,7 +87,7 @@ export const makeHnfCut = (lia: IntSolver): LiaMove => {
   const deps = isFullRank
     ? tightTerms.map((tight) => tight.dep)
     : basisRows.map((row) => tightTerms[row].dep);
-  const hermite = getHermiteNormalForm(matrix, determinant, () => settings.isCanceled());
+  const hermite = getHermiteNormalForm(matrix, determinant, settings.isCanceled);
   if (hermite === undefined) return { kind: "undef" };
   const rightSides = isFullRank
     ? tightTerms.map((tight) => tight.rightSide)

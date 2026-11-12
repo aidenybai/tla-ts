@@ -142,11 +142,13 @@ const LOOSE_OPERATORS = [
   " ~> ",
 ];
 
-export const wrapEquated = (expression: string) =>
-  expression.startsWith("~") ||
-  LOOSE_OPERATORS.some((operator) => getSurface(expression).includes(operator))
+export const wrapEquated = (expression: string) => {
+  if (expression.startsWith("~")) return `(${expression})`;
+  const surface = getSurface(expression);
+  return LOOSE_OPERATORS.some((operator) => surface.includes(operator))
     ? `(${expression})`
     : expression;
+};
 
 export const indent = (expression: string, prefix: string) =>
   expression.split("\n").join(`\n${prefix}`);

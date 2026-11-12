@@ -180,6 +180,16 @@ const unwrapBinding = (
   return thunk && { expression: thunk.expression, scope: thunk.scope };
 };
 
+const getCallScope = (
+  called: Closure,
+  expression: Expression,
+  scope: Scope | undefined,
+  environment: Environment,
+) =>
+  expression.kind === "Apply"
+    ? bindOperatorArguments(called, expression.args, getConstantContext(environment, scope))
+    : called.scope;
+
 const getParameters = (closure: Closure | undefined, scope: Scope | undefined) =>
   (closure?.params ?? []).flatMap((param): [string, Value][] => {
     const binding = lookupScope(scope, param.name);
@@ -400,12 +410,7 @@ const describeProperty = (
   const called = resolveClosure(expression, scope, environment);
   if (called && isConstantDefinition(called, environment)) return;
   if (called && called.params.length === getArguments(expression).length) {
-    recurse(
-      called.body,
-      expression.kind === "Apply"
-        ? bindOperatorArguments(called, expression.args, getConstantContext(environment, scope))
-        : called.scope,
-    );
+    recurse(called.body, getCallScope(called, expression, scope, environment));
     return;
   }
   if (expression.kind === "Forall") {
@@ -546,16 +551,7 @@ export const getSubscriptVariables = (
     if (!called || called.params.length !== getArguments(expression).length) return true;
     const definition = getDefinition(called.name, environment);
     if (definition?.body === called.body && isStartupValue(definition, environment)) return true;
-    return collect(
-      called.body,
-      expression.kind === "Apply"
-        ? bindOperatorArguments(
-            called,
-            expression.args,
-            getConstantContext(environment, innerScope),
-          )
-        : called.scope,
-    );
+    return collect(called.body, getCallScope(called, expression, innerScope, environment));
   };
   return collect(subscript, scope) ? variables : undefined;
 };

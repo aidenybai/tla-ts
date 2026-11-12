@@ -377,8 +377,6 @@ export const buildCoverage = (
       case "OperatorReference":
         return;
       case "Label":
-        walk(expression.body, bindNames(expression.params, locals));
-        return;
       case "Lambda":
         walk(expression.body, bindNames(expression.params, locals));
         return;

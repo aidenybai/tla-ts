@@ -1581,41 +1581,44 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
   );
   const recursive = new Set<Binding>();
   const declarations: { declaration: Declaration; binding: ModuleBinding | undefined }[] = [];
-  const createUnit = (
+  const createCheck = (
     location: SourceLocation,
     self: Definition | undefined,
-    errors: SanyError[],
-    warnings: SanyError[],
     hasLabelScope: boolean,
-  ): Unit => ({
-    imported: symbols,
-    getInstance: unit.getInstance,
-    definitions: unit.definitions,
-    getKey: unit.getKey,
+    check: (inner: Unit) => void,
+  ): SemanticUnit => ({
     location,
-    self,
-    facts,
-    goals,
-    bindings,
-    errors,
-    warnings,
-    hasLabelScope,
-    isLabelForbidden: false,
-    isInExcept: false,
-    labelParams: [],
-    labels: new Set(),
-    isGenerated: false,
+    check: (errors, warnings) =>
+      check({
+        imported: symbols,
+        getInstance: unit.getInstance,
+        definitions: unit.definitions,
+        getKey: unit.getKey,
+        location,
+        self,
+        facts,
+        goals,
+        bindings,
+        errors,
+        warnings,
+        hasLabelScope,
+        isLabelForbidden: false,
+        isInExcept: false,
+        labelParams: [],
+        labels: new Set(),
+        isGenerated: false,
+      }),
   });
   const bindDeclarations = (declarations: Declaration[], kind: "Constant" | "Variable") =>
-    declarations.map((declaration) => ({
-      location: declaration.location,
-      check: (errors: SanyError[], warnings: SanyError[]) =>
+    declarations.map((declaration) =>
+      createCheck(declaration.location, undefined, false, (inner) =>
         bindModuleName(
           declaration.name,
           { kind, arity: declaration.arity, range: declaration.location.range },
-          createUnit(declaration.location, undefined, errors, warnings, false),
+          inner,
         ),
-    }));
+      ),
+    );
   return collectSemanticErrors(
     [
       ...unit.reports.map((report) => ({
@@ -1629,9 +1632,8 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
       ...bindDeclarations(module.variables, "Variable"),
       ...module.units
         .flatMap((item) => (item.kind === "Recursive" ? item.declarations : []))
-        .map((declaration) => ({
-          location: declaration.location,
-          check: (errors: SanyError[], warnings: SanyError[]) => {
+        .map((declaration) =>
+          createCheck(declaration.location, undefined, false, (inner) => {
             const binding: ModuleBinding = {
               kind: "Definition",
               arity: declaration.arity,
@@ -1643,19 +1645,17 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
               declaration.name,
               bindings.get(declaration.name),
               binding,
-              createUnit(declaration.location, undefined, errors, warnings, false),
+              inner,
             );
             if (isBound) {
               bindings.set(declaration.name, binding);
               recursive.add(binding);
             }
             declarations.push({ declaration, binding: isBound ? binding : undefined });
-          },
-        })),
-      ...module.definitions.map((definition) => ({
-        location: definition.location,
-        check: (errors: SanyError[], warnings: SanyError[]) => {
-          const inner = createUnit(definition.location, definition, errors, warnings, true);
+          }),
+        ),
+      ...module.definitions.map((definition) =>
+        createCheck(definition.location, definition, true, (inner) => {
           if (isTheoremDefinition(module, definition)) {
             resolveExpression(definition.body, undefined, inner);
           } else if (resolveDefinition(definition, undefined, inner, recursive)) {
@@ -1666,12 +1666,10 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
               position: definition.location,
             });
           }
-        },
-      })),
-      ...module.instances.map((instance) => ({
-        location: instance.location,
-        check: (errors: SanyError[], warnings: SanyError[]) => {
-          const inner = createUnit(instance.location, undefined, errors, warnings, false);
+        }),
+      ),
+      ...module.instances.map((instance) =>
+        createCheck(instance.location, undefined, false, (inner) => {
           bindParams(undefined, instance.params, inner);
           unit.instanced
             .get(instance)
@@ -1683,18 +1681,10 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
               inner,
             );
           }
-        },
-      })),
-      ...module.assumptions.map((assumption) => ({
-        location: assumption.location,
-        check: (errors: SanyError[], warnings: SanyError[]) => {
-          const inner = createUnit(
-            assumption.location,
-            undefined,
-            errors,
-            warnings,
-            assumption.name !== undefined,
-          );
+        }),
+      ),
+      ...module.assumptions.map((assumption) =>
+        createCheck(assumption.location, undefined, assumption.name !== undefined, (inner) => {
           resolveExpression(assumption.expression, undefined, inner);
           if (assumption.name !== undefined) {
             bindModuleName(
@@ -1703,25 +1693,18 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
               inner,
             );
           }
-        },
-      })),
-      ...module.theorems.map((theorem) => ({
-        location: theorem.location,
-        check: (errors: SanyError[], warnings: SanyError[]) =>
-          resolveTheorem(
-            theorem,
-            createUnit(theorem.location, undefined, errors, warnings, theorem.name !== undefined),
-          ),
-      })),
-      ...module.uses.map((use) => ({
-        location: use.location,
-        check: (errors: SanyError[], warnings: SanyError[]) =>
-          checkFacts(
-            use.facts,
-            undefined,
-            createUnit(use.location, undefined, errors, warnings, false),
-          ),
-      })),
+        }),
+      ),
+      ...module.theorems.map((theorem) =>
+        createCheck(theorem.location, undefined, theorem.name !== undefined, (inner) =>
+          resolveTheorem(theorem, inner),
+        ),
+      ),
+      ...module.uses.map((use) =>
+        createCheck(use.location, undefined, false, (inner) =>
+          checkFacts(use.facts, undefined, inner),
+        ),
+      ),
       {
         location: module.location.range?.end ?? module.location,
         check: (errors: SanyError[]) =>

@@ -15,19 +15,16 @@ const shard = shardIndex === -1 ? undefined : args.splice(shardIndex, 2)[1];
 const tests = getShard(findTests(args.filter((arg) => arg !== "--missing")), shard).filter(
   (test) => !isMissingOnly || !test.recordings,
 );
-const oracles = new Map(
-  [...new Set(tests.map((test) => test.suite))].map((suite) => [suite, getHost(suite)]),
-);
 const refused: string[] = [];
 let doneCount = 0;
 let recordedCount = 0;
 
 await runPool(tests, WORKERS, async (test) => {
   const recordings: Record<string, Recording> = {};
-  const host = oracles.get(test.suite);
-  const refusals: string[] = host ? [] : [`${test.id}: no oracle for the ${test.suite} suite`];
-  for (const context of host ? getContexts(test) : []) {
-    const result = await runTest(host!, test, context);
+  const host = getHost(test.suite);
+  const refusals: string[] = [];
+  for (const context of getContexts(test)) {
+    const result = await runTest(host, test, context);
     const isDeclared = isDeclaredOutcome(test, result);
     if (isDeclared === undefined)
       refusals.push(`${test.id}: unknown outcome ${test.metadata.outcome}`);

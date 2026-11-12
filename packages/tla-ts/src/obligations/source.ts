@@ -552,22 +552,14 @@ export const createSource = (
       case "Always":
       case "Eventually": {
         const inner = expression.expression;
-        if (expression.kind === "Always" && inner.kind === "BoxAction") {
+        if (
+          (expression.kind === "Always" && inner.kind === "BoxAction") ||
+          (expression.kind === "Eventually" && inner.kind === "AngleAction")
+        ) {
           return at(
             {
               kind: "Tsub",
-              modal: "Box",
-              action: recurse(inner.action),
-              subscript: recurse(inner.subscript),
-            },
-            { location },
-          );
-        }
-        if (expression.kind === "Eventually" && inner.kind === "AngleAction") {
-          return at(
-            {
-              kind: "Tsub",
-              modal: "Dia",
+              modal: expression.kind === "Always" ? "Box" : "Dia",
               action: recurse(inner.action),
               subscript: recurse(inner.subscript),
             },
@@ -672,20 +664,16 @@ export const createSource = (
         ? "-."
         : getCanonicalName(definition.name);
     const body = convertExpression(definition.body, isExcept);
-    if (definition.kind === "Function" && hasTuple(definition.bounds)) {
-      return {
-        kind: "Operator",
-        name,
-        body: expandTuples(expandFcn(getTuplyBounds(definition.bounds, isExcept), body), location),
-        location,
-      };
-    }
     if (definition.kind === "Function") {
-      const bounds = convertBounds(definition.bounds, isExcept);
       return {
         kind: "Operator",
         name,
-        body: at({ kind: "Fcn", bounds, body }, { location }),
+        body: hasTuple(definition.bounds)
+          ? expandTuples(expandFcn(getTuplyBounds(definition.bounds, isExcept), body), location)
+          : at(
+              { kind: "Fcn", bounds: convertBounds(definition.bounds, isExcept), body },
+              { location },
+            ),
         location,
       };
     }
