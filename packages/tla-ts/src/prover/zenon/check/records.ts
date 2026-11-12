@@ -25,7 +25,7 @@ export const getFields = (record: Term, constructor: "TLA.record" | "TLA.records
   return fields;
 };
 
-const getLabels = (fields: [Term, Term][]) =>
+export const getLabels = (fields: [Term, Term][]) =>
   app(
     "TLA.set",
     fields.map((field) => field[0]),

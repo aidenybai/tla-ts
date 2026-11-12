@@ -1,4 +1,5 @@
-import type { CheckContext, RelationProperty, Term } from "./terms";
+import type { RelationProperty } from "../eqrel";
+import type { CheckContext, Term } from "./terms";
 
 type Polarity = "positive" | "negative" | "both";
 
