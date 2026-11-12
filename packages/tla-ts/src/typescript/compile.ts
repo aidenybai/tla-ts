@@ -170,6 +170,14 @@ export const compile = (
         : [];
     });
     const states = declared.some((state) => state.isChanged) || run.length > 0 ? declared : [];
+    // A class of an imported file that the model reaches, which its file makes where it declares it.
+    const classes = getReached([sourceFile, ...run], context).filter(
+      (node): node is ts.ClassDeclaration =>
+        ts.isClassDeclaration(node) &&
+        ts.isSourceFile(node.parent) &&
+        node.parent !== sourceFile &&
+        files.includes(node.parent),
+    );
     const next = effects.filter(
       (statement) =>
         run.includes(statement) ||
@@ -179,7 +187,7 @@ export const compile = (
     );
     return next.length > run.length
       ? getImported(next)
-      : [...new Set([...run, ...states.map((state) => state.statement)])].toSorted(
+      : [...new Set([...run, ...states.map((state) => state.statement), ...classes])].toSorted(
           (left, right) =>
             files.indexOf(left.getSourceFile()) - files.indexOf(right.getSourceFile()) ||
             left.pos - right.pos,

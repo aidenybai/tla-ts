@@ -237,7 +237,7 @@ export const readModel = (
   ): statement is ts.ClassDeclaration | ts.FunctionDeclaration =>
     (ts.isClassDeclaration(statement) && isHeapClass(statement, context)) ||
     (ts.isFunctionDeclaration(statement) && isHeapFunction(statement, context));
-  const classes = statements.flatMap((statement) => {
+  const classes = [...imported, ...statements].flatMap((statement) => {
     if (!isHeapDeclaration(statement)) return [];
     const symbol = statement.name && getSymbol(statement.name, context.checker);
     if (statement.name === undefined || symbol === undefined) return [];
@@ -259,7 +259,9 @@ export const readModel = (
     variables: [...variables, ...classes],
     // A script makes its functions before it runs, so they come first.
     script: [
-      ...imported,
+      ...imported.filter(
+        (statement) => !ts.isClassDeclaration(statement) || isHeapDeclaration(statement),
+      ),
       ...statements.filter(
         (statement) => ts.isFunctionDeclaration(statement) && isHeapDeclaration(statement),
       ),
