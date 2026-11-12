@@ -305,6 +305,7 @@ export const translateBuiltInValue = (
     | "Number"
     | "String"
     | "Boolean.prototype"
+    | "BigInt.prototype"
     | "Number.prototype"
     | "String.prototype"
     | `String.prototype.${string}`

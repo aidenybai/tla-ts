@@ -1668,6 +1668,21 @@ const translatePropertyAccess = (
           context,
         );
   }
+  // A BigInt has no properties of its own, so it reads them from BigInt.prototype.
+  if (isBigIntLike(receiver, context)) {
+    if (context.heap === undefined) {
+      throw new TlaTypeScriptError(`Unsupported property: ${node.getText()}`, node);
+    }
+    return useJavaScript(
+      "Get",
+      [
+        getHeap(scope, node, context),
+        translateBuiltInValue("BigInt.prototype", node, context),
+        string(name),
+      ],
+      context,
+    );
+  }
   // A value of type Function, such as an object's constructor, may be a built-in function, which
   // only the heap knows the properties of.
   const isFunctionType =

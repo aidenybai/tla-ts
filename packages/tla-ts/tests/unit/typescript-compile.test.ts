@@ -8184,6 +8184,30 @@ describe("BigInts", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("reads a BigInt's methods from BigInt.prototype", async () => {
+    const getSource = (expected: string) => `
+      const box = { kind: "bigint" };
+      if (box.kind !== "bigint") throw new Error("box");
+      const n = 1n;
+      const method: unknown = n.toString;
+      if (method !== ${expected}) throw new Error("method");
+      let caught = "";
+      const make = () => {
+        new (n.valueOf as unknown as new () => object)();
+      };
+      try {
+        make();
+      } catch (error) {
+        caught = error instanceof TypeError ? "TypeError" : "other";
+      }
+      if (caught !== "TypeError") throw new Error(caught);
+    `;
+    expect((await checkModel(getSource("BigInt.prototype.toString"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("Object.prototype.toString"))).failure?.message).toContain(
+      "method",
+    );
+  });
+
   it("assigns, converts, and writes BigInts", async () => {
     const result = await checkModel(`
       let a = 5n;
