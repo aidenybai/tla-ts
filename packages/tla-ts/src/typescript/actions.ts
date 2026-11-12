@@ -865,8 +865,23 @@ const getRemovedValue = (
       ),
     };
   }
-  if (method !== "shift" && method !== "pop") return undefined;
   if (kind !== "sequence") return undefined;
+  // A push or an unshift gives the array's new length.
+  if ((method === "push" || method === "unshift") && !node.arguments.some(ts.isSpreadElement)) {
+    return {
+      value: apply("+", [
+        apply("Len", [translateExpression(receiver, path.scope, context)]),
+        number(node.arguments.length),
+      ]),
+      path: assign(
+        receiver,
+        path,
+        context,
+        (current) => getUpdatedValue(current, kind, node, path.scope, context) ?? current,
+      ),
+    };
+  }
+  if (method !== "shift" && method !== "pop") return undefined;
   const sequence = translateExpression(receiver, path.scope, context);
   return {
     value:

@@ -3414,6 +3414,19 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("tla-ts can't call the at that a script put");
   });
 
+  it("gives the length that a push or an unshift leaves", async () => {
+    const result = await checkModel(`
+      const x: number[] = [];
+      const pushed = x.push(1);
+      const again = x.push();
+      const unshifted = x.unshift(5, 6);
+      if (pushed !== 1 || again !== 1 || unshifted !== 3 || x.join(",") !== "5,6,1") {
+        throw new Error("lengths");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`
