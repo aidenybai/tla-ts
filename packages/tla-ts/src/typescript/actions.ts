@@ -8933,23 +8933,29 @@ const findLeadingCall = (
       found.branch === run
     );
   };
-  // Operands that run only sometimes, which evaluate on where they run nothing.
-  const isEvaluated = (operands: readonly ts.Node[]) =>
-    operands.every((operand) => {
-      const found = findLeadingCall(operand, before, path, context);
-      return found.call === undefined && !found.isBlocked;
-    });
+  // An operand that runs nothing, which the operation evaluates as a value.
+  const isPlainOperand = (operand: ts.Expression) => {
+    const found = findLeadingCall(operand, [], path, context);
+    return (
+      found.call === undefined &&
+      found.read === undefined &&
+      found.conversion === undefined &&
+      !found.isBlocked
+    );
+  };
   // A condition or a short-circuit's left operand always runs first, so a read that it runs first
   // runs before the operand that runs only sometimes.
   if (ts.isConditionalExpression(node)) {
     const found = findLeadingCall(node.condition, before, path, context);
     return found.call !== undefined || found.read !== undefined || found.branch !== undefined
       ? found
-      : !found.isBlocked && (isBranchRun(node.whenTrue) || isBranchRun(node.whenFalse))
-        ? { ...blocked, branch: node }
-        : !found.isBlocked && isEvaluated([node.whenTrue, node.whenFalse])
-          ? none
-          : blocked;
+      : found.isBlocked
+        ? blocked
+        : isBranchRun(node.whenTrue) || isBranchRun(node.whenFalse)
+          ? { ...blocked, branch: node }
+          : isPlainOperand(node.whenTrue) && isPlainOperand(node.whenFalse)
+            ? evaluate(node)
+            : blocked;
   }
   if (ts.isBinaryExpression(node)) {
     const kind = node.operatorToken.kind;
@@ -8961,11 +8967,13 @@ const findLeadingCall = (
       const found = findLeadingCall(node.left, before, path, context);
       return found.call !== undefined || found.read !== undefined || found.branch !== undefined
         ? found
-        : !found.isBlocked && isBranchRun(node.right)
-          ? { ...blocked, branch: node }
-          : !found.isBlocked && isEvaluated([node.right])
-            ? none
-            : blocked;
+        : found.isBlocked
+          ? blocked
+          : isBranchRun(node.right)
+            ? { ...blocked, branch: node }
+            : isPlainOperand(node.right)
+              ? evaluate(node)
+              : blocked;
     }
     if (kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(node.left)) {
       return findLeadingCall(node.right, before, path, context);

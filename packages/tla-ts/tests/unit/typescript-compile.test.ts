@@ -4748,6 +4748,25 @@ describe("errors", () => {
     ).toThrow("Unsupported expression");
   });
 
+  it("runs the calls in a template after a conditional that runs nothing", async () => {
+    const getSource = (expected: string) => `
+      interface Box { seen: number }
+      const box: Box = { seen: 0 };
+      const show = (value: number) => {
+        box.seen += 1;
+        return \`<\${value}>\`;
+      };
+      const describe = (left: number, right: number, isEqual: boolean) =>
+        \`\${isEqual ? "equal" : "compare"} \${show(left)} \${left > 1 && right > 1 ? "big" : "small"} \${show(right)}\`;
+      const described = describe(1, 2, false);
+      if (described !== "${expected}" || box.seen !== 2) throw new Error("described");
+    `;
+    expect((await checkModel(getSource("compare <1> small <2>"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("compare <1> big <2>"))).failure?.message).toContain(
+      '"described"',
+    );
+  });
+
   it("gives the number an increment reads or writes", async () => {
     const result = await checkModel(`
       let x = 5;
