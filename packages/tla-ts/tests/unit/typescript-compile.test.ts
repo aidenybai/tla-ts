@@ -6789,6 +6789,24 @@ describe("errors", () => {
     expect((await checkModel(getSource("ordered.x === 42"))).failure?.message).toContain("Point");
   });
 
+  it("defines a class's fields under literal and computed literal keys", async () => {
+    const getSource = (keys: string) => `
+      const C = class {
+        [1.5e1] = "a";
+        ["x"] = "b";
+        2 = "c";
+        static [1e3] = () => 7;
+      };
+      const made = new C();
+      const keys = Object.keys(made).join(",");
+      if (keys !== "${keys}" || made[15] !== "a" || made.x !== "b" || C[1000]() !== 7) {
+        throw new Error("fields");
+      }
+    `;
+    expect((await checkModel(getSource("2,15,x"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("15,x,2"))).failure?.message).toContain("fields");
+  });
+
   it("makes the instances that a class's static fields hold", async () => {
     const getSource = (check: string) => `
       class Point {

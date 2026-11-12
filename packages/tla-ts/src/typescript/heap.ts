@@ -842,9 +842,11 @@ const translateInstance = (
             [object, string(getPrivateKey(member, context)), value],
             context,
           )
-        : ts.isIdentifier(member.name)
-          ? useJavaScript("Put", [object, string(member.name.text), value], context)
-          : object;
+        : useJavaScript(
+            "Put",
+            [object, translateMemberKey(member.name, scope, context), value],
+            context,
+          );
     },
     useJavaScript(
       "WithPrototype",

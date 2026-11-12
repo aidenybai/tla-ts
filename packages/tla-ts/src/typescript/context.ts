@@ -1038,7 +1038,8 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): bo
         (ts.isPropertyDeclaration(member) &&
           (ts.isIdentifier(member.name) ||
             ts.isPrivateIdentifier(member.name) ||
-            (isStatic(member) && isLiteralKey(member.name)))),
+            isLiteralKey(member.name) ||
+            (ts.isComputedPropertyName(member.name) && isLiteralKey(member.name.expression)))),
     ) &&
     !isAssigned(symbol, node.getSourceFile(), context);
   heapClasses.set(node, isHeap);
