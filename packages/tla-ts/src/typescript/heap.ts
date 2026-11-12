@@ -119,6 +119,7 @@ import {
   getArraySource,
   getIteratedArray,
   getKeptIterator,
+  isBigIntLike,
 } from "./types";
 
 const SHORT_CIRCUITS = new Set([
@@ -1477,11 +1478,12 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
       "Allocate",
       [
         heap,
-        wrapper === "Symbol"
+        wrapper === "Symbol" || wrapper === "BigInt"
           ? useJavaScript(
-              "SymbolObject",
+              "SlotObject",
               [
-                translateBuiltInValue("Symbol.prototype", node, context),
+                translateBuiltInValue(`${wrapper}.prototype`, node, context),
+                string(wrapper.toLowerCase()),
                 translateExpression((node.arguments ?? [])[0], scope, context),
               ],
               context,
@@ -1717,7 +1719,7 @@ export const isAllocation = (node: ts.Node, context: Context) =>
   getNewWrapper(node, context) !== undefined;
 
 // The primitive that new Boolean, new Number, or new String wraps in an object, or that Object
-// wraps in a Symbol object.
+// wraps in a Symbol or BigInt object.
 export const getNewWrapper = (node: ts.Node, context: Context) => {
   const called =
     context.heap !== undefined && ts.isNewExpression(node)
@@ -1727,13 +1729,19 @@ export const getNewWrapper = (node: ts.Node, context: Context) => {
         : undefined;
   // new Object, or Object, of a primitive wraps it as its own constructor would.
   const argument = isObjectConversion(node, context) ? node.arguments?.at(0) : undefined;
-  const names =
+  const isWrapped =
     called === "Object" &&
     argument !== undefined &&
-    isHeapType(context.checker.getTypeAtLocation(node), context)
-      ? getTypeNames(context.checker.getTypeAtLocation(argument), context.checker)
-      : undefined;
-  const primitive = names?.length === 1 ? names[0] : undefined;
+    isHeapType(context.checker.getTypeAtLocation(node), context);
+  const names = isWrapped
+    ? getTypeNames(context.checker.getTypeAtLocation(argument), context.checker)
+    : undefined;
+  const primitive =
+    names?.length === 1
+      ? names[0]
+      : isWrapped && isBigIntLike(argument, context)
+        ? "bigint"
+        : undefined;
   const name =
     primitive === "string"
       ? "String"
@@ -1743,11 +1751,14 @@ export const getNewWrapper = (node: ts.Node, context: Context) => {
           ? "Boolean"
           : primitive === "symbol"
             ? "Symbol"
-            : called;
+            : primitive === "bigint"
+              ? "BigInt"
+              : called;
   return (name === "Boolean" ||
     name === "Number" ||
     name === "String" ||
-    (name === "Symbol" && primitive === "symbol")) &&
+    (name === "Symbol" && primitive === "symbol") ||
+    (name === "BigInt" && primitive === "bigint")) &&
     (ts.isNewExpression(node) || ts.isCallExpression(node)) &&
     (node.arguments ?? []).length <= 1 &&
     !(node.arguments ?? []).some(ts.isSpreadElement)

@@ -1751,16 +1751,20 @@ export const translateMethod = (
   }
   if (kind === "set") return translateSetMethod(node, scope, context);
   if (kind === "map") return translateMapMethod(node, scope, context, isDefined);
-  // Symbol.prototype.valueOf through call reads the symbol of a symbol or of a Symbol object.
+  // Symbol.prototype.valueOf or BigInt.prototype.valueOf through call reads the primitive of a
+  // primitive or of the object that wraps it.
+  const valueOwner = ["Symbol", "BigInt"].find(
+    (owner) => getPrototypeMethod(receiver, owner, context) === "valueOf",
+  );
   if (
     context.heap !== undefined &&
     node.expression.name.text === "call" &&
     node.arguments.length === 1 &&
-    getPrototypeMethod(receiver, "Symbol", context) === "valueOf"
+    valueOwner !== undefined
   ) {
-    context.builtIns.add("Symbol.prototype");
+    context.builtIns.add(`${valueOwner}.prototype`);
     return useJavaScript(
-      "ThisSymbol",
+      valueOwner === "Symbol" ? "ThisSymbol" : "ThisBigIntObject",
       [getHeap(scope, node, context), translateExpression(node.arguments[0], scope, context)],
       context,
     );

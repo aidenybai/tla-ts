@@ -133,6 +133,7 @@ const LIBRARY_OBJECTS = new Set([
   "Number",
   "String",
   "Symbol",
+  "BigInt",
 ]);
 
 // An object type, or the object type, which any object may have.
