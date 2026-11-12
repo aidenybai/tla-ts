@@ -15,6 +15,7 @@ const NO_HIGHLIGHTS = {};
 interface CodeState {
   source: Source;
   isMultiline: boolean;
+  isWrapped: boolean;
   activeLine: number | undefined;
   notes: LineNote[];
   highlights: Record<string, string>;
@@ -28,6 +29,7 @@ interface RootProps {
   activeLine?: number;
   notes?: LineNote[];
   highlights?: Record<string, string>;
+  isWrapped?: boolean;
   onMorphEnd?: () => void;
   children: ReactNode;
 }
@@ -39,6 +41,7 @@ export const CodeRoot = (props: RootProps) => {
       value={{
         source: props.source,
         isMultiline,
+        isWrapped: props.isWrapped ?? true,
         activeLine: props.activeLine,
         notes: props.notes ?? [],
         highlights: props.highlights ?? NO_HIGHLIGHTS,
@@ -70,7 +73,10 @@ export const CodeContent = () => {
   return (
     <code
       ref={contentRef}
-      className="relative w-full min-w-0 font-mono text-[13px]/[1.7] text-foreground"
+      className={cn(
+        "relative w-full min-w-0 font-mono text-[13px]/[1.7] text-foreground",
+        !code.isWrapped && "overflow-x-auto",
+      )}
     >
       {code.source.lines
         .map((tokens, index) => ({ tokens, number: index + 1 }))
@@ -80,7 +86,11 @@ export const CodeContent = () => {
             tokens={line.tokens}
             note={code.notes.find((note) => note.line === line.number)}
             isActive={code.activeLine === line.number}
-            className={cn("-mr-4 -ml-4 pr-4 pl-4", line.number === 1 && "pr-14")}
+            isWrapped={code.isWrapped}
+            className={cn(
+              code.isWrapped ? "-mr-4 -ml-4 pr-4 pl-4" : "w-max min-w-full",
+              line.number === 1 && "pr-14",
+            )}
           />
         ))}
     </code>
@@ -92,7 +102,7 @@ interface FooterProps {
 }
 
 export const CodeFooter = (props: FooterProps) => (
-  <div className="relative z-10 -mr-4 -mb-4 -ml-4 flex shrink-0 bg-card basis-[calc(100%+2rem)] items-center gap-1.5 border-t py-2 pr-2.5 pl-4 text-sm">
+  <div className="relative z-10 -mr-4 -mb-4 -ml-4 flex w-[calc(100%+2rem)] shrink-0 bg-card items-center gap-1.5 border-t py-2 pr-2.5 pl-4 text-sm">
     {props.children}
   </div>
 );

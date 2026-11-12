@@ -61,7 +61,7 @@ export const BenchmarkChart = () => {
             style={{ left: `${tick.share * 100}%` }}
             className={cn(
               "absolute top-0 flex flex-col gap-1 text-xs font-medium whitespace-nowrap text-faint",
-              tick.share === 0.5 && "-translate-x-1/2 items-center",
+              tick.share === 0.5 && "-translate-x-1/2 items-center max-[22rem]:hidden",
               tick.share === 1 && "-translate-x-full items-end",
             )}
           >

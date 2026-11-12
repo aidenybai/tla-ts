@@ -167,11 +167,14 @@ const pages = (): Plugin => ({
   transformIndexHtml: {
     order: "post",
     async handler(html, context) {
-      if (context.server || !context.filename.endsWith("/index.html")) return html;
+      if (context.server) return html;
       const server = await createServer({ server: { middlewareMode: true }, appType: "custom" });
       const prerender = await server.ssrLoadModule("/src/prerender.tsx");
       await server.close();
-      return html.replace(EMPTY_ROOT, `<div id="root">${prerender.getAppHtml()}</div>`);
+      const content = context.filename.endsWith("/playground.html")
+        ? prerender.getPlaygroundHtml()
+        : prerender.getAppHtml();
+      return html.replace(EMPTY_ROOT, `<div id="root">${content}</div>`);
     },
   },
 });
