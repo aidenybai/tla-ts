@@ -2387,6 +2387,32 @@ describe("errors", () => {
     expect((await checkModel(getSource(4))).failure?.message).toContain("unexpected");
   });
 
+  it("runs the getter that a rest pattern copies where the script defines getters under other keys", async () => {
+    const getSource = (expected: number) => `
+      let count = 0;
+      let seen: unknown = 0;
+      class C {
+        #method({ ...x }: { v: number }) {
+          seen = x.v;
+        }
+        get method() {
+          return this.#method;
+        }
+      }
+      new C().method({
+        get v() {
+          count++;
+          return 2;
+        },
+      });
+      const getSeen = (): unknown => seen;
+      const getCount = (): number => count;
+      if (getSeen() !== 2 || getCount() !== ${expected}) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    expect((await checkModel(getSource(2))).failure?.message).toContain("unexpected");
+  });
+
   it("runs the setter of an object literal or a class that a computed key picks", async () => {
     const getSource = (written: string) => `
       let log = "";

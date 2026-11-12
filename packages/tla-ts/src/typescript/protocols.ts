@@ -358,8 +358,8 @@ const getGetterElements = (pattern: ts.BindingName, context: Context) => {
   );
 };
 
-// An object pattern's rest element, with the one key that the script defines a getter under that
-// it may copy, where nothing that the pattern evaluates before the copy runs code.
+// An object pattern's rest element, with the keys that the script defines getters under that it
+// may copy, where nothing that the pattern evaluates before the copy runs code.
 const getRestGetter = (pattern: ts.BindingName, context: Context) => {
   if (!ts.isObjectBindingPattern(pattern) || context.heap === undefined) return undefined;
   const element = pattern.elements.at(-1);
@@ -379,7 +379,7 @@ const getRestGetter = (pattern: ts.BindingName, context: Context) => {
   }
   const excluded = others.map(getElementKey);
   const keys = [...getGetterKeys(pattern)].filter((key) => !excluded.includes(key));
-  return keys.length === 1 ? { element, key: keys[0] } : undefined;
+  return keys.length > 0 ? { element, keys } : undefined;
 };
 
 // Whether a pattern's binding runs getters that haven't run yet.
@@ -415,18 +415,39 @@ export const readPatternGetters = (
     });
   const readFrom = (current: Path, values: readonly Expression[]): Formula => {
     const element = elements.at(values.length);
-    // The rest copies the key's value, running its getter, where the object has it as its own
-    // enumerable property.
+    // The rest copies a key's value, running its getter, where the object has it as its own
+    // enumerable property. Where it has more than one of the keys, their getters run in an order
+    // that tla-ts doesn't follow.
     if (element === undefined && rest !== undefined) {
-      return ifThenElse(
+      const isOwn = (key: string) =>
         useJavaScript(
           "IsEnumerableOwn",
-          [getHeap(current.scope, rest.element, context), value, string(rest.key)],
+          [getHeap(current.scope, rest.element, context), value, string(key)],
           context,
-        ),
-        read(rest.element, value, rest.key, current, context, frame, (after, got) =>
-          finish(after, [...values, apply(":>", [string(rest.key), got])]),
-        ),
+        );
+      return rest.keys.reduceRight(
+        (otherwise, key) => {
+          const others = rest.keys.filter((other) => other !== key);
+          const copy = read(rest.element, value, key, current, context, frame, (after, got) =>
+            finish(after, [...values, apply(":>", [string(key), got])]),
+          );
+          return ifThenElse(
+            isOwn(key),
+            others.length === 0
+              ? copy
+              : ifThenElse(
+                  junction("Or", others.map(isOwn)),
+                  leaf(
+                    apply("Assert", [
+                      boolean(false),
+                      string("tla-ts can't copy the properties of more than one getter in order"),
+                    ]),
+                  ),
+                  copy,
+                ),
+            otherwise,
+          );
+        },
         finish(current, [...values, tuple([])]),
       );
     }
@@ -1180,7 +1201,7 @@ export const getReadFunctions = (node: ts.Node, context: Context) => {
   const patternKeys = ts.isObjectBindingPattern(node)
     ? [
         ...getGetterElements(node, context).flatMap((element) => getElementKey(element) ?? []),
-        ...(rest === undefined ? [] : [rest.key]),
+        ...(rest === undefined ? [] : rest.keys),
       ]
     : [];
   return [
