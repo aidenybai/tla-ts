@@ -1327,7 +1327,8 @@ const UPDATES = new Map<Kind, Map<string, Update>>([
       ],
       ["unshift", (current, values) => apply("\\o", [tuple(values), current])],
       ["pop", (current) => removeLast(current)],
-      ["shift", (current) => apply("Tail", [current])],
+      // Tail of an empty sequence is an error in TLC, where JavaScript's shift changes nothing.
+      ["shift", (current) => apply("SubSeq", [current, number(2), apply("Len", [current])])],
     ]),
   ],
   [

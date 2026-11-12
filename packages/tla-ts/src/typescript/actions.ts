@@ -1024,11 +1024,15 @@ const getRemovedValue = (
       ? apply("+", [apply("Len", [sequence]), number(node.arguments.length)])
       : method === "splice"
         ? translateSpliced(sequence, node.arguments, true, path.scope, context)
-        : method === "shift"
-          ? apply("Head", [sequence])
-          : method === "pop"
-            ? index(sequence, [apply("Len", [sequence])])
-            : undefined;
+        : method === "shift" || method === "pop"
+          ? ifExpression(
+              apply("=", [sequence, tuple([])]),
+              getUndefined(context),
+              method === "shift"
+                ? apply("Head", [sequence])
+                : index(sequence, [apply("Len", [sequence])]),
+            )
+          : undefined;
   return value === undefined
     ? undefined
     : {

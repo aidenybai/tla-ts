@@ -4952,6 +4952,21 @@ describe("errors", () => {
     expect((await checkModel(getSource("Point.unit.x === 1"))).failure?.message).toContain("Point");
   });
 
+  it("gives undefined for what pop and shift remove from an empty array", async () => {
+    const getSource = (check: string) => `
+      const stack: number[] = [];
+      const top = stack.pop();
+      const queue = [1];
+      queue.shift();
+      queue.shift();
+      const head = queue.shift();
+      if (${check}) throw new Error("empty");
+    `;
+    const passing = "top !== undefined || head !== undefined || queue.length !== 0";
+    expect((await checkModel(getSource(passing))).failure).toBeUndefined();
+    expect((await checkModel(getSource("top === undefined"))).failure?.message).toContain("empty");
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`
