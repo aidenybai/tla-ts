@@ -514,34 +514,26 @@ const exportSpecification = (
         if (body === undefined || module === undefined) {
           throw new Error(`The definition of ${node.name} has no body`);
         }
-        if (isTlc174) {
-          return withLevel(
-            createElement("UserDefinedOpKind", [
-              createText("uniquename", node.name),
-              createText("arity", node.arity),
-              createElement("body", [exportExpression(body, JAVA_CALLS.body)]),
-              ...(node.params
-                ? [getParamsElement(params, node.isLeibnizArg, JAVA_CALLS.param)]
-                : []),
-              ...(node.inRecursive ? [createElement("recursive")] : []),
-            ]),
-            node,
-          );
-        }
         return withLevel(
           createElement("UserDefinedOpKind", [
             createText("uniquename", node.name),
             createText("arity", node.arity),
-            createElement("originalOperator", [getReference(node.source ?? node)]),
-            createElement("originallyDefinedInModule", [getReference(module)]),
+            ...(isTlc174
+              ? []
+              : [
+                  createElement("originalOperator", [getReference(node.source ?? node)]),
+                  createElement("originallyDefinedInModule", [getReference(module)]),
+                ]),
             createElement("body", [exportExpression(body, JAVA_CALLS.body)]),
-            getParamsElement(params, node.isLeibnizArg, JAVA_CALLS.param),
-            ...getPreCommentsElement(node.preComments),
+            ...(node.params || !isTlc174
+              ? [getParamsElement(params, node.isLeibnizArg, JAVA_CALLS.param)]
+              : []),
+            ...(isTlc174 ? [] : getPreCommentsElement(node.preComments)),
             ...(node.inRecursive ? [createElement("recursive")] : []),
-            ...(node.recursiveSection >= 0
+            ...(node.recursiveSection >= 0 && !isTlc174
               ? [createText("recursiveSection", node.recursiveSection)]
               : []),
-            ...(node.isLocal ? [createElement("local")] : []),
+            ...(node.isLocal && !isTlc174 ? [createElement("local")] : []),
           ]),
           node,
         );
