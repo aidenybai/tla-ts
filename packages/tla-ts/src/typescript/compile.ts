@@ -437,6 +437,35 @@ export const compile = (
       ) {
         texts.push(node.text);
       }
+      // String.fromCharCode and String.fromCodePoint of numbers that the text writes make the code
+      // units of those numbers, where fromCodePoint throws no RangeError.
+      const method =
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.expression.getText() === "String"
+          ? node.expression.name.text
+          : undefined;
+      const numbers =
+        ts.isCallExpression(node) && node.arguments.length > 0
+          ? node.arguments.map((argument) =>
+              ts.isNumericLiteral(argument)
+                ? Number(argument.text)
+                : ts.isPrefixUnaryExpression(argument) &&
+                    argument.operator === ts.SyntaxKind.MinusToken &&
+                    ts.isNumericLiteral(argument.operand)
+                  ? -Number(argument.operand.text)
+                  : Number.NaN,
+            )
+          : [Number.NaN];
+      if (method === "fromCharCode" && numbers.every(Number.isFinite)) {
+        texts.push(String.fromCharCode(...numbers));
+      }
+      if (
+        method === "fromCodePoint" &&
+        numbers.every((value) => Number.isInteger(value) && value >= 0 && value <= 0x10ffff)
+      ) {
+        texts.push(String.fromCodePoint(...numbers));
+      }
       ts.forEachChild(node, visit);
     };
     visit(sourceFile);

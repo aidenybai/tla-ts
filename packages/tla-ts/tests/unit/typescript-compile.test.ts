@@ -4358,6 +4358,26 @@ describe("errors", () => {
     ).rejects.toThrow("wide");
   });
 
+  it("makes the code units of numbers that a script writes into fromCharCode and fromCodePoint", async () => {
+    const getSource = (expected: number) => `
+      const text = String.fromCharCode(0x180e, -32767, 0x00a0);
+      if (text.charCodeAt(1) !== ${expected} || String.fromCodePoint(0x1f600).length !== 2) {
+        throw new Error("codes");
+      }
+      if (/\\S/.test(text.slice(2)) || !/\\S/.test(text.slice(0, 1)) || text.trim().length !== 2) {
+        throw new Error("spaces");
+      }
+    `;
+    expect((await checkModel(getSource(32769))).failure).toBeUndefined();
+    await expect(checkModel(getSource(32768))).rejects.toThrow("codes");
+    await expect(
+      checkModel(`
+        const code = 0x4e00;
+        if (String.fromCharCode(code) === "") throw new Error("never");
+      `),
+    ).rejects.toThrow("tla-ts can't make a character outside ASCII");
+  });
+
   it("reads a string's code units outside ASCII and iterates its code points", async () => {
     const result = await checkModel(`
       const text = "é😀\uDE00a";
@@ -4386,7 +4406,10 @@ describe("errors", () => {
       `),
     ).rejects.toThrow("units");
     await expect(
-      checkModel(`if (String.fromCharCode(0x4e00) === "") throw new Error("never");`),
+      checkModel(`
+        const code = 0x4e00;
+        if (String.fromCharCode(code) === "") throw new Error("never");
+      `),
     ).rejects.toThrow("tla-ts can't make a character outside ASCII");
     await expect(
       checkModel(`if (encodeURI("é") === "") throw new Error("never");`),
