@@ -1851,11 +1851,6 @@ describe("errors", () => {
       "Type a callback's array parameter as an array",
     ],
     [
-      "an object made in a callback inside an expression",
-      "let size = [1].map((value) => ({ value })).length;",
-      "Make objects only where a statement always runs",
-    ],
-    [
       "this in a function inside a method",
       "const box = {\n  read() {\n    const inner = function (this: unknown) {\n      return this;\n    };\n    return inner();\n  },\n};\nlet value = box.read();",
       "Unsupported expression: this",
@@ -6756,6 +6751,80 @@ describe("errors", () => {
         const stores = [new Store()];
       `),
     ).toThrow("Make objects only where a statement always runs");
+  });
+
+  it("runs first what an expression removes, and what a branch of it changes", async () => {
+    const getSource = (expected: string) => `
+      class Ids {
+        free: number[] = [];
+        ids = [0, 0, 0];
+        next = 1;
+        seen = new Set<number>([1]);
+        dropped = 0;
+        hashes = new Map<string, number>();
+        register(index: number) {
+          this.ids[index] = this.free.pop() ?? this.next++;
+        }
+        release(index: number) {
+          this.free.push(this.ids[index]);
+        }
+        drop(value: number) {
+          if (this.seen.delete(value)) this.dropped++;
+        }
+        take() {
+          return this.free.pop();
+        }
+        pattern(key: string) {
+          const existing = this.hashes.get(key);
+          if (existing !== undefined) return existing;
+          this.hashes.set(key, key.length);
+          return key.length;
+        }
+        find(isUser: boolean, slot: number, key: string) {
+          return isUser ? 1 : slot === -1 || slot > 5 ? this.pattern(key) : this.ids[slot];
+        }
+      }
+      const ids = new Ids();
+      ids.register(0);
+      ids.register(1);
+      ids.release(0);
+      ids.register(2);
+      ids.drop(1);
+      ids.drop(1);
+      ids.release(1);
+      const local = [5];
+      let count = 1;
+      const first = local.pop() ?? count++;
+      const second = local.pop() ?? count++;
+      const found = [ids.find(true, 0, "ab"), ids.find(false, -1, "abc"), ids.find(false, 1, "x")];
+      const taken = [ids.take(), ids.take()].join(",");
+      const result = [
+        ids.ids.join(","),
+        ids.next,
+        ids.dropped,
+        taken,
+        first,
+        second,
+        count,
+        found.join(","),
+        ids.hashes.size,
+      ].join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("1,2,1;3;1;2,;5;1;2;1,3,2;1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1,2,1;3;1;2,;5;2;2;1,3,2;1"))).failure?.message).toContain(
+      "1,2,1;3;1;2,;5;1;2;1,3,2;1",
+    );
+  });
+
+  it("makes the objects of a callback that an array literal's method calls", async () => {
+    const getSource = (expected: number) => `
+      const size = [1].map((value) => ({ value })).length;
+      const items = [1, 2].map((value) => ({ value }));
+      if (size !== 1 || items[1].value !== ${expected}) throw new Error("map");
+    `;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(3))).failure?.message).toContain("map");
   });
 
   it("evaluates a declaration that nothing reads where it runs", async () => {

@@ -1119,6 +1119,25 @@ const assignPatternWith = (
     continueWith,
   );
 
+const REMOVING_METHODS = new Set(["push", "unshift", "splice", "shift", "pop"]);
+
+// Whether a call changes an array, a set, or a map, and gives what it removed or how long the array
+// became.
+const isRemoving = (node: ts.Expression, context: Context): boolean => {
+  if (ts.isNonNullExpression(node) || ts.isParenthesizedExpression(node)) {
+    return isRemoving(node.expression, context);
+  }
+  if (!isMethodCall(node)) return false;
+  const method = node.expression.name.text;
+  const kind = getKind(node.expression.expression, context);
+  return (
+    (method === "delete" && (kind === "set" || kind === "map") && node.arguments.length === 1) ||
+    (kind === "sequence" &&
+      !node.arguments.some(ts.isSpreadElement) &&
+      REMOVING_METHODS.has(method))
+  );
+};
+
 // The value that a call like queue.shift() returns, before it changes the queue.
 const getRemovedValue = (
   node: ts.Expression,
@@ -1128,12 +1147,12 @@ const getRemovedValue = (
   if (ts.isNonNullExpression(node) || ts.isParenthesizedExpression(node)) {
     return getRemovedValue(node.expression, path, context);
   }
-  if (!isMethodCall(node)) return undefined;
+  if (!isMethodCall(node) || !isRemoving(node, context)) return undefined;
   const method = node.expression.name.text;
   const receiver = node.expression.expression;
   const kind = getKind(receiver, context);
   // A set's or a map's delete gives whether it held the key.
-  if (method === "delete" && (kind === "set" || kind === "map") && node.arguments.length === 1) {
+  if (method === "delete") {
     const collection = translateExpression(receiver, path.scope, context);
     const key = translateSetKey(node.arguments[0], path.scope, context);
     return {
@@ -1146,7 +1165,6 @@ const getRemovedValue = (
       ),
     };
   }
-  if (kind !== "sequence" || node.arguments.some(ts.isSpreadElement)) return undefined;
   const sequence = translateExpression(receiver, path.scope, context);
   // A push or an unshift gives the array's new length, and a splice the elements it removes.
   const value =
@@ -1154,26 +1172,22 @@ const getRemovedValue = (
       ? apply("+", [apply("Len", [sequence]), number(node.arguments.length)])
       : method === "splice"
         ? translateSpliced(sequence, node.arguments, true, path.scope, context)
-        : method === "shift" || method === "pop"
-          ? ifExpression(
-              apply("=", [sequence, tuple([])]),
-              getUndefined(context),
-              method === "shift"
-                ? apply("Head", [sequence])
-                : index(sequence, [apply("Len", [sequence])]),
-            )
-          : undefined;
-  return value === undefined
-    ? undefined
-    : {
-        value: checkArrayMethod(value, node, path.scope, context),
-        path: assign(
-          receiver,
-          path,
-          context,
-          (current) => getUpdatedValue(current, kind, node, path.scope, context) ?? current,
-        ),
-      };
+        : ifExpression(
+            apply("=", [sequence, tuple([])]),
+            getUndefined(context),
+            method === "shift"
+              ? apply("Head", [sequence])
+              : index(sequence, [apply("Len", [sequence])]),
+          );
+  return {
+    value: checkArrayMethod(value, node, path.scope, context),
+    path: assign(
+      receiver,
+      path,
+      context,
+      (current) => getUpdatedValue(current, kind, node, path.scope, context) ?? current,
+    ),
+  };
 };
 
 // A declaration's array pattern reads an array that the heap holds through its iterator, which
@@ -1367,6 +1381,17 @@ export const translateCallStatement = (
         frame,
         continueWith,
       ),
+    );
+  }
+  // A call like stack.pop() that an expression evaluates, which gives its value from before.
+  const removed = getRemovedValue(expression, path, context);
+  if (removed !== undefined) {
+    const name = context.names.getFresh("removed");
+    return bindOnce(
+      removed.path,
+      name,
+      removed.value,
+      continueWith(removed.path, identifier(name)),
     );
   }
   if (isPromiseCall(expression, context)) {
@@ -4099,9 +4124,7 @@ const getEarlyReads = (
     findNodes(
       inner,
       (found): found is ts.Node =>
-        ts.isPropertyAccessExpression(found) ||
-        ts.isElementAccessExpression(found) ||
-        found.kind === ts.SyntaxKind.ThisKeyword,
+        ts.isPropertyAccessExpression(found) || ts.isElementAccessExpression(found),
     ).length > 0;
   // A call that evaluates before, and hasn't run yet, reads what its function's body reads.
   const readsChanged = (inner: ts.Node, visited: Set<ts.Node>): boolean =>
@@ -8499,6 +8522,7 @@ const isPlainCallee = (
   results?: Scope["results"],
 ): boolean =>
   ts.isIdentifier(node) ||
+  node.kind === ts.SyntaxKind.ThisKeyword ||
   ts.isLiteralExpression(node) ||
   (results?.has(node) ?? false) ||
   (ts.isPropertyAccessExpression(node) &&
@@ -8517,7 +8541,8 @@ const isIncrement = (node: ts.Node): node is Increment =>
 
 // A variable, or a property of an object that a name holds, whose key no getter has, which reads
 // and writes a number without running code.
-const isPlainIncrement = (node: Increment, context: Context) => {
+// The boolean type keeps TypeScript from narrowing the increment as a proxy's operation.
+const isPlainIncrement = (node: Increment, context: Context): boolean => {
   const operand = node.operand;
   const names = getTypeNames(context.checker.getTypeAtLocation(operand), context.checker);
   const isNumeric =
@@ -8846,18 +8871,33 @@ const findLeadingCall = (
   if (ts.isTemplateExpression(node)) {
     return thenConverted(inOrder(node.templateSpans.map((span) => span.expression)));
   }
-  // An operand that runs a call that only statements can run.
-  const isBranchCall = (operand: ts.Expression) =>
-    findLeadingCall(operand, [], path, context).call !== undefined;
+  // An operand that runs a call that only statements can run, an increment, or a branch of these.
+  const isBranchRun = (operand: ts.Expression) => {
+    const run = skipCasts(operand);
+    const found = findLeadingCall(run, [], path, context);
+    return (
+      found.call !== undefined ||
+      (isIncrement(run) && isPlainIncrement(run, context)) ||
+      found.branch === run
+    );
+  };
+  // Operands that run only sometimes, which evaluate on where they run nothing.
+  const isEvaluated = (operands: readonly ts.Node[]) =>
+    operands.every((operand) => {
+      const found = findLeadingCall(operand, before, path, context);
+      return found.call === undefined && !found.isBlocked;
+    });
   // A condition or a short-circuit's left operand always runs first, so a read that it runs first
   // runs before the operand that runs only sometimes.
   if (ts.isConditionalExpression(node)) {
     const found = findLeadingCall(node.condition, before, path, context);
     return found.call !== undefined || found.read !== undefined || found.branch !== undefined
       ? found
-      : !found.isBlocked && (isBranchCall(node.whenTrue) || isBranchCall(node.whenFalse))
+      : !found.isBlocked && (isBranchRun(node.whenTrue) || isBranchRun(node.whenFalse))
         ? { ...blocked, branch: node }
-        : blocked;
+        : !found.isBlocked && isEvaluated([node.whenTrue, node.whenFalse])
+          ? none
+          : blocked;
   }
   if (ts.isBinaryExpression(node)) {
     const kind = node.operatorToken.kind;
@@ -8869,9 +8909,11 @@ const findLeadingCall = (
       const found = findLeadingCall(node.left, before, path, context);
       return found.call !== undefined || found.read !== undefined || found.branch !== undefined
         ? found
-        : !found.isBlocked && isBranchCall(node.right)
+        : !found.isBlocked && isBranchRun(node.right)
           ? { ...blocked, branch: node }
-          : blocked;
+          : !found.isBlocked && isEvaluated([node.right])
+            ? none
+            : blocked;
     }
     if (kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(node.left)) {
       return findLeadingCall(node.right, before, path, context);
@@ -8936,16 +8978,23 @@ const findLeadingCall = (
     const receiver = ts.isPropertyAccessExpression(node.expression)
       ? getCast(node.expression.expression)
       : undefined;
+    // An array literal's method runs its elements first.
+    const isListed =
+      receiver !== undefined &&
+      ts.isArrayLiteralExpression(receiver) &&
+      !receiver.elements.some(ts.isSpreadElement);
     const fromReceiver =
-      receiver !== undefined && ts.isCallExpression(receiver)
+      receiver !== undefined && (ts.isCallExpression(receiver) || isListed)
         ? findLeadingCall(receiver, before, path, context)
         : none;
     if (fromReceiver.call !== undefined || fromReceiver.isBlocked) return fromReceiver;
-    if (!isPlainCallee(node.expression, context, path.scope.results)) return blocked;
+    if (!isListed && !isPlainCallee(node.expression, context, path.scope.results)) return blocked;
     const found = thenConverted(inOrder(node.arguments));
     if (found.call !== undefined || found.isBlocked) return found;
     if (isGeneratorType(node, context)) return blocked;
-    return isStatementCall(node, path, context) ? { call: node, isBlocked: false } : evaluate(node);
+    return isStatementCall(node, path, context) || isRemoving(node, context)
+      ? { call: node, isBlocked: false }
+      : evaluate(node);
   }
   return ts.isIdentifier(node) ||
     ts.isLiteralExpression(node) ||
@@ -8998,7 +9047,8 @@ const getHoistedCall = (statement: ts.Statement, path: Path, context: Context) =
   return getLeadingCall(
     evaluated,
     (call) =>
-      call !== outer &&
+      // An if statement evaluates its condition, and runs no call of it.
+      (call !== outer || ts.isIfStatement(statement)) &&
       !(
         ts.isBinaryExpression(outer) &&
         outer.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
@@ -9089,7 +9139,7 @@ const getHoistedBranch = (statement: ts.Statement, path: Path, context: Context)
     : [node.right];
   rejectEarlyRun(
     node,
-    operands.map(skipCasts).filter(ts.isCallExpression),
+    operands.map(skipCasts),
     before.filter((inner) => ts.findAncestor(inner, (ancestor) => ancestor === node) === undefined),
     path,
     context,
@@ -9244,55 +9294,86 @@ export const translateStatements = (
   }
   const branch = getHoistedBranch(statement, path, context);
   if (branch !== undefined) {
-    const withValue = (after: Path, value: Expression) =>
-      translateStatements(
-        statements,
-        {
-          ...after,
-          scope: { ...after.scope, results: new Map([...after.scope.results, [branch, value]]) },
-        },
-        context,
-        frame,
-      );
-    // An operand runs the calls in it that only statements can run, in order, before the rest.
-    const evaluate = (operand: ts.Expression, current: Path): Formula => {
-      const call = skipCasts(operand);
-      if (ts.isCallExpression(call) && !current.scope.results.has(call)) {
-        return allocate(call, current, context, (allocated) =>
-          translateCallStatement(call, allocated, context, frame, (after, value) =>
-            withValue(after, value ?? getUndefined(context)),
-          ),
-        );
-      }
-      const leading = getLeadingCall(operand, () => true, current, context);
-      return leading === undefined
-        ? withValue(current, translateExpression(operand, current.scope, context))
-        : allocate(leading.call, current, context, (allocated) =>
-            translateCallStatement(leading.call, allocated, context, frame, (after, value) =>
-              evaluate(operand, withLeadingResults(leading, allocated, after, value, context)),
+    // A branch whose operand is a branch runs that one where it runs.
+    const runBranch = (
+      node: NonNullable<LeadingCall["branch"]>,
+      current: Path,
+      withValue: (after: Path, value: Expression) => Formula,
+    ): Formula => {
+      // An operand runs the calls in it that only statements can run, in order, before the rest.
+      const evaluate = (operand: ts.Expression, next: Path): Formula => {
+        const run = skipCasts(operand);
+        const inner = findLeadingCall(run, [], next, context).branch;
+        if (inner !== undefined && inner === run) return runBranch(inner, next, withValue);
+        // An increment gives its operand's number from before, or after, as its prefix form does.
+        if (isIncrement(run) && isPlainIncrement(run, context)) {
+          const before = translateExpression(run.operand, next.scope, context);
+          return translateExpressionStatement(run, next, context, frame, (after) =>
+            withValue(
+              after,
+              ts.isPostfixUnaryExpression(run)
+                ? before
+                : translateExpression(run.operand, after.scope, context),
             ),
           );
+        }
+        if (ts.isCallExpression(run) && !next.scope.results.has(run)) {
+          return allocate(run, next, context, (allocated) =>
+            translateCallStatement(run, allocated, context, frame, (after, value) =>
+              withValue(after, value ?? getUndefined(context)),
+            ),
+          );
+        }
+        const leading = getLeadingCall(operand, () => true, next, context);
+        return leading === undefined
+          ? withValue(next, translateExpression(operand, next.scope, context))
+          : allocate(leading.call, next, context, (allocated) =>
+              translateCallStatement(leading.call, allocated, context, frame, (after, value) =>
+                evaluate(operand, withLeadingResults(leading, allocated, after, value, context)),
+              ),
+            );
+      };
+      if (ts.isConditionalExpression(node)) {
+        return ifThenElse(
+          translateCondition(node.condition, current.scope, context),
+          evaluate(node.whenTrue, current),
+          evaluate(node.whenFalse, current),
+        );
+      }
+      const kind = node.operatorToken.kind;
+      context.prelude.add("Null");
+      context.prelude.add("Undefined");
+      const isRight =
+        kind === ts.SyntaxKind.QuestionQuestionToken
+          ? apply("\\in", [
+              translateExpression(node.left, current.scope, context),
+              set([identifier("Null"), identifier("Undefined")]),
+            ])
+          : kind === ts.SyntaxKind.AmpersandAmpersandToken
+            ? translateCondition(node.left, current.scope, context)
+            : not(translateCondition(node.left, current.scope, context));
+      return ifThenElse(isRight, evaluate(node.right, current), evaluate(node.left, current));
     };
-    if (ts.isConditionalExpression(branch)) {
-      return ifThenElse(
-        translateCondition(branch.condition, path.scope, context),
-        evaluate(branch.whenTrue, path),
-        evaluate(branch.whenFalse, path),
-      );
-    }
-    const kind = branch.operatorToken.kind;
-    context.prelude.add("Null");
-    context.prelude.add("Undefined");
-    const isRight =
-      kind === ts.SyntaxKind.QuestionQuestionToken
-        ? apply("\\in", [
-            translateExpression(branch.left, path.scope, context),
-            set([identifier("Null"), identifier("Undefined")]),
-          ])
-        : kind === ts.SyntaxKind.AmpersandAmpersandToken
-          ? translateCondition(branch.left, path.scope, context)
-          : not(translateCondition(branch.left, path.scope, context));
-    return ifThenElse(isRight, evaluate(branch.right, path), evaluate(branch.left, path));
+    // What follows translates once, for each operand that gives the value.
+    return translateJoined(
+      branch,
+      path,
+      context,
+      (after, value) =>
+        translateStatements(
+          statements,
+          {
+            ...after,
+            scope: {
+              ...after.scope,
+              results: new Map([...after.scope.results, [branch, value ?? getUndefined(context)]]),
+            },
+          },
+          context,
+          frame,
+        ),
+      (next) => runBranch(branch, path, next),
+    );
   }
   const hoisted = getHoistedAssignment(statement, path, context);
   // An increment gives its operand's number from before, or after, as its prefix form does.
@@ -9462,7 +9543,9 @@ export const translateStatements = (
         (!isLibraryCall(returned, context) ||
           isPromiseCall(returned, context) ||
           getLoopCall(returned, inner, context) !== undefined ||
-          isObjectChange(returned, context))
+          isObjectChange(returned, context) ||
+          isStatementResult(returned, inner, context) ||
+          isRemoving(returned, context))
       ) {
         return translateCallStatement(returned, inner, context, frame, frame.exit);
       }
