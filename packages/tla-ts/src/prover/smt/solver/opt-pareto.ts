@@ -28,6 +28,7 @@ import { Goal } from "./goal";
 import { goal2nlsat } from "./goal2nlsat";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { NlsatSolver } from "./nlsat/solver";
+import { getModelValueBound } from "./opt-solver";
 import { ProtoModel } from "./proto-model";
 import { RefVector } from "./ref-vector";
 import { compileInternalTactic, type TacticEnvironment } from "./tactic";
@@ -224,20 +225,28 @@ export const giaPareto = (
   manager: AstManager,
   solver: ParetoSolver,
   objectives: readonly ParetoObjective[],
+  isExact: boolean,
 ) => {
   const pinned = new RefVector(manager);
   const pin = (expr: number) => {
     pinned.push(expr);
     return expr;
   };
+  // Without exact comparison, an irrational value becomes the endpoint of an isolating interval
+  // on the side that keeps the atom true in the model, since the SMT core does not internalize it.
+  const getComparable = (value: number, isGreater: boolean) => {
+    if (manager.isNumeral(value) || (isExact && manager.isAlgebraicNumeral(value))) return value;
+    const bound = getModelValueBound(manager, manager.am, value, isGreater);
+    return bound === undefined ? -1 : pin(manager.mkRealNumeral(bound));
+  };
   const mkCmp = (isGe: boolean, model: ProtoModel, objective: ParetoObjective) => {
     const isGreater = objective.isMax ? isGe : !isGe;
-    const value = model.eval(objective.term, true);
-    pin(value);
-    manager.decRef(value);
-    const isComparable = manager.isAlgebraicNumeral(value) || manager.isNumeral(value);
+    const evaluated = model.eval(objective.term, true);
+    pin(evaluated);
+    manager.decRef(evaluated);
+    const value = getComparable(evaluated, isGreater);
     const pair = isGreater ? [objective.term, value] : [value, objective.term];
-    return isComparable ? pin(manager.mkApp(OP_GE, pair, SORT_BOOL)) : manager.trueExpr;
+    return value === -1 ? manager.trueExpr : pin(manager.mkApp(OP_GE, pair, SORT_BOOL));
   };
   const mkAnd = (args: number[]) =>
     args.length === 1 ? args[0] : pin(manager.mkApp(OP_AND, args, SORT_BOOL));

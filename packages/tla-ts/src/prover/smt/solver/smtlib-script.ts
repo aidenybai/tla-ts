@@ -45,14 +45,7 @@ import {
   type SmtList,
   type SmtlibReader,
 } from "./smtlib-parser";
-import {
-  isBeyondOptimization,
-  O_MAXIMIZE,
-  O_MAXSMT,
-  O_MINIMIZE,
-  OptContext,
-  type OptObjective,
-} from "./opt-context";
+import { O_MAXIMIZE, O_MAXSMT, O_MINIMIZE, OptContext, type OptObjective } from "./opt-context";
 import { getLogicStrategy } from "./logic-tactics";
 import { isMbqiByFeatures, isMbqiByLogic } from "./smt-setup";
 import { isSupportedLogic } from "./smt-logics";
@@ -274,11 +267,6 @@ interface CheckResult {
   core: number[] | undefined;
 }
 
-const getObjectiveTerms = (objectives: readonly OptObjective[]) =>
-  objectives.flatMap((objective) =>
-    objective.type === O_MAXSMT ? objective.terms : [objective.term],
-  );
-
 interface ScriptState {
   manager: AstManager;
   logic: string | undefined;
@@ -376,21 +364,24 @@ export const runSmtlibScript = (
   };
   const getOptOptions = () => {
     const parameters = settings.parameters;
-    if (parameters.get("opt.optsmt_nlsat") === "false")
-      throw new SmtUnsupportedError("nonlinear optimization without nlsat");
+    // symba and farkas run on the infinitesimal arithmetic solver, which is not ported.
     if ((parameters.get("opt.optsmt_engine") ?? "basic") !== "basic")
       throw new SmtUnsupportedError("the option :opt.optsmt_engine");
-    if (parameters.get("opt.pareto_nlsat_reuse") === "false")
-      throw new SmtUnsupportedError("pareto optimization without incremental nlsat");
     return {
       priority: parameters.get("opt.priority") ?? "lex",
-      bisectRounds: Number(parameters.get("opt.optsmt_bisect_rounds") ?? 64),
-      supremumRlimit: Number(parameters.get("opt.optsmt_nlsat_supremum_rlimit") ?? 100000),
+      optsmt: {
+        bisectRounds: Number(parameters.get("opt.optsmt_bisect_rounds") ?? 64),
+        isNlsat: parameters.get("opt.optsmt_nlsat") !== "false",
+        isDualBounds: parameters.get("opt.optsmt_dual_bounds") !== "false",
+        supremumRlimit: Number(parameters.get("opt.optsmt_nlsat_supremum_rlimit") ?? 100000),
+        isLexAfterUnbounded: parameters.get("opt.optsmt_lex_after_unbounded") !== "false",
+      },
       isParetoNlsat: parameters.get("opt.pareto_nlsat") !== "false",
+      isParetoNlsatReused: parameters.get("opt.pareto_nlsat_reuse") !== "false",
       paretoMaxLemmas: Number(parameters.get("opt.pareto_nlsat_max_lemmas") ?? 128),
     };
   };
-  const optimize = (extra: number[], isLinear: boolean) => {
+  const optimize = (extra: number[]) => {
     const state = script.state;
     const manager = state.manager;
     const objectives = state.objectives;
@@ -418,7 +409,6 @@ export const runSmtlibScript = (
       const status = optimizer.optimize(hard, {
         ...getOptOptions(),
         hasAssumptions,
-        isLinear,
         isSatEnabled: settings.parameters.get("opt.enable_sat") !== "false",
         maxsat: {
           maxsatEngine: settings.parameters.get("opt.maxsat_engine") ?? "maxres",
@@ -443,8 +433,8 @@ export const runSmtlibScript = (
       print(getVerdict(status));
       return true;
     } catch (error) {
-      // The unported parts of linear optimization keep the answer of the hard constraints.
-      if (isLinear && error instanceof SmtUnsupportedError) {
+      // The unported parts of optimization keep the answer of the hard constraints.
+      if (error instanceof SmtUnsupportedError) {
         resetOptimizer();
         return false;
       }
@@ -496,19 +486,9 @@ export const runSmtlibScript = (
     const state = script.state;
     state.manager.limit.restart(Date.now() + options.timeLimitMs);
     // opt::context::optimize answers as the search of the hard constraints does: once they are
-    // satisfiable, optsmt and maxsmt only improve the model. MaxSMT and the unported parts of
-    // optsmt only get that answer.
-    const isBeyond =
-      state.objectives.length > 0 &&
-      isBeyondOptimization(state.manager, [
-        ...state.assertions,
-        ...getObjectiveTerms(state.objectives),
-      ]);
-    if (isBeyond) {
-      optimize(extra, false);
-      return;
-    }
-    if (state.objectives.length > 0 && optimize(extra, true)) return;
+    // satisfiable, optsmt and maxsmt only improve the model. The unported parts of optimization
+    // only get that answer.
+    if (state.objectives.length > 0 && optimize(extra)) return;
     state.manager.limit.push(settings.rlimit);
     const isOptimizing = state.objectives.length > 0;
     try {

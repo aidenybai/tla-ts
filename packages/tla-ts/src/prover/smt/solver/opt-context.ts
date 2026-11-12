@@ -1,7 +1,5 @@
-// Ported from Z3 (src/opt/opt_context.cpp, src/opt/optsmt.cpp, src/opt/opt_value.cpp), MIT
-// license, see z3-license.txt. Nonlinear real objectives skip the arithmetic climb that Z3 runs
-// before nlsat, so a result nlsat does not certify is unsupported. A rational optimum has no exact
-// value, as when the climb finds it, so it prints as Z3 prints it. MaxSMT runs on the SMT core.
+// Ported from Z3 (src/opt/opt_context.cpp, src/opt/opt_value.cpp), MIT license, see
+// z3-license.txt. MaxSMT runs on the SMT core.
 import { SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
@@ -13,10 +11,6 @@ import {
   OP_ITE,
   OP_LE,
   OP_MUL,
-  OP_TO_REAL,
-  OP_MOD,
-  OP_IDIV,
-  OP_DIV,
   OP_EXTRACT,
   OP_UMINUS,
   SORT_BOOL,
@@ -30,15 +24,15 @@ import { getPbSum } from "./lia2card";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import type { MaxsatContext, MaxsatParams } from "./maxsmt-base";
 import { Maxsmt } from "./maxsmt";
-import { AlgebraicManager, type Anum } from "./nlsat/algebraic";
-import { isInNraFragment, mkAlgebraicEq, NlsatOpt, type NlsatOptResult } from "./opt-nlsat";
+import { isInNraFragment } from "./opt-nlsat";
 import { canReuseNlsatSolver, giaPareto, ParetoNlsatSolver, type ParetoSolver } from "./opt-pareto";
 import type { ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
 import { InfEps } from "./inf-eps";
 import { getModelValueBound, OptParetoSolver, OptSolver } from "./opt-solver";
-import { Optsmt } from "./optsmt";
+import { ObjectiveValue } from "./opt-value";
+import { Optsmt, type OptsmtParams } from "./optsmt";
 import { compileInternalTactic, convertModel, type TacticEnvironment } from "./tactic";
 
 const NORMALIZER =
@@ -70,76 +64,15 @@ interface Objective extends OptObjective {
 
 export interface OptOptions {
   priority: string;
-  bisectRounds: number;
-  supremumRlimit: number;
+  optsmt: OptsmtParams;
   isParetoNlsat: boolean;
+  isParetoNlsatReused: boolean;
   paretoMaxLemmas: number;
   hasAssumptions: boolean;
-  isLinear: boolean;
   isSatEnabled: boolean;
   isEliminatingZeroOne: boolean;
   maxsat: MaxsatParams;
 }
-
-interface ObjectiveValue {
-  infinity: Rational;
-  value: Rational;
-  epsilon: Rational;
-  exact: Anum | null;
-}
-
-const MINUS_INFINITY: ObjectiveValue = {
-  infinity: Rational.minusOne,
-  value: Rational.zero,
-  epsilon: Rational.zero,
-  exact: null,
-};
-
-const PLUS_INFINITY: ObjectiveValue = { ...MINUS_INFINITY, infinity: Rational.one };
-
-const getBracket = (value: InfEps): ObjectiveValue => ({ ...value, exact: null });
-
-const getRationalValue = (value: Rational): ObjectiveValue => ({
-  infinity: Rational.zero,
-  value,
-  epsilon: Rational.zero,
-  exact: null,
-});
-
-// opt::context warns that it does not support quantifiers, and optsmt need not find a bound of
-// nonlinear arithmetic, so the port does not answer either.
-export const isBeyondOptimization = (manager: AstManager, formulas: readonly number[]) => {
-  const seen = new Set<number>();
-  const stack = [...formulas];
-  for (let expr = stack.pop(); expr !== undefined; expr = stack.pop()) {
-    if (seen.has(expr)) continue;
-    seen.add(expr);
-    if (manager.hasQuantifierFlags[expr]) return true;
-    const args = manager.getArgs(expr);
-    const op = manager.getOp(expr);
-    const isConstant = (arg: number): boolean =>
-      manager.isNumeral(arg) ||
-      ((manager.getOp(arg) === OP_UMINUS || manager.getOp(arg) === OP_TO_REAL) &&
-        isConstant(manager.getArg(arg, 0)));
-    if (op === OP_MUL && args.filter((arg) => !isConstant(arg)).length > 1) return true;
-    if ((op === OP_DIV || op === OP_IDIV || op === OP_MOD) && !manager.isNumeral(args[1]))
-      return true;
-    stack.push(...args);
-  }
-  return false;
-};
-
-const hasIntConst = (manager: AstManager, formulas: readonly number[]) => {
-  const seen = new Set<number>();
-  const stack = [...formulas];
-  for (let expr = stack.pop(); expr !== undefined; expr = stack.pop()) {
-    if (seen.has(expr)) continue;
-    seen.add(expr);
-    if (manager.isUninterpretedConst(expr) && manager.sorts[expr] === SORT_INT) return true;
-    manager.pushArgs(expr, stack);
-  }
-  return false;
-};
 
 const isPropositional = (manager: AstManager, expr: number) => {
   const atom = manager.isNot(expr) ? manager.getArg(expr, 0) : expr;
@@ -192,9 +125,6 @@ const SAT_MAXSAT_ENGINES = new Set([
 ]);
 
 export class OptContext {
-  private am = new AlgebraicManager();
-  private lower: ObjectiveValue[] = [];
-  private upper: ObjectiveValue[] = [];
   private boxModels: ProtoModel[] = [];
   private boxIndex = -1;
   private pareto: ParetoSolver | null = null;
@@ -245,154 +175,51 @@ export class OptContext {
     this.model = fixed;
   }
 
-  private getInternalTerm(index: number, pinned: RefVector) {
-    const objective = this.normalized[index];
-    if (objective.isMax) return objective.term;
-    const negated = this.manager.mkApp(OP_UMINUS, [objective.term], SORT_REAL);
-    pinned.push(negated);
-    return negated;
-  }
-
-  private getCommitment(index: number, pinned: RefVector) {
-    const manager = this.manager;
-    const lower = this.lower[index];
-    const term = this.getInternalTerm(index, pinned);
-    const constraint =
-      lower.exact !== null && !this.am.isRational(lower.exact)
-        ? mkAlgebraicEq(manager, term, lower.exact)
-        : manager.mkApp(OP_GE, [term, manager.mkRealNumeral(lower.value)], SORT_BOOL);
-    pinned.push(constraint);
-    return constraint;
-  }
-
-  private search(
-    index: number,
-    hard: readonly number[],
-    options: OptOptions,
-    isCommitting: boolean,
-  ) {
-    const pinned = new RefVector(this.manager);
-    const commitments = Array.from({ length: isCommitting ? index : 0 }, (_value, earlier) =>
-      this.lower[earlier].infinity.isZero() ? [this.getCommitment(earlier, pinned)] : [],
-    ).flat();
-    const optimized = new NlsatOpt(this.manager, this.environment).maximize(
-      [...hard, ...commitments],
-      this.getInternalTerm(index, pinned),
-      null,
-      null,
-      options.bisectRounds,
-      options.supremumRlimit,
-    );
-    pinned.reset();
-    if (optimized.status === L_FALSE) return L_FALSE;
-    if (optimized.status !== L_TRUE)
-      throw new SmtUnsupportedError("an optimum that nlsat does not certify");
-    this.setResult(index, optimized.result);
-    this.setModel(optimized.result.model);
-    optimized.result.model?.decRef();
-    return L_TRUE;
-  }
-
-  private setResult(index: number, result: NlsatOptResult) {
-    if (result.isUnbounded) {
-      this.lower[index] = PLUS_INFINITY;
-      this.upper[index] = PLUS_INFINITY;
-      return;
-    }
-    const value = result.isOpen ? result.sup : result.value;
-    if (value === null) throw new SmtUnsupportedError("an optimum that nlsat does not certify");
-    const epsilon = result.isOpen ? Rational.minusOne : Rational.zero;
-    const exact = !result.isOpen && this.am.isRational(value) ? null : value;
-    const bracket = (rational: Rational) => ({
-      infinity: Rational.zero,
-      value: rational,
-      epsilon,
-      exact,
-    });
-    this.lower[index] = bracket(result.isOpen ? result.supLower : result.lower);
-    this.upper[index] = bracket(
-      exact === null ? result.lower : result.isOpen ? result.supUpper : result.upper,
-    );
-  }
-
-  private executeLex(hard: readonly number[], options: OptOptions) {
-    const count = this.objectives.length;
-    for (let index = 0; index < count; index++) {
-      const status = this.search(index, hard, options, true);
-      if (status !== L_TRUE) return status;
-      for (let later = index + 1; later < count; later++) this.lower[later] = MINUS_INFINITY;
-      const isOpen = !this.lower[index].epsilon.isZero();
-      if (isOpen && index + 1 < count) {
-        this.reasonUnknown =
-          "later lexicographic objectives after an unattained nonlinear optimum are not supported";
-        return L_UNDEF;
-      }
-      if (!this.lower[index].infinity.isZero() && index + 1 < count)
-        throw new SmtUnsupportedError("lexicographic objectives after an unbounded one");
-    }
-    return L_TRUE;
-  }
-
-  private executeBox(hard: readonly number[], options: OptOptions) {
-    for (let index = 0; index < this.objectives.length; index++) {
-      const status = this.search(index, hard, options, false);
-      if (status !== L_TRUE) return status;
-      const model = this.model;
-      if (model === null) throw new SmtUnsupportedError("a box objective without a model");
-      model.incRef();
-      this.boxModels.push(model);
-    }
-    this.boxIndex = 1;
-    this.setModel(this.boxModels[0]);
-    return L_TRUE;
-  }
-
-  private getModelBound(value: number, isLower: boolean) {
-    const manager = this.manager;
-    if (manager.isNumeral(value)) return manager.getRationalValue(value);
-    if (!manager.isAlgebraicNumeral(value)) return null;
-    const scale = Rational.of(10n ** 12n);
-    const interval = this.am.getInterval(manager.getAlgebraicValue(value), 40);
-    return isLower
-      ? interval[0].mul(scale).floor().div(scale)
-      : interval[1].mul(scale).ceil().div(scale);
-  }
-
   private executePareto() {
     const pareto = this.pareto;
-    if (pareto === null) throw new SmtUnsupportedError("pareto optimization without a solver");
-    const outcome = giaPareto(this.manager, pareto, this.normalized);
+    const optsmt = this.optsmt;
+    if (pareto === null || optsmt === null)
+      throw new SmtUnsupportedError("pareto optimization without a solver");
+    const outcome = giaPareto(
+      this.manager,
+      pareto,
+      this.normalized,
+      pareto instanceof ParetoNlsatSolver,
+    );
     if (outcome.status !== L_TRUE || outcome.model === null) {
       if (outcome.status === L_UNDEF) this.reasonUnknown = pareto.reasonUnknown;
       pareto.release();
       this.pareto = null;
       return outcome.status;
     }
-    const model = outcome.model;
-    for (const [index, objective] of this.normalized.entries()) {
-      const value = model.eval(objective.term, true);
-      const sides = [objective.isMax, !objective.isMax].map((isLower) => {
-        const bound = this.getModelBound(value, isLower);
-        return bound === null ? null : objective.isMax ? bound : bound.neg();
-      });
-      this.manager.decRef(value);
-      if (sides[0] !== null) this.lower[index] = getRationalValue(sides[0]);
-      if (sides[1] !== null) this.upper[index] = getRationalValue(sides[1]);
-    }
-    this.setModel(model);
-    model.decRef();
+    this.rawModel = outcome.model;
+    this.updateBound(optsmt, true);
+    this.updateBound(optsmt, false);
+    this.setModel(outcome.model);
+    outcome.model.decRef();
     return L_TRUE;
   }
 
-  private startPareto(hard: readonly number[], options: OptOptions) {
-    if (!options.isParetoNlsat || options.hasAssumptions)
-      throw new SmtUnsupportedError("pareto optimization without nlsat");
-    const terms = [...hard, ...this.normalized.map((objective) => objective.term)];
-    if (!canReuseNlsatSolver(this.manager, terms))
+  // On a pure NRA problem the dominance and blocking constraints go to nlsat, which decides atoms
+  // over irrational algebraic numerals that the SMT core does not internalize.
+  private mkParetoSolver(solver: OptSolver, hard: readonly number[], options: OptOptions) {
+    const manager = this.manager;
+    if (!options.isParetoNlsat || options.hasAssumptions) return new OptParetoSolver(solver);
+    const terms = [...hard];
+    for (const objective of this.internal) {
+      if (
+        objective.type === O_MAXSMT ||
+        manager.sorts[objective.term] !== SORT_REAL ||
+        !isInNraFragment(manager, [...hard, objective.term])
+      )
+        return new OptParetoSolver(solver);
+      terms.push(objective.term);
+    }
+    if (!options.isParetoNlsatReused || !canReuseNlsatSolver(manager, terms))
       throw new SmtUnsupportedError("pareto optimization without incremental nlsat");
-    this.pareto = new ParetoNlsatSolver(this.manager, this.environment, options.paretoMaxLemmas);
-    for (const form of hard) this.pareto.assert(form);
-    return this.executePareto();
+    const pareto = new ParetoNlsatSolver(manager, this.environment, options.paretoMaxLemmas);
+    for (const form of hard) pareto.assert(form);
+    return pareto;
   }
 
   optimize(hard: readonly number[], options: OptOptions) {
@@ -408,27 +235,6 @@ export class OptContext {
     this.release();
     const normalized = this.normalize(hard, options.isEliminatingZeroOne);
     if (normalized.length === 1 && this.manager.isFalse(normalized[0])) return L_FALSE;
-    const terms = [
-      ...normalized,
-      ...this.internal.flatMap((objective) =>
-        objective.type === O_MAXSMT ? objective.terms : [objective.term],
-      ),
-    ];
-    if (
-      options.isLinear ||
-      this.internal.every((objective) => objective.type === O_MAXSMT) ||
-      !isBeyondOptimization(this.manager, terms)
-    )
-      return this.executeLinear(normalized, options);
-    if (
-      this.internal.some(
-        (objective) =>
-          objective.type === O_MAXSMT || this.manager.sorts[objective.term] !== SORT_REAL,
-      ) ||
-      !isInNraFragment(this.manager, terms) ||
-      hasIntConst(this.manager, terms)
-    )
-      throw new SmtUnsupportedError("optimization beyond linear arithmetic");
     return this.execute(normalized, options);
   }
 
@@ -490,19 +296,24 @@ export class OptContext {
     return actual !== undefined && actual.equals(expected);
   }
 
-  private executeLinear(hard: readonly number[], options: OptOptions) {
+  private execute(hard: readonly number[], options: OptOptions) {
     const manager = this.manager;
     this.reasonUnknown = "";
     if (hard.some((form) => manager.hasQuantifierFlags[form]))
       throw new SmtUnsupportedError("optimization with quantified constraints");
     const solver = new OptSolver(manager, this.environment);
     this.optSolver = solver;
-    const optsmt = new Optsmt(manager, {
-      getBaseModel: () => this.rawModel,
-      setModel: (model) => {
-        this.rawModel = model;
+    const optsmt = new Optsmt(
+      manager,
+      this.environment,
+      {
+        getBaseModel: () => this.rawModel,
+        setModel: (model) => {
+          this.rawModel = model;
+        },
       },
-    });
+      options.optsmt,
+    );
     this.optsmt = optsmt;
     const context = this.getMaxsatContext(solver, options);
     for (const [index, objective] of this.internal.entries()) {
@@ -535,9 +346,7 @@ export class OptContext {
     if (count > 1 && options.priority === "pareto") {
       if (this.internal.some((objective) => objective.type === O_MAXSMT))
         throw new SmtUnsupportedError("pareto optimization of soft constraints");
-      this.lower = this.internal.map(() => MINUS_INFINITY);
-      this.upper = this.internal.map(() => PLUS_INFINITY);
-      this.pareto = new OptParetoSolver(solver);
+      this.pareto = this.mkParetoSolver(solver, hard, options);
       return this.executePareto();
     }
     const result =
@@ -546,14 +355,8 @@ export class OptContext {
         : count === 1
           ? this.execute1(optsmt, this.internal[0], true, false)
           : options.priority === "box"
-            ? this.executeLinearBox(optsmt)
-            : this.executeLinearLex(optsmt, options);
-    this.lower = this.internal.map((objective) =>
-      objective.type === O_MAXSMT ? MINUS_INFINITY : getBracket(optsmt.lower[objective.index]),
-    );
-    this.upper = this.internal.map((objective) =>
-      objective.type === O_MAXSMT ? PLUS_INFINITY : getBracket(optsmt.upper[objective.index]),
-    );
+            ? this.executeBox(optsmt)
+            : this.executeLex(optsmt, options);
     this.setModel(this.rawModel);
     return result === L_TRUE && solver.wasUnknown ? L_UNDEF : result;
   }
@@ -588,7 +391,7 @@ export class OptContext {
       }
       const value = model.eval(objective.term, false);
       const bound =
-        getModelValueBound(manager, this.am, value, isLower !== objective.isNegated) ??
+        getModelValueBound(manager, manager.am, value, isLower !== objective.isNegated) ??
         (manager.isBvNumeral(value) ? Rational.of(manager.getBvNumeralValue(value)) : undefined);
       manager.decRef(value);
       if (bound === undefined) continue;
@@ -621,15 +424,22 @@ export class OptContext {
     const solver = this.optSolver;
     if (solver === null) throw new SmtUnsupportedError("optimization without a solver");
     if (isScoped) solver.push();
-    const status = optsmt.lex(index);
+    const result = optsmt.lex(index);
+    // A later lexicographic objective cannot be optimized at an unattained real value.
+    const isOpen = result === L_TRUE && optsmt.hasOpenBound(index);
+    const isBlockingLater = isOpen && isCommitted && this.internal.length > 1;
+    if (isBlockingLater)
+      this.reasonUnknown =
+        "later lexicographic objectives after an unattained nonlinear optimum are not supported";
+    const status = isBlockingLater ? L_UNDEF : result;
     const best = optsmt.getBestModel();
     if (status === L_TRUE || (status === L_UNDEF && best !== null)) this.rawModel = best;
     if (isScoped) solver.pop(1);
-    if (status === L_TRUE && isCommitted) optsmt.commitAssignment(index);
+    if (status === L_TRUE && isCommitted && !isOpen) optsmt.commitAssignment(index);
     return status;
   }
 
-  private executeLinearLex(optsmt: Optsmt, options: OptOptions) {
+  private executeLex(optsmt: Optsmt, options: OptOptions) {
     const count = this.internal.length;
     const isScoped =
       options.maxsat.maxsatEngine !== "maxres" ||
@@ -639,17 +449,36 @@ export class OptContext {
       const isLast = index + 1 === count;
       const status = this.execute1(optsmt, objective, !isLast, isScoped && !isLast);
       if (status !== L_TRUE) return status;
-      if (objective.type !== O_MAXSMT && !optsmt.upper[objective.index].isFinite()) {
-        if (!isLast)
-          throw new SmtUnsupportedError("lexicographic objectives after an unbounded one");
-        return status;
-      }
+      const isUnbounded = objective.type !== O_MAXSMT && optsmt.isUnbounded(objective.index, true);
+      if (isUnbounded) return isLast ? status : this.executeLexAfterUnbounded(optsmt, index);
       if (!isLast) this.updateBound(optsmt, true);
     }
     return L_TRUE;
   }
 
-  private executeLinearBox(optsmt: Optsmt) {
+  // Each later arithmetic objective takes the limit of its optima as the unbounded objective
+  // grows. A determined limit is committed before the next objective; an interval ends the search,
+  // and the later objectives keep their unrestricted intervals.
+  private executeLexAfterUnbounded(optsmt: Optsmt, unbounded: number) {
+    const count = this.internal.length;
+    for (let index = unbounded + 1; index < count; index++) {
+      const objective = this.internal[index];
+      if (objective.type === O_MAXSMT) return L_TRUE;
+      const status = optsmt.lexAfterUnbounded(this.internal[unbounded].index, objective.index);
+      const best = optsmt.getBestModel();
+      if (best !== null) this.rawModel = best;
+      if (status !== L_TRUE) return status;
+      if (index + 1 < count) {
+        const am = this.manager.am;
+        if (!this.getAdjusted(index, true).equals(this.getAdjusted(index, false), am))
+          return L_TRUE;
+        optsmt.commitAssignment(objective.index);
+      }
+    }
+    return L_TRUE;
+  }
+
+  private executeBox(optsmt: Optsmt) {
     const solver = this.optSolver;
     if (solver === null) throw new SmtUnsupportedError("optimization without a solver");
     this.boxIndex = 1;
@@ -863,52 +692,28 @@ export class OptContext {
     return normalizedHard;
   }
 
-  private execute(hard: readonly number[], options: OptOptions) {
-    this.reasonUnknown = "";
-    this.lower = this.objectives.map(() => MINUS_INFINITY);
-    this.upper = this.objectives.map(() => PLUS_INFINITY);
-    if (this.objectives.length > 1 && options.priority === "pareto")
-      return this.startPareto(hard, options);
-    return this.objectives.length > 1 && options.priority === "box"
-      ? this.executeBox(hard, options)
-      : this.executeLex(hard, options);
-  }
-
-  private getAdjusted(index: number, isLower: boolean): ObjectiveValue {
+  private getAdjusted(index: number, isLower: boolean) {
     const objective = this.internal[index];
     const maxsmt = objective?.maxsmt;
     if (maxsmt !== null && maxsmt !== undefined)
-      return getRationalValue(isLower ? maxsmt.getLower() : maxsmt.getUpper());
+      return new ObjectiveValue(InfEps.of(isLower ? maxsmt.getLower() : maxsmt.getUpper()));
     const isMax = this.objectives[index].type === O_MAXIMIZE;
-    const value = (isLower === isMax ? this.lower : this.upper)[index];
-    if (isMax) return value;
-    const exact = value.exact === null ? null : this.am.copy(value.exact);
-    if (exact !== null) this.am.neg(exact);
-    return {
-      infinity: value.infinity.neg(),
-      value: value.value.neg(),
-      epsilon: value.epsilon.neg(),
-      exact,
-    };
-  }
-
-  private isEqual(first: ObjectiveValue, second: ObjectiveValue) {
-    if (!first.infinity.equals(second.infinity) || !first.epsilon.equals(second.epsilon))
-      return false;
-    if (first.exact === null && second.exact === null) return first.value.equals(second.value);
-    const isFirstAlgebraic = first.exact !== null && !this.am.isRational(first.exact);
-    const isSecondAlgebraic = second.exact !== null && !this.am.isRational(second.exact);
-    if (isFirstAlgebraic !== isSecondAlgebraic) return false;
-    if (first.exact !== null && second.exact !== null && isFirstAlgebraic)
-      return this.am.compare(first.exact, second.exact) === 0;
-    return first.value.equals(second.value);
+    const optsmt = this.optsmt;
+    const value =
+      optsmt === null || objective === undefined
+        ? isLower === isMax
+          ? ObjectiveValue.minusInfinity
+          : ObjectiveValue.infinity
+        : (isLower === isMax ? optsmt.lower : optsmt.upper)[objective.index];
+    return isMax ? value : value.negated(this.manager.am);
   }
 
   private toExpr(value: ObjectiveValue, pinned: RefVector) {
     const manager = this.manager;
-    const isAlgebraic = value.exact !== null && !this.am.isRational(value.exact);
+    const bound = value.bound;
+    const isAlgebraic = value.exact !== null && !manager.am.isRational(value.exact);
     const sort =
-      !isAlgebraic && value.epsilon.isZero() && value.value.isInt() ? SORT_INT : SORT_REAL;
+      !isAlgebraic && bound.epsilon.isZero() && bound.value.isInt() ? SORT_INT : SORT_REAL;
     const mkConst = (name: string, constSort: number) =>
       manager.mkApp(manager.mkFuncDecl(name, [], constSort), [], constSort);
     const mkScaled = (coefficient: Rational, term: number) =>
@@ -916,10 +721,10 @@ export class OptContext {
         ? term
         : manager.mkApp(OP_MUL, [manager.mkNumeralOfSort(coefficient, sort), term], sort);
     const args: number[] = [];
-    if (!value.infinity.isZero()) args.push(mkScaled(value.infinity, mkConst("oo", sort)));
+    if (!bound.infinity.isZero()) args.push(mkScaled(bound.infinity, mkConst("oo", sort)));
     if (isAlgebraic && value.exact !== null) args.push(manager.mkAlgebraicNumeral(value.exact));
-    else if (!value.value.isZero()) args.push(manager.mkNumeralOfSort(value.value, sort));
-    if (!value.epsilon.isZero()) args.push(mkScaled(value.epsilon, mkConst("epsilon", SORT_REAL)));
+    else if (!bound.value.isZero()) args.push(manager.mkNumeralOfSort(bound.value, sort));
+    if (!bound.epsilon.isZero()) args.push(mkScaled(bound.epsilon, mkConst("epsilon", SORT_REAL)));
     const expr =
       args.length === 0
         ? manager.mkNumeral(0n)
@@ -936,9 +741,9 @@ export class OptContext {
       const lower = this.getAdjusted(index, true);
       const upper = this.getAdjusted(index, false);
       const name = objective.type === O_MAXSMT ? (objective.id ?? "") : format(objective.term);
-      if (!this.isEqual(lower, upper))
+      if (!lower.equals(upper, this.manager.am))
         return ` (${name}  (interval ${format(this.toExpr(lower, pinned))} ${format(this.toExpr(upper, pinned))}))`;
-      if (lower.exact !== null && lower.epsilon.isZero()) {
+      if (lower.exact !== null && !lower.hasInfinitesimal()) {
         const exact = this.manager.mkAlgebraicNumeral(lower.exact);
         pinned.push(exact);
         return ` (${name} ${format(exact)})`;

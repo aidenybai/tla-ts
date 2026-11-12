@@ -227,6 +227,10 @@ export class AssertedFormulas {
     return this.formulas.size;
   }
 
+  getFormulas() {
+    return this.formulas.items;
+  }
+
   // Like internalize_assertions, nothing is committed once the formulas are inconsistent.
   reduce() {
     if (this.qhead === this.formulas.size) return [];
