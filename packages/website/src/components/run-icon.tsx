@@ -17,7 +17,7 @@ export const RunIcon = (props: RunIconProps) => (
       animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
       exit={HIDDEN}
       transition={{ type: "spring", duration: 0.3, bounce: 0 }}
-      className="flex"
+      className="flex size-4 items-center justify-center"
     >
       {props.isRunning ? (
         <svg

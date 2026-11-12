@@ -169,10 +169,8 @@ export const PlaygroundHeader = () => {
           onClick={state.run}
         >
           <RunIcon isRunning={state.isRunning} isDone={false} />
-          {state.isRunning ? "Processing" : "Run"}
-          {!state.isRunning && (
-            <kbd className="font-sans text-white/65 max-sm:hidden">{RUN_SHORTCUT}</kbd>
-          )}
+          Run
+          <kbd className="font-sans opacity-65 max-sm:hidden">{RUN_SHORTCUT}</kbd>
         </Button>
       </div>
     </header>
