@@ -51,6 +51,7 @@ import {
   changesState,
   getArgumentsOwner,
   getSymbol,
+  isAssigned,
   getTopLevelDeclaration,
   getUndefined,
   isHeapClass,
@@ -6054,6 +6055,85 @@ const translateForOfGenerator = (
   return iterate(path, translateExpression(iterated, path.scope, context));
 };
 
+// The array pattern that a for-of's head declares or assigns.
+const getArrayHead = (loop: ts.ForOfStatement) => {
+  const head = loop.initializer;
+  if (ts.isArrayLiteralExpression(head)) return head;
+  return ts.isVariableDeclarationList(head) &&
+    head.declarations.length === 1 &&
+    ts.isArrayBindingPattern(head.declarations[0].name)
+    ? head.declarations[0].name
+    : undefined;
+};
+
+// Whether a for-of iterates an array that the code writes in place of names that the script never
+// assigns again, some of which hold generators that an array pattern takes from, so that each
+// iteration reads its element where the array would have held it.
+const isTakingFromGenerators = (loop: ts.ForOfStatement, context: Context) => {
+  const iterated = getCast(loop.expression);
+  return (
+    loop.awaitModifier === undefined &&
+    getArrayHead(loop) !== undefined &&
+    ts.isArrayLiteralExpression(iterated) &&
+    iterated.elements.every((element) => {
+      const symbol = ts.isIdentifier(element) ? getSymbol(element, context.checker) : undefined;
+      return (
+        symbol !== undefined &&
+        symbol.valueDeclaration !== undefined &&
+        !isAssigned(symbol, element.getSourceFile(), context)
+      );
+    }) &&
+    iterated.elements.some((element) => isGeneratorType(element, context))
+  );
+};
+
+// A for-of that isTakingFromGenerators allows, which runs its body for each element in turn, and
+// binds a generator element's pattern to what the pattern takes through the generator's next.
+const translateForOfTaken = (
+  loop: ts.ForOfStatement,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const pattern = getArrayHead(loop);
+  const iterated = getCast(loop.expression);
+  if (pattern === undefined || !ts.isArrayLiteralExpression(iterated)) {
+    throw new TlaTypeScriptError("Unsupported for-of", loop);
+  }
+  const iterate = (current: Path, position: number): Formula => {
+    if (position === iterated.elements.length) return continueWith(current);
+    const element = iterated.elements[position];
+    const bodyFrame: Frame = {
+      ...guardYields(frame),
+      next: (after) => iterate(after, position + 1),
+      continueTo: (after) => iterate(after, position + 1),
+      breakTo: continueWith,
+    };
+    const runBody = (after: Path, value: Expression, source: ts.Expression | undefined) =>
+      bindIteration(loop.initializer, value, source, after, context, bodyFrame, (bound) =>
+        translateStatements([loop.statement], bound, context, bodyFrame),
+      );
+    if (!isGeneratorType(element, context)) {
+      return runBody(current, translateExpression(element, current.scope, context), element);
+    }
+    const taken = takeFromGenerator(
+      pattern,
+      element,
+      [],
+      current,
+      context,
+      bodyFrame,
+      (after, values) => runBody(after, values, undefined),
+    );
+    if (taken === undefined) {
+      throw new TlaTypeScriptError("tla-ts can't follow a generator here", element);
+    }
+    return taken;
+  };
+  return iterate(path, 0);
+};
+
 const translateForAwait = (
   loop: ts.ForOfStatement,
   path: Path,
@@ -7692,6 +7772,9 @@ export const translateStatements = (
   }
   if (ts.isForOfStatement(statement) && statement.awaitModifier !== undefined) {
     return translateForAwait(statement, path, context, frame, continueWith);
+  }
+  if (ts.isForOfStatement(statement) && isTakingFromGenerators(statement, context)) {
+    return translateForOfTaken(statement, path, context, frame, continueWith);
   }
   if (
     ts.isForOfStatement(statement) &&

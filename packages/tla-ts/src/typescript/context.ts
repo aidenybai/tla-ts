@@ -585,7 +585,7 @@ export const getLiteralName = (node: ts.ObjectLiteralExpression, context: Contex
 };
 
 // Whether a script assigns to a name anywhere.
-const isAssigned = (symbol: ts.Symbol, node: ts.Node, context: Context): boolean => {
+export const isAssigned = (symbol: ts.Symbol, node: ts.Node, context: Context): boolean => {
   const target =
     ts.isBinaryExpression(node) &&
     node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&

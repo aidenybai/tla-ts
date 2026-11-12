@@ -6573,6 +6573,28 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("takes a for-of's array pattern from the generators of an array written in place", async () => {
+    const result = await checkModel(`
+      let log = "";
+      const first = (function* () {
+        yield 1;
+        yield 2;
+        yield 3;
+      })();
+      const second = [4, 5];
+      const third = (function* () {
+        yield 6;
+      })();
+      for (const [a, b] of [first, second, third]) {
+        log += String(a) + String(b) + ";";
+      }
+      const rest = first.next();
+      log += rest.done ? "done" : "more";
+      if (log !== "12;45;6undefined;done") throw new Error(log);
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("takes a for await's array pattern from a generator element", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;
