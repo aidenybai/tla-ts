@@ -4414,6 +4414,19 @@ describe("errors", () => {
     );
   });
 
+  it("reverses a frozen array that reverse doesn't write", async () => {
+    const result = await checkModel(`
+      const single = [1];
+      Object.freeze(single);
+      single.reverse();
+      const empty = [, ,];
+      Object.freeze(empty);
+      empty.sort();
+      if (single[0] !== 1 || empty.length !== 2) throw new Error("frozen");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs the getters of an object literal that a method makes on each call", async () => {
     const getSource = (expected: string) => `
       const log: string[] = [];

@@ -3467,7 +3467,7 @@ LOCAL OwnElements(object) ==
 \\* elements leave out becomes a hole. Only an array whose elements are ordinary data properties,
 \\* whose prototypes hold no elements, and that takes new ones, changes this way, as sort, reverse,
 \\* and copyWithin would otherwise run setters or throw.
-LOCAL WithOwnElements(heap, ref, elements) ==
+LOCAL WithOwnElements(heap, ref, elements, isWriting) ==
   LET object == Lookup(heap, ref)
       old == {key \\in DOMAIN object.values : IsIndex(key)}
       present == DOMAIN elements
@@ -3476,16 +3476,18 @@ LOCAL WithOwnElements(heap, ref, elements) ==
                      Cardinality({other \\in present : other < element}) = position - 1]
       indices == {ToString(position) : position \\in present}
       kept == (DOMAIN object.values \\ old) \\cup indices
-  IN IF /\\ \\A key \\in old : object.attributes[key] = Writable
-        /\\ object.prototype = Null \\/ IndexKeys(heap, object.prototype) = {}
-        /\\ object.extensible
-     THEN Update(heap, ref, [object EXCEPT
+  IN CASE object.prototype # Null /\\ IndexKeys(heap, object.prototype) # {} ->
+            Assert(FALSE, "tla-ts can't reorder an array in place with inherited elements")
+       [] ~isWriting -> heap
+       [] (\\A key \\in old : object.attributes[key] = Writable) /\\ object.extensible ->
+            Update(heap, ref, [object EXCEPT
             !.keys = [position \\in DOMAIN ordered |-> ToString(ordered[position])]
                        \\o SelectSeq(@, LAMBDA key : ~IsIndex(key)),
             !.values = [key \\in kept |->
                          IF key \\in indices THEN elements[ToIndex(key)] ELSE @[key]],
             !.attributes = [key \\in kept |-> IF key \\in indices THEN Writable ELSE @[key]]])
-     ELSE Assert(FALSE, "tla-ts can't reorder an array in place with accessors, fixed elements, or inherited ones")
+       [] OTHER ->
+            Assert(FALSE, "tla-ts can't reorder an array in place with accessors or fixed elements")
 
 \\* reverse() on an array that the heap holds, which moves each hole as it moves each element.
 ArrayReverse(heap, ref) ==
@@ -3493,7 +3495,8 @@ ArrayReverse(heap, ref) ==
       elements == OwnElements(object)
       last == object.values["length"] - 1
   IN WithOwnElements(heap, ref,
-       [position \\in {last - index : index \\in DOMAIN elements} |-> elements[last - position]])
+       [position \\in {last - index : index \\in DOMAIN elements} |-> elements[last - position]],
+       last > 0)
 
 \\* sort() on an array that the heap holds, which sorts the elements it has to its start, with
 \\* undefined after them and the holes last.
@@ -3504,7 +3507,8 @@ ArraySort(heap, ref, IsBefore(_, _)) ==
                    elements[CHOOSE element \\in present :
                               Cardinality({other \\in present : other < element}) = position - 1]]
       sorted == SortSequence(ordered, IsBefore)
-  IN WithOwnElements(heap, ref, [position \\in 0..(Len(sorted) - 1) |-> sorted[position + 1]])
+  IN WithOwnElements(heap, ref, [position \\in 0..(Len(sorted) - 1) |-> sorted[position + 1]],
+       present # {})
 
 \\* copyWithin() on an array that the heap holds, where a hole that it copies deletes the element it
 \\* copies over. The indices are the numbers that its arguments give, and end is Undefined where it
@@ -3522,7 +3526,8 @@ ArrayCopyWithin(heap, ref, target, start, end) ==
                    \\cup {position \\in to..(to + count - 1) : position - to + from \\in DOMAIN elements}
   IN WithOwnElements(heap, ref,
        [position \\in present |->
-          IF isCopied(position) THEN elements[position - to + from] ELSE elements[position]])
+          IF isCopied(position) THEN elements[position - to + from] ELSE elements[position]],
+       count > 0)
 
 \\* What push, pop, shift, or unshift does to an array that the heap holds: the heap after, the value
 \\* that the method gives, and whether it throws a TypeError. An array whose length is fixed throws
