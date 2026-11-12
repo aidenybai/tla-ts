@@ -4864,7 +4864,9 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
     (ts.isArrowFunction(callback) ||
       ts.isFunctionExpression(callback) ||
       ts.isFunctionDeclaration(callback)) &&
-    (getChanged(callback, path, context).length > 0 || getLoopGetters(node, context).length > 0)
+    (getChanged(callback, path, context).length > 0 ||
+      getLoopGetters(node, context).length > 0 ||
+      context.heapCollections.has(node))
     ? {
         method: target.method,
         receiver: target.receiver,
@@ -4990,6 +4992,17 @@ const translateLoopCall = (
   const done = (current: Path, result: Expression) =>
     leaf(tuple([result, ...getValues(current), ...seeded]));
   const kept = identifier(accumulator);
+  // The array that map makes, where the heap holds it, gathers its elements and its holes.
+  const isHeapMap = method === "map" && context.heapCollections.has(expression);
+  const getMapped = (value: Expression, isHole: boolean) =>
+    isHeapMap
+      ? tuple([
+          apply("Append", [index(kept, [number(1)]), value]),
+          isHole
+            ? apply("\\cup", [index(kept, [number(2)]), set([identifier(position)])])
+            : index(kept, [number(2)]),
+        ])
+      : apply("Append", [kept, value]);
   const getAfterCallback = (element: Expression) => (current: Path, value?: Expression) => {
     const result = value ?? getUndefined(context);
     const isTruthy = useJavaScript("ToBoolean", [result], context);
@@ -5015,7 +5028,7 @@ const translateLoopCall = (
         repeat(current, kept),
       );
     }
-    return repeat(current, method === "map" ? apply("Append", [kept, result]) : result);
+    return repeat(current, method === "map" ? getMapped(result, false) : result);
   };
   const finished =
     new Map([
@@ -5143,6 +5156,17 @@ const translateLoopCall = (
         ? (current: Path, element: Expression) => repeat(current, apply("Append", [kept, element]))
         : compare;
   const replacedName = context.names.getFresh("replaced");
+  // map keeps a hole where the array that it visits lacks an element, which only an array that the
+  // heap holds can.
+  const keepHole = () =>
+    isHeapMap
+      ? repeat(inner, getMapped(getUndefined(context), true))
+      : leaf(
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't keep a hole in the array that map makes"),
+          ]),
+        );
   const visitLazily = (elementGetters: readonly FunctionNode[]) => {
     const key = useJavaScript("ToString", [apply("-", [identifier(position), number(1)])], context);
     const read = readWith(
@@ -5174,14 +5198,7 @@ const translateLoopCall = (
         : ifThenElse(
             useJavaScript("Has", [getHeap(inner.scope, receiver, context), owner, key], context),
             read,
-            method === "map"
-              ? leaf(
-                  apply("Assert", [
-                    boolean(false),
-                    string("tla-ts can't keep a hole in the array that map makes"),
-                  ]),
-                )
-              : repeat(inner, kept),
+            method === "map" ? keepHole() : repeat(inner, kept),
           );
   };
   // Reads the element at a position of the array as the callback left it, where the array still
@@ -5192,12 +5209,7 @@ const translateLoopCall = (
     const missing = EVERY_INDEX_METHODS.has(method)
       ? runCallback(inner, getUndefined(context))
       : method === "map"
-        ? leaf(
-            apply("Assert", [
-              boolean(false),
-              string("tla-ts can't keep a hole in the array that map makes"),
-            ]),
-          )
+        ? keepHole()
         : repeat(inner, kept);
     return ifThenElse(
       isPresent,
@@ -5275,6 +5287,43 @@ const translateLoopCall = (
       isAssigned: current.isAssigned || changed.some((symbol) => context.variables.has(symbol)),
     };
     const value = index(identifier(result), [number(1)]);
+    const heapName = context.names.getFresh("heap");
+    const finish = (): Formula =>
+      !isHeapMap || context.heap === undefined
+        ? continueWith(after, value)
+        : bindOnce(
+            after,
+            heapName,
+            useJavaScript(
+              "Allocate",
+              [
+                getHeap(after.scope, expression, context),
+                useJavaScript(
+                  "ArrayObjectWithHoles",
+                  [
+                    translateBuiltInValue("Array.prototype", expression, context),
+                    index(value, [number(1)]),
+                    index(value, [number(2)]),
+                  ],
+                  context,
+                ),
+              ],
+              context,
+            ),
+            continueWith(
+              {
+                ...after,
+                scope: {
+                  ...after.scope,
+                  bindings: new Map([
+                    ...after.scope.bindings,
+                    [context.heap, identifier(heapName)],
+                  ]),
+                },
+              },
+              useJavaScript("Allocated", [identifier(heapName)], context),
+            ),
+          );
     return letIn(
       [operator],
       bindOnce(
@@ -5284,10 +5333,10 @@ const translateLoopCall = (
         isUnseeded
           ? ifThenElse(
               index(identifier(result), [number(changed.length + 2)]),
-              continueWith(after, value),
+              finish(),
               throwTypeError(after, expression, context, frame),
             )
-          : continueWith(after, value),
+          : finish(),
       ),
     );
   };
@@ -5295,7 +5344,15 @@ const translateLoopCall = (
   // TypeError for an empty array.
   const getSeeded = (current: Path) =>
     !isReduce
-      ? runLoop(current, start, GATHERING_METHODS.has(method) ? tuple([]) : getUndefined(context))
+      ? runLoop(
+          current,
+          start,
+          isHeapMap
+            ? tuple([tuple([]), set([])])
+            : GATHERING_METHODS.has(method)
+              ? tuple([])
+              : getUndefined(context),
+        )
       : initial !== undefined
         ? runLoop(current, start, translateExpression(initial, current.scope, context))
         : isUnseeded

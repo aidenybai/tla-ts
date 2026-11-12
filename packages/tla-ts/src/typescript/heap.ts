@@ -7,6 +7,7 @@ import {
   type Context,
   type FunctionNode,
   getConstruction,
+  getCallee,
   getFunctionOfKind,
   getNewClass,
   isHeldError,
@@ -74,7 +75,13 @@ import {
   translateToNumber,
   useJavaScript,
 } from "./javascript";
-import { isDescriptorsRead, isProxyOperation } from "./protocols";
+import {
+  getDefinedGetters,
+  getElementGetters,
+  isDescriptorsRead,
+  isProxyOperation,
+} from "./protocols";
+import { getReached } from "./aliasing";
 import { createStateScope, type Scope } from "./scope";
 import { getStackCall } from "./stacks";
 import {
@@ -2160,9 +2167,10 @@ export const isMade = (node: ts.Node, context: Context, isSometimes = false): bo
     (ts.isObjectLiteralExpression(node) &&
       isObjectValue(node, context) &&
       !isProxyOperation(node, context)) ||
+    // map makes its array as it runs, after it visits each element.
     ((ts.isArrayLiteralExpression(node) ||
       isHoleyNewArray(node) ||
-      ts.isCallExpression(node) ||
+      (ts.isCallExpression(node) && getMapCall(node, context) === undefined) ||
       ts.isNewExpression(node)) &&
       context.heapCollections.has(node)) ||
     ts.isRegularExpressionLiteral(node) ||
@@ -2272,6 +2280,22 @@ const isAssigned = (node: ts.Node) =>
   node.parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
   node.parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment;
 
+// A use of an array that changes it in place: a method that changes it, or a write to its length
+// or an element.
+const isArrayChange = (use: ts.Expression) => {
+  const parent = use.parent;
+  return (
+    (ts.isPropertyAccessExpression(parent) &&
+      (IN_PLACE_METHODS.has(parent.name.text) || parent.name.text === "splice") &&
+      ts.isCallExpression(parent.parent) &&
+      parent.parent.expression === parent) ||
+    (ts.isPropertyAccessExpression(parent) &&
+      parent.name.text === "length" &&
+      isAssigned(parent)) ||
+    (ts.isElementAccessExpression(parent) && parent.expression === use && isAssigned(parent))
+  );
+};
+
 // The name that a script calls a function by, where it declares it or binds it to a constant.
 const getCalledName = (owner: ts.SignatureDeclaration) => {
   if (ts.isFunctionDeclaration(owner)) return owner.name;
@@ -2375,20 +2399,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
     (type.isUnion() || type.isIntersection() ? type.types : [type]).flatMap(
       (member) => checker.getPropertyOfType(member, name) ?? [],
     );
-  const isInPlace = (use: ts.Expression) => {
-    const parent = use.parent;
-    return (
-      (ts.isPropertyAccessExpression(parent) &&
-        (IN_PLACE_METHODS.has(parent.name.text) || parent.name.text === "splice") &&
-        ts.isCallExpression(parent.parent) &&
-        parent.parent.expression === parent) ||
-      (ts.isPropertyAccessExpression(parent) &&
-        parent.name.text === "length" &&
-        isAssigned(parent)) ||
-      (ts.isElementAccessExpression(parent) && parent.expression === use && isAssigned(parent)) ||
-      isSetOrMapChange(use)
-    );
-  };
+  const isInPlace = (use: ts.Expression) => isArrayChange(use) || isSetOrMapChange(use);
   const isSetOrMap = (node: ts.Expression) => ["set", "map"].includes(getKind(node, context));
   // A call that changes a set or a map in place, whose receiver is the use.
   const isSetOrMapChange = (use: ts.Expression) => {
@@ -3109,6 +3120,28 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
   return [...found];
 };
 
+// A call of map with a function that the script writes: the array or array-like object that it
+// visits, and the function.
+export const getMapCall = (node: ts.CallExpression, context: Context) => {
+  const callee = node.expression;
+  const isCall =
+    ts.isPropertyAccessExpression(callee) && callee.getText() === "Array.prototype.map.call";
+  const argument = node.arguments.at(isCall ? 1 : 0);
+  const callback = argument === undefined ? undefined : getCallee(argument, context);
+  const receiver = !ts.isPropertyAccessExpression(callee)
+    ? undefined
+    : isCall
+      ? getKind(node.arguments[0], context) === "object"
+        ? node.arguments[0]
+        : undefined
+      : callee.name.text === "map"
+        ? callee.expression
+        : undefined;
+  return receiver === undefined || callback?.body === undefined
+    ? undefined
+    : { receiver, callback, isCall };
+};
+
 export const findHeapArrays = (
   roots: readonly ts.Node[],
   changed: readonly ts.Node[],
@@ -3252,6 +3285,52 @@ export const findHeapArrays = (
     }
   });
   changed.forEach((node) => arrays.add(node));
+  // The array that map makes, which lacks an element where the array that it visits does: an
+  // array-like object whose getters may run, or an array or an array-like object that the callback,
+  // or what it calls, changes in place. The script must read it only as an object.
+  references.forEach((uses, symbol) => {
+    const declaration = symbol.valueDeclaration;
+    if (declaration === undefined || !ts.isVariableDeclaration(declaration)) return;
+    const call = declaration.initializer;
+    if (call === undefined || !ts.isCallExpression(call)) return;
+    const map = getMapCall(call, context);
+    const reads = uses.filter((use) => use.parent !== declaration);
+    if (map === undefined || reads.length === 0) return;
+    const receiver = map.receiver;
+    const held = ts.isIdentifier(receiver) ? getSymbol(receiver, context.checker) : undefined;
+    const heldDeclaration = held?.valueDeclaration;
+    const isArrayLike =
+      map.isCall ||
+      (heldDeclaration !== undefined &&
+        (arrays.has(heldDeclaration) ||
+          (ts.isVariableDeclaration(heldDeclaration) &&
+            heldDeclaration.initializer !== undefined &&
+            arrays.has(heldDeclaration.initializer))));
+    const hasGetters =
+      getElementGetters(receiver, context) !== undefined ||
+      ["length", "constructor"].some((key) => getDefinedGetters(receiver, key, context).length > 0);
+    const reached = new Set(getReached([map.callback], context));
+    const isChangedByCallback =
+      held !== undefined &&
+      (references.get(held) ?? []).some(
+        (use) =>
+          ts.findAncestor(
+            use,
+            (ancestor) => ts.isFunctionLike(ancestor) && reached.has(ancestor),
+          ) !== undefined &&
+          (isArrayChange(use) ||
+            (ts.isElementAccessExpression(use.parent) &&
+              use.parent.expression === use &&
+              ts.isDeleteExpression(use.parent.parent))),
+      );
+    if (
+      ((isArrayLike && hasGetters) || isChangedByCallback) &&
+      reads.every((use) => isArrayObjectUse(use, context))
+    ) {
+      arrays.add(call);
+      arrays.add(declaration);
+    }
+  });
   const check = (node: ts.Node) => {
     if (
       ts.isIdentifier(node) &&

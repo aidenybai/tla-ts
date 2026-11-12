@@ -403,6 +403,34 @@ describe("top-level statements", () => {
     expect(empty.failure?.message).toContain("TypeError");
   });
 
+  it("keep a hole in the array that map makes where the array it visits lacks an element", async () => {
+    const source = (expected: number) => `
+      const items: (number | undefined)[] = [1, , 3, 4];
+      const doubled = items.map((value, position) => {
+        if (position === 0) items.length = 3;
+        return (value ?? 0) * 2;
+      });
+      const like: { [key: string]: unknown } = { 0: 5, 2: 7, length: 4 };
+      const tripled = Array.prototype.map.call(like, (value: unknown) => {
+        delete like[2];
+        return (value as number) * 3;
+      });
+      if (
+        doubled.length !== 4 ||
+        1 in doubled ||
+        3 in doubled ||
+        doubled[2] !== ${expected} ||
+        tripled.length !== 4 ||
+        tripled[0] !== 15 ||
+        2 in tripled
+      ) {
+        throw new Error("map");
+      }
+    `;
+    expect((await checkModel(source(6))).failure).toBeUndefined();
+    expect((await checkModel(source(3))).failure?.message).toContain("map");
+  });
+
   it("make the objects of a parameter's default", async () => {
     const result = await checkModel(`
       let total = 0;
