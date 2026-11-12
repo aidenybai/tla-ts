@@ -4087,6 +4087,36 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("reads the arguments of a call that an expression makes", async () => {
+    const result = await checkModel(`
+      const box = { seen: 0 };
+      function count(...rest: unknown[]) {
+        return arguments.length;
+      }
+      function second(...rest: unknown[]) {
+        return arguments[1];
+      }
+      if (count(1, 2) !== 2) throw new Error("length " + count(1, 2));
+      if (second(1, "b") !== "b" || second(1) !== undefined) throw new Error("second " + second(1));
+      const read = { x: undefined as unknown };
+      function f(x = arguments[2], y?: unknown, z?: unknown) {
+        read.x = x;
+      }
+      f(undefined, undefined, "third");
+      if (read.x !== "third") throw new Error("default");
+    `);
+    expect(result.failure).toBeUndefined();
+    expect(() =>
+      compile(`
+        const box = { seen: 0 };
+        function all(...rest: unknown[]) {
+          return arguments;
+        }
+        if (all(1).length !== 1) throw new Error("length " + all(1).length);
+      `),
+    ).toThrow("Unsupported arguments object");
+  });
+
   it("rejects a sort comparator that may throw", () => {
     expect(() =>
       compile(`

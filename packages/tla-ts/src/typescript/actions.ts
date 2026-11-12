@@ -2060,13 +2060,27 @@ export const bindCall = (
     context,
   );
   const evaluateArguments = (rest: Formula) => values.evaluate(rest, leaf(boolean(false)));
+  if (
+    isArgumentsNamed(callee, context) &&
+    context.heap !== undefined &&
+    (callbacks.length > 0 || argumentNodes.some(ts.isSpreadElement))
+  ) {
+    throw new TlaTypeScriptError("Unsupported arguments object", node);
+  }
+  // Parameters' defaults may read the arguments object, which the call makes before it binds them.
+  const made = allocateArguments(
+    callee,
+    values.shared,
+    node,
+    { definitions: [], scope: path.scope },
+    context,
+  );
   const bound = bindValues(
     parameters.filter((_, position) => isValue(position)),
     values.shared,
-    path.scope,
+    made.scope,
     context,
   );
-  const heapSymbol = context.heap;
   const scope = {
     ...bound.scope,
     functions: new Map([...bound.scope.functions, ...callbacks]),
@@ -2085,37 +2099,24 @@ export const bindCall = (
       }),
     ]),
   };
-  if (
-    isArgumentsNamed(callee, context) &&
-    heapSymbol !== undefined &&
-    (callbacks.length > 0 || argumentNodes.some(ts.isSpreadElement))
-  ) {
-    throw new TlaTypeScriptError("Unsupported arguments object", node);
-  }
   return evaluateArguments(
-    continueWith(
-      allocateArguments(
-        callee,
-        values.shared,
-        node,
-        { definitions: bound.definitions, scope },
-        context,
-      ),
-      changeable,
-    ),
+    continueWith({ definitions: [...made.definitions, ...bound.definitions], scope }, changeable),
   );
 };
 
-const isArgumentsNamed = (callee: FunctionNode, context: Context) =>
-  callee.body !== undefined &&
+// The references to a function's arguments object, in its parameters' defaults and its body.
+export const getArgumentsReads = (callee: FunctionNode, context: Context) =>
   findNodes(
-    callee.body,
+    callee,
     (inner): inner is ts.Identifier => getArgumentsOwner(inner, context.checker) === callee,
-  ).length > 0;
+  );
+
+const isArgumentsNamed = (callee: FunctionNode, context: Context) =>
+  getArgumentsReads(callee, context).length > 0;
 
 // The arguments object of a call to a function whose body names it, which the scope holds under
 // the body.
-const allocateArguments = (
+export const allocateArguments = (
   callee: FunctionNode,
   values: readonly Expression[],
   node: ts.Node,
