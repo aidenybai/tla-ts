@@ -6541,6 +6541,23 @@ describe("errors", () => {
     }
   });
 
+  it("gathers a generator into an array with Array.from", async () => {
+    const result = await checkModel(`
+      function* g(): Generator<number> {
+        yield 1;
+        yield 2;
+        yield 3;
+      }
+      const plain = Array.from(g());
+      const mapped = Array.from(g(), (value, index) => value * 10 + index);
+      const taken = Array.from(g().take(2));
+      if (plain.join() !== "1,2,3" || mapped.join() !== "10,21,32" || taken.join() !== "1,2") {
+        throw new Error("gathered");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("unrolls a generator's counted loop that yields", async () => {
     const result = await checkModel(`
       function* g(): Generator<number> {

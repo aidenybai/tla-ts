@@ -3410,7 +3410,8 @@ const translateGeneratorConsumer = (
   const method = consumer.method;
   const argument = consumer.values.at(0);
   const callback = argument && getCallback(argument, path, context);
-  if (method !== "toArray" && callback?.body === undefined) {
+  const isGathering = method === "toArray" || method === "from";
+  if (!(isGathering && argument === undefined) && callback?.body === undefined) {
     throw new TlaTypeScriptError(
       `Give ${method} a function that tla-ts can tell`,
       argument ?? node,
@@ -3429,9 +3430,16 @@ const translateGeneratorConsumer = (
         frame.throwTo === undefined ? leaf(thrown.uncaught) : frame.throwTo(after, thrown),
       ),
   };
+  const thisArgument = method === "from" ? consumer.values.at(1) : undefined;
   const callbackReceiver =
     callback !== undefined && !ts.isArrowFunction(callback)
-      ? { value: getUndefined(context), method: callback }
+      ? {
+          value:
+            thisArgument === undefined
+              ? getUndefined(context)
+              : translateExpression(thisArgument, path.scope, context),
+          method: callback,
+        }
       : path.scope.receiver;
   const run = (
     current: Path,
@@ -3479,7 +3487,7 @@ const translateGeneratorConsumer = (
             if (isReduce && kept.length === 0) return throwTypeError(stepped, node, context, frame);
             return finish(
               stepped,
-              method === "toArray"
+              isGathering
                 ? tuple(kept)
                 : method === "some"
                   ? boolean(false)
@@ -3491,7 +3499,9 @@ const translateGeneratorConsumer = (
             );
           }
           const element = value ?? getUndefined(context);
-          if (method === "toArray") return loop(stepped, counter + 1, [...kept, element]);
+          if (isGathering && callback === undefined) {
+            return loop(stepped, counter + 1, [...kept, element]);
+          }
           // reduce without an initial value takes the first element as its accumulator.
           if (isReduce && kept.length === 0) return loop(stepped, counter + 1, [element]);
           const elementName = context.names.getFresh("element");
@@ -3503,7 +3513,11 @@ const translateGeneratorConsumer = (
             element,
             run(stepped, values, (after, result) => {
               const isTruthy = useJavaScript("ToBoolean", [result], context);
-              const rest = loop(after, counter + 1, isReduce ? [result] : kept);
+              const rest = loop(
+                after,
+                counter + 1,
+                isReduce ? [result] : isGathering ? [...kept, result] : kept,
+              );
               if (method === "some") {
                 return ifThenElse(
                   isTruthy,
@@ -3557,14 +3571,16 @@ const translateGeneratorConsumer = (
 };
 
 // Runs what follows where Iterator.prototype still holds the built-in method that a call reads.
+// Array.from reads the iterator that Iterator.prototype's Symbol.iterator gives.
 const translateHoldsIteratorPrototype = (
   method: string,
   node: ts.Node,
   path: Path,
   context: Context,
   rest: Formula,
-) =>
-  context.heap === undefined
+) => {
+  const key = method === "from" ? "@@iterator" : method;
+  return context.heap === undefined
     ? rest
     : ifThenElse(
         useJavaScript(
@@ -3572,8 +3588,10 @@ const translateHoldsIteratorPrototype = (
           [
             getHeap(path.scope, node, context),
             translateBuiltInValue("Iterator.prototype", node, context),
-            string(method),
-            string(`Iterator.prototype.${method}`),
+            key === "@@iterator"
+              ? useJavaScript("WellKnownSymbol", [string("iterator")], context)
+              : string(key),
+            string(`Iterator.prototype.${key}`),
           ],
           context,
         ),
@@ -3581,10 +3599,11 @@ const translateHoldsIteratorPrototype = (
         leaf(
           apply("Assert", [
             boolean(false),
-            string(`tla-ts can't call Iterator.prototype.${method} where a script replaced it`),
+            string(`tla-ts can't call Iterator.prototype.${key} where a script replaced it`),
           ]),
         ),
       );
+};
 
 // A call of Iterator.prototype's map, filter, take, or drop on a generator object, which makes an
 // iterator helper. tla-ts follows the helper as a generator: each next steps the generator it
@@ -4426,12 +4445,14 @@ const getGeneratorMethod = (node: ts.CallExpression, context: Context) => {
     accessed.name.text === "call" &&
     ts.isPropertyAccessExpression(owner) &&
     owner.expression.getText() === "Iterator.prototype";
+  // Array.from(generator, mapFn) gathers what the generator gives, as toArray does.
+  const isFrom = accessed.name.text === "from" && getBuiltIn(owner, context) === "Array";
   const method = isCall ? owner.name.text : accessed.name.text;
-  const receiver = isCall ? node.arguments.at(0) : owner;
-  return (ITERATOR_CONSUMERS.has(method) || ITERATOR_HELPERS.has(method)) &&
+  const receiver = isCall || isFrom ? node.arguments.at(0) : owner;
+  return (ITERATOR_CONSUMERS.has(method) || ITERATOR_HELPERS.has(method) || isFrom) &&
     receiver !== undefined &&
     isGeneratorType(receiver, context)
-    ? { method, receiver, values: isCall ? node.arguments.slice(1) : node.arguments }
+    ? { method, receiver, values: isCall || isFrom ? node.arguments.slice(1) : node.arguments }
     : undefined;
 };
 

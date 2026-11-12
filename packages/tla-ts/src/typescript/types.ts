@@ -702,7 +702,10 @@ export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
         ts.isPropertyAccessExpression(outer.expression.expression) &&
         outer.expression.expression.expression.getText() === "Iterator.prototype" &&
         (ITERATOR_CONSUMERS.has(outer.expression.expression.name.text) ||
-          ITERATOR_HELPERS.has(outer.expression.expression.name.text))));
+          ITERATOR_HELPERS.has(outer.expression.expression.name.text))) ||
+      (ts.isCallExpression(outer) &&
+        outer.arguments.at(0) === node &&
+        outer.expression.getText() === "Array.from"));
   if (!isHeld) throw new TlaTypeScriptError("tla-ts can't follow a generator here", node);
 };
 
