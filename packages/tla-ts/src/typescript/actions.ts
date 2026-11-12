@@ -9,6 +9,7 @@ import {
   translateArrayChange,
   translateArrayIteratorPrototype,
   translateHoldsIteratorMethod,
+  getHeapElements,
   translateHeapElements,
   getHeapRegExpCall,
   translateRegExpText,
@@ -765,14 +766,31 @@ const assignPattern = <Result>(
     if (!isList && isUntypedPattern(target, context)) {
       throw new TlaTypeScriptError("Give this pattern's value an array type", target);
     }
-    const assignFrom = (position: number, current: Path): Result => {
+    // An array that the heap holds gives each element as the iterator reaches it, after the
+    // pattern assigns the elements before it, and none once the iterator found no more.
+    const isHeapSource = !isList && source !== undefined && isHeapArray(source, context);
+    const assignFrom = (position: number, current: Path, wasDone: Expression): Result => {
       if (position === target.elements.length) return continueWith(current);
       const element = target.elements[position];
-      const next = (after: Path) => assignFrom(position + 1, after);
+      const values = isHeapSource
+        ? getHeapElements(getHeap(current.scope, target, context), value, context)
+        : value;
+      const done = isHeapSource
+        ? junction("Or", [
+            wasDone,
+            not(apply("\\in", [number(position + 1), apply("DOMAIN", [values])])),
+          ])
+        : wasDone;
+      const untilDone = (read: Expression, missing: Expression) =>
+        isHeapSource ? ifExpression(wasDone, missing, read) : read;
+      const next = (after: Path) => assignFrom(position + 1, after, done);
       if (ts.isOmittedExpression(element)) return next(current);
       if (ts.isSpreadElement(element)) {
         const restTarget = element.expression;
-        const rest = apply("SubSeq", [value, number(position + 1), apply("Len", [value])]);
+        const rest = untilDone(
+          apply("SubSeq", [values, number(position + 1), apply("Len", [values])]),
+          tuple([]),
+        );
         const heapSymbol = context.heap;
         const isProperty =
           (ts.isPropertyAccessExpression(restTarget) || ts.isElementAccessExpression(restTarget)) &&
@@ -873,7 +891,7 @@ const assignPattern = <Result>(
         getDefaulted(
           isFromSource
             ? translateExpression(sourceElement, path.scope, context)
-            : getElement(value, number(position + 1), context),
+            : untilDone(getElement(values, number(position + 1), context), getUndefined(context)),
           defaulted.initializer,
           current.scope,
           context,
@@ -884,7 +902,7 @@ const assignPattern = <Result>(
         next,
       );
     };
-    return assignFrom(0, path);
+    return assignFrom(0, path, boolean(false));
   }
   if (ts.isObjectLiteralExpression(target)) {
     const isHeapObject = isHeapPattern(
@@ -1106,6 +1124,26 @@ const getRemovedValue = (
           (current) => getUpdatedValue(current, kind, node, path.scope, context) ?? current,
         ),
       };
+};
+
+// A declaration's array pattern reads an array that the heap holds through its iterator, which
+// visits the elements that a copy of them holds while the pattern's defaults change no object.
+const translatePatternSource = (
+  pattern: ts.BindingName,
+  source: ts.Expression,
+  path: Path,
+  context: Context,
+) => {
+  if (!ts.isArrayBindingPattern(pattern) || !isHeapArray(source, context)) {
+    return translateExpression(source, path.scope, context);
+  }
+  if (getChanged(pattern, path, context).some((symbol) => symbol === context.heap)) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't destructure an array that the heap holds while the pattern changes objects",
+      pattern,
+    );
+  }
+  return translateHeapElements(source, path.scope, context);
 };
 
 // The path after an assignment, such as x = 1, x += 1, or x++.
@@ -6431,7 +6469,7 @@ export const translateDeclarations = (
       removed?.value ??
       (initializer === undefined
         ? getUndefined(context)
-        : translateExpression(initializer, allocated.scope, context));
+        : translatePatternSource(declaration.name, initializer, allocated, context));
     // JavaScript evaluates a declaration where it runs, and TLA+ a LET definition only where it's
     // read, so a declaration whose value may throw or stop evaluates it here.
     if (initializer !== undefined && !isInertValue(initializer)) {

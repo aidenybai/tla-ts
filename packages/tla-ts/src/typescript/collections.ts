@@ -2289,26 +2289,29 @@ export const getHeapArrayChange = (node: ts.Node, context: Context) =>
 // The elements that the iterator of an array that the heap holds gives, as for-of and spread read
 // them, where Array.prototype still holds the built-in iterator.
 export const translateHeapElements = (node: ts.Expression, scope: Scope, context: Context) =>
-  share(translateExpression(node, scope, context), "array", context, (array) => {
-    const heap = getHeap(scope, node, context);
-    return ifExpression(
-      useJavaScript(
-        "HoldsBuiltIn",
-        [
-          heap,
-          array,
-          useJavaScript("WellKnownSymbol", [string("iterator")], context),
-          string("Array.prototype.values"),
-        ],
-        context,
-      ),
-      useJavaScript("ArrayLikeValues", [heap, array], context),
-      apply("Assert", [
-        boolean(false),
-        string("tla-ts can't iterate an array whose iterator a script replaced"),
-      ]),
-    );
-  });
+  share(translateExpression(node, scope, context), "array", context, (array) =>
+    getHeapElements(getHeap(scope, node, context), array, context),
+  );
+
+// The elements that the iterator of an array that the heap holds visits.
+export const getHeapElements = (heap: Expression, array: Expression, context: Context) =>
+  ifExpression(
+    useJavaScript(
+      "HoldsBuiltIn",
+      [
+        heap,
+        array,
+        useJavaScript("WellKnownSymbol", [string("iterator")], context),
+        string("Array.prototype.values"),
+      ],
+      context,
+    ),
+    useJavaScript("ArrayLikeValues", [heap, array], context),
+    apply("Assert", [
+      boolean(false),
+      string("tla-ts can't iterate an array whose iterator a script replaced"),
+    ]),
+  );
 
 export const translateArrayLikeCall = (node: ts.CallExpression, scope: Scope, context: Context) => {
   const call = getArrayLikeCall(node, context);

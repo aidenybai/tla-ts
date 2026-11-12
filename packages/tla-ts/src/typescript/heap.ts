@@ -2026,9 +2026,13 @@ const isArrayObjectUse = (node: ts.Identifier, context: Context) => {
   // A loop or a spread runs the array's iterator, which reads its elements as an object's.
   if (ts.isForOfStatement(parent) && parent.expression === node) return true;
   if (ts.isSpreadElement(parent)) return true;
+  if (ts.isVariableDeclaration(parent)) return ts.isArrayBindingPattern(parent.name);
   if (ts.isBinaryExpression(parent)) {
     const kind = parent.operatorToken.kind;
     return (
+      (kind === ts.SyntaxKind.EqualsToken &&
+        parent.right === node &&
+        ts.isArrayLiteralExpression(parent.left)) ||
       kind === ts.SyntaxKind.EqualsEqualsEqualsToken ||
       kind === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
       kind === ts.SyntaxKind.EqualsEqualsToken ||
@@ -2824,8 +2828,9 @@ export const findHeapArrays = (
     }
   });
   // An array literal that a variable holds, where the script gives the array a property that isn't
-  // its length or an index, as a test of exec builds the array it expects, or keeps an iterator of
-  // it, which sees the array change. The script must read it only as an object.
+  // its length or an index, as a test of exec builds the array it expects, keeps an iterator of it,
+  // which sees the array change, or takes it from a pattern assignment. The script must read it
+  // only as an object.
   const isNamedWrite = (use: ts.Identifier) =>
     ts.isPropertyAccessExpression(use.parent) &&
     use.parent.expression === use &&
@@ -2833,6 +2838,13 @@ export const findHeapArrays = (
     ts.isBinaryExpression(use.parent.parent) &&
     use.parent.parent.left === use.parent &&
     use.parent.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken;
+  // A pattern assignment gives the array that it destructures, whose identity a script may see.
+  const isPatternResult = (use: ts.Identifier) =>
+    ts.isBinaryExpression(use.parent) &&
+    use.parent.right === use &&
+    use.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isArrayLiteralExpression(use.parent.left) &&
+    !ts.isExpressionStatement(use.parent.parent);
   references.forEach((uses, symbol) => {
     const declaration = symbol.valueDeclaration;
     const literal =
@@ -2849,7 +2861,10 @@ export const findHeapArrays = (
         (element) => !ts.isSpreadElement(element) && !ts.isOmittedExpression(element),
       ) &&
       reads.some(
-        (use) => isNamedWrite(use) || getKeptIterator(use.parent.parent, context) !== undefined,
+        (use) =>
+          isNamedWrite(use) ||
+          isPatternResult(use) ||
+          getKeptIterator(use.parent.parent, context) !== undefined,
       ) &&
       reads.every((use) => isArrayObjectUse(use, context))
     ) {

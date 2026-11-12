@@ -9031,6 +9031,74 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("can't throw the TypeError of destructuring");
   });
 
+  it("destructures an array that the heap holds and gives the array back", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      let a: unknown;
+      let b: unknown;
+      let c: unknown;
+      let result: unknown;
+      const vals = [1, , 3];
+      result = [a, b = 9, c] = vals;
+      if (a !== 1 || b !== 9 || c !== 3) throw new Error("values");
+      if (result !== vals) throw new Error("identity");
+      const [p, q = 5, r] = vals;
+      if (p !== 1 || q !== 5 || r !== 3) throw new Error("declared");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    for (const [from, to, message] of [
+      ["b !== 9", "b !== 2", "values"],
+      ["result !== vals", "result === vals", "identity"],
+      ["q !== 5", "q !== 2", "declared"],
+    ]) {
+      expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
+    }
+  });
+
+  it("reads each element of an array that the heap holds as the pattern reaches it", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const vals = [1, 2, 3];
+      let a: unknown;
+      let p: unknown;
+      let q: unknown;
+      let r: unknown = 9;
+      let result: unknown;
+      result = [vals[1], a, ...[p, q, r]] = vals;
+      if (a !== 1 || p !== 3 || q !== undefined || r !== undefined) throw new Error("read");
+      const empty: unknown[] = [];
+      let x: unknown = 9;
+      result = [empty[1] = 5, x] = empty;
+      if (x !== undefined || empty.length !== 2) throw new Error("done");
+      if (result !== empty) throw new Error("identity");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    for (const [from, to, message] of [
+      ["a !== 1", "a !== 2", "read"],
+      ["x !== undefined", "x !== 5", "done"],
+    ]) {
+      expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
+    }
+  });
+
+  it("rejects a declared pattern that changes objects as it destructures an array that the heap holds", () => {
+    expect(() =>
+      compile(
+        `
+          const holder = { y: 0 };
+          const vals = [, 2];
+          const [p = (holder.y = 1), q] = vals;
+          if (p !== 1 || q !== 2) throw new Error("values");
+        `,
+        "spec.ts",
+      ),
+    ).toThrow(
+      "tla-ts can't destructure an array that the heap holds while the pattern changes objects",
+    );
+  });
+
   it("destructures a rest element into an object pattern", async () => {
     const source = `
       let x: unknown = null;
