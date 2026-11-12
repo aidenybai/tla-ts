@@ -297,6 +297,26 @@ const getEntries = (value: Expression, context: Context): Unordered => ({
 const getElements = (value: Expression, context: Context) =>
   mapKeys(value, "sequence", context, (shared, key) => index(shared, [key]));
 
+// Whether a value of a node's type may be an error, as any type that an Error is assignable to.
+const mayBeError = (node: ts.Expression, context: Context) => {
+  const error = context.checker
+    .getSymbolsInScope(node.getSourceFile(), ts.SymbolFlags.Interface)
+    .find(
+      (symbol) =>
+        symbol.name === "Error" &&
+        (symbol.declarations ?? []).some(
+          (declaration) => declaration.getSourceFile().isDeclarationFile,
+        ),
+    );
+  return (
+    error !== undefined &&
+    context.checker.isTypeAssignableTo(
+      context.checker.getDeclaredTypeOfSymbol(error),
+      context.checker.getTypeAtLocation(node),
+    )
+  );
+};
+
 // A set built from a Set, Map, or object, whose element order TLA+ doesn't keep.
 const translateUnordered = (
   node: ts.Expression,
@@ -340,10 +360,21 @@ const translateUnordered = (
       return { set: set([]), isMapped: false };
     }
     const record = translate(argument);
-    if (method === "keys") return { set: getDomain(record), isMapped: false };
-    if (method === "values") return getValues(record, context);
-    if (method === "entries") return getEntries(record, context);
-    return undefined;
+    const listed =
+      method === "keys"
+        ? { set: getDomain(record), isMapped: false }
+        : method === "values"
+          ? getValues(record, context)
+          : method === "entries"
+            ? getEntries(record, context)
+            : undefined;
+    // An error is a record of fields that JavaScript keeps as no own enumerable property.
+    return listed === undefined || !mayBeError(argument, context)
+      ? listed
+      : {
+          ...listed,
+          set: ifExpression(useJavaScript("IsError", [record], context), set([]), listed.set),
+        };
   }
   const kind = getKind(receiver, context);
   if (kind === "set" && (method === "values" || method === "keys")) {

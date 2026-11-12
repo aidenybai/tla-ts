@@ -961,7 +961,7 @@ Has(heap, ref, key) ==
 \\* An error is a record of its constructor, its message and its name, an AggregateError's also of its
 \\* errors, a SuppressedError's also of its error and the error it suppressed, and one that a script
 \\* made also of its identity.
-LOCAL IsError(value) ==
+IsError(value) ==
   /\\ SubSeq(ToString(value), 1, 1) = "["
   /\\ DOMAIN value \\ {"identity"} \\in {{"constructor", "message", "name"},
                                      {"constructor", "errors", "message", "name"},

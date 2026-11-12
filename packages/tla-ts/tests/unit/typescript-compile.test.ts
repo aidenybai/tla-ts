@@ -4331,6 +4331,19 @@ describe("errors", () => {
     expect((await checkModel(getSource("same"))).failure?.message).toContain("caught");
   });
 
+  it("lists no own keys of an error", async () => {
+    const result = await checkModel(`
+      const box = { seen: 0 };
+      const error = new TypeError("a");
+      const point: { message: string } = { message: "a" };
+      if (Object.keys(error).length !== 0 || Object.entries(error).length !== 0) {
+        throw new Error("error");
+      }
+      if (Object.keys(point).length !== 1) throw new Error("point");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`
