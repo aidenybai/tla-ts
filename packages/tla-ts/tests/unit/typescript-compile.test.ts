@@ -1289,6 +1289,44 @@ describe("values", () => {
     }
   });
 
+  it("runs a default that assigns where a destructuring assignment takes undefined", async () => {
+    const getSource = (expected: string) => `
+      let x: number = 0;
+      let a: number | undefined;
+      let b: number | undefined;
+      let flag1 = false;
+      let flag2 = false;
+      let counter = 0;
+      const empty: number[][] = [[]];
+      for ([a = x += 1, b = x *= 2] of empty) {
+        counter += a * 10 + b;
+      }
+      let p: boolean | number | undefined;
+      let q: boolean | number | undefined;
+      const objects: { p?: number; q?: number }[] = [{ q: 1 }];
+      for ({ p = flag1 = true, q = flag2 = true } of objects) {
+        counter += 100;
+      }
+      const values: (boolean | undefined)[] = [false];
+      let first: boolean | undefined;
+      let second: boolean | undefined;
+      [first = flag1 = true, second = flag2 = true] = values;
+      const outcomes = [counter, x, p, q, flag1, flag2, first, second].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    const expected = "112,2,true,1,true,true,false,true";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    for (const wrong of [
+      "112,3,true,1,true,true,false,true",
+      "112,2,true,1,true,false,false,true",
+      "112,2,true,1,true,true,true,true",
+    ]) {
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(
+        `outcomes ${expected}`,
+      );
+    }
+  });
+
   it("gives what a compound assignment to a property writes, as its value", async () => {
     const getSource = (field: number, property: number, element: number, typed: number) => `
       class Counter {
