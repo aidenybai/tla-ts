@@ -47,6 +47,7 @@ import {
   getCaptures,
   getCapturedArguments,
   skipCasts,
+  isAssigned,
   getFunctionValue,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
@@ -1868,9 +1869,11 @@ export const getDateCall = (node: ts.Node, context: Context) => {
 // The method of a built-in's prototype, such as Date.prototype, that a value is, or that a variable
 // holds from its declaration.
 export const getPrototypeMethod = (node: ts.Expression, owner: string, context: Context) => {
-  const declaration = ts.isIdentifier(node)
-    ? getSymbol(node, context.checker)?.valueDeclaration
-    : undefined;
+  const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
+  const declaration =
+    symbol !== undefined && !isAssigned(symbol, node.getSourceFile(), context)
+      ? symbol.valueDeclaration
+      : undefined;
   const value =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
@@ -2534,7 +2537,7 @@ export const isHoleyArray = (node: ts.Node) => {
   );
 };
 
-const isAssigned = (node: ts.Node) =>
+const isAssignmentTarget = (node: ts.Node) =>
   ts.isBinaryExpression(node.parent) &&
   node.parent.left === node &&
   node.parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
@@ -2551,8 +2554,10 @@ const isArrayChange = (use: ts.Expression) => {
       parent.parent.expression === parent) ||
     (ts.isPropertyAccessExpression(parent) &&
       parent.name.text === "length" &&
-      isAssigned(parent)) ||
-    (ts.isElementAccessExpression(parent) && parent.expression === use && isAssigned(parent))
+      isAssignmentTarget(parent)) ||
+    (ts.isElementAccessExpression(parent) &&
+      parent.expression === use &&
+      isAssignmentTarget(parent))
   );
 };
 
@@ -3306,7 +3311,11 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       ) {
         return keepsFields(type, checker.getTypeAtLocation(parent));
       }
-      if (ts.isBinaryExpression(parent) && parent.right === node && isAssigned(parent.left)) {
+      if (
+        ts.isBinaryExpression(parent) &&
+        parent.right === node &&
+        isAssignmentTarget(parent.left)
+      ) {
         return keepsFields(type, checker.getTypeAtLocation(parent.left));
       }
       // A target that an assignment writes, which reads none of its fields.

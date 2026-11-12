@@ -6304,6 +6304,19 @@ describe("errors", () => {
     );
   });
 
+  it("stops on a call of a prototype method that a reassigned variable held", () => {
+    expect(() =>
+      compile(`
+        const holder = { seen: 0 };
+        let valueOf = Symbol.prototype.valueOf;
+        const symbol = Symbol("s");
+        valueOf = function (this: unknown) { return symbol; };
+        if (valueOf.call(Symbol("other")) !== symbol) throw new Error("reassigned");
+        holder.seen = 1;
+      `),
+    ).toThrow("Unsupported call: valueOf.call");
+  });
+
   it("rejects new Object of a value whose type doesn't tell the object", () => {
     expect(() =>
       compile("const box = { prop: 1 };\nconst same: Object = new Object(box);"),
