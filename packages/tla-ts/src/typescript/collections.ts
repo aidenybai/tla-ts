@@ -857,6 +857,43 @@ const translateSequenceOperation = (
     ],
     ["toSpliced", () => translateSpliced(sequence, call.arguments, false, scope, context)],
     ["map", translateEach((bounds, body) => functionOf(bounds, body))],
+    [
+      "flat",
+      () => {
+        const depth =
+          argument === undefined || argument.getText() === "undefined"
+            ? 1
+            : argument.getText() === "Infinity"
+              ? Infinity
+              : ts.isNumericLiteral(argument)
+                ? Number(argument.text)
+                : undefined;
+        if (depth === undefined || call.elementType === undefined) {
+          throw new TlaTypeScriptError("Give flat() a depth that is a number literal", node);
+        }
+        return flattenTypes(sequence, [call.elementType], depth, node, context);
+      },
+    ],
+    [
+      "flatMap",
+      () => {
+        const callee = getCallbackFunction(argument, scope, context);
+        const returned =
+          callee === undefined
+            ? undefined
+            : context.checker.getSignatureFromDeclaration(callee)?.getReturnType();
+        if (returned === undefined) {
+          throw new TlaTypeScriptError("Give flatMap() a callback whose type tells", node);
+        }
+        return flattenTypes(
+          translateEach((bounds, body) => functionOf(bounds, body))(),
+          [returned],
+          1,
+          node,
+          context,
+        );
+      },
+    ],
     ["every", translateEach((bounds, body) => quantify("Forall", bounds, body), translateTest)],
     ["some", translateEach((bounds, body) => quantify("Exists", bounds, body), translateTest)],
     [
@@ -1032,6 +1069,49 @@ const translateMapMethod = (
 
 const removeLast = (current: Expression) =>
   apply("SubSeq", [current, number(1), apply("-", [apply("Len", [current]), number(1)])]);
+
+// Flattens a sequence by levels while its elements' types are all arrays, and stops at a level
+// whose types hold no array. A level that may hold both has elements that tla-ts can't tell apart.
+const flattenTypes = (
+  sequence: Expression,
+  types: readonly ts.Type[],
+  depth: number,
+  node: ts.Node,
+  context: Context,
+  level = 0,
+): Expression => {
+  const checker = context.checker;
+  const members = types.flatMap((type) => (type.isUnion() ? type.types : [type]));
+  const isArray = (type: ts.Type) => checker.isArrayType(type) || checker.isTupleType(type);
+  // An object type that an array fits, such as {}, which TypeScript may give [{}, [{}]] as its
+  // elements' type, may hold an array. The array that flat() gives is one.
+  const array = checker.getTypeAtLocation(node);
+  const mayBeArray = (type: ts.Type) =>
+    isArray(type) ||
+    (type.flags &
+      (ts.TypeFlags.Any |
+        ts.TypeFlags.Unknown |
+        ts.TypeFlags.NonPrimitive |
+        ts.TypeFlags.TypeParameter)) !==
+      0 ||
+    ((type.flags & ts.TypeFlags.Object) !== 0 && checker.isTypeAssignableTo(array, type));
+  if (depth < 1 || !members.some(mayBeArray)) return sequence;
+  // A type that holds itself, as type Nested = Nested[] does, would flatten forever.
+  if (!members.every(isArray) || level > 32) {
+    throw new TlaTypeScriptError(
+      "Flatten only an array whose elements are all arrays, or none of them",
+      node,
+    );
+  }
+  return flattenTypes(
+    useJavaScript("Flatten", [sequence], context),
+    members.flatMap((member) => checker.getIndexTypeOfType(member, ts.IndexKind.Number) ?? []),
+    depth - 1,
+    node,
+    context,
+    level + 1,
+  );
+};
 
 const ITERATOR_METHODS = ["keys", "values", "entries"];
 

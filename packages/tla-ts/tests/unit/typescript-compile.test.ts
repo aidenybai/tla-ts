@@ -4389,6 +4389,31 @@ describe("errors", () => {
     );
   });
 
+  it("flattens an array whose elements are all arrays, or none of them", async () => {
+    const result = await checkModel(`
+      const deep = [[[1]], [[2, 3]]];
+      const words = ["a b", "c"].flatMap((text) => text.split(" "));
+      const doubled = [1, 2].flatMap((value) => value * 2);
+      if (
+        [[1, 2], [3], []].flat().join(",") !== "1,2,3" ||
+        deep.flat().length !== 2 ||
+        deep.flat(Infinity).join(",") !== "1,2,3" ||
+        [1, null].flat().length !== 2 ||
+        words.join(",") !== "a,b,c" ||
+        doubled.join(",") !== "2,4"
+      ) {
+        throw new Error("flattened");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+    expect(() => compile("const mixed = [1, [2]].flat();")).toThrow(
+      "Flatten only an array whose elements are all arrays, or none of them",
+    );
+    expect(() => compile("const empty = {}; const mixed = [empty, [empty]].flat();")).toThrow(
+      "Flatten only an array whose elements are all arrays, or none of them",
+    );
+  });
+
   it("runs the getters of an object literal that a method makes on each call", async () => {
     const getSource = (expected: string) => `
       const log: string[] = [];

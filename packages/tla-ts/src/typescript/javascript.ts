@@ -486,6 +486,13 @@ IsRef(value) ==
 
 IsHeap(ref) == IsRef(ref) /\\ TypeOf(ref[Ref]) = "number"
 
+\\* An array of arrays, one level flatter, as flat() makes it where every element is an array.
+RECURSIVE Flatten(_)
+Flatten(sequence) ==
+  CASE sequence = <<>> -> <<>>
+    [] IsRef(Head(sequence)) -> Assert(FALSE, "tla-ts can't flatten an array that the heap holds")
+    [] OTHER -> Head(sequence) \\o Flatten(Tail(sequence))
+
 LOCAL IsObject(value) == IsRef(value) \\/ TypeOf(value) = "function"
 
 LOCAL ObjectPrototype == Ref :> "Object.prototype"
