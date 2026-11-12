@@ -5324,11 +5324,14 @@ const isHeapCall = (
   context: Context,
 ): node is ts.CallExpression => {
   if (context.heap === undefined || !ts.isCallExpression(node)) return false;
+  // A method runs as statements only where it makes objects, as a statement allocates them.
+  if (isMethodCall(node)) {
+    const method = getCalledMethod(node.expression, context)?.method;
+    return method?.body !== undefined && getAllocated(method.body, context).length > 0;
+  }
   const symbol = getSymbol(node.expression, context.checker);
   const callee =
-    (symbol && path.scope.functions.get(symbol)) ??
-    getCallee(node.expression, context) ??
-    getCalledMethod(node.expression, context)?.method;
+    (symbol && path.scope.functions.get(symbol)) ?? getCallee(node.expression, context);
   return callee?.body !== undefined && usesHeap(callee, context, new Set());
 };
 
