@@ -2160,9 +2160,22 @@ const parse = (
     return nested.proof;
   };
 
-  const addFactDefinition = (module: Module, definition: Definition) => {
-    if (module.definitions.some((other) => other.name === definition.name)) return;
-    module.definitions.push(definition);
+  const addFactDefinition = (
+    module: Module,
+    name: string,
+    body: Expression,
+    location: SourceLocation,
+  ) => {
+    if (module.definitions.some((other) => other.name === name)) return;
+    module.definitions.push({
+      kind: "Operator",
+      name,
+      params: [],
+      body,
+      isLocal: false,
+      isRecursive: false,
+      location,
+    });
   };
 
   const parseFactName = () => {
@@ -2190,21 +2203,7 @@ const parse = (
     module.theorems.push(theorem);
     module.units.push({ kind: "Theorem", theorem });
     if (name === undefined || statement.kind === "AssumeProve") return;
-    addFactDefinition(
-      module,
-      withRange(
-        {
-          kind: "Operator",
-          name,
-          params: [],
-          body: statement,
-          isLocal: false,
-          isRecursive: false,
-          location: getLocation(keyword),
-        },
-        start,
-      ),
-    );
+    addFactDefinition(module, name, statement, theorem.location);
   };
 
   const parseAssumption = (): Assumption => {
@@ -2306,15 +2305,7 @@ const parse = (
           module.assumptions.push(assumption);
           module.units.push({ kind: "Assumption", assumption });
           if (assumption.name !== undefined) {
-            addFactDefinition(module, {
-              kind: "Operator",
-              name: assumption.name,
-              params: [],
-              body: assumption.expression,
-              isLocal: false,
-              isRecursive: false,
-              location: assumption.location,
-            });
+            addFactDefinition(module, assumption.name, assumption.expression, assumption.location);
           }
           continue;
         }
