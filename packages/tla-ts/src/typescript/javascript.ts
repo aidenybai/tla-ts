@@ -30,7 +30,7 @@ export const WELL_KNOWN_SYMBOLS = [
 export const JAVASCRIPT_MODULE = `------------------------------ MODULE JavaScript ------------------------------
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
-CONSTANTS Undefined, Null, Ref, BuiltIns, ConstantFunctions, Symbols,
+CONSTANTS Undefined, Null, Ref, Big, BuiltIns, ConstantFunctions, Symbols,
           NaN, Infinity, NegativeInfinity, NegativeZero
 
 LOCAL Digits == {"-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
@@ -49,6 +49,11 @@ IsSymbol(value) == \\E position \\in DOMAIN Symbols : Symbols[position] = value
 
 LOCAL SymbolPosition(symbol) == CHOOSE position \\in DOMAIN Symbols : Symbols[position] = symbol
 
+\\* A BigInt, which tla-ts holds as its integer under the model value Big.
+IsBigInt(value) ==
+  LET text == ToString(value)
+  IN Len(text) >= 7 /\\ SubSeq(text, 1, 7) = "(Big :>"
+
 TypeOf(value) ==
   LET text == ToString(value)
       first == SubSeq(text, 1, 1)
@@ -58,6 +63,7 @@ TypeOf(value) ==
        [] text \\in {"TRUE", "FALSE"} -> "boolean"
        [] first = "\\"" -> "string"
        [] \\A i \\in 1..Len(text) : SubSeq(text, i, i) \\in Digits -> "number"
+       [] IsBigInt(value) -> "bigint"
        [] first \\in {"[", "<", "{", "("} \\cup Digits -> "object"
        [] IsSymbol(value) -> "symbol"
        [] OTHER -> "function"
@@ -175,6 +181,75 @@ LessThan(left, right) ==
      \\/ Rank(left)[1] = Rank(right)[1] /\\ Rank(left)[2] < Rank(right)[2]
 
 LessOrEqual(left, right) == left # NaN /\\ right # NaN /\\ ~LessThan(right, left)
+
+\\* TLC's integers have 32 bits, where a BigInt has as many as it needs, so tla-ts stops where one
+\\* would leave them.
+LOCAL MaxInteger == 2147483647
+
+LOCAL TooBig == Assert(FALSE, "tla-ts can't hold a BigInt beyond 32 bits")
+
+BigIntAdd(left, right) ==
+  LET augend == left[Big]
+      addend == right[Big]
+  IN IF \\/ addend > 0 /\\ augend > MaxInteger - addend
+        \\/ addend < 0 /\\ augend < -MaxInteger - addend
+     THEN TooBig
+     ELSE Big :> augend + addend
+
+BigIntNegate(value) == Big :> -value[Big]
+
+BigIntSubtract(left, right) == BigIntAdd(left, BigIntNegate(right))
+
+BigIntMultiply(left, right) ==
+  LET multiplicand == left[Big]
+      multiplier == right[Big]
+  IN IF multiplicand # 0 /\\ Absolute(multiplier) > MaxInteger \\div Absolute(multiplicand)
+     THEN TooBig
+     ELSE Big :> multiplicand * multiplier
+
+\\* BigInt's /, which rounds toward zero.
+BigIntDivide(left, right) ==
+  LET dividend == left[Big]
+      divisor == right[Big]
+      quotient == Absolute(dividend) \\div Absolute(divisor)
+  IN IF divisor = 0
+     THEN Assert(FALSE, "tla-ts can't throw the RangeError of dividing a BigInt by zero")
+     ELSE Big :> IF (dividend < 0) # (divisor < 0) THEN -quotient ELSE quotient
+
+\\* BigInt's %, whose result has the sign of the dividend.
+BigIntRemainder(left, right) ==
+  LET dividend == left[Big]
+      divisor == right[Big]
+      remainder == Absolute(dividend) % Absolute(divisor)
+  IN IF divisor = 0
+     THEN Assert(FALSE, "tla-ts can't throw the RangeError of dividing a BigInt by zero")
+     ELSE Big :> IF dividend < 0 THEN -remainder ELSE remainder
+
+RECURSIVE BigIntPowerOf(_, _)
+BigIntPowerOf(base, exponent) ==
+  IF exponent = 0 THEN Big :> 1 ELSE BigIntMultiply(base, BigIntPowerOf(base, exponent - 1))
+
+BigIntPower(base, exponent) ==
+  LET magnitude == Absolute(base[Big])
+      count == exponent[Big]
+  IN CASE count < 0 ->
+            Assert(FALSE, "tla-ts can't throw the RangeError of a BigInt's negative exponent")
+       [] count = 0 \\/ base[Big] = 1 -> Big :> 1
+       [] magnitude = 1 -> Big :> IF count % 2 = 0 THEN 1 ELSE -1
+       [] magnitude = 0 -> Big :> 0
+       [] count > 31 -> TooBig
+       [] OTHER -> BigIntPowerOf(base, count)
+
+\\* The order of numbers and BigInts, which compares their mathematical values.
+LOCAL NumericRank(value) == IF IsBigInt(value) THEN <<1, value[Big]>> ELSE Rank(value)
+
+NumericLessThan(left, right) ==
+  /\\ left # NaN
+  /\\ right # NaN
+  /\\ \\/ NumericRank(left)[1] < NumericRank(right)[1]
+     \\/ NumericRank(left)[1] = NumericRank(right)[1] /\\ NumericRank(left)[2] < NumericRank(right)[2]
+
+NumericLessOrEqual(left, right) == left # NaN /\\ right # NaN /\\ ~NumericLessThan(right, left)
 
 \\* Math.abs.
 AbsoluteValue(value) == IF IsNegative(value) THEN Negate(value) ELSE value
@@ -1143,6 +1218,7 @@ StringOf(value) ==
     [] value = NegativeInfinity -> "-Infinity"
     [] value = NegativeZero -> "0"
     [] TypeOf(value) = "number" -> ToString(value)
+    [] IsBigInt(value) -> ToString(value[Big])
     [] OTHER -> Assert(FALSE, "tla-ts can't convert objects to strings")
 
 \\* Array.prototype.join of values that aren't all strings, which writes undefined and null as
@@ -1961,6 +2037,7 @@ ToBoolean(value) ==
     [] TypeOf(value) = "boolean" -> value
     [] TypeOf(value) = "number" -> value \\notin {0, NaN, NegativeZero}
     [] TypeOf(value) = "string" -> value # ""
+    [] IsBigInt(value) -> value[Big] # 0
     [] OTHER -> TRUE
 
 LOCAL Fields == {"value", "writable", "get", "set", "enumerable", "configurable"}
@@ -2145,6 +2222,8 @@ ToNumber(value) ==
              [] kind = "nan" -> NaN
              [] OTHER -> Assert(FALSE, "tla-ts can't represent the number " \\o ToString(value)))
     [] IsRef(value) -> Assert(FALSE, "tla-ts can't convert this object to a number")
+    [] IsBigInt(value) ->
+         Assert(FALSE, "tla-ts can't throw the TypeError of converting a BigInt to a number")
     [] OTHER -> Assert(FALSE, "tla-ts can't throw the TypeError of converting a symbol to a number")
 
 \\* The longest start of a text made of a radix's digits.
@@ -2224,8 +2303,15 @@ RECURSIVE LooseEquals(_, _, _)
 LooseEquals(heap, left, right) ==
   LET leftKind == LooseKind(left)
       rightKind == LooseKind(right)
-      primitives == {"string", "number", "symbol"}
+      primitives == {"string", "number", "symbol", "bigint"}
+      numbers == {"number", "bigint"}
   IN CASE leftKind = rightKind -> StrictEquals(left, right)
+       [] {leftKind, rightKind} = numbers ->
+            LET number == IF leftKind = "number" THEN left ELSE right
+                bigint == IF leftKind = "bigint" THEN left ELSE right
+            IN IsFinite(number) /\\ Magnitude(number) = bigint[Big]
+       [] {leftKind, rightKind} = {"bigint", "string"} ->
+            Assert(FALSE, "tla-ts can't compare a BigInt with a string")
        [] {leftKind, rightKind} = {"null", "undefined"} -> TRUE
        [] leftKind = "number" /\\ rightKind = "string" -> EqualsText(left, right)
        [] leftKind = "string" /\\ rightKind = "number" -> EqualsText(right, left)

@@ -136,6 +136,7 @@ import {
   isFieldName,
   isHeapArray,
   isHeapType,
+  isBigIntLike,
   isNumberLike,
   rejectGeneratorUse,
   isNumericKey,
@@ -205,6 +206,16 @@ const NUMBER_OPERATORS = new Map([
   [ts.SyntaxKind.LessThanEqualsToken, { name: "LessOrEqual", isSwapped: false }],
   [ts.SyntaxKind.GreaterThanToken, { name: "LessThan", isSwapped: true }],
   [ts.SyntaxKind.GreaterThanEqualsToken, { name: "LessOrEqual", isSwapped: true }],
+]);
+
+// The JavaScript module's operators on two BigInts.
+const BIGINT_OPERATORS = new Map([
+  [ts.SyntaxKind.PlusToken, "BigIntAdd"],
+  [ts.SyntaxKind.MinusToken, "BigIntSubtract"],
+  [ts.SyntaxKind.AsteriskToken, "BigIntMultiply"],
+  [ts.SyntaxKind.SlashToken, "BigIntDivide"],
+  [ts.SyntaxKind.PercentToken, "BigIntRemainder"],
+  [ts.SyntaxKind.AsteriskAsteriskToken, "BigIntPower"],
 ]);
 
 const LOGICAL_OPERATORS = new Map([
@@ -901,11 +912,16 @@ export const translateSetKey = (node: ts.Expression, scope: Scope, context: Cont
 };
 
 // A value as a string, as JavaScript converts it in a template or beside a string in +.
+// A BigInt, which the JavaScript module holds as its integer under the model value Big.
+export const translateBigInt = (value: number, context: Context) =>
+  useJavaScript(":>", [identifier("Big"), number(value)], context);
+
 export const translateToString = (node: ts.Expression, scope: Scope, context: Context) => {
   const value = translateExpression(node, scope, context);
   const flags = context.checker.getTypeAtLocation(node).flags;
   if (getKind(node, context) === "string") return value;
   if (isNumberLike(node, context)) return translateNumberString(value, context);
+  if (isBigIntLike(node, context)) return useJavaScript("StringOf", [value], context);
   if (isBooleanLike(node, context)) return ifExpression(value, string("true"), string("false"));
   if (flags & ts.TypeFlags.Null) return string("null");
   if (flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) return string("undefined");
@@ -977,6 +993,34 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
         : kind === ts.SyntaxKind.LessThanEqualsToken
           ? not(isLess(right, left))
           : not(isLess(left, right));
+  }
+  const bigIntOperator = BIGINT_OPERATORS.get(kind);
+  if (
+    bigIntOperator !== undefined &&
+    isBigIntLike(node.left, context) &&
+    isBigIntLike(node.right, context)
+  ) {
+    return useJavaScript(bigIntOperator, [translate(node.left), translate(node.right)], context);
+  }
+  // An ordering compares BigInts and numbers by their mathematical values.
+  const isBigIntOrdering =
+    ORDERING_OPERATORS.has(kind) &&
+    (isBigIntLike(node.left, context) || isBigIntLike(node.right, context)) &&
+    [node.left, node.right].every(
+      (side) => isBigIntLike(side, context) || isNumberLike(side, context),
+    );
+  if (isBigIntOrdering) {
+    const [lesser, greater] =
+      kind === ts.SyntaxKind.LessThanToken || kind === ts.SyntaxKind.LessThanEqualsToken
+        ? [node.left, node.right]
+        : [node.right, node.left];
+    const isStrict =
+      kind === ts.SyntaxKind.LessThanToken || kind === ts.SyntaxKind.GreaterThanToken;
+    return useJavaScript(
+      isStrict ? "NumericLessThan" : "NumericLessOrEqual",
+      [translate(lesser), translate(greater)],
+      context,
+    );
   }
   if (
     ARITHMETIC_OPERATORS.has(kind) &&
@@ -1731,9 +1775,11 @@ const translateTruthy = (node: ts.Expression, value: Expression, context: Contex
             ? "string"
             : (member.flags & ts.TypeFlags.NumberLike) !== 0 && !context.hasSpecialNumbers
               ? "number"
-              : (member.flags & ts.TypeFlags.BooleanLike) !== 0
-                ? "boolean"
-                : undefined;
+              : (member.flags & ts.TypeFlags.BigIntLike) !== 0
+                ? "bigint"
+                : (member.flags & ts.TypeFlags.BooleanLike) !== 0
+                  ? "boolean"
+                  : undefined;
   const kinds = new Set(members.map(getTruthKind));
   const defined = [...kinds].filter((kind) => kind !== "undefined" && kind !== "null");
   if (kinds.has(undefined) || defined.length > 1) {
@@ -1745,6 +1791,7 @@ const translateTruthy = (node: ts.Expression, value: Expression, context: Contex
     apply("\\notin", [value, set([identifier("Null"), getUndefined(context)])]),
     ...(defined[0] === "string" ? [apply("#", [value, string("")])] : []),
     ...(defined[0] === "number" ? [apply("#", [value, number(0)])] : []),
+    ...(defined[0] === "bigint" ? [apply("#", [value, translateBigInt(0, context)])] : []),
     ...(defined[0] === "boolean" ? [value] : []),
   ];
   return defined.length === 0
@@ -1904,6 +1951,13 @@ const translateNode = (
         ts.isPropertyDeclaration(ancestor),
     ) === scope.receiver?.method;
   if (isReceived && scope.receiver !== undefined) return scope.receiver.value;
+  if (ts.isBigIntLiteral(node)) {
+    const value = BigInt(node.text.slice(0, -1).replaceAll("_", ""));
+    if (value > 2n ** 31n - 1n) {
+      throw new TlaTypeScriptError(`TLC's integers have 32 bits, so ${node.text} is too big`, node);
+    }
+    return translateBigInt(Number(value), context);
+  }
   if (ts.isNumericLiteral(node)) {
     const value = Number(node.text);
     if (!Number.isInteger(value)) {
@@ -1927,6 +1981,21 @@ const translateNode = (
   if (ts.isIdentifier(node)) return translateIdentifier(node, scope, context);
   if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
     return not(translateCondition(node.operand, scope, context));
+  }
+  if (
+    ts.isPrefixUnaryExpression(node) &&
+    (node.operator === ts.SyntaxKind.MinusToken || node.operator === ts.SyntaxKind.TildeToken) &&
+    isBigIntLike(node.operand, context)
+  ) {
+    const negated = useJavaScript(
+      "BigIntNegate",
+      [translateExpression(node.operand, scope, context)],
+      context,
+    );
+    // ~x is -x - 1.
+    return node.operator === ts.SyntaxKind.MinusToken
+      ? negated
+      : useJavaScript("BigIntSubtract", [negated, translateBigInt(1, context)], context);
   }
   if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.MinusToken) {
     const isLiteral = ts.isNumericLiteral(node.operand);

@@ -425,6 +425,9 @@ export const isBooleanLike = (node: ts.Expression, context: Context) =>
 export const isNumberLike = (node: ts.Expression, context: Context) =>
   isEvery(context.checker.getTypeAtLocation(node), ts.TypeFlags.NumberLike | ts.TypeFlags.Never);
 
+export const isBigIntLike = (node: ts.Expression, context: Context) =>
+  isEvery(context.checker.getTypeAtLocation(node), ts.TypeFlags.BigIntLike);
+
 export const isSet = (node: ts.Expression, context: Context) =>
   isSetType(context.checker.getTypeAtLocation(node));
 

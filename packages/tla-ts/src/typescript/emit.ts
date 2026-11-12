@@ -160,7 +160,7 @@ export const emit = (
     ...context.symbols,
   ];
   const modelValues = [
-    ...(isJavaScript ? ["Undefined", "Null", "Ref", ...SPECIAL_NUMBERS] : []),
+    ...(isJavaScript ? ["Undefined", "Null", "Ref", "Big", ...SPECIAL_NUMBERS] : []),
     ...constants,
   ];
   const heap = context.heap === undefined ? undefined : context.variables.get(context.heap);

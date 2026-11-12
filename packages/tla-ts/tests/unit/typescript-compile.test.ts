@@ -6411,3 +6411,37 @@ describe("buffers", () => {
     expect(result.failure?.message).toContain("tla-ts can't");
   });
 });
+
+describe("BigInts", () => {
+  it("computes with BigInts and tells them from numbers", async () => {
+    const result = await checkModel(`
+      const a = 7n;
+      const b = -2n;
+      if (a + b !== 5n || a - b !== 9n || a * b !== -14n) throw new Error("ring");
+      if (a / b !== -3n || a % b !== 1n || -a % 2n !== -1n || b ** 3n !== -8n) throw new Error("division");
+      if (\`\${a}\` !== "7" || String(b) !== "-2") throw new Error("strings");
+      if (!(b < a) || a <= b || !(a > 3) || 7 > a || !(a >= 7)) throw new Error("order");
+      const value: unknown = 1n;
+      const one: unknown = 1;
+      if (value === one || Object.is(value, one) || !Object.is(value, 1n)) throw new Error("equality");
+      if (typeof value !== "bigint" || -a !== -7n || ~a !== -8n) throw new Error("unary");
+      let zero = 0n;
+      zero = zero * 1n;
+      if (zero) throw new Error("truthiness");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("stops where a BigInt leaves 32 bits or divides by zero", async () => {
+    const overflow = await checkModel(`
+      let sum = 2147483647n;
+      sum = sum + 1n;
+    `);
+    expect(overflow.failure?.message).toContain("tla-ts can't hold a BigInt beyond 32 bits");
+    const division = await checkModel(`
+      let quotient = 1n;
+      quotient = quotient / 0n;
+    `);
+    expect(division.failure?.message).toContain("tla-ts can't throw the RangeError");
+  });
+});
