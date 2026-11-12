@@ -612,7 +612,7 @@ class Nnf {
     return this.lookup(formula, isPositive0);
   }
 
-  // lift_ite: replaces a relevant if-then-else term t of the atom by its branches.
+  // Replaces a relevant if-then-else term t of the atom by its branches.
   private liftIte(formula: number) {
     const manager = this.context.manager;
     if (isAppOf(manager, formula, OP_ITE)) return formula;

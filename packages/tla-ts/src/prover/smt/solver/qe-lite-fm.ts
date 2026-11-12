@@ -543,7 +543,7 @@ export class Fm {
     }
   }
 
-  // copy_remaining: the live constraints of the upper bounds, then of the lower bounds.
+  // The live constraints of the upper bounds, then of the lower bounds.
   private copyRemaining() {
     for (const lists of [this.uppers, this.lowers])
       for (const constraints of lists)

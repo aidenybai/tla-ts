@@ -331,7 +331,6 @@ class ArithQeUtil {
     // a*s + b*t + (a-1)(b-1) <= 0
     const slack = this.mkNumeral(a.abs().sub(Rational.one).mul(b.abs().sub(Rational.one)));
     const result1 = this.mkLe(this.mkApp(OP_ADD, [asBt, slack], manager.sorts[asBt]));
-    // Swap so that |a| >= |b|.
     const isSwapped = a.abs().compare(b.abs()) < 0;
     const a1 = isSwapped ? b : a;
     const b1 = isSwapped ? a : b;
@@ -395,7 +394,6 @@ class ArithQeUtil {
     const isGe = isAppOf(manager, expr, OP_GE);
     if (isLe || isGe) {
       if (isPositive) return expr;
-      // a0 <= a1, or a1 >= a0.
       const [low, high] = isLe ? [a0, a1] : [a1, a0];
       return this.mkLt(this.mkSub(high, low));
     }
