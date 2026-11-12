@@ -348,16 +348,14 @@ interface SearchPosition {
 }
 
 interface FailureOptions {
+  /** What TLC was doing: "behavior-graph" is a failed next state whose call stack comes from adding the state to the behavior graph, "liveness" a failed liveness check. */
+  phase?: "initial" | "next" | "behavior-graph" | "liveness";
   initialState?: Value[];
-  isInitial?: boolean;
   outDegrees?: number[];
   callStack?: Expression[];
   fingerprint?: FingerprintFailure;
   replayError?: TlaEvaluationError;
-  isNextState?: boolean;
-  isCallStackFirst?: boolean;
   traceFailure?: FailureMessage;
-  isLiveCallStack?: boolean;
 }
 
 const appendTraceOutput = <Traced extends Behavior>(behavior: Traced, lines: OutputLine[]) => ({
@@ -1064,26 +1062,24 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     trace: getTrace(index, successor).trace,
   });
   const getFailureExitCode = (error: TlaEvaluationError, failureOptions: FailureOptions) => {
-    if (
-      failureOptions.isInitial &&
-      !failureOptions.callStack &&
-      !failureOptions.fingerprint &&
-      is174
-    ) {
-      return EXIT_STATUS.success;
+    const isReplayed = failureOptions.callStack !== undefined;
+    switch (failureOptions.phase) {
+      case "initial":
+        if (isReplayed) return EXIT_STATUS.specEvaluationFailure;
+        return is174 ? EXIT_STATUS.success : getInitialExitCode(error);
+      case "behavior-graph":
+        return (
+          getExitCode(error) ??
+          (error instanceof TlaModuleError ? error.exitCode : EXIT_STATUS.error)
+        );
+      case "liveness":
+        return getErrorExitCode(error);
+      default:
+        if (!isReplayed) return getErrorExitCode(error);
+        return failureOptions.fingerprint
+          ? EXIT_STATUS.specEvaluationFailure
+          : getReplayExitCode(failureOptions.replayError ?? error);
     }
-    if (!failureOptions.callStack) {
-      return failureOptions.isInitial ? getInitialExitCode(error) : getErrorExitCode(error);
-    }
-    if (failureOptions.isCallStackFirst) return getErrorExitCode(error);
-    if (failureOptions.isLiveCallStack) {
-      return (
-        getExitCode(error) ?? (error instanceof TlaModuleError ? error.exitCode : EXIT_STATUS.error)
-      );
-    }
-    return failureOptions.isInitial || failureOptions.fingerprint
-      ? EXIT_STATUS.specEvaluationFailure
-      : getReplayExitCode(failureOptions.replayError ?? error);
   };
   const createFailureResult = (
     failed: unknown,
@@ -1100,7 +1096,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const traceOutput = [...(behavior.traceOutput ?? []), ...(checked?.lines ?? [])];
     return {
       ...createResult("error", undefined, {
-        ...getFailureMessage(error, failureOptions.isNextState ?? false),
+        ...getFailureMessage(
+          error,
+          failureOptions.phase !== undefined && failureOptions.phase !== "initial",
+        ),
         ...behavior,
         ...(traceOutput.length > 0 && { traceOutput }),
         ...(postcondition && { postcondition }),
@@ -1110,7 +1109,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
             : undefined,
         exitCode: getFailureExitCode(error, failureOptions),
         callStack: failureOptions.callStack,
-        ...(failureOptions.isCallStackFirst && { isCallStackFirst: true }),
+        ...(failureOptions.phase === "liveness" && { isCallStackFirst: true }),
         ...(failureOptions.fingerprint && { fingerprint: failureOptions.fingerprint }),
         ...(failureOptions.traceFailure && { traceFailure: failureOptions.traceFailure }),
       }),
@@ -1449,7 +1448,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       return createFailureResult(
         error,
         { trace: [], traceOutput: replay.lines },
-        { initialState: state, ...replay.result, isInitial: true },
+        { initialState: state, ...replay.result, phase: "initial" },
       );
     };
     try {
@@ -1503,7 +1502,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       return createFailureResult(
         error,
         { trace: [], traceOutput: replay.lines },
-        { ...replay.result, isInitial: true },
+        { ...replay.result, phase: "initial" },
       );
     }
   }
@@ -1601,14 +1600,14 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const replayFailedNext = (index: number, liveSuccessors: LiveSuccessor[]) => {
     const live = captureOutput(() => addFailedLiveState(index, liveSuccessors));
     if (live.result) {
-      const result = { callStack: live.result, fingerprint: undefined, isLiveCallStack: true };
+      const result: FailureOptions = { phase: "behavior-graph", callStack: live.result };
       return { result, lines: live.lines };
     }
     const replay = captureOutput(() => replayNext(index));
     return { result: replay.result, lines: [...live.lines, ...replay.lines] };
   };
   const reportNextStateOverflow = (index: number) =>
-    createFailureResult(createStackOverflowError(), getStateTrace(index), { isNextState: true });
+    createFailureResult(createStackOverflowError(), getStateTrace(index), { phase: "next" });
   const reportNextStateFailure = (
     error: unknown,
     index: number,
@@ -1619,7 +1618,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     return createFailureResult(
       withNextStateExitCode(error),
       appendTraceOutput(getStateTrace(index), replay.lines),
-      { isNextState: true, ...replay.result },
+      { phase: "next", ...replay.result },
     );
   };
   const expandState = (index: number, liveSuccessors: LiveSuccessor[]) => {
@@ -1650,7 +1649,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           outcome = createFailureResult(
             new TlaEvaluationError(`${getWrappedException(error)}${error.message}`, error),
             appendTraceOutput({ trace: [] }, replay.lines),
-            { isNextState: true, ...replay.result },
+            { phase: "next", ...replay.result },
           );
           return true;
         }
@@ -1670,7 +1669,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
             traceFailure ? getStateTrace(index) : getFailedTrace(index, successor),
             replay.lines,
           ),
-          { isNextState: true, ...replay.result, traceFailure },
+          { phase: "next", ...replay.result, traceFailure },
         );
       }
       return outcome !== undefined;
@@ -1744,8 +1743,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       return createFailureResult(error, getStateTrace(index), {
         outDegrees: getFailureOutDegrees(),
         callStack: replay?.callStack.length ? replay.callStack : undefined,
-        isNextState: true,
-        isCallStackFirst: true,
+        phase: "liveness",
       });
     }
   };
