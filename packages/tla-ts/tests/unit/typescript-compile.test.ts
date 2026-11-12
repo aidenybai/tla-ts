@@ -1870,6 +1870,50 @@ describe("errors", () => {
     ).toThrow("Type a callback's array parameter as an array");
   });
 
+  it("searches an array-like object whose length and elements getters answer", async () => {
+    const getSource = (expected: number) => `
+      const arr: number[] = [20];
+      const like: Record<string, unknown> = {};
+      const holed: Record<string, unknown> = { 2: 2, length: 20 };
+      Object.defineProperty(arr, "0", {
+        get: function () {
+          arr[1] = 1;
+          return 0;
+        },
+        configurable: true,
+      });
+      if (arr.indexOf(1) !== -1) throw new Error("indexOf");
+      if (arr.lastIndexOf(0) !== 0) throw new Error("lastIndexOf");
+      if (arr.includes(1) !== true) throw new Error("includes");
+      Object.defineProperty(like, "length", {
+        get: function () {
+          like[2] = "length";
+          return 3;
+        },
+        configurable: true,
+      });
+      if (Array.prototype.indexOf.call(like, "length") !== 2) throw new Error("length");
+      if (Array.prototype.lastIndexOf.call(like, "length", -2) !== -1) throw new Error("from");
+      let isSeen = false;
+      Array.prototype.forEach.call(like, (value: unknown, position: number) => {
+        if (position === 2 && value === "length") isSeen = true;
+      });
+      if (!isSeen) throw new Error("forEach");
+      Object.defineProperty(holed, "0", {
+        get: function () {
+          delete (Object.prototype as Record<string, unknown>)[1];
+          return 0;
+        },
+        configurable: true,
+      });
+      (Object.prototype as Record<string, unknown>)[1] = 1;
+      if (Array.prototype.indexOf.call(holed, 1) !== -1) throw new Error("hole");
+      if (Array.prototype.indexOf.call(holed, 2, -18) !== ${expected}) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(-1))).failure?.message).toContain("unexpected");
+  });
+
   it("reads each element of an array-like object as its method visits it, running getters", async () => {
     const result = await checkModel(`
       let isFirstRead = false;

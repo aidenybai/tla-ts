@@ -481,6 +481,16 @@ export const getElementGetters = (node: ts.Node, context: Context) => {
     : undefined;
 };
 
+// The getters that reading an array-like object's length may run, where the script defines one
+// under length and tla-ts can run each of them.
+export const getLengthGetters = (node: ts.Node, context: Context) => {
+  const getters = getKeyGetters(node, "length", context);
+  return getGetterKeys(node).has("length") &&
+    getters.every((getter) => isRunnableGetter(getter, context))
+    ? getters
+    : [];
+};
+
 export const getDescriptorGetters = (node: ts.Node, context: Context) =>
   isDescriptorRead(node, context)
     ? getFieldGetters(node, context)

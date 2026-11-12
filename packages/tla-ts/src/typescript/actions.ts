@@ -169,6 +169,7 @@ import {
   callMethod,
   getDescriptorGetters,
   getElementGetters,
+  getLengthGetters,
   getReadFunctions,
   isDescriptorRead,
   isDescriptorsRead,
@@ -3295,14 +3296,20 @@ const LOOP_METHODS = new Set([
   "reduceRight",
 ]);
 
+// The array methods that search for a value, which run as a loop where a getter may answer the
+// length or an element of an array-like object.
+const SEARCH_METHODS = new Set(["indexOf", "lastIndexOf", "includes"]);
+
 // The callback of an array method that changes what a statement can see, such as a count of its
-// calls, which the method runs as a loop of statements.
+// calls, or a search that may run getters, which the method runs as a loop of statements.
 interface LoopCall {
   method: string;
   // The array, or the array-like object that Array.prototype's method calls back for.
   receiver: ts.Expression;
-  callback: FunctionNode;
-  argument: ts.Expression;
+  callback: FunctionNode | undefined;
+  // The callback's argument, or the value that a search looks for.
+  argument: ts.Expression | undefined;
+  // The initial value of reduce, or the index that a search starts from.
   initial: ts.Expression | undefined;
   isArrayLike: boolean;
 }
@@ -3321,7 +3328,8 @@ const getLoopTarget = (node: ts.Node, context: Context) => {
   const method =
     isCall && ts.isPropertyAccessExpression(target) ? target.name.text : node.expression.name.text;
   const receiver = isCall ? node.arguments[0] : target;
-  return LOOP_METHODS.has(method) && (isArrayLike || getKind(receiver, context) === "sequence")
+  return (LOOP_METHODS.has(method) || SEARCH_METHODS.has(method)) &&
+    (isArrayLike || getKind(receiver, context) === "sequence")
     ? {
         method,
         receiver,
@@ -3331,16 +3339,36 @@ const getLoopTarget = (node: ts.Node, context: Context) => {
     : undefined;
 };
 
-// The getters that an array-like object's method may run as it reads each element.
+// The getters that an array-like object's method may run as it reads its length and each element.
 const getLoopGetters = (node: ts.Node, context: Context) => {
   const target = getLoopTarget(node, context);
-  return target?.isArrayLike === true ? (getElementGetters(target.receiver, context) ?? []) : [];
+  return target?.isArrayLike === true
+    ? [
+        ...new Set([
+          ...(getElementGetters(target.receiver, context) ?? []),
+          ...getLengthGetters(target.receiver, context),
+        ]),
+      ]
+    : [];
 };
 
 const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCall | undefined => {
   const target = getLoopTarget(node, context);
   if (target === undefined) return undefined;
   const argument = target.callbackArguments.at(0);
+  if (SEARCH_METHODS.has(target.method)) {
+    return getLoopGetters(node, context).length > 0 &&
+      !target.callbackArguments.some(ts.isSpreadElement)
+      ? {
+          method: target.method,
+          receiver: target.receiver,
+          callback: undefined,
+          argument,
+          initial: target.callbackArguments.at(1),
+          isArrayLike: target.isArrayLike,
+        }
+      : undefined;
+  }
   const callback = argument && getCallback(argument, path, context);
   return argument !== undefined &&
     callback?.body !== undefined &&
@@ -3372,11 +3400,20 @@ const translateLoopCall = (
   const receiver = loop.receiver;
   const method = loop.method;
   const callback = loop.callback;
-  // Where a getter may answer an array-like object's element, the method reads each element as it
-  // visits it, as JavaScript does, so that the getters and the callback may change objects.
-  const getters = loop.isArrayLike ? getElementGetters(receiver, context) : undefined;
+  const site = callback ?? expression;
+  const isReversed =
+    method === "reduceRight" || method.startsWith("findLast") || method === "lastIndexOf";
+  const isReduce = method.startsWith("reduce");
+  // Where a getter may answer an array-like object's length or element, the method reads its
+  // length and then each element as it visits it, as JavaScript does, so that the getters and the
+  // callback may change objects. reduce without an initial value reads its first element apart.
+  const lengthGetters = loop.isArrayLike ? getLengthGetters(receiver, context) : [];
+  const getters = loop.isArrayLike
+    ? (getElementGetters(receiver, context) ??
+      (lengthGetters.length > 0 && !(isReduce && loop.initial === undefined) ? [] : undefined))
+    : undefined;
   const changed =
-    getters === undefined
+    getters === undefined && callback !== undefined
       ? getChanged(callback, path, context)
       : getChanged(expression, path, context);
   // Otherwise an array-like object's method reads its elements before it visits them, which a
@@ -3386,7 +3423,7 @@ const translateLoopCall = (
     loop.isArrayLike &&
     changed.some((symbol) => symbol === context.heap)
   ) {
-    throw new TlaTypeScriptError("Don't change objects in this callback", callback);
+    throw new TlaTypeScriptError("Don't change objects in this callback", site);
   }
   const isReceiverChanged = (node: ts.Node): boolean =>
     (ts.isIdentifier(node) &&
@@ -3398,14 +3435,13 @@ const translateLoopCall = (
     !loop.isArrayLike &&
     ts.isIdentifier(receiver) &&
     changed.some((symbol) => symbol === getSymbol(receiver, context.checker));
-  if (!isLive && isReceiverChanged(receiver)) {
+  // An array-like object's method reads it through the reference that it took before the loop.
+  if (!loop.isArrayLike && !isLive && isReceiverChanged(receiver)) {
     throw new TlaTypeScriptError("Don't change an array while its method calls back", receiver);
   }
   if (changed.some((symbol) => path.scope.functions.has(symbol))) {
-    throw new TlaTypeScriptError("Don't reassign a function inside a callback", callback);
+    throw new TlaTypeScriptError("Don't reassign a function inside a callback", site);
   }
-  const isReversed = method === "reduceRight" || method.startsWith("findLast");
-  const isReduce = method.startsWith("reduce");
   if (getters !== undefined && isReduce && loop.initial === undefined) {
     throw new TlaTypeScriptError(
       "Give reduce an initial value where a getter may answer an element",
@@ -3413,14 +3449,14 @@ const translateLoopCall = (
     );
   }
   // The array parameter holds a sequence, which only a parameter typed as an array can read.
-  const callbackParameters = getParameters(callback);
+  const callbackParameters = callback === undefined ? [] : getParameters(callback);
   const arrayName = callbackParameters.at(isReduce ? 3 : 2)?.name;
   if (
     arrayName !== undefined &&
     ts.isIdentifier(arrayName) &&
     getKind(arrayName, context) !== (loop.isArrayLike ? "object" : "sequence") &&
     (context.checker.getTypeAtLocation(arrayName).flags & ts.TypeFlags.Unknown) === 0 &&
-    isNameRead(arrayName, callback, context)
+    isNameRead(arrayName, site, context)
   ) {
     throw new TlaTypeScriptError("Type a callback's array parameter as an array", arrayName);
   }
@@ -3490,6 +3526,9 @@ const translateLoopCall = (
       ["some", boolean(false)],
       ["findIndex", number(-1)],
       ["findLastIndex", number(-1)],
+      ["indexOf", number(-1)],
+      ["lastIndexOf", number(-1)],
+      ["includes", boolean(false)],
     ]).get(method) ??
     (["filter", "map"].includes(method) || isReduce ? kept : getUndefined(context));
   const inner = {
@@ -3502,22 +3541,39 @@ const translateLoopCall = (
     generators: new Map(),
     tasks: undefined,
   };
-  const body = callback.body;
-  if (body === undefined) throw new TlaTypeScriptError("Give this a body", callback);
-  const statements = ts.isBlock(body)
-    ? body.statements
-    : [
-        getWritten(body) === undefined
-          ? ts.factory.createReturnStatement(body)
-          : ts.factory.createExpressionStatement(body),
-      ];
   const throwTo =
     frame.throwTo &&
     (() => {
-      throw new TlaTypeScriptError("Catch inside the callback, or throw after the call", callback);
+      throw new TlaTypeScriptError("Catch inside the callback, or throw after the call", site);
     });
+  const searchName = context.names.getFresh("searched");
+  // Compares an element with the value that a search looks for.
+  const compare = (current: Path, element: Expression) =>
+    ifThenElse(
+      useJavaScript(
+        method === "includes" ? "SameValueZero" : "StrictEquals",
+        [element, identifier(searchName)],
+        context,
+      ),
+      done(
+        current,
+        method === "includes" ? boolean(true) : apply("-", [identifier(position), number(1)]),
+      ),
+      repeat(current, kept),
+    );
   // Runs the callback on an element, from a path that may have run a getter to read it.
   const runCallback = (current: Path, element: Expression) => {
+    if (callback?.body === undefined || loop.argument === undefined) {
+      throw new TlaTypeScriptError("Give this a body", site);
+    }
+    const body = callback.body;
+    const statements = ts.isBlock(body)
+      ? body.statements
+      : [
+          getWritten(body) === undefined
+            ? ts.factory.createReturnStatement(body)
+            : ts.factory.createExpressionStatement(body),
+        ];
     const getChecked = (value: Expression, at: number) =>
       loop.isArrayLike
         ? checkElement(
@@ -3573,6 +3629,7 @@ const translateLoopCall = (
   // Reads the element at a position, running a getter that answers it, where the object or a
   // prototype has the index. The find methods read each index, and map keeps a hole, which the
   // array it makes can't hold.
+  const visit = callback === undefined ? compare : runCallback;
   const visitLazily = (elementGetters: readonly FunctionNode[]) => {
     const key = useJavaScript("ToString", [apply("-", [identifier(position), number(1)])], context);
     const read = readWith(
@@ -3583,7 +3640,7 @@ const translateLoopCall = (
       inner,
       context,
       { ...frame, breakTo: undefined, continueTo: undefined, throwTo },
-      runCallback,
+      visit,
     );
     return EVERY_INDEX_METHODS.has(method)
       ? read
@@ -3636,29 +3693,59 @@ const translateLoopCall = (
             ? visitLazily(getters)
             : isLive
               ? visitLive()
-              : runCallback(inner, index(sequence, [identifier(position)])),
+              : visit(inner, index(sequence, [identifier(position)])),
           done(inner, finished),
         ),
       ),
     ),
     isRecursive: true,
   };
-  const start = isReversed ? length : number(1);
+  const from = callback === undefined ? loop.initial : undefined;
+  if (from !== undefined && !isNumberLike(from, context)) {
+    throw new TlaTypeScriptError("Pass a number as the index to search from", from);
+  }
+  // A search starts from the position after the index that fromIndex gives, from the end where
+  // it's negative: lastIndexOf from no later than the last element, and the others from no earlier
+  // than the first.
+  const relative =
+    from === undefined
+      ? undefined
+      : useJavaScript(
+          "RelativeIndex",
+          [translateExpression(from, path.scope, context), length],
+          context,
+        );
+  const start =
+    relative === undefined
+      ? isReversed
+        ? length
+        : number(1)
+      : apply("+", [
+          isReversed
+            ? ifExpression(
+                apply("<", [relative, length]),
+                relative,
+                apply("-", [length, number(1)]),
+              )
+            : ifExpression(apply(">", [relative, number(0)]), relative, number(0)),
+          number(1),
+        ]);
   const result = context.names.getFresh("loop");
-  const runLoop = (from: Expression, seed: Expression) =>
+  const runLoop = (current: Path, first: Expression, seed: Expression) =>
     letIn(
       [operator],
       bindOnce(
-        path,
+        current,
         result,
-        call(name, [from, seed, ...getValues(path)]),
+        call(name, [first, seed, ...getValues(current)]),
         continueWith(
           {
             ...withValues(
-              path,
+              current,
               changed.map((_, offset) => index(identifier(result), [number(offset + 2)])),
             ),
-            isAssigned: path.isAssigned || changed.some((symbol) => context.variables.has(symbol)),
+            isAssigned:
+              current.isAssigned || changed.some((symbol) => context.variables.has(symbol)),
           },
           index(identifier(result), [number(1)]),
         ),
@@ -3666,50 +3753,78 @@ const translateLoopCall = (
     );
   // A reduce without an initial value starts from the first element it visits, and throws a
   // TypeError for an empty array.
-  const seeded = !isReduce
-    ? runLoop(start, ["filter", "map"].includes(method) ? tuple([]) : getUndefined(context))
-    : initial !== undefined
-      ? runLoop(start, translateExpression(initial, path.scope, context))
-      : ifThenElse(
-          apply("=", [length, number(0)]),
-          throwTypeError(path, expression, context, frame),
-          runLoop(
-            isReversed ? apply("-", [length, number(1)]) : number(2),
-            index(sequence, [start]),
-          ),
-        );
+  const getSeeded = (current: Path) =>
+    !isReduce
+      ? runLoop(
+          current,
+          start,
+          ["filter", "map"].includes(method) ? tuple([]) : getUndefined(context),
+        )
+      : initial !== undefined
+        ? runLoop(current, start, translateExpression(initial, current.scope, context))
+        : ifThenElse(
+            apply("=", [length, number(0)]),
+            throwTypeError(current, expression, context, frame),
+            runLoop(
+              current,
+              isReversed ? apply("-", [length, number(1)]) : number(2),
+              index(sequence, [start]),
+            ),
+          );
   if (getters !== undefined) {
-    // The length, which the method reads once, after which map and filter check the array's
-    // constructor, as ArraySpeciesCreate reads it.
-    const heap = getHeap(path.scope, receiver, context);
-    const readLength = useJavaScript(
-      "ToLength",
-      [useJavaScript("Get", [heap, owner, string("length")], context)],
-      context,
-    );
+    // The length, which the method reads once, running its getter, after which map and filter
+    // check the array's constructor, as ArraySpeciesCreate reads it.
     return letIn(
       [
         define(ownerName, [], translateExpression(receiver, path.scope, context)),
         define(
-          lengthName,
+          searchName,
           [],
-          ["filter", "map"].includes(method)
-            ? ifExpression(
-                apply("=", [
-                  useJavaScript(
-                    "SpeciesElements",
-                    [heap, owner, translateBuiltInValue("Array", receiver, context), tuple([])],
-                    context,
-                  ),
-                  tuple([]),
-                ]),
-                readLength,
-                number(0),
-              )
-            : readLength,
+          loop.argument === undefined || callback !== undefined
+            ? getUndefined(context)
+            : translateExpression(loop.argument, path.scope, context),
         ),
       ],
-      seeded,
+      readWith(
+        expression,
+        owner,
+        string("length"),
+        lengthGetters,
+        path,
+        context,
+        frame,
+        (after, value) => {
+          const readLength = useJavaScript("ToLength", [value], context);
+          return letIn(
+            [
+              define(
+                lengthName,
+                [],
+                ["filter", "map"].includes(method)
+                  ? ifExpression(
+                      apply("=", [
+                        useJavaScript(
+                          "SpeciesElements",
+                          [
+                            getHeap(after.scope, receiver, context),
+                            owner,
+                            translateBuiltInValue("Array", receiver, context),
+                            tuple([]),
+                          ],
+                          context,
+                        ),
+                        tuple([]),
+                      ]),
+                      readLength,
+                      number(0),
+                    )
+                  : readLength,
+              ),
+            ],
+            getSeeded(after),
+          );
+        },
+      ),
     );
   }
   return letIn(
@@ -3750,7 +3865,7 @@ const translateLoopCall = (
             ),
       ),
     ],
-    seeded,
+    getSeeded(path),
   );
 };
 
