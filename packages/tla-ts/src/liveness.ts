@@ -37,8 +37,10 @@ import {
   createPair,
   createUnary,
   getLiveLevel,
+  type LiveAction,
   type LiveEnabled,
   type LiveExpression,
+  type LiveState,
 } from "./tableau";
 import { isEqualLikeTlc, type Value } from "./values";
 
@@ -606,6 +608,45 @@ export const toLiveExpression = (
   return convert(root, rootScope);
 };
 
+export const evaluateStateAtom = (
+  expression: LiveState | LiveEnabled,
+  state: Value[],
+  environment: Environment,
+) => {
+  const context = { environment, scope: expression.scope, state, next: undefined };
+  const value =
+    expression.kind === "State"
+      ? evaluate(expression.expression, context)
+      : isEnabled(expression.step, context);
+  if (typeof value !== "boolean") {
+    throw new TlaEvaluationError("A state predicate was evaluated to a non-boolean value.");
+  }
+  return value;
+};
+
+export const evaluateActionAtom = (
+  expression: LiveAction,
+  state: Value[],
+  next: Value[] | undefined,
+  environment: Environment,
+) => {
+  const scope = expression.scope;
+  const subscript = expression.subscript;
+  if (
+    subscript &&
+    isEqualLikeTlc(
+      evaluate(subscript, { environment, scope, state, next: undefined }),
+      evaluate(subscript, { environment, scope, state: next, next: undefined }),
+    )
+  )
+    return false;
+  const value = evaluate(expression.expression, { environment, scope, state, next });
+  if (typeof value !== "boolean") {
+    throw new TlaEvaluationError("Encountered an action predicate that's not a boolean.");
+  }
+  return value;
+};
+
 export const evaluateLive = (
   expression: LiveExpression,
   state: Value[],
@@ -622,35 +663,13 @@ export const evaluateLive = (
     case "Enabled": {
       const cached = stateCache.get(expression);
       if (cached !== undefined) return cached;
-      const context = { environment, scope: expression.scope, state, next: undefined };
-      const value =
-        expression.kind === "State"
-          ? evaluate(expression.expression, context)
-          : isEnabled(expression.step, context);
-      if (typeof value !== "boolean") {
-        throw new TlaEvaluationError("A state predicate was evaluated to a non-boolean value.");
-      }
+      const value = evaluateStateAtom(expression, state, environment);
       stateCache.set(expression, value);
       return value;
     }
-    case "Action": {
+    case "Action":
       if (expression.enabled && stateCache.get(expression.enabled) === false) return false;
-      const scope = expression.scope;
-      const subscript = expression.subscript;
-      if (
-        subscript &&
-        isEqualLikeTlc(
-          evaluate(subscript, { environment, scope, state, next: undefined }),
-          evaluate(subscript, { environment, scope, state: next, next: undefined }),
-        )
-      )
-        return false;
-      const value = evaluate(expression.expression, { environment, scope, state, next });
-      if (typeof value !== "boolean") {
-        throw new TlaEvaluationError("Encountered an action predicate that's not a boolean.");
-      }
-      return value;
-    }
+      return evaluateActionAtom(expression, state, next, environment);
     case "Not":
       return !recurse(expression.body);
     case "And":
