@@ -308,16 +308,15 @@ const permuteSortedElements = (elements: Value[], images: RankedImages) => {
     else moved.push(permuted);
   }
   if (moved.length === 0) return undefined;
-  if (moved.length > MAXIMUM_INSERTION_SORT_LENGTH) moved.sort(compareValues);
-  else {
-    for (let index = 1; index < moved.length; index++) {
-      const value = moved[index];
-      let position = index;
-      for (; position > 0 && compareValues(moved[position - 1], value) > 0; position--) {
-        moved[position] = moved[position - 1];
-      }
-      moved[position] = value;
+  const isShort = moved.length <= MAXIMUM_INSERTION_SORT_LENGTH;
+  if (!isShort) moved.sort(compareValues);
+  for (let index = 1; isShort && index < moved.length; index++) {
+    const value = moved[index];
+    let position = index;
+    for (; position > 0 && compareValues(moved[position - 1], value) > 0; position--) {
+      moved[position] = moved[position - 1];
     }
+    moved[position] = value;
   }
   const merged = elements.slice();
   let keptIndex = 0;
