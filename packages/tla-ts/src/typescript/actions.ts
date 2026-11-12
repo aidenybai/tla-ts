@@ -5785,7 +5785,29 @@ const translateExpressionStatement = (
   ) {
     const target = expression.left;
     const object = translateObjectValue(target.expression, path.scope, context);
-    return ifThenElse(
+    // A compound or logical assignment passes the setter what it makes of what the getter gives.
+    const current =
+      expression.operatorToken.kind === ts.SyntaxKind.EqualsToken
+        ? undefined
+        : translateExpression(target, path.scope, context);
+    const update = current === undefined ? undefined : getUpdate(expression, path, context);
+    if (current !== undefined && update === undefined) {
+      throw new TlaTypeScriptError(
+        `Unsupported operator: ${expression.operatorToken.getText()}`,
+        expression.operatorToken,
+      );
+    }
+    const called =
+      current === undefined || update === undefined
+        ? path
+        : {
+            ...path,
+            scope: {
+              ...path.scope,
+              results: new Map([...path.scope.results, [expression.right, update(current)]]),
+            },
+          };
+    const call = ifThenElse(
       isPrivateMember(setter)
         ? translateHasPrivate(setter, target.expression, path.scope, context)
         : apply("=", [
@@ -5801,7 +5823,7 @@ const translateExpressionStatement = (
         setter,
         [expression.right],
         { value: object, method: setter },
-        path,
+        called,
         context,
         frame,
         (after) => continueWith(after),
@@ -5813,6 +5835,9 @@ const translateExpressionStatement = (
         ]),
       ),
     );
+    return current !== undefined && LOGICAL_OPERATORS.has(expression.operatorToken.kind)
+      ? ifThenElse(isLogicallyWritten(expression, current, context), call, continueWith(path))
+      : call;
   }
   const newAssigned =
     ts.isBinaryExpression(expression) &&

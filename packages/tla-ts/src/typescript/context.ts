@@ -573,11 +573,20 @@ const getObjectAccessor = <T extends ts.GetAccessorDeclaration | ts.SetAccessorD
 export const getObjectGetter = (node: ts.Expression, context: Context) =>
   getObjectAccessor(node, ts.isGetAccessorDeclaration, context);
 
-// The setter that an assignment such as obj.name = value runs.
-export const getAssignedSetter = (node: ts.Node, context: Context) =>
-  ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken
-    ? getObjectAccessor(node.left, ts.isSetAccessorDeclaration, context)
+// The setter that an assignment such as obj.name = value, or this.#name += value, runs. A compound
+// or logical assignment reads the property through the getter first, which tla-ts runs only for
+// private names.
+export const getAssignedSetter = (node: ts.Node, context: Context) => {
+  if (!ts.isBinaryExpression(node)) return undefined;
+  const kind = node.operatorToken.kind;
+  const setter =
+    kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment
+      ? getObjectAccessor(node.left, ts.isSetAccessorDeclaration, context)
+      : undefined;
+  return kind === ts.SyntaxKind.EqualsToken || (setter !== undefined && isPrivateMember(setter))
+    ? setter
     : undefined;
+};
 
 // A field that only types the instance, which JavaScript never defines.
 export const isAmbient = (node: ts.Node) =>

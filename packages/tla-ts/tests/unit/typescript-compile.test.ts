@@ -812,6 +812,37 @@ describe("values", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("passes a private setter what a compound or logical assignment makes of its getter's value", async () => {
+    const getSource = (added: number, stored: number, either: number) => `
+      class Counter {
+        #seen = 4;
+        get #field() {
+          return this.#seen + 1;
+        }
+        set #field(value: number) {
+          this.#seen = value * 10;
+        }
+        add() {
+          return (this.#field += 2);
+        }
+        either() {
+          return (this.#field ||= 9);
+        }
+        seen() {
+          return this.#seen;
+        }
+      }
+      const counter = new Counter();
+      const expected: number[] = [${added}, ${stored}, ${either}];
+      if (counter.add() !== expected[0] || counter.seen() !== expected[1]) throw new Error("add");
+      if (counter.either() !== expected[2] || counter.seen() !== 70) throw new Error("or");
+    `;
+    expect((await checkModel(getSource(7, 70, 71))).failure).toBeUndefined();
+    expect((await checkModel(getSource(70, 70, 71))).failure?.message).toContain("add");
+    expect((await checkModel(getSource(7, 7, 71))).failure?.message).toContain("add");
+    expect((await checkModel(getSource(7, 70, 9))).failure?.message).toContain("or");
+  });
+
   it("writes a property in a logical assignment only where its value doesn't decide", async () => {
     const getSource = (either: number, nullish: number, fixed: number) => `
       class Counter {
