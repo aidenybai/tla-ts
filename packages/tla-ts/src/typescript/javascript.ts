@@ -679,6 +679,9 @@ Put(object, key, value) ==
 \\* A generator object, whose properties tla-ts doesn't model, as only its methods' calls run.
 GeneratorObject == [EmptyObject EXCEPT !.isOpaque = TRUE]
 
+\\* An iterator helper, which tla-ts follows as a generator, inherits from %IteratorHelperPrototype%.
+IteratorHelperObject == [GeneratorObject EXCEPT !.prototype = Ref :> "%IteratorHelperPrototype%"]
+
 IteratorResult(value, isDone) == Put(Put(EmptyObject, "value", value), "done", isDone)
 
 \\* A property that a class defines, with its attributes.
@@ -1467,6 +1470,14 @@ IsPrototypeOf(heap, owner, ref) ==
   IN /\\ prototype # Null
      /\\ \\/ ToString(prototype) = ToString(owner)
         \\/ IsPrototypeOf(heap, owner, prototype)
+
+\\* Whether a generator or an iterator helper inherits from a prototype. tla-ts doesn't hold the
+\\* prototype that a generator's function gives it, which a script may change.
+GeneratorInheritsFrom(heap, owner, ref) ==
+  LET prototype == heap.objects[ref[Ref]].prototype
+  IN IF ToString(prototype) = ToString(IteratorHelperObject.prototype)
+     THEN ToString(prototype) = ToString(owner) \\/ IsPrototypeOf(heap, owner, prototype)
+     ELSE Assert(FALSE, "tla-ts can't tell what a generator inherits from")
 
 \\* Whether a value of any type inherits from a prototype, where only an object can.
 InheritsFrom(heap, owner, value) ==
