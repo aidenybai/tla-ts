@@ -1969,6 +1969,22 @@ describe("values", () => {
     );
   });
 
+  it("holds in the heap a field's array that fill made", async () => {
+    const getSource = (expected: string) => `
+      class Table {
+        slots = Array<number>(2).fill(0);
+      }
+      const table = new Table();
+      const kept = table.slots;
+      table.slots = Array<number>(3).fill(1);
+      kept[0] = 7;
+      const result = [kept.join(","), table.slots.join(",")].join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("7,0;1,1,1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("7,0;7,1,1"))).failure?.message).toContain("7,0;1,1,1");
+  });
+
   it("changes a field's array through a local that names it", async () => {
     const getSource = (expected: string) => `
       const shrink = (values: number[], size: number) => {

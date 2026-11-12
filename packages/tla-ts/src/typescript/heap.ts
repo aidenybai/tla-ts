@@ -2488,17 +2488,20 @@ const isFreshCollection = (node: ts.Node | undefined, context: Context) =>
 const SELF_RETURNING_METHODS = new Set(["sort", "reverse", "fill", "copyWithin"]);
 
 // A built-in call that makes a new array, such as Array.from(...) or a map, whose sequence the
-// heap can hold.
-const isFreshArrayCall = (node: ts.CallExpression, context: Context) => {
+// heap can hold. A method that gives the array it changes gives a new one where that array is new.
+const isFreshArrayCall = (node: ts.CallExpression, context: Context): boolean => {
   const declaration = getSymbol(node.expression, context.checker)?.valueDeclaration;
+  const method = ts.isPropertyAccessExpression(node.expression) ? node.expression : undefined;
+  const receiver = method && skipCasts(method.expression);
   return (
     declaration !== undefined &&
     declaration.getSourceFile().isDeclarationFile &&
     getKind(node, context) === "sequence" &&
-    !(
-      ts.isPropertyAccessExpression(node.expression) &&
-      SELF_RETURNING_METHODS.has(node.expression.name.text)
-    )
+    (method === undefined ||
+      receiver === undefined ||
+      !SELF_RETURNING_METHODS.has(method.name.text) ||
+      ts.isArrayLiteralExpression(receiver) ||
+      (ts.isCallExpression(receiver) && isFreshArrayCall(receiver, context)))
   );
 };
 
