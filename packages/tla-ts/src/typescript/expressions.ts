@@ -1179,6 +1179,15 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
     return apply("\\in", [translate(node.left), apply("DOMAIN", [translate(node.right)])]);
   }
   const bitwise = BITWISE_OPERATORS.get(kind);
+  if (
+    bitwise !== undefined &&
+    (isBigIntLike(node.left, context) || isBigIntLike(node.right, context))
+  ) {
+    throw new TlaTypeScriptError(
+      `Unsupported operator on BigInts: ${node.operatorToken.getText()}`,
+      node,
+    );
+  }
   if (bitwise !== undefined) {
     return useJavaScript(
       bitwise,
