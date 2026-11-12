@@ -1181,8 +1181,10 @@ const getRemovedValue = (
               ? apply("Head", [sequence])
               : index(sequence, [apply("Len", [sequence])]),
           );
+  // A splice whose result the heap holds gives the array that its statement made.
+  const made = context.heapArrays.has(node) ? path.scope.allocated.get(node) : undefined;
   return {
-    value: checkArrayMethod(value, node, path.scope, context),
+    value: made ?? checkArrayMethod(value, node, path.scope, context),
     path: assign(
       receiver,
       path,

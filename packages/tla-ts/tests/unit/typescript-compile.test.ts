@@ -8234,6 +8234,28 @@ describe("errors", () => {
     ).toContain("[object Object][object Array]");
   });
 
+  it("holds the array that a method makes where a script gives it a property", async () => {
+    const made = (expected: number) => `
+      const list = [0, 1, 2, 3];
+      const removed = list.splice(1, 2);
+      // @ts-ignore
+      removed.tag = "removed";
+      const copied = list.slice(1);
+      // @ts-ignore
+      copied.tag = "copied";
+      const joined = list.concat([4]);
+      // @ts-ignore
+      joined.tag = "joined";
+      // @ts-ignore
+      if (removed.tag + copied.tag + joined.tag !== "removedcopiedjoined") throw new Error("tag");
+      if (removed.length !== 2 || removed[0] !== 1 || removed[1] !== 2) throw new Error("removed");
+      if (copied.length !== 1 || copied[0] !== 3 || joined[2] !== 4) throw new Error("copied");
+      if (list.length !== ${expected} || list[1] !== 3) throw new Error("list");
+    `;
+    expect((await check(compile(made(2)))).failure).toBeUndefined();
+    expect((await check(compile(made(4)))).failure?.message).toContain("list");
+  });
+
   it("tests numbers through the global isNaN and isFinite", async () => {
     const result = await check(
       compile(

@@ -46,6 +46,7 @@ import {
   getHeapRegExpCall,
   IN_PLACE_METHODS,
   isSpliceStatement,
+  translateSpliced,
 } from "./collections";
 import { getJsonText, parseJson } from "./json";
 import { getCalledError, getConstructor, getErrorClass } from "./exceptions";
@@ -1114,7 +1115,17 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   // A new array that a built-in call makes, as the call's sequence.
   if (ts.isCallExpression(node) && context.heapArrays.has(node)) {
     const prototype = translateBuiltInValue("Array.prototype", node, context);
-    const elements = translateCall(node, scope, context, false);
+    // A splice gives the elements that it removes, which its statement then removes.
+    const elements =
+      isMethodCall(node) && node.expression.name.text === "splice"
+        ? translateSpliced(
+            translateExpression(node.expression.expression, scope, context),
+            node.arguments,
+            true,
+            scope,
+            context,
+          )
+        : translateCall(node, scope, context, false);
     return useJavaScript(
       "Allocate",
       [heap, useJavaScript("ArrayObject", [prototype, elements], context)],
@@ -3023,6 +3034,22 @@ export const findHeapArrays = (
       reads.every((use) => isArrayObjectUse(use, context))
     ) {
       arrays.add(literal);
+    }
+    // So is the new array that a built-in method makes, as slice() or splice() gives it.
+    const initializer =
+      declaration !== undefined && ts.isVariableDeclaration(declaration)
+        ? declaration.initializer
+        : undefined;
+    if (
+      declaration !== undefined &&
+      initializer !== undefined &&
+      ts.isCallExpression(initializer) &&
+      isFreshArrayCall(initializer, context) &&
+      reads.some(isNamedWrite) &&
+      reads.every((use) => isArrayObjectUse(use, context))
+    ) {
+      arrays.add(initializer);
+      arrays.add(declaration);
     }
   });
   changed.forEach((node) => arrays.add(node));
