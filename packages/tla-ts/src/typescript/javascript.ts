@@ -3755,6 +3755,11 @@ LOCAL JSONPrimitive(heap, ref, kind, method) ==
          Assert(FALSE, "tla-ts can't convert " \\o ToString(ref) \\o " to a primitive")
     [] OTHER -> WrappedPrimitive(heap, ref, kind, method)
 
+\\* ToString of a String object, where it reads the built-in toString, or of a string that a
+\\* String type holds.
+WrapperString(heap, ref) ==
+  IF TypeOf(ref) = "string" THEN ref ELSE JSONPrimitive(heap, ref, "String", "toString")
+
 \\* The gap that JSON.stringify indents by for its space argument.
 LOCAL JSONGap(heap, space) ==
   LET kind == IF IsRef(space) THEN JSONWrapperKind(heap, space) ELSE ""

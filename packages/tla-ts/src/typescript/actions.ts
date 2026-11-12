@@ -6,6 +6,7 @@ import {
   getHeapArrayChange,
   translateHeapElements,
   getHeapRegExpCall,
+  translateRegExpText,
   getStringCall,
   translateRegExpReplacer,
   getUpdatedValue,
@@ -1322,7 +1323,7 @@ export const translateCallStatement = (
       bindOnce(
         path,
         textName,
-        translateExpression(regExpCall.text, path.scope, context),
+        translateRegExpText(regExpCall, expression, path.scope, context),
         method === "replaceAll"
           ? ifThenElse(
               field(

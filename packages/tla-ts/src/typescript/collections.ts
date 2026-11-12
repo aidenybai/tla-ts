@@ -1453,6 +1453,8 @@ interface RegExpCall {
   heapOperator: string;
   regexp: ts.Expression;
   text: ts.Expression;
+  // Whether the text is a String object, which the call converts to its string.
+  isWrapped: boolean;
   // The arguments after the regexp and the text: split's limit, or replace's replacement.
   values: readonly ts.Expression[];
 }
@@ -1468,6 +1470,9 @@ const getRegExpCall = (node: ts.Node, context: Context): RegExpCall | undefined 
   const isText = (value: ts.Expression | undefined) =>
     value !== undefined &&
     isEvery(context.checker.getTypeAtLocation(value), ts.TypeFlags.StringLike);
+  const isWrapped =
+    context.heap !== undefined &&
+    context.checker.getTypeAtLocation(receiver).getSymbol()?.name === "String";
   const operators = REGEXP_OPERATORS.get(method);
   if (operators === undefined) return undefined;
   const getCall = (regexp: ts.Expression, text: ts.Expression, rest: readonly ts.Expression[]) => ({
@@ -1476,12 +1481,13 @@ const getRegExpCall = (node: ts.Node, context: Context): RegExpCall | undefined 
     heapOperator: operators[1],
     regexp,
     text,
+    isWrapped: text === receiver && isWrapped,
     values: rest,
   });
   if (isRegExp(receiver) && (method === "exec" || method === "test")) {
     return values.length === 1 && isText(values[0]) ? getCall(receiver, values[0], []) : undefined;
   }
-  if (!isText(receiver) || !isRegExp(values[0])) return undefined;
+  if ((!isText(receiver) && !isWrapped) || !isRegExp(values[0])) return undefined;
   const limit = values.at(1);
   const isKnown =
     ((method === "match" || method === "search") && values.length === 1) ||
@@ -1493,6 +1499,21 @@ const getRegExpCall = (node: ts.Node, context: Context): RegExpCall | undefined 
     ((method === "replace" || method === "replaceAll") && values.length === 2);
   return isKnown ? getCall(values[0], receiver, values.slice(1)) : undefined;
 };
+
+// The string that a regexp call reads, which ToString gives for a String object.
+export const translateRegExpText = (
+  call: RegExpCall,
+  node: ts.Node,
+  scope: Scope,
+  context: Context,
+) =>
+  call.isWrapped
+    ? useJavaScript(
+        "WrapperString",
+        [getHeap(scope, node, context), translateExpression(call.text, scope, context)],
+        context,
+      )
+    : translateExpression(call.text, scope, context);
 
 // A call that a script with objects runs as a statement, since it reads or changes the heap.
 export const getHeapRegExpCall = (node: ts.Node, context: Context) =>
@@ -1539,7 +1560,7 @@ const translateRegExpCall = (node: MethodCall, scope: Scope, context: Context) =
     !isEvery(context.checker.getTypeAtLocation(replacement), ts.TypeFlags.StringLike)
   ) {
     return share(regexp, "regexp", context, (sharedRegexp) =>
-      share(translate(call.text), "text", context, (text) =>
+      share(translateRegExpText(call, node, scope, context), "text", context, (text) =>
         share(
           useJavaScript(
             "RegExpMatchesOf",
@@ -1558,7 +1579,7 @@ const translateRegExpCall = (node: MethodCall, scope: Scope, context: Context) =
     call.operator,
     [
       regexp,
-      translate(call.text),
+      translateRegExpText(call, node, scope, context),
       ...(call.method === "split" && replacement === undefined
         ? [getUndefined(context)]
         : call.values.map(translate)),

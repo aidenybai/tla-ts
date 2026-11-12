@@ -7832,6 +7832,30 @@ describe("regular expressions", () => {
     `);
     expect(result.failure?.message).toContain("tla-ts can't match a regexp with the u flag");
   });
+
+  it("run a String object's regexp methods on its string", async () => {
+    const result = await checkModel(`
+      const text = new String("hello");
+      const pieces = text.split(/l/);
+      if (pieces.length !== 3 || pieces[0] !== "he" || pieces[2] !== "o") throw new Error("split");
+      const found = text.match(/l+/);
+      if (found === null || found[0] !== "ll") throw new Error("match");
+      if (text.replace(/l/g, "L") !== "heLLo") throw new Error("replace " + text.replace(/l/g, "L"));
+      if (text.search(/l+o/) !== 2) throw new Error("search");
+    `);
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(`
+      const text = new String("hello");
+      if (text.search(/lo/) !== 4) throw new Error("wrong");
+    `);
+    expect(wrong.failure?.message).toContain("wrong");
+    const replaced = await checkModel(`
+      const text = new String("hello");
+      Object.defineProperty(text, "toString", { value: () => "other" });
+      if (text.split(/l/).length !== 3) throw new Error("split");
+    `);
+    expect(replaced.failure?.message).toContain("tla-ts can't");
+  });
 });
 
 describe("calls through values", () => {
