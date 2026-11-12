@@ -11,15 +11,9 @@ import {
   UNEXPECTED_EXCEPTION,
 } from "./errors";
 import { EXIT_STATUS, getMessageExitStatus, withLivenessExitCode } from "./exit-codes";
-import { createLivenessChecker } from "./liveness-checker";
+import { createLivenessChecker, type LivenessChecker } from "./liveness-checker";
 import { getIncompleteSuccessorMessage, prepareSearch, reportAssumptionViolation } from "./search";
-import {
-  getActionLabel,
-  getInitActions,
-  getNextActions,
-  toActionValue,
-  type SpecAction,
-} from "./spec-description";
+import { getActionLabel, toActionValue, type SpecAction } from "./spec-description";
 import { forEachInitialState, forEachSuccessor } from "./successors";
 import {
   formatInnerMessage,
@@ -32,7 +26,7 @@ import {
   MESSAGE_CODE,
   withUnexpectedException,
 } from "./tlc/messages";
-import { createJavaRandom, nextPrime } from "./tlc/random";
+import { createJavaRandom, nextPrime, type JavaRandom } from "./tlc/random";
 import { createCounterExample } from "./tlc/tlcext-operators";
 import {
   createModelValue,
@@ -100,6 +94,130 @@ const RL_REWARD = -10;
 const isSameState = (left: Value[], right: Value[]) =>
   left.every((value, index) => isSameValue(value, right[index]));
 
+const getTrace = (last: TraceNode) => {
+  const trace: TraceNode[] = [];
+  for (let node: TraceNode | undefined = last; node; node = node.predecessor) {
+    const predecessor = node.predecessor;
+    if (predecessor && isSameState(node.state, predecessor.state)) continue;
+    trace.unshift(node);
+  }
+  trace.forEach((node, index) => {
+    node.predecessor = trace[index - 1];
+    node.level = index + 1;
+  });
+  return trace;
+};
+
+const findTemporalViolation = (
+  trace: TraceNode[],
+  getFingerprint: (state: Value[]) => bigint,
+  createChecker: (successors: number[][], states: Value[][]) => LivenessChecker | undefined,
+) => {
+  const fingerprints = trace.map((node) => getFingerprint(node.state));
+  const indices = new Map<bigint, number>();
+  const states: Value[][] = [];
+  const successors: number[][] = [];
+  fingerprints.forEach((fingerprint, position) => {
+    if (!indices.has(fingerprint)) {
+      indices.set(fingerprint, states.length);
+      states.push(trace[position].state);
+      successors.push([]);
+    }
+    if (position === 0) return;
+    const source = indices.get(fingerprints[position - 1]) ?? 0;
+    const target = indices.get(fingerprint) ?? 0;
+    if (source !== target && !successors[source].includes(target)) {
+      successors[source].push(target);
+    }
+  });
+  const checker = createChecker(successors, states);
+  if (!checker) return undefined;
+  checker.addInitialState(0, states[0]);
+  states.forEach((state, index) =>
+    checker.addState(
+      index,
+      state,
+      successors[index].map((successor) => ({ index: successor, state: states[successor] })),
+    ),
+  );
+  const lasso = checker.findViolation();
+  if (!lasso) return undefined;
+  const getLength = (path: number[]) =>
+    path.filter((index, position) => position === 0 || index !== path[position - 1]).length;
+  const path = [...lasso.prefix, ...lasso.cycle];
+  const length = getLength(path);
+  const cyclePosition = getLength(path.slice(0, lasso.prefix.length + 1));
+  const isStuttering =
+    fingerprints[length - 1] === getFingerprint(states[path[lasso.prefix.length]]);
+  return {
+    length,
+    loopStart: isStuttering ? length - 1 : cyclePosition - 1,
+    properties: checker.getViolatedProperties(
+      trace.slice(0, length).map((node) => node.state),
+      cyclePosition - 1,
+    ),
+  };
+};
+
+const createScheduler = (
+  scheduler: SimulationOptions["scheduler"],
+  nextActions: SpecAction[],
+  random: JavaRandom,
+  getFingerprint: (state: Value[]) => bigint,
+  getReward: (state: Value[] | undefined, next: Value[], fallback: number) => number,
+) => {
+  const qualities = nextActions.map(() => new Map<bigint | SpecAction, number>());
+  const getQualityKey = (node: TraceNode) =>
+    scheduler === "rlaction" ? node.action : getFingerprint(node.state);
+  const getRewardOf = (node: TraceNode) =>
+    getReward(node.predecessor?.state, node.state, RL_REWARD);
+  return {
+    getNextActionIndex: (node: TraceNode) => {
+      if (scheduler === "random") {
+        return Math.floor(random.nextDouble() * nextActions.length);
+      }
+      const key = getQualityKey(node);
+      qualities.forEach((quality) => {
+        if (!quality.has(key)) quality.set(key, 0);
+      });
+      const weights = qualities.map((quality) => Math.exp(quality.get(key) ?? 0));
+      const total = weights.reduce((sum, weight) => sum + weight, 0);
+      const ranked = weights
+        .map((weight, index) => ({ index, weight: weight / total }))
+        .sort((left, right) => right.weight - left.weight);
+      const threshold = random.nextDouble();
+      let cumulativeWeight = 0;
+      const chosen = ranked.find((item, position) => {
+        cumulativeWeight = position === 0 ? item.weight : cumulativeWeight + item.weight;
+        return cumulativeWeight >= threshold;
+      });
+      return (chosen ?? ranked[ranked.length - 1]).index;
+    },
+    markDisabled: (index: number, node: TraceNode) => {
+      if (scheduler === "random") return;
+      // TLC's rlaction scheduler stores the reward, then overwrites it as the rl scheduler does.
+      if (scheduler === "rlaction") getRewardOf(node);
+      qualities[index].set(getQualityKey(node), -Number.MAX_VALUE);
+    },
+    learnTrace: (last: TraceNode) => {
+      for (let node = last; node.predecessor; node = node.predecessor) {
+        const key = getQualityKey(node);
+        const maxQuality = qualities.reduce(
+          (max, quality) => Math.max(max, quality.get(key) ?? -Number.MAX_VALUE),
+          -Number.MAX_VALUE,
+        );
+        const quality = qualities[nextActions.indexOf(node.action)];
+        const predecessorKey = getQualityKey(node.predecessor);
+        quality.set(
+          predecessorKey,
+          (1 - RL_ALPHA) * (quality.get(predecessorKey) ?? 0) +
+            RL_ALPHA * (getRewardOf(node) + RL_GAMMA * maxQuality),
+        );
+      }
+    },
+  };
+};
+
 export const simulate = (options: SimulationOptions): number => {
   const output = options.onSimulation;
   const prepared = prepareSearch(options);
@@ -126,8 +244,9 @@ export const simulate = (options: SimulationOptions): number => {
     output({ kind: "message", code, isError, message: text, toolMessage: toolText });
   const printSummary = () => output({ kind: "summary", statistics: { ...statistics } });
   const nodes = new WeakMap<(Value | undefined)[], TraceNode>();
-  const initActions = getInitActions(config, environment, specification.instanceActions);
-  const nextActions = getNextActions(config, environment, specification.instanceActions);
+  const description = prepared.getDescription();
+  const initActions = description.inits;
+  const nextActions = description.actions;
   let traceCount = 0;
   let currentTrace = 0;
   runtime.getLevel = (state) => nodes.get(state)?.level ?? 0;
@@ -226,19 +345,6 @@ export const simulate = (options: SimulationOptions): number => {
     const node: TraceNode = { state, action, predecessor, level: (predecessor?.level ?? 0) + 1 };
     nodes.set(state, node);
     return node;
-  };
-  const getTrace = (last: TraceNode) => {
-    const trace: TraceNode[] = [];
-    for (let node: TraceNode | undefined = last; node; node = node.predecessor) {
-      const predecessor = node.predecessor;
-      if (predecessor && isSameState(node.state, predecessor.state)) continue;
-      trace.unshift(node);
-    }
-    trace.forEach((node, index) => {
-      node.predecessor = trace[index - 1];
-      node.level = index + 1;
-    });
-    return trace;
   };
   const toRecord = (state: (Value | undefined)[]) =>
     search.toRecord(state.map((value) => value ?? createModelValue("null")));
@@ -368,60 +474,6 @@ export const simulate = (options: SimulationOptions): number => {
     false,
   );
 
-  const findTemporalViolation = (last: TraceNode): Violation | undefined => {
-    if (temporalProperties.length === 0) return undefined;
-    const trace = getTrace(last);
-    const fingerprints = trace.map((node) => runtime.getFingerprint(node.state));
-    const indices = new Map<bigint, number>();
-    const states: Value[][] = [];
-    const successors: number[][] = [];
-    fingerprints.forEach((fingerprint, position) => {
-      if (!indices.has(fingerprint)) {
-        indices.set(fingerprint, states.length);
-        states.push(trace[position].state);
-        successors.push([]);
-      }
-      if (position === 0) return;
-      const source = indices.get(fingerprints[position - 1]) ?? 0;
-      const target = indices.get(fingerprint) ?? 0;
-      if (source !== target && !successors[source].includes(target)) {
-        successors[source].push(target);
-      }
-    });
-    const checker = createTemporalChecker(successors, states);
-    if (!checker) return undefined;
-    checker.addInitialState(0, states[0]);
-    states.forEach((state, index) =>
-      checker.addState(
-        index,
-        state,
-        successors[index].map((successor) => ({ index: successor, state: states[successor] })),
-      ),
-    );
-    const lasso = checker.findViolation();
-    if (!lasso) return undefined;
-    const getLength = (path: number[]) =>
-      path.filter((index, position) => position === 0 || index !== path[position - 1]).length;
-    const path = [...lasso.prefix, ...lasso.cycle];
-    const length = getLength(path);
-    const cyclePosition = getLength(path.slice(0, lasso.prefix.length + 1));
-    const printed = trace.slice(0, length);
-    const isStuttering =
-      fingerprints[length - 1] === runtime.getFingerprint(states[path[lasso.prefix.length]]);
-    const loopStart = isStuttering ? length - 1 : cyclePosition - 1;
-    const properties = checker.getViolatedProperties(
-      printed.map((node) => node.state),
-      cyclePosition - 1,
-    );
-    const back = trace[length];
-    return {
-      name: properties[0],
-      properties,
-      trace: toTraceSteps(printed),
-      loopStart,
-      loopLabel: back && getActionLabel(back.action, options.version, back.level === 1),
-    };
-  };
   const toWorkerError = (code: number, text: string, node: TraceNode): WorkerError => ({
     code,
     message: text,
@@ -501,59 +553,32 @@ export const simulate = (options: SimulationOptions): number => {
     return { successors, error: failure };
   };
   let currentNode = initialStates[0];
-  const qualities = nextActions.map(() => new Map<bigint | SpecAction, number>());
-  const getQualityKey = (node: TraceNode) =>
-    options.scheduler === "rlaction" ? node.action : runtime.getFingerprint(node.state);
-  const getRewardOf = (node: TraceNode) =>
-    search.getReward(node.predecessor?.state, node.state, RL_REWARD);
-  const getNextActionIndex = (node: TraceNode) => {
-    if (options.scheduler === "random") {
-      return Math.floor(workerRandom.nextDouble() * nextActions.length);
-    }
-    const key = getQualityKey(node);
-    qualities.forEach((quality) => {
-      if (!quality.has(key)) quality.set(key, 0);
-    });
-    const weights = qualities.map((quality) => Math.exp(quality.get(key) ?? 0));
-    const total = weights.reduce((sum, weight) => sum + weight, 0);
-    const ranked = weights
-      .map((weight, index) => ({ index, weight: weight / total }))
-      .sort((left, right) => right.weight - left.weight);
-    const threshold = workerRandom.nextDouble();
-    let cumulativeWeight = 0;
-    const chosen = ranked.find((item, position) => {
-      cumulativeWeight = position === 0 ? item.weight : cumulativeWeight + item.weight;
-      return cumulativeWeight >= threshold;
-    });
-    return (chosen ?? ranked[ranked.length - 1]).index;
-  };
-  const markDisabled = (index: number, node: TraceNode) => {
-    if (options.scheduler === "random") return;
-    // TLC's rlaction scheduler stores the reward, then overwrites it as the rl scheduler does.
-    if (options.scheduler === "rlaction") getRewardOf(node);
-    qualities[index].set(getQualityKey(node), -Number.MAX_VALUE);
-  };
-  const learnTrace = (last: TraceNode) => {
-    for (let node = last; node.predecessor; node = node.predecessor) {
-      const key = getQualityKey(node);
-      const maxQuality = qualities.reduce(
-        (max, quality) => Math.max(max, quality.get(key) ?? -Number.MAX_VALUE),
-        -Number.MAX_VALUE,
-      );
-      const quality = qualities[nextActions.indexOf(node.action)];
-      const predecessorKey = getQualityKey(node.predecessor);
-      quality.set(
-        predecessorKey,
-        (1 - RL_ALPHA) * (quality.get(predecessorKey) ?? 0) +
-          RL_ALPHA * (getRewardOf(node) + RL_GAMMA * maxQuality),
-      );
-    }
+  const scheduler = createScheduler(
+    options.scheduler,
+    nextActions,
+    workerRandom,
+    runtime.getFingerprint,
+    search.getReward,
+  );
+  const getTemporalViolation = (last: TraceNode): Violation | undefined => {
+    if (temporalProperties.length === 0) return undefined;
+    const trace = getTrace(last);
+    const found = findTemporalViolation(trace, runtime.getFingerprint, createTemporalChecker);
+    if (!found) return undefined;
+    const back = trace[found.length];
+    return {
+      name: found.properties[0],
+      properties: found.properties,
+      trace: toTraceSteps(trace.slice(0, found.length)),
+      loopStart: found.loopStart,
+      loopLabel: back && getActionLabel(back.action, options.version, back.level === 1),
+    };
   };
   const simulateTrace = (): WorkerError | "stopped" | undefined => {
     currentNode = initialStates[Math.floor(workerRandom.nextDouble() * initialStates.length)];
     for (let depth = 0; depth < traceDepth; depth++) {
       if (runtime.isStopped) return "stopped";
-      let actionIndex = getNextActionIndex(currentNode);
+      let actionIndex = scheduler.getNextActionIndex(currentNode);
       const prime = nextPrime(workerRandom);
       let successors: TraceNode[] = [];
       for (let attempt = 0; attempt < nextActions.length; attempt++) {
@@ -561,7 +586,7 @@ export const simulate = (options: SimulationOptions): number => {
         if (result.error) return result.error;
         successors = result.successors;
         if (successors.length > 0) break;
-        markDisabled(actionIndex, currentNode);
+        scheduler.markDisabled(actionIndex, currentNode);
         actionIndex = (actionIndex + prime) % nextActions.length;
       }
       if (successors.length === 0) {
@@ -574,7 +599,7 @@ export const simulate = (options: SimulationOptions): number => {
       currentNode.deferred?.(currentNode.state);
     }
     if (runtime.isStopped) return "stopped";
-    const violation = findTemporalViolation(currentNode);
+    const violation = getTemporalViolation(currentNode);
     if (violation) {
       return {
         ...toWorkerError(MESSAGE_CODE.temporalPropertyViolated, "", currentNode),
@@ -586,7 +611,7 @@ export const simulate = (options: SimulationOptions): number => {
     const delta = length - statistics.levelMean;
     statistics.levelMean += Math.trunc(delta / Math.max(statistics.traces, 1));
     statistics.levelM2 += delta * (length - statistics.levelMean);
-    if (options.scheduler === "rl") learnTrace(currentNode);
+    if (options.scheduler === "rl") scheduler.learnTrace(currentNode);
     return undefined;
   };
   const toException = (error: unknown, node: TraceNode): WorkerError => {

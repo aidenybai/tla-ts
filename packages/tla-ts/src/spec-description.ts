@@ -39,10 +39,13 @@ export interface SpecAction {
   scope: Scope | undefined;
 }
 
-interface SpecDescription {
+export interface SpecDescription {
   inits: SpecAction[];
   actions: SpecAction[];
   temporals: SpecAction[];
+}
+
+interface PropertyDescription {
   invariants: SpecAction[];
   impliedInits: SpecAction[];
   impliedActions: SpecAction[];
@@ -398,7 +401,7 @@ const describeProperty = (
   expression: Expression,
   scope: Scope | undefined,
   environment: Environment,
-  description: SpecDescription,
+  description: PropertyDescription,
 ): void => {
   const recurse = (inner: Expression, innerScope: Scope | undefined) =>
     describeProperty(configName, inner, innerScope, environment, description);
@@ -456,20 +459,13 @@ const getOperatorDefinition = (name: string, environment: Environment) => {
     : undefined;
 };
 
-const getSpecDescription = (
+// Tool's constructor describes the specification once, so a caller keeps the description and never walks it again.
+export const getSpecDescription = (
   config: ModelConfig,
   environment: Environment,
   instanceActions: Map<string, InstanceAction>,
 ) => {
-  const description: SpecDescription = {
-    inits: [],
-    actions: [],
-    temporals: [],
-    invariants: [],
-    impliedInits: [],
-    impliedActions: [],
-    impliedTemporals: [],
-  };
+  const description: SpecDescription = { inits: [], actions: [], temporals: [] };
   const next: NextItem[] = [];
   const specification =
     config.specification === undefined
@@ -556,18 +552,6 @@ export const getSubscriptVariables = (
   return collect(subscript, scope) ? variables : undefined;
 };
 
-export const getInitActions = (
-  config: ModelConfig,
-  environment: Environment,
-  instanceActions: Map<string, InstanceAction>,
-) => getSpecDescription(config, environment, instanceActions).inits;
-
-export const getNextActions = (
-  config: ModelConfig,
-  environment: Environment,
-  instanceActions: Map<string, InstanceAction>,
-) => getSpecDescription(config, environment, instanceActions).actions;
-
 const formatParameters = (action: SpecAction) =>
   action.parameters.length === 0
     ? ""
@@ -580,19 +564,24 @@ export const getActionSignature = (action: SpecAction) =>
   `${action.name}${formatParameters(action)}`;
 
 export const getSpecificationValue = (
+  description: SpecDescription,
   config: ModelConfig,
   environment: Environment,
   variableLocations: SourceLocation[],
-  instanceActions: Map<string, InstanceAction>,
 ): Value => {
-  const description = getSpecDescription(config, environment, instanceActions);
+  const properties: PropertyDescription = {
+    invariants: [],
+    impliedInits: [],
+    impliedActions: [],
+    impliedTemporals: [],
+  };
   config.invariants.forEach((name) => {
     const definition = getOperatorDefinition(name, environment);
-    if (definition) description.invariants.push(createAction(name, definition.body));
+    if (definition) properties.invariants.push(createAction(name, definition.body));
   });
   config.properties.forEach((name) => {
     const definition = getOperatorDefinition(name, environment);
-    if (definition) describeProperty(name, definition.body, undefined, environment, description);
+    if (definition) describeProperty(name, definition.body, undefined, environment, properties);
   });
   const coverage = environment.coverage;
   const toSet = (actions: SpecAction[], kind?: CoverageKind) =>
@@ -620,10 +609,10 @@ export const getSpecificationValue = (
     ["inits", toSet(description.inits, "init")],
     ["actions", toSet(description.actions, "next")],
     ["temporals", toSet(description.temporals)],
-    ["invariants", toSet(description.invariants, "invariant")],
-    ["impliedinits", toSet(description.impliedInits, "implied")],
-    ["impliedactions", toSet(description.impliedActions, "implied")],
-    ["impliedtemporals", toSet(description.impliedTemporals)],
+    ["invariants", toSet(properties.invariants, "invariant")],
+    ["impliedinits", toSet(properties.impliedInits, "implied")],
+    ["impliedactions", toSet(properties.impliedActions, "implied")],
+    ["impliedtemporals", toSet(properties.impliedTemporals)],
     [
       "variables",
       createSet(

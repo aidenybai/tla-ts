@@ -56,6 +56,13 @@ export interface TemporalProperty extends ScopedExpression {
   name: string;
 }
 
+interface Expansion {
+  name: string | undefined;
+  path: string[];
+  expanding: Set<Definition>;
+  isSubstituted: boolean;
+}
+
 const MAXIMUM_EXPANSION_DEPTH = 100;
 
 export const createTautologyError = () =>
@@ -210,31 +217,26 @@ export const expandTemporal = (
   scope: Scope | undefined,
   environment: Environment,
   isProperty: boolean,
-  expanding = new Set<Definition>(),
-  isSubstituted = false,
-  name?: string,
-  path: string[] = [],
+  expansion: Expansion = { name: undefined, path: [], expanding: new Set(), isSubstituted: false },
 ): ExpandedExpression[] => {
   const expand = (
     child: Expression,
     childScope: Scope | undefined,
-    childName = name,
-    childExpanding = expanding,
+    childName = expansion.name,
+    childExpanding = expansion.expanding,
     definition?: Definition,
   ): ExpandedExpression[] =>
-    expandTemporal(
-      child,
-      childScope,
-      environment,
-      isProperty,
-      childExpanding,
-      isSubstituted ||
+    expandTemporal(child, childScope, environment, isProperty, {
+      name: childName,
+      path:
+        definition?.kind === "Operator" && definition.params.length === 0
+          ? [...expansion.path, definition.name]
+          : expansion.path,
+      expanding: childExpanding,
+      isSubstituted:
+        expansion.isSubstituted ||
         (definition !== undefined && environment.substitutedDefinitions.has(definition)),
-      childName,
-      definition?.kind === "Operator" && definition.params.length === 0
-        ? [...path, definition.name]
-        : path,
-    );
+    });
   if (expression.kind === "And") {
     return expression.operands.flatMap((operand) => expand(operand, scope, describeRange(operand)));
   }
@@ -248,7 +250,7 @@ export const expandTemporal = (
       return expand(
         binding.expression,
         binding.scope,
-        definitionThunks.has(binding) ? expression.name : name,
+        definitionThunks.has(binding) ? expression.name : expansion.name,
       );
     }
     const definition = environment.constants.has(expression.name)
@@ -261,14 +263,15 @@ export const expandTemporal = (
       (getDefinitionLevel(definition, environment) > CONSTANT_LEVEL ||
         getStartupValue(definition, environment) === undefined)
     ) {
-      if (expanding.has(definition)) {
+      if (expansion.expanding.has(definition)) {
         throw createStackOverflowError();
       }
       return expand(
         definition.body,
         undefined,
-        (!isSubstituted && environment.instanceNames.get(expression.name)) || definition.name,
-        new Set([...expanding, definition]),
+        (!expansion.isSubstituted && environment.instanceNames.get(expression.name)) ||
+          definition.name,
+        new Set([...expansion.expanding, definition]),
         definition,
       );
     }
@@ -290,13 +293,13 @@ export const expandTemporal = (
       operator?.kind === "Closure" &&
       operator.params.length === expression.args.length &&
       !definition?.isRecursive &&
-      (!isSubstituted || isOwnArgumentFree);
+      (!expansion.isSubstituted || isOwnArgumentFree);
     if (isExpandable) {
       return expand(
         operator.body,
         bindOperatorArguments(operator, expression.args, context),
-        isSubstituted && definition ? definition.name : expression.operator,
-        expanding,
+        expansion.isSubstituted && definition ? definition.name : expression.operator,
+        expansion.expanding,
         definition,
       );
     }
@@ -315,7 +318,7 @@ export const expandTemporal = (
     if (expanded.length === 0) throw createTautologyError();
     return expanded;
   }
-  return [{ expression, scope, name, path }];
+  return [{ expression, scope, name: expansion.name, path: expansion.path }];
 };
 
 const bindLetDefinitions = (
@@ -483,42 +486,16 @@ export const toLiveExpression = (
     return level > ACTION_LEVEL ? parts : toAtom(expression, scope, level);
   };
 
-  const isTranslatedWhole = (expression: Expression) =>
-    expression.kind === "Label" ||
-    expression.kind === "Let" ||
-    expression.kind === "And" ||
-    expression.kind === "Or" ||
-    expression.kind === "Forall" ||
-    expression.kind === "Exists" ||
-    expression.kind === "If" ||
-    (expression.kind === "Apply" &&
-      ((expression.operator === "~" && !isLocallyResolved(expression)) ||
-        expression.operator === "=>"));
-
+  // These forms are translated part by part at every level; any other form below the temporal level is an atom.
   const convert = (expression: Expression, scope: Scope | undefined): LiveExpression => {
     const level = getLevel(expression, scope, environment);
-    if (level <= ACTION_LEVEL && !isTranslatedWhole(expression)) {
-      return toAtom(expression, scope, level);
-    }
     switch (expression.kind) {
       case "Label":
         return convert(expression.body, scope);
       case "Let":
         return convert(expression.body, bindLetDefinitions(expression, scope, environment));
-      case "Identifier":
-        return convertCall(expression, scope);
       case "Apply": {
         const args = expression.args;
-        if (expression.operator === "~>") {
-          return createUnary(
-            "Always",
-            createPair(
-              "Or",
-              createUnary("Not", convert(args[0], scope)),
-              createUnary("Eventually", convert(args[1], scope)),
-            ),
-          );
-        }
         if (expression.operator === "~" && !isLocallyResolved(expression)) {
           return toWhole(expression, scope, createUnary("Not", convert(args[0], scope)));
         }
@@ -529,7 +506,7 @@ export const toLiveExpression = (
             createPair("Or", createUnary("Not", convert(args[0], scope)), convert(args[1], scope)),
           );
         }
-        return convertCall(expression, scope);
+        break;
       }
       case "And":
       case "Or":
@@ -566,6 +543,22 @@ export const toLiveExpression = (
           ),
         );
       }
+    }
+    if (level <= ACTION_LEVEL) return toAtom(expression, scope, level);
+    switch (expression.kind) {
+      case "Identifier":
+        return convertCall(expression, scope);
+      case "Apply":
+        return expression.operator === "~>"
+          ? createUnary(
+              "Always",
+              createPair(
+                "Or",
+                createUnary("Not", convert(expression.args[0], scope)),
+                createUnary("Eventually", convert(expression.args[1], scope)),
+              ),
+            )
+          : convertCall(expression, scope);
       case "Always":
       case "Eventually":
         return createUnary(expression.kind, convert(expression.expression, scope));
