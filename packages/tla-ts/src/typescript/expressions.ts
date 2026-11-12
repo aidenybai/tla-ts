@@ -8,6 +8,7 @@ import {
   translateNew,
   translateSet,
   translateSize,
+  isArrayIteration,
 } from "./collections";
 import type { Expression } from "../ast";
 import {
@@ -286,7 +287,10 @@ export const translateArrayLiteral = (
     if (isHeapArray(element.expression, context)) {
       return [...result, translateHeapElements(element.expression, scope, context)];
     }
-    if (getKind(element.expression, context) !== "sequence") {
+    if (
+      getKind(element.expression, context) !== "sequence" &&
+      !isArrayIteration(element.expression, context)
+    ) {
       throw new TlaTypeScriptError(
         "Sets have no order, so spread one only into every(), some(), filter(), map(), or find()",
         element,

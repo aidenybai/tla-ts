@@ -319,6 +319,7 @@ export const translateBuiltInValue = (
     | `${string}Array.prototype`
     | "DataView.prototype"
     | "Symbol.prototype"
+    | "Iterator.prototype"
     | "Promise"
     | "Promise.prototype"
     | "JSON"

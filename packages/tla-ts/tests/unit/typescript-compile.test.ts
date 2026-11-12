@@ -4371,6 +4371,24 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("iterates an array's keys, values, and entries in a for-of or a spread", async () => {
+    const result = await checkModel(`
+      const arr = ["a", "b", "c"];
+      let text = "";
+      for (const [index, value] of arr.entries()) text += index + value;
+      let keys = 0;
+      for (const key of arr.keys()) keys += key;
+      const values = [...arr.values(), "d"];
+      if (text !== "0a1b2c" || keys !== 3 || values.join("") !== "abcd") {
+        throw new Error("iterated");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+    expect(() => compile(`const it = ["a"].values(); it.next();`)).toThrow(
+      "Iterate values() only in a for-of or a spread",
+    );
+  });
+
   it("runs the getters of an object literal that a method makes on each call", async () => {
     const getSource = (expected: string) => `
       const log: string[] = [];

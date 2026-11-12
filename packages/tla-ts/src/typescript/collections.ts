@@ -795,6 +795,48 @@ const translateSequenceOperation = (
         ),
     ],
     ["toReversed", () => reverseSequence(sequence, context)],
+    ...ITERATOR_METHODS.map((iteratorMethod): [string, () => Expression] => [
+      iteratorMethod,
+      () => {
+        if (!isArrayIteration(node, context)) {
+          throw new TlaTypeScriptError(
+            `Iterate ${iteratorMethod}() only in a for-of or a spread`,
+            node,
+          );
+        }
+        const position = context.names.getFresh("index");
+        const key = apply("-", [identifier(position), number(1)]);
+        const visited =
+          iteratorMethod === "values"
+            ? sequence
+            : functionOf(
+                [bound(position, getDomain(sequence))],
+                iteratorMethod === "keys"
+                  ? key
+                  : tuple([key, index(sequence, [identifier(position)])]),
+              );
+        // The iterator inherits the method that a for-of or a spread calls to iterate it.
+        return context.heap === undefined
+          ? visited
+          : ifExpression(
+              useJavaScript(
+                "HoldsBuiltIn",
+                [
+                  getHeap(scope, node, context),
+                  translateBuiltInValue("Iterator.prototype", node, context),
+                  useJavaScript("WellKnownSymbol", [string("iterator")], context),
+                  string("Iterator.prototype.@@iterator"),
+                ],
+                context,
+              ),
+              visited,
+              apply("Assert", [
+                boolean(false),
+                string("tla-ts can't iterate an iterator whose prototype a script changed"),
+              ]),
+            );
+      },
+    ]),
     [
       "hasOwnProperty",
       () =>
@@ -990,6 +1032,19 @@ const translateMapMethod = (
 
 const removeLast = (current: Expression) =>
   apply("SubSeq", [current, number(1), apply("-", [apply("Len", [current]), number(1)])]);
+
+const ITERATOR_METHODS = ["keys", "values", "entries"];
+
+// An array's keys(), values(), or entries() that a for-of or a spread reads at once, which visits
+// what a sequence of them holds. Anywhere else the iterator is an object, whose identity and
+// progress a sequence can't show.
+export const isArrayIteration = (node: ts.Node, context: Context) =>
+  isMethodCall(node) &&
+  ITERATOR_METHODS.includes(node.expression.name.text) &&
+  node.arguments.length === 0 &&
+  getKind(node.expression.expression, context) === "sequence" &&
+  ((ts.isForOfStatement(node.parent) && node.parent.expression === node) ||
+    ts.isSpreadElement(node.parent));
 
 // An index argument as ClampedIndex counts it, or a fallback where it's missing or undefined.
 const translateClampedIndex = (

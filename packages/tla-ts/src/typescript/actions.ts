@@ -4,6 +4,7 @@ import {
   checkElement,
   getCallbackReceiver,
   getHeapArrayChange,
+  isArrayIteration,
   translateArrayChange,
   translateHeapElements,
   getHeapRegExpCall,
@@ -6491,11 +6492,15 @@ const translateIterations = (
     ts.isForOfStatement(iterated) &&
     isHeapArray(iterated.expression, context);
   // A for-of over an object that a script declares iterates through the object's iterator.
+  const isSequence =
+    iterated !== undefined &&
+    (getKind(iterated.expression, context) === "sequence" ||
+      isArrayIteration(iterated.expression, context));
   const isIterator =
     iterated !== undefined &&
     ts.isForOfStatement(iterated) &&
     !isHeapIteration &&
-    getKind(iterated.expression, context) !== "sequence" &&
+    !isSequence &&
     isIteratedValue(iterated.expression, context);
   const isForIn =
     iterated !== undefined &&
@@ -6516,7 +6521,7 @@ const translateIterations = (
     !isIterator &&
     !isStringIteration &&
     !isHeapIteration &&
-    getKind(iterated.expression, context) !== "sequence"
+    !isSequence
   ) {
     throw new TlaTypeScriptError("Only arrays have an order to iterate in", iterated.expression);
   }
