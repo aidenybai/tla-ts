@@ -958,13 +958,14 @@ Has(heap, ref, key) ==
   ELSE \\/ key \\in DOMAIN PropertiesOf(heap, ref, key).values
        \\/ LET prototype == Prototype(heap, ref) IN prototype # Null /\\ Has(heap, prototype, key)
 
-\\* An error is a record of its constructor, its message and its name, and a SuppressedError's also
-\\* of its error and the error it suppressed.
+\\* An error is a record of its constructor, its message and its name, an AggregateError's also of its
+\\* errors, a SuppressedError's also of its error and the error it suppressed, and one that a script
+\\* made also of its identity.
 LOCAL IsError(value) ==
   /\\ SubSeq(ToString(value), 1, 1) = "["
-  /\\ DOMAIN value \\in {{"constructor", "message", "name"},
-                      {"constructor", "errors", "message", "name"},
-                      {"constructor", "message", "name", "error", "suppressed"}}
+  /\\ DOMAIN value \\ {"identity"} \\in {{"constructor", "message", "name"},
+                                     {"constructor", "errors", "message", "name"},
+                                     {"constructor", "message", "name", "error", "suppressed"}}
 
 \\* An error inherits its other properties from its constructor's prototype. The message of an error
 \\* that JavaScript throws differs between engines, and tla-ts gives it none. A script can't read or
