@@ -13,8 +13,9 @@ import {
   HOLE_SKIPPING_METHODS,
   translateMethodElements,
   MUTATING_METHODS,
-  REORDER_METHODS,
-  removeLast,
+  SEQUENCE_UPDATES,
+  translateSpliced,
+  checkArrayMethod,
   translatePrimitiveMethod,
 } from "./collections";
 import {
@@ -865,31 +866,30 @@ const getRemovedValue = (
       ),
     };
   }
-  if (kind !== "sequence") return undefined;
-  // A push or an unshift gives the array's new length.
-  if ((method === "push" || method === "unshift") && !node.arguments.some(ts.isSpreadElement)) {
-    return {
-      value: apply("+", [
-        apply("Len", [translateExpression(receiver, path.scope, context)]),
-        number(node.arguments.length),
-      ]),
-      path: assign(
-        receiver,
-        path,
-        context,
-        (current) => getUpdatedValue(current, kind, node, path.scope, context) ?? current,
-      ),
-    };
-  }
-  if (method !== "shift" && method !== "pop") return undefined;
+  if (kind !== "sequence" || node.arguments.some(ts.isSpreadElement)) return undefined;
   const sequence = translateExpression(receiver, path.scope, context);
-  return {
-    value:
-      method === "shift" ? apply("Head", [sequence]) : index(sequence, [apply("Len", [sequence])]),
-    path: assign(receiver, path, context, (current) =>
-      method === "shift" ? apply("Tail", [current]) : removeLast(current),
-    ),
-  };
+  // A push or an unshift gives the array's new length, and a splice the elements it removes.
+  const value =
+    method === "push" || method === "unshift"
+      ? apply("+", [apply("Len", [sequence]), number(node.arguments.length)])
+      : method === "splice"
+        ? translateSpliced(sequence, node.arguments, true, path.scope, context)
+        : method === "shift"
+          ? apply("Head", [sequence])
+          : method === "pop"
+            ? index(sequence, [apply("Len", [sequence])])
+            : undefined;
+  return value === undefined
+    ? undefined
+    : {
+        value: checkArrayMethod(value, node, path.scope, context),
+        path: assign(
+          receiver,
+          path,
+          context,
+          (current) => getUpdatedValue(current, kind, node, path.scope, context) ?? current,
+        ),
+      };
 };
 
 // The path after an assignment, such as x = 1, x += 1, or x++.
@@ -1651,7 +1651,7 @@ export const translateCallStatement = (
     if (
       MUTATING_METHODS.has(method) &&
       kind !== "other" &&
-      (kind === "sequence" || !REORDER_METHODS.has(method))
+      (kind === "sequence" || !SEQUENCE_UPDATES.has(method))
     ) {
       const updated = continueWith(
         assign(receiver, path, context, (current) => {

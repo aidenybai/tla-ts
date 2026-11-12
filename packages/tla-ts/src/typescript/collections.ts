@@ -778,31 +778,7 @@ const translateSequenceOperation = (
           context,
         ),
     ],
-    [
-      "toSpliced",
-      () => {
-        const start = translateClampedIndex(argument, number(0), getLength(), scope, context);
-        const count = call.arguments[1];
-        const items = tuple(call.arguments.slice(2).map(translate));
-        return share(start, "start", context, (shared) => {
-          const remaining = apply("-", [getLength(), shared]);
-          const skipped =
-            argument === undefined
-              ? number(0)
-              : count === undefined
-                ? remaining
-                : useJavaScript("ClampedCount", [getIndex(count), remaining], context);
-          return apply("\\o", [
-            apply("\\o", [apply("SubSeq", [sequence, number(1), shared]), items]),
-            apply("SubSeq", [
-              sequence,
-              apply("+", [apply("+", [shared, skipped]), number(1)]),
-              getLength(),
-            ]),
-          ]);
-        });
-      },
-    ],
+    ["toSpliced", () => translateSpliced(sequence, call.arguments, false, scope, context)],
     ["map", translateEach((bounds, body) => functionOf(bounds, body))],
     ["every", translateEach((bounds, body) => quantify("Forall", bounds, body), translateTest)],
     ["some", translateEach((bounds, body) => quantify("Exists", bounds, body), translateTest)],
@@ -977,7 +953,7 @@ const translateMapMethod = (
   );
 };
 
-export const removeLast = (current: Expression) =>
+const removeLast = (current: Expression) =>
   apply("SubSeq", [current, number(1), apply("-", [apply("Len", [current]), number(1)])]);
 
 // An index argument as ClampedIndex counts it, or a fallback where it's missing or undefined.
@@ -1004,6 +980,61 @@ const translateClampedIndex = (
       ),
     ),
   );
+};
+
+// What toSpliced() or splice() keeps of a sequence with the items it inserts, or what splice()
+// removes.
+export const translateSpliced = (
+  sequence: Expression,
+  methodArguments: readonly ts.Expression[],
+  isRemoved: boolean,
+  scope: Scope,
+  context: Context,
+) => {
+  if (methodArguments.some(ts.isSpreadElement)) {
+    throw new TlaTypeScriptError("Unsupported array method: splice", methodArguments[0]);
+  }
+  const [first, count] = methodArguments;
+  return share(sequence, "sequence", context, (shared) => {
+    const length = apply("Len", [shared]);
+    const start = translateClampedIndex(first, number(0), length, scope, context);
+    return share(start, "start", context, (at) => {
+      const remaining = apply("-", [length, at]);
+      const skipped =
+        first === undefined
+          ? number(0)
+          : count === undefined
+            ? remaining
+            : useJavaScript(
+                "ClampedCount",
+                [
+                  isNumberLike(count, context)
+                    ? translateExpression(count, scope, context)
+                    : useJavaScript(
+                        "ToNumber",
+                        [translateExpression(count, scope, context)],
+                        context,
+                      ),
+                  remaining,
+                ],
+                context,
+              );
+      const end = apply("+", [at, skipped]);
+      return isRemoved
+        ? apply("SubSeq", [shared, apply("+", [at, number(1)]), end])
+        : apply("\\o", [
+            apply("\\o", [
+              apply("SubSeq", [shared, number(1), at]),
+              tuple(
+                methodArguments
+                  .slice(2)
+                  .map((argument) => translateExpression(argument, scope, context)),
+              ),
+            ]),
+            apply("SubSeq", [shared, apply("+", [end, number(1)]), length]),
+          ]);
+    });
+  });
 };
 
 const reverseSequence = (sequence: Expression, context: Context) => {
@@ -1058,7 +1089,11 @@ const translateSortOrder = (
 };
 
 // The methods that reorder or overwrite an array in place, and give the array.
-export const REORDER_METHODS = new Set(["sort", "reverse", "fill", "copyWithin"]);
+const REORDER_METHODS = new Set(["sort", "reverse", "fill", "copyWithin"]);
+
+// The methods that change only an array value in place, which an object's method of the same name
+// doesn't.
+export const SEQUENCE_UPDATES = new Set([...REORDER_METHODS, "splice"]);
 
 // A sequence after sort, reverse, fill, or copyWithin.
 const translateReorder = (
@@ -1150,14 +1185,19 @@ const UPDATES = new Map<Kind, Map<string, Update>>([
 
 export const MUTATING_METHODS = new Set([
   ...[...UPDATES.values()].flatMap((updates) => [...updates.keys()]),
-  ...REORDER_METHODS,
+  ...SEQUENCE_UPDATES,
 ]);
 
 // The value of a collection after a mutating method call, or undefined if the method doesn't
 // mutate.
 // A method of an array value, which runs only where the prototype still holds the built-in method,
 // as a script that writes Array.prototype or Object.prototype may replace it.
-const checkArrayMethod = (value: Expression, node: MethodCall, scope: Scope, context: Context) => {
+export const checkArrayMethod = (
+  value: Expression,
+  node: MethodCall,
+  scope: Scope,
+  context: Context,
+) => {
   const method = node.expression.name.text;
   // toString runs the array's join.
   const methods = method === "toString" ? [method, "join"] : [method];
@@ -1194,8 +1234,15 @@ export const getUpdatedValue = (
   scope: Scope,
   context: Context,
 ) => {
-  if (kind === "sequence" && REORDER_METHODS.has(node.expression.name.text)) {
-    return checkArrayMethod(translateReorder(current, node, scope, context), node, scope, context);
+  if (kind === "sequence" && SEQUENCE_UPDATES.has(node.expression.name.text)) {
+    return checkArrayMethod(
+      node.expression.name.text === "splice"
+        ? translateSpliced(current, node.arguments, false, scope, context)
+        : translateReorder(current, node, scope, context),
+      node,
+      scope,
+      context,
+    );
   }
   const values = node.arguments.map((argument, position) =>
     position === 0 && (kind === "set" || kind === "map")

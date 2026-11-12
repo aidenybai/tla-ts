@@ -3449,6 +3449,27 @@ describe("errors", () => {
     );
   });
 
+  it("splices an array in place", async () => {
+    const result = await checkModel(`
+      const x = [0, 1, 2, 3];
+      const removed = x.splice(0, 3);
+      const y = [0, 1, 2, 3];
+      y.splice(1, 1, 7, 8);
+      const z = [0, 1, 2];
+      const tail = z.splice(-1);
+      if (
+        removed.join(",") !== "0,1,2" ||
+        x.join(",") !== "3" ||
+        y.join(",") !== "0,7,8,2,3" ||
+        tail.join(",") !== "2" ||
+        z.join(",") !== "0,1"
+      ) {
+        throw new Error("spliced");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`
