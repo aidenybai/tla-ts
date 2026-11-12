@@ -5002,6 +5002,31 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("converts a value that may not be a string where a template or + joins it", async () => {
+    const source = (expected: string) => `
+      const getText = (): string | undefined => undefined;
+      const getName = (): string | null => null;
+      const getCount = (): number | undefined => undefined;
+      const getFlag = (): boolean | string => false;
+      const text = getText();
+      const name = getName();
+      const words: string[] = ["a"];
+      const flags: boolean[] = [true];
+      let joined = "j";
+      joined += text;
+      const all =
+        \`\${text}-\${name}-\${getCount()}-\${getFlag()}-\${words[3]}-\${flags[2]}|\` +
+        text + (name + "") + String(text) + String(words[4]) + words[0] + joined;
+      if (all !== ${JSON.stringify(expected)}) throw new Error("strings");
+    `;
+    const expected =
+      "undefined-null-undefined-false-undefined-undefined|undefinednullundefinedundefinedajundefined";
+    expect((await checkModel(source(expected))).failure).toBeUndefined();
+    expect((await checkModel(source(expected.replace("-false", "-0")))).failure?.message).toContain(
+      "strings",
+    );
+  });
+
   it("changes an array that the heap holds in place", async () => {
     const result = await checkModel(`
       const items: number[] & { tag?: string } = [1, 2];

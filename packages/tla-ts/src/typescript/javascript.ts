@@ -3,7 +3,13 @@ import type { Expression } from "../ast";
 import { type Context, getSymbol, getUndefined, share } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { formatString } from "../printer";
-import { getNumberValue, translateBigInt, translateExpression } from "./expressions";
+import {
+  PRIMITIVE_NAMES,
+  getNumberValue,
+  translateBigInt,
+  translateExpression,
+  translateToString,
+} from "./expressions";
 import type { Scope } from "./scope";
 import { getKind, isBigIntLike } from "./types";
 import { apply, boolean, identifier, ifExpression, number, set, string } from "./tla";
@@ -4725,10 +4731,6 @@ export const translateConversion = (node: ts.CallExpression, scope: Scope, conte
     }
   }
   if (name === "String") {
-    if (kind === "string") return value;
-    if (kind === "number") return translateNumberString(value, context);
-    if (kind === "boolean") return ifExpression(value, string("true"), string("false"));
-    if (isEmpty) return string(kind);
     const heap = context.heap === undefined ? undefined : scope.bindings.get(context.heap);
     if (kind === "symbol" && heap !== undefined) {
       return useJavaScript("SymbolString", [heap, value], context);
@@ -4748,7 +4750,9 @@ export const translateConversion = (node: ts.CallExpression, scope: Scope, conte
         ),
       );
     }
-    if (names === undefined) return useJavaScript("StringOf", [value], context);
+    if (names === undefined || names.every((inner) => PRIMITIVE_NAMES.has(inner))) {
+      return translateToString(argument, scope, context);
+    }
   }
   throw unsupported;
 };

@@ -1237,15 +1237,28 @@ export const translateBigInt = (value: number, context: Context) =>
   useJavaScript(":>", [identifier("Big"), number(value)], context);
 
 // The types of the primitives that StringOf converts, where a union may hold any of them.
-const PRIMITIVE_NAMES = new Set(["string", "number", "boolean", "undefined", "null"]);
+export const PRIMITIVE_NAMES = new Set(["string", "number", "boolean", "undefined", "null"]);
 
 export const translateToString = (node: ts.Expression, scope: Scope, context: Context) => {
   const value = translateExpression(node, scope, context);
-  const flags = context.checker.getTypeAtLocation(node).flags;
-  if (getKind(node, context) === "string") return value;
+  const type = context.checker.getTypeAtLocation(node);
+  const flags = type.flags;
+  const inner = skipCasts(node);
+  // A read of a missing element gives undefined where TypeScript types it as the element, so only
+  // a string that the script writes or joins is surely one.
+  if (getKind(node, context) === "string" && isEvery(type, ts.TypeFlags.StringLike)) {
+    return ts.isStringLiteralLike(inner) ||
+      ts.isTemplateExpression(inner) ||
+      (ts.isBinaryExpression(inner) && inner.operatorToken.kind === ts.SyntaxKind.PlusToken)
+      ? value
+      : share(value, "text", context, (text) =>
+          ifExpression(apply("=", [text, getUndefined(context)]), string("undefined"), text),
+        );
+  }
   if (isNumberLike(node, context)) return translateNumberString(value, context);
-  if (isBigIntLike(node, context)) return useJavaScript("StringOf", [value], context);
-  if (isBooleanLike(node, context)) return ifExpression(value, string("true"), string("false"));
+  if (isBigIntLike(node, context) || isBooleanLike(node, context)) {
+    return useJavaScript("StringOf", [value], context);
+  }
   if (flags & ts.TypeFlags.Null) return string("null");
   if (flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) return string("undefined");
   const names = getTypeNames(context.checker.getTypeAtLocation(node), context.checker);
