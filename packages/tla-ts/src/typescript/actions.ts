@@ -7607,9 +7607,11 @@ const findLeadingCall = (
     const call = skipCasts(operand);
     return ts.isCallExpression(call) && findLeadingCall(call, [], path, context).call === call;
   };
+  // A condition or a short-circuit's left operand always runs first, so a read that it runs first
+  // runs before the operand that runs only sometimes.
   if (ts.isConditionalExpression(node)) {
     const found = findLeadingCall(node.condition, before, path, context);
-    return found.call !== undefined
+    return found.call !== undefined || found.read !== undefined
       ? found
       : !found.isBlocked && (isBranchCall(node.whenTrue) || isBranchCall(node.whenFalse))
         ? { ...blocked, branch: node }
@@ -7623,7 +7625,7 @@ const findLeadingCall = (
       kind === ts.SyntaxKind.QuestionQuestionToken
     ) {
       const found = findLeadingCall(node.left, before, path, context);
-      return found.call !== undefined
+      return found.call !== undefined || found.read !== undefined
         ? found
         : !found.isBlocked && isBranchCall(node.right)
           ? { ...blocked, branch: node }

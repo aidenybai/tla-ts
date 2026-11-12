@@ -8925,6 +8925,25 @@ describe("proxies", () => {
     expect((await checkModel(getSource(12))).failure?.message).toContain("unexpected");
   });
 
+  it("runs a trap on the left of a short-circuit or in a condition first", async () => {
+    const getSource = (expected: number) => `
+      const log: string[] = [];
+      const proxy = new Proxy<{ attr: number }>({ attr: 1 }, {
+        get(innerTarget, key) {
+          log.push("get");
+          return 2;
+        },
+      });
+      if (proxy.attr !== 2 || log.length !== 1) throw new Error("or");
+      if (proxy.attr === 2 && log.length < 2) throw new Error("and");
+      const fallback: number = 0;
+      const picked = Reflect.has(proxy, "attr") ? log.length : fallback;
+      if (picked !== ${expected}) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(3))).failure?.message).toContain("unexpected");
+  });
+
   it("stops the check where something else reads a proxy", async () => {
     const result = await checkModel(`
       const proxy = new Proxy({ attr: 1 }, {});
