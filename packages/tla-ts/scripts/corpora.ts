@@ -38,11 +38,13 @@ export const MAIN_THREAD_STACK_MB = 1.15;
 export const getCorpora = (): Corpus[] =>
   JSON.parse(readFileSync(join(CONFORMANCE_DIRECTORY, "corpora.json"), "utf8"));
 
-export const listFiles = (directory: string): string[] =>
-  readdirSync(directory).flatMap((entry) => {
+export const listFiles = (directory: string, isSorted = false): string[] => {
+  const entries = readdirSync(directory);
+  return (isSorted ? entries.sort() : entries).flatMap((entry) => {
     const path = join(directory, entry);
-    return statSync(path).isDirectory() ? listFiles(path) : [path];
+    return statSync(path).isDirectory() ? listFiles(path, isSorted) : [path];
   });
+};
 
 export interface CorpusModule {
   id: string;

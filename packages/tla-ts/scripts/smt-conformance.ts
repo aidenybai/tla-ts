@@ -1,8 +1,8 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { basename, join, relative } from "node:path";
 import { SmtParseError } from "../src/errors";
 import { decideSmt } from "../src/prover/smt/solver/solver";
-import { CONFORMANCE_DIRECTORY, getOption, writeResults } from "./corpora";
+import { CONFORMANCE_DIRECTORY, getOption, listFiles, writeResults } from "./corpora";
 import { getSmtVerdict, PROOF_INPUTS_DIRECTORY, type BackendVerdict } from "./proof-records";
 
 type Outcome = "proved" | "missed" | "extra" | "unsound" | "unproved";
@@ -11,15 +11,6 @@ const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".smt-results.json");
 
 const TIME_LIMIT_MS = 5000;
 const WALL_LIMIT_MS = 10 * TIME_LIMIT_MS;
-
-const listInputs = (directory: string): string[] =>
-  readdirSync(directory)
-    .sort()
-    .flatMap((entry) => {
-      const path = join(directory, entry);
-      if (statSync(path).isDirectory()) return listInputs(path);
-      return path.endsWith(".smt") || path.endsWith(".smt2") ? [path] : [];
-    });
 
 const decide = (text: string) => {
   try {
@@ -38,8 +29,11 @@ const getOutcome = (z3: BackendVerdict, ours: BackendVerdict, isInTime: boolean)
 
 const filter = getOption("--filter");
 const inputs = existsSync(PROOF_INPUTS_DIRECTORY)
-  ? listInputs(PROOF_INPUTS_DIRECTORY).filter(
-      (path) => existsSync(`${path}.out`) && (filter === undefined || path.includes(filter)),
+  ? listFiles(PROOF_INPUTS_DIRECTORY, true).filter(
+      (path) =>
+        (path.endsWith(".smt") || path.endsWith(".smt2")) &&
+        existsSync(`${path}.out`) &&
+        (filter === undefined || path.includes(filter)),
     )
   : [];
 if (inputs.length === 0)

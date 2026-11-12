@@ -5,7 +5,6 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
@@ -15,6 +14,7 @@ import {
   formatYaml,
   isDeclaredOutcome,
   keepCorrection,
+  listFiles,
   type Outcome,
   OUTCOME_EXITS,
   parseTest,
@@ -83,12 +83,6 @@ const getFeatures = (feature: string, testName: string) =>
   TLC_BUG_TESTS.has(testName) ? [feature, "tlc-bug"] : [feature];
 
 const skipped: string[] = [];
-
-const listFiles = (directory: string): string[] =>
-  readdirSync(directory).flatMap((entry) => {
-    const path = join(directory, entry);
-    return statSync(path).isDirectory() ? listFiles(path) : [path];
-  });
 
 const getOutcomeForExit = (exit: number) =>
   (Object.keys(OUTCOME_EXITS) as Outcome[]).find((outcome) =>
@@ -239,7 +233,7 @@ const portModelTest = (javaPath: string): PendingTest | undefined => {
 };
 
 const portSemanticCorpus = () =>
-  listFiles(join(toolsDirectory, "test/tla2sany/semantic/corpus"))
+  listFiles(join(toolsDirectory, "test/tla2sany/semantic/corpus"), false)
     .filter((path) => path.endsWith(".tla"))
     .map((path): PendingTest => ({
       directory: join(importDirectory, "sany/semantic"),
@@ -256,7 +250,7 @@ const portSemanticCorpus = () =>
     }));
 
 const portErrorCorpus = () =>
-  listFiles(join(toolsDirectory, "test/tla2sany/semantic/error_corpus"))
+  listFiles(join(toolsDirectory, "test/tla2sany/semantic/error_corpus"), false)
     .filter((path) => /[EW]\d+.*_Test\.tla$/.test(path))
     .map((path): PendingTest => {
       const moduleName = basename(path, ".tla");
@@ -283,7 +277,7 @@ const getSlug = (title: string) =>
     .replace(/^_|_$/g, "");
 
 const portParserCorpus = () =>
-  listFiles(join(toolsDirectory, "test/tla2sany/corpus"))
+  listFiles(join(toolsDirectory, "test/tla2sany/corpus"), false)
     .filter((path) => path.endsWith(".txt"))
     .flatMap((path) => {
       const area = basename(path, ".txt");
@@ -344,7 +338,7 @@ const pendingTests = [
   ...portSemanticCorpus(),
   ...portErrorCorpus(),
   ...portParserCorpus(),
-  ...listFiles(join(toolsDirectory, "test/tlc2"))
+  ...listFiles(join(toolsDirectory, "test/tlc2"), false)
     .filter((path) => /Test\d*\.java$|ETest\d+\.java$/.test(path))
     .flatMap((path) => portModelTest(path) ?? []),
 ];
