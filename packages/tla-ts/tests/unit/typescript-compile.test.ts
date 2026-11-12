@@ -15487,6 +15487,48 @@ ${call}
     }
   });
 
+  it("visits the keys that a function inherits, and a built-in object that a variable holds, through for-in", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      Object.defineProperty(Function.prototype, "hidden", { value: 1, enumerable: false, configurable: true });
+      Object.defineProperty(Function.prototype, "shown", { value: 2, enumerable: true, configurable: true });
+      Object.defineProperty(Function.prototype, "name", { value: "x", enumerable: true, configurable: true });
+      const made = function () {};
+      const arrow = () => 1;
+      const defined = function () {};
+      Object.defineProperty(defined, "own", { value: 1, enumerable: true, configurable: true });
+      const json = JSON;
+      let keys = "";
+      for (const key in made) keys += key + ",";
+      for (const key in arrow) keys += key + ";";
+      for (const key in defined) keys += key + ".";
+      for (const key in json) keys += key;
+      if (keys !== "shown,shown;own.shown.") throw new Error(keys);
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    for (const to of [
+      '"shown,shown;shown."',
+      '"name,shown,shown;own.shown."',
+      '"shown,shown;own.shown.parse"',
+    ]) {
+      expect(
+        (await checkModel(source.replace('"shown,shown;own.shown."', to))).failure?.message,
+      ).toContain("shown,shown;own.shown.");
+    }
+    const caller = `
+      const holder = { seen: 0 };
+      Object.defineProperty(Function.prototype, "caller", { value: 1, enumerable: true, configurable: true });
+      const made = function () {};
+      let keys = "";
+      for (const key in made) keys += key;
+      holder.seen = keys.length;
+    `;
+    expect((await checkModel(caller)).failure?.message).toContain(
+      "tla-ts can't tell whether this function has its own arguments and caller",
+    );
+  });
+
   it("destructures a rest element into an object pattern", async () => {
     const source = `
       let x: unknown = null;
