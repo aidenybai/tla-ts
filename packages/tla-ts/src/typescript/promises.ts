@@ -71,6 +71,8 @@ interface TrackedPromise {
   thenResolvers: readonly ThenResolvers[];
   value: Expression | undefined;
   reactions: readonly Reaction[];
+  // Whether code has given it a reaction, as a then, a catch, or an await does.
+  isHandled: boolean;
   // What the body of an async generator yielded or returned, for the promise of a request to it.
   iteration: { value: Expression; isDone: boolean } | undefined;
   // The values that the promise of Promise.all has so far, and how many it waits for.
@@ -505,10 +507,11 @@ const addReaction = (
     return setPromise(path, node, name, {
       ...promise,
       reactions: [...promise.reactions, reaction],
+      isHandled: true,
     });
   }
   return enqueue(
-    path,
+    setPromise(path, node, name, { ...promise, isHandled: true }),
     node,
     getReactionJob(
       reaction,
@@ -566,6 +569,7 @@ const makePromise = (
         thenResolvers: [],
         value: undefined,
         reactions: [],
+        isHandled: false,
         iteration: undefined,
         combined: undefined,
       }),
@@ -1560,6 +1564,8 @@ export const translatePromiseCall = (
 };
 
 // Runs the jobs that the path queued, in order, and then its timers, each with the jobs it queues.
+// As Node does by default, a promise that is rejected with no reaction once the jobs run out ends
+// the program.
 export const drainTasks = (path: Path, finish: (path: Path) => Formula): Formula => {
   const tasks = path.tasks;
   if (tasks === undefined) return finish(path);
@@ -1568,6 +1574,13 @@ export const drainTasks = (path: Path, finish: (path: Path) => Formula): Formula
     return job.run(withTasks(path, { ...tasks, jobs: tasks.jobs.slice(1) }), (after) =>
       drainTasks(after, finish),
     );
+  }
+  if (
+    [...tasks.promises.values()].some(
+      (promise) => promise.state === "rejected" && !promise.isHandled,
+    )
+  ) {
+    return leaf(apply("Assert", [boolean(false), string("A promise rejected with no handler")]));
   }
   const timer = tasks.timers.at(0);
   return timer === undefined

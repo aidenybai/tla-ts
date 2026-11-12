@@ -4361,6 +4361,22 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("ends the program at a promise rejected with no handler once the jobs run out", async () => {
+    const result = await checkModel(`
+      const box = { seen: 0 };
+      Promise.reject(new Error("x")).catch(() => {
+        throw new Error("again");
+      });
+    `);
+    expect(result.failure?.message).toContain("A promise rejected with no handler");
+    const handled = await checkModel(`
+      const box = { seen: 0 };
+      const rejected = Promise.reject(new Error("x"));
+      Promise.resolve().then(() => rejected.catch(() => {}));
+    `);
+    expect(handled.failure).toBeUndefined();
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`

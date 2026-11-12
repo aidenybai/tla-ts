@@ -117,9 +117,12 @@ const getSkipReason = (metadata: Metadata) => {
   return includes.length > 0 ? `includes ${includes.join(", ")}` : undefined;
 };
 
-// A test may leave a promise rejected with no handler, which JavaScript allows, though Node's
-// default would end this script.
-process.on("unhandledRejection", () => {});
+// A promise that a test leaves rejected with no handler ends the test, as Node's default ends a
+// program, though not this script, which runs the tests in turn.
+const rejections: unknown[] = [];
+process.on("unhandledRejection", (reason) => {
+  rejections.push(reason);
+});
 
 // Runs a test in Node, with its jobs and then its timers, as an async test checks $DONE in one.
 const getNodeError = async (source: string) => {
@@ -141,10 +144,15 @@ const getNodeError = async (source: string) => {
     await new Promise((resolve) => {
       setImmediate(resolve);
     });
-    timers.forEach((timer) => timer());
-    return undefined;
+    if (rejections.length === 0) timers.forEach((timer) => timer());
+    await new Promise((resolve) => {
+      setImmediate(resolve);
+    });
+    return rejections.length > 0 ? `Unhandled rejection: ${String(rejections[0])}` : undefined;
   } catch (error) {
     return String(error);
+  } finally {
+    rejections.length = 0;
   }
 };
 
@@ -154,11 +162,10 @@ const getModuleError = (source: string) => {
   const output = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ESNext },
   }).outputText;
-  const run = spawnSync(
-    process.execPath,
-    ["--input-type=module", "--unhandled-rejections=none", "-"],
-    { input: output, encoding: "utf8" },
-  );
+  const run = spawnSync(process.execPath, ["--input-type=module", "-"], {
+    input: output,
+    encoding: "utf8",
+  });
   if (run.status === 0) return undefined;
   return run.stderr.split("\n").find((line) => /^\w*Error\b/.test(line)) ?? `exit ${run.status}`;
 };
