@@ -17,6 +17,7 @@ import {
   OP_OR,
   OP_XOR,
   SORT_BOOL,
+  QUANTIFIER_FORALL,
 } from "./ast";
 import { mkNot } from "./ast-util";
 import { RefVector } from "./ref-vector";
@@ -87,7 +88,7 @@ export class DefinedNames {
           : elimUnusedVars(
               manager,
               manager.mkQuantifier({
-                isForall: true,
+                kind: QUANTIFIER_FORALL,
                 sorts: varSorts.toReversed(),
                 names: varSorts.map((_sort, index) => varSorts.length - 1 - index),
                 body: conjunct,
@@ -130,7 +131,7 @@ class ExprNamer extends RewriterTpl {
   getSubst(expr: number) {
     const manager = this.manager;
     const isNamed =
-      manager.kinds[expr] === KIND_QUANTIFIER ||
+      (manager.kinds[expr] === KIND_QUANTIFIER && !manager.isLambda(expr)) ||
       (manager.kinds[expr] === KIND_APP && manager.getOp(expr) === OP_LABEL) ||
       (this.isNamingFormulas &&
         manager.kinds[expr] === KIND_APP &&
@@ -501,14 +502,18 @@ export class Nnf {
   private processQuantifier(quantifier: number, frame: Frame) {
     const manager = this.manager;
     const data = manager.getQuantifier(quantifier);
-    const isUniversal = data.isForall === frame.isPositive;
+    const isUniversal = (data.kind === QUANTIFIER_FORALL) === frame.isPositive;
     if (frame.index === 0) {
       frame.index = 1;
       if (isUniversal) {
         if (!this.visit(data.body, frame.isPositive, true)) return false;
       } else {
         const skolemized = this.skolemizer.skolemize(quantifier);
-        const isDone = this.visit(skolemized, !data.isForall, frame.isInQuantifier);
+        const isDone = this.visit(
+          skolemized,
+          data.kind !== QUANTIFIER_FORALL,
+          frame.isInQuantifier,
+        );
         manager.decRef(skolemized);
         if (!isDone) return false;
       }
@@ -516,7 +521,10 @@ export class Nnf {
     // A skolemized quantifier's result is already on the stack.
     if (!isUniversal) return true;
     const body = this.results.items[this.results.size - 1];
-    this.setResult(this.results.size - 1, manager.mkQuantifier({ ...data, isForall: true, body }));
+    this.setResult(
+      this.results.size - 1,
+      manager.mkQuantifier({ ...data, kind: QUANTIFIER_FORALL, body }),
+    );
     return true;
   }
 }

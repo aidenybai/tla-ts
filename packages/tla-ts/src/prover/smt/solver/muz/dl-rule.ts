@@ -9,6 +9,8 @@ import {
   OP_AND,
   OP_IMPLIES,
   SORT_BOOL,
+  QUANTIFIER_EXISTS,
+  QUANTIFIER_FORALL,
 } from "../ast";
 import { flattenAndVector } from "../ast-util";
 import { RefVector } from "../ref-vector";
@@ -67,7 +69,7 @@ export const getRuleVars = (manager: AstManager, rule: Rule) =>
 
 export const mkForall = (manager: AstManager, sorts: number[], names: string[], body: number) =>
   manager.mkQuantifier({
-    isForall: true,
+    kind: QUANTIFIER_FORALL,
     sorts,
     names,
     body,
@@ -79,7 +81,7 @@ export const mkForall = (manager: AstManager, sorts: number[], names: string[], 
 
 export const mkExists = (manager: AstManager, sorts: number[], names: string[], body: number) =>
   manager.mkQuantifier({
-    isForall: false,
+    kind: QUANTIFIER_EXISTS,
     sorts,
     names,
     body,
@@ -205,7 +207,8 @@ export class RuleManager {
   private extractHorn(fml: number, body: number[]) {
     const manager = this.manager;
     const matrix =
-      manager.kinds[fml] === KIND_QUANTIFIER && manager.getQuantifier(fml).isForall
+      manager.kinds[fml] === KIND_QUANTIFIER &&
+      manager.getQuantifier(fml).kind === QUANTIFIER_FORALL
         ? manager.getQuantifier(fml).body
         : fml;
     const index = manager.freeVarBounds[matrix];

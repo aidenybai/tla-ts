@@ -14,6 +14,8 @@ import {
   SORT_BOOL,
   SORT_INT,
   type AstManager,
+  QUANTIFIER_FORALL,
+  QUANTIFIER_LAMBDA,
 } from "./ast";
 import { flattenAndVector, flattenOrVector, pushNotOwned } from "./ast-util";
 import { isOccurring } from "./der";
@@ -83,18 +85,23 @@ class QeLite {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
     let result = assign(manager, -1, body);
-    if (data.isForall) result = assign(manager, result, manager.mkApp(OP_NOT, [result], SORT_BOOL));
+    if (data.kind === QUANTIFIER_FORALL)
+      result = assign(manager, result, manager.mkApp(OP_NOT, [result], SORT_BOOL));
     const numVars = data.sorts.length;
-    result = this.reduceFormula((index) => index < numVars, result);
-    result = this.eliminateDiseqVars(data.sorts, result);
-    let expanded = this.tryExpandBoundedQuantifier(data.sorts, result);
-    if (expanded !== -1) {
-      if (data.isForall) expanded = assignOwned(manager, expanded, pushNotOwned(manager, expanded));
-      result = assignOwned(manager, result, this.rewriter.rewrite(expanded));
-      manager.decRef(expanded);
-      return result;
+    if (data.kind !== QUANTIFIER_LAMBDA) {
+      result = this.reduceFormula((index) => index < numVars, result);
+      result = this.eliminateDiseqVars(data.sorts, result);
+      let expanded = this.tryExpandBoundedQuantifier(data.sorts, result);
+      if (expanded !== -1) {
+        if (data.kind === QUANTIFIER_FORALL)
+          expanded = assignOwned(manager, expanded, pushNotOwned(manager, expanded));
+        result = assignOwned(manager, result, this.rewriter.rewrite(expanded));
+        manager.decRef(expanded);
+        return result;
+      }
     }
-    if (data.isForall) result = assignOwned(manager, result, pushNotOwned(manager, result));
+    if (data.kind === QUANTIFIER_FORALL)
+      result = assignOwned(manager, result, pushNotOwned(manager, result));
     const updated = assign(manager, -1, manager.mkQuantifier({ ...data, body: result, patterns }));
     result = assignOwned(manager, result, this.rewriter.rewrite(updated));
     manager.decRef(updated);

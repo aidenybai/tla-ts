@@ -63,11 +63,15 @@ import {
   OP_FALSE,
   OP_UMINUS,
   OP_UNINTERPRETED,
+  OP_FUN_DEFINED,
   OP_XOR,
   SORT_BOOL,
   SORT_INT,
   SORT_REAL,
   isArithSort,
+  QUANTIFIER_EXISTS,
+  QUANTIFIER_FORALL,
+  QUANTIFIER_LAMBDA,
 } from "./ast";
 import { getArraySignature, getMapSignature, mkAsArray } from "./array-decl-plugin";
 import { BV_OP_NAMES, getBvSignature } from "./bv-decl-plugin";
@@ -115,7 +119,8 @@ import {
   logicHasSeq,
   isSupportedLogic,
 } from "./smt-logics";
-import { replaceFreeVars } from "./var-subst";
+import { setRecFunDefinition } from "./recfun-decl-plugin";
+import { replaceFreeVars, VarSubst } from "./var-subst";
 import { UpolynomialManager } from "./nlsat/upolynomial";
 
 export interface ParserOptions {
@@ -424,7 +429,7 @@ const ARITIES = new Map<number, [number, number]>([
   [OP_OR, [0, Infinity]],
   [OP_ITE, [3, 3]],
   [OP_EQ, [2, Infinity]],
-  [OP_DISTINCT, [2, Infinity]],
+  [OP_DISTINCT, [1, Infinity]],
   ...[OP_NOT, OP_UMINUS, OP_ABS, OP_TO_REAL, OP_TO_INT, OP_IS_INT, ...REAL_FUNCTION_OPS]
     .filter((op) => op !== OP_ATAN2)
     .map((op): [number, [number, number]] => [op, [1, 1]]),
@@ -1047,7 +1052,9 @@ export const createSmtlibReader = (
     const op = manager.funcDecls[decl].op;
     const name = manager.funcDecls[decl].name;
     const isUninterpreted =
-      op === OP_UNINTERPRETED || manager.funcDecls[decl].family === FAMILY_DATATYPE;
+      op === OP_UNINTERPRETED ||
+      op === OP_FUN_DEFINED ||
+      manager.funcDecls[decl].family === FAMILY_DATATYPE;
     const domain = manager.funcDecls[decl].domain;
     const builtinSort = isUninterpreted ? -1 : (domainSort ?? getDomainSort(op, inputArgs));
     const getExpected = (index: number) =>
@@ -1151,7 +1158,7 @@ export const createSmtlibReader = (
     binders.depth -= count;
   };
 
-  const parseQuantifier = (list: SmtList, isForall: boolean) => {
+  const parseQuantifier = (list: SmtList, kind: number) => {
     if (list.items.length !== 3)
       throw new SmtParseError(
         "invalid quantified expression, syntax error: (forall|exists ((<symbol> <sort>)*) <expr>) expected",
@@ -1169,7 +1176,7 @@ export const createSmtlibReader = (
     const isAnnotated = bodySExpr.kind === "list" && isSymbol(bodySExpr.items[0], "!");
     const annotations = bodySExpr.kind === "list" && isAnnotated ? bodySExpr.items : [];
     const parsedBody = parseTerm(isAnnotated ? annotations[1] : bodySExpr);
-    if (manager.sorts[parsedBody] !== SORT_BOOL)
+    if (kind !== QUANTIFIER_LAMBDA && manager.sorts[parsedBody] !== SORT_BOOL)
       throw new SmtParseError("expected a formula", bodySExpr);
     const attributes = Array.from(
       { length: Math.ceil((annotations.length - 2) / 2) },
@@ -1237,7 +1244,7 @@ export const createSmtlibReader = (
     if (patterns.length > 0 && noPatterns.length > 0)
       throw new SmtParseError("simultaneous patterns and no-patterns not supported", list.end);
     const quantifier = manager.mkQuantifier({
-      isForall,
+      kind,
       sorts: varSorts,
       names: bound.names,
       body,
@@ -1732,7 +1739,8 @@ export const createSmtlibReader = (
           ? mkSeqTerm(name, args, indices, at)
           : mkBvApp(name, args, indices, at);
     const macro = macros.get(name);
-    if (macro !== undefined) {
+    // macros_find: a macro of another arity leaves the name to a declaration.
+    if (macro !== undefined && (macro.domain.length === args.length || !funcs.has(name))) {
       const coerced = args.map((arg, index) => coerce(arg, macro.domain[index]));
       if (
         coerced.length !== macro.domain.length ||
@@ -1844,8 +1852,15 @@ export const createSmtlibReader = (
     }
     if (sexpr.kind !== "list") throw new SmtParseError("invalid expression", sexpr);
     const head = sexpr.items[0];
-    if (isSymbol(head, "forall") || isSymbol(head, "exists"))
-      return parseQuantifier(sexpr, head.text === "forall");
+    if (isSymbol(head, "forall") || isSymbol(head, "exists") || isSymbol(head, "lambda"))
+      return parseQuantifier(
+        sexpr,
+        head.text === "forall"
+          ? QUANTIFIER_FORALL
+          : head.text === "exists"
+            ? QUANTIFIER_EXISTS
+            : QUANTIFIER_LAMBDA,
+      );
     if (isSymbol(head, "let")) return parseLet(sexpr);
     // Each attribute applies to the expression the attributes before it made.
     return sexpr.items.slice(2).reduce(
@@ -2013,9 +2028,10 @@ export const createSmtlibReader = (
         results.push(parseRootObj(current));
         return;
       }
-      if (head.text === "as" || head.text === "lambda" || head.text === "match")
+      if (head.text === "as" || head.text === "match")
         throw new SmtUnsupportedError(`the expression ${head.text}`);
-      if (["forall", "exists", "let", "!"].includes(head.text)) results.push(parseLeaf(current));
+      if (["forall", "exists", "lambda", "let", "!"].includes(head.text))
+        results.push(parseLeaf(current));
       else frames.push({ head, indices: [], list: current, start: results.length, next: 1 });
     };
     enter(sexpr);
@@ -2335,7 +2351,29 @@ export const createSmtlibReader = (
         `invalid function definition, sort mismatch. Expcected ${manager.getSortName(range)} but function body has sort ${manager.getSortName(manager.sorts[parsed])}`,
         next,
       );
-    manager.setRecFunBody(decl, parsed);
+    setRecFunDefinition(manager, manager.recFunDefs.get(decl)!, false, parsed);
+  };
+
+  // parse_define and insert_macro: Z3 declares a macro as a recursive function with one case, which
+  // a reference without arguments takes as an array. The reference that the body with its variables
+  // reversed keeps stands for Z3's macro_decls, and those of the variables for the definition's.
+  const defineMacroFunc = (name: string, domain: number[], body: number) => {
+    const count = domain.length;
+    if (count > 1) {
+      const subst = new VarSubst(manager, true);
+      subst.apply(
+        body,
+        domain.map((sort, index) => manager.mkVar(index, sort)),
+      );
+      subst.release();
+    }
+    for (const [index, sort] of domain.entries()) manager.incRef(manager.mkVar(index, sort));
+    const reversedVars = domain.map((_, index) => manager.mkVar(index, domain[count - index - 1]));
+    for (const reversedVar of reversedVars) manager.incRef(reversedVar);
+    const decl = manager.mkRecFuncDecl(name, domain, manager.sorts[body]);
+    for (const reversedVar of reversedVars) manager.decRef(reversedVar);
+    setRecFunDefinition(manager, manager.recFunDefs.get(decl)!, true, body);
+    declare(funcs, name, [...(funcs.get(name) ?? []), decl]);
   };
 
   const declareCommand = (list: SmtList) => {
@@ -2444,6 +2482,7 @@ export const createSmtlibReader = (
         );
       manager.incRef(coerced);
       declare(macros, symbol.text, { domain: bound.varSorts, range, body: coerced });
+      if (bound.varSorts.length > 0) defineMacroFunc(symbol.text, bound.varSorts, coerced);
       return;
     }
     const domain = name === "declare-fun" ? parseDomain(list.items[2], list) : [];

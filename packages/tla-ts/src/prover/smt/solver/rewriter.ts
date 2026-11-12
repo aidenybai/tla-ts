@@ -1,5 +1,6 @@
 // Ported from Z3 (src/ast/rewriter/th_rewriter.cpp, bool_rewriter.cpp, arith_rewriter.cpp), MIT
 // license, see z3-license.txt.
+import { mkArrayApp } from "./array-decl-plugin";
 import { ArrayRewriter } from "./array-rewriter";
 import { mkRecFunApp } from "./recfun-rewriter";
 import { mkDatatypeAppCore, mkDatatypeEqCore } from "./datatype-rewriter";
@@ -22,6 +23,7 @@ import {
   FAMILY_DATATYPE,
   FAMILY_FPA,
   FAMILY_PB,
+  FAMILY_RECFUN,
   FAMILY_SEQ,
   KIND_APP,
   KIND_QUANTIFIER,
@@ -70,6 +72,9 @@ import {
   OP_XOR,
   SORT_BOOL,
   isArithSort,
+  OP_CONST_ARRAY,
+  QUANTIFIER_FORALL,
+  QUANTIFIER_LAMBDA,
 } from "./ast";
 import { getRewriteDepth, type Rewrite, RewriterTpl } from "./rewriter-tpl";
 import { sortByKey } from "./sort";
@@ -219,7 +224,6 @@ export class Rewriter extends RewriterTpl {
     // An uninterpreted application only reduces by pull_ite, which needs two arguments.
     if (
       manager.funcDecls[decl].op === OP_UNINTERPRETED &&
-      !manager.recFunBodies.has(decl) &&
       (args.length !== 2 || this.options.isPullingCheapIte !== true)
     )
       return -1;
@@ -237,40 +241,51 @@ export class Rewriter extends RewriterTpl {
   private reduceQuantifierCore(expr: number, body: number, newPatterns: number[]) {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
+    const isLambda = data.kind === QUANTIFIER_LAMBDA;
     const isNegated = manager.isNot(body);
     const junction = isNegated ? manager.getArg(body, 0) : body;
     if (
-      manager.getOp(junction) === (data.isForall !== isNegated ? OP_AND : OP_OR) &&
+      !isLambda &&
+      manager.getOp(junction) ===
+        ((data.kind === QUANTIFIER_FORALL) !== isNegated ? OP_AND : OP_OR) &&
       manager.someArg(junction, (arg) => {
         const atom = manager.isNot(arg) ? manager.getArg(arg, 0) : arg;
         return manager.kinds[atom] === KIND_VAR && manager.values[atom] < data.sorts.length;
       })
     )
-      return data.isForall ? manager.falseExpr : manager.trueExpr;
+      return data.kind === QUANTIFIER_FORALL ? manager.falseExpr : manager.trueExpr;
     const nested =
       manager.kinds[body] === KIND_QUANTIFIER ? manager.getQuantifier(body) : undefined;
-    const patterns = newPatterns.filter((pattern, index) => newPatterns.indexOf(pattern) === index);
-    const merged =
+    const isMerging =
       nested !== undefined &&
-      nested.isForall === data.isForall &&
+      nested.kind === data.kind &&
+      !isLambda &&
       data.patterns.length + data.noPatterns.length === 0 &&
-      nested.patterns.length + nested.noPatterns.length === 0
-        ? manager.mkQuantifier({
-            ...data,
-            sorts: [...data.sorts, ...nested.sorts],
-            names: [...data.names, ...nested.names],
-            body: nested.body,
-            patterns: [],
-            weight: Math.min(data.weight, nested.weight),
-          })
-        : manager.mkQuantifier({
-            ...data,
-            body,
-            patterns: this.substitutePatterns(patterns),
-            noPatterns: data.noPatterns.filter(
-              (noPattern, index) => data.noPatterns.indexOf(noPattern) === index,
-            ),
-          });
+      nested.patterns.length + nested.noPatterns.length === 0;
+    if (!isMerging && isLambda && manager.isGround(body))
+      return mkArrayApp(manager, OP_CONST_ARRAY, [body], [manager.sorts[expr]]);
+    if (!isMerging && isLambda) {
+      const reduced = this.array.mkLambdaCore(expr, body);
+      if (reduced !== -1) return reduced;
+    }
+    const patterns = newPatterns.filter((pattern, index) => newPatterns.indexOf(pattern) === index);
+    const merged = isMerging
+      ? manager.mkQuantifier({
+          ...data,
+          sorts: [...data.sorts, ...nested.sorts],
+          names: [...data.names, ...nested.names],
+          body: nested.body,
+          patterns: [],
+          weight: Math.min(data.weight, nested.weight),
+        })
+      : manager.mkQuantifier({
+          ...data,
+          body,
+          patterns: this.substitutePatterns(patterns),
+          noPatterns: data.noPatterns.filter(
+            (noPattern, index) => data.noPatterns.indexOf(noPattern) === index,
+          ),
+        });
     const reduced = this.unusedVarsEliminator.apply(merged);
     manager.releaseLater(reduced);
     if (
@@ -553,7 +568,7 @@ export class Rewriter extends RewriterTpl {
     if (funcDecl.family === FAMILY_PB) return mkPbAppCore(manager, decl, args);
     if (funcDecl.family === FAMILY_SEQ || funcDecl.family === FAMILY_CHAR)
       return this.seq.mkAppCore(decl, args) ?? -1;
-    if (manager.recFunBodies.has(decl)) return mkRecFunApp(manager, decl, args) ?? -1;
+    if (funcDecl.family === FAMILY_RECFUN) return mkRecFunApp(manager, decl, args) ?? -1;
     const op = funcDecl.op;
     switch (op) {
       case OP_AND:

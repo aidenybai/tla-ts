@@ -11,6 +11,7 @@ import {
   OP_ITE,
   OP_OR,
   SORT_BOOL,
+  QUANTIFIER_FORALL,
 } from "../ast";
 import { flattenOrVector } from "../ast-util";
 import type { Goal } from "../goal";
@@ -50,7 +51,7 @@ const normalize = (manager: AstManager, formula: number) => {
   for (;;) {
     if (manager.kinds[current] === KIND_QUANTIFIER) {
       const quantifier = manager.getQuantifier(current);
-      if (quantifier.isForall === isPositive) {
+      if ((quantifier.kind === QUANTIFIER_FORALL) === isPositive) {
         current = quantifier.body;
         continue;
       }
@@ -64,7 +65,10 @@ const normalize = (manager: AstManager, formula: number) => {
 
 const isImplication = (manager: AstManager, formula: number) => {
   let current = formula;
-  while (manager.kinds[current] === KIND_QUANTIFIER && manager.getQuantifier(current).isForall)
+  while (
+    manager.kinds[current] === KIND_QUANTIFIER &&
+    manager.getQuantifier(current).kind === QUANTIFIER_FORALL
+  )
     current = manager.getQuantifier(current).body;
   while (manager.getOp(current) === OP_IMPLIES) current = manager.getArg(current, 1);
   return isPredicate(manager, current);

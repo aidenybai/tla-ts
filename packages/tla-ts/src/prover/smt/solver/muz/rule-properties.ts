@@ -10,6 +10,7 @@ import {
   OP_DIV,
   OP_DIV0,
   OP_DT_ACCESSOR,
+  OP_FUN_DEFINED,
   OP_EQ,
   OP_IDIV,
   OP_IDIV0,
@@ -20,6 +21,7 @@ import {
   OP_POWER0,
   OP_REM,
   SORT_SIZE_INFINITE,
+  QUANTIFIER_EXISTS,
 } from "../ast";
 import type { DatalogContext } from "./dl-context";
 import type { Rule } from "./dl-rule";
@@ -94,7 +96,7 @@ export class RuleProperties {
     } else if (manager.getFamily(expr) === FAMILY_USER) addUninterpreted();
     else if (op === OP_DT_ACCESSOR)
       throw new SmtUnsupportedError("datatype accessors in Horn rules");
-    else if (DIVISION_BY_ZERO_OPS.has(op) || manager.recFunBodies.has(decl)) addUninterpreted();
+    else if (DIVISION_BY_ZERO_OPS.has(op) || op === OP_FUN_DEFINED) addUninterpreted();
     else if (DIVISION_OPS.has(op)) {
       const divisor = this.context.simplify(manager.getArg(expr, 1));
       if (!manager.isNumeral(divisor) || manager.getRationalValue(divisor).isZero())
@@ -123,7 +125,7 @@ export class RuleProperties {
 
   checkExistsFree() {
     for (const quantifier of this.quantifiers.keys())
-      if (!this.manager.getQuantifier(quantifier).isForall)
+      if (this.manager.getQuantifier(quantifier).kind === QUANTIFIER_EXISTS)
         throw new SmtTacticError("cannot process EXISTS quantifier in rule");
   }
 

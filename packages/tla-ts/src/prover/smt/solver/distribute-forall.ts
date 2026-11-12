@@ -1,5 +1,5 @@
 // Ported from Z3 (src/ast/simplifiers/distribute_forall.cpp), MIT license, see z3-license.txt.
-import { type AstManager, OP_AND, OP_IMPLIES, OP_OR } from "./ast";
+import { type AstManager, OP_AND, OP_IMPLIES, OP_OR, QUANTIFIER_FORALL } from "./ast";
 import { flattenAndVector, flattenOrVector } from "./ast-util";
 import { runSimplifier } from "./dependent-expr-state";
 import type { Goal } from "./goal";
@@ -14,13 +14,14 @@ class DistributeForallRewriter extends RewriterTpl {
     if (data.patterns.length > 0 || data.noPatterns.length > 0) return -1;
     const op = manager.getOp(body);
     const negatedOp = manager.isNot(body) ? manager.getOp(manager.getArg(body, 0)) : -1;
-    const isSplitting = data.isForall
-      ? op === OP_AND || negatedOp === OP_IMPLIES || negatedOp === OP_OR
-      : op === OP_OR || op === OP_IMPLIES || negatedOp === OP_AND;
+    const isSplitting =
+      data.kind === QUANTIFIER_FORALL
+        ? op === OP_AND || negatedOp === OP_IMPLIES || negatedOp === OP_OR
+        : op === OP_OR || op === OP_IMPLIES || negatedOp === OP_AND;
     if (!isSplitting) return -1;
     const conjuncts = new RefVector(manager);
     conjuncts.push(body);
-    if (data.isForall) flattenAndVector(manager, conjuncts);
+    if (data.kind === QUANTIFIER_FORALL) flattenAndVector(manager, conjuncts);
     else flattenOrVector(manager, conjuncts);
     let quantifier = -1;
     for (let index = 0; index < conjuncts.size; index++) {
@@ -34,7 +35,10 @@ class DistributeForallRewriter extends RewriterTpl {
       conjuncts.set(index, eliminated);
       manager.decRef(eliminated);
     }
-    const result = data.isForall ? manager.mkAnd(conjuncts.items) : manager.mkOr(conjuncts.items);
+    const result =
+      data.kind === QUANTIFIER_FORALL
+        ? manager.mkAnd(conjuncts.items)
+        : manager.mkOr(conjuncts.items);
     manager.incRef(result);
     conjuncts.reset();
     if (quantifier !== -1) manager.decRef(quantifier);

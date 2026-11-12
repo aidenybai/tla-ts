@@ -9,6 +9,7 @@ import {
   OP_IMPLIES,
   OP_OR,
   SORT_BOOL,
+  QUANTIFIER_FORALL,
 } from "../ast";
 import { flattenAndVector, mkNot } from "../ast-util";
 import { QuantifierHoister } from "../quant-hoist";
@@ -58,7 +59,10 @@ export class Hnf {
   private isHorn(expr: number) {
     const manager = this.manager;
     let current = expr;
-    while (manager.kinds[current] === KIND_QUANTIFIER && manager.getQuantifier(current).isForall)
+    while (
+      manager.kinds[current] === KIND_QUANTIFIER &&
+      manager.getQuantifier(current).kind === QUANTIFIER_FORALL
+    )
       current = manager.getQuantifier(current).body;
     if (manager.getOp(current) !== OP_IMPLIES) return false;
     const premise = manager.getArg(current, 0);
@@ -148,7 +152,7 @@ export class Hnf {
     const manager = this.manager;
     if (
       manager.kinds[expr] !== KIND_QUANTIFIER ||
-      !manager.getQuantifier(expr).isForall ||
+      manager.getQuantifier(expr).kind !== QUANTIFIER_FORALL ||
       !this.containsPredicate(expr)
     )
       return expr;

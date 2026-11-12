@@ -10,6 +10,7 @@ import {
   OP_NOT,
   OP_OR,
   SORT_BOOL,
+  QUANTIFIER_FORALL,
 } from "./ast";
 import { mkNot } from "./ast-util";
 import { simplifyInjAxiom } from "./inj-axiom";
@@ -34,7 +35,7 @@ class PatternInferenceRw extends RewriterTpl {
   reduceQuantifier(expr: number, body: number) {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
-    if (!data.isForall || data.patterns.length > 0) return -1;
+    if (data.kind !== QUANTIFIER_FORALL || data.patterns.length > 0) return -1;
     const quantifier = manager.withTemporaries(() => {
       const inferred = this.inference.infer(data.sorts.length, body, data.weight, data.noPatterns);
       const withPatterns = manager.mkQuantifier({ ...data, body, patterns: inferred.patterns });

@@ -696,7 +696,7 @@ const createPrinter = (manager: AstManager, environment: PrintEnvironment) => {
           ),
           body,
         ],
-        data.isForall ? "forall" : "exists",
+        ["forall", "exists", "lambda"][data.kind],
         1,
       );
       const bodyInfo = infos[infos.length - 1];

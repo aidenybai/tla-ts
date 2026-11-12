@@ -9,6 +9,7 @@ import {
   OP_ITE,
   OP_OR,
   SORT_BOOL,
+  QUANTIFIER_FORALL,
 } from "./ast";
 import { isAppOf } from "./ast-util";
 import { RefVector } from "./ref-vector";
@@ -77,7 +78,7 @@ export class QuantifierHoister {
     let current = formula;
     while (
       manager.kinds[current] === KIND_QUANTIFIER &&
-      manager.getQuantifier(current).isForall === isForall
+      (manager.getQuantifier(current).kind === QUANTIFIER_FORALL) === isForall
     ) {
       const data = manager.getQuantifier(current);
       index += data.sorts.length;
@@ -139,8 +140,8 @@ export class QuantifierHoister {
     const kind = manager.kinds[formula];
     if (kind === KIND_QUANTIFIER) {
       const data = manager.getQuantifier(formula);
-      if (!isCompatible(type.value, data.isForall)) return formula;
-      setQuantifierType(type, data.isForall);
+      if (!isCompatible(type.value, data.kind === QUANTIFIER_FORALL)) return formula;
+      setQuantifierType(type, data.kind === QUANTIFIER_FORALL);
       return this.pull(this.extractQuantifier(formula, vars), type, vars);
     }
     if (kind !== KIND_APP) return formula;
