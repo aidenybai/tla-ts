@@ -7,7 +7,7 @@ import { TlaIsabelleError } from "../../../errors";
 import { compIncr, forallIntrVars, protectD, protectI, revcutRl } from "../pure/drule";
 import { conclude } from "../pure/goal";
 import type { Limits } from "../pure/interrupt";
-import { isProtected, stripAssumsConcl } from "../pure/logic";
+import { isProtected, stripAssumsConcl, stripParams } from "../pure/logic";
 import {
   appendSeq,
   emptySeq,
@@ -21,7 +21,7 @@ import {
 import { normHhf } from "../pure/simplifier";
 import { eresolveTac, resolveTac } from "../pure/tactic";
 import { every, subgoal, thenGoal, type GoalTactic, type Tactic } from "../pure/tactical";
-import { aconv, mkVar, propT, type Term } from "../pure/term";
+import { aconv, existsSubterm, mkAbs, mkFree, mkVar, propT, type Term } from "../pure/term";
 import { bicompose, incrIndexesThm, instantiate, nprems, type Thm } from "../pure/thm";
 import {
   addAssumptions,
@@ -31,13 +31,16 @@ import {
   bindTerm,
   declareTerm,
   exportThm,
+  maybeBindTerm,
   putFacts,
   readTerms,
   simultMatches,
+  updateCases,
   type IsarContext,
   type ReadMode,
 } from "./context";
-import { evaluate, finishTac, normHhfTac, unfoldGoals, unfoldRule } from "./method";
+import { evaluate, finishTac, normHhfTac, unfoldGoals, unfoldRule, type GoalState } from "./method";
+import { applyCase, dropJudgment } from "./rule-cases";
 import { parseType } from "./inner-syntax";
 import type { FixedVariable, MethodText, StatementPart } from "./theory";
 
@@ -70,6 +73,8 @@ interface Node {
 export type State = readonly Node[];
 
 const error = (message: string) => new TlaIsabelleError("ERROR", message);
+
+const hasVars = (term: Term) => existsSubterm((sub) => sub.kind === "Var", term);
 
 const top = (state: State) => state[state.length - 1];
 
@@ -129,11 +134,15 @@ const provideGoal = (state: State, thm: Thm) =>
 const usingFacts = (state: State, using: readonly Thm[]) =>
   mapGoal(state, (context, goal) => [context, { ...goal, using }]);
 
-// Proof.refine: the method applies to the goal with its facts, in the given context.
+// Proof.refine: the method applies to the goal with its facts, in the given context, and its
+// cases join the goal's context.
 const refine = (state: State, text: MethodText): Seq<State> => {
-  const [, , goal] = findGoal(state);
+  const [, goalContext, goal] = findGoal(state);
   const method = evaluate(contextOf(state), text);
-  return mapSeq((thm: Thm) => provideGoal(state, thm), method(goal.using)(goal.goal));
+  return mapSeq(
+    (result: GoalState) => mapGoal(state, () => [result.context, { ...goal, goal: result.goal }]),
+    method(goal.using)({ context: goalContext, goal: goal.goal }),
+  );
 };
 
 const STANDARD_TEXT: MethodText = { kind: "source", name: "standard", args: [] };
@@ -209,6 +218,13 @@ export const terminalProof = (
     ),
   );
 
+// Auto_Bind.goal: ?thesis is a single goal's conclusion, abstracted over its parameters.
+const thesisOf = (prop: Term) =>
+  stripParams(prop).reduceRight(
+    (body, param) => mkAbs(param.name, param.type, body),
+    dropJudgment(stripAssumsConcl(prop)),
+  );
+
 // Proof.generic_goal: a new block whose goal is the proposition.
 const genericGoal = (
   state: State,
@@ -223,7 +239,12 @@ const genericGoal = (
   const opened = putMode(openBlock(putMode(state, "forward")), "backward");
   const goalState = mapTop(opened, (node) => ({
     ...node,
-    context: { ...goalContext, isBody: true },
+    context: maybeBindTerm(
+      { ...goalContext, isBody: true },
+      "thesis",
+      0,
+      props.length === 1 ? thesisOf(props[0]) : undefined,
+    ),
     goal: { isGlobal, props, using: [], goal: initGoal(props[0]), afterQed },
   }));
   return putFactsOf(isChaining ? usingFacts(goalState, theFacts(state)) : goalState, undefined);
@@ -413,29 +434,83 @@ export const collect = (state: State, isFinal: boolean): State => {
     : updated;
 };
 
-export const assume = (state: State, parts: readonly StatementPart[]): State => {
+// Proof.assume: each group of propositions becomes hypotheses, which a named group names.
+const assumeProps = (
+  state: State,
+  groups: readonly { readonly name: string | undefined; readonly props: readonly Term[] }[],
+): State => {
   assertMode(state, ["forward"]);
-  const statement = readStatement(contextOf(state), parts, "default");
-  const [thms, context] = addAssumptions(
-    bindAll(contextOf(state), statement.binds),
-    false,
-    statement.props.flat(),
-  );
+  const props = groups.flatMap((group) => group.props);
+  const [thms, context] = addAssumptions(contextOf(state), false, props);
   let offset = 0;
-  const grouped = statement.props.map((group) => {
-    const slice = thms.slice(offset, offset + group.length);
-    offset += group.length;
-    return slice;
-  });
-  const named = parts.reduce(
-    (current, part, index) =>
-      part.name === undefined ? current : putFacts(current, part.name, grouped[index]),
-    statement.props.flat().reduce(declareTerm, context),
+  const named = groups.reduce(
+    (current, group) => {
+      const slice = thms.slice(offset, offset + group.props.length);
+      offset += group.props.length;
+      return group.name === undefined ? current : putFacts(current, group.name, slice);
+    },
+    props.reduce(declareTerm, context),
   );
   return putFactsOf(
     mapContext(state, () => named),
     thms,
   );
+};
+
+export const assume = (state: State, parts: readonly StatementPart[]): State => {
+  assertMode(state, ["forward"]);
+  const statement = readStatement(contextOf(state), parts, "default");
+  return assumeProps(
+    mapContext(state, (context) => bindAll(context, statement.binds)),
+    parts.map((part, index) => ({ name: part.name, props: statement.props[index] })),
+  );
+};
+
+// Proof.case: the case's fixes, under the names given, its term bindings and nested cases, then
+// its assumptions, which the case's name names.
+export const invokeCase = (
+  state: State,
+  binding: string | undefined,
+  name: string,
+  params: readonly (string | undefined)[],
+): State => {
+  const context = contextOf(assertMode(state, ["forward"]));
+  const ruleCase = context.cases.get(name);
+  if (ruleCase === undefined) throw error(`Undefined case: "${name}"`);
+  if (params.length > ruleCase.fixes.length) throw error(`Too many parameters for case "${name}"`);
+  if (ruleCase.assumes.some((assumption) => assumption.props.some(hasVars)))
+    throw error(`Illegal schematic variable(s) in case "${name}"`);
+  const fixes = ruleCase.fixes.map((fix, index) => ({ ...fix, name: params[index] ?? fix.name }));
+  const fixed = addFixes(
+    {
+      ...context,
+      types: new Map([...context.types, ...fixes.map((fix) => [fix.name, fix.type] as const)]),
+    },
+    fixes.map((fix) => fix.name),
+  );
+  const applied = applyCase(
+    fixes.map((fix) => mkFree(fix.name, fix.type)),
+    ruleCase,
+  );
+  const bound = applied.binds.reduce(
+    (current, bind) =>
+      maybeBindTerm(
+        current,
+        bind.name,
+        bind.index,
+        bind.term !== undefined && hasVars(bind.term) ? undefined : bind.term,
+      ),
+    fixed,
+  );
+  const caseName = binding ?? name;
+  const assumed = assumeProps(
+    mapContext(state, () => updateCases(bound, applied.cases)),
+    applied.assumes.map((assumption) => ({
+      name: assumption.name === "" ? undefined : `${caseName}.${assumption.name}`,
+      props: assumption.props,
+    })),
+  );
+  return mapContext(assumed, (current) => putFacts(current, caseName, theFacts(assumed)));
 };
 
 // Proof.fix: the variables are arbitrary but fixed from here on.

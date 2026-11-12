@@ -32,11 +32,10 @@ describe("decideIsabelle gives Isabelle's verdict on tlapm's theories", () => {
     expect(decide(text)).toBe(verdict);
   });
 
-  // tlapm's isabelle/examples/Allocator.thy up to AllocateMutex, whose case analysis tla-ts can't
-  // run yet.
+  // tlapm's isabelle/examples/Allocator.thy.
   it("checks the definitions and structured proofs of Allocator", () => {
     expect(decide(readTheory("Allocator"))).toBe("unsat");
-  });
+  }, 30_000);
 
   it("answers unknown for a theory tlapm stopped writing partway", () => {
     expect(decide(readTheory("Level_test-1"))).toBe("unknown");
@@ -79,6 +78,18 @@ describe("decideIsabelle doesn't prove what doesn't follow", () => {
     expect(theory).toContain(text);
     expect(decide(theory.replace(text, replacement))).toBe("unknown");
   });
+
+  it("Allocator's AllocateMutex with its cases swapped", () => {
+    const theory = readTheory("Allocator");
+    const simpleCase = "case False \\<comment> \\<open> the simple case first";
+    const otherCase = "case True \\<comment> \\<open> one of";
+    expect(theory).toContain(simpleCase);
+    expect(theory).toContain(otherCase);
+    const swapped = theory
+      .replace(simpleCase, simpleCase.replace("False", "True"))
+      .replace(otherCase, otherCase.replace("True", "False"));
+    expect(decide(swapped)).toBe("unknown");
+  }, 30_000);
 
   const falseGoal = readTheory("function_except_tuple_soundness_gh201_test-1").replace(
     /^assumes .*\n/m,

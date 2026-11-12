@@ -17,7 +17,7 @@ import { isEquals, listImplies, stripImpPrems, stripAssumsConcl } from "../pure/
 import { addSimps, congKey, emptySimpset, type Simpset } from "../pure/raw-simplifier";
 import { updateTable } from "../pure/table";
 import { genericRewriteGoalTac, rewriteCterm, simpleProver } from "../pure/rewriter";
-import { appendSeq, emptySeq, mapsSeq, singleSeq, type Seq } from "../pure/seq";
+import { appendSeq, emptySeq, mapSeq, mapsSeq, ofCell, singleSeq, type Seq } from "../pure/seq";
 import { fconvRule, premsConv } from "../pure/conv";
 import { atomizePremsTac } from "../pure/object-logic";
 import { asmFullSimpTac, normHhf } from "../pure/simplifier";
@@ -95,6 +95,7 @@ import {
 } from "../tools/intuitionistic";
 import { getThms, parseFactReferences } from "./attrib";
 import type { IsarContext } from "./context";
+import { casesMethod, type InductData } from "./induct";
 import { insertTac } from "./proof";
 import type { MethodText, OuterToken } from "./theory";
 
@@ -111,9 +112,25 @@ export interface ProofContext {
   readonly blastTac: (context: ClassicalContext) => GoalTactic;
   // Context_Rules' netpairs: of the rules declared with "!", without a mark and with "?".
   readonly contextRules: readonly NetPair<ContextRule>[];
+  readonly induct: InductData;
 }
 
-export type Method = (facts: readonly Thm[]) => Tactic;
+// A method refines the goal in the context of its proof block, which its cases extend.
+export interface GoalState {
+  readonly context: IsarContext;
+  readonly goal: Thm;
+}
+
+export type ContextTactic = (state: GoalState) => Seq<GoalState>;
+
+export type Method = (facts: readonly Thm[]) => ContextTactic;
+
+// Method.METHOD: a tactic that leaves the context as it is.
+const toMethod =
+  (method: (facts: readonly Thm[]) => Tactic): Method =>
+  (facts) =>
+  (state) =>
+    mapSeq((goal: Thm) => ({ context: state.context, goal }), method(facts)(state.goal));
 
 interface Modifier {
   readonly kind: "intro" | "dest" | "simp";
@@ -487,7 +504,7 @@ export const finishTac = (limits: Limits, isImmediate: boolean): Tactic =>
 
 // Seq.REPEAT, depth first.
 const repeat =
-  (tactic: Tactic): Tactic =>
+  (tactic: ContextTactic): ContextTactic =>
   (state) => {
     const results = tactic(state);
     const cell = results.pull();
@@ -496,12 +513,19 @@ const repeat =
       : appendSeq(repeat(tactic)(cell[0]), mapsSeq(repeat(tactic), cell[1]));
   };
 
+const orElseContext =
+  (first: ContextTactic, second: ContextTactic): ContextTactic =>
+  (state) => {
+    const cell = first(state).pull();
+    return cell === undefined ? second(state) : ofCell(cell);
+  };
+
 const methodSource = (
   context: ProofContext,
   isar: IsarContext,
   name: string,
   args: readonly OuterToken[],
-): Method => {
+): ((facts: readonly Thm[]) => Tactic) => {
   const thms = () => getThms(isar, parseFactReferences(args));
   const noArgs = () => {
     if (args.length > 0) throw syntaxError(args[0]);
@@ -612,11 +636,13 @@ export const evaluate = (isar: IsarContext, text: MethodText): Method => {
   const context = isar.tactics;
   switch (text.kind) {
     case "source":
-      return methodSource(context, isar, text.name, text.args);
+      return text.name === "cases"
+        ? casesMethod(isar, text.args)
+        : toMethod(methodSource(context, isar, text.name, text.args));
     case "then": {
       const methods = text.texts.map((inner) => evaluate(isar, inner));
       return (facts) => (state) =>
-        methods.reduce<Seq<Thm>>(
+        methods.reduce<Seq<GoalState>>(
           (results, method) => mapsSeq(method(facts), results),
           singleSeq(state),
         );
@@ -624,15 +650,18 @@ export const evaluate = (isar: IsarContext, text: MethodText): Method => {
     case "orelse": {
       const methods = text.texts.map((inner) => evaluate(isar, inner));
       return (facts) =>
-        methods.reduceRight<Tactic>((rest, method) => orElse(method(facts), rest), noTac);
+        methods.reduceRight<ContextTactic>(
+          (rest, method) => orElseContext(method(facts), rest),
+          () => emptySeq,
+        );
     }
     case "try": {
       const method = evaluate(isar, text.texts[0]);
-      return (facts) => orElse(method(facts), (state) => singleSeq(state));
+      return (facts) => orElseContext(method(facts), (state) => singleSeq(state));
     }
     case "repeat1": {
       const method = evaluate(isar, text.texts[0]);
-      return (facts) => thenTac(method(facts), repeat(method(facts)));
+      return (facts) => (state) => mapsSeq(repeat(method(facts)), method(facts)(state));
     }
     default:
       throw new TlaIsabelleError("ERROR", `Unsupported method combinator: ${text.kind}`);

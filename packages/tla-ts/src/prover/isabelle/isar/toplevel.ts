@@ -52,6 +52,7 @@ import {
   fix,
   from,
   have,
+  invokeCase,
   isFinished,
   next,
   proof,
@@ -89,6 +90,7 @@ const initContext = (logic: TlaLogic, theory: Theory): IsarContext => ({
   binds: new Map(),
   calculation: undefined,
   isBody: false,
+  cases: new Map(),
 });
 
 const addConst = (theory: Theory, base: string, type: Typ): Theory => {
@@ -271,6 +273,8 @@ const proofCommand = (state: State, command: Command): State => {
       return assume(state, command.parts);
     case "fix":
       return fix(state, command.variables);
+    case "case":
+      return invokeCase(state, command.binding, command.name, command.params);
     case "moreover":
     case "ultimately":
       return collect(state, command.kind === "ultimately");

@@ -9,6 +9,7 @@ export type OuterToken =
   | { readonly kind: "word"; readonly text: string }
   | { readonly kind: "string"; readonly text: string }
   | { readonly kind: "cartouche"; readonly text: string }
+  | { readonly kind: "var"; readonly text: string }
   | { readonly kind: "symbol"; readonly text: string };
 
 export interface FixedVariable {
@@ -86,7 +87,12 @@ export type Command =
       readonly command: "from" | "with" | "using" | "unfolding";
       readonly facts: readonly FactReference[];
     }
-  | { readonly kind: "case"; readonly name: string };
+  | {
+      readonly kind: "case";
+      readonly binding: string | undefined;
+      readonly name: string;
+      readonly params: readonly (string | undefined)[];
+    };
 
 export interface TheoryText {
   readonly name: string;
@@ -168,6 +174,11 @@ const tokenize = (text: string): OuterToken[] => {
     } else if (text.startsWith("\\<open>", position)) {
       const end = skipCartouche(text, position);
       tokens.push({ kind: "cartouche", text: text.slice(position, end) });
+      position = end;
+    } else if (text[position] === "?" && /[A-Za-z]/.test(text[position + 1] ?? "")) {
+      let end = position + 1;
+      while (end < text.length && isWordChar(text[end])) end += 1;
+      tokens.push({ kind: "var", text: text.slice(position, end) });
       position = end;
     } else if (isWordChar(text[position])) {
       let end = position;
@@ -281,12 +292,17 @@ export const parseTheory = (text: string): TheoryText => {
     return token.text;
   };
   // Parse.term and Parse.typ: an inner text is a string, a cartouche or a single name.
-  const isInner = () => peek()?.kind === "string" || peek()?.kind === "cartouche" || isName();
+  const isInner = () =>
+    peek()?.kind === "string" || peek()?.kind === "cartouche" || peek()?.kind === "var" || isName();
   const inner = () => {
     const token = peek();
     if (token?.kind === "cartouche") {
       position += 1;
       return token.text.slice("\\<open>".length, -"\\<close>".length);
+    }
+    if (token?.kind === "var") {
+      position += 1;
+      return token.text;
     }
     return token?.kind === "string" ? string() : name();
   };
@@ -483,6 +499,23 @@ export const parseTheory = (text: string): TheoryText => {
     if (declared !== undefined) expectWord("where");
     return { kind: "definition", name: declared, type, part: statementPart() };
   };
+  // Parse_Spec.opt_thm_name ":", then a case name, alone or with names for its parameters.
+  const caseCommand = (): Command => {
+    const header = thmName();
+    if (header.attributes.length > 0)
+      throw new TlaIsabelleError("ERROR", "Unsupported attributes of a case");
+    if (!isSymbol("(")) return { kind: "case", binding: header.name, name: name(), params: [] };
+    position += 1;
+    const caseName = name();
+    const params: (string | undefined)[] = [];
+    while (!isSymbol(")")) {
+      const isDummy = isWord("_");
+      params.push(isDummy ? undefined : name());
+      if (isDummy) position += 1;
+    }
+    position += 1;
+    return { kind: "case", binding: header.name, name: caseName, params };
+  };
   const command = (): Command | undefined => {
     const token = peek();
     if (token?.kind !== "word") throw syntaxError();
@@ -536,7 +569,7 @@ export const parseTheory = (text: string): TheoryText => {
       case "unfolding":
         return { kind: "facts", command: token.text, facts: facts() };
       case "case":
-        return { kind: "case", name: name() };
+        return caseCommand();
       default:
         position -= 1;
         throw syntaxError();

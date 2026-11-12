@@ -27,6 +27,7 @@ import { smashUnifiers } from "../pure/unify";
 import type { ConstInfo } from "../tla/logic";
 import { parseProp, parseTerm } from "./inner-syntax";
 import type { ProofContext } from "./method";
+import type { Cases, RuleCase } from "./rule-cases";
 import { checkProps } from "./type-check";
 
 export interface NameScope {
@@ -55,6 +56,8 @@ export interface IsarContext {
   readonly calculation: { readonly result: readonly Thm[]; readonly level: number } | undefined;
   // Variable.is_body: statements in a proof body fix none of their free variables.
   readonly isBody: boolean;
+  // Proof_Context.cases_of: the named cases that the case command invokes.
+  readonly cases: ReadonlyMap<string, RuleCase>;
 }
 
 export type ReadMode = "default" | "schematic" | "pattern";
@@ -128,6 +131,32 @@ export const bindTerm = (context: IsarContext, name: string, index: number, term
     { ...context, binds: new Map([...context.binds, [bindKey(name, index), term]]) },
     term,
   );
+
+// Proof_Context.maybe_bind_term: without a term, the name is no longer bound.
+export const maybeBindTerm = (
+  context: IsarContext,
+  name: string,
+  index: number,
+  term: Term | undefined,
+) =>
+  term === undefined
+    ? {
+        ...context,
+        binds: new Map([...context.binds].filter((entry) => entry[0] !== bindKey(name, index))),
+      }
+    : bindTerm(context, name, index, term);
+
+// Proof_Context.update_cases: a case without a context is no longer defined.
+export const updateCases = (context: IsarContext, cases: Cases): IsarContext => ({
+  ...context,
+  cases: cases.reduce((result, entry) => {
+    if (entry.name === "") return result;
+    const updated = new Map(result);
+    if (entry.case === undefined) updated.delete(entry.name);
+    else updated.set(entry.name, entry.case);
+    return updated;
+  }, context.cases),
+});
 
 const expandBinds = (context: IsarContext, term: Term): Term => {
   const expand = (current: Term): Term => {

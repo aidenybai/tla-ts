@@ -21,7 +21,10 @@ const syntaxError = (token: OuterToken | undefined) =>
 
 const isInnerToken = (token: OuterToken | undefined) =>
   token !== undefined &&
-  (token.kind === "string" || token.kind === "cartouche" || token.kind === "word");
+  (token.kind === "string" ||
+    token.kind === "cartouche" ||
+    token.kind === "word" ||
+    token.kind === "var");
 
 const innerText = (token: OuterToken) =>
   token.kind === "cartouche"

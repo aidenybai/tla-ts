@@ -196,4 +196,94 @@ lemma
    \<Rightarrow> Mutex(alloc')"
 by (clarsimp simp: Mutex_def TypeInvariant_def Return_def) auto
 
+text \<open>
+  The proof for the @{text Allocate} action requires some case analysis.
+  Unfortunately, we need to prove two symmetric assertions.
+\<close>
+
+lemma AllocateMutex:
+  "Mutex(alloc) \<and> TypeInvariant(unsat,alloc)
+   \<and> clt \<in> Client \<and> S \<in> SUBSET Resource \<and> Allocate(clt,S,unsat,alloc,unsat',alloc')
+   \<Rightarrow> Mutex(alloc')"
+proof (clarify)
+  assume clt: "clt \<in> Client" and S: "S \<subseteq> Resource"
+     and all: "Allocate(clt,S,unsat,alloc,unsat',alloc')"
+     and mux: "Mutex(alloc)"
+     and tpg: "TypeInvariant(unsat,alloc)"
+  show "Mutex(alloc')"
+  proof (clarsimp simp: Mutex_def)
+    fix c c' r
+    assume c: "c \<in> Client" and c': "c' \<in> Client" and r: "r \<in> Resource"
+       and rc: "r \<in> alloc'[c]" and rc': "r \<in> alloc'[c']"
+    show "c' = c"
+    proof (cases "c=clt \<or> c'=clt")
+      case False \<comment> \<open> the simple case first \<close>
+      with all c c' tpg have "alloc'[c] = alloc[c] \<and> alloc'[c'] = alloc[c']"
+	by (auto simp: Allocate_def TypeInvariant_def)
+      with mux rc rc' c c' r show "c' = c"
+	by (auto simp: Mutex_def)
+    next
+      case True \<comment> \<open> one of @{term c} or @{term c'} is @{term clt} \<close>
+      thus "c' = c"
+      proof
+	assume c1: "c = clt"
+	show "c' = c"
+	proof (rule contradiction)
+	  assume c1': "c' \<noteq> c"
+	  with c1 c' all tpg have c2': "alloc'[c'] = alloc[c']"
+	    by (auto simp: Allocate_def TypeInvariant_def)
+	  with mux r c rc' c' c1' have "r \<notin> alloc[c]"
+	    by (force simp: Mutex_def)
+	  moreover
+	  from c2' rc' r c' have "r \<notin> available(alloc)"
+	    by (auto simp: available_def)
+	  with all have "r \<notin> S"
+	    by (auto simp: Allocate_def)
+	  ultimately
+	  have "r \<notin> alloc'[c]"
+	    using all c1 c tpg by (auto simp: Allocate_def TypeInvariant_def)
+	  with rc show "FALSE" by auto
+	qed
+      next   \<comment> \<open> symmetric argument \<close>
+	assume c1: "c' = clt"
+	show "c' = c"
+	proof (rule contradiction)
+	  assume c1': "c' \<noteq> c"
+	  with c1 c all tpg have c2': "alloc'[c] = alloc[c]"
+	    by (auto simp: Allocate_def TypeInvariant_def)
+	  with mux r c rc c' c1' have "r \<notin> alloc[c']"
+	    by (force simp: Mutex_def)
+	  moreover
+	  from c2' rc r c have "r \<notin> available(alloc)"
+	    by (auto simp: available_def)
+	  with all have "r \<notin> S"
+	    by (auto simp: Allocate_def)
+	  ultimately
+	  have "r \<notin> alloc'[c']"
+	    using all c1 c' tpg by (auto simp: Allocate_def TypeInvariant_def)
+	  with rc' show "FALSE" by auto
+	qed
+      qed
+    qed
+  qed
+qed
+
+
+text \<open>
+  Using the above lemmas, it is straightforward to derive that the
+  next-state action preserves mutual exclusion.
+\<close>
+
+lemma NextMutex:
+  "Mutex(alloc) \<and> TypeInvariant(unsat,alloc) \<and> Next(unsat,alloc,unsat',alloc')
+   \<Rightarrow> Mutex(alloc')"
+unfolding Next_def
+by (blast intro:  RequestMutex [rule_format] AllocateMutex [rule_format] ReturnMutex [rule_format])
+
 end
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unsat
+---*)

@@ -37,6 +37,9 @@ const DEFN_RULES = [
   "PredicateLogic.atomize_eq",
 ];
 
+// PredicateLogic.thy's instantiation of Induct takes case_split as the default cases rule.
+const CASES_DEFAULT = "PredicateLogic.case_split";
+
 export const getProofContext = (logic: TlaLogic, limits: Limits): ProofContext => {
   const atomizeRules = ATOMIZE_RULES.map((name) => getFact(logic, name));
   const classical = { limits, claset: getClaset(logic, limits), data: getClassicalData(logic) };
@@ -63,6 +66,17 @@ export const getProofContext = (logic: TlaLogic, limits: Limits): ProofContext =
     toNetPair(logic.contextRules.plain),
     toNetPair(logic.contextRules.query),
   ];
+  const getTaggedFact = (name: string) => {
+    const fullName = logic.factNames.get(name) ?? name;
+    return logic.facts
+      .get(fullName)
+      ?.map((rule, index) => ({ rule, tags: logic.factTags.get(fullName)?.get(index) ?? [] }));
+  };
+  const taggedThms = new Set(
+    [...logic.factTags].flatMap((entry) =>
+      [...entry[1].keys()].map((index) => logic.facts.get(entry[0])?.[index]),
+    ),
+  );
   return {
     limits,
     simpset: getSimpset(logic),
@@ -74,6 +88,17 @@ export const getProofContext = (logic: TlaLogic, limits: Limits): ProofContext =
     blastDepthTac: (context, limit) => blastDepthTac(toBlastContext(context), limit),
     blastTac: (context) => blastTac(toBlastContext(context)),
     contextRules,
+    induct: {
+      casesType: logic.casesRules.type,
+      casesPred: logic.casesRules.pred,
+      casesDefault: {
+        rule: getFact(logic, CASES_DEFAULT),
+        tags: getTaggedFact(CASES_DEFAULT)?.[0].tags ?? [],
+      },
+      trivialRule: getFact(logic, "PredicateLogic.cases_trueI"),
+      getTaggedFact,
+      isTagged: (thm) => taggedThms.has(thm),
+    },
   };
 };
 
