@@ -1023,23 +1023,40 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   if (ts.isClassLike(node) || isHeapFunction(node, context)) {
     return translateClass(node, heap, scope, context);
   }
+  // A message is an own property that isn't enumerable.
   if (isHeldError(node, context)) {
+    // The prototype's properties, which the error inherits.
+    context.builtIns.add(`${node.expression.getText()}.prototype`);
+    const error = useJavaScript(
+      "ErrorObject",
+      [
+        useJavaScript(
+          "Get",
+          [heap, translateExpression(node.expression, scope, context), string("prototype")],
+          context,
+        ),
+      ],
+      context,
+    );
+    const message = node.arguments?.at(0);
     return useJavaScript(
       "Allocate",
       [
         heap,
-        useJavaScript(
-          "WithPrototype",
-          [
-            identifier("EmptyObject"),
-            useJavaScript(
-              "Get",
-              [heap, translateExpression(node.expression, scope, context), string("prototype")],
+        message === undefined
+          ? error
+          : useJavaScript(
+              "Define",
+              [
+                error,
+                string("message"),
+                translateExpression(message, scope, context),
+                boolean(true),
+                boolean(false),
+                boolean(true),
+              ],
               context,
             ),
-          ],
-          context,
-        ),
       ],
       context,
     );

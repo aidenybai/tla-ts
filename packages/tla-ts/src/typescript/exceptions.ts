@@ -257,7 +257,14 @@ const getSubclasses = (node: ts.Node, symbol: ts.Symbol, context: Context) => {
 };
 
 export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, context: Context) => {
-  if (getHeapClass(node.right, context) !== undefined && getKind(node.left, context) === "object") {
+  const rightClasses = getErrorClass(getSymbol(node.right, context.checker), context.checker);
+  // An object on the heap, such as an error that it holds, is an instance where the constructor's
+  // prototype is on its chain.
+  if (
+    (getHeapClass(node.right, context) !== undefined ||
+      (rightClasses !== undefined && isNative(rightClasses[0]))) &&
+    getKind(node.left, context) === "object"
+  ) {
     const heap = getHeap(scope, node, context);
     return useJavaScript(
       "IsPrototypeOf",

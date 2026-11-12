@@ -3603,6 +3603,74 @@ describe("errors", () => {
     expect((await checkModel(declared)).failure?.message).toContain("declared");
   });
 
+  it("writes the name and message of an error that the heap holds in its toString", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const check = (actual: unknown, expected: unknown, message: string) => {
+        if (actual !== expected) throw new Error(message);
+      };
+      const plain = new Error();
+      check(plain.toString(), "Error", "plain");
+      const typed = new TypeError("bad");
+      check(typed.toString(), "TypeError: bad", "typed");
+      const named = new Error("ErrorMessage");
+      named.name = "";
+      check(named.toString(), "ErrorMessage", "unnamed");
+      const renamed = new Error();
+      renamed.name = "ErrorName";
+      check(renamed.toString(), "ErrorName", "renamed");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const typed = source.replace('"TypeError: bad"', '"Error: bad"');
+    expect((await checkModel(typed)).failure?.message).toContain('"typed"');
+    const unnamed = source.replace('"ErrorMessage", "unnamed"', '": ErrorMessage", "unnamed"');
+    expect((await checkModel(unnamed)).failure?.message).toContain('"unnamed"');
+  });
+
+  it("holds an error that a script reads as an object on the heap, with its message and slot", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const check = (actual: unknown, expected: unknown, message: string) => {
+        if (actual !== expected) throw new Error(message);
+      };
+      const isOwn = (obj: object, name: string) => Object.prototype.hasOwnProperty.call(obj, name);
+      const message = "my-message";
+      const error = new TypeError(message);
+      check(error.message, "my-message", "message");
+      check(isOwn(error, "message"), true, "own message");
+      check(Object.getOwnPropertyDescriptor(error, "message")!.enumerable, false, "hidden");
+      check(error instanceof TypeError, true, "instanceof");
+      check(error instanceof Error, true, "instanceof Error");
+      check(error instanceof RangeError, false, "not RangeError");
+      check(Object.prototype.toString.call(error), "[object Error]", "tag");
+      const bare = new Error();
+      check(bare.hasOwnProperty("message"), false, "bare");
+      check(bare.message, "", "inherited");
+      (bare as unknown as { value: string }).value = "Error";
+      check((bare as unknown as { value: string }).value, "Error", "write");
+      const target: { property?: string } = {};
+      Object.defineProperty(target, "property", bare);
+      check(target.property, "Error", "descriptor");
+      Object.preventExtensions(bare);
+      check(Object.isExtensible(bare), false, "inextensible");
+      check(bare === error, false, "identity");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const hidden = source.replace('enumerable, false, "hidden"', 'enumerable, true, "hidden"');
+    expect((await checkModel(hidden)).failure?.message).toContain('"hidden"');
+    const instance = source.replace("RangeError, false", "RangeError, true");
+    expect((await checkModel(instance)).failure?.message).toContain("not RangeError");
+    const tag = source.replace('"[object Error]", "tag"', '"[object Object]", "tag"');
+    expect((await checkModel(tag)).failure?.message).toContain('"tag"');
+    const own = source.replace(
+      'hasOwnProperty("message"), false',
+      'hasOwnProperty("message"), true',
+    );
+    expect((await checkModel(own)).failure?.message).toContain('"bare"');
+  });
+
   it("holds an error that only Object's functions read as an object with its prototype", async () => {
     const source = `
       const holder = { seen: 0 };

@@ -2568,6 +2568,7 @@ IsRevokedProxy(heap, value) ==
 LOCAL ClassOf(heap, ref) ==
   CASE IsHeap(ref) /\\ IsArrayObject(Lookup(heap, ref)) -> "Array"
     [] IsHeap(ref) /\\ "isArguments" \\in DOMAIN Lookup(heap, ref) -> "Arguments"
+    [] IsHeap(ref) /\\ "isError" \\in DOMAIN Lookup(heap, ref) -> "Error"
     [] IsHeap(ref) /\\ "primitive" \\in DOMAIN Lookup(heap, ref) ->
          CASE TypeOf(Lookup(heap, ref).primitive) = "boolean" -> "Boolean"
            [] TypeOf(Lookup(heap, ref).primitive) = "string" -> "String"
@@ -3011,6 +3012,19 @@ Clock == [clock |-> TRUE]
 LOCAL Known(time) == IF time = Clock THEN Assert(FALSE, "tla-ts can't read the clock") ELSE time
 
 \\* The object that new Date makes, which holds its time value.
+\\* An error that the heap holds, which has the slot that marks it as one.
+ErrorObject(prototype) == [EmptyObject EXCEPT !.prototype = prototype] @@ [isError |-> TRUE]
+
+\\* Error.prototype.toString, which writes the name and the message that an error has or inherits.
+ErrorToString(heap, ref) ==
+  LET name == Get(heap, ref, "name")
+      message == Get(heap, ref, "message")
+      nameText == IF name = Undefined THEN "Error" ELSE StringOf(name)
+      messageText == IF message = Undefined THEN "" ELSE StringOf(message)
+  IN CASE nameText = "" -> messageText
+       [] messageText = "" -> nameText
+       [] OTHER -> nameText \\o ": " \\o messageText
+
 DateObject(prototype, time) == [EmptyObject EXCEPT !.prototype = prototype] @@ [time |-> time]
 
 \\* The time value that new Date takes from another Date.

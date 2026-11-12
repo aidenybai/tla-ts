@@ -28,6 +28,7 @@ import {
   getFunctionValue,
   getNewClass,
   isHeldError,
+  isHeldErrorName,
   getArgumentsOwner,
   getSymbol,
   skipCasts,
@@ -1159,6 +1160,29 @@ export const translateCall = (
     return isComparable(node.arguments[0], node.arguments[1], context)
       ? apply("=", values)
       : useJavaScript("SameValue", values, context);
+  }
+  // Error.prototype.toString of an error that the heap holds, where it inherits that method.
+  if (
+    ts.isPropertyAccessExpression(node.expression) &&
+    method === "toString" &&
+    node.arguments.length === 0 &&
+    isHeldErrorName(node.expression.expression, context)
+  ) {
+    const heap = getHeap(scope, node, context);
+    return share(
+      translateExpression(node.expression.expression, scope, context),
+      "error",
+      context,
+      (error) =>
+        ifExpression(
+          apply("=", [
+            useJavaScript("Get", [heap, error, string("toString")], context),
+            useJavaScript(":>", [identifier("Ref"), string("Error.prototype.toString")], context),
+          ]),
+          useJavaScript("ErrorToString", [heap, error], context),
+          apply("Assert", [boolean(false), string("tla-ts can't call this toString")]),
+        ),
+    );
   }
   const constructed =
     global === "Object" && method === "fromEntries"

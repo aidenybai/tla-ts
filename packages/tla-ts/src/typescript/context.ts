@@ -1,8 +1,8 @@
 import ts from "@typescript/typescript6";
 import type { Expression, OperatorDefinition, OperatorParam } from "../ast";
-import { JAVASCRIPT_OPERATORS } from "./javascript";
+import { getTypeNames, JAVASCRIPT_OPERATORS } from "./javascript";
 import { BUILT_INS } from "./built-ins";
-import { NATIVE_ERRORS } from "./exceptions";
+import { getErrorClass, NATIVE_ERRORS } from "./exceptions";
 import { getBuiltIn } from "./intrinsics";
 import { TlaTypeScriptError } from "../errors";
 import { createNames, type Names } from "./names";
@@ -1517,23 +1517,30 @@ const OWN_PROPERTY_FUNCTIONS = new Set([
   "seal",
 ]);
 
-// A new of a native error class without arguments, which a variable holds where each use passes it
-// first to one of those Object functions. The heap holds the error as an object without the slot
-// that marks it as one, which those functions don't read. A SuppressedError has own properties.
-export const isHeldError = (node: ts.Node, context: Context): node is ts.NewExpression => {
-  if (
-    context.heap === undefined ||
-    !ts.isNewExpression(node) ||
-    (node.arguments ?? []).length > 0
-  ) {
-    return false;
-  }
+// A new of a native error class, without a message or with a string, which a variable holds where
+// each use reads it as an object: as an Object function's argument, as the object of a property
+// access, in a comparison, typeof, or instanceof, or as the argument of a script's function whose
+// parameter takes an object that isn't an error. The heap holds such an error as an object, with
+// the slot that marks it as one. An error that a script throws, or keeps elsewhere, stays a record.
+// A SuppressedError has own properties.
+// It assumes that the errors it is already deciding are held, so two of them can be compared.
+export const isHeldError = (
+  node: ts.Node,
+  context: Context,
+  assumed: ReadonlySet<ts.Node> = new Set(),
+): node is ts.NewExpression => {
+  if (context.heap === undefined || !ts.isNewExpression(node)) return false;
   const name = getBuiltIn(node.expression, context);
   const holder = node.parent;
+  const message = node.arguments?.at(0);
   if (
     name === undefined ||
     !NATIVE_ERRORS.has(name) ||
     name === "SuppressedError" ||
+    (node.arguments ?? []).length > 1 ||
+    (message !== undefined &&
+      getTypeNames(context.checker.getTypeAtLocation(message), context.checker)?.join() !==
+        "string") ||
     !ts.isVariableDeclaration(holder) ||
     holder.initializer !== node ||
     !ts.isIdentifier(holder.name)
@@ -1541,23 +1548,97 @@ export const isHeldError = (node: ts.Node, context: Context): node is ts.NewExpr
     return false;
   }
   const symbol = getSymbol(holder.name, context.checker);
-  const isOwnPropertyUse = (child: ts.Node): boolean => {
-    const call = child.parent;
+  const isObjectParameter = (call: ts.CallExpression, position: number) => {
+    const declaration = context.checker.getResolvedSignature(call)?.getDeclaration();
+    const parameter =
+      declaration === undefined || declaration.getSourceFile().isDeclarationFile
+        ? undefined
+        : declaration.parameters.at(position);
+    const type =
+      parameter === undefined || parameter.dotDotDotToken !== undefined
+        ? undefined
+        : context.checker.getTypeAtLocation(parameter);
     return (
-      child === holder.name ||
-      !ts.isIdentifier(child) ||
-      getSymbol(child, context.checker) !== symbol ||
-      (ts.isCallExpression(call) &&
-        call.arguments[0] === child &&
-        ts.isPropertyAccessExpression(call.expression) &&
-        getBuiltIn(call.expression.expression, context) === "Object" &&
-        OWN_PROPERTY_FUNCTIONS.has(call.expression.name.text))
+      type !== undefined &&
+      type.getCallSignatures().length === 0 &&
+      getErrorClass(context.checker.getNonNullableType(type).getSymbol(), context.checker) ===
+        undefined
+    );
+  };
+  const isObjectUse = (name: ts.Identifier) => {
+    const child = ts.findAncestor(
+      name,
+      (ancestor) =>
+        !ts.isParenthesizedExpression(ancestor.parent) &&
+        !ts.isAsExpression(ancestor.parent) &&
+        !ts.isSatisfiesExpression(ancestor.parent) &&
+        !ts.isNonNullExpression(ancestor.parent),
+    );
+    const parent = child?.parent;
+    if (child === undefined || parent === undefined) return false;
+    if (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) {
+      return parent.expression === child;
+    }
+    if (ts.isTypeOfExpression(parent)) return true;
+    if (ts.isBinaryExpression(parent)) {
+      const kind = parent.operatorToken.kind;
+      // An error that stays a record can't equal one that the heap holds.
+      const other = skipCasts(parent.left === child ? parent.right : parent.left);
+      return (
+        ([
+          ts.SyntaxKind.EqualsEqualsEqualsToken,
+          ts.SyntaxKind.ExclamationEqualsEqualsToken,
+          ts.SyntaxKind.EqualsEqualsToken,
+          ts.SyntaxKind.ExclamationEqualsToken,
+        ].includes(kind) &&
+          (getErrorClass(
+            context.checker
+              .getNonNullableType(context.checker.getTypeAtLocation(other))
+              .getSymbol(),
+            context.checker,
+          ) === undefined ||
+            isHeldErrorName(other, context, new Set([...assumed, node])))) ||
+        (kind === ts.SyntaxKind.InstanceOfKeyword && parent.left === child)
+      );
+    }
+    if (!ts.isCallExpression(parent) || parent.expression === child) return false;
+    const callee = parent.expression;
+    return (
+      (ts.isPropertyAccessExpression(callee) &&
+        getBuiltIn(callee.expression, context) === "Object") ||
+      (ts.isPropertyAccessExpression(callee) &&
+        callee.name.text === "call" &&
+        callee.expression.getText().startsWith("Object.prototype.")) ||
+      isObjectParameter(
+        parent,
+        parent.arguments.findIndex((argument) => argument === child),
+      )
     );
   };
   const isEveryUse = (child: ts.Node): boolean =>
-    isOwnPropertyUse(child) &&
+    (child === holder.name ||
+      !ts.isIdentifier(child) ||
+      getSymbol(child, context.checker) !== symbol ||
+      isObjectUse(child)) &&
     !(ts.forEachChild(child, (inner) => !isEveryUse(inner) || undefined) ?? false);
   return symbol !== undefined && isEveryUse(node.getSourceFile());
+};
+
+// A name whose variable holds such an error.
+export const isHeldErrorName = (
+  node: ts.Expression,
+  context: Context,
+  assumed: ReadonlySet<ts.Node> = new Set(),
+) => {
+  const declaration = ts.isIdentifier(node)
+    ? getSymbol(node, context.checker)?.valueDeclaration
+    : undefined;
+  return (
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer !== undefined &&
+    (assumed.has(declaration.initializer) || isHeldError(declaration.initializer, context, assumed))
+  );
 };
 
 // The heap class that a new names, or that Reflect.construct constructs with a newTarget that is
