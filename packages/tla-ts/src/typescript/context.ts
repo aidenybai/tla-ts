@@ -401,16 +401,21 @@ const getMethod = (node: ts.Expression, context: Context) => {
   return getClass(owner, context) === declaration.parent ? declaration : undefined;
 };
 
-// Whether a node runs at most once, outside every function and loop.
 // Whether code under a node runs at most once: outside functions and loops, or in the body of a
-// function that a call runs where it's written.
+// function that a call runs where it's written. A for loop runs its initializer, and a for-of or a
+// for-in the expression it iterates, once.
 export const isOnce = (node: ts.Node): boolean =>
   ts.isSourceFile(node) ||
   (ts.isFunctionLike(node)
     ? isCalledInPlace(node)
       ? isOnce(node.parent)
       : isCalledOnce(node)
-    : !ts.isIterationStatement(node, false) && isOnce(node.parent));
+    : !ts.isIterationStatement(node, false) &&
+      ((ts.isForStatement(node.parent) && node.parent.initializer === node) ||
+      ((ts.isForOfStatement(node.parent) || ts.isForInStatement(node.parent)) &&
+        node.parent.expression === node)
+        ? isOnce(node.parent.parent)
+        : isOnce(node.parent)));
 
 const calledOnce = new WeakMap<ts.Node, boolean>();
 

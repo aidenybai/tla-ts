@@ -7982,10 +7982,13 @@ const translateIterations = (
   if (changed.some((symbol) => path.scope.functions.has(symbol))) {
     throw new TlaTypeScriptError("Don't reassign a function inside a loop", loop);
   }
+  // A method or an accessor of an object that the iterated expression makes runs only later.
   const isIteratedChanged = (node: ts.Node): boolean =>
     (ts.isIdentifier(node) &&
       changed.some((symbol) => symbol === getSymbol(node, context.checker))) ||
-    (ts.forEachChild(node, (child) => isIteratedChanged(child) || undefined) ?? false);
+    (!ts.isMethodDeclaration(node) &&
+      !ts.isAccessor(node) &&
+      (ts.forEachChild(node, (child) => isIteratedChanged(child) || undefined) ?? false));
   if (iterated !== undefined && !isIterator && isIteratedChanged(iterated.expression)) {
     throw new TlaTypeScriptError(
       "Don't change an array while a for-of iterates it",

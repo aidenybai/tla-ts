@@ -4999,6 +4999,29 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("makes the objects of a loop's head once", async () => {
+    const getSource = (expected: number) => `
+      let count = 0;
+      let total = 0;
+      for (const { ...x } = { get v() { count++; return 2; } }; total < 1; ) {
+        const descriptor = Object.getOwnPropertyDescriptor(x, "v");
+        if (descriptor?.value !== 2 || !descriptor.writable) throw new Error("descriptor");
+        total += 1;
+      }
+      for (const { ...x } of [{ get v() { count++; return 3; } }]) {
+        const descriptor = Object.getOwnPropertyDescriptor(x, "v");
+        if (descriptor?.value !== 3) throw new Error("rest");
+        total += 3;
+      }
+      for (const item of [{ method() { return 10; } }]) {
+        total += item.method();
+      }
+      if (count !== 2 || total !== ${expected}) throw new Error("total");
+    `;
+    expect((await checkModel(getSource(14))).failure).toBeUndefined();
+    expect((await checkModel(getSource(13))).failure?.message).toContain("total");
+  });
+
   it("runs a class's static private accessors", async () => {
     const result = await checkModel(`
       let stringSet = "";
