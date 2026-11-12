@@ -6541,6 +6541,42 @@ describe("errors", () => {
     }
   });
 
+  it("unrolls a generator's counted loop that yields", async () => {
+    const result = await checkModel(`
+      function* g(): Generator<number> {
+        for (let i = 0; i < 5; ++i) {
+          if (i === 3) continue;
+          yield i * 10;
+        }
+        yield 99;
+      }
+      const iter = g();
+      const first = iter.next();
+      iter.next();
+      const third = iter.next();
+      const rest = iter.toArray();
+      function* h(): Generator<number> {
+        for (let i = 4; i >= 0; i -= 2) {
+          if (i === 0) break;
+          yield i;
+        }
+      }
+      const down = h().toArray();
+      if (first.value !== 0 || third.value !== 20 || rest.join() !== "40,99" || down.join() !== "4,2") {
+        throw new Error("unrolled");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+    expect(() =>
+      compile(`
+        function* g(): Generator<number> {
+          for (let i = 0; i < 100; i++) yield i;
+        }
+        g().next();
+      `),
+    ).toThrow("Yield outside loops");
+  });
+
   it("steps an array's iterator with next as the array changes", async () => {
     const result = await checkModel(`
       const arr = ["a", "b"];

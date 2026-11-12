@@ -8166,6 +8166,130 @@ const keepHoles = (
   );
 };
 
+// The most iterations of a generator's counted loop that tla-ts unrolls.
+const UNROLL_LIMIT = 64;
+
+// The values that a generator's for loop gives its counter, where a literal starts it, a comparison
+// with a literal ends it, a step of a literal moves it, and nothing else writes it. tla-ts unrolls
+// such a loop, whose iterations then suspend at each yield as straight code does.
+const getCounts = (loop: ts.ForStatement, context: Context) => {
+  const initializer = loop.initializer;
+  const declaration =
+    initializer !== undefined &&
+    ts.isVariableDeclarationList(initializer) &&
+    (initializer.flags & ts.NodeFlags.Let) !== 0 &&
+    initializer.declarations.length === 1
+      ? initializer.declarations[0]
+      : undefined;
+  const counter =
+    declaration !== undefined && ts.isIdentifier(declaration.name) ? declaration.name : undefined;
+  const symbol = counter && getSymbol(counter, context.checker);
+  if (symbol === undefined || declaration?.initializer === undefined) return undefined;
+  const isCounter = (node: ts.Node) =>
+    ts.isIdentifier(node) && getSymbol(node, context.checker) === symbol;
+  const getLiteral = (node: ts.Node): number | undefined =>
+    ts.isNumericLiteral(node)
+      ? Number(node.text)
+      : ts.isPrefixUnaryExpression(node) &&
+          node.operator === ts.SyntaxKind.MinusToken &&
+          ts.isNumericLiteral(node.operand)
+        ? -Number(node.operand.text)
+        : undefined;
+  const start = getLiteral(declaration.initializer);
+  const condition = loop.condition;
+  const end =
+    condition !== undefined && ts.isBinaryExpression(condition) && isCounter(condition.left)
+      ? getLiteral(condition.right)
+      : undefined;
+  const step = loop.incrementor;
+  const delta =
+    step === undefined
+      ? undefined
+      : (ts.isPostfixUnaryExpression(step) || ts.isPrefixUnaryExpression(step)) &&
+          isCounter(step.operand)
+        ? step.operator === ts.SyntaxKind.PlusPlusToken
+          ? 1
+          : step.operator === ts.SyntaxKind.MinusMinusToken
+            ? -1
+            : undefined
+        : ts.isBinaryExpression(step) && isCounter(step.left)
+          ? step.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken
+            ? getLiteral(step.right)
+            : step.operatorToken.kind === ts.SyntaxKind.MinusEqualsToken
+              ? -(getLiteral(step.right) ?? Number.NaN)
+              : undefined
+          : undefined;
+  const isWritten = (node: ts.Node): boolean => {
+    const written = getWritten(node);
+    return (
+      (written !== undefined && getWrittenSymbols(written, context).includes(symbol)) ||
+      (ts.forEachChild(node, (child) => isWritten(child) || undefined) ?? false)
+    );
+  };
+  const comparisons = new Map([
+    [ts.SyntaxKind.LessThanToken, (value: number, limit: number) => value < limit],
+    [ts.SyntaxKind.LessThanEqualsToken, (value: number, limit: number) => value <= limit],
+    [ts.SyntaxKind.GreaterThanToken, (value: number, limit: number) => value > limit],
+    [ts.SyntaxKind.GreaterThanEqualsToken, (value: number, limit: number) => value >= limit],
+  ]);
+  const compare =
+    condition !== undefined && ts.isBinaryExpression(condition)
+      ? comparisons.get(condition.operatorToken.kind)
+      : undefined;
+  if (
+    start === undefined ||
+    end === undefined ||
+    delta === undefined ||
+    !Number.isInteger(delta) ||
+    delta === 0 ||
+    compare === undefined ||
+    isWritten(loop.statement)
+  ) {
+    return undefined;
+  }
+  const values = Array.from(
+    { length: UNROLL_LIMIT + 1 },
+    (_, position) => start + position * delta,
+  );
+  const length = values.findIndex((value) => !compare(value, end));
+  return length === -1 ? undefined : { symbol, counts: values.slice(0, length) };
+};
+
+// Whether a node yields outside the functions it holds.
+const hasYield = (node: ts.Node): boolean =>
+  ts.isYieldExpression(node) ||
+  (!ts.isFunctionLike(node) && (ts.forEachChild(node, hasYield) ?? false));
+
+// Runs a generator's counted loop that yields as its iterations, one after another, with the
+// counter each one reads.
+const translateUnrolled = (
+  loop: ts.ForStatement,
+  unrolled: NonNullable<ReturnType<typeof getCounts>>,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const iterate = (current: Path, position: number): Formula => {
+    const count = unrolled.counts.at(position);
+    if (count === undefined) return continueWith(current);
+    const next = (after: Path) => iterate(after, position + 1);
+    return translateStatements(
+      [loop.statement],
+      {
+        ...current,
+        scope: {
+          ...current.scope,
+          bindings: new Map([...current.scope.bindings, [unrolled.symbol, number(count)]]),
+        },
+      },
+      context,
+      { ...frame, next, continueTo: next, breakTo: continueWith },
+    );
+  };
+  return iterate(path, 0);
+};
+
 const translateLoop = (
   loop: ts.IterationStatement,
   path: Path,
@@ -8173,6 +8297,13 @@ const translateLoop = (
   frame: Frame,
   continueWith: (path: Path) => Formula,
 ): Formula => {
+  const unrolled =
+    frame.yieldTo !== undefined && ts.isForStatement(loop) && hasYield(loop.statement)
+      ? getCounts(loop, context)
+      : undefined;
+  if (unrolled !== undefined && ts.isForStatement(loop)) {
+    return translateUnrolled(loop, unrolled, path, context, frame, continueWith);
+  }
   const runLoop = (inner: Path) => translateIterations(loop, inner, context, frame, continueWith);
   // A for-of or a for-in evaluates what it iterates once, before its first iteration.
   if (ts.isForOfStatement(loop) || ts.isForInStatement(loop)) {
