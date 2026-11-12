@@ -1,5 +1,6 @@
 import {
   getChildren,
+  getReferencedName,
   isLocallyResolved,
   type Bound,
   type BoundPattern,
@@ -280,12 +281,7 @@ const isBoundOnce = (replacement: Expression, instantiation: Instantiation) => {
 };
 
 const getFreeNames = (expression: Expression, bound = new Set<string>()): string[] => {
-  const name =
-    expression.kind === "Identifier"
-      ? expression.name
-      : expression.kind === "Apply" || expression.kind === "OperatorReference"
-        ? expression.operator
-        : undefined;
+  const name = getReferencedName(expression);
   const names = name === undefined || bound.has(name) ? [] : [name];
   mapChildren(expression, (child, childBound) => {
     names.push(

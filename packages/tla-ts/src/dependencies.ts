@@ -1,4 +1,10 @@
-import { getChildren, isLocallyResolved, type Definition, type Expression } from "./ast";
+import {
+  getChildren,
+  getReferencedName,
+  isLocallyResolved,
+  type Definition,
+  type Expression,
+} from "./ast";
 import type { Environment } from "./evaluate";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 
@@ -57,13 +63,6 @@ const IMPURE_BUILTINS = new Set([
 ]);
 
 const STREAMED_BUILTINS = new Set(["UNION", "\\cup"]);
-
-const getReferencedName = (expression: Expression) => {
-  if (expression.kind === "Identifier") return expression.name;
-  if (expression.kind === "Apply" || expression.kind === "OperatorReference")
-    return expression.operator;
-  return undefined;
-};
 
 const isImpureBuiltin = (name: string, environment: DefinitionNames) =>
   IMPURE_BUILTINS.has(name) || environment.builtins.get(name)?.isStateLevel === true;

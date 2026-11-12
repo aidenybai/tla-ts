@@ -605,6 +605,13 @@ export const getChildren = (expression: Expression): Expression[] => {
   }
 };
 
+export const getReferencedName = (expression: Expression) => {
+  if (expression.kind === "Identifier") return expression.name;
+  if (expression.kind === "Apply" || expression.kind === "OperatorReference")
+    return expression.operator;
+  return undefined;
+};
+
 export const isLocallyResolved = (expression: Expression) =>
   (expression.kind === "Identifier" || expression.kind === "Apply") &&
   expression.resolution?.kind === "Local";

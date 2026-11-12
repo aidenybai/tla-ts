@@ -1,5 +1,6 @@
 import {
   getChildren,
+  getReferencedName,
   isLocallyResolved,
   type Bound,
   type BoundPattern,
@@ -1666,8 +1667,8 @@ const getScopeNames = (expression: Expression) => {
   const names = new Set<string>();
   const visit = (node: Expression): boolean => {
     if (node.kind === "Subexpression") return false;
-    if (node.kind === "Identifier") names.add(node.name);
-    if (node.kind === "Apply" || node.kind === "OperatorReference") names.add(node.operator);
+    const name = getReferencedName(node);
+    if (name !== undefined) names.add(name);
     if (node.kind === "ExceptAt") names.add(EXCEPT_AT);
     return getChildren(node).every(visit);
   };
