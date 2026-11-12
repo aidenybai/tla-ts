@@ -73,6 +73,16 @@ export interface Context {
   hasInheritedElements: boolean;
   // The argument that an inlined call passed, by the name that binds the parameter that took it.
   passed: Map<string, Passed>;
+  // What each function that a statement runs changes, with the functions that it runs in turn.
+  changeSummaries: Map<ts.Node, ChangeSummary>;
+}
+
+export interface ChangeSummary {
+  changed: Set<ts.Symbol>;
+  // Whether it makes an error, which changes the heap unless the caller ignores its identity.
+  isErrorMade: boolean;
+  // The parameters that it calls or passes, which a path may bind to functions.
+  parameters: Set<ts.Symbol>;
 }
 
 export interface Unknown {
@@ -125,6 +135,7 @@ export const createContext = (checker: ts.TypeChecker): Context => ({
   heapCollections: new Set(),
   hasInheritedElements: false,
   passed: new Map(),
+  changeSummaries: new Map(),
 });
 
 export const hasObjectLiteral = (node: ts.Node): boolean =>

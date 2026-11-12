@@ -38,6 +38,7 @@ import {
   getFunctionCandidates,
   getObjectGetter,
   type HeapClass,
+  type ChangeSummary,
   type Context,
   type FunctionNode,
   getAccessKey,
@@ -2370,7 +2371,8 @@ export const translateCallStatement = (
       continueWith,
     );
   }
-  const dispatched = callee === undefined ? getDispatched(expression, path, context) : undefined;
+  const dispatched =
+    callee === undefined ? getDispatched(expression, path.scope.functions, context) : undefined;
   if (dispatched !== undefined) {
     const target = getCast(expression.expression);
     const value = translateExpression(target, path.scope, context);
@@ -6701,14 +6703,20 @@ const isHeapCall = (
 // The functions that a call through a value may run, where tla-ts can't tell which one it names:
 // those that no other function encloses, whose type TypeScript lets the callee hold. The call
 // branches on its callee's value between them.
-const getDispatched = (node: ts.CallExpression, path: Path, context: Context) => {
+const getDispatched = (
+  node: ts.CallExpression,
+  functions: ReadonlyMap<ts.Symbol, FunctionNode>,
+  context: Context,
+) => {
   const callee = getCast(node.expression);
-  const declarations = getSymbol(callee, context.checker)?.declarations ?? [];
+  const symbol = getSymbol(callee, context.checker);
+  const declarations = symbol?.declarations ?? [];
+  const assigned = symbol && functions.get(symbol);
   if (
     context.heap === undefined ||
     declarations.length === 0 ||
     declarations.some((declaration) => declaration.getSourceFile().isDeclarationFile) ||
-    getCallback(callee, path, context) !== undefined ||
+    (assigned === undefined ? getCallee(callee, context) !== undefined : isPlain(assigned)) ||
     getCalledMethod(callee, context) !== undefined ||
     getFunctionOfKind(callee, context, isAnyGenerator) !== undefined ||
     getFunctionOfKind(callee, context, isAsyncFunction) !== undefined ||
@@ -6789,7 +6797,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     isHeapCall(node, path, context) ||
     getLoopCall(node, path, context) !== undefined ||
     isStateCall(node, path, context) ||
-    getDispatched(node, path, context) !== undefined);
+    getDispatched(node, path.scope.functions, context) !== undefined);
 
 // The expression that parentheses and casts wrap.
 export const getCast = (node: ts.Expression): ts.Expression =>
@@ -7386,162 +7394,243 @@ const bindDeclaration = (
 
 // The variables, and the heap, that a node may change. An error's identity is a new empty object,
 // which changes no object that exists before it, so isIdentityIgnored leaves it out.
+const NO_FUNCTIONS = new Map<ts.Symbol, FunctionNode>();
+
+// What running a node changes, apart from what the functions that it runs change.
+interface Effects {
+  // The names that it assigns, and the heap where it changes the heap other than by making an error.
+  changed: ts.Symbol[];
+  // Whether it makes an error, which changes the heap unless the caller ignores its identity.
+  isErrorMade: boolean;
+  // The functions that it runs.
+  called: ts.Node[];
+  // The parameters that it calls or passes, which a path may bind to functions.
+  parameters: ts.Symbol[];
+}
+
+const getEffects = (
+  node: ts.Node,
+  functions: ReadonlyMap<ts.Symbol, FunctionNode>,
+  context: Context,
+): Effects => {
+  const getFunctionNode = (expression: ts.Expression) => {
+    const symbol = getSymbol(expression, context.checker);
+    return (
+      (symbol && functions.get(symbol)) ??
+      getCallee(expression, context) ??
+      getFunctionOfKind(expression, context, isAnyGenerator) ??
+      getFunctionOfKind(expression, context, isAsyncFunction) ??
+      getCalledMethod(expression, context)?.method ??
+      getCalledMethod(expression, context, isAnyGenerator)?.method ??
+      getCalledMethod(expression, context, isAsyncFunction)?.method
+    );
+  };
+  const written =
+    ts.isForOfStatement(node) && !ts.isVariableDeclarationList(node.initializer)
+      ? node.initializer
+      : getWritten(node);
+  // A write to a property of an object in the heap changes the heap, not the name that holds it.
+  const assigned =
+    written === undefined
+      ? []
+      : getWrittenRoots(written).flatMap((root) => {
+          const symbol = ts.isIdentifier(root) ? getSymbol(root, context.checker) : undefined;
+          const access = ts.findAncestor(
+            root,
+            (ancestor) =>
+              ts.isPropertyAccessExpression(ancestor) ||
+              ts.isElementAccessExpression(ancestor) ||
+              ancestor === written,
+          );
+          const isProperty =
+            access !== undefined &&
+            (ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) &&
+            getKind(root, context) === "object";
+          return symbol !== undefined && !isProperty ? [symbol] : [];
+        });
+  const isObjectMade = isMade(node, context);
+  const isErrorMade = isObjectMade && isNewError(node, context);
+  // An operation that converts an object runs its valueOf and toString methods.
+  const conversions =
+    ts.isExpression(node) && getConversion(node, context) !== undefined
+      ? getConversionFunctions(node, context)
+      : undefined;
+  // A definition that reads its descriptor's fields, a read of a key with getters, or an
+  // operation on a proxy, which runs its traps, runs them.
+  const getters = [
+    ...getTrapFunctions(node, context),
+    ...getDescriptorGetters(node, context),
+    ...getOwnValuesGetters(node, context),
+    ...getReadFunctions(node, context),
+    ...getLoopGetters(node, context),
+  ];
+  // A pattern that destructures an object, or a for-of, a spread, or a yield* that iterates one,
+  // runs the functions of the object's iterator.
+  const isIterated =
+    (ts.isArrayBindingPattern(node) && isIteratedPattern(node, context)) ||
+    ((ts.isSpreadElement(node) ||
+      (ts.isYieldExpression(node) && node.asteriskToken !== undefined)) &&
+      node.expression !== undefined &&
+      getKind(node.expression, context) !== "sequence" &&
+      isIteratedValue(node.expression, context)) ||
+    (ts.isForOfStatement(node) &&
+      getKind(node.expression, context) !== "sequence" &&
+      isIteratedValue(node.expression, context));
+  // A DisposableStack's method may run the functions that the stacks dispose with.
+  const isStackCall = getStackCall(node, context) !== undefined;
+  // A using declaration runs the dispose methods, and their getters, that the script writes.
+  const isUsing = ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0;
+  const isHeapChanged =
+    getArgumentsOwner(node, context.checker) !== undefined ||
+    (isObjectMade && !isErrorMade) ||
+    (ts.isBindingElement(node) &&
+      (context.heapCollections.has(node) ||
+        (node.dotDotDotToken !== undefined && ts.isObjectBindingPattern(node.parent)))) ||
+    ts.isObjectLiteralExpression(node) ||
+    ts.isDeleteExpression(node) ||
+    isObjectChange(node, context) ||
+    isRevoke(node, context) ||
+    isProxyOperation(node, context) ||
+    getDateCall(node, context) !== undefined ||
+    getHeapRegExpCall(node, context) !== undefined ||
+    getViewCall(node, context) !== undefined ||
+    getHeapArrayChange(node, context) !== undefined ||
+    isStoredChange(node, context) ||
+    getArrayIteratorCall(node, context) !== undefined ||
+    getHeapSetOrMapChange(node, context) !== undefined ||
+    isAllocation(node, context) ||
+    (written !== undefined &&
+      (ts.isPropertyAccessExpression(written) || ts.isElementAccessExpression(written))) ||
+    conversions !== undefined ||
+    getters.length > 0 ||
+    isIterated ||
+    isStackCall ||
+    isStackConstruction(node, context) ||
+    isUsing;
+  const callees = ts.isCallExpression(node) ? [node.expression, ...node.arguments] : [];
+  return {
+    changed: [...assigned, ...(context.heap !== undefined && isHeapChanged ? [context.heap] : [])],
+    isErrorMade: context.heap !== undefined && isErrorMade,
+    called: [
+      ...(conversions ?? []),
+      ...getters,
+      ...(isIterated ? getIteratorFunctions(node, context) : []),
+      ...(isStackCall ? getStackFunctions(node, context) : []),
+      ...(isUsing
+        ? [
+            ...getWrittenFunctions(node, "@@dispose", context),
+            ...getWrittenFunctions(node, "@@asyncDispose", context),
+          ]
+        : []),
+      ...callees.flatMap((callee) => getFunctionNode(callee) ?? []),
+      ...(ts.isCallExpression(node) && getFunctionNode(node.expression) === undefined
+        ? (getDispatched(node, functions, context) ?? [])
+        : []),
+      ...(written === undefined
+        ? []
+        : getWrittenProperties(written).flatMap((property) =>
+            getPropertySetters(property, context),
+          )),
+    ],
+    parameters: [...callees, ...callees.slice(0, 1).map((callee) => getCast(callee))].flatMap(
+      (callee) => {
+        const symbol = getSymbol(callee, context.checker);
+        const declaration = symbol?.valueDeclaration;
+        return symbol !== undefined && declaration !== undefined && ts.isParameter(declaration)
+          ? [symbol]
+          : [];
+      },
+    ),
+  };
+};
+
+// What a function changes, with what the functions that it runs change, where no path binds its
+// parameters to functions. The functions that run one another, a strongly connected component of
+// the call graph, change the same things, so they share one summary, which Tarjan's algorithm
+// makes once the components that they run have theirs.
+const getSummary = (root: ts.Node, context: Context) => {
+  const indexes = new Map<ts.Node, number>();
+  const lowLinks = new Map<ts.Node, number>();
+  const stack: ts.Node[] = [];
+  const onStack = new Set<ts.Node>();
+  const effects = new Map<ts.Node, Effects[]>();
+  const connect = (node: ts.Node): ChangeSummary | undefined => {
+    const index = indexes.size;
+    indexes.set(node, index);
+    lowLinks.set(node, index);
+    stack.push(node);
+    onStack.add(node);
+    const found: Effects[] = [];
+    const visit = (inner: ts.Node) => {
+      found.push(getEffects(inner, NO_FUNCTIONS, context));
+      ts.forEachChild(inner, visit);
+    };
+    visit(node);
+    effects.set(node, found);
+    found.forEach((effect) =>
+      effect.called.forEach((called) => {
+        if (context.changeSummaries.has(called)) return;
+        if (!indexes.has(called)) connect(called);
+        const reached = onStack.has(called) ? (lowLinks.get(called) ?? index) : index;
+        lowLinks.set(node, Math.min(lowLinks.get(node) ?? index, reached));
+      }),
+    );
+    if (lowLinks.get(node) !== index) return undefined;
+    const component = stack.splice(stack.indexOf(node));
+    component.forEach((member) => onStack.delete(member));
+    const own = component.flatMap((member) => effects.get(member) ?? []);
+    const reached = own.flatMap((effect) =>
+      effect.called.flatMap((called) => context.changeSummaries.get(called) ?? []),
+    );
+    const summary: ChangeSummary = {
+      changed: new Set([
+        ...own.flatMap((effect) => effect.changed),
+        ...reached.flatMap((inner) => [...inner.changed]),
+      ]),
+      isErrorMade:
+        own.some((effect) => effect.isErrorMade) || reached.some((inner) => inner.isErrorMade),
+      parameters: new Set([
+        ...own.flatMap((effect) => effect.parameters),
+        ...reached.flatMap((inner) => [...inner.parameters]),
+      ]),
+    };
+    component.forEach((member) => context.changeSummaries.set(member, summary));
+    return summary;
+  };
+  return context.changeSummaries.get(root) ?? connect(root);
+};
+
 export const getChanged = (
   loop: ts.Node,
   path: Path,
   context: Context,
   isIdentityIgnored = false,
 ) => {
+  const functions = path.scope.functions;
   const changed = new Set<ts.Symbol>();
   const visited = new Set<ts.Node>();
-  const getFunctionNode = (node: ts.Expression) => {
-    const symbol = getSymbol(node, context.checker);
-    return (
-      (symbol && path.scope.functions.get(symbol)) ??
-      getCallee(node, context) ??
-      getFunctionOfKind(node, context, isAnyGenerator) ??
-      getFunctionOfKind(node, context, isAsyncFunction) ??
-      getCalledMethod(node, context)?.method ??
-      getCalledMethod(node, context, isAnyGenerator)?.method ??
-      getCalledMethod(node, context, isAsyncFunction)?.method
-    );
-  };
-  const visit = (node: ts.Node) => {
-    const written =
-      ts.isForOfStatement(node) && !ts.isVariableDeclarationList(node.initializer)
-        ? node.initializer
-        : getWritten(node);
-    // A write to a property of an object in the heap changes the heap, not the name that holds it.
-    if (written !== undefined) {
-      getWrittenRoots(written).forEach((root) => {
-        const symbol = ts.isIdentifier(root) ? getSymbol(root, context.checker) : undefined;
-        const access = ts.findAncestor(
-          root,
-          (ancestor) =>
-            ts.isPropertyAccessExpression(ancestor) ||
-            ts.isElementAccessExpression(ancestor) ||
-            ancestor === written,
-        );
-        const isProperty =
-          access !== undefined &&
-          (ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) &&
-          getKind(root, context) === "object";
-        if (symbol !== undefined && !isProperty) changed.add(symbol);
-      });
-    }
-    const isHeapChanged =
-      getArgumentsOwner(node, context.checker) !== undefined ||
-      (isMade(node, context) && !(isIdentityIgnored && isNewError(node, context))) ||
-      (ts.isBindingElement(node) &&
-        (context.heapCollections.has(node) ||
-          (node.dotDotDotToken !== undefined && ts.isObjectBindingPattern(node.parent)))) ||
-      ts.isObjectLiteralExpression(node) ||
-      ts.isDeleteExpression(node) ||
-      isObjectChange(node, context) ||
-      isRevoke(node, context) ||
-      isProxyOperation(node, context) ||
-      getDateCall(node, context) !== undefined ||
-      getHeapRegExpCall(node, context) !== undefined ||
-      getViewCall(node, context) !== undefined ||
-      getHeapArrayChange(node, context) !== undefined ||
-      isStoredChange(node, context) ||
-      getArrayIteratorCall(node, context) !== undefined ||
-      getHeapSetOrMapChange(node, context) !== undefined ||
-      isAllocation(node, context) ||
-      (written !== undefined &&
-        (ts.isPropertyAccessExpression(written) || ts.isElementAccessExpression(written)));
-    if (context.heap !== undefined && isHeapChanged) changed.add(context.heap);
-    // An operation that converts an object runs its valueOf and toString methods.
-    if (ts.isExpression(node) && getConversion(node, context) !== undefined) {
-      if (context.heap !== undefined) changed.add(context.heap);
-      getConversionFunctions(node, context).forEach((called) => {
-        if (visited.has(called)) return;
-        visited.add(called);
-        visit(called);
-      });
-    }
-    // A definition that reads its descriptor's fields, a read of a key with getters, or an
-    // operation on a proxy, which runs its traps, runs them.
-    const getters = [
-      ...getTrapFunctions(node, context),
-      ...getDescriptorGetters(node, context),
-      ...getOwnValuesGetters(node, context),
-      ...getReadFunctions(node, context),
-      ...getLoopGetters(node, context),
-    ];
-    if (context.heap !== undefined && getters.length > 0) changed.add(context.heap);
-    getters.forEach((called) => {
-      if (visited.has(called)) return;
-      visited.add(called);
-      visit(called);
-    });
-    // A pattern that destructures an object, or a for-of, a spread, or a yield* that iterates one,
-    // runs the functions of the object's iterator.
-    if (
-      (ts.isArrayBindingPattern(node) && isIteratedPattern(node, context)) ||
-      ((ts.isSpreadElement(node) ||
-        (ts.isYieldExpression(node) && node.asteriskToken !== undefined)) &&
-        node.expression !== undefined &&
-        getKind(node.expression, context) !== "sequence" &&
-        isIteratedValue(node.expression, context)) ||
-      (ts.isForOfStatement(node) &&
-        getKind(node.expression, context) !== "sequence" &&
-        isIteratedValue(node.expression, context))
-    ) {
-      if (context.heap !== undefined) changed.add(context.heap);
-      getIteratorFunctions(node, context).forEach((called) => {
-        if (visited.has(called)) return;
-        visited.add(called);
-        visit(called);
-      });
-    }
-    // A DisposableStack's method may run the functions that the stacks dispose with.
-    if (getStackCall(node, context) !== undefined) {
-      if (context.heap !== undefined) changed.add(context.heap);
-      getStackFunctions(node, context).forEach((called) => {
-        if (visited.has(called)) return;
-        visited.add(called);
-        visit(called);
-      });
-    }
-    if (isStackConstruction(node, context) && context.heap !== undefined) {
+  const add = (inner: { changed: Iterable<ts.Symbol>; isErrorMade: boolean }) => {
+    [...inner.changed].forEach((symbol) => changed.add(symbol));
+    if (inner.isErrorMade && !isIdentityIgnored && context.heap !== undefined) {
       changed.add(context.heap);
     }
-    // A using declaration runs the dispose methods, and their getters, that the script writes.
-    if (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) {
-      if (context.heap !== undefined) changed.add(context.heap);
-      [
-        ...getWrittenFunctions(node, "@@dispose", context),
-        ...getWrittenFunctions(node, "@@asyncDispose", context),
-      ].forEach((called) => {
-        if (visited.has(called)) return;
-        visited.add(called);
+  };
+  const visit = (node: ts.Node) => {
+    const effects = getEffects(node, functions, context);
+    add(effects);
+    effects.called.forEach((called) => {
+      if (visited.has(called)) return;
+      visited.add(called);
+      const summary = getSummary(called, context);
+      // A function that calls a parameter which the path binds runs the function bound to it.
+      if (
+        summary === undefined ||
+        [...functions.keys()].some((symbol) => summary.parameters.has(symbol))
+      ) {
         visit(called);
-      });
-    }
-    if (ts.isCallExpression(node)) {
-      [
-        ...[node.expression, ...node.arguments].flatMap((callee) => getFunctionNode(callee) ?? []),
-        ...(getFunctionNode(node.expression) === undefined
-          ? (getDispatched(node, path, context) ?? [])
-          : []),
-      ].forEach((called) => {
-        if (!visited.has(called)) {
-          visited.add(called);
-          visit(called);
-        }
-      });
-    }
-    const setters =
-      written === undefined
-        ? []
-        : getWrittenProperties(written).flatMap((property) =>
-            getPropertySetters(property, context),
-          );
-    setters.forEach((setter) => {
-      if (visited.has(setter)) return;
-      visited.add(setter);
-      visit(setter);
+        return;
+      }
+      add(summary);
     });
     ts.forEachChild(node, visit);
   };
