@@ -4344,6 +4344,23 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("stops where an arguments object outside strict mode maps a parameter that changes", async () => {
+    const script = `
+      const box = { seen: 0 as unknown };
+      function f(a: number) {
+        a = 2;
+        return arguments[0];
+      }
+      box.seen = f(1);
+      if (box.seen !== 1) throw new Error("mapped");
+    `;
+    expect(() => compile(script)).toThrow(
+      "tla-ts can't follow an arguments object that maps its function's parameters outside strict mode",
+    );
+    const result = await checkModel(`"use strict";\n${script}`);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`

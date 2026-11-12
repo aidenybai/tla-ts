@@ -24,6 +24,7 @@ import {
   allocateArguments,
   getArgumentsReads,
   getWritten,
+  isArgumentsRead,
   getWrittenRoots,
   translateLocalStatements,
 } from "./actions";
@@ -58,7 +59,7 @@ import {
 } from "./tla";
 import { isBuiltInObject } from "./intrinsics";
 import { link } from "./regions";
-import { hasHeapType, isNumberLike, translateUnknown } from "./types";
+import { hasHeapType, translateUnknown } from "./types";
 
 // Whether a step has changed a state variable, so that helpers reading state must see the change.
 const isStateModified = (scope: Scope, context: Context) =>
@@ -303,28 +304,11 @@ const inlineCall = (
   const reads = getArgumentsReads(callee, context);
   // A call inside an expression holds its arguments object on a heap that only the call reads, so
   // the body may read only its length and elements.
-  const isRead = (read: ts.Identifier) => {
-    const access = read.parent;
-    const outer = access.parent;
-    return (
-      ((ts.isPropertyAccessExpression(access) && access.name.text === "length") ||
-        (ts.isElementAccessExpression(access) &&
-          access.expression === read &&
-          isNumberLike(access.argumentExpression, context))) &&
-      getWritten(outer) !== access &&
-      !ts.isDeleteExpression(outer) &&
-      !(ts.isCallExpression(outer) && outer.expression === access) &&
-      !(
-        (ts.isPrefixUnaryExpression(outer) || ts.isPostfixUnaryExpression(outer)) &&
-        [ts.SyntaxKind.PlusPlusToken, ts.SyntaxKind.MinusMinusToken].includes(outer.operator)
-      )
-    );
-  };
   if (
     reads.length > 0 &&
     (callbacks.length > 0 ||
       argumentNodes.some(ts.isSpreadElement) ||
-      !reads.every(isRead) ||
+      !reads.every((read) => isArgumentsRead(read, context)) ||
       context.heap === undefined)
   ) {
     throw new TlaTypeScriptError("Unsupported arguments object", reads[0]);

@@ -2140,6 +2140,107 @@ const isArgumentsNamed = (callee: FunctionNode, context: Context) =>
 
 // The arguments object of a call to a function whose body names it, which the scope holds under
 // the body.
+// A read of an arguments object's length or of an element, which leaves the object where it is.
+export const isArgumentsRead = (read: ts.Identifier, context: Context) => {
+  const access = read.parent;
+  const outer = access.parent;
+  return (
+    ((ts.isPropertyAccessExpression(access) && access.name.text === "length") ||
+      (ts.isElementAccessExpression(access) &&
+        access.expression === read &&
+        isNumberLike(access.argumentExpression, context))) &&
+    getWritten(outer) !== access &&
+    !ts.isDeleteExpression(outer) &&
+    !(ts.isCallExpression(outer) && outer.expression === access) &&
+    !(
+      (ts.isPrefixUnaryExpression(outer) || ts.isPostfixUnaryExpression(outer)) &&
+      INCREMENT_OPERATORS.has(outer.operator)
+    )
+  );
+};
+
+const hasStrictDirective = (statements: readonly ts.Statement[]) =>
+  statements.some(
+    (statement) =>
+      ts.isExpressionStatement(statement) &&
+      ts.isStringLiteral(statement.expression) &&
+      statement.expression.getText().slice(1, -1) === "use strict",
+  );
+
+const isModuleSyntax = (statement: ts.Statement) =>
+  ts.isImportDeclaration(statement) ||
+  ts.isImportEqualsDeclaration(statement) ||
+  ts.isExportDeclaration(statement) ||
+  ts.isExportAssignment(statement) ||
+  (ts.canHaveModifiers(statement) &&
+    (ts.getModifiers(statement) ?? []).some(
+      (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
+    ));
+
+// Code that runs in strict mode wherever it runs: in a class, under a "use strict" directive, or in
+// a file that imports or exports, which runs only as a module. Node runs another file as a script
+// where it strips its types.
+const isStrictCode = (node: ts.Node): boolean =>
+  ts.findAncestor(
+    node,
+    (ancestor) =>
+      ts.isClassLike(ancestor) ||
+      (ts.isFunctionLike(ancestor) &&
+        "body" in ancestor &&
+        ancestor.body !== undefined &&
+        ts.isBlock(ancestor.body) &&
+        hasStrictDirective(ancestor.body.statements)) ||
+      (ts.isSourceFile(ancestor) &&
+        (hasStrictDirective(ancestor.statements) || ancestor.statements.some(isModuleSyntax))),
+  ) !== undefined;
+
+// Outside strict mode, a function with simple parameters has an arguments object that maps them,
+// so that writing one changes the other, which tla-ts's arguments object doesn't follow. Only a
+// parameter that changes where the object's elements are read, or a parameter read where the
+// object changes or leaves the function, shows the difference.
+const rejectMappedArguments = (callee: FunctionNode, context: Context) => {
+  const parameters = callee.parameters.filter(
+    (parameter) => !(ts.isIdentifier(parameter.name) && parameter.name.text === "this"),
+  );
+  if (
+    isStrictCode(callee) ||
+    parameters.length === 0 ||
+    parameters.some(
+      (parameter) =>
+        !ts.isIdentifier(parameter.name) ||
+        parameter.initializer !== undefined ||
+        parameter.dotDotDotToken !== undefined,
+    )
+  ) {
+    return;
+  }
+  const names = new Set(parameters.map((parameter) => parameter.name));
+  const symbols = new Set(
+    parameters.map((parameter) => getSymbol(parameter.name, context.checker)),
+  );
+  const isParameter = (node: ts.Node) =>
+    ts.isIdentifier(node) && !names.has(node) && symbols.has(getSymbol(node, context.checker));
+  const isParameterWritten =
+    findNodes(callee, (node): node is ts.Expression => {
+      const written = getWritten(node);
+      return written !== undefined && getWrittenRoots(written).some(isParameter);
+    }).length > 0;
+  const isParameterRead =
+    findNodes(callee, (node): node is ts.Identifier => isParameter(node)).length > 0;
+  const reads = getArgumentsReads(callee, context);
+  const isLengthRead = (read: ts.Identifier) =>
+    isArgumentsRead(read, context) && ts.isPropertyAccessExpression(read.parent);
+  if (
+    (isParameterWritten && !reads.every(isLengthRead)) ||
+    (isParameterRead && !reads.every((read) => isArgumentsRead(read, context)))
+  ) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't follow an arguments object that maps its function's parameters outside strict mode",
+      reads[0],
+    );
+  }
+};
+
 export const allocateArguments = (
   callee: FunctionNode,
   values: readonly Expression[],
@@ -2152,6 +2253,7 @@ export const allocateArguments = (
   if (heapSymbol === undefined || body === undefined || !isArgumentsNamed(callee, context)) {
     return bound;
   }
+  rejectMappedArguments(callee, context);
   const heap = context.names.getFresh("heap");
   const made = useJavaScript(
     "ArgumentsObject",

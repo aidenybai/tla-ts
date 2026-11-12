@@ -978,7 +978,9 @@ const runTest = async (path: string): Promise<TestRun> => {
     return { id, outcome: "skipped", reason: `Node fails: ${getFirstLine(nodeError)}` };
   }
   try {
-    const result = await check({ ...compile(annotated, "test262.ts"), onPrint: () => {} });
+    // Node runs the test as a module, which is strict code, so tla-ts compiles it as strict too.
+    const strict = `"use strict"; ${annotated}`;
+    const result = await check({ ...compile(strict, "test262.ts"), onPrint: () => {} });
     if (result.status === "success" || result.status === "deadlock") {
       return { id, outcome: "pass", reason: "" };
     }
