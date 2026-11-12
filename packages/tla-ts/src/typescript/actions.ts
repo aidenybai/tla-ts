@@ -2114,14 +2114,9 @@ export const translateCallStatement = (
         const candidateReceiver = ts.isArrowFunction(candidate)
           ? undefined
           : { value: receiver, method: candidate };
-        const run = isAnyGenerator(candidate)
-          ? makeGenerator
-          : isAsyncFunction(candidate)
-            ? translateAsyncCall
-            : undefined;
         return ifThenElse(
           apply("=", [value, candidateValue]),
-          run === undefined
+          !isAnyGenerator(candidate) && !isAsyncFunction(candidate)
             ? inlineBody(
                 expression,
                 candidate,
@@ -2132,7 +2127,26 @@ export const translateCallStatement = (
                 frame,
                 continueWith,
               )
-            : run(expression, candidate, candidateReceiver, path, context, frame, continueWith),
+            : isAnyGenerator(candidate)
+              ? makeGenerator(
+                  expression,
+                  candidate,
+                  expression.arguments,
+                  candidateReceiver,
+                  path,
+                  context,
+                  frame,
+                  continueWith,
+                )
+              : translateAsyncCall(
+                  expression,
+                  candidate,
+                  candidateReceiver,
+                  path,
+                  context,
+                  frame,
+                  continueWith,
+                ),
           otherwise,
         );
       },
@@ -2964,16 +2978,17 @@ export const enterBody = (
 // Makes the generator object that a call to a generator gives, whose body runs only as its
 // next, return, and throw methods resume it. A path tracks where each generator's body suspended,
 // as the rest of the body's statements, so a statement that resumes it runs them there.
-const makeGenerator = (
-  node: ts.CallExpression,
+export const makeGenerator = (
+  node: ts.Node,
   callee: FunctionNode,
+  argumentNodes: readonly ts.Expression[],
   receiver: Receiver | undefined,
   path: Path,
   context: Context,
   frame: Frame,
   continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula =>
-  bindCall(node, callee, node.arguments, receiver, path, context, frame, (bound, inner) => {
+  bindCall(node, callee, argumentNodes, receiver, path, context, frame, (bound, inner) => {
     const name = context.names.getFresh("generator");
     const heapSymbol = context.heap;
     const ref =
@@ -3787,6 +3802,7 @@ const translateGeneratorCall = (
   const make = makeGenerator(
     node,
     created.generator,
+    node.arguments,
     getReceiver(path.scope, context, created.called),
     path,
     context,

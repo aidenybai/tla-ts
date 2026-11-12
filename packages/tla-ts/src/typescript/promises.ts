@@ -14,6 +14,7 @@ import {
   getCast,
   inlineValues,
   isSameExpression,
+  makeGenerator,
   type Path,
   resumeGenerator,
   runLeadingCall,
@@ -26,10 +27,13 @@ import {
   type FunctionNode,
   findNodes,
   getLocalCaptures,
+  getFunctionOfKind,
   getParameters,
   getSymbol,
   getUndefined,
+  isAnyGenerator,
   isAsyncFunction,
+  isAsyncGenerator,
   translateString,
 } from "./context";
 import { getCallbackReceiver } from "./collections";
@@ -711,11 +715,55 @@ const getArrayLike = (node: ts.Expression, context: Context) => {
     : undefined;
 };
 
+// The generator function that an object literal holds as its only property, under
+// Symbol.asyncIterator or Symbol.iterator, which Array.fromAsync calls with the object to make the
+// iterator it reads.
+const getIteratorMethod = (node: ts.ObjectLiteralExpression, context: Context) => {
+  const property = node.properties.length === 1 ? node.properties[0] : undefined;
+  const name =
+    property !== undefined &&
+    property.name !== undefined &&
+    ts.isComputedPropertyName(property.name)
+      ? property.name.expression
+      : undefined;
+  const key =
+    name !== undefined &&
+    ts.isPropertyAccessExpression(name) &&
+    getBuiltIn(name.expression, context) === "Symbol"
+      ? name.name.text
+      : undefined;
+  const value =
+    property === undefined
+      ? undefined
+      : ts.isMethodDeclaration(property)
+        ? property
+        : ts.isPropertyAssignment(property)
+          ? getFunctionOfKind(property.initializer, context, isAnyGenerator)
+          : undefined;
+  if (
+    value === undefined ||
+    !(
+      ts.isFunctionDeclaration(value) ||
+      ts.isFunctionExpression(value) ||
+      ts.isMethodDeclaration(value)
+    ) ||
+    value.asteriskToken === undefined
+  ) {
+    return undefined;
+  }
+  const isAsync = isAsyncGenerator(value);
+  return (key === "asyncIterator" && isAsync) || (key === "iterator" && !isAsync)
+    ? { generator: value, isAsync }
+    : undefined;
+};
+
 // Array.fromAsync of an array or a string written in place, which it reads through an
-// async-from-sync iterator, or of an array-like object, which it reads by index. An iterator's
-// element takes a job to settle the iterator's result and another to await it, as does its end,
-// and a mapping function's throw or rejection takes another, to await the iterator's return. An
-// array-like's element, like a mapping function's result, takes a job to await.
+// async-from-sync iterator, of an array-like object, which it reads by index, or of a generator.
+// An iterator's element takes a job to settle the iterator's result and another to await it, as
+// does its end, and a mapping function's throw or rejection takes another, to await the iterator's
+// return. An async generator's element takes the job that awaits its request, without awaiting
+// the value again, and a mapping function's throw or rejection awaits its return. An array-like's
+// element, like a mapping function's result, takes a job to await.
 const translateFromAsync = (
   node: ts.CallExpression,
   path: Path,
@@ -739,23 +787,26 @@ const translateFromAsync = (
   const text = items !== undefined && ts.isStringLiteralLike(items) ? items.text : undefined;
   // A generator object that a variable holds, whose next fromAsync calls as it reads each value.
   const symbol = items && ts.isIdentifier(items) ? getSymbol(items, context.checker) : undefined;
-  const receiver =
-    items !== undefined &&
-    symbol !== undefined &&
-    context.checker.getTypeAtLocation(items).getSymbol()?.name === "Generator"
+  const generatorType = items && context.checker.getTypeAtLocation(items).getSymbol()?.name;
+  const held =
+    symbol !== undefined && (generatorType === "Generator" || generatorType === "AsyncGenerator")
       ? path.scope.bindings.get(symbol)
       : undefined;
+  const iteratorMethod =
+    items !== undefined && ts.isObjectLiteralExpression(items)
+      ? getIteratorMethod(items, context)
+      : undefined;
+  const isAsync =
+    (held !== undefined && generatorType === "AsyncGenerator") || iteratorMethod?.isAsync === true;
+  const isGenerator = held !== undefined || iteratorMethod !== undefined;
   if (
     items === undefined ||
-    (elements === undefined &&
-      text === undefined &&
-      arrayLike === undefined &&
-      receiver === undefined) ||
+    (elements === undefined && text === undefined && arrayLike === undefined && !isGenerator) ||
     (elements ?? []).some((element) => element !== undefined && ts.isSpreadElement(element)) ||
     (mapping !== undefined && callee === undefined)
   ) {
     throw new TlaTypeScriptError(
-      "Pass Array.fromAsync an array, a string or an array-like object written in place, or a generator, and a function that tla-ts can follow",
+      "Pass Array.fromAsync an array, a string or an array-like object written in place, a generator, or an object written in place whose Symbol.asyncIterator or Symbol.iterator is a generator function, and a function that tla-ts can follow",
       node,
     );
   }
@@ -768,7 +819,10 @@ const translateFromAsync = (
   if (ran !== undefined) return ran;
   const source = context.names.getFresh("items");
   const count = arrayLike?.count ?? elements?.length ?? [...(text ?? "")].length;
-  return allocate(receiver === undefined ? items : undefined, path, context, (allocated) =>
+  const unfollowed = () => {
+    throw new TlaTypeScriptError("tla-ts can't follow Array.fromAsync of this generator", node);
+  };
+  return allocate(held === undefined ? items : undefined, path, context, (allocated) =>
     makePromise(allocated, node, context, (made, name) => {
       const runMapping =
         mapping === undefined || callee === undefined
@@ -794,146 +848,228 @@ const translateFromAsync = (
           (resumer, _settled, _isRejected, onReturn) => next(resumer, onReturn),
           exit,
         );
-      // A rejection that closes the iterator, which fromAsync awaits, or that ends an array-like.
-      // A generator's return, which closing the iterator runs, and whose throw the rejection that
-      // closes it hides.
-      const close = (current: Path, next: (path: Path) => Formula) =>
-        receiver === undefined
-          ? next(current)
-          : resumeGenerator(
+      // Reads the generator object that receiver holds, or else the items, which source names.
+      const iterate = (start: Path, receiver: Expression | undefined) => {
+        // A rejection that closes the iterator, which fromAsync awaits, or that ends an
+        // array-like. A generator's return, which closing the iterator runs, and whose throw the
+        // rejection that closes it hides.
+        const close = (current: Path, next: (path: Path) => Formula) =>
+          receiver === undefined
+            ? next(current)
+            : resumeGenerator(
+                node,
+                receiver,
+                "return",
+                undefined,
+                current,
+                context,
+                { ...frame, throwTo: (after) => next(after) },
+                (after) => next(after),
+              );
+        // A throw or rejection of a mapping function, which awaits the iterator's return: its
+        // promise settles at once where the iterator has no return, or else a job after the
+        // return. An async generator's return gives a promise, which fromAsync awaits.
+        const reject = (current: Path, reason: Expression, exit: (path: Path) => Formula) => {
+          const settleRejected = (rejected: Path, onReturn: (path: Path) => Formula) =>
+            onReturn(settle(rejected, node, name, reason, true, context));
+          if (isAsync && receiver !== undefined) {
+            return resumeGenerator(
               node,
               receiver,
               "return",
               undefined,
               current,
               context,
-              { ...frame, throwTo: (after) => next(after) },
-              (after) => next(after),
+              frame,
+              unfollowed,
+              (requested, promise) =>
+                awaitIn(
+                  requested,
+                  node,
+                  promise,
+                  undefined,
+                  context,
+                  (resumer, _settled, _isRejected, onReturn) => settleRejected(resumer, onReturn),
+                  exit,
+                ),
             );
-      // A throw or rejection of a mapping function, which awaits the iterator's return: its
-      // promise settles at once where the iterator has no return, or else a job after the return.
-      const reject = (current: Path, reason: Expression, exit: (path: Path) => Formula) => {
-        const settleRejected = (rejected: Path, onReturn: (path: Path) => Formula) =>
-          onReturn(settle(rejected, node, name, reason, true, context));
-        return arrayLike !== undefined
-          ? exit(settle(current, node, name, reason, true, context))
-          : close(current, (closed) =>
-              receiver === undefined
-                ? tick(closed, settleRejected, exit)
-                : tick(
-                    closed,
-                    (resolved, onReturn) => tick(resolved, settleRejected, onReturn),
-                    exit,
-                  ),
-            );
-      };
-      // The value at a position, which an array-like gives as fromAsync reads it.
-      const read = (current: Path, position: number) =>
-        arrayLike === undefined
-          ? index(identifier(source), [number(position + 1)])
-          : useJavaScript(
-              "Get",
-              [getHeap(current.scope, node, context), identifier(source), string(String(position))],
-              context,
-            );
-      // The next value, or none at the end. A generator's next runs its body, and a throw from it
-      // rejects the promise that the iterator's next gives, which fromAsync awaits.
-      const getNext = (
-        current: Path,
-        position: number,
-        exit: (path: Path) => Formula,
-        withNext: (
-          path: Path,
-          value: Expression,
-          valueNode: ts.Expression | undefined,
-          isDone: boolean,
-        ) => Formula,
-      ) =>
-        receiver === undefined
-          ? withNext(
+          }
+          return arrayLike !== undefined
+            ? exit(settle(current, node, name, reason, true, context))
+            : close(current, (closed) =>
+                receiver === undefined
+                  ? tick(closed, settleRejected, exit)
+                  : tick(
+                      closed,
+                      (resolved, onReturn) => tick(resolved, settleRejected, onReturn),
+                      exit,
+                    ),
+              );
+        };
+        // The value at a position, which an array-like gives as fromAsync reads it.
+        const read = (current: Path, position: number) =>
+          arrayLike === undefined
+            ? index(identifier(source), [number(position + 1)])
+            : useJavaScript(
+                "Get",
+                [
+                  getHeap(current.scope, node, context),
+                  identifier(source),
+                  string(String(position)),
+                ],
+                context,
+              );
+        // The next value, or none at the end, and what the job that reads it does after. A
+        // generator's next runs its body, and a throw from it rejects the promise that the
+        // iterator's next gives, which fromAsync awaits. An async generator's next gives a
+        // promise, which fromAsync awaits.
+        const getNext = (
+          current: Path,
+          position: number,
+          exit: (path: Path) => Formula,
+          withNext: (
+            path: Path,
+            value: Expression,
+            valueNode: ts.Expression | undefined,
+            isDone: boolean,
+            exit: (path: Path) => Formula,
+          ) => Formula,
+        ) => {
+          if (receiver === undefined) {
+            return withNext(
               current,
               position === count ? getUndefined(context) : read(current, position),
               arrayLike?.getProperty(String(position)) ?? elements?.[position],
               position === count,
-            )
-          : resumeGenerator(
+              exit,
+            );
+          }
+          if (isAsync) {
+            return resumeGenerator(
               node,
               receiver,
               "next",
               undefined,
               current,
               context,
-              {
-                ...frame,
-                throwTo: (after, thrown) =>
-                  tick(
-                    after,
-                    (rejected, onReturn) =>
-                      onReturn(settle(rejected, node, name, thrown.value, true, context)),
-                    exit,
-                  ),
-              },
-              (after, value, isDone, isResult) => {
-                if (isResult) {
-                  throw new TlaTypeScriptError(
-                    "tla-ts can't follow Array.fromAsync of a generator that delegates",
-                    node,
-                  );
-                }
-                return withNext(after, value ?? getUndefined(context), undefined, isDone);
-              },
+              frame,
+              unfollowed,
+              (requested, promise) =>
+                awaitIn(
+                  requested,
+                  node,
+                  promise,
+                  undefined,
+                  context,
+                  (resumer, settled, isRejected, onReturn) => {
+                    if (isRejected) {
+                      return onReturn(settle(resumer, node, name, settled, true, context));
+                    }
+                    const iteration = getIteration(resumer, node, promise);
+                    return withNext(
+                      resumer,
+                      iteration.value,
+                      undefined,
+                      iteration.isDone,
+                      onReturn,
+                    );
+                  },
+                  exit,
+                ),
             );
-      const take = (
-        current: Path,
-        position: number,
-        values: Expression[],
-        exit: (path: Path) => Formula,
-      ): Formula => {
-        if (position === count && arrayLike !== undefined) {
-          return resolve(current, node, name, tuple(values), undefined, context, exit);
-        }
-        return getNext(current, position, exit, (read, value, valueNode, isDone) =>
-          awaitIn(
-            read,
+          }
+          return resumeGenerator(
             node,
-            value,
-            valueNode,
+            receiver,
+            "next",
+            undefined,
+            current,
             context,
-            (resumer, settled, isRejected, onReturn) => {
-              // A rejection of the value closes the iterator in the job that settles its result.
-              const next = (resumed: Path, back: (path: Path) => Formula) =>
-                isRejected
-                  ? back(settle(resumed, node, name, settled, true, context))
-                  : isDone
-                    ? resolve(resumed, node, name, tuple(values), undefined, context, back)
-                    : runMapping === undefined
-                      ? take(resumed, position + 1, [...values, settled], back)
-                      : runMapping(
-                          resumed,
-                          [settled, number(position)],
-                          (mapped, result) =>
-                            awaitIn(
-                              mapped,
-                              node,
-                              result,
-                              undefined,
-                              context,
-                              (awaited, value, isMappedRejected, onAwaited) =>
-                                isMappedRejected
-                                  ? reject(awaited, value, onAwaited)
-                                  : take(awaited, position + 1, [...values, value], onAwaited),
-                              back,
-                            ),
-                          (thrown, reason) => reject(thrown, reason, back),
-                        );
-              return arrayLike !== undefined
-                ? next(resumer, onReturn)
-                : isRejected
-                  ? close(resumer, (closed) => tick(closed, next, onReturn))
-                  : tick(resumer, next, onReturn);
+            {
+              ...frame,
+              throwTo: (after, thrown) =>
+                tick(
+                  after,
+                  (rejected, onReturn) =>
+                    onReturn(settle(rejected, node, name, thrown.value, true, context)),
+                  exit,
+                ),
             },
-            exit,
-          ),
+            (after, value, isDone, isResult) => {
+              if (isResult) {
+                throw new TlaTypeScriptError(
+                  "tla-ts can't follow Array.fromAsync of a generator that delegates",
+                  node,
+                );
+              }
+              return withNext(after, value ?? getUndefined(context), undefined, isDone, exit);
+            },
+          );
+        };
+        const take = (
+          current: Path,
+          position: number,
+          values: Expression[],
+          exit: (path: Path) => Formula,
+        ): Formula => {
+          if (position === count && arrayLike !== undefined) {
+            return resolve(current, node, name, tuple(values), undefined, context, exit);
+          }
+          return getNext(current, position, exit, (read, value, valueNode, isDone, back) => {
+            // A rejection of the value closes the iterator in the job that settles its result.
+            const next = (
+              resumed: Path,
+              settled: Expression,
+              isRejected: boolean,
+              onReturn: (path: Path) => Formula,
+            ) =>
+              isRejected
+                ? onReturn(settle(resumed, node, name, settled, true, context))
+                : isDone
+                  ? resolve(resumed, node, name, tuple(values), undefined, context, onReturn)
+                  : runMapping === undefined
+                    ? take(resumed, position + 1, [...values, settled], onReturn)
+                    : runMapping(
+                        resumed,
+                        [settled, number(position)],
+                        (mapped, result) =>
+                          awaitIn(
+                            mapped,
+                            node,
+                            result,
+                            undefined,
+                            context,
+                            (awaited, value, isMappedRejected, onAwaited) =>
+                              isMappedRejected
+                                ? reject(awaited, value, onAwaited)
+                                : take(awaited, position + 1, [...values, value], onAwaited),
+                            onReturn,
+                          ),
+                        (thrown, reason) => reject(thrown, reason, onReturn),
+                      );
+            // An async iterator's value, which fromAsync doesn't await.
+            if (isAsync) return next(read, value, false, back);
+            return awaitIn(
+              read,
+              node,
+              value,
+              valueNode,
+              context,
+              (resumer, settled, isRejected, onReturn) => {
+                const settle = (resumed: Path, onSettled: (path: Path) => Formula) =>
+                  next(resumed, settled, isRejected, onSettled);
+                return arrayLike !== undefined
+                  ? settle(resumer, onReturn)
+                  : isRejected
+                    ? close(resumer, (closed) => tick(closed, settle, onReturn))
+                    : tick(resumer, settle, onReturn);
+              },
+              back,
+            );
+          });
+        };
+        return take(start, 0, [], (after) =>
+          continueWith(after, getPromise(after, node, name).ref),
         );
       };
       const heap = getHeap(made.scope, node, context);
@@ -947,7 +1083,7 @@ const translateFromAsync = (
         useJavaScript("SameValue", [value, getUndefined(context)], context);
       const iterated = identifier(source);
       const prototype = translateBuiltInValue(
-        receiver !== undefined
+        held !== undefined
           ? "Iterator.prototype"
           : text === undefined
             ? "Array.prototype"
@@ -955,30 +1091,13 @@ const translateFromAsync = (
         node,
         context,
       );
-      // What fromAsync reads of its items before it runs: their iterators, which an array or a
-      // string inherits, or else an array-like's length.
+      // What fromAsync reads of its items before it runs: their iterators, which an array, a
+      // string or a generator inherits, an object's Symbol.asyncIterator, which it lacks where it
+      // holds a generator function under Symbol.iterator, or else an array-like's length. An async
+      // generator's Symbol.asyncIterator comes from the prototype that a script can't reach.
       const reads =
-        arrayLike === undefined
+        arrayLike !== undefined
           ? [
-              useJavaScript(
-                "HoldsBuiltIn",
-                [
-                  heap,
-                  prototype,
-                  useJavaScript("WellKnownSymbol", [string("iterator")], context),
-                  string(
-                    receiver !== undefined
-                      ? "Iterator.prototype.@@iterator"
-                      : text === undefined
-                        ? "Array.prototype.values"
-                        : "String.prototype.@@iterator",
-                  ),
-                ],
-                context,
-              ),
-              isUndefined(getSymbolMethod(prototype, "asyncIterator")),
-            ]
-          : [
               isUndefined(getSymbolMethod(iterated, "asyncIterator")),
               isUndefined(getSymbolMethod(iterated, "iterator")),
               useJavaScript(
@@ -989,14 +1108,37 @@ const translateFromAsync = (
                 ],
                 context,
               ),
-            ];
+            ]
+          : isAsync
+            ? []
+            : iteratorMethod !== undefined
+              ? [isUndefined(getSymbolMethod(iterated, "asyncIterator"))]
+              : [
+                  useJavaScript(
+                    "HoldsBuiltIn",
+                    [
+                      heap,
+                      prototype,
+                      useJavaScript("WellKnownSymbol", [string("iterator")], context),
+                      string(
+                        held !== undefined
+                          ? "Iterator.prototype.@@iterator"
+                          : text === undefined
+                            ? "Array.prototype.values"
+                            : "String.prototype.@@iterator",
+                      ),
+                    ],
+                    context,
+                  ),
+                  isUndefined(getSymbolMethod(prototype, "asyncIterator")),
+                ];
       return letIn(
         [
           define(
             source,
             [],
-            receiver !== undefined
-              ? receiver
+            held !== undefined
+              ? held
               : text === undefined
                 ? translateExpression(items, made.scope, context)
                 : tuple([...text].map((character) => translateString(character, context))),
@@ -1016,7 +1158,18 @@ const translateFromAsync = (
             ),
             ...reads,
           ]),
-          take(made, 0, [], (after) => continueWith(after, getPromise(after, node, name).ref)),
+          iteratorMethod === undefined
+            ? iterate(made, held)
+            : makeGenerator(
+                node,
+                iteratorMethod.generator,
+                [],
+                { value: iterated, method: iteratorMethod.generator },
+                made,
+                context,
+                frame,
+                (after, ref) => iterate(after, ref ?? getUndefined(context)),
+              ),
           leaf(
             apply("Assert", [
               boolean(false),
