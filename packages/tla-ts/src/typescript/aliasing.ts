@@ -415,6 +415,14 @@ export const getReached = (roots: readonly ts.Node[], context: Context) => {
   const reached = [...roots];
   const seen = new Set<ts.Node>(reached);
   const visit = (node: ts.Node): void => {
+    // A type runs nothing, though a class's base, which TypeScript parses as one, runs.
+    if (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) return;
+    if (
+      (ts.isImportDeclaration(node) && node.importClause?.isTypeOnly === true) ||
+      (ts.isImportSpecifier(node) && node.isTypeOnly)
+    ) {
+      return;
+    }
     const declarations = ts.isIdentifier(node)
       ? (getSymbol(node, context.checker)?.declarations ?? [])
       : [];

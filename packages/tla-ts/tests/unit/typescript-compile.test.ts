@@ -1245,6 +1245,14 @@ describe("definitions", () => {
     expect(wrong.failure?.message).toContain("stepped");
   });
 
+  it("skips the code of a class that a file names only as a type", async () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/chain-typing.ts");
+    const source = readFileSync(path, "utf8");
+    expect((await check(compile(source, path))).failure).toBeUndefined();
+    const wrong = await check(compile(source.replace("!== 2", "!== 3"), path));
+    expect(wrong.failure?.message).toContain("linked");
+  });
+
   it("compiles constants and functions imported from other files", async () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/counter.ts");
     const result = await check(compile(readFileSync(path, "utf8"), path));
