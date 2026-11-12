@@ -3253,6 +3253,8 @@ describe("errors", () => {
       const text: { [key: string]: PropertyDescriptor } = Object.getOwnPropertyDescriptors("ab");
       check(Object.keys(text).join(), "0,1,length", "string");
       check(text[1].value, "b", "character");
+      const inferred = Object.getOwnPropertyDescriptors({ attr: 3 });
+      check(inferred.attr.value, 3, "inferred");
     `;
     expect((await checkModel(source)).failure).toBeUndefined();
     const wrong = [
@@ -3260,6 +3262,7 @@ describe("errors", () => {
       ["result.c.writable, false", "result.c.writable, true"],
       ["result[enumSym].value, value", "result[enumSym].value, undefined"],
       ['"0,1,length", "string"', '"0,1", "string"'],
+      ["inferred.attr.value, 3", "inferred.attr.value, 4"],
     ];
     for (const [from, to] of wrong) {
       expect((await checkModel(source.replace(from, to))).failure).toBeDefined();
@@ -10563,7 +10566,7 @@ describe("proxies", () => {
         throw new Error("rest");
       }
       const described = Object.getOwnPropertyDescriptors(proxy);
-      if (!("foo" in described) || !("0" in described) || "hidden" in described) {
+      if (described.foo.value !== 1 || described[0].enumerable || "hidden" in described) {
         throw new Error("descriptors");
       }
       if (getCount() !== ${expected}) throw new Error("unexpected");
