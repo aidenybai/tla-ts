@@ -450,6 +450,8 @@ const translateSetMethod = (node: MethodCall, scope: Scope, context: Context) =>
   const operation = operations.get(method);
   if (operation === undefined)
     throw new TlaTypeScriptError(`Unsupported Set method: ${method}`, node);
+  if (node.arguments[0] === undefined)
+    throw new TlaTypeScriptError(`Set method needs an argument: ${method}`, node);
   return operation;
 };
 
@@ -465,8 +467,11 @@ const translateMapMethod = (
     node.arguments[0] === undefined
       ? ""
       : wrap(translateExpression(node.arguments[0], scope, context));
+  if (method !== "has" && method !== "get")
+    throw new TlaTypeScriptError(`Unsupported Map method: ${method}`, node);
+  if (node.arguments[0] === undefined)
+    throw new TlaTypeScriptError(`Map method needs a key: ${method}`, node);
   if (method === "has") return `${key} \\in DOMAIN ${map}`;
-  if (method !== "get") throw new TlaTypeScriptError(`Unsupported Map method: ${method}`, node);
   if (isDefined) return `${map}[${key}]`;
   return share(map, "map", context, (sharedMap) =>
     share(key, "key", context, (sharedKey) =>
