@@ -55,11 +55,10 @@ type Resolved =
   | { kind: "Declared"; name: string; level: number; arity: number }
   | { kind: "Defined"; levels: OperatorLevels };
 
-interface Operand {
-  data: LevelData;
-  operator?: OperatorLevels;
-  declared?: OperatorParam;
-}
+type Operand =
+  | { kind: "Value"; data: LevelData }
+  | { kind: "Operator"; data: OperatorLevels }
+  | { kind: "Declared"; data: LevelData; declared: OperatorParam };
 
 export const CONSTANT_LEVEL = 0;
 export const VARIABLE_LEVEL = 1;
@@ -95,6 +94,12 @@ export const putConstraint = (constraints: Map<string, number>, name: string, le
 
 export const putArgConstraint = (constraints: Map<string, number>, key: string, level: number) =>
   constraints.set(key, Math.max(level, constraints.get(key) ?? 0));
+
+const mergeConstraints = (data: LevelData, part: LevelData) => {
+  part.constraints.forEach((value, key) => putConstraint(data.constraints, key, value));
+  part.argConstraints.forEach((value, key) => putArgConstraint(data.argConstraints, key, value));
+  part.argParams.forEach((key) => data.argParams.add(key));
+};
 
 const createSignature = (
   name: string,
@@ -231,12 +236,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         data.params.add(param);
         data.argParams.add(getArgumentParamKey(name, index, param));
       });
-      operand.data.constraints.forEach((value, key) => putConstraint(data.constraints, key, value));
       putArgConstraint(data.argConstraints, getArgumentKey(name, index), operand.data.level);
-      operand.data.argConstraints.forEach((value, key) =>
-        putArgConstraint(data.argConstraints, key, value),
-      );
-      operand.data.argParams.forEach((key) => data.argParams.add(key));
+      mergeConstraints(data, operand.data);
     });
     return data;
   };
@@ -249,7 +250,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   ) => {
     const isBound = (name: string) => bound.includes(name);
     operands.forEach((operand, index) => {
-      if (operand.operator || operand.declared) return;
+      if (operand.kind !== "Value") return;
       if (operand.data.level > getMaxLevel(operator, index)) {
         throw new TlaSyntaxError(
           `Level error in applying operator ${operator.name}:\nThe level of argument ${index + 1} exceeds the maximum level allowed by the operator`,
@@ -300,8 +301,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       }),
     );
     operands.forEach((operand, operandIndex) => {
-      const argument = operand.operator;
-      if (!argument) return;
+      if (operand.kind !== "Operator") return;
+      const argument = operand.data;
       operands.forEach((other, otherIndex) =>
         argument.formals.forEach((_formal, argumentIndex) => {
           if (!hasCondition(operandIndex, otherIndex, argumentIndex)) return;
@@ -313,9 +314,13 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     });
     operator.argParams.forEach((key) => {
       const parameter = parseArgumentParamKey(key);
-      const argument = getOperand(parameter.operator)?.operator;
-      if (argument) {
-        putConstraint(data.constraints, parameter.param, getMaxLevel(argument, parameter.index));
+      const argument = getOperand(parameter.operator);
+      if (argument?.kind === "Operator") {
+        putConstraint(
+          data.constraints,
+          parameter.param,
+          getMaxLevel(argument.data, parameter.index),
+        );
       }
     });
 
@@ -328,8 +333,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       constraints.forEach((value, key) => putArgConstraint(data.argConstraints, key, value)),
     );
     operands.forEach((operand, operandIndex) => {
+      if (operand.kind !== "Declared") return;
       const declared = operand.declared;
-      if (!declared) return;
       Array.from({ length: declared.arity }, (_value, argumentIndex) =>
         putArgConstraint(
           data.argConstraints,
@@ -381,15 +386,15 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         );
         return;
       }
-      if (argument.declared) {
+      if (argument.kind === "Declared") {
         data.argParams.add(
           getArgumentParamKey(argument.declared.name, parameter.index, parameter.param),
         );
       }
     });
     operands.forEach((operand, operandIndex) => {
+      if (operand.kind !== "Declared") return;
       const declared = operand.declared;
-      if (!declared) return;
       operands.forEach((other, otherIndex) =>
         Array.from({ length: declared.arity }, (_value, argumentIndex) => {
           if (!hasCondition(operandIndex, otherIndex, argumentIndex)) return;
@@ -410,7 +415,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         expression.body,
         scope,
       );
-      return { data: operator, operator };
+      return { kind: "Operator", data: operator };
     }
     const name =
       expression.kind === "OperatorReference"
@@ -424,16 +429,16 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         resolved.kind === "Defined" &&
         (resolved.levels.formals.length > 0 || expression.kind === "OperatorReference")
       ) {
-        return { data: resolved.levels, operator: resolved.levels };
+        return { kind: "Operator", data: resolved.levels };
       }
       if (resolved.kind === "Declared" && resolved.arity > 0) {
         const data = createData();
         data.params.add(name);
-        return { data, declared: { name, arity: resolved.arity } };
+        return { kind: "Declared", data, declared: { name, arity: resolved.arity } };
       }
-      if (expression.kind === "OperatorReference") return { data: createData() };
+      if (expression.kind === "OperatorReference") return { kind: "Value", data: createData() };
     }
-    return { data: analyze(expression, scope) };
+    return { kind: "Value", data: analyze(expression, scope) };
   };
 
   const toOperands = (expressions: Expression[], scope: Scope) =>
@@ -509,14 +514,9 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       argConstraints: new Map(body.argConstraints),
       argParams: new Set(body.argParams),
     };
-    expression.definitions.forEach((definition) => {
-      const levels = analyzeDefinition(definition, inner);
-      levels.constraints.forEach((value, key) => putConstraint(data.constraints, key, value));
-      levels.argConstraints.forEach((value, key) =>
-        putArgConstraint(data.argConstraints, key, value),
-      );
-      levels.argParams.forEach((key) => data.argParams.add(key));
-    });
+    expression.definitions.forEach((definition) =>
+      mergeConstraints(data, analyzeDefinition(definition, inner)),
+    );
     return data;
   };
 
@@ -683,14 +683,14 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           toOperand(expression.function, scope),
           expression.args.length === 1
             ? toOperand(expression.args[0], scope)
-            : { data: applyBuiltin(SET_LEVELS, expression.args, scope) },
+            : { kind: "Value", data: applyBuiltin(SET_LEVELS, expression.args, scope) },
         ]);
       case "Bracket":
         return createData();
       case "FieldAccess":
         return applyDefined(SELECT_LEVELS, [
           toOperand(expression.record, scope),
-          { data: createData() },
+          { kind: "Value", data: createData() },
         ]);
       case "BoxAction":
       case "AngleAction":
@@ -868,9 +868,7 @@ export const analyzeAssumeProve = (
   const data = createData(Math.max(...parts.map((part) => part.level)));
   parts.forEach((part) => {
     part.params.forEach((param) => data.params.add(param));
-    part.constraints.forEach((value, key) => putConstraint(data.constraints, key, value));
-    part.argConstraints.forEach((value, key) => putArgConstraint(data.argConstraints, key, value));
-    part.argParams.forEach((key) => data.argParams.add(key));
+    mergeConstraints(data, part);
   });
   return data;
 };
