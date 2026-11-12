@@ -2,7 +2,7 @@
 
 import { TlaIsabelleError } from "../../../errors";
 import { asmRl, isNormHhf, normHhfEq, reflexiveThm, termI } from "../pure/drule";
-import { isEquals, stripImpPrems, stripAssumsConcl } from "../pure/logic";
+import { isEquals, isImplies, stripImpPrems, stripAssumsConcl } from "../pure/logic";
 import { makeSimpContext, type Simpset } from "../pure/raw-simplifier";
 import { genericRewriteGoalTac } from "../pure/rewriter";
 import { filterSeq, mapsSeq, singleSeq, type Seq } from "../pure/seq";
@@ -276,11 +276,8 @@ const assumeRuleTac = (limits: Limits): GoalTactic =>
       );
       const rules = stripImpPrems(body).filter(
         (prem) =>
-          prem.kind === "App" &&
-          ((prem.fun.kind === "App" &&
-            prem.fun.fun.kind === "Const" &&
-            prem.fun.fun.name === "Pure.imp") ||
-            (prem.fun.kind === "Const" && prem.fun.name === "Pure.all")),
+          isImplies(prem) ||
+          (prem.kind === "App" && prem.fun.kind === "Const" && prem.fun.name === "Pure.all"),
       );
       return rules.reduceRight<GoalTactic>(
         (tactic, rule) =>

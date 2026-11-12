@@ -2,7 +2,7 @@
 
 import { isIsabelleError, TlaIsabelleError } from "../../../../errors";
 import { selectGoal } from "../../pure/goal";
-import { destImplies, stripParams } from "../../pure/logic";
+import { destImplies, isAllAbs, stripParams } from "../../pure/logic";
 import { makeNameContext } from "../../pure/name";
 import { emptySeq, ofCell, type Seq } from "../../pure/seq";
 import { every, orElse, thenTac, type GoalTactic, type Tactic } from "../../pure/tactical";
@@ -48,12 +48,7 @@ const initialize = (context: BlastContext, state: Thm): BlastState => {
 };
 
 const discardForalls = (term: Term): Term =>
-  term.kind === "App" &&
-  term.fun.kind === "Const" &&
-  term.fun.name === "Pure.all" &&
-  term.arg.kind === "Abs"
-    ? discardForalls(term.arg.body)
-    : term;
+  isAllAbs(term) ? discardForalls(term.arg.body) : term;
 
 interface SubgoalVar {
   readonly key: string;

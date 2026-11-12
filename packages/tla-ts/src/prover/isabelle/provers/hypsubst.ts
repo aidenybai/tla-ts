@@ -3,7 +3,14 @@
 import { isIsabelleError, TlaIsabelleError } from "../../../errors";
 import { asmRl, compIncr, revcutRl, thinRl, zeroVarIndexes } from "../pure/drule";
 import { aeconv, etaContract } from "../pure/envir";
-import { occs, stripAssumsConcl, stripAssumsHyp, stripParams } from "../pure/logic";
+import {
+  isAllAbs,
+  isImplies,
+  occs,
+  stripAssumsConcl,
+  stripAssumsHyp,
+  stripParams,
+} from "../pure/logic";
 import { isBoundName } from "../pure/name";
 import { emptySimpset, type SimpContext } from "../pure/raw-simplifier";
 import { seqHead } from "../pure/seq";
@@ -136,19 +143,8 @@ const eqVar = (
     term: Term,
     hyps: readonly Term[],
   ): [number, [boolean, boolean]] => {
-    if (
-      term.kind === "App" &&
-      term.fun.kind === "Const" &&
-      term.fun.name === "Pure.all" &&
-      term.arg.kind === "Abs"
-    )
-      return visit(count, term.arg.body, hyps);
-    if (
-      term.kind === "App" &&
-      term.fun.kind === "App" &&
-      term.fun.fun.kind === "Const" &&
-      term.fun.fun.name === "Pure.imp"
-    ) {
+    if (isAllAbs(term)) return visit(count, term.arg.body, hyps);
+    if (isImplies(term)) {
       const premise = term.fun.arg;
       const conclusion = term.arg;
       try {
