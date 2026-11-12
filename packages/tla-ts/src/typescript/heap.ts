@@ -2280,6 +2280,10 @@ export const isPrototypeArray = (node: ts.Node) =>
   ts.isPropertyAccessExpression(node.parent.left) &&
   node.parent.left.name.text === "prototype";
 
+// Whether a script makes an array a prototype, whose methods an object may then inherit.
+export const hasPrototypeArray = (context: Context) =>
+  [...context.heapCollections].some(isPrototypeArray);
+
 export const isHoleyArray = (node: ts.Node) => {
   const isHeld =
     node.parent !== undefined &&

@@ -9272,6 +9272,50 @@ describe("errors", () => {
     );
   });
 
+  it("runs an inherited array method whose callback counts its calls", async () => {
+    const counted = (expected: string) => `
+      type Method = (...args: unknown[]) => unknown;
+      type Made = new () => { [key: string | symbol]: unknown };
+      function Holder() {}
+      Holder.prototype = new Array(1, 2, 3);
+      const numbers = new (Holder as unknown as Made)();
+      numbers.length = 2;
+      let total = 0;
+      let calls = 0;
+      (numbers.forEach as Method)((value: number) => {
+        calls++;
+        total += value;
+      });
+      const every = (numbers.every as Method)((value: number) => {
+        calls++;
+        return value < 2;
+      });
+      const result = total + " " + every + " " + calls;
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await check(compile(counted("3 false 4")))).failure).toBeUndefined();
+    expect((await check(compile(counted("3 false 3")))).failure?.message).toContain("3 false 4");
+  });
+
+  it("stops where an object's key holds another method than the one it inherits", async () => {
+    const result = await check(
+      compile(`
+        type Method = (...args: unknown[]) => unknown;
+        type Made = new () => { [key: string | symbol]: unknown };
+        function Holder() {}
+        Holder.prototype = new Array(1, 2, 3);
+        const numbers = new (Holder as unknown as Made)();
+        numbers.forEach = Array.prototype.map;
+        let calls = 0;
+        (numbers.forEach as Method)(() => {
+          calls++;
+        });
+        if (calls !== 3) throw new Error(String(calls));
+      `),
+    );
+    expect(result.failure?.message).toContain("tla-ts can't tell which function this call runs");
+  });
+
   it("throws where an inherited reduce has no initial value and no element", async () => {
     const empty = (expected: string) => `
       type Method = (...args: unknown[]) => unknown;
