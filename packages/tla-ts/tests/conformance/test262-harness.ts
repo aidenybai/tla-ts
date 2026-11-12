@@ -20,6 +20,8 @@ declare global {
     new (value: boolean): Boolean;
     // oxlint-disable-next-line typescript/no-wrapper-object-types
     new (value: symbol): Symbol;
+    // oxlint-disable-next-line typescript/no-wrapper-object-types
+    new (value: bigint): BigInt;
     (value?: null): { [key: string]: unknown };
     <T extends object>(value: T): T;
     // oxlint-disable-next-line typescript/no-wrapper-object-types
@@ -30,6 +32,8 @@ declare global {
     (value: boolean): Boolean;
     // oxlint-disable-next-line typescript/no-wrapper-object-types
     (value: symbol): Symbol;
+    // oxlint-disable-next-line typescript/no-wrapper-object-types
+    (value: bigint): BigInt;
   }
 }
 

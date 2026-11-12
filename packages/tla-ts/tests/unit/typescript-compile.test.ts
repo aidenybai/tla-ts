@@ -6304,6 +6304,39 @@ describe("errors", () => {
     );
   });
 
+  it("makes the BigInt object that Object makes of a BigInt", async () => {
+    const source = `
+      declare global {
+        interface ObjectConstructor {
+          // oxlint-disable-next-line typescript/no-wrapper-object-types
+          (value: bigint): BigInt;
+        }
+      }
+      const holder = { seen: 0 };
+      const valueOf = BigInt.prototype.valueOf;
+      const wrapped = Object(3n);
+      if (valueOf.call(wrapped) !== 3n || valueOf.call(2n) !== 2n) throw new Error("call");
+      if (wrapped.valueOf() !== 3n) throw new Error("method");
+      if (!(wrapped instanceof BigInt)) throw new Error("instance");
+      if (typeof wrapped !== "object") throw new Error("typeof");
+      if (Object.prototype.toString.call(wrapped) !== "[object BigInt]") throw new Error("tag");
+      if ((wrapped as unknown) != 3n) throw new Error("loose");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = [
+      ["valueOf.call(wrapped) !== 3n", "valueOf.call(wrapped) !== 2n", '"call"'],
+      ["wrapped.valueOf() !== 3n", "wrapped.valueOf() === 3n", '"method"'],
+      ["!(wrapped instanceof BigInt)", "wrapped instanceof BigInt", '"instance"'],
+      ['typeof wrapped !== "object"', 'typeof wrapped !== "bigint"', '"typeof"'],
+      ['"[object BigInt]"', '"[object Object]"', '"tag"'],
+      ["!= 3n", "!= 4n", '"loose"'],
+    ];
+    for (const [from, to, message] of wrong) {
+      expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
+    }
+  });
+
   it("stops on a call of a prototype method that a reassigned variable held", () => {
     expect(() =>
       compile(`

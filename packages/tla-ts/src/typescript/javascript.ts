@@ -1729,6 +1729,10 @@ ValueOf(heap, value, prototypes) ==
           /\\ Get(heap, value, "valueOf") = Ref :> "Symbol.prototype.valueOf" ->
             Lookup(heap, value).symbol
        [] /\\ IsHeap(value)
+          /\\ "bigint" \\in DOMAIN Lookup(heap, value)
+          /\\ Get(heap, value, "valueOf") = Ref :> "BigInt.prototype.valueOf" ->
+            Lookup(heap, value).bigint
+       [] /\\ IsHeap(value)
           /\\ IsRef(Get(heap, value, "valueOf"))
           /\\ ~IsHeap(Get(heap, value, "valueOf"))
           /\\ Get(heap, value, "valueOf")[Ref] = "Object.prototype.valueOf" -> value
@@ -1756,6 +1760,15 @@ ThisSymbol(heap, value) ==
     [] IsSymbol(value) -> value
     [] IsHeap(value) /\\ "symbol" \\in DOMAIN Lookup(heap, value) -> Lookup(heap, value).symbol
     [] OTHER -> Assert(FALSE, "tla-ts can't call a Symbol.prototype method on a value that isn't a symbol")
+
+\\* The BigInt that BigInt.prototype.valueOf reads from a BigInt or a BigInt object, while
+\\* BigInt.prototype holds the built-in method.
+ThisBigIntObject(heap, value) ==
+  CASE Get(heap, Ref :> "BigInt.prototype", "valueOf") # Ref :> "BigInt.prototype.valueOf" ->
+         Assert(FALSE, "tla-ts can't call BigInt.prototype.valueOf where a script replaced it")
+    [] IsBigInt(value) -> value
+    [] IsHeap(value) /\\ "bigint" \\in DOMAIN Lookup(heap, value) -> Lookup(heap, value).bigint
+    [] OTHER -> Assert(FALSE, "tla-ts can't call a BigInt.prototype method on a value that isn't a BigInt")
 
 \\* The BigInt that BigInt.prototype.method.call reads from the value that it calls the method on.
 ThisBigInt(value) ==
@@ -2860,6 +2873,10 @@ LOCAL LoosePrimitive(heap, ref) ==
             Assert(FALSE, "tla-ts can't convert " \\o ToString(ref) \\o " to a primitive")
        [] kind # "" /\\ isBuiltIn(valueOf, kind \\o ".prototype.valueOf") ->
             WrappedPrimitive(heap, ref, kind, "valueOf")
+       [] /\\ IsHeap(ref)
+          /\\ "bigint" \\in DOMAIN Lookup(heap, ref)
+          /\\ isBuiltIn(valueOf, "BigInt.prototype.valueOf") ->
+            Lookup(heap, ref).bigint
        [] /\\ isBuiltIn(valueOf, "Object.prototype.valueOf")
           /\\ isBuiltIn(Get(heap, ref, "toString"), "Object.prototype.toString") ->
             ObjectToString(heap, ref, "")
@@ -2880,6 +2897,8 @@ ConvertWith(heap, ref, method) ==
             NumberToString(WrappedPrimitive(heap, ref, "Number", "toString"), Undefined)
        [] path = "Boolean.prototype.toString" ->
             BooleanToString(WrappedPrimitive(heap, ref, "Boolean", "toString"))
+       [] path = "BigInt.prototype.valueOf" /\\ IsHeap(ref) /\\ "bigint" \\in DOMAIN Lookup(heap, ref) ->
+            Lookup(heap, ref).bigint
        [] OTHER -> Assert(FALSE, "tla-ts can't tell what this method gives where it converts an object")
 
 \\* ToNumber of a primitive. tla-ts can't represent a string's fraction.
@@ -3072,9 +3091,9 @@ WrapperObject(prototype, primitive) ==
       extensible |-> TRUE, prototype |-> prototype, isCallable |-> FALSE, isConstructor |-> FALSE,
       isOpaque |-> FALSE, privates |-> <<>>, primitive |-> primitive]
 
-\\* The object that Object makes of a symbol, which holds the symbol in a slot of its own rather than
-\\* the primitive slot of a Boolean, Number, or String object.
-SymbolObject(prototype, symbol) == [EmptyObject EXCEPT !.prototype = prototype] @@ [symbol |-> symbol]
+\\* The object that Object makes of a symbol or a BigInt, which holds it in a slot named symbol or
+\\* bigint rather than the primitive slot of a Boolean, Number, or String object.
+SlotObject(prototype, slot, value) == [EmptyObject EXCEPT !.prototype = prototype] @@ (slot :> value)
 
 \\* The description of a property of the String object that a string converts to.
 DescribeString(text, key) == DescribeObject(WrapperObject(Null, text), key)
