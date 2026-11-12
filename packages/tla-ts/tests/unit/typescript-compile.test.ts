@@ -812,6 +812,31 @@ describe("values", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("writes a property in a logical assignment only where its value doesn't decide", async () => {
+    const getSource = (either: number, nullish: number, fixed: number) => `
+      class Counter {
+        #field = 1;
+        either() {
+          return (this.#field ||= 9);
+        }
+      }
+      const echo = (value: unknown) => value;
+      const expected: number = ${either};
+      const counter = new Counter();
+      if (counter.either() !== expected) throw new Error("or");
+      const box: { count?: number | null } = { count: null };
+      box.count ??= 4;
+      if (box.count !== ${nullish}) throw new Error("nullish");
+      const fixed: { count: number } = { count: 2 };
+      Object.defineProperty(fixed, "count", { writable: false });
+      if (echo((fixed.count ||= 0)) !== ${fixed}) throw new Error("fixed");
+    `;
+    expect((await checkModel(getSource(1, 4, 2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(9, 4, 2))).failure?.message).toContain("or");
+    expect((await checkModel(getSource(1, 5, 2))).failure?.message).toContain("nullish");
+    expect((await checkModel(getSource(1, 4, 0))).failure?.message).toContain("fixed");
+  });
+
   it("gives what a compound assignment to a property writes, as its value", async () => {
     const getSource = (field: number, property: number, element: number, typed: number) => `
       class Counter {

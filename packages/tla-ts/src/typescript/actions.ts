@@ -1246,34 +1246,31 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
   return update === undefined ? undefined : assign(expression.left, path, context, update);
 };
 
+// Whether a logical assignment writes its target, which holds a value.
+const isLogicallyWritten = (
+  expression: ts.BinaryExpression,
+  current: Expression,
+  context: Context,
+) => {
+  const kind = expression.operatorToken.kind;
+  const isTruthy = isBooleanLike(expression.left, context)
+    ? current
+    : useJavaScript("ToBoolean", [current], context);
+  context.prelude.add("Null");
+  return kind === ts.SyntaxKind.QuestionQuestionEqualsToken
+    ? apply("\\in", [current, set([getUndefined(context), identifier("Null")])])
+    : kind === ts.SyntaxKind.BarBarEqualsToken
+      ? not(isTruthy)
+      : isTruthy;
+};
+
 // How a compound or logical assignment changes what its target holds.
 const getUpdate = (expression: ts.BinaryExpression, path: Path, context: Context) => {
   const kind = expression.operatorToken.kind;
   if (LOGICAL_OPERATORS.has(kind)) {
-    if (!ts.isIdentifier(expression.left)) {
-      throw new TlaTypeScriptError(
-        `${expression.operatorToken.getText()} assigns only to variables`,
-        expression,
-      );
-    }
-    const right = expression.right;
-    const left = expression.left;
-    return (current: Expression) => {
-      const isTruthy = isBooleanLike(left, context)
-        ? current
-        : useJavaScript("ToBoolean", [current], context);
-      const assigned = translateExpression(right, path.scope, context);
-      context.prelude.add("Null");
-      return kind === ts.SyntaxKind.QuestionQuestionEqualsToken
-        ? ifExpression(
-            apply("\\in", [current, set([getUndefined(context), identifier("Null")])]),
-            assigned,
-            current,
-          )
-        : kind === ts.SyntaxKind.BarBarEqualsToken
-          ? ifExpression(isTruthy, current, assigned)
-          : ifExpression(isTruthy, assigned, current);
-    };
+    const assigned = translateExpression(expression.right, path.scope, context);
+    return (current: Expression) =>
+      ifExpression(isLogicallyWritten(expression, current, context), assigned, current);
   }
   const arithmetic = ARITHMETIC_ASSIGNMENTS.get(kind);
   const bigIntOperator = arithmetic === undefined ? undefined : BIGINT_OPERATORS.get(arithmetic);
@@ -6010,6 +6007,34 @@ const translateExpressionStatement = (
       continueWith,
     );
   }
+  // A logical assignment to a property writes it only where the property's value doesn't decide
+  // the result, so that a property that can't change doesn't throw.
+  if (
+    ts.isBinaryExpression(expression) &&
+    LOGICAL_OPERATORS.has(expression.operatorToken.kind) &&
+    !ts.isIdentifier(expression.left)
+  ) {
+    return ifThenElse(
+      isLogicallyWritten(
+        expression,
+        translateExpression(expression.left, path.scope, context),
+        context,
+      ),
+      translateWriteStatement(expression, path, context, frame, continueWith),
+      continueWith(path),
+    );
+  }
+  return translateWriteStatement(expression, path, context, frame, continueWith);
+};
+
+// Runs an assignment or an increment, which writes a variable or a property.
+const translateWriteStatement = (
+  expression: ts.Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
   const assigned = getAssignedPath(expression, path, context);
   if (assigned === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
