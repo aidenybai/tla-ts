@@ -898,6 +898,34 @@ describe("calls", () => {
     expect((await checkModel(getSource("1,2"))).status).toBe("invariant-violation");
   });
 
+  it("truncates an array whose length a model sets", async () => {
+    const getSource = (expected: string) => `
+      let values: number[] = [3, 1, 2];
+      export const step = () => {
+        values.length = values.length > 0 ? values.length - 1 : 0;
+      };
+      export const isKnown = () => ["3,1,2", "${expected}", "3", ""].includes(values.join(","));
+    `;
+    expect((await checkModel(getSource("3,1"))).status).toBe("success");
+    expect((await checkModel(getSource("1,2"))).status).toBe("invariant-violation");
+  });
+
+  it("truncates an array whose length a script sets, and stops where it would leave holes", async () => {
+    const result = await checkModel(`
+      const x = [1, 2, 3, 4];
+      x.length = 2;
+      const arr = [1, 2, 3];
+      let visited = 0;
+      arr.forEach((value: number) => {
+        visited += value;
+        arr.length = 2;
+      });
+      if (x.join(",") !== "1,2" || visited !== 3) throw new Error("truncated");
+      x.length = 3;
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't lengthen an array");
+  });
+
   it("reports an index out of range in a function that reads state", async () => {
     const result = await checkModel(`
       let queue: number[] = [];

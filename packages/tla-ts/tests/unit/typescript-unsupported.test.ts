@@ -68,7 +68,6 @@ const CASES: [string, string][] = [
   ],
   ["labels", "outer: { count++; }"],
   ["an increment after a comma", "count = (label, count++);"],
-  ["array length assignment", "values.length = 0;"],
   ["returning a value from an action", "count++; return count;"],
   ["assigning a constant", "LIMIT = 3;"],
   ["calling an action from an action", "step();"],

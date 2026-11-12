@@ -611,6 +611,40 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
         ),
     };
   }
+  // An array's length that a script sets truncates the array, which can't hold the holes that a
+  // longer length would leave.
+  if (
+    ts.isPropertyAccessExpression(node) &&
+    node.name.text === "length" &&
+    getKind(node.expression, context) === "sequence"
+  ) {
+    const target = getTarget(node.expression, path, context);
+    const assigned = node.parent;
+    const isNumber = ts.isBinaryExpression(assigned) && isNumberLike(assigned.right, context);
+    return {
+      ...target,
+      current: apply("Len", [target.current]),
+      update: (getValue) =>
+        target.update((sequence) =>
+          share(
+            isNumber
+              ? getValue(apply("Len", [sequence]))
+              : useJavaScript("ToNumber", [getValue(apply("Len", [sequence]))], context),
+            "length",
+            context,
+            (length) =>
+              ifExpression(
+                apply("\\in", [length, apply("..", [number(0), apply("Len", [sequence])])]),
+                apply("SubSeq", [sequence, number(1), length]),
+                apply("Assert", [
+                  boolean(false),
+                  string("tla-ts can't lengthen an array that can't hold holes"),
+                ]),
+              ),
+          ),
+        ),
+    };
+  }
   if (ts.isPropertyAccessExpression(node)) {
     if (getKind(node.expression, context) !== "other") {
       throw new TlaTypeScriptError(`Can't assign to ${node.getText()}`, node);
