@@ -1768,6 +1768,8 @@ const GETTERS = new Map([
   ["ArrayBuffer", new Set(["byteLength", "maxByteLength", "resizable", "detached"])],
   ["SharedArrayBuffer", new Set(["byteLength", "maxByteLength", "growable"])],
   ["DataView", new Set(["buffer", "byteLength", "byteOffset"])],
+  ["Map", new Set(["size"])],
+  ["Set", new Set(["size"])],
 ]);
 
 // The constructors whose @@species getter gives its receiver.

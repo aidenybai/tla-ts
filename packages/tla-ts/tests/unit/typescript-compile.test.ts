@@ -2446,6 +2446,55 @@ describe("errors", () => {
     expect((await checkModel(getSource(2))).failure?.message).toContain("unexpected");
   });
 
+  it("calls the size getter that a script takes from a Map's or a Set's descriptor", async () => {
+    const getSource = (expected: number) => `
+      let thrown = 0;
+      const attempt = (run: () => void) => {
+        try {
+          run();
+        } catch (error) {
+          if (error instanceof TypeError) thrown++;
+        }
+      };
+      const descriptor = Object.getOwnPropertyDescriptor(Map.prototype, "size");
+      const setSize = Object.getOwnPropertyDescriptor(Set.prototype, "size")!.get;
+      const map = new Map<number, number>([
+        [1, 2],
+        [3, 4],
+      ]);
+      const set = new Set([5]);
+      const mapSize = descriptor!.get!.call(map);
+      const setCount = setSize!.call(set);
+      attempt(() => {
+        descriptor!.get!.call([]);
+      });
+      attempt(() => {
+        descriptor!.get!.call(new WeakMap());
+      });
+      attempt(() => {
+        descriptor!.get!.call(set);
+      });
+      attempt(() => {
+        descriptor!.get!.call(1);
+      });
+      attempt(() => {
+        descriptor!.get!.call({});
+      });
+      attempt(() => {
+        setSize!.call(map);
+      });
+      attempt(() => {
+        setSize!();
+      });
+      const getThrown = (): number => thrown;
+      if (getThrown() !== 7 || mapSize !== ${expected} || setCount !== 1) {
+        throw new Error("unexpected");
+      }
+    `;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(3))).failure?.message).toContain("unexpected");
+  });
+
   it("runs the getter that a rest pattern copies where the script defines getters under other keys", async () => {
     const getSource = (expected: number) => `
       let count = 0;

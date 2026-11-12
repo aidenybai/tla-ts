@@ -453,6 +453,53 @@ export const translateSize = (node: ts.Expression, scope: Scope, context: Contex
   return undefined;
 };
 
+const COLLECTION_NAMES = new Set([
+  "Map",
+  "ReadonlyMap",
+  "WeakMap",
+  "Set",
+  "ReadonlySet",
+  "WeakSet",
+]);
+
+const PRIMITIVE_FLAGS =
+  ts.TypeFlags.NumberLike |
+  ts.TypeFlags.BooleanLike |
+  ts.TypeFlags.StringLike |
+  ts.TypeFlags.BigIntLike |
+  ts.TypeFlags.ESSymbolLike |
+  ts.TypeFlags.Undefined |
+  ts.TypeFlags.Null |
+  ts.TypeFlags.Void;
+
+// What the size getter of Map.prototype or Set.prototype gives a receiver that a script calls it
+// on, or undefined where it throws a TypeError, as the receiver isn't a collection of that kind.
+export const translateSizeGetter = (
+  owner: "Map" | "Set",
+  receiver: ts.Expression | undefined,
+  scope: Scope,
+  context: Context,
+) => {
+  if (receiver === undefined) return undefined;
+  const type = context.checker.getTypeAtLocation(receiver);
+  const name = type.getSymbol()?.getName() ?? "";
+  const kind = getKind(receiver, context);
+  if ([owner, `Readonly${owner}`].includes(name) && kind === owner.toLowerCase()) {
+    return translateSize(receiver, scope, context);
+  }
+  const inner = skipCasts(receiver);
+  const isOther =
+    isEvery(type, PRIMITIVE_FLAGS) ||
+    kind === "sequence" ||
+    kind === "string" ||
+    COLLECTION_NAMES.has(name) ||
+    ts.isObjectLiteralExpression(inner) ||
+    ts.isArrowFunction(inner) ||
+    ts.isFunctionExpression(inner);
+  if (isOther) return undefined;
+  throw new TlaTypeScriptError(`Give the receiver of ${owner}.prototype.size a type`, receiver);
+};
+
 // [x \in S |-> e] from source.map((x) => [x, e]), as new Map() and Object.fromEntries() take it.
 export const translateFunctionConstructor = (
   node: ts.Expression,

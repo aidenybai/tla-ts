@@ -24,6 +24,7 @@ import {
   translateSpliced,
   checkArrayMethod,
   translatePrimitiveMethod,
+  translateSizeGetter,
 } from "./collections";
 import {
   findNodes,
@@ -1823,28 +1824,42 @@ export const translateCallStatement = (
       getterCall.path !== "get Object.prototype.__proto__" &&
       getterCall.path !== "get RegExp.prototype.flags" &&
       !getterCall.path.endsWith(".@@species");
+    const sizeOwner =
+      getterCall.path === "get Map.prototype.size"
+        ? "Map"
+        : getterCall.path === "get Set.prototype.size"
+          ? "Set"
+          : undefined;
+    const size =
+      sizeOwner === undefined
+        ? undefined
+        : translateSizeGetter(sizeOwner, receiver, path.scope, context);
     const run = isFunctionReceiver
       ? throwTypeError(path, expression, context, frame)
-      : bindOnce(
-          path,
-          resultName,
-          useJavaScript(
-            "GetterCall",
-            [
-              heap,
-              getter,
-              receiver === undefined
-                ? getUndefined(context)
-                : translateExpression(receiver, path.scope, context),
-            ],
-            context,
-          ),
-          ifThenElse(
-            apply("=", [field(result, "error"), string("")]),
-            continueWith(path, field(result, "value")),
-            throwTypeError(path, expression, context, frame),
-          ),
-        );
+      : sizeOwner !== undefined
+        ? size === undefined
+          ? throwTypeError(path, expression, context, frame)
+          : continueWith(path, size)
+        : bindOnce(
+            path,
+            resultName,
+            useJavaScript(
+              "GetterCall",
+              [
+                heap,
+                getter,
+                receiver === undefined
+                  ? getUndefined(context)
+                  : translateExpression(receiver, path.scope, context),
+              ],
+              context,
+            ),
+            ifThenElse(
+              apply("=", [field(result, "error"), string("")]),
+              continueWith(path, field(result, "value")),
+              throwTypeError(path, expression, context, frame),
+            ),
+          );
     const builtIn = translateBuiltInValue(getterCall.path, expression, context);
     return ifThenElse(
       apply("/\\", [
