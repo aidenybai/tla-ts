@@ -7287,6 +7287,18 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("truncates a fraction that split takes as its limit, at a string or a regexp", async () => {
+    const split = (expected: number) => `
+      const box = { size: 0 };
+      const text = "a,b,c";
+      if (text.split(",", 2.5).length !== 2 || text.split(",", -0.5).length !== 0) throw new Error("limit");
+      if (text.split(",", -1.5).length !== ${expected}) throw new Error("limit");
+      if ("a1b2c".split(/\\d/, 1.5).length !== 1 || "a1b2c".split(/\\d/, -1.5).length !== 3) throw new Error("regexp");
+    `;
+    expect((await checkModel(split(3))).failure).toBeUndefined();
+    expect((await checkModel(split(2))).failure?.message).toContain("limit");
+  });
+
   it("encodes and decodes URIs of ASCII", async () => {
     const result = await checkModel(`
       if (encodeURIComponent("a b&c/d") !== "a%20b%26c%2Fd") throw new Error("component");

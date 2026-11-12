@@ -1828,7 +1828,7 @@ StringSplit(value, separator, limit) ==
   LET text == Text(value)
       count == CASE limit = Undefined -> -1
                  [] limit \\in {NaN, Infinity, NegativeInfinity, NegativeZero} -> 0
-                 [] OTHER -> limit
+                 [] OTHER -> IntegerOf(limit)
       head == IF count < 0 \\/ count > Len(text) THEN text ELSE SubSeq(text, 1, count)
   IN  CASE count = 0 -> <<>>
         [] separator = Undefined -> <<text>>
@@ -2361,8 +2361,8 @@ RegExpSplitFrom(regexp, text, p, q) ==
 LOCAL RegExpPieces(regexp, text, limit) ==
   LET count == CASE limit = Undefined -> -1
                  [] limit \\in {NaN, Infinity, NegativeInfinity, NegativeZero} -> 0
-                 [] limit < 0 -> -1
-                 [] OTHER -> limit
+                 [] IntegerOf(limit) < 0 -> -1
+                 [] OTHER -> IntegerOf(limit)
       pieces == CASE count = 0 -> <<>>
                   [] text = "" -> IF RegExpAt(regexp, text, 0).end # -1 THEN <<>> ELSE <<text>>
                   [] OTHER -> RegExpSplitFrom(regexp, text, 0, 0)
