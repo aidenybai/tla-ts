@@ -403,6 +403,36 @@ describe("top-level statements", () => {
     expect(empty.failure?.message).toContain("TypeError");
   });
 
+  it("throw what an array method's callback or getter throws to the try around the call", async () => {
+    const source = (expected: number) => `
+      let visited = 0;
+      let message = "";
+      try {
+        [1, 2, 3].forEach((value) => {
+          visited += value;
+          if (value === 2) throw new RangeError("two");
+        });
+      } catch (error) {
+        if (error instanceof RangeError) message = error.message;
+      }
+      const like: { [key: string]: unknown } = { 0: 1, length: 3 };
+      Object.defineProperty(like, "1", {
+        get: function () {
+          throw new TypeError("getter");
+        },
+      });
+      let isTypeError = false;
+      try {
+        Array.prototype.map.call(like, (value: unknown) => value);
+      } catch (error) {
+        isTypeError = error instanceof TypeError;
+      }
+      if (visited !== ${expected} || message !== "two" || !isTypeError) throw new Error("thrown");
+    `;
+    expect((await checkModel(source(3))).failure).toBeUndefined();
+    expect((await checkModel(source(6))).failure?.message).toContain("thrown");
+  });
+
   it("convert an array-like object's length that's an object with its valueOf and toString", async () => {
     const source = (expected: string) => `
       const calls: string[] = [];
