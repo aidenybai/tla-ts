@@ -1,3 +1,4 @@
+import type { RelationProperty } from "../eqrel";
 import type { ExprKind } from "../expr";
 import type { Definition } from "../parse";
 import type { PlainRuleName, RuleArgs } from "../proof";
@@ -19,8 +20,6 @@ export interface RuleSpec {
   premises: Term[];
   branches: Term[][];
 }
-
-export type RelationProperty = "reflexive" | "symmetric" | "transitive";
 
 export type Binding = number | { formula: Term; env: Env; operators?: Operators };
 

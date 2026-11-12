@@ -25,7 +25,7 @@ const decomposeAdd = (set: Expr): [Expr[], Expr] => {
   return [elements, rest];
 };
 
-const BINARY_SET_RULES: Record<
+const BINARY_SET_RULES = new Map<
   string,
   [
     "in_cup" | "in_cap" | "in_setminus",
@@ -33,11 +33,11 @@ const BINARY_SET_RULES: Record<
     boolean,
     boolean,
   ]
-> = {
-  "TLA.cup": ["in_cup", "notin_cup", true, false],
-  "TLA.cap": ["in_cap", "notin_cap", false, true],
-  "TLA.setminus": ["in_setminus", "notin_setminus", false, true],
-};
+>([
+  ["TLA.cup", ["in_cup", "notin_cup", true, false]],
+  ["TLA.cap", ["in_cap", "notin_cap", false, true]],
+  ["TLA.setminus", ["in_setminus", "notin_setminus", false, true]],
+]);
 
 export const getMembershipNodes = (literal: Literal): Item[] | undefined => {
   const exprs = literal.context.exprs;
@@ -151,7 +151,7 @@ export const getMembershipNodes = (literal: Literal): Item[] | undefined => {
             [[exists]],
           );
     }
-    const binarySetRule = set.kind === "app" ? BINARY_SET_RULES[set.symbol] : undefined;
+    const binarySetRule = set.kind === "app" ? BINARY_SET_RULES.get(set.symbol) : undefined;
     if (binarySetRule !== undefined && set.args.length === 2) {
       const first = member(exprs, element, set.args[0]);
       const secondPositive = member(exprs, element, set.args[1]);

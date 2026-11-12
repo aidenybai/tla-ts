@@ -1,6 +1,8 @@
 // Ported from Zenon's index.ml, as shipped in tlapm. Copyright 2004 INRIA, see LICENSE.
 
 import {
+  getStringName,
+  isApp,
   isNegatedRelation,
   isRelation,
   type Expr,
@@ -128,35 +130,23 @@ export const createIndex = (exprs: Expressions) => {
     if (head !== undefined) action(positive, getHeadKey(head), formula);
   };
 
-  const getStringLiteral = (expression: Expr) =>
-    expression.kind === "app" &&
-    expression.symbol === "$string" &&
-    expression.args.length === 1 &&
-    expression.args[0].kind === "var"
-      ? expression.args[0].symbol
-      : undefined;
-
   const getStringEquality = (formula: Expr) => {
-    if (formula.kind !== "app" || formula.symbol !== "=" || formula.args.length !== 2)
-      return undefined;
-    const rightString = getStringLiteral(formula.args[1]);
+    if (!isApp(formula, "=", 2)) return undefined;
+    const rightString = getStringName(formula.args[1]);
     if (rightString !== undefined)
       return { isReversed: false, term: formula.args[0], value: rightString };
-    const leftString = getStringLiteral(formula.args[0]);
+    const leftString = getStringName(formula.args[0]);
     return leftString === undefined
       ? undefined
       : { isReversed: true, term: formula.args[1], value: leftString };
   };
 
-  const isEquality = (formula: Expr) =>
-    formula.kind === "app" && formula.symbol === "=" && formula.args.length === 2;
-
   const add = (formula: Expr, goalness: number) => {
     pushValue(formulas, formula, goalness);
-    if (isEquality(formula)) {
+    if (isApp(formula, "=", 2)) {
       pushValue(equalLeftRight, formula.args[0], formula.args[1]);
       pushValue(equalRightLeft, formula.args[1], formula.args[0]);
-    } else if (formula.kind === "not" && isEquality(formula.args[0])) {
+    } else if (formula.kind === "not" && isApp(formula.args[0], "=", 2)) {
       pushValue(unequalLeftRight, formula.args[0].args[0], formula.args[0].args[1]);
       pushValue(unequalRightLeft, formula.args[0].args[1], formula.args[0].args[0]);
     }
@@ -209,10 +199,10 @@ export const createIndex = (exprs: Expressions) => {
     const stringEquality = getStringEquality(formula);
     if (stringEquality !== undefined)
       (stringEquality.isReversed ? reversedStringEqualities : stringEqualities).shift();
-    if (isEquality(formula)) {
+    if (isApp(formula, "=", 2)) {
       popValue(equalLeftRight, formula.args[0]);
       popValue(equalRightLeft, formula.args[1]);
-    } else if (formula.kind === "not" && isEquality(formula.args[0])) {
+    } else if (formula.kind === "not" && isApp(formula.args[0], "=", 2)) {
       popValue(unequalLeftRight, formula.args[0].args[0]);
       popValue(unequalRightLeft, formula.args[0].args[1]);
     }
