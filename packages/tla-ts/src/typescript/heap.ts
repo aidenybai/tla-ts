@@ -1809,6 +1809,19 @@ export const isProxyValue = (node: ts.Expression, context: Context) => {
   return isNewProxy(origin, context) || isRevocableMember(origin, "proxy", context);
 };
 
+// The target that a proxy the script makes holds, where new Proxy or Proxy.revocable writes it.
+export const getProxyTarget = (node: ts.Expression, context: Context) => {
+  const origin = getOrigin(node, context);
+  const made =
+    isRevocableMember(origin, "proxy", context) && ts.isPropertyAccessExpression(origin)
+      ? getOrigin(origin.expression, context)
+      : origin;
+  return (isNewProxy(made, context) || isRevocable(made, context)) &&
+    (ts.isNewExpression(made) || ts.isCallExpression(made))
+    ? made.arguments?.at(0)
+    : undefined;
+};
+
 // A call of the function that revokes a proxy, which Proxy.revocable gives.
 export const isRevoke = (node: ts.Node, context: Context) =>
   context.heap !== undefined &&

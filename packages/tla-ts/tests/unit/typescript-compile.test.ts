@@ -8867,6 +8867,39 @@ describe("proxies", () => {
     expect((await checkModel(getSource(true))).failure?.message).toContain("unexpected");
   });
 
+  it("runs the traps of a proxy's target where the proxy's handler has none", async () => {
+    const getSource = (expected: number) => `
+      const log: string[] = [];
+      const inner = new Proxy<{ attr?: number }>({ attr: 1 }, {
+        get(innerTarget, key, receiver) {
+          log.push("get");
+          return key === "attr" ? 5 : undefined;
+        },
+        deleteProperty(innerTarget, key) {
+          log.push("delete");
+          return true;
+        },
+      });
+      const outer = new Proxy(inner, {});
+      if (outer.attr !== 5) throw new Error("get");
+      delete outer.attr;
+      if (log.length !== 2 || log[1] !== "delete") throw new Error("log");
+      const revocable = Proxy.revocable({ attr: 1 }, {});
+      const holding = new Proxy(revocable.proxy, {});
+      revocable.revoke();
+      let isThrown = false;
+      try {
+        const read = holding.attr;
+      } catch (error) {
+        isThrown = error instanceof TypeError;
+      }
+      if (!isThrown) throw new Error("revoked");
+      if (inner.attr !== ${expected}) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(5))).failure).toBeUndefined();
+    expect((await checkModel(getSource(1))).failure?.message).toContain("unexpected");
+  });
+
   it("stops the check where something else reads a proxy", async () => {
     const result = await checkModel(`
       const proxy = new Proxy({ attr: 1 }, {});

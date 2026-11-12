@@ -31,7 +31,13 @@ import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf } from "./formula";
 import { getBuiltIn } from "./intrinsics";
-import { getCandidateValue, getHeap, isProxyValue, translateObjectValue } from "./heap";
+import {
+  getCandidateValue,
+  getHeap,
+  getProxyTarget,
+  isProxyValue,
+  translateObjectValue,
+} from "./heap";
 import { useJavaScript } from "./javascript";
 import { getKind, isHeapPattern } from "./types";
 import {
@@ -1353,6 +1359,19 @@ const getProxyOperation = (node: ts.Node, context: Context) => {
 export const isProxyOperation = (node: ts.Node, context: Context): node is ts.Expression =>
   getProxyOperation(node, context) !== undefined;
 
+// The targets of a proxy that the script makes, through each target that is such a proxy too.
+const getTargets = (
+  expression: ts.Expression | undefined,
+  seen: ts.Expression[],
+  context: Context,
+): (ts.Expression | undefined)[] =>
+  expression !== undefined && !seen.includes(expression) && isProxyValue(expression, context)
+    ? [
+        expression,
+        ...getTargets(getProxyTarget(expression, context), [...seen, expression], context),
+      ]
+    : [expression];
+
 // Runs a proxy's internal method, as ECMAScript's proxy objects do: the handler's trap, called
 // with the target and the values, where the handler has one, or else what forward does with the
 // target. A revoked proxy, or a trap that isn't a function, throws a TypeError.
@@ -1364,7 +1383,7 @@ const runTrap = (
   path: Path,
   context: Context,
   frame: Frame,
-  forward: (path: Path, target: Expression, handler: Expression) => Formula,
+  forward: (path: Path, target: Expression) => Formula,
   check: (path: Path, target: Expression, result: Expression) => Formula,
 ) => {
   const heap = getHeap(path.scope, site, context);
@@ -1391,7 +1410,7 @@ const runTrap = (
               (withTrap, method) =>
                 ifThenElse(
                   isNullish(method, context),
-                  forward(withTrap, target, handler),
+                  forward(withTrap, target),
                   callValue(
                     site,
                     getMethods(site, trap, context),
@@ -1440,6 +1459,9 @@ export const runProxyOperation = (
   const key = string(operation.key ?? "");
   const method = string(operation.method ?? "");
   const javaScript = (name: string, values: Expression[]) => useJavaScript(name, values, context);
+  const targets = getTargets(operation.object, [], context);
+  // How many proxies the script makes the proxy hold as targets, one inside another.
+  const depth = targets.length - 2;
   // Evaluates the value that the operation takes, or the arguments of a call or a new, in order.
   const evaluate = (
     path: Path,
@@ -1529,7 +1551,15 @@ export const runProxyOperation = (
         ]),
       );
     };
-    const runWith = (path: Path, values: Expression[], descriptor: Expression) => {
+    // Runs the internal method of a proxy on the way, as its handler's trap or, where it has none,
+    // as its target's, where nested counts the proxies that the script makes it hold as targets.
+    const runWith = (
+      path: Path,
+      current: Expression,
+      values: Expression[],
+      descriptor: Expression,
+      nested: number,
+    ): Formula => {
       const heap = getHeap(path.scope, node, context);
       const check = (after: Path, target: Expression, result: Expression) => {
         const changed = getHeap(after.scope, node, context);
@@ -1624,7 +1654,7 @@ export const runProxyOperation = (
       };
       // What the target does where the handler has no trap. A set reads and defines the proxy's
       // own property, which tla-ts follows only where the handler can't trap those either.
-      const forward = (after: Path, target: Expression, handler: Expression) => {
+      const forwardTo = (after: Path, target: Expression) => {
         // What reads the target goes on through proxy targets that have no trap for it.
         const forwarded = (name: string) =>
           javaScript("ForwardTarget", [heap, target, set([string(name)])]);
@@ -1698,24 +1728,29 @@ export const runProxyOperation = (
         if (trap === "deleteProperty") {
           return change("CanDelete", javaScript("Delete", [heap, target, key]));
         }
-        return ifThenElse(
-          apply("/\\", [
-            isNullish(
-              javaScript("Get", [heap, handler, string("getOwnPropertyDescriptor")]),
-              context,
-            ),
-            isNullish(javaScript("Get", [heap, handler, string("defineProperty")]), context),
-          ]),
-          change("CanPut", javaScript("SetProperty", [heap, target, key, value])),
-          leaf(
-            apply("Assert", [
-              boolean(false),
-              string("tla-ts can't run the traps that a set through a proxy runs"),
+        return change(
+          "CanPut",
+          javaScript("SetProperty", [
+            heap,
+            javaScript("ForwardTarget", [
+              heap,
+              proxy,
+              set([string("getOwnPropertyDescriptor"), string("defineProperty")]),
             ]),
-          ),
+            key,
+            value,
+          ]),
         );
       };
-      return runTrap(node, proxy, trap, values, path, context, frame, forward, check);
+      const forward = (after: Path, target: Expression) =>
+        nested === 0
+          ? forwardTo(after, target)
+          : ifThenElse(
+              javaScript("IsProxy", [heap, target]),
+              runWith(after, target, values, descriptor, nested - 1),
+              forwardTo(after, target),
+            );
+      return runTrap(node, current, trap, values, path, context, frame, forward, check);
     };
     const heap = getHeap(path.scope, node, context);
     if (trap === "isArray") {
@@ -1746,8 +1781,10 @@ export const runProxyOperation = (
                     (bound, allocated) =>
                       runWith(
                         withHeap(bound, allocated, context),
+                        proxy,
                         [key, javaScript("Allocated", [allocated])],
                         descriptor,
+                        depth,
                       ),
                   ),
                   throwWith(converted),
@@ -1762,6 +1799,7 @@ export const runProxyOperation = (
                 : javaScript("IsConstructor", [heap, proxy]),
               runWith(
                 path,
+                proxy,
                 trap === "apply"
                   ? [
                       operation.receiver === undefined
@@ -1771,6 +1809,7 @@ export const runProxyOperation = (
                     ]
                   : [value, proxy],
                 getUndefined(context),
+                depth,
               ),
               throwWith(path),
             )
@@ -1780,11 +1819,12 @@ export const runProxyOperation = (
                   apply("=", [value, identifier("Null")]),
                   javaScript("IsObjectIn", [heap, value]),
                 ]),
-                runWith(path, [value], getUndefined(context)),
+                runWith(path, proxy, [value], getUndefined(context), depth),
                 throwWith(path),
               )
             : runWith(
                 path,
+                proxy,
                 trap === "get"
                   ? [key, proxy]
                   : trap === "set"
@@ -1793,6 +1833,7 @@ export const runProxyOperation = (
                       ? [key]
                       : [],
                 getUndefined(context),
+                depth,
               );
     // A read or an in of a value that isn't a proxy reads it as JavaScript does elsewhere.
     const isPlain = !operation.isReflected && (trap === "get" || trap === "has");
