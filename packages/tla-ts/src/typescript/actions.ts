@@ -5521,6 +5521,114 @@ const bindIteration = (
 // A for await over an array written in place. Each element reaches the body two jobs on, as the
 // async-from-sync iterator awaits the element and the loop then awaits the iterator's result, and
 // the last next takes two more. Leaving the body early awaits the iterator's return.
+// A key that a for-of reads from a generator object, which a script could replace.
+const GENERATOR_KEYS = new Set(["next", "return"]);
+
+const writesGeneratorKey = (node: ts.Node): boolean => {
+  const written = getWritten(node);
+  const key =
+    written === undefined
+      ? undefined
+      : ts.isPropertyAccessExpression(written)
+        ? written.name.text
+        : ts.isElementAccessExpression(written)
+          ? (getAccessKey(written) ?? "")
+          : undefined;
+  const isDefinition =
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    ["defineProperty", "defineProperties", "setPrototypeOf", "assign"].includes(
+      node.expression.name.text,
+    );
+  return (
+    (key !== undefined && (key === "" || GENERATOR_KEYS.has(key))) ||
+    isDefinition ||
+    (ts.forEachChild(node, writesGeneratorKey) ?? false)
+  );
+};
+
+// A for-of over a generator, which calls its next for each value, and its return where the loop
+// leaves early, as the generator object's own iterator does.
+const translateForOfGenerator = (
+  loop: ts.ForOfStatement,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const iterated = getCast(loop.expression);
+  if (writesGeneratorKey(loop.getSourceFile())) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't iterate a generator where a script may change how it iterates",
+      iterated,
+    );
+  }
+  const iterate = (start: Path, receiver: Expression) => {
+    const resume = (
+      current: Path,
+      method: string,
+      resumeFrame: Frame,
+      step: Caller["step"],
+    ): Formula =>
+      resumeGenerator(
+        loop.expression,
+        receiver,
+        method,
+        undefined,
+        current,
+        context,
+        resumeFrame,
+        step,
+      );
+    // Leaving the body early runs the generator's return, though a throw keeps what it threw.
+    const close = (current: Path, exit: (path: Path) => Formula) =>
+      resume(current, "return", frame, (after) => exit(after));
+    const next = (current: Path): Formula =>
+      resume(current, "next", frame, (after, value, isDone, isResult) => {
+        if (isDone) return continueWith(after);
+        const bodyFrame: Frame = {
+          ...guardYields(frame),
+          next,
+          continueTo: next,
+          breakTo: (left) => close(left, continueWith),
+          exit: (left, returned) => close(left, (closed) => frame.exit(closed, returned)),
+          // A throw closes the generator and keeps what it threw, even where the return throws.
+          throwTo: (left, thrown) => {
+            const rethrow = (closed: Path) =>
+              frame.throwTo === undefined ? leaf(thrown.uncaught) : frame.throwTo(closed, thrown);
+            return resume(left, "return", { ...frame, throwTo: rethrow }, rethrow);
+          },
+        };
+        const runBody = (current: Path, element: Expression) =>
+          bindIteration(
+            loop.initializer,
+            element,
+            undefined,
+            current,
+            context,
+            bodyFrame,
+            (bound) => translateStatements([loop.statement], bound, context, bodyFrame),
+          );
+        return isResult && value !== undefined
+          ? readValue(loop.expression, value, after, context, frame, runBody)
+          : runBody(after, value ?? getUndefined(context));
+      });
+    return next(start);
+  };
+  const created = ts.isCallExpression(iterated)
+    ? getCreatedGenerator(iterated, path, context)
+    : undefined;
+  if (created !== undefined && ts.isCallExpression(iterated)) {
+    return translateGeneratorCall(iterated, created, path, context, frame, (after, ref) =>
+      iterate(after, ref ?? getUndefined(context)),
+    );
+  }
+  if (hasCall(iterated, context)) {
+    throw new TlaTypeScriptError("tla-ts can't iterate this generator", iterated);
+  }
+  return iterate(path, translateExpression(iterated, path.scope, context));
+};
+
 const translateForAwait = (
   loop: ts.ForOfStatement,
   path: Path,
@@ -7131,6 +7239,13 @@ export const translateStatements = (
   }
   if (ts.isForOfStatement(statement) && statement.awaitModifier !== undefined) {
     return translateForAwait(statement, path, context, frame, continueWith);
+  }
+  if (
+    ts.isForOfStatement(statement) &&
+    context.heap !== undefined &&
+    isGeneratorType(statement.expression, context)
+  ) {
+    return translateForOfGenerator(statement, path, context, frame, continueWith);
   }
   if (ts.isIterationStatement(statement, false)) {
     return translateLoop(statement, path, context, frame, continueWith);

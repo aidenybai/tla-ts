@@ -3300,6 +3300,44 @@ describe("errors", () => {
     expect(stopped.failure?.message).toContain("tla-ts can't tell what this value inherits from");
   });
 
+  it("iterates a generator with for-of, closing it where the loop leaves early", async () => {
+    const result = await checkModel(`
+      const box = { seen: 0 };
+      function* values() {
+        yield 1;
+        box.seen += 1;
+        yield 2;
+        box.seen += 1;
+        yield 3;
+      }
+      const count = () => box.seen;
+      let total = 0;
+      for (const x of values()) total += x;
+      if (total !== 6 || count() !== 2) throw new Error("all");
+      const iterator = values();
+      for (const y of iterator) {
+        if (y === 2) break;
+        total += y;
+      }
+      for (const y of iterator) total += 100;
+      if (total !== 7 || count() !== 3) throw new Error("break");
+    `);
+    expect(result.failure).toBeUndefined();
+    expect(() =>
+      compile(`
+        const box = { seen: 0 };
+        function* values() {
+          yield 1;
+        }
+        (values as unknown as { prototype: { next: unknown } }).prototype.next = () => ({
+          value: 5,
+          done: true,
+        });
+        for (const y of values()) box.seen += y;
+      `),
+    ).toThrow("tla-ts can't iterate a generator where a script may change how it iterates");
+  });
+
   it("sorts, reverses, fills, and copies within an array in place", async () => {
     const result = await checkModel(`
       const letters = ["z", "B", "a", "A"];
