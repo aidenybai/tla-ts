@@ -424,6 +424,29 @@ export const compile = (
   );
   for (const definition of model.exported) translateExported(definition, model, sections, context);
   if (context.prelude.has("JavaScript")) {
+    // The code units outside ASCII that the script's text holds, or that the escapes of its literals
+    // and names write, whose codes the module tells. A lone surrogate is half of a pair, as a
+    // module's text holds only whole characters.
+    const texts = [sourceFile.text];
+    const visit = (node: ts.Node) => {
+      if (
+        ts.isLiteralExpression(node) ||
+        ts.isTemplateLiteralToken(node) ||
+        ts.isIdentifier(node) ||
+        ts.isPrivateIdentifier(node)
+      ) {
+        texts.push(node.text);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    const codes = new Set(
+      texts.flatMap((text) =>
+        Array.from({ length: text.length }, (_, position) => text.charCodeAt(position)).filter(
+          (code) => code >= 128,
+        ),
+      ),
+    );
     context.output.push(
       define(
         "UsedBuiltIns",
@@ -448,6 +471,36 @@ export const compile = (
                   value: Object.is(Math.round(fraction[0]), -0)
                     ? identifier("NegativeZero")
                     : number(Math.round(fraction[0])),
+                },
+              ]),
+            ),
+        ),
+      ),
+      define(
+        "UsedCharacters",
+        [],
+        tuple(
+          [...codes]
+            .sort((left, right) => left - right)
+            .map((code) =>
+              record("Record", [
+                { name: "code", value: number(code) },
+                {
+                  name: "character",
+                  value:
+                    code >= 0xd800 && code <= 0xdbff
+                      ? apply("SubSeq", [
+                          string(String.fromCharCode(code, 0xdc00)),
+                          number(1),
+                          number(1),
+                        ])
+                      : code >= 0xdc00 && code <= 0xdfff
+                        ? apply("SubSeq", [
+                            string(String.fromCharCode(0xd800, code)),
+                            number(2),
+                            number(2),
+                          ])
+                        : string(String.fromCharCode(code)),
                 },
               ]),
             ),

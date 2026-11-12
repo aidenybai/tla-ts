@@ -4236,9 +4236,15 @@ describe("errors", () => {
       const isOrdered = first <= second;
       if (!isOrdered) throw new Error("ordered");
     `);
-    expect(wide.failure?.message).toContain(
-      "tla-ts can't tell the code of a character outside ASCII",
-    );
+    expect(wide.failure).toBeUndefined();
+    const reversed = await checkModel(`
+      const first = { toString: () => "\u00e9" };
+      const second = { toString: () => "e" };
+      // @ts-ignore
+      const isOrdered = first <= second;
+      if (!isOrdered) throw new Error("ordered");
+    `);
+    expect(reversed.failure?.message).toContain("ordered");
   });
 
   it("changes the case of ASCII letters", async () => {
@@ -4339,12 +4345,52 @@ describe("errors", () => {
       if (box.digits !== "15") throw new Error("iterate");
     `);
     expect(result.failure).toBeUndefined();
+    const wide = await checkModel(`
+      const text = "a\u00e9";
+      if (text.charCodeAt(1) !== 233) throw new Error("wide");
+    `);
+    expect(wide.failure).toBeUndefined();
     await expect(
       checkModel(`
         const text = "a\u00e9";
-        if (text.charCodeAt(1) !== 233) throw new Error("wide");
+        if (text.charCodeAt(1) !== 234) throw new Error("wide");
       `),
-    ).rejects.toThrow("tla-ts can't tell the code of a character outside ASCII");
+    ).rejects.toThrow("wide");
+  });
+
+  it("reads a string's code units outside ASCII and iterates its code points", async () => {
+    const result = await checkModel(`
+      const text = "é😀\uDE00a";
+      if (text.length !== 5 || text.charCodeAt(0) !== 233 || text.charCodeAt(2) !== 0xde00) {
+        throw new Error("units");
+      }
+      if (text.codePointAt(1) !== 0x1f600 || text.codePointAt(3) !== 0xde00) {
+        throw new Error("points");
+      }
+      const points = [...text];
+      const visited: string[] = [];
+      for (const point of text) visited.push(point);
+      if (points.length !== 4 || points[1] !== "😀" || visited.join("|") !== "é|😀|\uDE00|a") {
+        throw new Error("iterate");
+      }
+      if (text.split("").length !== 5 || String.fromCodePoint(0x1f600, 233) !== "😀é") {
+        throw new Error("split");
+      }
+      if (!("z" < "é") || !("😀" < "￿") || "é" < "e") throw new Error("order");
+    `);
+    expect(result.failure).toBeUndefined();
+    await expect(
+      checkModel(`
+        const points = [..."é😀"];
+        if (points.length !== 3) throw new Error("units");
+      `),
+    ).rejects.toThrow("units");
+    await expect(
+      checkModel(`if (String.fromCharCode(0x4e00) === "") throw new Error("never");`),
+    ).rejects.toThrow("tla-ts can't make a character outside ASCII");
+    await expect(
+      checkModel(`if (encodeURI("é") === "") throw new Error("never");`),
+    ).rejects.toThrow("tla-ts can't encode a character outside ASCII");
   });
 
   it("converts the arguments of Math's functions, and stops where it can't", async () => {
