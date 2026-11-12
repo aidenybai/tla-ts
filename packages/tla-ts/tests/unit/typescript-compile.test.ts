@@ -10575,10 +10575,42 @@ describe("proxies", () => {
     expect((await checkModel(getSource(11))).failure?.message).toContain("unexpected");
   });
 
+  it("defines the descriptors that a proxy gives Object.defineProperties", async () => {
+    const getSource = (expected: number) => `
+      const seen: (string | symbol)[] = [];
+      const getCount = (): number => seen.length;
+      const symbol = Symbol();
+      const target: PropertyDescriptorMap = {};
+      target[symbol] = { value: 1, enumerable: true };
+      target.foo = { get: () => 5 };
+      target[0] = { value: 3 };
+      const proxy = new Proxy(target, {
+        getOwnPropertyDescriptor(innerTarget, key) {
+          seen.push(key);
+          return Reflect.getOwnPropertyDescriptor(innerTarget, key);
+        },
+      });
+      const made: Record<string | symbol, unknown> = {};
+      Object.defineProperties(made, proxy);
+      if (getCount() !== 3 || seen[0] !== "0" || seen[2] !== symbol) throw new Error("order");
+      if (made.foo !== 5 || made[0] !== 3 || made[symbol] !== 1) throw new Error("defined");
+      if (Object.keys(made).length !== 0) throw new Error("enumerable");
+      let isTypeError = false;
+      try {
+        Object.defineProperties(1 as unknown as object, proxy);
+      } catch (error) {
+        isTypeError = error instanceof TypeError;
+      }
+      if (!isTypeError || getCount() !== ${expected}) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(3))).failure).toBeUndefined();
+    expect((await checkModel(getSource(4))).failure?.message).toContain("unexpected");
+  });
+
   it("stops the check where something else reads a proxy", async () => {
     const result = await checkModel(`
       const proxy = new Proxy({ attr: { value: 1 } }, {});
-      Object.defineProperties({}, proxy);
+      Object.create({}, proxy);
     `);
     expect(result.failure?.message).toContain("tla-ts can't run a proxy's internal method here");
   });

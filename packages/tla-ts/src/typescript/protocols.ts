@@ -1363,8 +1363,13 @@ const getOperation = (node: ts.Node, context: Context): ProxyOperation | undefin
   if (!isMethodCall(node)) return undefined;
   const global = getBuiltIn(node.expression.expression, context);
   const method = node.expression.name.text;
-  // Object.assign of one source runs the source's internal methods on each of its keys.
-  if (global === "Object" && method === "assign" && node.arguments.length === 2) {
+  // Object.assign of one source, and Object.defineProperties, run the internal methods of their
+  // second argument on each of its keys.
+  if (
+    global === "Object" &&
+    (method === "assign" || method === "defineProperties") &&
+    node.arguments.length === 2
+  ) {
     return {
       trap: "ownKeys",
       object: node.arguments[1],
@@ -2005,15 +2010,22 @@ export const runProxyOperation = (
       );
     // Object.keys, values, entries, and getOwnPropertyDescriptors ask the proxy for each key's
     // descriptor, and all but the first and the last read each enumerable key's value, which
-    // Object.assign writes to the object it takes, and a spread or a rest element to a new one.
+    // Object.assign writes to the object it takes, a spread or a rest element to a new one, and
+    // Object.defineProperties reads as a descriptor to define on its object once it read them all.
     // Each key runs in turn where a handler may trap those, and keys and values leave symbols out.
     const giveKeys = (after: Path, keys: Expression) => {
       const heap = getHeap(after.scope, node, context);
       const listing = operation.method ?? "";
       if (
-        !["keys", "values", "entries", "assign", "copy", "getOwnPropertyDescriptors"].includes(
-          listing,
-        )
+        ![
+          "keys",
+          "values",
+          "entries",
+          "assign",
+          "copy",
+          "getOwnPropertyDescriptors",
+          "defineProperties",
+        ].includes(listing)
       ) {
         return next(after, javaScript("ProxyKeysOf", [heap, proxy, keys, method]));
       }
@@ -2032,7 +2044,7 @@ export const runProxyOperation = (
           ]),
         );
       }
-      const isSymbolKept = ["assign", "copy", "getOwnPropertyDescriptors"].includes(listing);
+      const isSymbolKept = !["keys", "values", "entries"].includes(listing);
       // What the loop gathers of a key's value, which Object.assign writes instead.
       const gatherValue = (
         valued: Path,
@@ -2043,6 +2055,17 @@ export const runProxyOperation = (
         again: (current: Path, gathered: Expression) => Formula,
       ) => {
         const changed = getHeap(valued.scope, node, context);
+        if (listing === "defineProperties" && ts.isCallExpression(node)) {
+          return readFields(node, property, valued, context, inner, (read, descriptor) =>
+            again(
+              read,
+              tuple([
+                apply("Append", [index(gathered, [number(1)]), key]),
+                apply("Append", [index(gathered, [number(2)]), descriptor]),
+              ]),
+            ),
+          );
+        }
         return listing !== "assign"
           ? again(
               valued,
@@ -2060,10 +2083,11 @@ export const runProxyOperation = (
               throwTypeError(valued, node, context, inner),
             );
       };
+      // Object.defineProperties gathers the keys and the descriptors apart, as it defines them.
       return loopKeys(
         node,
         keys,
-        tuple([]),
+        listing === "defineProperties" ? tuple([tuple([]), tuple([])]) : tuple([]),
         after,
         context,
         frame,
@@ -2094,6 +2118,18 @@ export const runProxyOperation = (
         },
         (looped, result) => {
           if (listing === "assign") return next(looped, value);
+          if (listing === "defineProperties" && ts.isCallExpression(node)) {
+            return defineAll(
+              node,
+              value,
+              index(result, [number(1)]),
+              index(result, [number(2)]),
+              looped,
+              context,
+              frame,
+              (defined) => next(defined, value),
+            );
+          }
           if (listing !== "copy" && listing !== "getOwnPropertyDescriptors") {
             return next(looped, result);
           }
@@ -2449,7 +2485,15 @@ export const runProxyOperation = (
               bound,
               operation.arguments ?? (operation.value === undefined ? [] : [operation.value]),
               [],
-              (valued, values) => run(valued, proxy, values, next),
+              (valued, values) =>
+                // Object.defineProperties checks its object before it reads the descriptors.
+                operation.method === "defineProperties"
+                  ? ifThenElse(
+                      isObjectArgument(values[0], context),
+                      run(valued, proxy, values, next),
+                      throwTypeError(valued, node, context, frame),
+                    )
+                  : run(valued, proxy, values, next),
             ),
         ),
     ),
