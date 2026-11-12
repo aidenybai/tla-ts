@@ -86,6 +86,7 @@ import {
   isModuleFile,
   getSymbol,
   isAssigned,
+  getFunctionValue,
   getTopLevelDeclaration,
   getUndefined,
   isHeapClass,
@@ -267,6 +268,7 @@ import {
 } from "./scope";
 import {
   set,
+  lambda,
   apply,
   boolean,
   bound,
@@ -280,6 +282,7 @@ import {
   identifier,
   ifExpression,
   index,
+  quantify,
   junction,
   locate,
   not,
@@ -10169,11 +10172,40 @@ const translateIterations = (
     !isHeapIteration &&
     !isSequence &&
     isIteratedValue(iterated.expression, context);
+  // A for-in over a function that a script makes and the heap doesn't hold visits the enumerable
+  // keys that it inherits from Function.prototype, but not its own length, name, and prototype.
+  const iteratedFunction =
+    iterated !== undefined && ts.isForInStatement(iterated) && context.heap !== undefined
+      ? getFunctionValue(skipCasts(iterated.expression), context)
+      : undefined;
+  const ownFunctionKeys =
+    iteratedFunction === undefined ||
+    isAnyGenerator(iteratedFunction) ||
+    isAsyncFunction(iteratedFunction)
+      ? undefined
+      : ts.isArrowFunction(iteratedFunction)
+        ? ["length", "name"]
+        : ["length", "name", "prototype"];
+  // A variable that only ever holds a built-in object, such as JSON.
+  const heldSymbol =
+    iterated !== undefined && ts.isIdentifier(iterated.expression)
+      ? getSymbol(iterated.expression, context.checker)
+      : undefined;
+  const heldDeclaration = heldSymbol?.valueDeclaration;
+  const isHeldBuiltIn =
+    heldSymbol !== undefined &&
+    heldDeclaration !== undefined &&
+    ts.isVariableDeclaration(heldDeclaration) &&
+    heldDeclaration.initializer !== undefined &&
+    isBuiltInObject(heldDeclaration.initializer, context) &&
+    !isAssigned(heldSymbol, heldDeclaration.getSourceFile(), context);
   const isForIn =
     iterated !== undefined &&
     ts.isForInStatement(iterated) &&
     (getKind(iterated.expression, context) === "object" ||
-      (context.heap !== undefined && isBuiltInObject(iterated.expression, context)));
+      (context.heap !== undefined &&
+        (isBuiltInObject(iterated.expression, context) || isHeldBuiltIn)) ||
+      ownFunctionKeys !== undefined);
   // A for-in over a list visits its indices, as strings in order.
   const isListKeys =
     iterated !== undefined &&
@@ -10484,49 +10516,107 @@ const translateIterations = (
               define(
                 sequence,
                 [],
-                isForIn
-                  ? useJavaScript(
-                      "ForInKeys",
-                      [
-                        getHeap(path.scope, iterated.expression, context),
-                        translateObjectValue(iterated.expression, path.scope, context),
-                      ],
+                isForIn && ownFunctionKeys !== undefined
+                  ? share(
+                      translateExpression(iterated.expression, path.scope, context),
+                      "function",
                       context,
-                    )
-                  : isListKeys
-                    ? share(
-                        translateExpression(iterated.expression, path.scope, context),
-                        "list",
-                        context,
-                        (list) =>
-                          functionOf(
-                            [bound("index", apply("DOMAIN", [list]))],
-                            apply("ToString", [apply("-", [identifier("index"), number(1)])]),
+                      (value) =>
+                        ifExpression(
+                          useJavaScript("IsRef", [value], context),
+                          useJavaScript(
+                            "ForInKeys",
+                            [getHeap(path.scope, iterated.expression, context), value],
+                            context,
                           ),
+                          share(
+                            apply("SelectSeq", [
+                              useJavaScript(
+                                "ForInKeys",
+                                [
+                                  getHeap(path.scope, iterated.expression, context),
+                                  translateBuiltInValue(
+                                    "Function.prototype",
+                                    iterated.expression,
+                                    context,
+                                  ),
+                                ],
+                                context,
+                              ),
+                              lambda(
+                                ["key"],
+                                apply("\\notin", [
+                                  identifier("key"),
+                                  set(ownFunctionKeys.map(string)),
+                                ]),
+                              ),
+                            ]),
+                            "keys",
+                            context,
+                            (keys) =>
+                              ifExpression(
+                                quantify(
+                                  "Exists",
+                                  [bound("position", apply("DOMAIN", [keys]))],
+                                  apply("\\in", [
+                                    index(keys, [identifier("position")]),
+                                    set([string("arguments"), string("caller")]),
+                                  ]),
+                                ),
+                                apply("Assert", [
+                                  boolean(false),
+                                  string(
+                                    "tla-ts can't tell whether this function has its own arguments and caller",
+                                  ),
+                                ]),
+                                keys,
+                              ),
+                          ),
+                        ),
+                    )
+                  : isForIn
+                    ? useJavaScript(
+                        "ForInKeys",
+                        [
+                          getHeap(path.scope, iterated.expression, context),
+                          translateObjectValue(iterated.expression, path.scope, context),
+                        ],
+                        context,
                       )
-                    : isStringIteration
-                      ? useJavaScript(
-                          "StringCharacters",
-                          [translateExpression(iterated.expression, path.scope, context)],
+                    : isListKeys
+                      ? share(
+                          translateExpression(iterated.expression, path.scope, context),
+                          "list",
                           context,
+                          (list) =>
+                            functionOf(
+                              [bound("index", apply("DOMAIN", [list]))],
+                              apply("ToString", [apply("-", [identifier("index"), number(1)])]),
+                            ),
                         )
-                      : isHeapIteration
-                        ? translateHeapElements(iterated.expression, path.scope, context)
-                        : isUnordered
-                          ? useJavaScript(
-                              "SetToSequence",
-                              [translateExpression(iterated.expression, path.scope, context)],
-                              context,
-                            )
-                          : context.heap !== undefined &&
-                              getKind(iterated.expression, context) === "sequence"
-                            ? translateArrayIteration(
-                                translateExpression(iterated.expression, path.scope, context),
-                                getHeap(path.scope, iterated.expression, context),
-                                iterated.expression,
+                      : isStringIteration
+                        ? useJavaScript(
+                            "StringCharacters",
+                            [translateExpression(iterated.expression, path.scope, context)],
+                            context,
+                          )
+                        : isHeapIteration
+                          ? translateHeapElements(iterated.expression, path.scope, context)
+                          : isUnordered
+                            ? useJavaScript(
+                                "SetToSequence",
+                                [translateExpression(iterated.expression, path.scope, context)],
                                 context,
                               )
-                            : translateExpression(iterated.expression, path.scope, context),
+                            : context.heap !== undefined &&
+                                getKind(iterated.expression, context) === "sequence"
+                              ? translateArrayIteration(
+                                  translateExpression(iterated.expression, path.scope, context),
+                                  getHeap(path.scope, iterated.expression, context),
+                                  iterated.expression,
+                                  context,
+                                )
+                              : translateExpression(iterated.expression, path.scope, context),
               ),
             ]),
         operator,
