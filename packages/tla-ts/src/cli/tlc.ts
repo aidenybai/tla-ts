@@ -45,6 +45,7 @@ import {
   formatTlcDuration,
   MESSAGE_CODE,
   MESSAGE_LEVEL,
+  type MessagePrinter,
 } from "../tlc/messages";
 import { addRuntimeInvariants } from "./runtime-invariants";
 import { parseTlcArguments, type TlcArguments } from "./tlc-arguments";
@@ -58,7 +59,6 @@ import {
   printStartupBanner,
   printWelcome,
   type Timing,
-  type TlcPrinter,
 } from "./tlc-output";
 import { getTlcUsage } from "./tlc-usage";
 import {
@@ -234,7 +234,7 @@ const checkSpec = async (
   args: TlcArguments,
   dump: StateDump | undefined,
   java: JavaProperties,
-  printer: TlcPrinter,
+  printer: MessagePrinter,
 ) => {
   const livenessCheck = args.livenessCheck;
   const version = printer.version;
@@ -564,16 +564,14 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
   const exitCodes: number[] = [];
   for (const [index, path] of paths.entries()) {
     if (index > 0) console.log("");
-    const printer = {
-      ...createMessagePrinter(
-        parsed.isTool,
-        parsed.isWarningEnabled,
-        version,
-        parsed.suppressedCodes,
-        parsed.errorCodes,
-      ),
+    const printer = createMessagePrinter({
+      isTool: parsed.isTool,
+      isWarningEnabled: parsed.isWarningEnabled,
       isDiffTrace: parsed.isDiffTrace,
-    };
+      version,
+      suppressedCodes: parsed.suppressedCodes,
+      errorCodes: parsed.errorCodes,
+    });
     exitCodes.push(
       await reportErrors(async () => {
         const specPath = path.endsWith(".ts") ? await writeTypeScriptSpec(path) : path;

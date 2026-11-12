@@ -116,8 +116,18 @@ const LEVEL_PREFIXES: Record<MessageLevel, string> = {
 
 export interface MessagePrinter {
   isTool: boolean;
+  isDiffTrace: boolean;
   version: TlcVersion;
   print: (code: number, level: MessageLevel, text: string) => void;
+}
+
+interface MessagePrinterOptions {
+  isTool: boolean;
+  isWarningEnabled?: boolean;
+  isDiffTrace?: boolean;
+  version?: TlcVersion;
+  suppressedCodes?: number[];
+  errorCodes?: number[];
 }
 
 export const formatMessage = (isTool: boolean, code: number, level: MessageLevel, text: string) =>
@@ -125,29 +135,24 @@ export const formatMessage = (isTool: boolean, code: number, level: MessageLevel
     ? `@!@!@STARTMSG ${code}:${level} @!@!@\n${text}\n@!@!@ENDMSG ${code} @!@!@`
     : `${LEVEL_PREFIXES[level]}${text}`;
 
-export const createMessagePrinter = (
-  isTool: boolean,
-  isWarningEnabled = true,
-  version: TlcVersion = "master",
-  suppressedCodes: number[] = [],
-  errorCodes: number[] = [],
-): MessagePrinter => {
+export const createMessagePrinter = (options: MessagePrinterOptions): MessagePrinter => {
   const warnings = new Set<string>();
   return {
-    isTool,
-    version,
+    isTool: options.isTool,
+    isDiffTrace: options.isDiffTrace ?? false,
+    version: options.version ?? "master",
     print: (code, level, text) => {
       const isWarning = level === MESSAGE_LEVEL.warning;
-      if (isWarning && errorCodes.includes(code)) {
+      if (isWarning && options.errorCodes?.includes(code)) {
         throw new TlaWarningAsError(code, text);
       }
-      if (isWarning && !isWarningEnabled) return;
-      if (level !== MESSAGE_LEVEL.error && suppressedCodes.includes(code)) return;
+      if (isWarning && options.isWarningEnabled === false) return;
+      if (level !== MESSAGE_LEVEL.error && options.suppressedCodes?.includes(code)) return;
       const hint =
-        isWarning && !isTool && warnings.size === 0
+        isWarning && !options.isTool && warnings.size === 0
           ? "\n(Use the -nowarning option to disable this warning.)"
           : "";
-      const message = formatMessage(isTool, code, level, `${text}${hint}`);
+      const message = formatMessage(options.isTool, code, level, `${text}${hint}`);
       if (isWarning && warnings.has(message)) return;
       if (isWarning) warnings.add(message);
       console.log(message);

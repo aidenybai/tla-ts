@@ -77,28 +77,37 @@ const printTraceOutput = (printer: MessagePrinter, lines: OutputLine[] | undefin
     );
   });
 
-export interface TlcPrinter extends MessagePrinter {
-  isDiffTrace: boolean;
-}
-
 const BEHAVIOR = {
   code: MESSAGE_CODE.behaviorUpToThisPoint,
   text: "The behavior up to this point is:",
 };
 
+const COUNTER_EXAMPLE = {
+  code: MESSAGE_CODE.counterExample,
+  text: "The following behavior constitutes a counter-example:\n",
+};
+
+const TRACE_MODES = {
+  "error-trace": { heading: BEHAVIOR, isLastDiffed: false },
+  simulation: { heading: BEHAVIOR, isLastDiffed: true },
+  "counter-example": { heading: COUNTER_EXAMPLE, isLastDiffed: true },
+};
+
 const printTrace = (
-  printer: TlcPrinter,
+  printer: MessagePrinter,
   trace: TraceStep[],
-  heading: { code: number; text: string } = BEHAVIOR,
-  isRebuiltAfterHeading = false,
-  isLastDiffed = heading !== BEHAVIOR,
+  mode: keyof typeof TRACE_MODES,
 ) => {
+  const heading = TRACE_MODES[mode].heading;
+  const isRebuiltAfterHeading = mode === "counter-example" && printer.version === "1.7.4";
   if (trace.length > 0) printer.print(heading.code, MESSAGE_LEVEL.error, heading.text);
   try {
     trace.forEach((step, index) => {
       if (index > 0 || isRebuiltAfterHeading) printTraceOutput(printer, step.output);
       const isDiffed =
-        printer.isDiffTrace && index > 0 && (isLastDiffed || index < trace.length - 1);
+        printer.isDiffTrace &&
+        index > 0 &&
+        (TRACE_MODES[mode].isLastDiffed || index < trace.length - 1);
       printer.print(
         MESSAGE_CODE.statePrint2,
         MESSAGE_LEVEL.state,
@@ -109,11 +118,6 @@ const printTrace = (
     if (!(error instanceof TlaAliasFormatError)) throw error;
     printer.print(MESSAGE_CODE.general, MESSAGE_LEVEL.error, error.message);
   }
-};
-
-const COUNTER_EXAMPLE = {
-  code: MESSAGE_CODE.counterExample,
-  text: "The following behavior constitutes a counter-example:\n",
 };
 
 const getTemporalHeadline = (names: string[], version: TlcVersion) =>
@@ -233,7 +237,7 @@ export const getClassPath = (directory: string, module: string) =>
   join(directory, `${module}.class`);
 
 export const printCheckProgress = (
-  printer: TlcPrinter,
+  printer: MessagePrinter,
   progress: CheckProgress,
   timing: Timing,
   directory: string,
@@ -360,7 +364,7 @@ const printPostcondition = (printer: MessagePrinter, postcondition: Postconditio
   );
 };
 
-const printViolation = (status: CheckStatus, violation: Violation, printer: TlcPrinter) => {
+const printViolation = (status: CheckStatus, violation: Violation, printer: MessagePrinter) => {
   const print = printer.print;
   const name = violation.name;
   const loopStart = violation.loopStart;
@@ -422,12 +426,7 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: TlcP
   }
   if (!isInitial) {
     if (!isCounterExample) printTraceOutput(printer, violation.trace[0]?.output);
-    printTrace(
-      printer,
-      violation.trace,
-      isCounterExample ? COUNTER_EXAMPLE : undefined,
-      isCounterExample && !isRebuiltFirst,
-    );
+    printTrace(printer, violation.trace, isCounterExample ? "counter-example" : "error-trace");
   }
   printTraceOutput(printer, violation.traceOutput);
   if (isLasso) {
@@ -474,7 +473,7 @@ const printSuccess = (printer: MessagePrinter, optimistic: number, actual: numbe
     ].join("\n"),
   );
 
-export const printDepthFirst = (printer: TlcPrinter, output: DepthFirstOutput) => {
+export const printDepthFirst = (printer: MessagePrinter, output: DepthFirstOutput) => {
   switch (output.kind) {
     case "message":
       printer.print(
@@ -506,7 +505,7 @@ export const printDepthFirst = (printer: TlcPrinter, output: DepthFirstOutput) =
   }
 };
 
-export const printResult = (result: CheckResult, printer: TlcPrinter, timing: Timing) => {
+export const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timing) => {
   const print = printer.print;
   if (result.failure) {
     const failure = result.failure;
@@ -547,7 +546,7 @@ export const printResult = (result: CheckResult, printer: TlcPrinter, timing: Ti
       initialState ? `${message}\n${initialState}` : message,
     );
     printTraceOutput(printer, failure.trace[0]?.output);
-    printTrace(printer, failure.trace);
+    printTrace(printer, failure.trace, "error-trace");
     const traceFailure = failure.traceFailure;
     if (traceFailure) {
       print(
@@ -600,7 +599,7 @@ export const printWelcome = (printer: MessagePrinter) =>
   printer.print(MESSAGE_CODE.version, MESSAGE_LEVEL.none, `TLC2 Version ${version} (rev: tla-ts)`);
 
 export const printCommandLineError = (isTool: boolean, version: TlcVersion, message: string) => {
-  const printer = createMessagePrinter(isTool, true, version);
+  const printer = createMessagePrinter({ isTool, version });
   printWelcome(printer);
   printer.print(
     MESSAGE_CODE.commandLineError,
@@ -636,7 +635,7 @@ export const printStartupBanner = (printer: MessagePrinter, args: TlcArguments) 
   );
 };
 
-export const printSimulation = (printer: TlcPrinter, output: SimulationOutput) => {
+export const printSimulation = (printer: MessagePrinter, output: SimulationOutput) => {
   const print = printer.print;
   switch (output.kind) {
     case "message":
@@ -649,7 +648,7 @@ export const printSimulation = (printer: TlcPrinter, output: SimulationOutput) =
     case "behavior": {
       const last = output.trace[output.trace.length - 1];
       if (!output.isLastStateOnly) {
-        printTrace(printer, output.trace, BEHAVIOR, false, true);
+        printTrace(printer, output.trace, "simulation");
         return;
       }
       print(MESSAGE_CODE.errorState, MESSAGE_LEVEL.none, "The error state is:\n");
