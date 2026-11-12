@@ -684,6 +684,7 @@ class BlockedClauseElim {
 export class Simplifier {
   numCalls = 0;
   useList: UseList;
+  private readonly extUseVars = new Set<number>();
   private subTodo = new ClauseSet();
   private subBinTodo: number[] = [];
   private lastSubTrailSize = 0;
@@ -704,7 +705,7 @@ export class Simplifier {
   private isAte: boolean;
   private bceAt: number;
   private blockedClauseLimit: number;
-  private isIncrementalMode: boolean;
+  readonly isIncrementalMode: boolean;
   private resLimit: number;
   private resOccCutoff: number;
   private resOccCutoff1: number;
@@ -717,7 +718,7 @@ export class Simplifier {
   private resClsCutoff2: number;
   private isSubsumption: boolean;
   private subsumptionLimit: number;
-  private isElimVars: boolean;
+  readonly isElimVars: boolean;
   numBce = 0;
   numCce = 0;
   numAcce = 0;
@@ -768,7 +769,7 @@ export class Simplifier {
   isExternal(boolVar: number) {
     const solver = this.solver;
     if (!solver.isExternal(boolVar)) return solver.isAssumption(boolVar);
-    return solver.isIncremental();
+    return solver.isIncremental() || this.extUseVars.has(boolVar);
   }
 
   private isBceEnabledBase() {
@@ -880,6 +881,7 @@ export class Simplifier {
 
   private finalize() {
     this.useList = new UseList(this.solver.arena, 0);
+    this.extUseVars.clear();
     this.subTodo.reset();
     this.subBinTodo = [];
     this.resetElimTodo();
@@ -894,6 +896,7 @@ export class Simplifier {
     solver.cleaner.run(true);
     this.lastSubTrailSize = solver.trail.length;
     this.useList = new UseList(solver.arena, solver.numVars());
+    solver.ext?.initUseList(this.extUseVars);
     this.subTodo.reset();
     this.subBinTodo.length = 0;
     this.resetElimTodo();
