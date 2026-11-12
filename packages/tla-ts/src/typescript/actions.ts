@@ -102,6 +102,7 @@ import {
   getConversionFunctions,
   isCompoundAssignment,
   runConversion,
+  runToPrimitive,
 } from "./conversions";
 import { getJsonText, parseJson, translateHoldsJson } from "./json";
 import {
@@ -5192,9 +5193,25 @@ const getLoopGetters = (node: ts.Node, context: Context) => {
           ...(getElementGetters(target.receiver, context) ?? []),
           ...getDefinedGetters(target.receiver, "length", context),
           ...getSpeciesGetters(target.method, target.receiver, context),
+          ...(isObjectLength(target.receiver, context)
+            ? getConversionFunctions(target.receiver, context)
+            : []),
         ]),
       ]
     : [];
+};
+
+// Whether an array-like object's length may be an object, which the method converts to a primitive
+// before it reads the elements, running the object's valueOf and toString methods.
+const isObjectLength = (receiver: ts.Node, context: Context) => {
+  const length = context.checker.getTypeAtLocation(receiver).getProperty("length");
+  const type = length === undefined ? undefined : context.checker.getTypeOfSymbol(length);
+  return (
+    type !== undefined &&
+    (type.isUnion() ? type.types : [type]).some(
+      (member) => (member.flags & (ts.TypeFlags.Object | ts.TypeFlags.NonPrimitive)) !== 0,
+    )
+  );
 };
 
 const getSpeciesGetters = (method: string, receiver: ts.Node, context: Context) =>
@@ -5269,9 +5286,11 @@ const translateLoopCall = (
   // accumulator, and throws a TypeError where it finds none.
   const lengthGetters = loop.isArrayLike ? getDefinedGetters(receiver, "length", context) : [];
   const speciesGetters = loop.isArrayLike ? getSpeciesGetters(method, receiver, context) : [];
+  const isLengthConverted = loop.isArrayLike && isObjectLength(receiver, context);
   const getters = loop.isArrayLike
     ? (getElementGetters(receiver, context) ??
       (lengthGetters.length + speciesGetters.length > 0 ||
+      isLengthConverted ||
       (callback !== undefined &&
         getChanged(callback, path, context).some((symbol) => symbol === context.heap))
         ? []
@@ -5752,71 +5771,81 @@ const translateLoopCall = (
         path,
         context,
         frame,
-        (after, value) => {
-          // with throws a RangeError where the index it replaces isn't below the length.
-          const seeded = (current: Path) =>
-            letIn(
-              [
-                define(lengthName, [], useJavaScript("ToLength", [value], context)),
-                ...(replaced === undefined
-                  ? []
-                  : [
-                      define(
-                        replacedName,
-                        [],
+        (found, held) => {
+          const visitWith = (after: Path, value: Expression) => {
+            // with throws a RangeError where the index it replaces isn't below the length.
+            const seeded = (current: Path) =>
+              letIn(
+                [
+                  define(lengthName, [], useJavaScript("ToLength", [value], context)),
+                  ...(replaced === undefined
+                    ? []
+                    : [
+                        define(
+                          replacedName,
+                          [],
+                          useJavaScript(
+                            "RelativeIndex",
+                            [translateExpression(replaced, path.scope, context), length],
+                            context,
+                          ),
+                        ),
+                      ]),
+                ],
+                replaced === undefined
+                  ? getSeeded(current)
+                  : ifThenElse(
+                      junction("And", [
+                        apply(">=", [identifier(replacedName), number(0)]),
+                        apply("<", [identifier(replacedName), length]),
+                      ]),
+                      getSeeded(current),
+                      throwError("RangeError", current, expression, context, frame),
+                    ),
+              );
+            // ArraySpeciesCreate reads an array's constructor, running its getter, where tla-ts
+            // follows only Array.
+            return ["filter", "map"].includes(method)
+              ? ifThenElse(
+                  useJavaScript(
+                    "IsArray",
+                    [getHeap(after.scope, receiver, context), owner],
+                    context,
+                  ),
+                  readWith(
+                    expression,
+                    owner,
+                    string("constructor"),
+                    speciesGetters,
+                    after,
+                    context,
+                    frame,
+                    (read, constructor) =>
+                      ifThenElse(
                         useJavaScript(
-                          "RelativeIndex",
-                          [translateExpression(replaced, path.scope, context), length],
+                          "SameValue",
+                          [constructor, translateBuiltInValue("Array", receiver, context)],
                           context,
                         ),
+                        seeded(read),
+                        leaf(
+                          apply("Assert", [
+                            boolean(false),
+                            string(
+                              "tla-ts can't make an array through a constructor that a script gives",
+                            ),
+                          ]),
+                        ),
                       ),
-                    ]),
-              ],
-              replaced === undefined
-                ? getSeeded(current)
-                : ifThenElse(
-                    junction("And", [
-                      apply(">=", [identifier(replacedName), number(0)]),
-                      apply("<", [identifier(replacedName), length]),
-                    ]),
-                    getSeeded(current),
-                    throwError("RangeError", current, expression, context, frame),
                   ),
-            );
-          // ArraySpeciesCreate reads an array's constructor, running its getter, where tla-ts
-          // follows only Array.
-          return ["filter", "map"].includes(method)
-            ? ifThenElse(
-                useJavaScript("IsArray", [getHeap(after.scope, receiver, context), owner], context),
-                readWith(
-                  expression,
-                  owner,
-                  string("constructor"),
-                  speciesGetters,
-                  after,
-                  context,
-                  frame,
-                  (read, constructor) =>
-                    ifThenElse(
-                      useJavaScript(
-                        "SameValue",
-                        [constructor, translateBuiltInValue("Array", receiver, context)],
-                        context,
-                      ),
-                      seeded(read),
-                      leaf(
-                        apply("Assert", [
-                          boolean(false),
-                          string(
-                            "tla-ts can't make an array through a constructor that a script gives",
-                          ),
-                        ]),
-                      ),
-                    ),
-                ),
-                seeded(after),
-              )
-            : seeded(after);
+                  seeded(after),
+                )
+              : seeded(after);
+          };
+          // ToLength converts a length that's an object to a primitive first.
+          return isLengthConverted
+            ? runToPrimitive(expression, held, "number", found, context, frame, visitWith)
+            : visitWith(found, held);
         },
       ),
     );
