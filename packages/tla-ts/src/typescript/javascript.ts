@@ -3624,7 +3624,7 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
         IN Returned(result, Allocated(result))
   IN CASE ~IsTypedArray(heap, ref) -> Thrown(heap, "TypeError")
        [] method \\notin {"at", "includes", "indexOf", "lastIndexOf", "join", "fill", "reverse", "slice",
-                         "subarray"} ->
+                         "subarray", "set"} ->
             Assert(FALSE, "tla-ts can't run this typed array method")
        [] method = "subarray" ->
             LET buffer == heap.objects[view.viewed[Ref]]
@@ -3666,6 +3666,23 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
             LET first == start(1)
                 final == end(2)
             IN made(heap, IF final > first THEN SubSeq(elements, first + 1, final) ELSE <<>>)
+       [] method = "set" ->
+            LET source == argument(1)
+                offset == integer(2)
+                sourceView == heap.objects[source[Ref]]
+                count == ViewLength(heap, sourceView)
+                isBigInt(type) == type \\in {"BigInt64", "BigUint64"}
+            IN (CASE offset < 0 -> Thrown(heap, "RangeError")
+                 [] ~IsTypedArray(heap, source) ->
+                      Assert(FALSE, "tla-ts can't set a typed array's elements from an array-like object")
+                 [] IsOutOfBounds(heap, sourceView) -> Thrown(heap, "TypeError")
+                 [] isBigInt(view.elementType) # isBigInt(sourceView.elementType) ->
+                      Thrown(heap, "TypeError")
+                 [] offset = Infinity \\/ count + offset > length -> Thrown(heap, "RangeError")
+                 [] OTHER ->
+                      Returned(write(heap, offset,
+                                     [position \\in 1..count |-> TypedElement(heap, source, position - 1)]),
+                               Undefined))
 
 SetProperty(heap, ref, key, value) ==
   LET accessor == AccessorOf(heap, ref, key)

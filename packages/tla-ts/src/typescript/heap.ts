@@ -1670,10 +1670,23 @@ export const getNewBuffer = (node: ts.Node, context: Context) => {
   }
   const name = getBuiltIn(node.expression, context);
   if (name !== undefined) return isBufferName(name) ? [name] : undefined;
+  // A constructor typed only by what it makes, such as an array's constructor, may be the
+  // constructor of each typed array that its instance's type allows.
   const type = context.checker.getTypeAtLocation(node.expression);
-  const names = (type.isUnion() ? type.types : [type]).map(
-    (inner) => inner.getSymbol()?.name.replace(/Constructor$/, "") ?? "",
-  );
+  const made =
+    type.getSymbol()?.name === "__type" ? type.getConstructSignatures().at(0) : undefined;
+  const instance =
+    made === undefined
+      ? undefined
+      : (context.checker.getBaseConstraintOfType(made.getReturnType()) ?? made.getReturnType());
+  const names =
+    instance === undefined
+      ? (type.isUnion() ? type.types : [type]).map(
+          (inner) => inner.getSymbol()?.name.replace(/Constructor$/, "") ?? "",
+        )
+      : (instance.isUnion() ? instance.types : [instance]).map(
+          (inner) => inner.getSymbol()?.name ?? "",
+        );
   const candidates = names.filter(isBufferName).filter((inner) => TYPED_ARRAYS.has(inner));
   return candidates.length === names.length ? candidates : undefined;
 };
@@ -1757,6 +1770,7 @@ const TYPED_ARRAY_METHODS = new Set([
   "reverse",
   "slice",
   "subarray",
+  "set",
 ]);
 
 const VIEW_ACCESSOR = /^[gs]et(?:Int8|Uint8|Int16|Uint16|Int32|Uint32|Float16|Float32|Float64)$/;

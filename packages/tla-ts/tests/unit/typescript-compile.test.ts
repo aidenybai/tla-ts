@@ -12236,6 +12236,46 @@ describe("calls through values", () => {
 });
 
 describe("buffers", () => {
+  it("copies a typed array's elements into another, and makes one through its constructor", async () => {
+    const getSource = (expected: string) => `
+      const grow = <T extends Uint8Array<ArrayBuffer> | Int32Array<ArrayBuffer>>(array: T): T => {
+        const grown = new (array.constructor as new (length: number) => T)(2 * array.length);
+        grown.set(array);
+        return grown;
+      };
+      let kinds = new Uint8Array(2);
+      kinds[1] = 3;
+      kinds = grow(kinds);
+      const source = new Uint8Array([1, 255, 3]);
+      const target = new Int32Array(5);
+      target.set(source, 1);
+      const bytes = new Uint8Array(3);
+      bytes.set(new Int32Array([-1, 256]));
+      let threw = "";
+      try {
+        target.set(source, 3);
+      } catch (error) {
+        threw = error instanceof RangeError ? "range" : "other";
+      }
+      const result = [
+        kinds.length,
+        kinds[1],
+        kinds instanceof Uint8Array,
+        target.join(","),
+        bytes.join(","),
+        threw,
+        target.set(source),
+      ].join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect(
+      (await checkModel(getSource("4;3;true;0,1,255,3,0;255,0,0;range;"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("4;3;true;0,1,255,3,0;255,1,0;range;"))).failure?.message,
+    ).toContain("255,0,0");
+  });
+
   it("reads and writes the elements of typed arrays that share a buffer", async () => {
     const result = await checkModel(`
       const buffer = new ArrayBuffer(8);
