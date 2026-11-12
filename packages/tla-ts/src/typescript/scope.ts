@@ -40,6 +40,14 @@ export interface Scope {
   // The values of an object pattern's elements whose getters ran before it binds, which binding
   // the pattern takes, once each.
   read?: ReadonlyMap<ts.BindingElement, Expression>;
+  // The values that patterns destructure, which throw a TypeError where they are null or undefined
+  // though nothing reads what the patterns bind, and which the next statement checks.
+  destructured?: readonly Destructured[];
+}
+
+export interface Destructured {
+  pattern: ts.BindingPattern;
+  value: Expression;
 }
 
 export interface Receiver {
@@ -225,6 +233,18 @@ export const bindPatternInline = (
       pattern,
     );
   }
+  // A nested pattern that destructures null or undefined throws before the getters of the elements
+  // after it run, which ran before the pattern binds.
+  if (ts.isBindingElement(pattern.parent) && (scope.read?.size ?? 0) > 0) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't destructure a nested pattern before the getters that follow it",
+      pattern,
+    );
+  }
+  const destructuring: Scope = {
+    ...scope,
+    destructured: [...(scope.destructured ?? []), { pattern, value }],
+  };
   if (ts.isArrayBindingPattern(pattern) && isUntypedPattern(pattern, context) && !isTaken(value)) {
     throw new TlaTypeScriptError("Give this pattern's value an array type", pattern);
   }
@@ -235,7 +255,7 @@ export const bindPatternInline = (
     ts.isArrayBindingPattern(pattern) &&
     !isTaken(value) &&
     !(context.checker.getTypeAtLocation(pattern).flags & ts.TypeFlags.StringLike);
-  const heap = heapSymbol === undefined ? undefined : getHeap(scope, pattern, context);
+  const heap = heapSymbol === undefined ? undefined : getHeap(destructuring, pattern, context);
   const iterated =
     isIterated && heap !== undefined
       ? translateArrayIteration(value, heap, pattern, context)
@@ -243,13 +263,13 @@ export const bindPatternInline = (
   const iterating =
     isIterated && heapSymbol !== undefined && heap !== undefined
       ? {
-          ...scope,
+          ...destructuring,
           bindings: new Map([
-            ...scope.bindings,
+            ...destructuring.bindings,
             [heapSymbol, translateArrayIteration(heap, heap, pattern, context)],
           ]),
         }
-      : scope;
+      : destructuring;
   const bound = pattern.elements.reduce((current, element, position) => {
     if (ts.isOmittedExpression(element)) return current;
     const initializer = element.initializer;
@@ -374,8 +394,12 @@ export const bindPatternInline = (
         context,
       );
     }
+    // A record may lack the field that a default or a nested pattern reads, which then reads
+    // undefined.
     const part =
-      initializer === undefined ? getField(value, key) : getOptionalField(value, key, context);
+      initializer === undefined && ts.isIdentifier(element.name)
+        ? getField(value, key)
+        : getOptionalField(value, key, context);
     return bindPatternInline(element.name, withDefault(part), current, context);
   }, iterating);
   if (heapSymbol === undefined) return bound;

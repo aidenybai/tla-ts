@@ -208,6 +208,7 @@ import {
   getOwnValuesGetters,
   readOwnValues,
   isGetterPattern,
+  isNullish,
   isProxyPattern,
   readProxyPattern,
   isGetterRead,
@@ -3227,23 +3228,35 @@ export const inlineBody = (
           });
           return translateJoined(node, getCaller(inner), context, continueWith, (next) => {
             const afterCall = (after: Path, value?: Expression) => next(getCaller(after), value);
+            const bodyFrame = {
+              next: afterCall,
+              exit: afterCall,
+              breakTo: undefined,
+              continueTo: undefined,
+              throwTo: frame.throwTo,
+              yieldTo: undefined,
+              awaitTo: undefined,
+              inlining: new Set([...frame.inlining, callee]),
+            };
             return letIn(
               bound.definitions,
-              forceHeap(
-                inner.scope,
+              throwOnDestructured(
                 bound.scope,
-                translateStatements(getBody(callee), { ...inner, scope: bound.scope }, context, {
-                  next: afterCall,
-                  exit: afterCall,
-                  breakTo: undefined,
-                  continueTo: undefined,
-                  throwTo: frame.throwTo,
-                  yieldTo: undefined,
-                  awaitTo: undefined,
-                  inlining: new Set([...frame.inlining, callee]),
-                }),
-                leaf(boolean(false)),
+                inner,
                 context,
+                bodyFrame,
+                forceHeap(
+                  inner.scope,
+                  bound.scope,
+                  translateStatements(
+                    getBody(callee),
+                    { ...inner, scope: { ...bound.scope, destructured: undefined } },
+                    context,
+                    bodyFrame,
+                  ),
+                  leaf(boolean(false)),
+                  context,
+                ),
               ),
             );
           });
@@ -3474,7 +3487,10 @@ export const makeGenerator = (
       inlining: new Set([...frame.inlining, callee]),
     };
     // The body runs for whatever next resumes it, which may catch what it throws.
-    const start = { ...inner, scope: { ...bound.scope, isCatching: true } };
+    const start = {
+      ...inner,
+      scope: { ...bound.scope, isCatching: true, destructured: undefined },
+    };
     const suspension: Suspension = {
       ref,
       generator: callee,
@@ -3486,26 +3502,38 @@ export const makeGenerator = (
       queue: [],
     };
     const made = { ...inner, generators: new Map([...inner.generators, [name, suspension]]) };
-    if (heapSymbol === undefined) return letIn(bound.definitions, continueWith(made, ref));
+    // A generator's call binds its parameters, which throws before the body first runs.
+    if (heapSymbol === undefined) {
+      return letIn(
+        bound.definitions,
+        throwOnDestructured(bound.scope, inner, context, frame, continueWith(made, ref)),
+      );
+    }
     return letIn(
       bound.definitions,
-      bindOnce(
+      throwOnDestructured(
+        bound.scope,
         inner,
-        name,
-        useJavaScript(
-          "Allocate",
-          [getHeap(bound.scope, node, context), identifier("GeneratorObject")],
-          context,
-        ),
-        continueWith(
-          {
-            ...made,
-            scope: {
-              ...made.scope,
-              bindings: new Map([...made.scope.bindings, [heapSymbol, identifier(name)]]),
+        context,
+        frame,
+        bindOnce(
+          inner,
+          name,
+          useJavaScript(
+            "Allocate",
+            [getHeap(bound.scope, node, context), identifier("GeneratorObject")],
+            context,
+          ),
+          continueWith(
+            {
+              ...made,
+              scope: {
+                ...made.scope,
+                bindings: new Map([...made.scope.bindings, [heapSymbol, identifier(name)]]),
+              },
             },
-          },
-          ref,
+            ref,
+          ),
         ),
       ),
     );
@@ -6615,6 +6643,28 @@ const isMaybeNullish = (type: ts.Type): boolean =>
           ts.TypeFlags.Unknown)) !==
       0;
 
+// Throws the TypeError of a pattern that destructures null or undefined, which a statement throws
+// though nothing reads what the pattern binds.
+const throwOnDestructured = (
+  scope: Scope,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  rest: Formula,
+): Formula => {
+  const destructured = scope.destructured ?? [];
+  if (destructured.length === 0) return rest;
+  context.prelude.add("Null");
+  return ifThenElse(
+    junction(
+      "Or",
+      destructured.map((entry) => isNullish(entry.value, context)),
+    ),
+    throwTypeError(path, destructured[0].pattern, context, frame),
+    rest,
+  );
+};
+
 const isCatchParameter = (node: ts.Node, name: string): boolean => {
   if (ts.isSourceFile(node) || ts.isFunctionLike(node)) return false;
   const parameter = ts.isCatchClause(node) ? node.variableDeclaration?.name : undefined;
@@ -7372,7 +7422,11 @@ const bindDeclaration = (
     isChangeable && symbol !== undefined ? new Set([...path.mutable, symbol]) : path.mutable;
   const rest = translateDeclarations(
     declarations.slice(1),
-    { ...path, scope: initialize(bound.scope, declaration, context), mutable },
+    {
+      ...path,
+      scope: initialize({ ...bound.scope, destructured: undefined }, declaration, context),
+      mutable,
+    },
     context,
     frame,
     continueWith,
@@ -7382,13 +7436,19 @@ const bindDeclaration = (
   const named = (symbol && bound.scope.bindings.get(symbol)) ?? value;
   return letIn(
     bound.definitions,
-    context.heap === undefined
-      ? rest
-      : ifThenElse(
-          apply("=", [named, named]),
-          forceHeap(path.scope, bound.scope, rest, leaf(boolean(false)), context),
-          leaf(boolean(false)),
-        ),
+    throwOnDestructured(
+      bound.scope,
+      path,
+      context,
+      frame,
+      context.heap === undefined
+        ? rest
+        : ifThenElse(
+            apply("=", [named, named]),
+            forceHeap(path.scope, bound.scope, rest, leaf(boolean(false)), context),
+            leaf(boolean(false)),
+          ),
+    ),
   );
 };
 
@@ -8049,12 +8109,18 @@ const bindElement = (
     const bound = bindPattern(name, element, allocated.scope, context);
     return letIn(
       bound.definitions,
-      forceHeap(
-        allocated.scope,
+      throwOnDestructured(
         bound.scope,
-        continueWith({ ...allocated, scope: bound.scope }),
-        leaf(boolean(false)),
+        allocated,
         context,
+        frame,
+        forceHeap(
+          allocated.scope,
+          bound.scope,
+          continueWith({ ...allocated, scope: { ...bound.scope, destructured: undefined } }),
+          leaf(boolean(false)),
+          context,
+        ),
       ),
     );
   });
@@ -9189,19 +9255,26 @@ const translateTry = (
       declaration === undefined
         ? { definitions: [], scope: caught.scope }
         : bindPattern(declaration.name, thrown.value, caught.scope, context);
+    const bodyFrame = statement.finallyBlock === undefined ? outer : guardYields(outer);
     return letIn(
       bound.definitions,
-      forceHeap(
-        caught.scope,
+      throwOnDestructured(
         bound.scope,
-        translateStatements(
-          catchClause.block.statements,
-          { ...caught, scope: bound.scope },
-          context,
-          statement.finallyBlock === undefined ? outer : guardYields(outer),
-        ),
-        leaf(boolean(false)),
+        caught,
         context,
+        bodyFrame,
+        forceHeap(
+          caught.scope,
+          bound.scope,
+          translateStatements(
+            catchClause.block.statements,
+            { ...caught, scope: { ...bound.scope, destructured: undefined } },
+            context,
+            bodyFrame,
+          ),
+          leaf(boolean(false)),
+          context,
+        ),
       ),
     );
   };
@@ -10055,6 +10128,16 @@ export const translateStatements = (
   context: Context,
   frame: Frame,
 ): Formula => {
+  if ((path.scope.destructured ?? []).length > 0) {
+    const checked = { ...path, scope: { ...path.scope, destructured: undefined } };
+    return throwOnDestructured(
+      path.scope,
+      checked,
+      context,
+      frame,
+      translateStatements(statements, checked, context, frame),
+    );
+  }
   if (statements.length === 0) return frame.next(path);
   const statement = statements[0];
   const continueWith = (inner: Path) =>

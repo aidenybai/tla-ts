@@ -1047,6 +1047,75 @@ describe("values", () => {
     expect((await checkModel(getSource("Named", 0, 5))).failure?.message).toContain("count");
   });
 
+  it("throws the TypeError of a pattern that destructures undefined, though nothing reads it", async () => {
+    const getSource = (expected: string) => `
+      type Inner = { x: number };
+      const empty: Inner[] = [];
+      const holder: { inner?: Inner } = {};
+      let calls = 0;
+      function take([{ x }]: Inner[]) {
+        calls++;
+      }
+      let array = "none";
+      try {
+        const [{ x }] = empty;
+      } catch (error) {
+        array = error instanceof TypeError ? "type" : "other";
+      }
+      let object = "none";
+      try {
+        const { inner: { x } } = holder as { inner: Inner };
+      } catch (error) {
+        object = error instanceof TypeError ? "type" : "other";
+      }
+      let parameter = "none";
+      try {
+        take([]);
+      } catch (error) {
+        parameter = error instanceof TypeError ? "type" : "other";
+      }
+      let head = "none";
+      try {
+        for (const [{ x }] of [empty]) {
+        }
+      } catch (error) {
+        head = error instanceof TypeError ? "type" : "other";
+      }
+      let caught = "none";
+      try {
+        try {
+          throw new Error("plain");
+        } catch ({ cause: { x } }: any) {
+        }
+      } catch (error) {
+        caught = error instanceof TypeError ? "type" : "other";
+      }
+      let present = "none";
+      try {
+        const [{ x }] = [{ x: 1 }];
+      } catch (error) {
+        present = error instanceof TypeError ? "type" : "other";
+      }
+      const outcomes = [array, object, parameter, head, caught, present, String(calls)].join();
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect(
+      (await checkModel(getSource("type,type,type,type,type,none,0"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("none,type,type,type,type,none,0"))).failure?.message,
+    ).toContain("outcomes type");
+    expect(
+      (await checkModel(getSource("type,type,none,type,type,none,0"))).failure?.message,
+    ).toContain("outcomes type");
+    expect(
+      (await checkModel(getSource("type,type,type,type,none,none,0"))).failure?.message,
+    ).toContain("outcomes type");
+    expect(
+      (await checkModel(getSource("type,type,type,type,type,type,0"))).failure?.message,
+    ).toContain("outcomes type");
+  });
+
   it("gives what a compound assignment to a property writes, as its value", async () => {
     const getSource = (field: number, property: number, element: number, typed: number) => `
       class Counter {
@@ -11454,21 +11523,28 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("stops where a nested pattern destructures an element that an array lacks", async () => {
-    const result = await checkModel(`
+  it("throws where a nested pattern destructures an element that an array lacks", async () => {
+    const getSource = (expected: string) => `
       const values: { x: number }[][] = [[]];
       const read = () => {
         for (const [{ x }] of values) {
           return;
         }
       };
-      read();
+      let caught = "none";
+      try {
+        read();
+      } catch (error) {
+        caught = error instanceof TypeError ? "type" : "other";
+      }
+      if (caught !== "${expected}") throw new Error("caught " + caught);
       const other: { x: number }[][] = [[{ x: 1 }]];
       for (const [{ x }] of other) {
         if (x !== 1) throw new Error("x");
       }
-    `);
-    expect(result.failure?.message).toContain("can't throw the TypeError of destructuring");
+    `;
+    expect((await checkModel(getSource("type"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("none"))).failure?.message).toContain("caught type");
   });
 
   it("destructures an array that the heap holds and gives the array back", async () => {
