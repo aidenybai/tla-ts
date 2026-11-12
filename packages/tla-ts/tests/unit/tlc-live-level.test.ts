@@ -1,15 +1,8 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { expect, it } from "vite-plus/test";
-import { check, formatValue } from "../../src";
+import { formatValue } from "../../src";
+import { checkFixture } from "./check-harness";
 
-const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-live-level");
-
-const checkProperty = (name: string) =>
-  check({
-    source: readFileSync(join(DIRECTORY, "LiveLevel.tla"), "utf8"),
-    config: readFileSync(join(DIRECTORY, `${name}.cfg`), "utf8"),
-  });
+const checkProperty = (name: string) => checkFixture("tlc-live-level", "LiveLevel", name);
 
 it.each(["ReachesThree", "StepsUp", "LevelsAtMostTwo", "LevelsFromOne"])(
   'evaluates TLCGet("level") in %s like TLC',
@@ -28,10 +21,7 @@ it('finds the behavior where TLCGet("level") never reaches 4', async () => {
 });
 
 it('reads TLCGet("level") of the search in the trace of a property that fails to evaluate', async () => {
-  const result = await check({
-    source: readFileSync(join(DIRECTORY, "LiveFail.tla"), "utf8"),
-    config: readFileSync(join(DIRECTORY, "LiveFail.cfg"), "utf8"),
-  });
+  const result = await checkFixture("tlc-live-level", "LiveFail");
   expect(result.status).toBe("error");
   expect(result.failure?.trace?.map((step) => step.output)).toEqual([
     ['<<"level", 1, 0>>'],

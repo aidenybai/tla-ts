@@ -1,17 +1,15 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { prove, type ProofObligation, type ProveOptions, TlaUnsupportedError } from "../../src";
 import { getObligations } from "../../src/obligations";
 import { encodeForBackend } from "../../src/prover/prove";
 import { TLAPS_MODULE } from "../../src/prover/tlaps-module";
+import { getModuleLoader } from "./check-harness";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/prove");
 
-const loadModule = (name: string) => {
-  const path = join(DIRECTORY, `${name}.tla`);
-  return existsSync(path) ? readFileSync(path, "utf8") : undefined;
-};
+const loadModule = getModuleLoader("prove");
 
 const proveFixture = (name: string, options: Partial<ProveOptions> = {}) =>
   prove({ source: loadModule(name) ?? "", loadModule, ...options });

@@ -1,15 +1,8 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check, formatValue, parseConfig, TlaConfigError, type TraceStep } from "../../src";
+import { checkFixture } from "./check-harness";
 
-const DIRECTORY = join(import.meta.dirname, "../fixtures/alias");
-
-const checkAlias = (configName: string) =>
-  check({
-    source: readFileSync(join(DIRECTORY, "Alias.tla"), "utf8"),
-    config: readFileSync(join(DIRECTORY, `${configName}.cfg`), "utf8"),
-  });
+const checkAlias = (configName: string) => checkFixture("alias", "Alias", configName);
 
 const checkModule = (body: string, config: string) =>
   check({
