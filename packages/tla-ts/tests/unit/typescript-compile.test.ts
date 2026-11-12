@@ -6753,6 +6753,37 @@ describe("errors", () => {
     ).toThrow("Make objects only where a statement always runs");
   });
 
+  it("gives new.target to a constructor whose class's fields run constructors", async () => {
+    const getSource = (expected: string) => `
+      class Marks {
+        constructor(readonly owner: Store) {
+          this.owner.log.push("marks");
+        }
+      }
+      class Store {
+        log: string[] = [];
+        readonly marks = new Marks(this);
+        target: unknown;
+        constructor() {
+          this.target = new.target;
+          this.log.push("store");
+        }
+      }
+      const store: Store = Reflect.construct(Store, []);
+      const other = new Store();
+      const result = [
+        store.log.join(","),
+        store.target === Store,
+        other.marks.owner === other,
+      ].join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("marks,store;true;true"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("store,marks;true;true"))).failure?.message).toContain(
+      "marks,store;",
+    );
+  });
+
   it("runs first what an expression removes, and what a branch of it changes", async () => {
     const getSource = (expected: string) => `
       class Ids {
