@@ -68,6 +68,7 @@ import {
   isFromEntries,
   isSymbolCall,
   isNewObject,
+  isObjectConversion,
   isNewProxy,
   getNewBuffer,
   isRevocable,
@@ -2120,7 +2121,9 @@ const translateNode = (
     }
     return allocated;
   }
-  if (ts.isCallExpression(node)) return translateCall(node, scope, context, isDefined);
+  if (ts.isCallExpression(node) && !isObjectConversion(node, context)) {
+    return translateCall(node, scope, context, isDefined);
+  }
   if (ts.isTypeOfExpression(node)) return translateTypeOf(node, scope, context);
   // The operand runs though nothing reads it, as a comma's left operand does.
   if (ts.isVoidExpression(node)) {
@@ -2158,13 +2161,12 @@ const translateNode = (
     }
     return allocated;
   }
-  // new Object of an object gives the object.
-  const passed = ts.isNewExpression(node) ? node.arguments?.at(0) : undefined;
+  // new Object, or Object, of an object gives the object.
+  const passed = isObjectConversion(node, context) ? node.arguments?.at(0) : undefined;
   if (
-    ts.isNewExpression(node) &&
+    isObjectConversion(node, context) &&
     passed !== undefined &&
     node.arguments?.length === 1 &&
-    getBuiltIn(node.expression, context) === "Object" &&
     isHeapType(context.checker.getTypeAtLocation(node), node, context) &&
     (getKind(passed, context) === "object" || isBuiltInObject(passed, context))
   ) {

@@ -2528,6 +2528,46 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("converts a value to an object where Object is called", async () => {
+    const source = `
+      declare global {
+        interface ObjectConstructor {
+          (value?: null): { [key: string]: unknown };
+          <T extends object>(value: T): T;
+          // oxlint-disable-next-line typescript/no-wrapper-object-types
+          (value: string): String;
+          // oxlint-disable-next-line typescript/no-wrapper-object-types
+          (value: number): Number;
+          // oxlint-disable-next-line typescript/no-wrapper-object-types
+          (value: boolean): Boolean;
+        }
+      }
+      const check = (actual: unknown, expected: unknown, message: string) => {
+        if (actual !== expected) throw new Error(message);
+      };
+      const box = { prop: 1 };
+      check(Object(box), box, "same");
+      const count = Object(5);
+      check(count.constructor, Number, "constructor");
+      check(typeof count, "object", "typeof");
+      check(count.valueOf(), 5, "number");
+      check(Object(true).valueOf(), true, "boolean");
+      const text = Object("ab");
+      check(text.length, 2, "length");
+      check(Object.getPrototypeOf(Object(null)), Object.prototype, "empty");
+      check(Object(5) === count, false, "fresh");
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = [
+      ['check(typeof count, "object"', 'check(typeof count, "number"'],
+      ["check(count.valueOf(), 5,", "check(count.valueOf(), 6,"],
+      ['check(Object(5) === count, false', 'check(Object(5) === count, true'],
+    ];
+    for (const [from, to] of wrong) {
+      expect((await checkModel(source.replace(from, to))).failure).toBeDefined();
+    }
+  });
+
   it("rejects new Object of a value whose type doesn't tell the object", () => {
     expect(() =>
       compile("const box = { prop: 1 };\nconst same: Object = new Object(box);"),

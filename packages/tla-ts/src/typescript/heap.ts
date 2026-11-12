@@ -692,7 +692,7 @@ const translateClassObject = (node: ts.ClassExpression, heap: Expression, contex
 // The object that a new of Boolean, Number, or String makes, or of a class that extends one, from
 // the new's first argument.
 const translateWrapperObject = (
-  node: ts.NewExpression,
+  node: ts.NewExpression | ts.CallExpression,
   wrapper: "Boolean" | "Number" | "String",
   prototype: Expression,
   scope: Scope,
@@ -1083,7 +1083,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     );
   }
   const wrapper = getNewWrapper(node, context);
-  if (wrapper !== undefined && ts.isNewExpression(node)) {
+  if (wrapper !== undefined && (ts.isNewExpression(node) || ts.isCallExpression(node))) {
     // The wrapper's constructor, which its prototype's constructor property holds.
     context.builtIns.add(wrapper);
     return useJavaScript(
@@ -1272,9 +1272,11 @@ export const getNewWrapper = (node: ts.Node, context: Context) => {
   const called =
     context.heap !== undefined && ts.isNewExpression(node)
       ? getBuiltIn(node.expression, context)
-      : undefined;
-  // new Object of a primitive wraps it as its own constructor would.
-  const argument = ts.isNewExpression(node) ? node.arguments?.at(0) : undefined;
+      : isObjectConversion(node, context)
+        ? "Object"
+        : undefined;
+  // new Object, or Object, of a primitive wraps it as its own constructor would.
+  const argument = isObjectConversion(node, context) ? node.arguments?.at(0) : undefined;
   const names =
     called === "Object" &&
     argument !== undefined &&
@@ -1291,7 +1293,7 @@ export const getNewWrapper = (node: ts.Node, context: Context) => {
           ? "Boolean"
           : called;
   return (name === "Boolean" || name === "Number" || name === "String") &&
-    ts.isNewExpression(node) &&
+    (ts.isNewExpression(node) || ts.isCallExpression(node)) &&
     (node.arguments ?? []).length <= 1 &&
     !(node.arguments ?? []).some(ts.isSpreadElement)
     ? name
@@ -1715,15 +1717,18 @@ export const isRevoke = (node: ts.Node, context: Context) =>
   node.arguments.length === 0 &&
   isRevocableMember(getOrigin(node.expression, context), "revoke", context);
 
-// new Object() with no value, which makes an empty object as {} does.
+// new Object(value), or Object(value), which converts the value to an object as new does.
+export const isObjectConversion = (
+  node: ts.Node,
+  context: Context,
+): node is ts.NewExpression | ts.CallExpression =>
+  context.heap !== undefined &&
+  (ts.isNewExpression(node) || ts.isCallExpression(node)) &&
+  getBuiltIn(node.expression, context) === "Object";
+
+// new Object() with no value, or Object(), which makes an empty object as {} does.
 export const isNewObject = (node: ts.Node, context: Context) => {
-  if (
-    context.heap === undefined ||
-    !ts.isNewExpression(node) ||
-    getBuiltIn(node.expression, context) !== "Object"
-  ) {
-    return false;
-  }
+  if (!isObjectConversion(node, context)) return false;
   // The argument is dropped, so it must be one that can't do anything.
   const argument = node.arguments?.at(0);
   return (

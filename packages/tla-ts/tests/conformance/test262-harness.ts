@@ -3,7 +3,7 @@
 class Test262Error extends Error {}
 
 // TypeScript's lib types new Object() as Object, which primitives also have, and which has no
-// properties to write. new Object of an object gives the object, and of a primitive its wrapper.
+// properties to write, and Object() as any. Both give an object back, and wrap a primitive.
 // Object.assign gives its target, which TypeScript types as the intersection of its arguments.
 declare global {
   interface ObjectConstructor {
@@ -16,6 +16,14 @@ declare global {
     new (value: number): Number;
     // oxlint-disable-next-line typescript/no-wrapper-object-types
     new (value: boolean): Boolean;
+    (value?: null): { [key: string]: unknown };
+    <T extends object>(value: T): T;
+    // oxlint-disable-next-line typescript/no-wrapper-object-types
+    (value: string): String;
+    // oxlint-disable-next-line typescript/no-wrapper-object-types
+    (value: number): Number;
+    // oxlint-disable-next-line typescript/no-wrapper-object-types
+    (value: boolean): Boolean;
   }
 }
 
