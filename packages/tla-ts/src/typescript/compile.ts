@@ -7,6 +7,7 @@ import {
   findNodes,
   getCallee,
   getSymbol,
+  hasObjectLiteral,
   isInertValue,
   isScript,
 } from "./context";
@@ -183,7 +184,11 @@ export const compile = (
           ]
         : [];
     });
-    const states = declared.some((state) => state.isChanged) || run.length > 0 ? declared : [];
+    // An object that a variable makes keeps its identity, so its file makes it once.
+    const states =
+      declared.some((state) => state.isChanged) || run.length > 0
+        ? declared
+        : declared.filter((state) => hasObjectLiteral(state.statement));
     // A class of an imported file that the model reaches, which its file makes where it declares it.
     const classes = getReached([sourceFile, ...run], context).filter(
       (node): node is ts.ClassDeclaration =>
