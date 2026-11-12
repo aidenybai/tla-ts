@@ -5280,6 +5280,76 @@ describe("errors", () => {
     );
   });
 
+  it("follows an array through a method's parameters and the array it returns", async () => {
+    const getSource = (check: string) => `
+      const shrink = (values: number[], size: number) => {
+        while (values.length > size) values.pop();
+      };
+      class Pool {
+        private buffer: number[] = [];
+        private held: number[] = [];
+        fill(args: number[], start: number) {
+          shrink(this.buffer, 0);
+          for (let index = start; index < args.length; index++) this.buffer.push(args[index]);
+          const used = start > 0 ? this.buffer : args;
+          return this.sum(used);
+        }
+        private sum(values: number[]) {
+          let total = 0;
+          for (const value of values) total += value;
+          return total;
+        }
+        getDoubled(values: number[]) {
+          const doubled: number[] = [];
+          this.pushDoubled(values, doubled);
+          return doubled;
+        }
+        private pushDoubled(values: number[], target: number[]) {
+          for (const value of values) target.push(value * 2);
+        }
+        hold(value: number) {
+          const held = this.held;
+          held.push(value);
+          shrink(held, 1);
+        }
+      }
+      const pool = new Pool();
+      const doubled = pool.getDoubled([1, 2]);
+      const first = pool.fill(doubled, 1);
+      const second = pool.fill([4, 5], 0);
+      pool.hold(5);
+      pool.hold(6);
+      if (${check}) throw new Error("Pool");
+    `;
+    expect((await checkModel(getSource("first !== 4 || second !== 9"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("first === 4"))).failure?.message).toContain("Pool");
+    expect((await checkModel(getSource("second === 9"))).failure?.message).toContain("Pool");
+  });
+
+  it("holds on the heap an array that a built-in makes", async () => {
+    const getSource = (check: string) => `
+      class Pool {
+        private buffer: number[] = [];
+        fill(args: number[], start: number) {
+          this.buffer.push(start);
+          const used = start > 0 ? this.buffer : args;
+          let total = 0;
+          for (const value of used) total += value;
+          return total;
+        }
+      }
+      const pool = new Pool();
+      const first = pool.fill([3, 4].map((value) => value + 1), 0);
+      const second = pool.fill(Array.from({ length: 2 }, (_, index) => index + 4), 0);
+      const third = pool.fill([7, 8].slice(1), 0);
+      if (${check}) throw new Error("Pool");
+    `;
+    const passing = "first !== 9 || second !== 9 || third !== 8";
+    expect((await checkModel(getSource(passing))).failure).toBeUndefined();
+    expect((await checkModel(getSource("first === 9"))).failure?.message).toContain("Pool");
+    expect((await checkModel(getSource("third === 8"))).failure?.message).toContain("Pool");
+  });
+
   it("keeps the arrays of an object that a new takes", async () => {
     const getSource = (check: string) => `
       class Store {

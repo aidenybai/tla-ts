@@ -44,6 +44,7 @@ import { getConstructor, getErrorClass } from "./exceptions";
 import {
   translateArrayLiteral,
   translateCondition,
+  translateCall,
   translateExpression,
   translateToString,
 } from "./expressions";
@@ -1038,6 +1039,16 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
       context,
     );
   }
+  // A new array that a built-in call makes, as the call's sequence.
+  if (ts.isCallExpression(node) && context.heapArrays.has(node)) {
+    const prototype = translateBuiltInValue("Array.prototype", node, context);
+    const elements = translateCall(node, scope, context, false);
+    return useJavaScript(
+      "Allocate",
+      [heap, useJavaScript("ArrayObject", [prototype, elements], context)],
+      context,
+    );
+  }
   if (ts.isArrayLiteralExpression(node)) {
     // An elision is a hole, which the array has no element for, though its length counts it.
     const holes = node.elements.flatMap((element, position) =>
@@ -1937,7 +1948,7 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
     (ts.isObjectLiteralExpression(node) &&
       isObjectValue(node, context) &&
       !isProxyOperation(node, context)) ||
-    ((ts.isArrayLiteralExpression(node) || isHoleyNewArray(node)) &&
+    ((ts.isArrayLiteralExpression(node) || isHoleyNewArray(node) || ts.isCallExpression(node)) &&
       context.heapArrays.has(node)) ||
     ts.isRegularExpressionLiteral(node) ||
     getMadeRegExp(node, context) !== undefined ||
@@ -2032,6 +2043,15 @@ const isAssigned = (node: ts.Node) =>
 // The name that a script calls a function by, where it declares it or binds it to a constant.
 const getCalledName = (owner: ts.SignatureDeclaration) => {
   if (ts.isFunctionDeclaration(owner)) return owner.name;
+  // A method of a class that neither extends nor is extended, which a call runs by its name.
+  if (
+    ts.isMethodDeclaration(owner) &&
+    ts.isIdentifier(owner.name) &&
+    ts.isClassDeclaration(owner.parent) &&
+    owner.parent.heritageClauses === undefined
+  ) {
+    return owner.name;
+  }
   const holder = owner.parent;
   return (ts.isArrowFunction(owner) || ts.isFunctionExpression(owner)) &&
     ts.isVariableDeclaration(holder) &&
@@ -2044,6 +2064,24 @@ const getCalledName = (owner: ts.SignatureDeclaration) => {
 
 const isPlainLiteral = (node: ts.Node | undefined): node is ts.ArrayLiteralExpression =>
   node !== undefined && ts.isArrayLiteralExpression(node);
+
+// The built-in methods that give the array they change rather than a new one.
+const SELF_RETURNING_METHODS = new Set(["sort", "reverse", "fill", "copyWithin"]);
+
+// A built-in call that makes a new array, such as Array.from(...) or a map, whose sequence the
+// heap can hold.
+const isFreshArrayCall = (node: ts.CallExpression, context: Context) => {
+  const declaration = getSymbol(node.expression, context.checker)?.valueDeclaration;
+  return (
+    declaration !== undefined &&
+    declaration.getSourceFile().isDeclarationFile &&
+    getKind(node, context) === "sequence" &&
+    !(
+      ts.isPropertyAccessExpression(node.expression) &&
+      SELF_RETURNING_METHODS.has(node.expression.name.text)
+    )
+  );
+};
 
 // The arrays that a function the script reaches changes in place through a parameter, which
 // JavaScript shares with its caller, live in the heap, with every variable, parameter, and field
@@ -2116,6 +2154,67 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
     };
     // Adds where a value that goes into one of the group's holders comes from: an array literal,
     // which the heap holds, or another holder.
+    // The references to what a declaration declares. TypeScript may give a reference through an
+    // instance another symbol for the same declaration.
+    const getReferences = (declaration: ts.Node) =>
+      [...references.entries()].flatMap((entry) =>
+        (entry[0].declarations ?? []).includes(declaration as ts.Declaration) ? entry[1] : [],
+      );
+    // A class's method that a class that extends its class may override.
+    const isExtended = (owner: ts.SignatureDeclaration) => {
+      return (
+        ts.isMethodDeclaration(owner) &&
+        ts.isClassDeclaration(owner.parent) &&
+        getReferences(owner.parent).some((reference) =>
+          ts.isExpressionWithTypeArguments(reference.parent),
+        )
+      );
+    };
+    // The call that a reference to a function's name makes, as f(...) or this.f(...).
+    const getCall = (reference: ts.Identifier) => {
+      const callee =
+        ts.isPropertyAccessExpression(reference.parent) && reference.parent.name === reference
+          ? reference.parent
+          : reference;
+      return ts.isCallExpression(callee.parent) && callee.parent.expression === callee
+        ? callee.parent
+        : undefined;
+    };
+    // A function that returns one of the group's arrays, whose every call gives the array.
+    const results = new Set<ts.Node>();
+    const addResult = (owner: ts.SignatureDeclaration): boolean => {
+      if (results.has(owner)) return true;
+      results.add(owner);
+      const name = getCalledName(owner);
+      const called = name === undefined ? undefined : getSymbol(name, checker);
+      const body =
+        ts.isFunctionDeclaration(owner) ||
+        ts.isMethodDeclaration(owner) ||
+        ts.isArrowFunction(owner) ||
+        ts.isFunctionExpression(owner)
+          ? owner.body
+          : undefined;
+      const returned: ts.Expression[] = [];
+      const findReturned = (node: ts.Node) => {
+        if (ts.isReturnStatement(node) && node.expression !== undefined) {
+          returned.push(node.expression);
+        }
+        if (!ts.isFunctionLike(node)) ts.forEachChild(node, findReturned);
+      };
+      if (body !== undefined && ts.isBlock(body)) ts.forEachChild(body, findReturned);
+      return (
+        called !== undefined &&
+        body !== undefined &&
+        !isExtended(owner) &&
+        (ts.isBlock(body) ? returned : [body]).every(addSource) &&
+        (name === undefined ? [] : getReferences(name.parent))
+          .filter((reference) => reference !== name)
+          .every((reference) => {
+            const call = getCall(reference);
+            return call !== undefined && isUse(call);
+          })
+      );
+    };
     const addSource = (node: ts.Expression): boolean => {
       if (isPlainLiteral(node)) {
         nodes.push(node);
@@ -2134,6 +2233,16 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       }
       if (ts.isConditionalExpression(node)) {
         return addSource(node.whenTrue) && addSource(node.whenFalse);
+      }
+      if (ts.isCallExpression(node) && isFreshArrayCall(node, context)) {
+        nodes.push(node);
+        return true;
+      }
+      if (ts.isCallExpression(node)) {
+        const callee = getSymbol(node.expression, checker)?.valueDeclaration;
+        const owner =
+          callee !== undefined && ts.isVariableDeclaration(callee) ? callee.initializer : callee;
+        return owner !== undefined && ts.isFunctionLike(owner) && addResult(owner);
       }
       return addHolder(node);
     };
@@ -2184,6 +2293,12 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         return isNumberLike(parent.argumentExpression, context);
       }
       if (ts.isForOfStatement(parent)) return parent.expression === use;
+      if (ts.isReturnStatement(parent) || (ts.isArrowFunction(parent) && parent.body === use)) {
+        const owner = ts.isArrowFunction(parent)
+          ? parent
+          : ts.findAncestor(parent, ts.isFunctionLike);
+        return owner !== undefined && addResult(owner);
+      }
       // A check of whether a holder holds an array reads only the reference.
       if (
         (ts.isIfStatement(parent) && parent.expression === use) ||
@@ -2204,9 +2319,10 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         );
       }
       if (!ts.isCallExpression(parent) || parent.arguments.some(ts.isSpreadElement)) return false;
-      const callee = ts.isIdentifier(parent.expression)
-        ? getSymbol(parent.expression, checker)?.valueDeclaration
-        : undefined;
+      const callee =
+        ts.isIdentifier(parent.expression) || ts.isPropertyAccessExpression(parent.expression)
+          ? getSymbol(parent.expression, checker)?.valueDeclaration
+          : undefined;
       const owner =
         callee !== undefined && ts.isVariableDeclaration(callee) ? callee.initializer : callee;
       const parameter =
@@ -2227,20 +2343,15 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         const called = name === undefined ? undefined : getSymbol(name, checker);
         return (
           called !== undefined &&
+          !isExtended(owner) &&
           declaration.initializer === undefined &&
           declaration.dotDotDotToken === undefined &&
-          (references.get(called) ?? [])
+          (name === undefined ? [] : getReferences(name.parent))
             .filter((reference) => reference !== name)
             .every((reference) => {
-              const call = reference.parent;
-              const argument = ts.isCallExpression(call) ? call.arguments.at(position) : undefined;
-              if (isPlainLiteral(argument)) nodes.push(argument);
-              return (
-                ts.isCallExpression(call) &&
-                call.expression === reference &&
-                argument !== undefined &&
-                (isPlainLiteral(argument) || addHolder(argument))
-              );
+              const call = getCall(reference);
+              const argument = call?.arguments.at(position);
+              return call !== undefined && argument !== undefined && addSource(argument);
             })
         );
       }

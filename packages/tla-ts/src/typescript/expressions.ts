@@ -525,7 +525,7 @@ const translateMath = (node: ts.CallExpression, method: string, scope: Scope, co
   return translateUnknown(node, `Unsupported call: Math.${method}`, context);
 };
 
-const translateCall = (
+export const translateCall = (
   node: ts.CallExpression,
   scope: Scope,
   context: Context,
@@ -2347,6 +2347,13 @@ const translateNode = (
       throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
     }
     return allocated;
+  }
+  if (ts.isCallExpression(node) && context.heapArrays.has(node)) {
+    const made = scope.allocated.get(node);
+    if (made === undefined) {
+      throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
+    }
+    return made;
   }
   if (ts.isCallExpression(node) && !isObjectConversion(node, context)) {
     return translateCall(node, scope, context, isDefined);
