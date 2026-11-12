@@ -1866,19 +1866,27 @@ export const bindCall = (
     );
   }
   // A first parameter's pattern runs the getters of the properties it reads, after the call
-  // evaluates its only argument.
+  // evaluates its only argument, or the object literal that its default makes where the call
+  // passes none.
   const only = argumentNodes.length === 1 ? argumentNodes[0] : undefined;
+  const defaultObject =
+    argumentNodes.length === 0 &&
+    first?.initializer !== undefined &&
+    ts.isObjectLiteralExpression(skipCasts(first.initializer))
+      ? first.initializer
+      : undefined;
+  const source = only ?? defaultObject;
   if (
     first !== undefined &&
-    only !== undefined &&
-    !ts.isSpreadElement(only) &&
+    source !== undefined &&
+    !ts.isSpreadElement(source) &&
     isGetterPattern(first.name, path, context)
   ) {
     const name = context.names.getFresh("argument");
     return bindOnce(
       path,
       name,
-      translateExpression(only, path.scope, context),
+      translateExpression(source, path.scope, context),
       readPatternGetters(first.name, identifier(name), path, context, frame, (after) =>
         bindCall(
           node,
@@ -1889,7 +1897,7 @@ export const bindCall = (
             ...after,
             scope: {
               ...after.scope,
-              results: new Map([...after.scope.results, [only, identifier(name)]]),
+              results: new Map([...after.scope.results, [source, identifier(name)]]),
             },
           },
           context,

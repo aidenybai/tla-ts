@@ -3131,6 +3131,19 @@ describe("errors", () => {
     ).toThrow("Unsupported object member");
   });
 
+  it("runs the getters of a parameter's default object that a pattern reads", async () => {
+    const result = await checkModel(`
+      let count: number = 0;
+      function f({ ...x }: object = { get v() { count++; return 2; } }) {
+        return x;
+      }
+      const made = f();
+      const descriptor = Object.getOwnPropertyDescriptor(made, "v");
+      if (count !== 1 || descriptor?.value !== 2) throw new Error("default");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("shares an array that a field holds and changes in place", async () => {
     const result = await checkModel(`
       interface Tree {
