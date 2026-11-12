@@ -11,6 +11,7 @@ import {
 import { TlaTypeScriptError } from "../errors";
 import { isIteratedPattern, isTaken, isUntypedPattern } from "./iterators";
 import type { Expression, OperatorDefinition } from "../ast";
+import { translateArrayIteration } from "./collections";
 import { translateExpression } from "./expressions";
 import { apply, define, identifier, ifExpression, number, set, string, tuple } from "./tla";
 import { getHeap } from "./heap";
@@ -196,6 +197,26 @@ export const bindPatternInline = (
   }
   const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(pattern));
   const heapSymbol = context.heap;
+  // An array pattern runs the iterator of an array, which may be one that a script replaced.
+  const isIterated =
+    ts.isArrayBindingPattern(pattern) &&
+    !isTaken(value) &&
+    !(context.checker.getTypeAtLocation(pattern).flags & ts.TypeFlags.StringLike);
+  const heap = heapSymbol === undefined ? undefined : getHeap(scope, pattern, context);
+  const iterated =
+    isIterated && heap !== undefined
+      ? translateArrayIteration(value, heap, pattern, context)
+      : value;
+  const iterating =
+    isIterated && heapSymbol !== undefined && heap !== undefined
+      ? {
+          ...scope,
+          bindings: new Map([
+            ...scope.bindings,
+            [heapSymbol, translateArrayIteration(heap, heap, pattern, context)],
+          ]),
+        }
+      : scope;
   const bound = pattern.elements.reduce((current, element, position) => {
     if (ts.isOmittedExpression(element)) return current;
     const initializer = element.initializer;
@@ -204,7 +225,7 @@ export const bindPatternInline = (
       if (element.dotDotDotToken === undefined) {
         return bindPatternInline(
           element.name,
-          withDefault(getElement(value, number(position + 1), context)),
+          withDefault(getElement(iterated, number(position + 1), context)),
           current,
           context,
         );
@@ -212,7 +233,7 @@ export const bindPatternInline = (
       if (context.checker.getTypeAtLocation(pattern).flags & ts.TypeFlags.StringLike) {
         throw new TlaTypeScriptError("Spread a string with split('') instead", element);
       }
-      const rest = apply("SubSeq", [value, number(position + 1), apply("Len", [value])]);
+      const rest = apply("SubSeq", [iterated, number(position + 1), apply("Len", [iterated])]);
       if (!context.heapArrays.has(element) || heapSymbol === undefined) {
         return bindPatternInline(element.name, rest, current, context);
       }
@@ -323,7 +344,7 @@ export const bindPatternInline = (
     const part =
       initializer === undefined ? getField(value, key) : getOptionalField(value, key, context);
     return bindPatternInline(element.name, withDefault(part), current, context);
-  }, scope);
+  }, iterating);
   if (heapSymbol === undefined) return bound;
   const isHeapObject = ts.isObjectBindingPattern(pattern) && isHeapPattern(type, pattern, context);
   // A nested pattern may destructure an element that an array lacks, which throws a TypeError

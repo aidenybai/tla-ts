@@ -4,6 +4,7 @@ import {
   translateArrayLikeCall,
   translateFunctionConstructor,
   translateHeapElements,
+  translateArrayIteration,
   translateMethod,
   translateNew,
   translateSet,
@@ -395,7 +396,13 @@ export const translateElements = (
         element,
       );
     }
-    return [...result, translateExpression(element.expression, scope, context)];
+    const value = translateExpression(element.expression, scope, context);
+    return [
+      ...result,
+      context.heap !== undefined && !isArrayIteration(element.expression, context)
+        ? translateArrayIteration(value, getHeap(scope, element, context), element, context)
+        : value,
+    ];
   }, []);
   if (parts.length === 0) return tuple([]);
   return concatenate(parts.map((part) => (Array.isArray(part) ? tuple(part) : part)));

@@ -11,6 +11,7 @@ import {
   translateHoldsIteratorMethod,
   getHeapElements,
   translateHeapElements,
+  translateArrayIteration,
   getHeapRegExpCall,
   translateRegExpText,
   getStringCall,
@@ -780,12 +781,22 @@ const assignPattern = <Result>(
     // An array that the heap holds gives each element as the iterator reaches it, after the
     // pattern assigns the elements before it, and none once the iterator found no more.
     const isHeapSource = !isList && source !== undefined && isHeapArray(source, context);
+    // Other arrays run the iterator that Array.prototype holds, which a script may replace.
+    const heapSymbol = context.heap;
+    const isIterated =
+      heapSymbol !== undefined &&
+      !isHeapSource &&
+      !isTaken(value) &&
+      !(context.checker.getTypeAtLocation(target).flags & ts.TypeFlags.StringLike);
+    const heap = isIterated ? getHeap(path.scope, target, context) : undefined;
+    const iterated =
+      heap === undefined ? value : translateArrayIteration(value, heap, target, context);
     const assignFrom = (position: number, current: Path, wasDone: Expression): Result => {
       if (position === target.elements.length) return continueWith(current);
       const element = target.elements[position];
       const values = isHeapSource
-        ? getHeapElements(getHeap(current.scope, target, context), value, context)
-        : value;
+        ? getHeapElements(getHeap(current.scope, target, context), value, target, context)
+        : iterated;
       const done = isHeapSource
         ? junction("Or", [
             wasDone,
@@ -802,7 +813,6 @@ const assignPattern = <Result>(
           apply("SubSeq", [values, number(position + 1), apply("Len", [values])]),
           tuple([]),
         );
-        const heapSymbol = context.heap;
         const isProperty =
           (ts.isPropertyAccessExpression(restTarget) || ts.isElementAccessExpression(restTarget)) &&
           heapSymbol !== undefined;
@@ -913,7 +923,22 @@ const assignPattern = <Result>(
         next,
       );
     };
-    return assignFrom(0, path, boolean(false));
+    return assignFrom(
+      0,
+      heapSymbol === undefined || heap === undefined
+        ? path
+        : {
+            ...path,
+            scope: {
+              ...path.scope,
+              bindings: new Map([
+                ...path.scope.bindings,
+                [heapSymbol, translateArrayIteration(heap, heap, target, context)],
+              ]),
+            },
+          },
+      boolean(false),
+    );
   }
   if (ts.isObjectLiteralExpression(target)) {
     const isHeapObject = isHeapPattern(
@@ -7964,7 +7989,15 @@ const translateIterations = (
                         )
                       : isHeapIteration
                         ? translateHeapElements(iterated.expression, path.scope, context)
-                        : translateExpression(iterated.expression, path.scope, context),
+                        : context.heap !== undefined &&
+                            getKind(iterated.expression, context) === "sequence"
+                          ? translateArrayIteration(
+                              translateExpression(iterated.expression, path.scope, context),
+                              getHeap(path.scope, iterated.expression, context),
+                              iterated.expression,
+                              context,
+                            )
+                          : translateExpression(iterated.expression, path.scope, context),
               ),
             ]),
         operator,

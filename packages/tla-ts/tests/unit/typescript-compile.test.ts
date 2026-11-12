@@ -3835,6 +3835,48 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("replaced Function.prototype.bind");
   });
 
+  it("stops iterating an array where a script replaced the array iterator", async () => {
+    const replaced = `
+      let calls = 0;
+      Array.prototype[Symbol.iterator] = function () {
+        calls += 1;
+        return { next: () => ({ value: 42, done: calls > 2 }) };
+      } as typeof Array.prototype.values;
+    `;
+    const nextReplaced = `
+      const ArrayIteratorPrototype = Object.getPrototypeOf([][Symbol.iterator]());
+      ArrayIteratorPrototype.next = () => ({ value: 7, done: true });
+    `;
+    const sources = [
+      `${replaced} const [first, second] = [1, 3, 2];`,
+      `${replaced} let sum = 0; for (const value of [1, 2, 3]) sum += value;`,
+      `${replaced} const spread = [...[5, 6, 7]];`,
+      `${replaced} let first = 0; [first] = [1, 2];`,
+      `${replaced} const [] = [1, 2];`,
+      `${nextReplaced} const items = [1, 2]; items.push(3); const [first] = items;`,
+      `${nextReplaced} const spread = [...[1, 2].values()];`,
+    ];
+    const results = await Promise.all(sources.map((source) => checkModel(source)));
+    expect(results.map((result) => result.failure?.message)).toEqual(
+      sources.map(() => expect.stringContaining("tla-ts can't iterate")),
+    );
+    const kept = `
+      Object.defineProperty(Array.prototype, "extra", { value: 1, writable: true });
+      const [first, second] = [1, 3, 2];
+      let sum = 0;
+      for (const value of [1, 2, 3]) sum += value;
+      const spread = [...[5, 6, 7]];
+      let third = 0;
+      [, , third] = [1, 3, 2];
+      if (first !== 1 || second !== 3 || sum !== 6 || spread.join() !== "5,6,7" || third !== 2) {
+        throw new Error("wrong");
+      }
+    `;
+    expect((await checkModel(kept)).failure).toBeUndefined();
+    const wrong = await checkModel(kept.replace("sum !== 6", "sum !== 7"));
+    expect(wrong.failure?.message).toContain("wrong");
+  });
+
   it("stops where a bound function would see a fresh receiver", () => {
     expect(() =>
       compile(
