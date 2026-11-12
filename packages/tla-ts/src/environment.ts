@@ -70,9 +70,10 @@ import { getSanyParseError } from "./sany/parse-error";
 import {
   CORE_OPERATORS,
   getJavaOverrides,
-  getStandardModule,
+  getStandardOperators,
   getTraceSpecArithmetic,
   STANDARD_DEPENDENCIES,
+  STANDARD_EXTENDS,
 } from "./standard-modules";
 import { getStandardRange, STANDARD_LEVELS } from "./standard-definitions";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
@@ -297,16 +298,16 @@ export const createEnvironment = (
   const addStandardModule = (name: string): Symbols | undefined => {
     const cached = standardExports.get(name);
     if (cached) return cached;
-    const standardModule = getStandardModule(name, options.print, runtime, options.files, builtins);
-    if (!standardModule) return undefined;
+    const operators = getStandardOperators(name, options.print, runtime, options.files, builtins);
+    if (!operators) return undefined;
     STANDARD_DEPENDENCIES.get(name)?.forEach(addStandardModule);
     const exported: Symbols = new Map();
-    standardModule.extends.forEach((extended) =>
+    STANDARD_EXTENDS.get(name)?.forEach((extended) =>
       addStandardModule(extended)?.forEach((symbol, symbolName) =>
         exported.set(symbolName, symbol),
       ),
     );
-    standardModule.operators.forEach((operator) => {
+    operators.forEach((operator) => {
       builtins.set(operator.name, operator);
       exported.set(operator.name, {
         key: operator.name,
