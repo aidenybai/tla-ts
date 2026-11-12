@@ -33,6 +33,7 @@ import {
   isModuleFile,
   getSymbol,
   isAssigned,
+  findNodes,
   skipCasts,
   isScript,
   getTopLevelDeclaration,
@@ -2216,8 +2217,12 @@ const isNumericOperand = (node: ts.Expression, context: Context): boolean => {
 // A read that an operator converts to a number, where a read past an array's end, or of a key that
 // an index signature lacks, gives undefined, though TypeScript types it as the value: NaN in a
 // script that has special numbers, and otherwise a stop, as tla-ts holds no NaN there.
-const toNumericRead = (node: ts.Expression, read: Expression, context: Context) => {
-  if (!isNumberLike(node, context) || !isNumericOperand(node, context)) return read;
+const toNumericRead = (node: ts.Expression, read: Expression, context: Context) =>
+  isNumberLike(node, context) && isNumericOperand(node, context)
+    ? guardNumber(read, context)
+    : read;
+
+const guardNumber = (read: Expression, context: Context) => {
   context.prelude.add("JavaScript");
   return share(read, "element", context, (element) =>
     ifExpression(
@@ -2231,6 +2236,106 @@ const toNumericRead = (node: ts.Expression, read: Expression, context: Context) 
       element,
     ),
   );
+};
+
+// Whether a node is a pattern's target, which an assignment or a for-of gives a value.
+const isPatternTarget = (node: ts.Node): boolean => {
+  const parent = node.parent;
+  if (
+    ts.isArrayLiteralExpression(parent) ||
+    ts.isObjectLiteralExpression(parent) ||
+    ts.isShorthandPropertyAssignment(parent) ||
+    ts.isSpreadElement(parent) ||
+    ts.isSpreadAssignment(parent) ||
+    (ts.isPropertyAssignment(parent) && parent.initializer === node) ||
+    (ts.isBinaryExpression(parent) &&
+      parent.left === node &&
+      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      isPatternTarget(parent))
+  ) {
+    return isPatternTarget(parent);
+  }
+  return (
+    (ts.isArrayLiteralExpression(node) || ts.isObjectLiteralExpression(node)) &&
+    ((ts.isBinaryExpression(parent) &&
+      parent.left === node &&
+      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken) ||
+      ((ts.isForOfStatement(parent) || ts.isForInStatement(parent)) && parent.initializer === node))
+  );
+};
+
+// Whether a value is a number that the script computes: a literal, or what an operator, a length,
+// or Math gives, or a name that holds only those, which can't be the undefined that a read past an
+// array's end gives.
+const isComputedNumber = (node: ts.Expression, context: Context, seen: Set<ts.Symbol>): boolean => {
+  const inner = skipCasts(node);
+  if (ts.isConditionalExpression(inner)) {
+    return (
+      isComputedNumber(inner.whenTrue, context, seen) &&
+      isComputedNumber(inner.whenFalse, context, seen)
+    );
+  }
+  if (ts.isBinaryExpression(inner)) {
+    const kind = inner.operatorToken.kind;
+    return kind === ts.SyntaxKind.EqualsToken || kind === ts.SyntaxKind.CommaToken
+      ? isComputedNumber(inner.right, context, seen)
+      : [
+            ts.SyntaxKind.AmpersandAmpersandToken,
+            ts.SyntaxKind.BarBarToken,
+            ts.SyntaxKind.QuestionQuestionToken,
+          ].includes(kind)
+        ? isComputedNumber(inner.left, context, seen) &&
+          isComputedNumber(inner.right, context, seen)
+        : true;
+  }
+  if (ts.isIdentifier(inner)) return holdsComputedNumber(inner, context, seen);
+  return (
+    ts.isNumericLiteral(inner) ||
+    ts.isPrefixUnaryExpression(inner) ||
+    ts.isPostfixUnaryExpression(inner) ||
+    (ts.isPropertyAccessExpression(inner) && inner.name.text === "length") ||
+    (ts.isCallExpression(inner) &&
+      ts.isPropertyAccessExpression(inner.expression) &&
+      inner.expression.expression.getText() === "Math")
+  );
+};
+
+// Whether a variable holds only numbers that the script computes, where its declaration and each
+// assignment give one.
+const holdsComputedNumber = (
+  name: ts.Identifier,
+  context: Context,
+  seen = new Set<ts.Symbol>(),
+): boolean => {
+  const symbol = getSymbol(name, context.checker);
+  const declaration = symbol?.valueDeclaration;
+  if (symbol === undefined || declaration === undefined) return false;
+  if (seen.has(symbol) || declaration.getSourceFile().isDeclarationFile) return true;
+  seen.add(symbol);
+  if (
+    !ts.isVariableDeclaration(declaration) ||
+    declaration.initializer === undefined ||
+    !isComputedNumber(declaration.initializer, context, seen)
+  ) {
+    return false;
+  }
+  const container =
+    ts.findAncestor(declaration.parent, (ancestor) => ts.isFunctionLike(ancestor)) ??
+    declaration.getSourceFile();
+  return findNodes(container, ts.isIdentifier).every((reference) => {
+    if (reference === declaration.name || getSymbol(reference, context.checker) !== symbol) {
+      return true;
+    }
+    const parent = reference.parent;
+    if (
+      ts.isBinaryExpression(parent) &&
+      parent.left === reference &&
+      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ) {
+      return isComputedNumber(parent.right, context, seen);
+    }
+    return !isPatternTarget(reference);
+  });
 };
 
 const translateElementAccess = (
@@ -2733,7 +2838,15 @@ const translateNode = (
     context.prelude.add("Null");
     return identifier("Null");
   }
-  if (ts.isIdentifier(node)) return translateIdentifier(node, scope, context);
+  if (ts.isIdentifier(node)) {
+    const value = translateIdentifier(node, scope, context);
+    // A name may hold what a read past an array's end gave, unless the script computes it.
+    return isNumberLike(node, context) &&
+      isNumericOperand(node, context) &&
+      !holdsComputedNumber(node, context)
+      ? guardNumber(value, context)
+      : value;
+  }
   if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
     return not(translateCondition(node.operand, scope, context));
   }

@@ -5183,6 +5183,36 @@ describe("errors", () => {
     );
   });
 
+  it("takes a name that holds a read past an array's end as NaN where an operator converts it", async () => {
+    const source = (expected: number) => `
+      const items: number[] = [1, 2];
+      const missing = items[3];
+      const box: { [key: string]: number } = { a: 1 };
+      const kept = box.b;
+      const total = items[0] + items[1];
+      const first = items[0];
+      const values = [missing + 1, -missing, missing * 2, Math.max(missing, 1), first + 1, kept - 1];
+      const isNaNAt = (position: number) => Number.isNaN(values[position]);
+      if (
+        !isNaNAt(0) || !isNaNAt(1) || !isNaNAt(2) || !isNaNAt(3) || values[4] !== ${expected} ||
+        total !== 3 || !isNaNAt(5) || !Number.isNaN(NaN)
+      ) {
+        throw new Error("names");
+      }
+    `;
+    expect((await checkModel(source(2))).failure).toBeUndefined();
+    expect((await checkModel(source(3))).failure?.message).toContain("names");
+    await expect(
+      checkModel(`
+        const items: number[] = [1];
+        const missing = items[3];
+        const sum = missing + 1;
+      `),
+    ).rejects.toThrow(
+      "tla-ts can't compute with the undefined that a read past an array's end gives",
+    );
+  });
+
   it("changes an array that the heap holds in place", async () => {
     const result = await checkModel(`
       const items: number[] & { tag?: string } = [1, 2];
