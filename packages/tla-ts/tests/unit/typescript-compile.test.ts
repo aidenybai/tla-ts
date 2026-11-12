@@ -8999,6 +8999,28 @@ describe("errors", () => {
     );
   });
 
+  it("throws where an inherited reduce has no initial value and no element", async () => {
+    const empty = (expected: string) => `
+      type Method = (...args: unknown[]) => unknown;
+      type Made = new () => { [key: string | symbol]: unknown };
+      function Holder() {}
+      Holder.prototype = new Array(1, 2, 3);
+      const numbers = new (Holder as unknown as Made)();
+      numbers.length = 0;
+      let thrown = "none";
+      try {
+        (numbers.reduce as Method)((total: number, value: number) => total + value);
+      } catch (error) {
+        thrown = error instanceof TypeError ? "TypeError" : "other";
+      }
+      const seeded = (numbers.reduceRight as Method)((total: number, value: number) => total + value, 7);
+      const result = thrown + " " + seeded;
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await check(compile(empty("TypeError 7")))).failure).toBeUndefined();
+    expect((await check(compile(empty("none 7")))).failure?.message).toContain("TypeError 7");
+  });
+
   it("stops where a key that stores an array method holds another function", async () => {
     const result = await check(
       compile(`
