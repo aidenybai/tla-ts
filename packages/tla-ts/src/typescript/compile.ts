@@ -93,8 +93,10 @@ export const compile = (
   const files: ts.SourceFile[] = [];
   const visitImports = (file: ts.SourceFile) =>
     file.statements.forEach((statement) => {
+      // TypeScript erases a declaration that imports or exports only types.
       const specifier =
-        ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)
+        (ts.isImportDeclaration(statement) && statement.importClause?.isTypeOnly !== true) ||
+        (ts.isExportDeclaration(statement) && !statement.isTypeOnly)
           ? statement.moduleSpecifier
           : undefined;
       const imported =

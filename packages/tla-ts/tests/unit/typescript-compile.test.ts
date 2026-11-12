@@ -1253,6 +1253,14 @@ describe("definitions", () => {
     expect(wrong.failure?.message).toContain("linked");
   });
 
+  it("runs nothing of a file that a file imports only types from", async () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/leveling.ts");
+    const source = readFileSync(path, "utf8");
+    expect((await check(compile(source, path))).failure).toBeUndefined();
+    const wrong = await check(compile(source.replace("!== 2", "!== 3"), path));
+    expect(wrong.failure?.message).toContain("leveled");
+  });
+
   it("compiles constants and functions imported from other files", async () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/counter.ts");
     const result = await check(compile(readFileSync(path, "utf8"), path));
