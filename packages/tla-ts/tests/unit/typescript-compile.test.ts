@@ -2166,6 +2166,36 @@ describe("errors", () => {
     expect((await checkModel(getSource("y"))).failure?.message).toContain("unexpected");
   });
 
+  it("runs the getters that Object.defineProperties defines where a statement reads them", async () => {
+    const getSource = (expected: number) => `
+      let accessed = 0;
+      const holder: Record<string, unknown> = {};
+      Object.defineProperties(holder, {
+        "0": {
+          get: function () {
+            accessed++;
+            return 12;
+          },
+        },
+        other: {
+          get: function () {
+            accessed += 10;
+            return 1;
+          },
+        },
+      });
+      const check = (value: unknown, expected: unknown) => {
+        if (value !== expected) throw new Error("value");
+      };
+      check(holder[0], 12);
+      check(holder.other, 1);
+      const getAccessed = (): number => accessed;
+      if (getAccessed() !== ${expected}) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(11))).failure).toBeUndefined();
+    expect((await checkModel(getSource(1))).failure?.message).toContain("unexpected");
+  });
+
   it("runs the setter of an object literal or a class that a computed key picks", async () => {
     const getSource = (written: string) => `
       let log = "";

@@ -448,15 +448,39 @@ const DESCRIPTOR_FIELDS = ["enumerable", "configurable", "value", "writable", "g
 const getterKeys = new WeakMap<ts.SourceFile, Set<string>>();
 
 // The keys that a script defines getters under, in object literals and classes or with
-// Object.defineProperty.
+// Object.defineProperty and Object.defineProperties.
 export const getGetterKeys = (node: ts.Node) => {
   const file = node.getSourceFile();
   const known = getterKeys.get(file);
   if (known !== undefined) return known;
   const keys = new Set<string>();
+  const hasGetter = (attributes: ts.Node | undefined) =>
+    attributes !== undefined &&
+    ts.isObjectLiteralExpression(attributes) &&
+    attributes.properties.some(
+      (property) => property.name !== undefined && getKey(property.name) === "get",
+    );
   findNodes(file, (inner): inner is ts.Node => {
     const key = ts.isGetAccessorDeclaration(inner) ? getKey(inner.name) : undefined;
     if (key !== undefined) keys.add(key);
+    const definitions =
+      ts.isCallExpression(inner) &&
+      ts.isPropertyAccessExpression(inner.expression) &&
+      inner.expression.name.text === "defineProperties"
+        ? inner.arguments.at(1)
+        : undefined;
+    if (definitions !== undefined && ts.isObjectLiteralExpression(definitions)) {
+      definitions.properties.forEach((property) => {
+        const definedKey = property.name === undefined ? undefined : getKey(property.name);
+        if (
+          definedKey !== undefined &&
+          ts.isPropertyAssignment(property) &&
+          hasGetter(property.initializer)
+        ) {
+          keys.add(definedKey);
+        }
+      });
+    }
     if (
       ts.isCallExpression(inner) &&
       ts.isPropertyAccessExpression(inner.expression) &&
@@ -472,16 +496,7 @@ export const getGetterKeys = (node: ts.Node) => {
             : ts.isStringLiteral(defined)
               ? defined.text
               : undefined;
-      if (
-        definedKey !== undefined &&
-        attributes !== undefined &&
-        ts.isObjectLiteralExpression(attributes) &&
-        attributes.properties.some(
-          (property) => property.name !== undefined && getKey(property.name) === "get",
-        )
-      ) {
-        keys.add(definedKey);
-      }
+      if (definedKey !== undefined && hasGetter(attributes)) keys.add(definedKey);
     }
     return false;
   });
