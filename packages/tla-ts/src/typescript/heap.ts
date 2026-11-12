@@ -9,6 +9,7 @@ import {
   getConstruction,
   getFunctionOfKind,
   getNewClass,
+  isHeldError,
   isInertValue,
   getParameters,
   getObjectMethod,
@@ -877,7 +878,7 @@ export const isNewError = (node: ts.Node, context: Context) =>
 
 export const translateAllocated = (node: ts.Node, scope: Scope, context: Context) => {
   const heap = getHeap(scope, node, context);
-  if (isNewError(node, context)) {
+  if (isNewError(node, context) && !isHeldError(node, context)) {
     return useJavaScript("Allocate", [heap, identifier("EmptyObject")], context);
   }
   if (ts.isRegularExpressionLiteral(node) || getMadeRegExp(node, context) !== undefined) {
@@ -1019,6 +1020,27 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   }
   if (ts.isClassLike(node) || isHeapFunction(node, context)) {
     return translateClass(node, heap, scope, context);
+  }
+  if (isHeldError(node, context)) {
+    return useJavaScript(
+      "Allocate",
+      [
+        heap,
+        useJavaScript(
+          "WithPrototype",
+          [
+            identifier("EmptyObject"),
+            useJavaScript(
+              "Get",
+              [heap, translateExpression(node.expression, scope, context), string("prototype")],
+              context,
+            ),
+          ],
+          context,
+        ),
+      ],
+      context,
+    );
   }
   const created = getNewClass(node, context);
   const construction = getConstruction(node, context);
@@ -1970,6 +1992,7 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
     isNewProxy(node, context) ||
     getNewBuffer(node, context) !== undefined ||
     getNewWrapper(node, context) !== undefined ||
+    isHeldError(node, context) ||
     (!isSometimes && isAllocation(node, context)) ||
     (!isSometimes && isNewError(node, context)) ||
     isNewInstance;

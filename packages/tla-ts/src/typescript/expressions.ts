@@ -26,6 +26,7 @@ import {
   getFactoryCall,
   getFunctionValue,
   getNewClass,
+  isHeldError,
   getArgumentsOwner,
   getSymbol,
   isScript,
@@ -2500,6 +2501,7 @@ const translateNode = (
     isFunctionObject(node, context) ||
     isNestedFunction(node, context) ||
     getNewClass(node, context) !== undefined ||
+    isHeldError(node, context) ||
     isNewObject(node, context) ||
     isNewDate(node, context) ||
     isNewProxy(node, context) ||

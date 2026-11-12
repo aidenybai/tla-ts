@@ -13,6 +13,7 @@ import {
   translateString,
   type Unknown,
   getBound,
+  isHeldError,
   isNestedFunction,
 } from "./context";
 import { KEYWORDS } from "../lexer";
@@ -459,6 +460,15 @@ export const getKeptIterator = (node: ts.Node, context: Context) => {
 export const getKind = (node: ts.Expression, context: Context): Kind => {
   if (isHeapArray(node, context) || getBound(node, context) !== undefined) return "object";
   const checker = context.checker;
+  const held = ts.isIdentifier(node) ? getSymbol(node, checker)?.valueDeclaration : undefined;
+  if (
+    held !== undefined &&
+    ts.isVariableDeclaration(held) &&
+    held.initializer !== undefined &&
+    isHeldError(held.initializer, context)
+  ) {
+    return "object";
+  }
   // An object stays one where TypeScript narrows its type, as instanceof Object narrows it to the
   // library's Object.
   const symbol = ts.isIdentifier(node) ? getSymbol(node, checker) : undefined;

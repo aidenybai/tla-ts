@@ -3266,6 +3266,38 @@ describe("errors", () => {
     }
   });
 
+  it("holds an error that only Object's functions read as an object with its prototype", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const check = (actual: unknown, expected: unknown, message: string) => {
+        if (actual !== expected) throw new Error(message);
+      };
+      const sealed = new Error();
+      check(Object.isExtensible(sealed), true, "extensible");
+      Object.seal(sealed);
+      check(Object.isSealed(sealed), true, "sealed");
+      check(Object.isFrozen(sealed), true, "frozen too");
+      const frozen = new SyntaxError();
+      Object.freeze(frozen);
+      check(Object.isFrozen(frozen), true, "frozen");
+      check(Object.getPrototypeOf(frozen), SyntaxError.prototype, "prototype");
+      const defined = new TypeError();
+      Object.defineProperty(defined, "foo", { value: 12, configurable: false });
+      check(Object.hasOwn(defined, "foo"), true, "own");
+      check(Object.isSealed(defined), false, "not sealed");
+      Object.preventExtensions(defined);
+      check(Object.isExtensible(defined), false, "inextensible");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const frozen = source.replace("isFrozen(frozen), true", "isFrozen(frozen), false");
+    expect((await checkModel(frozen)).failure?.message).toContain('"frozen"');
+    const prototype = source.replace("SyntaxError.prototype, ", "Error.prototype, ");
+    expect((await checkModel(prototype)).failure?.message).toContain("prototype");
+    const sealed = source.replace("isSealed(defined), false", "isSealed(defined), true");
+    expect((await checkModel(sealed)).failure?.message).toContain("not sealed");
+  });
+
   it("constructs through Reflect.construct as new does, with newTarget's prototype", async () => {
     const source = `
       const holder = { seen: 0 };

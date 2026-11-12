@@ -2,6 +2,7 @@ import ts from "@typescript/typescript6";
 import type { Expression, OperatorDefinition, OperatorParam } from "../ast";
 import { JAVASCRIPT_OPERATORS } from "./javascript";
 import { BUILT_INS } from "./built-ins";
+import { NATIVE_ERRORS } from "./exceptions";
 import { getBuiltIn } from "./intrinsics";
 import { TlaTypeScriptError } from "../errors";
 import { createNames, type Names } from "./names";
@@ -1483,6 +1484,66 @@ export const getConstruction = (node: ts.Node, context: Context): Construction |
     )
     ? { callee, arguments: list.elements, newTarget }
     : undefined;
+};
+
+// The Object functions that read or change only an object's own properties, its extensibility, and
+// its prototype.
+const OWN_PROPERTY_FUNCTIONS = new Set([
+  "defineProperty",
+  "freeze",
+  "getOwnPropertyDescriptor",
+  "getOwnPropertyNames",
+  "getPrototypeOf",
+  "hasOwn",
+  "isExtensible",
+  "isFrozen",
+  "isSealed",
+  "keys",
+  "preventExtensions",
+  "seal",
+]);
+
+// A new of a native error class without arguments, which a variable holds where each use passes it
+// first to one of those Object functions. The heap holds the error as an object without the slot
+// that marks it as one, which those functions don't read. A SuppressedError has own properties.
+export const isHeldError = (node: ts.Node, context: Context): node is ts.NewExpression => {
+  if (
+    context.heap === undefined ||
+    !ts.isNewExpression(node) ||
+    (node.arguments ?? []).length > 0
+  ) {
+    return false;
+  }
+  const name = getBuiltIn(node.expression, context);
+  const holder = node.parent;
+  if (
+    name === undefined ||
+    !NATIVE_ERRORS.has(name) ||
+    name === "SuppressedError" ||
+    !ts.isVariableDeclaration(holder) ||
+    holder.initializer !== node ||
+    !ts.isIdentifier(holder.name)
+  ) {
+    return false;
+  }
+  const symbol = getSymbol(holder.name, context.checker);
+  const isOwnPropertyUse = (child: ts.Node): boolean => {
+    const call = child.parent;
+    return (
+      child === holder.name ||
+      !ts.isIdentifier(child) ||
+      getSymbol(child, context.checker) !== symbol ||
+      (ts.isCallExpression(call) &&
+        call.arguments[0] === child &&
+        ts.isPropertyAccessExpression(call.expression) &&
+        getBuiltIn(call.expression.expression, context) === "Object" &&
+        OWN_PROPERTY_FUNCTIONS.has(call.expression.name.text))
+    );
+  };
+  const isEveryUse = (child: ts.Node): boolean =>
+    isOwnPropertyUse(child) &&
+    !(ts.forEachChild(child, (inner) => !isEveryUse(inner) || undefined) ?? false);
+  return symbol !== undefined && isEveryUse(node.getSourceFile());
 };
 
 // The heap class that a new names, or that Reflect.construct constructs with a newTarget that is
