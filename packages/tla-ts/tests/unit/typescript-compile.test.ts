@@ -4967,6 +4967,28 @@ describe("errors", () => {
     expect((await checkModel(getSource("top === undefined"))).failure?.message).toContain("empty");
   });
 
+  it("assigns what pop removes, as a loop's update does", async () => {
+    const getSource = (check: string) => `
+      class Counter {
+        total = 0;
+        drain(start: number) {
+          const worklist = [start, start + 1];
+          for (let node = worklist.pop(); node !== undefined; node = worklist.pop()) {
+            this.total += node;
+            if (node > 10) worklist.push(node - 10);
+          }
+        }
+      }
+      const counter = new Counter();
+      counter.drain(11);
+      if (${check}) throw new Error("drained");
+    `;
+    expect((await checkModel(getSource("counter.total !== 26"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("counter.total === 26"))).failure?.message).toContain(
+      "drained",
+    );
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`

@@ -4838,6 +4838,14 @@ const translateExpressionStatement = (
   if (isUnresolved(expression, context)) {
     return throwError("ReferenceError", path, expression, context, frame);
   }
+  // An assignment of what a call like stack.pop() removes, as a declaration takes it.
+  const removed =
+    ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      ? getRemovedValue(expression.right, path, context)
+      : undefined;
+  if (removed !== undefined && ts.isBinaryExpression(expression)) {
+    return continueWith(assign(expression.left, removed.path, context, () => removed.value));
+  }
   // JSON.parse of a literal that isn't JSON throws a SyntaxError, and of one that is makes objects
   // that nothing reads.
   const jsonText = getJsonText(expression, context);
