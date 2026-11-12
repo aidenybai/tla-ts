@@ -2,12 +2,12 @@ import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
 import { type Context, getUndefined, translateString } from "./context";
 import { TlaTypeScriptError } from "../errors";
-import { translateExpression } from "./expressions";
+import { getNumberValue, translateExpression } from "./expressions";
 import { getHeap, translateObjectValue } from "./heap";
 import { getBuiltIn, isBuiltInObject, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
-import { apply, boolean, identifier, ifExpression, number, string } from "./tla";
+import { apply, boolean, identifier, ifExpression, string } from "./tla";
 import { getKind } from "./types";
 
 const toEscape = (code: number) => `\\u${code.toString(16).padStart(4, "0")}`;
@@ -118,12 +118,8 @@ const translateParsed = (node: ts.CallExpression, text: string, context: Context
     context.prelude.add("Null");
     return identifier("Null");
   }
-  if (typeof value === "number" && Object.is(value, -0) && context.hasSpecialNumbers) {
-    return identifier("NegativeZero");
-  }
-  if (typeof value === "number" && Number.isInteger(value) && Math.abs(value) <= 2 ** 31 - 1) {
-    return number(value);
-  }
+  const converted = typeof value === "number" ? getNumberValue(value, context) : undefined;
+  if (converted !== undefined) return converted;
   throw new TlaTypeScriptError(`Unsupported call: ${node.getText()}`, node);
 };
 

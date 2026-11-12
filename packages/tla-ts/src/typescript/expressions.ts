@@ -1501,23 +1501,39 @@ const translateDeclared = (
     : identifier(getDefinition(declaration, context).name);
 };
 
+const SPECIAL_NUMBER_NAMES = new Map([
+  ["NaN", "NaN"],
+  ["Infinity", "Infinity"],
+  ["-Infinity", "NegativeInfinity"],
+  ["-0", "NegativeZero"],
+]);
+
 const getFraction = (value: number, context: Context) => {
   const name = context.fractions.get(value) ?? context.names.getFresh("Fraction");
   context.fractions.set(value, name);
   return name;
 };
 
-// A number that isn't an integer, which a script that computes as JavaScript holds as a model value.
-// Its negation has one too, which Negate gives. TLC holds its floor, so it stays inside 32 bits.
-export const getFractionValue = (value: number, context: Context) => {
-  if (!context.hasSpecialNumbers || Math.abs(value) >= 2 ** 31 - 1) return undefined;
+// A number that tla-ts works out as it compiles, or undefined where this script can't hold it. A
+// script that computes as JavaScript holds a number that isn't an integer as a model value, whose
+// negation has one too, which Negate gives. TLC holds its floor, so it stays inside 32 bits.
+export const getNumberValue = (value: number, context: Context) => {
+  if (Number.isInteger(value) && !Object.is(value, -0) && Math.abs(value) <= 2 ** 31 - 1) {
+    return number(value);
+  }
+  if (!context.hasSpecialNumbers) return undefined;
+  const special = SPECIAL_NUMBER_NAMES.get(Object.is(value, -0) ? "-0" : String(value));
+  if (special === undefined && (Number.isInteger(value) || Math.abs(value) >= 2 ** 31 - 1)) {
+    return undefined;
+  }
   context.prelude.add("JavaScript");
+  if (special !== undefined) return identifier(special);
   getFraction(-value, context);
   return identifier(getFraction(value, context));
 };
 
 const translateFraction = (value: number, node: ts.Node, context: Context) => {
-  const fraction = getFractionValue(value, context);
+  const fraction = getNumberValue(value, context);
   if (fraction === undefined) {
     throw new TlaTypeScriptError(`Only integers are supported: ${node.getText()}`, node);
   }

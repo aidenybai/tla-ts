@@ -7113,6 +7113,14 @@ describe("errors", () => {
       }
     `);
     expect(result.failure).toBeUndefined();
+    const converted = await checkModel(`
+      const object = {};
+      if (parseFloat("2.5") !== 2.5 || JSON.parse("-0.5") !== -0.5 || +"1.5" !== 1.5) {
+        throw new Error("fraction");
+      }
+      if (!Number.isNaN(Number("abc")) || Number("-Infinity") !== -Infinity) throw new Error("special");
+    `);
+    expect(converted.failure).toBeUndefined();
     const sum = await checkModel(`
       const object = {};
       const sum = 0.1 + 0.2;

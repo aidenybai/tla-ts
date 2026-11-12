@@ -3,7 +3,7 @@ import type { Expression } from "../ast";
 import { type Context, getSymbol, getUndefined } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { formatString } from "../printer";
-import { translateBigInt, translateExpression } from "./expressions";
+import { getNumberValue, translateBigInt, translateExpression } from "./expressions";
 import type { Scope } from "./scope";
 import { getKind, isBigIntLike } from "./types";
 import { apply, boolean, identifier, ifExpression, number, set, string } from "./tla";
@@ -4366,11 +4366,12 @@ const translateBigIntText = (text: string, node: ts.Node, context: Context) => {
   return translateBigInt(Number(value), context);
 };
 
-const getInteger = (value: number, node: ts.Node) => {
-  if (!Number.isInteger(value) || Object.is(value, -0) || Math.abs(value) > 2 ** 31 - 1) {
+const getConverted = (value: number, node: ts.Node, context: Context) => {
+  const converted = getNumberValue(value, context);
+  if (converted === undefined) {
     throw new TlaTypeScriptError(`Only integers are supported: ${node.getText()}`, node);
   }
-  return number(value);
+  return converted;
 };
 
 // The number that +argument or Number(argument) converts a value to.
@@ -4380,7 +4381,7 @@ export const translateToNumber = (
   scope: Scope,
   context: Context,
 ) => {
-  if (ts.isStringLiteral(argument)) return getInteger(Number(argument.text), node);
+  if (ts.isStringLiteral(argument)) return getConverted(Number(argument.text), node, context);
   const names = getTypeNames(context.checker.getTypeAtLocation(argument), context.checker);
   const kind = names?.length === 1 ? names[0] : undefined;
   if (kind === "null") return number(0);
@@ -4513,7 +4514,7 @@ export const translateConversion = (node: ts.CallExpression, scope: Scope, conte
   }
   const parse = PARSERS.get(name);
   if (parse !== undefined && ts.isStringLiteral(argument)) {
-    return getInteger(parse(argument.text), node);
+    return getConverted(parse(argument.text), node, context);
   }
   const names = getTypeNames(context.checker.getTypeAtLocation(argument), context.checker);
   const kind = names?.length === 1 ? names[0] : undefined;

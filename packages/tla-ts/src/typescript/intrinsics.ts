@@ -7,7 +7,7 @@ import {
   translateHoldsIteratorMethod,
 } from "./collections";
 import { getConstructor, getErrorClass, NATIVE_ERRORS } from "./exceptions";
-import { getFractionValue, translateExpression } from "./expressions";
+import { getNumberValue, translateExpression } from "./expressions";
 import { getHeap } from "./heap";
 import { useJavaScript, WELL_KNOWN_SYMBOLS } from "./javascript";
 import type { Scope } from "./scope";
@@ -397,15 +397,6 @@ const translateBuiltIn = (
   );
 };
 
-const MAX_INTEGER = 2 ** 31 - 1;
-
-const SPECIAL_NUMBER_NAMES = new Map([
-  ["NaN", "NaN"],
-  ["Infinity", "Infinity"],
-  ["-Infinity", "NegativeInfinity"],
-  ["-0", "NegativeZero"],
-]);
-
 // A property's value from BUILT_INS, or undefined for one TLA+ can't represent.
 const translateBuiltInProperty = (value: string, node: ts.Node, context: Context) => {
   const payload = value.slice(1);
@@ -414,20 +405,7 @@ const translateBuiltInProperty = (value: string, node: ts.Node, context: Context
   if (value.startsWith("b")) return boolean(payload === "true");
   if (value === "u") return getUndefined(context);
   if (value === "l") return identifier("Null");
-  const special = SPECIAL_NUMBER_NAMES.get(payload);
-  if (value.startsWith("n") && special !== undefined && context.hasSpecialNumbers) {
-    return identifier(special);
-  }
-  const parsed = Number(payload);
-  if (value.startsWith("n") && Number.isFinite(parsed) && !Number.isInteger(parsed)) {
-    return getFractionValue(parsed, context);
-  }
-  return value.startsWith("n") &&
-    Number.isInteger(parsed) &&
-    Math.abs(parsed) <= MAX_INTEGER &&
-    payload !== "-0"
-    ? number(parsed)
-    : undefined;
+  return value.startsWith("n") ? getNumberValue(Number(payload), context) : undefined;
 };
 
 // The built-in objects that a script's heap holds: those the script names, and their prototypes.
