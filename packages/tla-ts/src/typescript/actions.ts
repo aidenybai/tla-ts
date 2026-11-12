@@ -778,6 +778,16 @@ interface TargetAssigner<Result> {
   ): Result;
 }
 
+// Runs a default that assigns, as a statement, where the value that its target takes is undefined.
+interface DefaultRunner<Result> {
+  (
+    assignment: ts.BinaryExpression | Increment,
+    part: Expression,
+    path: Path,
+    continueWith: (path: Path, value: Expression) => Result,
+  ): Result;
+}
+
 const PRIMITIVE_TYPES =
   ts.TypeFlags.StringLike |
   ts.TypeFlags.NumberLike |
@@ -800,7 +810,27 @@ const assignPattern = <Result>(
   context: Context,
   assignTarget: TargetAssigner<Result>,
   continueWith: (path: Path) => Result,
+  runDefault?: DefaultRunner<Result>,
 ): Result => {
+  // A part takes its default where it's undefined, which only a statement can run where it assigns.
+  const assignDefaulted = (
+    inner: ts.Expression,
+    innerSource: ts.Expression | undefined,
+    part: Expression,
+    initializer: ts.Expression | undefined,
+    current: Path,
+    next: (path: Path) => Result,
+  ) => {
+    const assignment = initializer && skipCasts(initializer);
+    const assignWith = (after: Path, innerValue: Expression) =>
+      assignPattern(inner, innerSource, innerValue, after, context, assignTarget, next, runDefault);
+    return runDefault !== undefined &&
+      assignment !== undefined &&
+      isAssignment(assignment) &&
+      !current.scope.results.has(assignment)
+      ? runDefault(assignment, part, current, assignWith)
+      : assignWith(current, getDefaulted(part, initializer, current.scope, context));
+  };
   if (ts.isArrayLiteralExpression(target)) {
     // A pattern destructures a list where it took values from an iterator, or where a rest element
     // made the array.
@@ -865,7 +895,16 @@ const assignPattern = <Result>(
           throw new TlaTypeScriptError("Rest elements can't be assigned", element);
         }
         if (ts.isArrayLiteralExpression(restTarget)) {
-          return assignPattern(restTarget, undefined, rest, current, context, assignTarget, next);
+          return assignPattern(
+            restTarget,
+            undefined,
+            rest,
+            current,
+            context,
+            assignTarget,
+            next,
+            runDefault,
+          );
         }
         // An object pattern reads the indices and the length of the array that the rest makes.
         if (ts.isObjectLiteralExpression(restTarget)) {
@@ -890,18 +929,12 @@ const assignPattern = <Result>(
                 property,
               );
             }
-            return assignPattern(
+            return assignDefaulted(
               defaulted.target,
               undefined,
-              getDefaulted(
-                isIndex ? getElement(rest, number(Number(key) + 1), context) : apply("Len", [rest]),
-                defaulted.initializer,
-                inner.scope,
-                context,
-              ),
+              isIndex ? getElement(rest, number(Number(key) + 1), context) : apply("Len", [rest]),
+              defaulted.initializer,
               inner,
-              context,
-              assignTarget,
               (after) => assignKeys(at + 1, after),
             );
           };
@@ -942,20 +975,14 @@ const assignPattern = <Result>(
           ? source.elements[position]
           : undefined;
       const isFromSource = sourceElement !== undefined && !ts.isSpreadElement(sourceElement);
-      return assignPattern(
+      return assignDefaulted(
         defaulted.target,
         isFromSource ? sourceElement : undefined,
-        getDefaulted(
-          isFromSource
-            ? translateExpression(sourceElement, path.scope, context)
-            : untilDone(getElement(values, number(position + 1), context), getUndefined(context)),
-          defaulted.initializer,
-          current.scope,
-          context,
-        ),
+        isFromSource
+          ? translateExpression(sourceElement, path.scope, context)
+          : untilDone(getElement(values, number(position + 1), context), getUndefined(context)),
+        defaulted.initializer,
         current,
-        context,
-        assignTarget,
         next,
       );
     };
@@ -1079,13 +1106,12 @@ const assignPattern = <Result>(
         : defaulted.initializer === undefined
           ? getField(value, key)
           : getOptionalField(value, key, context);
-      return assignPattern(
+      return assignDefaulted(
         defaulted.target,
         undefined,
-        getDefaulted(part, defaulted.initializer, current.scope, context),
+        part,
+        defaulted.initializer,
         current,
-        context,
-        assignTarget,
         next,
       );
     };
@@ -1154,6 +1180,12 @@ const assignPatternWith = (
           );
     },
     continueWith,
+    (assignment, part, current, assignWith) =>
+      ifThenElse(
+        apply("=", [part, getUndefined(context)]),
+        runAssignment(assignment, current, context, frame, assignWith),
+        assignWith(current, part),
+      ),
   );
 
 const REMOVING_METHODS = new Set(["push", "unshift", "splice", "shift", "pop"]);
@@ -6843,6 +6875,32 @@ const translateExpressionStatement = (
       ),
       translateWriteStatement(expression, path, context, frame, continueWith),
       continueWith(path),
+    );
+  }
+  // A pattern whose default assigns runs the default as a statement as it assigns its target.
+  if (
+    ts.isBinaryExpression(expression) &&
+    expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    (ts.isArrayLiteralExpression(expression.left) ||
+      ts.isObjectLiteralExpression(expression.left)) &&
+    findNodes(expression.left, (node): node is ts.Node => {
+      const initializer = ts.isShorthandPropertyAssignment(node)
+        ? node.objectAssignmentInitializer
+        : ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+          ? node.right
+          : undefined;
+      return initializer !== undefined && isAssignment(skipCasts(initializer));
+    }).length > 0
+  ) {
+    return assignPatternWith(
+      expression,
+      expression.left,
+      expression.right,
+      translateExpression(expression.right, path.scope, context),
+      path,
+      context,
+      frame,
+      continueWith,
     );
   }
   return translateWriteStatement(expression, path, context, frame, continueWith);
