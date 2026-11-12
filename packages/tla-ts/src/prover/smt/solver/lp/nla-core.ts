@@ -44,6 +44,7 @@ import {
   mkIneq,
   negateKind,
 } from "./nla-types";
+import { NlaTranscendentals } from "./nla-transcendentals";
 import { NraSolver } from "./nra-solver";
 import { getSignedVarVar, isSignedVarNegated, mkSignedVar, VarEqs } from "./nla-var-eqs";
 
@@ -173,6 +174,7 @@ export class NlaCore {
   readonly horner: Horner;
   readonly grobner: Grobner;
   readonly nra = new NraSolver(this);
+  readonly transcendentals = new NlaTranscendentals(this);
   isUsingNraModel = false;
   private nlsatBackoff: Backoff;
   private checkAssignmentFailCount = 0;
@@ -403,6 +405,7 @@ export class NlaCore {
   }
 
   hasRelevantMonomial() {
+    if (!this.transcendentals.isEmpty) return true;
     return this.emons.monics.some((monic) => this.isRelevant(monic.variable));
   }
 
@@ -727,7 +730,29 @@ export class NlaCore {
 
   private onToRefineEmpty() {
     this.squeezeSchedule.onNothingToRefine();
-    return L_TRUE;
+    return this.checkTranscendentalsAndFinish();
+  }
+
+  // The applications of transcendental functions still need checking when the monomials hold. A
+  // failure of the check needs nlsat, and a model of nlsat that is not tight enough is unknown.
+  private checkTranscendentalsAndFinish() {
+    const transcendentals = this.transcendentals;
+    if (transcendentals.isEmpty) return L_TRUE;
+    const numFailures = transcendentals.numFailures;
+    transcendentals.check();
+    if (this.lemmas.length > 0 || this.literals.length > 0) return L_FALSE;
+    const isFailed = transcendentals.numFailures > numFailures;
+    let isRunningNlsat = this.shouldRunBoundedNlsat() && transcendentals.numFailures > 0;
+    if (isFailed && !isRunningNlsat) {
+      if (!NLA_PARAMS.nra) return L_UNDEF;
+      isRunningNlsat = true;
+    }
+    if (!isRunningNlsat) return L_TRUE;
+    const result = this.boundedNlsat();
+    if (result === L_FALSE) return L_FALSE;
+    if (result === L_TRUE && transcendentals.isNraModelValid()) return L_TRUE;
+    if (result === L_TRUE) this.setUseNraModel(false);
+    return L_UNDEF;
   }
 
   check(level: number) {
@@ -789,7 +814,8 @@ export class NlaCore {
     );
     if (this.isCanceled()) return L_UNDEF;
     if (this.lemmas.length > 0 || this.literals.length > 0 || this.isCheckFeasible) return L_FALSE;
-    if (this.isNlaSatisfied) return L_TRUE;
+    if (this.isNlaSatisfied) return this.checkTranscendentalsAndFinish();
+    if (hasNoEffect() && !this.transcendentals.isEmpty) this.transcendentals.check();
     if (
       hasNoEffect() &&
       NLA_PARAMS.nraCheckAssignment &&

@@ -13,6 +13,20 @@ export const getGcd = (first: bigint, second: bigint) => {
 
 const isBigInt = (value: bigint) => value <= -2147483648n || value > 2147483647n;
 
+// mpz's get_double sums the 32-bit digits of a bignum from the least significant one, which rounds
+// differently from Number.
+const getDouble = (value: bigint) => {
+  if (!isBigInt(value)) return Number(value);
+  let result = 0;
+  let scale = 1;
+  for (let rest = value < 0n ? -value : value; rest > 0n; rest >>= 32n) {
+    result += scale * Number(rest & 0xffffffffn);
+    scale *= 4294967296;
+  }
+  if (!(result >= 0)) result = 2 ** 64;
+  return value < 0n ? -result : result;
+};
+
 export const getLcm = (first: bigint, second: bigint) => {
   const product = first * second;
   return (product < 0n ? -product : product) / getGcd(first, second);
@@ -70,6 +84,17 @@ export class Rational {
 
   static fromNumber(value: number) {
     return new Rational(BigInt(value), 1n);
+  }
+
+  // The exact value of a finite double.
+  static fromDouble(value: number) {
+    let den = 1n;
+    let scaled = value;
+    while (!Number.isInteger(scaled)) {
+      scaled *= 2;
+      den *= 2n;
+    }
+    return Rational.of(BigInt(scaled), den);
   }
 
   isZero() {
@@ -154,6 +179,10 @@ export class Rational {
     if (this.den === 1n) return this;
     const quotient = this.num / this.den;
     return new Rational(this.num < 0n ? quotient : quotient + 1n, 1n);
+  }
+
+  toDouble() {
+    return getDouble(this.num) / getDouble(this.den);
   }
 
   toString() {

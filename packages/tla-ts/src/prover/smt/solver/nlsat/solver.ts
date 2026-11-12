@@ -14,6 +14,7 @@ import { Evaluator } from "./evaluator";
 import { Explain } from "./explain";
 import type { IntervalSet } from "./interval-set";
 import { NULL_VAR, type Polynomial, PolynomialCache, PolynomialManager } from "./polynomial";
+import { NlsatTranscendentals } from "./transcendentals";
 import { type Clause, type IneqAtom, type IneqKind, isIneqAtom, type RootKind } from "./types";
 
 // Past every Boolean variable.
@@ -79,6 +80,7 @@ export class NlsatSolver {
     reorder: (permutation) => this.reorder(permutation),
     restoreOrder: () => this.restoreOrder(),
   });
+  readonly transcendentals = new NlsatTranscendentals(this);
   private bk = 0;
   private xk = NULL_VAR;
   private scopeLevel = 0;
@@ -582,7 +584,11 @@ export class NlsatSolver {
         }
         bounds.push([variable, lower]);
       }
-      if (bounds.length === 0) return result;
+      if (bounds.length === 0) {
+        if (this.transcendentals.isEmpty || !this.transcendentals.refine()) return result;
+        this.initSearch();
+        continue;
+      }
       this.initSearch();
       for (const bound of bounds) {
         this.lemma.reset();
@@ -1032,6 +1038,7 @@ export class NlsatSolver {
       else polynomials.add(atom.polynomial);
     }
     this.pm.rename(permutation, polynomials);
+    this.transcendentals.rename(permutation);
     this.atoms.reinitCache();
     this.setAssignment(assignment);
     this.reattachArithClauses(this.clauses);
