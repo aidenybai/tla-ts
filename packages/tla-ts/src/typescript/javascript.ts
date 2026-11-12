@@ -939,8 +939,17 @@ LOCAL PropertiesOf(heap, ref, key) ==
   THEN heap.objects[ref[Ref]]
   ELSE Lookup(heap, ref)
 
+\\* A promise that tla-ts follows as it compiles, whose properties the heap doesn't hold.
+PromiseObject == [EmptyObject EXCEPT !.prototype = Ref :> "Promise.prototype", !.isOpaque = TRUE]
+
+\\* A promise that tla-ts follows keeps Promise.prototype, as a script can't change the object.
 Prototype(heap, ref) ==
-  IF IsTypedArray(heap, ref) THEN heap.objects[ref[Ref]].prototype ELSE Lookup(heap, ref).prototype
+  IF \\/ IsTypedArray(heap, ref)
+     \\/ /\\ IsHeap(ref)
+        /\\ heap.objects[ref[Ref]].isOpaque
+        /\\ ToString(heap.objects[ref[Ref]].prototype) = ToString(PromiseObject.prototype)
+  THEN heap.objects[ref[Ref]].prototype
+  ELSE Lookup(heap, ref).prototype
 
 RECURSIVE Has(_, _, _)
 Has(heap, ref, key) ==
@@ -948,9 +957,6 @@ Has(heap, ref, key) ==
   THEN TypedKey(key) = "index" /\\ ToIndex(key) < ViewLength(heap, heap.objects[ref[Ref]])
   ELSE \\/ key \\in DOMAIN PropertiesOf(heap, ref, key).values
        \\/ LET prototype == Prototype(heap, ref) IN prototype # Null /\\ Has(heap, prototype, key)
-
-\\* A promise that tla-ts follows as it compiles, whose properties the heap doesn't hold.
-PromiseObject == [EmptyObject EXCEPT !.prototype = Ref :> "Promise.prototype", !.isOpaque = TRUE]
 
 \\* An error is a record of its constructor, its message and its name, and a SuppressedError's also
 \\* of its error and the error it suppressed.

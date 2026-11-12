@@ -5914,6 +5914,19 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("reads the prototype of a promise", async () => {
+    const result = await checkModel(`
+      async function make() {}
+      const made = make();
+      const all = Promise.all([]);
+      const constructed = new Promise(() => {});
+      if (!(made instanceof Promise) || !(constructed instanceof Promise)) throw new Error("made");
+      if (made instanceof Array || !(made instanceof Object)) throw new Error("array");
+      if (Object.getPrototypeOf(all) !== Promise.prototype) throw new Error("prototype");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("rejects new AggregateError, whose first argument isn't a message", () => {
     expect(() => compile(`const error = new AggregateError([1], "message");`)).toThrow(
       "Unsupported constructor: new AggregateError",
