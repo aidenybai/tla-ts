@@ -5138,6 +5138,16 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("converts a value that may be a number or undefined to a string", async () => {
+    const result = await checkModel(`
+      const found = "Boston, MA 02134".match(/\\d{5}/);
+      if (found === null || "at " + found.index !== "at 11") throw new Error("index");
+      const values: (number | undefined)[] = [1, undefined];
+      if (\`\${values[0]},\${values[1]}\` !== "1,undefined") throw new Error("template");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("converts the value that a String.prototype method reads through call", async () => {
     const result = await checkModel(`
       const box = { size: 0 };

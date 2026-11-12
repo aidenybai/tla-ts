@@ -1014,6 +1014,9 @@ export const translateSetKey = (node: ts.Expression, scope: Scope, context: Cont
 export const translateBigInt = (value: number, context: Context) =>
   useJavaScript(":>", [identifier("Big"), number(value)], context);
 
+// The types of the primitives that StringOf converts, where a union may hold any of them.
+const PRIMITIVE_NAMES = new Set(["string", "number", "boolean", "undefined", "null"]);
+
 export const translateToString = (node: ts.Expression, scope: Scope, context: Context) => {
   const value = translateExpression(node, scope, context);
   const flags = context.checker.getTypeAtLocation(node).flags;
@@ -1024,7 +1027,9 @@ export const translateToString = (node: ts.Expression, scope: Scope, context: Co
   if (flags & ts.TypeFlags.Null) return string("null");
   if (flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) return string("undefined");
   const names = getTypeNames(context.checker.getTypeAtLocation(node), context.checker);
-  if (names === undefined) return useJavaScript("StringOf", [value], context);
+  if (names === undefined || names.every((name) => PRIMITIVE_NAMES.has(name))) {
+    return useJavaScript("StringOf", [value], context);
+  }
   // A function converts to its source text, which a branch that never runs, such as an error's
   // message, may still hold.
   if (names.every((name) => name === "function")) {
