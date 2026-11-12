@@ -1027,6 +1027,25 @@ export const translateCall = (
     if (kind === "sequence" || kind === "set" || kind === "map") {
       return boolean(method === "isExtensible");
     }
+    // A function that the heap or the built-in objects hold is an object there, which may be
+    // frozen, as %ThrowTypeError% is, which a script reaches through descriptors. Another function
+    // stays extensible, and undefined isn't.
+    if (
+      context.heap !== undefined &&
+      names?.includes("function") &&
+      names.every((name) => name === "function" || name === "undefined")
+    ) {
+      context.builtIns.add("get Function.prototype.arguments");
+      return ifExpression(
+        useJavaScript("IsRef", [value], context),
+        useJavaScript(test, [getHeap(scope, node, context), value], context),
+        ifExpression(
+          apply("=", [value, getUndefined(context)]),
+          boolean(method !== "isExtensible"),
+          boolean(method === "isExtensible"),
+        ),
+      );
+    }
   }
   if (isRevocable(node, context)) {
     const revocable = scope.allocated.get(node);

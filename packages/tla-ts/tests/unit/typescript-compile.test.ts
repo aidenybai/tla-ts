@@ -3575,22 +3575,30 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain("frozen");
   });
 
-  it("stops rather than take a built-in function that a variable holds as extensible", async () => {
+  it("tests the extensibility of a function that a variable holds where it runs", async () => {
     const source = `
       const holder = { seen: 0 };
       const made = () => 1;
       function declared() {}
       if (!Object.isExtensible(made) || Object.isFrozen(declared)) throw new Error("made");
+      const revoke = Proxy.revocable({}, {}).revoke;
+      if (!Object.isExtensible(revoke)) throw new Error("revoke");
+      const thrower = Object.getOwnPropertyDescriptor(Function.prototype, "caller")!.get!;
+      if (Object.isExtensible(thrower) || !Object.isFrozen(thrower)) throw new Error("thrower");
+      const missing = Object.getOwnPropertyDescriptor({ a: 1 }, "a")!.get;
+      if (Object.isExtensible(missing) || !Object.isFrozen(missing)) throw new Error("missing");
       holder.seen = 1;
     `;
     expect((await checkModel(source)).failure).toBeUndefined();
-    const wrong = source.replace("!Object.isExtensible(made)", "Object.isExtensible(made)");
-    expect((await checkModel(wrong)).failure?.message).toContain('"made"');
-    expect(() =>
-      compile(
-        'const holder = { seen: 0 };\nconst thrower = Object.getOwnPropertyDescriptor(Function.prototype, "caller")!.get!;\nif (Object.isExtensible(thrower)) holder.seen = 1;',
-      ),
-    ).toThrow("spec.ts:3:5 Unsupported call: Object.isExtensible");
+    const wrong = [
+      ["!Object.isExtensible(made)", "Object.isExtensible(made)", '"made"'],
+      ["!Object.isExtensible(revoke)", "Object.isExtensible(revoke)", '"revoke"'],
+      ["!Object.isFrozen(thrower)", "Object.isFrozen(thrower)", '"thrower"'],
+      ["!Object.isFrozen(missing)", "Object.isFrozen(missing)", '"missing"'],
+    ];
+    for (const [from, to, message] of wrong) {
+      expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
+    }
   });
 
   it("reads an object through Reflect as in and Object's functions do", async () => {
