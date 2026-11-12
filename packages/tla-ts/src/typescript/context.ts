@@ -500,6 +500,14 @@ export const getAccessKey = (node: ts.Expression) => {
   return ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key) ? key.text : undefined;
 };
 
+// Whether tla-ts inlines an accessor: a plain one of a heap class, or of an object literal that a
+// script makes once.
+const isInlinedAccessor = (accessor: ts.Declaration, context: Context) =>
+  isPlainAccessor(accessor) &&
+  (ts.isObjectLiteralExpression(accessor.parent)
+    ? isOnce(accessor.parent)
+    : ts.isClassLike(accessor.parent) && isHeapClass(accessor.parent, context));
+
 // The accessor of a heap class, or of an object literal that a script makes once, that a property
 // access names, which the access checks the object still holds.
 const getObjectAccessor = <T extends ts.GetAccessorDeclaration | ts.SetAccessorDeclaration>(
@@ -514,15 +522,7 @@ const getObjectAccessor = <T extends ts.GetAccessorDeclaration | ts.SetAccessorD
       ? node.argumentExpression
       : undefined;
   const accessor = name && getSymbol(name, context.checker)?.declarations?.find(isKind);
-  const parent = accessor?.parent;
-  return accessor !== undefined &&
-    isPlainAccessor(accessor) &&
-    parent !== undefined &&
-    (ts.isObjectLiteralExpression(parent)
-      ? isOnce(parent)
-      : ts.isClassLike(parent) && isHeapClass(parent, context))
-    ? accessor
-    : undefined;
+  return accessor !== undefined && isInlinedAccessor(accessor, context) ? accessor : undefined;
 };
 
 export const getObjectGetter = (node: ts.Expression, context: Context) =>
@@ -1193,15 +1193,18 @@ export const getAccessorFunctions = (node: ts.Node, field: "get" | "set", contex
 
 const setAccessors = new WeakMap<ts.SourceFile, ts.SetAccessorDeclaration[]>();
 
-// The setters that a script writes in object literals and classes under a key it names.
-const getSetAccessors = (node: ts.Node) => {
+// The setters that a script writes in object literals and classes under a key it names, of those
+// that tla-ts inlines.
+const getSetAccessors = (node: ts.Node, context: Context) => {
   const file = node.getSourceFile();
   const known = setAccessors.get(file);
   if (known !== undefined) return known;
   const found = findNodes(
     file,
     (inner): inner is ts.SetAccessorDeclaration =>
-      ts.isSetAccessorDeclaration(inner) && getNameKey(inner.name) !== undefined,
+      ts.isSetAccessorDeclaration(inner) &&
+      getNameKey(inner.name) !== undefined &&
+      isInlinedAccessor(inner, context),
   );
   setAccessors.set(file, found);
   return found;
@@ -1240,7 +1243,7 @@ export const getSetters = (node: ts.Node, context: Context) => {
   return [
     ...getAccessorFunctions(node, "set", context),
     ...getReturnedFunctions(node, context),
-    ...getSetAccessors(node).filter(
+    ...getSetAccessors(node, context).filter(
       (setter) => keys === undefined || keys.includes(getNameKey(setter.name) ?? ""),
     ),
   ].filter((setter) =>
