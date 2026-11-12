@@ -718,6 +718,17 @@ FunctionObject(functionPrototype, code) ==
 MethodObject(functionPrototype, code) ==
   [FunctionObject(functionPrototype, code) EXCEPT !.isConstructor = FALSE]
 
+\\* A function that a function makes, which outlives the call that made it, and the environment
+\\* that holds the locals it reads from that call, by key.
+ClosureObject(functionPrototype, code, environment) ==
+  [environment |-> environment] @@ FunctionObject(functionPrototype, code)
+
+EnvironmentObject(bindings) == [bindings |-> bindings] @@ [EmptyObject EXCEPT !.isOpaque = TRUE]
+
+\\* A local that a closure reads from the call that made it.
+Captured(heap, closure, key) ==
+  heap.objects[heap.objects[closure[Ref]].environment[Ref]].bindings[key]
+
 \\* The code that a value runs where a script calls it.
 CodeOf(heap, value) ==
   IF IsHeap(value) /\\ "code" \\in DOMAIN heap.objects[value[Ref]]

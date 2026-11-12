@@ -51,6 +51,9 @@ import {
   getCallee,
   getElement,
   getAnyFunction,
+  getCaptures,
+  getClosures,
+  isClosure,
   getFactoryCall,
   isAsyncFunction,
   isAsyncGenerator,
@@ -1332,7 +1335,9 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
   if (!ts.isBinaryExpression(expression)) return undefined;
   const kind = expression.operatorToken.kind;
   if (kind === ts.SyntaxKind.EqualsToken) {
-    const assigned = getAnyFunction(expression.right);
+    const assigned = isClosure(expression.right, context)
+      ? undefined
+      : getAnyFunction(expression.right);
     const symbol = ts.isIdentifier(expression.left)
       ? getSymbol(expression.left, context.checker)
       : undefined;
@@ -2511,18 +2516,36 @@ export const translateCallStatement = (
           ? undefined
           : { value: receiver, method: candidate };
         return ifThenElse(
-          apply("=", [value, candidateValue]),
+          apply("=", [
+            isClosure(candidate, context)
+              ? useJavaScript("CodeOf", [getHeap(path.scope, expression, context), value], context)
+              : value,
+            candidateValue,
+          ]),
           !isAnyGenerator(candidate) && !isAsyncFunction(candidate)
-            ? inlineBody(
-                expression,
-                candidate,
-                expression.arguments,
-                candidateReceiver,
-                path,
-                context,
-                frame,
-                continueWith,
-              )
+            ? isClosure(candidate, context)
+              ? enterClosure(candidate, value, path, context, (inner, leave) =>
+                  inlineBody(
+                    expression,
+                    candidate,
+                    expression.arguments,
+                    candidateReceiver,
+                    inner,
+                    context,
+                    frame,
+                    (after, result) => continueWith(leave(after), result),
+                  ),
+                )
+              : inlineBody(
+                  expression,
+                  candidate,
+                  expression.arguments,
+                  candidateReceiver,
+                  path,
+                  context,
+                  frame,
+                  continueWith,
+                )
             : isAnyGenerator(candidate)
               ? makeGenerator(
                   expression,
@@ -3471,6 +3494,48 @@ const isAction = (callee: FunctionNode, context: Context) =>
   (ts.getCombinedModifierFlags(ts.isVariableDeclaration(callee.parent) ? callee.parent : callee) &
     ts.ModifierFlags.Export) !==
     0;
+
+// Binds the locals that a closure reads to those its environment holds, for a call of the closure
+// that a value holds, and leaves them as they were once the call returns.
+const enterClosure = (
+  closure: ts.FunctionExpression,
+  value: Expression,
+  path: Path,
+  context: Context,
+  run: (inner: Path, leave: (after: Path) => Path) => Formula,
+) => {
+  const captures = getCaptures(closure, context);
+  const heap = getHeap(path.scope, closure, context);
+  const leave = (after: Path) => ({
+    ...after,
+    scope: {
+      ...after.scope,
+      bindings: new Map([
+        ...[...after.scope.bindings].filter((entry) => !captures.includes(entry[0])),
+        ...captures.flatMap((symbol): [ts.Symbol, Expression][] => {
+          const kept = path.scope.bindings.get(symbol);
+          return kept === undefined ? [] : [[symbol, kept]];
+        }),
+      ]),
+    },
+  });
+  return run(
+    {
+      ...path,
+      scope: {
+        ...path.scope,
+        bindings: new Map([
+          ...path.scope.bindings,
+          ...captures.map((symbol): [ts.Symbol, Expression] => [
+            symbol,
+            useJavaScript("Captured", [heap, value, string(symbol.name)], context),
+          ]),
+        ]),
+      },
+    },
+    leave,
+  );
+};
 
 export const inlineBody = (
   node: ts.Node,
@@ -7398,7 +7463,7 @@ const getDispatched = (
   functions: ReadonlyMap<ts.Symbol, FunctionNode>,
   context: Context,
 ) => {
-  const callee = getCast(node.expression);
+  const callee = skipCasts(node.expression);
   const symbol = getSymbol(callee, context.checker);
   const declarations = symbol?.declarations ?? [];
   const assigned = symbol && functions.get(symbol);
@@ -7416,7 +7481,7 @@ const getDispatched = (
   ) {
     return undefined;
   }
-  const dispatched = getFunctionCandidates(callee, context);
+  const dispatched = [...getFunctionCandidates(callee, context), ...getClosures(callee, context)];
   return dispatched.length > 0 ? dispatched : undefined;
 };
 
@@ -9968,6 +10033,7 @@ const isPlainCallee = (
   node.kind === ts.SyntaxKind.ThisKeyword ||
   ts.isLiteralExpression(node) ||
   (results?.has(node) ?? false) ||
+  (ts.isNonNullExpression(node) && isPlainCallee(node.expression, context, results)) ||
   (ts.isPropertyAccessExpression(node) &&
     !ts.isPrivateIdentifier(node.name) &&
     getObjectGetter(node, context) === undefined &&

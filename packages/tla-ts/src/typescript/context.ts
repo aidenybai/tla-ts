@@ -831,7 +831,8 @@ export const getFunctionValue = (
       (ts.isFunctionDeclaration(found) && found.body !== undefined)) &&
     isOnce(found.parent) &&
     !isHeapFunction(found, context) &&
-    !isFunctionObject(found, context)
+    !isFunctionObject(found, context) &&
+    !isClosure(found, context)
     ? found
     : undefined;
 };
@@ -1281,6 +1282,88 @@ export const isNestedFunction = (
       ts.findAncestor(declaration.parent, ts.isFunctionLike) === undefined
     );
   });
+
+// A function expression that a function makes and assigns to a name declared outside it, which
+// outlives the call that made it, and reads the locals of that call from its environment.
+export const isClosure = (node: ts.Node, context: Context): node is ts.FunctionExpression => {
+  if (
+    context.heap === undefined ||
+    !ts.isFunctionExpression(node) ||
+    node.name !== undefined ||
+    node.asteriskToken !== undefined ||
+    (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) !== 0
+  ) {
+    return false;
+  }
+  const maker = ts.findAncestor(node.parent, ts.isFunctionLike);
+  const assignment = node.parent;
+  const declaration =
+    ts.isBinaryExpression(assignment) &&
+    assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    assignment.right === node &&
+    ts.isIdentifier(assignment.left) &&
+    ts.isExpressionStatement(assignment.parent)
+      ? getSymbol(assignment.left, context.checker)?.valueDeclaration
+      : undefined;
+  return (
+    maker !== undefined &&
+    declaration !== undefined &&
+    ts.findAncestor(declaration, (ancestor) => ancestor === maker) === undefined
+  );
+};
+
+// The locals of the function that makes a closure that the closure reads, each once. tla-ts copies
+// them to the closure's environment where the function makes it, so each must hold its value by
+// then, and keep it.
+export const getCaptures = (node: ts.FunctionExpression, context: Context) => {
+  const maker = ts.findAncestor(node.parent, ts.isFunctionLike);
+  // A loop between a node and the function that makes the closure, which runs it again.
+  const isRepeated = (inner: ts.Node) =>
+    ts.findAncestor(inner, (ancestor) =>
+      ancestor === maker ? "quit" : ts.isIterationStatement(ancestor, false),
+    ) !== undefined;
+  const captures = findNodes(node, ts.isIdentifier).flatMap((name) => {
+    const symbol = ts.isShorthandPropertyAssignment(name.parent)
+      ? context.checker.getShorthandAssignmentValueSymbol(name.parent)
+      : getSymbol(name, context.checker);
+    const declaration = symbol?.valueDeclaration;
+    return symbol !== undefined &&
+      declaration !== undefined &&
+      ts.findAncestor(declaration, (ancestor) => ancestor === node) === undefined &&
+      ts.findAncestor(declaration.parent, ts.isFunctionLike) !== undefined &&
+      (ts.isVariableDeclaration(declaration) ||
+        ts.isParameter(declaration) ||
+        ts.isBindingElement(declaration) ||
+        ts.isFunctionDeclaration(declaration) ||
+        ts.isFunctionExpression(declaration) ||
+        ts.isClassLike(declaration))
+      ? [{ name, symbol, declaration }]
+      : [];
+  });
+  captures.forEach((capture) => {
+    const declaration = capture.declaration;
+    if (isAssigned(capture.symbol, node.getSourceFile(), context)) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't follow a function that outlives its call and reads a local that changes",
+        capture.name,
+      );
+    }
+    if (
+      !(ts.isVariableDeclaration(declaration) || ts.isParameter(declaration)) ||
+      !ts.isIdentifier(declaration.name) ||
+      ts.findAncestor(declaration.parent, ts.isFunctionLike) !== maker ||
+      isRepeated(node) ||
+      (ts.isVariableDeclaration(declaration) &&
+        (isRepeated(declaration) || declaration.end > node.getStart()))
+    ) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't follow a function that outlives its call and reads this name",
+        capture.name,
+      );
+    }
+  });
+  return [...new Set(captures.map((capture) => capture.symbol))];
+};
 
 // Whether a node gives a named binding's default, through parentheses and the commas that end in it.
 const isDefault = (node: ts.Node): boolean =>
@@ -2312,5 +2395,16 @@ export const getFunctionCandidates = (callee: ts.Expression, context: Context) =
   const type = context.checker.getTypeAtLocation(callee);
   return found.filter((candidate) =>
     context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(candidate), type),
+  );
+};
+
+// The closures that a value whose type has calls may hold, whose type TypeScript lets it hold.
+export const getClosures = (callee: ts.Expression, context: Context) => {
+  if (isHeldBuiltInObject(callee, context)) return [];
+  const type = context.checker.getTypeAtLocation(callee);
+  return findNodes(callee.getSourceFile(), (inner): inner is ts.FunctionExpression =>
+    isClosure(inner, context),
+  ).filter((closure) =>
+    context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(closure), type),
   );
 };
