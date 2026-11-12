@@ -966,6 +966,23 @@ LOCAL IsError(value) ==
 LOCAL IsSequenceValue(value) ==
   ~IsRef(value) /\\ TypeOf(value) = "object" /\\ SubSeq(ToString(value), 1, 2) = "<<"
 
+LOCAL IsRegExp(heap, value) == IsHeap(value) /\\ "regexp" \\in DOMAIN heap.objects[value[Ref]]
+
+LOCAL IsRegExpPrototype(value) == IsRef(value) /\\ ~IsHeap(value) /\\ value[Ref] = "RegExp.prototype"
+
+\\* The getters of RegExp.prototype that read a regexp's record, which flags doesn't.
+LOCAL RegExpGetters ==
+  {"get RegExp.prototype." \\o name :
+     name \\in {"source", "hasIndices", "global", "ignoreCase", "multiline", "dotAll", "unicode",
+              "unicodeSets", "sticky"}}
+
+\\* What one of those getters gives for a regexp or RegExp.prototype.
+LOCAL RegExpGet(heap, path, receiver) ==
+  LET name == SubSeq(path, Len("get RegExp.prototype.") + 1, Len(path))
+  IN CASE IsRegExp(heap, receiver) -> heap.objects[receiver[Ref]].regexp[name]
+       [] IsRegExpPrototype(receiver) -> IF name = "source" THEN "(?:)" ELSE Undefined
+       [] OTHER -> Assert(FALSE, "tla-ts can't throw the TypeError of a getter on another kind of object")
+
 \\* A read of a key from an object or its prototypes, where a getter that reads a buffer's or a view's
 \\* internal slots reads the receiver's. An array outside the heap, which a value typed only as
 \\* array-like may hold, holds its elements and its length, and reads the rest from its prototype.
@@ -982,6 +999,8 @@ GetFrom(heap, ref, key, receiver) ==
              path == GetterPath(object.values[key].get)
          IN CASE key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
                    /\\ path \\in ViewGetters -> ViewGet(heap, path, receiver)
+              [] key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
+                   /\\ path \\in RegExpGetters -> RegExpGet(heap, path, receiver)
               [] key \\in DOMAIN object.values -> Value(object, key)
               [] object.prototype = Null -> Undefined
               [] OTHER -> GetFrom(heap, object.prototype, key, receiver)
@@ -2712,8 +2731,6 @@ RegExpObject(prototype, regexp) ==
      !.attributes = "lastIndex" :> [Writable EXCEPT !.enumerable = FALSE, !.configurable = FALSE]]
     @@ [regexp |-> regexp]
 
-LOCAL IsRegExp(heap, value) == IsHeap(value) /\\ "regexp" \\in DOMAIN heap.objects[value[Ref]]
-
 \\* The record of a regexp's pattern, where tla-ts follows the built-in methods only while a script
 \\* has given the regexp no property but its lastIndex and hasn't changed the built-in objects in
 \\* changeable, which hold the methods that the call reads.
@@ -2732,8 +2749,6 @@ RegExpFresh(heap, regexp, changeable) ==
   THEN regexp
   ELSE Assert(FALSE, "tla-ts can't call a regexp's method where a script changed what it reads")
 
-LOCAL IsRegExpPrototype(value) == IsRef(value) /\\ ~IsHeap(value) /\\ value[Ref] = "RegExp.prototype"
-
 \\* The flags that RegExp.prototype's flags getter gives, which reads each flag from the receiver.
 LOCAL FlagsOf(heap, receiver) ==
   LET flags == << <<"d", "hasIndices">>, <<"g", "global">>, <<"i", "ignoreCase">>,
@@ -2751,16 +2766,13 @@ LOCAL FlagsOf(heap, receiver) ==
 \\* or "", and the value that it gives.
 GetterCall(heap, getter, receiver) ==
   LET path == GetterPath(getter)
-      flag == SubSeq(path, Len("get RegExp.prototype.") + 1, Len(path))
       give(value) == [error |-> "", value |-> value]
       typeError == [error |-> "TypeError", value |-> Undefined]
       object == IF IsHeap(receiver) THEN heap.objects[receiver[Ref]] ELSE EmptyObject
   IN CASE HasPrefix(path, "get RegExp.prototype.") /\\ ~IsObjectIn(heap, receiver) -> typeError
        [] path = "get RegExp.prototype.flags" -> give(FlagsOf(heap, receiver))
-       [] HasPrefix(path, "get RegExp.prototype.") /\\ IsRegExp(heap, receiver) ->
-            give(object.regexp[flag])
-       [] HasPrefix(path, "get RegExp.prototype.") /\\ IsRegExpPrototype(receiver) ->
-            give(IF flag = "source" THEN "(?:)" ELSE Undefined)
+       [] path \\in RegExpGetters /\\ (IsRegExp(heap, receiver) \\/ IsRegExpPrototype(receiver)) ->
+            give(RegExpGet(heap, path, receiver))
        [] HasPrefix(path, "get RegExp.prototype.") -> typeError
        [] path = "get Symbol.prototype.description" ->
             CASE IsSymbol(receiver) -> give(SymbolDescription(heap, receiver))

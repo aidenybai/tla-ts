@@ -7639,6 +7639,19 @@ describe("buffers", () => {
     expect((await checkModel(getSource("gmy"))).failure?.message).toContain("unexpected");
   });
 
+  it("reads a regexp's flag through a key that it computes", async () => {
+    const getSource = (expected: boolean) => `
+      const sample = /^|^/;
+      const key: string = ["glo", "bal"].join("");
+      const sourceKey: string = ["sou", "rce"].join("");
+      const flagged = sample as unknown as Record<string, unknown>;
+      if ((/ab/g as unknown as Record<string, unknown>)[sourceKey] !== "ab") throw new Error("source");
+      if (flagged[key] !== ${expected}) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(false))).failure).toBeUndefined();
+    await expect(checkModel(getSource(true))).rejects.toThrow("unexpected");
+  });
+
   it("calls the getters of a symbol's description and an object's __proto__", async () => {
     const result = await checkModel(`
       const description = Object.getOwnPropertyDescriptor(Symbol.prototype, "description")!.get!;
