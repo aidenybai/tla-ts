@@ -47,7 +47,7 @@ import {
   isSpliceStatement,
 } from "./collections";
 import { getJsonText, parseJson } from "./json";
-import { getConstructor, getErrorClass } from "./exceptions";
+import { getCalledError, getConstructor, getErrorClass } from "./exceptions";
 import {
   translateElements,
   translateCondition,
@@ -873,8 +873,9 @@ export const translateHasPrivate = (
 
 // A script's error outside the heap, which takes an empty object on the heap as its identity.
 export const isNewError = (node: ts.Node, context: Context) =>
-  ts.isNewExpression(node) &&
-  getErrorClass(getSymbol(node.expression, context.checker), context.checker) !== undefined;
+  (ts.isNewExpression(node) &&
+    getErrorClass(getSymbol(node.expression, context.checker), context.checker) !== undefined) ||
+  getCalledError(node, context) !== undefined;
 
 export const translateAllocated = (node: ts.Node, scope: Scope, context: Context) => {
   const heap = getHeap(scope, node, context);

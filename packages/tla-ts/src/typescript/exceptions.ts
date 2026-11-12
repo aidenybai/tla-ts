@@ -145,8 +145,16 @@ export const translateSuppressedError = (
   ]);
 };
 
+// The native error class that a call constructs an error of, as new does.
+export const getCalledError = (node: ts.Node, context: Context) => {
+  const classes = ts.isCallExpression(node)
+    ? getErrorClass(getSymbol(node.expression, context.checker), context.checker)
+    : undefined;
+  return classes !== undefined && isNative(classes[0]) ? classes : undefined;
+};
+
 export const translateNewError = (
-  node: ts.NewExpression,
+  node: ts.NewExpression | ts.CallExpression,
   classes: ts.Symbol[],
   scope: Scope,
   context: Context,

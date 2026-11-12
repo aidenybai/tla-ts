@@ -48,6 +48,7 @@ import {
 import { TlaTypeScriptError } from "../errors";
 import { translateJsonCall } from "./json";
 import {
+  getCalledError,
   getConstructor,
   getErrorClass,
   isCaughtRead,
@@ -2467,6 +2468,10 @@ const translateNode = (
       throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
     }
     return made;
+  }
+  const calledErrors = getCalledError(node, context);
+  if (ts.isCallExpression(node) && calledErrors !== undefined) {
+    return translateNewError(node, calledErrors, scope, context);
   }
   if (
     ts.isCallExpression(node) &&

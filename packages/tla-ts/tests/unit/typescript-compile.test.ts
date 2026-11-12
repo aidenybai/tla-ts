@@ -3266,6 +3266,25 @@ describe("errors", () => {
     }
   });
 
+  it("constructs an error that a call of a native error class makes", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const check = (actual: unknown, expected: unknown, message: string) => {
+        if (actual !== expected) throw new Error(message);
+      };
+      const made = TypeError("m");
+      check(made.message, "m", "message");
+      check(made instanceof TypeError, true, "instanceof");
+      check(Object.prototype.toString.call(Error()), "[object Error]", "error call");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const message = source.replace('made.message, "m"', 'made.message, "n"');
+    expect((await checkModel(message)).failure?.message).toContain("message");
+    const instance = source.replace("instanceof TypeError, true", "instanceof TypeError, false");
+    expect((await checkModel(instance)).failure?.message).toContain("instanceof");
+  });
+
   it("holds an error that only Object's functions read as an object with its prototype", async () => {
     const source = `
       const holder = { seen: 0 };

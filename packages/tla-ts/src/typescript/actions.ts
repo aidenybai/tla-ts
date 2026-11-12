@@ -114,7 +114,7 @@ import {
   BITWISE_OPERATORS,
 } from "./expressions";
 import { and, bindValue, DISABLED, type Formula, ifThenElse, letIn, leaf, render } from "./formula";
-import { getErrorClass, translateEngineError, translateThrown } from "./exceptions";
+import { getCalledError, getErrorClass, translateEngineError, translateThrown } from "./exceptions";
 import {
   drainTasks,
   EMPTY_TASKS,
@@ -5963,31 +5963,32 @@ const isStateCall = (node: ts.CallExpression, path: Path, context: Context) => {
 
 // A call whose value only statements can compute, which an assignment or a declaration takes.
 const isStatementResult = (node: ts.CallExpression, path: Path, context: Context) =>
-  getBound(node.expression, context) !== undefined ||
-  getDateCall(node, context) !== undefined ||
-  getHeapRegExpCall(node, context) !== undefined ||
-  getURICall(node, context)?.isDecode === true ||
-  getViewCall(node, context) !== undefined ||
-  getGetterCall(node, context) !== undefined ||
-  getHeapArrayChange(node, context) !== undefined ||
-  getArrayIteratorCall(node, context) !== undefined ||
-  getStringCall(node, context) !== undefined ||
-  isDescriptorsRead(node, context) ||
-  isOwnValuesRead(node, context) ||
-  isRevoke(node, context) ||
-  (isObjectChange(node, context) &&
-    node.expression.name.text !== "construct" &&
-    isHeapType(context.checker.getTypeAtLocation(node), context)) ||
-  isGeneratorStep(node, context) ||
-  getGeneratorMethod(node, context) !== undefined ||
-  isPromiseCall(node, context) ||
-  getCreatedGenerator(node, path, context) !== undefined ||
-  getAsyncCallee(node.expression, path, context) !== undefined ||
-  getCalledMethod(node.expression, context, isAsyncFunction) !== undefined ||
-  isHeapCall(node, path, context) ||
-  getLoopCall(node, path, context) !== undefined ||
-  isStateCall(node, path, context) ||
-  getDispatched(node, path, context) !== undefined;
+  getCalledError(node, context) === undefined &&
+  (getBound(node.expression, context) !== undefined ||
+    getDateCall(node, context) !== undefined ||
+    getHeapRegExpCall(node, context) !== undefined ||
+    getURICall(node, context)?.isDecode === true ||
+    getViewCall(node, context) !== undefined ||
+    getGetterCall(node, context) !== undefined ||
+    getHeapArrayChange(node, context) !== undefined ||
+    getArrayIteratorCall(node, context) !== undefined ||
+    getStringCall(node, context) !== undefined ||
+    isDescriptorsRead(node, context) ||
+    isOwnValuesRead(node, context) ||
+    isRevoke(node, context) ||
+    (isObjectChange(node, context) &&
+      node.expression.name.text !== "construct" &&
+      isHeapType(context.checker.getTypeAtLocation(node), context)) ||
+    isGeneratorStep(node, context) ||
+    getGeneratorMethod(node, context) !== undefined ||
+    isPromiseCall(node, context) ||
+    getCreatedGenerator(node, path, context) !== undefined ||
+    getAsyncCallee(node.expression, path, context) !== undefined ||
+    getCalledMethod(node.expression, context, isAsyncFunction) !== undefined ||
+    isHeapCall(node, path, context) ||
+    getLoopCall(node, path, context) !== undefined ||
+    isStateCall(node, path, context) ||
+    getDispatched(node, path, context) !== undefined);
 
 // The expression that parentheses and casts wrap.
 export const getCast = (node: ts.Expression): ts.Expression =>
