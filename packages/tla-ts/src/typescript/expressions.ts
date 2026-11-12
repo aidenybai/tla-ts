@@ -1083,6 +1083,48 @@ const mayBeValueObject = (node: ts.Expression, context: Context) => {
   );
 };
 
+// The raw text of a template's literal, where a carriage return, alone or before a line feed, is a
+// line feed.
+const getRawText = (literal: ts.TemplateLiteralLikeNode) =>
+  string((literal.rawText ?? "").replace(/\r\n?/g, "\n"));
+
+// String.raw of a template, which joins the raw text of its literals with its substitutions.
+const translateRawTemplate = (
+  node: ts.TaggedTemplateExpression,
+  scope: Scope,
+  context: Context,
+) => {
+  const template = node.template;
+  const joined = ts.isNoSubstitutionTemplateLiteral(template)
+    ? getRawText(template)
+    : concatenate([
+        getRawText(template.head),
+        ...template.templateSpans.flatMap((span) => [
+          translateToString(span.expression, scope, context),
+          getRawText(span.literal),
+        ]),
+      ]);
+  return context.heap === undefined
+    ? joined
+    : ifExpression(
+        useJavaScript(
+          "HoldsBuiltIn",
+          [
+            getHeap(scope, node, context),
+            translateBuiltInValue("String", node, context),
+            string("raw"),
+            string("String.raw"),
+          ],
+          context,
+        ),
+        joined,
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't call String.raw where a script replaced it"),
+        ]),
+      );
+};
+
 const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Context) => {
   const kind = node.operatorToken.kind;
   const translate = (inner: ts.Expression) => translateExpression(inner, scope, context);
@@ -2146,6 +2188,14 @@ const translateNode = (
     return translateString(node.text, context);
   }
   if (ts.isTemplateExpression(node)) return translateTemplate(node, scope, context);
+  if (
+    ts.isTaggedTemplateExpression(node) &&
+    ts.isPropertyAccessExpression(node.tag) &&
+    node.tag.name.text === "raw" &&
+    getBuiltIn(node.tag.expression, context) === "String"
+  ) {
+    return translateRawTemplate(node, scope, context);
+  }
   if (node.kind === ts.SyntaxKind.TrueKeyword) return boolean(true);
   if (node.kind === ts.SyntaxKind.FalseKeyword) return boolean(false);
   if (node.kind === ts.SyntaxKind.NullKeyword) {

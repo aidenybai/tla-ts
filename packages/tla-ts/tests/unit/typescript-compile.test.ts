@@ -5209,6 +5209,19 @@ describe("errors", () => {
     ).rejects.toThrow("wrong");
   });
 
+  it("joins the raw text of String.raw's template", async () => {
+    const result = await checkModel(`
+      const count = 2;
+      if (String.raw\`a\\n\${count}b\${"c"}\\u0065\` !== "a\\\\n2bc\\\\u0065") throw new Error("raw");
+      if (String.raw\`\` !== "") throw new Error("empty");
+      if (String.raw\`a\r\nb\rc\` !== "a\\nb\\nc") throw new Error("line");
+    `);
+    expect(result.failure).toBeUndefined();
+    await expect(
+      checkModel(`if (String.raw\`a\\n\` !== "a\\n") throw new Error("wrong");`),
+    ).rejects.toThrow("wrong");
+  });
+
   it("converts a value that may be a number or undefined to a string", async () => {
     const result = await checkModel(`
       const found = "Boston, MA 02134".match(/\\d{5}/);
