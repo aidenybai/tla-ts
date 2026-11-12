@@ -3709,8 +3709,8 @@ SetProperty(heap, ref, key, value) ==
        [] accessor.set \\in DOMAIN ConstantFunctions -> heap
        [] OTHER -> Assert(FALSE, "tla-ts can't call setters")
 
-\\* The elements of an array that the heap holds, which push, pop, shift, and unshift read and write
-\\* whole: each index below its length is its own plain data property.
+\\* The elements of an array that the heap holds, which splice reads and writes whole: each index
+\\* below its length is its own plain data property.
 LOCAL DenseElements(heap, ref) ==
   LET object == Lookup(heap, ref)
       length == object.values["length"]
@@ -3829,33 +3829,104 @@ ArrayCopyWithin(heap, ref, target, start, end) ==
           IF isCopied(position) THEN elements[position - to + from] ELSE elements[position]],
        count > 0)
 
+\\* A write of an element or the length of an array that the heap holds, where a write that fails
+\\* throws a TypeError: the heap after, and whether it throws.
+LOCAL ArraySet(heap, ref, key, value) ==
+  LET object == Lookup(heap, ref)
+      written == DefineOwn(object, key, WriteDescriptor(object, key, value))
+  IN CASE ~CanPut(heap, ref, key) -> [heap |-> heap, isThrown |-> TRUE]
+       [] AccessorOf(heap, ref, key) # Undefined ->
+            [heap |-> SetProperty(heap, ref, key, value), isThrown |-> FALSE]
+       [] written.isDone -> [heap |-> Update(heap, ref, written.object), isThrown |-> FALSE]
+       [] OTHER -> [heap |-> heap, isThrown |-> TRUE]
+
+\\* DeletePropertyOrThrow of an index of an array that the heap holds.
+LOCAL ArrayDelete(heap, ref, key) ==
+  IF CanDelete(heap, ref, key)
+  THEN [heap |-> Delete(heap, ref, key), isThrown |-> FALSE]
+  ELSE [heap |-> heap, isThrown |-> TRUE]
+
+\\* A step that runs where no earlier one threw.
+LOCAL AndThen(state, Step(_)) == IF state.isThrown THEN state ELSE Step(state.heap)
+
+\\* Moves elements of an array that the heap holds by an offset, from the lowest index where the
+\\* offset is negative and from the highest otherwise, where a hole deletes the index it moves to.
+RECURSIVE ArrayMoves(_, _, _, _)
+ArrayMoves(state, ref, froms, offset) ==
+  IF state.isThrown \\/ froms = {}
+  THEN state
+  ELSE LET from == CHOOSE index \\in froms :
+                     \\A other \\in froms : IF offset < 0 THEN index <= other ELSE index >= other
+           key == ToString(from + offset)
+       IN ArrayMoves(
+            IF Has(state.heap, ref, ToString(from))
+            THEN ArraySet(state.heap, ref, key, Get(state.heap, ref, ToString(from)))
+            ELSE ArrayDelete(state.heap, ref, key),
+            ref, froms \\ {from}, offset)
+
+\\* Writes items to an array that the heap holds from an index on.
+RECURSIVE ArraySets(_, _, _, _)
+ArraySets(state, ref, from, items) ==
+  IF state.isThrown \\/ items = <<>>
+  THEN state
+  ELSE ArraySets(AndThen(state, LAMBDA heap : ArraySet(heap, ref, ToString(from), Head(items))),
+                 ref, from + 1, Tail(items))
+
 \\* What push, pop, shift, or unshift does to an array that the heap holds: the heap after, the value
-\\* that the method gives, and whether it throws a TypeError. An array whose length is fixed throws
-\\* where the method sets its length, after a pop or a shift has moved and deleted its elements, and
-\\* one that takes no new index throws where the method first writes one.
+\\* that the method gives, and whether it throws a TypeError. An array whose elements are its own
+\\* writable data properties, whose prototypes hold no elements, and that takes new ones and a new
+\\* length changes in one step. Any other changes index by index as the spec runs it, where a move
+\\* reads each index through the prototypes, and only the indices that an array or its prototypes
+\\* hold, or that a move deletes, move.
 ArrayChange(heap, ref, method, items) ==
   LET object == Lookup(heap, ref)
-      elements == DenseElements(heap, ref)
-      length == Len(elements)
-      isFixed == ~object.attributes["length"].writable
-      isAdding == method \\in {"push", "unshift"} /\\ items # <<>>
-      first == CASE method = "push" \\/ length = 0 -> ToString(length)
-                 [] OTHER -> ToString(length + Len(items) - 1)
+      length == object.values["length"]
+      indices == {ToIndex(key) : key \\in IndexKeys(heap, ref)}
+      own == {ToIndex(key) : key \\in {key \\in DOMAIN object.values : IsIndex(key)}}
+      count == Len(items)
+      start == [heap |-> heap, isThrown |-> FALSE]
+      setLength(state, value) == AndThen(state, LAMBDA after : ArraySet(after, ref, "length", value))
+      first == Get(heap, ref, ToString(IF method = "pop" THEN length - 1 ELSE 0))
+      removed == AndThen(
+                   IF method = "shift"
+                   THEN ArrayMoves(start, ref,
+                          {index \\in indices \\cup {index + 1 : index \\in own} :
+                             index >= 1 /\\ index < length}, -1)
+                   ELSE start,
+                   LAMBDA after : ArrayDelete(after, ref, ToString(length - 1)))
+      added == CASE method = "push" -> ArraySets(start, ref, length, items)
+                 [] count = 0 -> start
+                 [] OTHER -> ArraySets(
+                               ArrayMoves(start, ref,
+                                 {index \\in indices \\cup {index - count : index \\in own} :
+                                    index >= 0 /\\ index < length}, count),
+                               ref, 0, items)
+      elements == [position \\in 1..length |-> object.values[ToString(position - 1)]]
       changed == CASE method = "push" -> elements \\o items
                    [] method = "unshift" -> items \\o elements
                    [] elements = <<>> -> elements
                    [] method = "pop" -> SubSeq(elements, 1, length - 1)
                    [] method = "shift" -> Tail(elements)
-  IN IF isAdding /\\ (isFixed \\/ ~object.extensible)
-     THEN IF AccessorOf(heap, ref, first) = Undefined
-          THEN [heap |-> heap, value |-> Undefined, isThrown |-> TRUE]
-          ELSE Assert(FALSE, "tla-ts can't add an element where the array can't take it")
-     ELSE [heap |-> WithElements(heap, ref, changed, IF isFixed THEN length ELSE Len(changed)),
+      state == CASE method \\in {"push", "unshift"} -> setLength(added, length + count)
+                 [] length = 0 -> setLength(start, 0)
+                 [] OTHER -> setLength(removed, length - 1)
+  IN IF /\\ IsArrayObject(object)
+        /\\ own = 0..(length - 1)
+        /\\ \\A index \\in own : object.attributes[ToString(index)] = Writable
+        /\\ object.prototype = Null \\/ IndexKeys(heap, object.prototype) = {}
+        /\\ object.extensible
+        /\\ object.attributes["length"].writable
+     THEN [heap |-> WithElements(heap, ref, changed, Len(changed)),
            value |-> CASE method \\in {"push", "unshift"} -> Len(changed)
                        [] elements = <<>> -> Undefined
                        [] method = "pop" -> elements[length]
                        [] method = "shift" -> Head(elements),
-           isThrown |-> isFixed]
+           isThrown |-> FALSE]
+     ELSE [heap |-> state.heap,
+           value |-> CASE method \\in {"push", "unshift"} -> length + count
+                       [] length = 0 -> Undefined
+                       [] OTHER -> first,
+           isThrown |-> state.isThrown]
 
 \\* What a splice whose result nothing reads does to an array that the heap holds, which makes that
 \\* result through the array's constructor, where tla-ts follows only Array.

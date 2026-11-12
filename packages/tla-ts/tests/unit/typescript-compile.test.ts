@@ -4996,11 +4996,39 @@ describe("errors", () => {
       const items: number[] & { tag?: string } = [1, 2];
       items.tag = "t";
       Object.freeze(items);
-      items.push(3);
+      let isThrown = false;
+      try {
+        items.push(3);
+      } catch (error) {
+        isThrown = error instanceof TypeError;
+      }
+      if (!isThrown || items.length !== 2) throw new Error("frozen");
     `);
-    expect(frozen.failure?.message).toContain(
-      "tla-ts can't change an array in place that has holes or fixed elements",
-    );
+    expect(frozen.failure).toBeUndefined();
+  });
+
+  it("changes an array with holes or fixed elements in place index by index", async () => {
+    const source = (expected: string) => `
+      const items: (string | undefined)[] = ["a", , "c", ,];
+      Array.prototype[1] = "p";
+      const first = items.shift();
+      const length = items.unshift("z");
+      const last = items.pop();
+      const fixed: string[] = ["x", "y"];
+      Object.defineProperty(fixed, "0", { value: "x", writable: false, configurable: true });
+      let caught = "";
+      try {
+        fixed.shift();
+      } catch (error) {
+        if (error instanceof TypeError) caught = fixed.join("") + fixed.length;
+      }
+      const text = items.join("-") + "/" + Object.keys(items).join("");
+      if (first !== "a" || length !== 4 || last !== undefined || text !== ${JSON.stringify(expected)} || caught !== "xy2") {
+        throw new Error("steps");
+      }
+    `;
+    expect((await checkModel(source("z-p-c/012"))).failure).toBeUndefined();
+    expect((await checkModel(source("z-p-c/01"))).failure?.message).toContain("steps");
   });
 
   it("throws where an array that the heap holds has a fixed length", async () => {
