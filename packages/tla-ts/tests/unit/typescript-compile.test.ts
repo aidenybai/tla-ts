@@ -6558,6 +6558,34 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("throws the TypeError of Iterator.prototype's methods on what isn't an iterator", async () => {
+    const result = await checkModel(`
+      const box = { seen: 0 };
+      const caught: string[] = [];
+      try {
+        Iterator.prototype.some.call(null, () => true);
+      } catch (error) {
+        caught.push(error instanceof TypeError ? "a" : "x");
+      }
+      try {
+        Iterator.prototype.reduce.call({ next: 0 }, () => 0, 0);
+      } catch (error) {
+        caught.push(error instanceof TypeError ? "b" : "x");
+      }
+      const iter = Iterator.prototype.map.call({ next: 0 }, () => 0);
+      caught.push("c");
+      try {
+        iter.next();
+      } catch (error) {
+        caught.push(error instanceof TypeError ? "d" : "x");
+      }
+      const none = Iterator.prototype.take.call({ next: 0 }, 0);
+      const end = none.next();
+      if (caught.join("") !== "abcd" || !end.done) throw new Error("thrown");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("unrolls a generator's counted loop that yields", async () => {
     const result = await checkModel(`
       function* g(): Generator<number> {

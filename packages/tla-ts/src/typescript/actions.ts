@@ -310,7 +310,8 @@ interface KnownDefault {
 
 interface Suspension {
   ref: Expression;
-  generator: FunctionNode;
+  // The function whose body a next runs, which a helper of an object that isn't an iterator lacks.
+  generator: FunctionNode | undefined;
   // Runs the rest of the body from the path of the call that resumes it, or undefined once the
   // generator completes.
   resume: ((path: Path) => Formula) | undefined;
@@ -3417,6 +3418,16 @@ const translateGeneratorConsumer = (
       argument ?? node,
     );
   }
+  // A receiver that isn't an iterator throws once the method checks it or steps it.
+  if (consumer.invalid !== undefined) {
+    return translateHoldsIteratorPrototype(
+      method,
+      node,
+      path,
+      context,
+      throwTypeError(path, node, context, frame),
+    );
+  }
   const receiver = translateExpression(consumer.receiver, path.scope, context);
   const close = (current: Path, finish: (after: Path) => Formula) =>
     resumeGenerator(node, receiver, "return", undefined, current, context, frame, (after) =>
@@ -3652,15 +3663,29 @@ const translateIteratorHelper = (
   };
   // A helper's return closes the generator it wraps, which tla-ts doesn't follow, so a return
   // stops.
-  const translated = translateExpression(helper.receiver, path.scope, context);
+  if (helper.invalid === "primitive") {
+    return translateHoldsIteratorPrototype(
+      method,
+      node,
+      path,
+      context,
+      throwTypeError(path, node, context, frame),
+    );
+  }
+  // An object whose next isn't callable makes a helper whose next throws.
+  const translated =
+    helper.invalid === "object"
+      ? getUndefined(context)
+      : translateExpression(helper.receiver, path.scope, context);
   // The generator that a next runs, which patterns check, where the receiver may hold only one.
   const suspensions = [...path.generators.values()];
   const exact = suspensions.filter((suspension) => isSameExpression(suspension.ref, translated));
   const candidates = new Set(
     (exact.length > 0 ? exact : suspensions).map((suspension) => suspension.generator),
   );
-  const generator = candidates.size === 1 ? [...candidates][0] : undefined;
-  if (generator === undefined) {
+  const generator =
+    helper.invalid === "object" ? callback : candidates.size === 1 ? [...candidates][0] : undefined;
+  if (generator === undefined && helper.invalid === undefined) {
     throw new TlaTypeScriptError("tla-ts can't tell which generator this helper wraps", node);
   }
   const getSuspension = (resume: Suspension["resume"]): Suspension => ({
@@ -3691,6 +3716,15 @@ const translateIteratorHelper = (
       const caller = getCaller(resumer);
       const give = (current: Path, value: Expression | undefined, isDone: boolean) =>
         caller.step(leave(current, isDone ? undefined : stepFrom(counter + 1)), value, isDone);
+      if (method === "take" && counter >= (limit ?? 0) && helper.invalid === "object") {
+        return give(resumer, undefined, true);
+      }
+      if (helper.invalid === "object") {
+        return throwTypeError(leave(resumer, undefined), node, context, {
+          ...frame,
+          throwTo: caller.throwTo,
+        });
+      }
       if (method === "take" && counter >= (limit ?? 0)) {
         return resumeGenerator(
           node,
@@ -4184,7 +4218,7 @@ const takeFromGenerator = (
     return translateCallStatement(node, path, context, frame, (after, ref) =>
       take(
         ref ?? getUndefined(context),
-        [...after.generators.values()].map((suspension) => suspension.generator),
+        [...after.generators.values()].flatMap((suspension) => suspension.generator ?? []),
         after,
       ),
     );
@@ -4196,7 +4230,7 @@ const takeFromGenerator = (
   const exact = generators.filter((suspension) => isSameExpression(suspension.ref, held));
   return take(
     held,
-    (exact.length > 0 ? exact : generators).map((suspension) => suspension.generator),
+    (exact.length > 0 ? exact : generators).flatMap((suspension) => suspension.generator ?? []),
     path,
   );
 };
@@ -4449,10 +4483,40 @@ const getGeneratorMethod = (node: ts.CallExpression, context: Context) => {
   const isFrom = accessed.name.text === "from" && getBuiltIn(owner, context) === "Array";
   const method = isCall ? owner.name.text : accessed.name.text;
   const receiver = isCall || isFrom ? node.arguments.at(0) : owner;
+  const invalid = isCall && receiver !== undefined ? getInvalidIterator(receiver) : undefined;
   return (ITERATOR_CONSUMERS.has(method) || ITERATOR_HELPERS.has(method) || isFrom) &&
     receiver !== undefined &&
-    isGeneratorType(receiver, context)
-    ? { method, receiver, values: isCall || isFrom ? node.arguments.slice(1) : node.arguments }
+    (isGeneratorType(receiver, context) || invalid !== undefined)
+    ? {
+        method,
+        receiver,
+        values: isCall || isFrom ? node.arguments.slice(1) : node.arguments,
+        invalid,
+      }
+    : undefined;
+};
+
+// What a call of Iterator.prototype's method gives as its receiver, where the method throws a
+// TypeError for it: a primitive, which isn't an object, or an object literal of literals whose next
+// a step can't call. Evaluating either changes nothing.
+const getInvalidIterator = (node: ts.Expression) => {
+  const isLiteral = (value: ts.Expression) =>
+    ts.isNumericLiteral(value) ||
+    ts.isStringLiteral(value) ||
+    [ts.SyntaxKind.NullKeyword, ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword].includes(
+      value.kind,
+    ) ||
+    (ts.isIdentifier(value) && value.text === "undefined");
+  if (isLiteral(node)) return "primitive";
+  return ts.isObjectLiteralExpression(node) &&
+    node.properties.every(
+      (property) =>
+        ts.isPropertyAssignment(property) &&
+        ts.isIdentifier(property.name) &&
+        isLiteral(property.initializer),
+    ) &&
+    node.properties.some((property) => property.name?.getText() === "next")
+    ? "object"
     : undefined;
 };
 
@@ -7968,7 +8032,7 @@ const translateForAwait = (
     return takeFromHeld(
       pattern,
       value,
-      [...current.generators.values()].map((suspension) => suspension.generator),
+      [...current.generators.values()].flatMap((suspension) => suspension.generator ?? []),
       [],
       current,
       context,
