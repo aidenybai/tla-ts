@@ -22,6 +22,11 @@ export interface SelfCall {
   functions: (FunctionNode | undefined)[];
 }
 
+export interface Passed {
+  node: ts.Expression;
+  value: Expression;
+}
+
 export interface Context {
   checker: ts.TypeChecker;
   names: Names;
@@ -67,6 +72,8 @@ export interface Context {
   // Whether a script gives Array.prototype or Object.prototype properties, which an array reads
   // past its end.
   hasInheritedElements: boolean;
+  // The argument that an inlined call passed, by the name that binds the parameter that took it.
+  passed: Map<string, Passed>;
 }
 
 export interface Unknown {
@@ -118,6 +125,7 @@ export const createContext = (checker: ts.TypeChecker): Context => ({
   fractions: new Map(),
   heapArrays: new Set(),
   hasInheritedElements: false,
+  passed: new Map(),
 });
 
 export const hasObjectLiteral = (node: ts.Node): boolean =>

@@ -9512,6 +9512,31 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("awaits unknown parameters that numbers and a promise pass", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      const make = (): unknown => Promise.resolve(7);
+      async function echo(value: unknown) {
+        return await value;
+      }
+      async function run(value: unknown) {
+        const got = await echo(value);
+        log += String(got);
+      }
+      run(1);
+      run(2);
+      run(3);
+      run(4);
+      run(5);
+      run(make());
+      setTimeout(() => {
+        if (log !== "123457") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs Array.fromAsync of an async generator, which it closes where a mapping throws", async () => {
     // V8 settles a rejected request two jobs later than the spec, whose order a for await gives.
     const result = await checkModel(`

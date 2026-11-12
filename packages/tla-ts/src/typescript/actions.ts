@@ -2555,12 +2555,9 @@ export const bindCall = (
           !(ts.isFunctionExpression(argument) || ts.isArrowFunction(argument))
       : !callbacks.some((entry) => entry[0] === getSymbol(parameter.name, context.checker));
   };
-  const values = shareArguments(
-    argumentNodes
-      .filter((_, position) => isValue(position))
-      .map((argument) => translateExpression(argument, path.scope, context)),
-    context,
-  );
+  const passed = argumentNodes.filter((_, position) => isValue(position));
+  const translated = passed.map((argument) => translateExpression(argument, path.scope, context));
+  const values = shareArguments(translated, context);
   const evaluateArguments = (rest: Formula) => values.evaluate(rest, leaf(boolean(false)));
   if (
     isArgumentsNamed(callee, context) &&
@@ -2577,8 +2574,9 @@ export const bindCall = (
     { definitions: [], scope: path.scope },
     context,
   );
+  const valueParameters = parameters.filter((_, position) => isValue(position));
   const bound = bindValues(
-    parameters.filter((_, position) => isValue(position)),
+    valueParameters,
     values.shared,
     ts.isCallExpression(node)
       ? bindFactory(
@@ -2589,6 +2587,23 @@ export const bindCall = (
       : made.scope,
     context,
   );
+  if (!passed.some(ts.isSpreadElement)) {
+    valueParameters.forEach((parameter, position) => {
+      const argument = passed.at(position);
+      const symbol = ts.isIdentifier(parameter.name)
+        ? getSymbol(parameter.name, context.checker)
+        : undefined;
+      const binding = symbol && bound.scope.bindings.get(symbol);
+      if (
+        argument !== undefined &&
+        parameter.dotDotDotToken === undefined &&
+        parameter.initializer === undefined &&
+        binding?.kind === "Identifier"
+      ) {
+        context.passed.set(binding.name, { node: argument, value: translated[position] });
+      }
+    });
+  }
   const scope = {
     ...bound.scope,
     functions: new Map([...bound.scope.functions, ...callbacks]),

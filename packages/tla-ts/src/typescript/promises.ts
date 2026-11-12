@@ -214,8 +214,27 @@ const isPromiseType = (node: ts.Expression, context: Context) => {
   );
 };
 
-// The promise that a value is: one that its expression names, or, where TypeScript types the value
-// as a promise, unknown or any, any that the path follows, which the value may hold.
+// Whether a value may be a promise: TypeScript types it as one, or as unknown or any, unless it
+// binds a parameter whose argument TypeScript types as something else.
+const isPossiblePromise = (
+  valueNode: ts.Expression,
+  value: Expression,
+  context: Context,
+): boolean => {
+  if (isPromiseType(valueNode, context)) return true;
+  if (
+    (context.checker.getTypeAtLocation(valueNode).flags &
+      (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) ===
+    0
+  ) {
+    return false;
+  }
+  const passed = value.kind === "Identifier" ? context.passed.get(value.name) : undefined;
+  return passed === undefined || isPossiblePromise(passed.node, passed.value, context);
+};
+
+// The promise that a value is: one that its expression names, or, where the value may be a
+// promise, any that the path follows.
 const dispatchPromise = (
   path: Path,
   node: ts.Node,
@@ -227,17 +246,7 @@ const dispatchPromise = (
 ): Formula => {
   const found = findPromise(path, node, value);
   if (found !== undefined) return onPromise(found);
-  if (
-    valueNode === undefined ||
-    !(
-      isPromiseType(valueNode, context) ||
-      (context.checker.getTypeAtLocation(valueNode).flags &
-        (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
-        0
-    )
-  ) {
-    return otherwise();
-  }
+  if (valueNode === undefined || !isPossiblePromise(valueNode, value, context)) return otherwise();
   return [...getTasks(path, node).promises].reduceRight(
     (rest, entry) =>
       ifThenElse(
