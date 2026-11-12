@@ -3794,11 +3794,16 @@ IsObjectArgument(value) ==
     [] OTHER -> FALSE
 
 \\* The values that tla-ts keeps outside the heap never read a built-in's accessors, but for an
-\\* array, which reads Array.prototype past its end.
+\\* array, which reads Array.prototype past its end. Function.prototype is the one built-in function
+\\* that inherits from Object.prototype, and only functions that the heap holds read it.
 LOCAL CanDefineOn(ref, descriptor) ==
   Assert(\\/ IsHeap(ref)
          \\/ ~descriptor.isAccessor
-         \\/ BuiltInKey(ref) \\in {"Array.prototype", "Object.prototype"},
+         \\/ BuiltInKey(ref) \\in {"Array.prototype", "Object.prototype"}
+         \\/ /\\ ~IsRef(ref)
+            /\\ IsBuiltIn(ref)
+            /\\ BuiltIns[ref].isCallable
+            /\\ BuiltIns[ref].prototype = Ref :> "Object.prototype",
          "tla-ts can't define accessors on built-in objects")
 
 \\* Defines each key with the descriptor that ToPropertyDescriptor gave it, in order.

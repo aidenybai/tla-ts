@@ -2495,6 +2495,31 @@ describe("errors", () => {
     expect((await checkModel(getSource(3))).failure?.message).toContain("unexpected");
   });
 
+  it("runs the accessors that a script defines on Function.prototype for a bound function", async () => {
+    const getSource = (expected: number) => `
+      const target = function (this: unknown, value: number) {
+        return value;
+      };
+      let data = 1;
+      Object.defineProperty(Function.prototype, "prop", {
+        get: function () {
+          return data;
+        },
+        set: function (value: number) {
+          data = value;
+        },
+        configurable: true,
+      });
+      const bound = target.bind({}) as unknown as { prop: number };
+      bound.prop = 9;
+      const read = bound.prop;
+      const isOwn = Object.prototype.hasOwnProperty.call(bound, "prop");
+      if (isOwn || read !== ${expected}) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(9))).failure).toBeUndefined();
+    expect((await checkModel(getSource(8))).failure?.message).toContain("unexpected");
+  });
+
   it("runs the getter that a rest pattern copies where the script defines getters under other keys", async () => {
     const getSource = (expected: number) => `
       let count = 0;
