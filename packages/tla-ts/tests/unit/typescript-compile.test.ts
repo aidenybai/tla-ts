@@ -4068,6 +4068,25 @@ describe("errors", () => {
     );
   });
 
+  it("gives a callback that an array method calls the arguments it passes", async () => {
+    const result = await checkModel(`
+      const box = { count: 0 as number, second: 0 as unknown };
+      function callback(value: unknown, position: unknown, array: unknown) {
+        box.count = arguments.length;
+        box.second = arguments[1];
+        return true;
+      }
+      [5, 6].filter(callback);
+      const reducer = function (total: number, value: number) {
+        box.count += arguments.length;
+        return total + value;
+      };
+      [1].reduce(reducer, 0);
+      if (box.count !== 7 || box.second !== 1) throw new Error("arguments");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("rejects a sort comparator that may throw", () => {
     expect(() =>
       compile(`

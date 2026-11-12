@@ -2085,52 +2085,72 @@ export const bindCall = (
       }),
     ]),
   };
-  const body = callee.body;
-  const isArgumentsNamed =
-    body !== undefined &&
-    findNodes(
-      body,
-      (inner): inner is ts.Identifier => getArgumentsOwner(inner, context.checker) === callee,
-    ).length > 0;
-  if (!isArgumentsNamed || heapSymbol === undefined) {
-    return evaluateArguments(continueWith({ definitions: bound.definitions, scope }, changeable));
-  }
-  if (callbacks.length > 0 || argumentNodes.some(ts.isSpreadElement)) {
+  if (
+    isArgumentsNamed(callee, context) &&
+    heapSymbol !== undefined &&
+    (callbacks.length > 0 || argumentNodes.some(ts.isSpreadElement))
+  ) {
     throw new TlaTypeScriptError("Unsupported arguments object", node);
   }
-  // The arguments object of the call, which the scope holds under the body that names it.
-  const heap = context.names.getFresh("heap");
-  const made = useJavaScript(
-    "ArgumentsObject",
-    [
-      tuple(values.shared),
-      translateBuiltInValue("get Function.prototype.arguments", node, context),
-    ],
-    context,
-  );
   return evaluateArguments(
     continueWith(
-      {
-        definitions: [
-          ...bound.definitions,
-          define(
-            heap,
-            [],
-            useJavaScript("Allocate", [getHeap(scope, node, context), made], context),
-          ),
-        ],
-        scope: {
-          ...scope,
-          bindings: new Map([...scope.bindings, [heapSymbol, identifier(heap)]]),
-          allocated: new Map([
-            ...scope.allocated,
-            [body, useJavaScript("Allocated", [identifier(heap)], context)],
-          ]),
-        },
-      },
+      allocateArguments(
+        callee,
+        values.shared,
+        node,
+        { definitions: bound.definitions, scope },
+        context,
+      ),
       changeable,
     ),
   );
+};
+
+const isArgumentsNamed = (callee: FunctionNode, context: Context) =>
+  callee.body !== undefined &&
+  findNodes(
+    callee.body,
+    (inner): inner is ts.Identifier => getArgumentsOwner(inner, context.checker) === callee,
+  ).length > 0;
+
+// The arguments object of a call to a function whose body names it, which the scope holds under
+// the body.
+const allocateArguments = (
+  callee: FunctionNode,
+  values: readonly Expression[],
+  node: ts.Node,
+  bound: Bound,
+  context: Context,
+): Bound => {
+  const heapSymbol = context.heap;
+  const body = callee.body;
+  if (heapSymbol === undefined || body === undefined || !isArgumentsNamed(callee, context)) {
+    return bound;
+  }
+  const heap = context.names.getFresh("heap");
+  const made = useJavaScript(
+    "ArgumentsObject",
+    [tuple([...values]), translateBuiltInValue("get Function.prototype.arguments", node, context)],
+    context,
+  );
+  return {
+    definitions: [
+      ...bound.definitions,
+      define(
+        heap,
+        [],
+        useJavaScript("Allocate", [getHeap(bound.scope, node, context), made], context),
+      ),
+    ],
+    scope: {
+      ...bound.scope,
+      bindings: new Map([...bound.scope.bindings, [heapSymbol, identifier(heap)]]),
+      allocated: new Map([
+        ...bound.scope.allocated,
+        [body, useJavaScript("Allocated", [identifier(heap)], context)],
+      ]),
+    },
+  };
 };
 
 // Runs a function's body with the values that a call passes it, for a call that JavaScript makes,
@@ -3606,21 +3626,23 @@ const translateLoopCall = (
             context,
           )
         : value;
-    const bound = bindValues(
-      callbackParameters,
-      [
-        ...(isReduce ? [getChecked(kept, 0)] : []),
-        getChecked(element, isReduce ? 1 : 0),
-        isSkippingHoles
-          ? index(field(identifier(presentName), "indices"), [identifier(position)])
-          : apply("-", [identifier(position), number(1)]),
-        loop.isArrayLike
-          ? owner
-          : isLive
-            ? translateExpression(receiver, current.scope, context)
-            : sequence,
-      ],
-      current.scope,
+    const passed = [
+      ...(isReduce ? [getChecked(kept, 0)] : []),
+      getChecked(element, isReduce ? 1 : 0),
+      isSkippingHoles
+        ? index(field(identifier(presentName), "indices"), [identifier(position)])
+        : apply("-", [identifier(position), number(1)]),
+      loop.isArrayLike
+        ? owner
+        : isLive
+          ? translateExpression(receiver, current.scope, context)
+          : sequence,
+    ];
+    const bound = allocateArguments(
+      callback,
+      passed,
+      receiver,
+      bindValues(callbackParameters, passed, current.scope, context),
       context,
     );
     const afterCallback = getAfterCallback(element);
