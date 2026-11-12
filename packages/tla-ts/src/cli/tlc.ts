@@ -1,15 +1,4 @@
-import {
-  appendFileSync,
-  closeSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  readSync,
-  realpathSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { fileSystem } from "../file-system";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { arch, availableParallelism, release, tmpdir, type } from "node:os";
 import { pathToFileURL } from "node:url";
@@ -108,7 +97,7 @@ const EXIT_CODES: Record<CheckStatus, number> = {
 };
 
 const checkNotDirectory = (path: string) => {
-  if (statSync(path, { throwIfNoEntry: false })?.isDirectory()) {
+  if (fileSystem.statSync(path, { throwIfNoEntry: false })?.isDirectory()) {
     throw new TlaEvaluationError(`${path} (Is a directory)`);
   }
 };
@@ -695,16 +684,19 @@ const createFileDescriber = (
   version: TlcVersion,
 ) => {
   const temporary = java.temporaryDirectory ?? tmpdir();
-  const temporaryDirectory = existsSync(temporary) ? realpathSync(temporary) : resolve(temporary);
+  const temporaryDirectory = fileSystem.existsSync(temporary)
+    ? fileSystem.realpathSync(temporary)
+    : resolve(temporary);
   const libraryDirectory = join(temporaryDirectory, `tlc-${getTemporaryName(resolve(specPath))}`);
   const jar = getToolsJar(java);
   return (name: string, origin: SanyModuleOrigin) => {
     const fileName = `${name}.tla`;
-    if (origin === "file") return realpathSync(findModuleFile(directories, name) ?? specPath);
+    if (origin === "file")
+      return fileSystem.realpathSync(findModuleFile(directories, name) ?? specPath);
     if (version === "1.7.4") return join(temporaryDirectory, fileName);
     if (origin === "root file") {
       const directory = metadir === undefined ? temporaryDirectory : resolve(metadir);
-      const root = realpathSync(specPath);
+      const root = fileSystem.realpathSync(specPath);
       return `${join(directory, getTemporaryName(`${root} ${name}`), fileName)} (${root})`;
     }
     const copy = join(libraryDirectory, fileName);
@@ -866,7 +858,7 @@ const JAVA_FILE_ERRORS: Record<string, string> = {
 
 const writeJavaFile = (path: string, content: string | Uint8Array) => {
   try {
-    writeFileSync(path, content);
+    fileSystem.writeFileSync(path, content);
   } catch (error) {
     const reason =
       error instanceof Error && "code" in error ? JAVA_FILE_ERRORS[String(error.code)] : undefined;
@@ -878,7 +870,7 @@ const writeJavaFile = (path: string, content: string | Uint8Array) => {
 // Java's File#mkdirs reports a failure only through its result, which TLC ignores.
 const makeJavaDirectory = (path: string) => {
   try {
-    mkdirSync(path, { recursive: true });
+    fileSystem.mkdirSync(path, { recursive: true });
   } catch {}
 };
 
@@ -887,7 +879,7 @@ const createMetadir = (args: TlcArguments) => {
   const pad = (value: number, length = 2) => String(value).padStart(length, "0");
   const name = `${pad(now.getFullYear() % 100)}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}.${pad(now.getMilliseconds(), 3)}`;
   const directory = join(args.metadir ?? "states", name);
-  mkdirSync(directory, { recursive: true });
+  fileSystem.mkdirSync(directory, { recursive: true });
   return directory;
 };
 
@@ -903,7 +895,7 @@ const checkSpec = async (
   printWelcome(printer);
   const recoverDirectory = args.recoverDirectory;
   if (recoverDirectory !== undefined) {
-    throw existsSync(join(recoverDirectory, "vars.chkpt"))
+    throw fileSystem.existsSync(join(recoverDirectory, "vars.chkpt"))
       ? new TlaFeatureUnsupportedError(
           `tla-ts can't recover a model check from the checkpoint in ${recoverDirectory}.`,
         )
@@ -911,7 +903,7 @@ const checkSpec = async (
   }
   printStartupBanner(printer, args);
   const configPath = args.configPath ?? specPath.replace(/\.tla$/, ".cfg");
-  if (!existsSync(configPath)) {
+  if (!fileSystem.existsSync(configPath)) {
     printer.print(
       MESSAGE_CODE.configFileError,
       MESSAGE_LEVEL.error,
@@ -946,7 +938,7 @@ const checkSpec = async (
   };
   const config = (() => {
     try {
-      const contents = readFileSync(configPath, "utf8");
+      const contents = fileSystem.readFileSync(configPath, "utf8");
       return parseConfig(
         configPath.endsWith(".tla")
           ? getEmbeddedConfig(contents, configPath.replaceAll(".tla", ""))
@@ -991,10 +983,10 @@ const checkSpec = async (
   const reportMissingFile =
     version === "1.7.4" ? createMissingFilePrinter174(specPath, java, jar) : undefined;
   if (reportMissingFile) {
-    if (!existsSync(specPath) && !SANY_174_STANDARD_MODULES.has(fileName)) {
+    if (!fileSystem.existsSync(specPath) && !SANY_174_STANDARD_MODULES.has(fileName)) {
       reportMissingFile(`${fileName}.tla`);
     }
-  } else if (!existsSync(specPath) && !SANY_STANDARD_MODULES.has(fileName)) {
+  } else if (!fileSystem.existsSync(specPath) && !SANY_STANDARD_MODULES.has(fileName)) {
     printMissingFile(
       isAbsoluteSpec ? directory : process.cwd(),
       isAbsoluteSpec ? `${fileName}.tla` : `./${specName}.tla`,
@@ -1029,7 +1021,7 @@ const checkSpec = async (
     return EXIT_STATUS.specParseError;
   }
   try {
-    const source = readFileSync(specPath, "utf8");
+    const source = fileSystem.readFileSync(specPath, "utf8");
     const moduleName = parseModule(source).name;
     if (moduleName !== fileName) {
       throw new TlaSanyFatalError(
@@ -1070,18 +1062,21 @@ const checkSpec = async (
       isWarningEnabled: args.isWarningEnabled,
       version,
       onProgress: (progress) => printCheckProgress(printer, progress, timing, directory),
-      onPrint: userFile === undefined ? undefined : (text) => appendFileSync(userFile, `${text}\n`),
+      onPrint:
+        userFile === undefined
+          ? undefined
+          : (text) => fileSystem.appendFileSync(userFile, `${text}\n`),
       source: invariants.source,
       config,
-      onPause: () => readSync(0, Buffer.alloc(1)),
+      onPause: () => fileSystem.readSync(0, Buffer.alloc(1)),
       loadModule,
       loadClass: (name) => {
         const classPath = getClassPath(directory, name);
-        return existsSync(classPath) ? readFileSync(classPath) : undefined;
+        return fileSystem.existsSync(classPath) ? fileSystem.readFileSync(classPath) : undefined;
       },
       readFile: (path) => {
         checkNotDirectory(path);
-        return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+        return fileSystem.existsSync(path) ? fileSystem.readFileSync(path, "utf8") : undefined;
       },
       writeFile: writeJavaFile,
       makeDirectory: makeJavaDirectory,
@@ -1177,7 +1172,7 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
   const dumpPath = dump?.path;
   if (dumpPath !== undefined) {
     try {
-      closeSync(openSync(dumpPath, "w"));
+      fileSystem.closeSync(fileSystem.openSync(dumpPath, "w"));
     } catch {
       console.log(`Error: Unable to write to file ${dumpPath}`);
       return printCommandLineError(
@@ -1208,7 +1203,9 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
       (input) =>
         input.path.endsWith(".ts") ||
         (input.path.endsWith(".tla") &&
-          (!input.isGlobbed || isConfigured || existsSync(input.path.replace(/\.tla$/, ".cfg")))),
+          (!input.isGlobbed ||
+            isConfigured ||
+            fileSystem.existsSync(input.path.replace(/\.tla$/, ".cfg")))),
     )
     .map((input) => input.path);
   if (specPaths.length === 0) {
@@ -1219,9 +1216,10 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     return 1;
   }
   const findSpec = (path: string) =>
-    existsSync(path) || isAbsolute(path)
+    fileSystem.existsSync(path) || isAbsolute(path)
       ? path
-      : (java.libraries.map((directory) => join(directory, path)).find(existsSync) ?? path);
+      : (java.libraries.map((directory) => join(directory, path)).find(fileSystem.existsSync) ??
+        path);
   const paths = [...new Set(specPaths.map(findSpec))];
   const exitCodes: number[] = [];
   for (const [index, path] of paths.entries()) {

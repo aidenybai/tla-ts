@@ -1,14 +1,4 @@
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { fileSystem } from "../../file-system";
 import { basename, join } from "node:path";
 import { version } from "../../../package.json";
 import { TlaProofError } from "../../errors";
@@ -79,7 +69,7 @@ const readBucket = (entry: OcamlValue | undefined): [OcamlValue, OcamlValue][] =
     : [];
 
 export const loadFingerprints = (table: FingerprintTable, path: string, isSafe: boolean) => {
-  const bytes = readFileSync(path);
+  const bytes = fileSystem.readFileSync(path);
   const magic = readMarshaled(bytes, 0);
   const contents = readMarshaled(bytes, magic.next).value;
   if (magic.value !== MAGIC_NUMBER || !isBlock(contents) || contents.tag !== 0)
@@ -184,15 +174,18 @@ export const saveHistory = (path: string, sources: string[]) => {
     history,
     `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}_${pad(now.getMinutes())}_${pad(now.getSeconds())}`,
   );
-  mkdirSync(directory, { recursive: true });
+  fileSystem.mkdirSync(directory, { recursive: true });
   [path, ...sources]
-    .filter((file) => existsSync(file))
-    .forEach((file) => cpSync(file, join(directory, basename(file)), { preserveTimestamps: true }));
-  readdirSync(history)
+    .filter((file) => fileSystem.existsSync(file))
+    .forEach((file) =>
+      fileSystem.cpSync(file, join(directory, basename(file)), { preserveTimestamps: true }),
+    );
+  fileSystem
+    .readdirSync(history)
     .map((name) => join(history, name))
-    .sort((left, right) => statSync(right).mtimeMs - statSync(left).mtimeMs)
+    .sort((left, right) => fileSystem.statSync(right).mtimeMs - fileSystem.statSync(left).mtimeMs)
     .slice(HISTORY_SIZE)
-    .forEach((old) => rmSync(old, { recursive: true, force: true }));
+    .forEach((old) => fileSystem.rmSync(old, { recursive: true, force: true }));
 };
 
 export const getKnownResults = (table: FingerprintTable) => {
@@ -221,11 +214,11 @@ export const getKnownResults = (table: FingerprintTable) => {
       });
       table.set(fingerprint, record);
     });
-    writeFileSync(
+    fileSystem.writeFileSync(
       `${path}.tmp`,
       Buffer.concat([writeMarshaled(MAGIC_NUMBER), writeMarshaled(encodeTable(table))]),
     );
-    renameSync(`${path}.tmp`, path);
+    fileSystem.renameSync(`${path}.tmp`, path);
   };
   return { results, save };
 };

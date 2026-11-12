@@ -1,4 +1,4 @@
-import { existsSync, globSync, readFileSync } from "node:fs";
+import { fileSystem } from "../file-system";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -30,18 +30,19 @@ interface InputPath {
 export const getInputPaths = (paths: string[]): InputPath[] =>
   paths.flatMap((arg): InputPath[] =>
     GLOB_CHARACTERS.test(arg)
-      ? globSync(arg)
+      ? fileSystem
+          .globSync(arg)
           .sort()
           .map((path) => ({ path, isGlobbed: true }))
       : [{ path: arg, isGlobbed: false }],
   );
 
 export const findModuleFile = (directories: string[], name: string) =>
-  directories.map((directory) => join(directory, `${name}.tla`)).find(existsSync);
+  directories.map((directory) => join(directory, `${name}.tla`)).find(fileSystem.existsSync);
 
 export const createModuleLoader = (directories: string[]) => (name: string) => {
   const path = findModuleFile(directories, name);
-  return path === undefined ? undefined : readFileSync(path, "utf8");
+  return path === undefined ? undefined : fileSystem.readFileSync(path, "utf8");
 };
 
 export const printMissingFile = (userDirectory: string, fileName: string, directories: string[]) =>

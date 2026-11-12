@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { fileSystem } from "../file-system";
 import { basename } from "node:path";
 import type { Module } from "../ast";
 import { TlaSyntaxError, PcalRuntimeError, TlaSanyFatalError } from "../errors";
@@ -109,8 +109,8 @@ export const getSanyReport = (
   const rootName = basename(rootPath, ".tla");
   const standardModules = getSanyStandardModules(options.version);
   const name = options.fileName ?? rootName;
-  const source = existsSync(rootPath)
-    ? readFileSync(rootPath, "utf8")
+  const source = fileSystem.existsSync(rootPath)
+    ? fileSystem.readFileSync(rootPath, "utf8")
     : standardModules.get(rootName);
   const lines: string[] = [];
   const write = (text: string) => {
@@ -125,7 +125,7 @@ export const getSanyReport = (
   };
   const describeFile = options.describeFile;
   const origins = new Map<string, SanyModuleOrigin>([
-    [rootName, existsSync(rootPath) ? "file" : "standard"],
+    [rootName, fileSystem.existsSync(rootPath) ? "file" : "standard"],
   ]);
   let isFailed = false;
   const parseMessages: SanyMessage[] = [];
