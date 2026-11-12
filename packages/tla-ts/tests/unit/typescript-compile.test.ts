@@ -967,6 +967,24 @@ describe("values", () => {
     expect(await getMessage(getSource(1, 0, 3, 14))).toContain("argument");
   });
 
+  it("runs an assignment in a unary operator's operand first", async () => {
+    const getSource = (negated: number, voided: number) => `
+      let x = 0;
+      const expected: number[] = [${negated}, ${voided}];
+      if (-(x = 3) !== expected[0]) throw new Error("negate");
+      if (void (x = 1) !== undefined || x !== expected[1]) throw new Error("void");
+      if (!((x = 2) === x)) throw new Error("not");
+    `;
+    const getMessage = (source: string) =>
+      checkModel(source).then(
+        (result) => result.failure?.message,
+        (error: Error) => error.message,
+      );
+    expect(await getMessage(getSource(-3, 1))).toBeUndefined();
+    expect(await getMessage(getSource(3, 1))).toContain("negate");
+    expect(await getMessage(getSource(-3, 3))).toContain("void");
+  });
+
   it("gives what a compound assignment to a property writes, as its value", async () => {
     const getSource = (field: number, property: number, element: number, typed: number) => `
       class Counter {

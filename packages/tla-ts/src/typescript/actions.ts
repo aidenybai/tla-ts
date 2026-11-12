@@ -8831,11 +8831,14 @@ const getLeadingAssignment = (
 ): ts.BinaryExpression | Increment | undefined => {
   if (results.has(node)) return undefined;
   if (isIncrement(node)) return isPlainIncrement(node, context) ? node : undefined;
+  // A unary operator evaluates its operand before it converts it.
+  if (ts.isPrefixUnaryExpression(node)) return getLeadingAssignment(node.operand, results, context);
   if (
     ts.isParenthesizedExpression(node) ||
     ts.isAsExpression(node) ||
     ts.isNonNullExpression(node) ||
     ts.isTypeOfExpression(node) ||
+    ts.isVoidExpression(node) ||
     ts.isPropertyAccessExpression(node) ||
     ts.isElementAccessExpression(node)
   ) {
