@@ -4,6 +4,7 @@ import { getTypeNames, JAVASCRIPT_OPERATORS } from "./javascript";
 import { BUILT_INS } from "./built-ins";
 import { getErrorClass, NATIVE_ERRORS } from "./exceptions";
 import { getBuiltIn, isHeldBuiltInObject } from "./intrinsics";
+import { isHeapArray, isHeapSetOrMap } from "./types";
 import { TlaTypeScriptError } from "../errors";
 import { createNames, type Names } from "./names";
 import type { Link } from "./regions";
@@ -1568,7 +1569,8 @@ export const changesState = (
       visited.add(called);
       if (changesState(called, called, context, visited)) return true;
     }
-    // A built-in method that changes in place an array or a collection that isn't a local.
+    // A built-in method that changes in place an array or a collection that isn't a local, or that
+    // the heap holds, which a local may name.
     const receiver = isMethodCall(node) ? skipCasts(node.expression.expression) : undefined;
     const local =
       receiver !== undefined && ts.isIdentifier(receiver)
@@ -1576,9 +1578,14 @@ export const changesState = (
         : undefined;
     if (
       called === undefined &&
+      receiver !== undefined &&
       isMethodCall(node) &&
       IN_PLACE_CHANGES.has(node.expression.name.text) &&
-      (local === undefined || local.pos < callee.pos || local.end > callee.end)
+      (local === undefined ||
+        local.pos < callee.pos ||
+        local.end > callee.end ||
+        isHeapArray(receiver, context) ||
+        isHeapSetOrMap(receiver, context))
     ) {
       return true;
     }
