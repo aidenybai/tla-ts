@@ -22,8 +22,8 @@ import {
   DATE_FIELDS,
   getHeap,
   getPrototypeMethod,
+  hasPrototypeArray,
   isDateType,
-  isPrototypeArray,
   TIME_METHODS,
 } from "./heap";
 import {
@@ -2578,9 +2578,7 @@ export const getStoredCall = (node: ts.Node, context: Context): StoredCall | und
               (!method.endsWith("ndexOf") || node.arguments.length > 0)));
   };
   // An object whose prototype is an array that the script makes inherits the array's methods.
-  const inherited = [...context.heapCollections].some(isPrototypeArray)
-    ? [`Array.prototype.${callee.name.text}`]
-    : [];
+  const inherited = hasPrototypeArray(context) ? [`Array.prototype.${callee.name.text}`] : [];
   const builtIns = new Set(
     [
       ...findNodes(node.getSourceFile(), ts.isPropertyAccessExpression).map((inner) =>

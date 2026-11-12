@@ -155,6 +155,7 @@ import {
   isNewError,
   getCandidateValue,
   getHeap,
+  hasPrototypeArray,
   getNewWrapper,
   isAllocation,
   isNewProxy,
@@ -1437,6 +1438,21 @@ export const translateCallStatement = (
     return translateSuperCall(expression, path, context, frame, continueWith);
   }
   const loop = getLoopCall(expression, path, context);
+  if (loop?.isInherited === true) {
+    return ifThenElse(
+      apply("=", [
+        translateExpression(expression.expression, path.scope, context),
+        translateBuiltInValue(`Array.prototype.${loop.method}`, expression, context),
+      ]),
+      translateLoopCall(expression, loop, path, context, frame, continueWith),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't tell which function this call runs"),
+        ]),
+      ),
+    );
+  }
   if (loop !== undefined) {
     return translateLoopCall(expression, loop, path, context, frame, continueWith);
   }
@@ -5034,6 +5050,8 @@ interface LoopCall {
   isArrayLike: boolean;
   // Whether the receiver is a set, which the method visits in an order that TLC picks.
   isUnordered: boolean;
+  // Whether the receiver inherits the method, which the call checks is Array.prototype's.
+  isInherited: boolean;
 }
 
 // An array method that calls back for each element, on an array or an array-like object.
@@ -5114,7 +5132,30 @@ const isOrderFreeForOf = (node: ts.ForOfStatement, context: Context) => {
   );
 };
 
+// An object whose prototype is an array that the script makes may inherit an array method that
+// calls back, which the call checks as it runs.
 const getLoopTarget = (node: ts.Node, context: Context) => {
+  const callee = ts.isCallExpression(node) ? skipCasts(node.expression) : undefined;
+  if (
+    callee !== undefined &&
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(callee) &&
+    LOOP_METHODS.has(callee.name.text) &&
+    (context.checker.getTypeAtLocation(callee).flags &
+      (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
+      0 &&
+    getKind(callee.expression, context) === "object" &&
+    hasPrototypeArray(context)
+  ) {
+    return {
+      method: callee.name.text,
+      receiver: callee.expression,
+      callbackArguments: node.arguments,
+      isArrayLike: true,
+      isUnordered: false,
+      isInherited: true,
+    };
+  }
   if (!isMethodCall(node)) return undefined;
   const target = node.expression.expression;
   const isCall =
@@ -5136,6 +5177,7 @@ const getLoopTarget = (node: ts.Node, context: Context) => {
         callbackArguments: isCall ? node.arguments.slice(1) : node.arguments,
         isArrayLike,
         isUnordered,
+        isInherited: false,
       }
     : undefined;
 };
@@ -5175,6 +5217,7 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
           initial: target.callbackArguments.at(1),
           isArrayLike: target.isArrayLike,
           isUnordered: target.isUnordered,
+          isInherited: target.isInherited,
         }
       : undefined;
   }
@@ -5195,6 +5238,7 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
         initial: target.callbackArguments.at(1),
         isArrayLike: target.isArrayLike,
         isUnordered: target.isUnordered,
+        isInherited: target.isInherited,
       }
     : undefined;
 };
