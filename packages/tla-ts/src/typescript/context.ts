@@ -1437,6 +1437,7 @@ export const isStatementNew = (node: ts.NewExpression) => {
   const parent = node.parent;
   return (
     ts.isExpressionStatement(parent) ||
+    ts.isReturnStatement(parent) ||
     (ts.isVariableDeclaration(parent) &&
       parent.initializer === node &&
       ts.isIdentifier(parent.name) &&

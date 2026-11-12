@@ -5279,10 +5279,12 @@ const isHeapCall = (
   path: Path,
   context: Context,
 ): node is ts.CallExpression => {
-  if (context.heap === undefined || !ts.isCallExpression(node) || isMethodCall(node)) return false;
+  if (context.heap === undefined || !ts.isCallExpression(node)) return false;
   const symbol = getSymbol(node.expression, context.checker);
   const callee =
-    (symbol && path.scope.functions.get(symbol)) ?? getCallee(node.expression, context);
+    (symbol && path.scope.functions.get(symbol)) ??
+    getCallee(node.expression, context) ??
+    getCalledMethod(node.expression, context)?.method;
   return callee?.body !== undefined && usesHeap(callee, context, new Set());
 };
 
@@ -8052,6 +8054,10 @@ export const translateStatements = (
         statement,
         path.scope,
         context,
+      const constructor = getConstructorRun(returned, context);
+      if (constructor !== undefined && ts.isNewExpression(returned)) {
+        return translateConstruction(returned, constructor, inner, context, frame, frame.exit);
+      }
         (clause) => translateStatements(clause, path, context, { ...frame, next, breakTo: next }),
         () => next(path),
       ),

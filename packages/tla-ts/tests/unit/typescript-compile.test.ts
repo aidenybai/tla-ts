@@ -4872,6 +4872,36 @@ describe("errors", () => {
     expect(handled.failure).toBeUndefined();
   });
 
+  it("returns a new instance from a function or a method", async () => {
+    const getSource = (check: string) => `
+      class Point {
+        constructor(readonly x: number) {}
+        static of(x: number) {
+          if (x < 0) return new Point(0);
+          return new Point(x * 2);
+        }
+        double() {
+          if (this.x === 0) return this;
+          return new Point(this.x * 2);
+        }
+      }
+      let made = 0;
+      const make = (x: number) => {
+        made++;
+        return new Point(x);
+      };
+      const first = Point.of(3);
+      const second = first.double();
+      const third = make(5);
+      const fourth = make(5);
+      if (${check}) throw new Error("Point");
+    `;
+    const passing = "first.x !== 6 || second.x !== 12 || third === fourth || made !== 2";
+    expect((await checkModel(getSource(passing))).failure).toBeUndefined();
+    expect((await checkModel(getSource("second.x === 12"))).failure?.message).toContain("Point");
+    expect((await checkModel(getSource("third !== fourth"))).failure?.message).toContain("Point");
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`
