@@ -767,6 +767,15 @@ describe("values", () => {
     expect(result.failure?.message).toContain("got 2");
   });
 
+  it("runs a call in an error's message before it makes the error", async () => {
+    const result = await checkModel(`
+      const box = { size: 0 };
+      const text: string = "abc";
+      if (text.split(/b/).length !== 3) throw new Error("got " + text.split(/b/).length);
+    `);
+    expect(result.failure?.message).toContain("got 2");
+  });
+
   it("runs a comma's operands in order as statements", async () => {
     const result = await checkModel(`
       let total = 0;

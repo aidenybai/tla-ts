@@ -7067,7 +7067,7 @@ const findLeadingCall = (
       : found;
   }
   // A Boolean, Number, or String object, or a proxy, runs no code where a statement makes it. Any
-  // other new runs a conversion among its arguments first, such as one in an error's message.
+  // other new runs what its arguments need first, such as a call in an error's message.
   if (
     ts.isNewExpression(node) &&
     (getNewWrapper(node, context) !== undefined ||
@@ -7079,7 +7079,7 @@ const findLeadingCall = (
   }
   if (ts.isNewExpression(node)) {
     const found = inOrder([node.expression, ...(node.arguments ?? [])]);
-    return found.conversion === undefined ? blocked : found;
+    return found.call !== undefined || found.isBlocked ? found : blocked;
   }
   if (ts.isCallExpression(node)) {
     if (!isPlainCallee(node.expression, context)) return blocked;
