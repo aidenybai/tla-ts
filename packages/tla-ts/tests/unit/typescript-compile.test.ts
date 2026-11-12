@@ -12357,6 +12357,30 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain('"this"');
   });
 
+  it("reads this in an arrow function of a class expression's static field as the variable's class", async () => {
+    const source = `
+      const box = { seen: 0 };
+      var C = class {
+        static f = () => this;
+      };
+      const D = class extends C {};
+      if (C.f() !== C || D.f() !== C) throw new Error("this");
+      box.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("D.f() !== C", "D.f() !== D");
+    expect((await checkModel(wrong)).failure?.message).toContain('"this"');
+    expect(() =>
+      compile(`
+        const box = { seen: 0 };
+        var C = class {
+          static f = () => this;
+          static { box.seen = this.f() === undefined ? 2 : 1; }
+        };
+      `),
+    ).toThrow("spec.ts:4:28 Unsupported expression: this");
+  });
+
   it("reads a module's this as undefined, and stops on a script's", async () => {
     const source = `
       const box = { seen: 0 };
