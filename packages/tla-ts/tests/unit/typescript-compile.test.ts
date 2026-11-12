@@ -12728,6 +12728,37 @@ describe("buffers", () => {
     ).toContain("255,0,0");
   });
 
+  it("copies an array's elements into a typed array", async () => {
+    const getSource = (expected: string) => `
+      const keys = new Int32Array(8).fill(-1);
+      keys.set([1, 2, 3, 4], 4);
+      const list = [5, 6];
+      list.push(7);
+      keys.set(list);
+      const bytes = new Uint8Array(3);
+      bytes.set([300, -1, 1.5]);
+      const errors: string[] = [];
+      try {
+        keys.set([1, 2], 7);
+      } catch (error) {
+        errors.push(error instanceof RangeError ? "range" : "other");
+      }
+      try {
+        keys.set([1], -1);
+      } catch (error) {
+        errors.push(error instanceof RangeError ? "range" : "other");
+      }
+      const result = [keys.join(","), bytes.join(","), errors.join(",")].join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect(
+      (await checkModel(getSource("5,6,7,-1,1,2,3,4;44,255,1;range,range"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("5,6,7,-1,1,2,3,4;44,255,2;range,range"))).failure?.message,
+    ).toContain("44,255,1;");
+  });
+
   it("reads and writes the elements of typed arrays that share a buffer", async () => {
     const result = await checkModel(`
       const buffer = new ArrayBuffer(8);
