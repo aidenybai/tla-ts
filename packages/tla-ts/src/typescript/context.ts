@@ -550,13 +550,23 @@ const getObjectAccessor = <T extends ts.GetAccessorDeclaration | ts.SetAccessorD
   isKind: (declaration: ts.Declaration) => declaration is T,
   context: Context,
 ) => {
-  if (context.heap === undefined || getAccessKey(node) === undefined) return undefined;
-  const name = ts.isPropertyAccessExpression(node)
-    ? node.name
-    : ts.isElementAccessExpression(node)
-      ? node.argumentExpression
+  if (
+    context.heap === undefined ||
+    getAccessKey(node) === undefined ||
+    !(ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node))
+  ) {
+    return undefined;
+  }
+  const name = ts.isPropertyAccessExpression(node) ? node.name : node.argumentExpression;
+  // A spread or a rest copies an accessor's value into a property of its own, which TypeScript
+  // declares with the accessor still. A union's property is neither.
+  const symbol = getSymbol(name, context.checker);
+  const accessor =
+    symbol !== undefined &&
+    ((symbol.flags & ts.SymbolFlags.Accessor) !== 0 ||
+      context.checker.getTypeAtLocation(node.expression).isUnionOrIntersection())
+      ? symbol.declarations?.find(isKind)
       : undefined;
-  const accessor = name && getSymbol(name, context.checker)?.declarations?.find(isKind);
   return accessor !== undefined && isInlinedAccessor(accessor, context) ? accessor : undefined;
 };
 

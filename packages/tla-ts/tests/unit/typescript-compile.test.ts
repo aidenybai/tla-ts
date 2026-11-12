@@ -4957,6 +4957,18 @@ describe("errors", () => {
     expect(thrown.failure).toBeUndefined();
   });
 
+  it("reads a rest's copy of what a getter gave as a value", async () => {
+    const getSource = (expected: number) => `
+      let count = 0;
+      const source = { get v() { count++; return 2; } };
+      const { ...rest } = source;
+      const value = rest.v + rest.v;
+      if (count !== 1 || value !== ${expected}) throw new Error("rest");
+    `;
+    expect((await checkModel(getSource(4))).failure).toBeUndefined();
+    expect((await checkModel(getSource(3))).failure?.message).toContain("rest");
+  });
+
   it("copies what a getter gives into an object rest", async () => {
     const result = await checkModel(`
       let count: number = 0;
