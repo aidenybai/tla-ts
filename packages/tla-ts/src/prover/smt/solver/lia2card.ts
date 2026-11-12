@@ -1,5 +1,4 @@
 // Ported from Z3 (src/tactic/arith/lia2card_tactic.cpp), MIT license, see z3-license.txt.
-import { SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
   KIND_APP,
@@ -20,6 +19,7 @@ import {
   SORT_INT,
 } from "./ast";
 import { BoundManager } from "./bound-manager";
+import { mkPbEq, mkPbGe, mkPbLe } from "./pb-rewriter";
 import { ExprSafeReplace } from "./expr-safe-replace";
 import type { Definition, Goal } from "./goal";
 import { Rational } from "./rational";
@@ -137,7 +137,7 @@ class PbRewriter extends RewriterTpl {
     if (isSingleOne && bound.compare(Rational.one) >= 0) return manager.trueExpr;
     if (isSingleOne && bound.isZero()) return manager.mkApp(OP_NOT, [sum.args[0]], SORT_BOOL);
     if (bound.isNegative()) return manager.falseExpr;
-    throw new SmtUnsupportedError("pseudo-Boolean constraints");
+    return mkPbLe(manager, sum.coeffs, sum.args, bound);
   }
 
   // Only mkEq uses it, so a single 0-1 term at least zero is its negation, as in Z3.
@@ -149,7 +149,7 @@ class PbRewriter extends RewriterTpl {
     if (isSingleOne && bound.equals(Rational.one)) return sum.args[0];
     if (isSingleOne && bound.isZero()) return manager.mkApp(OP_NOT, [sum.args[0]], SORT_BOOL);
     if (bound.isNegative()) return manager.trueExpr;
-    throw new SmtUnsupportedError("pseudo-Boolean constraints");
+    return mkPbGe(manager, sum.coeffs, sum.args, bound);
   }
 
   private mkEq(sum: PbSum) {
@@ -158,15 +158,7 @@ class PbRewriter extends RewriterTpl {
     if (bound.isNegative()) return manager.falseExpr;
     if (!this.isCompilingEquality)
       return manager.mkAnd([this.pin(this.mkGe(sum)), this.pin(this.mkLe(sum))]);
-    const scale = sum.coeffs.reduce((lcm, coeff) => {
-      const den = coeff.den;
-      let [first, second] = [lcm, den];
-      while (second !== 0n) [first, second] = [second, first % second];
-      return (lcm / first) * den;
-    }, 1n);
-    if (!bound.mul(Rational.of(scale)).isInt()) return manager.falseExpr;
-    if (sum.args.length === 0) return bound.isZero() ? manager.trueExpr : manager.falseExpr;
-    throw new SmtUnsupportedError("pseudo-Boolean constraints");
+    return mkPbEq(manager, sum.coeffs, sum.args, bound);
   }
 
   reduceApp(decl: number, args: number[]) {

@@ -30,6 +30,7 @@ export const FAMILY_FPA = 8;
 export const FAMILY_CHAR = 9;
 export const FAMILY_SEQ = 10;
 export const FAMILY_LABEL = 11;
+export const FAMILY_PB = 12;
 
 export const OP_TRUE = 0;
 export const OP_FALSE = 1;
@@ -306,6 +307,12 @@ export const OP_CHAR_IS_DIGIT = CHAR_OP_BASE + 5;
 const LABEL_OP_BASE = 700;
 export const OP_LABEL = LABEL_OP_BASE;
 export const OP_LABEL_LIT = LABEL_OP_BASE + 1;
+const PB_OP_BASE = 800;
+export const OP_AT_MOST_K = PB_OP_BASE;
+export const OP_AT_LEAST_K = PB_OP_BASE + 1;
+export const OP_PB_LE = PB_OP_BASE + 2;
+export const OP_PB_GE = PB_OP_BASE + 3;
+export const OP_PB_EQ = PB_OP_BASE + 4;
 
 // The number of elements of a sort, with -1 for an infinite sort and -2 for a very big one.
 export const SORT_SIZE_INFINITE = -1n;
@@ -421,6 +428,7 @@ const Z3_RECFUN_FAMILY = 10;
 const Z3_CHAR_FAMILY = 12;
 const Z3_SEQ_FAMILY = 13;
 const Z3_FPA_FAMILY = 14;
+const Z3_PB_FAMILY = 15;
 const Z3_SEQ_SORT = 0;
 const Z3_RE_SORT = 1;
 const Z3_FLOATING_POINT_SORT = 0;
@@ -546,6 +554,8 @@ const MAX_SMALL_NUM_TO_CACHE = 16;
 // The sorts that finite_set_decl_plugin::init makes.
 const NUM_FINITE_SET_PLUGIN_SORTS = 7;
 
+const PB_OP_NAMES = ["at-most", "at-least", "pble", "pbge", "pbeq"];
+
 export const getSymbolHash = (symbol: SmtSymbol) =>
   typeof symbol === "number" ? symbol : stringHash(symbol, 17);
 
@@ -590,7 +600,8 @@ const hasOwnDeclHash = (family: number) =>
   family === FAMILY_FPA ||
   family === FAMILY_CHAR ||
   family === FAMILY_SEQ ||
-  family === FAMILY_LABEL;
+  family === FAMILY_LABEL ||
+  family === FAMILY_PB;
 
 export class AstManager {
   // The tables of the expressions are typed arrays indexed by expression, which the collector does
@@ -650,6 +661,9 @@ export class AstManager {
   private rmSort = -1;
   private fpaDecls = new Map<string, number>();
   private labelDecls = new Map<string, number>();
+  private pbDecls = new Map<string, number>();
+  // The parameters of a pseudo-Boolean declaration: its bound, then a coefficient per argument.
+  private pbParameters = new Map<number, Rational[]>();
   // The names of the labels, which the parameters of a label declaration index.
   private labelNames: string[] = [];
   private labelNameIds = new Map<string, number>();
@@ -1207,6 +1221,46 @@ export class AstManager {
     });
     this.fpaDecls.set(key, decl);
     return decl;
+  }
+
+  // pb_decl_plugin::mk_func_decl: a parameter that fits in 32 bits is an integer, else a rational.
+  mkPbDecl(op: number, parameters: Rational[], domain: number[]) {
+    const key = `${op}:${parameters.join(",")}:${domain.join(",")}`;
+    const existing = this.pbDecls.get(key);
+    if (existing !== undefined) return existing;
+    const decl = this.funcDecls.length;
+    const name = PB_OP_NAMES[op - PB_OP_BASE];
+    this.declHashes[decl] = this.getFuncDeclHash(
+      name,
+      domain,
+      SORT_BOOL,
+      getInfoHash(
+        Z3_PB_FAMILY,
+        op - PB_OP_BASE,
+        parameters.map((parameter) =>
+          parameter.isInt() && parameter.num >= -(2n ** 31n) && parameter.num < 2n ** 31n
+            ? Number(BigInt.asUintN(32, parameter.num))
+            : (getIntegerHash(parameter.num) + 3 * getIntegerHash(parameter.den)) >>> 0,
+        ),
+      ),
+    );
+    this.funcDecls.push({
+      name,
+      family: FAMILY_PB,
+      op,
+      domain,
+      range: SORT_BOOL,
+      isSkolem: false,
+      smallId: this.mkSmallId(),
+      parameters: [],
+    });
+    this.pbParameters.set(decl, parameters);
+    this.pbDecls.set(key, decl);
+    return decl;
+  }
+
+  getPbParameters(decl: number) {
+    return this.pbParameters.get(decl) as Rational[];
   }
 
   mkFpValueId(value: Mpf) {

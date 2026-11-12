@@ -10,6 +10,7 @@ import {
   FAMILY_FINITE_SET,
   FAMILY_FPA,
   FAMILY_MODEL_VALUE,
+  FAMILY_PB,
   FAMILY_SEQ,
   FAMILY_USER,
   KIND_APP,
@@ -36,6 +37,7 @@ import {
   SORT_INT,
   SORT_REAL,
 } from "./ast";
+import { logicHasPb } from "./smt-logics";
 
 interface LogicFlags {
   isUf: boolean;
@@ -125,6 +127,7 @@ const FAMILY_NAMES = new Map([
   [FAMILY_DATATYPE, "datatype"],
   [FAMILY_FPA, "fpa"],
   [FAMILY_CHAR, "char"],
+  [FAMILY_PB, "pb"],
 ]);
 
 const NONLINEAR = "logic does not support nonlinear arithmetic";
@@ -262,6 +265,7 @@ export const createLogicChecker = (manager: AstManager, logic: string | undefine
     if (family === FAMILY_MODEL_VALUE) return undefined;
     if (family === FAMILY_SEQ || manager.isCharSort(manager.sorts[expr])) return undefined;
     if (family === FAMILY_DATATYPE && flags.isDt) return undefined;
+    if (family === FAMILY_PB && logic !== undefined && logicHasPb(logic)) return undefined;
     return `logic does not support theory ${FAMILY_NAMES.get(family)}`;
   };
 

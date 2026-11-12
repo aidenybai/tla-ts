@@ -5,6 +5,7 @@ import {
   FAMILY_BV,
   FAMILY_CHAR,
   FAMILY_FPA,
+  FAMILY_PB,
   FAMILY_SEQ,
   OP_SEQ_CONCAT,
   OP_SEQ_EMPTY,
@@ -331,6 +332,8 @@ const formatFpNumeral = (options: PrintOptions, value: Mpf) => {
 const getDeclName = (manager: AstManager, decl: number) => {
   const funcDecl = manager.funcDecls[decl];
   const name = getQuotedName(funcDecl.name);
+  if (funcDecl.family === FAMILY_PB)
+    return `(_ ${name} ${manager.getPbParameters(decl).join(" ")})`;
   if (funcDecl.op === OP_CONST_ARRAY || funcDecl.op === OP_SEQ_EMPTY)
     return `(as ${name} ${getSortText(manager, funcDecl.range)})`;
   if (

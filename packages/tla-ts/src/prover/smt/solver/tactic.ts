@@ -20,13 +20,14 @@ import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { Der } from "./der";
 import { fixDlVar } from "./fix-dl-var";
 import { runFpa2Bv } from "./fpa2bv-tactic";
-import { runBitBlast } from "./bit-blast-tactic";
+import { type BitBlasterRewriter, runBitBlast } from "./bit-blast-tactic";
 import { runMaxBvSharing } from "./max-bv-sharing-tactic";
 import { runBvBoundChk } from "./bv-bound-chk";
 import { runBvDivremBounds } from "./bv-divrem-bounds";
 import { runBv1Blast } from "./bv1-blast";
 import { runReduceBvSize } from "./reduce-bv-size";
 import { createSatTactic } from "./sat/sat-tactic";
+import { createFdTactic } from "./fd-solver";
 import { elimUncnstr } from "./elim-uncnstr";
 import { rewriteUfbv } from "./demodulator";
 import { distributeForall } from "./distribute-forall";
@@ -1167,6 +1168,14 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     },
   ],
   [
+    "qffd",
+    {
+      descrs: SAT_DESCRS,
+      isRejectingUnknown: false,
+      build: (environment, params) => createFdTactic(environment.manager, params),
+    },
+  ],
+  [
     "psat",
     {
       descrs: SAT_DESCRS,
@@ -1223,7 +1232,7 @@ const UNPORTED_TACTICS = new Set(
     "elim-predicates elim-uncnstr2 " +
     "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv fold-unfold fpa2bv " +
     "horn-simplify injectivity pb-preprocess pqffd propagate-bv-bounds " +
-    "propagate-bv-bounds2 propagate-values2 psmt qfbv-sls qffd qfufbv recover-01 reduce-args2 " +
+    "propagate-bv-bounds2 propagate-values2 psmt qfbv-sls qfufbv recover-01 reduce-args2 " +
     "sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
     "split-clause subpaving symmetry-reduce"
   ).split(" "),
@@ -1654,6 +1663,43 @@ const compile = (
       throw new SmtParseError(`invalid tactic, unknown tactic combinator ${head.text}`, end);
   }
 };
+
+// inc_sat_solver's init_preprocess, without sat.euf.
+export const mkIncSatPreprocess = (manager: AstManager, bitBlaster: BitBlasterRewriter) =>
+  [
+    inPlace((goal) => simplifyGoal(manager, goal, getRewriterOptions(manager, new Map()))),
+    inPlace((goal) => propagateValues(manager, goal)),
+    inPlace((goal) => card2bv(manager, goal, getRewriterOptions(manager, new Map()))),
+    inPlace((goal) =>
+      simplifyGoal(
+        manager,
+        goal,
+        getRewriterOptions(
+          manager,
+          new Map<string, TacticParam>([
+            ["som", true],
+            ["pull_cheap_ite", true],
+            ["push_ite_bv", false],
+            ["local_ctx", true],
+            ["local_ctx_limit", 10000000],
+            ["flat", true],
+            ["hoist_mul", false],
+            ["elim_and", true],
+            ["blast_distinct", true],
+          ]),
+        ),
+      ),
+    ),
+    runMaxBvSharing(manager),
+    runBitBlast(
+      manager,
+      { isBlastingMul: true, isBlastingAdd: true, isBlastingQuant: false, isBlastingFull: false },
+      bitBlaster,
+    ),
+    inPlace((goal) =>
+      simplifyGoal(manager, goal, getRewriterOptions(manager, new Map([["flat", false]]))),
+    ),
+  ].reduceRight((second, first) => runAndThen(first, second));
 
 export const compileTactic = (environment: TacticEnvironment, sexpr: SExpr, end: SmtToken) =>
   compile(environment, sexpr, end, false);

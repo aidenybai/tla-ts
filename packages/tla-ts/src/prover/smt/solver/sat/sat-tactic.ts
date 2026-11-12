@@ -14,7 +14,7 @@ export const createSatTactic = (manager: AstManager, params: SatParams) => (goal
   goal.elimRedundancies();
   const solver = new Solver(params, manager.limit);
   const goal2sat = new Goal2Sat(manager, solver, params.get("ite_extra") !== false);
-  goal2sat.run(goal);
+  goal2sat.run(goal.forms.items);
   goal.reset();
   const result = solver.check();
   if (result === L_FALSE) goal.assert(manager.falseExpr);

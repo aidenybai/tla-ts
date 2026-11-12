@@ -10,6 +10,7 @@ import type { ArithRewriterOptions } from "./poly-rewriter";
 import { isAstLess } from "./ast-lt";
 import { Der } from "./der";
 import { mkFpaAppCore, mkFpaEqCore } from "./fpa-rewriter";
+import { mkPbAppCore } from "./pb-rewriter";
 import { SeqRewriter } from "./seq-rewriter";
 import {
   AstManager,
@@ -20,6 +21,7 @@ import {
   FAMILY_CHAR,
   FAMILY_DATATYPE,
   FAMILY_FPA,
+  FAMILY_PB,
   FAMILY_SEQ,
   KIND_APP,
   KIND_QUANTIFIER,
@@ -548,6 +550,7 @@ export class Rewriter extends RewriterTpl {
     if (funcDecl.family === FAMILY_ARRAY) return this.array.mkAppCore(funcDecl.op, args) ?? -1;
     if (funcDecl.family === FAMILY_DATATYPE) return mkDatatypeAppCore(manager, decl, args) ?? -1;
     if (funcDecl.family === FAMILY_FPA) return mkFpaAppCore(manager, decl, args) ?? -1;
+    if (funcDecl.family === FAMILY_PB) return mkPbAppCore(manager, decl, args);
     if (funcDecl.family === FAMILY_SEQ || funcDecl.family === FAMILY_CHAR)
       return this.seq.mkAppCore(decl, args) ?? -1;
     if (manager.recFunBodies.has(decl)) return mkRecFunApp(manager, decl, args) ?? -1;

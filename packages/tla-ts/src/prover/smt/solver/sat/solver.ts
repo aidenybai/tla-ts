@@ -26,6 +26,7 @@ import {
   type SatConfig,
   type SatParams,
 } from "./config";
+import { MaxCliques } from "../max-cliques";
 import { ModelConverter } from "./model-converter";
 import { Probing } from "./probing";
 import { Scc } from "./scc";
@@ -178,6 +179,9 @@ export class Solver {
   isSimplifyEnabled = true;
   isRestartEnabled = true;
   lemma: number[] = [];
+  private incremental = false;
+  private assumptions: number[] = [];
+  private assumptionSet = new Set<number>();
   private diffLevels: boolean[] = [];
   private unmark: number[] = [];
   private lvlSet = 0;
@@ -186,7 +190,9 @@ export class Solver {
   constructor(
     params: SatParams,
     readonly limit: ResourceLimit,
+    isIncremental = false,
   ) {
+    this.incremental = isIncremental;
     this.config = getSatConfig(params);
     this.rand = new RandomGen(this.config.randomSeed);
     this.caseSplitQueue = new VarQueue(this.activity);
@@ -248,15 +254,23 @@ export class Solver {
   }
 
   isAssumption(boolVar: number) {
-    return boolVar < 0;
+    return this.isAssumptionLit(2 * boolVar) || this.isAssumptionLit(2 * boolVar + 1);
+  }
+
+  private isAssumptionLit(lit: number) {
+    return this.trackingAssumptions() && this.assumptionSet.has(lit);
   }
 
   isIncremental() {
-    return false;
+    return this.incremental;
   }
 
   trackingAssumptions() {
-    return false;
+    return this.assumptions.length > 0;
+  }
+
+  setExternal(boolVar: number) {
+    this.external[boolVar] = true;
   }
 
   initVisited() {
@@ -521,6 +535,7 @@ export class Solver {
     this.clauses = newClauses;
     this.learned = newLearned;
     this.arena = target;
+    this.reinitAssumptions();
   }
 
   private selectWatchLit(clause: number, startingAt: number) {
@@ -792,15 +807,18 @@ export class Solver {
     this.watches[this.arena.get(clause, 1) ^ 1].pushClause(this.arena.get(clause, 0), clause);
   }
 
-  check() {
+  check(assumptions: readonly number[] = []) {
     this.reasonUnknown = "no reason given";
     this.popToBaseLevel();
     this.isSearching = true;
     try {
       this.initSearch();
-      if (this.isInconsistent) return L_FALSE;
+      if (this.checkInconsistent()) return L_FALSE;
       this.propagate(false);
-      if (this.isInconsistent) return L_FALSE;
+      if (this.checkInconsistent()) return L_FALSE;
+      this.initAssumptions(assumptions);
+      this.propagate(false);
+      if (this.checkInconsistent()) return L_FALSE;
       if (this.config.isForcingCleanup) this.doCleanup(true);
       if (this.config.isGcBurst) {
         this.conflictsSinceGc = this.gcThreshold + 1;
@@ -808,7 +826,7 @@ export class Solver {
       }
       if (this.config.isEnablingPreSimplify) {
         this.doSimplify();
-        if (this.isInconsistent) return L_FALSE;
+        if (this.checkInconsistent()) return L_FALSE;
       }
       if (this.config.maxConflicts === 0) return L_UNDEF;
       if (this.config.maxConflicts > 0 && this.config.burstSearch > 0) {
@@ -823,6 +841,144 @@ export class Solver {
     } finally {
       this.isSearching = false;
     }
+  }
+
+  private checkInconsistent() {
+    if (!this.isInconsistent) return false;
+    if (this.trackingAssumptions() && this.scopeLvl === this.searchLvl) this.resolveConflict();
+    return true;
+  }
+
+  private resolveConflict() {
+    for (;;) {
+      if (this.resolveConflictCore() === L_FALSE) return false;
+      if (!this.isInconsistent) return true;
+    }
+  }
+
+  private initAssumptions(lits: readonly number[]) {
+    if (lits.length === 0) return;
+    this.resetAssumptions();
+    this.push();
+    this.propagate(false);
+    if (this.isInconsistent) return;
+    for (let index = 0; !this.isInconsistent && index < lits.length; index++) {
+      const lit = lits[index];
+      this.setExternal(lit >> 1);
+      this.addAssumption(lit);
+      this.assignScoped(lit);
+    }
+    this.searchLvl = this.scopeLvl;
+  }
+
+  private resetAssumptions() {
+    this.assumptions = [];
+    this.assumptionSet.clear();
+  }
+
+  private addAssumption(lit: number) {
+    this.assumptionSet.add(lit);
+    this.assumptions.push(lit);
+    this.setExternal(lit >> 1);
+  }
+
+  private reinitAssumptions() {
+    if (!this.trackingAssumptions() || !this.atBaseLvl() || this.isInconsistent) return;
+    if (!this.propagate(false)) return;
+    this.push();
+    for (const lit of this.assumptions) {
+      if (this.isInconsistent) break;
+      this.assignScoped(lit);
+    }
+    if (!this.isInconsistent) this.propagate(false);
+  }
+
+  private processAntecedentForUnsatCore(antecedent: number) {
+    const boolVar = antecedent >> 1;
+    if (this.mark[boolVar]) return;
+    this.mark[boolVar] = true;
+    this.unmark.push(boolVar);
+    if (this.isAssumptionLit(antecedent)) this.core.push(antecedent);
+  }
+
+  private processConsequentForUnsatCore(consequent: number, kind: number, val: number) {
+    if (kind === JUSTIFICATION_BINARY) {
+      this.processAntecedentForUnsatCore(val ^ 1);
+      return;
+    }
+    if (kind !== JUSTIFICATION_CLAUSE) return;
+    const arena = this.arena;
+    let position = 0;
+    if (consequent !== NULL_LITERAL) {
+      if (arena.get(val, 0) === consequent) position = 1;
+      else {
+        this.processAntecedentForUnsatCore(arena.get(val, 0) ^ 1);
+        position = 2;
+      }
+    }
+    for (; position < arena.size[val]; position++)
+      this.processAntecedentForUnsatCore(arena.get(val, position) ^ 1);
+  }
+
+  private resolveConflictForUnsatCore() {
+    this.core = [];
+    if (this.conflictLevel === 0) return;
+    const oldSize = this.unmark.length;
+    let index = this.skipLiteralsAboveConflictLevel();
+    let consequent = this.notL;
+    if (this.notL !== NULL_LITERAL) {
+      const boolVar = this.notL >> 1;
+      this.processAntecedentForUnsatCore(this.notL);
+      if (this.isAssumptionLit(this.notL ^ 1)) this.core.push(this.notL ^ 1);
+      else
+        this.processConsequentForUnsatCore(
+          this.notL,
+          this.justKind[boolVar],
+          this.justVal[boolVar],
+        );
+      consequent = this.notL ^ 1;
+    }
+    let kind = this.conflictKind;
+    let val = this.conflictVal;
+    const initSize = this.initTrailSize();
+    for (;;) {
+      this.processConsequentForUnsatCore(consequent, kind, val);
+      while (index >= initSize) {
+        consequent = this.trail[index];
+        if (this.mark[consequent >> 1] && this.lvl(consequent) === this.conflictLevel) break;
+        index--;
+      }
+      if (index < initSize) break;
+      kind = this.justKind[consequent >> 1];
+      val = this.justVal[consequent >> 1];
+      index--;
+    }
+    this.resetUnmark(oldSize);
+    if (this.core.length > 1) this.core = this.core.filter((lit) => this.lvl(lit) > 0);
+  }
+
+  // max_cliques over the binary clauses, the largest mutexes first.
+  findMutexes(lits: readonly number[]) {
+    const cliques = new MaxCliques((index) => index ^ 1);
+    const seen = new Set<string>();
+    for (let index = 0; index < this.watches.length; index++) {
+      const first = index ^ 1;
+      const wlist = this.watches[index];
+      for (let position = 0; position < wlist.size; position++) {
+        if (!wlist.isBinary(position)) continue;
+        const second = wlist.getLiteral(position);
+        const key = `${first},${second}`;
+        if (first > second || seen.has(key)) continue;
+        seen.add(key);
+        cliques.addEdge(first, second);
+      }
+    }
+    const mutexes = cliques.cliques2(lits);
+    const sorted: number[][][] = [];
+    for (const mutex of mutexes) (sorted[mutex.length] ??= []).push(mutex);
+    const result: number[][] = [];
+    for (let size = sorted.length; size-- > 0;) result.push(...(sorted[size] ?? []));
+    return result;
   }
 
   private shouldCancel() {
@@ -955,6 +1111,7 @@ export class Solver {
     this.sortWatchLits();
     this.probing.run(false);
     this.asymmBranch.run(false);
+    this.reinitAssumptions();
     if (this.isInconsistent) return;
     if (this.nextSimplify === 0) this.nextSimplify = this.config.nextSimplify1;
     else {
@@ -1034,6 +1191,10 @@ export class Solver {
     this.conflicts++;
     const conflict = this.getMaxLvl(this.notL, this.conflictKind, this.conflictVal);
     this.conflictLevel = conflict.level;
+    if (this.conflictLevel <= 1 && this.assumptions.length > 0) {
+      this.resolveConflictForUnsatCore();
+      return L_FALSE;
+    }
     if (this.conflictLevel === 0) return L_FALSE;
     if (this.allowBacktracking() && conflict.isUniqueMax && !this.isForcingConflictAnalysis) {
       this.popReinit(this.scopeLvl - this.conflictLevel + 1);
@@ -1415,6 +1576,7 @@ export class Solver {
 
   popReinit(numScopes: number) {
     this.pop(numScopes);
+    this.reinitAssumptions();
   }
 
   pop(numScopes: number) {
@@ -1477,6 +1639,7 @@ export class Solver {
   }
 
   popToBaseLevel() {
+    this.resetAssumptions();
     this.pop(this.scopeLvl);
     this.isModelCurrent = false;
   }

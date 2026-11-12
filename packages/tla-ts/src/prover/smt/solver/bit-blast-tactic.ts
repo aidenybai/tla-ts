@@ -543,39 +543,45 @@ const convertModel = (manager: AstManager, consts: BlastedConst[], source: Proto
   return target;
 };
 
-export const runBitBlast = (manager: AstManager, params: BitBlastParams) => (goal: Goal) => {
-  if (goal.isProofsEnabled && params.isBlastingQuant)
-    throw new SmtTacticError("quantified variable blasting does not support proof generation");
-  const rewriter = new BitBlasterRewriter(manager, params);
-  let rewritten = -1;
-  let isChanged = false;
-  const size = goal.forms.size;
-  for (let index = 0; index < size && !goal.isInconsistent; index++) {
-    const form = goal.forms.items[index];
-    const next = rewriter.rewrite(form);
-    release(manager, rewritten);
-    rewritten = next;
-    if (form === rewritten) continue;
-    isChanged = true;
-    goal.update(index, rewritten);
-  }
-  if (isChanged && rewriter.keys.length > 0) {
-    const const2bits = new ObjMap<number>((decl) => manager.getDeclHash(decl));
-    for (let index = 0; index < rewriter.keys.length; index++)
-      const2bits.set(rewriter.keys[index], rewriter.values.items[index]);
-    const consts: BlastedConst[] = [];
-    for (const entry of const2bits) {
-      manager.incDeclRef(entry[0]);
-      manager.incRef(entry[1]);
-      consts.push({ decl: entry[0], bits: entry[1] });
+// inc_sat_solver passes a rewriter that keeps its bits across calls; each call converts the
+// constants it blasts.
+export const runBitBlast =
+  (manager: AstManager, params: BitBlastParams, persistent?: BitBlasterRewriter) =>
+  (goal: Goal) => {
+    if (goal.isProofsEnabled && params.isBlastingQuant)
+      throw new SmtTacticError("quantified variable blasting does not support proof generation");
+    const rewriter = persistent ?? new BitBlasterRewriter(manager, params);
+    const keyPos = rewriter.keys.length;
+    let rewritten = -1;
+    let isChanged = false;
+    const size = goal.forms.size;
+    for (let index = 0; index < size && !goal.isInconsistent; index++) {
+      const form = goal.forms.items[index];
+      const next = rewriter.rewrite(form);
+      release(manager, rewritten);
+      rewritten = next;
+      if (form === rewritten) continue;
+      isChanged = true;
+      goal.update(index, rewritten);
     }
-    for (const decl of rewriter.newbits) manager.incDeclRef(decl);
-    goal.addModelConversion((model) => convertModel(manager, consts, model));
-  }
-  goal.depth++;
-  rewriter.cleanup();
-  release(manager, rewritten);
-  rewriter.releaseCfg();
-  rewriter.release();
-  return [goal];
-};
+    if (isChanged && rewriter.keys.length > keyPos) {
+      const const2bits = new ObjMap<number>((decl) => manager.getDeclHash(decl));
+      for (let index = keyPos; index < rewriter.keys.length; index++)
+        const2bits.set(rewriter.keys[index], rewriter.values.items[index]);
+      const consts: BlastedConst[] = [];
+      for (const entry of const2bits) {
+        manager.incDeclRef(entry[0]);
+        manager.incRef(entry[1]);
+        consts.push({ decl: entry[0], bits: entry[1] });
+      }
+      for (const decl of rewriter.newbits) manager.incDeclRef(decl);
+      goal.addModelConversion((model) => convertModel(manager, consts, model));
+    }
+    goal.depth++;
+    rewriter.cleanup();
+    release(manager, rewritten);
+    if (persistent !== undefined) return [goal];
+    rewriter.releaseCfg();
+    rewriter.release();
+    return [goal];
+  };

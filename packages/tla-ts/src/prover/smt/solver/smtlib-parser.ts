@@ -12,6 +12,11 @@ import {
   OP_ABS,
   OP_ADD,
   OP_AND,
+  OP_AT_LEAST_K,
+  OP_AT_MOST_K,
+  OP_PB_EQ,
+  OP_PB_GE,
+  OP_PB_LE,
   OP_ARRAY_DEFAULT,
   OP_ARRAY_MAP,
   OP_CONST_ARRAY,
@@ -302,6 +307,13 @@ const THEORY_SORTS = new Set([
   "FiniteSet",
   "FiniteField",
   "Complex",
+]);
+const PB_OP_NAMES = new Map([
+  ["at-most", OP_AT_MOST_K],
+  ["at-least", OP_AT_LEAST_K],
+  ["pble", OP_PB_LE],
+  ["pbge", OP_PB_GE],
+  ["pbeq", OP_PB_EQ],
 ]);
 const THEORY_OPERATOR = /^(bv|fp\.|str\.|seq\.|re\.|char\.|ff\.)/;
 const THEORY_OPERATORS = new Set([
@@ -1291,6 +1303,28 @@ export const createSmtlibReader = (
 
   const isFpaOpName = (name: string) => hasFpa && FPA_OP_NAMES.has(name);
 
+  // pb_decl_plugin::get_op_names and mk_func_decl.
+  const isPbOpName = (name: string) =>
+    PB_OP_NAMES.has(name) &&
+    (logic === undefined || logic === "QF_FD" || logic === "ALL" || logic === "HORN");
+
+  const mkPbTerm = (name: string, args: number[], parameters: Rational[], at: SExpr) => {
+    const op = PB_OP_NAMES.get(name) ?? -1;
+    if (args.some((arg) => manager.sorts[arg] !== SORT_BOOL))
+      throw new SmtParseError("invalid non-Boolean sort applied to Pseudo-Boolean relation", at);
+    const isCardinality = op === OP_AT_MOST_K || op === OP_AT_LEAST_K;
+    if (isCardinality && parameters.length !== 1)
+      throw new SmtParseError("function expects one non-negative integer parameter", at);
+    if (!isCardinality && parameters.length !== 1 + args.length)
+      throw new SmtParseError("function expects arity+1 rational parameters", at);
+    const decl = manager.mkPbDecl(
+      op,
+      parameters,
+      args.map(() => SORT_BOOL),
+    );
+    return manager.mkApp(decl, args, SORT_BOOL);
+  };
+
   const mkFpaTerm = (name: string, args: number[], indices: number[], at: SExpr) => {
     const op = FPA_OP_NAMES.get(name) ?? -1;
     const getSignature = (innerArgs: number[]) => {
@@ -1915,6 +1949,25 @@ export const createSmtlibReader = (
             head: name,
             indices: [],
             build: (args) => parseApp(name, args, current.end, [], range),
+            list: current,
+            start: results.length,
+            next: 1,
+          });
+          return;
+        }
+        if (
+          isSymbol(head.items[0], "_") &&
+          isSymbol(name) &&
+          isPbOpName(name.text) &&
+          indices.every((index) => index.kind === "numeral")
+        ) {
+          const parameters = indices.map((index) =>
+            Rational.of(BigInt(index.kind === "list" ? 0 : index.text)),
+          );
+          frames.push({
+            head: name,
+            indices: [],
+            build: (args) => mkPbTerm(name.text, args, parameters, current.end),
             list: current,
             start: results.length,
             next: 1,
