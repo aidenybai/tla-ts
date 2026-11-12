@@ -351,6 +351,30 @@ describe("top-level statements", () => {
     expect(getTrace(result)?.[0]).toMatchObject({ seen: '"0:11,1:6,5:10,"' });
   });
 
+  it("read each index of an array as a callback that changes objects leaves it", async () => {
+    const source = (expected: string) => `
+      const items: (number | undefined)[] = [1, , 3, 4];
+      let seen = "";
+      items.forEach((value, position) => {
+        seen += value ?? "u";
+        if (position === 0) {
+          items[1] = 2;
+          delete items[2];
+          items.push(5);
+        }
+      });
+      const isEvery = items.every((value, position) => {
+        if (position === 0) items[3] = 9;
+        return value !== 9;
+      });
+      if (seen !== ${JSON.stringify(expected)} || isEvery || items.length !== 5) {
+        throw new Error("callback");
+      }
+    `;
+    expect((await checkModel(source("124"))).failure).toBeUndefined();
+    expect((await checkModel(source("1234"))).failure?.message).toContain("callback");
+  });
+
   it("make the objects of a parameter's default", async () => {
     const result = await checkModel(`
       let total = 0;

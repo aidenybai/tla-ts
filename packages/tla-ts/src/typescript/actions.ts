@@ -4556,14 +4556,17 @@ const translateLoopCall = (
     method === "lastIndexOf" ||
     method === "toReversed";
   const isReduce = method.startsWith("reduce");
-  // Where a getter may answer an array-like object's length or element, the method reads its
-  // length and then each element as it visits it, as JavaScript does, so that the getters and the
-  // callback may change objects. reduce without an initial value reads its first element apart.
+  // Where a getter may answer an array-like object's length or element, or the callback may change
+  // objects, the method reads its length and then each element as it visits it, as JavaScript
+  // does. reduce without an initial value reads its first element apart.
   const lengthGetters = loop.isArrayLike ? getDefinedGetters(receiver, "length", context) : [];
   const speciesGetters = loop.isArrayLike ? getSpeciesGetters(method, receiver, context) : [];
   const getters = loop.isArrayLike
     ? (getElementGetters(receiver, context) ??
-      (lengthGetters.length + speciesGetters.length > 0 && !(isReduce && loop.initial === undefined)
+      ((lengthGetters.length + speciesGetters.length > 0 ||
+        (callback !== undefined &&
+          getChanged(callback, path, context).some((symbol) => symbol === context.heap))) &&
+      !(isReduce && loop.initial === undefined)
         ? []
         : undefined))
     : undefined;
