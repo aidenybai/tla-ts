@@ -1123,7 +1123,7 @@ export const isFunctionObject = (
           ts.isSemicolonClassElement(member) ||
           (ts.isConstructorDeclaration(member) && member.body !== undefined) ||
           (isPlainMethod(member) &&
-            member.asteriskToken === undefined &&
+            (ts.getCombinedModifierFlags(member) & ts.ModifierFlags.Async) === 0 &&
             (ts.isIdentifier(member.name) || ts.isStringLiteral(member.name))) ||
           (ts.isPropertyDeclaration(member) && !isStatic(member) && ts.isIdentifier(member.name)),
       ))) &&
