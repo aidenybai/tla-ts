@@ -660,7 +660,7 @@ const hasWideString = (config: ModelConfig, environment: Environment) =>
         definition.bounds.some((bound) => isWideExpression(bound.set))),
   );
 
-interface Search {
+export interface Search {
   properties: Properties;
   toRecord: (state: Value[]) => Record<string, Value>;
   evaluateAlias: (
