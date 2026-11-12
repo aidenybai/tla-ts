@@ -38,11 +38,16 @@ import {
   skipCasts,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
-import { ARRAY_LIKE_METHODS, getHeapRegExpCall, IN_PLACE_METHODS } from "./collections";
+import {
+  ARRAY_LIKE_METHODS,
+  getHeapRegExpCall,
+  IN_PLACE_METHODS,
+  isSpliceStatement,
+} from "./collections";
 import { getJsonText, parseJson } from "./json";
 import { getConstructor, getErrorClass } from "./exceptions";
 import {
-  translateArrayLiteral,
+  translateElements,
   translateCondition,
   translateCall,
   translateExpression,
@@ -82,6 +87,9 @@ import {
 import {
   getAccessedFields,
   getArrayLiteral,
+  getCalledFunction,
+  getElementTypeNode,
+  getHolders,
   getKind,
   isEvery,
   hasHeapType,
@@ -1055,7 +1063,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
       ts.isOmittedExpression(element) ? [number(position + 1)] : [],
     );
     const elements = node.elements.some(ts.isSpreadElement)
-      ? translateArrayLiteral(node, scope, context)
+      ? translateElements(node.elements, scope, context)
       : tuple(
           node.elements.map((element) =>
             ts.isOmittedExpression(element)
@@ -2127,7 +2135,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
     const parent = use.parent;
     return (
       (ts.isPropertyAccessExpression(parent) &&
-        IN_PLACE_METHODS.has(parent.name.text) &&
+        (IN_PLACE_METHODS.has(parent.name.text) || parent.name.text === "splice") &&
         ts.isCallExpression(parent.parent) &&
         parent.parent.expression === parent) ||
       (ts.isPropertyAccessExpression(parent) &&
@@ -2141,15 +2149,42 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
     const names = new Set<string>();
     const nodes: ts.Node[] = [];
     const pending = [...start];
+    // The functions whose results, and the holders whose arrays' elements, are the group's.
+    const returns: ts.SignatureDeclaration[] = [];
+    const outers: ts.Symbol[] = [];
+    const outerKeys = new Set<ts.Node>();
     const isInGroup = (symbol: ts.Symbol) =>
       (symbol.declarations ?? []).some((declaration) => group.has(declaration));
     const isSame = (symbol: ts.Symbol, other: ts.Symbol) =>
       (symbol.declarations ?? []).some((declaration) => other.declarations?.includes(declaration));
     // Adds what an expression that holds one of the group's arrays names, where it names any.
-    const addHolder = (node: ts.Expression) => {
-      const symbol = ts.isIdentifier(node) ? getSymbol(node, checker) : undefined;
-      const found = getAccessedFields(node, checker) ?? (symbol === undefined ? [] : [symbol]);
+    const addHolder = (node: ts.Expression): boolean => {
+      if (ts.isParenthesizedExpression(node)) return addHolder(node.expression);
+      if (ts.isCallExpression(node)) {
+        const called = getCalledFunction(node, checker);
+        if (called !== undefined) returns.push(called);
+        return (
+          called !== undefined ||
+          (ts.isPropertyAccessExpression(node.expression) &&
+            node.expression.name.text === "at" &&
+            addOuter(node.expression.expression))
+        );
+      }
+      if (
+        ts.isElementAccessExpression(node) &&
+        getAccessedFields(node, checker) === undefined &&
+        isNumberLike(node.argumentExpression, context)
+      ) {
+        return addOuter(node.expression);
+      }
+      const found = getHolders(node, checker);
       pending.push(...found);
+      return found.length > 0;
+    };
+    // Adds the holders whose arrays' elements are the group's arrays.
+    const addOuter = (node: ts.Expression) => {
+      const found = getHolders(node, checker);
+      outers.push(...found);
       return found.length > 0;
     };
     // Adds where a value that goes into one of the group's holders comes from: an array literal,
@@ -2261,6 +2296,14 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
     const isUse = (use: ts.Expression): boolean => {
       const parent = use.parent;
       if (ts.isParenthesizedExpression(parent)) return isUse(parent);
+      // A function that returns one of the group's arrays makes its result a holder.
+      if (ts.isReturnStatement(parent) || (ts.isArrowFunction(parent) && parent.body === use)) {
+        const owner = ts.isReturnStatement(parent)
+          ? ts.findAncestor(parent, ts.isFunctionLike)
+          : parent;
+        if (owner !== undefined) returns.push(owner);
+        return owner !== undefined;
+      }
       if (ts.isConditionalExpression(parent) && parent.condition !== use) {
         return (
           addSource(parent.whenTrue === use ? parent.whenFalse : parent.whenTrue) && isUse(parent)
@@ -2284,10 +2327,12 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         const call = parent.parent;
         return (
           parent.name.text === "length" ||
+          (ts.isCallExpression(call) && isSpliceStatement(call, context)) ||
           ((IN_PLACE_METHODS.has(parent.name.text) || ARRAY_LIKE_METHODS.has(parent.name.text)) &&
             ts.isCallExpression(call) &&
             call.expression === parent &&
-            !call.arguments.some(ts.isSpreadElement))
+            (["push", "unshift"].includes(parent.name.text) ||
+              !call.arguments.some(ts.isSpreadElement)))
         );
       }
       if (ts.isElementAccessExpression(parent) && parent.expression === use) {
@@ -2311,7 +2356,15 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       ) {
         return true;
       }
-      if (ts.isSpreadElement(parent)) return ts.isArrayLiteralExpression(parent.parent);
+      if (ts.isSpreadElement(parent)) {
+        const owner = parent.parent;
+        return (
+          ts.isArrayLiteralExpression(owner) ||
+          (ts.isCallExpression(owner) &&
+            ts.isPropertyAccessExpression(owner.expression) &&
+            ["push", "unshift"].includes(owner.expression.name.text))
+        );
+      }
       if (ts.isBinaryExpression(parent)) {
         const kind = parent.operatorToken.kind;
         return (
@@ -2408,7 +2461,119 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
             getAccessedFields(access, checker)?.some((field) => isSame(field, symbol)),
           );
     };
-    while (pending.length > 0) {
+    // A function's result, where each return gives one of the group's arrays, and each reference
+    // calls it.
+    const isReturned = (owner: ts.SignatureDeclaration) => {
+      const name = getCalledName(owner);
+      const called = name === undefined ? undefined : getSymbol(name, checker);
+      const body = "body" in owner ? owner.body : undefined;
+      const findReturns = (node: ts.Node): ts.ReturnStatement[] =>
+        ts.isFunctionLike(node)
+          ? []
+          : [
+              ...(ts.isReturnStatement(node) ? [node] : []),
+              ...node.getChildren().flatMap(findReturns),
+            ];
+      nodes.push(owner);
+      return (
+        called !== undefined &&
+        body !== undefined &&
+        (ts.isBlock(body)
+          ? body.statements
+              .flatMap(findReturns)
+              .every(
+                (returned) => returned.expression !== undefined && addSource(returned.expression),
+              )
+          : addSource(body)) &&
+        (references.get(called) ?? [])
+          .filter((reference) => reference !== name)
+          .every(
+            (reference) =>
+              ts.isCallExpression(reference.parent) &&
+              reference.parent.expression === reference &&
+              isUse(reference.parent),
+          )
+      );
+    };
+    // A holder whose arrays' elements are the group's arrays: each array that it holds starts as a
+    // literal, and each use reads, adds, or drops an element, or reads the length.
+    const isOuter = (outer: ts.Symbol) => {
+      const declarations = outer.declarations ?? [];
+      const elements = declarations.map(getElementTypeNode);
+      nodes.push(...elements.filter((element) => element !== undefined));
+      const isElementSource = (value: ts.Expression | undefined) =>
+        value !== undefined &&
+        ts.isArrayLiteralExpression(value) &&
+        value.elements.every((element) => !ts.isSpreadElement(element) && addSource(element));
+      const isElementUse = (use: ts.Expression) => {
+        const parent = use.parent;
+        if (ts.isPropertyAccessExpression(parent) && parent.expression === use) {
+          const call = parent.parent;
+          const method = parent.name.text;
+          if (method === "length") return true;
+          if (
+            !ts.isCallExpression(call) ||
+            call.expression !== parent ||
+            call.arguments.some(ts.isSpreadElement)
+          ) {
+            return false;
+          }
+          if (method === "push" || method === "unshift") return call.arguments.every(addSource);
+          if (method === "pop" || method === "shift") return ts.isExpressionStatement(call.parent);
+          return method === "at" && isUse(call);
+        }
+        if (
+          !ts.isElementAccessExpression(parent) ||
+          parent.expression !== use ||
+          !isNumberLike(parent.argumentExpression, context)
+        ) {
+          return false;
+        }
+        const assignment = parent.parent;
+        return ts.isBinaryExpression(assignment) && assignment.left === parent
+          ? assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+              addSource(assignment.right)
+          : isUse(parent);
+      };
+      const declaration = outer.valueDeclaration;
+      return (
+        elements.every((element) => element !== undefined) &&
+        (declaration !== undefined && ts.isVariableDeclaration(declaration)
+          ? (declaration.parent.flags & ts.NodeFlags.Const) !== 0 &&
+            isElementSource(declaration.initializer)
+          : declarations.every(
+              (fieldDeclaration) =>
+                ts.isPropertySignature(fieldDeclaration) &&
+                fieldDeclaration.questionToken === undefined,
+            ) &&
+            objects.every((object) =>
+              object.properties.every((property) => {
+                const fields = getPropertyFields(property);
+                return (
+                  !fields.some((field) => isSame(field, outer)) ||
+                  (ts.isPropertyAssignment(property) && isElementSource(property.initializer))
+                );
+              }),
+            )) &&
+        getUses(outer).every(isElementUse)
+      );
+    };
+    while (pending.length > 0 || returns.length > 0 || outers.length > 0) {
+      const owner = returns.pop();
+      if (owner !== undefined) {
+        if (group.has(owner)) continue;
+        group.add(owner);
+        if (!isReturned(owner)) return [];
+        continue;
+      }
+      const outer = outers.pop();
+      if (outer !== undefined) {
+        const key = outer.declarations?.[0];
+        if (key === undefined || outerKeys.has(key)) continue;
+        outerKeys.add(key);
+        if (!isOuter(outer)) return [];
+        continue;
+      }
       const symbol = pending.pop();
       if (symbol === undefined || (symbol.declarations ?? []).every((node) => group.has(node))) {
         continue;

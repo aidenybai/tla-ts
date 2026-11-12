@@ -1558,7 +1558,23 @@ export const translateCallStatement = (
       bindOnce(
         path,
         changeName,
-        translateArrayChange(method, heap, ref, arrayChange.items, path.scope, context),
+        method === "splice"
+          ? useJavaScript(
+              "ArraySplice",
+              [
+                heap,
+                ref,
+                translateExpression(arrayChange.items[0], path.scope, context),
+                boolean(arrayChange.items.length > 1),
+                arrayChange.items.length > 1
+                  ? translateExpression(arrayChange.items[1], path.scope, context)
+                  : getUndefined(context),
+                tuple(translateArguments(arrayChange.items.slice(2))),
+                translateBuiltInValue("Array", expression, context),
+              ],
+              context,
+            )
+          : translateArrayChange(method, heap, ref, arrayChange.items, path.scope, context),
         ifThenElse(
           field(change, "isThrown"),
           throwTypeError(withHeap(field(change, "heap")), expression, context, frame),

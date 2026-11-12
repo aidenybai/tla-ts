@@ -3622,7 +3622,7 @@ ArrayChange(heap, ref, method, items) ==
                    [] method = "unshift" -> items \\o elements
                    [] elements = <<>> -> elements
                    [] method = "pop" -> SubSeq(elements, 1, length - 1)
-                   [] OTHER -> Tail(elements)
+                   [] method = "shift" -> Tail(elements)
   IN IF isAdding /\\ (isFixed \\/ ~object.extensible)
      THEN IF AccessorOf(heap, ref, first) = Undefined
           THEN [heap |-> heap, value |-> Undefined, isThrown |-> TRUE]
@@ -3631,8 +3631,35 @@ ArrayChange(heap, ref, method, items) ==
            value |-> CASE method \\in {"push", "unshift"} -> Len(changed)
                        [] elements = <<>> -> Undefined
                        [] method = "pop" -> elements[length]
-                       [] OTHER -> Head(elements),
+                       [] method = "shift" -> Head(elements),
            isThrown |-> isFixed]
+
+\\* What a splice whose result nothing reads does to an array that the heap holds, which makes that
+\\* result through the array's constructor, where tla-ts follows only Array.
+ArraySplice(heap, ref, start, hasCount, count, items, array) ==
+  LET object == Lookup(heap, ref)
+      elements == DenseElements(heap, ref)
+      length == Len(elements)
+      relative == ToIntegerOrInfinity(ToNumber(start))
+      deleting == IF hasCount THEN ToIntegerOrInfinity(ToNumber(count)) ELSE length
+  IN CASE ~(relative \\in Int /\\ deleting \\in Int) ->
+            Assert(FALSE, "tla-ts can't splice at a position that isn't an integer")
+       [] ~object.attributes["length"].writable \\/ ~object.extensible ->
+            Assert(FALSE, "tla-ts can't splice an array whose length is fixed")
+       [] OTHER ->
+            LET first == CASE relative < 0 /\\ length + relative < 0 -> 0
+                           [] relative < 0 -> length + relative
+                           [] relative > length -> length
+                           [] OTHER -> relative
+                deleted == CASE deleting < 0 -> 0
+                             [] deleting > length - first -> length - first
+                             [] OTHER -> deleting
+                changed == SubSeq(elements, 1, first) \\o items
+                             \\o SubSeq(elements, first + deleted + 1, length)
+            IN Species(Get(heap, ref, "constructor"), array,
+                       [heap |-> WithElements(heap, ref, changed, Len(changed)),
+                        value |-> Undefined,
+                        isThrown |-> FALSE])
 
 RECURSIVE ApplyAll(_, _, _)
 ApplyAll(object, keys, descriptors) ==

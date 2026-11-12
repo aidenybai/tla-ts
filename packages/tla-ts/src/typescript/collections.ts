@@ -15,7 +15,7 @@ import {
 } from "./context";
 import type { Expression } from "../ast";
 import { TlaTypeScriptError } from "../errors";
-import { translateExpression, translateSetKey } from "./expressions";
+import { translateElements, translateExpression, translateSetKey } from "./expressions";
 import { mayThrow, translateBody } from "./functions";
 import { DATE_FIELDS, getHeap, getPrototypeMethod, isDateType, TIME_METHODS } from "./heap";
 import {
@@ -2187,12 +2187,7 @@ export const translateArrayChange = (
   return reordered === undefined
     ? useJavaScript(
         "ArrayChange",
-        [
-          heap,
-          ref,
-          string(method),
-          tuple(items.map((item) => translateExpression(item, scope, context))),
-        ],
+        [heap, ref, string(method), translateElements(items, scope, context)],
         context,
       )
     : record("Record", [
@@ -2202,13 +2197,22 @@ export const translateArrayChange = (
       ]);
 };
 
+// A splice whose result nothing reads, as tla-ts doesn't make the array of what it removes.
+export const isSpliceStatement = (node: ts.CallExpression, context: Context) =>
+  ts.isPropertyAccessExpression(node.expression) &&
+  node.expression.name.text === "splice" &&
+  ts.isExpressionStatement(node.parent) &&
+  node.arguments.length > 0 &&
+  node.arguments.slice(0, 2).every((argument) => isNumberLike(argument, context));
+
 // A call of a method that changes an array that the heap holds in place.
 export const getHeapArrayChange = (node: ts.Node, context: Context) =>
   ts.isCallExpression(node) &&
   ts.isPropertyAccessExpression(node.expression) &&
-  IN_PLACE_METHODS.has(node.expression.name.text) &&
+  (IN_PLACE_METHODS.has(node.expression.name.text) || isSpliceStatement(node, context)) &&
   isHeapArray(node.expression.expression, context) &&
-  !node.arguments.some(ts.isSpreadElement)
+  (["push", "unshift"].includes(node.expression.name.text) ||
+    !node.arguments.some(ts.isSpreadElement))
     ? {
         method: node.expression.name.text,
         receiver: node.expression.expression,

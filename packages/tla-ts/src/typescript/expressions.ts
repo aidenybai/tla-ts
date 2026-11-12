@@ -271,13 +271,14 @@ export const translateKey = (node: ts.ElementAccessExpression, scope: Scope, con
     : apply("+", [position, number(1)]);
 };
 
-export const translateArrayLiteral = (
-  node: ts.ArrayLiteralExpression,
+// The elements that an array literal or a call's arguments list, where runs of plain elements become
+// tuples, and each spread array stays a sequence of its own.
+export const translateElements = (
+  elements: readonly ts.Expression[],
   scope: Scope,
   context: Context,
 ) => {
-  // Runs of plain elements become tuples, and each spread array stays a sequence of its own.
-  const parts = node.elements.reduce<(Expression | Expression[])[]>((result, element) => {
+  const parts = elements.reduce<(Expression | Expression[])[]>((result, element) => {
     if (!ts.isSpreadElement(element)) {
       const value = translateExpression(element, scope, context);
       const last = result.at(-1);
@@ -2331,7 +2332,7 @@ const translateNode = (
     if (contextualKeys.some((key) => !arrayKeys.has(key))) {
       throw new TlaTypeScriptError("Use an array only as an array, not as an object", node);
     }
-    return translateArrayLiteral(node, scope, context);
+    return translateElements(node.elements, scope, context);
   }
   if (ts.isObjectLiteralExpression(node)) return translateObjectLiteral(node, scope, context);
   if (ts.isPropertyAccessExpression(node)) return translatePropertyAccess(node, scope, context);

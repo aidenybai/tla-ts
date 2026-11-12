@@ -286,9 +286,73 @@ export const getAccessedFields = (node: ts.Node, checker: ts.TypeChecker) => {
     : undefined;
 };
 
+// The function that a call names, where a script declares it or binds it to a constant, and that
+// gives what it returns as it is.
+export const getCalledFunction = (node: ts.CallExpression, checker: ts.TypeChecker) => {
+  const declaration = ts.isIdentifier(node.expression)
+    ? getSymbol(node.expression, checker)?.valueDeclaration
+    : undefined;
+  const owner =
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    (declaration.parent.flags & ts.NodeFlags.Const) !== 0
+      ? declaration.initializer
+      : declaration;
+  return owner !== undefined &&
+    (ts.isFunctionDeclaration(owner) ||
+      ts.isArrowFunction(owner) ||
+      ts.isFunctionExpression(owner)) &&
+    owner.asteriskToken === undefined &&
+    !(ts.getCombinedModifierFlags(owner) & ts.ModifierFlags.Async)
+    ? owner
+    : undefined;
+};
+
+// The type that a declaration writes for the elements of the arrays it holds.
+export const getElementTypeNode = (declaration: ts.Declaration) =>
+  (ts.isPropertySignature(declaration) || ts.isVariableDeclaration(declaration)) &&
+  declaration.type !== undefined &&
+  ts.isArrayTypeNode(declaration.type)
+    ? declaration.type.elementType
+    : undefined;
+
+// The variables and fields that an expression names, which hold what it gives.
+export const getHolders = (node: ts.Expression, checker: ts.TypeChecker) => {
+  const symbol = ts.isIdentifier(node) ? getSymbol(node, checker) : undefined;
+  return getAccessedFields(node, checker) ?? (symbol === undefined ? [] : [symbol]);
+};
+
 export const isHeapArray = (node: ts.Expression, context: Context): boolean => {
   if (context.heapArrays.size === 0) return false;
   if (ts.isParenthesizedExpression(node)) return isHeapArray(node.expression, context);
+  // An element of the arrays that a holder holds, where the heap holds those elements.
+  const isElementHeld = (outer: ts.Expression) => {
+    const holders = getHolders(outer, context.checker);
+    return (
+      holders.length > 0 &&
+      holders.every((holder) =>
+        (holder.declarations ?? []).every((declaration) => {
+          const element = getElementTypeNode(declaration);
+          return element !== undefined && context.heapArrays.has(element);
+        }),
+      )
+    );
+  };
+  if (ts.isCallExpression(node)) {
+    const called = getCalledFunction(node, context.checker);
+    return called !== undefined
+      ? context.heapArrays.has(called)
+      : ts.isPropertyAccessExpression(node.expression) &&
+          node.expression.name.text === "at" &&
+          isElementHeld(node.expression.expression);
+  }
+  if (
+    ts.isElementAccessExpression(node) &&
+    getAccessedFields(node, context.checker) === undefined &&
+    isNumberLike(node.argumentExpression, context)
+  ) {
+    return isElementHeld(node.expression);
+  }
   if (ts.isConditionalExpression(node)) {
     return isHeapArray(node.whenTrue, context) && isHeapArray(node.whenFalse, context);
   }

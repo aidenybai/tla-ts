@@ -1554,6 +1554,10 @@ describe("errors", () => {
       "const make = () => {\n  const items: number[] = [];\n  try {\n    return items;\n  } finally {\n    items.push(1);\n  }\n};\nlet size = make().length;",
     ],
     [
+      "a parameter that a function changes and returns to JSON",
+      "const fill = (items: number[]) => {\n  items.push(1);\n  return items;\n};\nconst list: number[] = [];\nlet size = JSON.stringify(fill(list)).length + list.length;",
+    ],
+    [
       "a local of an outer function that an inner function returns",
       "const make = () => {\n  const items: number[] = [];\n  const get = () => {\n    return items;\n  };\n  const other = get();\n  items.push(1);\n  return other.length;\n};\nlet size = make();",
     ],
@@ -4394,6 +4398,93 @@ describe("errors", () => {
         items.push(1);
       `),
     ).toThrow("items would share an object that changes in place, so copy it");
+  });
+
+  it("shares the arrays inside an array that a field holds", async () => {
+    const result = await checkModel(`
+      interface Item { value: number }
+      interface State { stacks: Item[][] }
+      const state: State = { stacks: [] };
+      const getStack = (current: State) => current.stacks[current.stacks.length - 1];
+      state.stacks.push([]);
+      const stack = getStack(state);
+      stack.push({ value: 1 });
+      stack.push({ value: 2 });
+      const last = state.stacks.at(-1)?.at(-1);
+      stack[stack.length - 1] = { value: 7 };
+      state.stacks.push([{ value: 9 }]);
+      getStack(state).push({ value: 10 });
+      const inner = getStack(state);
+      state.stacks.pop();
+      if (
+        last?.value !== 2 ||
+        state.stacks[0][1].value !== 7 ||
+        inner.length !== 2 ||
+        state.stacks.length !== 1
+      ) {
+        throw new Error("nested");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+    const returned = await checkModel(`
+      const fill = (items: number[]) => {
+        items.push(1);
+        return items;
+      };
+      const list: number[] = [];
+      if (fill(list).length + list.length !== 2) throw new Error("returned");
+    `);
+    expect(returned.failure).toBeUndefined();
+    expect(() =>
+      checkModel(`
+        const inner = [1];
+        const state = { stacks: [inner] };
+        const getTop = () => state.stacks[0];
+        getTop().push(2);
+      `),
+    ).toThrow("Can't assign to getTop()");
+  });
+
+  it("splices an array that the heap holds", async () => {
+    const result = await checkModel(`
+      const box = { list: [1, 2, 3, 4], rest: [1, 2, 3] };
+      const cut = (list: number[], rest: number[]) => {
+        list.splice(-3, 2, 9, 8, 7);
+        rest.splice(1);
+      };
+      cut(box.list, box.rest);
+      if (box.list.join() !== "1,9,8,7,4" || box.rest.join() !== "1") throw new Error("splice");
+    `);
+    expect(result.failure).toBeUndefined();
+    expect(() =>
+      checkModel(`
+        const box = { list: [1, 2, 3] };
+        const cut = (list: number[]) => list.splice(0, 1);
+        const removed = cut(box.list);
+      `),
+    ).toThrow("Unsupported array method: splice");
+  });
+
+  it("pushes the elements that a spread gives onto an array that the heap holds", async () => {
+    const result = await checkModel(`
+      interface Module { constants: string[]; units: { names: string[] }[] }
+      const module: Module = { constants: [], units: [] };
+      const add = (names: string[]) => {
+        module.constants.push(...names);
+        module.units.push({ names });
+      };
+      add(["a", "b"]);
+      const more = { list: ["z"] };
+      const grow = (list: string[]) => {
+        list.unshift(...module.constants, "y");
+      };
+      grow(more.list);
+      add(["c"]);
+      if (module.constants.join() !== "a,b,c" || more.list.join() !== "a,b,y,z") {
+        throw new Error("spread");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
   });
 
   it("names a function's model value so that TLC doesn't type it", async () => {
