@@ -615,7 +615,7 @@ export const getDescriptorGetters = (node: ts.Node, context: Context) =>
       : [];
 
 // Names the heap that a change gives, for what follows it.
-const withHeap = (path: Path, heap: Expression, context: Context): Path => {
+export const withHeap = (path: Path, heap: Expression, context: Context): Path => {
   const symbol = context.heap;
   return symbol === undefined
     ? path

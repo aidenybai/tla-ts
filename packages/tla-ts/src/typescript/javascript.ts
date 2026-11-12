@@ -3744,6 +3744,26 @@ ArrayReverse(heap, ref) ==
        [position \\in {last - index : index \\in DOMAIN elements} |-> elements[last - position]],
        last > 0)
 
+\\* Whether sort() reorders an array's own elements in one step: its elements are ordinary data
+\\* properties, its prototypes hold no elements, and it takes new ones, so that no getter or setter
+\\* runs and no write fails.
+SortsInPlace(heap, ref) ==
+  LET object == Lookup(heap, ref)
+  IN /\\ object.prototype = Null \\/ IndexKeys(heap, object.prototype) = {}
+     /\\ \\A key \\in {key \\in DOMAIN object.values : IsIndex(key)} : object.attributes[key] = Writable
+     /\\ object.extensible
+
+\\* The heap after sort() deletes each index of an array from one up to another, in order, and whether
+\\* it throws a TypeError where an index is an element it can't delete.
+RECURSIVE ArrayDeleteFrom(_, _, _, _)
+ArrayDeleteFrom(heap, ref, from, to) ==
+  LET key == ToString(from)
+      object == Lookup(heap, ref)
+  IN CASE from >= to -> [heap |-> heap, isThrown |-> FALSE]
+       [] key \\in DOMAIN object.values /\\ ~object.attributes[key].configurable ->
+            [heap |-> heap, isThrown |-> TRUE]
+       [] OTHER -> ArrayDeleteFrom(Delete(heap, ref, key), ref, from + 1, to)
+
 \\* sort() on an array that the heap holds, which sorts the elements it has to its start, with
 \\* undefined after them and the holes last.
 ArraySort(heap, ref, IsBefore(_, _)) ==

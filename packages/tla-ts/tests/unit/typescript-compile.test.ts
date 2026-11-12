@@ -2636,6 +2636,52 @@ describe("errors", () => {
     ).toThrow("tla-ts can't read the holes of an array that a pattern takes after code runs");
   });
 
+  it("sorts an array whose elements run getters and setters, index by index", async () => {
+    const getSource = (expected: string) => `
+      const array = [undefined, "c", , "b", undefined, , "a", "d"];
+      Object.defineProperty(array, "2", {
+        get(this: Record<string, unknown>) {
+          array[3] = "foobar";
+          return this.foo;
+        },
+        set(this: Record<string, unknown>, value: unknown) {
+          this.foo = value;
+        },
+      });
+      array.sort();
+      const check = (actual: unknown, wanted: unknown) => {
+        if (actual !== wanted) throw new Error("unexpected");
+      };
+      check(array[0], "a");
+      check(array[1], "c");
+      check(array[2], ${expected});
+      check(array[3], "foobar");
+      check(array[4], undefined);
+      check("7" in array, false);
+      check(array.length, 8);
+    `;
+    expect((await checkModel(getSource('"d"'))).failure).toBeUndefined();
+    expect((await checkModel(getSource('"c"'))).failure?.message).toContain("unexpected");
+  });
+
+  it("sorts an array that inherits an element from Object.prototype", async () => {
+    const getSource = (expected: number) => `
+      (Object.prototype as unknown as Record<number, number>)[2] = 4;
+      const array = [undefined, 3, , 2, undefined, , 1];
+      array.sort();
+      const check = (actual: unknown, wanted: unknown) => {
+        if (actual !== wanted) throw new Error("unexpected");
+      };
+      check(array[0], 1);
+      check(array[2], 3);
+      check(array[3], ${expected});
+      check(array.hasOwnProperty("6"), false);
+      check(array.length, 7);
+    `;
+    expect((await checkModel(getSource(4))).failure).toBeUndefined();
+    expect((await checkModel(getSource(2))).failure?.message).toContain("unexpected");
+  });
+
   it("runs the setter of an object literal or a class that a computed key picks", async () => {
     const getSource = (written: string) => `
       let log = "";

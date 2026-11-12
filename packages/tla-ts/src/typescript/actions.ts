@@ -26,6 +26,7 @@ import {
   checkArrayMethod,
   translatePrimitiveMethod,
   translateSizeGetter,
+  translateSortOrder,
 } from "./collections";
 import {
   findNodes,
@@ -36,6 +37,7 @@ import {
   type FunctionNode,
   getAccessKey,
   getAssignedSetter,
+  getAccessorFunctions,
   getCalledMethod,
   getCallee,
   getElement,
@@ -208,6 +210,7 @@ import {
   readPatternGetters,
   readWith,
   writeWith,
+  withHeap,
   runGetterRead,
   runProxyOperation,
 } from "./protocols";
@@ -264,6 +267,7 @@ import {
   rejectAnyReceiver,
   getField,
   getKind,
+  getArrayLiteral,
   isHeapArray,
   getPathStep,
   isHeapPattern,
@@ -1647,36 +1651,56 @@ export const translateCallStatement = (
     const changeName = context.names.getFresh("change");
     const change = identifier(changeName);
     const method = arrayChange.method;
+    const literal = getArrayLiteral(skipCasts(arrayChange.receiver), context);
+    const sortsInPlace = (inPlace: Formula) =>
+      method === "sort" && literal !== undefined
+        ? ifThenElse(
+            useJavaScript("SortsInPlace", [heap, ref], context),
+            inPlace,
+            translateIndexedSort(
+              expression,
+              ref,
+              arrayChange.items.at(0),
+              literal.elements.length,
+              path,
+              context,
+              frame,
+              continueWith,
+            ),
+          )
+        : inPlace;
     const changeArray = ifThenElse(
       useJavaScript(
         "HoldsBuiltIn",
         [heap, ref, string(method), string(`Array.prototype.${method}`)],
         context,
       ),
-      bindOnce(
-        path,
-        changeName,
-        method === "splice"
-          ? useJavaScript(
-              "ArraySplice",
-              [
-                heap,
-                ref,
-                translateExpression(arrayChange.items[0], path.scope, context),
-                boolean(arrayChange.items.length > 1),
-                arrayChange.items.length > 1
-                  ? translateExpression(arrayChange.items[1], path.scope, context)
-                  : getUndefined(context),
-                tuple(translateArguments(arrayChange.items.slice(2))),
-                translateBuiltInValue("Array", expression, context),
-              ],
-              context,
-            )
-          : translateArrayChange(method, heap, ref, arrayChange.items, path.scope, context),
-        ifThenElse(
-          field(change, "isThrown"),
-          throwTypeError(withHeap(field(change, "heap")), expression, context, frame),
-          continueWith(withHeap(field(change, "heap")), field(change, "value")),
+      sortsInPlace(
+        bindOnce(
+          path,
+          changeName,
+          method === "splice"
+            ? useJavaScript(
+                "ArraySplice",
+                [
+                  heap,
+                  ref,
+                  translateExpression(arrayChange.items[0], path.scope, context),
+                  boolean(arrayChange.items.length > 1),
+                  arrayChange.items.length > 1
+                    ? translateExpression(arrayChange.items[1], path.scope, context)
+                    : getUndefined(context),
+                  tuple(translateArguments(arrayChange.items.slice(2))),
+                  translateBuiltInValue("Array", expression, context),
+                ],
+                context,
+              )
+            : translateArrayChange(method, heap, ref, arrayChange.items, path.scope, context),
+          ifThenElse(
+            field(change, "isThrown"),
+            throwTypeError(withHeap(field(change, "heap")), expression, context, frame),
+            continueWith(withHeap(field(change, "heap")), field(change, "value")),
+          ),
         ),
       ),
       leaf(
@@ -6963,9 +6987,9 @@ export const translateJoined = (
   context: Context,
   continueWith: (path: Path, value?: Expression) => Formula,
   translateWith: (next: (inner: Path, value?: Expression) => Formula) => Formula,
+  changed = getChanged(node, path, context),
 ): Formula => {
   if (context.heap === undefined) return translateWith(continueWith);
-  const changed = getChanged(node, path, context);
   const name = context.names.getFresh("Join");
   const parameters = changed.map((symbol) => {
     const binding = path.scope.bindings.get(symbol);
@@ -7056,6 +7080,127 @@ export const translateJoined = (
       ),
     ],
     joined,
+  );
+};
+
+// sort() on an array that the heap holds, step by step as SortIndexedProperties does it: it reads
+// each element that the array has, running its getter, sorts them, writes them back from the start,
+// running each setter, and deletes the indices past them. The array's literal bounds its length.
+const translateIndexedSort = (
+  site: ts.CallExpression,
+  ref: Expression,
+  comparator: ts.Expression | undefined,
+  bound: number,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  const getters = getAccessorFunctions(site, "get", context);
+  const setters = getAccessorFunctions(site, "set", context);
+  const changed = [
+    ...new Set([site, ...getters, ...setters].flatMap((node) => getChanged(node, path, context))),
+  ].filter((symbol) => path.scope.bindings.has(symbol));
+  const lengthName = context.names.getFresh("length");
+  const length = identifier(lengthName);
+  const sortedName = context.names.getFresh("sorted");
+  const sorted = identifier(sortedName);
+  const order = translateSortOrder(comparator, path.scope, context);
+  const getHeapNow = (current: Path) => getHeap(current.scope, site, context);
+  const join = (
+    current: Path,
+    after: (path: Path, value?: Expression) => Formula,
+    step: (next: (inner: Path, value?: Expression) => Formula) => Formula,
+  ) => translateJoined(site, current, context, after, step, changed);
+  const deleteRest = (current: Path) =>
+    bind(
+      current,
+      "change",
+      useJavaScript(
+        "ArrayDeleteFrom",
+        [getHeapNow(current), ref, apply("Len", [sorted]), length],
+        context,
+      ),
+      context,
+      (deletedPath, deleted) =>
+        ifThenElse(
+          field(deleted, "isThrown"),
+          throwTypeError(
+            withHeap(deletedPath, field(deleted, "heap"), context),
+            site,
+            context,
+            frame,
+          ),
+          continueWith(withHeap(deletedPath, field(deleted, "heap"), context), ref),
+        ),
+    );
+  const write = (current: Path, position: number): Formula =>
+    position === bound
+      ? deleteRest(current)
+      : join(
+          current,
+          (after) => write(after, position + 1),
+          (next) =>
+            ifThenElse(
+              apply("<", [number(position), apply("Len", [sorted])]),
+              writeWith(
+                site,
+                ref,
+                string(String(position)),
+                index(sorted, [number(position + 1)]),
+                setters,
+                current,
+                context,
+                frame,
+                (after) => next(after),
+              ),
+              next(current),
+            ),
+        );
+  const read = (current: Path, position: number, items: Expression): Formula =>
+    position === bound
+      ? bindOnce(
+          current,
+          sortedName,
+          useJavaScript("SortSequence", [items, order], context),
+          write(current, 0),
+        )
+      : join(
+          current,
+          (after, value) => read(after, position + 1, value ?? tuple([])),
+          (next) =>
+            ifThenElse(
+              apply("/\\", [
+                apply("<", [number(position), length]),
+                useJavaScript("Has", [getHeapNow(current), ref, string(String(position))], context),
+              ]),
+              readWith(
+                site,
+                ref,
+                string(String(position)),
+                getters,
+                current,
+                context,
+                frame,
+                (after, value) => next(after, apply("Append", [items, value])),
+              ),
+              next(current, items),
+            ),
+        );
+  return bindOnce(
+    path,
+    lengthName,
+    useJavaScript("Get", [getHeapNow(path), ref, string("length")], context),
+    ifThenElse(
+      apply("<=", [length, number(bound)]),
+      read(path, 0, tuple([])),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't sort an array that grew past its literal's length"),
+        ]),
+      ),
+    ),
   );
 };
 

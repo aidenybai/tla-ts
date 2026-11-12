@@ -1335,7 +1335,7 @@ const reverseSequence = (sequence: Expression, context: Context) => {
 
 // The comparator that sort() orders by: whether its callback gives a number below 0, or else the
 // order of the elements' strings.
-const translateSortOrder = (
+export const translateSortOrder = (
   comparator: ts.Expression | undefined,
   scope: Scope,
   context: Context,
