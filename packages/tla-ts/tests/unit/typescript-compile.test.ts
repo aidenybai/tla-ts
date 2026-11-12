@@ -403,6 +403,21 @@ describe("top-level statements", () => {
     expect(empty.failure?.message).toContain("TypeError");
   });
 
+  it("skip a hole in the array that map makes where nothing reads the array", async () => {
+    const source = (expected: number) => `
+      const items = [1, 2, 3];
+      let count = 0;
+      items.map((value) => {
+        count += value;
+        items.length = 1;
+        return value;
+      });
+      if (count !== ${expected}) throw new Error("map");
+    `;
+    expect((await checkModel(source(1))).failure).toBeUndefined();
+    expect((await checkModel(source(6))).failure?.message).toContain("map");
+  });
+
   it("throw what an array method's callback or getter throws to the try around the call", async () => {
     const source = (expected: number) => `
       let visited = 0;
