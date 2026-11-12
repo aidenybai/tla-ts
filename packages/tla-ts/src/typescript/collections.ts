@@ -1433,6 +1433,20 @@ export const translateSortOrder = (
 // The methods that reorder or overwrite an array in place, and give the array.
 const REORDER_METHODS = new Set(["sort", "reverse", "fill", "copyWithin"]);
 
+// The array methods that give a new array.
+const NEW_ARRAY_METHODS = new Set([
+  "map",
+  "filter",
+  "slice",
+  "concat",
+  "flat",
+  "flatMap",
+  "toReversed",
+  "toSorted",
+  "toSpliced",
+  "with",
+]);
+
 // The methods that change only an array value in place, which an object's method of the same name
 // doesn't.
 export const SEQUENCE_UPDATES = new Set([...REORDER_METHODS, "splice"]);
@@ -1620,11 +1634,16 @@ export const translateMethod = (
     ? getUpdatedValue(translateExpression(receiver, scope, context), kind, node, scope, context)
     : undefined;
   if (updated !== undefined) return updated;
-  // A fresh array literal that a method reorders in place is the array that the call gives.
+  // A fresh array, from a literal or a method that makes a new one, that a method reorders in place
+  // is the array that the call gives, as nothing else holds it.
+  const fresh = skipCasts(receiver);
   if (
     kind === "sequence" &&
     REORDER_METHODS.has(node.expression.name.text) &&
-    ts.isArrayLiteralExpression(skipCasts(receiver))
+    (ts.isArrayLiteralExpression(fresh) ||
+      (isMethodCall(fresh) &&
+        NEW_ARRAY_METHODS.has(fresh.expression.name.text) &&
+        getKind(fresh.expression.expression, context) === "sequence"))
   ) {
     return checkArrayMethod(
       translateReorder(translateExpression(receiver, scope, context), node, scope, context),

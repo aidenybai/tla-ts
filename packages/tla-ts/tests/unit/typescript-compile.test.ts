@@ -1876,6 +1876,16 @@ describe("values", () => {
     expect((await checkModel(getSource(3, 5, -2, 44))).failure?.message).toContain("typed");
   });
 
+  it("reorders in place the new array that a method gives", async () => {
+    const getSource = (expected: string) => `
+      const doubled = [1, 2].map((value) => value * 2).reverse();
+      const result = doubled.join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("4,2"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("2,4"))).rejects.toThrow("4,2");
+  });
+
   it("spreads a string's code points into an array", async () => {
     const getSource = (expected: string) => `
       const word = "hi";
