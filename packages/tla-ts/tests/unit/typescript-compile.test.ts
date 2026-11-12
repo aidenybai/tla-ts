@@ -2510,6 +2510,25 @@ describe("errors", () => {
     expect((await checkModel(thrown)).failure).toBeDefined();
   });
 
+  it("seals what a new of a built-in makes where nothing else reaches it", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      Object.seal(new TypeError());
+      Object.freeze(new Map());
+      Object.preventExtensions(new WeakSet());
+      Object.seal(new Uint8Array());
+      Object.seal(new DataView(new ArrayBuffer(4)));
+      Object.seal(new WeakRef({}));
+      Object.seal(new FinalizationRegistry(() => {}));
+      Object.seal(new AggregateError([]));
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    // Freezing a typed array with elements throws a TypeError.
+    const frozen = source.replace("Object.seal(new Uint8Array());", "Object.freeze(new Uint8Array(1));");
+    expect((await checkModel(frozen)).failure).toBeDefined();
+  });
+
   it("gives new Object's object argument back and wraps a primitive one", async () => {
     const result = await checkModel(`
       declare global {

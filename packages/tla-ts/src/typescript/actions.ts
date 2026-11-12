@@ -132,6 +132,7 @@ import {
   isRevoke,
   getPrimitiveObjectCall,
   isObjectChange,
+  isUnreachableChange,
   getDateCall,
   getDateSetter,
   translateAllocated,
@@ -4355,6 +4356,7 @@ const translateExpressionStatement = (
           : continueWith(after),
     );
   }
+  if (isUnreachableChange(expression, context)) return continueWith(path);
   // An Object function on a primitive changes nothing, and throws only where it converts null or
   // undefined to an object.
   const primitiveCall = getPrimitiveObjectCall(expression, context);

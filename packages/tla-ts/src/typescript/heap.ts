@@ -2486,6 +2486,68 @@ export const getPrimitiveObjectCall = (node: ts.Node, context: Context) => {
     : undefined;
 };
 
+// The built-in constructors whose new, without arguments, makes an object and does nothing else.
+const QUIET_CONSTRUCTORS = new Set([
+  "Error",
+  "EvalError",
+  "RangeError",
+  "ReferenceError",
+  "SyntaxError",
+  "TypeError",
+  "URIError",
+  "Map",
+  "Set",
+  "WeakMap",
+  "WeakSet",
+  "ArrayBuffer",
+  "Int8Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int16Array",
+  "Uint16Array",
+  "Int32Array",
+  "Uint32Array",
+  "Float32Array",
+  "Float64Array",
+]);
+
+// A new of a built-in constructor that makes an object and does nothing else, such as new Map()
+// or new DataView(new ArrayBuffer(4)), so that nothing else can reach what it makes.
+const isQuietNew = (node: ts.Expression, context: Context): boolean => {
+  if (!ts.isNewExpression(node)) return false;
+  const name = getBuiltIn(node.expression, context);
+  const argumentList = node.arguments ?? [];
+  const argument = argumentList.at(0);
+  if (name === undefined || argumentList.length > 1) return false;
+  if (argument === undefined) return QUIET_CONSTRUCTORS.has(name);
+  return (
+    ((name === "ArrayBuffer" || name === "SharedArrayBuffer") &&
+      ts.isNumericLiteral(argument) &&
+      Number(argument.text) <= 1024) ||
+    (name === "DataView" &&
+      ts.isNewExpression(argument) &&
+      getBuiltIn(argument.expression, context)?.endsWith("ArrayBuffer") === true &&
+      isQuietNew(argument, context)) ||
+    (name === "WeakRef" &&
+      ts.isObjectLiteralExpression(argument) &&
+      argument.properties.length === 0) ||
+    (name === "FinalizationRegistry" &&
+      (ts.isArrowFunction(argument) || ts.isFunctionExpression(argument))) ||
+    (name === "AggregateError" &&
+      ts.isArrayLiteralExpression(argument) &&
+      argument.elements.length === 0)
+  );
+};
+
+// freeze, seal, or preventExtensions of what a quiet new makes, which nothing else can reach, so
+// that the statement changes nothing that anything reads.
+export const isUnreachableChange = (node: ts.Node, context: Context) =>
+  isMethodCall(node) &&
+  getBuiltIn(node.expression.expression, context) === "Object" &&
+  ["freeze", "seal", "preventExtensions"].includes(node.expression.name.text) &&
+  node.arguments.length === 1 &&
+  isQuietNew(node.arguments[0], context);
+
 // The errors that JavaScript itself may throw where a node runs, which instanceof checks for: a
 // failed definition or Reflect.construct, a new of a value that isn't a constructor, or a reduce
 // of an empty array, the RangeError of an array's invalid length, and a Date method's TypeError
