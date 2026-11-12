@@ -4344,7 +4344,7 @@ const translateIteratorHelper = (
           name,
           useJavaScript(
             "Allocate",
-            [getHeap(path.scope, node, context), identifier("GeneratorObject")],
+            [getHeap(path.scope, node, context), identifier("IteratorHelperObject")],
             context,
           ),
           continueWith(
@@ -10475,6 +10475,21 @@ const findLeadingCall = (
     return found.call !== undefined || found.isBlocked ? found : blocked;
   }
   if (ts.isCallExpression(node)) {
+    // A call that makes a generator runs first, with what makes its receiver, where instanceof
+    // reads what it makes.
+    const outer = ts.findAncestor(
+      node.parent,
+      (ancestor) => !ts.isParenthesizedExpression(ancestor),
+    );
+    if (
+      outer !== undefined &&
+      ts.isBinaryExpression(outer) &&
+      outer.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
+      isGeneratorType(node, context) &&
+      isStatementCall(node, path, context)
+    ) {
+      return { call: node, isBlocked: false };
+    }
     // A method of a call's result runs the call first.
     const receiver = ts.isPropertyAccessExpression(node.expression)
       ? getCast(node.expression.expression)

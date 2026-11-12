@@ -681,7 +681,8 @@ export const ITERATOR_CONSUMERS = new Set([
 export const ITERATOR_HELPERS = new Set(["map", "filter", "flatMap", "take", "drop"]);
 
 // A generator object goes only where tla-ts follows it: into a variable that holds generators, to a
-// call of its methods or Iterator.prototype's, into a comparison, or into a for-of or a for await.
+// call of its methods or Iterator.prototype's, into a comparison or an instanceof, or into a for-of
+// or a for await.
 // Elsewhere, such as an array pattern, a spread, or a function's parameter, code would iterate it
 // in ways that tla-ts doesn't follow.
 export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
@@ -712,6 +713,9 @@ export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
           ts.SyntaxKind.EqualsEqualsEqualsToken,
           ts.SyntaxKind.ExclamationEqualsEqualsToken,
         ].includes(outer.operatorToken.kind)) ||
+      (ts.isBinaryExpression(outer) &&
+        outer.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
+        outer.left === node) ||
       (ts.isPropertyAccessExpression(outer) && isGeneratorType(node, context)) ||
       (ts.isForOfStatement(outer) &&
         outer.expression === node &&

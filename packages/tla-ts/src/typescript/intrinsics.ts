@@ -25,7 +25,7 @@ import {
   string,
   tuple,
 } from "./tla";
-import { getCollection, getKind } from "./types";
+import { getCollection, getKind, isGeneratorType } from "./types";
 
 // Built-in constructors, besides the errors, whose prototype objects tla-ts compiles to
 // constants, which compare by identity.
@@ -264,11 +264,19 @@ export const translateBuiltInInstanceOf = (
         ts.TypeFlags.Null)) !==
       0;
   const isObject = getKind(left, context) === "object";
-  const parent = isPrimitive || isObject ? undefined : getPrototype(left, context);
+  const isGenerator = !isPrimitive && !isObject && isGeneratorType(left, context);
+  const parent =
+    isPrimitive || isObject || isGenerator ? undefined : getPrototype(left, context);
   // A value of type unknown or any may be anything, which only the run can tell.
   const isUnknown =
     !isPrimitive && !isObject && (type.flags & (ts.TypeFlags.Unknown | ts.TypeFlags.Any)) !== 0;
-  if (!isPrimitive && !isObject && !isUnknown && (parent === undefined || parent === "null")) {
+  if (
+    !isPrimitive &&
+    !isObject &&
+    !isGenerator &&
+    !isUnknown &&
+    (parent === undefined || parent === "null")
+  ) {
     return undefined;
   }
   const heap = getHeap(scope, node, context);
@@ -277,6 +285,11 @@ export const translateBuiltInInstanceOf = (
   const found = (value: Expression) => {
     if (isPrimitive) return boolean(false);
     if (isObject) return useJavaScript("IsPrototypeOf", [heap, prototype, value], context);
+    if (isGenerator) {
+      // An iterator helper inherits from %IteratorHelperPrototype%, which Lookup reads.
+      context.builtIns.add("%IteratorHelperPrototype%");
+      return useJavaScript("GeneratorInheritsFrom", [heap, prototype, value], context);
+    }
     if (isUnknown) return useJavaScript("InheritsFrom", [heap, prototype, value], context);
     const inherited = translateBuiltIn(parent ?? "null", left, scope, context);
     return apply("\\/", [

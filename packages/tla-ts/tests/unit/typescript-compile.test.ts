@@ -7360,6 +7360,31 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("tla-ts can't define accessors on built-in objects");
   });
 
+  it("tells that an iterator helper is an instance of Iterator", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      function* count() {
+        yield 1;
+      }
+      if (count().take(1) instanceof Promise) throw new Error("promise");
+      holder.count = 1;
+      if (count().map((value) => value) instanceof Iterator) throw new Error("helper");
+    `);
+    expect(result.failure?.message).toContain("helper");
+  });
+
+  it("stops telling what a generator object inherits from", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      function* count() {
+        yield 1;
+      }
+      holder.count = 1;
+      if (count() instanceof Iterator) throw new Error("generator");
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't tell what a generator inherits from");
+  });
+
   it("throws the TypeError of Iterator.prototype's methods on what isn't an iterator", async () => {
     const result = await checkModel(`
       const box = { seen: 0 };
