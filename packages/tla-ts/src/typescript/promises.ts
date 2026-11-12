@@ -206,7 +206,7 @@ const isPromiseType = (node: ts.Expression, context: Context) => {
 };
 
 // The promise that a value is: one that its expression names, or, where TypeScript types the value
-// as a promise, any that the path follows, which the value may hold.
+// as a promise, unknown or any, any that the path follows, which the value may hold.
 const dispatchPromise = (
   path: Path,
   node: ts.Node,
@@ -218,7 +218,17 @@ const dispatchPromise = (
 ): Formula => {
   const found = findPromise(path, node, value);
   if (found !== undefined) return onPromise(found);
-  if (valueNode === undefined || !isPromiseType(valueNode, context)) return otherwise();
+  if (
+    valueNode === undefined ||
+    !(
+      isPromiseType(valueNode, context) ||
+      (context.checker.getTypeAtLocation(valueNode).flags &
+        (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
+        0
+    )
+  ) {
+    return otherwise();
+  }
   return [...getTasks(path, node).promises].reduceRight(
     (rest, entry) =>
       ifThenElse(

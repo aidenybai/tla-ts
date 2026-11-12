@@ -2190,7 +2190,16 @@ const getGeneratorCallee = (node: ts.Expression, path: Path, context: Context) =
 // An async function that a callee names, other than a method, which a call runs only where the
 // object still holds it.
 export const getAsyncCallee = (node: ts.Expression, path: Path, context: Context) => {
-  if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) return undefined;
+  // A namespace's function, which TypeScript doesn't let a script replace.
+  const isNamespaced =
+    ts.isPropertyAccessExpression(node) &&
+    ((getSymbol(node.expression, context.checker)?.flags ?? 0) & ts.SymbolFlags.Namespace) !== 0;
+  if (
+    !isNamespaced &&
+    (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node))
+  ) {
+    return undefined;
+  }
   const symbol = getSymbol(node, context.checker);
   const assigned = symbol && path.scope.functions.get(symbol);
   return assigned !== undefined && isAsyncFunction(assigned)
@@ -6008,10 +6017,33 @@ const isStateCall = (node: ts.CallExpression, path: Path, context: Context) => {
   );
 };
 
+// A call to a function whose body makes a promise or calls an async function, which only
+// statements can run.
+const isPromiseMaking = (node: ts.CallExpression, path: Path, context: Context) => {
+  const symbol = getSymbol(node.expression, context.checker);
+  const callee =
+    (symbol && path.scope.functions.get(symbol)) ?? getCallee(node.expression, context);
+  return (
+    callee?.body !== undefined &&
+    (findNodes(callee.body, ts.isCallExpression).some(
+      (call) =>
+        ts.findAncestor(call.parent, ts.isFunctionLike) === callee &&
+        (isPromiseCall(call, context) ||
+          getAsyncCallee(call.expression, path, context) !== undefined),
+    ) ||
+      findNodes(callee.body, ts.isNewExpression).some(
+        (construction) =>
+          ts.findAncestor(construction.parent, ts.isFunctionLike) === callee &&
+          isPromiseConstruction(construction, context),
+      ))
+  );
+};
+
 // A call whose value only statements can compute, which an assignment or a declaration takes.
 const isStatementResult = (node: ts.CallExpression, path: Path, context: Context) =>
   getCalledError(node, context) === undefined &&
-  (getBound(node.expression, context) !== undefined ||
+  (isPromiseMaking(node, path, context) ||
+    getBound(node.expression, context) !== undefined ||
     getDateCall(node, context) !== undefined ||
     getHeapRegExpCall(node, context) !== undefined ||
     getURICall(node, context)?.isDecode === true ||

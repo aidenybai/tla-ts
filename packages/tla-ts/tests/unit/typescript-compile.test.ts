@@ -7998,6 +7998,52 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("awaits a namespace's async function that awaits what a callback gives", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      namespace checks {
+        export async function settles(func: () => unknown) {
+          let result: unknown = undefined;
+          result = func();
+          log += "s";
+          try {
+            await result;
+            log += "f";
+          } catch (error) {
+            log += "<" + String(error) + ">";
+          }
+        }
+      }
+      const run = async () => {
+        await checks.settles(() => Promise.reject("r"));
+        log += "a";
+        await checks.settles(() => Promise.resolve(1));
+        log += "b";
+        await checks.settles(() => 5);
+        log += "c";
+        await checks.settles(() => new Promise((resolve, reject) => reject("n")));
+        log += "d";
+      };
+      run();
+      Promise.resolve()
+        .then(() => { log += "0"; })
+        .then(() => { log += "1"; })
+        .then(() => { log += "2"; })
+        .then(() => { log += "3"; })
+        .then(() => { log += "4"; })
+        .then(() => { log += "5"; })
+        .then(() => { log += "6"; })
+        .then(() => { log += "7"; })
+        .then(() => { log += "8"; })
+        .then(() => { log += "9"; });
+      setTimeout(() => {
+        if (log !== "s<r>0as1f2bs3f4cs5<n>6d789") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs Array.fromAsync of an array-like object and of a string", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;
