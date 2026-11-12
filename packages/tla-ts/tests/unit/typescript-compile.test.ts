@@ -4930,6 +4930,20 @@ describe("errors", () => {
     expect((await checkModel(getSource("ordered.x === 42"))).failure?.message).toContain("Point");
   });
 
+  it("makes the instances that a class's static fields hold", async () => {
+    const getSource = (check: string) => `
+      class Point {
+        static readonly origin = new Point(0);
+        static readonly unit = new Point(1);
+        constructor(readonly x: number) {}
+      }
+      if (${check}) throw new Error("Point");
+    `;
+    const passing = "Point.origin.x !== 0 || Point.unit.x !== 1 || Point.origin === Point.unit";
+    expect((await checkModel(getSource(passing))).failure).toBeUndefined();
+    expect((await checkModel(getSource("Point.unit.x === 1"))).failure?.message).toContain("Point");
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`

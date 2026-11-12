@@ -4412,66 +4412,84 @@ const translateStaticElements = (
           ),
         );
       }
-      return allocate(element.initializer, before, context, (allocated) => {
-        const value = context.names.getFresh("value");
-        const heap = getHeap(allocated.scope, element, context);
-        const withHeap = (changed: Expression) => ({
-          ...allocated,
-          scope: {
-            ...allocated.scope,
-            bindings: new Map([...allocated.scope.bindings, [heapSymbol, changed]]),
-          },
-        });
-        const change = context.names.getFresh("change");
-        const defined = ts.isPrivateIdentifier(element.name)
-          ? bindOnce(
-              allocated,
-              change,
-              useJavaScript(
-                "Update",
-                [
-                  heap,
-                  ref,
-                  useJavaScript(
-                    "PrivateAdd",
-                    [
-                      useJavaScript("Lookup", [heap, ref], context),
-                      string(getPrivateKey(element, context)),
-                      identifier(value),
-                    ],
-                    context,
-                  ),
-                ],
-                context,
-              ),
-              afterElement(withHeap(identifier(change))),
-            )
-          : bindOnce(
-              allocated,
-              change,
-              useJavaScript(
-                "DefineField",
-                [
-                  heap,
-                  ref,
-                  translateMemberKey(element.name, allocated.scope, context),
-                  identifier(value),
-                ],
-                context,
-              ),
-              ifThenElse(
-                field(identifier(change), "isDone"),
-                afterElement(withHeap(field(identifier(change), "heap"))),
-                throwTypeError(withHeap(heap), element, context, frame),
-              ),
-            );
-        return bindOnce(
+      const initializer = element.initializer;
+      return allocate(initializer, before, context, (allocated) => {
+        const define = (inner: Path, initial: Expression) => {
+          const value = context.names.getFresh("value");
+          const heap = getHeap(inner.scope, element, context);
+          const withHeap = (changed: Expression) => ({
+            ...inner,
+            scope: {
+              ...inner.scope,
+              bindings: new Map([...inner.scope.bindings, [heapSymbol, changed]]),
+            },
+          });
+          const change = context.names.getFresh("change");
+          const defined = ts.isPrivateIdentifier(element.name)
+            ? bindOnce(
+                inner,
+                change,
+                useJavaScript(
+                  "Update",
+                  [
+                    heap,
+                    ref,
+                    useJavaScript(
+                      "PrivateAdd",
+                      [
+                        useJavaScript("Lookup", [heap, ref], context),
+                        string(getPrivateKey(element, context)),
+                        identifier(value),
+                      ],
+                      context,
+                    ),
+                  ],
+                  context,
+                ),
+                afterElement(withHeap(identifier(change))),
+              )
+            : bindOnce(
+                inner,
+                change,
+                useJavaScript(
+                  "DefineField",
+                  [
+                    heap,
+                    ref,
+                    translateMemberKey(element.name, inner.scope, context),
+                    identifier(value),
+                  ],
+                  context,
+                ),
+                ifThenElse(
+                  field(identifier(change), "isDone"),
+                  afterElement(withHeap(field(identifier(change), "heap"))),
+                  throwTypeError(withHeap(heap), element, context, frame),
+                ),
+              );
+          return bindOnce(inner, value, initial, defined);
+        };
+        const withReceiver = { ...allocated, scope: { ...allocated.scope, receiver } };
+        const constructor = initializer && getConstructorRun(initializer, context);
+        if (
+          constructor !== undefined &&
+          initializer !== undefined &&
+          ts.isNewExpression(initializer)
+        ) {
+          return translateConstruction(
+            initializer,
+            constructor,
+            withReceiver,
+            context,
+            frame,
+            (after, constructed) => define(after, constructed ?? getUndefined(context)),
+          );
+        }
+        return define(
           allocated,
-          value,
-          element.initializer === undefined
+          initializer === undefined
             ? getUndefined(context)
-            : translateExpression(element.initializer, { ...allocated.scope, receiver }, context),
-          defined,
+            : translateExpression(initializer, withReceiver.scope, context),
         );
       });
     },
@@ -7140,6 +7158,7 @@ const isPlainCallee = (
 ): boolean =>
   ts.isIdentifier(node) ||
   ts.isLiteralExpression(node) ||
+  (results?.has(node) ?? false) ||
   (ts.isPropertyAccessExpression(node) &&
     !ts.isPrivateIdentifier(node.name) &&
     getObjectGetter(node, context) === undefined &&
@@ -7158,7 +7177,6 @@ const isIncrement = (node: ts.Node): node is Increment =>
 // and writes a number without running code.
 const isPlainIncrement = (node: Increment, context: Context) => {
   const operand = node.operand;
-  (results?.has(node) ?? false) ||
   const names = getTypeNames(context.checker.getTypeAtLocation(operand), context.checker);
   const isNumeric =
     names !== undefined && names.every((name) => name === "number" || name === "bigint");
@@ -8036,6 +8054,10 @@ export const translateStatements = (
       if (isPromiseConstruction(constructed, context)) {
         return translatePromiseConstruction(constructed, inner, context, frame, frame.exit);
       }
+      const constructor = getConstructorRun(returned, context);
+      if (constructor !== undefined && ts.isNewExpression(returned)) {
+        return translateConstruction(returned, constructor, inner, context, frame, frame.exit);
+      }
       if (
         ts.isCallExpression(returned) &&
         (!isLibraryCall(returned, context) || isPromiseCall(returned, context))
@@ -8083,10 +8105,6 @@ export const translateStatements = (
         statement,
         path.scope,
         context,
-      const constructor = getConstructorRun(returned, context);
-      if (constructor !== undefined && ts.isNewExpression(returned)) {
-        return translateConstruction(returned, constructor, inner, context, frame, frame.exit);
-      }
         (clause) => translateStatements(clause, path, context, { ...frame, next, breakTo: next }),
         () => next(path),
       ),
