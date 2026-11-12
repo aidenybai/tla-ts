@@ -3285,6 +3285,34 @@ describe("errors", () => {
     expect((await checkModel(instance)).failure?.message).toContain("instanceof");
   });
 
+  it("gives an object to Object back", async () => {
+    const source = `
+      declare global {
+        interface ObjectConstructor {
+          <T extends object>(value: T): T;
+        }
+      }
+      const holder = { seen: 0 };
+      const check = (actual: unknown, expected: unknown, message: string) => {
+        if (actual !== expected) throw new Error(message);
+      };
+      check(Object.prototype.toString.call(Object([])), "[object Array]", "array");
+      check(Object.prototype.toString.call(Object([1, 2])), "[object Array]", "array 2");
+      check(Object.prototype.toString.call(Error()), "[object Error]", "error call");
+      check(Object.prototype.toString.call(Object(new Error())), "[object Error]", "object error");
+      check(Object.prototype.toString.call(Object(Error())), "[object Error]", "object error call");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const error = source.replace(
+      '"[object Error]", "object error call"',
+      '"[object Object]", "object error call"',
+    );
+    expect((await checkModel(error)).failure?.message).toContain("object error call");
+    const array = source.replace('2])), "[object Array]"', '2])), "[object Object]"');
+    expect((await checkModel(array)).failure?.message).toContain("array 2");
+  });
+
   it("holds an error that only Object's functions read as an object with its prototype", async () => {
     const source = `
       const holder = { seen: 0 };

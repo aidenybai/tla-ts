@@ -29,6 +29,7 @@ import {
   isHeldError,
   getArgumentsOwner,
   getSymbol,
+  skipCasts,
   isScript,
   getTopLevelDeclaration,
   getUndefined,
@@ -1057,8 +1058,16 @@ export const translateCall = (
   }
   if (calledMethod === "toString" && node.arguments.length <= 1) {
     const argument = node.arguments.at(0);
-    const kind = argument === undefined ? "other" : getKind(argument, context);
-    const collection = argument === undefined ? undefined : getCollection(argument, context);
+    // Object of an object gives the object, whose kind its type tells.
+    const read =
+      argument !== undefined &&
+      ts.isCallExpression(argument) &&
+      isObjectConversion(argument, context) &&
+      argument.arguments.length === 1
+        ? argument.arguments[0]
+        : argument;
+    const kind = read === undefined ? "other" : getKind(read, context);
+    const collection = read === undefined ? undefined : getCollection(read, context);
     return useJavaScript(
       "ObjectToString",
       [
@@ -2529,6 +2538,26 @@ const translateNode = (
     (getKind(passed, context) === "object" || isBuiltInObject(passed, context))
   ) {
     return translateObjectValue(passed, scope, context);
+  }
+  // Any other object, such as an array that a sequence holds or an error, is given back too, where
+  // the call's type keeps its kind. A property's value may not have its type, as
+  // Object.defineProperty can give it any.
+  const passedTypes =
+    passed === undefined
+      ? undefined
+      : getTypeNames(context.checker.getTypeAtLocation(passed), context.checker);
+  if (
+    isObjectConversion(node, context) &&
+    passed !== undefined &&
+    node.arguments?.length === 1 &&
+    !ts.isPropertyAccessExpression(skipCasts(passed)) &&
+    !ts.isElementAccessExpression(skipCasts(passed)) &&
+    passedTypes !== undefined &&
+    passedTypes.length > 0 &&
+    passedTypes.every((name) => name === "object" || name === "function") &&
+    getKind(node, context) === getKind(passed, context)
+  ) {
+    return translateExpression(passed, scope, context);
   }
   if (ts.isNewExpression(node)) {
     const classes = getErrorClass(getSymbol(node.expression, context.checker), context.checker);
