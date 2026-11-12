@@ -1815,13 +1815,14 @@ export const translateCallStatement = (
     const result = identifier(resultName);
     const getter = translateExpression(getterCall.getter, path.scope, context);
     const receiver = getterCall.receiver;
-    // A function that a literal makes is neither a regexp nor a symbol, which the getters other
-    // than flags and __proto__ check for.
+    // A function that a literal makes is none of the objects that the getters other than flags,
+    // __proto__ and @@species check for.
     const isFunctionReceiver =
       receiver !== undefined &&
       (ts.isArrowFunction(receiver) || ts.isFunctionExpression(receiver)) &&
       getterCall.path !== "get Object.prototype.__proto__" &&
-      getterCall.path !== "get RegExp.prototype.flags";
+      getterCall.path !== "get RegExp.prototype.flags" &&
+      !getterCall.path.endsWith(".@@species");
     const run = isFunctionReceiver
       ? throwTypeError(path, expression, context, frame)
       : bindOnce(

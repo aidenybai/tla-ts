@@ -2427,6 +2427,25 @@ describe("errors", () => {
     expect((await checkModel(getSource(3))).failure?.message).toContain("unexpected");
   });
 
+  it("gives the receiver of the @@species getter that a script takes from its descriptor", async () => {
+    const getSource = (expected: number) => `
+      const holder = {};
+      const descriptor = Object.getOwnPropertyDescriptor(Promise, Symbol.species);
+      const accessor = Object.getOwnPropertyDescriptor(ArrayBuffer, Symbol.species)!.get;
+      const check = (actual: unknown, wanted: unknown) => {
+        if (actual !== wanted) throw new Error("unexpected");
+      };
+      const make = () => 1;
+      check(accessor!.call(holder), holder);
+      check(descriptor!.get!.call(holder), holder);
+      check(accessor!.call(make), make);
+      check(accessor!.call(undefined), undefined);
+      check(accessor!.call(1), ${expected});
+    `;
+    expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    expect((await checkModel(getSource(2))).failure?.message).toContain("unexpected");
+  });
+
   it("runs the getter that a rest pattern copies where the script defines getters under other keys", async () => {
     const getSource = (expected: number) => `
       let count = 0;

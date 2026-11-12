@@ -1770,6 +1770,17 @@ const GETTERS = new Map([
   ["DataView", new Set(["buffer", "byteLength", "byteOffset"])],
 ]);
 
+// The constructors whose @@species getter gives its receiver.
+const SPECIES_OWNERS = new Set([
+  "Array",
+  "RegExp",
+  "Map",
+  "Set",
+  "Promise",
+  "ArrayBuffer",
+  "SharedArrayBuffer",
+]);
+
 // A call of a built-in getter that a variable holds from a descriptor, as in
 // Object.getOwnPropertyDescriptor(RegExp.prototype, "global").get, directly or through call, which
 // a statement runs, as it may throw.
@@ -1779,7 +1790,9 @@ export const getGetterCall = (node: ts.Node, context: Context) => {
   const isCall = ts.isPropertyAccessExpression(callee) && callee.name.text === "call";
   const getter = isCall ? callee.expression : callee;
   const origin = getOrigin(getter, context);
-  const descriptor = ts.isPropertyAccessExpression(origin) ? skipCasts(origin.expression) : origin;
+  const descriptor = ts.isPropertyAccessExpression(origin)
+    ? getOrigin(origin.expression, context)
+    : origin;
   const owner =
     ts.isCallExpression(descriptor) && descriptor.arguments.length === 2
       ? skipCasts(descriptor.arguments[0])
@@ -1789,17 +1802,28 @@ export const getGetterCall = (node: ts.Node, context: Context) => {
     owner !== undefined && ts.isPropertyAccessExpression(owner) && owner.name.text === "prototype"
       ? getBuiltIn(owner.expression, context)
       : undefined;
+  const speciesOwner =
+    owner !== undefined &&
+    key !== undefined &&
+    ts.isPropertyAccessExpression(key) &&
+    key.name.text === "species" &&
+    getBuiltIn(key.expression, context) === "Symbol"
+      ? getBuiltIn(owner, context)
+      : undefined;
+  const path =
+    key !== undefined && ts.isStringLiteral(key) && GETTERS.get(builtIn ?? "")?.has(key.text)
+      ? (`get ${builtIn}.prototype.${key.text}` as const)
+      : speciesOwner !== undefined && SPECIES_OWNERS.has(speciesOwner)
+        ? (`get ${speciesOwner}.@@species` as const)
+        : undefined;
   return ts.isPropertyAccessExpression(origin) &&
     origin.name.text === "get" &&
     ts.isCallExpression(descriptor) &&
     descriptor.expression.getText() === "Object.getOwnPropertyDescriptor" &&
-    key !== undefined &&
-    ts.isStringLiteral(key) &&
-    builtIn !== undefined &&
-    GETTERS.get(builtIn)?.has(key.text) === true &&
+    path !== undefined &&
     !node.arguments.some(ts.isSpreadElement)
     ? {
-        path: `get ${builtIn}.prototype.${key.text}` as const,
+        path,
         getter,
         isCall,
         receiver: isCall ? node.arguments.at(0) : undefined,
