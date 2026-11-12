@@ -1886,6 +1886,21 @@ describe("values", () => {
     await expect(checkModel(getSource("2,4"))).rejects.toThrow("4,2");
   });
 
+  it("makes a map from an array of entries, where a later entry of a key wins", async () => {
+    const getSource = (expected: string) => `
+      const pairs: [string, number][] = [
+        ["a", 0],
+        ["b", 1],
+        ["a", 2],
+      ];
+      const indexes = new Map(pairs);
+      const result = [indexes.get("a"), indexes.size].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("2,2"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("0,2"))).rejects.toThrow("2,2");
+  });
+
   it("spreads a string's code points into an array", async () => {
     const getSource = (expected: string) => `
       const word = "hi";

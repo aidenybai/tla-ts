@@ -2871,7 +2871,10 @@ const translateNewCollection = (
   }
   if (getKind(argument, context) === "map") return translateExpression(argument, scope, context);
   const map = translateFunctionConstructor(argument, scope, context);
-  if (map === undefined)
+  if (map !== undefined) return map;
+  if (getKind(argument, context) !== "sequence") {
     throw new TlaTypeScriptError(`Unsupported constructor: new ${constructor}`, node);
-  return map;
+  }
+  const entries = translateExpression(argument, scope, context);
+  return useJavaScript(context.hasSpecialNumbers ? "KeyedMapOf" : "MapOf", [entries], context);
 };
