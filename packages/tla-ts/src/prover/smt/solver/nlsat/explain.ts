@@ -1,7 +1,7 @@
-// Ported from Z3 (src/nlsat/nlsat_explain.cpp), MIT license, see z3-license.txt. Only Z3's
-// default nlsat parameters are ported, so the cell always comes from the levelwise construction,
-// and Z3's fallback projection (project, add_lcs and the psc_* helpers) is not ported.
-import { SmtInvariantError } from "../../../../errors";
+// Ported from Z3 (src/nlsat/nlsat_explain.cpp), MIT license, see z3-license.txt. Of Z3's nlsat
+// parameters only factor is ported, and lws keeps its default, so the cell always comes from the
+// levelwise construction, and Z3's fallback projection (add_lcs and the psc_* helpers) is not
+// ported.
 import type { AlgebraicManager, Anum } from "./algebraic";
 import {
   type AtomTable,
@@ -27,6 +27,9 @@ interface ExplainContext {
   // value(l): l_true, l_false or l_undef, as 1, -1 and 0.
   getValue: (literal: number) => number;
   var2eq: (IneqAtom | null)[];
+  getNumVars: () => number;
+  reorder: (permutation: readonly number[]) => void;
+  restoreOrder: () => void;
 }
 
 // add_all_coeffs_restart: every coefficient of a polynomial vanished, so the explanation starts
@@ -76,6 +79,7 @@ export class Explain {
   // m_full_dimensional: the solver sets it when every clause is full dimensional, and the cell
   // bounds are then closed.
   isFullDimensional = false;
+  isFactoring = true;
 
   constructor(
     private pm: PolynomialManager,
@@ -199,6 +203,10 @@ export class Explain {
     if (this.pm.isConst(polynomial)) return polynomial;
     const p = this.elimVanishing(polynomial);
     if (this.pm.isConst(p)) return p;
+    if (!this.isFactoring) {
+      this.todo.insert(p);
+      return p;
+    }
     for (const factor of this.cache.factor(p)) {
       const reduced = this.elimVanishing(factor);
       if (!this.pm.isConst(reduced)) this.todo.insert(reduced);
@@ -567,6 +575,7 @@ export class Explain {
   projectVariable(variable: number, literals: readonly number[], result: ScopedLiterals) {
     const base = result.size;
     while (true) {
+      let isReordered = false;
       this.result = result;
       try {
         const kept: number[] = [];
@@ -582,13 +591,22 @@ export class Explain {
         }
         const polynomials = this.collectPolys(kept);
         if (polynomials.length > 0) {
-          if (this.getMaxVarOfPolys(polynomials) !== variable)
-            throw new SmtInvariantError("nlsat projects the maximal variable");
-          this.project(this.elimVanishingAll(polynomials), variable);
+          const maxVar = this.getMaxVarOfPolys(polynomials);
+          if (maxVar !== variable) {
+            const renaming = Array.from({ length: this.context.getNumVars() }, (_value, index) =>
+              index === variable ? maxVar : index === maxVar ? variable : index,
+            );
+            this.context.reorder(renaming);
+            isReordered = true;
+          }
+          this.project(this.elimVanishingAll(polynomials), maxVar);
+          this.resetResult();
+          if (isReordered) this.context.restoreOrder();
         }
         break;
       } catch (error) {
         if (!(error instanceof AddAllCoeffsRestart)) throw error;
+        if (isReordered) this.context.restoreOrder();
         result.shrink(base);
       } finally {
         this.resetResult();

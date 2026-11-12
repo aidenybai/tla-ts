@@ -21,9 +21,9 @@ import { QuantifierHoister } from "./quant-hoist";
 import { RefVector } from "./ref-vector";
 import { SmtKernel } from "./smt-kernel";
 
-const NO_LEVEL = -1;
+export const NO_LEVEL = -1;
 
-interface MaxLevel {
+export interface MaxLevel {
   ex: number;
   fa: number;
 }
@@ -31,11 +31,11 @@ interface MaxLevel {
 const getMax = (first: number, second: number) =>
   first === NO_LEVEL ? second : second === NO_LEVEL ? first : Math.max(first, second);
 
-const getMaxLevel = (level: MaxLevel) => getMax(level.ex, level.fa);
+export const getMaxLevel = (level: MaxLevel) => getMax(level.ex, level.fa);
 
-const mkLevel = (): MaxLevel => ({ ex: NO_LEVEL, fa: NO_LEVEL });
+export const mkLevel = (): MaxLevel => ({ ex: NO_LEVEL, fa: NO_LEVEL });
 
-const mergeLevel = (level: MaxLevel, other: MaxLevel) => {
+export const mergeLevel = (level: MaxLevel, other: MaxLevel) => {
   level.ex = getMax(level.ex, other.ex);
   level.fa = getMax(level.fa, other.fa);
 };
@@ -69,6 +69,22 @@ const isGround = (manager: AstManager, expr: number) => {
     manager.pushArgs(current, todo);
   }
   return true;
+};
+
+// pred_abs::get_free_vars: the uninterpreted constants of a formula.
+export const getFreeVars = (manager: AstManager, formula: number, vars: RefVector) => {
+  const marked = new Set<number>();
+  const todo = [formula];
+  for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
+    if (marked.has(current) || manager.kinds[current] === KIND_VAR) continue;
+    marked.add(current);
+    if (manager.kinds[current] === KIND_QUANTIFIER) {
+      todo.push(manager.getQuantifier(current).body);
+      continue;
+    }
+    if (manager.isUninterpretedConst(current)) vars.push(current);
+    manager.pushArgs(current, todo);
+  }
 };
 
 // The propositional abstraction: atoms become fresh predicates, each with a level.
@@ -297,23 +313,6 @@ class PredAbs {
     concrete.forEach((formula, index) => fmls.set(index, formula));
   }
 
-  // The uninterpreted constants of a formula.
-  getFreeVars(formula: number, vars: RefVector) {
-    const manager = this.manager;
-    const marked = new Set<number>();
-    const todo = [formula];
-    for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
-      if (marked.has(current) || manager.kinds[current] === KIND_VAR) continue;
-      marked.add(current);
-      if (manager.kinds[current] === KIND_QUANTIFIER) {
-        todo.push(manager.getQuantifier(current).body);
-        continue;
-      }
-      if (manager.isUninterpretedConst(current)) vars.push(current);
-      manager.pushArgs(current, todo);
-    }
-  }
-
   release() {
     this.reset();
   }
@@ -503,7 +502,7 @@ export class Qsat {
     if (manager.hasLabelFlags[formula]) throw new SmtUnsupportedError("labels under qsat");
     const hoister = new QuantifierHoister(manager);
     const freeVars = new RefVector(manager);
-    this.predAbs.getFreeVars(formula, freeVars);
+    getFreeVars(manager, formula, freeVars);
     this.vars.push(freeVars);
     let result = formula;
     let isForall = false;

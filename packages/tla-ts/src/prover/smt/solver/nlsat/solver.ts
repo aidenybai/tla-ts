@@ -1,5 +1,5 @@
 // Ported from Z3 (src/nlsat/nlsat_solver.cpp, src/nlsat/nlsat_justification.h), MIT license, see
-// z3-license.txt. Only Z3's default nlsat parameters are ported, so nlsat_simplify and the bounds
+// z3-license.txt. Of Z3's nlsat parameters only seed and factor are ported, so nlsat_simplify and the bounds
 // of eliminated variables are not. The search counts its steps against the resource limit, but not
 // the memory, which Z3 also bounds by max_memory.
 import { SmtCanceledError, SmtInvariantError } from "../../../../errors";
@@ -44,7 +44,7 @@ export class NlsatSolver {
   private justifications: (Justification | null)[] = [];
   private bwatches: Clause[][] = [];
   private isDead: boolean[] = [];
-  private atoms = new AtomTable(this.pm, this.cache, {
+  readonly atoms = new AtomTable(this.pm, this.cache, {
     onMk: (boolVar) => {
       this.bvalues[boolVar] = L_UNDEF;
       this.levels[boolVar] = Infinity;
@@ -70,11 +70,14 @@ export class NlsatSolver {
   // perm: internal to external variables. invPerm: external to internal.
   private perm: number[] = [];
   private invPerm: number[] = [];
-  private explain = new Explain(this.pm, this.am, this.cache, {
+  readonly explain = new Explain(this.pm, this.am, this.cache, {
     atoms: this.atoms,
     sample: this.assignment,
     getValue: (literal) => this.value(literal),
     var2eq: this.var2eq,
+    getNumVars: () => this.isInt.length,
+    reorder: (permutation) => this.reorder(permutation),
+    restoreOrder: () => this.restoreOrder(),
   });
   private bk = 0;
   private xk = NULL_VAR;
@@ -111,9 +114,10 @@ export class NlsatSolver {
     this.mkClause([TRUE_LITERAL], false, null);
   }
 
-  setSeed(seed: number) {
+  updtParams(seed: number, isFactoring: boolean) {
     this.randomSeed = seed;
     this.ism.setSeed(seed);
+    this.explain.isFactoring = isFactoring;
   }
 
   private checkpoint() {
@@ -151,6 +155,36 @@ export class NlsatSolver {
 
   getBoolValue(boolVar: number) {
     return this.bvalues[boolVar];
+  }
+
+  vars(literal: number) {
+    const atom = this.atoms.getAtom(literal);
+    if (atom === null) return [];
+    if (isIneqAtom(atom))
+      return atom.polynomials.flatMap((polynomial) => this.pm.getVars(polynomial));
+    return [...this.pm.getVars(atom.polynomial), atom.maxVar];
+  }
+
+  getRvalues() {
+    return this.assignment.map((value) => (value === undefined ? undefined : this.am.copy(value)));
+  }
+
+  setRvalues(values: readonly (Anum | undefined)[]) {
+    this.setAssignment(values);
+  }
+
+  getBvalues(boolVars: Iterable<number>) {
+    const values: number[] = [];
+    for (const boolVar of boolVars) {
+      while (values.length <= boolVar) values.push(L_UNDEF);
+      if (this.atoms.atoms[boolVar] === null) values[boolVar] = this.bvalues[boolVar];
+    }
+    return values;
+  }
+
+  setBvalues(values: readonly number[]) {
+    for (const [boolVar, value] of values.entries())
+      if (value !== L_UNDEF) this.bvalues[boolVar] = value;
   }
 
   setMaxVar(variable: number) {
@@ -313,7 +347,7 @@ export class NlsatSolver {
     this.setLiteralToTrue(literal, DECISION);
   }
 
-  private value(literal: number) {
+  value(literal: number) {
     const assigned = this.getAssignedValue(literal);
     if (assigned !== L_UNDEF) return assigned;
     const atom = this.atoms.getAtom(literal);
@@ -580,6 +614,32 @@ export class NlsatSolver {
     for (const watches of this.watches) this.sortClausesByDegree(watches);
     const result = this.searchCheck();
     if (isReordered) this.restoreOrder();
+    return result;
+  }
+
+  // Keeps in assumptions the ones in the core when unsatisfiable, and none otherwise.
+  checkAssumptions(assumptions: number[]) {
+    const tags = assumptions.map((literal) => {
+      const tag = --this.nextTag;
+      this.mkExternalClause([literal], tag);
+      return tag;
+    });
+    const result = this.check();
+    const core: number[] = [];
+    if (result === L_FALSE)
+      for (const tag of this.getCore()) {
+        const index = tags.indexOf(tag);
+        if (index !== -1) core.push(assumptions[index]);
+      }
+    const isAssumed = (clause: Clause) => {
+      const isFound = linearize([clause.assumptions]).some((tag) => tags.includes(tag));
+      if (isFound) this.delClause(clause);
+      return !isFound;
+    };
+    this.clauses = this.clauses.filter(isAssumed);
+    this.learned = this.learned.filter(isAssumed);
+    assumptions.length = 0;
+    assumptions.push(...core);
     return result;
   }
 
@@ -945,7 +1005,7 @@ export class NlsatSolver {
     this.reorder(permutation);
   }
 
-  private reorder(permutation: readonly number[]) {
+  reorder(permutation: readonly number[]) {
     let kept = 0;
     for (const clause of this.learned) {
       if (clause.literals.some((literal) => this.atoms.getAtom(literal)?.kind.startsWith("ROOT")))

@@ -43,6 +43,7 @@ const mkModel = (
 
 export interface NlsatOptions {
   seed: number;
+  isFactoring: boolean;
   isShufflingVars: boolean;
   variableOrderingStrategy: number;
 }
@@ -51,10 +52,10 @@ export const runNlsat = (manager: AstManager, options: NlsatOptions) => (goal: G
   if (goal.isDecided()) return [goal];
   if (goal.isProofsEnabled) throw new SmtTacticError("nlsat does not support proof production");
   const solver = new NlsatSolver(manager.limit);
-  solver.setSeed(options.seed);
+  solver.updtParams(options.seed, options.isFactoring);
   const t2x = new Map<number, number>();
   const a2b = new Map<number, number>();
-  goal2nlsat(manager, goal.forms.items, solver, t2x, a2b, null);
+  goal2nlsat(manager, goal.forms.items, solver, t2x, a2b, null, options.isFactoring);
   if (options.isShufflingVars || options.variableOrderingStrategy !== 0)
     throw new SmtUnsupportedError("nlsat's shuffle_vars and variable_ordering_strategy");
   const status = solver.check();

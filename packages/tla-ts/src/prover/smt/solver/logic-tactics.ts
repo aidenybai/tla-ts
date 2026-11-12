@@ -181,6 +181,12 @@ const QFNRA =
   `${QFNRA_VERY_SMALL}) (if (< memory 80) (or-else ${QFNRA_SMALL}) (if (< memory 300) (or-else ` +
   `${QFNRA_MIDDLE}) (if (< memory 600) (or-else ${QFNRA_LARGE}) (or-else ${QFNRA_VERY_LARGE}))))))`;
 
+const NRA =
+  "(and-then simplify propagate-values qe-light simplify (if is-qfnra (or-else (try-for " +
+  `${QFNRA_NLSAT} 5000) (try-for (using-params ${getQfnraNlsat(false)} :seed 11 ` +
+  `:factor false) 10000) (using-params ${getQfnraNlsat(false)} :seed 13 :factor false)) ` +
+  "(or-else nlqsat smt)))";
+
 const QFNIA_BV_SOLVER =
   "(using-params (and-then simplify propagate-values (using-params simplify :local_ctx true " +
   ":local_ctx_limit 10000000) max-bv-sharing (using-params bit-blast :max_memory 100 " +
@@ -282,6 +288,7 @@ export const LOGIC_TACTICS: ReadonlyMap<string, string> = new Map([
   ["qfnia", QFNIA],
   ["qfnra-nlsat", QFNRA_NLSAT],
   ["qfnra", QFNRA],
+  ["nra", NRA],
   ["qflra", "(using-params smt :arith.greatest_error_pivot true)"],
   ["lra", LRA],
   ["lia", LRA],

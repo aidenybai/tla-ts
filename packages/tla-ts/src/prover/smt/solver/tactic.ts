@@ -50,6 +50,7 @@ import { cofactorTermIte } from "./cofactor-elim-term-ite";
 import { nla2bv } from "./nla2bv-tactic";
 import { Rational } from "./rational";
 import { runNlsat } from "./nlsat-tactic";
+import { runNlqsat } from "./nlqsat";
 import { occf } from "./occf";
 import { propagateValues } from "./propagate-values";
 import { purifyArith } from "./purify-arith";
@@ -375,6 +376,13 @@ const NNF_DESCRS = getDescrs("nnf", [
   ["max_memory", PARAM_UINT, UINT_MAX, true],
   ["sk_hack", PARAM_BOOL, false],
   ["ignore_labels", PARAM_BOOL, false, true],
+]);
+
+const NLSAT_DESCRS = getDescrs("nlsat", [
+  ["seed", PARAM_UINT, 0, true],
+  ["factor", PARAM_BOOL, true, true],
+  ["shuffle_vars", PARAM_BOOL, false, true],
+  ["variable_ordering_strategy", PARAM_UINT, 0, true],
 ]);
 
 const TSEITIN_DESCRS = getDescrs("", [
@@ -1080,14 +1088,27 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "nlsat",
     {
-      descrs: new Map(),
+      descrs: NLSAT_DESCRS,
       isRejectingUnknown: false,
       build: (environment, params) =>
         runNlsat(environment.manager, {
           seed: getUint(params, "seed", 0),
+          isFactoring: getBool(params, "factor", true),
           isShufflingVars: getBool(params, "shuffle_vars", false),
           variableOrderingStrategy: getUint(params, "variable_ordering_strategy", 0),
         }),
+    },
+  ],
+  [
+    "nlqsat",
+    {
+      descrs: new Map(),
+      build: (environment, params) =>
+        runNlqsat(
+          environment.manager,
+          getUint(params, "seed", 0),
+          compileInternalTactic(environment, "tseitin-cnf"),
+        ),
     },
   ],
   [
@@ -1186,7 +1207,7 @@ const UNPORTED_TACTICS = new Set(
     "degree-shift demodulator " +
     "elim-predicates elim-uncnstr2 " +
     "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv fold-unfold fpa2bv horn " +
-    "horn-simplify injectivity nlqsat nra pb-preprocess pqffd propagate-bv-bounds " +
+    "horn-simplify injectivity pb-preprocess pqffd propagate-bv-bounds " +
     "propagate-bv-bounds2 propagate-values2 psmt qfbv-sls qffd qfufbv recover-01 reduce-args2 " +
     "sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
     "split-clause subpaving symmetry-reduce"

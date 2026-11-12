@@ -70,6 +70,7 @@ export const goal2nlsat = (
   t2x: Map<number, number>,
   a2b: Map<number, number>,
   assumption: number | null,
+  isFactoring = true,
 ) => {
   const pm = solver.pm;
 
@@ -99,6 +100,7 @@ export const goal2nlsat = (
       const isTrue = kind === "EQ" ? sign === 0 : kind === "LT" ? sign < 0 : sign > 0;
       return isTrue ? 0 : 1;
     }
+    if (!isFactoring) return solver.mkIneqLiteral(kind, [polynomial], [false]);
     const factors = pm.factor(polynomial);
     return solver.mkIneqLiteral(
       factors.constant < 0n ? flipKind(kind) : kind,

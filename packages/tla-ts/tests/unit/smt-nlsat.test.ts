@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { NlsatUnsupportedError, SmtCanceledError } from "../../src/errors";
+import { NlsatUnsupportedError, SmtCanceledError, SmtInvariantError } from "../../src/errors";
 import { L_FALSE, L_TRUE } from "../../src/prover/smt/solver/lbool";
 import {
   type ConstraintKind,
@@ -486,6 +486,13 @@ const runExplainProgram = (program: string) => {
       return evaluator.eval(atom, (literal & 1) === 1) ? 1 : -1;
     },
     var2eq,
+    getNumVars: () => sample.length,
+    reorder: () => {
+      throw new SmtInvariantError("explain programs do not project");
+    },
+    restoreOrder: () => {
+      throw new SmtInvariantError("explain programs do not project");
+    },
   });
   const registers: Anum[] = [];
   const atoms: number[] = [];
