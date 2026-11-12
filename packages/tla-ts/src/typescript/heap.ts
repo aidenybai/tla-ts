@@ -5,7 +5,7 @@ import {
   type CalledMethod,
   type Context,
   type FunctionNode,
-  getCallee,
+  getFunctionOfKind,
   getNewClass,
   isInertValue,
   getParameters,
@@ -14,6 +14,7 @@ import {
   getSymbol,
   getUndefined,
   getPrivateKey,
+  isPlain,
   isPlainAccessor,
   isPrivateMember,
   isStatic,
@@ -1069,12 +1070,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     const values = [target, handler].map((argument) =>
       translateExpression(argument, scope, context),
     );
-    // A function that the script writes constructs where it isn't an arrow or a method.
-    const callee = getCallee(target, context);
-    const isConstructor =
-      callee === undefined
-        ? useJavaScript("IsConstructor", [heap, values[0]], context)
-        : boolean(ts.isFunctionExpression(callee) || ts.isFunctionDeclaration(callee));
+    const isConstructor = getIsConstructor(target, values[0], heap, context);
     return isRevocable(node, context)
       ? useJavaScript(
           "Revocable",
@@ -1807,6 +1803,22 @@ const isRevocableMember = (node: ts.Expression, name: string, context: Context) 
 export const isProxyValue = (node: ts.Expression, context: Context) => {
   const origin = getOrigin(node, context);
   return isNewProxy(origin, context) || isRevocableMember(origin, "proxy", context);
+};
+
+// Whether new can call a value, where a function that the script writes constructs where it isn't
+// an arrow, a method, a generator, or async.
+export const getIsConstructor = (
+  node: ts.Expression,
+  value: Expression,
+  heap: Expression,
+  context: Context,
+) => {
+  const callee = getFunctionOfKind(node, context, () => true);
+  return callee === undefined
+    ? useJavaScript("IsConstructor", [heap, value], context)
+    : boolean(
+        (ts.isFunctionExpression(callee) || ts.isFunctionDeclaration(callee)) && isPlain(callee),
+      );
 };
 
 // The target that a proxy the script makes holds, where new Proxy or Proxy.revocable writes it.

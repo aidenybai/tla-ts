@@ -34,6 +34,7 @@ import { getBuiltIn } from "./intrinsics";
 import {
   getCandidateValue,
   getHeap,
+  getIsConstructor,
   getProxyTarget,
   isProxyValue,
   translateObjectValue,
@@ -1212,6 +1213,8 @@ interface ProxyOperation {
   receiver?: ts.Expression;
   // The function of Object or Reflect that runs it.
   method?: string;
+  // The constructor that Reflect.construct gives a construct trap, where it isn't the proxy.
+  newTarget?: ts.Expression;
   // Whether Reflect runs it, which gives whether it succeeded rather than throwing a TypeError.
   isReflected: boolean;
 }
@@ -1316,6 +1319,28 @@ const getOperation = (node: ts.Node, context: Context): ProxyOperation | undefin
   if (!isMethodCall(node)) return undefined;
   const global = getBuiltIn(node.expression.expression, context);
   const method = node.expression.name.text;
+  // Reflect.apply and Reflect.construct of an array that the script writes call or construct.
+  const listed = node.arguments.at(method === "apply" ? 2 : 1);
+  if (
+    global === "Reflect" &&
+    (method === "apply" || method === "construct") &&
+    listed !== undefined &&
+    ts.isArrayLiteralExpression(listed) &&
+    !listed.elements.some(
+      (element) => ts.isSpreadElement(element) || ts.isOmittedExpression(element),
+    ) &&
+    (method === "apply" ? node.arguments.length === 3 : node.arguments.length <= 3)
+  ) {
+    return {
+      trap: method,
+      object: node.arguments[0],
+      key: undefined,
+      arguments: listed.elements,
+      receiver: method === "apply" ? node.arguments[1] : undefined,
+      newTarget: method === "construct" ? node.arguments.at(2) : undefined,
+      isReflected: false,
+    };
+  }
   // Array.isArray, Object.prototype.toString, and JSON.stringify's replacer run IsArray.
   const tested =
     global === "Array" && method === "isArray"
@@ -1460,8 +1485,11 @@ export const runProxyOperation = (
   const method = string(operation.method ?? "");
   const javaScript = (name: string, values: Expression[]) => useJavaScript(name, values, context);
   const targets = getTargets(operation.object, [], context);
-  // How many proxies the script makes the proxy hold as targets, one inside another.
+  // How many proxies the script makes the proxy hold as targets, one inside another, and the
+  // function at the end, which a call runs where no handler on the way traps it.
   const depth = targets.length - 2;
+  const end = targets.at(-1);
+  const callee = end === undefined ? undefined : getCallee(end, context);
   // Evaluates the value that the operation takes, or the arguments of a call or a new, in order.
   const evaluate = (
     path: Path,
@@ -1481,9 +1509,18 @@ export const runProxyOperation = (
   const run = (
     path: Path,
     proxy: Expression,
-    value: Expression,
+    argumentValues: Expression[],
     given: (path: Path, value?: Expression) => Formula,
   ) => {
+    // The value that the operation takes, or the arguments of a call or a new as an array.
+    const value =
+      operation.arguments === undefined
+        ? (argumentValues[0] ?? getUndefined(context))
+        : tuple(argumentValues);
+    const newTarget =
+      operation.newTarget === undefined
+        ? proxy
+        : translateExpression(operation.newTarget, path.scope, context);
     const throwWith = (after: Path) => throwTypeError(after, node, context, frame);
     // Object.seal and Object.freeze restrict the keys of a proxy that stops growing, and
     // Object.isSealed and Object.isFrozen test them where it can't grow.
@@ -1658,10 +1695,25 @@ export const runProxyOperation = (
         // What reads the target goes on through proxy targets that have no trap for it.
         const forwarded = (name: string) =>
           javaScript("ForwardTarget", [heap, target, set([string(name)])]);
+        const isCalled = trap === "apply" && callee !== undefined;
         if (trap === "apply" || trap === "construct") {
-          return leaf(
+          const stop = leaf(
             apply("Assert", [boolean(false), string("tla-ts can't call the target of a proxy")]),
           );
+          return !isCalled
+            ? stop
+            : callValue(
+                node,
+                [callee],
+                target,
+                values[0],
+                argumentValues,
+                after,
+                context,
+                frame,
+                () => stop,
+                next,
+              );
         }
         if (trap === "get" || trap === "has") {
           return next(
@@ -1796,7 +1848,12 @@ export const runProxyOperation = (
           ? ifThenElse(
               trap === "apply"
                 ? apply("=", [javaScript("TypeOfIn", [heap, proxy]), string("function")])
-                : javaScript("IsConstructor", [heap, proxy]),
+                : apply("/\\", [
+                    javaScript("IsConstructor", [heap, proxy]),
+                    operation.newTarget === undefined
+                      ? boolean(true)
+                      : getIsConstructor(operation.newTarget, newTarget, heap, context),
+                  ]),
               runWith(
                 path,
                 proxy,
@@ -1807,7 +1864,7 @@ export const runProxyOperation = (
                         : translateExpression(operation.receiver, path.scope, context),
                       value,
                     ]
-                  : [value, proxy],
+                  : [value, newTarget],
                 getUndefined(context),
                 depth,
               ),
@@ -1869,15 +1926,7 @@ export const runProxyOperation = (
               bound,
               operation.arguments ?? (operation.value === undefined ? [] : [operation.value]),
               [],
-              (valued, values) =>
-                run(
-                  valued,
-                  proxy,
-                  operation.arguments === undefined
-                    ? (values[0] ?? getUndefined(context))
-                    : tuple(values),
-                  next,
-                ),
+              (valued, values) => run(valued, proxy, values, next),
             ),
         ),
     ),

@@ -8900,6 +8900,31 @@ describe("proxies", () => {
     expect((await checkModel(getSource(1))).failure?.message).toContain("unexpected");
   });
 
+  it("calls and constructs through proxies and Reflect", async () => {
+    const getSource = (expected: number) => `
+      let calls = 0;
+      let seen: unknown;
+      const sum = (left: number, right: number) => left + right;
+      const summing = new Proxy(new Proxy(sum, {}), {});
+      if (summing(1, 2) !== 3) throw new Error("apply");
+      if (Reflect.apply(summing, undefined, [3, 4]) !== 7) throw new Error("Reflect.apply");
+      const Target = new Proxy(function () {} as unknown as new (...values: number[]) => { sum: number }, {
+        construct(innerTarget, values, newTarget) {
+          calls += 1;
+          seen = newTarget;
+          return { sum: values[0] + values[1] };
+        },
+      });
+      const Outer = new Proxy(Target, { construct: undefined });
+      function NewTarget() {}
+      const made: { sum: number } = Reflect.construct(Outer, [3, 4], NewTarget);
+      if (calls !== 1 || seen !== NewTarget) throw new Error("construct");
+      if (made.sum !== ${expected}) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(7))).failure).toBeUndefined();
+    expect((await checkModel(getSource(12))).failure?.message).toContain("unexpected");
+  });
+
   it("stops the check where something else reads a proxy", async () => {
     const result = await checkModel(`
       const proxy = new Proxy({ attr: 1 }, {});
