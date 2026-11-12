@@ -778,6 +778,19 @@ const translateFromAsync = (
     mapping &&
     (getCallback(getCast(mapping), path, context) ??
       getAsyncCallee(getCast(mapping), path, context));
+  // The one expression that a mapping function that isn't async returns, whose type tells whether
+  // its result has a then that fromAsync's await calls.
+  const returns =
+    callee === undefined || isAsyncFunction(callee) || callee.body === undefined
+      ? []
+      : ts.isBlock(callee.body)
+        ? findNodes(callee.body, ts.isReturnStatement).filter(
+            (statement) => ts.findAncestor(statement.parent, ts.isFunctionLike) === callee,
+          )
+        : [callee.body];
+  const returned = returns.length === 1 ? returns[0] : undefined;
+  const mappedNode =
+    returned !== undefined && ts.isReturnStatement(returned) ? returned.expression : returned;
   const arrayLike =
     items && !ts.isArrayLiteralExpression(items) ? getArrayLike(items, context) : undefined;
   const elements =
@@ -1037,7 +1050,7 @@ const translateFromAsync = (
                             mapped,
                             node,
                             result,
-                            undefined,
+                            mappedNode,
                             context,
                             (awaited, value, isMappedRejected, onAwaited) =>
                               isMappedRejected

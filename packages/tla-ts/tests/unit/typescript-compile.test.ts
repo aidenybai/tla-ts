@@ -8150,6 +8150,39 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("awaits the thenable that an Array.fromAsync mapping returns", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      let count = 0;
+      Array.fromAsync([1, 2], () => {
+        return {
+          then(resolve: (value: number) => void) {
+            count++;
+            log += "t";
+            resolve(count * 10);
+          },
+        };
+      }).then((values) => {
+        log += "[" + values.join(",") + "]";
+      });
+      Promise.resolve()
+        .then(() => { log += "0"; })
+        .then(() => { log += "1"; })
+        .then(() => { log += "2"; })
+        .then(() => { log += "3"; })
+        .then(() => { log += "4"; })
+        .then(() => { log += "5"; })
+        .then(() => { log += "6"; })
+        .then(() => { log += "7"; })
+        .then(() => { log += "8"; });
+      setTimeout(() => {
+        if (log !== "01t2345t678[10,20]") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs Array.fromAsync of an array-like object and of a string", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;
