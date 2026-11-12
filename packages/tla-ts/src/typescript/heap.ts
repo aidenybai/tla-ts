@@ -52,7 +52,7 @@ import {
   ARRAY_LIKE_METHODS,
   getHeapRegExpCall,
   IN_PLACE_METHODS,
-  isSpliceStatement,
+  isUnheldSplice,
   translateSpliced,
   translateNew,
 } from "./collections";
@@ -2812,7 +2812,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         const call = parent.parent;
         return (
           parent.name.text === "length" ||
-          (ts.isCallExpression(call) && isSpliceStatement(call, context)) ||
+          (ts.isCallExpression(call) && isUnheldSplice(call, context)) ||
           ((IN_PLACE_METHODS.has(parent.name.text) || ARRAY_LIKE_METHODS.has(parent.name.text)) &&
             ts.isCallExpression(call) &&
             call.expression === parent &&
