@@ -216,6 +216,7 @@ import {
   identifier,
   ifExpression,
   index,
+  junction,
   locate,
   not,
   number,
@@ -3302,9 +3303,13 @@ const LOOP_METHODS = new Set([
   "reduceRight",
 ]);
 
-// The array methods that search for a value, which run as a loop where a getter may answer the
-// length or an element of an array-like object.
-const SEARCH_METHODS = new Set(["indexOf", "lastIndexOf", "includes"]);
+// The array methods that read an array-like object's elements without a callback: those that search
+// for a value and those that copy the elements. Each runs as a loop where a getter may answer the
+// object's length or an element.
+const UNCALLED_METHODS = new Set(["indexOf", "lastIndexOf", "includes", "toReversed", "with"]);
+
+// The array methods that gather what they read into the array that they give.
+const GATHERING_METHODS = new Set(["filter", "map", "toReversed", "with"]);
 
 // The callback of an array method that changes what a statement can see, such as a count of its
 // calls, or a search that may run getters, which the method runs as a loop of statements.
@@ -3334,7 +3339,7 @@ const getLoopTarget = (node: ts.Node, context: Context) => {
   const method =
     isCall && ts.isPropertyAccessExpression(target) ? target.name.text : node.expression.name.text;
   const receiver = isCall ? node.arguments[0] : target;
-  return (LOOP_METHODS.has(method) || SEARCH_METHODS.has(method)) &&
+  return (LOOP_METHODS.has(method) || UNCALLED_METHODS.has(method)) &&
     (isArrayLike || getKind(receiver, context) === "sequence")
     ? {
         method,
@@ -3369,7 +3374,7 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
   const target = getLoopTarget(node, context);
   if (target === undefined) return undefined;
   const argument = target.callbackArguments.at(0);
-  if (SEARCH_METHODS.has(target.method)) {
+  if (UNCALLED_METHODS.has(target.method)) {
     return getLoopGetters(node, context).length > 0 &&
       !target.callbackArguments.some(ts.isSpreadElement)
       ? {
@@ -3415,7 +3420,10 @@ const translateLoopCall = (
   const callback = loop.callback;
   const site = callback ?? expression;
   const isReversed =
-    method === "reduceRight" || method.startsWith("findLast") || method === "lastIndexOf";
+    method === "reduceRight" ||
+    method.startsWith("findLast") ||
+    method === "lastIndexOf" ||
+    method === "toReversed";
   const isReduce = method.startsWith("reduce");
   // Where a getter may answer an array-like object's length or element, the method reads its
   // length and then each element as it visits it, as JavaScript does, so that the getters and the
@@ -3545,8 +3553,7 @@ const translateLoopCall = (
       ["indexOf", number(-1)],
       ["lastIndexOf", number(-1)],
       ["includes", boolean(false)],
-    ]).get(method) ??
-    (["filter", "map"].includes(method) || isReduce ? kept : getUndefined(context));
+    ]).get(method) ?? (GATHERING_METHODS.has(method) || isReduce ? kept : getUndefined(context));
   const inner = {
     ...withValues(
       path,
@@ -3645,7 +3652,14 @@ const translateLoopCall = (
   // Reads the element at a position, running a getter that answers it, where the object or a
   // prototype has the index. The find methods read each index, and map keeps a hole, which the
   // array it makes can't hold.
-  const visit = callback === undefined ? compare : runCallback;
+  const isCopy = method === "toReversed" || method === "with";
+  const visit =
+    callback !== undefined
+      ? runCallback
+      : isCopy
+        ? (current: Path, element: Expression) => repeat(current, apply("Append", [kept, element]))
+        : compare;
+  const replacedName = context.names.getFresh("replaced");
   const visitLazily = (elementGetters: readonly FunctionNode[]) => {
     const key = useJavaScript("ToString", [apply("-", [identifier(position), number(1)])], context);
     const read = readWith(
@@ -3658,20 +3672,27 @@ const translateLoopCall = (
       { ...frame, breakTo: undefined, continueTo: undefined, throwTo },
       visit,
     );
-    return EVERY_INDEX_METHODS.has(method)
-      ? read
-      : ifThenElse(
-          useJavaScript("Has", [getHeap(inner.scope, receiver, context), owner, key], context),
+    // with gives its value at the index that it replaces, which it doesn't read.
+    return method === "with"
+      ? ifThenElse(
+          apply("=", [identifier(position), apply("+", [identifier(replacedName), number(1)])]),
+          repeat(inner, apply("Append", [kept, identifier(searchName)])),
           read,
-          method === "map"
-            ? leaf(
-                apply("Assert", [
-                  boolean(false),
-                  string("tla-ts can't keep a hole in the array that map makes"),
-                ]),
-              )
-            : repeat(inner, kept),
-        );
+        )
+      : EVERY_INDEX_METHODS.has(method)
+        ? read
+        : ifThenElse(
+            useJavaScript("Has", [getHeap(inner.scope, receiver, context), owner, key], context),
+            read,
+            method === "map"
+              ? leaf(
+                  apply("Assert", [
+                    boolean(false),
+                    string("tla-ts can't keep a hole in the array that map makes"),
+                  ]),
+                )
+              : repeat(inner, kept),
+          );
   };
   // Reads the element at a position of the array as the callback left it, where the array still
   // reaches the position, as for a hole.
@@ -3716,9 +3737,15 @@ const translateLoopCall = (
     ),
     isRecursive: true,
   };
-  const from = callback === undefined ? loop.initial : undefined;
+  const from = callback === undefined && !isCopy ? loop.initial : undefined;
   if (from !== undefined && !isNumberLike(from, context)) {
     throw new TlaTypeScriptError("Pass a number as the index to search from", from);
+  }
+  // The value that a search looks for, or that with gives at the index that it replaces.
+  const searched = callback !== undefined ? undefined : isCopy ? loop.initial : loop.argument;
+  const replaced = method === "with" ? loop.argument : undefined;
+  if (method === "with" && (replaced === undefined || !isNumberLike(replaced, context))) {
+    throw new TlaTypeScriptError("Pass a number as the index that with replaces", expression);
   }
   // A search starts from the position after the index that fromIndex gives, from the end where
   // it's negative: lastIndexOf from no later than the last element, and the others from no earlier
@@ -3771,11 +3798,7 @@ const translateLoopCall = (
   // TypeError for an empty array.
   const getSeeded = (current: Path) =>
     !isReduce
-      ? runLoop(
-          current,
-          start,
-          ["filter", "map"].includes(method) ? tuple([]) : getUndefined(context),
-        )
+      ? runLoop(current, start, GATHERING_METHODS.has(method) ? tuple([]) : getUndefined(context))
       : initial !== undefined
         ? runLoop(current, start, translateExpression(initial, current.scope, context))
         : ifThenElse(
@@ -3796,9 +3819,9 @@ const translateLoopCall = (
         define(
           searchName,
           [],
-          loop.argument === undefined || callback !== undefined
+          searched === undefined
             ? getUndefined(context)
-            : translateExpression(loop.argument, path.scope, context),
+            : translateExpression(searched, path.scope, context),
         ),
       ],
       readWith(
@@ -3810,10 +3833,35 @@ const translateLoopCall = (
         context,
         frame,
         (after, value) => {
+          // with throws a RangeError where the index it replaces isn't below the length.
           const seeded = (current: Path) =>
             letIn(
-              [define(lengthName, [], useJavaScript("ToLength", [value], context))],
-              getSeeded(current),
+              [
+                define(lengthName, [], useJavaScript("ToLength", [value], context)),
+                ...(replaced === undefined
+                  ? []
+                  : [
+                      define(
+                        replacedName,
+                        [],
+                        useJavaScript(
+                          "RelativeIndex",
+                          [translateExpression(replaced, path.scope, context), length],
+                          context,
+                        ),
+                      ),
+                    ]),
+              ],
+              replaced === undefined
+                ? getSeeded(current)
+                : ifThenElse(
+                    junction("And", [
+                      apply(">=", [identifier(replacedName), number(0)]),
+                      apply("<", [identifier(replacedName), length]),
+                    ]),
+                    getSeeded(current),
+                    throwError("RangeError", current, expression, context, frame),
+                  ),
             );
           // ArraySpeciesCreate reads an array's constructor, running its getter, where tla-ts
           // follows only Array.

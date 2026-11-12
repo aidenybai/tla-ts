@@ -2003,6 +2003,44 @@ describe("errors", () => {
     expect((await checkModel(getSource("x,a,"))).failure?.message).toContain("unexpected");
   });
 
+  it("runs getters as toReversed and with copy an array, skipping the index with replaces", async () => {
+    const reversed = await checkModel(`
+      const arr: number[] = [0, 1, 2, 3, 4];
+      (Array.prototype as unknown as Record<string, number>)[1] = 5;
+      Object.defineProperty(arr, "3", {
+        get: function () {
+          arr.length = 1;
+          return 3;
+        },
+      });
+      const reversed = arr.toReversed();
+      if (reversed.join(",") !== "4,3,,5,0") throw new Error("reversed");
+    `);
+    expect(reversed.failure).toBeUndefined();
+    const getSource = (replaced: number) => `
+      const arr: number[] = [0, 1, 2];
+      let reads = 0;
+      const getReads = (): number => reads;
+      Object.defineProperty(arr, "0", {
+        get: function () {
+          reads += 1;
+          return 0;
+        },
+      });
+      let isRange = false;
+      try {
+        const unused = arr.with(${replaced}, 0);
+      } catch (error) {
+        isRange = error instanceof RangeError;
+      }
+      if (!isRange || reads !== 0) throw new Error("unexpected");
+      const back = arr.with(-1, 9);
+      if (back.join(",") !== "0,1,9" || getReads() !== 1) throw new Error("negative");
+    `;
+    expect((await checkModel(getSource(3))).failure).toBeUndefined();
+    expect((await checkModel(getSource(2))).failure?.message).toContain("unexpected");
+  });
+
   it("reads each element of an array-like object as its method visits it, running getters", async () => {
     const result = await checkModel(`
       let isFirstRead = false;
