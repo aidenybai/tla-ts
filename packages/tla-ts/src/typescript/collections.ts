@@ -21,6 +21,7 @@ import { DATE_FIELDS, getHeap, getPrototypeMethod, isDateType, TIME_METHODS } fr
 import {
   isBuiltInObject,
   translateBuiltInValue,
+  getStringRegExp,
   translateRegExpValue,
   translateSymbolProperty,
 } from "./intrinsics";
@@ -1487,7 +1488,10 @@ const getRegExpCall = (node: ts.Node, context: Context): RegExpCall | undefined 
   if (isRegExp(receiver) && (method === "exec" || method === "test")) {
     return values.length === 1 && isText(values[0]) ? getCall(receiver, values[0], []) : undefined;
   }
-  if ((!isText(receiver) && !isWrapped) || !isRegExp(values[0])) return undefined;
+  // search and match make a regexp of a string.
+  const isMade =
+    (method === "search" || method === "match") && getStringRegExp(values[0]) !== undefined;
+  if ((!isText(receiver) && !isWrapped) || (!isRegExp(values[0]) && !isMade)) return undefined;
   const limit = values.at(1);
   const isKnown =
     ((method === "match" || method === "search") && values.length === 1) ||
@@ -1516,8 +1520,10 @@ export const translateRegExpText = (
     : translateExpression(call.text, scope, context);
 
 // A call that a script with objects runs as a statement, since it reads or changes the heap.
-export const getHeapRegExpCall = (node: ts.Node, context: Context) =>
-  context.heap === undefined ? undefined : getRegExpCall(node, context);
+export const getHeapRegExpCall = (node: ts.Node, context: Context) => {
+  const call = context.heap === undefined ? undefined : getRegExpCall(node, context);
+  return call === undefined || getStringRegExp(call.regexp) !== undefined ? undefined : call;
+};
 
 // A RegExp's exec or test, or a String method that calls a regexp's, as an expression, where a
 // regexp is the record of its pattern. With objects, a statement runs the call where it can, and
@@ -1529,7 +1535,8 @@ const translateRegExpCall = (node: MethodCall, scope: Scope, context: Context) =
   if (
     call === undefined ||
     (context.heap !== undefined &&
-      (!ts.isRegularExpressionLiteral(call.regexp) ||
+      ((!ts.isRegularExpressionLiteral(call.regexp) &&
+        getStringRegExp(call.regexp) === undefined) ||
         call.method === "exec" ||
         call.method === "match"))
   ) {
@@ -1543,7 +1550,9 @@ const translateRegExpCall = (node: MethodCall, scope: Scope, context: Context) =
   ];
   const regexp =
     context.heap === undefined
-      ? translate(call.regexp)
+      ? getStringRegExp(call.regexp) === undefined
+        ? translate(call.regexp)
+        : translateRegExpValue(call.regexp, context)
       : useJavaScript(
           "RegExpFresh",
           [

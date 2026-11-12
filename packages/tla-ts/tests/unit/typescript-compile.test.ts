@@ -7856,6 +7856,26 @@ describe("regular expressions", () => {
     `);
     expect(replaced.failure?.message).toContain("tla-ts can't");
   });
+
+  it("search and match with a regexp that a string's pattern makes", async () => {
+    const result = await checkModel(`
+      const text = new String("hello");
+      if (text.search("l+o") !== 2 || "a.c".search(".") !== 0 || "abc".search("x") !== -1) {
+        throw new Error("search");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+    const matched = await checkModel(`
+      const found = "abcabc".match("b(c)");
+      if (found === null || found[1] !== "c" || found.index !== 1) throw new Error("match");
+    `);
+    expect(matched.failure).toBeUndefined();
+    const wrong = await checkModel(`
+      const text = new String("hello");
+      if (text.search("lo") !== 4) throw new Error("wrong");
+    `);
+    expect(wrong.failure?.message).toContain("wrong");
+  });
 });
 
 describe("calls through values", () => {

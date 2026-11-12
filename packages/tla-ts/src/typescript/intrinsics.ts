@@ -1198,10 +1198,23 @@ export const isInvalidRegExp = (node: ts.Node, context: Context) => {
   return texts !== undefined && getValidRegExp(texts) === undefined;
 };
 
-// A regular expression literal, or a regexp that getMadeRegExp reads, as the record of its pattern,
-// which without objects is the regexp itself, whose lastIndex stays 0.
+// The regexp that search or match makes of a string literal, where the literal is a valid pattern.
+export const getStringRegExp = (node: ts.Node) => {
+  const made = ts.isStringLiteralLike(node)
+    ? getValidRegExp({ pattern: node.text, flags: "" })
+    : undefined;
+  return ts.isStringLiteralLike(node) && made !== undefined
+    ? { pattern: node.text, flags: "", source: made.source }
+    : undefined;
+};
+
+// A regular expression literal, a regexp that getMadeRegExp reads, or one that getStringRegExp
+// reads, as the record of its pattern, which without objects is the regexp itself, whose lastIndex
+// stays 0.
 export const translateRegExpValue = (node: ts.Node, context: Context) => {
-  const made = ts.isRegularExpressionLiteral(node) ? undefined : getMadeRegExp(node, context);
+  const made = ts.isRegularExpressionLiteral(node)
+    ? undefined
+    : (getMadeRegExp(node, context) ?? getStringRegExp(node));
   if (made !== undefined) {
     return translateRegExp(made.pattern, made.flags, made.source, node, context);
   }
