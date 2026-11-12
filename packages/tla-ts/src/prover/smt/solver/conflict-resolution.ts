@@ -122,18 +122,28 @@ export class ConflictResolution {
     this.processedEqs.clear();
   }
 
-  private justificationToLiteralsCore(justification: Justification) {
+  private collectLiterals(mark: () => void) {
     const saved = this.antecedents;
     this.antecedents = [];
-    this.markJustification(justification);
+    mark();
     this.processJustifications();
     const result = this.antecedents;
     this.antecedents = saved;
     return result;
   }
 
+  private justificationToLiteralsCore(justification: Justification) {
+    return this.collectLiterals(() => this.markJustification(justification));
+  }
+
   justificationToLiterals(justification: Justification) {
     const result = this.justificationToLiteralsCore(justification);
+    this.unmarkJustifications(0);
+    return result;
+  }
+
+  eqToLiterals(first: Enode, second: Enode) {
+    const result = this.collectLiterals(() => this.markEq(first, second));
     this.unmarkJustifications(0);
     return result;
   }

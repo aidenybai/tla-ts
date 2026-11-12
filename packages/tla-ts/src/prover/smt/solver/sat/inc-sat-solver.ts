@@ -9,6 +9,7 @@ import { RefVector } from "../ref-vector";
 import { convertModel, mkIncSatPreprocess } from "../tactic";
 import type { SatParams } from "./config";
 import { Goal2Sat } from "./goal2sat";
+import { getConsequences } from "./consequences";
 import { sat2goal } from "./sat2goal";
 import { Solver } from "./solver";
 
@@ -187,6 +188,74 @@ export class IncSatSolver {
     if (result === L_UNDEF) this.reasonUnknown = this.solver.reasonUnknown;
     if (result !== L_FALSE) this.core.reset();
     return result;
+  }
+
+  // internalize_var: the variables of a constant's bits, undefined for a bit the solver lacks.
+  private internalizeVar(expr: number) {
+    const manager = this.manager;
+    if (!manager.isUninterpretedConst(expr)) return [undefined];
+    if (manager.isBool(expr)) return [this.goal2sat.atoms.get(expr)];
+    const bits = this.bitBlaster?.getConstBits(manager.decls[expr]);
+    if (bits === undefined) return [undefined];
+    return manager.getArgs(bits).map((bit) => this.goal2sat.atoms.get(bit));
+  }
+
+  private getValue(expr: number, value: readonly number[]) {
+    const manager = this.manager;
+    if (manager.isBool(expr)) return value[0] & 1 ? manager.mkNot(expr) : expr;
+    const numeral = value.reduce(
+      (sum, lit, index) => (lit & 1 ? sum : sum + (1n << BigInt(index))),
+      0n,
+    );
+    return manager.mkEq(expr, manager.mkBvNumeral(numeral, value.length));
+  }
+
+  getConsequences(assumptions: readonly number[], vars: readonly number[]) {
+    const manager = this.manager;
+    this.bitBlaster ??= new BitBlasterRewriter(manager, BIT_BLAST_PARAMS);
+    this.dep2asm = new Map();
+    this.solver.popToBaseLevel();
+    const consequences: number[] = [];
+    const internalized = this.internalizeFormulas();
+    if (internalized !== L_TRUE) return { result: internalized, consequences };
+    if (!assumptions.every((assumption) => this.isLiteral(assumption)))
+      throw new SmtUnsupportedError("get-consequences assumptions that are not literals");
+    this.internalizeAssumptions(assumptions);
+    const found = getConsequences(
+      this.solver,
+      this.asms,
+      vars.flatMap((expr) => this.internalizeVar(expr).filter((boolVar) => boolVar !== undefined)),
+    );
+    if (found.result === L_FALSE && this.asms.length > 0) this.extractCore(new Map());
+    if (found.result === L_FALSE) return { result: found.result, consequences };
+    const boolVar2conseq = new Map<number, number[]>();
+    for (const consequence of found.consequences)
+      boolVar2conseq.set(consequence[0] >> 1, consequence);
+    const asm2dep = new Map<number, number>();
+    for (const [dep, lit] of this.dep2asm) asm2dep.set(lit, dep);
+    for (const expr of vars) {
+      const boolVars = this.internalizeVar(expr);
+      const fixed = boolVars
+        .map((boolVar) => (boolVar === undefined ? undefined : boolVar2conseq.get(boolVar)))
+        .filter((consequence) => consequence !== undefined);
+      if (fixed.length < boolVars.length) continue;
+      const value: number[] = [];
+      const premises = new Set<number>();
+      for (const consequence of fixed) {
+        value.push(consequence[0]);
+        for (const lit of consequence.slice(1)) premises.add(lit);
+      }
+      // Z3 pops the premises, the last inserted first.
+      const conjuncts = [...premises].reverse().map((lit) => asm2dep.get(lit) as number);
+      consequences.push(
+        manager.mkApp(
+          OP_IMPLIES,
+          [manager.mkAnd(conjuncts), this.getValue(expr, value)],
+          SORT_BOOL,
+        ),
+      );
+    }
+    return { result: found.result, consequences };
   }
 
   private extractCore(asm2fml: Map<number, number>) {

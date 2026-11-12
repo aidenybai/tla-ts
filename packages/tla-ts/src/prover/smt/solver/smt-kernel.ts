@@ -55,6 +55,10 @@ export class SmtKernel {
     for (let index = 0; index < numScopes; index++) this.asserted.pop();
   }
 
+  initAssumptions(assumptions: number[]) {
+    this.context.initAssumptions(assumptions, this.asserted);
+  }
+
   check(assumptions: readonly number[] = []) {
     this.context.popToBaseLevel();
     this.setupContext();

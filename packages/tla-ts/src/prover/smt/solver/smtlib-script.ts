@@ -50,6 +50,9 @@ import { getLogicStrategy } from "./logic-tactics";
 import { isMbqiByFeatures, isMbqiByLogic } from "./smt-setup";
 import { isSupportedLogic } from "./smt-logics";
 import { getVerdict, solveAssertions, solveAssuming } from "./solver";
+import { getConsequences } from "./smt-consequences";
+import { getFdConsequences } from "./fd-solver";
+import { SmtKernel } from "./smt-kernel";
 import { isAstLess } from "./ast-lt";
 import { InvVarShifter } from "./rewriter-tpl";
 import { elimUnusedVars, getFreeVarSorts, VarSubst } from "./var-subst";
@@ -794,6 +797,67 @@ export const runSmtlibScript = (
           literals ?? list.end,
         );
       checkSat(parseFormulas(literals.items));
+    },
+    "get-consequences": (list) => {
+      const state = script.state;
+      const manager = state.manager;
+      const [assumptions, vars] = [list.items[1], list.items[2]].map((terms) => {
+        if (terms === undefined)
+          throw new SmtParseError("invalid command, argument(s) missing", list.end);
+        if (terms.kind !== "list")
+          throw new SmtParseError("invalid list of terms, '(' expected", terms);
+        return terms.items.map((item) => state.reader.parseTerm(item));
+      });
+      if (list.items.length > 3)
+        throw new SmtParseError("invalid command, too many arguments", list.items[3]);
+      clearCheck();
+      manager.limit.restart(Date.now() + options.timeLimitMs);
+      manager.limit.push(settings.rlimit);
+      const names = state.names.filter((name) => name !== -1);
+      const isFd =
+        (state.logic === "QF_FD" || state.logic === "SAT") &&
+        !settings.isProducingProofs &&
+        !settings.parameters.has("tactic.default_tactic");
+      try {
+        if (isFd) {
+          if (names.length > 0)
+            throw new SmtUnsupportedError("the named assertions of the finite-domain solver");
+          const found = getFdConsequences(manager, new Map(), state.assertions, assumptions, vars);
+          found.model?.incRef();
+          state.check = {
+            status: found.result,
+            context: undefined,
+            isOptimizing: false,
+            model: found.model,
+            core: undefined,
+          };
+          print(getVerdict(found.result));
+          print("");
+          for (const consequence of found.consequences.items) display(consequence);
+          found.consequences.reset();
+          return;
+        }
+        const kernel = new SmtKernel(manager, {
+          isMbqi: settings.isMbqi || isMbqiByLogic(getSetup()),
+          mbqiMaxIterations: settings.mbqiMaxIterations,
+          isFindingMacros: settings.isFindingMacros,
+        });
+        for (const assertion of getNamedAssertions()) kernel.assertExpr(assertion);
+        const found = getConsequences(kernel, [...names, ...assumptions], vars);
+        state.check = {
+          status: found.result,
+          context: kernel.context,
+          isOptimizing: false,
+          model: undefined,
+          core: kernel.context.unsatCore,
+        };
+        print(getVerdict(found.result));
+        print("");
+        for (const consequence of found.consequences.items) display(consequence);
+        found.consequences.reset();
+      } finally {
+        manager.limit.pop();
+      }
     },
     minimize: (list) => addObjective(list, false),
     maximize: (list) => addObjective(list, true),
