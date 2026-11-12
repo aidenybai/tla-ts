@@ -1914,6 +1914,31 @@ describe("errors", () => {
     expect((await checkModel(getSource(-1))).failure?.message).toContain("unexpected");
   });
 
+  it("runs the getter of the constructor that map makes its array through", async () => {
+    const getSource = (expected: number) => `
+      const a: number[] = [];
+      let callCount = 0;
+      const callback = () => {
+        callCount += 1;
+      };
+      Object.defineProperty(a, "constructor", {
+        get: function () {
+          throw new RangeError("constructor");
+        },
+      });
+      let isThrown = false;
+      try {
+        a.map(callback);
+      } catch (error) {
+        isThrown = error instanceof RangeError;
+      }
+      if (!isThrown) throw new Error("thrown");
+      if (callCount !== ${expected}) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(0))).failure).toBeUndefined();
+    expect((await checkModel(getSource(1))).failure?.message).toContain("unexpected");
+  });
+
   it("reads each element of an array-like object as its method visits it, running getters", async () => {
     const result = await checkModel(`
       let isFirstRead = false;

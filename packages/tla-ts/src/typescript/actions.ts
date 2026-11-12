@@ -169,7 +169,7 @@ import {
   callMethod,
   getDescriptorGetters,
   getElementGetters,
-  getLengthGetters,
+  getDefinedGetters,
   getReadFunctions,
   isDescriptorRead,
   isDescriptorsRead,
@@ -3339,18 +3339,25 @@ const getLoopTarget = (node: ts.Node, context: Context) => {
     : undefined;
 };
 
-// The getters that an array-like object's method may run as it reads its length and each element.
+// The getters that an array-like object's method may run as it reads its length, the constructor
+// that map and filter make their array through, and each element.
 const getLoopGetters = (node: ts.Node, context: Context) => {
   const target = getLoopTarget(node, context);
   return target?.isArrayLike === true
     ? [
         ...new Set([
           ...(getElementGetters(target.receiver, context) ?? []),
-          ...getLengthGetters(target.receiver, context),
+          ...getDefinedGetters(target.receiver, "length", context),
+          ...getSpeciesGetters(target.method, target.receiver, context),
         ]),
       ]
     : [];
 };
+
+const getSpeciesGetters = (method: string, receiver: ts.Node, context: Context) =>
+  method === "map" || method === "filter"
+    ? getDefinedGetters(receiver, "constructor", context)
+    : [];
 
 const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCall | undefined => {
   const target = getLoopTarget(node, context);
@@ -3407,10 +3414,13 @@ const translateLoopCall = (
   // Where a getter may answer an array-like object's length or element, the method reads its
   // length and then each element as it visits it, as JavaScript does, so that the getters and the
   // callback may change objects. reduce without an initial value reads its first element apart.
-  const lengthGetters = loop.isArrayLike ? getLengthGetters(receiver, context) : [];
+  const lengthGetters = loop.isArrayLike ? getDefinedGetters(receiver, "length", context) : [];
+  const speciesGetters = loop.isArrayLike ? getSpeciesGetters(method, receiver, context) : [];
   const getters = loop.isArrayLike
     ? (getElementGetters(receiver, context) ??
-      (lengthGetters.length > 0 && !(isReduce && loop.initial === undefined) ? [] : undefined))
+      (lengthGetters.length + speciesGetters.length > 0 && !(isReduce && loop.initial === undefined)
+        ? []
+        : undefined))
     : undefined;
   const changed =
     getters === undefined && callback !== undefined
@@ -3794,35 +3804,45 @@ const translateLoopCall = (
         context,
         frame,
         (after, value) => {
-          const readLength = useJavaScript("ToLength", [value], context);
-          return letIn(
-            [
-              define(
-                lengthName,
-                [],
-                ["filter", "map"].includes(method)
-                  ? ifExpression(
-                      apply("=", [
-                        useJavaScript(
-                          "SpeciesElements",
-                          [
-                            getHeap(after.scope, receiver, context),
-                            owner,
-                            translateBuiltInValue("Array", receiver, context),
-                            tuple([]),
-                          ],
-                          context,
-                        ),
-                        tuple([]),
-                      ]),
-                      readLength,
-                      number(0),
-                    )
-                  : readLength,
-              ),
-            ],
-            getSeeded(after),
-          );
+          const seeded = (current: Path) =>
+            letIn(
+              [define(lengthName, [], useJavaScript("ToLength", [value], context))],
+              getSeeded(current),
+            );
+          // ArraySpeciesCreate reads an array's constructor, running its getter, where tla-ts
+          // follows only Array.
+          return ["filter", "map"].includes(method)
+            ? ifThenElse(
+                useJavaScript("IsArray", [getHeap(after.scope, receiver, context), owner], context),
+                readWith(
+                  expression,
+                  owner,
+                  string("constructor"),
+                  speciesGetters,
+                  after,
+                  context,
+                  frame,
+                  (read, constructor) =>
+                    ifThenElse(
+                      useJavaScript(
+                        "SameValue",
+                        [constructor, translateBuiltInValue("Array", receiver, context)],
+                        context,
+                      ),
+                      seeded(read),
+                      leaf(
+                        apply("Assert", [
+                          boolean(false),
+                          string(
+                            "tla-ts can't make an array through a constructor that a script gives",
+                          ),
+                        ]),
+                      ),
+                    ),
+                ),
+                seeded(after),
+              )
+            : seeded(after);
         },
       ),
     );
