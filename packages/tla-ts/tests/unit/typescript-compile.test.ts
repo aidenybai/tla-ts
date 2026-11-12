@@ -5578,6 +5578,39 @@ describe("errors", () => {
     );
   });
 
+  it("throws the TypeError of calling %ThrowTypeError% or undefined through a function value", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const thrower = Object.getOwnPropertyDescriptor(Function.prototype, "caller")!.get;
+      let caught = 0;
+      try {
+        thrower!();
+      } catch (error) {
+        if (error instanceof TypeError) caught += 1;
+      }
+      const missing = Object.getOwnPropertyDescriptor({ a: 1 }, "a")!.get;
+      try {
+        missing!();
+      } catch (error) {
+        if (error instanceof TypeError) caught += 1;
+      }
+      if (caught !== 2) throw new Error("caught");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("caught !== 2", "caught !== 1");
+    expect((await checkModel(wrong)).failure?.message).toContain('"caught"');
+    const getter = `
+      const holder = { seen: 0 };
+      const getter = Object.getOwnPropertyDescriptor({ get a() { return 1; } }, "a")!.get;
+      getter!();
+      holder.seen = 1;
+    `;
+    expect((await checkModel(getter)).failure?.message).toContain(
+      "tla-ts can't tell which function this call runs",
+    );
+  });
+
   describe("tests the extensibility of a function that a variable holds where it runs", () => {
     const source = `
       const holder = { seen: 0 };
