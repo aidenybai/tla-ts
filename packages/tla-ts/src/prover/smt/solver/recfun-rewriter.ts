@@ -1,99 +1,33 @@
-// Ported from Z3 (src/ast/rewriter/recfun_rewriter.cpp, src/ast/recfun_decl_plugin.cpp), MIT
-// license, see z3-license.txt.
+// Ported from Z3 (src/ast/rewriter/recfun_rewriter.cpp), MIT license, see z3-license.txt.
 import {
   type AstManager,
   FAMILY_USER,
   KIND_APP,
-  KIND_QUANTIFIER,
   KIND_VAR,
   OP_DT_ACCESSOR,
   OP_DT_CONSTRUCTOR,
   OP_DT_IS,
   OP_DT_RECOGNISER,
-  OP_ITE,
 } from "./ast";
+import { getSubterms, isDefinedApp } from "./recfun-decl-plugin";
 import type { Rewrite } from "./rewriter-tpl";
 import { VarSubst } from "./var-subst";
 
-const getChildren = (manager: AstManager, expr: number) =>
-  manager.kinds[expr] === KIND_QUANTIFIER
-    ? [manager.getQuantifier(expr).body]
-    : manager.kinds[expr] === KIND_APP
-      ? manager.getArgs(expr)
-      : [];
+const getRhs = (manager: AstManager, decl: number) => manager.recFunDefs.get(decl)?.rhs ?? -1;
 
-// subterms::all, which goes under quantifiers.
-const getSubterms = (manager: AstManager, expr: number) => {
-  const visited = new Set<number>();
-  const todo = [expr];
-  for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
-    if (visited.has(current)) continue;
-    visited.add(current);
-    todo.push(...getChildren(manager, current));
-  }
-  return [...visited];
-};
-
-const isDefinedApp = (manager: AstManager, expr: number) =>
-  manager.kinds[expr] === KIND_APP && manager.recFunBodies.has(manager.decls[expr]);
-
-// check_pred stops at quantifiers.
-const hasPredicate = (manager: AstManager, expr: number, predicate: (term: number) => boolean) => {
-  const visited = new Set<number>();
-  const todo = [expr];
-  for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
-    if (visited.has(current) || manager.kinds[current] === KIND_QUANTIFIER) continue;
-    visited.add(current);
-    if (predicate(current)) return true;
-    if (manager.kinds[current] === KIND_APP) todo.push(...manager.getArgs(current));
-  }
-  return false;
-};
-
-const containsDef = (manager: AstManager, expr: number) =>
-  hasPredicate(manager, expr, (term) => isDefinedApp(manager, term));
-
-const containsIte = (manager: AstManager, expr: number) =>
-  hasPredicate(
-    manager,
-    expr,
-    (term) =>
-      manager.getOp(term) === OP_ITE &&
-      !containsDef(manager, manager.getArg(term, 0)) &&
-      containsDef(manager, term),
-  );
-
-// def::compute_cases makes one case unless the first unfolding of the body meets an ite to split.
-const isFunMacro = (manager: AstManager, decl: number, body: number) => {
-  if (manager.funcDecls[decl].domain.length === 0 || !containsIte(manager, body)) return true;
-  const stack = [body];
-  for (let expr = stack.pop(); expr !== undefined; expr = stack.pop()) {
-    if (manager.getOp(expr) === OP_ITE) {
-      if (containsDef(manager, manager.getArg(expr, 0))) continue;
-      if (
-        !containsDef(manager, manager.getArg(expr, 1)) &&
-        !containsDef(manager, manager.getArg(expr, 2))
-      )
-        continue;
-      return false;
-    }
-    if (manager.kinds[expr] === KIND_APP)
-      for (const arg of manager.getArgs(expr)) if (containsIte(manager, arg)) stack.push(arg);
-  }
-  return true;
-};
+const isFunMacro = (manager: AstManager, decl: number) =>
+  manager.recFunDefs.get(decl)?.cases.length === 1;
 
 // Leaves cycles through unconditional bodies to the resource-limited theory solver.
 const isOnMacroCycle = (manager: AstManager, decl: number) => {
   const todo = [decl];
   const visited = new Set(todo);
   for (let index = 0; index < todo.length; index++) {
-    for (const term of getSubterms(manager, manager.recFunBodies.get(todo[index]) ?? -1)) {
+    for (const term of getSubterms(manager, getRhs(manager, todo[index]))) {
       if (!isDefinedApp(manager, term)) continue;
       const callee = manager.decls[term];
       if (callee === decl) return true;
-      const body = manager.recFunBodies.get(callee) ?? -1;
-      if (body !== -1 && isFunMacro(manager, callee, body) && !visited.has(callee)) {
+      if (isFunMacro(manager, callee) && !visited.has(callee)) {
         visited.add(callee);
         todo.push(callee);
       }
@@ -108,7 +42,7 @@ const isDecreasingArg = (
   position: number,
   isAnyAccessorAllowed: boolean,
 ) => {
-  const body = manager.recFunBodies.get(decl) ?? -1;
+  const body = getRhs(manager, decl);
   if (body === -1 || manager.hasQuantifierFlags[body]) return false;
   const index = manager.funcDecls[decl].domain.length - position - 1;
   const isParameter = (expr: number) =>
@@ -139,22 +73,21 @@ const isDecreasingArg = (
   return true;
 };
 
-// recfun_rewriter::mk_app_core without unfold_recursive_functions, which only the model evaluator
-// sets.
+// recfun_rewriter::mk_app_core, which unfolds a body with uninterpreted functions only with
+// unfold_recursive_functions, which only the model evaluator sets.
 export const mkRecFunApp = (
   manager: AstManager,
   decl: number,
   args: number[],
+  isUnfolding = false,
 ): Rewrite | undefined => {
-  const body = manager.recFunBodies.get(decl) ?? -1;
+  const body = getRhs(manager, decl);
   if (args.length === 0 || body === -1) return undefined;
-  if (isFunMacro(manager, decl, body) && isOnMacroCycle(manager, decl)) return undefined;
+  if (isFunMacro(manager, decl) && isOnMacroCycle(manager, decl)) return undefined;
   if (
+    !isUnfolding &&
     getSubterms(manager, body).some(
-      (term) =>
-        manager.kinds[term] === KIND_APP &&
-        manager.getFamily(term) === FAMILY_USER &&
-        !manager.recFunBodies.has(manager.decls[term]),
+      (term) => manager.kinds[term] === KIND_APP && manager.getFamily(term) === FAMILY_USER,
     )
   )
     return undefined;

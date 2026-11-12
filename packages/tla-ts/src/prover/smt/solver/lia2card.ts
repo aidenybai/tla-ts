@@ -195,6 +195,7 @@ export const lia2card = (
   maxIteNesting: number,
   isCompilingEquality: boolean,
 ) => {
+  if (manager.hasRecDefs) return;
   const terms = new RefVector(manager);
   const pin = (expr: number) => {
     terms.push(expr);

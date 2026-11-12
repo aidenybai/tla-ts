@@ -10,6 +10,7 @@ import {
   OP_DIV,
   OP_DIV0,
   OP_DT_ACCESSOR,
+  OP_FUN_DEFINED,
   OP_EQ,
   OP_IDIV,
   OP_IDIV0,
@@ -95,7 +96,7 @@ export class RuleProperties {
     } else if (manager.getFamily(expr) === FAMILY_USER) addUninterpreted();
     else if (op === OP_DT_ACCESSOR)
       throw new SmtUnsupportedError("datatype accessors in Horn rules");
-    else if (DIVISION_BY_ZERO_OPS.has(op) || manager.recFunBodies.has(decl)) addUninterpreted();
+    else if (DIVISION_BY_ZERO_OPS.has(op) || op === OP_FUN_DEFINED) addUninterpreted();
     else if (DIVISION_OPS.has(op)) {
       const divisor = this.context.simplify(manager.getArg(expr, 1));
       if (!manager.isNumeral(divisor) || manager.getRationalValue(divisor).isZero())

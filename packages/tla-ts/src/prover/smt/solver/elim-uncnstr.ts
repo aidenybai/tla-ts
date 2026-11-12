@@ -490,7 +490,7 @@ export const elimUncnstr = (manager: AstManager, goal: Goal, bodies: RefVector) 
   bodies.reset();
   const vars = collectUnconstrained(manager, goal);
   const disabled = disableQuantified(manager, goal, bodies);
-  if (vars.size === 0) return;
+  if (vars.size === 0 || manager.hasRecDefs) return;
   const rewriter = new UncnstrRewriter(manager, goal.isProofsEnabled);
   rewriter.vars = vars;
   rewriter.disabled = disabled;

@@ -7,6 +7,7 @@ import {
   FAMILY_FPA,
   FAMILY_LABEL,
   FAMILY_MODEL_VALUE,
+  FAMILY_RECFUN,
   FAMILY_SEQ,
   FAMILY_USER,
   KIND_APP,
@@ -19,6 +20,7 @@ import {
   OP_DT_RECOGNISER,
   OP_SEQ_SKOLEM,
   OP_FPA_NUM,
+  OP_FUN_CASE_PRED,
   OP_LABEL,
   OP_ITE,
   OP_NUM,
@@ -132,6 +134,17 @@ const getDeclKey = (manager: AstManager, expr: number): DeclKey => {
     };
   if (decl.family === FAMILY_ARRAY)
     return { name: decl.name, parameters: [], domain: decl.domain, range };
+  // A case predicate has the parameters (index, definition), and the others an integer.
+  if (decl.family === FAMILY_RECFUN)
+    return {
+      name: decl.name,
+      parameters:
+        decl.op === OP_FUN_CASE_PRED
+          ? [PARAM_INT, decl.parameters[0], PARAM_AST, manager.funcDecls[decl.parameters[1]].name]
+          : [PARAM_INT, decl.parameters[0]],
+      domain: decl.domain,
+      range,
+    };
   if (decl.family === FAMILY_DATATYPE)
     return {
       name: decl.name,
@@ -211,7 +224,8 @@ const isSameDeclKey = (manager: AstManager, first: number, second: number) => {
     decl.family === FAMILY_DATATYPE ||
     decl.family === FAMILY_FPA ||
     decl.family === FAMILY_SEQ ||
-    decl.family === FAMILY_CHAR
+    decl.family === FAMILY_CHAR ||
+    decl.family === FAMILY_RECFUN
   )
     return true;
   const index = decl.op === OP_ITE ? 1 : 0;

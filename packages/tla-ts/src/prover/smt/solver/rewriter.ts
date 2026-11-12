@@ -23,6 +23,7 @@ import {
   FAMILY_DATATYPE,
   FAMILY_FPA,
   FAMILY_PB,
+  FAMILY_RECFUN,
   FAMILY_SEQ,
   KIND_APP,
   KIND_QUANTIFIER,
@@ -223,7 +224,6 @@ export class Rewriter extends RewriterTpl {
     // An uninterpreted application only reduces by pull_ite, which needs two arguments.
     if (
       manager.funcDecls[decl].op === OP_UNINTERPRETED &&
-      !manager.recFunBodies.has(decl) &&
       (args.length !== 2 || this.options.isPullingCheapIte !== true)
     )
       return -1;
@@ -568,7 +568,7 @@ export class Rewriter extends RewriterTpl {
     if (funcDecl.family === FAMILY_PB) return mkPbAppCore(manager, decl, args);
     if (funcDecl.family === FAMILY_SEQ || funcDecl.family === FAMILY_CHAR)
       return this.seq.mkAppCore(decl, args) ?? -1;
-    if (manager.recFunBodies.has(decl)) return mkRecFunApp(manager, decl, args) ?? -1;
+    if (funcDecl.family === FAMILY_RECFUN) return mkRecFunApp(manager, decl, args) ?? -1;
     const op = funcDecl.op;
     switch (op) {
       case OP_AND:

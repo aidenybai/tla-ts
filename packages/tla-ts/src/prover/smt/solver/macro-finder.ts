@@ -18,6 +18,7 @@ import {
   QUANTIFIER_FORALL,
 } from "./ast";
 import { isAppOf } from "./ast-util";
+import { getSubterms } from "./recfun-decl-plugin";
 import type { Goal } from "./goal";
 import { isMacroHead, normalizeMacroDef, setElseInterp } from "./model-macro-solver";
 import type { ProtoModel } from "./proto-model";
@@ -274,6 +275,17 @@ export class MacroManager {
   insert(decl: number, quantifier: number) {
     const manager = this.manager;
     if (this.decl2macro.has(decl)) return false;
+    // The recfun theory unfolds a recursive definition, which the expansion of the macro does not
+    // reach.
+    for (const def of manager.recFunDefs.values())
+      if (
+        !def.isMacro &&
+        def.rhs !== -1 &&
+        getSubterms(manager, def.rhs).some(
+          (term) => manager.kinds[term] === KIND_APP && manager.decls[term] === decl,
+        )
+      )
+        return false;
     const headDef = getHeadDef(manager, quantifier, decl);
     const deps = new Set<number>();
     collectUserDecls(manager, headDef.def, deps);
@@ -463,7 +475,7 @@ export class MacroManager {
 }
 
 export const findGoalMacros = (manager: AstManager, goal: Goal) => {
-  if (manager.recFunBodies.size > 0) return;
+  if (manager.recFunDefs.size > 0) return;
   const macros = new MacroManager(manager);
   const forms = macros.findInGoal([...goal.forms.items]);
   goal.reset();

@@ -63,6 +63,7 @@ import {
   OP_FALSE,
   OP_UMINUS,
   OP_UNINTERPRETED,
+  OP_FUN_DEFINED,
   OP_XOR,
   SORT_BOOL,
   SORT_INT,
@@ -118,6 +119,7 @@ import {
   logicHasSeq,
   isSupportedLogic,
 } from "./smt-logics";
+import { setRecFunDefinition } from "./recfun-decl-plugin";
 import { replaceFreeVars } from "./var-subst";
 import { UpolynomialManager } from "./nlsat/upolynomial";
 
@@ -1050,7 +1052,9 @@ export const createSmtlibReader = (
     const op = manager.funcDecls[decl].op;
     const name = manager.funcDecls[decl].name;
     const isUninterpreted =
-      op === OP_UNINTERPRETED || manager.funcDecls[decl].family === FAMILY_DATATYPE;
+      op === OP_UNINTERPRETED ||
+      op === OP_FUN_DEFINED ||
+      manager.funcDecls[decl].family === FAMILY_DATATYPE;
     const domain = manager.funcDecls[decl].domain;
     const builtinSort = isUninterpreted ? -1 : (domainSort ?? getDomainSort(op, inputArgs));
     const getExpected = (index: number) =>
@@ -2346,7 +2350,7 @@ export const createSmtlibReader = (
         `invalid function definition, sort mismatch. Expcected ${manager.getSortName(range)} but function body has sort ${manager.getSortName(manager.sorts[parsed])}`,
         next,
       );
-    manager.setRecFunBody(decl, parsed);
+    setRecFunDefinition(manager, manager.recFunDefs.get(decl)!, false, parsed);
   };
 
   const declareCommand = (list: SmtList) => {

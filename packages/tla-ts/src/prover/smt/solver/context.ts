@@ -41,6 +41,7 @@ import { MaxCliques } from "./max-cliques";
 import { BoolVar, getVar, isNegated, Literal, mkLiteral, negate, toBoolVar } from "./literal";
 import type { MacroManager } from "./macro-finder";
 import { mkModel } from "./model-generator";
+import { TheoryRecfun } from "./theory-recfun";
 import type { GeneratedModel } from "./model-generator";
 import type { ProtoModel } from "./proto-model";
 import { DefaultQuantifierManager } from "./quantifier-manager";
@@ -160,6 +161,7 @@ export class Context extends Internalizer {
     this.registerPlugin(new TheoryArray(this));
     this.registerPlugin(new TheoryBv(this));
     this.registerPlugin(new TheoryDatatype(this));
+    this.registerPlugin(new TheoryRecfun(this));
     this.registerPlugin(new TheorySeq(this));
     this.registerPlugin(new TheoryChar(this));
     this.registerPlugin(new TheoryFpa(this));
@@ -1231,6 +1233,7 @@ export class Context extends Internalizer {
     const model = generated.model.mkModel();
     for (const entry of this.manager.macros)
       if (!model.constInterps.has(entry[0])) model.registerConst(entry[0], entry[1]);
+    model.addRecFuns();
     model.incRef();
     this.modelState = { kind: "final", generated, model };
     return model;

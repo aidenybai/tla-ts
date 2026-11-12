@@ -35,6 +35,7 @@ export const FAMILY_CHAR = 9;
 export const FAMILY_SEQ = 10;
 export const FAMILY_LABEL = 11;
 export const FAMILY_PB = 12;
+export const FAMILY_RECFUN = 13;
 
 export const OP_TRUE = 0;
 export const OP_FALSE = 1;
@@ -317,6 +318,10 @@ export const OP_AT_LEAST_K = PB_OP_BASE + 1;
 export const OP_PB_LE = PB_OP_BASE + 2;
 export const OP_PB_GE = PB_OP_BASE + 3;
 export const OP_PB_EQ = PB_OP_BASE + 4;
+const RECFUN_OP_BASE = 900;
+export const OP_FUN_DEFINED = RECFUN_OP_BASE;
+export const OP_FUN_CASE_PRED = RECFUN_OP_BASE + 1;
+export const OP_NUM_ROUNDS = RECFUN_OP_BASE + 2;
 
 // The number of elements of a sort, with -1 for an infinite sort and -2 for a very big one.
 export const SORT_SIZE_INFINITE = -1n;
@@ -346,6 +351,22 @@ export interface FuncDecl {
   isSkolem: boolean;
   smallId: number;
   parameters: number[];
+}
+
+// The rhs of a definition is -1 until its body is parsed.
+export interface RecFunDef {
+  decl: number;
+  rhs: number;
+  isMacro: boolean;
+  cases: RecFunCase[];
+}
+
+export interface RecFunCase {
+  pred: number;
+  guards: number[];
+  rhs: number;
+  isImmediate: boolean;
+  def: RecFunDef;
 }
 
 interface QuantifierData {
@@ -605,7 +626,11 @@ const hasOwnDeclHash = (family: number) =>
   family === FAMILY_CHAR ||
   family === FAMILY_SEQ ||
   family === FAMILY_LABEL ||
-  family === FAMILY_PB;
+  family === FAMILY_PB ||
+  family === FAMILY_RECFUN;
+
+// The declarations that Z3 makes once and counts references to, rather than on each use.
+const isDeclaredFamily = (family: number) => family === FAMILY_USER || family === FAMILY_RECFUN;
 
 export class AstManager {
   // The tables of the expressions are typed arrays indexed by expression, which the collector does
@@ -710,8 +735,11 @@ export class AstManager {
   // A deleted declaration keeps its small id here, in case an application of it is created again.
   private declRefCounts: number[] = [];
   readonly macros = new ObjMap<number>((decl) => this.declHashes[decl]);
-  // -1 until the body is parsed.
-  readonly recFunBodies = new Map<number, number>();
+  // The recfun plugin's definitions by declaration, and their cases by case predicate.
+  readonly recFunDefs = new Map<number, RecFunDef>();
+  readonly recFunCases = new Map<number, RecFunCase>();
+  hasRecDefs = false;
+  private numRoundsDecls = new Map<number, number>();
   private deletedDecls = new Set<number>();
   private freshId = 0;
   // Z3's id of each expression, which orders Z3's sorts. Like Z3, the manager counts references and
@@ -821,32 +849,67 @@ export class AstManager {
     this.macros.set(decl, expr);
   }
 
-  mkRecFuncDecl(name: string, domain: number[], range: number) {
+  // recfun::def: the declaration of a defined function, which the definition holds.
+  mkRecFuncDecl(name: SmtSymbol, domain: number[], range: number) {
+    const decl = this.mkRecFunDecl(OP_FUN_DEFINED, name, [0], domain, range);
+    this.declRefCounts[decl] = 1;
+    this.recFunDefs.set(decl, { decl, rhs: -1, isMacro: false, cases: [] });
+    return decl;
+  }
+
+  // case_def: the predicate of a case, which the case holds.
+  mkRecFunCasePredDecl(def: number, index: number) {
+    const decl = this.mkRecFunDecl(
+      OP_FUN_CASE_PRED,
+      "case-def",
+      [index, def],
+      this.funcDecls[def].domain,
+      SORT_BOOL,
+    );
+    this.declRefCounts[decl] = 1;
+    return decl;
+  }
+
+  // mk_num_rounds_pred: Z3 makes the declaration again once its last application is deleted.
+  mkNumRoundsPred(round: number) {
+    let decl = this.numRoundsDecls.get(round);
+    if (decl === undefined) {
+      decl = this.mkRecFunDecl(OP_NUM_ROUNDS, "recfun-num-rounds", [round], [], SORT_BOOL);
+      this.declRefCounts[decl] = 0;
+      this.numRoundsDecls.set(round, decl);
+    }
+    return this.mkApp(decl, [], SORT_BOOL);
+  }
+
+  private mkRecFunDecl(
+    op: number,
+    name: SmtSymbol,
+    parameters: number[],
+    domain: number[],
+    range: number,
+  ) {
     const decl = this.funcDecls.length;
     this.declHashes[decl] = this.getFuncDeclHash(
       name,
       domain,
       range,
-      getInfoHash(Z3_RECFUN_FAMILY, 0, [0]),
+      getInfoHash(
+        Z3_RECFUN_FAMILY,
+        op - RECFUN_OP_BASE,
+        op === OP_FUN_CASE_PRED ? [parameters[0], this.declHashes[parameters[1]]] : parameters,
+      ),
     );
     this.funcDecls.push({
       name,
-      family: FAMILY_USER,
-      op: OP_UNINTERPRETED,
+      family: FAMILY_RECFUN,
+      op,
       domain,
       range,
       isSkolem: false,
       smallId: this.mkSmallId(),
-      parameters: [],
+      parameters,
     });
-    this.declRefCounts[decl] = 1;
-    this.recFunBodies.set(decl, -1);
     return decl;
-  }
-
-  setRecFunBody(decl: number, body: number) {
-    this.incRef(body);
-    this.recFunBodies.set(decl, body);
   }
 
   // The signature of a builtin declaration that Z3 makes on first use, or null for a declaration
@@ -879,7 +942,7 @@ export class AstManager {
 
   private holdDecl(expr: number) {
     const decl = this.decls[expr];
-    if (this.funcDecls[decl].family === FAMILY_USER) {
+    if (isDeclaredFamily(this.funcDecls[decl].family)) {
       this.incDeclRef(decl);
       return;
     }
@@ -899,7 +962,7 @@ export class AstManager {
 
   private releaseDecl(expr: number) {
     const decl = this.decls[expr];
-    if (this.funcDecls[decl].family === FAMILY_USER) {
+    if (isDeclaredFamily(this.funcDecls[decl].family)) {
       this.declRefCounts[decl]--;
       if (this.declRefCounts[decl] > 0) return -1;
       this.deletedDecls.add(decl);
@@ -1909,9 +1972,11 @@ export class AstManager {
   }
 
   mkFreshVarName(prefix: string | null) {
-    const name = `${prefix ?? "var"}!${this.freshId}`;
-    this.freshId++;
-    return name;
+    return `${prefix ?? "var"}!${this.mkFreshId()}`;
+  }
+
+  mkFreshId() {
+    return this.freshId++;
   }
 
   private intern(

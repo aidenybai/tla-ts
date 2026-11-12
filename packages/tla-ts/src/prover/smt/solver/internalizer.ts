@@ -823,8 +823,6 @@ export abstract class Internalizer {
 
   private internalizeRec(expr: number, isGateContext: boolean) {
     const manager = this.manager;
-    if (manager.kinds[expr] === KIND_APP && manager.recFunBodies.has(manager.decls[expr]))
-      throw new SmtUnsupportedError("theory_recfun, which recursive functions need");
     if (manager.getFamily(expr) === FAMILY_PB)
       throw new SmtUnsupportedError("theory_pb, which pseudo-Boolean constraints need");
     if (manager.sorts[expr] === SORT_BOOL) this.internalizeFormula(expr, isGateContext);

@@ -6,6 +6,7 @@ import {
   FAMILY_LABEL,
   FAMILY_ARRAY,
   FAMILY_FPA,
+  FAMILY_RECFUN,
   FAMILY_USER,
   KIND_APP,
   KIND_QUANTIFIER,
@@ -34,6 +35,7 @@ import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
 import type { Rewrite } from "./rewriter-tpl";
 import { Rational } from "./rational";
+import { mkRecFunApp } from "./recfun-rewriter";
 import { VarSubst } from "./var-subst";
 
 const BY_ZERO_OPS = new Map([
@@ -109,6 +111,15 @@ export class ModelEvaluator extends RewriterTpl {
       if (reduced !== undefined) return reduced;
     }
     if (family === FAMILY_LABEL && args.length === 1) return args[0];
+    if (family === FAMILY_RECFUN) {
+      const unfolded = mkRecFunApp(manager, decl, args, true);
+      if (unfolded !== undefined) return unfolded;
+      const interp = model.funcInterps.get(decl);
+      if (interp === undefined) return -1;
+      if (interp.isPartial()) interp.setElse(model.getSomeValue(sort));
+      const result = this.substitute(interp.getInterp() as number, args);
+      return manager.isGround(result) ? { expr: result, depth: Infinity } : result;
+    }
     const rewritten = this.rewriter.reduceAppCore(decl, args);
     const reduced =
       rewritten !== -1

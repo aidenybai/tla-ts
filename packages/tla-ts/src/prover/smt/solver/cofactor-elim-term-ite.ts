@@ -83,11 +83,7 @@ class CofactorRewriter extends RewriterTpl {
 
   reduceApp(decl: number, args: number[], _sort: number) {
     const manager = this.manager;
-    if (
-      !SIMPLIFIED_FAMILIES.includes(manager.funcDecls[decl].family) ||
-      manager.recFunBodies.has(decl)
-    )
-      return -1;
+    if (!SIMPLIFIED_FAMILIES.includes(manager.funcDecls[decl].family)) return -1;
     const outer = manager.beginTemporaries();
     const result = this.simplifier.reduceAppCore(decl, args);
     if (result !== -1) manager.incRef(typeof result === "number" ? result : result.expr);

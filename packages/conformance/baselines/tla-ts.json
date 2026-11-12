@@ -15,7 +15,6 @@
   "tlapm/backends/z3/z3test/regressions/smt2/macro-finder-cores.smt2": "text-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/opt_nlsat_uf_fallback.smt2": "text-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/pb.smt2": "message-mismatch",
-  "tlapm/backends/z3/z3test/regressions/smt2/recfun_defined_function_soundness.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/seq_foldl_nth_model_validation.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/sine9.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/string-concat.smt2": "text-mismatch",

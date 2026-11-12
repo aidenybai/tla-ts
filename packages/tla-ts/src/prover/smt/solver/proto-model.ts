@@ -28,6 +28,7 @@ import { mkEmptySeq, mkSeqApp } from "./seq-decl-plugin";
 import { Rational } from "./rational";
 import { ObjHashtable, ObjMap } from "./hashtable";
 import { ModelEvaluator } from "./model-evaluator";
+import { ExprSafeReplace } from "./expr-safe-replace";
 import { RefVector } from "./ref-vector";
 import { CharFactory, SeqFactory } from "./seq-factory";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
@@ -316,6 +317,31 @@ export class ProtoModel {
     }
     this.funcInterps.set(decl, interp);
     old?.release();
+  }
+
+  // add_rec_funs: a recursive function without an interpretation takes its definition, whose
+  // variables a function interpretation numbers from the first argument.
+  addRecFuns() {
+    const manager = this.manager;
+    for (const def of manager.recFunDefs.values()) {
+      if (def.rhs === -1 || this.constInterps.has(def.decl) || this.funcInterps.has(def.decl))
+        continue;
+      const domain = manager.funcDecls[def.decl].domain;
+      if (domain.length === 0) {
+        this.registerConst(def.decl, def.rhs);
+        continue;
+      }
+      const subst = new ExprSafeReplace(manager);
+      domain.forEach((sort, index) =>
+        subst.insert(manager.mkVar(domain.length - index - 1, sort), manager.mkVar(index, sort)),
+      );
+      const body = subst.apply(def.rhs);
+      subst.release();
+      const interp = new FuncInterp(manager, domain.length);
+      interp.setElse(body);
+      manager.decRef(body);
+      this.registerFunc(def.decl, interp);
+    }
   }
 
   registerAuxDecl(decl: number, interp?: FuncInterp) {

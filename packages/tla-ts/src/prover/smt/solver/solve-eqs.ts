@@ -34,6 +34,7 @@ import { mkBvApp } from "./bv-decl-plugin";
 import type { Definition, Goal } from "./goal";
 import { ObjMap } from "./hashtable";
 import { Rational } from "./rational";
+import { getSubterms } from "./recfun-decl-plugin";
 import { RefVector } from "./ref-vector";
 import { Rewriter, type RewriterOptions } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
@@ -102,6 +103,7 @@ export class SolveEqs {
   private substitution: ObjMap<number>;
   private definitions: Definition[] = [];
   private containsV = new Set<number>();
+  private unsafeVars = new Set<number>();
   private andPositive = new Set<number>();
   private andNegative = new Set<number>();
   private orPositive = new Set<number>();
@@ -530,13 +532,13 @@ export class SolveEqs {
     this.var2id.clear();
     this.id2var = [];
     for (const eq of eqs) {
-      if (this.var2id.has(eq.variable) || !this.isConst(eq.variable)) continue;
+      if (this.var2id.has(eq.variable) || !this.canBeVar(eq.variable)) continue;
       this.var2id.set(eq.variable, this.id2var.length);
       this.id2var.push(eq.variable);
     }
     this.next = this.id2var.map(() => []);
     for (const eq of eqs)
-      if (this.isConst(eq.variable)) this.next[this.var2id.get(eq.variable) as number].push(eq);
+      if (this.canBeVar(eq.variable)) this.next[this.var2id.get(eq.variable) as number].push(eq);
   }
 
   private extractSubst() {
@@ -628,7 +630,19 @@ export class SolveEqs {
       this.definitions.push({ decl: this.manager.decls[variable], def });
   }
 
+  private canBeVar(expr: number) {
+    return this.isConst(expr) && !this.unsafeVars.has(expr);
+  }
+
+  // filter_unsafe_vars: the recfun theory unfolds a recursive definition, which a substitution
+  // does not reach, so the constants in its body stay.
   private runRound(getEqs: () => DependentEq[]) {
+    const manager = this.manager;
+    this.unsafeVars = new Set(
+      [...manager.recFunDefs.values()]
+        .filter((def) => !def.isMacro && def.rhs !== -1)
+        .flatMap((def) => getSubterms(manager, def.rhs)),
+    );
     this.eqTerms.reset();
     const eqs = getEqs();
     this.extractDepGraph(eqs);
