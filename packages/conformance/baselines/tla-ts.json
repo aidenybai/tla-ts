@@ -19,7 +19,6 @@
   "tlapm/backends/z3/z3test/regressions/smt2/7026-1.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/consequence_fd.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/consequences.smt2": "message-mismatch",
-  "tlapm/backends/z3/z3test/regressions/smt2/fp-conversions-10.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/fp-to_ieee_bv-2.smt2": "text-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/fpa_to_fp_from_real_interval.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/issue-1655.smt2": "text-mismatch",

@@ -25,12 +25,21 @@ import {
   OP_FPA_MAX,
   OP_FPA_MIN,
   OP_ITE,
+  OP_ADD,
+  OP_DIV,
+  OP_GT,
+  OP_IMPLIES,
+  OP_LT,
+  OP_MUL,
+  OP_POWER,
+  OP_UMINUS,
   OP_SIGN_EXT,
   OP_SLEQ,
   OP_SLT,
   OP_ULEQ,
   OP_ZERO_EXT,
   OP_NUM,
+  SORT_BOOL,
   SORT_INT,
   SORT_REAL,
 } from "./ast";
@@ -47,7 +56,7 @@ import {
 } from "./fpa-decl-plugin";
 import { ObjMap } from "./hashtable";
 import { isInf, isNan, type Mpf, mpfFromRational } from "./mpf";
-import type { Rational } from "./rational";
+import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
 import type { Rewriter } from "./rewriter";
 
@@ -1442,8 +1451,78 @@ export class Fpa2BvConverter {
     return this.mkIte(c4, nte, r3);
   }
 
-  mkToReal(): number {
-    throw new SmtUnsupportedError("floating-point conversion to a non-numeral real");
+  mkToReal(decl: number, x: number) {
+    const manager = this.manager;
+    const sort = manager.sorts[x];
+    const ebits = manager.getEbits(sort);
+    const sbits = manager.getSbits(sort);
+    const real = (op: number, ...args: number[]) => manager.mkApp(op, args, SORT_REAL);
+    const isBitOne = (expr: number, index: number) =>
+      manager.mkEq(this.extract(index, index, expr), bv1);
+    const xIsNan = this.mkIsNan(x);
+    const xIsInf = this.mkIsInf(x);
+    const xIsZero = this.mkIsZero(x);
+    const unpacked = this.unpack(x, true);
+    const zero = manager.mkRealNumeral(Rational.of(0n));
+    const one = manager.mkRealNumeral(Rational.of(1n));
+    const two = manager.mkRealNumeral(Rational.of(2n));
+    this.num(0, 1);
+    const bv1 = this.num(1, 1);
+    let rsig = one;
+    for (let index = sbits - 2; index >= 0; index--) {
+      const bitIsOne = isBitOne(unpacked.sig, index);
+      rsig = real(OP_ADD, real(OP_MUL, rsig, two), this.mkRawIte(bitIsOne, one, zero));
+    }
+    const ep2 = manager.mkRealNumeral(Rational.of(1n << BigInt(sbits - 1)));
+    rsig = real(OP_DIV, rsig, ep2);
+    const expP = this.bv(
+      OP_BSUB,
+      this.signExtend(1, unpacked.exp),
+      this.zeroExtend(1, unpacked.lz),
+    );
+    const expIsNeg = isBitOne(expP, ebits);
+    const expAbs = this.mkRawIte(expIsNeg, this.bv(OP_BNEG, expP), expP);
+    let exp2 = zero;
+    for (let index = ebits; index >= 0; index--) {
+      const bitIsOne = isBitOne(expAbs, index);
+      exp2 = real(OP_ADD, real(OP_MUL, exp2, two), this.mkRawIte(bitIsOne, one, zero));
+    }
+    const twoExp2 = real(OP_POWER, two, exp2);
+    const scale = this.mkRawIte(expIsNeg, real(OP_DIV, one, twoExp2), twoExp2);
+    const magnitude = real(OP_MUL, rsig, scale);
+    const negated = real(OP_UMINUS, magnitude);
+    const sgnIsOne = manager.mkEq(unpacked.sgn, bv1);
+    const value = this.mkRawIte(sgnIsOne, negated, magnitude);
+    const wrapped = this.nanWrap(x);
+    const unspecified = manager.mkApp(
+      this.mkBvUf(decl, [manager.sorts[wrapped]], SORT_REAL),
+      [wrapped],
+      SORT_REAL,
+    );
+    const result = this.mkRawIte(
+      xIsNan,
+      unspecified,
+      this.mkRawIte(xIsInf, unspecified, this.mkRawIte(xIsZero, zero, value)),
+    );
+    const notSpecial = manager.mkNot(this.mkOr(xIsNan, xIsInf, xIsZero));
+    this.extraAssertions.push(
+      manager.mkApp(
+        OP_IMPLIES,
+        [this.mkAnd(notSpecial, sgnIsOne), manager.mkApp(OP_LT, [result, zero], SORT_BOOL)],
+        SORT_BOOL,
+      ),
+    );
+    this.extraAssertions.push(
+      manager.mkApp(
+        OP_IMPLIES,
+        [
+          this.mkAnd(notSpecial, manager.mkNot(sgnIsOne)),
+          manager.mkApp(OP_GT, [result, zero], SORT_BOOL),
+        ],
+        SORT_BOOL,
+      ),
+    );
+    return result;
   }
 
   private mkToFpBits(sort: number, rm: number, x: number, isSigned: boolean) {

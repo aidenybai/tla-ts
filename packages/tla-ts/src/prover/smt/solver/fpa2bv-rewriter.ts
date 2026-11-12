@@ -285,8 +285,9 @@ export class Fpa2BvRewriter extends RewriterTpl {
         );
       }
       case OP_FPA_TO_REAL:
+        return converter.mkToReal(decl, args[0]);
       case OP_FPA_TO_REAL_I:
-        return converter.mkToReal();
+        return converter.mkToReal(this.getDecl(OP_FPA_TO_REAL, [], args), args[0]);
       case OP_FPA_TO_IEEE_BV:
         return converter.mkToIeeeBv(decl, args[0]);
       case OP_FPA_TO_IEEE_BV_I:
