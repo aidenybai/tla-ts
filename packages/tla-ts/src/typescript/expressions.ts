@@ -1548,6 +1548,16 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
       node,
     );
   }
+  // The global object, whose properties tla-ts doesn't read.
+  if (
+    node.text === "globalThis" &&
+    context.heap !== undefined &&
+    symbol !== undefined &&
+    (symbol.flags & ts.SymbolFlags.ValueModule) !== 0
+  ) {
+    context.prelude.add("JavaScript");
+    return identifier("GlobalObject");
+  }
   throw new TlaTypeScriptError(`Unknown name: ${node.text}`, node);
 };
 

@@ -3222,6 +3222,43 @@ describe("errors", () => {
     }
   });
 
+  it("compares globalThis as the global object and stops where it reads its properties", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const check = (actual: unknown, expected: unknown, message: string) => {
+        if (actual !== expected) throw new Error(message);
+      };
+      const global = globalThis;
+      check(typeof global, "object", "typeof");
+      check((global as unknown) === holder, false, "other");
+      check(Object.isExtensible(global), true, "extensible");
+      check(Object.isFrozen(global), false, "frozen");
+      function callback(this: unknown) { return this === global; }
+      check([11].some(callback, global), true, "thisArg");
+      check([11].some(callback, holder), false, "other thisArg");
+      const run = (func: () => unknown) => {
+        try {
+          func();
+        } catch (thrown) {
+          if (typeof thrown !== "object") throw new Error("setter kind");
+          return;
+        }
+        throw new Error("setter");
+      };
+      run(function () {
+        Object.create({}, { prop: { set: global as unknown as () => void } });
+      });
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("callback, holder), false", "callback, holder), true");
+    expect((await checkModel(wrong)).failure?.message).toContain("other thisArg");
+    const frozen = source.replace("isFrozen(global), false", "isFrozen(global), true");
+    expect((await checkModel(frozen)).failure?.message).toContain("frozen");
+    const read = source.replace("holder.seen = 1;", "holder.seen = globalThis.NaN;");
+    expect((await checkModel(read)).failure?.message).toContain("can't read the properties");
+  });
+
   it("gives new Object's object argument back and wraps a primitive one", async () => {
     const result = await checkModel(`
       declare global {

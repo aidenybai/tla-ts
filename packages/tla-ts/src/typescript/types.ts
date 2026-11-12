@@ -132,6 +132,11 @@ const isPlainObject = (type: ts.Type, context: Context): boolean => {
   if (readonly !== undefined) return isPlainObject(readonly, context);
   if (type.isIntersection()) return type.types.every((member) => isPlainObject(member, context));
   if ((type.flags & ts.TypeFlags.NonPrimitive) !== 0) return true;
+  // The global object, which typeof globalThis types, and whose properties a script reads from
+  // the heap.
+  if (symbol?.name === "globalThis" && (symbol.flags & ts.SymbolFlags.ValueModule) !== 0) {
+    return true;
+  }
   const declaration = symbol?.valueDeclaration;
   if (
     declaration !== undefined &&

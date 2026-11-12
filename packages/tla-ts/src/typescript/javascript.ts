@@ -497,6 +497,10 @@ LOCAL IsObject(value) == IsRef(value) \\/ TypeOf(value) = "function"
 
 LOCAL ObjectPrototype == Ref :> "Object.prototype"
 
+\\* The global object, which a script's this is at its top level, and whose properties tla-ts doesn't
+\\* read.
+GlobalObject == Ref :> "globalThis"
+
 LOCAL Writable == [writable |-> TRUE, enumerable |-> TRUE, configurable |-> TRUE, kind |-> "data"]
 
 EmptyObject ==
@@ -570,6 +574,7 @@ TypeOfIn(heap, value) ==
   CASE IsHeap(value) -> IF heap.objects[value[Ref]].isCallable THEN "function" ELSE "object"
     [] IsRef(value) /\\ value[Ref] \\in DOMAIN BuiltIns ->
          IF BuiltIns[value[Ref]].isCallable THEN "function" ELSE "object"
+    [] IsRef(value) /\\ value = GlobalObject -> "object"
     [] IsRef(value) -> Assert(FALSE, "tla-ts can't tell the type of " \\o ToString(value))
     [] OTHER -> TypeOf(value)
 
@@ -3822,11 +3827,13 @@ Seal(heap, ref) == Restrict(heap, ref, FALSE)
 
 Freeze(heap, ref) == Restrict(heap, ref, TRUE)
 
-IsExtensible(heap, ref) == Lookup(heap, ref).extensible
+\\* Nothing makes the global object inextensible, since tla-ts stops where a script would.
+IsExtensible(heap, ref) ==
+  IF IsRef(ref) /\\ ~IsHeap(ref) /\\ ref = GlobalObject THEN TRUE ELSE Lookup(heap, ref).extensible
 
 IsSealed(heap, ref) ==
   LET object == Lookup(heap, ref)
-  IN ~object.extensible /\\ \\A key \\in DOMAIN object.attributes : ~object.attributes[key].configurable
+  IN ~IsExtensible(heap, ref) /\\ \\A key \\in DOMAIN object.attributes : ~object.attributes[key].configurable
 
 IsFrozen(heap, ref) ==
   LET object == Lookup(heap, ref)
