@@ -131,6 +131,7 @@ import {
 import {
   getAccessorValue,
   getAllocated,
+  isNewError,
   getCandidateValue,
   getHeap,
   getNewWrapper,
@@ -6509,7 +6510,14 @@ const bindDeclaration = (
   );
 };
 
-export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
+// The variables, and the heap, that a node may change. An error's identity is a new empty object,
+// which changes no object that exists before it, so isIdentityIgnored leaves it out.
+export const getChanged = (
+  loop: ts.Node,
+  path: Path,
+  context: Context,
+  isIdentityIgnored = false,
+) => {
   const changed = new Set<ts.Symbol>();
   const visited = new Set<ts.Node>();
   const getFunctionNode = (node: ts.Expression) => {
@@ -6539,7 +6547,8 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
     }
     const isHeapChanged =
       getArgumentsOwner(node, context.checker) !== undefined ||
-      getAllocated(node, context).includes(node) ||
+      (getAllocated(node, context).includes(node) &&
+        !(isIdentityIgnored && isNewError(node, context))) ||
       (ts.isBindingElement(node) &&
         (context.heapArrays.has(node) ||
           (node.dotDotDotToken !== undefined && ts.isObjectBindingPattern(node.parent)))) ||
@@ -6642,6 +6651,10 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
   visit(loop);
   return [...path.mutable].filter((symbol) => changed.has(symbol));
 };
+
+// Whether a node may change an object that exists before it runs.
+const changesObjects = (node: ts.Node, path: Path, context: Context) =>
+  getChanged(node, path, context, true).some((symbol) => symbol === context.heap);
 
 // Translates a statement whose paths may each continue with what follows it. A script translates
 // what follows once, as an operator of what the statement changes and the value it gives, instead
@@ -6824,7 +6837,7 @@ const bindIteration = (
     );
   if (taken) return taken;
   // A default that calls a function runs only where its element or property is undefined, before
-  // the pattern binds. A call that changes the heap would change the properties that the pattern
+  // the pattern binds. A call that changes objects would change the properties that the pattern
   // read before it.
   const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(name));
   const isHeapObject = ts.isObjectBindingPattern(name) && isHeapPattern(type, name, context);
@@ -6868,10 +6881,7 @@ const bindIteration = (
           !path.scope.results.has(call) &&
           (isStatementCall(call, path, context) ||
             (path.scope.isCatching && mayThrow(call, context))) &&
-          !(
-            ts.isObjectBindingPattern(name) &&
-            getChanged(call, path, context).some((symbol) => symbol === context.heap)
-          )
+          !(ts.isObjectBindingPattern(name) && changesObjects(call, path, context))
           ? [{ call, part, pattern }]
           : [];
       })
@@ -7414,14 +7424,14 @@ const translateIterations = (
   const changed = getChanged(loop, path, context);
   // The iterator reads each element as the loop reaches it, which a copy of the elements matches
   // only while the body changes no object.
-  if (isHeapIteration && changed.some((symbol) => symbol === context.heap)) {
+  if (isHeapIteration && changesObjects(loop, path, context)) {
     throw new TlaTypeScriptError(
       "Unsupported loop: tla-ts can't iterate an array that the heap holds while the loop changes objects",
       iterated?.expression,
     );
   }
   // A for-in skips a key that its body deletes before visiting it, which a list of keys can't.
-  if (isForIn && changed.some((symbol) => symbol === context.heap)) {
+  if (isForIn && changesObjects(loop, path, context)) {
     throw new TlaTypeScriptError("Don't change objects while a for-in iterates one", loop);
   }
   if (changed.some((symbol) => path.scope.functions.has(symbol))) {

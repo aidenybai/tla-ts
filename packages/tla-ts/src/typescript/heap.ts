@@ -868,7 +868,7 @@ export const translateHasPrivate = (
   );
 
 // A script's error outside the heap, which takes an empty object on the heap as its identity.
-const isNewError = (node: ts.Node, context: Context) =>
+export const isNewError = (node: ts.Node, context: Context) =>
   ts.isNewExpression(node) &&
   getErrorClass(getSymbol(node.expression, context.checker), context.checker) !== undefined;
 

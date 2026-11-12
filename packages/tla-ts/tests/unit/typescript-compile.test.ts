@@ -4884,6 +4884,39 @@ describe("errors", () => {
     );
   });
 
+  it("makes an error inside a loop or a default that must change no object", async () => {
+    const getSource = (check: string) => `
+      const object: { [key: string]: number } = { a: 1, b: 2 };
+      const items: (number | undefined)[] = [3, , 4];
+      let first: Error | undefined;
+      let seen = "";
+      for (const key in object) {
+        const error = new Error(key);
+        first = first ?? error;
+        seen = seen + key + (first === error ? "=" : "!") + ";";
+      }
+      for (const item of items) {
+        const error = new Error("item");
+        seen = \`\${seen}\${item}\${first === error ? "=" : "!"};\`;
+      }
+      const thrower = (): number => {
+        throw new RangeError("default");
+      };
+      try {
+        for (const { x = thrower() } of [{ x: 5 }, {}] as { x?: number }[]) {
+          seen = seen + x + ";";
+        }
+      } catch (thrown) {
+        seen = seen + (thrown instanceof RangeError ? "caught" : "other");
+      }
+      if (seen !== "${check}") throw new Error(seen);
+    `;
+    expect(
+      (await checkModel(getSource("a=;b!;3!;undefined!;4!;5;caught"))).failure,
+    ).toBeUndefined();
+    expect((await checkModel(getSource("a=;b=;3!;undefined!;4!;5;caught"))).failure).toBeDefined();
+  });
+
   it("gives a callback that an array method calls the arguments it passes", async () => {
     const result = await checkModel(`
       const box = { count: 0 as number, second: 0 as unknown };
