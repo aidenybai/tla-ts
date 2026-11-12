@@ -1,5 +1,4 @@
 // Ported from Z3 (src/model/model_evaluator.cpp), MIT license, see z3-license.txt.
-import { SmtUnsupportedError } from "../../../errors";
 import { mkArrayApp } from "./array-decl-plugin";
 import {
   FAMILY_ARITH,
@@ -86,7 +85,8 @@ export class ModelEvaluator extends RewriterTpl {
     const model = this.model;
     const family = manager.funcDecls[decl].family;
     if (family === FAMILY_ARRAY && manager.funcDecls[decl].op === OP_AS_ARRAY) {
-      const arrayInterp = this.getArrayInterp(manager.funcDecls[decl].parameters[0]);
+      const arrayDecl = manager.funcDecls[decl].parameters[0];
+      const arrayInterp = model.funcInterps.get(arrayDecl)?.getArrayInterp(arrayDecl);
       if (arrayInterp !== undefined) return { expr: arrayInterp, depth: 1 };
     }
     if (family === FAMILY_USER) {
@@ -194,28 +194,6 @@ export class ModelEvaluator extends RewriterTpl {
     if (interp === undefined) return getManagerSomeValue(manager, sort);
     if (interp.isPartial()) interp.setElse(getManagerSomeValue(manager, sort));
     return { expr: this.substitute(interp.getInterp() as number, args), depth: Infinity };
-  }
-
-  private getArrayInterp(decl: number) {
-    const manager = this.manager;
-    const interp = this.model.funcInterps.get(decl);
-    const elseExpr = interp?.elseExpr ?? null;
-    if (interp === undefined || elseExpr === null) return undefined;
-    const isGround =
-      manager.isGround(elseExpr) &&
-      interp.entries.every(
-        (entry) =>
-          manager.isGround(entry.result) && entry.args.every((arg) => manager.isGround(arg)),
-      );
-    if (!isGround) throw new SmtUnsupportedError("lambdas");
-    const sort = manager.mkArraySort([...manager.funcDecls[decl].domain, manager.sorts[elseExpr]]);
-    return interp.entries.reduce(
-      (array, entry) =>
-        entry.result === elseExpr
-          ? array
-          : mkArrayApp(manager, OP_STORE, [array, ...entry.args, entry.result]),
-      mkArrayApp(manager, OP_CONST_ARRAY, [elseExpr], [sort]),
-    );
   }
 
   // Like Z3, only the indices of the stores of a store chain decide whether they are unique.

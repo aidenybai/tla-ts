@@ -1,17 +1,26 @@
 // Ported from Z3 (src/smt/proto_model/proto_model.cpp, src/model/func_interp.cpp,
 // src/model/value_factory.cpp, src/model/model_core.cpp, src/model/datatype_factory.cpp), MIT
 // license, see z3-license.txt.
+import { SmtUnsupportedError } from "../../../errors";
 import { TermEnumeration } from "./term-enumeration";
 import {
   AstManager,
+  FAMILY_ARRAY,
+  FAMILY_BV,
   FAMILY_SEQ,
   KIND_APP,
+  KIND_QUANTIFIER,
   KIND_VAR,
   OP_AND,
+  OP_ARRAY_MAP,
+  OP_AS_ARRAY,
+  OP_BIT2BOOL,
   OP_EQ,
+  OP_EXTRACT,
   OP_CONST_ARRAY,
   OP_ITE,
   OP_SEQ_TO_RE,
+  OP_STORE,
   SORT_BOOL,
   isArithSort,
 } from "./ast";
@@ -32,6 +41,8 @@ import { ExprSafeReplace } from "./expr-safe-replace";
 import { RefVector } from "./ref-vector";
 import { CharFactory, SeqFactory } from "./seq-factory";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
+import { VarSubst } from "./var-subst";
+import { mkBvApp } from "./bv-decl-plugin";
 
 export const getManagerSomeValue = (manager: AstManager, sort: number): number => {
   if (sort === SORT_BOOL) return manager.falseExpr;
@@ -230,6 +241,28 @@ export class FuncInterp {
     return this.entries.length + 1 === 2;
   }
 
+  // get_array_interp, without the lambda Z3 makes of an interpretation that is not ground.
+  getArrayInterp(decl: number) {
+    const manager = this.manager;
+    const elseExpr = this.elseExpr;
+    if (elseExpr === null) return undefined;
+    const isGround =
+      manager.isGround(elseExpr) &&
+      this.entries.every(
+        (entry) =>
+          manager.isGround(entry.result) && entry.args.every((arg) => manager.isGround(arg)),
+      );
+    if (!isGround) throw new SmtUnsupportedError("lambdas");
+    const sort = manager.mkArraySort([...manager.funcDecls[decl].domain, manager.sorts[elseExpr]]);
+    return this.entries.reduce(
+      (array, entry) =>
+        entry.result === elseExpr
+          ? array
+          : mkArrayApp(manager, OP_STORE, [array, ...entry.args, entry.result]),
+      mkArrayApp(manager, OP_CONST_ARRAY, [elseExpr], [sort]),
+    );
+  }
+
   getInterp() {
     if (this.interp !== null) return this.interp;
     const manager = this.manager;
@@ -283,6 +316,7 @@ export class ProtoModel {
   private refCount = 0;
   // A model, rather than the proto_model it was made from, takes its values from the manager.
   private isFinal = false;
+  private isCompact = false;
   private seqFactory: SeqFactory | undefined;
   private charFactory: CharFactory | undefined;
 
@@ -599,6 +633,191 @@ export class ProtoModel {
     for (const decl of this.funcDecls) this.funcInterps.get(decl)?.compress();
   }
 
+  // model::compress, which get-model and get-value apply, unlike the compress of a proto_model: it
+  // inlines the skolem functions and the arrays that the other interpretations use, and drops the
+  // skolem declarations that none uses.
+  compact() {
+    if (this.isCompact) return;
+    const manager = this.manager;
+    const getHash = (decl: number) => manager.getDeclHash(decl);
+    for (;;) {
+      const sort = new DeclTopSort();
+      const occurCounts = new Map<number, number>();
+      const collectDeps = (decl: number, exprs: number[]) => {
+        const deps = new ObjHashtable(getHash);
+        for (const expr of exprs)
+          forEachExpr(manager, expr, (term) => {
+            if (manager.kinds[term] !== KIND_APP) return;
+            const termDecl = manager.decls[term];
+            const used = isAsArray(manager, termDecl)
+              ? manager.funcDecls[termDecl].parameters[0]
+              : termDecl;
+            if (!this.constInterps.has(used) && !this.funcInterps.has(used)) return;
+            deps.add(used);
+            occurCounts.set(used, (occurCounts.get(used) ?? 0) + 1);
+          });
+        sort.insert(decl, deps);
+      };
+      for (const [decl, interp] of this.funcInterps) {
+        if (manager.recFunDefs.has(decl)) continue;
+        interp.compress();
+        collectDeps(decl, [
+          ...(interp.elseExpr === null ? [] : [interp.elseExpr]),
+          ...interp.entries.flatMap((entry) => [...entry.args, entry.result]),
+        ]);
+      }
+      for (const [decl, value] of this.constInterps)
+        if (!manager.recFunDefs.has(decl)) collectDeps(decl, [value]);
+      sort.sort();
+      const rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
+      for (const decl of sort.sorted) {
+        const partition = sort.partitions.get(decl) as number;
+        const cleanup = (expr: number) =>
+          this.compactExpr(rewriter, expr, partition, sort.partitions, occurCounts);
+        const value = this.constInterps.get(decl);
+        if (value !== undefined) {
+          const cleaned = cleanup(value);
+          if (cleaned !== value) this.registerConst(decl, cleaned);
+          manager.decRef(cleaned);
+          continue;
+        }
+        const interp = this.funcInterps.get(decl);
+        if (interp === undefined) continue;
+        if (interp.elseExpr !== null) {
+          const cleaned = cleanup(interp.elseExpr);
+          interp.setElse(cleaned);
+          manager.decRef(cleaned);
+        }
+        for (const entry of interp.entries) {
+          const cleaned = cleanup(entry.result);
+          if (cleaned !== entry.result) interp.insertEntry(entry.args, cleaned);
+          manager.decRef(cleaned);
+        }
+      }
+      rewriter.release();
+      const occurrences = new Map<number, number>();
+      const collectOccs = (expr: number) => {
+        const decls = new Set<number>();
+        forEachExpr(manager, expr, (term) => {
+          if (manager.kinds[term] !== KIND_APP) return;
+          const termDecl = manager.decls[term];
+          decls.add(termDecl);
+          if (isAsArray(manager, termDecl) || isArrayMap(manager, termDecl))
+            decls.add(manager.funcDecls[termDecl].parameters[0]);
+        });
+        for (const decl of decls) occurrences.set(decl, (occurrences.get(decl) ?? 0) + 1);
+      };
+      for (const decl of sort.sorted) {
+        const value = this.constInterps.get(decl);
+        const interp = this.funcInterps.get(decl);
+        if (value !== undefined) collectOccs(value);
+        else if (interp !== undefined) {
+          if (interp.elseExpr !== null) collectOccs(interp.elseExpr);
+          for (const entry of interp.entries) {
+            collectOccs(entry.result);
+            for (const arg of entry.args) collectOccs(arg);
+          }
+        }
+      }
+      const removed = sort.sorted.filter(
+        (decl) => manager.funcDecls[decl].isSkolem && !occurrences.has(decl),
+      );
+      for (const decl of removed) this.unregisterDecl(decl);
+      if (removed.length === 0) break;
+    }
+    this.isCompact = true;
+  }
+
+  // can_inline_def: an interpretation that more than one other uses is inlined when it is small.
+  private canInlineDef(decl: number, occurCounts: Map<number, number>) {
+    if ((occurCounts.get(decl) ?? 0) <= 1) return true;
+    const interp = this.funcInterps.get(decl);
+    if (interp === undefined || interp.elseExpr === null) return false;
+    const subterms = new Set<number>();
+    const todo = [interp.elseExpr];
+    while (todo.length > 0) {
+      if (interp.entries.length + subterms.size > 8) return false;
+      const expr = todo.pop() as number;
+      if (subterms.has(expr)) continue;
+      subterms.add(expr);
+      if (this.manager.kinds[expr] === KIND_APP) todo.push(...this.manager.getArgs(expr));
+      else if (this.manager.kinds[expr] === KIND_QUANTIFIER)
+        todo.push(this.manager.getQuantifier(expr).body);
+    }
+    return true;
+  }
+
+  // model::cleanup_expr: the result comes with a reference, which the caller releases.
+  private compactExpr(
+    rewriter: Rewriter,
+    expr: number,
+    partition: number,
+    partitions: Map<number, number>,
+    occurCounts: Map<number, number>,
+  ) {
+    const manager = this.manager;
+    const trail = new RefVector(manager);
+    const cache = new Map<number, number>();
+    const todo = [expr];
+    while (todo.length > 0) {
+      const current = todo[todo.length - 1];
+      // A numeral carries its value, so the rewriter keeps every constant as it is.
+      if (
+        manager.kinds[current] !== KIND_APP ||
+        (manager.getNumArgs(current) === 0 && !isAsArray(manager, manager.decls[current]))
+      ) {
+        todo.pop();
+        cache.set(current, current);
+        continue;
+      }
+      const numTodo = todo.length;
+      for (let index = 0; index < manager.getNumArgs(current); index++) {
+        const arg = manager.getArg(current, index);
+        if (!cache.has(arg)) todo.push(arg);
+      }
+      if (todo.length > numTodo) continue;
+      todo.pop();
+      const decl = manager.decls[current];
+      const funcDecl = manager.funcDecls[decl];
+      const args = manager.mapArgs(current, (arg) => cache.get(arg) as number);
+      const arrayDecl = isAsArray(manager, decl) ? funcDecl.parameters[0] : -1;
+      const interp = this.funcInterps.get(arrayDecl === -1 ? decl : arrayDecl);
+      const result = manager.withTemporaries(() => {
+        if (arrayDecl !== -1 && interp !== undefined && this.canInlineDef(arrayDecl, occurCounts)) {
+          const arrayInterp = interp.getArrayInterp(arrayDecl);
+          if (arrayInterp !== undefined) return arrayInterp;
+        }
+        if (
+          arrayDecl === -1 &&
+          funcDecl.isSkolem &&
+          interp !== undefined &&
+          this.canInlineDef(decl, occurCounts) &&
+          interp.getInterp() !== null &&
+          partitions.get(decl) !== partition
+        ) {
+          const subst = new VarSubst(manager, false);
+          const substituted = subst.apply(interp.getInterp() as number, args);
+          subst.release();
+          manager.releaseLater(substituted);
+          return substituted;
+        }
+        if (funcDecl.family === FAMILY_BV && funcDecl.op === OP_BIT2BOOL) {
+          const index = funcDecl.parameters[0];
+          return manager.mkEq(
+            mkBvApp(manager, OP_EXTRACT, [args[0]], [index, index]),
+            manager.mkBvNumeral(1n, 1),
+          );
+        }
+        return rewriter.mkApp(decl, args, manager.sorts[current]);
+      });
+      trail.pushOwned(result);
+      cache.set(current, result);
+    }
+    const result = rewriter.rewrite(cache.get(expr) as number);
+    trail.reset();
+    return result;
+  }
+
   completePartialFunc(decl: number, isUsingFresh: boolean) {
     const interp = this.funcInterps.get(decl);
     if (interp === undefined || !interp.isPartial()) return;
@@ -768,5 +987,71 @@ export class ProtoModel {
 
   areEqual(first: number, second: number) {
     return first === second;
+  }
+}
+
+const isAsArray = (manager: AstManager, decl: number) =>
+  manager.funcDecls[decl].family === FAMILY_ARRAY && manager.funcDecls[decl].op === OP_AS_ARRAY;
+
+const isArrayMap = (manager: AstManager, decl: number) =>
+  manager.funcDecls[decl].family === FAMILY_ARRAY && manager.funcDecls[decl].op === OP_ARRAY_MAP;
+
+// for_each_expr: each distinct subterm, after its arguments.
+const forEachExpr = (manager: AstManager, expr: number, visit: (term: number) => void) => {
+  const visited = new Set<number>();
+  const walk = (term: number) => {
+    if (visited.has(term)) return;
+    visited.add(term);
+    if (manager.kinds[term] === KIND_APP) for (const arg of manager.getArgs(term)) walk(arg);
+    else if (manager.kinds[term] === KIND_QUANTIFIER) walk(manager.getQuantifier(term).body);
+    visit(term);
+  };
+  walk(expr);
+};
+
+// top_sort: each declaration comes after the ones its interpretation uses. Like Z3's, it never pops
+// the path stack, so the declarations of a cycle get partitions of their own.
+class DeclTopSort {
+  readonly sorted: number[] = [];
+  readonly partitions = new Map<number, number>();
+  private deps = new Map<number, ObjHashtable>();
+  private dfsNums = new Map<number, number>();
+  private stackS: number[] = [];
+  private stackP: number[] = [];
+
+  insert(decl: number, deps: ObjHashtable) {
+    this.deps.set(decl, deps);
+  }
+
+  sort() {
+    for (const decl of this.deps.keys()) this.traverse(decl);
+  }
+
+  private traverse(decl: number) {
+    const dfsNum = this.dfsNums.get(decl);
+    if (dfsNum !== undefined) {
+      if (this.partitions.has(decl)) return;
+      for (
+        let top = this.stackP.at(-1);
+        top !== undefined && (this.partitions.get(top) ?? -1) > dfsNum;
+        top = this.stackP.at(-1)
+      )
+        this.stackP.pop();
+      return;
+    }
+    const deps = this.deps.get(decl);
+    if (deps === undefined) return;
+    this.dfsNums.set(decl, this.dfsNums.size);
+    this.stackS.push(decl);
+    this.stackP.push(decl);
+    for (const dep of deps) this.traverse(dep);
+    if (decl !== this.stackP.at(-1)) return;
+    const partition = this.sorted.length;
+    for (let top = this.stackS.pop(); top !== undefined; top = this.stackS.pop()) {
+      this.sorted.push(top);
+      this.partitions.set(top, partition);
+      if (top === decl) break;
+    }
+    this.stackP.pop();
   }
 }

@@ -1110,7 +1110,7 @@ export const runSmtlibScript = (
         throw new SmtParseError("invalid get-value command, empty list of terms", terms.end);
       if (list.items.length > 2) throw new SmtUnsupportedError("the parameters of get-value");
       const model = getModel(list);
-      model.compress();
+      model.compact();
       // Z3 prints each term as the script spells it, from the end of the term before.
       const offsets = [
         terms.offset + 1,
@@ -1136,7 +1136,7 @@ export const runSmtlibScript = (
       if (list.items.length > 1) throw new SmtUnsupportedError("the index of get-model");
       const manager = script.state.manager;
       const model = getModel(list);
-      model.compress();
+      model.compact();
       for (const decl of script.state.reader.getDeclaredFuncs()) {
         const funcDecl = manager.funcDecls[decl];
         if (
