@@ -39,15 +39,6 @@ export interface Lemma {
   proof: LlProof;
 }
 
-export const connect = (exprs: Expressions, connective: Connective, left: Expr, right: Expr) =>
-  connective === "and"
-    ? exprs.eand(left, right)
-    : connective === "or"
-      ? exprs.eor(left, right)
-      : connective === "imply"
-        ? exprs.eimply(left, right)
-        : exprs.eequiv(left, right);
-
 const getLemma = (lemmas: Map<string, Lemma>, name: string) => {
   const lemma = lemmas.get(name);
   if (lemma === undefined) throw new TlaZenonError(`Zenon: no lemma ${name}`);
@@ -102,9 +93,9 @@ const getEliminated = (exprs: Expressions, lemmas: Map<string, Lemma>, rule: LlR
     case "notnot":
       return [exprs.enot(exprs.enot(rule.formula))];
     case "connect":
-      return [connect(exprs, rule.connective, rule.left, rule.right)];
+      return [exprs.binary(rule.connective, rule.left, rule.right)];
     case "notconnect":
-      return [exprs.enot(connect(exprs, rule.connective, rule.left, rule.right))];
+      return [exprs.enot(exprs.binary(rule.connective, rule.left, rule.right))];
     case "ex":
     case "all":
       return [rule.quantified];

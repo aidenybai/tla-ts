@@ -10,7 +10,7 @@ import {
   type Expressions,
   type VarExpr,
 } from "./expr";
-import { connect, type Connective, type Lemma, type LlProof, type LlRule } from "./llproof";
+import type { Connective, Lemma, LlProof, LlRule } from "./llproof";
 import type { Definition, Phrase } from "./parse";
 import type { Rule } from "./proof";
 import { getTlaLlProof } from "./tla/llproof";
@@ -175,13 +175,13 @@ export const translateProof = (
         case "imply":
         case "equiv": {
           const right = translateExpr(expression.args[1]);
-          return connect(exprs, expression.kind, translateExpr(expression.args[0]), right);
+          return exprs.binary(expression.kind, translateExpr(expression.args[0]), right);
         }
         case "all":
         case "ex":
         case "tau":
         case "lam":
-          return makeBinder(
+          return exprs.binder(
             expression.kind,
             expression.args[0],
             expression.symbol,
@@ -194,15 +194,6 @@ export const translateProof = (
     translatedExprs.set(expression, result);
     return result;
   };
-
-  const makeBinder = (kind: BinderExpr["kind"], variable: VarExpr, type: string, body: Expr) =>
-    kind === "all"
-      ? exprs.eall(variable, type, body)
-      : kind === "ex"
-        ? exprs.eex(variable, type, body)
-        : kind === "tau"
-          ? exprs.etau(variable, type, body)
-          : exprs.elam(variable, type, body);
 
   const translateRule = (rule: MlRule): LlRule => {
     switch (rule.name) {
@@ -1420,10 +1411,10 @@ export const translateProof = (
     ) {
       if (left.args[0] === right.args[0]) {
         const diff = findDiff(variable, left.args[1], right.args[1]);
-        return [connect(exprs, left.kind, left.args[0], diff[0]), diff[1], diff[2]];
+        return [exprs.binary(left.kind, left.args[0], diff[0]), diff[1], diff[2]];
       }
       const diff = findDiff(variable, left.args[0], right.args[0]);
-      return [connect(exprs, left.kind, diff[0], left.args[1]), diff[1], diff[2]];
+      return [exprs.binary(left.kind, diff[0], left.args[1]), diff[1], diff[2]];
     }
     if (
       left.kind === right.kind &&

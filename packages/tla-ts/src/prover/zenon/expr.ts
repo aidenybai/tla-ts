@@ -504,6 +504,8 @@ export const createExpressions = () => {
     emeta,
     eapp,
     enot,
+    binary,
+    binder,
     eand: (left: Expr, right: Expr) => binary("and", left, right),
     eor: (left: Expr, right: Expr) => binary("or", left, right),
     eimply: (left: Expr, right: Expr) => binary("imply", left, right),
