@@ -270,7 +270,7 @@ export const generateOperatorArgument = (
     return createOpArg(generation, resolveName(generation, argument.operator, location), location);
   }
   const node = generateSelector(generation, argument, target.arity, false, false);
-  if (node.kind === "OpArg" || (node.kind === "OpAppl" && node.isNull === true)) return node;
+  if (node.kind === "OpArg" || (node.kind === "OpAppl" && node.nullKind !== undefined)) return node;
   throw new TlaSyntaxError(
     `Expected an operator argument at line ${location.beginLine}, column ${location.beginColumn}`,
   );
@@ -706,7 +706,7 @@ export const generateExpression = (
           location,
           `Couldn't resolve ${unresolved.fixity} operator symbol \`${unresolved.name}'.`,
         );
-        return { ...createNullNode(generation), isAbsent: true };
+        return { ...createNullNode(generation), nullKind: "absent" };
       }
       const node = generateSelectorExpression(generation, expression);
       if (isSelector(expression.operator) || isIdentifier(expression.operator)) {
@@ -719,7 +719,7 @@ export const generateExpression = (
         getTokenLocation(generation.file, getExpressionSpan(generation.file, expression).start),
         "Unsupported expression type `['.",
       );
-      return { ...createNullNode(generation), isAbsent: true };
+      return { ...createNullNode(generation), nullKind: "absent" };
     case "OperatorReference":
     case "Lambda": {
       const text =
@@ -730,7 +730,7 @@ export const generateExpression = (
           ? "LAMBDA expression used where an expression is required."
           : `Unsupported expression type \`${getOperatorNodeKind(expression, text)}'.`,
       );
-      return { ...createNullNode(generation), isAbsent: true };
+      return { ...createNullNode(generation), nullKind: "absent" };
     }
     case "And":
     case "Or":

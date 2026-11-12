@@ -635,7 +635,7 @@ const exportSpecification = (
     );
 
   const exportApplication = (node: OpApplNode) => {
-    if (node.isNull && isTlc174) {
+    if (node.nullKind !== undefined && isTlc174) {
       throw getJavaException(getUnsupportedKind(0), [
         JAVA_CALLS.operator,
         ...getDefinitionFrames("OpDef", IN_BUILTINS),
@@ -698,7 +698,7 @@ const exportSpecification = (
     call: JavaFrame | JavaExpressionCall,
   ): XmlElement => {
     if (!isTlc174) return exportLevelNode(node);
-    if (node.kind === "OpAppl" && node.isAbsent && "nullType" in call) {
+    if (node.kind === "OpAppl" && node.nullKind === "absent" && "nullType" in call) {
       throw getNullPointerException(call);
     }
     return withFrames(

@@ -302,7 +302,7 @@ export const createNullNode = (generation: ModuleGeneration): OpApplNode => ({
     {},
     generation.nullApplicationId,
   ),
-  isNull: true,
+  nullKind: "null",
 });
 
 export const getBuiltin = (generation: ModuleGeneration, name: string) => {
