@@ -2522,10 +2522,15 @@ export const bindCall = (
       argument !== undefined &&
       getHeapClass(argument, context) !== undefined &&
       context.checker.getTypeAtLocation(parameter).getCallSignatures().length === 0;
+    // A parameter that the call passes nothing takes the function that its default writes.
     const callback =
-      argument && !isObject
-        ? (getCallback(argument, path, context) ?? getAsyncCallee(argument, path, context))
-        : undefined;
+      argument === undefined
+        ? argumentNodes.some(ts.isSpreadElement)
+          ? undefined
+          : getAnyFunction(parameter.initializer)
+        : isObject
+          ? undefined
+          : (getCallback(argument, path, context) ?? getAsyncCallee(argument, path, context));
     const symbol = getSymbol(parameter.name, context.checker);
     return callback?.body !== undefined && symbol !== undefined ? [[symbol, callback]] : [];
   });

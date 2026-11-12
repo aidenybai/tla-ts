@@ -4687,6 +4687,22 @@ describe("errors", () => {
     expect((await checkModel(getSource("!=="))).failure?.message).toContain('"small"');
   });
 
+  it("runs the function that a parameter's default writes", async () => {
+    const getSource = (doubled: string) => `
+      interface Box { seen: number }
+      const box: Box = { seen: 0 };
+      const apply = (value: number, change = (inner: number) => inner * 2): number => {
+        box.seen += 1;
+        return change(value);
+      };
+      const doubled = apply(3);
+      const tripled = apply(3, (inner) => inner * 3);
+      if (doubled !== ${doubled} || tripled !== 9 || box.seen !== 2) throw new Error("apply");
+    `;
+    expect((await checkModel(getSource("6"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("3"))).failure?.message).toContain('"apply"');
+  });
+
   it("stops where something besides its one call names a factory with variables", () => {
     expect(() =>
       compile(`
