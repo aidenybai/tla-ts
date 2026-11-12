@@ -6008,6 +6008,17 @@ describe("errors", () => {
     );
   });
 
+  it("stops reading a generator's method as a value", () => {
+    expect(() =>
+      compile(`
+        const holder: { [key: string]: unknown } = {};
+        function* gen() {}
+        const it = gen();
+        holder.next = it.next;
+      `),
+    ).toThrow("tla-ts can't read a generator's next as a value");
+  });
+
   it("flattens an array whose elements are all arrays, or none of them", async () => {
     const result = await checkModel(`
       const deep = [[[1]], [[2, 3]]];

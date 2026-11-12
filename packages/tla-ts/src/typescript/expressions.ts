@@ -151,6 +151,7 @@ import {
   isHeapType,
   isBigIntLike,
   isNumberLike,
+  mayBeGeneratorType,
   rejectGeneratorUse,
   isNumericKey,
   isObject,
@@ -2078,6 +2079,10 @@ const translatePropertyAccess = (
       [getHeap(scope, node, context), translateExpression(receiver, scope, context), string(name)],
       context,
     );
+  }
+  // A generator runs its methods only where a script calls them.
+  if (context.heap !== undefined && mayBeGeneratorType(receiver, context)) {
+    throw new TlaTypeScriptError(`tla-ts can't read a generator's ${name} as a value`, node);
   }
   rejectAnyReceiver(receiver, context);
   return getField(translateExpression(receiver, scope, context), name);
