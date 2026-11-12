@@ -20,6 +20,7 @@ import {
 import {
   type Context,
   type FunctionNode,
+  findNodes,
   getLocalCaptures,
   getSymbol,
   getUndefined,
@@ -27,7 +28,7 @@ import {
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf, letIn } from "./formula";
-import { getHeap } from "./heap";
+import { getCandidateValue, getHeap } from "./heap";
 import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { type Receiver } from "./scope";
@@ -61,12 +62,20 @@ interface TrackedPromise {
   isResolved: boolean;
   // The functions that new Promise passes its executor.
   resolvers: { resolve: Expression; reject: Expression } | undefined;
+  // The functions that a job passes a thenable's then, each pair with whether it ran.
+  thenResolvers: readonly ThenResolvers[];
   value: Expression | undefined;
   reactions: readonly Reaction[];
   // What the body of an async generator yielded or returned, for the promise of a request to it.
   iteration: { value: Expression; isDone: boolean } | undefined;
   // The values that the promise of Promise.all has so far, and how many it waits for.
   combined: { values: readonly Expression[]; remaining: number } | undefined;
+}
+
+interface ThenResolvers {
+  resolve: Expression;
+  reject: Expression;
+  isResolved: boolean;
 }
 
 // What a job does once a promise settles: call a handler, or pass the value on, and settle the
@@ -233,26 +242,237 @@ const resolve = (
       }),
     );
   };
+  const heap = getHeap(path.scope, node, context);
+  const thenName = context.names.getFresh("then");
+  const candidates = getThenFunctions(node, valueNode, context);
+  // Each thenable that a job follows may give another.
+  const pairs = [...getTasks(path, node).promises.values()].reduce(
+    (count, promise) => count + promise.thenResolvers.length,
+    0,
+  );
+  const runsThen = valueNode !== undefined && hasCallableThen(valueNode, context);
+  const callThen = () =>
+    pairs >= MAX_THEN_PAIRS
+      ? leaf(apply("Assert", [boolean(false), string("tla-ts can't follow this many thenables")]))
+      : bindOnce(
+          path,
+          thenName,
+          useJavaScript("Get", [heap, value, string("then")], context),
+          continueWith(
+            enqueue(path, node, {
+              run: (current, next) =>
+                runThen(
+                  current,
+                  node,
+                  name,
+                  value,
+                  identifier(thenName),
+                  candidates,
+                  context,
+                  next,
+                ),
+            }),
+          ),
+        );
+  const cannotThen = leaf(
+    apply("Assert", [
+      boolean(false),
+      string("tla-ts can't resolve a promise with an object that has a then"),
+    ]),
+  );
   return dispatchPromise(path, node, value, valueNode, context, follow, () =>
     ifThenElse(
       useJavaScript(
         "IsThenable",
         [
-          getHeap(path.scope, node, context),
+          heap,
           value,
           translateBuiltInValue("Array.prototype", node, context),
           translateBuiltInValue("Object.prototype", node, context),
         ],
         context,
       ),
-      leaf(
-        apply("Assert", [
-          boolean(false),
-          string("tla-ts can't resolve a promise with an object that has a then"),
-        ]),
-      ),
-      continueWith(settle(path, node, name, value, false, context)),
+      runsThen
+        ? ifThenElse(
+            useJavaScript("HasCallableThen", [heap, value], context),
+            callThen(),
+            cannotThen,
+          )
+        : cannotThen,
+      runsThen
+        ? leaf(
+            apply("Assert", [
+              boolean(false),
+              string("tla-ts can't resolve a promise with a value whose type has a then it lacks"),
+            ]),
+          )
+        : continueWith(settle(path, node, name, value, false, context)),
     ),
+  );
+};
+
+const isThenName = (name: ts.PropertyName) =>
+  (ts.isIdentifier(name) || ts.isStringLiteral(name)) && name.text === "then";
+
+// Whether TypeScript types a value with a then that it can call, which a job then calls where the
+// value resolves a promise. tla-ts follows a value of another type as one without a then.
+const hasCallableThen = (valueNode: ts.Expression, context: Context) => {
+  const then = context.checker.getTypeAtLocation(valueNode).getProperty("then");
+  if (then === undefined || (then.flags & ts.SymbolFlags.Optional) !== 0) return false;
+  const type = context.checker.getTypeOfSymbolAtLocation(then, valueNode);
+  return (type.isUnion() ? type.types : [type]).every(
+    (member) => member.getCallSignatures().length > 0,
+  );
+};
+
+const MAX_THEN_PAIRS = 8;
+
+// A function that an object literal gives as its then, which a promise that the object resolves
+// calls with the promise's resolve and reject.
+const isThenFunction = (node: ts.Node): node is FunctionNode =>
+  ((ts.isFunctionExpression(node) || ts.isArrowFunction(node)) &&
+    ts.isPropertyAssignment(node.parent) &&
+    node.parent.initializer === node &&
+    ts.isObjectLiteralExpression(node.parent.parent) &&
+    isThenName(node.parent.name)) ||
+  (ts.isMethodDeclaration(node) &&
+    node.body !== undefined &&
+    ts.isObjectLiteralExpression(node.parent) &&
+    isThenName(node.name));
+
+const thenFunctions = new WeakMap<ts.SourceFile, readonly FunctionNode[]>();
+
+// The thens that a value may have: those of the object literals that its type names, or else any
+// in the file.
+const getThenFunctions = (
+  node: ts.Node,
+  valueNode: ts.Expression | undefined,
+  context: Context,
+) => {
+  const sourceFile = node.getSourceFile();
+  const all = thenFunctions.get(sourceFile) ?? findNodes(sourceFile, isThenFunction);
+  thenFunctions.set(sourceFile, all);
+  if (valueNode === undefined) return all;
+  const type = context.checker.getTypeAtLocation(valueNode);
+  const literals = (type.isUnion() ? type.types : [type]).map(
+    (member) => member.getSymbol()?.valueDeclaration,
+  );
+  return literals.every((literal) => literal !== undefined && ts.isObjectLiteralExpression(literal))
+    ? all.filter((candidate) =>
+        literals.some(
+          (literal) =>
+            literal ===
+            (ts.isMethodDeclaration(candidate) ? candidate.parent : candidate.parent.parent),
+        ),
+      )
+    : all;
+};
+
+// The job that calls a thenable's then with a new resolve and reject of the promise, which run
+// once between them, and reject the promise where the then throws first.
+const runThen = (
+  path: Path,
+  node: ts.Node,
+  name: string,
+  thenable: Expression,
+  then: Expression,
+  candidates: readonly FunctionNode[],
+  context: Context,
+  next: (path: Path) => Formula,
+): Formula => {
+  const resolvingFunction = useJavaScript(
+    "ArrowObject",
+    [translateBuiltInValue("Function.prototype", node, context), string(""), number(1)],
+    context,
+  );
+  return allocateObject(path, node, context, resolvingFunction, (withResolve, resolveRef) =>
+    allocateObject(withResolve, node, context, resolvingFunction, (withReject, rejectRef) => {
+      const promise = getPromise(withReject, node, name);
+      const start = setPromise(withReject, node, name, {
+        ...promise,
+        thenResolvers: [
+          ...promise.thenResolvers,
+          { resolve: resolveRef, reject: rejectRef, isResolved: false },
+        ],
+      });
+      const code = useJavaScript("CodeOf", [getHeap(start.scope, node, context), then], context);
+      return candidates.reduceRight(
+        (otherwise, candidate) => {
+          const parameters = candidate.parameters;
+          if (
+            parameters.length > 2 ||
+            parameters.some(
+              (parameter) =>
+                !ts.isIdentifier(parameter.name) ||
+                parameter.initializer !== undefined ||
+                parameter.dotDotDotToken !== undefined,
+            ) ||
+            getLocalCaptures(candidate, context).size > 0 ||
+            (ts.isArrowFunction(candidate) &&
+              ts.findAncestor(candidate.parent, ts.isFunctionLike) !== undefined)
+          ) {
+            return otherwise;
+          }
+          const candidateValue = getCandidateValue(candidate, context);
+          if (candidateValue === undefined) return otherwise;
+          const back = (after: Path) =>
+            next({
+              ...after,
+              scope: {
+                ...after.scope,
+                previous: start.scope.previous,
+                isCatching: start.scope.isCatching,
+                receiver: start.scope.receiver,
+              },
+            });
+          const bindings = new Map([
+            ...start.scope.bindings,
+            ...parameters.flatMap((parameter, position): [ts.Symbol, Expression][] => {
+              const symbol = getSymbol(parameter.name, context.checker);
+              return symbol === undefined
+                ? []
+                : [[symbol, position === 0 ? resolveRef : rejectRef]];
+            }),
+          ]);
+          return ifThenElse(
+            apply("=", [code, candidateValue]),
+            translateStatements(
+              getBody(candidate),
+              {
+                ...start,
+                scope: {
+                  ...start.scope,
+                  bindings,
+                  isCatching: true,
+                  receiver: ts.isArrowFunction(candidate)
+                    ? undefined
+                    : { value: thenable, method: candidate },
+                },
+              },
+              context,
+              {
+                next: back,
+                exit: back,
+                breakTo: undefined,
+                continueTo: undefined,
+                throwTo: (after, thrown) =>
+                  callResolver(node, rejectRef, thrown.value, undefined, after, context, back),
+                yieldTo: undefined,
+                awaitTo: undefined,
+                inlining: new Set([candidate]),
+              },
+            ),
+            otherwise,
+          );
+        },
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't tell which then this thenable has"),
+          ]),
+        ),
+      );
+    }),
   );
 };
 
@@ -332,6 +552,7 @@ const makePromise = (
         state: "pending",
         isResolved: false,
         resolvers: undefined,
+        thenResolvers: [],
         value: undefined,
         reactions: [],
         iteration: undefined,
@@ -537,7 +758,7 @@ const translatePromiseCombinator = (
           ),
         () =>
           makePromise(current, node, context, (wrapped, wrapper) =>
-            resolve(wrapped, node, wrapper, value, undefined, context, (resolved) =>
+            resolve(wrapped, node, wrapper, value, element, context, (resolved) =>
               next(resolved, wrapper),
             ),
           ),
@@ -601,13 +822,14 @@ const isResolverParameter = (node: ts.Node, context: Context) => {
     (ancestor) => !ts.isParenthesizedExpression(ancestor),
   );
   return (
-    (ts.isArrowFunction(executor) || ts.isFunctionExpression(executor)) &&
-    construction !== undefined &&
-    ts.isNewExpression(construction) &&
-    isPromiseConstruction(construction, context) &&
-    construction.arguments?.[0] !== undefined &&
-    getCast(construction.arguments[0]) === executor &&
-    executor.parameters.indexOf(node) <= 1
+    executor.parameters.indexOf(node) <= 1 &&
+    (isThenFunction(executor) ||
+      ((ts.isArrowFunction(executor) || ts.isFunctionExpression(executor)) &&
+        construction !== undefined &&
+        ts.isNewExpression(construction) &&
+        isPromiseConstruction(construction, context) &&
+        construction.arguments?.[0] !== undefined &&
+        getCast(construction.arguments[0]) === executor))
   );
 };
 
@@ -682,15 +904,38 @@ const callResolver = (
           { name: entry[0], ref: functions.reject, isRejecting: true },
         ];
   });
-  const found = resolvers.find((resolver) => isSameExpression(resolver.ref, callee));
-  if (found !== undefined) return run(found.name, found.isRejecting);
-  return resolvers.reduceRight(
-    (rest, resolver) =>
-      ifThenElse(
-        useJavaScript("SameValue", [callee, resolver.ref], context),
-        run(resolver.name, resolver.isRejecting),
-        rest,
+  // A pair that a thenable's then took runs once, apart from the promise's own.
+  const runThen = (name: string, position: number, isRejecting: boolean) => {
+    const promise = getPromise(path, node, name);
+    const pair = promise.thenResolvers[position];
+    if (pair.isResolved) return continueWith(path);
+    const resolved = setPromise(path, node, name, {
+      ...promise,
+      thenResolvers: promise.thenResolvers.map((other, index) =>
+        index === position ? { ...other, isResolved: true } : other,
       ),
+    });
+    return isRejecting
+      ? continueWith(settle(resolved, node, name, value, true, context))
+      : resolve(resolved, node, name, value, valueNode, context, continueWith);
+  };
+  const all = [
+    ...resolvers.map((resolver) => ({
+      ref: resolver.ref,
+      run: () => run(resolver.name, resolver.isRejecting),
+    })),
+    ...[...getTasks(path, node).promises].flatMap((entry) =>
+      entry[1].thenResolvers.flatMap((pair, position) => [
+        { ref: pair.resolve, run: () => runThen(entry[0], position, false) },
+        { ref: pair.reject, run: () => runThen(entry[0], position, true) },
+      ]),
+    ),
+  ];
+  const found = all.find((resolver) => isSameExpression(resolver.ref, callee));
+  if (found !== undefined) return found.run();
+  return all.reduceRight(
+    (rest, resolver) =>
+      ifThenElse(useJavaScript("SameValue", [callee, resolver.ref], context), resolver.run(), rest),
     leaf(apply("Assert", [boolean(false), string("tla-ts can't tell which function this is")])),
   );
 };
@@ -895,7 +1140,7 @@ export const translatePromiseCall = (
         const ref = getPromise(made, node, name).ref;
         return promiseFunction === "reject"
           ? continueWith(settle(made, node, name, value, true, context), ref)
-          : resolve(made, node, name, value, undefined, context, (resolved) =>
+          : resolve(made, node, name, value, argument, context, (resolved) =>
               continueWith(resolved, ref),
             );
       });
@@ -1039,7 +1284,7 @@ const awaitValue = (
       ),
     () =>
       makePromise(path, node, context, (made, name) =>
-        resolve(made, node, name, value, undefined, context, (resolved) =>
+        resolve(made, node, name, value, valueNode, context, (resolved) =>
           continueWith(resolved, name),
         ),
       ),

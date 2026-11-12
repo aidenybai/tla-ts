@@ -5077,6 +5077,43 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("calls a thenable's then in a job, which settles the promise once", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      const thenable = {
+        then(resolve: (value: number) => void) {
+          log += "t";
+          resolve(1);
+          resolve(2);
+        },
+      };
+      const throwing = {
+        then: (resolve: (value: number) => void) => {
+          resolve(5);
+          throw 6;
+        },
+      };
+      Promise.resolve(thenable).then((value) => {
+        log += "a" + value;
+      });
+      Promise.resolve(throwing).then((value) => {
+        log += "d" + value;
+      });
+      Promise.resolve(0)
+        .then(() => {
+          log += "1";
+        })
+        .then(() => {
+          log += "2";
+        });
+      setTimeout(() => {
+        if (log !== "t1a1d52") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("gives a promise's callback the locals of the call that made it", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;

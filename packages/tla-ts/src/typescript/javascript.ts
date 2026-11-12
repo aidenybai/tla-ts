@@ -993,6 +993,12 @@ IsThenable(heap, value, arrayPrototype, objectPrototype) ==
        /\\ TypeOf(value) = "object"
        /\\ Has(heap, arrayPrototype, "then") \\/ Has(heap, objectPrototype, "then")
 
+\\* Whether a value is an object on the heap whose then a job can call.
+HasCallableThen(heap, value) ==
+  /\\ IsRef(value)
+  /\\ ~(IsHeap(value) /\\ heap.objects[value[Ref]].isOpaque)
+  /\\ TypeOfIn(heap, Get(heap, value, "then")) = "function"
+
 \\* The heap after a pattern reads keys of an object, which TLC would read only where something
 \\* reads what the pattern binds, so that a getter that tla-ts can't call stops the check.
 ReadKeys(heap, ref, keys) ==
