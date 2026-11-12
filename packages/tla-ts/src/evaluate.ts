@@ -873,7 +873,7 @@ const forceThunk = (thunk: Thunk, context: Context) => {
   return value;
 };
 
-const getDefinitionClosure = (definition: Definition & { kind: "Operator" }): Closure => ({
+export const getDefinitionClosure = (definition: Definition & { kind: "Operator" }): Closure => ({
   kind: "Closure",
   name: definition.name,
   params: definition.params,
@@ -1213,7 +1213,7 @@ const isRebindable = (value: Value): value is RebindableFilteredSet | Rebindable
   (value.kind === "FilteredSet" || value.kind === "LazyFunction") &&
   "rebind" in value;
 
-const toNextContext = (context: Context): Context => ({
+export const toNextContext = (context: Context): Context => ({
   environment: context.environment,
   scope: context.scope,
   state: context.next,

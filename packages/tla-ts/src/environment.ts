@@ -31,9 +31,9 @@ import {
   createRealNumberError,
   evaluate,
   getDefinition,
+  getDefinitionClosure,
   type Builtin,
   type BuiltinArgument,
-  type Closure,
   type Context,
   type Environment,
 } from "./evaluate";
@@ -425,16 +425,9 @@ export const createEnvironment = (
       if (definition?.kind !== "Operator" || !context || expressions.length !== args.length) {
         throw new TlaEvaluationError(`No definition of ${operator} to fall back to`);
       }
-      const closure: Closure = {
-        kind: "Closure",
-        name: definition.name,
-        params: definition.params,
-        body: definition.body,
-        scope: undefined,
-      };
       return evaluate(definition.body, {
         environment: context.environment,
-        scope: bindOperatorArguments(closure, expressions, context),
+        scope: bindOperatorArguments(getDefinitionClosure(definition), expressions, context),
         state: context.state,
         next: context.next,
         isKeepLazy: context.isKeepLazy,

@@ -25,6 +25,7 @@ import {
   resolveGlobalOperator,
   expectFunction,
   toKeepLazyContext,
+  toNextContext,
   createUnassignedError,
   getSortedFields,
   hasDuplicateFields,
@@ -122,13 +123,7 @@ const createGeneratedHelpers = () => ({
   unassigned: (name: string, expression: Expression): never => {
     throw createUnassignedError(name, expression);
   },
-  prime: (context: Context): Context => ({
-    environment: context.environment,
-    scope: context.scope,
-    state: context.next,
-    next: undefined,
-    isKeepLazy: context.isKeepLazy,
-  }),
+  prime: toNextContext,
   keepLazyContext: toKeepLazyContext,
   extend: (context: Context, names: string[], values: Value[]): Context => ({
     environment: context.environment,
