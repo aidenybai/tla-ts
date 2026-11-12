@@ -1,6 +1,5 @@
 // Ported from Z3 (src/tactic/core/elim_uncnstr_tactic.cpp, src/tactic/core/collect_occs.cpp), MIT
 // license, see z3-license.txt.
-import { SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
   FAMILY_ARITH,
@@ -45,6 +44,11 @@ import {
 } from "./ast";
 import { mkArrayApp } from "./array-decl-plugin";
 import { mkBvApp } from "./bv-decl-plugin";
+import {
+  getAccessorConstructor,
+  getConstructorAccessors,
+  getDatatypeConstructors,
+} from "./datatype-decl-plugin";
 import type { Definition, Goal } from "./goal";
 import { getManagerSomeValue } from "./proto-model";
 import { Rational } from "./rational";
@@ -161,8 +165,6 @@ class UncnstrRewriter extends RewriterTpl {
     if (manager.isUninterpretedSort(sort)) return false;
     if (manager.isArraySort(sort))
       return manager.getSortParameters(sort).every((parameter) => this.isFullyInterp(parameter));
-    if (manager.isDatatypeSort(sort))
-      throw new SmtUnsupportedError("eliminating an unconstrained datatype constant");
     return true;
   }
 
@@ -177,8 +179,25 @@ class UncnstrRewriter extends RewriterTpl {
     if (isArithSort(sort))
       return this.pin(manager.mkApp(OP_ADD, [term, this.mkNumeral(Rational.one, sort)], sort));
     if (manager.isBvSort(sort)) return this.pin(mkBvApp(manager, OP_BNOT, [term]));
-    if (manager.isDatatypeSort(sort))
-      throw new SmtUnsupportedError("eliminating an unconstrained datatype constant");
+    if (manager.isDatatypeSort(sort)) {
+      for (const constructor of getDatatypeConstructors(manager, sort)) {
+        const domain = manager.funcDecls[constructor].domain;
+        let target = -1;
+        for (const [index, argSort] of domain.entries()) {
+          if (argSort === sort) {
+            target = index;
+            continue;
+          }
+          if (manager.isUninterpretedSort(argSort)) break;
+        }
+        if (target === -1) continue;
+        const args = domain.map((argSort, index) =>
+          index === target ? term : this.pin(getManagerSomeValue(manager, argSort)),
+        );
+        return this.pin(manager.mkApp(constructor, args, sort));
+      }
+      return -1;
+    }
     if (!manager.isArraySort(sort)) return -1;
     const parameters = manager.getSortParameters(sort);
     if (parameters.some((parameter) => manager.isUninterpretedSort(parameter))) return -1;
@@ -465,6 +484,22 @@ class UncnstrRewriter extends RewriterTpl {
     return found.fresh;
   }
 
+  // head(x) -> fresh, x := cons(fresh, arb)
+  private processDatatype(decl: number, args: number[], sort: number) {
+    const manager = this.manager;
+    if (manager.funcDecls[decl].op !== OP_DT_ACCESSOR || !this.isUncnstr(args[0])) return -1;
+    const constructor = getAccessorConstructor(manager, decl);
+    const domain = manager.funcDecls[constructor].domain;
+    if (!domain.every((argSort) => this.isFullyInterp(argSort))) return -1;
+    const found = this.mkFreshFor(decl, args, sort);
+    if (!found.isNew) return found.fresh;
+    const newArgs = getConstructorAccessors(manager, constructor).map((accessor, index) =>
+      accessor === decl ? found.fresh : this.pin(getManagerSomeValue(manager, domain[index])),
+    );
+    this.addDef(args[0], manager.mkApp(constructor, newArgs, manager.sorts[args[0]]));
+    return found.fresh;
+  }
+
   reduceApp(decl: number, args: number[], sort: number) {
     const manager = this.manager;
     if (args.length === 0 || !args.every((arg) => manager.isGround(arg))) return -1;
@@ -478,9 +513,9 @@ class UncnstrRewriter extends RewriterTpl {
             ? this.processBv(decl, args, sort)
             : info.family === FAMILY_ARRAY
               ? this.processArray(decl, args, sort)
-              : -1;
-    if (info.family === FAMILY_DATATYPE && info.op === OP_DT_ACCESSOR && this.isUncnstr(args[0]))
-      throw new SmtUnsupportedError("eliminating an unconstrained datatype constant");
+              : info.family === FAMILY_DATATYPE
+                ? this.processDatatype(decl, args, sort)
+                : -1;
     if (result !== -1) manager.incRef(result);
     return result;
   }
