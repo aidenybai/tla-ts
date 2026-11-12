@@ -2355,7 +2355,8 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         return element !== undefined && keepsFields(type, element);
       }
       if (
-        (ts.isCallExpression(parent) && parent.arguments.includes(node)) ||
+        ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) &&
+          parent.arguments?.includes(node) === true) ||
         (ts.isPropertyAssignment(parent) && parent.initializer === node) ||
         ts.isShorthandPropertyAssignment(parent)
       ) {

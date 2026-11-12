@@ -5280,6 +5280,29 @@ describe("errors", () => {
     );
   });
 
+  it("keeps the arrays of an object that a new takes", async () => {
+    const getSource = (check: string) => `
+      class Store {
+        items: number[] = [];
+        alias() {
+          const held = this.items;
+          held.push(1);
+        }
+      }
+      class Marks {
+        constructor(readonly owner: Store) {}
+      }
+      const store = new Store();
+      const marks = new Marks(store);
+      store.alias();
+      if (${check}) throw new Error("Store");
+    `;
+    expect((await checkModel(getSource("marks.owner.items.length !== 1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("store.items.length === 1"))).failure?.message).toContain(
+      "Store",
+    );
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`
