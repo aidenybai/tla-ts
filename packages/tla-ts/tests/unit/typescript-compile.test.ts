@@ -13245,6 +13245,23 @@ describe("calls through values", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs the function that a variable holds where the call asserts that it isn't null", async () => {
+    const getSource = (expected: number) => `
+      let count: number = 1;
+      let read: (() => number) | undefined;
+      let other: (() => number) | undefined;
+      (() => {
+        read = () => count + 1;
+        other = () => count + 2;
+      })();
+      count = 5;
+      const value = read!() * 10 + (other as () => number)();
+      if (value !== ${expected}) throw new Error("value " + value);
+    `;
+    expect((await checkModel(getSource(67))).failure).toBeUndefined();
+    expect((await checkModel(getSource(66))).failure?.message).toContain("value 67");
+  });
+
   it("skips a function that a callback takes but doesn't name", async () => {
     const result = await checkModel(`
       const marker = new Uint8Array(1);

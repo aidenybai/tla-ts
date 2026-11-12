@@ -2461,7 +2461,7 @@ export const translateCallStatement = (
 };
 
 export const getCallback = (node: ts.Expression, path: Path, context: Context) => {
-  const symbol = getSymbol(node, context.checker);
+  const symbol = getSymbol(skipCasts(node), context.checker);
   const assigned = symbol && path.scope.functions.get(symbol);
   if (assigned === undefined) return getCallee(node, context);
   return isPlain(assigned) ? assigned : undefined;

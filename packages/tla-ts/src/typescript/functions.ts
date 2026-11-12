@@ -20,6 +20,7 @@ import {
   isLiteral,
   isPlain,
   share,
+  skipCasts,
 } from "./context";
 import {
   allocateArguments,
@@ -746,7 +747,7 @@ export const translateLocalCall = (
   context: Context,
   called?: CalledMethod,
 ) => {
-  const symbol = getSymbol(node.expression, context.checker);
+  const symbol = getSymbol(skipCasts(node.expression), context.checker);
   const callee =
     called?.method ??
     (symbol && scope.functions.get(symbol)) ??
