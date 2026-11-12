@@ -1172,6 +1172,95 @@ describe("values", () => {
     ).toContain("outcomes type");
   });
 
+  it("runs a parameter's default that assigns where the call binds the parameter", async () => {
+    const getSource = (expected: string) => `
+      let count: number = 0;
+      let cached: number | undefined = undefined;
+      let caught = "none";
+      const poisoned = {
+        get value(): number | undefined {
+          throw new RangeError("get");
+        },
+      };
+      const take = ({ value: taken = ++count }: { value?: number }) => taken;
+      try {
+        take(poisoned);
+      } catch (error) {
+        caught = error instanceof RangeError ? "range" : "other";
+      }
+      const sum = (a = ++count, b = count) => a * 10 + b;
+      const steps = (a = count++, b = (count += 5), c = (cached ??= 3)) => [a, b, c].join(" ");
+      class Counter {
+        method({ value = ++count }: { value?: number }) {
+          return value;
+        }
+        static make(a: number, b = (count += 10)) {
+          return a + b;
+        }
+      }
+      function* yields(a = ++count) {
+        yield a;
+      }
+      const before = count;
+      const defaulted = take({});
+      const passed = take({ value: 7 });
+      const summed = sum();
+      const added = sum(4);
+      const stepped = steps();
+      const given = steps(1, 2, 4);
+      const counted = new Counter().method({});
+      const made = Counter.make(1);
+      const iterator = yields();
+      const yielded = iterator.next().value;
+      const outcomes = [
+        caught,
+        before,
+        defaulted,
+        passed,
+        summed,
+        added,
+        stepped,
+        given,
+        counted,
+        made,
+        yielded,
+        count,
+        cached,
+      ].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    const expected = "range,0,1,7,22,42,2 8 3,1 2 4,9,20,20,20,3";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    for (const wrong of [
+      "range,1,1,7,22,42,2 8 3,1 2 4,9,20,20,20,3",
+      "range,0,1,8,22,42,2 8 3,1 2 4,9,20,20,20,3",
+      "range,0,1,7,21,42,2 8 3,1 2 4,9,20,20,20,3",
+      "range,0,1,7,22,42,2 7 3,1 2 4,9,20,20,20,3",
+      "range,0,1,7,22,42,2 8 3,1 2 4,9,19,20,20,3",
+    ]) {
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(
+        `outcomes ${expected}`,
+      );
+    }
+  });
+
+  it("stops where a parameter's default that assigns runs out of order", () => {
+    expect(() =>
+      compile(`
+        let count: number = 0;
+        const sum = (a = count, b = ++count) => a + b;
+        if (sum() !== 1) throw new Error("sum");
+      `),
+    ).toThrow("tla-ts can't run this before what reads what it changes");
+    expect(() =>
+      compile(`
+        const box = { count: 0 };
+        const next = (a = ++box.count) => a;
+        if (next() !== 1) throw new Error("next");
+      `),
+    ).toThrow("tla-ts can't run a default that writes a property");
+  });
+
   it("runs the getters of a parameter's pattern again at each call", async () => {
     const getSource = (expected: string) => `
       let count: number = 0;
