@@ -43,6 +43,9 @@ export interface Scope {
   // The values that patterns destructure, which throw a TypeError where they are null or undefined
   // though nothing reads what the patterns bind, and which the next statement checks.
   destructured?: readonly Destructured[];
+  // The statement that runs where the object it first uses has the private name it uses, which
+  // translating it again doesn't check again.
+  brandChecked?: ts.Statement;
 }
 
 export interface Destructured {

@@ -7771,6 +7771,33 @@ describe("errors", () => {
     expect((await checkModel(getSource(6))).failure?.message).toContain("call");
   });
 
+  it("throws the TypeError of a private name that an object lacks", async () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      class S {
+        #m() { return 1; }
+        run() { return this.#m(); }
+      }
+      class D extends S {
+        #f = 0;
+        static #s = 1;
+        go() { this.#f = 2; log += "go"; }
+        each() { for (this.#f of [1]) {} }
+        static read() { return this.#s; }
+      }
+      const s = new S();
+      const d = new D();
+      let caught = "";
+      try { D.prototype.go.call(s); } catch (error) { caught += error instanceof TypeError ? "t" : "o"; }
+      try { D.prototype.each.call({}); } catch (error) { caught += error instanceof TypeError ? "t" : "o"; }
+      try { D.read.call(d); } catch (error) { caught += error instanceof TypeError ? "t" : "o"; }
+      try { S.prototype.run.call(d); } catch (error) { caught += error instanceof TypeError ? "t" : "o"; }
+      if (caught !== "${expected}" || log !== "") throw new Error("brand");
+    `;
+    expect((await checkModel(getSource("ttt"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("tttt"))).failure?.message).toContain("brand");
+  });
+
   it("makes a class expression that a script only reads where it runs", async () => {
     const getSource = (length: number) => `
       const describe = (made: object, key: string) => Object.getOwnPropertyDescriptor(made, key)!.value;
