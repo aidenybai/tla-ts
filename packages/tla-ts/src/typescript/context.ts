@@ -1251,13 +1251,15 @@ export const getSetters = (node: ts.Node, context: Context) => {
   );
 };
 
-// Whether a node makes a function or an object, which only a statement can.
+// Whether a node makes a function or an object, which only a statement can. A type, such as one
+// with an index signature, makes nothing.
 const isMaking = (node: ts.Node): boolean =>
-  ts.isFunctionLike(node) ||
-  ts.isClassLike(node) ||
-  ts.isObjectLiteralExpression(node) ||
-  ts.isNewExpression(node) ||
-  (ts.forEachChild(node, (child) => isMaking(child) || undefined) ?? false);
+  !ts.isTypeNode(node) &&
+  (ts.isFunctionLike(node) ||
+    ts.isClassLike(node) ||
+    ts.isObjectLiteralExpression(node) ||
+    ts.isNewExpression(node) ||
+    (ts.forEachChild(node, (child) => isMaking(child) || undefined) ?? false));
 
 const returnedFunctions = new WeakMap<ts.SourceFile, ts.FunctionExpression[]>();
 

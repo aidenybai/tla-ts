@@ -2150,6 +2150,22 @@ describe("errors", () => {
     expect((await checkModel(getSource(2))).failure?.message).toContain("unexpected");
   });
 
+  it("runs a getter whose type has an index signature where a computed key picks it", async () => {
+    const getSource = (expected: string) => `
+      const readKey = (obj: object, name: string) => (obj as { [key: string]: unknown })[name];
+      const holder = {};
+      (holder as { [key: string]: unknown }).data = "x";
+      Object.defineProperty(holder, "property", {
+        get: function () {
+          return (holder as { [key: string]: unknown }).data;
+        },
+      });
+      if (readKey(holder, "property") !== "${expected}") throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource("x"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("y"))).failure?.message).toContain("unexpected");
+  });
+
   it("runs the setter of an object literal or a class that a computed key picks", async () => {
     const getSource = (written: string) => `
       let log = "";
