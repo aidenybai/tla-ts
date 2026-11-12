@@ -27,13 +27,13 @@ export interface DecimalExpression {
   location: SourceLocation;
 }
 
-export interface StringExpression {
+interface StringExpression {
   kind: "String";
   value: string;
   location: SourceLocation;
 }
 
-export interface IdentifierExpression {
+interface IdentifierExpression {
   kind: "Identifier";
   name: string;
   spelling?: string;
@@ -42,7 +42,7 @@ export interface IdentifierExpression {
   resolution?: LocalResolution;
 }
 
-export interface ApplyExpression {
+interface ApplyExpression {
   kind: "Apply";
   operator: string;
   spelling?: string;
@@ -55,14 +55,14 @@ export interface ApplyExpression {
   resolution?: LocalResolution;
 }
 
-export interface OperatorReferenceExpression {
+interface OperatorReferenceExpression {
   kind: "OperatorReference";
   operator: string;
   spelling?: string;
   location: SourceLocation;
 }
 
-export interface LambdaExpression {
+interface LambdaExpression {
   kind: "Lambda";
   params: string[];
   paramRanges?: SourceRange[];
@@ -71,7 +71,7 @@ export interface LambdaExpression {
   location: SourceLocation;
 }
 
-export interface JunctionExpression {
+interface JunctionExpression {
   kind: "And" | "Or";
   operands: Expression[];
   isBulleted?: boolean;
@@ -79,25 +79,25 @@ export interface JunctionExpression {
   location: SourceLocation;
 }
 
-export interface PrimeExpression {
+interface PrimeExpression {
   kind: "Prime";
   expression: Expression;
   location: SourceLocation;
 }
 
-export interface UnchangedExpression {
+interface UnchangedExpression {
   kind: "Unchanged";
   expression: Expression;
   location: SourceLocation;
 }
 
-export interface EnabledExpression {
+interface EnabledExpression {
   kind: "Enabled";
   expression: Expression;
   location: SourceLocation;
 }
 
-export interface IfExpression {
+interface IfExpression {
   kind: "If";
   condition: Expression;
   consequent: Expression;
@@ -110,7 +110,7 @@ export interface CaseArm {
   body: Expression;
 }
 
-export interface CaseExpression {
+interface CaseExpression {
   kind: "Case";
   arms: CaseArm[];
   other: Expression | undefined;
@@ -118,7 +118,7 @@ export interface CaseExpression {
   location: SourceLocation;
 }
 
-export interface LetExpression {
+interface LetExpression {
   kind: "Let";
   definitions: Definition[];
   instances?: Instance[];
@@ -142,7 +142,7 @@ export interface QuantifierExpression {
   location: SourceLocation;
 }
 
-export interface UnboundedQuantifierExpression {
+interface UnboundedQuantifierExpression {
   kind: "UnboundedQuantifier";
   quantifier: "Forall" | "Exists";
   names: string[];
@@ -152,7 +152,7 @@ export interface UnboundedQuantifierExpression {
   location: SourceLocation;
 }
 
-export interface ChooseExpression {
+interface ChooseExpression {
   kind: "Choose";
   pattern: BoundPattern;
   set: Expression | undefined;
@@ -160,33 +160,33 @@ export interface ChooseExpression {
   location: SourceLocation;
 }
 
-export interface SetEnumerationExpression {
+interface SetEnumerationExpression {
   kind: "SetEnumeration";
   elements: Expression[];
   location: SourceLocation;
 }
 
-export interface SetFilterExpression {
+interface SetFilterExpression {
   kind: "SetFilter";
   bound: Bound;
   predicate: Expression;
   location: SourceLocation;
 }
 
-export interface SetMapExpression {
+interface SetMapExpression {
   kind: "SetMap";
   expression: Expression;
   bounds: Bound[];
   location: SourceLocation;
 }
 
-export interface TupleExpression {
+interface TupleExpression {
   kind: "Tuple";
   elements: Expression[];
   location: SourceLocation;
 }
 
-export interface FunctionConstructionExpression {
+interface FunctionConstructionExpression {
   kind: "FunctionConstruction";
   bounds: Bound[];
   body: Expression;
@@ -194,7 +194,7 @@ export interface FunctionConstructionExpression {
   isRecursive?: boolean;
 }
 
-export interface FunctionSetExpression {
+interface FunctionSetExpression {
   kind: "FunctionSet";
   domain: Expression;
   range: Expression;
@@ -207,7 +207,7 @@ export interface RecordField {
   location: SourceLocation;
 }
 
-export interface RecordExpression {
+interface RecordExpression {
   kind: "Record" | "RecordSet";
   fields: RecordField[];
   location: SourceLocation;
@@ -222,58 +222,58 @@ interface ExceptUpdate {
   value: Expression;
 }
 
-export interface ExceptExpression {
+interface ExceptExpression {
   kind: "Except";
   function: Expression;
   updates: ExceptUpdate[];
   location: SourceLocation;
 }
 
-export interface ExceptAtExpression {
+interface ExceptAtExpression {
   kind: "ExceptAt";
   location: SourceLocation;
 }
 
-export interface FunctionApplicationExpression {
+interface FunctionApplicationExpression {
   kind: "FunctionApplication";
   function: Expression;
   args: Expression[];
   location: SourceLocation;
 }
 
-export interface BracketExpression {
+interface BracketExpression {
   kind: "Bracket";
   args: Expression[];
   location: SourceLocation;
 }
 
-export interface FieldAccessExpression {
+interface FieldAccessExpression {
   kind: "FieldAccess";
   record: Expression;
   field: string;
   location: SourceLocation;
 }
 
-export interface ProductExpression {
+interface ProductExpression {
   kind: "Product";
   factors: Expression[];
   location: SourceLocation;
 }
 
-export interface TemporalExpression {
+interface TemporalExpression {
   kind: "Always" | "Eventually";
   expression: Expression;
   location: SourceLocation;
 }
 
-export interface ActionExpression {
+interface ActionExpression {
   kind: "BoxAction" | "AngleAction";
   action: Expression;
   subscript: Expression;
   location: SourceLocation;
 }
 
-export interface FairnessExpression {
+interface FairnessExpression {
   kind: "WeakFairness" | "StrongFairness";
   subscript: Expression;
   action: Expression;
@@ -298,7 +298,7 @@ export type Selector =
   | { kind: "At" }
   | { kind: "Colon" };
 
-export interface SubexpressionExpression {
+interface SubexpressionExpression {
   kind: "Subexpression";
   selectors: Selector[];
   selectorRanges?: SourceRange[];
