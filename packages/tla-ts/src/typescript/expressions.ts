@@ -1332,8 +1332,10 @@ const mayBeValueObject = (node: ts.Expression, context: Context) => {
 
 // The raw text of a template's literal, where a carriage return, alone or before a line feed, is a
 // line feed.
-const getRawText = (literal: ts.TemplateLiteralLikeNode) =>
-  string((literal.rawText ?? "").replace(/\r\n?/g, "\n"));
+export const getRawString = (literal: ts.TemplateLiteralLikeNode) =>
+  (literal.rawText ?? "").replace(/\r\n?/g, "\n");
+
+const getRawText = (literal: ts.TemplateLiteralLikeNode) => string(getRawString(literal));
 
 // String.raw of a template, which joins the raw text of its literals with its substitutions.
 const translateRawTemplate = (
@@ -3007,7 +3009,7 @@ const translateNode = (
   // makes.
   if (ts.isRegularExpressionLiteral(node) || getMadeRegExp(node, context) !== undefined) {
     const allocated = scope.allocated.get(node);
-    if (context.heap === undefined) return translateRegExpValue(node, context);
+    if (context.heap === undefined) return translateRegExpValue(node, scope, context);
     if (allocated === undefined) {
       throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
     }

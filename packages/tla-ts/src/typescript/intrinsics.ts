@@ -1,5 +1,13 @@
 import ts from "@typescript/typescript6";
-import { type Context, findNodes, getSymbol, getUndefined, isAssigned, share } from "./context";
+import {
+  type Context,
+  findNodes,
+  getSymbol,
+  getUndefined,
+  isAssigned,
+  share,
+  skipCasts,
+} from "./context";
 import { TlaTypeScriptError } from "../errors";
 import {
   getArrayIteratorCall,
@@ -7,7 +15,7 @@ import {
   translateHoldsIteratorMethod,
 } from "./collections";
 import { getConstructor, getErrorClass, NATIVE_ERRORS } from "./exceptions";
-import { getNumberValue, translateExpression } from "./expressions";
+import { getNumberValue, getRawString, translateExpression } from "./expressions";
 import { getHeap } from "./heap";
 import { useJavaScript, WELL_KNOWN_SYMBOLS } from "./javascript";
 import type { Scope } from "./scope";
@@ -1551,7 +1559,141 @@ const translateRegExp = (
   ]);
 };
 
-// The pattern and flags of new RegExp or RegExp, where literals write them.
+// The methods whose callback takes each element of the array that they visit first.
+const ELEMENT_METHODS = new Set(["map", "forEach", "flatMap", "filter", "some", "every", "find"]);
+
+// The values that an expression may take that tla-ts finds as it compiles: the strings that
+// literals, String.raw and templates write and that + joins, and the regexps that literals write,
+// through constants, the elements that an array method passes its callback, and the arguments that
+// each call in its file passes a function. A run checks what it makes against them.
+const getConstantValues = (
+  node: ts.Expression,
+  context: Context,
+  visited: ReadonlySet<ts.Node>,
+): (string | ts.RegularExpressionLiteral)[] | undefined => {
+  const expression = skipCasts(node);
+  const getStrings = (inner: ts.Expression) => {
+    const values = getConstantValues(inner, context, visited);
+    const strings = values?.filter((value) => typeof value === "string");
+    return strings?.length === values?.length ? strings : undefined;
+  };
+  const join = (parts: (string[] | undefined)[]) =>
+    parts.reduce<string[] | undefined>(
+      (joined, part) =>
+        joined === undefined || part === undefined
+          ? undefined
+          : joined.flatMap((left) => part.map((right) => left + right)),
+      [""],
+    );
+  if (ts.isStringLiteralLike(expression)) return [expression.text];
+  if (ts.isRegularExpressionLiteral(expression)) return [expression];
+  if (ts.isTemplateExpression(expression)) {
+    return join([
+      [expression.head.text],
+      ...expression.templateSpans.flatMap((span) => [
+        getStrings(span.expression),
+        [span.literal.text],
+      ]),
+    ]);
+  }
+  if (
+    ts.isTaggedTemplateExpression(expression) &&
+    ts.isPropertyAccessExpression(expression.tag) &&
+    expression.tag.name.text === "raw" &&
+    getBuiltIn(expression.tag.expression, context) === "String"
+  ) {
+    const template = expression.template;
+    return ts.isNoSubstitutionTemplateLiteral(template)
+      ? [getRawString(template)]
+      : join([
+          [getRawString(template.head)],
+          ...template.templateSpans.flatMap((span) => [
+            getStrings(span.expression),
+            [getRawString(span.literal)],
+          ]),
+        ]);
+  }
+  if (
+    ts.isBinaryExpression(expression) &&
+    expression.operatorToken.kind === ts.SyntaxKind.PlusToken
+  ) {
+    return join([getStrings(expression.left), getStrings(expression.right)]);
+  }
+  if (
+    ts.isPropertyAccessExpression(expression) &&
+    ["source", "flags"].includes(expression.name.text)
+  ) {
+    const values = getConstantValues(expression.expression, context, visited);
+    const regexps = values?.filter((value) => typeof value !== "string");
+    return regexps === undefined || regexps.length < (values?.length ?? 0)
+      ? undefined
+      : regexps.map((regexp) => {
+          const end = regexp.text.lastIndexOf("/");
+          const made = new RegExp(regexp.text.slice(1, end), regexp.text.slice(end + 1));
+          return expression.name.text === "source" ? made.source : made.flags;
+        });
+  }
+  const symbol = ts.isIdentifier(expression) ? getSymbol(expression, context.checker) : undefined;
+  const declaration = symbol?.valueDeclaration;
+  if (symbol === undefined || declaration === undefined || visited.has(declaration)) {
+    return undefined;
+  }
+  const inner = new Set([...visited, declaration]);
+  const getUnion = (nodes: readonly ts.Expression[]) => {
+    const values = nodes.map((value) => getConstantValues(value, context, inner));
+    return nodes.length === 0 || values.some((value) => value === undefined)
+      ? undefined
+      : [...new Set(values.flatMap((value) => value ?? []))];
+  };
+  if (ts.isVariableDeclaration(declaration)) {
+    return (declaration.parent.flags & ts.NodeFlags.Const) !== 0 &&
+      declaration.initializer !== undefined
+      ? getConstantValues(declaration.initializer, context, inner)
+      : undefined;
+  }
+  if (
+    !ts.isParameter(declaration) ||
+    declaration.initializer !== undefined ||
+    declaration.dotDotDotToken !== undefined ||
+    isAssigned(symbol, declaration.parent, context)
+  ) {
+    return undefined;
+  }
+  const owner = declaration.parent;
+  const position = owner.parameters.indexOf(declaration);
+  const call = owner.parent;
+  // The first parameter of an array method's callback takes each element of an array literal.
+  if (
+    ts.isCallExpression(call) &&
+    call.arguments.at(0) === owner &&
+    ts.isPropertyAccessExpression(call.expression) &&
+    ELEMENT_METHODS.has(call.expression.name.text)
+  ) {
+    const receiver = skipCasts(call.expression.expression);
+    return position === 0 &&
+      ts.isArrayLiteralExpression(receiver) &&
+      !receiver.elements.some(ts.isSpreadElement)
+      ? getUnion(receiver.elements)
+      : undefined;
+  }
+  const name = ts.isFunctionDeclaration(owner)
+    ? owner.name
+    : ts.isVariableDeclaration(call) && ts.isIdentifier(call.name)
+      ? call.name
+      : undefined;
+  const callee = name && getSymbol(name, context.checker);
+  if (callee === undefined) return undefined;
+  const calls = findNodes(owner.getSourceFile(), ts.isCallExpression).filter(
+    (inner) => getSymbol(inner.expression, context.checker) === callee,
+  );
+  const values = calls.map((inner) => inner.arguments.at(position));
+  return values.every((value) => value !== undefined && !ts.isSpreadElement(value))
+    ? getUnion(values.filter((value) => value !== undefined))
+    : undefined;
+};
+
+// The patterns and flags that new RegExp or RegExp may make, where its arguments are strings that
+// tla-ts finds as it compiles.
 const getRegExpTexts = (node: ts.Node, context: Context) => {
   if (
     (!ts.isNewExpression(node) && !ts.isCallExpression(node)) ||
@@ -1560,10 +1702,18 @@ const getRegExpTexts = (node: ts.Node, context: Context) => {
     return undefined;
   }
   const values = node.arguments ?? [];
-  const texts = values.flatMap((value) => (ts.isStringLiteralLike(value) ? [value.text] : []));
-  return values.length > 2 || texts.length < values.length
+  const texts = values.map((value) => {
+    const constants = getConstantValues(value, context, new Set());
+    const strings = constants?.filter((constant) => typeof constant === "string");
+    return getKind(value, context) === "string" && strings?.length === constants?.length
+      ? strings
+      : undefined;
+  });
+  const patterns = values.length === 0 ? [""] : texts.at(0);
+  const flags = values.length < 2 ? [""] : texts.at(1);
+  return values.length > 2 || patterns === undefined || flags === undefined
     ? undefined
-    : { pattern: texts.at(0) ?? "", flags: texts.at(1) ?? "" };
+    : patterns.flatMap((pattern) => flags.map((flag) => ({ pattern, flags: flag })));
 };
 
 const getValidRegExp = (texts: { pattern: string; flags: string }) => {
@@ -1577,15 +1727,17 @@ const getValidRegExp = (texts: { pattern: string; flags: string }) => {
 // new RegExp or RegExp of literals that make a valid regexp, whose source the engine that tla-ts
 // runs on escapes as the spec's EscapeRegExpPattern does.
 export const getMadeRegExp = (node: ts.Node, context: Context) => {
-  const texts = getRegExpTexts(node, context);
-  const made = texts === undefined ? undefined : getValidRegExp(texts);
-  return texts === undefined || made === undefined ? undefined : { ...texts, source: made.source };
+  const made = getRegExpTexts(node, context)?.map((texts) => {
+    const valid = getValidRegExp(texts);
+    return valid === undefined ? undefined : { ...texts, source: valid.source };
+  });
+  return made?.every((texts) => texts !== undefined) ? made : undefined;
 };
 
 // new RegExp or RegExp of literals that make no valid regexp, which throws a SyntaxError.
 export const isInvalidRegExp = (node: ts.Node, context: Context) => {
   const texts = getRegExpTexts(node, context);
-  return texts !== undefined && getValidRegExp(texts) === undefined;
+  return texts?.length === 1 && getValidRegExp(texts[0]) === undefined;
 };
 
 // The regexp that search or match makes of a string literal, where the literal is a valid pattern.
@@ -1600,13 +1752,43 @@ export const getStringRegExp = (node: ts.Node) => {
 
 // A regular expression literal, a regexp that getMadeRegExp reads, or one that getStringRegExp
 // reads, as the record of its pattern, which without objects is the regexp itself, whose lastIndex
-// stays 0.
-export const translateRegExpValue = (node: ts.Node, context: Context) => {
-  const made = ts.isRegularExpressionLiteral(node)
+// stays 0. A regexp whose arguments aren't all literals is the one of the texts that they give as
+// it runs.
+export const translateRegExpValue = (node: ts.Node, scope: Scope, context: Context) => {
+  const made = getMadeRegExp(node, context);
+  if (
+    made !== undefined &&
+    (ts.isNewExpression(node) || ts.isCallExpression(node)) &&
+    !(node.arguments ?? []).every(ts.isStringLiteralLike)
+  ) {
+    const values = (node.arguments ?? []).map((argument) =>
+      translateExpression(argument, scope, context),
+    );
+    return share(values[0], "pattern", context, (pattern) =>
+      share(values.at(1) ?? string(""), "flags", context, (flags) =>
+        made.reduceRight<Expression>(
+          (otherwise, texts) =>
+            ifExpression(
+              apply("/\\", [
+                apply("=", [pattern, string(texts.pattern)]),
+                apply("=", [flags, string(texts.flags)]),
+              ]),
+              translateRegExp(texts.pattern, texts.flags, texts.source, node, context),
+              otherwise,
+            ),
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't make a regexp of a pattern that it didn't find as it compiled"),
+          ]),
+        ),
+      ),
+    );
+  }
+  const literal = ts.isRegularExpressionLiteral(node)
     ? undefined
-    : (getMadeRegExp(node, context) ?? getStringRegExp(node));
-  if (made !== undefined) {
-    return translateRegExp(made.pattern, made.flags, made.source, node, context);
+    : (made?.[0] ?? getStringRegExp(node));
+  if (literal !== undefined) {
+    return translateRegExp(literal.pattern, literal.flags, literal.source, node, context);
   }
   if (!ts.isRegularExpressionLiteral(node))
     throw new TlaTypeScriptError("Unsupported regexp", node);

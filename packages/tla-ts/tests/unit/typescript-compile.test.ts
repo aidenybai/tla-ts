@@ -2015,6 +2015,27 @@ describe("values", () => {
     expect((await checkModel(getSource("true,false"))).failure?.message).toContain("true,true");
   });
 
+  it("makes the regexps whose patterns constants give, through a map's callback", async () => {
+    const getSource = (expected: string) => `
+      const patterns = [/[0-9]+/, /[a-z]+/].map((prefix) => new RegExp(\`^\${prefix.source}-$\`));
+      const result = [patterns[0].test("1-"), patterns[1].test("1-")].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("true,false"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("true,true"))).rejects.toThrow("true,false");
+  });
+
+  it("makes the regexp whose pattern a function's argument and String.raw give", async () => {
+    const getSource = (expected: string) => `
+      const make = (suffix: string) => new RegExp(String.raw\`<\\d>\` + suffix, /a/i.flags);
+      const step = make("x");
+      const result = [step.test("<1>X"), step.test("<1>y")].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("true,false"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("false,false"))).rejects.toThrow("true,false");
+  });
+
   it("changes a field's array through a local that names it", async () => {
     const getSource = (expected: string) => `
       const shrink = (values: number[], size: number) => {

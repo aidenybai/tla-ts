@@ -1915,12 +1915,12 @@ const translateRegExpCall = (node: MethodCall, scope: Scope, context: Context) =
     context.heap === undefined
       ? getStringRegExp(call.regexp) === undefined
         ? translate(call.regexp)
-        : translateRegExpValue(call.regexp, context)
+        : translateRegExpValue(call.regexp, scope, context)
       : useJavaScript(
           "RegExpFresh",
           [
             getHeap(scope, node, context),
-            translateRegExpValue(call.regexp, context),
+            translateRegExpValue(call.regexp, scope, context),
             set(changeable.map(string)),
           ],
           context,
