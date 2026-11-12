@@ -22,7 +22,7 @@ import type { EncodingSession } from "./smt/rewrite";
 import { encodeZenon } from "./zenon/encode";
 import type { TlapmResult } from "./tlapm/tlapm";
 import { TLAPS_MODULE } from "./tlaps-module";
-import type { Verdict } from "./verdict";
+import { isBackend, type Backend, type Verdict } from "./verdict";
 
 interface ObligationBase {
   id: number;
@@ -96,21 +96,33 @@ interface ProveRun {
   decide: DecidePool["decide"];
 }
 
-type Encoder = (id: number, sequent: Sequent, method: Method, session: EncodingSession) => string;
+interface Encoder {
+  encode: (id: number, sequent: Sequent, method: Method, session: EncodingSession) => string;
+  isCaseNumbered: boolean;
+}
 
 const shipFirstOrder = (sequent: Sequent) => flatten(processObligation(sequent));
 
-const encodeSmtProblem: Encoder = (_id, sequent, method, session) =>
-  (method.rlimit === undefined ? "" : `(set-option :rlimit ${method.rlimit})\n`) +
-  encodeSmt(shipFirstOrder(sequent), session);
+const SMT_ENCODER: Encoder = {
+  encode: (_id, sequent, method, session) =>
+    (method.rlimit === undefined ? "" : `(set-option :rlimit ${method.rlimit})\n`) +
+    encodeSmt(shipFirstOrder(sequent), session),
+  isCaseNumbered: true,
+};
 
-const ENCODERS: Record<string, Encoder> = {
-  smt: encodeSmtProblem,
-  z3: encodeSmtProblem,
-  zenon: (id, sequent) => encodeZenon(id, shipFirstOrder(sequent)),
-  isabelle: (id, sequent, method) =>
-    encodeIsabelle(id, shipFirstOrder(sequent), method.tactic ?? "auto"),
-  ls4: (_id, sequent) => encodePtl(sequent),
+const ENCODERS: Record<Backend, Encoder> = {
+  smt: SMT_ENCODER,
+  z3: SMT_ENCODER,
+  zenon: {
+    encode: (id, sequent) => encodeZenon(id, shipFirstOrder(sequent)),
+    isCaseNumbered: false,
+  },
+  isabelle: {
+    encode: (id, sequent, method) =>
+      encodeIsabelle(id, shipFirstOrder(sequent), method.tactic ?? "auto"),
+    isCaseNumbered: false,
+  },
+  ls4: { encode: (_id, sequent) => encodePtl(sequent), isCaseNumbered: false },
 };
 
 const hasIncompleteCase = (expression: Expr): boolean =>
@@ -181,17 +193,20 @@ export const encodeProofTheory = (
 
 export const encodeForBackend = (
   obligation: PrintedObligation,
-  prover: string,
+  prover: Backend,
   session: EncodingSession,
 ) => {
-  const encode = ENCODERS[prover];
-  if (!encode) throw new TlaUnsupportedError(`the ${prover} backend`);
   const methods = findMethods(obligation);
   const method = methods.provers.find((candidate) => candidate.prover === prover) ?? {
     prover,
     timeLimitMs: Infinity,
   };
-  return encode(obligation.id, normalizeExpand(obligation, methods), method, session);
+  return ENCODERS[prover].encode(
+    obligation.id,
+    normalizeExpand(obligation, methods),
+    method,
+    session,
+  );
 };
 
 const getSession = async (run: ProveRun, index: number) => {
@@ -273,17 +288,17 @@ const proveWithBackends = async (
     }
     if (!run.isProving) continue;
     if (method.prover === "trivial") return getProvedReport(method.prover);
-    const encode = ENCODERS[method.prover];
-    if (!encode) {
+    if (!isBackend(method.prover)) {
       skip(method, `tla-ts has no ${method.prover} backend`);
       continue;
     }
     try {
+      const encoder = ENCODERS[method.prover];
       const isCaseNumbered =
-        encode === encodeSmtProblem &&
+        encoder.isCaseNumbered &&
         (sequent.context.some(isIncompleteCaseHyp) || hasIncompleteCase(sequent.active));
       const session = isCaseNumbered ? await getSession(run, index) : { caseErrors: 0 };
-      const text = encode(obligation.id, sequent, method, session);
+      const text = encoder.encode(obligation.id, sequent, method, session);
       const decision = await run.decide(
         method.prover,
         text,

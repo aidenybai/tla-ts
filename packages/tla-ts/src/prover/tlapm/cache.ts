@@ -20,6 +20,7 @@ import {
   type OcamlValue,
 } from "./ocaml-marshal";
 import type { ProofAttempt } from "../prove";
+import { BACKENDS, type Backend } from "../verdict";
 
 export type FingerprintTable = Map<string, OcamlValue[]>;
 
@@ -27,7 +28,7 @@ const MAGIC_NUMBER = 20210223;
 
 const RECORD_SIZE = 23;
 
-const PROVERS: Record<string, { field: number; tag: number }> = {
+const PROVERS: Record<Backend, { field: number; tag: number }> = {
   zenon: { field: 1, tag: 1 },
   isabelle: { field: 2, tag: 0 },
   smt: { field: 10, tag: 8 },
@@ -102,7 +103,10 @@ export const loadFingerprints = (table: FingerprintTable, path: string, isSafe: 
     });
 };
 
-const decodeResult = (prover: string, result: OcamlValue | undefined): ProofAttempt | undefined => {
+const decodeResult = (
+  prover: Backend,
+  result: OcamlValue | undefined,
+): ProofAttempt | undefined => {
   const status = getField(result, 0);
   const outcome = getField(status, 0);
   const argument = getField(getField(status, 1), 0);
@@ -125,14 +129,14 @@ const decodeResult = (prover: string, result: OcamlValue | undefined): ProofAtte
 };
 
 // Fpfile.fp_writes, whose date counts months from 0.
-const encodeResult = (attempt: ProofAttempt) => {
+const encodeResult = (prover: Backend, attempt: ProofAttempt) => {
   const now = new Date();
   const method = attempt.method;
   const timeout = { float: method.rlimit ?? method.timeLimitMs / 1000 };
   const argument =
-    method.prover === "zenon"
+    prover === "zenon"
       ? createBlock(0, timeout, FAIL_METHOD)
-      : method.prover === "isabelle"
+      : prover === "isabelle"
         ? createBlock(0, createBlock(0, timeout), method.tactic ?? "auto")
         : createBlock(0, timeout);
   const reasonIndex = REASONS.indexOf(attempt.reason ?? "");
@@ -147,7 +151,7 @@ const encodeResult = (attempt: ProofAttempt) => {
       createBlock(
         0,
         attempt.isProved ? 0 : createBlock(0, reason),
-        createBlock(PROVERS[method.prover].tag, argument),
+        createBlock(PROVERS[prover].tag, argument),
       ),
       createBlock(
         0,
@@ -201,10 +205,11 @@ export const getKnownResults = (table: FingerprintTable) => {
   const results = new Map(
     [...table].map(([fingerprint, record]) => {
       const attempts = new Map(
-        Object.entries(PROVERS).flatMap(([prover, known]) => {
-          const result = decodeResult(prover, getField(record[known.field], 0));
+        BACKENDS.flatMap((prover) => {
+          const stored = record[PROVERS[prover].field];
+          const result = decodeResult(prover, getField(stored, 0));
           if (!result) return [];
-          storedResults.set(result, record[known.field]);
+          storedResults.set(result, stored);
           return [[prover, result]];
         }),
       );
@@ -216,8 +221,11 @@ export const getKnownResults = (table: FingerprintTable) => {
     table.clear();
     results.forEach((attempts, fingerprint) => {
       const record = [...(storedRecords.get(attempts) ?? Array<OcamlValue>(RECORD_SIZE).fill(0))];
-      attempts.forEach((attempt, prover) => {
-        record[PROVERS[prover].field] = storedResults.get(attempt) ?? encodeResult(attempt);
+      BACKENDS.forEach((prover) => {
+        const attempt = attempts.get(prover);
+        if (attempt)
+          record[PROVERS[prover].field] =
+            storedResults.get(attempt) ?? encodeResult(prover, attempt);
       });
       table.set(fingerprint, record);
     });

@@ -3,9 +3,9 @@ import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { type ProofObligation, TlaError } from "../src";
 import type { PrintedObligation } from "../src/obligations";
-import { DECIDERS } from "../src/prover/deciders";
 import { findMethods, type Method } from "../src/prover/prep/methods";
 import { encodeForBackend } from "../src/prover/prove";
+import { isBackend } from "../src/prover/verdict";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, writeResults } from "./corpora";
 import { runWithCpuLimit } from "./cpu-limit";
 import { tlaTs } from "./dist";
@@ -102,7 +102,7 @@ const getCpuProof = async (
   obligation: PrintedObligation,
   method: Method,
 ): Promise<CpuProof | undefined> => {
-  if (!(method.prover in DECIDERS)) return undefined;
+  if (!isBackend(method.prover)) return undefined;
   try {
     const text = encodeForBackend(obligation, method.prover, { caseErrors: 0 });
     const run = await runWithCpuLimit(method.timeLimitMs, method.prover, text);

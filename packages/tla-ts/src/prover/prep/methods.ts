@@ -1,15 +1,34 @@
 import { TlapmBugError, TlaProverError } from "../../errors";
 import type { Expr, Locus, Sequent } from "../../obligations/expression";
 import type { OldMethod, PragmaSetting } from "../../obligations/pragma";
+import type { Backend } from "../verdict";
+
+type Prover =
+  | Backend
+  | "yices"
+  | "cvc3"
+  | "cooper"
+  | "fail"
+  | "verit"
+  | "zipper"
+  | "spass"
+  | "tptp"
+  | "trivial"
+  | "expandenabled"
+  | "expandcdot"
+  | "autouse"
+  | "lambdify"
+  | "enabledaxioms"
+  | "levelcomparison";
 
 export interface Method {
-  prover: string;
+  prover: Prover;
   timeLimitMs: number;
   rlimit?: number;
   tactic?: string;
 }
 
-const FRONTENDS = new Set([
+const FRONTENDS = new Set<Prover>([
   "expandenabled",
   "expandcdot",
   "autouse",
@@ -32,7 +51,7 @@ const DEFAULT_METHODS: Method[] = [
   { prover: "isabelle", timeLimitMs: ISABELLE_SECONDS * 1000, tactic: "auto" },
 ];
 
-const PROVERS: Record<string, { prover: string; seconds: number; isBudgeted?: boolean }> = {
+const PROVERS: Record<string, { prover: Prover; seconds: number; isBudgeted?: boolean }> = {
   zenon: { prover: "zenon", seconds: ZENON_SECONDS },
   isabelle: { prover: "isabelle", seconds: ISABELLE_SECONDS },
   yices: { prover: "yices", seconds: 30 },
