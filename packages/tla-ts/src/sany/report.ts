@@ -109,9 +109,8 @@ export const getSanyReport = (
   const rootName = basename(rootPath, ".tla");
   const standardModules = getSanyStandardModules(options.version);
   const name = options.fileName ?? rootName;
-  const source = existsSync(rootPath)
-    ? readFileSync(rootPath, "utf8")
-    : standardModules.get(rootName);
+  const isRootFile = existsSync(rootPath);
+  const source = isRootFile ? readFileSync(rootPath, "utf8") : standardModules.get(rootName);
   const lines: string[] = [];
   const write = (text: string) => {
     lines.push(text);
@@ -124,9 +123,7 @@ export const getSanyReport = (
     if (!options.isXmlExport) log(text);
   };
   const describeFile = options.describeFile;
-  const origins = new Map<string, SanyModuleOrigin>([
-    [rootName, existsSync(rootPath) ? "file" : "standard"],
-  ]);
+  const origins = new Map<string, SanyModuleOrigin>([[rootName, isRootFile ? "file" : "standard"]]);
   let isFailed = false;
   const parseMessages: SanyMessage[] = [];
   let isParseReported = false;
