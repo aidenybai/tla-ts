@@ -10651,6 +10651,33 @@ describe("proxies", () => {
     expect((await checkModel(getSource(2))).failure?.message).toContain("unexpected");
   });
 
+  it("spreads a proxy beside plain properties, in the order that they run", async () => {
+    const getSource = (expected: number) => `
+      let reads = 0;
+      const symbol = Symbol();
+      const proxy = new Proxy<Record<string | symbol, number>>({ attr: 1, other: 2 }, {
+        get(innerTarget, key) {
+          reads += 1;
+          return 5;
+        },
+      });
+      const made: Record<string | symbol, number> = {
+        [symbol]: 0,
+        attr: 0,
+        first: reads,
+        ...proxy,
+        last: reads,
+      };
+      const keys = Reflect.ownKeys(made);
+      if (made.attr !== 5 || keys[0] !== "attr" || keys[3] !== "last" || keys[4] !== symbol) {
+        throw new Error("order");
+      }
+      if (made.first !== 0 || made.last !== ${expected}) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(0))).failure?.message).toContain("unexpected");
+  });
+
   it("stops the check where something else reads a proxy", async () => {
     const result = await checkModel(`
       const proxy = new Proxy({ attr: { value: 1 } }, {});

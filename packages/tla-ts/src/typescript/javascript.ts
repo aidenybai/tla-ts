@@ -4033,12 +4033,11 @@ OwnDescriptor(heap, ref, key) ==
   ELSE Undefined
 
 \\* The object of keys and values that a spread or a rest element copies from a proxy.
-PairsObject(pairs) ==
-  LET keys == [position \\in DOMAIN pairs |-> pairs[position][1]]
-  IN PutAll(EmptyObject,
-            [key \\in {keys[position] : position \\in DOMAIN keys} |->
-               pairs[CHOOSE position \\in DOMAIN keys : keys[position] = key][2]],
-            keys)
+RECURSIVE PutPairs(_, _)
+PutPairs(object, pairs) ==
+  IF pairs = <<>> THEN object ELSE PutPairs(Put(object, Head(pairs)[1], Head(pairs)[2]), Tail(pairs))
+
+PairsObject(pairs) == PutPairs(EmptyObject, pairs)
 
 \\* Object.getOwnPropertyDescriptors of a proxy, which makes the object of each descriptor that it
 \\* gathered, and then the object that holds them under their keys, last, so that Allocated names it.

@@ -39,8 +39,10 @@ import {
   getProxyTarget,
   isProxyValue,
   translateObjectValue,
+  translatePropertyKey,
 } from "./heap";
 import { useJavaScript } from "./javascript";
+import type { Scope } from "./scope";
 import { getKind, isHeapPattern } from "./types";
 import {
   apply,
@@ -1289,24 +1291,46 @@ const KEYED_TRAPS = new Set([
   "defineProperty",
 ]);
 
+// A key or a value beside a spread, which reads nothing that can run code.
+const isPlainOperand = (node: ts.Node): boolean =>
+  ts.isIdentifier(node) ||
+  ts.isStringLiteral(node) ||
+  ts.isNumericLiteral(node) ||
+  ts.isNoSubstitutionTemplateLiteral(node) ||
+  node.kind === ts.SyntaxKind.TrueKeyword ||
+  node.kind === ts.SyntaxKind.FalseKeyword ||
+  node.kind === ts.SyntaxKind.NullKeyword ||
+  (ts.isComputedPropertyName(node) && isPlainOperand(node.expression));
+
+// The spread of an object literal whose other properties are plain keys and values.
+const getSpread = (node: ts.ObjectLiteralExpression) => {
+  const spreads = node.properties.filter(ts.isSpreadAssignment);
+  const isPlain = node.properties.every(
+    (property) =>
+      ts.isSpreadAssignment(property) ||
+      ts.isShorthandPropertyAssignment(property) ||
+      (ts.isPropertyAssignment(property) &&
+        isPlainOperand(property.name) &&
+        isPlainOperand(property.initializer)),
+  );
+  return spreads.length === 1 && isPlain ? spreads[0] : undefined;
+};
+
 const getOperation = (node: ts.Node, context: Context): ProxyOperation | undefined => {
-  // An object spread alone in its object, or a rest element alone in a declaration's pattern,
-  // copies a proxy's enumerable keys to a new object.
+  // An object's spread beside plain properties, or a rest element alone in a declaration's
+  // pattern, copies a proxy's enumerable keys to a new object.
   const parent = node.parent;
-  const copied =
-    ts.isObjectLiteralExpression(node) &&
-    node.properties.length === 1 &&
-    ts.isSpreadAssignment(node.properties[0])
-      ? node.properties[0].expression
-      : ts.isExpression(node) &&
-          parent !== undefined &&
-          ts.isVariableDeclaration(parent) &&
-          parent.initializer === node &&
-          ts.isObjectBindingPattern(parent.name) &&
-          parent.name.elements.length === 1 &&
-          parent.name.elements[0].dotDotDotToken !== undefined
-        ? node
-        : undefined;
+  const copied = ts.isObjectLiteralExpression(node)
+    ? getSpread(node)?.expression
+    : ts.isExpression(node) &&
+        parent !== undefined &&
+        ts.isVariableDeclaration(parent) &&
+        parent.initializer === node &&
+        ts.isObjectBindingPattern(parent.name) &&
+        parent.name.elements.length === 1 &&
+        parent.name.elements[0].dotDotDotToken !== undefined
+      ? node
+      : undefined;
   if (copied !== undefined) {
     return { trap: "ownKeys", object: copied, key: undefined, method: "copy", isReflected: false };
   }
@@ -2134,11 +2158,44 @@ export const runProxyOperation = (
             return next(looped, result);
           }
           const changed = getHeap(looped.scope, node, context);
+          // The properties beside a spread, those before it read before the proxy's traps run.
+          const spread = ts.isObjectLiteralExpression(node) ? getSpread(node) : undefined;
+          const getPairs = (isBefore: boolean, scope: Scope) =>
+            !ts.isObjectLiteralExpression(node) || spread === undefined
+              ? []
+              : node.properties
+                  .filter((property) => property.pos < spread.pos === isBefore)
+                  .flatMap((property) =>
+                    ts.isShorthandPropertyAssignment(property)
+                      ? [
+                          tuple([
+                            string(property.name.text),
+                            translateExpression(property.name, scope, context),
+                          ]),
+                        ]
+                      : ts.isPropertyAssignment(property)
+                        ? [
+                            tuple([
+                              ts.isComputedPropertyName(property.name)
+                                ? translatePropertyKey(property.name.expression, scope, context)
+                                : ts.isStringLiteral(property.name) ||
+                                    ts.isNumericLiteral(property.name)
+                                  ? translatePropertyKey(property.name, scope, context)
+                                  : string(property.name.getText()),
+                              translateExpression(property.initializer, scope, context),
+                            ]),
+                          ]
+                        : [],
+                  );
+          const pairs = apply("\\o", [
+            apply("\\o", [tuple(getPairs(true, path.scope)), result]),
+            tuple(getPairs(false, looped.scope)),
+          ]);
           return bind(
             looped,
             "heap",
             listing === "copy"
-              ? javaScript("Allocate", [changed, javaScript("PairsObject", [result])])
+              ? javaScript("Allocate", [changed, javaScript("PairsObject", [pairs])])
               : javaScript("ProxyDescriptors", [changed, result]),
             context,
             (bound, allocated) =>
