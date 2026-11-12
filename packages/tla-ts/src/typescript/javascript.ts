@@ -2433,7 +2433,22 @@ DefineAccessor(object, key, field, function, isEnumerable) ==
 
 LOCAL IsArrayObject(object) == "isArray" \\in DOMAIN object /\\ object.isArray
 
-IsArray(heap, value) == IsRef(value) /\\ IsArrayObject(Lookup(heap, value))
+\\* IsArray, which reads a proxy's target, where an array outside the heap is a sequence.
+RECURSIVE IsArray(_, _)
+IsArray(heap, value) ==
+  CASE IsProxy(heap, value) ->
+         IF ProxyHandler(heap, value) = Null
+         THEN Assert(FALSE, "tla-ts can't throw the TypeError of a revoked proxy here")
+         ELSE LET target == ProxyTarget(heap, value)
+              IN \\/ ~IsRef(target) /\\ TypeOf(target) = "object" /\\ SubSeq(ToString(target), 1, 2) = "<<"
+                 \\/ IsArray(heap, target)
+    [] OTHER -> IsRef(value) /\\ IsArrayObject(Lookup(heap, value))
+
+\\* Whether a proxy or a proxy that it reads through is revoked, so that IsArray throws a TypeError.
+RECURSIVE IsRevokedProxy(_, _)
+IsRevokedProxy(heap, value) ==
+  /\\ IsProxy(heap, value)
+  /\\ ProxyHandler(heap, value) = Null \\/ IsRevokedProxy(heap, ProxyTarget(heap, value))
 
 \\* The kind that Object.prototype.toString gives an object without a Symbol.toStringTag.
 LOCAL ClassOf(heap, ref) ==
@@ -2458,6 +2473,17 @@ LOCAL Tagged(heap, ref, kind) ==
   LET tag == Get(heap, ref, WellKnownSymbol("toStringTag"))
   IN IF TypeOf(tag) = "string" THEN tag ELSE kind
 
+\\* The object that a proxy's internal methods read where the handler has none of their traps, which
+\\* goes on through each proxy target whose handler has none either.
+RECURSIVE ForwardTarget(_, _, _)
+ForwardTarget(heap, ref, traps) ==
+  CASE ~IsProxy(heap, ref) -> ref
+    [] ProxyHandler(heap, ref) = Null ->
+         Assert(FALSE, "tla-ts can't throw the TypeError of a revoked proxy's target")
+    [] \\A trap \\in traps : Get(heap, ProxyHandler(heap, ref), trap) \\in {Undefined, Null} ->
+         ForwardTarget(heap, ProxyTarget(heap, ref), traps)
+    [] OTHER -> Assert(FALSE, "tla-ts can't run the traps that this reads a proxy through")
+
 \\* Object.prototype.toString, which gives "[object Kind]". A value that isn't on the heap gives the
 \\* kind of object that holds it, such as Array for a sequence.
 ObjectToString(heap, value, kind) ==
@@ -2469,6 +2495,15 @@ ObjectToString(heap, value, kind) ==
           [] TypeOf(value) = "boolean" -> "Boolean"
           [] ~IsRef(value) /\\ IsError(value) ->
                Tagged(heap, Get(heap, value.constructor, "prototype"), "Error")
+          [] IsProxy(heap, value) ->
+               LET target == ForwardTarget(heap, value, {"get"})
+                   class == CASE IsArray(heap, value) -> "Array"
+                             [] TypeOfIn(heap, value) = "function" -> "Function"
+                             [] OTHER -> "Object"
+               IN CASE IsRef(target) -> Tagged(heap, target, class)
+                    [] class = "Function" ->
+                         Assert(FALSE, "tla-ts can't tell the kind of function that a proxy holds")
+                    [] OTHER -> class
           [] IsHeap(value) \\/ IsBuiltIn(value) -> Tagged(heap, value, ClassOf(heap, value))
           [] TypeOf(value) = "function" -> "Function"
           [] kind # "" -> kind
@@ -3772,16 +3807,6 @@ IsFrozen(heap, ref) ==
      /\\ \\A key \\in DOMAIN object.attributes :
           object.attributes[key].kind # "data" \\/ ~object.attributes[key].writable
 
-\\* The object that a proxy's internal method reads where the handler has no trap for it, which goes
-\\* on through each proxy target whose handler has none either.
-RECURSIVE ForwardTarget(_, _, _)
-ForwardTarget(heap, ref, trap) ==
-  CASE ~IsProxy(heap, ref) -> ref
-    [] ProxyHandler(heap, ref) = Null ->
-         Assert(FALSE, "tla-ts can't throw the TypeError of a revoked proxy's target")
-    [] Get(heap, ProxyHandler(heap, ref), trap) \\in {Undefined, Null} ->
-         ForwardTarget(heap, ProxyTarget(heap, ref), trap)
-    [] OTHER -> Assert(FALSE, "tla-ts can't run the trap of a proxy's target")
 
 \\* FromPropertyDescriptor, the object of a descriptor's fields.
 DescriptorObject(descriptor) ==
@@ -3832,6 +3857,18 @@ ProxyDefinitionAgrees(heap, target, key, descriptor) ==
               /\\ current.writable
               /\\ "writable" \\in descriptor.fields) => descriptor.writable
 
+\\* Object.seal or Object.freeze of a proxy that can't grow, which restricts the keys of the target
+\\* that its handlers forward keys and definitions to.
+ProxyRestrict(heap, ref, isFrozen) ==
+  Restrict(heap, ForwardTarget(heap, ref, {"ownKeys", "getOwnPropertyDescriptor", "defineProperty"}),
+           isFrozen)
+
+\\* Object.isSealed or Object.isFrozen of a proxy that can't grow, which reads the keys of the target
+\\* that its handlers forward keys and descriptors to.
+ProxyIsRestricted(heap, ref, isFrozen) ==
+  LET target == ForwardTarget(heap, ref, {"ownKeys", "getOwnPropertyDescriptor"})
+  IN IF isFrozen THEN IsFrozen(heap, target) ELSE IsSealed(heap, target)
+
 \\* The prototype of a proxy's target, where an array outside the heap has Array.prototype, which it
 \\* holds there since nothing can change it.
 TargetPrototype(heap, ref) ==
@@ -3857,14 +3894,19 @@ ProxyKeysAgree(heap, target, keys) ==
         \\/ /\\ \\A key \\in DOMAIN object.values : isListed(key)
            /\\ \\A position \\in DOMAIN keys : keys[position] \\in DOMAIN object.values
 
-\\* What Object.keys, Object.getOwnPropertyNames, Object.getOwnPropertySymbols, or Reflect.ownKeys
-\\* gives of a proxy's keys, where Object.keys asks the target which of them are enumerable.
+\\* What Object.keys, values, entries, getOwnPropertyNames, or getOwnPropertySymbols, or
+\\* Reflect.ownKeys, gives of a proxy's keys, where the first three ask the object that the proxy
+\\* reads descriptors and values through which of them are enumerable.
 ProxyKeysOf(heap, target, keys, method) ==
-  CASE method = "keys" ->
-         SelectSeq(keys, LAMBDA key : ~IsSymbol(key) /\\ IsEnumerableOwn(heap, target, key))
-    [] method = "getOwnPropertyNames" -> SelectSeq(keys, LAMBDA key : ~IsSymbol(key))
-    [] method = "getOwnPropertySymbols" -> SelectSeq(keys, IsSymbol)
-    [] OTHER -> keys
+  LET enumerable == SelectSeq(keys, LAMBDA key : ~IsSymbol(key) /\\ IsEnumerableOwn(heap, target, key))
+  IN CASE method = "keys" -> enumerable
+       [] method = "values" -> Read([position \\in DOMAIN enumerable |-> Get(heap, target, enumerable[position])])
+       [] method = "entries" ->
+            Read([position \\in DOMAIN enumerable |->
+                    <<enumerable[position], Get(heap, target, enumerable[position])>>])
+       [] method = "getOwnPropertyNames" -> SelectSeq(keys, LAMBDA key : ~IsSymbol(key))
+       [] method = "getOwnPropertySymbols" -> SelectSeq(keys, IsSymbol)
+       [] OTHER -> keys
 
 \\* Whether a code unit is a surrogate that JSON.stringify escapes, where escapes maps each code unit
 \\* that it escapes to its escape.
@@ -3925,10 +3967,11 @@ LOCAL JSONGap(heap, space) ==
 
 \\* The keys that a replacer array lists, in order and without repeats.
 LOCAL JSONKeys(heap, replacer) ==
-  LET elements == IF IsRef(replacer)
-                  THEN [position \\in 1..ToLength(Get(heap, replacer, "length")) |->
-                          Get(heap, replacer, ToString(position - 1))]
-                  ELSE replacer
+  LET list == IF IsProxy(heap, replacer) THEN ForwardTarget(heap, replacer, {"get"}) ELSE replacer
+      elements == IF IsRef(list)
+                  THEN [position \\in 1..ToLength(Get(heap, list, "length")) |->
+                          Get(heap, list, ToString(position - 1))]
+                  ELSE list
       item(element) ==
         LET kind == IF IsRef(element) THEN JSONWrapperKind(heap, element) ELSE ""
         IN CASE TypeOf(element) = "string" -> element
@@ -3974,6 +4017,9 @@ SerializeJSON(heap, value, state, stack, indent) ==
        [] TypeOf(value) = "string" -> QuoteJSON(value, state.escapes)
        [] TypeOf(value) = "number" -> IF IsFinite(value) THEN StringOf(value) ELSE "null"
        [] TypeOf(value) = "symbol" -> Undefined
+       [] IsProxy(heap, value) ->
+            SerializeJSON(heap, ForwardTarget(heap, value, {"get", "ownKeys", "getOwnPropertyDescriptor"}),
+                          state, stack, indent)
        [] IsRef(value) /\\ hasToJSON(value) -> Assert(FALSE, "tla-ts can't call toJSON")
        [] kind = "Number" ->
             SerializeJSON(heap, JSONPrimitive(heap, value, kind, "valueOf"), state, stack, indent)

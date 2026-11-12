@@ -8800,10 +8800,77 @@ describe("proxies", () => {
     expect((await checkModel(getSource(3))).failure?.message).toContain("unexpected");
   });
 
+  it("seals and freezes a proxy through its preventExtensions trap", async () => {
+    const getSource = (isRefusing: boolean) => `
+      let calls = 0;
+      const target: { attr: number; extra?: number } = { attr: 1 };
+      const proxy = new Proxy(target, {});
+      if (Object.isFrozen(proxy)) throw new Error("frozen early");
+      if (Object.seal(proxy) !== proxy) throw new Error("seal");
+      if (!Object.isSealed(target)) throw new Error("sealed");
+      if (Object.isFrozen(proxy)) throw new Error("frozen");
+      Object.freeze(proxy);
+      if (!Object.isFrozen(target)) throw new Error("freeze");
+      const counted = new Proxy({ attr: 1 }, {
+        preventExtensions(innerTarget) {
+          calls += 1;
+          Object.preventExtensions(innerTarget);
+          return ${!isRefusing};
+        },
+      });
+      let isThrown = false;
+      try {
+        Object.freeze(counted);
+      } catch (error) {
+        isThrown = error instanceof TypeError;
+      }
+      if (calls !== 1 || isThrown) throw new Error("unexpected");
+      if (!Object.isFrozen(counted)) throw new Error("counted");
+    `;
+    expect((await checkModel(getSource(false))).failure).toBeUndefined();
+    expect((await checkModel(getSource(true))).failure?.message).toContain("unexpected");
+  });
+
+  it("reads the values and entries of a proxy whose handlers trap none of their reads", async () => {
+    const getSource = (expected: number) => `
+      const proxy = new Proxy(new Proxy({ first: 1, second: 2 }, {}), {});
+      const values = Object.values(proxy);
+      const entries = Object.entries(proxy);
+      if (entries.length !== 2 || entries[1][0] !== "second") throw new Error("entries");
+      if (values[1] !== ${expected}) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(1))).failure?.message).toContain("unexpected");
+  });
+
+  it("runs IsArray through proxies, throwing a TypeError for a revoked one", async () => {
+    const getSource = (isRevoked: boolean) => `
+      const handle = Proxy.revocable<unknown[]>([], {});
+      const nested = new Proxy(handle.proxy, {});
+      const plain = new Proxy({}, {});
+      if (!Array.isArray(nested) || Array.isArray(plain)) throw new Error("isArray");
+      if (Object.prototype.toString.call(nested) !== "[object Array]") throw new Error("toString");
+      const json = JSON.stringify({ first: 1, second: 2 }, new Proxy(["second"], {}));
+      if (json !== '{"second":2}') throw new Error("replacer");
+      const written = JSON.stringify(new Proxy({ first: [1] }, {}));
+      if (written !== '{"first":[1]}') throw new Error("value");
+      ${isRevoked ? "handle.revoke();" : ""}
+      let isThrown = false;
+      try {
+        Object.prototype.toString.call(handle.proxy);
+      } catch (error) {
+        isThrown = error instanceof TypeError;
+      }
+      if (isThrown) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(false))).failure).toBeUndefined();
+    expect((await checkModel(getSource(true))).failure?.message).toContain("unexpected");
+  });
+
   it("stops the check where something else reads a proxy", async () => {
     const result = await checkModel(`
       const proxy = new Proxy({ attr: 1 }, {});
-      const values = Object.values(proxy);
+      const described = Object.getOwnPropertyDescriptors(proxy);
     `);
     expect(result.failure?.message).toContain("tla-ts can't run a proxy's internal method here");
   });

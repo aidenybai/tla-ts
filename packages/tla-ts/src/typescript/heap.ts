@@ -2565,7 +2565,13 @@ const FALLIBLE_CHANGES = new Set([
 ]);
 
 // The changes that a proxy's traps run instead.
-const PROXY_CHANGES = new Set(["defineProperty", "preventExtensions", "setPrototypeOf"]);
+const PROXY_CHANGES = new Set([
+  "defineProperty",
+  "preventExtensions",
+  "setPrototypeOf",
+  "freeze",
+  "seal",
+]);
 
 const isConstruct = (node: MethodCall) =>
   node.expression.expression.getText() === "Reflect" && node.expression.name.text === "construct";

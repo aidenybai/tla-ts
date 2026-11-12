@@ -39,11 +39,13 @@ import {
   boolean,
   field,
   identifier,
+  ifExpression,
   index,
   junction,
   not,
   number,
   record,
+  set,
   string,
   tuple,
 } from "./tla";
@@ -1193,7 +1195,9 @@ interface ProxyOperation {
     | "preventExtensions"
     | "ownKeys"
     | "apply"
-    | "construct";
+    | "construct"
+    // IsArray, which throws a TypeError for a revoked proxy, though no handler traps it.
+    | "isArray";
   object: ts.Expression;
   key: string | undefined;
   value?: ts.Expression;
@@ -1230,8 +1234,14 @@ const TRAP_CALLS = new Map([
   ["Object.isExtensible", { trap: "isExtensible", arity: 1 }],
   ["Reflect.preventExtensions", { trap: "preventExtensions", arity: 1 }],
   ["Object.preventExtensions", { trap: "preventExtensions", arity: 1 }],
+  ["Object.seal", { trap: "preventExtensions", arity: 1 }],
+  ["Object.freeze", { trap: "preventExtensions", arity: 1 }],
+  ["Object.isSealed", { trap: "isExtensible", arity: 1 }],
+  ["Object.isFrozen", { trap: "isExtensible", arity: 1 }],
   ["Reflect.ownKeys", { trap: "ownKeys", arity: 1 }],
   ["Object.keys", { trap: "ownKeys", arity: 1 }],
+  ["Object.values", { trap: "ownKeys", arity: 1 }],
+  ["Object.entries", { trap: "ownKeys", arity: 1 }],
   ["Object.getOwnPropertyNames", { trap: "ownKeys", arity: 1 }],
   ["Object.getOwnPropertySymbols", { trap: "ownKeys", arity: 1 }],
 ] as const);
@@ -1300,6 +1310,18 @@ const getOperation = (node: ts.Node, context: Context): ProxyOperation | undefin
   if (!isMethodCall(node)) return undefined;
   const global = getBuiltIn(node.expression.expression, context);
   const method = node.expression.name.text;
+  // Array.isArray, Object.prototype.toString, and JSON.stringify's replacer run IsArray.
+  const tested =
+    global === "Array" && method === "isArray"
+      ? node.arguments.at(0)
+      : global === "JSON" && method === "stringify"
+        ? node.arguments.at(1)
+        : method === "call" && node.expression.expression.getText() === "Object.prototype.toString"
+          ? node.arguments.at(0)
+          : undefined;
+  if (tested !== undefined && !node.arguments.some(ts.isSpreadElement)) {
+    return { trap: "isArray", object: tested, key: undefined, isReflected: false };
+  }
   const call = [...TRAP_CALLS].find((entry) => entry[0] === `${global}.${method}`)?.[1];
   const values = node.arguments;
   if (call === undefined || values.length !== call.arity || values.some(ts.isSpreadElement)) {
@@ -1343,7 +1365,7 @@ const runTrap = (
   context: Context,
   frame: Frame,
   forward: (path: Path, target: Expression, handler: Expression) => Formula,
-  check: (path: Path, target: Expression, result: Expression, handler: Expression) => Formula,
+  check: (path: Path, target: Expression, result: Expression) => Formula,
 ) => {
   const heap = getHeap(path.scope, site, context);
   return bind(
@@ -1393,7 +1415,7 @@ const runTrap = (
                         ),
                         throwTypeError(withTrap, site, context, frame),
                       ),
-                    (after, result) => check(after, target, result, handler),
+                    (after, result) => check(after, target, result),
                   ),
                 ),
             ),
@@ -1438,9 +1460,37 @@ export const runProxyOperation = (
     path: Path,
     proxy: Expression,
     value: Expression,
-    next: (path: Path, value?: Expression) => Formula,
+    given: (path: Path, value?: Expression) => Formula,
   ) => {
     const throwWith = (after: Path) => throwTypeError(after, node, context, frame);
+    // Object.seal and Object.freeze restrict the keys of a proxy that stops growing, and
+    // Object.isSealed and Object.isFrozen test them where it can't grow.
+    const isFrozen = boolean(operation.method === "freeze" || operation.method === "isFrozen");
+    const next = (after: Path, result?: Expression): Formula => {
+      const heap = getHeap(after.scope, node, context);
+      if (operation.method === "seal" || operation.method === "freeze") {
+        return bind(
+          after,
+          "heap",
+          javaScript("ProxyRestrict", [heap, proxy, isFrozen]),
+          context,
+          (bound, restricted) => given(withHeap(bound, restricted, context), result),
+        );
+      }
+      return operation.method === "isSealed" || operation.method === "isFrozen"
+        ? bind(
+            after,
+            "result",
+            ifExpression(
+              result ?? boolean(true),
+              boolean(false),
+              javaScript("ProxyIsRestricted", [heap, proxy, isFrozen]),
+            ),
+            context,
+            given,
+          )
+        : given(after, result);
+    };
     // What a change gives where it succeeds: the value that an assignment writes, the proxy that
     // Object's functions give, or true.
     const succeed = (after: Path) =>
@@ -1464,35 +1514,24 @@ export const runProxyOperation = (
         (bound, allocated) =>
           next(withHeap(bound, allocated, context), javaScript("Allocated", [allocated])),
       );
-    // Object.keys asks the proxy which keys are enumerable, which runs a getOwnPropertyDescriptor
-    // trap that tla-ts follows only where the handler has none.
-    const giveKeys = (after: Path, target: Expression, handler: Expression, keys: Expression) => {
+    // Object.keys, values, and entries ask the proxy which keys are enumerable, and the last two
+    // read their values, which tla-ts follows where no handler on the way traps those.
+    const giveKeys = (after: Path, keys: Expression) => {
       const heap = getHeap(after.scope, node, context);
-      const described = javaScript("ForwardTarget", [
-        heap,
-        target,
-        string("getOwnPropertyDescriptor"),
-      ]);
-      const given = next(after, javaScript("ProxyKeysOf", [heap, described, keys, method]));
-      return operation.method !== "keys"
-        ? given
-        : ifThenElse(
-            isNullish(
-              javaScript("Get", [heap, handler, string("getOwnPropertyDescriptor")]),
-              context,
-            ),
-            given,
-            leaf(
-              apply("Assert", [
-                boolean(false),
-                string("tla-ts can't run the getOwnPropertyDescriptor trap that Object.keys runs"),
-              ]),
-            ),
-          );
+      const traps = ["getOwnPropertyDescriptor", ...(operation.method === "keys" ? [] : ["get"])];
+      return next(
+        after,
+        javaScript("ProxyKeysOf", [
+          heap,
+          javaScript("ForwardTarget", [heap, proxy, set(traps.map((name) => string(name)))]),
+          keys,
+          method,
+        ]),
+      );
     };
     const runWith = (path: Path, values: Expression[], descriptor: Expression) => {
       const heap = getHeap(path.scope, node, context);
-      const check = (after: Path, target: Expression, result: Expression, handler: Expression) => {
+      const check = (after: Path, target: Expression, result: Expression) => {
         const changed = getHeap(after.scope, node, context);
         const agreeing = (isAgreed: Expression, then: Formula) =>
           ifThenElse(isAgreed, then, throwWith(after));
@@ -1539,7 +1578,7 @@ export const runProxyOperation = (
               (listed, keys) =>
                 ifThenElse(
                   javaScript("ProxyKeysAgree", [changed, target, keys]),
-                  giveKeys(listed, target, handler, keys),
+                  giveKeys(listed, keys),
                   throwWith(listed),
                 ),
             ),
@@ -1588,7 +1627,7 @@ export const runProxyOperation = (
       const forward = (after: Path, target: Expression, handler: Expression) => {
         // What reads the target goes on through proxy targets that have no trap for it.
         const forwarded = (name: string) =>
-          javaScript("ForwardTarget", [heap, target, string(name)]);
+          javaScript("ForwardTarget", [heap, target, set([string(name)])]);
         if (trap === "apply" || trap === "construct") {
           return leaf(
             apply("Assert", [boolean(false), string("tla-ts can't call the target of a proxy")]),
@@ -1617,12 +1656,7 @@ export const runProxyOperation = (
           );
         }
         if (trap === "ownKeys") {
-          return giveKeys(
-            after,
-            target,
-            handler,
-            javaScript("PropertyKeysOf", [heap, forwarded(trap)]),
-          );
+          return giveKeys(after, javaScript("PropertyKeysOf", [heap, forwarded(trap)]));
         }
         if (trap === "preventExtensions") {
           return bind(
@@ -1684,6 +1718,13 @@ export const runProxyOperation = (
       return runTrap(node, proxy, trap, values, path, context, frame, forward, check);
     };
     const heap = getHeap(path.scope, node, context);
+    if (trap === "isArray") {
+      return ifThenElse(
+        javaScript("IsRevokedProxy", [heap, proxy]),
+        throwWith(path),
+        next(path, translateExpression(node, path.scope, context)),
+      );
+    }
     // Object.defineProperty converts the descriptor first, and gives the trap a copy of it.
     const trapped =
       trap === "defineProperty"
