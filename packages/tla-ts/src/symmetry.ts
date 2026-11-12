@@ -294,6 +294,9 @@ const permuteElements = (elements: Value[], images: RankedImages) => {
   return undefined;
 };
 
+// The builtin sort's callback overhead outweighs its fewer comparisons on short arrays.
+const MAXIMUM_INSERTION_SORT_LENGTH = 32;
+
 // A permutation maps distinct elements to distinct elements and keeps the elements it doesn't move
 // in order, so it sorts only the moved ones and merges them back.
 const permuteSortedElements = (elements: Value[], images: RankedImages) => {
@@ -305,19 +308,25 @@ const permuteSortedElements = (elements: Value[], images: RankedImages) => {
     else moved.push(permuted);
   }
   if (moved.length === 0) return undefined;
-  moved.sort(compareValues);
-  const merged: Value[] = [];
+  const isShort = moved.length <= MAXIMUM_INSERTION_SORT_LENGTH;
+  if (!isShort) moved.sort(compareValues);
+  for (let index = 1; isShort && index < moved.length; index++) {
+    const value = moved[index];
+    let position = index;
+    for (; position > 0 && compareValues(moved[position - 1], value) > 0; position--) {
+      moved[position] = moved[position - 1];
+    }
+    moved[position] = value;
+  }
+  const merged = elements.slice();
   let keptIndex = 0;
   let movedIndex = 0;
-  while (keptIndex < kept.length && movedIndex < moved.length) {
-    merged.push(
-      compareValues(kept[keptIndex], moved[movedIndex]) < 0
-        ? kept[keptIndex++]
-        : moved[movedIndex++],
-    );
+  for (let index = 0; index < merged.length; index++) {
+    const isKept =
+      movedIndex === moved.length ||
+      (keptIndex < kept.length && compareValues(kept[keptIndex], moved[movedIndex]) < 0);
+    merged[index] = isKept ? kept[keptIndex++] : moved[movedIndex++];
   }
-  while (keptIndex < kept.length) merged.push(kept[keptIndex++]);
-  while (movedIndex < moved.length) merged.push(moved[movedIndex++]);
   return merged;
 };
 
