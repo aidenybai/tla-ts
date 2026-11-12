@@ -2129,6 +2129,13 @@ const translateElementAccess = (
     context,
   );
   if (regExpRead !== undefined) return regExpRead;
+  // A built-in object that a well-known symbol keys, such as Iterator.prototype[Symbol.iterator],
+  // whose own properties the heap then holds.
+  const builtIn =
+    context.heap !== undefined && scope.bindings.has(context.heap)
+      ? translateBuiltInObject(node, scope, context)
+      : undefined;
+  if (builtIn !== undefined) return builtIn;
   const getterRead = translateGetterRead(node, scope, context);
   if (getterRead !== undefined) return getterRead;
   const kind = getKind(node.expression, context);

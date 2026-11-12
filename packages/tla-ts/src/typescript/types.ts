@@ -16,6 +16,7 @@ import {
   isHeldErrorName,
   isNestedFunction,
 } from "./context";
+import { isHeldBuiltInObject } from "./intrinsics";
 import { KEYWORDS } from "../lexer";
 import { TlaTypeScriptError } from "../errors";
 import {
@@ -498,6 +499,7 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
   ) {
     return "object";
   }
+  if (isHeldBuiltInObject(node, context)) return "object";
   const type = checker.getNonNullableType(checker.getTypeAtLocation(node));
   if (isRegExpArray(type)) return context.heap === undefined ? "other" : "object";
   if (

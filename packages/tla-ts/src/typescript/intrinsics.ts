@@ -1,5 +1,5 @@
 import ts from "@typescript/typescript6";
-import { type Context, getSymbol, getUndefined, share } from "./context";
+import { type Context, findNodes, getSymbol, getUndefined, isAssigned, share } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import {
   getArrayIteratorCall,
@@ -50,21 +50,50 @@ const getParent = (name: string) => {
   return entry[0] ?? "null";
 };
 
-const isPlainFunction = (type: ts.Type) => {
-  const declarations = type.getCallSignatures().map((signature) => signature.getDeclaration());
-  return (
-    declarations.length > 0 &&
-    type.getConstructSignatures().length === 0 &&
-    declarations.every(
-      (declaration) =>
-        !declaration.getSourceFile().isDeclarationFile &&
-        (ts.isArrowFunction(declaration) ||
+// The prototype of the functions that a script declares with a type, by their kind: plain, a
+// generator, async, or an async generator. Methods and accessors aren't among them.
+const getFunctionPrototype = (type: ts.Type) => {
+  const prototypes = new Set(
+    type.getCallSignatures().map((signature) => {
+      const declaration = signature.getDeclaration();
+      if (
+        declaration.getSourceFile().isDeclarationFile ||
+        !(
+          ts.isArrowFunction(declaration) ||
           ts.isFunctionExpression(declaration) ||
-          ts.isFunctionDeclaration(declaration)) &&
-        declaration.asteriskToken === undefined &&
-        !(ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Async),
-    )
+          ts.isFunctionDeclaration(declaration)
+        )
+      ) {
+        return undefined;
+      }
+      const isAsync = (ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Async) !== 0;
+      if (declaration.asteriskToken !== undefined) {
+        return isAsync ? "%AsyncGeneratorFunction%.prototype" : "%GeneratorFunction%.prototype";
+      }
+      return isAsync ? "%AsyncFunction%.prototype" : "Function.prototype";
+    }),
   );
+  return prototypes.size === 1 && type.getConstructSignatures().length === 0
+    ? [...prototypes][0]
+    : undefined;
+};
+
+// The object and the key that a read names, as BUILT_INS writes it: a property's name, or a
+// well-known symbol's, as "@@iterator".
+const getBuiltInKey = (node: ts.Expression, context: Context) => {
+  if (ts.isPropertyAccessExpression(node) && !ts.isPrivateIdentifier(node.name)) {
+    return { owner: node.expression, name: node.name.text };
+  }
+  const symbol =
+    ts.isElementAccessExpression(node) && ts.isPropertyAccessExpression(node.argumentExpression)
+      ? node.argumentExpression
+      : undefined;
+  return symbol !== undefined &&
+    ts.isElementAccessExpression(node) &&
+    getBuiltIn(symbol.expression, context) === "Symbol" &&
+    WELL_KNOWN_SYMBOLS.includes(symbol.name.text)
+    ? { owner: node.expression, name: `@@${symbol.name.text}` }
+    : undefined;
 };
 
 // The built-in object that a node is, by its path in BUILT_INS, such as "Array.prototype".
@@ -72,12 +101,26 @@ const getName = (node: ts.Expression, context: Context): string | undefined => {
   if (ts.isParenthesizedExpression(node)) return getName(node.expression, context);
   const builtIn = getBuiltIn(node, context);
   if (builtIn !== undefined) return builtIn;
-  if (ts.isPropertyAccessExpression(node)) {
-    const owner = getName(node.expression, context);
+  // A read in the block that declares the variable, outside any function there, runs after the
+  // declaration.
+  const held = getHeldBuiltIn(node, context);
+  const statement = held?.parent.parent.parent;
+  if (
+    held !== undefined &&
+    statement !== undefined &&
+    ts.isVariableStatement(statement) &&
+    ts.findAncestor(node, (ancestor) => ancestor === statement.parent) !== undefined &&
+    ts.findAncestor(node, ts.isFunctionLike) === ts.findAncestor(held, ts.isFunctionLike)
+  ) {
+    return getName(held, context);
+  }
+  const key = getBuiltInKey(node, context);
+  if (key !== undefined) {
+    const owner = getName(key.owner, context);
     const property =
       owner === undefined
         ? undefined
-        : BUILT_INS[owner]?.[3].find((entry) => entry[0] === node.name.text && entry.length === 3);
+        : BUILT_INS[owner]?.[3].find((entry) => entry[0] === key.name && entry.length === 3);
     return property?.[2].startsWith("o") ? property[2].slice(1) : undefined;
   }
   if (isPrototypeCall(node, context)) {
@@ -85,6 +128,41 @@ const getName = (node: ts.Expression, context: Context): string | undefined => {
     return parent === "null" ? undefined : parent;
   }
   return undefined;
+};
+
+// The prototype object of a generator function that a script writes in place, or declares and only
+// calls and asks for its prototype and for the prototype of that object, so that the object is the
+// one the function starts with, which inherits from the built-in one.
+const getGeneratorObjectPrototype = (node: ts.Expression, context: Context) => {
+  if (!ts.isPropertyAccessExpression(node) || node.name.text !== "prototype") return undefined;
+  const owner = ts.isParenthesizedExpression(node.expression)
+    ? node.expression.expression
+    : node.expression;
+  const checker = context.checker;
+  const prototype = getFunctionPrototype(checker.getTypeAtLocation(owner));
+  const symbol = ts.isIdentifier(owner) ? getSymbol(owner, checker) : undefined;
+  const isUntouched =
+    ts.isFunctionExpression(owner) ||
+    (symbol !== undefined &&
+      findNodes(node.getSourceFile(), ts.isIdentifier).every((reference) => {
+        const parent = reference.parent;
+        return (
+          getSymbol(reference, checker) !== symbol ||
+          ((ts.isFunctionDeclaration(parent) || ts.isVariableDeclaration(parent)) &&
+            parent.name === reference) ||
+          (ts.isCallExpression(parent) && parent.expression === reference) ||
+          (isPrototypeCall(parent, context) && parent.arguments[0] === reference) ||
+          (ts.isPropertyAccessExpression(parent) &&
+            parent.name.text === "prototype" &&
+            isPrototypeCall(parent.parent, context) &&
+            parent.parent.arguments[0] === parent)
+        );
+      }));
+  return isUntouched &&
+    (prototype === "%GeneratorFunction%.prototype" ||
+      prototype === "%AsyncGeneratorFunction%.prototype")
+    ? `${prototype}.prototype`
+    : undefined;
 };
 
 // The built-in object that is the prototype of a node's value, or "null".
@@ -101,6 +179,8 @@ const getPrototype = (node: ts.Expression, context: Context): string | undefined
   if (getArrayIteratorCall(node, context)?.kind !== undefined && !context.hasInheritedElements) {
     return "%ArrayIteratorPrototype%";
   }
+  const generatorPrototype = getGeneratorObjectPrototype(node, context);
+  if (generatorPrototype !== undefined) return generatorPrototype;
   const kind = getKind(node, context);
   if (kind === "object") return undefined;
   if (kind === "sequence") return "Array.prototype";
@@ -112,7 +192,8 @@ const getPrototype = (node: ts.Expression, context: Context): string | undefined
       ? `${classes[0].name}.prototype`
       : undefined;
   }
-  if (isPlainFunction(type)) return "Function.prototype";
+  const functionPrototype = getFunctionPrototype(type);
+  if (functionPrototype !== undefined) return functionPrototype;
   return (type.getSymbol()?.flags ?? 0) & ts.SymbolFlags.ObjectLiteral
     ? "Object.prototype"
     : undefined;
@@ -186,6 +267,30 @@ export const translateBuiltInInstanceOf = (
 
 export const isBuiltInObject = (node: ts.Expression, context: Context) =>
   getName(node, context) !== undefined;
+
+// The built-in object that a variable only ever holds, where TypeScript types it as any, such as
+// the prototype of a generator function that getPrototypeOf gives, for a read after the variable's
+// declaration.
+const getHeldBuiltIn = (node: ts.Expression, context: Context) => {
+  const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
+  const declaration = symbol?.valueDeclaration;
+  const initializer =
+    declaration !== undefined && ts.isVariableDeclaration(declaration)
+      ? declaration.initializer
+      : undefined;
+  return context.heap !== undefined &&
+    symbol !== undefined &&
+    initializer !== undefined &&
+    node.pos > initializer.end &&
+    (context.checker.getTypeAtLocation(initializer).flags & ts.TypeFlags.Any) !== 0 &&
+    isBuiltInObject(initializer, context) &&
+    !isAssigned(symbol, node.getSourceFile(), context)
+    ? initializer
+    : undefined;
+};
+
+export const isHeldBuiltInObject = (node: ts.Expression, context: Context) =>
+  getHeldBuiltIn(node, context) !== undefined;
 
 // A built-in object that a built-in function takes, such as the prototype Object.create takes.
 export const translateBuiltInObject = (node: ts.Expression, scope: Scope, context: Context) => {
@@ -331,6 +436,8 @@ export const translateBuiltInValue = (
     | "Symbol.prototype"
     | "Iterator.prototype"
     | "%ArrayIteratorPrototype%"
+    | "%GeneratorFunction%.prototype"
+    | "%GeneratorFunction%.prototype.prototype"
     | "Promise"
     | "Promise.prototype"
     | "JSON"
@@ -376,15 +483,15 @@ const translateBuiltIn = (
   }
   if (context.heap === undefined) return getBuiltInValue(name, node, context);
   context.builtIns.add(name);
-  const path = ts.isParenthesizedExpression(node) ? node.expression : node;
-  if (!ts.isPropertyAccessExpression(path) || !scope.bindings.has(context.heap)) {
+  const key = getBuiltInKey(ts.isParenthesizedExpression(node) ? node.expression : node, context);
+  if (key === undefined || !scope.bindings.has(context.heap)) {
     return getBuiltInValue(name, node, context);
   }
-  const owner = getName(path.expression, context);
+  const owner = getName(key.owner, context);
   const flags =
     owner === undefined
       ? undefined
-      : BUILT_INS[owner][3].find((property) => property[0] === path.name.text)?.[1];
+      : BUILT_INS[owner][3].find((property) => property[0] === key.name)?.[1];
   if (owner === undefined || flags === undefined || !/[wc]/.test(flags)) {
     return getBuiltInValue(name, node, context);
   }
@@ -392,8 +499,10 @@ const translateBuiltIn = (
     "Get",
     [
       getHeap(scope, node, context),
-      translateBuiltIn(owner, path.expression, scope, context),
-      string(path.name.text),
+      translateBuiltIn(owner, key.owner, scope, context),
+      key.name.startsWith("@@")
+        ? useJavaScript("WellKnownSymbol", [string(key.name.slice(2))], context)
+        : string(key.name),
     ],
     context,
   );
@@ -525,7 +634,9 @@ const evaluate = (node: ts.Expression, scope: Scope, context: Context) => {
     ts.forEachChild(child, visit);
   };
   visit(node);
-  if (!ts.isFunctionLike(node)) translateExpression(node, scope, context);
+  if (!ts.isFunctionLike(node) && getGeneratorObjectPrototype(node, context) === undefined) {
+    translateExpression(node, scope, context);
+  }
 };
 
 // A built-in object, or Object.getPrototypeOf or isPrototypeOf on built-in objects, or undefined

@@ -95,6 +95,13 @@ visit(
   Object.getPrototypeOf(Iterator.from({ next: () => ({ done: true, value: undefined }) })),
   "%WrapForValidIteratorPrototype%",
 );
+visit(Object.getPrototypeOf(function* () {}).constructor, "%GeneratorFunction%");
+visit(Object.getPrototypeOf(async function* () {}).constructor, "%AsyncGeneratorFunction%");
+visit(Object.getPrototypeOf(async function () {}).constructor, "%AsyncFunction%");
+visit(
+  Object.getPrototypeOf(Object.getPrototypeOf(async function* () {}).prototype),
+  "%AsyncIteratorPrototype%",
+);
 
 const getValue = (value: unknown) => {
   if (value === undefined) return "u";

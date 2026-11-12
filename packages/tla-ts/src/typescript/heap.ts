@@ -983,10 +983,22 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     return useJavaScript(
       "Allocate",
       [
-        useJavaScript("Allocate", [heap, identifier("GeneratorPrototypeObject")], context),
+        useJavaScript(
+          "Allocate",
+          [
+            heap,
+            useJavaScript(
+              "GeneratorPrototypeObject",
+              [translateBuiltInValue("%GeneratorFunction%.prototype.prototype", node, context)],
+              context,
+            ),
+          ],
+          context,
+        ),
         useJavaScript(
           "GeneratorFunctionObject",
           [
+            translateBuiltInValue("%GeneratorFunction%.prototype", node, context),
             string(getFunctionName(node)),
             number(getFunctionLength(getParameters(node))),
             useJavaScript("NextRef", [heap, number(1)], context),

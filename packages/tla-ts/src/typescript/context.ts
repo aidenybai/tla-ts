@@ -3,7 +3,7 @@ import type { Expression, OperatorDefinition, OperatorParam } from "../ast";
 import { getTypeNames, JAVASCRIPT_OPERATORS } from "./javascript";
 import { BUILT_INS } from "./built-ins";
 import { getErrorClass, NATIVE_ERRORS } from "./exceptions";
-import { getBuiltIn } from "./intrinsics";
+import { getBuiltIn, isHeldBuiltInObject } from "./intrinsics";
 import { TlaTypeScriptError } from "../errors";
 import { createNames, type Names } from "./names";
 import type { Link } from "./regions";
@@ -1995,6 +1995,7 @@ const candidates = new WeakMap<ts.SourceFile, FunctionNode[]>();
 // The functions that a value whose type has calls may hold, where tla-ts can't tell which: those
 // that no other function encloses, whose type TypeScript lets the value hold.
 export const getFunctionCandidates = (callee: ts.Expression, context: Context) => {
+  if (isHeldBuiltInObject(callee, context)) return [];
   const sourceFile = callee.getSourceFile();
   const found =
     candidates.get(sourceFile) ??

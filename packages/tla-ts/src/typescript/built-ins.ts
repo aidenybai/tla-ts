@@ -863,6 +863,49 @@ export const BUILT_INS: Record<string, [string | null, boolean, boolean, string[
     ],
     false,
   ],
+  "%GeneratorFunction%": [
+    "Function",
+    true,
+    true,
+    [
+      ["length", "c", "n1"],
+      ["name", "c", "sGeneratorFunction"],
+      ["prototype", "", "o%GeneratorFunction%.prototype"],
+    ],
+    true,
+  ],
+  "%AsyncGeneratorFunction%": [
+    "Function",
+    true,
+    true,
+    [
+      ["length", "c", "n1"],
+      ["name", "c", "sAsyncGeneratorFunction"],
+      ["prototype", "", "o%AsyncGeneratorFunction%.prototype"],
+    ],
+    true,
+  ],
+  "%AsyncFunction%": [
+    "Function",
+    true,
+    true,
+    [
+      ["length", "c", "n1"],
+      ["name", "c", "sAsyncFunction"],
+      ["prototype", "", "o%AsyncFunction%.prototype"],
+    ],
+    true,
+  ],
+  "%AsyncIteratorPrototype%": [
+    "Object.prototype",
+    false,
+    true,
+    [
+      ["@@asyncIterator", "wc", "o%AsyncIteratorPrototype%.@@asyncIterator"],
+      ["@@asyncDispose", "wc", "o%AsyncIteratorPrototype%.@@asyncDispose"],
+    ],
+    false,
+  ],
   "Object.prototype": [
     null,
     false,
@@ -3353,6 +3396,58 @@ export const BUILT_INS: Record<string, [string | null, boolean, boolean, string[
     [
       ["length", "c", "n0"],
       ["name", "c", "sreturn"],
+    ],
+    false,
+  ],
+  "%GeneratorFunction%.prototype": [
+    "Function.prototype",
+    false,
+    true,
+    [
+      ["prototype", "c", "o%GeneratorFunction%.prototype.prototype"],
+      ["constructor", "c", "o%GeneratorFunction%"],
+      ["@@toStringTag", "c", "sGeneratorFunction"],
+    ],
+    false,
+  ],
+  "%AsyncGeneratorFunction%.prototype": [
+    "Function.prototype",
+    false,
+    true,
+    [
+      ["prototype", "c", "o%AsyncGeneratorFunction%.prototype.prototype"],
+      ["constructor", "c", "o%AsyncGeneratorFunction%"],
+      ["@@toStringTag", "c", "sAsyncGeneratorFunction"],
+    ],
+    false,
+  ],
+  "%AsyncFunction%.prototype": [
+    "Function.prototype",
+    false,
+    true,
+    [
+      ["constructor", "c", "o%AsyncFunction%"],
+      ["@@toStringTag", "c", "sAsyncFunction"],
+    ],
+    false,
+  ],
+  "%AsyncIteratorPrototype%.@@asyncIterator": [
+    "Function.prototype",
+    true,
+    true,
+    [
+      ["length", "c", "n0"],
+      ["name", "c", "s[Symbol.asyncIterator]"],
+    ],
+    false,
+  ],
+  "%AsyncIteratorPrototype%.@@asyncDispose": [
+    "Function.prototype",
+    true,
+    true,
+    [
+      ["length", "c", "n0"],
+      ["name", "c", "s[Symbol.asyncDispose]"],
     ],
     false,
   ],
@@ -6294,6 +6389,92 @@ export const BUILT_INS: Record<string, [string | null, boolean, boolean, string[
     [
       ["length", "c", "n0"],
       ["name", "c", "sget disposed"],
+    ],
+    false,
+  ],
+  "%GeneratorFunction%.prototype.prototype": [
+    "Iterator.prototype",
+    false,
+    true,
+    [
+      ["constructor", "c", "o%GeneratorFunction%.prototype"],
+      ["next", "wc", "o%GeneratorFunction%.prototype.prototype.next"],
+      ["return", "wc", "o%GeneratorFunction%.prototype.prototype.return"],
+      ["throw", "wc", "o%GeneratorFunction%.prototype.prototype.throw"],
+      ["@@toStringTag", "c", "sGenerator"],
+    ],
+    false,
+  ],
+  "%AsyncGeneratorFunction%.prototype.prototype": [
+    "%AsyncIteratorPrototype%",
+    false,
+    true,
+    [
+      ["constructor", "c", "o%AsyncGeneratorFunction%.prototype"],
+      ["next", "wc", "o%AsyncGeneratorFunction%.prototype.prototype.next"],
+      ["return", "wc", "o%AsyncGeneratorFunction%.prototype.prototype.return"],
+      ["throw", "wc", "o%AsyncGeneratorFunction%.prototype.prototype.throw"],
+      ["@@toStringTag", "c", "sAsyncGenerator"],
+    ],
+    false,
+  ],
+  "%GeneratorFunction%.prototype.prototype.next": [
+    "Function.prototype",
+    true,
+    true,
+    [
+      ["length", "c", "n1"],
+      ["name", "c", "snext"],
+    ],
+    false,
+  ],
+  "%GeneratorFunction%.prototype.prototype.return": [
+    "Function.prototype",
+    true,
+    true,
+    [
+      ["length", "c", "n1"],
+      ["name", "c", "sreturn"],
+    ],
+    false,
+  ],
+  "%GeneratorFunction%.prototype.prototype.throw": [
+    "Function.prototype",
+    true,
+    true,
+    [
+      ["length", "c", "n1"],
+      ["name", "c", "sthrow"],
+    ],
+    false,
+  ],
+  "%AsyncGeneratorFunction%.prototype.prototype.next": [
+    "Function.prototype",
+    true,
+    true,
+    [
+      ["length", "c", "n1"],
+      ["name", "c", "snext"],
+    ],
+    false,
+  ],
+  "%AsyncGeneratorFunction%.prototype.prototype.return": [
+    "Function.prototype",
+    true,
+    true,
+    [
+      ["length", "c", "n1"],
+      ["name", "c", "sreturn"],
+    ],
+    false,
+  ],
+  "%AsyncGeneratorFunction%.prototype.prototype.throw": [
+    "Function.prototype",
+    true,
+    true,
+    [
+      ["length", "c", "n1"],
+      ["name", "c", "sthrow"],
     ],
     false,
   ],

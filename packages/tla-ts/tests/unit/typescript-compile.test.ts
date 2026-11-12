@@ -6019,6 +6019,39 @@ describe("errors", () => {
     ).toThrow("tla-ts can't read a generator's next as a value");
   });
 
+  it("reads the built-in prototypes of generator functions and their prototype objects", async () => {
+    const source = (check: string) => `
+      const holder: { [key: string]: unknown } = {};
+      function* gen() {}
+      async function* asyncGen() {}
+      const GeneratorFunction = Object.getPrototypeOf(function* () {}).constructor;
+      const Generator = Object.getPrototypeOf(gen);
+      const AsyncIteratorPrototype = Object.getPrototypeOf(
+        Object.getPrototypeOf(asyncGen.prototype),
+      );
+      if (GeneratorFunction.length !== 1 || GeneratorFunction.name !== "GeneratorFunction") {
+        throw new Error("constructor");
+      }
+      if (Generator.constructor !== GeneratorFunction || Generator === Function.prototype) {
+        throw new Error("prototype");
+      }
+      if (Object.getPrototypeOf(gen.prototype) !== Generator.prototype) throw new Error("object");
+      if (Generator.prototype.next.length !== 1) throw new Error("next");
+      if (Object.getPrototypeOf(Object.getPrototypeOf(asyncGen)) !== Function.prototype) {
+        throw new Error("async");
+      }
+      if (AsyncIteratorPrototype[Symbol.asyncIterator].length !== 0) throw new Error("async");
+      ${check}
+    `;
+    expect((await checkModel(source(""))).failure).toBeUndefined();
+    const wrong = await checkModel(
+      source(`if (Object.getPrototypeOf(Generator.prototype) === Iterator.prototype) {
+        throw new Error("iterator");
+      }`),
+    );
+    expect(wrong.failure?.message).toContain("iterator");
+  });
+
   it("flattens an array whose elements are all arrays, or none of them", async () => {
     const result = await checkModel(`
       const deep = [[[1]], [[2, 3]]];
