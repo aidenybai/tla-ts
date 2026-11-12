@@ -80,6 +80,7 @@ import {
   isDescriptionOfAll,
   getDescribedValue,
   isFromEntries,
+  isFunctionValue,
   isSymbolCall,
   isNewObject,
   isObjectConversion,
@@ -95,6 +96,7 @@ import {
   translateHoldsMethod,
   translateFunctionValue,
   translateObjectValue,
+  translateFunctionObject,
   translatePropertyKey,
 } from "./heap";
 import {
@@ -912,10 +914,14 @@ export const translateCall = (
   const ownKeys = global === "Object" ? OWN_KEYS.get(method) : undefined;
   if (ownKeys !== undefined && node.arguments.length === 1 && context.heap !== undefined) {
     const argument = node.arguments[0];
-    if (getKind(argument, context) === "object" || isBuiltInObject(argument, context)) {
+    if (
+      getKind(argument, context) === "object" ||
+      isBuiltInObject(argument, context) ||
+      isFunctionValue(argument, context)
+    ) {
       return useJavaScript(
         ownKeys,
-        [getHeap(scope, node, context), translateObjectValue(argument, scope, context)],
+        [getHeap(scope, node, context), translateFunctionObject(argument, scope, context)],
         context,
       );
     }
@@ -1162,13 +1168,14 @@ export const translateCall = (
     (ownMethod === "hasOwnProperty" || ownMethod === "propertyIsEnumerable") &&
     owned.length === 2 &&
     (getKind(owned[0], context) === "object" ||
-      (context.heap !== undefined && isBuiltInObject(owned[0], context)));
+      (context.heap !== undefined && isBuiltInObject(owned[0], context)) ||
+      isFunctionValue(owned[0], context));
   if (isOwner) {
     return useJavaScript(
       ownMethod === "hasOwnProperty" ? "HasOwn" : "IsEnumerableOwn",
       [
         getHeap(scope, node, context),
-        translateObjectValue(owned[0], scope, context),
+        translateFunctionObject(owned[0], scope, context),
         translatePropertyKey(owned[1], scope, context),
       ],
       context,

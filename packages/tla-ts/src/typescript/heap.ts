@@ -5,6 +5,7 @@ import {
   type HeapClass,
   type CalledMethod,
   type Context,
+  share,
   type FunctionNode,
   getConstruction,
   getCallee,
@@ -46,6 +47,7 @@ import {
   getCaptures,
   getCapturedArguments,
   skipCasts,
+  getFunctionValue,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import {
@@ -133,9 +135,39 @@ export const getHeap = (scope: Scope, node: ts.Node, context: Context) => {
   return heap;
 };
 
+// A value that TypeScript types as a function, or undefined, such as a descriptor's get, which is
+// an object where the heap or the built-in objects hold it, as they hold %ThrowTypeError%. A
+// function that a script makes is another, which tla-ts reads where it knows the function.
+export const isFunctionValue = (node: ts.Expression, context: Context) => {
+  const names = getTypeNames(context.checker.getTypeAtLocation(node), context.checker);
+  return (
+    context.heap !== undefined &&
+    getFunctionValue(skipCasts(node), context) === undefined &&
+    getKind(node, context) !== "object" &&
+    names?.includes("function") === true &&
+    names.every((name) => name === "function" || name === "undefined")
+  );
+};
+
 // An object, which may be a built-in one such as Math or Array.prototype.
 export const translateObjectValue = (node: ts.Expression, scope: Scope, context: Context) =>
   translateBuiltInObject(node, scope, context) ?? translateExpression(node, scope, context);
+
+// Object's functions read a function value as an object where the heap or the built-in objects
+// hold it, and stop on another.
+export const translateFunctionObject = (node: ts.Expression, scope: Scope, context: Context) => {
+  const builtIn = translateBuiltInObject(node, scope, context);
+  if (builtIn !== undefined) return builtIn;
+  if (!isFunctionValue(node, context)) return translateExpression(node, scope, context);
+  context.builtIns.add("get Function.prototype.arguments");
+  return share(translateExpression(node, scope, context), "function", context, (value) =>
+    ifExpression(
+      useJavaScript("IsRef", [value], context),
+      value,
+      apply("Assert", [boolean(false), string("tla-ts can't read this function as an object")]),
+    ),
+  );
+};
 
 const getNumericKey = (node: ts.NumericLiteral) => string(String(Number(node.text)));
 

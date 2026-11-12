@@ -16,7 +16,7 @@ import {
 } from "./collections";
 import { getConstructor, getErrorClass, NATIVE_ERRORS } from "./exceptions";
 import { getNumberValue, getRawString, translateExpression } from "./expressions";
-import { getHeap } from "./heap";
+import { getHeap, isFunctionValue, translateFunctionObject } from "./heap";
 import { useJavaScript, WELL_KNOWN_SYMBOLS } from "./javascript";
 import type { Scope } from "./scope";
 import type { Expression } from "../ast";
@@ -961,7 +961,8 @@ export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: C
     (getKind(node.arguments[0], context) === "object" ||
       (context.heap !== undefined &&
         scope.bindings.has(context.heap) &&
-        isBuiltInObject(node.arguments[0], context)));
+        (isBuiltInObject(node.arguments[0], context) ||
+          isFunctionValue(node.arguments[0], context))));
   if (isOfObject && isPrototypeOfCall(node) && ts.isPropertyAccessExpression(node.expression)) {
     const owner = node.expression.expression;
     const name = getName(owner, context);
@@ -992,11 +993,7 @@ export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: C
     }
     return useJavaScript(
       "Prototype",
-      [
-        getHeap(scope, node, context),
-        translateBuiltInObject(node.arguments[0], scope, context) ??
-          translateExpression(node.arguments[0], scope, context),
-      ],
+      [getHeap(scope, node, context), translateFunctionObject(node.arguments[0], scope, context)],
       context,
     );
   }

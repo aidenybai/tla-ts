@@ -5540,6 +5540,44 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain("frozen");
   });
 
+  it("reads a function value that the built-in objects hold through Object's functions", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const thrower = Object.getOwnPropertyDescriptor(Function.prototype, "caller")!.get;
+      if (Object.getPrototypeOf(thrower) !== Function.prototype) throw new Error("prototype");
+      const names = Object.getOwnPropertyNames(thrower);
+      if (names.indexOf("length") !== 0 || names.indexOf("name") !== 1) throw new Error("names");
+      if (Object.prototype.hasOwnProperty.call(thrower, "arguments")) throw new Error("own");
+      if (!Object.prototype.hasOwnProperty.call(thrower, "length")) throw new Error("length");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = [
+      ["!== Function.prototype", "=== Function.prototype", '"prototype"'],
+      ['indexOf("name") !== 1', 'indexOf("name") === 1', '"names"'],
+      [
+        'if (Object.prototype.hasOwnProperty.call(thrower, "arguments"))',
+        'if (!Object.prototype.hasOwnProperty.call(thrower, "arguments"))',
+        '"own"',
+      ],
+    ];
+    for (const [from, to, message] of wrong) {
+      expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
+    }
+    const getter = `
+      const holder = { seen: 0 };
+      const getter = Object.getOwnPropertyDescriptor({ get a() { return 1; } }, "a")!.get;
+      const names = Object.getOwnPropertyNames(getter);
+      if (names.length !== 2 || Object.getPrototypeOf(getter) !== Function.prototype) throw new Error("getter");
+      if (!Object.prototype.hasOwnProperty.call(getter, "name")) throw new Error("name");
+      const missing = Object.getOwnPropertyDescriptor({ a: 1 }, "a")!.get;
+      holder.seen = 1;
+    `;
+    expect((await checkModel(getter)).failure?.message).toContain(
+      "tla-ts can't read this function as an object",
+    );
+  });
+
   describe("tests the extensibility of a function that a variable holds where it runs", () => {
     const source = `
       const holder = { seen: 0 };
