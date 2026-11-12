@@ -1193,6 +1193,26 @@ export const translateCall = (
         : argument;
     const kind = read === undefined ? "other" : getKind(read, context);
     const collection = read === undefined ? undefined : getCollection(read, context);
+    // A primitive gives the Symbol.toStringTag of its prototype where that's a string.
+    const type = argument === undefined ? undefined : context.checker.getTypeAtLocation(argument);
+    const flags =
+      type === undefined
+        ? 0
+        : (type.isUnion() ? type.types : [type]).reduce((all, inner) => all | inner.flags, 0);
+    for (const [flag, name] of new Map([
+      [ts.TypeFlags.NumberLike, "Number"],
+      [ts.TypeFlags.StringLike, "String"],
+      [ts.TypeFlags.BooleanLike, "Boolean"],
+      [ts.TypeFlags.BigIntLike, "BigInt"],
+      [ts.TypeFlags.ESSymbolLike, "Symbol"],
+    ])) {
+      if (
+        (flags & (flag | ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Instantiable)) !==
+        0
+      ) {
+        context.builtIns.add(`${name}.prototype`);
+      }
+    }
     return useJavaScript(
       "ObjectToString",
       [
