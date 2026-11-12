@@ -767,6 +767,18 @@ describe("values", () => {
     expect(result.failure?.message).toContain("got 2");
   });
 
+  it("runs a comma's operands in order as statements", async () => {
+    const result = await checkModel(`
+      let total = 0;
+      for (let low = 0, high = 3; low < 3; low++, high--) total += high - low;
+      let first = 0;
+      let second = 0;
+      (first = 1), (second = first + 1);
+      if (total !== 3 || second !== 2) throw new Error("got " + total + " " + second);
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("converts what a compound assignment reads from a variable of type any", async () => {
     const result = await checkModel(`
       const marker = NaN;

@@ -4533,6 +4533,15 @@ const translateExpressionStatement = (
   if (ts.isParenthesizedExpression(expression)) {
     return translateExpressionStatement(expression.expression, path, context, frame, continueWith);
   }
+  // A comma runs its operands in order, as a for loop's incrementor may.
+  if (
+    ts.isBinaryExpression(expression) &&
+    expression.operatorToken.kind === ts.SyntaxKind.CommaToken
+  ) {
+    return translateExpressionStatement(expression.left, path, context, frame, (after) =>
+      translateExpressionStatement(expression.right, after, context, frame, continueWith),
+    );
+  }
   // A name that no declaration binds throws a ReferenceError where a statement reads it.
   if (isUnresolved(expression, context)) {
     return throwError("ReferenceError", path, expression, context, frame);
