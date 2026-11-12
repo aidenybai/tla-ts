@@ -4899,15 +4899,15 @@ const translateLoopCall = (
   const isReduce = method.startsWith("reduce");
   // Where a getter may answer an array-like object's length or element, or the callback may change
   // objects, the method reads its length and then each element as it visits it, as JavaScript
-  // does. reduce without an initial value reads its first element apart.
+  // does. reduce without an initial value takes the first element that it finds as its
+  // accumulator, and throws a TypeError where it finds none.
   const lengthGetters = loop.isArrayLike ? getDefinedGetters(receiver, "length", context) : [];
   const speciesGetters = loop.isArrayLike ? getSpeciesGetters(method, receiver, context) : [];
   const getters = loop.isArrayLike
     ? (getElementGetters(receiver, context) ??
-      ((lengthGetters.length + speciesGetters.length > 0 ||
-        (callback !== undefined &&
-          getChanged(callback, path, context).some((symbol) => symbol === context.heap))) &&
-      !(isReduce && loop.initial === undefined)
+      (lengthGetters.length + speciesGetters.length > 0 ||
+      (callback !== undefined &&
+        getChanged(callback, path, context).some((symbol) => symbol === context.heap))
         ? []
         : undefined))
     : undefined;
@@ -4940,12 +4940,6 @@ const translateLoopCall = (
   }
   if (changed.some((symbol) => path.scope.functions.has(symbol))) {
     throw new TlaTypeScriptError("Don't reassign a function inside a callback", site);
-  }
-  if (getters !== undefined && isReduce && loop.initial === undefined) {
-    throw new TlaTypeScriptError(
-      "Give reduce an initial value where a getter may answer an element",
-      expression,
-    );
   }
   // The array parameter holds a sequence, which only a parameter typed as an array can read.
   const callbackParameters = callback === undefined ? [] : getParameters(callback);
@@ -4988,9 +4982,13 @@ const translateLoopCall = (
     },
   });
   const step = apply(isReversed ? "-" : "+", [identifier(position), number(1)]);
+  const isUnseeded = getters !== undefined && isReduce && initial === undefined;
+  const seededName = context.names.getFresh("isSeeded");
+  const seeded = isUnseeded ? [identifier(seededName)] : [];
   const repeat = (current: Path, next: Expression) =>
-    leaf(call(name, [step, next, ...getValues(current)]));
-  const done = (current: Path, result: Expression) => leaf(tuple([result, ...getValues(current)]));
+    leaf(call(name, [step, next, ...seeded, ...getValues(current)]));
+  const done = (current: Path, result: Expression) =>
+    leaf(tuple([result, ...getValues(current), ...seeded]));
   const kept = identifier(accumulator);
   const getAfterCallback = (element: Expression) => (current: Path, value?: Expression) => {
     const result = value ?? getUndefined(context);
@@ -5155,7 +5153,14 @@ const translateLoopCall = (
       inner,
       context,
       { ...frame, breakTo: undefined, continueTo: undefined, throwTo },
-      visit,
+      isUnseeded
+        ? (current, element) =>
+            ifThenElse(
+              identifier(seededName),
+              visit(current, element),
+              leaf(call(name, [step, element, boolean(true), ...getValues(current)])),
+            )
+        : visit,
     );
     // with gives its value at the index that it replaces, which it doesn't read.
     return method === "with"
@@ -5207,7 +5212,9 @@ const translateLoopCall = (
   const operator: OperatorDefinition = {
     ...define(
       name,
-      [position, accumulator, ...parameters].map((parameter) => ({ name: parameter, arity: 0 })),
+      [position, accumulator, ...(isUnseeded ? [seededName] : []), ...parameters].map(
+        (parameter) => ({ name: parameter, arity: 0 }),
+      ),
       render(
         ifThenElse(
           isInRange,
@@ -5259,26 +5266,31 @@ const translateLoopCall = (
           number(1),
         ]);
   const result = context.names.getFresh("loop");
-  const runLoop = (current: Path, first: Expression, seed: Expression) =>
-    letIn(
+  const runLoop = (current: Path, first: Expression, seed: Expression) => {
+    const after = {
+      ...withValues(
+        current,
+        changed.map((_, offset) => index(identifier(result), [number(offset + 2)])),
+      ),
+      isAssigned: current.isAssigned || changed.some((symbol) => context.variables.has(symbol)),
+    };
+    const value = index(identifier(result), [number(1)]);
+    return letIn(
       [operator],
       bindOnce(
         current,
         result,
-        call(name, [first, seed, ...getValues(current)]),
-        continueWith(
-          {
-            ...withValues(
-              current,
-              changed.map((_, offset) => index(identifier(result), [number(offset + 2)])),
-            ),
-            isAssigned:
-              current.isAssigned || changed.some((symbol) => context.variables.has(symbol)),
-          },
-          index(identifier(result), [number(1)]),
-        ),
+        call(name, [first, seed, ...(isUnseeded ? [boolean(false)] : []), ...getValues(current)]),
+        isUnseeded
+          ? ifThenElse(
+              index(identifier(result), [number(changed.length + 2)]),
+              continueWith(after, value),
+              throwTypeError(after, expression, context, frame),
+            )
+          : continueWith(after, value),
       ),
     );
+  };
   // A reduce without an initial value starts from the first element it visits, and throws a
   // TypeError for an empty array.
   const getSeeded = (current: Path) =>
@@ -5286,15 +5298,17 @@ const translateLoopCall = (
       ? runLoop(current, start, GATHERING_METHODS.has(method) ? tuple([]) : getUndefined(context))
       : initial !== undefined
         ? runLoop(current, start, translateExpression(initial, current.scope, context))
-        : ifThenElse(
-            apply("=", [length, number(0)]),
-            throwTypeError(current, expression, context, frame),
-            runLoop(
-              current,
-              isReversed ? apply("-", [length, number(1)]) : number(2),
-              index(sequence, [start]),
-            ),
-          );
+        : isUnseeded
+          ? runLoop(current, start, getUndefined(context))
+          : ifThenElse(
+              apply("=", [length, number(0)]),
+              throwTypeError(current, expression, context, frame),
+              runLoop(
+                current,
+                isReversed ? apply("-", [length, number(1)]) : number(2),
+                index(sequence, [start]),
+              ),
+            );
   if (getters !== undefined) {
     // The length, which the method reads once, running its getter, after which map and filter
     // check the array's constructor, as ArraySpeciesCreate reads it.

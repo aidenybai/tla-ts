@@ -375,6 +375,34 @@ describe("top-level statements", () => {
     expect((await checkModel(source("1234"))).failure?.message).toContain("callback");
   });
 
+  it("seed a reduce from the first element it finds as a callback that changes objects leaves it", async () => {
+    const source = (expected: number) => `
+      const items: (number | undefined)[] = [, 2, , 4];
+      let calls = 0;
+      const total = items.reduce((sum: number | undefined, value, position) => {
+        calls++;
+        if (position === 1) delete items[3];
+        return (sum ?? 0) + (value ?? 0) + 10;
+      });
+      const right = items.reduceRight((sum: number | undefined, value) => {
+        items[0] = 5;
+        return (sum ?? 0) + (value ?? 0);
+      });
+      if (total !== 16 || calls !== 1 || right !== ${expected}) throw new Error("reduce");
+    `;
+    expect((await checkModel(source(11))).failure).toBeUndefined();
+    expect((await checkModel(source(6))).failure?.message).toContain("reduce");
+    const empty = await checkModel(`
+      const empty: number[] & { tag?: string } = [];
+      empty.tag = "t";
+      empty.reduce((sum: number, value: number) => {
+        empty.tag = "u";
+        return sum + value;
+      });
+    `);
+    expect(empty.failure?.message).toContain("TypeError");
+  });
+
   it("make the objects of a parameter's default", async () => {
     const result = await checkModel(`
       let total = 0;
