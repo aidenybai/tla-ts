@@ -728,23 +728,13 @@ const translateSequenceOperation = (
       "slice",
       () => {
         const start = argument === undefined ? number(0) : getRelative(argument, "ClampedIndex");
-        const end = call.arguments[1];
-        const last =
-          end === undefined
-            ? getLength()
-            : isNumberLike(end, context)
-              ? useJavaScript("ClampedIndex", [translate(end), getLength()], context)
-              : share(translate(end), "end", context, (value) =>
-                  ifExpression(
-                    apply("=", [value, getUndefined(context)]),
-                    getLength(),
-                    useJavaScript(
-                      "ClampedIndex",
-                      [useJavaScript("ToNumber", [value], context), getLength()],
-                      context,
-                    ),
-                  ),
-                );
+        const last = translateClampedIndex(
+          call.arguments[1],
+          getLength(),
+          getLength(),
+          scope,
+          context,
+        );
         const first =
           start.kind === "Number" ? number(start.value + 1) : apply("+", [start, number(1)]);
         return apply("SubSeq", [sequence, first, last]);
@@ -770,6 +760,40 @@ const translateSequenceOperation = (
         ),
     ],
     ["toReversed", () => reverseSequence(sequence, context)],
+    [
+      "toSorted",
+      () =>
+        useJavaScript(
+          "SortSequence",
+          [sequence, translateSortOrder(argument, scope, context)],
+          context,
+        ),
+    ],
+    [
+      "toSpliced",
+      () => {
+        const start = translateClampedIndex(argument, number(0), getLength(), scope, context);
+        const count = call.arguments[1];
+        const items = tuple(call.arguments.slice(2).map(translate));
+        return share(start, "start", context, (shared) => {
+          const remaining = apply("-", [getLength(), shared]);
+          const skipped =
+            argument === undefined
+              ? number(0)
+              : count === undefined
+                ? remaining
+                : useJavaScript("ClampedCount", [getIndex(count), remaining], context);
+          return apply("\\o", [
+            apply("\\o", [apply("SubSeq", [sequence, number(1), shared]), items]),
+            apply("SubSeq", [
+              sequence,
+              apply("+", [apply("+", [shared, skipped]), number(1)]),
+              getLength(),
+            ]),
+          ]);
+        });
+      },
+    ],
     ["map", translateEach((bounds, body) => functionOf(bounds, body))],
     ["every", translateEach((bounds, body) => quantify("Forall", bounds, body), translateTest)],
     ["some", translateEach((bounds, body) => quantify("Exists", bounds, body), translateTest)],

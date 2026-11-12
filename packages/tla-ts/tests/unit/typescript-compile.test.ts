@@ -3312,6 +3312,26 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("copies an array sorted or spliced", async () => {
+    const result = await checkModel(`
+      const items = ["first", "second", "third"];
+      const numbers = [3, 10, 2];
+      if (
+        items.toSpliced(1).join(",") !== "first" ||
+        items.toSpliced(1, undefined).join(",") !== "first,second,third" ||
+        items.toSpliced(-2, 1, "x", "y").join(",") !== "first,x,y,third" ||
+        items.toSpliced(1, -3).join(",") !== "first,second,third" ||
+        items.toSpliced(1, 10).join(",") !== "first" ||
+        numbers.toSorted().join(",") !== "10,2,3" ||
+        numbers.toSorted((a, b) => a - b).join(",") !== "2,3,10" ||
+        numbers.join(",") !== "3,10,2"
+      ) {
+        throw new Error("copies");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`

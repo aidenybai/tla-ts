@@ -413,6 +413,14 @@ ClampedIndex(index, length) ==
   LET relative == RelativeIndex(index, length)
   IN IF relative < 0 THEN 0 ELSE IF relative > length THEN length ELSE relative
 
+\\* A count between 0 and a maximum, as toSpliced() and splice() take their delete count.
+ClampedCount(count, maximum) ==
+  CASE count = NaN \\/ count = NegativeZero \\/ count = NegativeInfinity -> 0
+    [] count = Infinity -> maximum
+    [] count < 0 -> 0
+    [] count > maximum -> maximum
+    [] OTHER -> count
+
 SequenceWith(sequence, index, value) ==
   LET relative == RelativeIndex(index, Len(sequence))
   IN IF relative \\in 0..(Len(sequence) - 1)
