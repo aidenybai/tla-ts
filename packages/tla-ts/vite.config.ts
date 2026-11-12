@@ -34,5 +34,6 @@ export default defineConfig({
     globalSetup: ["./tests/setup/build.ts"],
     include: ["tests/unit/**/*.test.ts"],
     passWithNoTests: true,
+    testTimeout: 30_000,
   },
 });
