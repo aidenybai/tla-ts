@@ -9099,6 +9099,28 @@ describe("errors", () => {
     );
   });
 
+  it("reads an array that the heap holds through for-in, instanceof, and a cast", async () => {
+    const source = `
+      const holder: { seen: string } = { seen: "" };
+      const arr = [1, , 3];
+      (arr as unknown as { name: number }).name = 4;
+      let keys = "";
+      for (const key in arr) keys += key;
+      if (keys !== "02name") throw new Error("keys " + keys);
+      if (!(arr instanceof Array)) throw new Error("instance");
+      if (Object.keys(arr as unknown as object).length !== 3) throw new Error("cast");
+      holder.seen = keys;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    for (const [from, to, message] of [
+      ['keys !== "02name"', 'keys !== "012name"', "keys"],
+      ["!(arr instanceof Array)", "arr instanceof Array", "instance"],
+      ["length !== 3", "length !== 2", "cast"],
+    ]) {
+      expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
+    }
+  });
+
   it("destructures a rest element into an object pattern", async () => {
     const source = `
       let x: unknown = null;

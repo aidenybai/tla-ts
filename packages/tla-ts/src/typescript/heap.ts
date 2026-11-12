@@ -2017,14 +2017,25 @@ const ARRAY_OBJECT_USES = new Set([
 ]);
 
 // Whether an array that the heap holds may appear here, where tla-ts reads it as an object.
-const isArrayObjectUse = (node: ts.Identifier, context: Context) => {
+const isArrayObjectUse = (node: ts.Expression, context: Context): boolean => {
   const parent = node.parent;
+  if (
+    ts.isParenthesizedExpression(parent) ||
+    ts.isAsExpression(parent) ||
+    ts.isNonNullExpression(parent) ||
+    ts.isSatisfiesExpression(parent)
+  ) {
+    return isArrayObjectUse(parent, context);
+  }
   if (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) {
     return parent.expression === node;
   }
   if (ts.isTypeOfExpression(parent)) return true;
-  // A loop or a spread runs the array's iterator, which reads its elements as an object's.
-  if (ts.isForOfStatement(parent) && parent.expression === node) return true;
+  // A for-of or a spread runs the array's iterator, which reads its elements as an object's, and a
+  // for-in reads its keys.
+  if ((ts.isForOfStatement(parent) || ts.isForInStatement(parent)) && parent.expression === node) {
+    return true;
+  }
   if (ts.isSpreadElement(parent)) return true;
   if (ts.isVariableDeclaration(parent)) return ts.isArrayBindingPattern(parent.name);
   if (ts.isBinaryExpression(parent)) {
@@ -2037,7 +2048,8 @@ const isArrayObjectUse = (node: ts.Identifier, context: Context) => {
       kind === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
       kind === ts.SyntaxKind.EqualsEqualsToken ||
       kind === ts.SyntaxKind.ExclamationEqualsToken ||
-      (kind === ts.SyntaxKind.InKeyword && parent.right === node)
+      (kind === ts.SyntaxKind.InKeyword && parent.right === node) ||
+      (kind === ts.SyntaxKind.InstanceOfKeyword && parent.left === node)
     );
   }
   if (!ts.isCallExpression(parent) || !parent.arguments.some((argument) => argument === node)) {
