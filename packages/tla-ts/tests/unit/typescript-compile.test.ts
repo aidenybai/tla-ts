@@ -1856,12 +1856,12 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
     expect(() =>
       compile(
-        "const box = { seen: new Set<number>() };\nconst copy = box.seen;\nbox.seen.add(2);\nlet size = copy.size;",
+        "const box = { seen: [[1]] };\nconst copy = box.seen;\nbox.seen[0].push(2);\nlet size = copy[0].length;",
       ),
     ).toThrow("box.seen would share an object that changes in place");
     expect(() =>
       compile(
-        "const items = new Set<number>();\nconst box = { kept: items };\nconst wrap = { inner: box.kept };\nwrap.inner.add(3);\nlet size = items.size;",
+        "const box = { kept: [[1]] };\nconst wrap = { inner: box.kept };\nwrap.inner[0].push(3);\nlet size = box.kept[0].length;",
       ),
     ).toThrow("box.kept would share an object that changes in place");
   });
@@ -5949,6 +5949,21 @@ describe("errors", () => {
   });
 
   it("keeps the identity of a set that a field holds and changes in place", async () => {
+    const shared = await checkModel(`
+      const items = new Set<number>();
+      const box = { kept: items, seen: new Set<number>() };
+      const wrap = { inner: box.kept };
+      const copy = box.seen;
+      wrap.inner.add(3);
+      box.seen.add(2);
+      if (items.size !== 1 || !box.kept.has(3) || copy.size !== 1) throw new Error("kept");
+    `);
+    expect(shared.failure).toBeUndefined();
+    expect(() =>
+      compile(
+        "const items = new Set<number>();\nconst box = { kept: items };\nconst text = JSON.stringify(box);\nbox.kept.add(3);\nlet size = items.size;",
+      ),
+    ).toThrow("items would share an object that changes in place");
     const result = await checkModel(`
       interface Unit { kinds: Set<number> }
       interface Analysis { first: Set<number>; isNullable: boolean }
