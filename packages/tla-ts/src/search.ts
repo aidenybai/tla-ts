@@ -71,6 +71,7 @@ import { getTlcFingerprint, getTlcFingerprints, setFingerprintPolynomial } from 
 import type { TlcVersion } from "./tlc/version";
 import {
   formatValue,
+  freezeStringOrder,
   getWrittenPairs,
   isFunctionValue,
   isUpdatedElementOf,
@@ -81,6 +82,27 @@ import {
   toFiniteFunction,
   type Value,
 } from "./values";
+
+interface EnvironmentSettings extends Pick<
+  CheckOptions,
+  | "source"
+  | "loadModule"
+  | "loadClass"
+  | "readFile"
+  | "writeFile"
+  | "makeDirectory"
+  | "seed"
+  | "isTool"
+  | "traceSpec"
+  | "isSanyReported"
+  | "isWarningEnabled"
+  | "version"
+  | "moduleOperators"
+  | "fingerprintPolynomial"
+  | "maxSetSize"
+  | "isLazyValueExpanded"
+  | "isViewPrinted"
+> {}
 
 interface NamedExpression {
   name: string;
@@ -770,21 +792,23 @@ export const findAssumptionViolation = (
   return undefined;
 };
 
-export const prepareSearch = (options: CheckOptions) => {
-  const config =
-    typeof options.config === "string"
-      ? parseConfig(options.config, options.version)
-      : options.config;
+export const createCheckEnvironment = (
+  config: ModelConfig,
+  options: EnvironmentSettings,
+  print: (text: string) => void,
+  isStringOrderFrozen = false,
+) => {
   const order = createTlcOrder(options.source, options.loadModule);
   setStringOrder(order.getStringOrder(config));
   setValueOptions(options);
   setFingerprintPolynomial(options.fingerprintPolynomial ?? 0);
+  if (isStringOrderFrozen) freezeStringOrder();
   const specification = createEnvironment(config, {
     source: options.source,
     loadModule: options.loadModule,
     order,
     loadClass: options.loadClass,
-    print: options.onPrint ?? console.log,
+    print,
     files: {
       readFile: options.readFile,
       writeFile: options.writeFile,
@@ -798,6 +822,16 @@ export const prepareSearch = (options: CheckOptions) => {
     version: options.version,
     moduleOperators: options.moduleOperators,
   });
+  return { order, specification };
+};
+
+export const prepareSearch = (options: CheckOptions) => {
+  const config =
+    typeof options.config === "string"
+      ? parseConfig(options.config, options.version)
+      : options.config;
+  const created = createCheckEnvironment(config, options, options.onPrint ?? console.log);
+  const specification = created.specification;
   reportStartup(specification, config, options.onProgress);
   const environment = specification.environment;
   environment.runtime.getSpecification = () =>
@@ -811,7 +845,7 @@ export const prepareSearch = (options: CheckOptions) => {
     config,
     environment,
     specification.variableLocations,
-    () => order.getDeclarationOrder("variable"),
+    () => created.order.getDeclarationOrder("variable"),
     options.onProgress,
     specification.moduleOperators,
   );

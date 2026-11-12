@@ -9,7 +9,6 @@ import {
   getCoverageReport,
   type CoverageReport,
 } from "./coverage";
-import { createEnvironment } from "./environment";
 import {
   createStackOverflowError,
   getErrorExitCode,
@@ -47,6 +46,7 @@ import {
   type LiveSuccessor,
 } from "./liveness-checker";
 import {
+  createCheckEnvironment,
   createMissingOperatorError,
   createSearch,
   getIncompleteSuccessorMessage,
@@ -90,9 +90,7 @@ import {
 } from "./tlc/messages";
 import { createTautologyError } from "./liveness";
 import { KEY_SEPARATOR } from "./resolve";
-import { setFingerprintPolynomial } from "./tlc/fingerprint";
 import { writeTraceSpec } from "./tlc/trace-spec";
-import { createTlcOrder } from "./tlc/order";
 import {
   getPrimedRanges,
   replayInitialStates,
@@ -113,8 +111,6 @@ import {
   getValueHash,
   isSameValue,
   markFingerprinted,
-  setStringOrder,
-  setValueOptions,
   type Value,
 } from "./values";
 
@@ -428,29 +424,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       capturedLines = outer;
     }
   };
-  const order = createTlcOrder(options.source, options.loadModule);
-  setStringOrder(order.getStringOrder(config));
-  setValueOptions(options);
-  setFingerprintPolynomial(options.fingerprintPolynomial ?? 0);
-  const specification = createEnvironment(config, {
-    source: options.source,
-    loadModule: options.loadModule,
-    order,
-    loadClass: options.loadClass,
-    print,
-    files: {
-      readFile: options.readFile,
-      writeFile: options.writeFile,
-      makeDirectory: options.makeDirectory,
-    },
-    seed: options.seed,
-    isTool: options.isTool,
-    traceFile: options.traceSpec?.traceFile,
-    isSanyReported: options.isSanyReported,
-    isWarningEnabled: options.isWarningEnabled,
-    version: options.version,
-    moduleOperators: options.moduleOperators,
-  });
+  const created = createCheckEnvironment(config, options, print);
+  const specification = created.specification;
   reportStartup(specification, config, options.onProgress);
   const coverage =
     options.coverage === undefined
@@ -553,7 +528,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     config,
     environment,
     specification.variableLocations,
-    () => order.getDeclarationOrder("variable"),
+    () => created.order.getDeclarationOrder("variable"),
     options.onProgress,
     specification.moduleOperators,
   );
