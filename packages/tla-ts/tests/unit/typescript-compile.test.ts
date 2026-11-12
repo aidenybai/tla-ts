@@ -2150,6 +2150,40 @@ describe("errors", () => {
     expect((await checkModel(getSource(2))).failure?.message).toContain("unexpected");
   });
 
+  it("runs the setter of an object literal or a class that a computed key picks", async () => {
+    const getSource = (written: string) => `
+      let log = "";
+      class Box {
+        set width(value: number) {
+          log += "w" + value;
+        }
+        set height(value: number) {
+          log += "h" + value;
+        }
+      }
+      const tokens: Record<string, unknown> = {
+        set break(_: unknown) {
+          log += "b";
+        },
+        set case(_: unknown) {
+          log += "${written}";
+        },
+      };
+      const box = new Box() as unknown as Record<string, unknown>;
+      const plain: Record<string, unknown> = {};
+      const pick = (isWide: boolean): "width" | "height" => (isWide ? "width" : "height");
+      box[pick(true)] = 1;
+      box[pick(false)] = 2;
+      plain[pick(true)] = 3;
+      const names = ["break", "case"];
+      for (let index = 0; index < names.length; index++) tokens[names[index]] = 0;
+      const getLog = (): string => log;
+      if (getLog() !== "w1h2bc" || plain.width !== 3) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource("c"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("b"))).failure?.message).toContain("unexpected");
+  });
+
   it("sets a prototype through the __proto__ setter, which throws where the object refuses", async () => {
     const getSource = (isCycle: string) => `
       type Proto = { __proto__?: unknown };

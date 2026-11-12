@@ -206,11 +206,13 @@ export const getMethodValue = (
 
 // The model value of a function that a value may hold.
 export const getCandidateValue = (node: FunctionNode, context: Context) =>
-  ts.isMethodDeclaration(node) || ts.isGetAccessorDeclaration(node)
-    ? getMethodValue(node, context)
-    : ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node)
-      ? translateFunctionValue(node, context)
-      : undefined;
+  ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)
+    ? getAccessorValue(node, context)
+    : ts.isMethodDeclaration(node)
+      ? getMethodValue(node, context)
+      : ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node)
+        ? translateFunctionValue(node, context)
+        : undefined;
 
 // A getter or setter has its own value, though it shares its property's symbol.
 export const getAccessorValue = (

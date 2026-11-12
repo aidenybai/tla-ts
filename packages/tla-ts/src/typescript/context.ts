@@ -1191,22 +1191,65 @@ export const getAccessorFunctions = (node: ts.Node, field: "get" | "set", contex
   return found.get(field) ?? [];
 };
 
-// A setter takes one argument, so a function that declares more parameters would hold undefined
-// in ones its types say it can't.
+const setAccessors = new WeakMap<ts.SourceFile, ts.SetAccessorDeclaration[]>();
+
+// The setters that a script writes in object literals and classes under a key it names.
+const getSetAccessors = (node: ts.Node) => {
+  const file = node.getSourceFile();
+  const known = setAccessors.get(file);
+  if (known !== undefined) return known;
+  const found = findNodes(
+    file,
+    (inner): inner is ts.SetAccessorDeclaration =>
+      ts.isSetAccessorDeclaration(inner) && getNameKey(inner.name) !== undefined,
+  );
+  setAccessors.set(file, found);
+  return found;
+};
+
+const getNameKey = (name: ts.Node) =>
+  ts.isIdentifier(name) || ts.isStringLiteral(name)
+    ? name.text
+    : ts.isNumericLiteral(name)
+      ? String(Number(name.text))
+      : undefined;
+
+// The keys that a write may pick, or undefined where its key's type allows any.
+const getWrittenKeys = (node: ts.Node, context: Context) => {
+  const target = ts.isBinaryExpression(node) ? skipCasts(node.left) : undefined;
+  if (target !== undefined && ts.isPropertyAccessExpression(target)) return [target.name.text];
+  const key =
+    target !== undefined && ts.isElementAccessExpression(target)
+      ? context.checker.getTypeAtLocation(target.argumentExpression)
+      : undefined;
+  const types = key === undefined ? [] : key.isUnion() ? key.types : [key];
+  const literals = types.flatMap((type) =>
+    type.isStringLiteral() || type.isNumberLiteral() ? [String(type.value)] : [],
+  );
+  return literals.length > 0 && literals.length === types.length ? literals : undefined;
+};
+
 // The setters that a write may run, which take the value as their first parameter. A parameter
 // after it holds undefined, which one that TypeScript types as given can't.
-export const getSetters = (node: ts.Node, context: Context) =>
-  [...getAccessorFunctions(node, "set", context), ...getReturnedFunctions(node, context)].filter(
-    (setter) =>
-      getParameters(setter)
-        .slice(1)
-        .every(
-          (parameter) =>
-            parameter.type === undefined ||
-            parameter.questionToken !== undefined ||
-            parameter.initializer !== undefined,
-        ),
+export const getSetters = (node: ts.Node, context: Context) => {
+  const keys = getWrittenKeys(node, context);
+  return [
+    ...getAccessorFunctions(node, "set", context),
+    ...getReturnedFunctions(node, context),
+    ...getSetAccessors(node).filter(
+      (setter) => keys === undefined || keys.includes(getNameKey(setter.name) ?? ""),
+    ),
+  ].filter((setter) =>
+    getParameters(setter)
+      .slice(1)
+      .every(
+        (parameter) =>
+          parameter.type === undefined ||
+          parameter.questionToken !== undefined ||
+          parameter.initializer !== undefined,
+      ),
   );
+};
 
 // Whether a node makes a function or an object, which only a statement can.
 const isMaking = (node: ts.Node): boolean =>
