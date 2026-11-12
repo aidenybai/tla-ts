@@ -294,6 +294,25 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ).toEqual(["unsat", "(c f b a)", "unsat", "(f e a b)"]);
   });
 
+  it("finds no macros while a defined function is in scope", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-const x Int)",
+        "(assert (forall ((y Int)) (= (f y) (+ y 1))))",
+        "(assert (> (f x) 3))",
+        "(push)",
+        "(define-fun two () Int 2)",
+        "(apply macro-finder)",
+        "(pop)",
+        "(apply macro-finder)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (forall ((y Int)) (= (f y) (+ y 1)))\n  (> (f x) 3)\n  :precision precise :depth 0)\n)",
+      "(goals\n(goal\n  (not (<= x 2))\n  :precision precise :depth 1)\n)",
+    ]);
+  });
+
   it("throws at the dependencies of a tactic that drops them", () => {
     expect(() =>
       run([

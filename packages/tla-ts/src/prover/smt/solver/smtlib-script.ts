@@ -412,6 +412,7 @@ export const runSmtlibScript = (
         setup: getSetup(),
         write: () => {},
         parameters: settings.parameters,
+        hasDefinitions: () => script.state.reader.hasDefinitions(),
       },
       objectives,
     );
@@ -591,6 +592,7 @@ export const runSmtlibScript = (
     setup: getSetup(),
     write,
     parameters: settings.parameters,
+    hasDefinitions: () => script.state.reader.hasDefinitions(),
   });
   const getDatalog = () => {
     const state = script.state;

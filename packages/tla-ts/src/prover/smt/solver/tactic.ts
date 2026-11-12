@@ -116,6 +116,7 @@ export interface TacticEnvironment {
   setup: SmtSetup;
   write: (text: string, isDiagnostic: boolean) => void;
   parameters: ReadonlyMap<string, string>;
+  hasDefinitions: () => boolean;
 }
 
 // A tactic that tracks dependencies keeps the dependency of every formula it changes, so the goal
@@ -978,7 +979,10 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["produce_models", PARAM_BOOL, false, true],
         ["produce_proofs", PARAM_BOOL, false, true],
       ]),
-      build: (environment) => inPlace((goal) => findQuasiMacros(environment.manager, goal)),
+      build: (environment) =>
+        inPlace((goal) => {
+          if (!environment.hasDefinitions()) findQuasiMacros(environment.manager, goal);
+        }),
     },
   ],
   [
@@ -1008,7 +1012,10 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["elim_and", PARAM_BOOL, false, true],
       ]),
       isTrackingDependencies: true,
-      build: (environment) => inPlace((goal) => findGoalMacros(environment.manager, goal)),
+      build: (environment) =>
+        inPlace((goal) => {
+          if (!environment.hasDefinitions()) findGoalMacros(environment.manager, goal);
+        }),
     },
   ],
   [

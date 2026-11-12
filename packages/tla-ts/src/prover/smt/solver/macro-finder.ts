@@ -506,7 +506,6 @@ export class MacroManager {
 }
 
 export const findGoalMacros = (manager: AstManager, goal: Goal) => {
-  if (manager.recFunBodies.size > 0) return;
   const macros = new MacroManager(manager);
   const found = macros.findInGoal([...goal.forms.items], goal.dependencies);
   goal.reset();
