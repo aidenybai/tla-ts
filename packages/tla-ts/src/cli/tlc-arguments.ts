@@ -1,6 +1,7 @@
 import { closeSync, openSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import type { ModuleOperator } from "../check";
+import { MAXIMUM_INTEGER } from "../values";
 
 export interface TlcArguments {
   specs: string[];
@@ -44,9 +45,9 @@ export interface RuntimeInvariant {
 }
 
 export interface TlcArgumentsError {
+  kind: "command-line" | "uncaught";
   error: string;
   isTool: boolean;
-  isUncaught?: boolean;
 }
 
 interface MessageCodes {
@@ -55,7 +56,6 @@ interface MessageCodes {
 }
 
 const FINGERPRINT_POLYNOMIALS = 131;
-const MAXIMUM_INT = 2147483647n;
 
 const TLC_MESSAGE_CODES = [
   [-123456, -123456],
@@ -231,31 +231,228 @@ const SWITCHES: Record<string, (parsed: TlcArguments) => void> = {
   },
 };
 
+interface ValueFlag {
+  missing: string;
+  apply: (parsed: TlcArguments, text: string) => string | undefined;
+}
+
+const applyInteger =
+  (
+    bits: 32 | 64,
+    malformed: string,
+    apply: (parsed: TlcArguments, value: bigint, text: string) => string | undefined,
+  ) =>
+  (parsed: TlcArguments, text: string) => {
+    const value = parseJavaInteger(text, bits);
+    return value === undefined
+      ? `${malformed} But encountered ${text}`
+      : apply(parsed, value, text);
+  };
+
+const getIntervalFlag = (
+  name: string,
+  missing: string,
+  malformed: string,
+  assign: (parsed: TlcArguments, minutes: number) => void,
+): ValueFlag => ({
+  missing,
+  apply: applyInteger(32, malformed, (parsed, minutes) => {
+    // TLC multiplies the minutes into an int of milliseconds.
+    const milliseconds = BigInt.asIntN(32, minutes * 60_000n);
+    if (milliseconds < 0n) return `Error: expect a nonnegative integer for -${name} option.`;
+    assign(parsed, Number(milliseconds) / 60_000);
+  }),
+});
+
+const VALUE_FLAGS: Record<string, ValueFlag> = {
+  "-teSpecOutDir": {
+    missing: "Error: expected a path for -teSpecOutDir option.",
+    apply: (parsed, path) => {
+      parsed.traceSpecPath = path;
+    },
+  },
+  "-userFile": {
+    missing: "Error: need to specify the full qualified file.",
+    apply: (parsed, path) => {
+      try {
+        closeSync(openSync(path, "w"));
+      } catch {
+        return "Error: Failed to create user output log file.";
+      }
+      parsed.userFile = path;
+    },
+  },
+  "-lncheck": {
+    missing: "Error: expect a strategy such as final for -lncheck option.",
+    apply: (parsed, strategy) => {
+      parsed.livenessCheck = strategy.toLowerCase();
+    },
+  },
+  "-config": {
+    missing: "Error: expect a file name for -config option.",
+    apply: (parsed, path) => {
+      const name = path.replace(/\.cfg$/, "");
+      parsed.configPath = name.endsWith(".tla") ? name : `${name}.cfg`;
+    },
+  },
+  "-coverage": getIntervalFlag(
+    "coverage",
+    "Error: coverage report interval required.",
+    "Error: An integer for coverage report interval required.",
+    (parsed, minutes) => {
+      parsed.coverage = minutes;
+    },
+  ),
+  "-checkpoint": getIntervalFlag(
+    "checkpoint",
+    "Error: checkpoint interval required.",
+    "Error: An integer for checkpoint interval is required.",
+    () => {},
+  ),
+  "-depth": {
+    missing: "Error: trace length required.",
+    apply: applyInteger(32, "Error: An integer for trace length required.", (parsed, depth) => {
+      parsed.traceDepth = Number(depth);
+    }),
+  },
+  "-seed": {
+    missing: "Error: seed required.",
+    apply: applyInteger(64, "Error: An integer for seed required.", (parsed, seed) => {
+      parsed.seed = seed;
+    }),
+  },
+  "-aril": {
+    missing: "Error: aril required.",
+    apply: applyInteger(64, "Error: An integer for aril required.", (parsed, aril) => {
+      parsed.aril = aril;
+    }),
+  },
+  "-maxSetSize": {
+    missing: "Error: maxSetSize required.",
+    apply: applyInteger(32, "Error: An integer for maxSetSize required.", (parsed, bound, text) => {
+      if (bound < 1n) {
+        return `Error: Value in interval [0, ${MAXIMUM_INTEGER}] for maxSetSize required. But encountered ${text}`;
+      }
+      parsed.maxSetSize = Number(bound);
+    }),
+  },
+  "-recover": {
+    missing: "Error: need to specify the metadata directory for recovery.",
+    apply: (parsed, directory) => {
+      parsed.recoverDirectory = directory;
+    },
+  },
+  "-metadir": {
+    missing: "Error: need to specify the metadata directory.",
+    apply: (parsed, directory) => {
+      parsed.metadir = directory;
+    },
+  },
+  "-workers": {
+    missing: "Error: expect an integer or 'auto' for -workers option.",
+    apply: (parsed, text) => {
+      const count =
+        text.trim().toLowerCase() === "auto"
+          ? BigInt(availableParallelism())
+          : parseJavaInteger(text, 32);
+      if (count === undefined) {
+        return `Error: worker number or 'auto' required. But encountered ${text}`;
+      }
+      if (count < 1n) return "Error: at least one worker required.";
+      parsed.workers = Number(count);
+    },
+  },
+  "-dfid": {
+    missing: "Error: expect a nonnegative integer for -dfid option.",
+    apply: applyInteger(
+      32,
+      "Error: expect a nonnegative integer for -dfid option.",
+      (parsed, depth) => {
+        if (depth < 0n) return "Error: expect a nonnegative integer for -dfid option.";
+        parsed.dfidDepth = Number(depth);
+      },
+    ),
+  },
+  "-fp": {
+    missing: "Error: expect an integer for -fp option.",
+    apply: applyInteger(32, "Error: A number for -fp is required.", (parsed, index) => {
+      if (index < 0n || index >= FINGERPRINT_POLYNOMIALS) {
+        return `Error: The number for -fp must be between 0 and ${FINGERPRINT_POLYNOMIALS - 1} (inclusive).`;
+      }
+      parsed.fingerprintIndex = Number(index);
+    }),
+  },
+  "-fpmem": {
+    missing: "Error: fpset memory size required.",
+    apply: (_parsed, text) => {
+      const size = parseJavaDouble(text);
+      if (size === undefined || size < 0) {
+        return `Error: An positive integer or a fraction for fpset memory size/percentage required. But encountered ${text}`;
+      }
+      if (size > 1) {
+        process.stdout.write(
+          "Using -fpmem with an abolute memory value has been deprecated. Please allocate memory for the TLC process via the JVM mechanisms and use -fpmem to set the fraction to be used for fingerprint storage.\n",
+        );
+      }
+    },
+  },
+  "-fpbits": {
+    missing: "Error: fpbits required.",
+    apply: applyInteger(32, "Error: An integer for fpbits required.", (_parsed, bits, text) =>
+      bits < 0n || bits > 30n
+        ? `Error: Value in interval [0, 30] for fpbits required. But encountered ${text}`
+        : undefined,
+    ),
+  },
+};
+
+interface TraceFlag {
+  name: string;
+  missing: string;
+  formats: Record<string, TraceFormat>;
+}
+
+const TRACE_FLAGS: Record<string, TraceFlag> = {
+  "-loadtrace": {
+    name: "-loadTrace",
+    missing: "Error: A format and a file name for loading traces required.",
+    formats: LOADED_TRACES,
+  },
+  "-dumptrace": {
+    name: "-dumpTrace",
+    missing: "Error: A format and a file name for dumping traces required.",
+    formats: DUMPED_TRACES,
+  },
+};
+
 export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsError | "usage" => {
   const parsed = createDefaults();
   let argumentIndex = 0;
-  const reject = (error: string): TlcArgumentsError => ({ error, isTool: parsed.isTool });
+  const reject = (error: string): TlcArgumentsError => ({
+    kind: "command-line",
+    error,
+    isTool: parsed.isTool,
+  });
   const getMissing = (): TlcArgumentsError => ({
+    kind: "uncaught",
     error: `java.lang.ArrayIndexOutOfBoundsException: Index ${args.length} out of bounds for length ${args.length}`,
     isTool: parsed.isTool,
-    isUncaught: true,
   });
   const suppressedCodes: MessageCodes = { tlc: [], sany: [] };
   const errorCodes: MessageCodes = { tlc: [], sany: [] };
   const peek = () => args[argumentIndex];
   const take = () => args[argumentIndex++];
-  const readInteger = (bits: 32 | 64, missing: string, malformed: string) => {
-    const text = peek();
-    if (text === undefined) return reject(missing);
-    const value = parseJavaInteger(text, bits);
-    if (value === undefined) return reject(`${malformed} But encountered ${text}`);
-    argumentIndex++;
-    return value;
-  };
   while (argumentIndex < args.length) {
     const flag = take();
     if (Object.hasOwn(SWITCHES, flag)) {
       SWITCHES[flag](parsed);
+      continue;
+    }
+    if (Object.hasOwn(VALUE_FLAGS, flag)) {
+      const text = take();
+      if (text === undefined) return reject(VALUE_FLAGS[flag].missing);
+      const error = VALUE_FLAGS[flag].apply(parsed, text);
+      if (error !== undefined) return reject(error);
       continue;
     }
     if (flag === "-simulate" || flag === "-generate") {
@@ -279,9 +476,9 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
         parsed.traceCount = parseJavaInteger(count, 64);
         if (parsed.traceCount === undefined) {
           return {
+            kind: "uncaught",
             error: `java.lang.NumberFormatException: For input string: "${count}"`,
             isTool: parsed.isTool,
-            isUncaught: true,
           };
         }
       }
@@ -328,23 +525,6 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
       });
       continue;
     }
-    if (flag === "-teSpecOutDir") {
-      const path = take();
-      if (path === undefined) return reject("Error: expected a path for -teSpecOutDir option.");
-      parsed.traceSpecPath = path;
-      continue;
-    }
-    if (flag === "-userFile") {
-      const path = take();
-      if (path === undefined) return reject("Error: need to specify the full qualified file.");
-      try {
-        closeSync(openSync(path, "w"));
-      } catch {
-        return reject("Error: Failed to create user output log file.");
-      }
-      parsed.userFile = path;
-      continue;
-    }
     if (flag === "-invlevel") {
       const text = take();
       if (text === undefined) return getMissing();
@@ -383,21 +563,6 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
       continue;
     }
     if (flag === "-help" || flag === "-h") return "usage";
-    if (flag === "-lncheck") {
-      const strategy = take();
-      if (strategy === undefined) {
-        return reject("Error: expect a strategy such as final for -lncheck option.");
-      }
-      parsed.livenessCheck = strategy.toLowerCase();
-      continue;
-    }
-    if (flag === "-config") {
-      const path = take();
-      if (path === undefined) return reject("Error: expect a file name for -config option.");
-      const name = path.replace(/\.cfg$/, "");
-      parsed.configPath = name.endsWith(".tla") ? name : `${name}.cfg`;
-      continue;
-    }
     if (flag === "-dump") {
       const format = peek();
       if (format?.startsWith("class,")) {
@@ -412,22 +577,15 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
         return reject("Error: A file name for dumping states required.");
       continue;
     }
-    if (flag.toLowerCase() === "-loadtrace" || flag.toLowerCase() === "-dumptrace") {
-      const name = flag.toLowerCase() === "-loadtrace" ? "-loadTrace" : "-dumpTrace";
-      if (argumentIndex + 1 >= args.length) {
-        return reject(
-          name === "-loadTrace"
-            ? "Error: A format and a file name for loading traces required."
-            : "Error: A format and a file name for dumping traces required.",
-        );
-      }
+    if (Object.hasOwn(TRACE_FLAGS, flag.toLowerCase())) {
+      const traceFlag = TRACE_FLAGS[flag.toLowerCase()];
+      if (argumentIndex + 1 >= args.length) return reject(traceFlag.missing);
       const format = take();
       const path = take();
-      const traces = name === "-loadTrace" ? LOADED_TRACES : DUMPED_TRACES;
-      if (!Object.hasOwn(traces, format.toLowerCase())) {
-        return reject(`Error: Unknown format ${format} given to ${name}.`);
+      if (!Object.hasOwn(traceFlag.formats, format.toLowerCase())) {
+        return reject(`Error: Unknown format ${format} given to ${traceFlag.name}.`);
       }
-      const trace = traces[format.toLowerCase()];
+      const trace = traceFlag.formats[format.toLowerCase()];
       parsed.moduleOperators.push(
         ...trace.operators.map((operator) => ({
           ...operator,
@@ -463,153 +621,6 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
         );
       }
       parsed.moduleOperators.push({ kind: "postcondition", module: parts[0], operator: parts[1] });
-      continue;
-    }
-    if (flag === "-coverage" || flag === "-checkpoint") {
-      const name = flag.slice(1);
-      const minutes = readInteger(
-        32,
-        name === "coverage"
-          ? "Error: coverage report interval required."
-          : "Error: checkpoint interval required.",
-        name === "coverage"
-          ? "Error: An integer for coverage report interval required."
-          : "Error: An integer for checkpoint interval is required.",
-      );
-      if (typeof minutes !== "bigint") return minutes;
-      // TLC multiplies the minutes into an int of milliseconds.
-      const milliseconds = BigInt.asIntN(32, minutes * 60_000n);
-      if (milliseconds < 0n) {
-        return reject(`Error: expect a nonnegative integer for -${name} option.`);
-      }
-      if (name === "coverage") parsed.coverage = Number(milliseconds) / 60_000;
-      continue;
-    }
-    if (flag === "-depth") {
-      const depth = readInteger(
-        32,
-        "Error: trace length required.",
-        "Error: An integer for trace length required.",
-      );
-      if (typeof depth !== "bigint") return depth;
-      parsed.traceDepth = Number(depth);
-      continue;
-    }
-    if (flag === "-seed") {
-      const seed = readInteger(64, "Error: seed required.", "Error: An integer for seed required.");
-      if (typeof seed !== "bigint") return seed;
-      parsed.seed = seed;
-      continue;
-    }
-    if (flag === "-aril") {
-      const aril = readInteger(64, "Error: aril required.", "Error: An integer for aril required.");
-      if (typeof aril !== "bigint") return aril;
-      parsed.aril = aril;
-      continue;
-    }
-    if (flag === "-maxSetSize") {
-      const text = peek();
-      const bound = readInteger(
-        32,
-        "Error: maxSetSize required.",
-        "Error: An integer for maxSetSize required.",
-      );
-      if (typeof bound !== "bigint") return bound;
-      if (bound < 1n) {
-        return reject(
-          `Error: Value in interval [0, ${MAXIMUM_INT}] for maxSetSize required. But encountered ${text}`,
-        );
-      }
-      parsed.maxSetSize = Number(bound);
-      continue;
-    }
-    if (flag === "-recover" || flag === "-metadir") {
-      const directory = take();
-      if (directory === undefined) {
-        return reject(
-          flag === "-recover"
-            ? "Error: need to specify the metadata directory for recovery."
-            : "Error: need to specify the metadata directory.",
-        );
-      }
-      if (flag === "-metadir") parsed.metadir = directory;
-      if (flag === "-recover") parsed.recoverDirectory = directory;
-      continue;
-    }
-    if (flag === "-workers") {
-      const text = take();
-      if (text === undefined) {
-        return reject("Error: expect an integer or 'auto' for -workers option.");
-      }
-      const count =
-        text.trim().toLowerCase() === "auto"
-          ? BigInt(availableParallelism())
-          : parseJavaInteger(text, 32);
-      if (count === undefined) {
-        return reject(`Error: worker number or 'auto' required. But encountered ${text}`);
-      }
-      if (count < 1n) return reject("Error: at least one worker required.");
-      parsed.workers = Number(count);
-      continue;
-    }
-    if (flag === "-dfid") {
-      const text = take();
-      const depth = text === undefined ? undefined : parseJavaInteger(text, 32);
-      if (text !== undefined && depth === undefined) {
-        return reject(
-          `Error: expect a nonnegative integer for -dfid option. But encountered ${text}`,
-        );
-      }
-      if (depth === undefined || depth < 0n) {
-        return reject("Error: expect a nonnegative integer for -dfid option.");
-      }
-      parsed.dfidDepth = Number(depth);
-      continue;
-    }
-    if (flag === "-fp") {
-      const index = readInteger(
-        32,
-        "Error: expect an integer for -fp option.",
-        "Error: A number for -fp is required.",
-      );
-      if (typeof index !== "bigint") return index;
-      if (index < 0n || index >= FINGERPRINT_POLYNOMIALS) {
-        return reject(
-          `Error: The number for -fp must be between 0 and ${FINGERPRINT_POLYNOMIALS - 1} (inclusive).`,
-        );
-      }
-      parsed.fingerprintIndex = Number(index);
-      continue;
-    }
-    if (flag === "-fpmem") {
-      const text = take();
-      if (text === undefined) return reject("Error: fpset memory size required.");
-      const size = parseJavaDouble(text);
-      if (size === undefined || size < 0) {
-        return reject(
-          `Error: An positive integer or a fraction for fpset memory size/percentage required. But encountered ${text}`,
-        );
-      }
-      if (size > 1) {
-        process.stdout.write(
-          "Using -fpmem with an abolute memory value has been deprecated. Please allocate memory for the TLC process via the JVM mechanisms and use -fpmem to set the fraction to be used for fingerprint storage.\n",
-        );
-      }
-      continue;
-    }
-    if (flag === "-fpbits") {
-      const text = peek();
-      const bits = readInteger(
-        32,
-        "Error: fpbits required.",
-        "Error: An integer for fpbits required.",
-      );
-      if (typeof bits !== "bigint") return bits;
-      if (bits < 0n || bits > 30n) {
-        return reject(
-          `Error: Value in interval [0, 30] for fpbits required. But encountered ${text}`,
-        );
-      }
       continue;
     }
     if (flag.startsWith("-")) return reject(`Error: unrecognized option: ${flag}`);
