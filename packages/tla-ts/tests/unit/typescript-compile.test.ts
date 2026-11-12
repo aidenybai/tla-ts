@@ -3389,6 +3389,22 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("tells which properties an array has", async () => {
+    const result = await checkModel(`
+      const arr = [0, 1, 2];
+      if (
+        !arr.hasOwnProperty(0) ||
+        !arr.hasOwnProperty("2") ||
+        !arr.hasOwnProperty("length") ||
+        arr.hasOwnProperty(3) ||
+        arr.hasOwnProperty("01")
+      ) {
+        throw new Error("properties");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops at an array method that a script replaced", async () => {
     const result = await checkModel(`
       // @ts-ignore

@@ -1334,6 +1334,11 @@ SymbolString(heap, symbol) ==
 
 PropertyKey(value) == IF IsSymbol(value) THEN value ELSE StringOf(value)
 
+\\* Whether an array without holes has an own property: its length, or an index below the length.
+SequenceHasOwn(sequence, key) ==
+  LET text == PropertyKey(key)
+  IN text = "length" \\/ \\E position \\in DOMAIN sequence : ToString(position - 1) = text
+
 \\* Whether an object still holds a built-in function, which tla-ts runs as it compiles.
 HoldsBuiltIn(heap, ref, key, path) == SameValue(Get(heap, ref, key), Ref :> path)
 

@@ -761,6 +761,15 @@ const translateSequenceOperation = (
     ],
     ["toReversed", () => reverseSequence(sequence, context)],
     [
+      "hasOwnProperty",
+      () =>
+        useJavaScript(
+          "SequenceHasOwn",
+          [sequence, argument === undefined ? getUndefined(context) : translate(argument)],
+          context,
+        ),
+    ],
+    [
       "toSorted",
       () =>
         useJavaScript(
