@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
+  CRASH_EXIT,
   getHost,
   getSuiteCommand,
   HOSTS,
@@ -35,8 +36,6 @@ interface ResultEntry {
   expected: Recording | undefined;
   actual: HostResult;
 }
-
-const CRASH_EXIT = -1;
 
 const args = process.argv.slice(2);
 const getOption = (name: string) => {

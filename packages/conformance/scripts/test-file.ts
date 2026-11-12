@@ -160,6 +160,9 @@ export const keepCorrection = (
     ? { ...metadata, correct: existing.metadata.correct }
     : metadata;
 
+export const renderTest = (metadata: TestMetadata, moduleText: string) =>
+  `(*---\n${formatYaml(metadata)}\n---*)\n${moduleText}`;
+
 const isSameRecording = (left: Recording, right: Recording) =>
   left.exit === right.exit && left.transcript === right.transcript;
 

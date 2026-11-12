@@ -8,16 +8,16 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
-import { getHost, runPool, runTest, WORKERS } from "./hosts";
+import { CRASH_EXIT, getHost, runPool, runTest, WORKERS } from "./hosts";
 import {
   findTests,
-  formatYaml,
   isDeclaredOutcome,
   keepCorrection,
   listFiles,
   type Outcome,
   OUTCOME_EXITS,
   parseTest,
+  renderTest,
   SUITE_DIRECTORY,
   type TestMetadata,
 } from "./test-file";
@@ -88,9 +88,6 @@ const getOutcomeForExit = (exit: number) =>
   (Object.keys(OUTCOME_EXITS) as Outcome[]).find((outcome) =>
     OUTCOME_EXITS[outcome].includes(exit),
   );
-
-const renderTest = (metadata: TestMetadata, moduleText: string) =>
-  `(*---\n${formatYaml(metadata)}\n---*)\n${moduleText}`;
 
 const getConstructorArguments = (java: string) => {
   const start = java.search(/\bsuper\s*\(/);
@@ -313,6 +310,15 @@ const portParserCorpus = () =>
       });
     });
 
+const writeModule = (path: string, pending: PendingTest, metadata: TestMetadata) =>
+  writeFileSync(
+    path,
+    renderTest(
+      keepCorrection(corrections.get(path), metadata, pending.moduleText),
+      pending.moduleText,
+    ),
+  );
+
 const writePending = (pending: PendingTest) => {
   mkdirSync(pending.directory, { recursive: true });
   pending.fixtures.forEach((fixture) => {
@@ -324,13 +330,7 @@ const writePending = (pending: PendingTest) => {
     cpSync(fixture.from, target);
   });
   const path = join(pending.directory, `${pending.moduleName}.tla`);
-  writeFileSync(
-    path,
-    renderTest(
-      keepCorrection(corrections.get(path), pending.metadata, pending.moduleText),
-      pending.moduleText,
-    ),
-  );
+  writeModule(path, pending, pending.metadata);
   return path;
 };
 
@@ -359,7 +359,7 @@ await runPool(pendingTests, WORKERS, async (pending) => {
     { name: "model", source: test.source, config: test.metadata.config ?? "" },
     { milliseconds: LIMIT_MILLISECONDS },
   );
-  if (result.exit === -1) {
+  if (result.exit === CRASH_EXIT) {
     skipped.push(`${test.id}: takes longer than ${LIMIT_MILLISECONDS} ms`);
     rmSync(path, { force: true });
     return;
@@ -370,16 +370,8 @@ await runPool(pendingTests, WORKERS, async (pending) => {
     rmSync(path, { force: true });
     return;
   }
-  if (pending.isOutcomeObserved && observed) {
-    const metadata = { ...pending.metadata, outcome: observed };
-    writeFileSync(
-      path,
-      renderTest(
-        keepCorrection(corrections.get(path), metadata, pending.moduleText),
-        pending.moduleText,
-      ),
-    );
-  }
+  if (pending.isOutcomeObserved && observed)
+    writeModule(path, pending, { ...pending.metadata, outcome: observed });
   keptCount += 1;
   if (keptCount % 100 === 0) console.log(`${keptCount}/${pendingTests.length}`);
 });

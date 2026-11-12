@@ -75,6 +75,8 @@ export const getHost = (name: string): Host => {
 export const getSuiteCommand = (host: Host, test: SuiteTest) =>
   test.suite === "tlc" ? host.tlc : undefined;
 
+export const CRASH_EXIT = -1;
+
 export interface HostResult {
   exit: number;
   transcript: string;
@@ -149,7 +151,7 @@ const spawnRun = (run: Run) =>
         clearTimeout(timer);
         clearInterval(poll);
         resolve({
-          exit: exitCode ?? (signal ? -1 : 0),
+          exit: exitCode ?? (signal ? CRASH_EXIT : 0),
           stdout: Buffer.concat(stdout).toString("utf8"),
           stderr: Buffer.concat(stderr).toString("utf8"),
           exceeded,
