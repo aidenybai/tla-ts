@@ -32,7 +32,7 @@ import {
   type GoalTactic,
 } from "../pure/tactical";
 import { aconv, eqTerm, headOf, type Term } from "../pure/term";
-import { conclOf, rs, type Thm } from "../pure/thm";
+import { catchThm, conclOf, rs, type Thm } from "../pure/thm";
 import { trade } from "../pure/variable";
 import { getFact } from "./classical-setup";
 import type { TlaLogic } from "./logic";
@@ -44,15 +44,6 @@ const isConstApp = (name: string, arity: number, term: Term): boolean =>
 
 const getPredicateFact = (logic: TlaLogic, name: string) =>
   getFact(logic, `PredicateLogic.${name}`);
-
-const catchThm = <Result>(derive: () => Result): Result | undefined => {
-  try {
-    return derive();
-  } catch (error) {
-    if (error instanceof TlaIsabelleError && error.exception === "THM") return undefined;
-    throw error;
-  }
-};
 
 const getRewriting = (logic: TlaLogic) => {
   const eqReflection = getPredicateFact(logic, "eq_reflection");

@@ -183,7 +183,7 @@ const incrIndexesFixed = (
 export const incrIndexes = (types: readonly Typ[], increment: number, term: Term) =>
   incrIndexesFixed([], types, increment, 0, term);
 
-const isAllAbs = (
+export const isAllAbs = (
   term: Term,
 ): term is Extract<Term, { kind: "App" }> & {
   arg: Extract<Term, { kind: "Abs" }>;

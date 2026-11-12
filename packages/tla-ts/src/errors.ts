@@ -279,6 +279,9 @@ export class TlaIsabelleError {
   }
 }
 
+export const isIsabelleError = (error: unknown, exception: IsabelleException): boolean =>
+  error instanceof TlaIsabelleError && error.exception === exception;
+
 export class TlaUnsupportedError extends TlaError {
   constructor(message: string, cause?: unknown) {
     super(message, cause);

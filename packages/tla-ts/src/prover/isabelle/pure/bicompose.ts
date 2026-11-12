@@ -2,33 +2,17 @@
 
 import { TlaIsabelleError } from "../../../errors";
 import { normTerm, type Envir } from "./envir";
-import { allConst, mkImplies } from "./logic";
+import { allConst, isAllAbs, isImplies, mkImplies } from "./logic";
 import { unifyTypesEnvir } from "./pattern";
 import type { Thm } from "./thm";
 import { normType } from "./type";
 import { eqTyp, foldVars, matchBvars, mkAbs, mkApp, mkVar, type Term, type Typ } from "./term";
 import type { Tpair } from "./unify";
 
-const isImpApp = (
-  term: Term,
-): term is Extract<Term, { kind: "App" }> & { fun: Extract<Term, { kind: "App" }> } =>
-  term.kind === "App" &&
-  term.fun.kind === "App" &&
-  term.fun.fun.kind === "Const" &&
-  term.fun.fun.name === "Pure.imp";
-
-const isAllApp = (
-  term: Term,
-): term is Extract<Term, { kind: "App" }> & { arg: Extract<Term, { kind: "Abs" }> } =>
-  term.kind === "App" &&
-  term.fun.kind === "Const" &&
-  term.fun.name === "Pure.all" &&
-  term.arg.kind === "Abs";
-
 export const stripApply = (apply: (term: Term) => Term, lifted: Term, term: Term): Term => {
-  if (isImpApp(lifted) && isImpApp(term))
+  if (isImplies(lifted) && isImplies(term))
     return mkApp(mkApp(lifted.fun.fun, term.fun.arg), stripApply(apply, lifted.arg, term.arg));
-  if (isAllApp(lifted) && isAllApp(term))
+  if (isAllAbs(lifted) && isAllAbs(term))
     return mkApp(
       lifted.fun,
       mkAbs(term.arg.name, term.arg.type, stripApply(apply, lifted.arg.body, term.arg.body)),
@@ -37,8 +21,8 @@ export const stripApply = (apply: (term: Term) => Term, lifted: Term, term: Term
 };
 
 const stripLifted = (lifted: Term, term: Term): Term => {
-  if (isImpApp(lifted) && isImpApp(term)) return stripLifted(lifted.arg, term.arg);
-  if (isAllApp(lifted) && isAllApp(term)) return stripLifted(lifted.arg.body, term.arg.body);
+  if (isImplies(lifted) && isImplies(term)) return stripLifted(lifted.arg, term.arg);
+  if (isAllAbs(lifted) && isAllAbs(term)) return stripLifted(lifted.arg.body, term.arg.body);
   return term;
 };
 
@@ -125,8 +109,8 @@ export const renameBvars = (
 };
 
 export const stripAssums2 = (lifted: Term, goal: Term): Tpair => {
-  if (isImpApp(lifted) && isImpApp(goal)) return stripAssums2(lifted.arg, goal.arg);
-  if (isAllApp(lifted) && isAllApp(goal)) {
+  if (isImplies(lifted) && isImplies(goal)) return stripAssums2(lifted.arg, goal.arg);
+  if (isAllAbs(lifted) && isAllAbs(goal)) {
     const [left, right] = stripAssums2(lifted.arg.body, goal.arg.body);
     return [
       mkAbs(lifted.arg.name, lifted.arg.type, left),
@@ -138,14 +122,14 @@ export const stripAssums2 = (lifted: Term, goal: Term): Tpair => {
 
 export const normTermSkip = (envir: Envir, count: number, term: Term): Term => {
   if (count === 0) return normTerm(envir, term);
-  if (isAllApp(term)) {
+  if (isAllAbs(term)) {
     const type = normType(envir.tyenv, term.arg.type);
     return mkApp(
       allConst(type),
       mkAbs(term.arg.name, type, normTermSkip(envir, count, term.arg.body)),
     );
   }
-  if (isImpApp(term)) return mkImplies(term.fun.arg, normTermSkip(envir, count - 1, term.arg));
+  if (isImplies(term)) return mkImplies(term.fun.arg, normTermSkip(envir, count - 1, term.arg));
   throw new TlaIsabelleError("ERROR", "norm_term_skip: too few assumptions??");
 };
 

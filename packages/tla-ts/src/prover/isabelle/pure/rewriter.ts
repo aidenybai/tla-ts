@@ -1,6 +1,6 @@
 // Ported from Isabelle2025's Pure/raw_simplifier.ML and Pure/conv.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
-import { TlaIsabelleError } from "../../../errors";
+import { isIsabelleError, TlaIsabelleError } from "../../../errors";
 import { gconvRule, impCongRule } from "./conv";
 import { impCong, swapPremsEq } from "./drule";
 import { emptyTEnv } from "./envir";
@@ -80,9 +80,6 @@ export type Prover = (context: SimpContext, thm: Thm) => Thm | undefined;
 export const simpleProver: Prover = (context, thm) =>
   seqHead(allGoals(resolveTac(context.limits, context.simpset.prems))(thm));
 
-const isThmError = (error: unknown) =>
-  error instanceof TlaIsabelleError && error.exception === "THM";
-
 const lhsOf = (thm: Thm) => destEquals(thm.prop)[0];
 const rhsOf = (thm: Thm) => destEquals(thm.prop)[1];
 
@@ -109,18 +106,18 @@ const checkConv = (thm: Thm, next: Thm): Thm | undefined => {
   try {
     return transitive(thm, next);
   } catch (error) {
-    if (!isThmError(error)) throw error;
+    if (!isIsabelleError(error, "THM")) throw error;
   }
   try {
     const normalized = transitive(symmetric(betaEtaConversion(lhsOf(next))), next);
     try {
       return transitive(thm, normalized);
     } catch (error) {
-      if (!isThmError(error)) throw error;
+      if (!isIsabelleError(error, "THM")) throw error;
       return transitive(transitive(thm, betaEtaConversion(rhsOf(thm))), normalized);
     }
   } catch (error) {
-    if (isThmError(error)) return undefined;
+    if (isIsabelleError(error, "THM")) return undefined;
     throw error;
   }
 };
@@ -328,9 +325,8 @@ const bottomc = (mode: RewriteMode, prover: Prover, maxidx: number) => {
       return inner === undefined ? undefined : abstractRule(term.name, variable, inner);
     }
     if (term.kind !== "App") return undefined;
+    if (isImplies(term)) return impc(term, context);
     const head = term.fun;
-    if (head.kind === "App" && head.fun.kind === "Const" && head.fun.name === "Pure.imp")
-      return impc(term, context);
     if (head.kind === "Abs") {
       const beta = betaConversion(false, term);
       const rest = subc(SKEL0, context, rhsOf(beta));
