@@ -1390,10 +1390,18 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
       ? undefined
       : getSymbol(nameNode, context.checker);
   const sourceFile = node.getSourceFile();
+  // A new constructs the function, or an Object function reads or changes it as an object.
   const isNewTarget = (child: ts.Node): boolean => {
     const callee = getConstruction(child, context)?.callee;
+    const target =
+      ts.isCallExpression(child) &&
+      ts.isPropertyAccessExpression(child.expression) &&
+      getBuiltIn(child.expression.expression, context) === "Object" &&
+      OWN_PROPERTY_FUNCTIONS.has(child.expression.name.text)
+        ? child.arguments.at(0)
+        : callee;
     return (
-      (callee !== undefined && getSymbol(skipCasts(callee), context.checker) === symbol) ||
+      (target !== undefined && getSymbol(skipCasts(target), context.checker) === symbol) ||
       (ts.forEachChild(child, (inner) => isNewTarget(inner) || undefined) ?? false)
     );
   };

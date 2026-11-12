@@ -3333,6 +3333,47 @@ describe("errors", () => {
     expect((await checkModel(array)).failure?.message).toContain("array 2");
   });
 
+  it("holds a function that Object's functions read on the heap, where calls still run it", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const check = (actual: unknown, expected: unknown, message: string) => {
+        if (actual !== expected) throw new Error(message);
+      };
+      const called = { count: 0 };
+      const funObj = function () {
+        called.count += 1;
+      };
+      (funObj as unknown as { foo: number }).foo = 10;
+      check(Object.isExtensible(funObj), true, "extensible");
+      Object.freeze(funObj);
+      check(Object.isFrozen(funObj), true, "frozen");
+      check(Object.getOwnPropertyDescriptor(funObj, "foo")!.writable, false, "writable");
+      const isWritable = (obj: object, name: string) =>
+        Object.getOwnPropertyDescriptor(obj, name)!.writable;
+      check(isWritable(funObj, "foo"), false, "passed");
+      funObj();
+      check(called.count, 1, "call");
+      check(typeof funObj, "function", "typeof");
+      check(funObj.name, "funObj", "name");
+      check(funObj.length, 0, "length");
+      check(Object.getPrototypeOf(funObj), Function.prototype, "prototype");
+      function declared() {}
+      Object.preventExtensions(declared);
+      check(Object.isExtensible(declared), false, "declared");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const frozen = source.replace("isFrozen(funObj), true", "isFrozen(funObj), false");
+    expect((await checkModel(frozen)).failure?.message).toContain('"frozen"');
+    const call = source.replace("called.count, 1", "called.count, 2");
+    expect((await checkModel(call)).failure?.message).toContain('"call"');
+    const declared = source.replace(
+      "isExtensible(declared), false",
+      "isExtensible(declared), true",
+    );
+    expect((await checkModel(declared)).failure?.message).toContain("declared");
+  });
+
   it("holds an error that only Object's functions read as an object with its prototype", async () => {
     const source = `
       const holder = { seen: 0 };

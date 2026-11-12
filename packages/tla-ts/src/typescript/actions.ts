@@ -44,6 +44,7 @@ import {
   getLocalCaptures,
   isPlain,
   getConstruction,
+  getHeapClass,
   getNewClass,
   isInertValue,
   isLiteral,
@@ -2319,10 +2320,18 @@ export const bindCall = (
       ),
     );
   }
+  // A function that the heap holds passes as an object where the parameter takes one, not a
+  // function.
   const callbacks = parameters.flatMap((parameter, position): [ts.Symbol, FunctionNode][] => {
     const argument = argumentNodes.at(position);
+    const isObject =
+      argument !== undefined &&
+      getHeapClass(argument, context) !== undefined &&
+      context.checker.getTypeAtLocation(parameter).getCallSignatures().length === 0;
     const callback =
-      argument && (getCallback(argument, path, context) ?? getAsyncCallee(argument, path, context));
+      argument && !isObject
+        ? (getCallback(argument, path, context) ?? getAsyncCallee(argument, path, context))
+        : undefined;
     const symbol = getSymbol(parameter.name, context.checker);
     return callback?.body !== undefined && symbol !== undefined ? [[symbol, callback]] : [];
   });
