@@ -1255,6 +1255,7 @@ const TRAP_CALLS = new Map([
   ["Object.entries", { trap: "ownKeys", arity: 1 }],
   ["Object.getOwnPropertyNames", { trap: "ownKeys", arity: 1 }],
   ["Object.getOwnPropertySymbols", { trap: "ownKeys", arity: 1 }],
+  ["Object.getOwnPropertyDescriptors", { trap: "ownKeys", arity: 1 }],
 ] as const);
 
 // The traps that take a key, which the script must write.
@@ -1268,6 +1269,26 @@ const KEYED_TRAPS = new Set([
 ]);
 
 const getOperation = (node: ts.Node, context: Context): ProxyOperation | undefined => {
+  // An object spread alone in its object, or a rest element alone in a declaration's pattern,
+  // copies a proxy's enumerable keys to a new object.
+  const parent = node.parent;
+  const copied =
+    ts.isObjectLiteralExpression(node) &&
+    node.properties.length === 1 &&
+    ts.isSpreadAssignment(node.properties[0])
+      ? node.properties[0].expression
+      : ts.isExpression(node) &&
+          parent !== undefined &&
+          ts.isVariableDeclaration(parent) &&
+          parent.initializer === node &&
+          ts.isObjectBindingPattern(parent.name) &&
+          parent.name.elements.length === 1 &&
+          parent.name.elements[0].dotDotDotToken !== undefined
+        ? node
+        : undefined;
+  if (copied !== undefined) {
+    return { trap: "ownKeys", object: copied, key: undefined, method: "copy", isReflected: false };
+  }
   if (
     (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
     !isWritten(node)
@@ -1961,13 +1982,18 @@ export const runProxyOperation = (
         (bound, allocated) =>
           next(withHeap(bound, allocated, context), javaScript("Allocated", [allocated])),
       );
-    // Object.keys, values, entries, and assign ask the proxy for each key's descriptor, and all
-    // but the first read each enumerable key's value, which Object.assign writes to the object it
-    // takes. Each key runs in turn where a handler may trap those, and only assign reads symbols.
+    // Object.keys, values, entries, and getOwnPropertyDescriptors ask the proxy for each key's
+    // descriptor, and all but the first and the last read each enumerable key's value, which
+    // Object.assign writes to the object it takes, and a spread or a rest element to a new one.
+    // Each key runs in turn where a handler may trap those, and keys and values leave symbols out.
     const giveKeys = (after: Path, keys: Expression) => {
       const heap = getHeap(after.scope, node, context);
       const listing = operation.method ?? "";
-      if (!["keys", "values", "entries", "assign"].includes(listing)) {
+      if (
+        !["keys", "values", "entries", "assign", "copy", "getOwnPropertyDescriptors"].includes(
+          listing,
+        )
+      ) {
         return next(after, javaScript("ProxyKeysOf", [heap, proxy, keys, method]));
       }
       const traps = ["getOwnPropertyDescriptor", ...(listing === "keys" ? [] : ["get"])];
@@ -1985,6 +2011,7 @@ export const runProxyOperation = (
           ]),
         );
       }
+      const isSymbolKept = ["assign", "copy", "getOwnPropertyDescriptors"].includes(listing);
       // What the loop gathers of a key's value, which Object.assign writes instead.
       const gatherValue = (
         valued: Path,
@@ -2021,16 +2048,22 @@ export const runProxyOperation = (
         frame,
         (current, key, gathered, inner, again) => {
           const gather = (described: Path, descriptor: Expression) =>
-            ifThenElse(
-              isEnumerable(descriptor),
-              listing === "keys"
-                ? again(described, apply("Append", [gathered, key]))
-                : readKey(described, key, inner, (valued, property) =>
-                    gatherValue(valued, key, property, gathered, inner, again),
-                  ),
-              again(described, gathered),
-            );
-          return listing === "assign"
+            listing === "getOwnPropertyDescriptors"
+              ? ifThenElse(
+                  isPresent(descriptor),
+                  again(described, apply("Append", [gathered, tuple([key, descriptor])])),
+                  again(described, gathered),
+                )
+              : ifThenElse(
+                  isEnumerable(descriptor),
+                  listing === "keys"
+                    ? again(described, apply("Append", [gathered, key]))
+                    : readKey(described, key, inner, (valued, property) =>
+                        gatherValue(valued, key, property, gathered, inner, again),
+                      ),
+                  again(described, gathered),
+                );
+          return isSymbolKept
             ? describeKey(current, key, inner, gather)
             : ifThenElse(
                 javaScript("IsSymbol", [key]),
@@ -2038,7 +2071,23 @@ export const runProxyOperation = (
                 describeKey(current, key, inner, gather),
               );
         },
-        (looped, result) => next(looped, listing === "assign" ? value : result),
+        (looped, result) => {
+          if (listing === "assign") return next(looped, value);
+          if (listing !== "copy" && listing !== "getOwnPropertyDescriptors") {
+            return next(looped, result);
+          }
+          const changed = getHeap(looped.scope, node, context);
+          return bind(
+            looped,
+            "heap",
+            listing === "copy"
+              ? javaScript("Allocate", [changed, javaScript("PairsObject", [result])])
+              : javaScript("ProxyDescriptors", [changed, result]),
+            context,
+            (bound, allocated) =>
+              next(withHeap(bound, allocated, context), javaScript("Allocated", [allocated])),
+          );
+        },
       );
     };
     // Runs the internal method of a proxy on the way, as its handler's trap or, where it has none,

@@ -7545,6 +7545,13 @@ const findLeadingCall = (
         ? { call: undefined, isBlocked: true, conversion: node }
         : none;
   if (ts.isExpression(node) && path.scope.results.has(node)) return none;
+  // A proxy that a rest element copies, or an object that only spreads one, runs its traps.
+  if (
+    (ts.isIdentifier(node) || ts.isObjectLiteralExpression(node)) &&
+    isProxyOperation(node, context)
+  ) {
+    return { call: undefined, isBlocked: true, read: node };
+  }
   if (
     ts.isParenthesizedExpression(node) ||
     ts.isAsExpression(node) ||

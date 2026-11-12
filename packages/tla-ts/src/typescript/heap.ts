@@ -1271,14 +1271,15 @@ const getDescribedPrimitive = (node: ts.Expression, context: Context) => {
 
 // Object.getOwnPropertyDescriptors of an object, or of a primitive that it converts to one, which
 // makes a description of each own property.
-export const isDescriptionOfAll = (node: ts.Node, context: Context) =>
+export const isDescriptionOfAll = (node: ts.Node, context: Context): boolean =>
   isMethodCall(node) &&
   getBuiltIn(node.expression.expression, context) === "Object" &&
   node.expression.name.text === "getOwnPropertyDescriptors" &&
   node.arguments.length === 1 &&
   (getKind(node.arguments[0], context) === "object" ||
     isBuiltInObject(node.arguments[0], context) ||
-    getDescribedPrimitive(node.arguments[0], context) !== undefined);
+    getDescribedPrimitive(node.arguments[0], context) !== undefined) &&
+  !isProxyOperation(node, context);
 
 // Object.create, with a prototype that tla-ts can tell is an object or null.
 export const isCreation = (node: ts.Node, context: Context) => {
@@ -1933,7 +1934,9 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
         )
       : [];
   const isAllocated =
-    (ts.isObjectLiteralExpression(node) && isObjectValue(node, context)) ||
+    (ts.isObjectLiteralExpression(node) &&
+      isObjectValue(node, context) &&
+      !isProxyOperation(node, context)) ||
     ((ts.isArrayLiteralExpression(node) || isHoleyNewArray(node)) &&
       context.heapArrays.has(node)) ||
     ts.isRegularExpressionLiteral(node) ||

@@ -3882,7 +3882,25 @@ OwnDescriptor(heap, ref, key) ==
                                 [] OTHER -> attributes[field]])
   ELSE Undefined
 
-\
+\\* The object of keys and values that a spread or a rest element copies from a proxy.
+PairsObject(pairs) ==
+  LET keys == [position \\in DOMAIN pairs |-> pairs[position][1]]
+  IN PutAll(EmptyObject,
+            [key \\in {keys[position] : position \\in DOMAIN keys} |->
+               pairs[CHOOSE position \\in DOMAIN keys : keys[position] = key][2]],
+            keys)
+
+\\* Object.getOwnPropertyDescriptors of a proxy, which makes the object of each descriptor that it
+\\* gathered, and then the object that holds them under their keys, last, so that Allocated names it.
+ProxyDescriptors(heap, described) ==
+  LET keys == [position \\in DOMAIN described |-> described[position][1]]
+      first == Len(heap.objects)
+      allocated == [heap EXCEPT !.objects =
+                      @ \\o [position \\in DOMAIN described |->
+                               DescriptorObject(described[position][2])]]
+      refs == [key \\in {keys[position] : position \\in DOMAIN keys} |->
+                Ref :> (first + CHOOSE position \\in DOMAIN keys : keys[position] = key)]
+  IN Allocate(allocated, PutAll(EmptyObject, refs, keys))
 
 \\* The prototype of a proxy's target, where an array outside the heap has Array.prototype, which it
 \\* holds there since nothing can change it.

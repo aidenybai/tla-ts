@@ -9026,6 +9026,44 @@ describe("proxies", () => {
     expect((await checkModel(getSource(true))).failure?.message).toContain("unexpected");
   });
 
+  it("copies a proxy's enumerable keys in a spread, a rest element, and its descriptors", async () => {
+    const getSource = (expected: number) => `
+      const seen: (string | symbol)[] = [];
+      const getCount = (): number => seen.length;
+      const symbol = Symbol();
+      const listed = [symbol, "foo", "0", "hidden"];
+      const proxy = new Proxy<Record<string, number>>({}, {
+        getOwnPropertyDescriptor(innerTarget, key) {
+          seen.push(key);
+          return key === "hidden"
+            ? undefined
+            : { value: 1, writable: true, enumerable: key !== "0", configurable: true };
+        },
+        get(innerTarget, key) {
+          return key === "foo" ? 7 : 9;
+        },
+        ownKeys() {
+          return listed;
+        },
+      });
+      const spread: Record<string | symbol, number> = { ...proxy };
+      if (getCount() !== 4 || spread.foo !== 7 || spread[symbol] !== 9 || "0" in spread) {
+        throw new Error("spread");
+      }
+      const { ...rest }: Record<string | symbol, number> = proxy;
+      if (getCount() !== 8 || rest.foo !== 7 || Object.keys(rest).length !== 1) {
+        throw new Error("rest");
+      }
+      const described = Object.getOwnPropertyDescriptors(proxy);
+      if (!("foo" in described) || !("0" in described) || "hidden" in described) {
+        throw new Error("descriptors");
+      }
+      if (getCount() !== ${expected}) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(12))).failure).toBeUndefined();
+    expect((await checkModel(getSource(11))).failure?.message).toContain("unexpected");
+  });
+
   it("stops the check where something else reads a proxy", async () => {
     const result = await checkModel(`
       const proxy = new Proxy({ attr: { value: 1 } }, {});
