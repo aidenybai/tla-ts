@@ -262,6 +262,11 @@ export const translateKey = (node: ts.ElementAccessExpression, scope: Scope, con
     throw new TlaTypeScriptError("tla-ts can't read what a symbol keys on this value", key);
   }
   if (kind !== "sequence" && kind !== "string") return translateExpression(key, scope, context);
+  // A key that may not be a number, such as a for-in's string or a value cast to a number, reads
+  // the element that it names as an index.
+  if (kind === "sequence" && !isNumberLike(skipCasts(key), context)) {
+    return useJavaScript("KeyPosition", [translateExpression(key, scope, context)], context);
+  }
   if (!isNumberLike(key, context)) {
     throw new TlaTypeScriptError("Index arrays and strings with numbers", key);
   }

@@ -9604,6 +9604,27 @@ describe("errors", () => {
     );
   });
 
+  it("indexes a list with a key that may not be a number as the index it names", async () => {
+    const source = `
+      const holder = { seen: "" };
+      const list = ["a", "b", "c"];
+      const keys: unknown[] = ["1", 2, "length"];
+      const joined = list[keys[0] as number] + list[keys[1] as number];
+      if (joined !== "bc") throw new Error("joined " + joined);
+      holder.seen = joined;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace('"bc"', '"cb"');
+    expect((await checkModel(wrong)).failure?.message).toContain("joined");
+    const named = source.replace(
+      "holder.seen = joined;",
+      "holder.seen = String(list[keys[2] as number]);",
+    );
+    expect((await checkModel(named)).failure?.message).toContain(
+      "tla-ts can't read this key of an array",
+    );
+  });
+
   it("reads an array that the heap holds through for-in, instanceof, and a cast", async () => {
     const source = `
       const holder: { seen: string } = { seen: "" };

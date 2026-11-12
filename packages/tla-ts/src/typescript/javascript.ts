@@ -778,6 +778,12 @@ ToIndex(key) ==
   ELSE 10 * ToIndex(SubSeq(key, 1, Len(key) - 1))
          + (CHOOSE digit \\in 0..9 : ToString(digit) = SubSeq(key, Len(key), Len(key)))
 
+\\* The position in a sequence that a key reads, which may be a number or an index's string.
+KeyPosition(key) ==
+  CASE TypeOf(key) = "number" -> ElementPosition(key)
+    [] TypeOf(key) = "string" /\\ IsIndex(key) -> ToIndex(key) + 1
+    [] OTHER -> Assert(FALSE, "tla-ts can't read this key of an array")
+
 \\* An object's own string keys, with the indices first in order.
 OwnKeys(object) ==
   LET strings == SelectSeq(object.keys, LAMBDA key : ~IsSymbol(key))
