@@ -6878,6 +6878,60 @@ describe("errors", () => {
     }
   });
 
+  it("flattens the arrays that flatMap's mapper returns", async () => {
+    const source = `
+      const holder = { count: 0 };
+      function* letters() {
+        yield "a";
+        yield "b";
+        yield "c";
+      }
+      let calls = 0;
+      const flat = letters().flatMap((value, count) => {
+        calls += 1;
+        return value === "a" ? [count] : value === "b" ? [1, 2] : [];
+      });
+      if (Number(calls) !== 0) throw new Error("eager");
+      const first = flat.next();
+      if (first.value !== 0 || Number(calls) !== 1) throw new Error("first");
+      let total = 0;
+      for (const value of flat) total += value;
+      if (total !== 3 || Number(calls) !== 3) throw new Error("rest");
+      let isThrown = false;
+      try {
+        for (const unused of letters().flatMap(() => "string"));
+      } catch (error) {
+        isThrown = error instanceof TypeError;
+      }
+      if (!isThrown) throw new Error("string");
+      holder.count = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    for (const [from, to, message] of [
+      ["[1, 2]", "[1]", "rest"],
+      ['() => "string"', "() => [0]", "string"],
+    ]) {
+      expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
+    }
+  });
+
+  it("stops translating a helper whose callback's paths multiply its steps", () => {
+    expect(() =>
+      compile(`
+        const holder = { count: 0 };
+        function* count() {
+          for (let index = 0; index < 8; ++index) yield index;
+        }
+        const flat = count().flatMap((value) => {
+          if (value === 0) return [0];
+          if (value === 1) return [1, 1];
+          return [];
+        });
+        for (const value of flat) holder.count += value;
+      `),
+    ).toThrow("tla-ts can't follow this many paths through an iterator helper's callback");
+  });
+
   it("iterates the helper that a call makes in a for-of", async () => {
     const source = `
       const holder = { count: 0 };

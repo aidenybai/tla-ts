@@ -2443,25 +2443,34 @@ export const translateArrayIteration = (
   receiver = translateBuiltInValue("Array.prototype", node, context),
 ) =>
   ifExpression(
-    junction("And", [
-      useJavaScript(
-        "HoldsBuiltIn",
-        [
-          heap,
-          receiver,
-          useJavaScript("WellKnownSymbol", [string("iterator")], context),
-          string("Array.prototype.values"),
-        ],
-        context,
-      ),
-      holdsArrayIteratorNext(heap, node, context),
-    ]),
+    holdsArrayIteration(heap, node, context, receiver),
     value,
-    apply("Assert", [
-      boolean(false),
-      string("tla-ts can't iterate an array whose iterator a script replaced"),
-    ]),
+    apply("Assert", [boolean(false), string(ARRAY_ITERATOR_REPLACED)]),
   );
+
+export const ARRAY_ITERATOR_REPLACED =
+  "tla-ts can't iterate an array whose iterator a script replaced";
+
+// Whether the receiver still holds the built-in iterator and array iterators the built-in next.
+export const holdsArrayIteration = (
+  heap: Expression,
+  node: ts.Node,
+  context: Context,
+  receiver = translateBuiltInValue("Array.prototype", node, context),
+) =>
+  junction("And", [
+    useJavaScript(
+      "HoldsBuiltIn",
+      [
+        heap,
+        receiver,
+        useJavaScript("WellKnownSymbol", [string("iterator")], context),
+        string("Array.prototype.values"),
+      ],
+      context,
+    ),
+    holdsArrayIteratorNext(heap, node, context),
+  ]);
 
 const holdsArrayIteratorNext = (heap: Expression, node: ts.Node, context: Context) =>
   useJavaScript(
