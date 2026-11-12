@@ -4308,6 +4308,21 @@ describe("errors", () => {
     ).rejects.toThrow("tla-ts can't represent NaN in this script");
   });
 
+  it("spreads a string's characters into an array", async () => {
+    const result = await checkModel(`
+      const word: string = "abc";
+      const letters = [...word, 1, ..."d"];
+      if (letters.length !== 5 || letters[2] !== "c" || letters[4] !== "d") throw new Error("spread");
+    `);
+    expect(result.failure).toBeUndefined();
+    await expect(
+      checkModel(`
+        const letters = [..."ab"];
+        if (letters.length !== 1) throw new Error("spread");
+      `),
+    ).rejects.toThrow("spread");
+  });
+
   it("reads the codes of ASCII characters, orders strings by them, and iterates a string", async () => {
     const result = await checkModel(`
       const text = "Az0 ~";

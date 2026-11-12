@@ -396,6 +396,16 @@ export const translateElements = (
     if (isHeapArray(element.expression, context)) {
       return [...result, translateHeapElements(element.expression, scope, context)];
     }
+    if (isEvery(context.checker.getTypeAtLocation(element.expression), ts.TypeFlags.StringLike)) {
+      return [
+        ...result,
+        useJavaScript(
+          "StringCharacters",
+          [translateExpression(element.expression, scope, context)],
+          context,
+        ),
+      ];
+    }
     if (
       getKind(element.expression, context) !== "sequence" &&
       !isArrayIteration(element.expression, context)
