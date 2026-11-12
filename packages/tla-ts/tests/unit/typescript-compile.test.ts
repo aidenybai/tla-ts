@@ -8061,6 +8061,32 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("gives a generator from an assignment of what a pattern takes from it", async () => {
+    const getSource = (length: number) => `
+      const box = { size: 1 };
+      const isSame = (actual: unknown, expected: unknown) => {
+        if (!Object.is(actual, expected)) throw new Error("same");
+      };
+      var count = 0;
+      var g = function* () {
+        count += 1;
+        yield;
+        count += 1;
+        yield;
+        count += 1;
+      };
+      var x;
+      var result;
+      var vals = g();
+      result = [...x] = vals;
+      isSame(count, 3);
+      isSame(result, vals);
+      isSame(x.length, ${length});
+    `;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(3))).failure?.message).toContain('"same"');
+  });
+
   it("takes a for await's array pattern from the generators that an async yield* yields", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;

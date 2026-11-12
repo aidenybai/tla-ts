@@ -2,6 +2,8 @@ import ts from "@typescript/typescript6";
 import type { ExceptPathStep, Expression, OperatorDefinition, OperatorParam } from "../ast";
 import {
   type Context,
+  findNodes,
+  getCallee,
   getHeapClass,
   getSymbol,
   getUndefined,
@@ -527,21 +529,74 @@ const isPatternDefaultReturn = (node: ts.ReturnStatement) => {
   );
 };
 
+// An argument of a call of a function whose parameter only compares it to other values, with
+// Object.is, === or !==.
+const isComparedArgument = (node: ts.Expression, call: ts.CallExpression, context: Context) => {
+  const position = call.arguments.findIndex(
+    (argument) => ts.findAncestor(node, (ancestor) => ancestor === argument) !== undefined,
+  );
+  const callee = getCallee(call.expression, context);
+  const parameter = callee?.parameters[position];
+  const symbol =
+    parameter !== undefined && ts.isIdentifier(parameter.name)
+      ? getSymbol(parameter.name, context.checker)
+      : undefined;
+  const body = callee?.body;
+  if (symbol === undefined || body === undefined) return false;
+  return findNodes(
+    body,
+    (inner): inner is ts.Identifier =>
+      ts.isIdentifier(inner) && getSymbol(inner, context.checker) === symbol,
+  ).every((reference) => {
+    const user = ts.findAncestor(
+      reference.parent,
+      (ancestor) => !ts.isParenthesizedExpression(ancestor),
+    );
+    return (
+      user !== undefined &&
+      ((ts.isBinaryExpression(user) &&
+        [
+          ts.SyntaxKind.EqualsEqualsEqualsToken,
+          ts.SyntaxKind.ExclamationEqualsEqualsToken,
+        ].includes(user.operatorToken.kind)) ||
+        (ts.isCallExpression(user) &&
+          ts.isPropertyAccessExpression(user.expression) &&
+          user.expression.name.text === "is" &&
+          ts.isIdentifier(user.expression.expression) &&
+          user.expression.expression.text === "Object" &&
+          (getSymbol(user.expression, context.checker)?.declarations ?? []).every(
+            (declaration) => declaration.getSourceFile().isDeclarationFile,
+          )))
+    );
+  });
+};
+
 // A generator object goes only where tla-ts follows it: into a variable that holds generators, to a
 // call of its methods, into a comparison, or into a for-of or a for await. Elsewhere, such as an array pattern, a spread, or a
 // function's parameter, code would iterate it in ways that tla-ts doesn't follow.
 export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
   if (!getMembers(node, context).some(isGeneratorMember)) return;
   const outer = ts.findAncestor(node.parent, (ancestor) => !ts.isParenthesizedExpression(ancestor));
+  const isHeldBy = (assignment: ts.Node | undefined) =>
+    assignment !== undefined &&
+    ts.isBinaryExpression(assignment) &&
+    assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isIdentifier(assignment.left) &&
+    (isGeneratorType(assignment.left, context) || isAutoTyped(assignment.left, context));
   const isHeld =
     outer !== undefined &&
     ((ts.isVariableDeclaration(outer) &&
       ts.isIdentifier(outer.name) &&
       isGeneratorType(outer.name, context)) ||
+      isHeldBy(outer) ||
+      // A pattern that takes values from the generator, in an assignment whose value a variable
+      // then holds.
       (ts.isBinaryExpression(outer) &&
         outer.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-        ts.isIdentifier(outer.left) &&
-        (isGeneratorType(outer.left, context) || isAutoTyped(outer.left, context))) ||
+        ts.isArrayLiteralExpression(outer.left) &&
+        isHeldBy(
+          ts.findAncestor(outer.parent, (ancestor) => !ts.isParenthesizedExpression(ancestor)),
+        )) ||
       (ts.isBinaryExpression(outer) &&
         [
           ts.SyntaxKind.EqualsEqualsEqualsToken,
@@ -552,6 +607,7 @@ export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
         outer.expression === node &&
         (outer.awaitModifier !== undefined || isGeneratorType(node, context))) ||
       ts.isExpressionStatement(outer) ||
+      (ts.isCallExpression(outer) && isComparedArgument(node, outer, context)) ||
       (ts.isArrayLiteralExpression(outer) && isAsyncDelegated(outer)) ||
       (ts.isReturnStatement(outer) && isPatternDefaultReturn(outer)));
   if (!isHeld) throw new TlaTypeScriptError("tla-ts can't follow a generator here", node);
