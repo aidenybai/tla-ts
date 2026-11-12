@@ -7692,6 +7692,24 @@ describe("errors", () => {
     expect((await checkModel(getSource("15,x,2"))).failure?.message).toContain("fields");
   });
 
+  it("throws the ReferenceError of a name that a class's computed key reads", async () => {
+    const getSource = (caught: string) => `
+      let caught = "";
+      const evaluate = () => {
+        // @ts-ignore
+        class C { ["a"] = 1; [noRef] = 2; }
+      };
+      try {
+        evaluate();
+      } catch (error) {
+        caught = error instanceof ReferenceError ? "reference" : "other";
+      }
+      if (caught !== "${caught}") throw new Error("caught");
+    `;
+    expect((await checkModel(getSource("reference"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("other"))).failure?.message).toContain("caught");
+  });
+
   it("makes a class expression that a script only reads where it runs", async () => {
     const getSource = (length: number) => `
       const describe = (made: object, key: string) => Object.getOwnPropertyDescriptor(made, key)!.value;

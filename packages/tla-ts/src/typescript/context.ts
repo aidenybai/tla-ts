@@ -204,7 +204,7 @@ const getLiteralTruth = (node: ts.Expression) => {
 // The unresolved name that an expression reads before it evaluates anything that could change
 // state or throw, which throws a ReferenceError there.
 export const getUnresolvedRead = (
-  node: ts.Expression,
+  node: ts.Expression | ts.ClassDeclaration,
   context: Context,
 ): ts.Identifier | undefined => {
   if (ts.isIdentifier(node)) return isUnresolved(node, context) ? node : undefined;
@@ -252,6 +252,17 @@ export const getUnresolvedRead = (
     );
     const end = values.findIndex((value) => value.length === 0);
     return readInOrder(values.slice(0, end === -1 ? undefined : end).flat());
+  }
+  // A class without a base evaluates its computed keys in order before it runs anything else.
+  if (ts.isClassLike(node)) {
+    if (node.heritageClauses !== undefined) return undefined;
+    return readInOrder(
+      node.members.flatMap((member) =>
+        member.name !== undefined && ts.isComputedPropertyName(member.name)
+          ? [member.name.expression]
+          : [],
+      ),
+    );
   }
   if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
     if (isUnresolved(node.expression, context)) return node.expression;
