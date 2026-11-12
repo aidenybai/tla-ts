@@ -272,6 +272,39 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("carries assertion names through tactics into the unsat core", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (! (and p (or q (> x 2))) :named a))",
+        "(assert (! (=> p (= y 4)) :named b))",
+        "(assert (! (not (or (< y x) q)) :named c))",
+        "(assert (! (> x 3) :named d))",
+        "(assert (! (< x 5) :named e))",
+        "(assert (! (> (+ x y) 8) :named f))",
+        "(check-sat-using (then (repeat propagate-values) smt))",
+        "(get-unsat-core)",
+        "(check-sat-using (or-else (then simplify fail) smt))",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual(["unsat", "(c f b a)", "unsat", "(f e a b)"]);
+  });
+
+  it("throws at the dependencies of a tactic that drops them", () => {
+    expect(() =>
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(assert (! (= x 1) :named a))",
+        "(apply solve-eqs :print-dependencies true)",
+      ]),
+    ).toThrow(SmtUnsupportedError);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),

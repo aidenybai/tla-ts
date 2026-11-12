@@ -17,7 +17,7 @@ import {
   type AstManager,
 } from "./ast";
 import { isAppOf } from "./ast-util";
-import type { Goal } from "./goal";
+import { type Dependency, type Goal, joinDependencies } from "./goal";
 import { isMacroHead, normalizeMacroDef, setElseInterp } from "./model-macro-solver";
 import type { ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
@@ -34,6 +34,11 @@ interface MacroScope {
 interface HeadDef {
   head: number;
   def: number;
+}
+
+interface JustifiedForms {
+  forms: RefVector;
+  dependencies: (Dependency | undefined)[];
 }
 
 interface PseudoHead {
@@ -79,6 +84,7 @@ const getHeadDef = (manager: AstManager, quantifier: number, decl: number): Head
 class MacroExpander extends RewriterTpl {
   readonly trail: RefVector;
   private subst: VarSubst;
+  usedDependencies: Dependency | undefined;
 
   constructor(
     manager: AstManager,
@@ -116,6 +122,10 @@ class MacroExpander extends RewriterTpl {
     const result = this.subst.apply(headDef.def, args);
     this.trail.pushOwned(result);
     manager.decRef(headDef.def);
+    this.usedDependencies = joinDependencies(
+      this.usedDependencies,
+      this.macros.getMacroDependency(decl),
+    );
     return result;
   }
 
@@ -130,6 +140,7 @@ export class MacroManager {
   private decls: number[] = [];
   private macros: number[] = [];
   private decl2macro = new Map<number, number>();
+  private decl2dependency = new Map<number, Dependency | undefined>();
   private deps = new Map<number, Set<number>>();
   private forbidden = new Set<number>();
   private forbiddenTrail: number[] = [];
@@ -146,6 +157,10 @@ export class MacroManager {
     return this.decl2macro.get(decl);
   }
 
+  getMacroDependency(decl: number) {
+    return this.decl2dependency.get(decl);
+  }
+
   pushScope() {
     this.scopes.push({ numDecls: this.decls.length, numForbidden: this.forbiddenTrail.length });
   }
@@ -156,6 +171,7 @@ export class MacroManager {
     for (const decl of this.decls.splice(scope.numDecls)) {
       this.deps.delete(decl);
       this.decl2macro.delete(decl);
+      this.decl2dependency.delete(decl);
     }
     for (const quantifier of this.macros.splice(scope.numDecls)) this.manager.decRef(quantifier);
     for (const decl of this.forbiddenTrail.splice(scope.numForbidden)) this.forbidden.delete(decl);
@@ -185,7 +201,7 @@ export class MacroManager {
 
   find(formulas: number[]) {
     this.unsafe.clear();
-    const current = this.expandRounds(formulas, Infinity);
+    const current = this.expandRounds(formulas, [], Infinity).forms;
     for (const [index, decl] of this.decls.entries())
       if (this.unsafe.has(decl)) current.push(this.macros[index]);
     this.unsafe.clear();
@@ -193,8 +209,8 @@ export class MacroManager {
   }
 
   // The tactic stops after one round per formula, and keeps unsafe macros out of the result.
-  findInGoal(formulas: number[]) {
-    return this.expandRounds(formulas, formulas.length);
+  findInGoal(formulas: number[], dependencies: (Dependency | undefined)[]) {
+    return this.expandRounds(formulas, dependencies, formulas.length);
   }
 
   // The definitions come with a reference, which the caller releases.
@@ -216,49 +232,70 @@ export class MacroManager {
     );
   }
 
-  private expandRounds(formulas: number[], maxRounds: number) {
-    let current = new RefVector(this.manager);
-    let isFound = this.expandFormulas(formulas, current);
+  private expandRounds(
+    formulas: number[],
+    dependencies: (Dependency | undefined)[],
+    maxRounds: number,
+  ) {
+    let current: JustifiedForms = { forms: new RefVector(this.manager), dependencies: [] };
+    let isFound = this.expandFormulas(formulas, dependencies, current);
     for (let round = 0; isFound && round < maxRounds; round++) {
-      const next = new RefVector(this.manager);
-      isFound = this.expandFormulas(current.items, next);
-      current.reset();
+      const next = { forms: new RefVector(this.manager), dependencies: [] };
+      isFound = this.expandFormulas(current.forms.items, current.dependencies, next);
+      current.forms.reset();
       current = next;
     }
     return current;
   }
 
-  private expandFormulas(formulas: number[], result: RefVector) {
+  private expandFormulas(
+    formulas: number[],
+    dependencies: (Dependency | undefined)[],
+    result: JustifiedForms,
+  ) {
     const manager = this.manager;
     let isFound = false;
-    for (const formula of formulas) {
-      const expanded = this.expand(formula);
+    for (const [index, formula] of formulas.entries()) {
+      const expanded = this.expandJustified(formula, dependencies[index]);
       if (
-        this.insertSimpleMacro(expanded) ||
-        this.findArithMacro(expanded, result) ||
-        this.findPseudoPredicateMacro(expanded, result)
+        this.insertSimpleMacro(expanded.expr, expanded.dependency) ||
+        this.findArithMacro(expanded.expr, expanded.dependency, result) ||
+        this.findPseudoPredicateMacro(expanded.expr, expanded.dependency, result)
       )
         isFound = true;
-      else result.push(expanded);
-      manager.decRef(expanded);
+      else {
+        result.forms.push(expanded.expr);
+        result.dependencies.push(expanded.dependency);
+      }
+      manager.decRef(expanded.expr);
     }
     return isFound;
   }
 
   // The result comes with a reference, which the caller releases.
   expand(expr: number) {
+    return this.expandJustified(expr, undefined).expr;
+  }
+
+  private expandJustified(expr: number, dependency: Dependency | undefined) {
     const manager = this.manager;
     manager.incRef(expr);
-    if (!this.hasMacros()) return expr;
+    if (!this.hasMacros()) return { expr, dependency };
     let current = expr;
+    let currentDependency = dependency;
     for (;;) {
       const expander = new MacroExpander(manager, this);
       const result = expander.rewrite(current);
+      currentDependency = joinDependencies(currentDependency, expander.usedDependencies);
       const isChanged = result !== current;
       manager.decRef(current);
       current = result;
       expander.release();
-      if (!isChanged) return current === expr ? current : this.simplify(current);
+      if (!isChanged)
+        return {
+          expr: current === expr ? current : this.simplify(current),
+          dependency: currentDependency,
+        };
     }
   }
 
@@ -270,7 +307,7 @@ export class MacroManager {
     return result;
   }
 
-  insert(decl: number, quantifier: number) {
+  insert(decl: number, quantifier: number, dependency?: Dependency) {
     const manager = this.manager;
     if (this.decl2macro.has(decl)) return false;
     const headDef = getHeadDef(manager, quantifier, decl);
@@ -281,6 +318,7 @@ export class MacroManager {
     this.deps.set(decl, deps);
     manager.incRef(quantifier);
     this.decl2macro.set(decl, quantifier);
+    this.decl2dependency.set(decl, dependency);
     this.decls.push(decl);
     this.macros.push(quantifier);
     return true;
@@ -307,7 +345,7 @@ export class MacroManager {
     );
   }
 
-  private insertSimpleMacro(expr: number) {
+  private insertSimpleMacro(expr: number, dependency: Dependency | undefined) {
     const manager = this.manager;
     if (!isForall(manager, expr)) return false;
     const data = manager.getQuantifier(expr);
@@ -325,7 +363,7 @@ export class MacroManager {
       : this.isHead(rhs, numDecls, lhs)
         ? rhs
         : undefined;
-    return head !== undefined && this.insert(manager.decls[head], expr);
+    return head !== undefined && this.insert(manager.decls[head], expr, dependency);
   }
 
   private isArithHead(expr: number, numDecls: number, poly: number, exception: number) {
@@ -338,7 +376,7 @@ export class MacroManager {
       .every((arg) => arg === exception || !manager.isOccurring(decl, arg));
   }
 
-  private findArithMacro(expr: number, result: RefVector) {
+  private findArithMacro(expr: number, dependency: Dependency | undefined, result: JustifiedForms) {
     const manager = this.manager;
     if (!isForall(manager, expr)) return false;
     const data = manager.getQuantifier(expr);
@@ -381,17 +419,17 @@ export class MacroManager {
           ...data,
           body: manager.mkApp(newOp, [macroHead, def], SORT_BOOL),
         });
-        if (op === OP_EQ) return this.insert(decl, macro);
+        if (op === OP_EQ) return this.insert(decl, macro, dependency);
         const fresh = manager.mkFreshFuncDecl(funcDecl.name, funcDecl.domain, funcDecl.range);
         const freshApp = manager.mkApp(fresh, manager.getArgs(macroHead), funcDecl.range);
         const macroData = manager.getQuantifier(macro);
-        result.push(
+        result.forms.push(
           manager.mkQuantifier({
             ...macroData,
             body: manager.mkEq(macroHead, manager.mkApp(OP_ADD, [def, freshApp], sort)),
           }),
         );
-        result.push(
+        result.forms.push(
           manager.mkQuantifier({
             ...macroData,
             body: manager.mkApp(
@@ -402,6 +440,7 @@ export class MacroManager {
             patterns: [manager.mkPattern([freshApp])],
           }),
         );
+        result.dependencies.push(dependency, dependency);
         return true;
       },
       () => [],
@@ -421,7 +460,11 @@ export class MacroManager {
     return undefined;
   }
 
-  private findPseudoPredicateMacro(expr: number, result: RefVector) {
+  private findPseudoPredicateMacro(
+    expr: number,
+    dependency: Dependency | undefined,
+    result: JustifiedForms,
+  ) {
     const manager = this.manager;
     if (!isForall(manager, expr)) return false;
     const data = manager.getQuantifier(expr);
@@ -446,14 +489,15 @@ export class MacroManager {
         const fresh = manager.mkFreshFuncDecl(funcDecl.name, funcDecl.domain, funcDecl.range);
         const freshApp = manager.mkApp(fresh, manager.getArgs(pseudo.head), funcDecl.range);
         const ite = manager.mkApp(OP_ITE, [def, pseudo.value, freshApp], funcDecl.range);
-        result.push(manager.mkQuantifier({ ...data, body: manager.mkEq(pseudo.head, ite) }));
-        result.push(
+        result.forms.push(manager.mkQuantifier({ ...data, body: manager.mkEq(pseudo.head, ite) }));
+        result.forms.push(
           manager.mkQuantifier({
             ...data,
             body: manager.mkApp(OP_NOT, [manager.mkEq(freshApp, pseudo.value)], SORT_BOOL),
             patterns: [manager.mkPattern([freshApp])],
           }),
         );
+        result.dependencies.push(dependency, dependency);
       },
       () => [],
     );
@@ -464,10 +508,11 @@ export class MacroManager {
 export const findGoalMacros = (manager: AstManager, goal: Goal) => {
   if (manager.recFunBodies.size > 0) return;
   const macros = new MacroManager(manager);
-  const forms = macros.findInGoal([...goal.forms.items]);
+  const found = macros.findInGoal([...goal.forms.items], goal.dependencies);
   goal.reset();
-  for (const form of forms.items) goal.assert(form);
-  forms.reset();
+  for (const [index, form] of found.forms.items.entries())
+    goal.assert(form, found.dependencies[index]);
+  found.forms.reset();
   const definitions = macros.getInterpretations();
   goal.addDefinitions(definitions);
   for (const definition of definitions) manager.decRef(definition.def);

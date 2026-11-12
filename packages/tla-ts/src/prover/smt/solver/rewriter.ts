@@ -9,6 +9,7 @@ import { isAssociativeBvOp } from "./bv-decl-plugin";
 import type { ArithRewriterOptions } from "./poly-rewriter";
 import { isAstLess } from "./ast-lt";
 import { Der } from "./der";
+import { type Dependency, joinDependencies } from "./goal";
 import { mkFpaAppCore, mkFpaEqCore } from "./fpa-rewriter";
 import { mkPbAppCore } from "./pb-rewriter";
 import { SeqRewriter } from "./seq-rewriter";
@@ -116,6 +117,8 @@ export class Rewriter extends RewriterTpl {
   private array: ArrayRewriter;
   private seq: SeqRewriter;
   private substitution = new Map<number, number>();
+  private substitutionDependencies = new Map<number, Dependency | undefined>();
+  usedDependencies: Dependency | undefined;
   private unusedVarsEliminator: UnusedVarsEliminator;
   private der: Der;
   // try_ite_value writes the result of reduce_app, which is the m_r of the rewriter that applies
@@ -187,13 +190,23 @@ export class Rewriter extends RewriterTpl {
   }
 
   // The caller may extend the substitution between rewrites without a reset.
-  setSubstitution(substitution: Map<number, number>) {
+  setSubstitution(
+    substitution: Map<number, number>,
+    dependencies = new Map<number, Dependency | undefined>(),
+  ) {
     this.substitution = substitution;
+    this.substitutionDependencies = dependencies;
     this.reset();
   }
 
   getSubst(expr: number) {
-    return this.substitution.size === 0 ? undefined : this.substitution.get(expr);
+    const replacement = this.substitution.size === 0 ? undefined : this.substitution.get(expr);
+    if (replacement !== undefined)
+      this.usedDependencies = joinDependencies(
+        this.usedDependencies,
+        this.substitutionDependencies.get(expr),
+      );
+    return replacement;
   }
 
   isFlatAssoc(decl: number) {

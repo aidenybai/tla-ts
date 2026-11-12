@@ -14,7 +14,14 @@ import { card2bv } from "./card2bv";
 import { Context, MBQI_MAX_ITERATIONS } from "./context";
 import { ctxSimplify } from "./ctx-simplify";
 import { createCtxSolverSimplify } from "./ctx-solver-simplify";
-import { type Definition, Goal } from "./goal";
+import {
+  type Definition,
+  type Dependency,
+  Goal,
+  getDependencyValues,
+  joinDependencies,
+  mkDependencyLeaf,
+} from "./goal";
 import type { AckrSolver } from "./lackr";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { Der } from "./der";
@@ -77,7 +84,7 @@ import {
   type SmtList,
   type SmtToken,
 } from "./smtlib-parser";
-import { solveGoal } from "./solver";
+import { solveAssuming, solveGoal } from "./solver";
 import { tseitinCnf } from "./tseitin-cnf";
 
 const PARAM_BOOL = 0;
@@ -111,15 +118,19 @@ export interface TacticEnvironment {
   parameters: ReadonlyMap<string, string>;
 }
 
+// A tactic that tracks dependencies keeps the dependency of every formula it changes, so the goal
+// gets the assertion names only for those.
 interface TacticBuilder {
   descrs: ParamDescrs;
   isRejectingUnknown: boolean;
+  isTrackingDependencies: boolean;
   build: (params: TacticParams) => Tactic;
 }
 
 interface NamedTactic {
   descrs: ParamDescrs;
   isRejectingUnknown?: boolean;
+  isTrackingDependencies?: boolean;
   build: (environment: TacticEnvironment, params: TacticParams) => Tactic;
 }
 
@@ -262,19 +273,44 @@ const SMT_DESCRS = getDescrs("smt", [
   ["arith.nl.rounds", PARAM_UINT, 1024, true],
 ]);
 
+// The dependencies are assertion names, which are Boolean constants, so each one is its own
+// assumption.
 const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: Goal) => {
   const manager = environment.manager;
   const hasQuantifiers = goal.forms.items.some((form) => manager.hasQuantifierFlags[form]);
-  const solved = solveGoal(manager, goal.forms.items, {
+  const kernelParams = {
     isMbqi:
       getBool(params, "mbqi", environment.isMbqi) ||
       isMbqiByFeatures(environment.setup, hasQuantifiers),
     mbqiMaxIterations: getUint(params, "mbqi.max_iterations", environment.mbqiMaxIterations),
     isFindingMacros: environment.isFindingMacros,
-  });
+  };
+  const assumptions: number[] = [];
+  const clauses = new RefVector(manager);
+  for (const [index, form] of goal.forms.items.entries()) {
+    const values = getDependencyValues(goal.getDependency(index));
+    for (const value of values) if (!assumptions.includes(value)) assumptions.push(value);
+    clauses.pushOwned(
+      manager.withTemporaries(() =>
+        manager.mkOr([form, ...values.map((value) => manager.mkNot(value))]),
+      ),
+    );
+  }
+  const solved =
+    assumptions.length === 0
+      ? solveGoal(manager, goal.forms.items, kernelParams)
+      : solveAssuming(manager, clauses.items, assumptions, kernelParams);
+  clauses.reset();
   if (solved.result === L_UNDEF) throw new SmtTacticError(solved.context.getLastFailureMessage());
   goal.reset();
-  if (solved.result === L_FALSE) goal.assert(environment.manager.falseExpr);
+  if (solved.result === L_FALSE)
+    goal.assert(
+      environment.manager.falseExpr,
+      solved.context.unsatCore.reduce<Dependency | undefined>(
+        (core, value) => joinDependencies(core, mkDependencyLeaf(value)),
+        undefined,
+      ),
+    );
   else goal.model = solved.context.getModel();
   return [goal];
 };
@@ -498,6 +534,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "simplify",
     {
       descrs: REWRITER_DESCRS,
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) =>
           simplifyGoal(environment.manager, goal, getRewriterOptions(environment.manager, params)),
@@ -508,6 +545,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "elim-and",
     {
       descrs: REWRITER_DESCRS,
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) =>
           simplifyGoal(environment.manager, goal, {
@@ -524,6 +562,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ...REWRITER_DESCRS,
         ...getDescrs("", [["max_rounds", PARAM_UINT, 4, true]]),
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) =>
           propagateValues(environment.manager, goal, getUint(params, "max_rounds", 4)),
@@ -968,6 +1007,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["produce_proofs", PARAM_BOOL, false, true],
         ["elim_and", PARAM_BOOL, false, true],
       ]),
+      isTrackingDependencies: true,
       build: (environment) => inPlace((goal) => findGoalMacros(environment.manager, goal)),
     },
   ],
@@ -1087,7 +1127,15 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       },
     },
   ],
-  ["smt", { descrs: SMT_DESCRS, isRejectingUnknown: false, build: runSmt }],
+  [
+    "smt",
+    {
+      descrs: SMT_DESCRS,
+      isRejectingUnknown: false,
+      isTrackingDependencies: true,
+      build: runSmt,
+    },
+  ],
   [
     "nlsat",
     {
@@ -1202,11 +1250,12 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       build: (environment) => createAigTactic(environment.manager),
     },
   ],
-  ["skip", { descrs: new Map(), build: () => (goal) => [goal] }],
+  ["skip", { descrs: new Map(), isTrackingDependencies: true, build: () => (goal) => [goal] }],
   [
     "fail",
     {
       descrs: new Map(),
+      isTrackingDependencies: true,
       build: () => () => {
         throw new SmtTacticError("fail tactic");
       },
@@ -1216,6 +1265,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "fail-if-undecided",
     {
       descrs: new Map(),
+      isTrackingDependencies: true,
       build: () => (goal) => {
         if (!goal.isDecided()) throw new SmtTacticError("undecided");
         return [goal];
@@ -1343,6 +1393,7 @@ const getParams = (
 const mergeDescrs = (builders: TacticBuilder[]) => ({
   descrs: new Map(builders.flatMap((builder) => [...builder.descrs])),
   isRejectingUnknown: builders.every((builder) => builder.isRejectingUnknown),
+  isTrackingDependencies: builders.every((builder) => builder.isTrackingDependencies),
 });
 
 const isDecidedSat = (goals: Goal[]) => goals.length === 1 && goals[0].isDecidedSat();
@@ -1432,6 +1483,7 @@ const compile = (
       return {
         descrs: named.descrs,
         isRejectingUnknown: named.isRejectingUnknown ?? true,
+        isTrackingDependencies: named.isTrackingDependencies ?? false,
         build: (params) => {
           const tactic = named.build(environment, params);
           if (!isInternal) return tactic;
@@ -1450,6 +1502,7 @@ const compile = (
       return {
         descrs: new Map(),
         isRejectingUnknown: false,
+        isTrackingDependencies: false,
         build: () => () => {
           throw error;
         },
@@ -1631,6 +1684,7 @@ const compile = (
       return {
         descrs: new Map(),
         isRejectingUnknown: true,
+        isTrackingDependencies: true,
         build: () => (goal) => {
           if (probe(goal) !== 0) throw new SmtTacticError("fail-if tactic");
           return [goal];
@@ -1656,6 +1710,7 @@ const compile = (
       return {
         descrs: new Map(),
         isRejectingUnknown: true,
+        isTrackingDependencies: true,
         build: () => pieces.reduceRight((second, first) => runAndThen(first, second)),
       };
     }
@@ -1712,6 +1767,7 @@ export const compileInternalTactic = (environment: TacticEnvironment, text: stri
 interface TacticCheck {
   status: number;
   model: ProtoModel | undefined;
+  core: Dependency | undefined;
 }
 
 // A constant of an uninterpreted sort the model lacks puts its value in that sort's universe.
@@ -1786,9 +1842,11 @@ export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
     return {
       status: L_TRUE,
       model: convertModel(goals[0], goals[0].model ?? new ProtoModel(goal.manager)),
+      core: undefined,
     };
-  if (goals !== undefined && isDecidedUnsat(goals)) return { status: L_FALSE, model: undefined };
-  return { status: L_UNDEF, model: undefined };
+  if (goals !== undefined && isDecidedUnsat(goals))
+    return { status: L_FALSE, model: undefined, core: goals[0].getDependency(0) };
+  return { status: L_UNDEF, model: undefined, core: undefined };
 };
 
 export const applyTactic = (tactic: Tactic, goal: Goal) => {
