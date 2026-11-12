@@ -290,8 +290,54 @@ const getMethod = (node: ts.Expression, context: Context) => {
 // function that a call runs where it's written.
 export const isOnce = (node: ts.Node): boolean =>
   ts.isSourceFile(node) ||
-  ((ts.isFunctionLike(node) ? isCalledInPlace(node) : !ts.isIterationStatement(node, false)) &&
-    isOnce(node.parent));
+  (ts.isFunctionLike(node)
+    ? isCalledInPlace(node)
+      ? isOnce(node.parent)
+      : isCalledOnce(node)
+    : !ts.isIterationStatement(node, false) && isOnce(node.parent));
+
+const calledOnce = new WeakMap<ts.Node, boolean>();
+
+// A named function or method that its file calls at one place, which runs once, and names nowhere
+// else, so that its body runs at most once.
+const isCalledOnce = (node: ts.SignatureDeclaration): boolean => {
+  const known = calledOnce.get(node);
+  if (known !== undefined) return known;
+  // Functions that call each other answer no.
+  calledOnce.set(node, false);
+  const name =
+    ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)
+      ? node.name
+      : (ts.isFunctionExpression(node) || ts.isArrowFunction(node)) &&
+          ts.isVariableDeclaration(node.parent) &&
+          node.parent.initializer === node
+        ? node.parent.name
+        : undefined;
+  const uses =
+    name !== undefined && ts.isIdentifier(name)
+      ? findNodes(
+          node.getSourceFile(),
+          (inner): inner is ts.Identifier =>
+            ts.isIdentifier(inner) && inner.text === name.text && inner !== name,
+        )
+      : [];
+  const use = uses.length === 1 ? uses[0] : undefined;
+  const callee =
+    use !== undefined && ts.isPropertyAccessExpression(use.parent) && use.parent.name === use
+      ? use.parent
+      : use;
+  const call = callee?.parent;
+  const isOnceCalled =
+    callee !== undefined &&
+    call !== undefined &&
+    ts.isCallExpression(call) &&
+    call.expression === callee &&
+    ts.findAncestor(call, (ancestor) => ancestor === node) === undefined &&
+    isOnce(node.parent) &&
+    isOnce(call);
+  calledOnce.set(node, isOnceCalled);
+  return isOnceCalled;
+};
 
 const isCalledInPlace = (node: ts.Node) => {
   const getOuter = (inner: ts.Node): ts.Node =>

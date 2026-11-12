@@ -3115,6 +3115,22 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("holds a getter in an object literal of a function that the script calls once", async () => {
+    const result = await checkModel(`
+      const make = () => ({ get v() { return 2; } });
+      const made = make();
+      if (made.v !== 2) throw new Error("v");
+    `);
+    expect(result.failure).toBeUndefined();
+    expect(() =>
+      checkModel(`
+        const make = () => ({ get v() { return 2; } });
+        const first = make();
+        const second = make();
+      `),
+    ).toThrow("Unsupported object member");
+  });
+
   it("shares an array that a field holds and changes in place", async () => {
     const result = await checkModel(`
       interface Tree {
