@@ -7754,6 +7754,23 @@ describe("errors", () => {
     ).toThrow("Unsupported expression");
   });
 
+  it("runs a class's method through call with another object as this", async () => {
+    const getSource = (got: number) => `
+      class C {
+        x = 5;
+        m(add: number) { return this.x + add; }
+        set() { this.x = 9; }
+      }
+      const c = new C();
+      const o = { x: 7 };
+      const got = c.m.call(o, 1);
+      C.prototype.set.call(o);
+      if (got !== ${got} || c.m(1) !== 6 || o.x !== 9 || c.x !== 5) throw new Error("call");
+    `;
+    expect((await checkModel(getSource(8))).failure).toBeUndefined();
+    expect((await checkModel(getSource(6))).failure?.message).toContain("call");
+  });
+
   it("makes a class expression that a script only reads where it runs", async () => {
     const getSource = (length: number) => `
       const describe = (made: object, key: string) => Object.getOwnPropertyDescriptor(made, key)!.value;

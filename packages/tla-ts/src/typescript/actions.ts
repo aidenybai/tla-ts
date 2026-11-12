@@ -2415,6 +2415,41 @@ export const translateCallStatement = (
       ),
     );
   }
+  const calledThrough = getCalledThrough(expression, context);
+  const thisArgument = expression.arguments.at(0);
+  if (calledThrough !== undefined && thisArgument !== undefined) {
+    return ifThenElse(
+      apply("/\\", [
+        translateHoldsMethod(calledThrough, path.scope, context),
+        useJavaScript(
+          "HoldsBuiltIn",
+          [
+            getHeap(path.scope, expression, context),
+            translateBuiltInValue("Function.prototype", expression, context),
+            string("call"),
+            string("Function.prototype.call"),
+          ],
+          context,
+        ),
+      ]),
+      inlineBody(
+        expression,
+        calledThrough.method,
+        expression.arguments.slice(1),
+        {
+          value: translateObjectValue(thisArgument, path.scope, context),
+          method: calledThrough.method,
+        },
+        path,
+        context,
+        frame,
+        continueWith,
+      ),
+      leaf(
+        apply("Assert", [boolean(false), string("tla-ts can't tell which method this call runs")]),
+      ),
+    );
+  }
   const callee = called?.method ?? getCallback(expression.expression, path, context);
   const bound = callee === undefined ? getBound(expression.expression, context) : undefined;
   if (bound !== undefined && !bound.isSteady) {
@@ -2529,6 +2564,22 @@ export const translateCallStatement = (
           ]),
         ),
       );
+};
+
+// A method's call through Function.prototype.call, which runs it with an object as this.
+const getCalledThrough = (node: ts.CallExpression, context: Context) => {
+  const thisArgument = node.arguments.at(0);
+  const called =
+    isMethodCall(node) && node.expression.name.text === "call"
+      ? getCalledMethod(node.expression.expression, context)
+      : undefined;
+  return called !== undefined &&
+    called.receiver.kind !== ts.SyntaxKind.SuperKeyword &&
+    thisArgument !== undefined &&
+    !node.arguments.some(ts.isSpreadElement) &&
+    getKind(thisArgument, context) === "object"
+    ? called
+    : undefined;
 };
 
 export const getCallback = (node: ts.Expression, path: Path, context: Context) => {
@@ -7351,6 +7402,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getURICall(node, context)?.isDecode === true ||
     getViewCall(node, context) !== undefined ||
     getGetterCall(node, context) !== undefined ||
+    getCalledThrough(node, context) !== undefined ||
     getStackCall(node, context) !== undefined ||
     getHeapArrayChange(node, context) !== undefined ||
     isStoredStatement(node, context) ||
