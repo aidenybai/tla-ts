@@ -863,6 +863,20 @@ describe("calls", () => {
     expect(result.status).toBe("success");
   });
 
+  it("sorts, reverses, and splices an array that a model holds", async () => {
+    const getSource = (expected: string) => `
+      let values: number[] = [3, 1, 2];
+      export const step = () => {
+        values.sort();
+        values.reverse();
+        values.splice(0, 1);
+      };
+      export const isKnown = () => ["3,1,2", "${expected}", "1", ""].includes(values.join(","));
+    `;
+    expect((await checkModel(getSource("2,1"))).status).toBe("success");
+    expect((await checkModel(getSource("1,2"))).status).toBe("invariant-violation");
+  });
+
   it("reports an index out of range in a function that reads state", async () => {
     const result = await checkModel(`
       let queue: number[] = [];
