@@ -1,6 +1,6 @@
 // Ported from Zenon's ext_tla.ml, as shipped in tlapm. Copyright 2008 INRIA, see LICENSE.
 
-import { compareExprs, isApp, type Expr } from "../expr";
+import { compareExprs, getStringName, isApp, type Expr } from "../expr";
 import { stableSort } from "../ocaml";
 import { makeRule } from "../proof";
 import {
@@ -16,11 +16,6 @@ import {
   type Item,
   type Literal,
 } from "./terms";
-
-const getStringName = (expression: Expr) =>
-  isApp(expression, "$string", 1) && expression.args[0].kind === "var"
-    ? expression.args[0].symbol
-    : undefined;
 
 const hasDistinctLabels = (pairs: [Expr, Expr][]) => {
   for (let index = 0; index + 1 < pairs.length; index++) {
