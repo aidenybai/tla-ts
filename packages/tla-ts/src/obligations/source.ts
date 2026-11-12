@@ -105,7 +105,7 @@ const TUPLY_FAILURE = "use instead the class`E_visit.iter_concrete`";
 const isDitto = (bounds: QuantifierExpression["bounds"], index: number) =>
   index > 0 && bounds[index - 1].set === bounds[index].set;
 
-export const createSource = (
+export const createModuleConverter = (
   file: string,
   text: string,
   counter: Counter,
@@ -1006,5 +1006,5 @@ export const createSource = (
     }),
   });
 
-  return { convertModule };
+  return convertModule;
 };

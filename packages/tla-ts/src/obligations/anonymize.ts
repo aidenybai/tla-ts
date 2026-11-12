@@ -4,6 +4,7 @@ import { TlapmBugError, TlaProofError } from "../errors";
 import { consSubstitution, normalizeApply, shift, shiftExpr, substituteExpr } from "./substitution";
 import { isEqualExpr } from "./equality";
 import {
+  AT_NOWHERE,
   adjoin,
   adjoinAll,
   applyBuiltin,
@@ -16,6 +17,7 @@ import {
   getLocalDefn,
   getLocusPrefix,
   getScopeAt,
+  getTrue,
   mapAccumulate,
   mapBoundDomains,
   mapScoped,
@@ -48,7 +50,7 @@ import {
 
 const DUMMY_FACT: Hyp = {
   kind: "Fact",
-  expression: { kind: "At", isExcept: false },
+  expression: AT_NOWHERE,
   visibility: "Visible",
   time: "Always",
 };
@@ -235,7 +237,7 @@ export const createAnonymizer = (
             text: `${getLocusPrefix(expression.location)}Warning: ${name} does not introduce any assumptions. It does not make sense to use it here.\n`,
             channel: "toolbox",
           });
-          return at({ kind: "Internal", builtin: "TRUE" }, expression);
+          return getTrue(expression);
         }
         const args = expression.args.map((arg) => anonymizeExpr(context, arg));
         return resolveName(context, name, args, expression);

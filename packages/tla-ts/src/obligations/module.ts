@@ -4,6 +4,7 @@ import { TlaProofError, TlapmBugError } from "../errors";
 import {
   at,
   exprifySequent,
+  getDefinitionHyp,
   getFact,
   getFresh,
   mapAccumulate,
@@ -172,31 +173,26 @@ export const getUnitHyps = (unit: ModuleUnit): Hyp[] => {
         location,
       }));
     case "Recursives":
-      return unit.declarations.map((declaration) => ({
-        kind: "Defn",
-        definition: {
-          kind: "Recursive",
-          name: declaration.name,
-          shape: declaration.shape,
+      return unit.declarations.map((declaration) =>
+        getDefinitionHyp(
+          { kind: "Recursive", name: declaration.name, shape: declaration.shape, location },
+          "User",
+          "Hidden",
+          false,
           location,
-        },
-        whereDefined: "User",
-        visibility: "Hidden",
-        isLocal: false,
-        location,
-      }));
+        ),
+      );
     case "Variables":
       return unit.names.map((name) => ({ kind: "Flex", name, location }));
     case "Definition":
       return [
-        {
-          kind: "Defn",
-          definition: unit.definition,
-          whereDefined: unit.whereDefined,
-          visibility: unit.visibility,
-          isLocal: unit.isLocal,
+        getDefinitionHyp(
+          unit.definition,
+          unit.whereDefined,
+          unit.visibility,
+          unit.isLocal,
           location,
-        },
+        ),
       ];
     case "Axiom":
     case "Theorem": {
@@ -236,14 +232,13 @@ export const getHypSize = (unit: ModuleUnit) =>
     : getUnitHyps(unit).length;
 
 const getNamedFact = (name: string, expression: Expr, location: Locus | undefined): Hyp[] => [
-  {
-    kind: "Defn",
-    definition: { kind: "Operator", name, body: expression, location },
-    whereDefined: "User",
-    visibility: "Visible",
-    isLocal: false,
+  getDefinitionHyp(
+    { kind: "Operator", name, body: expression, location },
+    "User",
+    "Visible",
+    false,
     location,
-  },
+  ),
   getFact({ kind: "Ix", index: 1, location }, "Hidden", "Always", location),
 ];
 
@@ -413,19 +408,13 @@ export const bindTheoremName = (
     ? { hyps: [], sequent }
     : {
         hyps: [
-          {
-            kind: "Defn",
-            definition: {
-              kind: "Operator",
-              name,
-              body: at(exprifySequent(sequent), { location }),
-              location,
-            },
-            whereDefined: { kind: "Proof", time: "Always" },
-            visibility: "Visible",
-            isLocal: false,
+          getDefinitionHyp(
+            { kind: "Operator", name, body: at(exprifySequent(sequent), { location }), location },
+            { kind: "Proof", time: "Always" },
+            "Visible",
+            false,
             location,
-          },
+          ),
         ],
         sequent: substituteSequent(shift(1), sequent),
       };
