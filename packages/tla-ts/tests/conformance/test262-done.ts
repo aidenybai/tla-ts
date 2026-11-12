@@ -14,7 +14,7 @@ function $DONE(error?: unknown): void {
     error === false ||
     error === 0 ||
     error === "" ||
-    error !== error;
+    (typeof error === "number" && error !== error);
   if (isFalsy) {
     isAsyncTestComplete = true;
   } else {

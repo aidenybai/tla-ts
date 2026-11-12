@@ -8,30 +8,46 @@ import {
   getChanged,
   leaveBody,
   getBody,
+  allocate,
+  getAsyncCallee,
   getCallback,
   getCast,
   inlineValues,
   isSameExpression,
+  makeGenerator,
   type Path,
+  resumeGenerator,
   runLeadingCall,
+  throwError,
   translateCallStatement,
   translateStatements,
 } from "./actions";
 import {
   type Context,
   type FunctionNode,
+  findNodes,
   getLocalCaptures,
+  getFunctionOfKind,
+  getParameters,
   getSymbol,
   getUndefined,
+  isAnyGenerator,
+  isAsyncFunction,
+  isAsyncGenerator,
+  translateString,
 } from "./context";
+import { getCallbackReceiver, translateArrayIteratorPrototype } from "./collections";
 import { TlaTypeScriptError } from "../errors";
+import { translateEngineError } from "./exceptions";
 import { translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf, letIn } from "./formula";
-import { getHeap } from "./heap";
+import { getCandidateValue, getHeap, translateFunctionValue } from "./heap";
 import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
-import { type Receiver } from "./scope";
-import { apply, boolean, identifier, number, string, tuple } from "./tla";
+import { getKeptIterator } from "./types";
+import { type Bound, bindValues, type Receiver } from "./scope";
+import type { TrackedStack } from "./stacks";
+import { apply, boolean, define, identifier, index, junction, number, string, tuple } from "./tla";
 
 // The jobs and timers that a script queues, and the promises it makes, which tla-ts follows as it
 // compiles, as JavaScript runs each job once the script and the jobs before it finish.
@@ -42,6 +58,11 @@ export interface Tasks {
   // The code that last ran each async function's body, by the body's promise, which the body
   // leaves to when it awaits or finishes: the call, and then the job that resumed it.
   callers: ReadonlyMap<string, Caller>;
+  // What the executor that NewPromiseCapability passes a script's constructor took, by the
+  // executor's parameter, while the constructor's body runs.
+  capabilities: ReadonlyMap<ts.Symbol, { resolve: Expression; reject: Expression }>;
+  // The DisposableStacks that the code made, by the name of the heap that made each.
+  stacks: ReadonlyMap<string, TrackedStack>;
 }
 
 interface Caller {
@@ -61,12 +82,22 @@ interface TrackedPromise {
   isResolved: boolean;
   // The functions that new Promise passes its executor.
   resolvers: { resolve: Expression; reject: Expression } | undefined;
+  // The functions that a job passes a thenable's then, each pair with whether it ran.
+  thenResolvers: readonly ThenResolvers[];
   value: Expression | undefined;
   reactions: readonly Reaction[];
+  // Whether code has given it a reaction, as a then, a catch, or an await does.
+  isHandled: boolean;
   // What the body of an async generator yielded or returned, for the promise of a request to it.
   iteration: { value: Expression; isDone: boolean } | undefined;
   // The values that the promise of Promise.all has so far, and how many it waits for.
   combined: { values: readonly Expression[]; remaining: number } | undefined;
+}
+
+interface ThenResolvers {
+  resolve: Expression;
+  reject: Expression;
+  isResolved: boolean;
 }
 
 // What a job does once a promise settles: call a handler, or pass the value on, and settle the
@@ -86,7 +117,14 @@ interface Handler {
   ) => Formula;
 }
 
-export const EMPTY_TASKS: Tasks = { jobs: [], timers: [], promises: new Map(), callers: new Map() };
+export const EMPTY_TASKS: Tasks = {
+  jobs: [],
+  timers: [],
+  promises: new Map(),
+  callers: new Map(),
+  capabilities: new Map(),
+  stacks: new Map(),
+};
 
 const getTasks = (path: Path, node: ts.Node) => {
   if (path.tasks === undefined) {
@@ -176,8 +214,27 @@ const isPromiseType = (node: ts.Expression, context: Context) => {
   );
 };
 
-// The promise that a value is: one that its expression names, or, where TypeScript types the value
-// as a promise, any that the path follows, which the value may hold.
+// Whether a value may be a promise: TypeScript types it as one, or as unknown or any, unless it
+// binds a parameter whose argument TypeScript types as something else.
+const isPossiblePromise = (
+  valueNode: ts.Expression,
+  value: Expression,
+  context: Context,
+): boolean => {
+  if (isPromiseType(valueNode, context)) return true;
+  if (
+    (context.checker.getTypeAtLocation(valueNode).flags &
+      (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) ===
+    0
+  ) {
+    return false;
+  }
+  const passed = value.kind === "Identifier" ? context.passed.get(value.name) : undefined;
+  return passed === undefined || isPossiblePromise(passed.node, passed.value, context);
+};
+
+// The promise that a value is: one that its expression names, or, where the value may be a
+// promise, any that the path follows.
 const dispatchPromise = (
   path: Path,
   node: ts.Node,
@@ -189,7 +246,7 @@ const dispatchPromise = (
 ): Formula => {
   const found = findPromise(path, node, value);
   if (found !== undefined) return onPromise(found);
-  if (valueNode === undefined || !isPromiseType(valueNode, context)) return otherwise();
+  if (valueNode === undefined || !isPossiblePromise(valueNode, value, context)) return otherwise();
   return [...getTasks(path, node).promises].reduceRight(
     (rest, entry) =>
       ifThenElse(
@@ -233,26 +290,237 @@ const resolve = (
       }),
     );
   };
+  const heap = getHeap(path.scope, node, context);
+  const thenName = context.names.getFresh("then");
+  const candidates = getThenFunctions(node, valueNode, context);
+  // Each thenable that a job follows may give another.
+  const pairs = [...getTasks(path, node).promises.values()].reduce(
+    (count, promise) => count + promise.thenResolvers.length,
+    0,
+  );
+  const runsThen = valueNode !== undefined && hasCallableThen(valueNode, context);
+  const callThen = () =>
+    pairs >= MAX_THEN_PAIRS
+      ? leaf(apply("Assert", [boolean(false), string("tla-ts can't follow this many thenables")]))
+      : bindOnce(
+          path,
+          thenName,
+          useJavaScript("Get", [heap, value, string("then")], context),
+          continueWith(
+            enqueue(path, node, {
+              run: (current, next) =>
+                runThen(
+                  current,
+                  node,
+                  name,
+                  value,
+                  identifier(thenName),
+                  candidates,
+                  context,
+                  next,
+                ),
+            }),
+          ),
+        );
+  const cannotThen = leaf(
+    apply("Assert", [
+      boolean(false),
+      string("tla-ts can't resolve a promise with an object that has a then"),
+    ]),
+  );
   return dispatchPromise(path, node, value, valueNode, context, follow, () =>
     ifThenElse(
       useJavaScript(
         "IsThenable",
         [
-          getHeap(path.scope, node, context),
+          heap,
           value,
           translateBuiltInValue("Array.prototype", node, context),
           translateBuiltInValue("Object.prototype", node, context),
         ],
         context,
       ),
-      leaf(
-        apply("Assert", [
-          boolean(false),
-          string("tla-ts can't resolve a promise with an object that has a then"),
-        ]),
-      ),
-      continueWith(settle(path, node, name, value, false, context)),
+      runsThen
+        ? ifThenElse(
+            useJavaScript("HasCallableThen", [heap, value], context),
+            callThen(),
+            cannotThen,
+          )
+        : cannotThen,
+      runsThen
+        ? leaf(
+            apply("Assert", [
+              boolean(false),
+              string("tla-ts can't resolve a promise with a value whose type has a then it lacks"),
+            ]),
+          )
+        : continueWith(settle(path, node, name, value, false, context)),
     ),
+  );
+};
+
+const isThenName = (name: ts.PropertyName) =>
+  (ts.isIdentifier(name) || ts.isStringLiteral(name)) && name.text === "then";
+
+// Whether TypeScript types a value with a then that it can call, which a job then calls where the
+// value resolves a promise. tla-ts follows a value of another type as one without a then.
+const hasCallableThen = (valueNode: ts.Expression, context: Context) => {
+  const then = context.checker.getTypeAtLocation(valueNode).getProperty("then");
+  if (then === undefined || (then.flags & ts.SymbolFlags.Optional) !== 0) return false;
+  const type = context.checker.getTypeOfSymbolAtLocation(then, valueNode);
+  return (type.isUnion() ? type.types : [type]).every(
+    (member) => member.getCallSignatures().length > 0,
+  );
+};
+
+const MAX_THEN_PAIRS = 8;
+
+// A function that an object literal gives as its then, which a promise that the object resolves
+// calls with the promise's resolve and reject.
+const isThenFunction = (node: ts.Node): node is FunctionNode =>
+  ((ts.isFunctionExpression(node) || ts.isArrowFunction(node)) &&
+    ts.isPropertyAssignment(node.parent) &&
+    node.parent.initializer === node &&
+    ts.isObjectLiteralExpression(node.parent.parent) &&
+    isThenName(node.parent.name)) ||
+  (ts.isMethodDeclaration(node) &&
+    node.body !== undefined &&
+    ts.isObjectLiteralExpression(node.parent) &&
+    isThenName(node.name));
+
+const thenFunctions = new WeakMap<ts.SourceFile, readonly FunctionNode[]>();
+
+// The thens that a value may have: those of the object literals that its type names, or else any
+// in the file.
+const getThenFunctions = (
+  node: ts.Node,
+  valueNode: ts.Expression | undefined,
+  context: Context,
+) => {
+  const sourceFile = node.getSourceFile();
+  const all = thenFunctions.get(sourceFile) ?? findNodes(sourceFile, isThenFunction);
+  thenFunctions.set(sourceFile, all);
+  if (valueNode === undefined) return all;
+  const type = context.checker.getTypeAtLocation(valueNode);
+  const literals = (type.isUnion() ? type.types : [type]).map(
+    (member) => member.getSymbol()?.valueDeclaration,
+  );
+  return literals.every((literal) => literal !== undefined && ts.isObjectLiteralExpression(literal))
+    ? all.filter((candidate) =>
+        literals.some(
+          (literal) =>
+            literal ===
+            (ts.isMethodDeclaration(candidate) ? candidate.parent : candidate.parent.parent),
+        ),
+      )
+    : all;
+};
+
+// The job that calls a thenable's then with a new resolve and reject of the promise, which run
+// once between them, and reject the promise where the then throws first.
+const runThen = (
+  path: Path,
+  node: ts.Node,
+  name: string,
+  thenable: Expression,
+  then: Expression,
+  candidates: readonly FunctionNode[],
+  context: Context,
+  next: (path: Path) => Formula,
+): Formula => {
+  const resolvingFunction = useJavaScript(
+    "ArrowObject",
+    [translateBuiltInValue("Function.prototype", node, context), string(""), number(1)],
+    context,
+  );
+  return allocateObject(path, node, context, resolvingFunction, (withResolve, resolveRef) =>
+    allocateObject(withResolve, node, context, resolvingFunction, (withReject, rejectRef) => {
+      const promise = getPromise(withReject, node, name);
+      const start = setPromise(withReject, node, name, {
+        ...promise,
+        thenResolvers: [
+          ...promise.thenResolvers,
+          { resolve: resolveRef, reject: rejectRef, isResolved: false },
+        ],
+      });
+      const code = useJavaScript("CodeOf", [getHeap(start.scope, node, context), then], context);
+      return candidates.reduceRight(
+        (otherwise, candidate) => {
+          const parameters = candidate.parameters;
+          if (
+            parameters.length > 2 ||
+            parameters.some(
+              (parameter) =>
+                !ts.isIdentifier(parameter.name) ||
+                parameter.initializer !== undefined ||
+                parameter.dotDotDotToken !== undefined,
+            ) ||
+            getLocalCaptures(candidate, context).size > 0 ||
+            (ts.isArrowFunction(candidate) &&
+              ts.findAncestor(candidate.parent, ts.isFunctionLike) !== undefined)
+          ) {
+            return otherwise;
+          }
+          const candidateValue = getCandidateValue(candidate, context);
+          if (candidateValue === undefined) return otherwise;
+          const back = (after: Path) =>
+            next({
+              ...after,
+              scope: {
+                ...after.scope,
+                previous: start.scope.previous,
+                isCatching: start.scope.isCatching,
+                receiver: start.scope.receiver,
+              },
+            });
+          const bindings = new Map([
+            ...start.scope.bindings,
+            ...parameters.flatMap((parameter, position): [ts.Symbol, Expression][] => {
+              const symbol = getSymbol(parameter.name, context.checker);
+              return symbol === undefined
+                ? []
+                : [[symbol, position === 0 ? resolveRef : rejectRef]];
+            }),
+          ]);
+          return ifThenElse(
+            apply("=", [code, candidateValue]),
+            translateStatements(
+              getBody(candidate),
+              {
+                ...start,
+                scope: {
+                  ...start.scope,
+                  bindings,
+                  isCatching: true,
+                  receiver: ts.isArrowFunction(candidate)
+                    ? undefined
+                    : { value: thenable, method: candidate },
+                },
+              },
+              context,
+              {
+                next: back,
+                exit: back,
+                breakTo: undefined,
+                continueTo: undefined,
+                throwTo: (after, thrown) =>
+                  callResolver(node, rejectRef, thrown.value, undefined, after, context, back),
+                yieldTo: undefined,
+                awaitTo: undefined,
+                inlining: new Set([candidate]),
+              },
+            ),
+            otherwise,
+          );
+        },
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't tell which then this thenable has"),
+          ]),
+        ),
+      );
+    }),
   );
 };
 
@@ -274,10 +542,11 @@ const addReaction = (
     return setPromise(path, node, name, {
       ...promise,
       reactions: [...promise.reactions, reaction],
+      isHandled: true,
     });
   }
   return enqueue(
-    path,
+    setPromise(path, node, name, { ...promise, isHandled: true }),
     node,
     getReactionJob(
       reaction,
@@ -332,8 +601,10 @@ const makePromise = (
         state: "pending",
         isResolved: false,
         resolvers: undefined,
+        thenResolvers: [],
         value: undefined,
         reactions: [],
+        isHandled: false,
         iteration: undefined,
         combined: undefined,
       }),
@@ -365,34 +636,665 @@ const getHandler = (
         ),
     };
   }
-  const callee = getCallback(cast, path, context);
+  const callee = getCallback(cast, path, context) ?? getAsyncCallee(cast, path, context);
   if (callee === undefined) {
     throw new TlaTypeScriptError("Pass then a function that tla-ts can follow", node);
   }
-  const captured = getLocalCaptures(callee, context);
-  const made = path.scope;
-  const keep = <Value>(runtime: Map<ts.Symbol, Value>, kept: Map<ts.Symbol, Value>) =>
-    new Map([...runtime, ...[...kept].filter((entry) => captured.has(entry[0]))]);
+  const runCallback = getCallbackRunner(
+    callee,
+    ts.isArrowFunction(callee) ? path.scope.receiver : undefined,
+    path,
+    context,
+    frame,
+  );
   return {
-    run: (current, value, onReturn, onThrow) =>
-      inlineValues(
-        callee,
-        [value],
-        ts.isArrowFunction(callee) ? made.receiver : undefined,
-        {
-          ...current,
-          scope: {
-            ...current.scope,
-            bindings: keep(current.scope.bindings, made.bindings),
-            functions: keep(current.scope.functions, made.functions),
-          },
-        },
-        context,
-        { ...frame, throwTo: (after, thrown) => onThrow(after, thrown.value) },
-        (after, result) => onReturn(after, result ?? getUndefined(context)),
-      ),
+    run: (current, value, onReturn, onThrow) => runCallback(current, [value], onReturn, onThrow),
   };
 };
+
+// Runs a callback in a later job, where the variables it captures hold what they held where the
+// script passed it.
+const getCallbackRunner =
+  (
+    callee: FunctionNode,
+    receiver: Receiver | undefined,
+    path: Path,
+    context: Context,
+    frame: Frame,
+  ) =>
+  (
+    current: Path,
+    values: Expression[],
+    onReturn: (path: Path, result: Expression) => Formula,
+    onThrow: (path: Path, thrown: Expression) => Formula,
+  ) => {
+    const captured = getLocalCaptures(callee, context);
+    const keep = <Value>(runtime: Map<ts.Symbol, Value>, kept: Map<ts.Symbol, Value>) =>
+      new Map([...runtime, ...[...kept].filter((entry) => captured.has(entry[0]))]);
+    const kept = {
+      ...current,
+      scope: {
+        ...current.scope,
+        bindings: keep(current.scope.bindings, path.scope.bindings),
+        functions: keep(current.scope.functions, path.scope.functions),
+      },
+    };
+    const callbackFrame: Frame = {
+      ...frame,
+      throwTo: (after, thrown) => onThrow(after, thrown.value),
+    };
+    const back = (after: Path, result?: Expression) =>
+      onReturn(after, result ?? getUndefined(context));
+    // An async callback gives the promise of its body, which settles as the body returns or throws.
+    return isAsyncFunction(callee)
+      ? runAsyncBody(
+          callee,
+          callee,
+          kept,
+          context,
+          callbackFrame,
+          (made, _rejectFrame, bindWith) => {
+            const bound = bindValues(getParameters(callee), values, made.scope, context);
+            return bindWith({ ...bound, scope: { ...bound.scope, receiver } }, made);
+          },
+          back,
+        )
+      : inlineValues(callee, values, receiver, kept, context, callbackFrame, back);
+  };
+
+// The object literal that an array-like names, written in place or as a const's value, and the
+// length that it writes.
+const getArrayLike = (node: ts.Expression, context: Context) => {
+  const declaration = ts.isIdentifier(node)
+    ? getSymbol(node, context.checker)?.valueDeclaration
+    : undefined;
+  const literal =
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0 &&
+    declaration.initializer !== undefined
+      ? getCast(declaration.initializer)
+      : node;
+  if (!ts.isObjectLiteralExpression(literal)) return undefined;
+  const getProperty = (key: string) =>
+    literal.properties.find(
+      (property): property is ts.PropertyAssignment =>
+        ts.isPropertyAssignment(property) &&
+        (ts.isIdentifier(property.name) || ts.isNumericLiteral(property.name)) &&
+        property.name.text === key,
+    )?.initializer;
+  const length = getProperty("length");
+  return length !== undefined && ts.isNumericLiteral(length)
+    ? { length, count: Number(length.text), getProperty }
+    : undefined;
+};
+
+// The array literal whose values() a const holds, which only the given use reads, so that nothing
+// steps the iterator before it, and whose elements are literals or consts, which read the same
+// wherever they're evaluated.
+const getIteratedLiteral = (node: ts.Identifier, context: Context) => {
+  const symbol = getSymbol(node, context.checker);
+  const valueDeclaration = symbol?.valueDeclaration;
+  const declaration =
+    valueDeclaration !== undefined && ts.isVariableDeclaration(valueDeclaration)
+      ? valueDeclaration
+      : undefined;
+  const initializer =
+    declaration !== undefined &&
+    (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0 &&
+    declaration.initializer !== undefined
+      ? getCast(declaration.initializer)
+      : undefined;
+  const literal =
+    initializer !== undefined &&
+    ts.isCallExpression(initializer) &&
+    getKeptIterator(initializer, context) === "values" &&
+    (ts.isPropertyAccessExpression(initializer.expression) ||
+      ts.isElementAccessExpression(initializer.expression))
+      ? getCast(initializer.expression.expression)
+      : undefined;
+  const isConstant = (element: ts.Expression) => {
+    const declared = ts.isIdentifier(element)
+      ? getSymbol(element, context.checker)?.valueDeclaration
+      : undefined;
+    return (
+      ts.isLiteralExpression(element) ||
+      (declared !== undefined &&
+        ts.isVariableDeclaration(declared) &&
+        (ts.getCombinedNodeFlags(declared) & ts.NodeFlags.Const) !== 0)
+    );
+  };
+  const uses = findNodes(
+    node.getSourceFile(),
+    (inner): inner is ts.Identifier =>
+      ts.isIdentifier(inner) &&
+      inner !== declaration?.name &&
+      getSymbol(inner, context.checker) === symbol,
+  );
+  return literal !== undefined &&
+    ts.isArrayLiteralExpression(literal) &&
+    literal.elements.every(isConstant) &&
+    uses.length === 1 &&
+    uses[0] === node
+    ? literal
+    : undefined;
+};
+
+// The generator function that an object literal holds as its only property, under
+// Symbol.asyncIterator or Symbol.iterator, which Array.fromAsync calls with the object to make the
+// iterator it reads.
+const getIteratorMethod = (node: ts.ObjectLiteralExpression, context: Context) => {
+  const property = node.properties.length === 1 ? node.properties[0] : undefined;
+  const name =
+    property !== undefined &&
+    property.name !== undefined &&
+    ts.isComputedPropertyName(property.name)
+      ? property.name.expression
+      : undefined;
+  const key =
+    name !== undefined &&
+    ts.isPropertyAccessExpression(name) &&
+    getBuiltIn(name.expression, context) === "Symbol"
+      ? name.name.text
+      : undefined;
+  const value =
+    property === undefined
+      ? undefined
+      : ts.isMethodDeclaration(property)
+        ? property
+        : ts.isPropertyAssignment(property)
+          ? getFunctionOfKind(property.initializer, context, isAnyGenerator)
+          : undefined;
+  if (
+    value === undefined ||
+    !(
+      ts.isFunctionDeclaration(value) ||
+      ts.isFunctionExpression(value) ||
+      ts.isMethodDeclaration(value)
+    ) ||
+    value.asteriskToken === undefined
+  ) {
+    return undefined;
+  }
+  const isAsync = isAsyncGenerator(value);
+  return (key === "asyncIterator" && isAsync) || (key === "iterator" && !isAsync)
+    ? { generator: value, isAsync }
+    : undefined;
+};
+
+// Array.fromAsync of an array or a string written in place, which it reads through an
+// async-from-sync iterator, of an array-like object, which it reads by index, or of a generator.
+// An iterator's element takes a job to settle the iterator's result and another to await it, as
+// does its end, and a mapping function's throw or rejection takes another, to await the iterator's
+// return. An async generator's element takes the job that awaits its request, without awaiting
+// the value again, and a mapping function's throw or rejection awaits its return. An array-like's
+// element, like a mapping function's result, takes a job to await.
+const translateFromAsync = (
+  node: ts.CallExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  const argument = node.arguments.at(0);
+  const items = argument && getCast(argument);
+  const mapping = node.arguments.at(1);
+  const callee =
+    mapping &&
+    (getCallback(getCast(mapping), path, context) ??
+      getAsyncCallee(getCast(mapping), path, context));
+  // The one expression that a mapping function that isn't async returns, whose type tells whether
+  // its result has a then that fromAsync's await calls.
+  const returns =
+    callee === undefined || isAsyncFunction(callee) || callee.body === undefined
+      ? []
+      : ts.isBlock(callee.body)
+        ? findNodes(callee.body, ts.isReturnStatement).filter(
+            (statement) => ts.findAncestor(statement.parent, ts.isFunctionLike) === callee,
+          )
+        : [callee.body];
+  const returned = returns.length === 1 ? returns[0] : undefined;
+  const mappedNode =
+    returned !== undefined && ts.isReturnStatement(returned) ? returned.expression : returned;
+  const arrayLike =
+    items && !ts.isArrayLiteralExpression(items) ? getArrayLike(items, context) : undefined;
+  // An array's iterator that fromAsync reads as it reads the array.
+  const iteratedLiteral =
+    items !== undefined && ts.isIdentifier(items) ? getIteratedLiteral(items, context) : undefined;
+  const literal =
+    items !== undefined && ts.isArrayLiteralExpression(items) ? items : iteratedLiteral;
+  const elements = literal?.elements.map((element) =>
+    ts.isOmittedExpression(element) ? undefined : element,
+  );
+  const text = items !== undefined && ts.isStringLiteralLike(items) ? items.text : undefined;
+  // A generator object that a variable holds, whose next fromAsync calls as it reads each value.
+  const symbol = items && ts.isIdentifier(items) ? getSymbol(items, context.checker) : undefined;
+  const generatorType = items && context.checker.getTypeAtLocation(items).getSymbol()?.name;
+  const held =
+    symbol !== undefined && (generatorType === "Generator" || generatorType === "AsyncGenerator")
+      ? path.scope.bindings.get(symbol)
+      : undefined;
+  const iteratorMethod =
+    items !== undefined && ts.isObjectLiteralExpression(items)
+      ? getIteratorMethod(items, context)
+      : undefined;
+  const isAsync =
+    (held !== undefined && generatorType === "AsyncGenerator") || iteratorMethod?.isAsync === true;
+  const isGenerator = held !== undefined || iteratorMethod !== undefined;
+  if (
+    items === undefined ||
+    (elements === undefined && text === undefined && arrayLike === undefined && !isGenerator) ||
+    (elements ?? []).some((element) => element !== undefined && ts.isSpreadElement(element)) ||
+    (mapping !== undefined && callee === undefined)
+  ) {
+    throw new TlaTypeScriptError(
+      "Pass Array.fromAsync an array, a string or an array-like object written in place, the values() of an array written in place, a generator, or an object written in place whose Symbol.asyncIterator or Symbol.iterator is a generator function, and a function that tla-ts can follow",
+      node,
+    );
+  }
+  const ran =
+    elements === undefined || iteratedLiteral !== undefined
+      ? undefined
+      : runLeadingCall(items, path, context, frame, (after) =>
+          translateFromAsync(node, after, context, frame, continueWith),
+        );
+  if (ran !== undefined) return ran;
+  const source = context.names.getFresh("items");
+  const count = arrayLike?.count ?? elements?.length ?? [...(text ?? "")].length;
+  const unfollowed = () => {
+    throw new TlaTypeScriptError("tla-ts can't follow Array.fromAsync of this generator", node);
+  };
+  return allocate(held === undefined ? items : undefined, path, context, (allocated) =>
+    makePromise(allocated, node, context, (made, name) => {
+      const runMapping =
+        mapping === undefined || callee === undefined
+          ? undefined
+          : getCallbackRunner(
+              callee,
+              getCallbackReceiver(mapping, callee, made.scope, context),
+              made,
+              context,
+              frame,
+            );
+      const tick = (
+        current: Path,
+        next: (path: Path, onReturn: (path: Path) => Formula) => Formula,
+        exit: (path: Path) => Formula,
+      ) =>
+        awaitIn(
+          current,
+          node,
+          getUndefined(context),
+          undefined,
+          context,
+          (resumer, _settled, _isRejected, onReturn) => next(resumer, onReturn),
+          exit,
+        );
+      // Reads the generator object that receiver holds, or else the items, which source names.
+      const iterate = (start: Path, receiver: Expression | undefined) => {
+        // A rejection that closes the iterator, which fromAsync awaits, or that ends an
+        // array-like. A generator's return, which closing the iterator runs, and whose throw the
+        // rejection that closes it hides.
+        const close = (current: Path, next: (path: Path) => Formula) =>
+          receiver === undefined
+            ? next(current)
+            : resumeGenerator(
+                node,
+                receiver,
+                "return",
+                undefined,
+                current,
+                context,
+                { ...frame, throwTo: (after) => next(after) },
+                (after) => next(after),
+              );
+        // A throw or rejection of a mapping function, which awaits the iterator's return: its
+        // promise settles at once where the iterator has no return, or else a job after the
+        // return. An async generator's return gives a promise, which fromAsync awaits.
+        const reject = (current: Path, reason: Expression, exit: (path: Path) => Formula) => {
+          const settleRejected = (rejected: Path, onReturn: (path: Path) => Formula) =>
+            onReturn(settle(rejected, node, name, reason, true, context));
+          if (isAsync && receiver !== undefined) {
+            return resumeGenerator(
+              node,
+              receiver,
+              "return",
+              undefined,
+              current,
+              context,
+              frame,
+              unfollowed,
+              (requested, promise) =>
+                awaitIn(
+                  requested,
+                  node,
+                  promise,
+                  undefined,
+                  context,
+                  (resumer, _settled, _isRejected, onReturn) => settleRejected(resumer, onReturn),
+                  exit,
+                ),
+            );
+          }
+          return arrayLike !== undefined
+            ? exit(settle(current, node, name, reason, true, context))
+            : close(current, (closed) =>
+                receiver === undefined
+                  ? tick(closed, settleRejected, exit)
+                  : tick(
+                      closed,
+                      (resolved, onReturn) => tick(resolved, settleRejected, onReturn),
+                      exit,
+                    ),
+              );
+        };
+        // The value at a position, which an array-like gives as fromAsync reads it.
+        const read = (current: Path, position: number) =>
+          arrayLike === undefined
+            ? index(identifier(source), [number(position + 1)])
+            : useJavaScript(
+                "Get",
+                [
+                  getHeap(current.scope, node, context),
+                  identifier(source),
+                  string(String(position)),
+                ],
+                context,
+              );
+        // The next value, or none at the end, and what the job that reads it does after. A
+        // generator's next runs its body, and a throw from it rejects the promise that the
+        // iterator's next gives, which fromAsync awaits. An async generator's next gives a
+        // promise, which fromAsync awaits.
+        const getNext = (
+          current: Path,
+          position: number,
+          exit: (path: Path) => Formula,
+          withNext: (
+            path: Path,
+            value: Expression,
+            valueNode: ts.Expression | undefined,
+            isDone: boolean,
+            exit: (path: Path) => Formula,
+          ) => Formula,
+        ) => {
+          if (receiver === undefined) {
+            return withNext(
+              current,
+              position === count ? getUndefined(context) : read(current, position),
+              arrayLike?.getProperty(String(position)) ?? elements?.[position],
+              position === count,
+              exit,
+            );
+          }
+          if (isAsync) {
+            return resumeGenerator(
+              node,
+              receiver,
+              "next",
+              undefined,
+              current,
+              context,
+              frame,
+              unfollowed,
+              (requested, promise) =>
+                awaitIn(
+                  requested,
+                  node,
+                  promise,
+                  undefined,
+                  context,
+                  (resumer, settled, isRejected, onReturn) => {
+                    if (isRejected) {
+                      return onReturn(settle(resumer, node, name, settled, true, context));
+                    }
+                    const iteration = getIteration(resumer, node, promise);
+                    return withNext(
+                      resumer,
+                      iteration.value,
+                      undefined,
+                      iteration.isDone,
+                      onReturn,
+                    );
+                  },
+                  exit,
+                ),
+            );
+          }
+          return resumeGenerator(
+            node,
+            receiver,
+            "next",
+            undefined,
+            current,
+            context,
+            {
+              ...frame,
+              throwTo: (after, thrown) =>
+                tick(
+                  after,
+                  (rejected, onReturn) =>
+                    onReturn(settle(rejected, node, name, thrown.value, true, context)),
+                  exit,
+                ),
+            },
+            (after, value, isDone, isResult) => {
+              if (isResult) {
+                throw new TlaTypeScriptError(
+                  "tla-ts can't follow Array.fromAsync of a generator that delegates",
+                  node,
+                );
+              }
+              return withNext(after, value ?? getUndefined(context), undefined, isDone, exit);
+            },
+          );
+        };
+        const take = (
+          current: Path,
+          position: number,
+          values: Expression[],
+          exit: (path: Path) => Formula,
+        ): Formula => {
+          if (position === count && arrayLike !== undefined) {
+            return resolve(current, node, name, tuple(values), undefined, context, exit);
+          }
+          return getNext(current, position, exit, (read, value, valueNode, isDone, back) => {
+            // A rejection of the value closes the iterator in the job that settles its result.
+            const next = (
+              resumed: Path,
+              settled: Expression,
+              isRejected: boolean,
+              onReturn: (path: Path) => Formula,
+            ) =>
+              isRejected
+                ? onReturn(settle(resumed, node, name, settled, true, context))
+                : isDone
+                  ? resolve(resumed, node, name, tuple(values), undefined, context, onReturn)
+                  : runMapping === undefined
+                    ? take(resumed, position + 1, [...values, settled], onReturn)
+                    : runMapping(
+                        resumed,
+                        [settled, number(position)],
+                        (mapped, result) =>
+                          awaitIn(
+                            mapped,
+                            node,
+                            result,
+                            mappedNode,
+                            context,
+                            (awaited, value, isMappedRejected, onAwaited) =>
+                              isMappedRejected
+                                ? reject(awaited, value, onAwaited)
+                                : take(awaited, position + 1, [...values, value], onAwaited),
+                            onReturn,
+                          ),
+                        (thrown, reason) => reject(thrown, reason, onReturn),
+                      );
+            // An async iterator's value, which fromAsync doesn't await.
+            if (isAsync) return next(read, value, false, back);
+            return awaitIn(
+              read,
+              node,
+              value,
+              valueNode,
+              context,
+              (resumer, settled, isRejected, onReturn) => {
+                const settle = (resumed: Path, onSettled: (path: Path) => Formula) =>
+                  next(resumed, settled, isRejected, onSettled);
+                return arrayLike !== undefined
+                  ? settle(resumer, onReturn)
+                  : isRejected
+                    ? close(resumer, (closed) => tick(closed, settle, onReturn))
+                    : tick(resumer, settle, onReturn);
+              },
+              back,
+            );
+          });
+        };
+        return take(start, 0, [], (after) =>
+          continueWith(after, getPromise(after, node, name).ref),
+        );
+      };
+      const heap = getHeap(made.scope, node, context);
+      const getSymbolMethod = (object: Expression, symbol: string) =>
+        useJavaScript(
+          "Get",
+          [heap, object, useJavaScript("WellKnownSymbol", [string(symbol)], context)],
+          context,
+        );
+      const isUndefined = (value: Expression) =>
+        useJavaScript("SameValue", [value, getUndefined(context)], context);
+      const iterated = identifier(source);
+      const prototype =
+        iteratedLiteral !== undefined
+          ? translateArrayIteratorPrototype(node, context)
+          : translateBuiltInValue(
+              held !== undefined
+                ? "Iterator.prototype"
+                : text === undefined
+                  ? "Array.prototype"
+                  : "String.prototype",
+              node,
+              context,
+            );
+      // What fromAsync reads of its items before it runs: their iterators, which an array, a
+      // string or a generator inherits, an object's Symbol.asyncIterator, which it lacks where it
+      // holds a generator function under Symbol.iterator, or else an array-like's length. An async
+      // generator's Symbol.asyncIterator comes from the prototype that a script can't reach.
+      const reads =
+        arrayLike !== undefined
+          ? [
+              isUndefined(getSymbolMethod(iterated, "asyncIterator")),
+              isUndefined(getSymbolMethod(iterated, "iterator")),
+              useJavaScript(
+                "SameValue",
+                [
+                  useJavaScript("Get", [heap, iterated, string("length")], context),
+                  translateExpression(arrayLike.length, made.scope, context),
+                ],
+                context,
+              ),
+            ]
+          : isAsync
+            ? []
+            : iteratorMethod !== undefined
+              ? [isUndefined(getSymbolMethod(iterated, "asyncIterator"))]
+              : iteratedLiteral !== undefined
+                ? [
+                    useJavaScript(
+                      "HoldsBuiltIn",
+                      [heap, prototype, string("next"), string("%ArrayIteratorPrototype%.next")],
+                      context,
+                    ),
+                    useJavaScript(
+                      "HoldsBuiltIn",
+                      [
+                        heap,
+                        translateBuiltInValue("Iterator.prototype", node, context),
+                        useJavaScript("WellKnownSymbol", [string("iterator")], context),
+                        string("Iterator.prototype.@@iterator"),
+                      ],
+                      context,
+                    ),
+                    isUndefined(
+                      getSymbolMethod(
+                        translateExpression(items, made.scope, context),
+                        "asyncIterator",
+                      ),
+                    ),
+                  ]
+                : [
+                    useJavaScript(
+                      "HoldsBuiltIn",
+                      [
+                        heap,
+                        prototype,
+                        useJavaScript("WellKnownSymbol", [string("iterator")], context),
+                        string(
+                          held !== undefined
+                            ? "Iterator.prototype.@@iterator"
+                            : text === undefined
+                              ? "Array.prototype.values"
+                              : "String.prototype.@@iterator",
+                        ),
+                      ],
+                      context,
+                    ),
+                    isUndefined(getSymbolMethod(prototype, "asyncIterator")),
+                  ];
+      return letIn(
+        [
+          define(
+            source,
+            [],
+            held !== undefined
+              ? held
+              : text === undefined
+                ? translateExpression(literal ?? items, made.scope, context)
+                : tuple([...text].map((character) => translateString(character, context))),
+          ),
+        ],
+        ifThenElse(
+          junction("And", [
+            useJavaScript(
+              "HoldsBuiltIn",
+              [
+                heap,
+                translateBuiltInValue("Array", node, context),
+                string("fromAsync"),
+                string("Array.fromAsync"),
+              ],
+              context,
+            ),
+            ...reads,
+          ]),
+          iteratorMethod === undefined
+            ? iterate(made, held)
+            : makeGenerator(
+                node,
+                iteratorMethod.generator,
+                [],
+                { value: iterated, method: iteratorMethod.generator },
+                made,
+                context,
+                frame,
+                (after, ref) => iterate(after, ref ?? getUndefined(context)),
+              ),
+          leaf(
+            apply("Assert", [
+              boolean(false),
+              string("tla-ts can't run Array.fromAsync where a script changed what it reads"),
+            ]),
+          ),
+        ),
+      );
+    }),
+  );
+};
+
+const isFromAsync = (node: ts.CallExpression, context: Context) =>
+  ts.isPropertyAccessExpression(node.expression) &&
+  node.expression.name.text === "fromAsync" &&
+  getBuiltIn(node.expression.expression, context) === "Array";
 
 // Promise.resolve(value), Promise.reject(value), or a combinator such as Promise.all(values).
 const getPromiseFunction = (node: ts.CallExpression, context: Context) => {
@@ -404,12 +1306,13 @@ const getPromiseFunction = (node: ts.CallExpression, context: Context) => {
     : undefined;
 };
 
-const COMBINATORS = ["all", "allSettled", "race"];
+const COMBINATORS = ["all", "allSettled", "any", "race"];
 
 // A combinator of an array written in place, which follows the promises that PromiseResolve gives
 // for the elements. Promise.all fulfills with their values once each fulfills, or rejects with the
-// first reason. Promise.allSettled fulfills with an object for each once all settle. Promise.race
-// settles as the first does.
+// first reason. Promise.allSettled fulfills with an object for each once all settle. Promise.any
+// fulfills with the first value, or rejects with an AggregateError of the reasons once each
+// rejects. Promise.race settles as the first does.
 const translatePromiseCombinator = (
   node: ts.CallExpression,
   combinator: string,
@@ -454,9 +1357,22 @@ const translatePromiseCombinator = (
         ...promise,
         combined: { values, remaining },
       });
-      return remaining === 0
-        ? resolve(taken, node, name, tuple(values), undefined, context, next)
-        : next(taken);
+      return remaining > 0
+        ? next(taken)
+        : combinator === "any"
+          ? next(
+              promise.isResolved
+                ? taken
+                : settle(
+                    taken,
+                    node,
+                    name,
+                    translateEngineError("AggregateError", node, context, tuple(values)),
+                    true,
+                    context,
+                  ),
+            )
+          : resolve(taken, node, name, tuple(values), undefined, context, next);
     };
     // Resolves or rejects the promise once, as Promise.race does with each element's value.
     const settleOnce =
@@ -489,21 +1405,26 @@ const translatePromiseCombinator = (
           take(allocated, position, ref, (after) => onReturn(after, getUndefined(context))),
         );
       };
+    const takeValue =
+      (position: number): Handler["run"] =>
+      (current, value, onReturn) =>
+        take(current, position, value, (after) => onReturn(after, getUndefined(context)));
     const getReaction = (position: number): Reaction => ({
       onFulfilled: {
         run:
           combinator === "allSettled"
             ? takeSettled(position, "value", "fulfilled")
-            : combinator === "race"
+            : combinator === "race" || combinator === "any"
               ? settleOnce(false)
-              : (current, value, onReturn) =>
-                  take(current, position, value, (after) => onReturn(after, getUndefined(context))),
+              : takeValue(position),
       },
       onRejected: {
         run:
           combinator === "allSettled"
             ? takeSettled(position, "reason", "rejected")
-            : settleOnce(true),
+            : combinator === "any"
+              ? takeValue(position)
+              : settleOnce(true),
       },
       derived: undefined,
     });
@@ -537,7 +1458,7 @@ const translatePromiseCombinator = (
           ),
         () =>
           makePromise(current, node, context, (wrapped, wrapper) =>
-            resolve(wrapped, node, wrapper, value, undefined, context, (resolved) =>
+            resolve(wrapped, node, wrapper, value, element, context, (resolved) =>
               next(resolved, wrapper),
             ),
           ),
@@ -601,13 +1522,14 @@ const isResolverParameter = (node: ts.Node, context: Context) => {
     (ancestor) => !ts.isParenthesizedExpression(ancestor),
   );
   return (
-    (ts.isArrowFunction(executor) || ts.isFunctionExpression(executor)) &&
-    construction !== undefined &&
-    ts.isNewExpression(construction) &&
-    isPromiseConstruction(construction, context) &&
-    construction.arguments?.[0] !== undefined &&
-    getCast(construction.arguments[0]) === executor &&
-    executor.parameters.indexOf(node) <= 1
+    executor.parameters.indexOf(node) <= 1 &&
+    (isThenFunction(executor) ||
+      ((ts.isArrowFunction(executor) || ts.isFunctionExpression(executor)) &&
+        construction !== undefined &&
+        ts.isNewExpression(construction) &&
+        isPromiseConstruction(construction, context) &&
+        construction.arguments?.[0] !== undefined &&
+        getCast(construction.arguments[0]) === executor))
   );
 };
 
@@ -682,15 +1604,38 @@ const callResolver = (
           { name: entry[0], ref: functions.reject, isRejecting: true },
         ];
   });
-  const found = resolvers.find((resolver) => isSameExpression(resolver.ref, callee));
-  if (found !== undefined) return run(found.name, found.isRejecting);
-  return resolvers.reduceRight(
-    (rest, resolver) =>
-      ifThenElse(
-        useJavaScript("SameValue", [callee, resolver.ref], context),
-        run(resolver.name, resolver.isRejecting),
-        rest,
+  // A pair that a thenable's then took runs once, apart from the promise's own.
+  const runThen = (name: string, position: number, isRejecting: boolean) => {
+    const promise = getPromise(path, node, name);
+    const pair = promise.thenResolvers[position];
+    if (pair.isResolved) return continueWith(path);
+    const resolved = setPromise(path, node, name, {
+      ...promise,
+      thenResolvers: promise.thenResolvers.map((other, index) =>
+        index === position ? { ...other, isResolved: true } : other,
       ),
+    });
+    return isRejecting
+      ? continueWith(settle(resolved, node, name, value, true, context))
+      : resolve(resolved, node, name, value, valueNode, context, continueWith);
+  };
+  const all = [
+    ...resolvers.map((resolver) => ({
+      ref: resolver.ref,
+      run: () => run(resolver.name, resolver.isRejecting),
+    })),
+    ...[...getTasks(path, node).promises].flatMap((entry) =>
+      entry[1].thenResolvers.flatMap((pair, position) => [
+        { ref: pair.resolve, run: () => runThen(entry[0], position, false) },
+        { ref: pair.reject, run: () => runThen(entry[0], position, true) },
+      ]),
+    ),
+  ];
+  const found = all.find((resolver) => isSameExpression(resolver.ref, callee));
+  if (found !== undefined) return found.run();
+  return all.reduceRight(
+    (rest, resolver) =>
+      ifThenElse(useJavaScript("SameValue", [callee, resolver.ref], context), resolver.run(), rest),
     leaf(apply("Assert", [boolean(false), string("tla-ts can't tell which function this is")])),
   );
 };
@@ -785,7 +1730,267 @@ export const translatePromiseConstruction = (
   );
 };
 
+// The Promise function that Promise.resolve.call(C, value) and the like call with C as this.
+const PROMISE_STATICS = [
+  "all",
+  "allSettled",
+  "any",
+  "race",
+  "reject",
+  "resolve",
+  "try",
+  "withResolvers",
+];
+
+const getCalledPromiseFunction = (node: ts.CallExpression, context: Context) => {
+  const callee = node.expression;
+  return ts.isPropertyAccessExpression(callee) &&
+    callee.name.text === "call" &&
+    ts.isPropertyAccessExpression(callee.expression) &&
+    getBuiltIn(callee.expression.expression, context) === "Promise" &&
+    PROMISE_STATICS.includes(callee.expression.name.text)
+    ? callee.expression.name.text
+    : undefined;
+};
+
+// A value that reading has no effect on, as an argument that a TypeError makes unread.
+const isInert = (node: ts.Expression): boolean =>
+  ts.isLiteralExpression(node) ||
+  (ts.isIdentifier(node) && node.text === "undefined") ||
+  [ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword, ts.SyntaxKind.NullKeyword].includes(
+    node.kind,
+  ) ||
+  (ts.isArrayLiteralExpression(node) && node.elements.every(isInert)) ||
+  (ts.isObjectLiteralExpression(node) && node.properties.length === 0);
+
+// Whether NewPromiseCapability(C) throws a TypeError before it runs any code: C isn't an object or
+// a constructor, or its body is empty, so it never calls the executor.
+const isIncapable = (node: ts.Expression | undefined, path: Path, context: Context) => {
+  if (node === undefined) return true;
+  const isRead =
+    isInert(node) ||
+    (ts.isIdentifier(node) && getSymbol(node, context.checker)?.valueDeclaration !== undefined) ||
+    (ts.isCallExpression(node) &&
+      getBuiltIn(node.expression, context) === "Symbol" &&
+      node.arguments.every(isInert));
+  if (!isRead) return false;
+  const type = context.checker.getTypeAtLocation(node);
+  const isPrimitive = (type.isUnion() ? type.types : [type]).every(
+    (member) =>
+      (member.flags &
+        (ts.TypeFlags.Undefined |
+          ts.TypeFlags.Null |
+          ts.TypeFlags.Void |
+          ts.TypeFlags.NumberLike |
+          ts.TypeFlags.StringLike |
+          ts.TypeFlags.BooleanLike |
+          ts.TypeFlags.BigIntLike |
+          ts.TypeFlags.ESSymbolLike)) !==
+      0,
+  );
+  if (isPrimitive) return true;
+  const callee = getCallback(getCast(node), path, context);
+  return callee !== undefined && ts.isArrowFunction(callee);
+};
+
+// A function that the code passes only as the this of Promise.resolve.call and the like, which
+// NewPromiseCapability constructs with an executor that the function only calls.
+const getCapabilityConstructor = (node: ts.Expression, context: Context) => {
+  const callee = ts.isIdentifier(node)
+    ? getSymbol(node, context.checker)?.valueDeclaration
+    : getCast(node);
+  const constructor =
+    callee !== undefined && ts.isVariableDeclaration(callee) && callee.initializer !== undefined
+      ? getCast(callee.initializer)
+      : callee;
+  if (
+    constructor === undefined ||
+    !(ts.isFunctionDeclaration(constructor) || ts.isFunctionExpression(constructor)) ||
+    constructor.asteriskToken !== undefined ||
+    (ts.getCombinedModifierFlags(constructor) & ts.ModifierFlags.Async) !== 0 ||
+    constructor.body === undefined ||
+    constructor.parameters.length > 1 ||
+    constructor.parameters.some(
+      (parameter) => !ts.isIdentifier(parameter.name) || parameter.initializer !== undefined,
+    ) ||
+    findNodes(
+      constructor.body,
+      (inner): inner is ts.Node =>
+        inner.kind === ts.SyntaxKind.ThisKeyword ||
+        (ts.isIdentifier(inner) && inner.text === "arguments") ||
+        ts.isMetaProperty(inner),
+    ).length > 0
+  ) {
+    return undefined;
+  }
+  const name = ts.isFunctionExpression(constructor)
+    ? constructor.name
+    : (constructor.name ??
+      (callee !== undefined && ts.isVariableDeclaration(callee) && ts.isIdentifier(callee.name)
+        ? callee.name
+        : undefined));
+  const symbol = name && getSymbol(name, context.checker);
+  const isPassedOnly =
+    ts.isFunctionExpression(constructor) && constructor === getCast(node)
+      ? constructor.name === undefined
+      : symbol !== undefined &&
+        findNodes(
+          constructor.getSourceFile(),
+          (inner): inner is ts.Identifier =>
+            ts.isIdentifier(inner) &&
+            inner !== name &&
+            getSymbol(inner, context.checker) === symbol,
+        ).every((reference) => {
+          const call = reference.parent;
+          return (
+            ts.isCallExpression(call) &&
+            call.arguments[0] === reference &&
+            getCalledPromiseFunction(call, context) !== undefined
+          );
+        });
+  return isPassedOnly ? constructor : undefined;
+};
+
+// The parameter of a capability constructor, which names its executor.
+const isCapabilityExecutor = (node: ts.Expression, context: Context) => {
+  const declaration = getSymbol(node, context.checker)?.valueDeclaration;
+  if (declaration === undefined || !ts.isParameter(declaration)) return false;
+  const constructor = declaration.parent;
+  if (!ts.isFunctionDeclaration(constructor) && !ts.isFunctionExpression(constructor)) {
+    return false;
+  }
+  const declared = constructor.parent;
+  const source = ts.isFunctionDeclaration(constructor)
+    ? constructor.name
+    : ts.isVariableDeclaration(declared) && ts.isIdentifier(declared.name)
+      ? declared.name
+      : constructor;
+  return (
+    ts.isIdentifier(node) &&
+    source !== undefined &&
+    getCapabilityConstructor(source, context) === constructor
+  );
+};
+
+// NewPromiseCapability(C), where C's body runs with an executor that keeps what C passes it, and
+// a TypeError follows where C doesn't pass it two functions. tla-ts doesn't follow a capability
+// that a script's constructor makes.
+const translateCapability = (
+  node: ts.CallExpression,
+  constructor: ts.FunctionDeclaration | ts.FunctionExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+): Formula => {
+  const executor = constructor.parameters[0];
+  const symbol = executor && getSymbol(executor.name, context.checker);
+  const tasks = getTasks(path, node);
+  const start =
+    symbol === undefined
+      ? path
+      : withTasks(path, {
+          ...tasks,
+          capabilities: new Map([
+            ...tasks.capabilities,
+            [symbol, { resolve: getUndefined(context), reject: getUndefined(context) }],
+          ]),
+        });
+  const finish = (after: Path) => {
+    const taken = symbol && getTasks(after, node).capabilities.get(symbol);
+    const isCallable = (value: Expression) =>
+      apply("=", [
+        useJavaScript("TypeOfIn", [getHeap(after.scope, node, context), value], context),
+        string("function"),
+      ]);
+    const left = {
+      ...after,
+      scope: {
+        ...after.scope,
+        previous: path.scope.previous,
+        isCatching: path.scope.isCatching,
+        receiver: path.scope.receiver,
+      },
+    };
+    return taken === undefined
+      ? throwError("TypeError", left, node, context, frame)
+      : ifThenElse(
+          apply("/\\", [isCallable(taken.resolve), isCallable(taken.reject)]),
+          leaf(
+            apply("Assert", [
+              boolean(false),
+              string("tla-ts can't follow a promise that a script's constructor makes"),
+            ]),
+          ),
+          throwError("TypeError", left, node, context, frame),
+        );
+  };
+  return translateStatements(
+    getBody(constructor),
+    {
+      ...start,
+      scope: { ...start.scope, isCatching: true, receiver: undefined },
+    },
+    context,
+    {
+      next: finish,
+      exit: finish,
+      breakTo: undefined,
+      continueTo: undefined,
+      throwTo: frame.throwTo,
+      yieldTo: undefined,
+      awaitTo: undefined,
+      inlining: new Set([...frame.inlining, constructor]),
+    },
+  );
+};
+
+// A call of a capability constructor's executor, which takes the functions it gets, or throws a
+// TypeError where it took some already.
+const callExecutor = (
+  node: ts.CallExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  const symbol = getSymbol(node.expression, context.checker);
+  const tasks = getTasks(path, node);
+  const taken = symbol && tasks.capabilities.get(symbol);
+  if (symbol === undefined || taken === undefined) {
+    throw new TlaTypeScriptError("tla-ts can't follow this executor", node);
+  }
+  // Only whether a function that the executor takes is callable matters.
+  const values = [0, 1].map((position) => {
+    const argument = node.arguments.at(position);
+    const cast = argument && getCast(argument);
+    return cast === undefined
+      ? getUndefined(context)
+      : ts.isFunctionExpression(cast) || ts.isArrowFunction(cast)
+        ? translateFunctionValue(cast, context)
+        : translateExpression(cast, path.scope, context);
+  });
+  const isSet = (value: Expression) =>
+    apply("~", [useJavaScript("SameValue", [value, getUndefined(context)], context)]);
+  return ifThenElse(
+    apply("\\/", [isSet(taken.resolve), isSet(taken.reject)]),
+    throwError("TypeError", path, node, context, frame),
+    continueWith(
+      withTasks(path, {
+        ...tasks,
+        capabilities: new Map([
+          ...tasks.capabilities,
+          [symbol, { resolve: values[0], reject: values[1] }],
+        ]),
+      }),
+      getUndefined(context),
+    ),
+  );
+};
+
 export const isPromiseCall = (node: ts.CallExpression, context: Context) =>
+  isFromAsync(node, context) ||
+  getCalledPromiseFunction(node, context) !== undefined ||
+  isCapabilityExecutor(node.expression, context) ||
   isResolver(node.expression, context) ||
   getPromiseFunction(node, context) !== undefined ||
   getPromiseMethod(node, context) !== undefined ||
@@ -794,7 +1999,7 @@ export const isPromiseCall = (node: ts.CallExpression, context: Context) =>
 // Runs the rest where the built-in functions that a call runs are still where it reads them.
 const guardBuiltIns = (
   node: ts.Node,
-  owner: "Promise" | "Promise.prototype",
+  owner: "Function.prototype" | "Promise" | "Promise.prototype",
   keys: string[],
   path: Path,
   context: Context,
@@ -842,6 +2047,38 @@ export const translatePromiseCall = (
   const argument = node.arguments.at(0);
   if (node.arguments.some(ts.isSpreadElement)) {
     throw new TlaTypeScriptError("Pass a promise's functions without spreads", node);
+  }
+  if (isCapabilityExecutor(node.expression, context)) {
+    return callExecutor(node, path, context, frame, continueWith);
+  }
+  if (isFromAsync(node, context))
+    return translateFromAsync(node, path, context, frame, continueWith);
+  const called = getCalledPromiseFunction(node, context);
+  if (called !== undefined) {
+    const constructor = argument && getCapabilityConstructor(argument, context);
+    if (
+      (constructor === undefined && !isIncapable(argument, path, context)) ||
+      !node.arguments.slice(1).every(isInert)
+    ) {
+      throw new TlaTypeScriptError(`Unsupported call: Promise.${called}.call`, node);
+    }
+    return guardBuiltIns(
+      node,
+      "Promise",
+      [called],
+      path,
+      context,
+      guardBuiltIns(
+        node,
+        "Function.prototype",
+        ["call"],
+        path,
+        context,
+        constructor === undefined
+          ? throwError("TypeError", path, node, context, frame)
+          : translateCapability(node, constructor, path, context, frame),
+      ),
+    );
   }
   if (isResolver(node.expression, context)) {
     return callResolver(
@@ -895,7 +2132,7 @@ export const translatePromiseCall = (
         const ref = getPromise(made, node, name).ref;
         return promiseFunction === "reject"
           ? continueWith(settle(made, node, name, value, true, context), ref)
-          : resolve(made, node, name, value, undefined, context, (resolved) =>
+          : resolve(made, node, name, value, argument, context, (resolved) =>
               continueWith(resolved, ref),
             );
       });
@@ -996,6 +2233,8 @@ export const translatePromiseCall = (
 };
 
 // Runs the jobs that the path queued, in order, and then its timers, each with the jobs it queues.
+// As Node does by default, a promise that is rejected with no reaction once the jobs run out ends
+// the program.
 export const drainTasks = (path: Path, finish: (path: Path) => Formula): Formula => {
   const tasks = path.tasks;
   if (tasks === undefined) return finish(path);
@@ -1004,6 +2243,13 @@ export const drainTasks = (path: Path, finish: (path: Path) => Formula): Formula
     return job.run(withTasks(path, { ...tasks, jobs: tasks.jobs.slice(1) }), (after) =>
       drainTasks(after, finish),
     );
+  }
+  if (
+    [...tasks.promises.values()].some(
+      (promise) => promise.state === "rejected" && !promise.isHandled,
+    )
+  ) {
+    return leaf(apply("Assert", [boolean(false), string("A promise rejected with no handler")]));
   }
   const timer = tasks.timers.at(0);
   return timer === undefined
@@ -1039,7 +2285,7 @@ const awaitValue = (
       ),
     () =>
       makePromise(path, node, context, (made, name) =>
-        resolve(made, node, name, value, undefined, context, (resolved) =>
+        resolve(made, node, name, value, valueNode, context, (resolved) =>
           continueWith(resolved, name),
         ),
       ),
@@ -1135,7 +2381,7 @@ export const getIteration = (path: Path, node: ts.Node, request: Expression) => 
 // body settles once it returns or throws. The body leaves to the code that last ran it: the call,
 // and then the job that resumed it once a promise it awaited settled.
 export const translateAsyncCall = (
-  node: ts.CallExpression,
+  node: ts.Node,
   callee: FunctionNode,
   receiver: Receiver | undefined,
   path: Path,
@@ -1143,9 +2389,61 @@ export const translateAsyncCall = (
   frame: Frame,
   continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula =>
+  runAsyncBody(
+    node,
+    callee,
+    path,
+    context,
+    frame,
+    (made, rejectFrame, bindWith) =>
+      bindCall(
+        node,
+        callee,
+        ts.isCallExpression(node) ? node.arguments : [],
+        receiver,
+        made,
+        context,
+        rejectFrame,
+        bindWith,
+      ),
+    continueWith,
+  );
+
+// Runs a built-in async function's body, such as an AsyncDisposableStack's disposeAsync, which
+// gives a promise that settles as the body returns or throws.
+export const translateAsyncBuiltIn = (
+  node: ts.Node,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+  run: (path: Path, frame: Frame) => Formula,
+): Formula =>
+  runAsyncBody(
+    node,
+    run,
+    path,
+    context,
+    frame,
+    (made, _rejectFrame, bindWith) => bindWith({ definitions: [], scope: made.scope }, made),
+    continueWith,
+  );
+
+// Runs an async function's body once a call binds its parameters, and gives its promise.
+const runAsyncBody = (
+  node: ts.Node,
+  // The async function, or the body of a built-in one.
+  body: FunctionNode | ((path: Path, frame: Frame) => Formula),
+  path: Path,
+  context: Context,
+  frame: Frame,
+  bind: (path: Path, frame: Frame, continueWith: (bound: Bound, path: Path) => Formula) => Formula,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula =>
   makePromise(path, node, context, (made, name) => {
     const ref = getPromise(made, node, name).ref;
-    const captured = getLocalCaptures(callee, context);
+    const callee = typeof body === "function" ? undefined : body;
+    const captured = callee === undefined ? new Set() : getLocalCaptures(callee, context);
     const isOuter = (symbol: ts.Symbol) =>
       !(symbol.declarations ?? []).some(
         (declaration) =>
@@ -1169,76 +2467,61 @@ export const translateAsyncCall = (
         continueWith(settle(current, node, name, thrown.value, true, context), ref),
     };
     const catching = { ...made, scope: { ...made.scope, isCatching: true } };
-    return bindCall(
-      node,
-      callee,
-      node.arguments,
-      receiver,
-      catching,
-      context,
-      rejectFrame,
-      (bound, inner) => {
-        // The heap changes as the body awaits, which makes promises.
-        const changed = [
-          ...new Set([
-            ...getChanged(callee, inner, context),
-            ...(context.heap === undefined ? [] : [context.heap]),
-          ]),
-        ];
-        const leave = (current: Path) => {
-          const caller = getCaller(current);
-          return { caller, left: leaveBody(current, caller.path, changed, isOuter) };
-        };
-        const finish = (current: Path, value: Expression, isThrown: boolean) => {
+    return bind(catching, rejectFrame, (bound, inner) => {
+      // The heap changes as the body awaits, which makes promises.
+      const changed = [
+        ...new Set([
+          ...getChanged(callee ?? node, inner, context),
+          ...(context.heap === undefined ? [] : [context.heap]),
+        ]),
+      ];
+      const leave = (current: Path) => {
+        const caller = getCaller(current);
+        return { caller, left: leaveBody(current, caller.path, changed, isOuter) };
+      };
+      const finish = (current: Path, value: Expression, isThrown: boolean) => {
+        const left = leave(current);
+        return isThrown
+          ? left.caller.resume(settle(left.left, node, name, value, true, context))
+          : resolve(left.left, node, name, value, undefined, context, left.caller.resume);
+      };
+      const bodyFrame: Frame = {
+        next: (current) => finish(current, getUndefined(context), false),
+        exit: (current, value) => finish(current, value ?? getUndefined(context), false),
+        breakTo: undefined,
+        continueTo: undefined,
+        throwTo: (current, thrown) => finish(current, thrown.value, true),
+        yieldTo: undefined,
+        awaitTo: (current, value, operand, onFulfilled, onRejected) => {
           const left = leave(current);
-          return isThrown
-            ? left.caller.resume(settle(left.left, node, name, value, true, context))
-            : resolve(left.left, node, name, value, undefined, context, left.caller.resume);
-        };
-        const bodyFrame: Frame = {
-          next: (current) => finish(current, getUndefined(context), false),
-          exit: (current, value) => finish(current, value ?? getUndefined(context), false),
-          breakTo: undefined,
-          continueTo: undefined,
-          throwTo: (current, thrown) => finish(current, thrown.value, true),
-          yieldTo: undefined,
-          awaitTo: (current, value, operand, onFulfilled, onRejected) => {
-            const left = leave(current);
-            return awaitIn(
-              left.left,
-              node,
-              value,
-              operand,
-              context,
-              (resumer, settled, isRejected, onReturn) =>
-                (isRejected ? onRejected : onFulfilled)(
-                  setCaller(
-                    enterBody(
-                      resumer,
-                      current,
-                      (symbol) => isOuter(symbol) && !captured.has(symbol),
-                    ),
-                    { path: resumer, resume: onReturn },
-                  ),
-                  settled,
-                ),
-              left.caller.resume,
-            );
-          },
-          inlining: new Set([...frame.inlining, callee]),
-        };
-        return letIn(
-          bound.definitions,
-          translateStatements(
-            getBody(callee),
-            setCaller(
-              { ...inner, scope: bound.scope },
-              { path: made, resume: (after) => continueWith(after, ref) },
-            ),
+          return awaitIn(
+            left.left,
+            node,
+            value,
+            operand,
             context,
-            bodyFrame,
-          ),
-        );
-      },
-    );
+            (resumer, settled, isRejected, onReturn) =>
+              (isRejected ? onRejected : onFulfilled)(
+                setCaller(
+                  enterBody(resumer, current, (symbol) => isOuter(symbol) && !captured.has(symbol)),
+                  { path: resumer, resume: onReturn },
+                ),
+                settled,
+              ),
+            left.caller.resume,
+          );
+        },
+        inlining: callee === undefined ? frame.inlining : new Set([...frame.inlining, callee]),
+      };
+      const start = setCaller(
+        { ...inner, scope: bound.scope },
+        { path: made, resume: (after) => continueWith(after, ref) },
+      );
+      return letIn(
+        bound.definitions,
+        typeof body === "function"
+          ? body(start, bodyFrame)
+          : translateStatements(getBody(body), start, context, bodyFrame),
+      );
+    });
   });

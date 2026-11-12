@@ -58,6 +58,10 @@ const PORTED_INCLUDES = new Map([
     readFileSync(join(CONFORMANCE_DIRECTORY, "test262-is-constructor.ts"), "utf8"),
   ],
   [
+    "testTypedArray.js",
+    readFileSync(join(CONFORMANCE_DIRECTORY, "test262-typed-array.ts"), "utf8"),
+  ],
+  [
     "promiseHelper.js",
     readFileSync(join(CONFORMANCE_DIRECTORY, "test262-promise-helper.ts"), "utf8"),
   ],
@@ -113,9 +117,12 @@ const getSkipReason = (metadata: Metadata) => {
   return includes.length > 0 ? `includes ${includes.join(", ")}` : undefined;
 };
 
-// A test may leave a promise rejected with no handler, which JavaScript allows, though Node's
-// default would end this script.
-process.on("unhandledRejection", () => {});
+// A promise that a test leaves rejected with no handler ends the test, as Node's default ends a
+// program, though not this script, which runs the tests in turn.
+const rejections: unknown[] = [];
+process.on("unhandledRejection", (reason) => {
+  rejections.push(reason);
+});
 
 // Runs a test in Node, with its jobs and then its timers, as an async test checks $DONE in one.
 const getNodeError = async (source: string) => {
@@ -137,10 +144,15 @@ const getNodeError = async (source: string) => {
     await new Promise((resolve) => {
       setImmediate(resolve);
     });
-    timers.forEach((timer) => timer());
-    return undefined;
+    if (rejections.length === 0) timers.forEach((timer) => timer());
+    await new Promise((resolve) => {
+      setImmediate(resolve);
+    });
+    return rejections.length > 0 ? `Unhandled rejection: ${String(rejections[0])}` : undefined;
   } catch (error) {
     return String(error);
+  } finally {
+    rejections.length = 0;
   }
 };
 
@@ -150,11 +162,10 @@ const getModuleError = (source: string) => {
   const output = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ESNext },
   }).outputText;
-  const run = spawnSync(
-    process.execPath,
-    ["--input-type=module", "--unhandled-rejections=none", "-"],
-    { input: output, encoding: "utf8" },
-  );
+  const run = spawnSync(process.execPath, ["--input-type=module", "-"], {
+    input: output,
+    encoding: "utf8",
+  });
   if (run.status === 0) return undefined;
   return run.stderr.split("\n").find((line) => /^\w*Error\b/.test(line)) ?? `exit ${run.status}`;
 };
@@ -170,6 +181,9 @@ const IMPLICIT_ANY_ERRORS = new Set([
 
 // TypeScript's errors for a value that may be null or undefined.
 const NULLABLE_ERRORS = new Set([2531, 2532, 2533, 2721, 2722, 18047, 18048, 18049]);
+
+// TypeScript's error for a use of a value of type unknown.
+const UNKNOWN_VALUE_ERROR = 18046;
 
 const PROGRAM_PATH = "/test262.ts";
 
@@ -451,6 +465,25 @@ const loosen = () => {
         " as unknown as new (...args: unknown[]) => { [key: string | symbol]: unknown })",
       );
     }
+    // A test may call a value of an unknown type, such as a built-in method that it stores under a
+    // key, which gives a value of an unknown type.
+    const unknownCallee =
+      diagnostic.code === UNKNOWN_VALUE_ERROR
+        ? ts.findAncestor(
+            node,
+            (ancestor) =>
+              ancestor.getStart() === diagnostic.start &&
+              ancestor.getEnd() === (diagnostic.start ?? 0) + (diagnostic.length ?? 0),
+          )
+        : undefined;
+    if (
+      unknownCallee !== undefined &&
+      ts.isCallExpression(unknownCallee.parent) &&
+      unknownCallee.parent.expression === unknownCallee
+    ) {
+      edits.set(unknownCallee.getStart(), "(");
+      edits.set(unknownCallee.getEnd(), " as (...args: unknown[]) => unknown)");
+    }
     // A test may call a function with fewer arguments than it declares, which leaves the others
     // undefined, or with more, which only its arguments object holds. A rest parameter takes the
     // extra arguments without changing the function's length.
@@ -523,6 +556,18 @@ const loosen = () => {
     }
     const target = OPERAND_TYPE_ERRORS.has(diagnostic.code) ? getCompoundTarget(node) : undefined;
     if (target !== undefined) edits.set(target.name.getEnd(), ": any");
+    // A test may assign an accessor's this, which a descriptor types as an object, to a variable
+    // that holds a number until then.
+    if (
+      diagnostic.code === 2322 &&
+      ts.isBinaryExpression(parent) &&
+      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      parent.left === node &&
+      parent.right.kind === ts.SyntaxKind.ThisKeyword
+    ) {
+      edits.set(parent.right.getStart(), "(");
+      edits.set(parent.right.getEnd(), " as any)");
+    }
   });
   const visit = (node: ts.Node) => {
     const initializer = ts.isVariableDeclaration(node) ? node.initializer : undefined;
@@ -531,9 +576,31 @@ const loosen = () => {
       node.type === undefined &&
       initializer !== undefined &&
       ts.isCallExpression(initializer) &&
-      ["Object.create", "Object.fromEntries"].includes(initializer.expression.getText())
+      ["Object.create", "Object.fromEntries", "Reflect.construct"].includes(
+        initializer.expression.getText(),
+      )
     ) {
       edits.set(node.name.getEnd(), ": { [key: string | symbol]: unknown }");
+    }
+    // An accessor that a descriptor gives reads this, which ThisType<any> leaves untyped, as the
+    // object that it's defined on.
+    const isFunction = ts.isMethodDeclaration(node) || ts.isFunctionExpression(node);
+    const holder =
+      isFunction && ts.isPropertyAssignment(node.parent) ? node.parent.parent : node.parent;
+    if (
+      isFunction &&
+      node.body !== undefined &&
+      !node.parameters.some((parameter) => parameter.name.getText() === "this") &&
+      readsThis(node.body) &&
+      ts.isObjectLiteralExpression(holder) &&
+      isDescriptor(checker.getContextualType(holder))
+    ) {
+      edits.set(
+        node.parameters.pos,
+        node.parameters.length === 0
+          ? "this: { [key: string | symbol]: unknown }"
+          : "this: { [key: string | symbol]: unknown }, ",
+      );
     }
     ts.forEachChild(node, visit);
   };
@@ -541,6 +608,12 @@ const loosen = () => {
   if (edits.size > 0) applyEdits(edits);
   return edits.size > 0;
 };
+
+// Whether a function's body reads this, outside the functions it makes that have their own.
+const readsThis = (node: ts.Node): boolean =>
+  node.kind === ts.SyntaxKind.ThisKeyword ||
+  (!(ts.isFunctionLike(node) && !ts.isArrowFunction(node)) &&
+    (ts.forEachChild(node, (child) => readsThis(child) || undefined) ?? false));
 
 // A function that a test declares and passes by name, once, takes the parameter types of the
 // callback it's passed as, such as an array method's (value, index, array), which usage alone
@@ -949,6 +1022,23 @@ const runSyntaxTest = (id: string, source: string, metadata: Metadata): TestRun 
       };
 };
 
+// A script's this at its top level, and in the arrow functions there, is the global object, which
+// TypeScript types as undefined, as tla-ts compiles each file as a module, so the test names it.
+const nameGlobalObject = (source: string) => {
+  const sourceFile = ts.createSourceFile(PROGRAM_PATH, source, ts.ScriptTarget.Latest, true);
+  const starts: number[] = [];
+  const visit = (node: ts.Node) => {
+    if (node.kind === ts.SyntaxKind.ThisKeyword) starts.push(node.getStart(sourceFile));
+    if ((ts.isFunctionLike(node) && !ts.isArrowFunction(node)) || ts.isClassLike(node)) return;
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return starts.reduceRight(
+    (text, start) => `${text.slice(0, start)}globalThis${text.slice(start + "this".length)}`,
+    source,
+  );
+};
+
 const runTest = async (path: string): Promise<TestRun> => {
   const id = relative(TEST_DIRECTORY, path);
   const source = readFileSync(path, "utf8");
@@ -962,7 +1052,9 @@ const runTest = async (path: string): Promise<TestRun> => {
   // TypeScript itself fails on some syntax, such as import defer.
   const annotated = (() => {
     try {
-      return annotate(`${getHarness(metadata)}\n${source}`);
+      return annotate(
+        `${getHarness(metadata)}\n${metadata.isModule ? source : nameGlobalObject(source)}`,
+      );
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("Debug Failure.")) return undefined;
       throw error;
@@ -974,7 +1066,9 @@ const runTest = async (path: string): Promise<TestRun> => {
     return { id, outcome: "skipped", reason: `Node fails: ${getFirstLine(nodeError)}` };
   }
   try {
-    const result = await check({ ...compile(annotated, "test262.ts"), onPrint: () => {} });
+    // Node runs the test as a module, which is strict code, so tla-ts compiles it as strict too.
+    const strict = `"use strict"; ${annotated}`;
+    const result = await check({ ...compile(strict, "test262.ts"), onPrint: () => {} });
     if (result.status === "success" || result.status === "deadlock") {
       return { id, outcome: "pass", reason: "" };
     }

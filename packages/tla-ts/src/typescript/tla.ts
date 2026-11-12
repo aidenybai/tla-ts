@@ -72,12 +72,11 @@ export const string = (value: string): Expression => ({
   location: UNLOCATED,
 });
 
-export const apply = (operator: string, args: Expression[]): Expression => ({
-  kind: "Apply",
-  operator,
-  args,
-  location: UNLOCATED,
-});
+// The parser reads /\ and \/ as junctions, which short-circuit, as TLC's do.
+export const apply = (operator: string, args: Expression[]): Expression =>
+  operator === "/\\" || operator === "\\/"
+    ? junction(operator === "/\\" ? "And" : "Or", args)
+    : { kind: "Apply", operator, args, location: UNLOCATED };
 
 export const not = (expression: Expression) => apply("~", [expression]);
 

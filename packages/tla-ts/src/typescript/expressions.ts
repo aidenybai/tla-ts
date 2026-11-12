@@ -1,12 +1,16 @@
 import ts from "@typescript/typescript6";
 import {
+  getHeapSetOrMapChange,
   translateArrayConstructor,
   translateArrayLikeCall,
   translateFunctionConstructor,
+  translateHeapElements,
+  translateArrayIteration,
   translateMethod,
   translateNew,
   translateSet,
   translateSize,
+  isArrayIteration,
 } from "./collections";
 import type { Expression } from "../ast";
 import {
@@ -21,10 +25,17 @@ import {
   getFunction,
   getFunctionCandidates,
   getParameters,
+  getFactoryCall,
   getFunctionValue,
   getNewClass,
+  isHeldError,
+  isHeldErrorName,
   getArgumentsOwner,
+  isModuleFile,
   getSymbol,
+  isAssigned,
+  findNodes,
+  skipCasts,
   isScript,
   getTopLevelDeclaration,
   getUndefined,
@@ -35,6 +46,7 @@ import {
   getPrivateMember,
   getPrivateKey,
   isHeapFunction,
+  isInertValue,
   isMethodCall,
   share,
   translateString,
@@ -43,8 +55,10 @@ import {
 import { TlaTypeScriptError } from "../errors";
 import { translateJsonCall } from "./json";
 import {
+  getCalledError,
   getConstructor,
   getErrorClass,
+  isCaughtRead,
   translateInstanceOf,
   translateNewError,
 } from "./exceptions";
@@ -62,11 +76,14 @@ import {
   getSuperLookup,
   isCreation,
   isDescription,
-  isElementDescription,
+  isDescriptionOfAll,
+  getDescribedValue,
   isFromEntries,
   isSymbolCall,
   isNewObject,
+  isObjectConversion,
   isNewProxy,
+  getNewBuffer,
   isRevocable,
   getNewWrapper,
   isNewDate,
@@ -91,6 +108,7 @@ import {
 } from "./intrinsics";
 import {
   getTypeNames,
+  getURICall,
   isComparable,
   mayBeNumber,
   translateConversion,
@@ -100,7 +118,7 @@ import {
   translateTypeOf,
   useJavaScript,
 } from "./javascript";
-import { rejectBeforeDeclaration, type Scope } from "./scope";
+import { getThisOwner, rejectBeforeDeclaration, type Scope } from "./scope";
 import {
   apply,
   boolean,
@@ -132,8 +150,13 @@ import {
   getPropertyKey,
   isBooleanLike,
   isFieldName,
+  isHeapArray,
+  hasHeapType,
+  isHeapSetOrMap,
   isHeapType,
+  isBigIntLike,
   isNumberLike,
+  mayBeGeneratorType,
   rejectGeneratorUse,
   isNumericKey,
   isObject,
@@ -141,6 +164,7 @@ import {
   isRegExpArray,
   isSequenceType,
   translateUnknown,
+  isHoleyNewArray,
 } from "./types";
 
 interface Field {
@@ -204,6 +228,16 @@ const NUMBER_OPERATORS = new Map([
   [ts.SyntaxKind.GreaterThanEqualsToken, { name: "LessOrEqual", isSwapped: true }],
 ]);
 
+// The JavaScript module's operators on two BigInts.
+export const BIGINT_OPERATORS = new Map([
+  [ts.SyntaxKind.PlusToken, "BigIntAdd"],
+  [ts.SyntaxKind.MinusToken, "BigIntSubtract"],
+  [ts.SyntaxKind.AsteriskToken, "BigIntMultiply"],
+  [ts.SyntaxKind.SlashToken, "BigIntDivide"],
+  [ts.SyntaxKind.PercentToken, "BigIntRemainder"],
+  [ts.SyntaxKind.AsteriskAsteriskToken, "BigIntPower"],
+]);
+
 const LOGICAL_OPERATORS = new Map([
   [ts.SyntaxKind.AmpersandAmpersandToken, "And" as const],
   [ts.SyntaxKind.BarBarToken, "Or" as const],
@@ -236,6 +270,11 @@ export const translateKey = (node: ts.ElementAccessExpression, scope: Scope, con
     throw new TlaTypeScriptError("tla-ts can't read what a symbol keys on this value", key);
   }
   if (kind !== "sequence" && kind !== "string") return translateExpression(key, scope, context);
+  // A key that may not be a number, such as a for-in's string or a value cast to a number, reads
+  // the element that it names as an index.
+  if (kind === "sequence" && !isNumberLike(skipCasts(key), context)) {
+    return useJavaScript("KeyPosition", [translateExpression(key, scope, context)], context);
+  }
   if (!isNumberLike(key, context)) {
     throw new TlaTypeScriptError("Index arrays and strings with numbers", key);
   }
@@ -248,23 +287,129 @@ export const translateKey = (node: ts.ElementAccessExpression, scope: Scope, con
     : apply("+", [position, number(1)]);
 };
 
-const translateArrayLiteral = (node: ts.ArrayLiteralExpression, scope: Scope, context: Context) => {
-  // Runs of plain elements become tuples, and each spread array stays a sequence of its own.
-  const parts = node.elements.reduce<(Expression | Expression[])[]>((result, element) => {
+// An array literal that only an array's iterator reads: one that a for-of iterates, or an element
+// of one where the for-of destructures each element with an array pattern.
+const isIteratedOnly = (node: ts.ArrayLiteralExpression): boolean => {
+  const parent = node.parent;
+  if (ts.isForOfStatement(parent)) return parent.expression === node;
+  if (!ts.isArrayLiteralExpression(parent) || !ts.isForOfStatement(parent.parent)) return false;
+  const initializer = parent.parent.initializer;
+  const target = ts.isVariableDeclarationList(initializer)
+    ? initializer.declarations.at(0)?.name
+    : initializer;
+  return (
+    isIteratedOnly(parent) &&
+    !parent.elements.some(ts.isSpreadElement) &&
+    target !== undefined &&
+    (ts.isArrayBindingPattern(target) || ts.isArrayLiteralExpression(target))
+  );
+};
+
+// A literal whose holes give what Array.prototype holds at their indices.
+const isPrototypeHoled = (node: ts.ArrayLiteralExpression) =>
+  isIteratedOnly(node) && !node.elements.some(ts.isSpreadElement);
+
+// The positions of a for-of's literal whose element reads a hole from Array.prototype, each with
+// whether Array.prototype still gives what the literal read when it was made, as the iterator
+// reads a hole only once it reaches it: the element itself, or each hole of the element there.
+export const getHoleChecks = (
+  literal: ts.Expression,
+  getHeapValue: () => Expression,
+  context: Context,
+) => {
+  const inner = skipCasts(literal);
+  if (context.heap === undefined || !ts.isArrayLiteralExpression(inner)) return [];
+  const isKept = (value: Expression, position: number) =>
+    useJavaScript(
+      "SameValue",
+      [
+        value,
+        useJavaScript(
+          "Get",
+          [
+            getHeapValue(),
+            translateBuiltInValue("Array.prototype", literal, context),
+            string(String(position)),
+          ],
+          context,
+        ),
+      ],
+      context,
+    );
+  return inner.elements.flatMap((element, position) => {
+    if (ts.isOmittedExpression(element) && isPrototypeHoled(inner)) {
+      return [{ position, holes: [], isKept: (value: Expression) => isKept(value, position) }];
+    }
+    const holes =
+      ts.isArrayLiteralExpression(element) && isPrototypeHoled(element)
+        ? element.elements.flatMap((part, hole) => (ts.isOmittedExpression(part) ? [hole] : []))
+        : [];
+    return holes.length === 0
+      ? []
+      : [
+          {
+            position,
+            holes,
+            isKept: (value: Expression) =>
+              junction(
+                "And",
+                holes.map((hole) => isKept(index(value, [number(hole + 1)]), hole)),
+              ),
+          },
+        ];
+  });
+};
+
+// The elements that an array literal or a call's arguments list, where runs of plain elements become
+// tuples, and each spread array stays a sequence of its own. A hole of a literal that only an
+// iterator reads gives what Array.prototype holds at its index.
+export const translateElements = (
+  elements: readonly ts.Expression[],
+  scope: Scope,
+  context: Context,
+  literal?: ts.ArrayLiteralExpression,
+) => {
+  const parts = elements.reduce<(Expression | Expression[])[]>((result, element, position) => {
     if (!ts.isSpreadElement(element)) {
-      const value = translateExpression(element, scope, context);
+      const isHole =
+        literal !== undefined && ts.isOmittedExpression(element) && isPrototypeHoled(literal);
+      const value = !isHole
+        ? translateExpression(element, scope, context)
+        : context.heap === undefined
+          ? getUndefined(context)
+          : useJavaScript(
+              "Get",
+              [
+                getHeap(scope, literal, context),
+                translateBuiltInValue("Array.prototype", literal, context),
+                string(String(position)),
+              ],
+              context,
+            );
       const last = result.at(-1);
       return Array.isArray(last)
         ? [...result.slice(0, -1), [...last, value]]
         : [...result, [value]];
     }
-    if (getKind(element.expression, context) !== "sequence") {
+    if (isHeapArray(element.expression, context)) {
+      return [...result, translateHeapElements(element.expression, scope, context)];
+    }
+    if (
+      getKind(element.expression, context) !== "sequence" &&
+      !isArrayIteration(element.expression, context)
+    ) {
       throw new TlaTypeScriptError(
         "Sets have no order, so spread one only into every(), some(), filter(), map(), or find()",
         element,
       );
     }
-    return [...result, translateExpression(element.expression, scope, context)];
+    const value = translateExpression(element.expression, scope, context);
+    return [
+      ...result,
+      context.heap !== undefined && !isArrayIteration(element.expression, context)
+        ? translateArrayIteration(value, getHeap(scope, element, context), element, context)
+        : value,
+    ];
   }, []);
   if (parts.length === 0) return tuple([]);
   return concatenate(parts.map((part) => (Array.isArray(part) ? tuple(part) : part)));
@@ -419,12 +564,28 @@ const translateMath = (node: ts.CallExpression, method: string, scope: Scope, co
     const power = useJavaScript("Power", node.arguments.map(translate), context);
     return isSpecial ? power : useJavaScript("PlainNumber", [power], context);
   }
+  if ((method === "round" || method === "sign") && node.arguments.length === 1) {
+    return useJavaScript(method === "round" ? "Round" : "Sign", [translate(argument)], context);
+  }
+  if (method === "ceil" && node.arguments.length === 1 && isSpecial) {
+    // Math.ceil(x) is -Math.floor(-x).
+    const negated = useJavaScript("Negate", [translate(argument)], context);
+    const floor = useJavaScript("FloorDivide", [negated, number(1)], context);
+    return useJavaScript("Negate", [floor], context);
+  }
   if ((method === "floor" || method === "trunc") && node.arguments.length === 1) {
     const division = ts.isParenthesizedExpression(argument) ? argument.expression : argument;
     if (
       !ts.isBinaryExpression(division) ||
       division.operatorToken.kind !== ts.SyntaxKind.SlashToken
     ) {
+      if (isSpecial) {
+        return useJavaScript(
+          method === "floor" ? "FloorDivide" : "TruncDivide",
+          [translate(argument), number(1)],
+          context,
+        );
+      }
       throw new TlaTypeScriptError(
         `Math.${method} only takes a division, as in Math.${method}(a / b)`,
         node,
@@ -492,7 +653,7 @@ const translateMath = (node: ts.CallExpression, method: string, scope: Scope, co
   return translateUnknown(node, `Unsupported call: Math.${method}`, context);
 };
 
-const translateCall = (
+export const translateCall = (
   node: ts.CallExpression,
   scope: Scope,
   context: Context,
@@ -531,6 +692,15 @@ const translateCall = (
     translateIntrinsic(node, scope, context) ??
     translateJsonCall(node, scope, context);
   if (converted !== undefined) return converted;
+  // decodeURI and decodeURIComponent may throw, so only a statement runs them.
+  const uriCall = getURICall(node, context);
+  if (uriCall !== undefined && !uriCall.isDecode) {
+    return useJavaScript(
+      "EncodeURI",
+      [translateExpression(uriCall.text, scope, context), uriCall.kept],
+      context,
+    );
+  }
   const symbol = getSymbol(node.expression, context.checker);
   const helper = getTopLevelDeclaration(symbol);
   if (helper?.getSourceFile().isDeclarationFile) {
@@ -539,7 +709,8 @@ const translateCall = (
   if (
     helper !== undefined &&
     ts.isVariableDeclaration(helper) &&
-    (helper.initializer === undefined || !ts.isFunctionLike(helper.initializer))
+    (helper.initializer === undefined || !ts.isFunctionLike(helper.initializer)) &&
+    getFactoryCall(helper.initializer, context) === undefined
   ) {
     throw new TlaTypeScriptError(`Unsupported call: ${node.expression.getText()}`, node);
   }
@@ -554,6 +725,17 @@ const translateCall = (
   }
   const callee = isMethodCall(node) ? getCallee(node.expression, context) : undefined;
   if (callee !== undefined && ts.isMethodDeclaration(callee)) {
+    return translateLocalCall(node, scope, context);
+  }
+  // A call of a function that a field holds.
+  const field = symbol?.valueDeclaration;
+  if (
+    isMethodCall(node) &&
+    context.heap !== undefined &&
+    field !== undefined &&
+    !field.getSourceFile().isDeclarationFile &&
+    (ts.isPropertyDeclaration(field) || ts.isParameter(field) || ts.isPropertySignature(field))
+  ) {
     return translateLocalCall(node, scope, context);
   }
   if (!isMethodCall(node)) {
@@ -587,7 +769,15 @@ const translateCall = (
     const argument = node.arguments.at(0);
     if (argument === undefined) return boolean(false);
     const value = translateExpression(argument, scope, context);
-    if (method !== "isNaN") return useJavaScript("IsFinite", [value], context);
+    if (method === "isFinite") return useJavaScript("IsFinite", [value], context);
+    if (method !== "isNaN") {
+      return share(value, "value", context, (shared) =>
+        junction("And", [
+          useJavaScript("IsFinite", [shared], context),
+          not(useJavaScript("IsFraction", [shared], context)),
+        ]),
+      );
+    }
     context.prelude.add("JavaScript");
     return apply("=", [value, identifier("NaN")]);
   }
@@ -659,6 +849,48 @@ const translateCall = (
     }
     throw new TlaTypeScriptError("Array.isArray needs a value whose type tells", node);
   }
+  // Reflect's functions on an object do what in and Object's functions do, and throw a TypeError
+  // only where the value isn't one.
+  const reflected = global === "Reflect" ? node.arguments.at(0) : undefined;
+  const reflectedKind = reflected === undefined ? undefined : getKind(reflected, context);
+  const isReflectedObject =
+    reflected !== undefined &&
+    context.heap !== undefined &&
+    (reflectedKind === "object" || isBuiltInObject(reflected, context));
+  if (isReflectedObject && method === "has" && node.arguments.length === 2) {
+    return useJavaScript(
+      "Has",
+      [
+        getHeap(scope, node, context),
+        translateObjectValue(reflected, scope, context),
+        translatePropertyKey(node.arguments[1], scope, context),
+      ],
+      context,
+    );
+  }
+  if (isReflectedObject && method === "isExtensible" && node.arguments.length === 1) {
+    return useJavaScript(
+      "IsExtensible",
+      [getHeap(scope, node, context), translateObjectValue(reflected, scope, context)],
+      context,
+    );
+  }
+  if (method === "ownKeys" && node.arguments.length === 1 && reflected !== undefined) {
+    if (isReflectedObject) {
+      return useJavaScript(
+        "OwnPropertyKeys",
+        [getHeap(scope, node, context), translateObjectValue(reflected, scope, context)],
+        context,
+      );
+    }
+    if (reflectedKind === "sequence") {
+      return useJavaScript(
+        "ElementNames",
+        [translateExpression(reflected, scope, context)],
+        context,
+      );
+    }
+  }
   const ownKeys = global === "Object" ? OWN_KEYS.get(method) : undefined;
   if (ownKeys !== undefined && node.arguments.length === 1 && context.heap !== undefined) {
     const argument = node.arguments[0];
@@ -669,25 +901,47 @@ const translateCall = (
         context,
       );
     }
-    // A number or a boolean converts to an object with no own properties.
-    if (isNumberLike(argument, context) || isBooleanLike(argument, context)) return tuple([]);
-    // An array or a string that isn't on the heap has no properties that symbols key.
+    // A number, a boolean, or a symbol converts to an object with no own properties.
     if (
-      method === "getOwnPropertySymbols" &&
-      ["sequence", "string"].includes(getKind(argument, context))
+      isNumberLike(argument, context) ||
+      isBooleanLike(argument, context) ||
+      isEvery(context.checker.getTypeAtLocation(argument), ts.TypeFlags.ESSymbolLike)
     ) {
       return tuple([]);
     }
-    if (getKind(argument, context) === "sequence" && method === "getOwnPropertyNames") {
+    const kind = getKind(argument, context);
+    // An array or a string that isn't on the heap has no properties that symbols key.
+    if (method === "getOwnPropertySymbols" && (kind === "sequence" || kind === "string")) {
+      return tuple([]);
+    }
+    if (kind === "sequence" && method === "getOwnPropertyNames") {
       return useJavaScript(
         "ElementNames",
         [translateExpression(argument, scope, context)],
         context,
       );
     }
-    if (getKind(argument, context) === "sequence") {
+    // A string converts to a String object, which holds its characters and its length.
+    if (kind === "string" && method === "getOwnPropertyNames") {
+      context.prelude.add("Null");
+      return useJavaScript(
+        "OwnKeys",
+        [
+          useJavaScript(
+            "WrapperObject",
+            [identifier("Null"), translateExpression(argument, scope, context)],
+            context,
+          ),
+        ],
+        context,
+      );
+    }
+    if (kind === "sequence" || kind === "string") {
+      const value = translateExpression(argument, scope, context);
       return share(
-        translateExpression(argument, scope, context),
+        kind === "sequence"
+          ? value
+          : useJavaScript("StringSplit", [value, string(""), getUndefined(context)], context),
         "elements",
         context,
         (elements) => {
@@ -730,7 +984,24 @@ const translateCall = (
   if (global === "Object" && test !== undefined && node.arguments.length > 0) {
     const argument = node.arguments[0];
     const names = getTypeNames(context.checker.getTypeAtLocation(argument), context.checker);
-    const isFunction = ts.isIdentifier(argument) && names?.every((name) => name === "function");
+    // A function that a script makes and the heap doesn't hold stays extensible, as only freeze,
+    // seal, and preventExtensions of objects on the heap make an object inextensible. A built-in
+    // function, which a variable may hold, may be frozen.
+    const declaration = ts.isIdentifier(argument)
+      ? getSymbol(argument, context.checker)?.valueDeclaration
+      : undefined;
+    const isFunction =
+      ts.isArrowFunction(argument) ||
+      ts.isFunctionExpression(argument) ||
+      (ts.isIdentifier(argument) &&
+        declaration !== undefined &&
+        (ts.isFunctionDeclaration(declaration) ||
+          (ts.isVariableDeclaration(declaration) &&
+            declaration.initializer !== undefined &&
+            (ts.isArrowFunction(skipCasts(declaration.initializer)) ||
+              ts.isFunctionExpression(skipCasts(declaration.initializer))))) &&
+        names?.every((name) => name === "function") &&
+        getKind(argument, context) !== "object");
     const isBuiltIn = isBuiltInObject(argument, context);
     if (isBuiltIn && context.heap !== undefined) {
       return useJavaScript(
@@ -759,6 +1030,25 @@ const translateCall = (
     if (kind === "sequence" || kind === "set" || kind === "map") {
       return boolean(method === "isExtensible");
     }
+    // A function that the heap or the built-in objects hold is an object there, which may be
+    // frozen, as %ThrowTypeError% is, which a script reaches through descriptors. Another function
+    // stays extensible, and undefined isn't.
+    if (
+      context.heap !== undefined &&
+      names?.includes("function") &&
+      names.every((name) => name === "function" || name === "undefined")
+    ) {
+      context.builtIns.add("get Function.prototype.arguments");
+      return ifExpression(
+        useJavaScript("IsRef", [value], context),
+        useJavaScript(test, [getHeap(scope, node, context), value], context),
+        ifExpression(
+          apply("=", [value, getUndefined(context)]),
+          boolean(method !== "isExtensible"),
+          boolean(method === "isExtensible"),
+        ),
+      );
+    }
   }
   if (isRevocable(node, context)) {
     const revocable = scope.allocated.get(node);
@@ -772,7 +1062,7 @@ const translateCall = (
     const contextual = context.checker.getContextualType(node);
     const isTyped =
       contextual !== undefined &&
-      ((contextual.flags & ts.TypeFlags.Unknown) !== 0 || isHeapType(contextual, node, context));
+      ((contextual.flags & ts.TypeFlags.Unknown) !== 0 || hasHeapType(contextual, context));
     if (!isTyped) {
       throw new TlaTypeScriptError(
         `Give the object Object.${isFromEntriesCall ? "fromEntries" : "create"} makes an object type`,
@@ -785,26 +1075,49 @@ const translateCall = (
     }
     return created;
   }
+  // A number, a boolean, or a symbol converts to an object with no own properties.
+  const [target, key] = node.arguments;
+  if (
+    global === "Object" &&
+    method === "getOwnPropertyDescriptor" &&
+    target !== undefined &&
+    key !== undefined &&
+    isInertValue(key) &&
+    (isInertValue(target) || isSymbolCall(target, context)) &&
+    (isNumberLike(target, context) ||
+      isBooleanLike(target, context) ||
+      isEvery(context.checker.getTypeAtLocation(target), ts.TypeFlags.ESSymbolLike))
+  ) {
+    return getUndefined(context);
+  }
+  if (isDescriptionOfAll(node, context)) {
+    const described = scope.allocated.get(node);
+    if (described === undefined) {
+      throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
+    }
+    return described;
+  }
   if (isDescription(node, context)) {
     const described = scope.allocated.get(node);
     if (described === undefined) {
       throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
     }
     const key = translatePropertyKey(node.arguments[1], scope, context);
+    const describedValue = getDescribedValue(node, context);
     return ifExpression(
-      isElementDescription(node, context)
+      describedValue === undefined
         ? useJavaScript(
-            "HasOwnElement",
-            [translateExpression(node.arguments[0], scope, context), key],
-            context,
-          )
-        : useJavaScript(
             "HasOwn",
             [
               getHeap(scope, node, context),
               translateObjectValue(node.arguments[0], scope, context),
               key,
             ],
+            context,
+          )
+        : useJavaScript(
+            `HasOwn${describedValue}`,
+            [translateExpression(node.arguments[0], scope, context), key],
             context,
           ),
       described,
@@ -845,8 +1158,16 @@ const translateCall = (
   }
   if (calledMethod === "toString" && node.arguments.length <= 1) {
     const argument = node.arguments.at(0);
-    const kind = argument === undefined ? "other" : getKind(argument, context);
-    const collection = argument === undefined ? undefined : getCollection(argument, context);
+    // Object of an object gives the object, whose kind its type tells.
+    const read =
+      argument !== undefined &&
+      ts.isCallExpression(argument) &&
+      isObjectConversion(argument, context) &&
+      argument.arguments.length === 1
+        ? argument.arguments[0]
+        : argument;
+    const kind = read === undefined ? "other" : getKind(read, context);
+    const collection = read === undefined ? undefined : getCollection(read, context);
     return useJavaScript(
       "ObjectToString",
       [
@@ -875,6 +1196,29 @@ const translateCall = (
       ? apply("=", values)
       : useJavaScript("SameValue", values, context);
   }
+  // Error.prototype.toString of an error that the heap holds, where it inherits that method.
+  if (
+    ts.isPropertyAccessExpression(node.expression) &&
+    method === "toString" &&
+    node.arguments.length === 0 &&
+    isHeldErrorName(node.expression.expression, context)
+  ) {
+    const heap = getHeap(scope, node, context);
+    return share(
+      translateExpression(node.expression.expression, scope, context),
+      "error",
+      context,
+      (error) =>
+        ifExpression(
+          apply("=", [
+            useJavaScript("Get", [heap, error, string("toString")], context),
+            useJavaScript(":>", [identifier("Ref"), string("Error.prototype.toString")], context),
+          ]),
+          useJavaScript("ErrorToString", [heap, error], context),
+          apply("Assert", [boolean(false), string("tla-ts can't call this toString")]),
+        ),
+    );
+  }
   const constructed =
     global === "Object" && method === "fromEntries"
       ? translateFunctionConstructor(node.arguments[0], scope, context)
@@ -891,16 +1235,39 @@ export const translateSetKey = (node: ts.Expression, scope: Scope, context: Cont
 };
 
 // A value as a string, as JavaScript converts it in a template or beside a string in +.
+// A BigInt, which the JavaScript module holds as its integer under the model value Big.
+export const translateBigInt = (value: number, context: Context) =>
+  useJavaScript(":>", [identifier("Big"), number(value)], context);
+
+// The types of the primitives that StringOf converts, where a union may hold any of them.
+export const PRIMITIVE_NAMES = new Set(["string", "number", "boolean", "undefined", "null"]);
+
 export const translateToString = (node: ts.Expression, scope: Scope, context: Context) => {
   const value = translateExpression(node, scope, context);
-  const flags = context.checker.getTypeAtLocation(node).flags;
-  if (getKind(node, context) === "string") return value;
+  const type = context.checker.getTypeAtLocation(node);
+  const flags = type.flags;
+  const inner = skipCasts(node);
+  // A read of a missing element gives undefined where TypeScript types it as the element, so only
+  // a string that the script writes or joins is surely one.
+  if (getKind(node, context) === "string" && isEvery(type, ts.TypeFlags.StringLike)) {
+    return ts.isStringLiteralLike(inner) ||
+      ts.isTemplateExpression(inner) ||
+      (ts.isBinaryExpression(inner) && inner.operatorToken.kind === ts.SyntaxKind.PlusToken)
+      ? value
+      : share(value, "text", context, (text) =>
+          ifExpression(apply("=", [text, getUndefined(context)]), string("undefined"), text),
+        );
+  }
   if (isNumberLike(node, context)) return translateNumberString(value, context);
-  if (isBooleanLike(node, context)) return ifExpression(value, string("true"), string("false"));
+  if (isBigIntLike(node, context) || isBooleanLike(node, context)) {
+    return useJavaScript("StringOf", [value], context);
+  }
   if (flags & ts.TypeFlags.Null) return string("null");
   if (flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) return string("undefined");
   const names = getTypeNames(context.checker.getTypeAtLocation(node), context.checker);
-  if (names === undefined) return useJavaScript("StringOf", [value], context);
+  if (names === undefined || names.every((name) => PRIMITIVE_NAMES.has(name))) {
+    return useJavaScript("StringOf", [value], context);
+  }
   // A function converts to its source text, which a branch that never runs, such as an error's
   // message, may still hold.
   if (names.every((name) => name === "function")) {
@@ -917,6 +1284,73 @@ const translateTemplate = (node: ts.TemplateExpression, scope: Scope, context: C
       return span.literal.text === "" ? [value] : [value, string(span.literal.text)];
     }),
   ]);
+};
+
+// Both sides name one variable, which holds one value at a time.
+const isSameName = (left: ts.Expression, right: ts.Expression, context: Context) =>
+  ts.isIdentifier(left) &&
+  ts.isIdentifier(right) &&
+  getSymbol(left, context.checker) === getSymbol(right, context.checker);
+
+const OBJECT_FLAGS =
+  ts.TypeFlags.Object |
+  ts.TypeFlags.NonPrimitive |
+  ts.TypeFlags.Any |
+  ts.TypeFlags.Unknown |
+  ts.TypeFlags.TypeParameter;
+
+// A value that may be an object that the heap doesn't hold.
+const mayBeValueObject = (node: ts.Expression, context: Context) => {
+  const kind = getKind(node, context);
+  const type = context.checker.getTypeAtLocation(node);
+  return (
+    kind === "set" ||
+    kind === "map" ||
+    (kind === "other" &&
+      (type.isUnion() ? type.types : [type]).some((member) => (member.flags & OBJECT_FLAGS) !== 0))
+  );
+};
+
+// The raw text of a template's literal, where a carriage return, alone or before a line feed, is a
+// line feed.
+const getRawText = (literal: ts.TemplateLiteralLikeNode) =>
+  string((literal.rawText ?? "").replace(/\r\n?/g, "\n"));
+
+// String.raw of a template, which joins the raw text of its literals with its substitutions.
+const translateRawTemplate = (
+  node: ts.TaggedTemplateExpression,
+  scope: Scope,
+  context: Context,
+) => {
+  const template = node.template;
+  const joined = ts.isNoSubstitutionTemplateLiteral(template)
+    ? getRawText(template)
+    : concatenate([
+        getRawText(template.head),
+        ...template.templateSpans.flatMap((span) => [
+          translateToString(span.expression, scope, context),
+          getRawText(span.literal),
+        ]),
+      ]);
+  return context.heap === undefined
+    ? joined
+    : ifExpression(
+        useJavaScript(
+          "HoldsBuiltIn",
+          [
+            getHeap(scope, node, context),
+            translateBuiltInValue("String", node, context),
+            string("raw"),
+            string("String.raw"),
+          ],
+          context,
+        ),
+        joined,
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't call String.raw where a script replaced it"),
+        ]),
+      );
 };
 
 const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Context) => {
@@ -967,6 +1401,34 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
         : kind === ts.SyntaxKind.LessThanEqualsToken
           ? not(isLess(right, left))
           : not(isLess(left, right));
+  }
+  const bigIntOperator = BIGINT_OPERATORS.get(kind);
+  if (
+    bigIntOperator !== undefined &&
+    isBigIntLike(node.left, context) &&
+    isBigIntLike(node.right, context)
+  ) {
+    return useJavaScript(bigIntOperator, [translate(node.left), translate(node.right)], context);
+  }
+  // An ordering compares BigInts and numbers by their mathematical values.
+  const isBigIntOrdering =
+    ORDERING_OPERATORS.has(kind) &&
+    (isBigIntLike(node.left, context) || isBigIntLike(node.right, context)) &&
+    [node.left, node.right].every(
+      (side) => isBigIntLike(side, context) || isNumberLike(side, context),
+    );
+  if (isBigIntOrdering) {
+    const [lesser, greater] =
+      kind === ts.SyntaxKind.LessThanToken || kind === ts.SyntaxKind.LessThanEqualsToken
+        ? [node.left, node.right]
+        : [node.right, node.left];
+    const isStrict =
+      kind === ts.SyntaxKind.LessThanToken || kind === ts.SyntaxKind.GreaterThanToken;
+    return useJavaScript(
+      isStrict ? "NumericLessThan" : "NumericLessOrEqual",
+      [translate(lesser), translate(greater)],
+      context,
+    );
   }
   if (
     ARITHMETIC_OPERATORS.has(kind) &&
@@ -1055,11 +1517,7 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
     isScript(node.getSourceFile()) &&
     getKind(node.left, context) === "sequence" &&
     getKind(node.right, context) === "sequence" &&
-    !(
-      ts.isIdentifier(node.left) &&
-      ts.isIdentifier(node.right) &&
-      getSymbol(node.left, context.checker) === getSymbol(node.right, context.checker)
-    )
+    !isSameName(node.left, node.right, context)
   ) {
     return ifExpression(
       apply("=", [translate(node.left), translate(node.right)]),
@@ -1069,6 +1527,22 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
       ]),
       boolean(!isPositive),
     );
+  }
+  // A script's other objects outside the heap, such as a Set or an error that JavaScript throws,
+  // compare by value too, unless they hold the identity that made them.
+  if (
+    isEquality &&
+    isScript(node.getSourceFile()) &&
+    mayBeValueObject(node.left, context) &&
+    mayBeValueObject(node.right, context) &&
+    !isSameName(node.left, node.right, context)
+  ) {
+    const isSame = useJavaScript(
+      "IsIdentical",
+      [translate(node.left), translate(node.right)],
+      context,
+    );
+    return isPositive ? isSame : not(isSame);
   }
   if (kind === ts.SyntaxKind.InKeyword) {
     if (ts.isPrivateIdentifier(node.left)) {
@@ -1125,6 +1599,15 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
     return apply("\\in", [translate(node.left), apply("DOMAIN", [translate(node.right)])]);
   }
   const bitwise = BITWISE_OPERATORS.get(kind);
+  if (
+    bitwise !== undefined &&
+    (isBigIntLike(node.left, context) || isBigIntLike(node.right, context))
+  ) {
+    throw new TlaTypeScriptError(
+      `Unsupported operator on BigInts: ${node.operatorToken.getText()}`,
+      node,
+    );
+  }
   if (bitwise !== undefined) {
     return useJavaScript(
       bitwise,
@@ -1190,10 +1673,55 @@ const translateDeclared = (
   }
   const declaration = getTopLevelDeclaration(symbol);
   if (declaration === undefined) return undefined;
+  if (ts.isVariableDeclaration(declaration) && getFactoryCall(declaration.initializer, context)) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't use a function that a factory returns as a value",
+      node,
+    );
+  }
   // A function passes as its operator's name, and a constant as its value.
   return getFunction(declaration) === undefined
     ? translateHelperCall(declaration, undefined, scope, context)
     : identifier(getDefinition(declaration, context).name);
+};
+
+const SPECIAL_NUMBER_NAMES = new Map([
+  ["NaN", "NaN"],
+  ["Infinity", "Infinity"],
+  ["-Infinity", "NegativeInfinity"],
+  ["-0", "NegativeZero"],
+]);
+
+const getFraction = (value: number, context: Context) => {
+  const name = context.fractions.get(value) ?? context.names.getFresh("Fraction");
+  context.fractions.set(value, name);
+  return name;
+};
+
+// A number that tla-ts works out as it compiles, or undefined where this script can't hold it. A
+// script that computes as JavaScript holds a number that isn't an integer as a model value, whose
+// negation has one too, which Negate gives. TLC holds its floor, so it stays inside 32 bits.
+export const getNumberValue = (value: number, context: Context) => {
+  if (Number.isInteger(value) && !Object.is(value, -0) && Math.abs(value) <= 2 ** 31 - 1) {
+    return number(value);
+  }
+  if (!context.hasSpecialNumbers) return undefined;
+  const special = SPECIAL_NUMBER_NAMES.get(Object.is(value, -0) ? "-0" : String(value));
+  if (special === undefined && (Number.isInteger(value) || Math.abs(value) >= 2 ** 31 - 1)) {
+    return undefined;
+  }
+  context.prelude.add("JavaScript");
+  if (special !== undefined) return identifier(special);
+  getFraction(-value, context);
+  return identifier(getFraction(value, context));
+};
+
+const translateFraction = (value: number, node: ts.Node, context: Context) => {
+  const fraction = getNumberValue(value, context);
+  if (fraction === undefined) {
+    throw new TlaTypeScriptError(`Only integers are supported: ${node.getText()}`, node);
+  }
+  return fraction;
 };
 
 const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context) => {
@@ -1266,6 +1794,16 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
       `tla-ts can't run ${node.text}, which only a declaration gives`,
       node,
     );
+  }
+  // The global object, whose properties tla-ts doesn't read.
+  if (
+    node.text === "globalThis" &&
+    context.heap !== undefined &&
+    symbol !== undefined &&
+    (symbol.flags & ts.SymbolFlags.ValueModule) !== 0
+  ) {
+    context.prelude.add("JavaScript");
+    return identifier("GlobalObject");
   }
   throw new TlaTypeScriptError(`Unknown name: ${node.text}`, node);
 };
@@ -1440,7 +1978,7 @@ const translatePropertyAccess = (
 ) => {
   const regExpRead = translateRegExpRead(node, () => string(node.name.text), scope, context);
   if (regExpRead !== undefined) return regExpRead;
-  if (node.questionDotToken !== undefined && !scope.results.has(node.expression)) {
+  if (node.questionDotToken !== undefined && scope.checked?.has(node) !== true) {
     throw new TlaTypeScriptError("Optional chaining isn't supported", node);
   }
   if (ts.isPrivateIdentifier(node.name)) return translatePrivateRead(node, scope, context);
@@ -1469,6 +2007,21 @@ const translatePropertyAccess = (
           ],
           context,
         );
+  }
+  // A BigInt has no properties of its own, so it reads them from BigInt.prototype.
+  if (isBigIntLike(receiver, context)) {
+    if (context.heap === undefined) {
+      throw new TlaTypeScriptError(`Unsupported property: ${node.getText()}`, node);
+    }
+    return useJavaScript(
+      "Get",
+      [
+        getHeap(scope, node, context),
+        translateBuiltInValue("BigInt.prototype", node, context),
+        string(name),
+      ],
+      context,
+    );
   }
   // A value of type Function, such as an object's constructor, may be a built-in function, which
   // only the heap knows the properties of.
@@ -1567,6 +2120,17 @@ const translatePropertyAccess = (
   ) {
     throw new TlaTypeScriptError(`Unsupported property: ${node.getText()}`, node);
   }
+  if (context.heap !== undefined && isCaughtRead(receiver, context)) {
+    return useJavaScript(
+      "Get",
+      [getHeap(scope, node, context), translateExpression(receiver, scope, context), string(name)],
+      context,
+    );
+  }
+  // A generator runs its methods only where a script calls them.
+  if (context.heap !== undefined && mayBeGeneratorType(receiver, context)) {
+    throw new TlaTypeScriptError(`tla-ts can't read a generator's ${name} as a value`, node);
+  }
   rejectAnyReceiver(receiver, context);
   return getField(translateExpression(receiver, scope, context), name);
 };
@@ -1591,7 +2155,202 @@ const translateSuperRead = (
   );
 };
 
+// The operators that convert an operand to a number, as + does where both operands are numbers.
+const NUMERIC_OPERATORS = new Set([
+  ts.SyntaxKind.MinusToken,
+  ts.SyntaxKind.AsteriskToken,
+  ts.SyntaxKind.SlashToken,
+  ts.SyntaxKind.PercentToken,
+  ts.SyntaxKind.AsteriskAsteriskToken,
+  ts.SyntaxKind.LessThanToken,
+  ts.SyntaxKind.GreaterThanToken,
+  ts.SyntaxKind.LessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanEqualsToken,
+  ts.SyntaxKind.AmpersandToken,
+  ts.SyntaxKind.BarToken,
+  ts.SyntaxKind.CaretToken,
+  ts.SyntaxKind.LessThanLessThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
+  ts.SyntaxKind.MinusEqualsToken,
+  ts.SyntaxKind.AsteriskEqualsToken,
+  ts.SyntaxKind.SlashEqualsToken,
+  ts.SyntaxKind.PercentEqualsToken,
+  ts.SyntaxKind.AsteriskAsteriskEqualsToken,
+  ts.SyntaxKind.AmpersandEqualsToken,
+  ts.SyntaxKind.BarEqualsToken,
+  ts.SyntaxKind.CaretEqualsToken,
+  ts.SyntaxKind.LessThanLessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanGreaterThanEqualsToken,
+  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
+]);
+
+// Whether an operator or a Math function converts a value to a number, which takes undefined as
+// NaN.
+const isNumericOperand = (node: ts.Expression, context: Context): boolean => {
+  const parent = node.parent;
+  if (ts.isParenthesizedExpression(parent) || ts.isAsExpression(parent)) {
+    return isNumericOperand(parent, context);
+  }
+  if (ts.isPrefixUnaryExpression(parent)) {
+    return [ts.SyntaxKind.MinusToken, ts.SyntaxKind.PlusToken, ts.SyntaxKind.TildeToken].includes(
+      parent.operator,
+    );
+  }
+  if (ts.isCallExpression(parent)) {
+    return (
+      parent.arguments.includes(node) &&
+      ts.isPropertyAccessExpression(parent.expression) &&
+      parent.expression.expression.getText() === "Math"
+    );
+  }
+  if (!ts.isBinaryExpression(parent)) return false;
+  const kind = parent.operatorToken.kind;
+  const isAssigned = kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
+  return (
+    !(isAssigned && parent.left === node) &&
+    (NUMERIC_OPERATORS.has(kind) ||
+      ([ts.SyntaxKind.PlusToken, ts.SyntaxKind.PlusEqualsToken].includes(kind) &&
+        isNumberLike(parent.left, context) &&
+        isNumberLike(parent.right, context)))
+  );
+};
+
+// A read that an operator converts to a number, where a read past an array's end, or of a key that
+// an index signature lacks, gives undefined, though TypeScript types it as the value: NaN in a
+// script that has special numbers, and otherwise a stop, as tla-ts holds no NaN there.
+const toNumericRead = (node: ts.Expression, read: Expression, context: Context) =>
+  isNumberLike(node, context) && isNumericOperand(node, context)
+    ? guardNumber(read, context)
+    : read;
+
+const guardNumber = (read: Expression, context: Context) => {
+  context.prelude.add("JavaScript");
+  return share(read, "element", context, (element) =>
+    ifExpression(
+      apply("=", [element, getUndefined(context)]),
+      context.hasSpecialNumbers
+        ? identifier("NaN")
+        : apply("Assert", [
+            boolean(false),
+            string("tla-ts can't compute with the undefined that a read past an array's end gives"),
+          ]),
+      element,
+    ),
+  );
+};
+
+// Whether a node is a pattern's target, which an assignment or a for-of gives a value.
+const isPatternTarget = (node: ts.Node): boolean => {
+  const parent = node.parent;
+  if (
+    ts.isArrayLiteralExpression(parent) ||
+    ts.isObjectLiteralExpression(parent) ||
+    ts.isShorthandPropertyAssignment(parent) ||
+    ts.isSpreadElement(parent) ||
+    ts.isSpreadAssignment(parent) ||
+    (ts.isPropertyAssignment(parent) && parent.initializer === node) ||
+    (ts.isBinaryExpression(parent) &&
+      parent.left === node &&
+      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      isPatternTarget(parent))
+  ) {
+    return isPatternTarget(parent);
+  }
+  return (
+    (ts.isArrayLiteralExpression(node) || ts.isObjectLiteralExpression(node)) &&
+    ((ts.isBinaryExpression(parent) &&
+      parent.left === node &&
+      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken) ||
+      ((ts.isForOfStatement(parent) || ts.isForInStatement(parent)) && parent.initializer === node))
+  );
+};
+
+// Whether a value is a number that the script computes: a literal, or what an operator, a length,
+// or Math gives, or a name that holds only those, which can't be the undefined that a read past an
+// array's end gives.
+const isComputedNumber = (node: ts.Expression, context: Context, seen: Set<ts.Symbol>): boolean => {
+  const inner = skipCasts(node);
+  if (ts.isConditionalExpression(inner)) {
+    return (
+      isComputedNumber(inner.whenTrue, context, seen) &&
+      isComputedNumber(inner.whenFalse, context, seen)
+    );
+  }
+  if (ts.isBinaryExpression(inner)) {
+    const kind = inner.operatorToken.kind;
+    return kind === ts.SyntaxKind.EqualsToken || kind === ts.SyntaxKind.CommaToken
+      ? isComputedNumber(inner.right, context, seen)
+      : [
+            ts.SyntaxKind.AmpersandAmpersandToken,
+            ts.SyntaxKind.BarBarToken,
+            ts.SyntaxKind.QuestionQuestionToken,
+          ].includes(kind)
+        ? isComputedNumber(inner.left, context, seen) &&
+          isComputedNumber(inner.right, context, seen)
+        : true;
+  }
+  if (ts.isIdentifier(inner)) return holdsComputedNumber(inner, context, seen);
+  return (
+    ts.isNumericLiteral(inner) ||
+    ts.isPrefixUnaryExpression(inner) ||
+    ts.isPostfixUnaryExpression(inner) ||
+    (ts.isPropertyAccessExpression(inner) && inner.name.text === "length") ||
+    (ts.isCallExpression(inner) &&
+      ts.isPropertyAccessExpression(inner.expression) &&
+      inner.expression.expression.getText() === "Math")
+  );
+};
+
+// Whether a variable holds only numbers that the script computes, where its declaration and each
+// assignment give one.
+const holdsComputedNumber = (
+  name: ts.Identifier,
+  context: Context,
+  seen = new Set<ts.Symbol>(),
+): boolean => {
+  const symbol = getSymbol(name, context.checker);
+  const declaration = symbol?.valueDeclaration;
+  if (symbol === undefined || declaration === undefined) return false;
+  if (seen.has(symbol) || declaration.getSourceFile().isDeclarationFile) return true;
+  seen.add(symbol);
+  if (
+    !ts.isVariableDeclaration(declaration) ||
+    declaration.initializer === undefined ||
+    !isComputedNumber(declaration.initializer, context, seen)
+  ) {
+    return false;
+  }
+  const container =
+    ts.findAncestor(declaration.parent, (ancestor) => ts.isFunctionLike(ancestor)) ??
+    declaration.getSourceFile();
+  return findNodes(container, ts.isIdentifier).every((reference) => {
+    if (reference === declaration.name || getSymbol(reference, context.checker) !== symbol) {
+      return true;
+    }
+    const parent = reference.parent;
+    if (
+      ts.isBinaryExpression(parent) &&
+      parent.left === reference &&
+      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ) {
+      return isComputedNumber(parent.right, context, seen);
+    }
+    return !isPatternTarget(reference);
+  });
+};
+
 const translateElementAccess = (
+  node: ts.ElementAccessExpression,
+  scope: Scope,
+  context: Context,
+  isDefined: boolean,
+) => {
+  const read = translateElementRead(node, scope, context, isDefined);
+  return isDefined ? read : toNumericRead(node, read, context);
+};
+
+const translateElementRead = (
   node: ts.ElementAccessExpression,
   scope: Scope,
   context: Context,
@@ -1612,6 +2371,13 @@ const translateElementAccess = (
     context,
   );
   if (regExpRead !== undefined) return regExpRead;
+  // A built-in object that a well-known symbol keys, such as Iterator.prototype[Symbol.iterator],
+  // whose own properties the heap then holds.
+  const builtIn =
+    context.heap !== undefined && scope.bindings.has(context.heap)
+      ? translateBuiltInObject(node, scope, context)
+      : undefined;
+  if (builtIn !== undefined) return builtIn;
   const getterRead = translateGetterRead(node, scope, context);
   if (getterRead !== undefined) return getterRead;
   const kind = getKind(node.expression, context);
@@ -1633,6 +2399,17 @@ const translateElementAccess = (
       translateObjectValue(node.expression, scope, context),
       translatePropertyKey(node.argumentExpression, scope, context),
       scope,
+      context,
+    );
+  }
+  if (context.heap !== undefined && isCaughtRead(node.expression, context)) {
+    return useJavaScript(
+      "Get",
+      [
+        getHeap(scope, node, context),
+        translateExpression(node.expression, scope, context),
+        translatePropertyKey(node.argumentExpression, scope, context),
+      ],
       context,
     );
   }
@@ -1721,9 +2498,11 @@ const translateTruthy = (node: ts.Expression, value: Expression, context: Contex
             ? "string"
             : (member.flags & ts.TypeFlags.NumberLike) !== 0 && !context.hasSpecialNumbers
               ? "number"
-              : (member.flags & ts.TypeFlags.BooleanLike) !== 0
-                ? "boolean"
-                : undefined;
+              : (member.flags & ts.TypeFlags.BigIntLike) !== 0
+                ? "bigint"
+                : (member.flags & ts.TypeFlags.BooleanLike) !== 0
+                  ? "boolean"
+                  : undefined;
   const kinds = new Set(members.map(getTruthKind));
   const defined = [...kinds].filter((kind) => kind !== "undefined" && kind !== "null");
   if (kinds.has(undefined) || defined.length > 1) {
@@ -1735,6 +2514,7 @@ const translateTruthy = (node: ts.Expression, value: Expression, context: Contex
     apply("\\notin", [value, set([identifier("Null"), getUndefined(context)])]),
     ...(defined[0] === "string" ? [apply("#", [value, string("")])] : []),
     ...(defined[0] === "number" ? [apply("#", [value, number(0)])] : []),
+    ...(defined[0] === "bigint" ? [apply("#", [value, translateBigInt(0, context)])] : []),
     ...(defined[0] === "boolean" ? [value] : []),
   ];
   return defined.length === 0
@@ -1760,6 +2540,8 @@ export const translateNegatedCondition = (
   if (ts.isParenthesizedExpression(node)) {
     return translateNegatedCondition(node.expression, scope, context);
   }
+  // A condition that a statement evaluated first has its value.
+  if (scope.results.has(node)) return not(translateCondition(node, scope, context));
   if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
     return translateCondition(node.operand, scope, context);
   }
@@ -1778,39 +2560,135 @@ export const translateExpression = (
   scope: Scope,
   context: Context,
   isDefined = false,
-): Expression => locate(translateNode(node, scope, context, isDefined), getLocation(node));
+): Expression => {
+  const translated = translateNode(node, scope, context, isDefined);
+  // The base of an optional chain that a check already read is the value that it read.
+  return locate(
+    isSetOrMapRead(node, context) &&
+      !(ts.isOptionalChain(node.parent) && scope.checked?.has(node.parent) === true)
+      ? useJavaScript("CollectionData", [getHeap(scope, node, context), translated], context)
+      : translated,
+    getLocation(node),
+  );
+};
+
+// Whether an expression gives a set or a map that the heap holds where a script reads its value,
+// rather than passes it on or changes it.
+const isSetOrMapRead = (node: ts.Expression, context: Context) => {
+  const parent = node.parent;
+  const isRead =
+    (ts.isPropertyAccessExpression(parent) &&
+      parent.expression === node &&
+      getHeapSetOrMapChange(parent.parent, context) === undefined) ||
+    (ts.isForOfStatement(parent) && parent.expression === node) ||
+    ts.isSpreadElement(parent) ||
+    (ts.isNewExpression(parent) &&
+      ["Set", "Map"].includes(getBuiltIn(parent.expression, context) ?? ""));
+  return isRead && isHeapSetOrMap(node, context);
+};
 
 const readsArguments = (node: ts.Node): boolean =>
   (ts.isIdentifier(node) && node.text === "arguments") ||
   (ts.forEachChild(node, (child) => readsArguments(child) || undefined) ?? false);
 
-// Whether an array literal goes straight into an array pattern, which takes its elements in order,
-// so that nothing sees where it has holes.
-const isPatternSource = (node: ts.Expression, context: Context) => {
+// Whether a pattern takes the elements before a position without running code, as a default that
+// calls a function, a nested pattern, or a setter would.
+export const isInertBefore = (pattern: ts.Node | undefined, count: number) => {
+  const elements =
+    pattern !== undefined &&
+    (ts.isArrayBindingPattern(pattern) || ts.isArrayLiteralExpression(pattern))
+      ? pattern.elements
+      : [];
+  return elements
+    .slice(0, count)
+    .every(
+      (element) =>
+        ts.isOmittedExpression(element) ||
+        ts.isIdentifier(element) ||
+        (ts.isBindingElement(element) &&
+          element.dotDotDotToken === undefined &&
+          ts.isIdentifier(element.name) &&
+          (element.initializer === undefined || isInertValue(element.initializer))) ||
+        (ts.isBinaryExpression(element) &&
+          element.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          ts.isIdentifier(element.left) &&
+          isInertValue(element.right)),
+    );
+};
+
+// The array pattern that an array literal goes straight into, which takes its elements in order,
+// so that nothing sees where it has holes, with whether nothing runs between the literal and the
+// pattern: a call's later arguments, and the parameters before the pattern.
+const getSourcePattern = (node: ts.Expression, context: Context) => {
   const parent = node.parent;
   if (ts.isVariableDeclaration(parent) || ts.isParameter(parent) || ts.isBindingElement(parent)) {
-    return parent.initializer === node && ts.isArrayBindingPattern(parent.name);
+    return parent.initializer === node && ts.isArrayBindingPattern(parent.name)
+      ? { pattern: parent.name, isDirect: true }
+      : undefined;
   }
   if (ts.isBinaryExpression(parent)) {
-    return (
-      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    return parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
       parent.right === node &&
       ts.isArrayLiteralExpression(parent.left)
-    );
+      ? { pattern: parent.left, isDirect: true }
+      : undefined;
   }
-  if (!ts.isCallExpression(parent) && !ts.isNewExpression(parent)) return false;
+  if (!ts.isCallExpression(parent) && !ts.isNewExpression(parent)) return undefined;
   const position = parent.arguments?.indexOf(node) ?? -1;
   if (position === -1 || parent.arguments?.slice(0, position).some(ts.isSpreadElement)) {
-    return false;
+    return undefined;
   }
   const declaration = context.checker.getResolvedSignature(parent)?.getDeclaration();
   const parameter = declaration?.parameters.at(position);
-  return (
-    declaration !== undefined &&
+  return declaration !== undefined &&
     parameter !== undefined &&
     parameter.dotDotDotToken === undefined &&
     ts.isArrayBindingPattern(parameter.name) &&
     !readsArguments(declaration)
+    ? {
+        pattern: parameter.name,
+        isDirect:
+          (parent.arguments ?? []).slice(position + 1).every(isInertValue) &&
+          declaration.parameters
+            .slice(0, position)
+            .every(
+              (earlier) =>
+                ts.isIdentifier(earlier.name) &&
+                (earlier.initializer === undefined || isInertValue(earlier.initializer)),
+            ),
+      }
+    : undefined;
+};
+
+// A hole of a literal that an array pattern takes, which reads what Array.prototype holds at its
+// index, where nothing that runs before the pattern reads it may change Array.prototype.
+const translatePatternHole = (
+  node: ts.OmittedExpression,
+  literal: ts.ArrayLiteralExpression,
+  scope: Scope,
+  context: Context,
+) => {
+  const source = getSourcePattern(literal, context);
+  if (source === undefined) return undefined;
+  if (context.heap === undefined) return getUndefined(context);
+  const lastHole = literal.elements.reduce(
+    (last, element, position) => (ts.isOmittedExpression(element) ? position : last),
+    0,
+  );
+  if (!source.isDirect || !isInertBefore(source.pattern, lastHole)) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't read the holes of an array that a pattern takes after code runs",
+      node,
+    );
+  }
+  return useJavaScript(
+    "Get",
+    [
+      getHeap(scope, literal, context),
+      translateBuiltInValue("Array.prototype", literal, context),
+      string(String(literal.elements.indexOf(node))),
+    ],
+    context,
   );
 };
 
@@ -1826,7 +2704,7 @@ const translateOptionalChain = (node: ts.Expression, scope: Scope, context: Cont
           ts.isElementAccessExpression(link) ||
           ts.isCallExpression(link)) &&
         link.questionDotToken !== undefined &&
-        !scope.results.has(link.expression),
+        scope.checked?.has(link) !== true,
     )
     .at(-1);
   if (optional === undefined || !ts.isOptionalChain(optional)) return undefined;
@@ -1842,7 +2720,11 @@ const translateOptionalChain = (node: ts.Expression, scope: Scope, context: Cont
       identifier("Undefined"),
       translateExpression(
         node,
-        { ...scope, results: new Map([...scope.results, [base, shared]]) },
+        {
+          ...scope,
+          results: new Map([...scope.results, [base, shared]]),
+          checked: new Set([...(scope.checked ?? []), optional]),
+        },
         context,
       ),
     ),
@@ -1860,13 +2742,11 @@ const translateNode = (
     !(ts.isOptionalChain(node.parent) && node.parent.expression === node);
   const chain = isChainEnd ? translateOptionalChain(node, scope, context) : undefined;
   if (chain !== undefined) return chain;
-  if (
-    ts.isOmittedExpression(node) &&
-    ts.isArrayLiteralExpression(node.parent) &&
-    isPatternSource(node.parent, context)
-  ) {
-    return getUndefined(context);
-  }
+  const hole =
+    ts.isOmittedExpression(node) && ts.isArrayLiteralExpression(node.parent)
+      ? translatePatternHole(node, node.parent, scope, context)
+      : undefined;
+  if (hole !== undefined) return hole;
   if (
     ts.isParenthesizedExpression(node) ||
     ts.isAsExpression(node) ||
@@ -1880,21 +2760,88 @@ const translateNode = (
   }
   const result = scope.results.get(node);
   if (result !== undefined) return result;
-  const isReceived =
-    node.kind === ts.SyntaxKind.ThisKeyword &&
-    ts.findAncestor(
+  const thisOwner = node.kind === ts.SyntaxKind.ThisKeyword ? getThisOwner(node) : undefined;
+  if (thisOwner !== undefined && thisOwner === scope.receiver?.method) return scope.receiver.value;
+  // An arrow function that a call took names the this of where it was written.
+  const arrow = ts.findAncestor(
+    node,
+    (ancestor) =>
+      ancestor === thisOwner ||
+      (ts.isArrowFunction(ancestor) && scope.arrowReceivers?.get(ancestor)?.method === thisOwner),
+  );
+  const arrowReceiver = arrow === undefined ? undefined : scope.arrowReceivers?.get(arrow);
+  if (thisOwner !== undefined && arrowReceiver !== undefined) return arrowReceiver.value;
+  // new.target, which a construction gives its constructor and a call gives as undefined. An arrow
+  // function reads its owner's, so only one that runs where it's made can read it.
+  if (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.NewKeyword) {
+    const owner = ts.findAncestor(
       node.parent,
       (ancestor) =>
         (ts.isFunctionLike(ancestor) && !ts.isArrowFunction(ancestor)) ||
         ts.isClassStaticBlockDeclaration(ancestor) ||
-        ts.isPropertyDeclaration(ancestor),
-    ) === scope.receiver?.method;
-  if (isReceived && scope.receiver !== undefined) return scope.receiver.value;
+        ts.isPropertyDeclaration(ancestor) ||
+        (ts.isArrowFunction(ancestor) &&
+          !(
+            ts.isParenthesizedExpression(ancestor.parent) &&
+            ts.isCallExpression(ancestor.parent.parent) &&
+            ancestor.parent.parent.expression === ancestor.parent
+          )),
+    );
+    if (owner === undefined || ts.isArrowFunction(owner)) {
+      throw new TlaTypeScriptError(`Unsupported expression: ${node.getText()}`, node);
+    }
+    if (scope.receiver?.method === owner) {
+      return scope.receiver.newTarget ?? getUndefined(context);
+    }
+    if (ts.isConstructorDeclaration(owner)) {
+      throw new TlaTypeScriptError(`Unsupported expression: ${node.getText()}`, node);
+    }
+    return getUndefined(context);
+  }
+  // A module's this is undefined, which an arrow function outside any other function reads too.
+  if (
+    node.kind === ts.SyntaxKind.ThisKeyword &&
+    ts.isSourceFile(
+      ts.findAncestor(
+        node.parent,
+        (ancestor) =>
+          ts.isSourceFile(ancestor) ||
+          (ts.isFunctionLike(ancestor) && !ts.isArrowFunction(ancestor)) ||
+          ts.isClassLike(ancestor),
+      ) ?? node,
+    ) &&
+    isModuleFile(node.getSourceFile())
+  ) {
+    return getUndefined(context);
+  }
+  // A static field's or static block's this is its class, which an arrow function there reads
+  // wherever it runs, where nothing assigns the class's name.
+  const staticClass =
+    thisOwner !== undefined &&
+    (ts.isClassStaticBlockDeclaration(thisOwner) ||
+      (ts.isPropertyDeclaration(thisOwner) &&
+        (ts.getCombinedModifierFlags(thisOwner) & ts.ModifierFlags.Static) !== 0)) &&
+    ts.isClassDeclaration(thisOwner.parent)
+      ? thisOwner.parent.name
+      : undefined;
+  const staticSymbol = staticClass && getSymbol(staticClass, context.checker);
+  if (
+    staticClass !== undefined &&
+    staticSymbol !== undefined &&
+    !isAssigned(staticSymbol, node.getSourceFile(), context)
+  ) {
+    return translateExpression(staticClass, scope, context);
+  }
+  if (ts.isBigIntLiteral(node)) {
+    const value = BigInt(node.text.slice(0, -1).replaceAll("_", ""));
+    if (value > 2n ** 31n - 1n) {
+      throw new TlaTypeScriptError(`TLC's integers have 32 bits, so ${node.text} is too big`, node);
+    }
+    return translateBigInt(Number(value), context);
+  }
   if (ts.isNumericLiteral(node)) {
     const value = Number(node.text);
-    if (!Number.isInteger(value)) {
-      throw new TlaTypeScriptError(`Only integers are supported: ${node.text}`, node);
-    }
+    if (!Number.isInteger(value)) return translateFraction(value, node, context);
     if (value > 2 ** 31 - 1) {
       throw new TlaTypeScriptError(`TLC's integers have 32 bits, so ${node.text} is too big`, node);
     }
@@ -1904,18 +2851,52 @@ const translateNode = (
     return translateString(node.text, context);
   }
   if (ts.isTemplateExpression(node)) return translateTemplate(node, scope, context);
+  if (
+    ts.isTaggedTemplateExpression(node) &&
+    ts.isPropertyAccessExpression(node.tag) &&
+    node.tag.name.text === "raw" &&
+    getBuiltIn(node.tag.expression, context) === "String"
+  ) {
+    return translateRawTemplate(node, scope, context);
+  }
   if (node.kind === ts.SyntaxKind.TrueKeyword) return boolean(true);
   if (node.kind === ts.SyntaxKind.FalseKeyword) return boolean(false);
   if (node.kind === ts.SyntaxKind.NullKeyword) {
     context.prelude.add("Null");
     return identifier("Null");
   }
-  if (ts.isIdentifier(node)) return translateIdentifier(node, scope, context);
+  if (ts.isIdentifier(node)) {
+    const value = translateIdentifier(node, scope, context);
+    // A name may hold what a read past an array's end gave, unless the script computes it.
+    return isNumberLike(node, context) &&
+      isNumericOperand(node, context) &&
+      !holdsComputedNumber(node, context)
+      ? guardNumber(value, context)
+      : value;
+  }
   if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
     return not(translateCondition(node.operand, scope, context));
   }
+  if (
+    ts.isPrefixUnaryExpression(node) &&
+    (node.operator === ts.SyntaxKind.MinusToken || node.operator === ts.SyntaxKind.TildeToken) &&
+    isBigIntLike(node.operand, context)
+  ) {
+    const negated = useJavaScript(
+      "BigIntNegate",
+      [translateExpression(node.operand, scope, context)],
+      context,
+    );
+    // ~x is -x - 1.
+    return node.operator === ts.SyntaxKind.MinusToken
+      ? negated
+      : useJavaScript("BigIntSubtract", [negated, translateBigInt(1, context)], context);
+  }
   if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.MinusToken) {
     const isLiteral = ts.isNumericLiteral(node.operand);
+    if (isLiteral && !Number.isInteger(Number(node.operand.text))) {
+      return translateFraction(-Number(node.operand.text), node, context);
+    }
     if (isLiteral && Number(node.operand.text) === 0 && !context.hasSpecialNumbers) {
       throw new TlaTypeScriptError("TLA+ integers have no negative zero", node);
     }
@@ -1948,7 +2929,7 @@ const translateNode = (
       translateExpression(node.whenFalse, scope, context),
     );
   }
-  if (ts.isArrayLiteralExpression(node) && !context.heapArrays.has(node)) {
+  if (ts.isArrayLiteralExpression(node) && !context.heapCollections.has(node)) {
     // A sequence has no properties but an array's, so a type that gives it others, as a script
     // writes them, needs an array that the heap holds.
     const checker = context.checker;
@@ -1964,18 +2945,34 @@ const translateNode = (
         member === undefined ||
         (member.flags & (ts.TypeFlags.Object | ts.TypeFlags.Intersection)) === 0 ||
         isSequenceType(member, checker) ||
-        // An iterable, such as a generator that a pattern takes, reads an array only as one.
-        member.getProperties().some((property) => property.name.startsWith("__@iterator"))
+        // An iterable, such as a generator that a pattern takes, or an async iterable, reads an
+        // array only as one.
+        member
+          .getProperties()
+          .some(
+            (property) =>
+              property.name.startsWith("__@iterator") ||
+              property.name.startsWith("__@asyncIterator"),
+          )
           ? []
           : member.getProperties().map((property) => property.name),
     );
     if (contextualKeys.some((key) => !arrayKeys.has(key))) {
       throw new TlaTypeScriptError("Use an array only as an array, not as an object", node);
     }
-    return translateArrayLiteral(node, scope, context);
+    return translateElements(node.elements, scope, context, node);
   }
   if (ts.isObjectLiteralExpression(node)) return translateObjectLiteral(node, scope, context);
-  if (ts.isPropertyAccessExpression(node)) return translatePropertyAccess(node, scope, context);
+  if (ts.isPropertyAccessExpression(node)) {
+    const read = translatePropertyAccess(node, scope, context);
+    // A property that the type doesn't declare comes from an index signature, which may lack it.
+    const checker = context.checker;
+    return checker
+      .getNonNullableType(checker.getTypeAtLocation(node.expression))
+      .getProperty(node.name.text) === undefined
+      ? toNumericRead(node, read, context)
+      : read;
+  }
   if (ts.isElementAccessExpression(node)) {
     return translateElementAccess(node, scope, context, isDefined);
   }
@@ -1989,7 +2986,24 @@ const translateNode = (
     }
     return allocated;
   }
-  if (ts.isCallExpression(node)) return translateCall(node, scope, context, isDefined);
+  if (ts.isCallExpression(node) && context.heapCollections.has(node)) {
+    const made = scope.allocated.get(node);
+    if (made === undefined) {
+      throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
+    }
+    return made;
+  }
+  const calledErrors = getCalledError(node, context);
+  if (ts.isCallExpression(node) && calledErrors !== undefined) {
+    return translateNewError(node, calledErrors, scope, context);
+  }
+  if (
+    ts.isCallExpression(node) &&
+    !isObjectConversion(node, context) &&
+    getNewClass(node, context) === undefined
+  ) {
+    return translateCall(node, scope, context, isDefined);
+  }
   if (ts.isTypeOfExpression(node)) return translateTypeOf(node, scope, context);
   // The operand runs though nothing reads it, as a comma's left operand does.
   if (ts.isVoidExpression(node)) {
@@ -2009,15 +3023,18 @@ const translateNode = (
       : undefined;
   if (errorClass !== undefined) return getConstructor(errorClass, context);
   const isHeapObject =
-    (ts.isArrayLiteralExpression(node) && context.heapArrays.has(node)) ||
+    ((ts.isArrayLiteralExpression(node) || isHoleyNewArray(node)) &&
+      context.heapCollections.has(node)) ||
     (ts.isClassExpression(node) && isHeapClass(node, context)) ||
     isHeapFunction(node, context) ||
     isFunctionObject(node, context) ||
     isNestedFunction(node, context) ||
     getNewClass(node, context) !== undefined ||
+    isHeldError(node, context) ||
     isNewObject(node, context) ||
     isNewDate(node, context) ||
     isNewProxy(node, context) ||
+    getNewBuffer(node, context) !== undefined ||
     getNewWrapper(node, context) !== undefined;
   if (isHeapObject) {
     const allocated = scope.allocated.get(node);
@@ -2026,17 +3043,48 @@ const translateNode = (
     }
     return allocated;
   }
-  // new Object of an object gives the object.
-  const passed = ts.isNewExpression(node) ? node.arguments?.at(0) : undefined;
+  // new Object, or Object, of an object gives the object.
+  const passed = isObjectConversion(node, context) ? node.arguments?.at(0) : undefined;
   if (
-    ts.isNewExpression(node) &&
+    isObjectConversion(node, context) &&
     passed !== undefined &&
     node.arguments?.length === 1 &&
-    getBuiltIn(node.expression, context) === "Object" &&
-    isHeapType(context.checker.getTypeAtLocation(node), node, context) &&
+    isHeapType(context.checker.getTypeAtLocation(node), context) &&
     (getKind(passed, context) === "object" || isBuiltInObject(passed, context))
   ) {
     return translateObjectValue(passed, scope, context);
+  }
+  // Any other object, such as an array that a sequence holds or an error, is given back too, where
+  // the call's type keeps its kind. A property's value may not have its type, as
+  // Object.defineProperty can give it any.
+  const passedTypes =
+    passed === undefined
+      ? undefined
+      : getTypeNames(context.checker.getTypeAtLocation(passed), context.checker);
+  if (
+    isObjectConversion(node, context) &&
+    passed !== undefined &&
+    node.arguments?.length === 1 &&
+    !ts.isPropertyAccessExpression(skipCasts(passed)) &&
+    !ts.isElementAccessExpression(skipCasts(passed)) &&
+    passedTypes !== undefined &&
+    passedTypes.length > 0 &&
+    passedTypes.every((name) => name === "object" || name === "function") &&
+    getKind(node, context) === getKind(passed, context)
+  ) {
+    return translateExpression(passed, scope, context);
+  }
+  // A set or a map that the heap holds, which a statement makes.
+  if (
+    ts.isNewExpression(node) &&
+    context.heapCollections.has(node) &&
+    ["Set", "Map"].includes(getBuiltIn(node.expression, context) ?? "")
+  ) {
+    const made = scope.allocated.get(node);
+    if (made === undefined) {
+      throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
+    }
+    return made;
   }
   if (ts.isNewExpression(node)) {
     const classes = getErrorClass(getSymbol(node.expression, context.checker), context.checker);

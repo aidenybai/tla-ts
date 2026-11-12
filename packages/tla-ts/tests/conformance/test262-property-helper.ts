@@ -3,7 +3,7 @@
 /* oxlint-disable no-unused-vars */
 
 interface Properties {
-  [key: string]: unknown;
+  [key: PropertyKey]: unknown;
 }
 
 interface VerifyOptions {
@@ -13,7 +13,7 @@ interface VerifyOptions {
 
 function verifyProperty(
   obj: object,
-  name: string,
+  name: PropertyKey,
   desc: PropertyDescriptor | undefined,
   options?: VerifyOptions,
 ) {
@@ -94,7 +94,7 @@ function verifyProperty(
   return true;
 }
 
-function isConfigurable(obj: object, name: string) {
+function isConfigurable(obj: object, name: PropertyKey) {
   try {
     delete (obj as Properties)[name];
   } catch (e) {
@@ -107,7 +107,7 @@ function isConfigurable(obj: object, name: string) {
 
 // for-in visits every own enumerable key, so propertyHelper.js's for-in that looks for name
 // agrees with propertyIsEnumerable, and a function that computes a value can't loop.
-function isEnumerable(obj: object, name: string) {
+function isEnumerable(obj: object, name: PropertyKey) {
   return (
     Object.prototype.hasOwnProperty.call(obj, name) &&
     Object.prototype.propertyIsEnumerable.call(obj, name)
@@ -120,7 +120,7 @@ function isSameValue(a: unknown, b: unknown) {
 
 // propertyHelper.js tells whether a caller gave value by arguments.length, which only
 // verifyWritable does.
-function isWritable(obj: object, name: string, verifyProp?: string | null, value?: unknown) {
+function isWritable(obj: object, name: PropertyKey, verifyProp?: string | null, value?: unknown) {
   const properties = obj as Properties;
   // propertyHelper.js writes 2 ** 32 - 1 to an array's length, which TLC's integers can't hold,
   // and tla-ts can't read an array's properties by name, so it never verifies one.
@@ -156,7 +156,7 @@ function isWritable(obj: object, name: string, verifyProp?: string | null, value
   return writeSucceeded;
 }
 
-function verifyEqualTo(obj: object, name: string, value: unknown) {
+function verifyEqualTo(obj: object, name: PropertyKey, value: unknown) {
   if (!isSameValue((obj as Properties)[name], value)) {
     throw new Test262Error(
       "Expected obj[" +
@@ -169,7 +169,12 @@ function verifyEqualTo(obj: object, name: string, value: unknown) {
   }
 }
 
-function verifyWritable(obj: object, name: string, verifyProp?: string | null, value?: unknown) {
+function verifyWritable(
+  obj: object,
+  name: PropertyKey,
+  verifyProp?: string | null,
+  value?: unknown,
+) {
   if (verifyProp === undefined || verifyProp === null || verifyProp === "") {
     assert(
       Object.getOwnPropertyDescriptor(obj, name)!.writable,
@@ -183,7 +188,12 @@ function verifyWritable(obj: object, name: string, verifyProp?: string | null, v
 }
 
 // propertyHelper.js takes a value here too, which it doesn't use.
-function verifyNotWritable(obj: object, name: string, verifyProp?: string | null, value?: unknown) {
+function verifyNotWritable(
+  obj: object,
+  name: PropertyKey,
+  verifyProp?: string | null,
+  value?: unknown,
+) {
   if (verifyProp === undefined || verifyProp === null || verifyProp === "") {
     assert(
       Object.getOwnPropertyDescriptor(obj, name)!.writable !== true,
@@ -196,7 +206,7 @@ function verifyNotWritable(obj: object, name: string, verifyProp?: string | null
   }
 }
 
-function verifyEnumerable(obj: object, name: string) {
+function verifyEnumerable(obj: object, name: PropertyKey) {
   assert(
     Object.getOwnPropertyDescriptor(obj, name)!.enumerable,
     "Expected obj[" + String(name) + "] to have enumerable:true.",
@@ -206,7 +216,7 @@ function verifyEnumerable(obj: object, name: string) {
   }
 }
 
-function verifyNotEnumerable(obj: object, name: string) {
+function verifyNotEnumerable(obj: object, name: PropertyKey) {
   assert(
     Object.getOwnPropertyDescriptor(obj, name)!.enumerable !== true,
     "Expected obj[" + String(name) + "] to have enumerable:false.",
@@ -216,7 +226,7 @@ function verifyNotEnumerable(obj: object, name: string) {
   }
 }
 
-function verifyConfigurable(obj: object, name: string) {
+function verifyConfigurable(obj: object, name: PropertyKey) {
   assert(
     Object.getOwnPropertyDescriptor(obj, name)!.configurable,
     "Expected obj[" + String(name) + "] to have configurable:true.",
@@ -227,7 +237,7 @@ function verifyConfigurable(obj: object, name: string) {
   }
 }
 
-function verifyNotConfigurable(obj: object, name: string) {
+function verifyNotConfigurable(obj: object, name: PropertyKey) {
   assert(
     Object.getOwnPropertyDescriptor(obj, name)!.configurable !== true,
     "Expected obj[" + String(name) + "] to have configurable:false.",
@@ -240,7 +250,7 @@ function verifyNotConfigurable(obj: object, name: string) {
 
 function verifyPrimordialProperty(
   obj: object,
-  name: string,
+  name: PropertyKey,
   desc: PropertyDescriptor | undefined,
   options?: VerifyOptions,
 ) {

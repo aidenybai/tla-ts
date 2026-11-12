@@ -2,6 +2,8 @@ import ts from "@typescript/typescript6";
 import type { ExceptPathStep, Expression, OperatorDefinition, OperatorParam } from "../ast";
 import {
   type Context,
+  findNodes,
+  getCallee,
   getHeapClass,
   getSymbol,
   getUndefined,
@@ -11,8 +13,11 @@ import {
   translateString,
   type Unknown,
   getBound,
+  isHeldErrorName,
   isNestedFunction,
+  isRestOnly,
 } from "./context";
+import { isHeldBuiltInObject } from "./intrinsics";
 import { KEYWORDS } from "../lexer";
 import { TlaTypeScriptError } from "../errors";
 import {
@@ -74,6 +79,24 @@ export const isEvery = (type: ts.Type, flags: ts.TypeFlags): boolean =>
     : (type.flags & flags) !== 0;
 
 // The plain objects that built-in functions take or give.
+// The type of each typed array's elements. tla-ts stops where a script makes a BigInt array.
+export const TYPED_ARRAYS = new Map(
+  [
+    "Int8",
+    "Uint8",
+    "Uint8Clamped",
+    "Int16",
+    "Uint16",
+    "Int32",
+    "Uint32",
+    "Float16",
+    "Float32",
+    "Float64",
+    "BigInt64",
+    "BigUint64",
+  ].map((type) => [`${type}Array`, type]),
+);
+
 const LIBRARY_OBJECTS = new Set([
   "Promise",
   "PromiseFulfilledResult",
@@ -81,13 +104,34 @@ const LIBRARY_OBJECTS = new Set([
   "PropertyDescriptor",
   "TypedPropertyDescriptor",
   "PropertyDescriptorMap",
+  "ProxyHandler",
   "IteratorYieldResult",
   "IteratorReturnResult",
+  "ArrayIterator",
   "IArguments",
+  "ArrayLike",
   "Date",
+  "ArrayBuffer",
+  "SharedArrayBuffer",
+  "DataView",
+  "DisposableStack",
+  "AsyncDisposableStack",
+  "Int8Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int16Array",
+  "Uint16Array",
+  "Int32Array",
+  "Uint32Array",
+  "Float16Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
   "Boolean",
   "Number",
   "String",
+  "Symbol",
 ]);
 
 // An object type, or the object type, which any object may have.
@@ -98,6 +142,11 @@ const isPlainObject = (type: ts.Type, context: Context): boolean => {
   if (readonly !== undefined) return isPlainObject(readonly, context);
   if (type.isIntersection()) return type.types.every((member) => isPlainObject(member, context));
   if ((type.flags & ts.TypeFlags.NonPrimitive) !== 0) return true;
+  // The global object, which typeof globalThis types, and whose properties a script reads from
+  // the heap.
+  if (symbol?.name === "globalThis" && (symbol.flags & ts.SymbolFlags.ValueModule) !== 0) {
+    return true;
+  }
   const declaration = symbol?.valueDeclaration;
   if (
     declaration !== undefined &&
@@ -105,6 +154,16 @@ const isPlainObject = (type: ts.Type, context: Context): boolean => {
       isHeapFunction(declaration, context) ||
       isFunctionObject(declaration, context) ||
       isNestedFunction(declaration, context))
+  ) {
+    return true;
+  }
+  // A typed array's constructor, which a variable may hold where a script picks one, and whose
+  // properties a script reads from the heap.
+  const constructed = symbol?.name.match(/^(.+Array)Constructor$/)?.[1];
+  if (
+    constructed !== undefined &&
+    TYPED_ARRAYS.has(constructed) &&
+    (symbol?.declarations ?? []).every((inner) => inner.getSourceFile().isDeclarationFile)
   ) {
     return true;
   }
@@ -125,13 +184,18 @@ const isPlainObject = (type: ts.Type, context: Context): boolean => {
         (LIBRARY_OBJECTS.has(symbol.name) ||
           // A mapped type, such as Record or Partial, whose declaration the library writes.
           ((type as ts.ObjectType).objectFlags & ts.ObjectFlags.Mapped) !== 0 ||
-          // The object that Proxy.revocable gives, whose type its declaration writes in place.
-          (symbol.declarations ?? []).some(
-            (declaration) =>
+          // The objects that Proxy.revocable and Object.getOwnPropertyDescriptors give, whose
+          // types their declarations write in place.
+          (symbol.declarations ?? []).some((declaration) => {
+            const signature = ts.isIntersectionTypeNode(declaration.parent)
+              ? declaration.parent.parent
+              : declaration.parent;
+            return (
               ts.isTypeLiteralNode(declaration) &&
-              ts.isMethodSignature(declaration.parent) &&
-              declaration.parent.name.getText() === "revocable",
-          ) ||
+              ts.isMethodSignature(signature) &&
+              ["revocable", "getOwnPropertyDescriptors"].includes(signature.name.getText())
+            );
+          }) ||
           (symbol.declarations ?? []).every(
             (declaration) => !declaration.getSourceFile().isDeclarationFile,
           )))
@@ -143,28 +207,73 @@ export const hasHeapType = (type: ts.Type, context: Context) =>
   context.heap !== undefined &&
   (type.isUnion() ? type.types : [type]).some((member) => isPlainObject(member, context));
 
-export const isHeapType = (type: ts.Type, node: ts.Node | undefined, context: Context) => {
-  if (context.heap === undefined) return false;
-  const members = type.isUnion() ? type.types : [type];
-  const objects = members.filter((member) => isPlainObject(member, context));
-  if (objects.length > 0 && objects.length < members.length) {
-    throw new TlaTypeScriptError("Give this either objects or other values", node);
+// Whether every value of a type is an object in the heap. A union that mixes objects with other
+// values holds references beside them, which TypeOf tells apart, and which a script narrows to
+// read a property.
+export const isHeapType = (type: ts.Type, context: Context) =>
+  context.heap !== undefined &&
+  (type.isUnion() ? type.types : [type]).every((member) => isPlainObject(member, context));
+
+// Whether a pattern reads the properties of an object in the heap rather than the fields of a
+// value, which it can't tell where the value may be either.
+export const isHeapPattern = (type: ts.Type, pattern: ts.Node, context: Context) => {
+  if (hasHeapType(type, context) && !isHeapType(type, context)) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't destructure a value that may be an object or another value",
+      pattern,
+    );
   }
-  return objects.length > 0;
+  return isHeapType(type, context);
 };
 
-// In a script with objects, a value of type any may be an object, so its properties are unknown.
+// In a script with objects, a value of type any may be an object, so its properties are unknown,
+// as are those of a value that a union types as an object or another value.
 export const rejectAnyReceiver = (node: ts.Expression, context: Context) => {
-  if (
-    context.heap !== undefined &&
-    (context.checker.getTypeAtLocation(node).flags & ts.TypeFlags.Any) !== 0 &&
-    getKind(node, context) !== "object"
-  ) {
+  if (context.heap === undefined || getKind(node, context) === "object") return;
+  const type = context.checker.getTypeAtLocation(node);
+  if ((type.flags & ts.TypeFlags.Any) !== 0) {
     throw new TlaTypeScriptError("Give this value a type to use its properties", node);
+  }
+  if (hasHeapType(type, context)) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't read a property of a value that may be an object or another value",
+      node,
+    );
   }
 };
 
 // The array literal that an expression is, or that the variable it names holds.
+// new Array(length), which makes an array of holes, for a length short enough to list them.
+export const isHoleyNewArray = (node: ts.Node): node is ts.NewExpression => {
+  const length = ts.isNewExpression(node) ? node.arguments?.at(0) : undefined;
+  return (
+    ts.isNewExpression(node) &&
+    node.expression.getText() === "Array" &&
+    node.arguments?.length === 1 &&
+    length !== undefined &&
+    ts.isNumericLiteral(length) &&
+    Number.isInteger(Number(length.text)) &&
+    Number(length.text) > 0 &&
+    Number(length.text) <= 64
+  );
+};
+
+// The array literal, or the new Array of holes, that an expression or the variable it names holds.
+export const getArraySource = (node: ts.Expression, context: Context) => {
+  const declaration = ts.isIdentifier(node)
+    ? getSymbol(node, context.checker)?.valueDeclaration
+    : undefined;
+  const initializer =
+    declaration !== undefined && ts.isVariableDeclaration(declaration)
+      ? declaration.initializer
+      : undefined;
+  return (
+    getArrayLiteral(node, context) ??
+    (isHoleyNewArray(node) ? node : undefined) ??
+    (initializer !== undefined && isHoleyNewArray(initializer) ? initializer : undefined)
+  );
+};
+
 export const getArrayLiteral = (node: ts.Expression, context: Context) => {
   if (ts.isArrayLiteralExpression(node)) return node;
   const declaration = ts.isIdentifier(node)
@@ -178,17 +287,138 @@ export const getArrayLiteral = (node: ts.Expression, context: Context) => {
     : undefined;
 };
 
+// The fields that a property access or an element access reads, where its key names them: a
+// literal, or a union of literals. It's undefined where tla-ts can't tell.
+export const getAccessedFields = (node: ts.Node, checker: ts.TypeChecker) => {
+  if (ts.isPropertyAccessExpression(node) && !ts.isPrivateIdentifier(node.name)) {
+    const symbol = checker.getSymbolAtLocation(node.name);
+    return symbol === undefined ? undefined : [symbol];
+  }
+  if (!ts.isElementAccessExpression(node)) return undefined;
+  const keyType = checker.getTypeAtLocation(node.argumentExpression);
+  const keys = keyType.isUnion() ? keyType.types : [keyType];
+  const objectType = checker.getNonNullableType(checker.getTypeAtLocation(node.expression));
+  const fields = keys.map((key) =>
+    key.isStringLiteral() ? checker.getPropertyOfType(objectType, key.value) : undefined,
+  );
+  return fields.every((field) => field !== undefined)
+    ? fields.filter((field) => field !== undefined)
+    : undefined;
+};
+
+// The function that a call names, where a script declares it or binds it to a constant, and that
+// gives what it returns as it is.
+export const getCalledFunction = (node: ts.CallExpression, checker: ts.TypeChecker) => {
+  const declaration = ts.isIdentifier(node.expression)
+    ? getSymbol(node.expression, checker)?.valueDeclaration
+    : undefined;
+  const owner =
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    (declaration.parent.flags & ts.NodeFlags.Const) !== 0
+      ? declaration.initializer
+      : declaration;
+  return owner !== undefined &&
+    (ts.isFunctionDeclaration(owner) ||
+      ts.isArrowFunction(owner) ||
+      ts.isFunctionExpression(owner)) &&
+    owner.asteriskToken === undefined &&
+    !(ts.getCombinedModifierFlags(owner) & ts.ModifierFlags.Async)
+    ? owner
+    : undefined;
+};
+
+// The type that a declaration writes for the elements of the arrays it holds.
+export const getElementTypeNode = (declaration: ts.Declaration) =>
+  (ts.isPropertySignature(declaration) || ts.isVariableDeclaration(declaration)) &&
+  declaration.type !== undefined &&
+  ts.isArrayTypeNode(declaration.type)
+    ? declaration.type.elementType
+    : undefined;
+
+// The variables and fields that an expression names, which hold what it gives.
+export const getHolders = (node: ts.Expression, checker: ts.TypeChecker) => {
+  const symbol = ts.isIdentifier(node) ? getSymbol(node, checker) : undefined;
+  return getAccessedFields(node, checker) ?? (symbol === undefined ? [] : [symbol]);
+};
+
+// Whether an expression gives a set or a map that the heap holds, which keeps its identity as a
+// script changes it in place.
+export const isHeapSetOrMap = (node: ts.Expression, context: Context) => {
+  if (context.heapCollections.size === 0) return false;
+  const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(node));
+  return (isSetType(type) || isMapType(type)) && isHeld(node, context);
+};
+
 export const isHeapArray = (node: ts.Expression, context: Context) => {
-  if (context.heapArrays.size === 0) return false;
-  const literal = getArrayLiteral(node, context);
+  if (context.heapCollections.size === 0) return false;
+  const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(node));
+  return !isSetType(type) && !isMapType(type) && isHeld(node, context);
+};
+
+// Whether an expression gives a collection that the heap holds: a literal or a new set or map that
+// it holds, or what a holder of them gives.
+const isHeld = (node: ts.Expression, context: Context): boolean => {
+  if (ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node)) {
+    return isHeld(node.expression, context);
+  }
+  // An element of the arrays that a holder holds, where the heap holds those elements.
+  const isElementHeld = (outer: ts.Expression) => {
+    const holders = getHolders(outer, context.checker);
+    return (
+      holders.length > 0 &&
+      holders.every((holder) =>
+        (holder.declarations ?? []).every((declaration) => {
+          const element = getElementTypeNode(declaration);
+          return element !== undefined && context.heapCollections.has(element);
+        }),
+      )
+    );
+  };
+  if (ts.isCallExpression(node)) {
+    const called = getCalledFunction(node, context.checker);
+    return called !== undefined
+      ? context.heapCollections.has(called)
+      : ts.isPropertyAccessExpression(node.expression) &&
+          node.expression.name.text === "at" &&
+          isElementHeld(node.expression.expression);
+  }
+  if (
+    ts.isElementAccessExpression(node) &&
+    getAccessedFields(node, context.checker) === undefined &&
+    isNumberLike(node.argumentExpression, context)
+  ) {
+    return isElementHeld(node.expression);
+  }
+  if (ts.isConditionalExpression(node)) {
+    return isHeld(node.whenTrue, context) && isHeld(node.whenFalse, context);
+  }
+  const literal = getArraySource(node, context);
   const declaration = ts.isIdentifier(node)
     ? getSymbol(node, context.checker)?.valueDeclaration
     : undefined;
+  const fields = getAccessedFields(node, context.checker);
+  const called = ts.isCallExpression(node)
+    ? getSymbol(node.expression, context.checker)?.valueDeclaration
+    : undefined;
+  const returning =
+    called !== undefined && ts.isVariableDeclaration(called) ? called.initializer : called;
   return (
-    (literal !== undefined && context.heapArrays.has(literal)) ||
+    (returning !== undefined && context.heapCollections.has(returning)) ||
+    (literal !== undefined && context.heapCollections.has(literal)) ||
+    (ts.isNewExpression(node) && context.heapCollections.has(node)) ||
     (declaration !== undefined &&
-      ts.isBindingElement(declaration) &&
-      context.heapArrays.has(declaration))
+      (ts.isBindingElement(declaration) ||
+        ts.isParameter(declaration) ||
+        ts.isVariableDeclaration(declaration)) &&
+      context.heapCollections.has(declaration)) ||
+    (fields !== undefined &&
+      fields.length > 0 &&
+      fields.every((field) =>
+        (field.declarations ?? []).some((fieldDeclaration) =>
+          context.heapCollections.has(fieldDeclaration),
+        ),
+      ))
   );
 };
 
@@ -225,9 +455,41 @@ const isRegExpGroups = (node: ts.Expression, context: Context): boolean => {
         );
 };
 
+export const ITERATOR_METHODS = ["keys", "values", "entries"];
+
+// The kind of iterator that a call of an array's keys(), values(), entries(), or [Symbol.iterator]()
+// makes, where no for-of or spread reads it at once, so that the iterator is an object.
+export const getKeptIterator = (node: ts.Node, context: Context) => {
+  if (
+    !ts.isCallExpression(node) ||
+    node.arguments.length > 0 ||
+    !(
+      ts.isPropertyAccessExpression(node.expression) ||
+      ts.isElementAccessExpression(node.expression)
+    ) ||
+    !isSequenceType(
+      context.checker.getTypeAtLocation(node.expression.expression),
+      context.checker,
+    ) ||
+    (ts.isForOfStatement(node.parent) && node.parent.expression === node) ||
+    ts.isSpreadElement(node.parent)
+  ) {
+    return undefined;
+  }
+  const callee = node.expression;
+  if (ts.isPropertyAccessExpression(callee) && ITERATOR_METHODS.includes(callee.name.text)) {
+    return callee.name.text;
+  }
+  return ts.isElementAccessExpression(callee) &&
+    callee.argumentExpression.getText() === "Symbol.iterator"
+    ? "values"
+    : undefined;
+};
+
 export const getKind = (node: ts.Expression, context: Context): Kind => {
   if (isHeapArray(node, context) || getBound(node, context) !== undefined) return "object";
   const checker = context.checker;
+  if (isHeldErrorName(node, context)) return "object";
   // An object stays one where TypeScript narrows its type, as instanceof Object narrows it to the
   // library's Object.
   const symbol = ts.isIdentifier(node) ? getSymbol(node, checker) : undefined;
@@ -243,6 +505,30 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
   ) {
     return "object";
   }
+  if (
+    declared !== undefined &&
+    symbol !== undefined &&
+    (declared.flags & ts.TypeFlags.Any) !== 0 &&
+    isRestOnly(symbol, context)
+  ) {
+    return "object";
+  }
+  // A variable that holds the prototype of an array iterator, which getPrototypeOf types as any.
+  const initializer =
+    symbol?.valueDeclaration !== undefined && ts.isVariableDeclaration(symbol.valueDeclaration)
+      ? symbol.valueDeclaration.initializer
+      : undefined;
+  if (
+    context.heap !== undefined &&
+    initializer !== undefined &&
+    ts.isCallExpression(initializer) &&
+    initializer.expression.getText() === "Object.getPrototypeOf" &&
+    initializer.arguments.length === 1 &&
+    getKeptIterator(initializer.arguments[0], context) !== undefined
+  ) {
+    return "object";
+  }
+  if (isHeldBuiltInObject(node, context)) return "object";
   const type = checker.getNonNullableType(checker.getTypeAtLocation(node));
   if (isRegExpArray(type)) return context.heap === undefined ? "other" : "object";
   if (
@@ -260,7 +546,7 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
     ts.isPropertyAccessExpression(node) &&
     node.name.text === "prototype" &&
     getHeapClass(node.expression, context) !== undefined;
-  return isFunctionPrototype || isHeapType(type, node, context) ? "object" : "other";
+  return isFunctionPrototype || isHeapType(type, context) ? "object" : "other";
 };
 
 const getMembers = (node: ts.Node, context: Context) => {
@@ -268,11 +554,34 @@ const getMembers = (node: ts.Node, context: Context) => {
   return type.isUnion() ? type.types : [type];
 };
 
+// An iterator helper, which Iterator.prototype's methods type as an IteratorObject, steps as a
+// generator does.
 const isGeneratorMember = (type: ts.Type) =>
-  ["Generator", "AsyncGenerator"].includes(type.getSymbol()?.name ?? "");
+  ["Generator", "AsyncGenerator", "IteratorObject"].includes(type.getSymbol()?.name ?? "");
 
 export const isGeneratorType = (node: ts.Node, context: Context) =>
   getMembers(node, context).every(isGeneratorMember);
+
+export const mayBeGeneratorType = (node: ts.Node, context: Context) =>
+  getMembers(node, context).some(isGeneratorMember);
+
+// An array written in place that an async generator's yield* yields each element of, which a
+// for await that takes a pattern from each follows.
+const isAsyncDelegated = (node: ts.ArrayLiteralExpression) => {
+  const outer = ts.findAncestor(node.parent, (ancestor) => !ts.isParenthesizedExpression(ancestor));
+  const generator = ts.findAncestor(node, ts.isFunctionLike);
+  return (
+    outer !== undefined &&
+    ts.isYieldExpression(outer) &&
+    outer.asteriskToken !== undefined &&
+    generator !== undefined &&
+    (ts.isFunctionExpression(generator) ||
+      ts.isFunctionDeclaration(generator) ||
+      ts.isMethodDeclaration(generator)) &&
+    generator.asteriskToken !== undefined &&
+    (ts.getCombinedModifierFlags(generator) & ts.ModifierFlags.Async) !== 0
+  );
+};
 
 // A variable that a declaration without a type or a value gives a type that follows what it's
 // assigned.
@@ -309,21 +618,88 @@ const isPatternDefaultReturn = (node: ts.ReturnStatement) => {
   );
 };
 
+// An argument of a call of a function whose parameter only compares it to other values, with
+// Object.is, === or !==.
+const isComparedArgument = (node: ts.Expression, call: ts.CallExpression, context: Context) => {
+  const position = call.arguments.findIndex(
+    (argument) => ts.findAncestor(node, (ancestor) => ancestor === argument) !== undefined,
+  );
+  const callee = getCallee(call.expression, context);
+  const parameter = callee?.parameters[position];
+  const symbol =
+    parameter !== undefined && ts.isIdentifier(parameter.name)
+      ? getSymbol(parameter.name, context.checker)
+      : undefined;
+  const body = callee?.body;
+  if (symbol === undefined || body === undefined) return false;
+  return findNodes(
+    body,
+    (inner): inner is ts.Identifier =>
+      ts.isIdentifier(inner) && getSymbol(inner, context.checker) === symbol,
+  ).every((reference) => {
+    const user = ts.findAncestor(
+      reference.parent,
+      (ancestor) => !ts.isParenthesizedExpression(ancestor),
+    );
+    return (
+      user !== undefined &&
+      ((ts.isBinaryExpression(user) &&
+        [
+          ts.SyntaxKind.EqualsEqualsEqualsToken,
+          ts.SyntaxKind.ExclamationEqualsEqualsToken,
+        ].includes(user.operatorToken.kind)) ||
+        (ts.isCallExpression(user) &&
+          ts.isPropertyAccessExpression(user.expression) &&
+          user.expression.name.text === "is" &&
+          ts.isIdentifier(user.expression.expression) &&
+          user.expression.expression.text === "Object" &&
+          (getSymbol(user.expression, context.checker)?.declarations ?? []).every(
+            (declaration) => declaration.getSourceFile().isDeclarationFile,
+          )))
+    );
+  });
+};
+
+// The methods of Iterator.prototype that consume what an iterator gives.
+export const ITERATOR_CONSUMERS = new Set([
+  "toArray",
+  "forEach",
+  "some",
+  "every",
+  "find",
+  "reduce",
+]);
+
+// The methods of Iterator.prototype that make an iterator helper, which tla-ts follows.
+export const ITERATOR_HELPERS = new Set(["map", "filter", "take", "drop"]);
+
 // A generator object goes only where tla-ts follows it: into a variable that holds generators, to a
-// call of its methods, into a comparison, or into a for await. Elsewhere, such as an array pattern, a spread, or a
-// function's parameter, code would iterate it in ways that tla-ts doesn't follow.
+// call of its methods or Iterator.prototype's, into a comparison, or into a for-of or a for await.
+// Elsewhere, such as an array pattern, a spread, or a function's parameter, code would iterate it
+// in ways that tla-ts doesn't follow.
 export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
   if (!getMembers(node, context).some(isGeneratorMember)) return;
   const outer = ts.findAncestor(node.parent, (ancestor) => !ts.isParenthesizedExpression(ancestor));
+  const isHeldBy = (assignment: ts.Node | undefined) =>
+    assignment !== undefined &&
+    ts.isBinaryExpression(assignment) &&
+    assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isIdentifier(assignment.left) &&
+    (isGeneratorType(assignment.left, context) || isAutoTyped(assignment.left, context));
   const isHeld =
     outer !== undefined &&
     ((ts.isVariableDeclaration(outer) &&
       ts.isIdentifier(outer.name) &&
       isGeneratorType(outer.name, context)) ||
+      isHeldBy(outer) ||
+      // A pattern that takes values from the generator, in an assignment whose value a variable
+      // then holds.
       (ts.isBinaryExpression(outer) &&
         outer.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-        ts.isIdentifier(outer.left) &&
-        (isGeneratorType(outer.left, context) || isAutoTyped(outer.left, context))) ||
+        ts.isArrayLiteralExpression(outer.left) &&
+        isHeldBy(
+          ts.findAncestor(outer.parent, (ancestor) => !ts.isParenthesizedExpression(ancestor)),
+        )) ||
       (ts.isBinaryExpression(outer) &&
         [
           ts.SyntaxKind.EqualsEqualsEqualsToken,
@@ -331,10 +707,23 @@ export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
         ].includes(outer.operatorToken.kind)) ||
       (ts.isPropertyAccessExpression(outer) && isGeneratorType(node, context)) ||
       (ts.isForOfStatement(outer) &&
-        outer.awaitModifier !== undefined &&
-        outer.expression === node) ||
+        outer.expression === node &&
+        (outer.awaitModifier !== undefined || isGeneratorType(node, context))) ||
       ts.isExpressionStatement(outer) ||
-      (ts.isReturnStatement(outer) && isPatternDefaultReturn(outer)));
+      (ts.isCallExpression(outer) && isComparedArgument(node, outer, context)) ||
+      (ts.isArrayLiteralExpression(outer) && isAsyncDelegated(outer)) ||
+      (ts.isReturnStatement(outer) && isPatternDefaultReturn(outer)) ||
+      (ts.isCallExpression(outer) &&
+        outer.arguments.at(0) === node &&
+        ts.isPropertyAccessExpression(outer.expression) &&
+        outer.expression.name.text === "call" &&
+        ts.isPropertyAccessExpression(outer.expression.expression) &&
+        outer.expression.expression.expression.getText() === "Iterator.prototype" &&
+        (ITERATOR_CONSUMERS.has(outer.expression.expression.name.text) ||
+          ITERATOR_HELPERS.has(outer.expression.expression.name.text))) ||
+      (ts.isCallExpression(outer) &&
+        outer.arguments.at(0) === node &&
+        outer.expression.getText() === "Array.from"));
   if (!isHeld) throw new TlaTypeScriptError("tla-ts can't follow a generator here", node);
 };
 
@@ -348,6 +737,9 @@ export const isBooleanLike = (node: ts.Expression, context: Context) =>
 
 export const isNumberLike = (node: ts.Expression, context: Context) =>
   isEvery(context.checker.getTypeAtLocation(node), ts.TypeFlags.NumberLike | ts.TypeFlags.Never);
+
+export const isBigIntLike = (node: ts.Expression, context: Context) =>
+  isEvery(context.checker.getTypeAtLocation(node), ts.TypeFlags.BigIntLike);
 
 export const isSet = (node: ts.Expression, context: Context) =>
   isSetType(context.checker.getTypeAtLocation(node));

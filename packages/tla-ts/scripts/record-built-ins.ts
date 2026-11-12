@@ -28,6 +28,7 @@ const GLOBALS = [
   "EvalError",
   "URIError",
   "AggregateError",
+  "SuppressedError",
   "Map",
   "Set",
   "WeakMap",
@@ -41,6 +42,8 @@ const GLOBALS = [
   "DataView",
   "Atomics",
   "Iterator",
+  "DisposableStack",
+  "AsyncDisposableStack",
   "Int8Array",
   "Uint8Array",
   "Uint8ClampedArray",
@@ -48,6 +51,7 @@ const GLOBALS = [
   "Uint16Array",
   "Int32Array",
   "Uint32Array",
+  "Float16Array",
   "Float32Array",
   "Float64Array",
   "BigInt64Array",
@@ -84,6 +88,24 @@ const visit = (value: unknown, name: string) => {
 };
 const globals = new Map(Object.entries(Object.getOwnPropertyDescriptors(globalThis)));
 GLOBALS.forEach((name) => visit(globals.get(name)?.value, name));
+// The prototypes that only the objects a built-in makes inherit, which no global reaches.
+visit(Object.getPrototypeOf([][Symbol.iterator]()), "%ArrayIteratorPrototype%");
+visit(Object.getPrototypeOf(Iterator.from([]).map((value) => value)), "%IteratorHelperPrototype%");
+visit(
+  Object.getPrototypeOf(Iterator.from({ next: () => ({ done: true, value: undefined }) })),
+  "%WrapForValidIteratorPrototype%",
+);
+visit(Object.getPrototypeOf(function* () {}).constructor, "%GeneratorFunction%");
+visit(Object.getPrototypeOf(async function* () {}).constructor, "%AsyncGeneratorFunction%");
+visit(Object.getPrototypeOf(async function () {}).constructor, "%AsyncFunction%");
+visit(
+  Object.getPrototypeOf(Object.getPrototypeOf(async function* () {}).prototype),
+  "%AsyncIteratorPrototype%",
+);
+visit(Object.getPrototypeOf(""[Symbol.iterator]()), "%StringIteratorPrototype%");
+visit(Object.getPrototypeOf(new Map().values()), "%MapIteratorPrototype%");
+visit(Object.getPrototypeOf(new Set().values()), "%SetIteratorPrototype%");
+visit(Object.getPrototypeOf(/./[Symbol.matchAll]("")), "%RegExpStringIteratorPrototype%");
 
 const getValue = (value: unknown) => {
   if (value === undefined) return "u";

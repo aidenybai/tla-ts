@@ -1,6 +1,14 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
-import { type Context, getHeapClass, getSymbol, getUndefined, isOnce, share } from "./context";
+import {
+  type Context,
+  getHeapClass,
+  getLiteralName,
+  getSymbol,
+  getUndefined,
+  isOnce,
+  share,
+} from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
 import { getEngineErrors, getHeap, translateObjectValue } from "./heap";
@@ -8,7 +16,7 @@ import { translateBuiltInInstanceOf } from "./intrinsics";
 import { getTypeNames, useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
 import { getKind } from "./types";
-import { apply, field, identifier, ifExpression, junction, record, set, string } from "./tla";
+import { apply, field, identifier, ifExpression, record, set, string } from "./tla";
 
 export const NATIVE_ERRORS = new Set([
   "Error",
@@ -18,6 +26,8 @@ export const NATIVE_ERRORS = new Set([
   "ReferenceError",
   "EvalError",
   "URIError",
+  "SuppressedError",
+  "AggregateError",
 ]);
 
 const isNative = (symbol: ts.Symbol) =>
@@ -99,27 +109,68 @@ const includeError = (name: string, context: Context) => {
 };
 
 // An error that JavaScript itself throws, such as the TypeError of a failed defineProperty.
-export const translateEngineError = (name: string, node: ts.Node, context: Context) => {
+// An AggregateError also holds its errors.
+export const translateEngineError = (
+  name: string,
+  node: ts.Node,
+  context: Context,
+  errors?: Expression,
+) => {
   const symbol = getNative(name, node, context);
   includeError(name, context);
   return record("Record", [
     { name: "constructor", value: getConstructor(symbol, context) },
+    ...(errors === undefined ? [] : [{ name: "errors", value: errors }]),
     { name: "message", value: string("") },
     { name: "name", value: string(name) },
   ]);
 };
 
+// The SuppressedError that disposing a resource throws where an error already completed the
+// statements, which holds both.
+export const translateSuppressedError = (
+  error: Expression,
+  suppressed: Expression,
+  node: ts.Node,
+  context: Context,
+) => {
+  const symbol = getNative("SuppressedError", node, context);
+  includeError("SuppressedError", context);
+  return record("Record", [
+    { name: "constructor", value: getConstructor(symbol, context) },
+    { name: "message", value: string("") },
+    { name: "name", value: string("SuppressedError") },
+    { name: "error", value: error },
+    { name: "suppressed", value: suppressed },
+  ]);
+};
+
+// The native error class that a call constructs an error of, as new does.
+export const getCalledError = (node: ts.Node, context: Context) => {
+  const classes = ts.isCallExpression(node)
+    ? getErrorClass(getSymbol(node.expression, context.checker), context.checker)
+    : undefined;
+  return classes !== undefined && isNative(classes[0]) ? classes : undefined;
+};
+
 export const translateNewError = (
-  node: ts.NewExpression,
+  node: ts.NewExpression | ts.CallExpression,
   classes: ts.Symbol[],
   scope: Scope,
   context: Context,
 ) => {
+  const native = classes.find(isNative);
+  if (native === undefined) throw new TlaTypeScriptError("Unknown error class", node);
+  // A SuppressedError takes the error and the suppressed error before its message.
+  const held = native.name === "SuppressedError" ? ["error", "suppressed"] : [];
   const argumentNodes = node.arguments ?? [];
-  if (argumentNodes.length > 1) {
+  if (classes.some((symbol) => isNative(symbol) && symbol.name === "AggregateError")) {
+    throw new TlaTypeScriptError("Unsupported constructor: new AggregateError", node);
+  }
+  if (argumentNodes.length > held.length + 1) {
     throw new TlaTypeScriptError("Error options aren't supported", node);
   }
-  const message = argumentNodes.at(0);
+  const message = argumentNodes.at(held.length);
   const value =
     message === undefined
       ? string("")
@@ -130,25 +181,64 @@ export const translateNewError = (
             ifExpression(apply("=", [shared, getUndefined(context)]), string(""), shared),
           )
         : translateExpression(message, scope, context);
-  const native = classes.find(isNative);
-  if (native === undefined) throw new TlaTypeScriptError("Unknown error class", node);
   if (native === classes[0]) includeError(native.name, context);
+  const identity = scope.allocated.get(node);
   return record("Record", [
     { name: "constructor", value: getConstructor(classes[0], context) },
+    ...(identity === undefined ? [] : [{ name: "identity", value: identity }]),
     { name: "message", value },
     { name: "name", value: string(native.name) },
+    ...held.map((name, position) => {
+      const argument = argumentNodes.at(position);
+      return {
+        name,
+        value:
+          argument === undefined
+            ? getUndefined(context)
+            : translateExpression(argument, scope, context),
+      };
+    }),
   ]);
 };
 
-const isCaught = (node: ts.Expression, context: Context) => {
+// A caught value, or what a SuppressedError holds, which may be any value.
+const isCaught = (node: ts.Expression, context: Context): boolean => {
   const declaration = getSymbol(node, context.checker)?.valueDeclaration;
+  if (
+    ts.isPropertyAccessExpression(node) &&
+    ["error", "suppressed"].includes(node.name.text) &&
+    getErrorClass(
+      context.checker.getTypeAtLocation(node.expression).getSymbol(),
+      context.checker,
+    )?.at(-2)?.name === "SuppressedError"
+  ) {
+    return true;
+  }
+  if (!ts.isIdentifier(node) || declaration === undefined) return false;
+  if (ts.isVariableDeclaration(declaration)) return ts.isCatchClause(declaration.parent);
+  // A promise's value or reason, which a handler that then or catch takes gets.
+  const handler = declaration.parent;
+  const call = ts.findAncestor(
+    handler.parent,
+    (ancestor) => !ts.isParenthesizedExpression(ancestor) && !ts.isAsExpression(ancestor),
+  );
   return (
-    ts.isIdentifier(node) &&
-    declaration !== undefined &&
-    ts.isVariableDeclaration(declaration) &&
-    ts.isCatchClause(declaration.parent)
+    ts.isParameter(declaration) &&
+    (ts.isArrowFunction(handler) || ts.isFunctionExpression(handler)) &&
+    call !== undefined &&
+    ts.isCallExpression(call) &&
+    ts.isPropertyAccessExpression(call.expression) &&
+    ["then", "catch"].includes(call.expression.name.text) &&
+    context.checker.getTypeAtLocation(call.expression.expression).getSymbol()?.name === "Promise"
   );
 };
+
+// A caught value without a type, or a property of one, whose reads Get runs, as it may be any value.
+export const isCaughtRead = (node: ts.Expression, context: Context): boolean =>
+  (context.checker.getTypeAtLocation(node).flags & ts.TypeFlags.Any) !== 0 &&
+  (isCaught(node, context) ||
+    ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+      isCaughtRead(node.expression, context)));
 
 const getSubclasses = (node: ts.Node, symbol: ts.Symbol, context: Context) => {
   const found = new Map<ts.Symbol, Expression>();
@@ -167,7 +257,14 @@ const getSubclasses = (node: ts.Node, symbol: ts.Symbol, context: Context) => {
 };
 
 export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, context: Context) => {
-  if (getHeapClass(node.right, context) !== undefined && getKind(node.left, context) === "object") {
+  const rightClasses = getErrorClass(getSymbol(node.right, context.checker), context.checker);
+  // An object on the heap, such as an error that it holds, is an instance where the constructor's
+  // prototype is on its chain.
+  if (
+    (getHeapClass(node.right, context) !== undefined ||
+      (rightClasses !== undefined && isNative(rightClasses[0]))) &&
+    getKind(node.left, context) === "object"
+  ) {
     const heap = getHeap(scope, node, context);
     return useJavaScript(
       "IsPrototypeOf",
@@ -199,12 +296,15 @@ export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, con
   if (!isCaught(node.left, context)) {
     throw new TlaTypeScriptError("instanceof needs an error or a caught value", node);
   }
+  if (context.heap === undefined) return useJavaScript("IsErrorOf", [value, subclasses], context);
+  // Every error class's prototype inherits from Error.prototype, so a caught object on the heap that
+  // doesn't is no error's instance. tla-ts doesn't tell the class of one that does.
   return share(value, "caught", context, (caught) =>
-    junction("And", [
-      apply("=", [useJavaScript("TypeOf", [caught], context), string("object")]),
-      apply("#", [caught, identifier("Null")]),
-      apply("\\in", [field(caught, "constructor"), subclasses]),
-    ]),
+    useJavaScript(
+      "IsInstanceOfError",
+      [getHeap(scope, node, context), caught, subclasses, string(node.right.getText())],
+      context,
+    ),
   );
 };
 
@@ -212,8 +312,24 @@ export const translateThrown = (node: ts.Expression, scope: Scope, context: Cont
   const type = context.checker.getTypeAtLocation(node);
   const names = getTypeNames(type, context.checker);
   const isPrimitive = names?.every((name) => name !== "object" && name !== "function") === true;
+  // An object on the heap keeps its identity as a thrown value, as its ref. A name that only an
+  // object literal gives holds one, though its type, such as {}, may fit primitives.
+  const declaration = ts.isIdentifier(node)
+    ? getSymbol(node, context.checker)?.valueDeclaration
+    : undefined;
+  const initializer =
+    declaration !== undefined && ts.isVariableDeclaration(declaration)
+      ? declaration.initializer
+      : undefined;
+  const isHeapObject =
+    getKind(node, context) === "object" &&
+    (names?.every((name) => name === "object") === true ||
+      (initializer !== undefined &&
+        ts.isObjectLiteralExpression(initializer) &&
+        getLiteralName(initializer, context) !== undefined));
   if (
     !isPrimitive &&
+    !isHeapObject &&
     getErrorClass(type.getSymbol(), context.checker) === undefined &&
     !isCaught(node, context)
   ) {

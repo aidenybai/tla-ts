@@ -68,10 +68,6 @@ const CASES: [string, string][] = [
   ],
   ["labels", "outer: { count++; }"],
   ["an increment after a comma", "count = (label, count++);"],
-  ["sort", "values.sort();"],
-  ["reverse", "values.reverse();"],
-  ["splice", "values.splice(0, 1);"],
-  ["array length assignment", "values.length = 0;"],
   ["returning a value from an action", "count++; return count;"],
   ["assigning a constant", "LIMIT = 3;"],
   ["calling an action from an action", "step();"],
@@ -104,7 +100,6 @@ const CASES: [string, string][] = [
   ],
   ["a callback parameter with a default", "count = [undefined].map((value = 1) => value)[0];"],
   ["a callback rest parameter", "count = [1].map((...values) => values.length)[0];"],
-  ["indexing an array with a string", 'count = values["0"] ?? 0;'],
   [
     "a callback array parameter typed as an object",
     "count = [1].filter((_, __, array: { length: number }) => array.length === 1).length;",

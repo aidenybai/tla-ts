@@ -36,6 +36,43 @@ const createLibraryHost = (libraries: ReadonlyMap<string, string>): ts.CompilerH
   readFile: (fileName) => libraries.get(fileName),
 });
 
+// HACK: TypeScript checks a parameter property's assignment only in its emit, so the text gains it.
+// A file's text where each constructor assigns its parameter properties, as TypeScript does once
+// its base's constructor returns, after the super call that a derived class must make first. The
+// text stays on the same lines.
+const assignParameterProperties = (fileName: string, text: string) => {
+  const file = ts.createSourceFile(fileName, text, ts.ScriptTarget.ESNext);
+  const insertions: { position: number; text: string }[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isConstructorDeclaration(node) && node.body !== undefined) {
+      const names = node.parameters.flatMap((parameter) =>
+        ts.isParameterPropertyDeclaration(parameter, node) && ts.isIdentifier(parameter.name)
+          ? [parameter.name.text]
+          : [],
+      );
+      const superCall = node.body.statements.find(
+        (statement) =>
+          ts.isExpressionStatement(statement) &&
+          ts.isCallExpression(statement.expression) &&
+          statement.expression.expression.kind === ts.SyntaxKind.SuperKeyword,
+      );
+      if (names.length > 0) {
+        insertions.push({
+          position: superCall?.end ?? node.body.getStart(file) + 1,
+          text: names.map((name) => ` this.${name} = ${name};`).join(""),
+        });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return insertions.reduceRight(
+    (current, insertion) =>
+      current.slice(0, insertion.position) + insertion.text + current.slice(insertion.position),
+    text,
+  );
+};
+
 // The project of the nearest tsconfig.json, where it holds the file, as an editor finds it.
 const getProject = (path: string) => {
   if (!ts.sys.fileExists(path)) return undefined;
@@ -89,14 +126,29 @@ export const createProgram = (
       ...host,
       // The program's options parse the model as a module, where await can start a statement.
       getSourceFile: (fileName, languageVersion) => {
-        if (fileName === path) return ts.createSourceFile(path, source, languageVersion, true);
+        if (fileName === path) {
+          return ts.createSourceFile(
+            path,
+            assignParameterProperties(path, source),
+            languageVersion,
+            true,
+          );
+        }
         const cached = libraryFiles.get(fileName);
         if (cached !== undefined) return cached;
         const file = host.getSourceFile(fileName, languageVersion);
-        if (file !== undefined && fileName.startsWith(libraryDirectory)) {
-          libraryFiles.set(fileName, file);
+        if (file === undefined || file.isDeclarationFile) {
+          if (file !== undefined && fileName.startsWith(libraryDirectory)) {
+            libraryFiles.set(fileName, file);
+          }
+          return file;
         }
-        return file;
+        return ts.createSourceFile(
+          fileName,
+          assignParameterProperties(fileName, file.text),
+          languageVersion,
+          true,
+        );
       },
       fileExists: (fileName) => fileName === path || host.fileExists(fileName),
       readFile: (fileName) => (fileName === path ? source : host.readFile(fileName)),

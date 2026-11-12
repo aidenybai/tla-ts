@@ -11,12 +11,13 @@ import {
 import { TlaTypeScriptError } from "../errors";
 import { isIteratedPattern, isTaken, isUntypedPattern } from "./iterators";
 import type { Expression, OperatorDefinition } from "../ast";
+import { translateArrayIteration } from "./collections";
 import { translateExpression } from "./expressions";
 import { apply, define, identifier, ifExpression, number, set, string, tuple } from "./tla";
 import { getHeap } from "./heap";
 import { translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
-import { getField, getPathStep, getPropertyKey, isHeapType, isSequenceType } from "./types";
+import { getField, getPathStep, getPropertyKey, isHeapPattern, isSequenceType } from "./types";
 
 export interface Scope {
   // The TLA+ expression for each variable, parameter, and local in scope.
@@ -30,8 +31,23 @@ export interface Scope {
   // The results of the calls that only statements can run, and of assignments inside
   // expressions, which ran before the statement that holds them.
   results: ReadonlyMap<ts.Expression, Expression>;
+  // The links of optional chains whose base tla-ts found isn't null or undefined.
+  checked?: ReadonlySet<ts.Expression>;
   // The object that this names in the method that a call through it inlines.
   receiver?: Receiver;
+  // The object that this names in each arrow function that a call takes, from where it was written.
+  arrowReceivers?: ReadonlyMap<ts.Node, Receiver>;
+  // The values of an object pattern's elements whose getters ran before it binds, which binding
+  // the pattern takes, once each.
+  read?: ReadonlyMap<ts.BindingElement, Expression>;
+  // The values that patterns destructure, which throw a TypeError where they are null or undefined
+  // though nothing reads what the patterns bind, and which the next statement checks.
+  destructured?: readonly Destructured[];
+}
+
+export interface Destructured {
+  pattern: ts.BindingPattern;
+  value: Expression;
 }
 
 export interface Receiver {
@@ -44,7 +60,38 @@ export interface Receiver {
     | ts.ClassStaticBlockDeclaration
     | ts.PropertyDeclaration
     | HeapFunction;
+  // The newTarget of a construction, which new.target reads in the constructor.
+  newTarget?: Expression;
 }
+
+// The function, static block, or field whose this a node's this names.
+export const getThisOwner = (node: ts.Node) =>
+  ts.findAncestor(
+    node.parent,
+    (ancestor) =>
+      (ts.isFunctionLike(ancestor) && !ts.isArrowFunction(ancestor)) ||
+      ts.isClassStaticBlockDeclaration(ancestor) ||
+      ts.isPropertyDeclaration(ancestor),
+  );
+
+// The receivers of the arrow functions that a call takes, with the scope's receiver for those
+// written in its method.
+export const getArrowReceivers = (
+  callbacks: readonly [ts.Symbol, FunctionNode][],
+  scope: Scope,
+): ReadonlyMap<ts.Node, Receiver> => {
+  const receiver = scope.receiver;
+  return new Map([
+    ...(scope.arrowReceivers ?? []),
+    ...callbacks.flatMap(([, callback]): [ts.Node, Receiver][] =>
+      receiver !== undefined &&
+      ts.isArrowFunction(callback) &&
+      getThisOwner(callback) === receiver.method
+        ? [[callback, receiver]]
+        : [],
+    ),
+  ]);
+};
 
 export interface Bound {
   definitions: OperatorDefinition[];
@@ -186,11 +233,43 @@ export const bindPatternInline = (
       pattern,
     );
   }
+  // A nested pattern that destructures null or undefined throws before the getters of the elements
+  // after it run, which ran before the pattern binds.
+  if (ts.isBindingElement(pattern.parent) && (scope.read?.size ?? 0) > 0) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't destructure a nested pattern before the getters that follow it",
+      pattern,
+    );
+  }
+  const destructuring: Scope = {
+    ...scope,
+    destructured: [...(scope.destructured ?? []), { pattern, value }],
+  };
   if (ts.isArrayBindingPattern(pattern) && isUntypedPattern(pattern, context) && !isTaken(value)) {
     throw new TlaTypeScriptError("Give this pattern's value an array type", pattern);
   }
   const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(pattern));
   const heapSymbol = context.heap;
+  // An array pattern runs the iterator of an array, which may be one that a script replaced.
+  const isIterated =
+    ts.isArrayBindingPattern(pattern) &&
+    !isTaken(value) &&
+    !(context.checker.getTypeAtLocation(pattern).flags & ts.TypeFlags.StringLike);
+  const heap = heapSymbol === undefined ? undefined : getHeap(destructuring, pattern, context);
+  const iterated =
+    isIterated && heap !== undefined
+      ? translateArrayIteration(value, heap, pattern, context)
+      : value;
+  const iterating =
+    isIterated && heapSymbol !== undefined && heap !== undefined
+      ? {
+          ...destructuring,
+          bindings: new Map([
+            ...destructuring.bindings,
+            [heapSymbol, translateArrayIteration(heap, heap, pattern, context)],
+          ]),
+        }
+      : destructuring;
   const bound = pattern.elements.reduce((current, element, position) => {
     if (ts.isOmittedExpression(element)) return current;
     const initializer = element.initializer;
@@ -199,7 +278,7 @@ export const bindPatternInline = (
       if (element.dotDotDotToken === undefined) {
         return bindPatternInline(
           element.name,
-          withDefault(getElement(value, number(position + 1), context)),
+          withDefault(getElement(iterated, number(position + 1), context)),
           current,
           context,
         );
@@ -207,8 +286,8 @@ export const bindPatternInline = (
       if (context.checker.getTypeAtLocation(pattern).flags & ts.TypeFlags.StringLike) {
         throw new TlaTypeScriptError("Spread a string with split('') instead", element);
       }
-      const rest = apply("SubSeq", [value, number(position + 1), apply("Len", [value])]);
-      if (!context.heapArrays.has(element) || heapSymbol === undefined) {
+      const rest = apply("SubSeq", [iterated, number(position + 1), apply("Len", [iterated])]);
+      if (!context.heapCollections.has(element) || heapSymbol === undefined) {
         return bindPatternInline(element.name, rest, current, context);
       }
       const heap = useJavaScript(
@@ -252,17 +331,28 @@ export const bindPatternInline = (
         }
         return [string(otherKey)];
       });
-      if (heapSymbol === undefined || !isHeapType(type, pattern, context)) {
+      if (heapSymbol === undefined || !isHeapPattern(type, pattern, context)) {
         throw new TlaTypeScriptError("Object rest elements need an object in a script", element);
       }
       const heap = getHeap(current, element, context);
       const allocated = useJavaScript(
         "Allocate",
-        [heap, useJavaScript("RestObject", [heap, value, set(excluded)], context)],
+        [
+          heap,
+          useJavaScript(
+            "RestObject",
+            [heap, value, set(excluded), current.read?.get(element) ?? tuple([])],
+            context,
+          ),
+        ],
         context,
       );
       return bindNames(
-        { ...current, bindings: new Map([...current.bindings, [heapSymbol, allocated]]) },
+        {
+          ...current,
+          bindings: new Map([...current.bindings, [heapSymbol, allocated]]),
+          read: new Map([...(current.read ?? [])].filter((entry) => entry[0] !== element)),
+        },
         [
           {
             name: useJavaScript("Allocated", [allocated], context),
@@ -277,13 +367,19 @@ export const bindPatternInline = (
         ? undefined
         : getPropertyKey(name);
     if (key === undefined) throw new TlaTypeScriptError("Unsupported key", element);
-    if (isHeapType(type, pattern, context)) {
-      const part = useJavaScript(
-        "Get",
-        [getHeap(current, element, context), value, string(key)],
-        context,
-      );
-      return bindPatternInline(element.name, withDefault(part), current, context);
+    if (isHeapPattern(type, pattern, context)) {
+      const got = current.read?.get(element);
+      const part =
+        got ??
+        useJavaScript("Get", [getHeap(current, element, context), value, string(key)], context);
+      const taken =
+        got === undefined
+          ? current
+          : {
+              ...current,
+              read: new Map([...(current.read ?? [])].filter((entry) => entry[0] !== element)),
+            };
+      return bindPatternInline(element.name, withDefault(part), taken, context);
     }
     if (isSequenceType(context.checker.getTypeAtLocation(pattern), context.checker)) {
       if (key !== "length" && !/^(0|[1-9][0-9]*)$/.test(key)) {
@@ -298,17 +394,21 @@ export const bindPatternInline = (
         context,
       );
     }
+    // A record may lack the field that a default or a nested pattern reads, which then reads
+    // undefined.
     const part =
-      initializer === undefined ? getField(value, key) : getOptionalField(value, key, context);
+      initializer === undefined && ts.isIdentifier(element.name)
+        ? getField(value, key)
+        : getOptionalField(value, key, context);
     return bindPatternInline(element.name, withDefault(part), current, context);
-  }, scope);
+  }, iterating);
   if (heapSymbol === undefined) return bound;
-  const isHeapObject = ts.isObjectBindingPattern(pattern) && isHeapType(type, pattern, context);
+  const isHeapObject = ts.isObjectBindingPattern(pattern) && isHeapPattern(type, pattern, context);
   // A nested pattern may destructure an element that an array lacks, which throws a TypeError
   // that TLC would find only where something reads what the pattern binds.
   if (!isHeapObject && !ts.isBindingElement(pattern.parent)) return bound;
   const keys = (isHeapObject ? pattern.elements : []).flatMap((element) => {
-    if (element.dotDotDotToken !== undefined) return [];
+    if (element.dotDotDotToken !== undefined || scope.read?.has(element)) return [];
     const name = element.propertyName ?? element.name;
     const key =
       ts.isIdentifier(name) || ts.isStringLiteral(name) ? getPropertyKey(name) : undefined;

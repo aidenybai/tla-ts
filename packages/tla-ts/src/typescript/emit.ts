@@ -143,13 +143,20 @@ export const emit = (
 ): CompiledSpec => {
   if (sections.views.length > 1) throw new TlaTypeScriptError("Tag only one function @view");
   const location = getLocation(sourceFile);
-  const recursive = [...context.recursive].map((declaration): Declaration => {
-    const definition = context.definitions.get(declaration);
-    if (definition === undefined || definition.parameters.length === 0) {
-      throw new TlaTypeScriptError("A constant can't refer to itself", declaration);
-    }
-    return { name: definition.name, arity: definition.parameters.length, location };
-  });
+  const recursive = [
+    ...[...context.recursive].map((declaration) => {
+      const definition = context.definitions.get(declaration);
+      if (definition === undefined || definition.parameters.length === 0) {
+        throw new TlaTypeScriptError("A constant can't refer to itself", declaration);
+      }
+      return definition;
+    }),
+    ...context.stateCalls.values(),
+  ].map((definition): Declaration => ({
+    name: definition.name,
+    arity: definition.parameters.length,
+    location,
+  }));
   const prelude = context.prelude;
   const isJavaScript = prelude.has("JavaScript");
   const constants = [
@@ -158,9 +165,10 @@ export const emit = (
     ...context.modelValues.values(),
     ...context.constructors.values(),
     ...context.symbols,
+    ...context.fractions.values(),
   ];
   const modelValues = [
-    ...(isJavaScript ? ["Undefined", "Null", "Ref", ...SPECIAL_NUMBERS] : []),
+    ...(isJavaScript ? ["Undefined", "Null", "Ref", "Big", ...SPECIAL_NUMBERS] : []),
     ...constants,
   ];
   const heap = context.heap === undefined ? undefined : context.variables.get(context.heap);
@@ -278,6 +286,7 @@ export const emit = (
                 "  BuiltIns <- UsedBuiltIns",
                 "  ConstantFunctions <- UsedConstantFunctions",
                 "  Symbols <- UsedSymbols",
+                "  Fractions <- UsedFractions",
               ]
             : []),
         ]

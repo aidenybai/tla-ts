@@ -13,7 +13,12 @@ import {
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
 import { render } from "./formula";
 import { translateBody } from "./functions";
-import { findHeapArrays, isHoleyArray, translateConstantFunctions } from "./heap";
+import {
+  findChangedArrays,
+  findHeapArrays,
+  isHoleyArray,
+  translateConstantFunctions,
+} from "./heap";
 import { translateBuiltIns } from "./intrinsics";
 import { WELL_KNOWN_SYMBOLS } from "./javascript";
 import { type Exported, isDeclaration, type Model, readModel, type Variable } from "./model";
@@ -23,8 +28,20 @@ import { translateCall, translateInvariant, translateProperty, VALUE_TAGS } from
 import { createStateScope } from "./scope";
 import { TlaTypeScriptError } from "../errors";
 import { translateStep } from "./steps";
-import { apply, define, getLocation, getModuleName, identifier, locate, tuple } from "./tla";
-import { getDomain } from "./types";
+import {
+  apply,
+  define,
+  getLocation,
+  getModuleName,
+  identifier,
+  locate,
+  number,
+  record,
+  string,
+  tuple,
+} from "./tla";
+import { BUILT_INS } from "./built-ins";
+import { getDomain, getKeptIterator, TYPED_ARRAYS } from "./types";
 
 // A state variable starts at its initializer, or at every value of its type without one.
 const translateInitial = (variable: Variable, context: Context) => {
@@ -87,8 +104,10 @@ export const compile = (
   const files: ts.SourceFile[] = [];
   const visitImports = (file: ts.SourceFile) =>
     file.statements.forEach((statement) => {
+      // TypeScript erases a declaration that imports or exports only types.
       const specifier =
-        ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)
+        (ts.isImportDeclaration(statement) && statement.importClause?.isTypeOnly !== true) ||
+        (ts.isExportDeclaration(statement) && !statement.isTypeOnly)
           ? statement.moduleSpecifier
           : undefined;
       const imported =
@@ -164,6 +183,14 @@ export const compile = (
         : [];
     });
     const states = declared.some((state) => state.isChanged) || run.length > 0 ? declared : [];
+    // A class of an imported file that the model reaches, which its file makes where it declares it.
+    const classes = getReached([sourceFile, ...run], context).filter(
+      (node): node is ts.ClassDeclaration =>
+        ts.isClassDeclaration(node) &&
+        ts.isSourceFile(node.parent) &&
+        node.parent !== sourceFile &&
+        files.includes(node.parent),
+    );
     const next = effects.filter(
       (statement) =>
         run.includes(statement) ||
@@ -173,7 +200,7 @@ export const compile = (
     );
     return next.length > run.length
       ? getImported(next)
-      : [...new Set([...run, ...states.map((state) => state.statement)])].toSorted(
+      : [...new Set([...run, ...states.map((state) => state.statement), ...classes])].toSorted(
           (left, right) =>
             files.indexOf(left.getSourceFile()) - files.indexOf(right.getSourceFile()) ||
             left.pos - right.pos,
@@ -204,25 +231,98 @@ export const compile = (
       ts.isIdentifier(node.expression) &&
       ["Boolean", "Number", "String", "Date"].includes(node.expression.text)) ||
     (ts.isIdentifier(node) &&
-      ["arguments", "Symbol", "Promise", "setTimeout", "JSON", "Proxy"].includes(node.text)) ||
+      [
+        "arguments",
+        "Symbol",
+        "Promise",
+        "setTimeout",
+        "JSON",
+        "Proxy",
+        "ArrayBuffer",
+        "SharedArrayBuffer",
+        "DataView",
+        "DisposableStack",
+        "AsyncDisposableStack",
+        ...TYPED_ARRAYS.keys(),
+      ].includes(node.text)) ||
+    (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) ||
     node.kind === ts.SyntaxKind.AsyncKeyword ||
     isHoleyArray(node) ||
+    getKeptIterator(node, context) !== undefined ||
+    // An array that a script gives a named property, which only an object can hold.
+    (ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(node.left) &&
+      node.left.name.text !== "length" &&
+      [context.checker.getTypeAtLocation(node.left.expression)]
+        .flatMap((type) => (type.isIntersection() ? type.types : [type]))
+        .some((type) => context.checker.isArrayType(type) || context.checker.isTupleType(type))) ||
     (ts.forEachChild(node, usesObjects) ?? false);
-  if (heap !== undefined && isScript(sourceFile) && roots.some(usesObjects)) {
+  const changedArrays = isScript(sourceFile)
+    ? findChangedArrays(getReached(roots, context), context)
+    : [];
+  if (
+    heap !== undefined &&
+    isScript(sourceFile) &&
+    (changedArrays.length > 0 || roots.some(usesObjects))
+  ) {
     context.heap = heap;
     context.variables.set(heap, identifier(context.names.getFresh("heap")));
     const usesSpecialNumbers = (node: ts.Node): boolean =>
       (ts.isIdentifier(node) &&
-        ["NaN", "Infinity", "POSITIVE_INFINITY", "NEGATIVE_INFINITY"].includes(node.text)) ||
+        [
+          "NaN",
+          "Infinity",
+          "POSITIVE_INFINITY",
+          "NEGATIVE_INFINITY",
+          // The properties of Number and Math that hold fractions.
+          "EPSILON",
+          "MIN_VALUE",
+          "E",
+          "LN10",
+          "LN2",
+          "LOG10E",
+          "LOG2E",
+          "PI",
+          "SQRT1_2",
+          "SQRT2",
+          // A float's bytes may hold any of them.
+          "DataView",
+          "Float16Array",
+          "Float32Array",
+          "Float64Array",
+        ].includes(node.text)) ||
       (ts.isPrefixUnaryExpression(node) &&
         node.operator === ts.SyntaxKind.MinusToken &&
         ts.isNumericLiteral(node.operand) &&
         Number(node.operand.text) === 0) ||
       // Division may give an infinity or -0.
       (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.SlashToken) ||
+      // A literal may give a fraction.
+      (ts.isNumericLiteral(node) && !Number.isInteger(Number(node.text))) ||
       (ts.forEachChild(node, usesSpecialNumbers) ?? false);
     context.hasSpecialNumbers = roots.some(usesSpecialNumbers);
-    context.heapArrays = findHeapArrays(roots, context);
+    // A variable may hold any typed array's constructor, so the heap holds them all, their
+    // prototypes, and the methods that they share.
+    const usesTypedArrays = (node: ts.Node): boolean =>
+      (ts.isIdentifier(node) && TYPED_ARRAYS.has(node.text)) ||
+      (ts.forEachChild(node, usesTypedArrays) ?? false);
+    if (roots.some(usesTypedArrays)) {
+      const shared = ["%Int8Array.[[Prototype]]%", "%Int8Array.prototype.[[Prototype]]%"];
+      [
+        ...[...TYPED_ARRAYS.keys()].flatMap((name) => [name, `${name}.prototype`]),
+        ...shared,
+        ...shared.flatMap((name) =>
+          BUILT_INS[name][3].flatMap((property) =>
+            property
+              .slice(2)
+              .filter((value) => value.startsWith("o"))
+              .map((value) => value.slice(1)),
+          ),
+        ),
+      ].forEach((name) => context.builtIns.add(name));
+    }
+    context.heapCollections = findHeapArrays(roots, changedArrays, context);
     const prototypes = new Set(["Array.prototype", "Object.prototype"]);
     const changesPrototype = (node: ts.Node): boolean =>
       (ts.isCallExpression(node) &&
@@ -265,9 +365,18 @@ export const compile = (
     (node.kind === ts.SyntaxKind.NullKeyword ||
       (ts.isIdentifier(node) && node.text === "undefined") ||
       (ts.isArrayLiteralExpression(node) && node.elements.length === 0));
+  // A script disposes the resources of a using declaration that a block, a for, or a for-of
+  // holds.
+  const isDisposed = (node: ts.VariableDeclarationList) =>
+    context.heap !== undefined &&
+    ((ts.isVariableStatement(node.parent) &&
+      (ts.isBlock(node.parent.parent) || ts.isSourceFile(node.parent.parent))) ||
+      ((ts.isForStatement(node.parent) || ts.isForOfStatement(node.parent)) &&
+        node.parent.initializer === node));
   const findUsing = (node: ts.Node): ts.Node | undefined =>
     ts.isVariableDeclarationList(node) &&
     (node.flags & ts.NodeFlags.Using) !== 0 &&
+    !isDisposed(node) &&
     !(ts.isForOfStatement(node.parent)
       ? isNothing(node.parent.expression)
       : node.declarations.every((declaration) => isNothing(declaration.initializer)))
@@ -319,6 +428,27 @@ export const compile = (
       ),
       define("UsedConstantFunctions", [], translateConstantFunctions(context)),
       define("UsedSymbols", [], tuple(context.symbols.map((name) => identifier(name)))),
+      define(
+        "UsedFractions",
+        [],
+        tuple(
+          [...context.fractions]
+            .sort((left, right) => left[0] - right[0])
+            .map((fraction) =>
+              record("Record", [
+                { name: "value", value: identifier(fraction[1]) },
+                { name: "text", value: string(String(fraction[0])) },
+                { name: "floor", value: number(Math.floor(fraction[0])) },
+                {
+                  name: "round",
+                  value: Object.is(Math.round(fraction[0]), -0)
+                    ? identifier("NegativeZero")
+                    : number(Math.round(fraction[0])),
+                },
+              ]),
+            ),
+        ),
+      ),
     );
   }
   return emit(getModuleName(path), program.sourceFile, model, sections, context);
