@@ -135,15 +135,26 @@ const printAtom = (expression: Expression) =>
     ? print(expression)
     : parenthesize(print(expression));
 
-const printIf = (condition: string[], consequent: string[], alternative: string[]) => {
-  const inline = `IF ${condition[0]} THEN ${consequent[0]} ELSE ${alternative[0]}`;
-  return [condition, consequent, alternative].every((part) => part.length === 1) &&
+// A part that is itself a LET, an IF, or an existential quantifier starts a line after its keyword,
+// at its parent's column, or indented under a definition, so that a long chain of them, as a
+// compiled script's code is, doesn't indent once per link.
+const printPart = (prefix: string[], expression: Expression, lines: string[], indent = "") =>
+  lines.length > 1 &&
+  (expression.kind === "Let" || expression.kind === "If" || expression.kind === "Exists")
+    ? [...prefix.map((line) => line.trimEnd()), ...lines.map((line) => indent + line)]
+    : concat(prefix, lines);
+
+const printIf = (condition: string[], consequent: Expression, alternative: Expression) => {
+  const consequentLines = print(consequent);
+  const alternativeLines = print(alternative);
+  const inline = `IF ${condition[0]} THEN ${consequentLines[0]} ELSE ${alternativeLines[0]}`;
+  return [condition, consequentLines, alternativeLines].every((part) => part.length === 1) &&
     inline.length <= 80
     ? [inline]
     : [
         ...concat("IF ", condition),
-        ...concat("THEN ", consequent),
-        ...concat("ELSE ", alternative),
+        ...printPart(["THEN "], consequent, consequentLines),
+        ...printPart(["ELSE "], alternative, alternativeLines),
       ];
 };
 
@@ -208,11 +219,7 @@ const print = (expression: Expression): string[] => {
     case "Eventually":
       return concat("<>", printAtom(expression.expression));
     case "If":
-      return printIf(
-        print(expression.condition),
-        print(expression.consequent),
-        print(expression.alternative),
-      );
+      return printIf(print(expression.condition), expression.consequent, expression.alternative);
     case "Case": {
       const arms = [
         ...expression.arms.map((arm) => concat(print(arm.condition), " -> ", print(arm.body))),
@@ -237,14 +244,17 @@ const print = (expression: Expression): string[] => {
               : [printDefinition(definition)],
           )
           .flatMap((lines, index) => concat(index === 0 ? "LET " : "    ", lines)),
-        ...concat("IN  ", print(expression.body)),
+        ...printPart(["IN  "], expression.body, print(expression.body)),
       ];
     case "Forall":
     case "Exists":
-      return concat(
-        expression.kind === "Forall" ? "\\A " : "\\E ",
-        printBounds(expression.bounds),
-        " : ",
+      return printPart(
+        concat(
+          expression.kind === "Forall" ? "\\A " : "\\E ",
+          printBounds(expression.bounds),
+          " : ",
+        ),
+        expression.body,
         print(expression.body),
       );
     case "UnboundedQuantifier":
@@ -342,7 +352,7 @@ const printDefinition = (definition: Definition) => {
             ? definition.name
             : `${definition.name}(${definition.params.map(formatParameter).join(", ")})`,
         ];
-  return concat(head, " == ", print(definition.body));
+  return printPart(concat(head, " == "), definition.body, print(definition.body), "  ");
 };
 
 const formatParameter = (parameter: { name: string; arity: number }) =>

@@ -4298,6 +4298,21 @@ describe("errors", () => {
     expect(result.status).toBe("deadlock");
   });
 
+  it("prints a long script's statements at an indentation that grows little", async () => {
+    const statements = Array.from(
+      { length: 100 },
+      (_, index) => `if (box.size === ${index}) box.size++;`,
+    );
+    const compiled = compile(
+      `const box = { size: 0 };\n${statements.join("\n")}\nif (box.size !== 100) throw new Error("size");`,
+    );
+    const text = printModule(compiled.source);
+    expect(
+      Math.max(...text.split("\n").map((line) => line.length - line.trimStart().length)),
+    ).toBeLessThan(1000);
+    expect((await check({ ...compiled, source: text })).failure).toBeUndefined();
+  });
+
   it("reads new.target in a call as undefined rather than the function it's in", async () => {
     const source = `
       const box = { size: 1 };
