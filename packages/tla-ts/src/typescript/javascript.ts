@@ -37,7 +37,7 @@ export const JAVASCRIPT_MODULE = `------------------------------ MODULE JavaScri
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
 CONSTANTS Undefined, Null, Ref, Big, BuiltIns, ConstantFunctions, Symbols, Fractions,
-          NaN, Infinity, NegativeInfinity, NegativeZero
+          Characters, NaN, Infinity, NegativeInfinity, NegativeZero
 
 LOCAL Digits == {"-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
 
@@ -1839,8 +1839,25 @@ EndsWith(value, search, position) ==
 \\* The characters whose codes are below 128, in order. tla-ts tells the codes of these only.
 LOCAL AsciiCharacters == ${formatString(String.fromCharCode(...Array.from({ length: 128 }, (_, code) => code)))}
 
+LOCAL AsciiCodes ==
+  [character \\in CharactersOf(AsciiCharacters) |->
+     CHOOSE code \\in 0..127 : SubSeq(AsciiCharacters, code + 1, code + 1) = character]
+
+\\* The codes of the characters of ASCII and of the code units outside it that a script's text holds,
+\\* which tla-ts tells the codes of only.
+LOCAL CharacterCodes ==
+  LET others == {Characters[position] : position \\in DOMAIN Characters}
+  IN  AsciiCodes @@ [character \\in {other.character : other \\in others} |->
+                       (CHOOSE other \\in others : other.character = character).code]
+
+\\* The code unit that a code gives, which tla-ts makes only where it can tell the code.
+LOCAL CodeUnit(code) ==
+  IF \\E character \\in DOMAIN CharacterCodes : CharacterCodes[character] = code
+  THEN CHOOSE character \\in DOMAIN CharacterCodes : CharacterCodes[character] = code
+  ELSE Assert(FALSE, "tla-ts can't make a character outside ASCII")
+
 \\* String.fromCharCode, which takes each code modulo 2^16, or String.fromCodePoint, which throws a
-\\* RangeError for a number that isn't a code point. tla-ts makes the characters of ASCII only.
+\\* RangeError for a number that isn't a code point and writes one past 2^16 as a surrogate pair.
 RECURSIVE FromCharCodes(_, _)
 FromCharCodes(codes, isCodePoint) ==
   IF codes = <<>>
@@ -1851,19 +1868,20 @@ FromCharCodes(codes, isCodePoint) ==
                       [] OTHER -> IntegerOf(code) % 65536
        IN  CASE isCodePoint /\\ (code \\in {NaN, Infinity, NegativeInfinity} \\/ IsFraction(code) \\/ point < 0 \\/ point > 1114111) ->
                   Assert(FALSE, "tla-ts can't throw the RangeError of String.fromCodePoint")
-             [] point >= 128 -> Assert(FALSE, "tla-ts can't make a character outside ASCII")
-             [] OTHER ->
-                  SubSeq(AsciiCharacters, point + 1, point + 1) \\o FromCharCodes(Tail(codes), isCodePoint)
+             [] point >= 65536 ->
+                  CodeUnit(55296 + (point - 65536) \\div 1024) \\o CodeUnit(56320 + ((point - 65536) % 1024))
+                    \\o FromCharCodes(Tail(codes), isCodePoint)
+             [] OTHER -> CodeUnit(point) \\o FromCharCodes(Tail(codes), isCodePoint)
 
-LOCAL AsciiCodes ==
-  [character \\in CharactersOf(AsciiCharacters) |->
-     CHOOSE code \\in 0..127 : SubSeq(AsciiCharacters, code + 1, code + 1) = character]
-
-\\* The code of a character, which a for-of visits and charCodeAt reads.
+\\* The code of a code unit, which charCodeAt reads.
 LOCAL CharacterCode(character) ==
-  IF character \\in DOMAIN AsciiCodes
-  THEN AsciiCodes[character]
+  IF character \\in DOMAIN CharacterCodes
+  THEN CharacterCodes[character]
   ELSE Assert(FALSE, "tla-ts can't tell the code of a character outside ASCII")
+
+LOCAL IsHighSurrogate(code) == code >= 55296 /\\ code <= 56319
+
+LOCAL IsLowSurrogate(code) == code >= 56320 /\\ code <= 57343
 
 \\* The code of the character at an index, or outside where the index is out of range.
 LOCAL CodeAt(value, index, outside) ==
@@ -1875,9 +1893,13 @@ LOCAL CodeAt(value, index, outside) ==
 
 CharCodeAt(value, index) == CodeAt(value, index, NaN)
 
-\\* String.prototype.codePointAt, which reads the code of a surrogate pair, though an ASCII
-\\* character's code point is its code.
-CodePointAt(value, index) == CodeAt(value, index, Undefined)
+\\* String.prototype.codePointAt, which reads a surrogate pair's code point, and otherwise the code.
+CodePointAt(value, index) ==
+  LET first == CodeAt(value, index, Undefined)
+      second == CodeAt(value, IntegerOf(index) + 1, Undefined)
+  IN  IF first # Undefined /\\ IsHighSurrogate(first) /\\ second # Undefined /\\ IsLowSurrogate(second)
+      THEN (first - 55296) * 1024 + second - 56320 + 65536
+      ELSE first
 
 LOCAL FirstOf(indices) == CHOOSE index \\in indices : \\A other \\in indices : index <= other
 
@@ -1904,11 +1926,7 @@ StringSplit(value, separator, limit) ==
   IN  CASE count = 0 -> <<>>
         [] separator = Undefined -> <<text>>
         [] Text(separator) = "" ->
-             [position \\in 1..Len(head) |->
-                LET character == SubSeq(head, position, position)
-                IN  IF character \\in DOMAIN AsciiCodes
-                    THEN character
-                    ELSE Assert(FALSE, "tla-ts can't split a string with a character outside ASCII")]
+             [position \\in 1..Len(head) |-> SubSeq(head, position, position)]
         [] text = "" -> <<text>>
         [] OTHER -> SplitPieces(text, separator, 0, count)
 
@@ -2021,7 +2039,9 @@ EncodeURI(text, kept) ==
   IF text = ""
   THEN ""
   ELSE LET character == SubSeq(text, 1, 1)
-           code == CharacterCode(character)
+           code == IF character \\in DOMAIN AsciiCodes
+                   THEN AsciiCodes[character]
+                   ELSE Assert(FALSE, "tla-ts can't encode a character outside ASCII")
        IN  (IF character \\in kept
             THEN character
             ELSE "%" \\o SubSeq(HexDigits, code \\div 16 + 1, code \\div 16 + 1)
@@ -2113,14 +2133,21 @@ StringLessThan(left, right) ==
 \\* sort()'s order without a comparator, which compares the strings of the elements.
 DefaultSortBefore(left, right) == StringLessThan(StringOf(left), StringOf(right))
 
-\\* The values that a for-of over a string visits, its code points, which are its characters where
-\\* each is ASCII.
+\\* The code points of a string outside ASCII, where a surrogate pair is one.
+RECURSIVE CodePoints(_)
+CodePoints(text) ==
+  LET size == IF Len(text) >= 2
+                 /\\ IsHighSurrogate(CharacterCode(SubSeq(text, 1, 1)))
+                 /\\ IsLowSurrogate(CharacterCode(SubSeq(text, 2, 2)))
+              THEN 2
+              ELSE 1
+  IN  IF text = "" THEN <<>> ELSE <<SubSeq(text, 1, size)>> \\o CodePoints(SubSeq(text, size + 1, Len(text)))
+
+\\* The values that a for-of over a string or its spread visits, its code points.
 StringCharacters(value) ==
-  [position \\in 1..Len(value) |->
-     LET character == SubSeq(value, position, position)
-     IN  IF character \\in DOMAIN AsciiCodes
-         THEN character
-         ELSE Assert(FALSE, "tla-ts can't iterate a string with a character outside ASCII")]
+  IF IsAscii(value)
+  THEN [position \\in 1..Len(value) |-> SubSeq(value, position, position)]
+  ELSE CodePoints(value)
 
 \\* A filler repeated and cut to a length.
 RECURSIVE FillTo(_, _)
