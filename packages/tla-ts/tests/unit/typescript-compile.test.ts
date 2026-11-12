@@ -8259,6 +8259,52 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs Array.fromAsync of the values() of an array written in place", async () => {
+    // V8 rejects a job later than the spec, whose order a for await gives.
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      const input = [1, 2, 3].values();
+      Array.fromAsync(input, (value: number, k: number) => value * 10 + k).then((values) => {
+        log += "[" + values.join(",") + "]";
+      });
+      const thenable = {
+        then(resolve: (value: number) => void, reject: (reason: unknown) => void) {
+          log += "t";
+          reject("r");
+        },
+      };
+      const rejecting = [thenable].values();
+      Array.fromAsync(rejecting as Iterable<unknown>).catch((error) => {
+        log += "<" + String(error) + ">";
+      });
+      Promise.resolve()
+        .then(() => { log += "0"; })
+        .then(() => { log += "1"; })
+        .then(() => { log += "2"; })
+        .then(() => { log += "3"; })
+        .then(() => { log += "4"; })
+        .then(() => { log += "5"; })
+        .then(() => { log += "6"; })
+        .then(() => { log += "7"; })
+        .then(() => { log += "8"; });
+      setTimeout(() => {
+        if (log !== "t012<r>345678[10,21,32]") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("stops at Array.fromAsync of an array's values() that another call steps", () => {
+    expect(() =>
+      compile(`
+        const input = [1, 2].values();
+        input.next();
+        Array.fromAsync(input);
+      `),
+    ).toThrow("Pass Array.fromAsync");
+  });
+
   it("runs Array.fromAsync of an array-like object and of a string", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;

@@ -36,7 +36,7 @@ import {
   isAsyncGenerator,
   translateString,
 } from "./context";
-import { getCallbackReceiver } from "./collections";
+import { getCallbackReceiver, translateArrayIteratorPrototype } from "./collections";
 import { TlaTypeScriptError } from "../errors";
 import { translateEngineError } from "./exceptions";
 import { translateExpression } from "./expressions";
@@ -44,6 +44,7 @@ import { type Formula, ifThenElse, leaf, letIn } from "./formula";
 import { getCandidateValue, getHeap, translateFunctionValue } from "./heap";
 import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
+import { getKeptIterator } from "./types";
 import { type Bound, bindValues, type Receiver } from "./scope";
 import { apply, boolean, define, identifier, index, junction, number, string, tuple } from "./tla";
 
@@ -715,6 +716,57 @@ const getArrayLike = (node: ts.Expression, context: Context) => {
     : undefined;
 };
 
+// The array literal whose values() a const holds, which only the given use reads, so that nothing
+// steps the iterator before it, and whose elements are literals or consts, which read the same
+// wherever they're evaluated.
+const getIteratedLiteral = (node: ts.Identifier, context: Context) => {
+  const symbol = getSymbol(node, context.checker);
+  const valueDeclaration = symbol?.valueDeclaration;
+  const declaration =
+    valueDeclaration !== undefined && ts.isVariableDeclaration(valueDeclaration)
+      ? valueDeclaration
+      : undefined;
+  const initializer =
+    declaration !== undefined &&
+    (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0 &&
+    declaration.initializer !== undefined
+      ? getCast(declaration.initializer)
+      : undefined;
+  const literal =
+    initializer !== undefined &&
+    ts.isCallExpression(initializer) &&
+    getKeptIterator(initializer, context) === "values" &&
+    (ts.isPropertyAccessExpression(initializer.expression) ||
+      ts.isElementAccessExpression(initializer.expression))
+      ? getCast(initializer.expression.expression)
+      : undefined;
+  const isConstant = (element: ts.Expression) => {
+    const declared = ts.isIdentifier(element)
+      ? getSymbol(element, context.checker)?.valueDeclaration
+      : undefined;
+    return (
+      ts.isLiteralExpression(element) ||
+      (declared !== undefined &&
+        ts.isVariableDeclaration(declared) &&
+        (ts.getCombinedNodeFlags(declared) & ts.NodeFlags.Const) !== 0)
+    );
+  };
+  const uses = findNodes(
+    node.getSourceFile(),
+    (inner): inner is ts.Identifier =>
+      ts.isIdentifier(inner) &&
+      inner !== declaration?.name &&
+      getSymbol(inner, context.checker) === symbol,
+  );
+  return literal !== undefined &&
+    ts.isArrayLiteralExpression(literal) &&
+    literal.elements.every(isConstant) &&
+    uses.length === 1 &&
+    uses[0] === node
+    ? literal
+    : undefined;
+};
+
 // The generator function that an object literal holds as its only property, under
 // Symbol.asyncIterator or Symbol.iterator, which Array.fromAsync calls with the object to make the
 // iterator it reads.
@@ -793,10 +845,14 @@ const translateFromAsync = (
     returned !== undefined && ts.isReturnStatement(returned) ? returned.expression : returned;
   const arrayLike =
     items && !ts.isArrayLiteralExpression(items) ? getArrayLike(items, context) : undefined;
-  const elements =
-    items !== undefined && ts.isArrayLiteralExpression(items)
-      ? items.elements.map((element) => (ts.isOmittedExpression(element) ? undefined : element))
-      : undefined;
+  // An array's iterator that fromAsync reads as it reads the array.
+  const iteratedLiteral =
+    items !== undefined && ts.isIdentifier(items) ? getIteratedLiteral(items, context) : undefined;
+  const literal =
+    items !== undefined && ts.isArrayLiteralExpression(items) ? items : iteratedLiteral;
+  const elements = literal?.elements.map((element) =>
+    ts.isOmittedExpression(element) ? undefined : element,
+  );
   const text = items !== undefined && ts.isStringLiteralLike(items) ? items.text : undefined;
   // A generator object that a variable holds, whose next fromAsync calls as it reads each value.
   const symbol = items && ts.isIdentifier(items) ? getSymbol(items, context.checker) : undefined;
@@ -819,12 +875,12 @@ const translateFromAsync = (
     (mapping !== undefined && callee === undefined)
   ) {
     throw new TlaTypeScriptError(
-      "Pass Array.fromAsync an array, a string or an array-like object written in place, a generator, or an object written in place whose Symbol.asyncIterator or Symbol.iterator is a generator function, and a function that tla-ts can follow",
+      "Pass Array.fromAsync an array, a string or an array-like object written in place, the values() of an array written in place, a generator, or an object written in place whose Symbol.asyncIterator or Symbol.iterator is a generator function, and a function that tla-ts can follow",
       node,
     );
   }
   const ran =
-    elements === undefined
+    elements === undefined || iteratedLiteral !== undefined
       ? undefined
       : runLeadingCall(items, path, context, frame, (after) =>
           translateFromAsync(node, after, context, frame, continueWith),
@@ -1095,15 +1151,18 @@ const translateFromAsync = (
       const isUndefined = (value: Expression) =>
         useJavaScript("SameValue", [value, getUndefined(context)], context);
       const iterated = identifier(source);
-      const prototype = translateBuiltInValue(
-        held !== undefined
-          ? "Iterator.prototype"
-          : text === undefined
-            ? "Array.prototype"
-            : "String.prototype",
-        node,
-        context,
-      );
+      const prototype =
+        iteratedLiteral !== undefined
+          ? translateArrayIteratorPrototype(node, context)
+          : translateBuiltInValue(
+              held !== undefined
+                ? "Iterator.prototype"
+                : text === undefined
+                  ? "Array.prototype"
+                  : "String.prototype",
+              node,
+              context,
+            );
       // What fromAsync reads of its items before it runs: their iterators, which an array, a
       // string or a generator inherits, an object's Symbol.asyncIterator, which it lacks where it
       // holds a generator function under Symbol.iterator, or else an array-like's length. An async
@@ -1126,25 +1185,49 @@ const translateFromAsync = (
             ? []
             : iteratorMethod !== undefined
               ? [isUndefined(getSymbolMethod(iterated, "asyncIterator"))]
-              : [
-                  useJavaScript(
-                    "HoldsBuiltIn",
-                    [
-                      heap,
-                      prototype,
-                      useJavaScript("WellKnownSymbol", [string("iterator")], context),
-                      string(
-                        held !== undefined
-                          ? "Iterator.prototype.@@iterator"
-                          : text === undefined
-                            ? "Array.prototype.values"
-                            : "String.prototype.@@iterator",
+              : iteratedLiteral !== undefined
+                ? [
+                    useJavaScript(
+                      "HoldsBuiltIn",
+                      [heap, prototype, string("next"), string("%ArrayIteratorPrototype%.next")],
+                      context,
+                    ),
+                    useJavaScript(
+                      "HoldsBuiltIn",
+                      [
+                        heap,
+                        translateBuiltInValue("Iterator.prototype", node, context),
+                        useJavaScript("WellKnownSymbol", [string("iterator")], context),
+                        string("Iterator.prototype.@@iterator"),
+                      ],
+                      context,
+                    ),
+                    isUndefined(
+                      getSymbolMethod(
+                        translateExpression(items, made.scope, context),
+                        "asyncIterator",
                       ),
-                    ],
-                    context,
-                  ),
-                  isUndefined(getSymbolMethod(prototype, "asyncIterator")),
-                ];
+                    ),
+                  ]
+                : [
+                    useJavaScript(
+                      "HoldsBuiltIn",
+                      [
+                        heap,
+                        prototype,
+                        useJavaScript("WellKnownSymbol", [string("iterator")], context),
+                        string(
+                          held !== undefined
+                            ? "Iterator.prototype.@@iterator"
+                            : text === undefined
+                              ? "Array.prototype.values"
+                              : "String.prototype.@@iterator",
+                        ),
+                      ],
+                      context,
+                    ),
+                    isUndefined(getSymbolMethod(prototype, "asyncIterator")),
+                  ];
       return letIn(
         [
           define(
@@ -1153,7 +1236,7 @@ const translateFromAsync = (
             held !== undefined
               ? held
               : text === undefined
-                ? translateExpression(items, made.scope, context)
+                ? translateExpression(literal ?? items, made.scope, context)
                 : tuple([...text].map((character) => translateString(character, context))),
           ),
         ],
