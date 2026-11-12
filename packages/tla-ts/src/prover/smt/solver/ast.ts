@@ -736,7 +736,7 @@ export class AstManager {
   private declRefCounts: number[] = [];
   readonly macros = new ObjMap<number>((decl) => this.declHashes[decl]);
   // The recfun plugin's definitions by declaration, and their cases by case predicate.
-  readonly recFunDefs = new Map<number, RecFunDef>();
+  readonly recFunDefs = new ObjMap<RecFunDef>((decl) => this.declHashes[decl]);
   readonly recFunCases = new Map<number, RecFunCase>();
   hasRecDefs = false;
   private numRoundsDecls = new Map<number, number>();

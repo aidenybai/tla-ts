@@ -1154,6 +1154,7 @@ export const runSmtlibScript = (
         interp.setElse(value);
         model.registerFunc(decl, interp);
       }
+      model.addRecFuns();
       print(`(\n${printModel(manager, getPrintEnvironment(), model, 2)})`);
     },
     display: (list) => display(script.state.reader.parseTerm(list.items[1] ?? list.end)),

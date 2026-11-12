@@ -2482,7 +2482,7 @@ export const createSmtlibReader = (
         );
       manager.incRef(coerced);
       declare(macros, symbol.text, { domain: bound.varSorts, range, body: coerced });
-      if (bound.varSorts.length > 0) defineMacroFunc(symbol.text, bound.varSorts, coerced);
+      defineMacroFunc(symbol.text, bound.varSorts, coerced);
       return;
     }
     const domain = name === "declare-fun" ? parseDomain(list.items[2], list) : [];

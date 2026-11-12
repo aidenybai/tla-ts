@@ -1231,8 +1231,6 @@ export class Context extends Internalizer {
     const generated =
       this.modelState.kind === "proto" ? this.modelState.generated : this.mkProtoModel();
     const model = generated.model.mkModel();
-    for (const entry of this.manager.macros)
-      if (!model.constInterps.has(entry[0])) model.registerConst(entry[0], entry[1]);
     model.addRecFuns();
     model.incRef();
     this.modelState = { kind: "final", generated, model };
