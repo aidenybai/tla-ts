@@ -1416,15 +1416,31 @@ export const translateCallStatement = (
       ),
     );
   }
+  // A receiver that may be undefined or null gives undefined to an optional chain, and throws a
+  // TypeError otherwise.
+  const guardReceiver = (receiver: ts.Expression, changed: Formula) => {
+    const held = getCast(ts.isNonNullExpression(receiver) ? receiver.expression : receiver);
+    const heldType = context.checker.getTypeAtLocation(held);
+    if (context.checker.getNonNullableType(heldType) === heldType) return changed;
+    context.prelude.add("Null");
+    return ifThenElse(
+      apply("\\in", [
+        translateExpression(held, path.scope, context),
+        set([getUndefined(context), identifier("Null")]),
+      ]),
+      isMethodCall(expression) && expression.expression.questionDotToken !== undefined
+        ? continueWith(path)
+        : throwTypeError(path, expression, context, frame),
+      changed,
+    );
+  };
   // A call like stack.pop() that an expression evaluates, which gives its value from before.
   const removed = getRemovedValue(expression, path, context);
-  if (removed !== undefined) {
+  if (removed !== undefined && isMethodCall(expression)) {
     const name = context.names.getFresh("removed");
-    return bindOnce(
-      removed.path,
-      name,
-      removed.value,
-      continueWith(removed.path, identifier(name)),
+    return guardReceiver(
+      expression.expression.expression,
+      bindOnce(removed.path, name, removed.value, continueWith(removed.path, identifier(name))),
     );
   }
   if (isPromiseCall(expression, context)) {
@@ -2203,7 +2219,7 @@ export const translateCallStatement = (
       kind !== "other" &&
       (kind === "sequence" || !SEQUENCE_UPDATES.has(method))
     ) {
-      const updated = continueWith(
+      const changed = continueWith(
         assign(receiver, path, context, (current) => {
           const value = getUpdatedValue(current, kind, expression, path.scope, context);
           if (value === undefined) {
@@ -2212,6 +2228,7 @@ export const translateCallStatement = (
           return value;
         }),
       );
+      const updated = guardReceiver(receiver, changed);
       const key = expression.arguments.at(0);
       // A weak collection throws a TypeError on a symbol that Symbol.for registered.
       if (

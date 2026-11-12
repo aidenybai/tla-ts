@@ -7515,6 +7515,28 @@ describe("errors", () => {
     expect((await checkModel(getSource(3))).failure?.message).toContain("map");
   });
 
+  it("changes a collection that may be missing only where an optional chain finds it", async () => {
+    const result = await checkModel(`
+      const scopes: (Set<string> | undefined)[] = [undefined];
+      const queues: (number[] | undefined)[] = [undefined];
+      scopes[0]?.add("a");
+      queues[0]?.push(1);
+      const getThrown = (change: () => void) => {
+        try {
+          change();
+        } catch (error) {
+          return error instanceof TypeError;
+        }
+        return false;
+      };
+      if (scopes[0] !== undefined || queues[0] !== undefined) throw new Error("optional");
+      if (!getThrown(() => scopes[0]!.add("b")) || !getThrown(() => queues[0]!.push(2))) {
+        throw new Error("thrown");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`
