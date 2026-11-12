@@ -1939,6 +1939,34 @@ describe("errors", () => {
     expect((await checkModel(getSource(1))).failure?.message).toContain("unexpected");
   });
 
+  it("reads an object's values and entries in turn, running getters that change its keys", async () => {
+    const getSource = (expected: number) => `
+      const bAddsC: Record<string, string> = {
+        a: "A",
+        get b() {
+          this.c = "C";
+          return "B";
+        },
+      };
+      const values = Object.values(bAddsC);
+      if (values.length !== 2) throw new Error("length");
+      if (values[0] !== "A" || values[1] !== "B") throw new Error("values");
+      const bHidesC: Record<string, string> = {
+        a: "A",
+        get b() {
+          Object.defineProperty(this, "c", { enumerable: false });
+          return "B";
+        },
+        c: "C",
+      };
+      const entries = Object.entries(bHidesC);
+      if (entries[1][0] !== "b" || entries[1][1] !== "B") throw new Error("entry");
+      if (entries.length !== ${expected}) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(3))).failure?.message).toContain("unexpected");
+  });
+
   it("reads each element of an array-like object as its method visits it, running getters", async () => {
     const result = await checkModel(`
       let isFirstRead = false;

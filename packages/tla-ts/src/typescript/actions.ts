@@ -173,6 +173,9 @@ import {
   getReadFunctions,
   isDescriptorRead,
   isDescriptorsRead,
+  isOwnValuesRead,
+  getOwnValuesGetters,
+  readOwnValues,
   isGetterPattern,
   isGetterRead,
   getGetterKeys,
@@ -1607,6 +1610,9 @@ export const translateCallStatement = (
         ),
       ),
     );
+  }
+  if (isOwnValuesRead(expression, context)) {
+    return readOwnValues(expression, path, context, frame, continueWith);
   }
   if (isObjectChange(expression, context) && heapSymbol !== undefined) {
     const translated = translateObjectChange(expression, path.scope, context);
@@ -4907,6 +4913,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
   getHeapArrayChange(node, context) !== undefined ||
   getStringCall(node, context) !== undefined ||
   isDescriptorsRead(node, context) ||
+  isOwnValuesRead(node, context) ||
   isRevoke(node, context) ||
   (isObjectChange(node, context) &&
     node.expression.name.text !== "construct" &&
@@ -5485,6 +5492,7 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
     // A definition that reads its descriptor's fields, or a read of a key with getters, runs them.
     const getters = [
       ...getDescriptorGetters(node, context),
+      ...getOwnValuesGetters(node, context),
       ...getReadFunctions(node, context),
       ...getLoopGetters(node, context),
     ];

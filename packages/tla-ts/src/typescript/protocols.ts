@@ -853,6 +853,111 @@ export const readDescriptors = (
   );
 };
 
+// The getters that the script defines under any key, which reading an object's values may run.
+const getOwnValueGetters = (node: ts.Node, context: Context) => [
+  ...new Set([...getGetterKeys(node)].flatMap((key) => getKeyGetters(node, key, context))),
+];
+
+// Object.values or Object.entries of an object where a getter that tla-ts can run may answer a key.
+export const isOwnValuesRead = (node: ts.Node, context: Context): node is ts.CallExpression =>
+  context.heap !== undefined &&
+  ts.isCallExpression(node) &&
+  ts.isPropertyAccessExpression(node.expression) &&
+  node.expression.expression.getText() === "Object" &&
+  (getCallName(node) === "values" || getCallName(node) === "entries") &&
+  node.arguments.length === 1 &&
+  !ts.isSpreadElement(node.arguments[0]) &&
+  getOwnValueGetters(node, context).length > 0 &&
+  getOwnValueGetters(node, context).every((getter) => isRunnableGetter(getter, context));
+
+export const getOwnValuesGetters = (node: ts.Node, context: Context) =>
+  isOwnValuesRead(node, context) ? getOwnValueGetters(node, context) : [];
+
+// Object.values or Object.entries, which lists an object's own string keys, and then reads each
+// that is still an enumerable own property in turn, running its getter. The statement reads at
+// most a few keys.
+export const readOwnValues = (
+  site: ts.CallExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value: Expression) => Formula,
+): Formula => {
+  const isEntries = getCallName(site) === "entries";
+  const getters = getOwnValueGetters(site, context);
+  const readFrom = (
+    current: Path,
+    object: Expression,
+    keys: Expression,
+    position: number,
+    read: Expression,
+  ): Formula => {
+    if (position > KEYS_LIMIT) {
+      return ifThenElse(
+        apply("<=", [apply("Len", [keys]), number(KEYS_LIMIT)]),
+        continueWith(current, read),
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string(`tla-ts can't read the values of more than ${KEYS_LIMIT} keys`),
+          ]),
+        ),
+      );
+    }
+    const key = index(keys, [number(position)]);
+    return translateJoined(
+      site,
+      current,
+      context,
+      (after, value) => readFrom(after, object, keys, position + 1, value ?? read),
+      (next) =>
+        ifThenElse(
+          junction("And", [
+            apply("<=", [number(position), apply("Len", [keys])]),
+            useJavaScript(
+              "IsEnumerableOwn",
+              [getHeap(current.scope, site, context), object, key],
+              context,
+            ),
+          ]),
+          readWith(site, object, key, getters, current, context, frame, (after, value) =>
+            next(after, apply("Append", [read, isEntries ? tuple([key, value]) : value])),
+          ),
+          next(current, read),
+        ),
+    );
+  };
+  return bind(
+    path,
+    "object",
+    translateExpression(site.arguments[0], path.scope, context),
+    context,
+    (bound, object) =>
+      ifThenElse(
+        isObjectArgument(object, context),
+        bind(
+          bound,
+          "keys",
+          useJavaScript(
+            "OwnKeys",
+            [useJavaScript("Lookup", [getHeap(bound.scope, site, context), object], context)],
+            context,
+          ),
+          context,
+          (listed, keys) => readFrom(listed, object, keys, 1, tuple([])),
+        ),
+        continueWith(
+          bound,
+          useJavaScript(
+            isEntries ? "ObjectEntries" : "ObjectValues",
+            [getHeap(bound.scope, site, context), object],
+            context,
+          ),
+        ),
+      ),
+  );
+};
+
 const getCallName = (node: ts.CallExpression) =>
   ts.isPropertyAccessExpression(node.expression) ? node.expression.name.text : undefined;
 
