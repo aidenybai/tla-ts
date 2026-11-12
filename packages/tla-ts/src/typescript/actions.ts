@@ -43,6 +43,7 @@ import {
   isAnyGenerator,
   getLocalCaptures,
   isPlain,
+  getConstruction,
   getNewClass,
   isInertValue,
   isLiteral,
@@ -4801,7 +4802,7 @@ const translateLoopCall = (
 // The constructor that a new of a heap class runs, where a statement runs it.
 const getConstructorRun = (node: ts.Expression, context: Context) => {
   const created = getNewClass(node, context);
-  return created !== undefined && ts.isNewExpression(node) && isStatementNew(node)
+  return created !== undefined && isStatementNew(node)
     ? getRunConstructor(created, context)
     : undefined;
 };
@@ -4810,7 +4811,7 @@ const getConstructorRun = (node: ts.Expression, context: Context) => {
 // that the statement allocated as this, and gives the instance, or the object the constructor
 // returns. A derived class's constructor throws a TypeError where it returns anything else.
 const translateConstruction = (
-  expression: ts.NewExpression,
+  expression: ts.Expression,
   constructor: ts.ConstructorDeclaration | HeapFunction,
   path: Path,
   context: Context,
@@ -4831,7 +4832,7 @@ const translateConstruction = (
   return inlineBody(
     expression,
     constructor,
-    expression.arguments ?? [],
+    getConstruction(expression, context)?.arguments ?? [],
     { value: instance, method: constructor },
     path,
     context,
@@ -5483,7 +5484,7 @@ const translateExpressionStatement = (
     return translatePromiseConstruction(expression, path, context, frame, continueWith);
   }
   const constructor = getConstructorRun(expression, context);
-  if (constructor !== undefined && ts.isNewExpression(expression)) {
+  if (constructor !== undefined) {
     return translateConstruction(expression, constructor, path, context, frame, continueWith);
   }
   if (ts.isYieldExpression(expression) && expression.asteriskToken !== undefined) {
@@ -5587,14 +5588,18 @@ const translateExpressionStatement = (
       ),
     );
   }
-  const assignedConstructor = newAssigned && getConstructorRun(newAssigned, context);
+  const constructed =
+    ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      ? expression.right
+      : undefined;
+  const assignedConstructor = constructed && getConstructorRun(constructed, context);
   if (
-    newAssigned !== undefined &&
+    constructed !== undefined &&
     assignedConstructor !== undefined &&
     ts.isBinaryExpression(expression)
   ) {
     return translateConstruction(
-      newAssigned,
+      constructed,
       assignedConstructor,
       path,
       context,
@@ -5603,7 +5608,7 @@ const translateExpressionStatement = (
         assignPatternWith(
           expression,
           expression.left,
-          newAssigned,
+          constructed,
           value ?? getUndefined(context),
           after,
           context,
@@ -6376,7 +6381,7 @@ export const translateDeclarations = (
       );
     }
     const constructor = initializer && getConstructorRun(initializer, context);
-    if (constructor !== undefined && initializer !== undefined && ts.isNewExpression(initializer)) {
+    if (constructor !== undefined && initializer !== undefined) {
       return translateConstruction(
         initializer,
         constructor,

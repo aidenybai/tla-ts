@@ -2467,7 +2467,11 @@ const translateNode = (
     }
     return made;
   }
-  if (ts.isCallExpression(node) && !isObjectConversion(node, context)) {
+  if (
+    ts.isCallExpression(node) &&
+    !isObjectConversion(node, context) &&
+    getNewClass(node, context) === undefined
+  ) {
     return translateCall(node, scope, context, isDefined);
   }
   if (ts.isTypeOfExpression(node)) return translateTypeOf(node, scope, context);

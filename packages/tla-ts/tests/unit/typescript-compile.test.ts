@@ -3266,6 +3266,45 @@ describe("errors", () => {
     }
   });
 
+  it("constructs through Reflect.construct as new does, with newTarget's prototype", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const o = {};
+      function fn(this: { o: object }) {
+        this.o = o;
+      }
+      const result: { o: object } = Reflect.construct(fn, []);
+      if (result.o !== o) throw new Error("o");
+      if (!(result instanceof fn)) throw new Error("instanceof");
+      class Point {
+        x: number;
+        constructor(x: number, y: number) {
+          this.x = x + y;
+        }
+      }
+      const point: Point = Reflect.construct(Point, [1, 2]);
+      if (point.x !== 3) throw new Error("x");
+      if (Object.getPrototypeOf(point) !== Point.prototype) throw new Error("proto");
+      const seen = { isArray: false };
+      function other(this: object) {
+        seen.isArray = Object.getPrototypeOf(this) === Array.prototype;
+      }
+      const array: object = Reflect.construct(other, [], Array);
+      if (Object.getPrototypeOf(array) !== Array.prototype) throw new Error("newTarget");
+      if (!seen.isArray) throw new Error("inner");
+      const pointed: object = Reflect.construct(other, [], Point);
+      if (!(pointed instanceof Point)) throw new Error("Point newTarget");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const prototype = source.replace("(array) !== Array.prototype", "(array) !== Object.prototype");
+    expect((await checkModel(prototype)).failure?.message).toContain("newTarget");
+    const inner = source.replace("if (!seen.isArray)", "if (seen.isArray)");
+    expect((await checkModel(inner)).failure?.message).toContain("inner");
+    const passed = source.replace("point.x !== 3", "point.x !== 1");
+    expect((await checkModel(passed)).failure?.message).toContain('"x"');
+  });
+
   it("compares globalThis as the global object and stops where it reads its properties", async () => {
     const source = `
       const holder = { seen: 0 };

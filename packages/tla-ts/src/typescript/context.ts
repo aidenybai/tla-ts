@@ -1,6 +1,7 @@
 import ts from "@typescript/typescript6";
 import type { Expression, OperatorDefinition, OperatorParam } from "../ast";
 import { JAVASCRIPT_OPERATORS } from "./javascript";
+import { BUILT_INS } from "./built-ins";
 import { getBuiltIn } from "./intrinsics";
 import { TlaTypeScriptError } from "../errors";
 import { createNames, type Names } from "./names";
@@ -1388,10 +1389,13 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
       ? undefined
       : getSymbol(nameNode, context.checker);
   const sourceFile = node.getSourceFile();
-  const isNewTarget = (child: ts.Node): boolean =>
-    (ts.isNewExpression(child) &&
-      getSymbol(skipCasts(child.expression), context.checker) === symbol) ||
-    (ts.forEachChild(child, (inner) => isNewTarget(inner) || undefined) ?? false);
+  const isNewTarget = (child: ts.Node): boolean => {
+    const callee = getConstruction(child, context)?.callee;
+    return (
+      (callee !== undefined && getSymbol(skipCasts(callee), context.checker) === symbol) ||
+      (ts.forEachChild(child, (inner) => isNewTarget(inner) || undefined) ?? false)
+    );
+  };
   const isHeap =
     symbol !== undefined &&
     node.body !== undefined &&
@@ -1445,9 +1449,54 @@ export const isScript = (sourceFile: ts.SourceFile) =>
       ),
   );
 
-// The heap class that a new names.
-export const getNewClass = (node: ts.Node, context: Context) =>
-  ts.isNewExpression(node) ? getHeapClass(node.expression, context) : undefined;
+// What a new, or a Reflect.construct of a list of arguments, constructs, the arguments it passes,
+// and the newTarget whose prototype property gives the instance its prototype.
+export interface Construction {
+  callee: ts.Expression;
+  arguments: readonly ts.Expression[];
+  newTarget: ts.Expression;
+}
+
+export const getConstruction = (node: ts.Node, context: Context): Construction | undefined => {
+  if (ts.isNewExpression(node)) {
+    return { callee: node.expression, arguments: node.arguments ?? [], newTarget: node.expression };
+  }
+  if (
+    !ts.isCallExpression(node) ||
+    !ts.isPropertyAccessExpression(node.expression) ||
+    node.expression.name.text !== "construct" ||
+    getBuiltIn(node.expression.expression, context) !== "Reflect" ||
+    node.arguments.length > 3
+  ) {
+    return undefined;
+  }
+  const callee = node.arguments.at(0);
+  const list = node.arguments.at(1);
+  const newTarget = node.arguments.at(2) ?? callee;
+  return callee !== undefined &&
+    newTarget !== undefined &&
+    ts.isIdentifier(newTarget) &&
+    list !== undefined &&
+    ts.isArrayLiteralExpression(list) &&
+    list.elements.every(
+      (element) => !ts.isSpreadElement(element) && !ts.isOmittedExpression(element),
+    )
+    ? { callee, arguments: list.elements, newTarget }
+    : undefined;
+};
+
+// The heap class that a new names, or that Reflect.construct constructs with a newTarget that is
+// a constructor, so that it can't throw.
+export const getNewClass = (node: ts.Node, context: Context) => {
+  const construction = getConstruction(node, context);
+  if (construction === undefined) return undefined;
+  const builtIn = getBuiltIn(construction.newTarget, context);
+  return construction.newTarget === construction.callee ||
+    getHeapClass(construction.newTarget, context) !== undefined ||
+    (builtIn !== undefined && BUILT_INS[builtIn][4])
+    ? getHeapClass(construction.callee, context)
+    : undefined;
+};
 
 // A class's constructor, or a function, when its body runs statements. A derived class without
 // a constructor runs its base's.
@@ -1468,7 +1517,7 @@ export const getRunConstructor = (
 
 // Whether a new is all that a statement evaluates, besides the variable it initializes or
 // assigns, so the statement can run the constructor.
-export const isStatementNew = (node: ts.NewExpression) => {
+export const isStatementNew = (node: ts.Expression) => {
   const parent = node.parent;
   return (
     ts.isExpressionStatement(parent) ||

@@ -1,10 +1,12 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
 import {
+  type Construction,
   type HeapClass,
   type CalledMethod,
   type Context,
   type FunctionNode,
+  getConstruction,
   getFunctionOfKind,
   getNewClass,
   isInertValue,
@@ -33,7 +35,6 @@ import {
   isAmbient,
   isInlineBase,
   isNullBased,
-  getHeapClass,
   isNestedFunction,
   skipCasts,
 } from "./context";
@@ -749,19 +750,21 @@ const getChain = (current: HeapClass, context: Context): HeapClass[] => {
 // An instance of a heap class with its fields, before the constructor runs. An instance of a class
 // with private methods or accessors has the class's key in its private names first.
 const translateInstance = (
-  node: ts.NewExpression,
+  node: ts.Node,
+  construction: Construction,
   created: HeapClass,
   heap: Expression,
   scope: Scope,
   context: Context,
 ) => {
   const builtInBase = ts.isClassLike(created) ? getBuiltInBase(created, context) : undefined;
+  const isWrapped = builtInBase !== undefined && builtInBase !== "Object";
+  if (isWrapped && !ts.isNewExpression(node)) {
+    throw new TlaTypeScriptError("Unsupported Reflect.construct of a wrapper's subclass", node);
+  }
   // No constructor body runs, so the arguments and the parameters' defaults are only evaluated
   // where evaluating them can't throw or change anything. A wrapper base reads its first argument.
-  const dropped =
-    builtInBase === undefined || builtInBase === "Object"
-      ? (node.arguments ?? [])
-      : (node.arguments ?? []).slice(1);
+  const dropped = isWrapped ? construction.arguments.slice(1) : construction.arguments;
   const defaults = getChain(created, context).flatMap((current) =>
     (ts.isClassLike(current)
       ? (current.members.find(ts.isConstructorDeclaration)?.parameters ?? [])
@@ -795,9 +798,9 @@ const translateInstance = (
             context,
           )
         : object,
-    builtInBase === undefined || builtInBase === "Object"
-      ? identifier("EmptyObject")
-      : translateWrapperObject(node, builtInBase, identifier("Null"), scope, context),
+    isWrapped && ts.isNewExpression(node)
+      ? translateWrapperObject(node, builtInBase, identifier("Null"), scope, context)
+      : identifier("EmptyObject"),
   );
   // TypeScript defines a class's parameter properties before its other fields.
   const fields = getChain(created, context).flatMap((current) =>
@@ -840,7 +843,7 @@ const translateInstance = (
         empty,
         useJavaScript(
           "Get",
-          [heap, translateExpression(node.expression, scope, context), string("prototype")],
+          [heap, translateExpression(construction.newTarget, scope, context), string("prototype")],
           context,
         ),
       ],
@@ -1018,10 +1021,11 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     return translateClass(node, heap, scope, context);
   }
   const created = getNewClass(node, context);
-  if (created !== undefined && ts.isNewExpression(node)) {
+  const construction = getConstruction(node, context);
+  if (created !== undefined && construction !== undefined) {
     return useJavaScript(
       "Allocate",
-      [heap, translateInstance(node, created, heap, scope, context)],
+      [heap, translateInstance(node, construction, created, heap, scope, context)],
       context,
     );
   }
@@ -1936,7 +1940,7 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
   const isNewInstance =
     !isSometimes &&
     created !== undefined &&
-    ts.isNewExpression(node) &&
+    ts.isExpression(node) &&
     (getRunConstructor(created, context) === undefined || isStatementNew(node));
   // The objects that the fields of a new's instance make, before the instance that holds them.
   const fields =
@@ -2886,7 +2890,7 @@ export const isObjectChange = (node: ts.Node, context: Context): node is MethodC
       ts.isExpressionStatement(node.parent) ||
       isDescriptorsRead(node, context)) &&
     !isProxyOperation(node, context)) ||
-    isConstruct(node));
+    (isConstruct(node) && getNewClass(node, context) === undefined));
 
 // The Object functions that convert their first argument to an object, which throws a TypeError for
 // null and undefined, and those that give a primitive back, or test it, without converting it.
@@ -3039,7 +3043,7 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
   if (getURICall(node, context)?.isDecode === true) return ["URIError"];
   if (getGetterCall(node, context) !== undefined) return ["TypeError"];
   if (isInvalidRegExp(node, context)) return ["SyntaxError"];
-  const created = ts.isNewExpression(node) ? getHeapClass(node.expression, context) : undefined;
+  const created = getNewClass(node, context);
   if (created !== undefined && ts.isClassLike(created) && isNullBased(created)) {
     return ["ReferenceError"];
   }
@@ -3048,6 +3052,7 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
     (isObjectChange(node, context) && isConstruct(node)) ||
     isRevocable(node, context) ||
     ts.isNewExpression(node) ||
+    created !== undefined ||
     (isMethodCall(node) && node.expression.name.text.startsWith("reduce"))
     ? ["TypeError"]
     : [];
