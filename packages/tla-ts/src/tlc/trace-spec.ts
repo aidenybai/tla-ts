@@ -1,3 +1,4 @@
+import { getJavaHashCode } from "../java-hash";
 import { formatValue, type Value } from "../values";
 
 interface TraceSpecInput {
@@ -23,10 +24,8 @@ const CLOSING_TAG = `${"=".repeat(77)}\n`;
 const LASSO_START = "_TTraceLassoStart";
 const LASSO_END = "_TTraceLassoEnd";
 
-const getJavaHash = (text: string) => {
-  const hash = text
-    .split("")
-    .reduce((current, unit) => (Math.imul(current, 31) + unit.charCodeAt(0)) | 0, 0);
+const getHashMapHash = (text: string) => {
+  const hash = getJavaHashCode(text);
   return hash ^ (hash >>> 16);
 };
 
@@ -34,7 +33,7 @@ const getHashOrder = (names: string[]) => {
   const unique = [...new Set(names)];
   const capacity = 2 ** Math.max(4, Math.ceil(Math.log2(unique.length / 0.75)));
   return unique
-    .map((name, index) => ({ name, index, bucket: getJavaHash(name) & (capacity - 1) }))
+    .map((name, index) => ({ name, index, bucket: getHashMapHash(name) & (capacity - 1) }))
     .sort((left, right) => left.bucket - right.bucket || left.index - right.index)
     .map((entry) => entry.name);
 };

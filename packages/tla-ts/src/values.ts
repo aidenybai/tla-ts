@@ -6,6 +6,7 @@ import {
   TlaModuleError,
   TlaSetBoundError,
 } from "./errors";
+import { getJavaHashCode } from "./java-hash";
 import { prettyPrint } from "./pretty-print";
 import { isEvalException } from "./tlc/messages";
 import type { TlcVersion } from "./tlc/version";
@@ -3122,12 +3123,6 @@ const isUnchanged = (previous: Value | undefined, value: Value) => {
 };
 
 const JAVA_FORMAT_SPECIFIER = /%(\d+\$)?([-#+ 0,(<]*)(\d+)?(\.\d+)?(.?)/gs;
-
-const getJavaHashCode = (text: string) =>
-  Array.from({ length: text.length }, (_value, index) => text.charCodeAt(index)).reduce(
-    (hash, unit) => (Math.imul(hash, 31) + unit) | 0,
-    0,
-  );
 
 const formatJava = (format: string, args: string[]) => {
   let nextIndex = 0;

@@ -1,3 +1,5 @@
+import { getJavaHashCode } from "../java-hash";
+
 export interface SanyLocation {
   file: string;
   beginLine: number;
@@ -343,14 +345,6 @@ interface JavaHashtable {
   threshold: number;
 }
 
-const getJavaHash = (text: string) => {
-  let hash = 0;
-  for (let index = 0; index < text.length; index++) {
-    hash = (Math.imul(hash, 31) + text.charCodeAt(index)) | 0;
-  }
-  return hash;
-};
-
 const createJavaHashtable = (): JavaHashtable => ({
   buckets: Array.from({ length: 11 }, () => []),
   count: 0,
@@ -372,12 +366,12 @@ const rehash = (table: JavaHashtable) => {
 };
 
 const getHashtableValue = (table: JavaHashtable, key: string, hashKey = key) =>
-  table.buckets[getBucketIndex(getJavaHash(hashKey), table.buckets.length)].find(
+  table.buckets[getBucketIndex(getJavaHashCode(hashKey), table.buckets.length)].find(
     (entry) => entry.key === key,
   )?.value;
 
 const putHashtableValue = (table: JavaHashtable, key: string, value: SymbolNode, hashKey = key) => {
-  const hash = getJavaHash(hashKey);
+  const hash = getJavaHashCode(hashKey);
   const existing = table.buckets[getBucketIndex(hash, table.buckets.length)].find(
     (entry) => entry.key === key,
   );

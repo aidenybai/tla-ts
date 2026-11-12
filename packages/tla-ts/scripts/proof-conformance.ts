@@ -89,7 +89,7 @@ const analyze = (path: string): ParseOutcome => {
       loadModule: (name) =>
         readModule(join(dirname(path), `${name}.tla`)) ?? readModule(libraryModules.get(name)),
       print: () => {},
-      files: { readFile: undefined, writeFile: undefined },
+      files: { readFile: undefined, writeFile: undefined, makeDirectory: undefined },
     });
   } catch (error) {
     if (error instanceof TlaUnsupportedError)

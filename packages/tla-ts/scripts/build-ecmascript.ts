@@ -180,7 +180,7 @@ createEnvironment(parseConfig("CONSTANTS None = None Empty = Empty Absent = Abse
     }
   },
   print: () => {},
-  files: { readFile: undefined, writeFile: undefined },
+  files: { readFile: undefined, writeFile: undefined, makeDirectory: undefined },
 });
 
 console.log(`${parts.length} parts, ${operators.length} operators, ${names.length} names`);

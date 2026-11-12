@@ -8,6 +8,7 @@ import {
 } from "./ast";
 import { formatRange } from "./errors";
 import type { Environment, Scope } from "./evaluate";
+import { getJavaHashCode } from "./java-hash";
 import { getTlcFingerprint } from "./tlc/fingerprint";
 import type { Value } from "./values";
 
@@ -204,12 +205,6 @@ const getStartRange = (location: SourceLocation, last: SourceRange | undefined) 
     end: last.end,
   };
 
-const getJavaHashCode = (text: string) =>
-  Array.from({ length: text.length }, (_value, index) => text.charCodeAt(index)).reduce(
-    (hash, code) => (Math.imul(hash, 31) + code) | 0,
-    0,
-  ) & 0x7fffffff;
-
 const getHashtableOrder = (definitions: Definition[]) => {
   let buckets = Array.from({ length: 11 }, (): Definition[] => []);
   definitions.forEach((definition, count) => {
@@ -217,12 +212,12 @@ const getHashtableOrder = (definitions: Definition[]) => {
       const grown = Array.from({ length: buckets.length * 2 + 1 }, (): Definition[] => []);
       for (let index = buckets.length - 1; index >= 0; index--) {
         buckets[index].forEach((entry) =>
-          grown[getJavaHashCode(entry.name) % grown.length].unshift(entry),
+          grown[(getJavaHashCode(entry.name) & 0x7fffffff) % grown.length].unshift(entry),
         );
       }
       buckets = grown;
     }
-    buckets[getJavaHashCode(definition.name) % buckets.length].unshift(definition);
+    buckets[(getJavaHashCode(definition.name) & 0x7fffffff) % buckets.length].unshift(definition);
   });
   return buckets.toReversed().flat();
 };

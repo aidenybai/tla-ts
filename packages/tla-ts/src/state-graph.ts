@@ -1,5 +1,6 @@
 // A port of TLC's -dump writers, tlc2.util.StateWriter and tlc2.util.DotStateWriter.
 
+import { getJavaHashCode } from "./java-hash";
 import type { TlcVersion } from "./tlc/version";
 
 export interface StateDump {
@@ -67,12 +68,6 @@ const getJavaHashOrder = <Key>(keys: Key[], getHash: (key: Key) => number) => {
 const getLongHash = (value: bigint) =>
   Number(BigInt.asIntN(32, value ^ (BigInt.asUintN(64, value) >> 32n)));
 
-const getStringHash = (text: string) =>
-  [...Array(text.length).keys()].reduce(
-    (hash, index) => (Math.imul(31, hash) + text.charCodeAt(index)) | 0,
-    0,
-  );
-
 const escapeDotString = (text: string) =>
   text.replaceAll("\\", "\\\\").replaceAll('"', '\\"').trim();
 
@@ -132,7 +127,7 @@ const createDotWriter = (
     [
       `subgraph cluster_legend {graph[style=bold];label = "Next State Actions" style="solid"\n`,
       `node [ labeljust="l",colorscheme="${COLOR_SCHEME}",style=filled,shape=record ]\n`,
-      ...getJavaHashOrder([...colors.keys()], getStringHash).map(
+      ...getJavaHashOrder([...colors.keys()], getJavaHashCode).map(
         (name) => `${name.replaceAll("!", ":")} [label="${name}",fillcolor=${colors.get(name)}]\n`,
       ),
       "}",

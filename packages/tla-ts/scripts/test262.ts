@@ -608,7 +608,7 @@ const createRunner = () => {
     loadModule,
     order,
     print: () => {},
-    files: { readFile: undefined, writeFile: undefined },
+    files: { readFile: undefined, writeFile: undefined, makeDirectory: undefined },
   });
   const environment = specification.environment;
   evaluateStartupDefinitions(specification.startupDefinitions, environment);
