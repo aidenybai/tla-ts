@@ -36,6 +36,7 @@ const mkVarPair = (kind: "x_eq_y" | "x_neq_y" | "x_leq_y", first: number, second
   first > second ? { kind, first: second, second: first } : { kind, first, second };
 
 export class QuantifierInfo {
+  private manager: AstManager;
   readonly flatQ: number;
   qinfos: QInfo[] = [];
   isAuf = true;
@@ -45,11 +46,12 @@ export class QuantifierInfo {
   readonly condMacros;
 
   constructor(
-    private manager: AstManager,
     private context: Context,
     readonly quantifier: number,
     macroRewriter: Rewriter,
   ) {
+    const manager = context.manager;
+    this.manager = manager;
     const isNested = manager.hasQuantifierFlags[manager.getQuantifier(quantifier).body];
     this.flatQ = isNested ? pullQuant(manager, quantifier) : quantifier;
     if (!isNested) manager.incRef(quantifier);

@@ -150,7 +150,6 @@ export abstract class Internalizer {
   constructor(
     readonly manager: AstManager,
     isRelevancyEnabled: boolean,
-    isDelayingNewCaseSplits: boolean,
   ) {
     this.rewriter = new Rewriter(manager, KERNEL_REWRITER_OPTIONS);
     this.relevancy = new RelevancyPropagator(
@@ -170,7 +169,7 @@ export abstract class Internalizer {
         getNumBoolVars: () => this.numBoolVars,
         isUnassigned: (boolVar) => this.assignment[mkLiteral(boolVar)] === L_UNDEF,
       },
-      isDelayingNewCaseSplits,
+      isRelevancyEnabled,
     );
     this.mkBoolVar(manager.trueExpr);
     this.assignment[0] = L_TRUE;

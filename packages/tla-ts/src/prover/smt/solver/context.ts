@@ -109,7 +109,7 @@ export class Context extends Internalizer {
   private modelState: ModelState = { kind: "none" };
 
   constructor(manager: AstManager, params: SmtParams) {
-    super(manager, params.relevancyLevel > 0, params.relevancyLevel > 0);
+    super(manager, params.relevancyLevel > 0);
     this.qmanager = new DefaultQuantifierManager(this, params.isMbqi);
   }
 
@@ -1071,7 +1071,7 @@ export class Context extends Internalizer {
         this.lastSearchFailure !== FAILURE_THEORY ||
         status === L_FALSE ||
         this.isInconsistent() ||
-        !qmanager.hasQuantifiers() ||
+        qmanager.quantifiers.length === 0 ||
         !qmanager.isModelBased()
       )
         return status;
@@ -1083,7 +1083,7 @@ export class Context extends Internalizer {
       isForcedRestart = true;
     }
     if (status === L_FALSE) return L_FALSE;
-    if (status === L_TRUE && !qmanager.hasQuantifiers()) return L_TRUE;
+    if (status === L_TRUE && qmanager.quantifiers.length === 0) return L_TRUE;
     if (status === L_TRUE) {
       const generated = this.mkProtoModel();
       const result = qmanager.isModelBased()
