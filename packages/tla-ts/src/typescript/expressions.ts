@@ -396,6 +396,13 @@ export const translateElements = (
     if (isHeapArray(element.expression, context)) {
       return [...result, translateHeapElements(element.expression, scope, context)];
     }
+    // A string spreads its code points.
+    if (ts.isStringLiteralLike(element.expression)) {
+      return [
+        ...result,
+        [...element.expression.text].map((character) => translateString(character, context)),
+      ];
+    }
     if (isEvery(context.checker.getTypeAtLocation(element.expression), ts.TypeFlags.StringLike)) {
       return [
         ...result,
