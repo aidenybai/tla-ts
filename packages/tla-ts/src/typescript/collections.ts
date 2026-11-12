@@ -614,7 +614,7 @@ const translateSequenceOperation = (
       : useJavaScript("ToNumber", [translate(inner)], context);
   // An index that counts back from the end when it's negative, as at() and slice() take it.
   const getRelative = (inner: ts.Expression, operator: "RelativeIndex" | "ClampedIndex") =>
-    ts.isNumericLiteral(inner)
+    ts.isNumericLiteral(inner) && Number.isInteger(Number(inner.text))
       ? translate(inner)
       : useJavaScript(operator, [getIndex(inner), getLength()], context);
   const orUndefined = (exists: Expression, value: Expression) => {
@@ -669,7 +669,7 @@ const translateSequenceOperation = (
       }
       const start = isUndefined
         ? number(0)
-        : ts.isNumericLiteral(from)
+        : ts.isNumericLiteral(from) && Number.isInteger(Number(from.text))
           ? translate(from)
           : useJavaScript("RelativeIndex", [translate(from), getLength()], context);
       // A search back from index start reaches position start + 1, as positions count from 1.

@@ -30,7 +30,7 @@ export const WELL_KNOWN_SYMBOLS = [
 export const JAVASCRIPT_MODULE = `------------------------------ MODULE JavaScript ------------------------------
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
-CONSTANTS Undefined, Null, Ref, Big, BuiltIns, ConstantFunctions, Symbols,
+CONSTANTS Undefined, Null, Ref, Big, BuiltIns, ConstantFunctions, Symbols, Fractions,
           NaN, Infinity, NegativeInfinity, NegativeZero
 
 LOCAL Digits == {"-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
@@ -46,6 +46,18 @@ LOCAL WellKnownSymbols == <<${WELL_KNOWN_SYMBOLS.map((name) => `"${name}"`).join
 
 \\* A model value equals only a model value, so this compares a value of any kind with Symbols.
 IsSymbol(value) == \\E position \\in DOMAIN Symbols : Symbols[position] = value
+
+\\* Fractions holds the numbers that a script's literals give and that aren't integers, with their
+\\* negations, from the least. Each is a model value with its text and its floor.
+IsFraction(value) == \\E position \\in DOMAIN Fractions : Fractions[position].value = value
+
+LOCAL FractionPosition(value) ==
+  CHOOSE position \\in DOMAIN Fractions : Fractions[position].value = value
+
+LOCAL Floor(value) == Fractions[FractionPosition(value)].floor
+
+\\* ToIntegerOrInfinity of a fraction.
+LOCAL Truncate(value) == IF Floor(value) < 0 THEN Floor(value) + 1 ELSE Floor(value)
 
 LOCAL SymbolPosition(symbol) == CHOOSE position \\in DOMAIN Symbols : Symbols[position] = symbol
 
@@ -66,20 +78,24 @@ TypeOf(value) ==
        [] IsBigInt(value) -> "bigint"
        [] first \\in {"[", "<", "{", "("} \\cup Digits -> "object"
        [] IsSymbol(value) -> "symbol"
+       [] IsFraction(value) -> "number"
        [] OTHER -> "function"
 
 \\* TLC can't tell whether a value that isn't an integer is in Int, so this asks TypeOf.
 IsNumber(value) == TypeOf(value) = "number"
 
-LOCAL IsInteger(value) == IsNumber(value) /\\ value \\notin SpecialNumbers
+LOCAL IsInteger(value) == IsNumber(value) /\\ value \\notin SpecialNumbers /\\ ~IsFraction(value)
 
 \\* Whether a value is a number other than NaN and the infinities.
-IsFinite(value) == IsInteger(value) \\/ value = NegativeZero
+IsFinite(value) == IsInteger(value) \\/ value = NegativeZero \\/ IsFraction(value)
 
 LOCAL IsZero(value) == value = 0 \\/ value = NegativeZero
 
 LOCAL IsNegative(value) ==
-  value = NegativeZero \\/ value = NegativeInfinity \\/ (IsInteger(value) /\\ value < 0)
+  \\/ value = NegativeZero
+  \\/ value = NegativeInfinity
+  \\/ IsFraction(value) /\\ Floor(value) < 0
+  \\/ IsInteger(value) /\\ value < 0
 
 LOCAL Magnitude(value) == IF value = NegativeZero THEN 0 ELSE value
 
@@ -91,6 +107,7 @@ Negate(value) ==
     [] value = NegativeInfinity -> Infinity
     [] value = NegativeZero -> 0
     [] value = 0 -> NegativeZero
+    [] IsFraction(value) -> Fractions[Len(Fractions) + 1 - FractionPosition(value)].value
     [] OTHER -> -value
 
 Add(left, right) ==
@@ -100,6 +117,9 @@ Add(left, right) ==
     [] right \\in Infinities -> right
     [] left = NegativeZero -> right
     [] right = NegativeZero -> left
+    [] left = 0 -> right
+    [] right = 0 -> left
+    [] IsFraction(left) \\/ IsFraction(right) -> Assert(FALSE, "tla-ts can't add fractions")
     [] OTHER -> left + right
 
 Subtract(left, right) == Add(left, Negate(right))
@@ -111,6 +131,12 @@ Multiply(left, right) ==
             CASE IsZero(left) \\/ IsZero(right) -> NaN
               [] isNegative -> NegativeInfinity
               [] OTHER -> Infinity
+       [] IsZero(left) \\/ IsZero(right) -> IF isNegative THEN NegativeZero ELSE 0
+       [] left = 1 -> right
+       [] right = 1 -> left
+       [] left = -1 -> Negate(right)
+       [] right = -1 -> Negate(left)
+       [] IsFraction(left) \\/ IsFraction(right) -> Assert(FALSE, "tla-ts can't multiply fractions")
        [] OTHER ->
             LET product == Magnitude(left) * Magnitude(right)
             IN IF product = 0 /\\ isNegative THEN NegativeZero ELSE product
@@ -127,6 +153,9 @@ Divide(left, right) ==
        [] right \\in Infinities -> signed(0)
        [] IsZero(right) /\\ IsZero(left) -> NaN
        [] IsZero(right) -> IF isNegative THEN NegativeInfinity ELSE Infinity
+       [] IsZero(left) -> signed(0)
+       [] right = 1 -> left
+       [] IsFraction(left) \\/ IsFraction(right) -> Assert(FALSE, "tla-ts can't divide fractions")
        [] Absolute(Magnitude(left)) % Absolute(Magnitude(right)) = 0 ->
             signed(Absolute(Magnitude(left)) \\div Absolute(Magnitude(right)))
        [] OTHER -> Assert(FALSE, "tla-ts can't represent the fraction " \\o ToString(left) \\o " / "
@@ -136,6 +165,8 @@ Divide(left, right) ==
 Remainder(left, right) ==
   CASE left = NaN \\/ right = NaN \\/ left \\in Infinities \\/ IsZero(right) -> NaN
     [] right \\in Infinities \\/ IsZero(left) -> left
+    [] IsFraction(left) \\/ IsFraction(right) ->
+         Assert(FALSE, "tla-ts can't compute the remainder of fractions")
     [] OTHER ->
          LET remainder == Absolute(left) % Absolute(right)
          IN CASE left > 0 -> remainder
@@ -153,32 +184,41 @@ Power(base, exponent) ==
     [] base = NegativeInfinity ->
          CASE ~IsNegative(exponent) /\\ IsOdd(exponent) -> NegativeInfinity
            [] ~IsNegative(exponent) -> Infinity
-           [] IsOdd(-exponent) -> NegativeZero
+           [] IsOdd(Negate(exponent)) -> NegativeZero
            [] OTHER -> 0
     [] base = 0 -> IF IsNegative(exponent) THEN Infinity ELSE 0
     [] base = NegativeZero ->
          CASE ~IsNegative(exponent) /\\ IsOdd(exponent) -> NegativeZero
            [] ~IsNegative(exponent) -> 0
-           [] IsOdd(-exponent) -> NegativeInfinity
+           [] IsOdd(Negate(exponent)) -> NegativeInfinity
            [] OTHER -> Infinity
     [] exponent \\in Infinities ->
-         CASE Absolute(base) = 1 -> NaN
-           [] (Absolute(base) > 1) = (exponent = Infinity) -> Infinity
-           [] OTHER -> 0
+         LET exceedsOne == IF IsFraction(base)
+                           THEN Floor(base) >= 1 \\/ Floor(base) <= -2
+                           ELSE Absolute(base) > 1
+         IN CASE base \\in {1, -1} -> NaN
+              [] exceedsOne = (exponent = Infinity) -> Infinity
+              [] OTHER -> 0
+    [] IsFraction(base) \\/ IsFraction(exponent) ->
+         Assert(FALSE, "tla-ts can't raise fractions to a power")
     [] exponent >= 0 -> base ^ exponent
-    [] Absolute(base) = 1 -> IF IsOdd(-exponent) THEN base ELSE 1
+    [] Absolute(base) = 1 -> IF IsOdd(Negate(exponent)) THEN base ELSE 1
     [] OTHER -> Assert(FALSE, "tla-ts can't represent this value")
 
+\\* The order of numbers, by their kind, then their floor, then their position in Fractions, where
+\\* an integer comes before the fractions above it.
 LOCAL Rank(value) ==
-  CASE value = NegativeInfinity -> <<0, 0>>
-    [] value = Infinity -> <<2, 0>>
-    [] OTHER -> <<1, Magnitude(value)>>
+  CASE value = NegativeInfinity -> <<0, 0, 0>>
+    [] value = Infinity -> <<2, 0, 0>>
+    [] IsFraction(value) -> <<1, Floor(value), FractionPosition(value)>>
+    [] OTHER -> <<1, Magnitude(value), 0>>
 
-LessThan(left, right) ==
-  /\\ left # NaN
-  /\\ right # NaN
-  /\\ \\/ Rank(left)[1] < Rank(right)[1]
-     \\/ Rank(left)[1] = Rank(right)[1] /\\ Rank(left)[2] < Rank(right)[2]
+LOCAL Precedes(left, right) ==
+  \\E position \\in DOMAIN left :
+    /\\ left[position] < right[position]
+    /\\ \\A earlier \\in 1..(position - 1) : left[earlier] = right[earlier]
+
+LessThan(left, right) == left # NaN /\\ right # NaN /\\ Precedes(Rank(left), Rank(right))
 
 LessOrEqual(left, right) == left # NaN /\\ right # NaN /\\ ~LessThan(right, left)
 
@@ -247,13 +287,10 @@ BigIntPower(base, exponent) ==
        [] OTHER -> BigIntPowerOf(base, count)
 
 \\* The order of numbers and BigInts, which compares their mathematical values.
-LOCAL NumericRank(value) == IF IsBigInt(value) THEN <<1, value[Big]>> ELSE Rank(value)
+LOCAL NumericRank(value) == IF IsBigInt(value) THEN <<1, value[Big], 0>> ELSE Rank(value)
 
 NumericLessThan(left, right) ==
-  /\\ left # NaN
-  /\\ right # NaN
-  /\\ \\/ NumericRank(left)[1] < NumericRank(right)[1]
-     \\/ NumericRank(left)[1] = NumericRank(right)[1] /\\ NumericRank(left)[2] < NumericRank(right)[2]
+  left # NaN /\\ right # NaN /\\ Precedes(NumericRank(left), NumericRank(right))
 
 NumericLessOrEqual(left, right) == left # NaN /\\ right # NaN /\\ ~NumericLessThan(right, left)
 
@@ -261,7 +298,10 @@ NumericLessOrEqual(left, right) == left # NaN /\\ right # NaN /\\ ~NumericLessTh
 AbsoluteValue(value) == IF IsNegative(value) THEN Negate(value) ELSE value
 
 \\* ToInt32 of a number. TLC keeps integers in 32 bits, so it leaves an integer as it is.
-LOCAL Int32(value) == IF value \\in SpecialNumbers THEN 0 ELSE value
+LOCAL Int32(value) ==
+  CASE value \\in SpecialNumbers -> 0
+    [] IsFraction(value) -> Truncate(value)
+    [] OTHER -> value
 
 \\* The count that a shift takes: ToUint32 of its right operand, modulo 32.
 LOCAL ShiftCount(value) == Int32(value) % 32
@@ -376,6 +416,10 @@ LOCAL Quotient(left, right, isFloor) ==
        [] IsZero(left) /\\ IsZero(right) -> NaN
        [] left \\in Infinities \\/ IsZero(right) -> signed(Infinity)
        [] right \\in Infinities \\/ IsZero(left) -> signed(0)
+       [] IsFraction(left) /\\ right = 1 ->
+            LET whole == IF isFloor THEN Floor(left) ELSE Truncate(left)
+            IN IF whole = 0 /\\ isNegative THEN NegativeZero ELSE whole
+       [] IsFraction(left) \\/ IsFraction(right) -> Assert(FALSE, "tla-ts can't divide fractions")
        [] isFloor /\\ isNegative /\\ Absolute(left) % Absolute(right) # 0 ->
             -(Absolute(left) \\div Absolute(right) + 1)
        [] OTHER -> signed(Absolute(left) \\div Absolute(right))
@@ -388,7 +432,7 @@ TruncDivide(left, right) == Quotient(left, right, FALSE)
 \\* index.
 ElementPosition(value) ==
   CASE value = NegativeZero -> 1
-    [] value \\in SpecialNumbers -> 0
+    [] value \\in SpecialNumbers \\/ IsFraction(value) -> 0
     [] OTHER -> value + 1
 
 \\* The value that a Set or a Map keeps as a key, where -0 is 0.
@@ -406,6 +450,7 @@ RelativeIndex(index, length) ==
   CASE index = NaN \\/ index = NegativeZero -> 0
     [] index = Infinity -> length
     [] index = NegativeInfinity -> -1
+    [] IsFraction(index) -> IF Truncate(index) < 0 THEN length + Truncate(index) ELSE Truncate(index)
     [] index < 0 -> length + index
     [] OTHER -> index
 
@@ -885,6 +930,7 @@ TypedKey(key) ==
     [] IsIndex(key) -> "index"
     [] key \\in {"-0", "Infinity", "-Infinity", "NaN"} -> "number"
     [] Len(key) > 1 /\\ SubSeq(key, 1, 1) = "-" /\\ IsIndex(SubSeq(key, 2, Len(key))) -> "number"
+    [] \\E position \\in DOMAIN Fractions : Fractions[position].text = key -> "number"
     [] /\\ Len(key) > 0
        /\\ \\A position \\in 1..Len(key) : SubSeq(key, position, position) \\in Digits \\cup {".", "e", "+"} ->
          Assert(FALSE, "tla-ts can't tell whether this key is a number")
@@ -1222,6 +1268,7 @@ ToLength(value) ==
     [] TypeOf(value) = "boolean" -> IF value THEN 1 ELSE 0
     [] value = Infinity -> Assert(FALSE, "tla-ts can't represent this value")
     [] value \\in SpecialNumbers -> 0
+    [] IsFraction(value) -> IF Floor(value) < 0 THEN 0 ELSE Floor(value)
     [] TypeOf(value) = "number" -> IF value < 0 THEN 0 ELSE value
     [] TypeOf(value) = "string" -> ToLengthOfText(value)
     [] value = <<>> -> 0
@@ -1437,6 +1484,7 @@ StringOf(value) ==
     [] TypeOf(value) = "string" -> value
     [] value = NegativeInfinity -> "-Infinity"
     [] value = NegativeZero -> "0"
+    [] IsFraction(value) -> Fractions[FractionPosition(value)].text
     [] TypeOf(value) = "number" -> ToString(value)
     [] IsBigInt(value) -> ToString(value[Big])
     [] OTHER -> Assert(FALSE, "tla-ts can't convert objects to strings")
@@ -1607,7 +1655,10 @@ ToBigInt(value) ==
 NumberOfBigInt(value) == IntegerOfBigInt(value)
 
 \\* ToIntegerOrInfinity of a number or undefined.
-LOCAL IntegerOf(value) == IF value \\in {Undefined, NaN, NegativeZero} THEN 0 ELSE value
+LOCAL IntegerOf(value) ==
+  CASE value \\in {Undefined, NaN, NegativeZero} -> 0
+    [] IsFraction(value) -> Truncate(value)
+    [] OTHER -> value
 
 \\* An integer or an infinity, clamped to 0..length.
 LOCAL Clamp(value, length) ==
@@ -2000,6 +2051,8 @@ NumberToString(value, radix) ==
   LET base == IF radix = Undefined THEN 10 ELSE IntegerOf(radix)
   IN  CASE ~IsInteger(base) \\/ base < 2 \\/ base > 36 ->
              Assert(FALSE, "tla-ts can't throw the RangeError of a radix outside 2 to 36")
+        [] IsFraction(value) /\\ base # 10 ->
+             Assert(FALSE, "tla-ts can't write a fraction in a radix other than 10")
         [] ~IsInteger(value) \\/ base = 10 -> StringOf(value)
         [] value < 0 -> "-" \\o RadixDigits(-value, base)
         [] OTHER -> RadixDigits(value, base)
@@ -2591,6 +2644,9 @@ ToNumber(value) ==
              [] kind = "integer" -> magnitude
              [] kind = "infinity" -> IF isNegative THEN NegativeInfinity ELSE Infinity
              [] kind = "nan" -> NaN
+             [] \\E position \\in DOMAIN Fractions : Fractions[position].text = value ->
+                  Fractions[CHOOSE position \\in DOMAIN Fractions :
+                              Fractions[position].text = value].value
              [] OTHER -> Assert(FALSE, "tla-ts can't represent the number " \\o ToString(value)))
     [] IsRef(value) -> Assert(FALSE, "tla-ts can't convert this object to a number")
     [] IsBigInt(value) ->
@@ -2666,6 +2722,11 @@ LOCAL EqualsText(number, text) ==
   ReadNumber(text, LAMBDA kind, isNegative, magnitude :
     CASE kind = "integer" -> StrictEquals(number, IF isNegative THEN -magnitude ELSE magnitude)
       [] kind = "infinity" -> number = IF isNegative THEN NegativeInfinity ELSE Infinity
+      [] kind = "fraction" /\\ IsFraction(number) ->
+           \\/ StringOf(number) = text
+           \\/ /\\ IsNegative(number) = isNegative
+              /\\ AbsoluteValue(Truncate(number)) = magnitude
+              /\\ Assert(FALSE, "tla-ts can't compare a fraction with " \\o ToString(text))
       [] OTHER -> FALSE)
 
 \\* JavaScript's ==, which converts a boolean to a number, a string to compare it with a number, and
@@ -2780,7 +2841,10 @@ LOCAL TimeClip(time) ==
   THEN time
   ELSE NaN
 
-LOCAL ToIntegerOrInfinity(value) == IF value \\in {NaN, NegativeZero} THEN 0 ELSE value
+LOCAL ToIntegerOrInfinity(value) ==
+  CASE value \\in {NaN, NegativeZero} -> 0
+    [] IsFraction(value) -> Truncate(value)
+    [] OTHER -> value
 
 LOCAL AreFinite(values) == \\A position \\in DOMAIN values : IsFinite(values[position])
 
@@ -3219,6 +3283,7 @@ LOCAL FloatBytes(value, type) ==
        [] value = NegativeInfinity -> encode(TRUE, ones, none)
        [] value = NegativeZero -> encode(TRUE, 0, none)
        [] value = 0 -> encode(FALSE, 0, none)
+       [] IsFraction(value) -> Assert(FALSE, "tla-ts can't write a fraction's bits")
        [] value = -2147483647 - 1 -> Assert(FALSE, "tla-ts can't represent a number this big")
        [] (shift < 0 /\\ magnitude % 2^(-shift) # 0) \\/ power + 2^(exponentBits - 1) - 1 >= ones ->
             Assert(FALSE, "tla-ts can't round a number to a float")
@@ -3230,6 +3295,10 @@ LOCAL FloatBytes(value, type) ==
 \\* The little-endian bytes that an element of a type holds for a number.
 NumberBytes(type, value) ==
   CASE type \\in {"Float16", "Float32", "Float64"} -> FloatBytes(value, type)
+    [] IsFraction(value) /\\ type = "Uint8Clamped" ->
+         Assert(FALSE, "tla-ts can't round a fraction to a byte")
+    [] IsFraction(value) ->
+         [position \\in 1..ElementSize(type) |-> (Truncate(value) \\div 2^(8 * (position - 1))) % 256]
     [] type = "Uint8Clamped" ->
          <<CASE value \\in {NaN, NegativeZero, NegativeInfinity} -> 0
              [] value = Infinity -> 255
@@ -3263,6 +3332,7 @@ IndexOfArgument(value) ==
   LET number == ToNumber(value)
   IN CASE number \\in {NaN, NegativeZero} -> 0
        [] number \\in {Infinity, NegativeInfinity} -> -1
+       [] IsFraction(number) -> IF Truncate(number) < 0 THEN -1 ELSE Truncate(number)
        [] number < 0 -> -1
        [] OTHER -> number
 
@@ -4049,6 +4119,7 @@ LOCAL JSONGap(heap, space) ==
                  [] kind = "String" -> JSONPrimitive(heap, space, kind, "toString")
                  [] OTHER -> space
       count == CASE value \\in {NaN, NegativeInfinity, NegativeZero} -> 0
+                 [] IsFraction(value) -> IF Truncate(value) > 10 THEN 10 ELSE Truncate(value)
                  [] value = Infinity -> 10
                  [] value > 10 -> 10
                  [] OTHER -> value

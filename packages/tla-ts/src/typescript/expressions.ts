@@ -453,12 +453,25 @@ const translateMath = (node: ts.CallExpression, method: string, scope: Scope, co
     const power = useJavaScript("Power", node.arguments.map(translate), context);
     return isSpecial ? power : useJavaScript("PlainNumber", [power], context);
   }
+  if (method === "ceil" && node.arguments.length === 1 && isSpecial) {
+    // Math.ceil(x) is -Math.floor(-x).
+    const negated = useJavaScript("Negate", [translate(argument)], context);
+    const floor = useJavaScript("FloorDivide", [negated, number(1)], context);
+    return useJavaScript("Negate", [floor], context);
+  }
   if ((method === "floor" || method === "trunc") && node.arguments.length === 1) {
     const division = ts.isParenthesizedExpression(argument) ? argument.expression : argument;
     if (
       !ts.isBinaryExpression(division) ||
       division.operatorToken.kind !== ts.SyntaxKind.SlashToken
     ) {
+      if (isSpecial) {
+        return useJavaScript(
+          method === "floor" ? "FloorDivide" : "TruncDivide",
+          [translate(argument), number(1)],
+          context,
+        );
+      }
       throw new TlaTypeScriptError(
         `Math.${method} only takes a division, as in Math.${method}(a / b)`,
         node,
@@ -642,7 +655,15 @@ export const translateCall = (
     const argument = node.arguments.at(0);
     if (argument === undefined) return boolean(false);
     const value = translateExpression(argument, scope, context);
-    if (method !== "isNaN") return useJavaScript("IsFinite", [value], context);
+    if (method === "isFinite") return useJavaScript("IsFinite", [value], context);
+    if (method !== "isNaN") {
+      return share(value, "value", context, (shared) =>
+        junction("And", [
+          useJavaScript("IsFinite", [shared], context),
+          not(useJavaScript("IsFraction", [shared], context)),
+        ]),
+      );
+    }
     context.prelude.add("JavaScript");
     return apply("=", [value, identifier("NaN")]);
   }
@@ -1477,6 +1498,29 @@ const translateDeclared = (
     : identifier(getDefinition(declaration, context).name);
 };
 
+const getFraction = (value: number, context: Context) => {
+  const name = context.fractions.get(value) ?? context.names.getFresh("Fraction");
+  context.fractions.set(value, name);
+  return name;
+};
+
+// A number that isn't an integer, which a script that computes as JavaScript holds as a model value.
+// Its negation has one too, which Negate gives. TLC holds its floor, so it stays inside 32 bits.
+export const getFractionValue = (value: number, context: Context) => {
+  if (!context.hasSpecialNumbers || Math.abs(value) >= 2 ** 31 - 1) return undefined;
+  context.prelude.add("JavaScript");
+  getFraction(-value, context);
+  return identifier(getFraction(value, context));
+};
+
+const translateFraction = (value: number, node: ts.Node, context: Context) => {
+  const fraction = getFractionValue(value, context);
+  if (fraction === undefined) {
+    throw new TlaTypeScriptError(`Only integers are supported: ${node.getText()}`, node);
+  }
+  return fraction;
+};
+
 const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context) => {
   if (node.text === "undefined") return getUndefined(context);
   rejectGeneratorUse(node, context);
@@ -2232,9 +2276,7 @@ const translateNode = (
   }
   if (ts.isNumericLiteral(node)) {
     const value = Number(node.text);
-    if (!Number.isInteger(value)) {
-      throw new TlaTypeScriptError(`Only integers are supported: ${node.text}`, node);
-    }
+    if (!Number.isInteger(value)) return translateFraction(value, node, context);
     if (value > 2 ** 31 - 1) {
       throw new TlaTypeScriptError(`TLC's integers have 32 bits, so ${node.text} is too big`, node);
     }
@@ -2279,6 +2321,9 @@ const translateNode = (
   }
   if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.MinusToken) {
     const isLiteral = ts.isNumericLiteral(node.operand);
+    if (isLiteral && !Number.isInteger(Number(node.operand.text))) {
+      return translateFraction(-Number(node.operand.text), node, context);
+    }
     if (isLiteral && Number(node.operand.text) === 0 && !context.hasSpecialNumbers) {
       throw new TlaTypeScriptError("TLA+ integers have no negative zero", node);
     }

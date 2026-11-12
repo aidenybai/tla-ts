@@ -165,6 +165,7 @@ export const emit = (
     ...context.modelValues.values(),
     ...context.constructors.values(),
     ...context.symbols,
+    ...context.fractions.values(),
   ];
   const modelValues = [
     ...(isJavaScript ? ["Undefined", "Null", "Ref", "Big", ...SPECIAL_NUMBERS] : []),
@@ -285,6 +286,7 @@ export const emit = (
                 "  BuiltIns <- UsedBuiltIns",
                 "  ConstantFunctions <- UsedConstantFunctions",
                 "  Symbols <- UsedSymbols",
+                "  Fractions <- UsedFractions",
               ]
             : []),
         ]

@@ -7,7 +7,7 @@ import {
   translateHoldsIteratorMethod,
 } from "./collections";
 import { getConstructor, getErrorClass, NATIVE_ERRORS } from "./exceptions";
-import { translateExpression } from "./expressions";
+import { getFractionValue, translateExpression } from "./expressions";
 import { getHeap } from "./heap";
 import { useJavaScript, WELL_KNOWN_SYMBOLS } from "./javascript";
 import type { Scope } from "./scope";
@@ -419,6 +419,9 @@ const translateBuiltInProperty = (value: string, node: ts.Node, context: Context
     return identifier(special);
   }
   const parsed = Number(payload);
+  if (value.startsWith("n") && Number.isFinite(parsed) && !Number.isInteger(parsed)) {
+    return getFractionValue(parsed, context);
+  }
   return value.startsWith("n") &&
     Number.isInteger(parsed) &&
     Math.abs(parsed) <= MAX_INTEGER &&

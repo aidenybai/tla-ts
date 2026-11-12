@@ -7073,6 +7073,48 @@ describe("errors", () => {
     expect(fraction.failure?.message).toContain("tla-ts can't represent the fraction 7 / 2");
   });
 
+  it("compares, writes, and truncates the fractions that literals give", async () => {
+    const result = await checkModel(`
+      const keyed: Record<string, number> = { "1.5": 3 };
+      const values: number[] = [6.99, -0.5, 2.5];
+      if (values[0] === 7 || values[0] !== 6.99 || !(values[1] < 0) || !(-0.5 > -1)) {
+        throw new Error("order");
+      }
+      if (!(2.5 > 2) || !(2.5 < 3) || !(2.5 < 6.99) || !(-6.99 < -2.5) || 2.5 >= 6.99) {
+        throw new Error("order");
+      }
+      if (String(6.99) !== "6.99" || \`\${-0.5}\` !== "-0.5" || keyed[1.5] !== 3) {
+        throw new Error("text");
+      }
+      if (Math.floor(2.5) !== 2 || Math.trunc(-2.5) !== -2 || Math.floor(-2.5) !== -3) {
+        throw new Error("integer");
+      }
+      if (!Object.is(Math.ceil(-0.5), -0) || Math.ceil(2.5) !== 3 || Math.floor(7) !== 7) {
+        throw new Error("integer");
+      }
+      if ([0, 1, 2, 3, 4].slice(2.5, 4).length !== 2 || [1, 2, 3].at(-1.5) !== 3) {
+        throw new Error("index");
+      }
+      if ((6.99 | 0) !== 6 || ~2.5 !== -3 || (-6.99 >> 0) !== -6) throw new Error("bits");
+      if (typeof 2.5 !== "number" || Number.isInteger(2.5) || !Number.isFinite(-2.5)) {
+        throw new Error("kind");
+      }
+      if (Math.max(1, 2.5) !== 2.5 || Math.min(-0.5, 0) !== -0.5 || Math.abs(-2.5) !== 2.5) {
+        throw new Error("extremes");
+      }
+      if (2.5 * 1 !== 2.5 || 0 + 2.5 !== 2.5 || -(-2.5) !== 2.5 || 0.5 ** Infinity !== 0) {
+        throw new Error("arithmetic");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+    const sum = await checkModel(`
+      const object = {};
+      const sum = 0.1 + 0.2;
+      if (sum === 0.3) throw new Error("missed");
+    `);
+    expect(sum.failure?.message).toContain("tla-ts can't add fractions");
+  });
+
   it("runs a parenthesized call that makes an object as a statement", async () => {
     const result = await checkModel(`
       const held = (function (first: number) {

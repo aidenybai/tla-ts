@@ -53,6 +53,9 @@ export interface Context {
   hasSpecialNumbers: boolean;
   // The model values that stand for the well-known symbols and for the symbols a script makes.
   symbols: string[];
+  // The model values that stand for the numbers that a script's literals give and that aren't
+  // integers, and for their negations, by number.
+  fractions: Map<number, string>;
   // The array literals and the rest elements that a script uses as objects, which its heap holds.
   // The array literals, and the rest elements, parameters, and fields that hold arrays, which the
   // heap holds.
@@ -108,6 +111,7 @@ export const createContext = (checker: ts.TypeChecker): Context => ({
   constantFunctions: new Map(),
   hasSpecialNumbers: false,
   symbols: [],
+  fractions: new Map(),
   heapArrays: new Set(),
   hasInheritedElements: false,
 });

@@ -28,7 +28,18 @@ import { translateCall, translateInvariant, translateProperty, VALUE_TAGS } from
 import { createStateScope } from "./scope";
 import { TlaTypeScriptError } from "../errors";
 import { translateStep } from "./steps";
-import { apply, define, getLocation, getModuleName, identifier, locate, tuple } from "./tla";
+import {
+  apply,
+  define,
+  getLocation,
+  getModuleName,
+  identifier,
+  locate,
+  number,
+  record,
+  string,
+  tuple,
+} from "./tla";
 import { BUILT_INS } from "./built-ins";
 import { getDomain, getKeptIterator, TYPED_ARRAYS } from "./types";
 
@@ -261,6 +272,17 @@ export const compile = (
           "Infinity",
           "POSITIVE_INFINITY",
           "NEGATIVE_INFINITY",
+          // The properties of Number and Math that hold fractions.
+          "EPSILON",
+          "MIN_VALUE",
+          "E",
+          "LN10",
+          "LN2",
+          "LOG10E",
+          "LOG2E",
+          "PI",
+          "SQRT1_2",
+          "SQRT2",
           // A float's bytes may hold any of them.
           "DataView",
           "Float16Array",
@@ -273,6 +295,8 @@ export const compile = (
         Number(node.operand.text) === 0) ||
       // Division may give an infinity or -0.
       (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.SlashToken) ||
+      // A literal may give a fraction.
+      (ts.isNumericLiteral(node) && !Number.isInteger(Number(node.text))) ||
       (ts.forEachChild(node, usesSpecialNumbers) ?? false);
     context.hasSpecialNumbers = roots.some(usesSpecialNumbers);
     // A variable may hold any typed array's constructor, so the heap holds them all, their
@@ -399,6 +423,21 @@ export const compile = (
       ),
       define("UsedConstantFunctions", [], translateConstantFunctions(context)),
       define("UsedSymbols", [], tuple(context.symbols.map((name) => identifier(name)))),
+      define(
+        "UsedFractions",
+        [],
+        tuple(
+          [...context.fractions]
+            .sort((left, right) => left[0] - right[0])
+            .map((fraction) =>
+              record("Record", [
+                { name: "value", value: identifier(fraction[1]) },
+                { name: "text", value: string(String(fraction[0])) },
+                { name: "floor", value: number(Math.floor(fraction[0])) },
+              ]),
+            ),
+        ),
+      ),
     );
   }
   return emit(getModuleName(path), program.sourceFile, model, sections, context);
