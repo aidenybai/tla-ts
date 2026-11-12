@@ -332,12 +332,14 @@ const getHeldBuiltIn = (node: ts.Expression, context: Context) => {
 export const isHeldBuiltInObject = (node: ts.Expression, context: Context) =>
   getHeldBuiltIn(node, context) !== undefined;
 
-// Object.prototype.toString as a value that a script stores, rather than calls.
-export const isObjectToStringValue = (node: ts.Node, context: Context) =>
+// The built-in that a script uses as a value, rather than reads from or calls, as
+// obj.pop = Array.prototype.pop stores Array.prototype.pop.
+export const getStoredBuiltIn = (node: ts.Node, context: Context) =>
   ts.isPropertyAccessExpression(node) &&
-  getName(node, context) === "Object.prototype.toString" &&
   !(ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node) &&
-  !(ts.isCallExpression(node.parent) && node.parent.expression === node);
+  !(ts.isCallExpression(node.parent) && node.parent.expression === node)
+    ? getName(node, context)
+    : undefined;
 
 // A built-in object that a built-in function takes, such as the prototype Object.create takes.
 export const translateBuiltInObject = (node: ts.Expression, scope: Scope, context: Context) => {
@@ -459,6 +461,7 @@ export const translateBuiltInValue = (
     | "Array.prototype"
     | "Object.prototype"
     | "Object.prototype.toString"
+    | `Array.prototype.${string}`
     | "Array"
     | `get ${string}`
     | "Object"

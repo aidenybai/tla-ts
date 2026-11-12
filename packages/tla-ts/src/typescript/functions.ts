@@ -18,7 +18,6 @@ import {
   type HelperDeclaration,
   isInlined,
   isLiteral,
-  isMethodCall,
   isPlain,
   share,
 } from "./context";
@@ -33,7 +32,7 @@ import {
 import { TlaTypeScriptError } from "../errors";
 import { translateCondition, translateExpression, translateNegatedCondition } from "./expressions";
 import { type Formula, ifThenElse, letIn, render, leaf } from "./formula";
-import { getCandidateValue, getHeap, getSuperLookup, translateObjectValue } from "./heap";
+import { getCandidateValue, getSuperLookup, translateObjectValue } from "./heap";
 import { mayBeNumber, useJavaScript } from "./javascript";
 import {
   type Bound,
@@ -51,6 +50,7 @@ import {
   call,
   define,
   defineAt,
+  field,
   getLocation,
   identifier,
   ifExpression,
@@ -60,10 +60,11 @@ import {
   string,
   tuple,
 } from "./tla";
-import { isBuiltInObject, isObjectToStringValue, translateBuiltInValue } from "./intrinsics";
+import { isBuiltInObject } from "./intrinsics";
+import { getStoredCall, translateStoredCall } from "./collections";
 import { link } from "./regions";
 import { getStackCall } from "./stacks";
-import { getKind, hasHeapType, translateUnknown } from "./types";
+import { hasHeapType, translateUnknown } from "./types";
 
 // Whether a step has changed a state variable, so that helpers reading state must see the change.
 const isStateModified = (scope: Scope, context: Context) =>
@@ -737,18 +738,6 @@ export const translateLiftedCall = (
   );
 };
 
-// The receiver of a method call that may run Object.prototype.toString, where a script stores it
-// under a key, as test262 stores it under getClass.
-export const getStoredToStringReceiver = (node: ts.CallExpression, context: Context) =>
-  context.heap !== undefined &&
-  isMethodCall(node) &&
-  node.arguments.length === 0 &&
-  findNodes(node.getSourceFile(), (inner): inner is ts.PropertyAccessExpression =>
-    isObjectToStringValue(inner, context),
-  ).length > 0
-    ? node.expression.expression
-    : undefined;
-
 // A call to a function declared inside another, or to a method a caller resolves, which is
 // inlined.
 export const translateLocalCall = (
@@ -777,8 +766,8 @@ export const translateLocalCall = (
               ).length === 0),
         )
       : [];
-  const receiver = callee === undefined ? getStoredToStringReceiver(node, context) : undefined;
-  if (callee === undefined && (candidates.length > 0 || receiver !== undefined)) {
+  const stored = callee === undefined ? getStoredCall(node, context) : undefined;
+  if (callee === undefined && (candidates.length > 0 || stored !== undefined)) {
     const unknown = apply("Assert", [
       boolean(false),
       string("tla-ts can't tell which function this call runs"),
@@ -799,23 +788,18 @@ export const translateLocalCall = (
                   otherwise,
                 );
           },
-          receiver === undefined
+          stored === undefined
             ? unknown
-            : ifExpression(
-                apply("=", [
+            : field(
+                translateStoredCall(
+                  stored,
                   value,
-                  translateBuiltInValue("Object.prototype.toString", node, context),
-                ]),
-                useJavaScript(
-                  "ObjectToString",
-                  [
-                    getHeap(scope, node, context),
-                    translateExpression(receiver, scope, context),
-                    string(getKind(receiver, context) === "sequence" ? "Array" : ""),
-                  ],
+                  translateExpression(stored.receiver, scope, context),
+                  false,
+                  scope,
                   context,
                 ),
-                unknown,
+                "value",
               ),
         ),
     );

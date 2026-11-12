@@ -8618,6 +8618,45 @@ describe("errors", () => {
     ).toContain("[object Object][object Array]");
   });
 
+  it("runs the array methods that a script stores under a key of an object", async () => {
+    const stored = (expected: string) => `
+      type Method = (...args: unknown[]) => unknown;
+      const object: { [key: string | symbol]: unknown } = {};
+      object.push = Array.prototype.push;
+      object.pop = Array.prototype.pop;
+      object.shift = Array.prototype.shift;
+      object.unshift = Array.prototype.unshift;
+      object.reverse = Array.prototype.reverse;
+      object.join = Array.prototype.join;
+      const pushed = (object.push as Method)("a", "b", "c");
+      const popped = (object.pop as Method)();
+      const unshifted = (object.unshift as Method)("z");
+      const shifted = (object.shift as Method)();
+      object[4] = "e";
+      object.length = 6;
+      const reversed = (object.reverse as Method)();
+      const joined = (object.join as Method)("-");
+      const result = [pushed, popped, unshifted, shifted, reversed === object, joined].join(" ");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await check(compile(stored("3 c 3 z true -e---b-a")))).failure).toBeUndefined();
+    expect((await check(compile(stored("3 c 3 z true -e--b-a")))).failure?.message).toContain(
+      "3 c 3 z true -e---b-a",
+    );
+  });
+
+  it("stops where a key that stores an array method holds another function", async () => {
+    const result = await check(
+      compile(`
+        const object: { [key: string | symbol]: unknown } = {};
+        object.pop = Array.prototype.pop;
+        object.pop = Array.prototype.sort;
+        (object.pop as (...args: unknown[]) => unknown)();
+      `),
+    );
+    expect(result.failure?.message).toContain("tla-ts can't tell which function this call runs");
+  });
+
   it("holds the array that a method makes where a script gives it a property", async () => {
     const made = (expected: number) => `
       const list = [0, 1, 2, 3];

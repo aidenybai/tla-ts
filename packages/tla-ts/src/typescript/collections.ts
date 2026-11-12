@@ -1,6 +1,7 @@
 import ts from "@typescript/typescript6";
 import {
   type Context,
+  findNodes,
   type FunctionNode,
   getBuiltInBase,
   getCallee,
@@ -16,15 +17,10 @@ import {
 import type { Expression } from "../ast";
 import { TlaTypeScriptError } from "../errors";
 import { translateElements, translateExpression, translateSetKey } from "./expressions";
-import {
-  callStateOperator,
-  getStoredToStringReceiver,
-  mayThrow,
-  translateBody,
-  translateLocalCall,
-} from "./functions";
+import { callStateOperator, mayThrow, translateBody, translateLocalCall } from "./functions";
 import { DATE_FIELDS, getHeap, getPrototypeMethod, isDateType, TIME_METHODS } from "./heap";
 import {
+  getStoredBuiltIn,
   isBuiltInObject,
   translateBuiltInValue,
   getStringRegExp,
@@ -1746,7 +1742,7 @@ export const translateMethod = (
   if (
     primitiveCall === undefined &&
     kind === "object" &&
-    getStoredToStringReceiver(node, context) !== undefined
+    getStoredCall(node, context) !== undefined
   ) {
     return translateLocalCall(node, scope, context);
   }
@@ -2455,8 +2451,12 @@ const holdsArrayIteratorNext = (heap: Expression, node: ts.Node, context: Contex
     context,
   );
 
-export const translateArrayLikeCall = (node: ts.CallExpression, scope: Scope, context: Context) => {
-  const call = getArrayLikeCall(node, context);
+export const translateArrayLikeCall = (
+  node: ts.CallExpression,
+  scope: Scope,
+  context: Context,
+  call = getArrayLikeCall(node, context),
+) => {
   if (call === undefined) return undefined;
   const method = call.method;
   const object = call.object;
@@ -2494,6 +2494,128 @@ export const translateArrayLikeCall = (node: ts.CallExpression, scope: Scope, co
           (sequence) => operate(owner, sequence),
         ),
   );
+};
+
+// The array methods that read an array-like object, and those that change it in place, which a
+// call runs on an object where a script stores them under a key.
+const STORED_ARRAY_READS = new Set(["join", "slice", "indexOf", "lastIndexOf"]);
+const STORED_ARRAY_CHANGES = new Set(["push", "pop", "shift", "unshift", "reverse"]);
+
+type StoredBuiltIn = "Object.prototype.toString" | `Array.prototype.${string}`;
+
+export interface StoredCall {
+  node: ts.CallExpression;
+  receiver: ts.Expression;
+  builtIns: StoredBuiltIn[];
+}
+
+const getStoredMethod = (builtIn: StoredBuiltIn) => builtIn.slice("Array.prototype.".length);
+
+// A call of a key that may hold a built-in method that a script uses as a value, as
+// obj.pop = Array.prototype.pop stores one for obj.pop(): its receiver, and the built-ins that the
+// key may hold, which the call runs on the receiver where the key holds one. An array method runs
+// only on an object.
+export const getStoredCall = (node: ts.Node, context: Context): StoredCall | undefined => {
+  if (context.heap === undefined || !ts.isCallExpression(node)) return undefined;
+  const callee = skipCasts(node.expression);
+  if (!ts.isPropertyAccessExpression(callee) || node.arguments.some(ts.isSpreadElement)) {
+    return undefined;
+  }
+  const isObject = getKind(callee.expression, context) === "object";
+  const isRunnable = (builtIn: string | undefined): builtIn is StoredBuiltIn => {
+    const method = builtIn?.startsWith("Array.prototype.")
+      ? builtIn.slice("Array.prototype.".length)
+      : undefined;
+    // indexOf and lastIndexOf search for their first argument.
+    return builtIn === "Object.prototype.toString"
+      ? node.arguments.length === 0
+      : method !== undefined &&
+          isObject &&
+          (STORED_ARRAY_CHANGES.has(method) ||
+            (STORED_ARRAY_READS.has(method) &&
+              (!method.endsWith("ndexOf") || node.arguments.length > 0)));
+  };
+  const builtIns = new Set(
+    findNodes(node.getSourceFile(), ts.isPropertyAccessExpression)
+      .map((inner) => getStoredBuiltIn(inner, context))
+      .filter(isRunnable),
+  );
+  return builtIns.size === 0
+    ? undefined
+    : { node, receiver: callee.expression, builtIns: [...builtIns] };
+};
+
+// A call of a key whose type doesn't tell which function it holds, which may hold a built-in method
+// that a script uses as a value.
+const getUntypedStoredCall = (node: ts.Node, context: Context) =>
+  ts.isCallExpression(node) &&
+  (context.checker.getTypeAtLocation(skipCasts(node.expression)).flags &
+    (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
+    0
+    ? getStoredCall(node, context)
+    : undefined;
+
+export const isUntypedStoredCall = (node: ts.Node, context: Context) =>
+  getUntypedStoredCall(node, context) !== undefined;
+
+// Whether such a call may run a built-in method that changes its receiver in place, which only
+// statements can run.
+export const isStoredChange = (node: ts.Node, context: Context) =>
+  getUntypedStoredCall(node, context)?.builtIns.some((builtIn) =>
+    STORED_ARRAY_CHANGES.has(getStoredMethod(builtIn)),
+  ) === true;
+
+// What a call of a key under which a script stores built-in methods does where the value that it
+// calls is one of them: the heap after, the value that it gives, and whether it throws a TypeError.
+// An expression, rather than a statement, runs none that changes the receiver.
+export const translateStoredCall = (
+  call: StoredCall,
+  value: Expression,
+  ref: Expression,
+  isStatement: boolean,
+  scope: Scope,
+  context: Context,
+) => {
+  const node = call.node;
+  const heap = getHeap(scope, node, context);
+  const giving = (given: Expression) =>
+    record("Record", [
+      { name: "heap", value: heap },
+      { name: "value", value: given },
+      { name: "isThrown", value: boolean(false) },
+    ]);
+  const translateBuiltIn = (builtIn: StoredBuiltIn) => {
+    const method = getStoredMethod(builtIn);
+    if (builtIn === "Object.prototype.toString") {
+      const kind = getKind(call.receiver, context) === "sequence" ? "Array" : "";
+      return giving(useJavaScript("ObjectToString", [heap, ref, string(kind)], context));
+    }
+    if (method === "reverse") return useJavaScript("ArrayLikeReverse", [heap, ref], context);
+    if (STORED_ARRAY_CHANGES.has(method)) {
+      return useJavaScript(
+        "ArrayChange",
+        [heap, ref, string(method), translateElements(node.arguments, scope, context)],
+        context,
+      );
+    }
+    const read = translateArrayLikeCall(node, scope, context, {
+      method,
+      object: call.receiver,
+      methodArguments: node.arguments,
+    });
+    return giving(read ?? getUndefined(context));
+  };
+  return call.builtIns
+    .filter((builtIn) => isStatement || !STORED_ARRAY_CHANGES.has(getStoredMethod(builtIn)))
+    .reduceRight<Expression>(
+      (otherwise, builtIn) =>
+        ifExpression(
+          apply("=", [value, translateBuiltInValue(builtIn, node, context)]),
+          translateBuiltIn(builtIn),
+          otherwise,
+        ),
+      apply("Assert", [boolean(false), string("tla-ts can't tell which function this call runs")]),
+    );
 };
 
 // The kinds of the keys that a new Set or Map holds, which TLC compares, so that they must agree:

@@ -3896,15 +3896,15 @@ ArraySets(state, ref, from, items) ==
   ELSE ArraySets(AndThen(state, LAMBDA heap : ArraySet(heap, ref, ToString(from), Head(items))),
                  ref, from + 1, Tail(items))
 
-\\* What push, pop, shift, or unshift does to an array that the heap holds: the heap after, the value
-\\* that the method gives, and whether it throws a TypeError. An array whose elements are its own
-\\* writable data properties, whose prototypes hold no elements, and that takes new ones and a new
-\\* length changes in one step. Any other changes index by index as the spec runs it, where a move
-\\* reads each index through the prototypes, and only the indices that an array or its prototypes
-\\* hold, or that a move deletes, move.
+\\* What push, pop, shift, or unshift does to an array or an array-like object that the heap holds:
+\\* the heap after, the value that the method gives, and whether it throws a TypeError. An array whose
+\\* elements are its own writable data properties, whose prototypes hold no elements, and that takes
+\\* new ones and a new length changes in one step. Any other changes index by index as the spec runs
+\\* it, where a move reads each index through the prototypes, and only the indices that the object or
+\\* its prototypes hold, or that a move deletes, move.
 ArrayChange(heap, ref, method, items) ==
   LET object == Lookup(heap, ref)
-      length == object.values["length"]
+      length == ToLength(Get(heap, ref, "length"))
       indices == {ToIndex(key) : key \\in IndexKeys(heap, ref)}
       own == {ToIndex(key) : key \\in {key \\in DOMAIN object.values : IsIndex(key)}}
       count == Len(items)
@@ -3951,6 +3951,43 @@ ArrayChange(heap, ref, method, items) ==
                        [] length = 0 -> Undefined
                        [] OTHER -> first,
            isThrown |-> state.isThrown]
+
+\\* Swaps the elements of an array-like object at each index below the middle of its length and the
+\\* index as far from its end, from the lowest, where a hole deletes the index it swaps with.
+RECURSIVE ArrayLikeSwaps(_, _, _, _)
+ArrayLikeSwaps(state, ref, lowers, length) ==
+  IF state.isThrown \\/ lowers = {}
+  THEN state
+  ELSE LET lower == CHOOSE index \\in lowers : \\A other \\in lowers : index <= other
+           lowerKey == ToString(lower)
+           upperKey == ToString(length - lower - 1)
+           heap == state.heap
+           lowerValue == Get(heap, ref, lowerKey)
+           upperValue == Get(heap, ref, upperKey)
+           hasLower == Has(heap, ref, lowerKey)
+           hasUpper == Has(heap, ref, upperKey)
+       IN ArrayLikeSwaps(
+            CASE hasLower /\\ hasUpper ->
+                   AndThen(ArraySet(heap, ref, lowerKey, upperValue),
+                           LAMBDA after : ArraySet(after, ref, upperKey, lowerValue))
+              [] hasUpper ->
+                   AndThen(ArraySet(heap, ref, lowerKey, upperValue),
+                           LAMBDA after : ArrayDelete(after, ref, upperKey))
+              [] hasLower ->
+                   AndThen(ArrayDelete(heap, ref, lowerKey),
+                           LAMBDA after : ArraySet(after, ref, upperKey, lowerValue))
+              [] OTHER -> state,
+            ref, lowers \\ {lower}, length)
+
+\\* reverse() on an array-like object that the heap holds, as the spec runs it index by index, where
+\\* only the indices that the object or its prototypes hold, and those they swap with, change.
+ArrayLikeReverse(heap, ref) ==
+  LET length == ToLength(Get(heap, ref, "length"))
+      indices == {ToIndex(key) : key \\in IndexKeys(heap, ref)}
+      lowers == {index \\in indices \\cup {length - index - 1 : index \\in indices} :
+                   index >= 0 /\\ index < length \\div 2}
+      state == ArrayLikeSwaps([heap |-> heap, isThrown |-> FALSE], ref, lowers, length)
+  IN [heap |-> state.heap, value |-> ref, isThrown |-> state.isThrown]
 
 \\* What a splice whose result nothing reads does to an array that the heap holds, which makes that
 \\* result through the array's constructor, where tla-ts follows only Array.

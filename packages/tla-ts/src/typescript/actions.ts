@@ -5,9 +5,13 @@ import {
   getCallbackReceiver,
   getArrayIteratorCall,
   getHeapArrayChange,
+  getStoredCall,
   isArrayIteration,
+  isStoredChange,
+  isUntypedStoredCall,
   translateArrayChange,
   translateArrayIteratorPrototype,
+  translateStoredCall,
   translateHoldsIteratorMethod,
   getHeapElements,
   translateHeapElements,
@@ -1696,6 +1700,41 @@ export const translateCallStatement = (
               throwTypeError(path, expression, context, frame),
             )
           : run,
+      ),
+    );
+  }
+  // A call of a key under which a script stores a built-in method that changes its receiver.
+  const storedCall = isStoredChange(expression, context)
+    ? getStoredCall(expression, context)
+    : undefined;
+  if (storedCall !== undefined) {
+    const objectName = context.names.getFresh("object");
+    const changeName = context.names.getFresh("change");
+    const change = identifier(changeName);
+    return bindOnce(
+      path,
+      objectName,
+      translateExpression(storedCall.receiver, path.scope, context),
+      ifThenElse(
+        apply("\\in", [identifier(objectName), set([getUndefined(context), identifier("Null")])]),
+        throwTypeError(path, expression, context, frame),
+        bindOnce(
+          path,
+          changeName,
+          translateStoredCall(
+            storedCall,
+            translateExpression(expression.expression, path.scope, context),
+            identifier(objectName),
+            true,
+            path.scope,
+            context,
+          ),
+          ifThenElse(
+            field(change, "isThrown"),
+            throwTypeError(withHeap(field(change, "heap")), expression, context, frame),
+            continueWith(withHeap(field(change, "heap")), field(change, "value")),
+          ),
+        ),
       ),
     );
   }
@@ -6507,7 +6546,10 @@ const getDispatched = (node: ts.CallExpression, path: Path, context: Context) =>
     getCallback(callee, path, context) !== undefined ||
     getCalledMethod(callee, context) !== undefined ||
     getFunctionOfKind(callee, context, isAnyGenerator) !== undefined ||
-    getFunctionOfKind(callee, context, isAsyncFunction) !== undefined
+    getFunctionOfKind(callee, context, isAsyncFunction) !== undefined ||
+    // A call of a key that may hold a built-in method matches its functions as an expression, or
+    // runs the method that changes its receiver as a statement.
+    isUntypedStoredCall(node, context)
   ) {
     return undefined;
   }
@@ -6562,6 +6604,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getGetterCall(node, context) !== undefined ||
     getStackCall(node, context) !== undefined ||
     getHeapArrayChange(node, context) !== undefined ||
+    isStoredChange(node, context) ||
     getArrayIteratorCall(node, context) !== undefined ||
     getStringCall(node, context) !== undefined ||
     isDescriptorsRead(node, context) ||
@@ -7236,6 +7279,7 @@ export const getChanged = (
       getHeapRegExpCall(node, context) !== undefined ||
       getViewCall(node, context) !== undefined ||
       getHeapArrayChange(node, context) !== undefined ||
+      isStoredChange(node, context) ||
       getArrayIteratorCall(node, context) !== undefined ||
       isAllocation(node, context) ||
       (written !== undefined &&
