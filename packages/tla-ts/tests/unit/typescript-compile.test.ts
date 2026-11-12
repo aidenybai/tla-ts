@@ -6878,6 +6878,22 @@ describe("errors", () => {
     }
   });
 
+  it("iterates the helper that a call makes in a for-of", async () => {
+    const source = `
+      const holder = { count: 0 };
+      function* count() {
+        yield 1;
+        yield 2;
+        yield 3;
+      }
+      for (const value of count().map((value) => value * 2)) holder.count += value;
+      if (holder.count !== 12) throw new Error("sum");
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = await checkModel(source.replace("value * 2", "value * 3"));
+    expect(wrong.failure?.message).toContain("sum");
+  });
+
   it("steps only the generator that an iterator helper wraps", async () => {
     const source = `
       const holder = { count: 0 };

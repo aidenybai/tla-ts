@@ -8346,6 +8346,17 @@ const translateForOfGenerator = (
       iterate(after, ref ?? getUndefined(context)),
     );
   }
+  // A for-of over the helper that a call makes runs the call first.
+  const helper = ts.isCallExpression(iterated) ? getGeneratorMethod(iterated, context) : undefined;
+  if (
+    helper !== undefined &&
+    ITERATOR_HELPERS.has(helper.method) &&
+    ts.isCallExpression(iterated)
+  ) {
+    return translateCallStatement(iterated, path, context, frame, (after, ref) =>
+      iterate(after, ref ?? getUndefined(context)),
+    );
+  }
   if (hasCall(iterated, context)) {
     throw new TlaTypeScriptError("tla-ts can't iterate this generator", iterated);
   }
