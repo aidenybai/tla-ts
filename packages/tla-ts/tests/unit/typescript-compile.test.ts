@@ -4795,6 +4795,29 @@ describe("errors", () => {
     expect((await checkModel(getSource("other === 0"))).failure?.message).toContain("Bag");
   });
 
+  it("calls the function that a class's field holds", async () => {
+    const getSource = (check: string) => `
+      const getDouble = (key: number) => key * 2;
+      function getTriple(key: number) {
+        return key * 3;
+      }
+      class Hasher {
+        constructor(private getHash: (key: number) => number) {}
+        slot(key: number) {
+          return this.getHash(key) & 7;
+        }
+      }
+      const doubled = new Hasher(getDouble);
+      const tripled = new Hasher(getTriple);
+      const first = doubled.slot(5);
+      const second = tripled.slot(5);
+      if (${check}) throw new Error("Hasher");
+    `;
+    expect((await checkModel(getSource("first !== 2 || second !== 7"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("first === 2"))).failure?.message).toContain("Hasher");
+    expect((await checkModel(getSource("second === 7"))).failure?.message).toContain("Hasher");
+  });
+
   it("lists no own keys of an error", async () => {
     const result = await checkModel(`
       const box = { seen: 0 };

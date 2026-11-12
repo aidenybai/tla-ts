@@ -598,6 +598,17 @@ const translateCall = (
   if (callee !== undefined && ts.isMethodDeclaration(callee)) {
     return translateLocalCall(node, scope, context);
   }
+  // A call of a function that a field holds.
+  const field = symbol?.valueDeclaration;
+  if (
+    isMethodCall(node) &&
+    context.heap !== undefined &&
+    field !== undefined &&
+    !field.getSourceFile().isDeclarationFile &&
+    (ts.isPropertyDeclaration(field) || ts.isParameter(field) || ts.isPropertySignature(field))
+  ) {
+    return translateLocalCall(node, scope, context);
+  }
   if (!isMethodCall(node)) {
     const operator = symbol === undefined ? undefined : scope.bindings.get(symbol);
     if (operator === undefined || (symbol !== undefined && scope.functions.has(symbol))) {

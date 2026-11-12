@@ -10,6 +10,7 @@ import {
   getCallee,
   getFactoryCall,
   getFunction,
+  getFunctionCandidates,
   getGetters,
   getSymbol,
   getTopLevelDeclaration,
@@ -31,7 +32,12 @@ import {
 import { TlaTypeScriptError } from "../errors";
 import { translateCondition, translateExpression, translateNegatedCondition } from "./expressions";
 import { type Formula, ifThenElse, letIn, render, leaf } from "./formula";
-import { getCandidateValue, getSuperLookup, translateObjectValue } from "./heap";
+import {
+  getCandidateValue,
+  getSuperLookup,
+  translateFunctionValue,
+  translateObjectValue,
+} from "./heap";
 import { mayBeNumber, useJavaScript } from "./javascript";
 import {
   type Bound,
@@ -730,6 +736,45 @@ export const translateLocalCall = (
     called?.method ??
     (symbol && scope.functions.get(symbol)) ??
     getCallee(node.expression, context);
+  // A function that a value holds, which the call runs by matching the value against the functions
+  // of its file that it may be. One that reads its this would need the call's receiver.
+  const candidates =
+    callee === undefined && context.heap !== undefined
+      ? getFunctionCandidates(node.expression, context).filter(
+          (candidate) =>
+            isPlain(candidate) &&
+            !context.inProgress.has(candidate) &&
+            (ts.isArrowFunction(candidate) ||
+              findNodes(
+                candidate,
+                (inner): inner is ts.ThisExpression => inner.kind === ts.SyntaxKind.ThisKeyword,
+              ).length === 0),
+        )
+      : [];
+  if (callee === undefined && candidates.length > 0) {
+    return share(
+      translateExpression(node.expression, scope, context),
+      "function",
+      context,
+      (value) =>
+        candidates.reduceRight<Expression>(
+          (otherwise, candidate) => {
+            const candidateValue = getCandidateValue(candidate, context);
+            return candidateValue === undefined
+              ? otherwise
+              : ifExpression(
+                  apply("=", [value, candidateValue]),
+                  inlineCall(candidate, node.arguments, scope, context),
+                  otherwise,
+                );
+          },
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't tell which function this call runs"),
+          ]),
+        ),
+    );
+  }
   if (callee === undefined) {
     return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
   }
