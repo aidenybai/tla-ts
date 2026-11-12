@@ -7463,6 +7463,61 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs Array.fromAsync of a generator, which it closes where a value rejects", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      const first = (function* () {
+        log += "a";
+        yield 1;
+        log += "b";
+        yield 2;
+        log += "c";
+      })();
+      Array.fromAsync(first, (value: number, k: number) => value * 10 + k).then((values) => {
+        log += "[" + values.join(",") + "]";
+      });
+      const second = (function* () {
+        log += "d";
+        throw "t";
+      })();
+      Array.fromAsync(second).catch((error) => {
+        log += "<" + String(error) + ">";
+      });
+      const third = (function* () {
+        log += "e";
+        yield Promise.reject("r");
+        log += "f";
+      })();
+      Array.fromAsync(third).catch((error) => {
+        log += "(" + String(error) + ")";
+      });
+      const fourth = (function* () {
+        yield 1;
+        log += "x";
+      })();
+      Array.fromAsync(fourth, () => {
+        throw "m";
+      }).catch((error) => {
+        log += "{" + String(error) + "}";
+      });
+      Promise.resolve()
+        .then(() => { log += "0"; })
+        .then(() => { log += "1"; })
+        .then(() => { log += "2"; })
+        .then(() => { log += "3"; })
+        .then(() => { log += "4"; })
+        .then(() => { log += "5"; })
+        .then(() => { log += "6"; })
+        .then(() => { log += "7"; })
+        .then(() => { log += "8"; });
+      setTimeout(() => {
+        if (log !== "ade0<t>1b(r)23{m}4c567[10,21]8") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("runs Array.fromAsync of an array-like object and of a string", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;

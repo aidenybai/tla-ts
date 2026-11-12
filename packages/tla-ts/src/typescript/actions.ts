@@ -3106,7 +3106,7 @@ const translateGeneratorStep = (
 // Resumes the generator whose object a receiver holds, for its next, return, or throw. Only a next
 // runs the body; a return or a throw completes a generator that suspended outside try statements,
 // which would otherwise run their finally blocks.
-const resumeGenerator = (
+export const resumeGenerator = (
   node: ts.Node,
   receiver: Expression,
   method: string,
