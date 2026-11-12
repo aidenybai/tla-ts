@@ -14,8 +14,10 @@ import { translateSuppressedError } from "./exceptions";
 import { translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf } from "./formula";
 import { getHeap } from "./heap";
+import { translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { callValue, getMethods, isNullish, read } from "./protocols";
+import { disposeStack } from "./stacks";
 import { apply, boolean, set, string } from "./tla";
 
 export interface Resource {
@@ -32,6 +34,9 @@ export interface Resource {
   // Whether the method is Symbol.dispose that an await using declaration calls in place of
   // Symbol.asyncDispose, as a promise that settles once it returns or throws.
   isWrapped: boolean;
+  // Whether adopt or defer added the method, which tla-ts follows only as one of the candidates,
+  // not as a DisposableStack's dispose.
+  isCallback: boolean;
 }
 
 // The resources that a block's using declarations added, with the frame of the block and the path
@@ -111,6 +116,41 @@ export const disposeAll = (
   const succeed = (current: Path, hasAwaited: boolean) =>
     disposeAll(rest, { ...disposing, hasAwaited }, current, context, frame, resume);
   const uncaught = apply("Assert", [boolean(false), string("await using")]);
+  const callFrame: Frame = {
+    ...frame,
+    throwTo: (thrownPath, thrown) =>
+      resource.isWrapped
+        ? tick(thrownPath, (after) => fail(after, thrown, true))
+        : fail(thrownPath, thrown, disposing.hasAwaited),
+  };
+  const unknown = leaf(
+    apply("Assert", [boolean(false), string("tla-ts can't tell which function this calls")]),
+  );
+  // A DisposableStack's dispose, or an AsyncDisposableStack's disposeAsync, which a stack that the
+  // path made holds.
+  const disposeStacks = (next: (path: Path, value?: Expression) => Formula) =>
+    resource.isCallback || (path.tasks?.stacks.size ?? 0) === 0
+      ? unknown
+      : ifThenElse(
+          useJavaScript(
+            "SameValue",
+            [method, translateBuiltInValue("DisposableStack.prototype.dispose", site, context)],
+            context,
+          ),
+          disposeStack(site, resource.receiver, false, path, context, callFrame, next),
+          ifThenElse(
+            useJavaScript(
+              "SameValue",
+              [
+                method,
+                translateBuiltInValue("AsyncDisposableStack.prototype.disposeAsync", site, context),
+              ],
+              context,
+            ),
+            disposeStack(site, resource.receiver, true, path, context, callFrame, next),
+            unknown,
+          ),
+        );
   return callValue(
     site,
     resource.candidates,
@@ -119,17 +159,8 @@ export const disposeAll = (
     resource.values,
     path,
     context,
-    {
-      ...frame,
-      throwTo: (thrownPath, thrown) =>
-        resource.isWrapped
-          ? tick(thrownPath, (after) => fail(after, thrown, true))
-          : fail(thrownPath, thrown, disposing.hasAwaited),
-    },
-    () =>
-      leaf(
-        apply("Assert", [boolean(false), string("tla-ts can't tell which function this calls")]),
-      ),
+    callFrame,
+    disposeStacks,
     (after, result) => {
       if (!resource.isAsync) return succeed(after, disposing.hasAwaited);
       if (resource.isWrapped) return tick(after, (ticked) => succeed(ticked, true));
@@ -212,6 +243,7 @@ export const readResource = (
         : getMethods(site, "@@dispose", context),
     isAsync,
     isWrapped,
+    isCallback: false,
   });
   const readDispose = (inner: Path, isWrapped: boolean) =>
     read(site, value, "@@dispose", inner, context, frame, (got, method) =>
@@ -275,6 +307,7 @@ export const addResource = (
           candidates: [],
           isAsync,
           isWrapped: false,
+          isCallback: false,
         })
       : continueWith(path, frame),
     readResource(site, value, isAsync, path, context, frame, add),

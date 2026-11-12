@@ -488,6 +488,8 @@ export const translateBuiltInValue = (
     | "Date.prototype"
     | "DisposableStack.prototype"
     | "AsyncDisposableStack.prototype"
+    | "DisposableStack.prototype.dispose"
+    | "AsyncDisposableStack.prototype.disposeAsync"
     | "RegExp.prototype"
     | "ArrayBuffer"
     | "SharedArrayBuffer"
