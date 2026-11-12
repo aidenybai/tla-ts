@@ -9031,6 +9031,19 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("can't throw the TypeError of destructuring");
   });
 
+  it("destructures a rest element into an object pattern", async () => {
+    const source = `
+      let x: unknown = null;
+      let length: unknown;
+      let y: unknown;
+      [y, ...{ 0: x, length }] = [1, 2, 3];
+      if (y !== 1 || x !== 2 || length !== 2) throw new Error("rest");
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("length !== 2", "length !== 3");
+    expect((await checkModel(wrong)).failure?.message).toContain("rest");
+  });
+
   it("stops where a promise resolves with an array that Array.prototype gives a then", async () => {
     const result = await checkModel(`
       Object.defineProperty(Array.prototype, "then", {
