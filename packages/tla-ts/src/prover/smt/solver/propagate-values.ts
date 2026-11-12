@@ -74,6 +74,7 @@ export const propagateValues = (manager: AstManager, goal: Goal, maxRounds = 4) 
       if (goal.isInconsistent) return;
     }
     if (substitution.size === 0 && !isModified) break;
+    if (round + 1 >= maxRounds) break;
     occs = getSharedOccs(manager, goal.forms.items);
     clear();
     for (let index = goal.forms.size - 1; index >= 0; index--) {

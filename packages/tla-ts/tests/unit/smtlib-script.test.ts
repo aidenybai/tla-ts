@@ -294,6 +294,22 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ).toEqual(["unsat", "(c f b a)", "unsat", "(f e a b)"]);
   });
 
+  it("counts each propagate-values pass as a round", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (= y (+ x 1)))",
+        "(assert (= x 0))",
+        "(apply (using-params propagate-values :max_rounds 1))",
+        "(apply (using-params propagate-values :max_rounds 2))",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (= y (+ x 1))\n  (= x 0)\n  :precision precise :depth 1)\n)",
+      "(goals\n(goal\n  (= y 1)\n  (= x 0)\n  :precision precise :depth 1)\n)",
+    ]);
+  });
+
   it("finds no macros while a defined function is in scope", () => {
     expect(
       run([
