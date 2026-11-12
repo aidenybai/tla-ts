@@ -5449,12 +5449,77 @@ describe("errors", () => {
     expect(wrong.failure?.message).toContain("111111");
   });
 
-  it("rejects an await using declaration, whose resource it doesn't dispose", () => {
-    expect(() =>
-      compile(
-        "const holder = {};\nconst run = async () => {\n  await using resource = { async [Symbol.asyncDispose]() {} };\n};",
-      ),
-    ).toThrow("tla-ts can't dispose what a using declaration holds");
+  it("awaits what an await using declaration disposes, as Node does", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      const order: string[] = [];
+      const run = async () => {
+        await using first = { [Symbol.dispose]() { order.push("sync"); } };
+        await using second = {
+          [Symbol.asyncDispose]() { order.push("async"); },
+        } as unknown as AsyncDisposable;
+        {
+          await using nothing = null;
+          order.push("body");
+        }
+        order.push("left");
+      };
+      const done = run();
+      order.push("after call");
+      Promise.resolve()
+        .then(() => order.push("tick 1"))
+        .then(() => order.push("tick 2"))
+        .then(() => order.push("tick 3"));
+      done.then(() => order.push("done"));
+      setTimeout(() => {
+        if (order.join() !== "${expected}") throw new Error(order.join());
+      });
+    `;
+    const expected = "body,after call,left,async,tick 1,sync,tick 2,tick 3,done";
+    const result = await checkModel(source(expected));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source(expected.replace("left,async", "async,left")));
+    expect(wrong.failure).toBeDefined();
+  });
+
+  it("rejects what an async function returns where disposing throws", async () => {
+    const source = (expected: number) => `
+      declare function setTimeout(callback: () => void): void;
+      let count = 0;
+      const run = async () => {
+        await using held = { [Symbol.dispose]() { throw new TypeError("dispose"); } };
+        throw new RangeError("body");
+      };
+      const fail = async () => {
+        await using held = {} as AsyncDisposable;
+      };
+      const check = async () => {
+        try {
+          await run();
+        } catch (error) {
+          if (
+            error instanceof SuppressedError &&
+            error.error instanceof TypeError &&
+            error.suppressed instanceof RangeError
+          ) {
+            count += 1;
+          }
+        }
+        try {
+          await fail();
+        } catch (error) {
+          if (error instanceof TypeError) count += 10;
+        }
+      };
+      check();
+      setTimeout(() => {
+        if (count !== ${expected}) throw new Error(String(count));
+      });
+    `;
+    const result = await checkModel(source(11));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source(10));
+    expect(wrong.failure).toBeDefined();
   });
 
   it("rejects a symbol key on a value that isn't an object", () => {

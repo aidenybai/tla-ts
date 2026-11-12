@@ -8,7 +8,7 @@ import {
   throwTypeError,
   translateDeclarations,
 } from "./actions";
-import type { Context } from "./context";
+import { type Context, getUndefined } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateSuppressedError } from "./exceptions";
 import { translateExpression } from "./expressions";
@@ -21,7 +21,13 @@ import { apply, boolean, set, string } from "./tla";
 interface Resource {
   site: ts.Node;
   value: Expression;
-  method: Expression;
+  // The dispose method, or undefined for null or undefined that an await using declaration holds.
+  method: Expression | undefined;
+  // Whether an await using declaration added it, which awaits what the method returns.
+  isAsync: boolean;
+  // Whether the method is Symbol.dispose that an await using declaration calls in place of
+  // Symbol.asyncDispose, as a promise that settles once it returns or throws.
+  isWrapped: boolean;
 }
 
 // The resources that a block's using declarations added, with the frame of the block and the path
@@ -33,24 +39,82 @@ export interface Disposal {
   path: Path;
 }
 
+interface Disposing {
+  completion: Thrown | undefined;
+  // Whether the block disposes null or undefined that an await using declaration holds, which
+  // awaits once unless a dispose method's result was awaited since.
+  needsAwait: boolean;
+  hasAwaited: boolean;
+}
+
 // Calls the dispose methods of a block's resources, last first, with each resource as this. An
 // error that a method throws replaces the completion, or suppresses the error that it threw.
 const disposeAll = (
   resources: readonly Resource[],
-  completion: Thrown | undefined,
+  disposing: Disposing,
   path: Path,
   context: Context,
   frame: Frame,
   resume: (path: Path, completion: Thrown | undefined) => Formula,
 ): Formula => {
   const resource = resources.at(-1);
-  if (resource === undefined) return resume(path, completion);
+  const tick = (current: Path, next: (path: Path) => Formula) => {
+    if (frame.awaitTo === undefined) {
+      throw new TlaTypeScriptError("Unsupported await using", resource?.site);
+    }
+    return frame.awaitTo(current, getUndefined(context), undefined, next, next);
+  };
+  if (resource === undefined) {
+    return disposing.needsAwait && !disposing.hasAwaited
+      ? tick(path, (after) => resume(after, disposing.completion))
+      : resume(path, disposing.completion);
+  }
+  if (!resource.isAsync && disposing.needsAwait && !disposing.hasAwaited) {
+    return tick(path, (after) =>
+      disposeAll(resources, { ...disposing, needsAwait: false }, after, context, frame, resume),
+    );
+  }
   const rest = resources.slice(0, -1);
   const site = resource.site;
+  const method = resource.method;
+  if (method === undefined) {
+    return disposeAll(rest, { ...disposing, needsAwait: true }, path, context, frame, resume);
+  }
+  const fail = (current: Path, thrown: Thrown, hasAwaited: boolean) =>
+    disposeAll(
+      rest,
+      {
+        ...disposing,
+        hasAwaited,
+        completion:
+          disposing.completion === undefined
+            ? thrown
+            : {
+                value: translateSuppressedError(
+                  thrown.value,
+                  disposing.completion.value,
+                  site,
+                  context,
+                ),
+                uncaught: apply("Assert", [boolean(false), string("SuppressedError")]),
+              },
+      },
+      current,
+      context,
+      frame,
+      resume,
+    );
+  const succeed = (current: Path, hasAwaited: boolean) =>
+    disposeAll(rest, { ...disposing, hasAwaited }, current, context, frame, resume);
+  const uncaught = apply("Assert", [boolean(false), string("await using")]);
   return callValue(
     site,
-    getMethods(site, "@@dispose", context),
-    resource.method,
+    getMethods(
+      site,
+      resource.isAsync && !resource.isWrapped ? "@@asyncDispose" : "@@dispose",
+      context,
+    ),
+    method,
     resource.value,
     [],
     path,
@@ -58,25 +122,27 @@ const disposeAll = (
     {
       ...frame,
       throwTo: (thrownPath, thrown) =>
-        disposeAll(
-          rest,
-          completion === undefined
-            ? thrown
-            : {
-                value: translateSuppressedError(thrown.value, completion.value, site, context),
-                uncaught: apply("Assert", [boolean(false), string("SuppressedError")]),
-              },
-          thrownPath,
-          context,
-          frame,
-          resume,
-        ),
+        resource.isWrapped
+          ? tick(thrownPath, (after) => fail(after, thrown, true))
+          : fail(thrownPath, thrown, disposing.hasAwaited),
     },
     () =>
       leaf(
         apply("Assert", [boolean(false), string("tla-ts can't tell which function this calls")]),
       ),
-    (after) => disposeAll(rest, completion, after, context, frame, resume),
+    (after, result) => {
+      if (!resource.isAsync) return succeed(after, disposing.hasAwaited);
+      if (resource.isWrapped) return tick(after, (ticked) => succeed(ticked, true));
+      if (frame.awaitTo === undefined)
+        throw new TlaTypeScriptError("Unsupported await using", site);
+      return frame.awaitTo(
+        after,
+        result,
+        undefined,
+        (fulfilled) => succeed(fulfilled, true),
+        (rejected, reason) => fail(rejected, { value: reason, uncaught }, true),
+      );
+    },
   );
 };
 
@@ -91,7 +157,7 @@ const getDisposingFrame = (disposal: Disposal, context: Context): Frame => {
   ): Formula =>
     disposeAll(
       disposal.resources,
-      completion,
+      { completion, needsAwait: false, hasAwaited: false },
       {
         ...inner,
         scope: { ...inner.scope, isCatching: disposal.path.scope.isCatching },
@@ -120,9 +186,12 @@ const getDisposingFrame = (disposal: Disposal, context: Context): Frame => {
 
 // A using declaration, whose resources the code after it in its block disposes, in the reverse of
 // the order that the block adds them. A resource is null, undefined, or an object whose
-// Symbol.dispose method the declaration reads once. The block is a block's statements or a for.
+// Symbol.dispose method the declaration reads once, or for an await using declaration its
+// Symbol.asyncDispose method, or else its Symbol.dispose method. The block is a block's statements
+// or a for.
 export const translateUsing = (
   block: ts.Node,
+  list: ts.VariableDeclarationList,
   declarations: readonly ts.VariableDeclaration[],
   path: Path,
   context: Context,
@@ -130,47 +199,60 @@ export const translateUsing = (
   run: (path: Path, frame: Frame) => Formula,
 ): Formula => {
   if (declarations.length === 0) return run(path, frame);
+  const isAsync = (list.flags & ts.NodeFlags.AwaitUsing) === ts.NodeFlags.AwaitUsing;
   const current =
     path.disposal?.block === block ? path.disposal : { block, resources: [], frame, path };
   const declaration = declarations[0];
   const name = declaration.name;
   // A using declaration binds only names.
   if (!ts.isIdentifier(name)) throw new TlaTypeScriptError("Unsupported using declaration", name);
+  const next = (inner: Path, innerFrame: Frame) =>
+    translateUsing(block, list, declarations.slice(1), inner, context, innerFrame, run);
   const add = (inner: Path, resource: Resource) => {
     const disposal = { ...current, resources: [...current.resources, resource] };
-    return translateUsing(
-      block,
-      declarations.slice(1),
+    return next(
       { ...inner, scope: { ...inner.scope, isCatching: true }, disposal },
-      context,
       getDisposingFrame(disposal, context),
-      run,
     );
   };
+  const isFunction = (current: Path, method: Expression) =>
+    apply("=", [
+      useJavaScript("TypeOfIn", [getHeap(current.scope, declaration, context), method], context),
+      string("function"),
+    ]);
   return translateDeclarations([declaration], path, context, frame, (after) => {
     const value = translateExpression(name, after.scope, context);
+    const readDispose = (current: Path, isWrapped: boolean) =>
+      read(declaration, value, "@@dispose", current, context, frame, (got, method) =>
+        ifThenElse(
+          isFunction(got, method),
+          add(got, { site: declaration, value, method, isAsync, isWrapped }),
+          throwTypeError(got, declaration, context, frame),
+        ),
+      );
     return ifThenElse(
       isNullish(value, context),
-      translateUsing(block, declarations.slice(1), after, context, frame, run),
+      isAsync
+        ? add(after, { site: declaration, value, method: undefined, isAsync, isWrapped: false })
+        : next(after, frame),
       ifThenElse(
         apply("\\in", [
           useJavaScript("TypeOfIn", [getHeap(after.scope, declaration, context), value], context),
           set([string("object"), string("function")]),
         ]),
-        read(declaration, value, "@@dispose", after, context, frame, (got, method) =>
-          ifThenElse(
-            apply("=", [
-              useJavaScript(
-                "TypeOfIn",
-                [getHeap(got.scope, declaration, context), method],
-                context,
+        isAsync
+          ? read(declaration, value, "@@asyncDispose", after, context, frame, (got, method) =>
+              ifThenElse(
+                isNullish(method, context),
+                readDispose(got, true),
+                ifThenElse(
+                  isFunction(got, method),
+                  add(got, { site: declaration, value, method, isAsync, isWrapped: false }),
+                  throwTypeError(got, declaration, context, frame),
+                ),
               ),
-              string("function"),
-            ]),
-            add(got, { site: declaration, value, method }),
-            throwTypeError(got, declaration, context, frame),
-          ),
-        ),
+            )
+          : readDispose(after, false),
         throwTypeError(after, declaration, context, frame),
       ),
     );

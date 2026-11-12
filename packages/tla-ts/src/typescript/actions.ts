@@ -5382,7 +5382,10 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
     // A using declaration runs the dispose methods, and their getters, that the script writes.
     if (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) {
       if (context.heap !== undefined) changed.add(context.heap);
-      getWrittenFunctions(node, "@@dispose", context).forEach((called) => {
+      [
+        ...getWrittenFunctions(node, "@@dispose", context),
+        ...getWrittenFunctions(node, "@@asyncDispose", context),
+      ].forEach((called) => {
         if (visited.has(called)) return;
         visited.add(called);
         visit(called);
@@ -5992,6 +5995,7 @@ const translateLoop = (
   if (ts.isVariableDeclarationList(initializer) && (initializer.flags & ts.NodeFlags.Using) !== 0) {
     return translateUsing(
       loop,
+      initializer,
       initializer.declarations,
       path,
       context,
@@ -7309,6 +7313,7 @@ export const translateStatements = (
     if ((statement.declarationList.flags & ts.NodeFlags.Using) !== 0) {
       return translateUsing(
         statement.parent,
+        statement.declarationList,
         statement.declarationList.declarations,
         path,
         context,
