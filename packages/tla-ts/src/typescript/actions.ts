@@ -5424,8 +5424,11 @@ const translateLoopCall = (
   const seeded = isUnseeded ? [identifier(seededName)] : [];
   const repeat = (current: Path, next: Expression) =>
     leaf(call(name, [step, next, ...seeded, ...getValues(current)]));
+  // Inside a try, the loop's result also tells whether the callback, or a getter that it ran, threw
+  // what it gives.
+  const caught = frame.throwTo === undefined ? [] : [boolean(false)];
   const done = (current: Path, result: Expression) =>
-    leaf(tuple([result, ...getValues(current), ...seeded]));
+    leaf(tuple([result, ...getValues(current), ...seeded, ...caught]));
   const kept = identifier(accumulator);
   // The array that map makes, where the heap holds it, gathers its elements and its holes.
   const isHeapMap = method === "map" && context.heapCollections.has(expression);
@@ -5487,9 +5490,8 @@ const translateLoopCall = (
   };
   const throwTo =
     frame.throwTo &&
-    (() => {
-      throw new TlaTypeScriptError("Catch inside the callback, or throw after the call", site);
-    });
+    ((current: Path, thrown: Thrown) =>
+      leaf(tuple([thrown.value, ...getValues(current), ...seeded, boolean(true)])));
   const searchName = context.names.getFresh("searched");
   // Compares an element with the value that a search looks for.
   const compare = (current: Path, element: Expression) =>
@@ -5759,19 +5761,29 @@ const translateLoopCall = (
               useJavaScript("Allocated", [identifier(heapName)], context),
             ),
           );
+    const completed = isUnseeded
+      ? ifThenElse(
+          index(identifier(result), [number(changed.length + 2)]),
+          finish(),
+          throwTypeError(after, expression, context, frame),
+        )
+      : finish();
     return letIn(
       [operator],
       bindOnce(
         current,
         result,
         call(name, [first, seed, ...(isUnseeded ? [boolean(false)] : []), ...getValues(current)]),
-        isUnseeded
-          ? ifThenElse(
-              index(identifier(result), [number(changed.length + 2)]),
-              finish(),
-              throwTypeError(after, expression, context, frame),
-            )
-          : finish(),
+        frame.throwTo === undefined
+          ? completed
+          : ifThenElse(
+              index(identifier(result), [number(changed.length + seeded.length + 2)]),
+              frame.throwTo(after, {
+                value,
+                uncaught: apply("Assert", [boolean(false), string(expression.getText())]),
+              }),
+              completed,
+            ),
       ),
     );
   };
