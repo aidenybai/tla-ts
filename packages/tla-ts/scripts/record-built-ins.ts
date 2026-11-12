@@ -42,6 +42,8 @@ const GLOBALS = [
   "DataView",
   "Atomics",
   "Iterator",
+  "DisposableStack",
+  "AsyncDisposableStack",
   "Int8Array",
   "Uint8Array",
   "Uint8ClampedArray",

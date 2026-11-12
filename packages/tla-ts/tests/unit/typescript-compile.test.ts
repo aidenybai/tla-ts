@@ -5449,6 +5449,23 @@ describe("errors", () => {
     expect(wrong.failure?.message).toContain("111111");
   });
 
+  it("reads the properties of DisposableStack and AsyncDisposableStack", async () => {
+    const source = (length: number) => `
+      if (DisposableStack.prototype.adopt.length !== ${length}) throw new Error("adopt");
+      if (AsyncDisposableStack.prototype.disposeAsync.name !== "disposeAsync") {
+        throw new Error("name");
+      }
+      if (typeof DisposableStack.prototype[Symbol.dispose] !== "function") {
+        throw new Error("dispose");
+      }
+      if (Object.getPrototypeOf(SuppressedError) !== Error) throw new Error("proto");
+    `;
+    const result = await checkModel(source(2));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source(1));
+    expect(wrong.failure?.message).toContain("adopt");
+  });
+
   it("awaits what an await using declaration disposes, as Node does", async () => {
     const source = (expected: string) => `
       declare function setTimeout(callback: () => void): void;
