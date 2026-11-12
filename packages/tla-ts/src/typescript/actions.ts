@@ -159,10 +159,10 @@ import {
 import {
   getDescriptorGetters,
   getElementGetters,
-  getGetterElements,
   getReadFunctions,
   isDescriptorRead,
   isDescriptorsRead,
+  isGetterPattern,
   isGetterRead,
   getGetterKeys,
   isProxyOperation,
@@ -767,7 +767,7 @@ const assignPattern = (
         const heap = getHeap(current.scope, property, context);
         const allocated = useJavaScript(
           "Allocate",
-          [heap, useJavaScript("RestObject", [heap, value, set(excluded)], context)],
+          [heap, useJavaScript("RestObject", [heap, value, set(excluded), tuple([])], context)],
           context,
         );
         return assign(
@@ -1872,7 +1872,7 @@ export const bindCall = (
     first !== undefined &&
     only !== undefined &&
     !ts.isSpreadElement(only) &&
-    getGetterElements(first.name, context).some((element) => !path.scope.read?.has(element))
+    isGetterPattern(first.name, path, context)
   ) {
     const name = context.names.getFresh("argument");
     return bindOnce(
@@ -4820,8 +4820,7 @@ const bindDeclaration = (
 ): Formula => {
   const declaration = declarations[0];
   // A pattern runs the getters of the properties it reads before it binds them.
-  const getters = getGetterElements(declaration.name, context);
-  if (getters.some((element) => !path.scope.read?.has(element))) {
+  if (isGetterPattern(declaration.name, path, context)) {
     const name = context.names.getFresh("value");
     return bindOnce(
       path,

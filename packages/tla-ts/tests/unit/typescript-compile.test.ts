@@ -3102,6 +3102,19 @@ describe("errors", () => {
     expect(thrown.failure).toBeUndefined();
   });
 
+  it("copies what a getter gives into an object rest", async () => {
+    const result = await checkModel(`
+      let count: number = 0;
+      const source = { a: 1, get v() { count++; return 2; } };
+      const { a, ...rest } = source;
+      const descriptor = Object.getOwnPropertyDescriptor(rest, "v");
+      if (count !== 1 || a !== 1 || descriptor?.value !== 2 || !descriptor.writable) {
+        throw new Error("rest");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("shares an array that a field holds and changes in place", async () => {
     const result = await checkModel(`
       interface Tree {

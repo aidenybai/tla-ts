@@ -281,7 +281,7 @@ const isRunning = (name: ts.BindingName): boolean =>
 // The elements of an object pattern on an object whose getters the binding runs first: those that
 // read a key that the script defines a getter under, before any element whose default or key runs
 // code, after which a getter would run out of order.
-export const getGetterElements = (pattern: ts.BindingName, context: Context) => {
+const getGetterElements = (pattern: ts.BindingName, context: Context) => {
   if (!ts.isObjectBindingPattern(pattern) || context.heap === undefined) return [];
   const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(pattern));
   if (!isHeapType(type, pattern, context)) return [];
@@ -300,6 +300,36 @@ export const getGetterElements = (pattern: ts.BindingName, context: Context) => 
   );
 };
 
+// An object pattern's rest element, with the one key that the script defines a getter under that
+// it may copy, where nothing that the pattern evaluates before the copy runs code.
+const getRestGetter = (pattern: ts.BindingName, context: Context) => {
+  if (!ts.isObjectBindingPattern(pattern) || context.heap === undefined) return undefined;
+  const element = pattern.elements.at(-1);
+  const others = pattern.elements.slice(0, -1);
+  const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(pattern));
+  if (
+    element?.dotDotDotToken === undefined ||
+    !isHeapType(type, pattern, context) ||
+    others.some(
+      (other) =>
+        getElementKey(other) === undefined ||
+        (other.initializer !== undefined && !isInertValue(other.initializer)) ||
+        isRunning(other.name),
+    )
+  ) {
+    return undefined;
+  }
+  const excluded = others.map(getElementKey);
+  const keys = [...getGetterKeys(pattern)].filter((key) => !excluded.includes(key));
+  return keys.length === 1 ? { element, key: keys[0] } : undefined;
+};
+
+// Whether a pattern's binding runs getters that haven't run yet.
+export const isGetterPattern = (pattern: ts.BindingName, path: Path, context: Context) =>
+  [...getGetterElements(pattern, context), getRestGetter(pattern, context)?.element].some(
+    (element) => element !== undefined && !path.scope.read?.has(element),
+  );
+
 // Reads the properties of an object pattern's elements whose getters may run, in order, so that
 // binding the pattern takes the values that they gave.
 export const readPatternGetters = (
@@ -311,23 +341,38 @@ export const readPatternGetters = (
   continueWith: (path: Path) => Formula,
 ): Formula => {
   const elements = getGetterElements(pattern, context);
+  const rest = getRestGetter(pattern, context);
+  const finish = (current: Path, values: readonly Expression[]) =>
+    continueWith({
+      ...current,
+      scope: {
+        ...current.scope,
+        read: new Map([
+          ...(current.scope.read ?? []),
+          ...[...elements, ...(rest === undefined ? [] : [rest.element])].map(
+            (inner, position): [ts.BindingElement, Expression] => [inner, values[position]],
+          ),
+        ]),
+      },
+    });
   const readFrom = (current: Path, values: readonly Expression[]): Formula => {
     const element = elements.at(values.length);
-    if (element === undefined) {
-      return continueWith({
-        ...current,
-        scope: {
-          ...current.scope,
-          read: new Map([
-            ...(current.scope.read ?? []),
-            ...elements.map((inner, position): [ts.BindingElement, Expression] => [
-              inner,
-              values[position],
-            ]),
-          ]),
-        },
-      });
+    // The rest copies the key's value, running its getter, where the object has it as its own
+    // enumerable property.
+    if (element === undefined && rest !== undefined) {
+      return ifThenElse(
+        useJavaScript(
+          "IsEnumerableOwn",
+          [getHeap(current.scope, rest.element, context), value, string(rest.key)],
+          context,
+        ),
+        read(rest.element, value, rest.key, current, context, frame, (after, got) =>
+          finish(after, [...values, apply(":>", [string(rest.key), got])]),
+        ),
+        finish(current, [...values, tuple([])]),
+      );
     }
+    if (element === undefined) return finish(current, values);
     return read(
       element,
       value,

@@ -263,11 +263,22 @@ export const bindPatternInline = (
       const heap = getHeap(current, element, context);
       const allocated = useJavaScript(
         "Allocate",
-        [heap, useJavaScript("RestObject", [heap, value, set(excluded)], context)],
+        [
+          heap,
+          useJavaScript(
+            "RestObject",
+            [heap, value, set(excluded), current.read?.get(element) ?? tuple([])],
+            context,
+          ),
+        ],
         context,
       );
       return bindNames(
-        { ...current, bindings: new Map([...current.bindings, [heapSymbol, allocated]]) },
+        {
+          ...current,
+          bindings: new Map([...current.bindings, [heapSymbol, allocated]]),
+          read: new Map([...(current.read ?? [])].filter((entry) => entry[0] !== element)),
+        },
         [
           {
             name: useJavaScript("Allocated", [allocated], context),

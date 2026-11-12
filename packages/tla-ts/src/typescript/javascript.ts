@@ -960,11 +960,14 @@ ObjectValues(heap, ref) ==
 
 \\* The object that an object pattern's rest element makes, which holds the enumerable own properties
 \\* of the object that the pattern reads, except those it names, in their order.
-RestObject(heap, ref, excluded) ==
+\\* The rest of an object, where read holds the values that its getters gave.
+RestObject(heap, ref, excluded, read) ==
   LET keys == SelectSeq(EnumerableOwnKeys(Lookup(heap, ref)), LAMBDA key : key \\notin excluded)
       kept == {keys[position] : position \\in DOMAIN keys}
   IN [EmptyObject EXCEPT !.keys = keys,
-                         !.values = Read([key \\in kept |-> Get(heap, ref, key)]),
+                         !.values = Read([key \\in kept |->
+                                           IF key \\in DOMAIN read THEN read[key]
+                                           ELSE Get(heap, ref, key)]),
                          !.attributes = [key \\in kept |-> Writable]]
 
 ObjectEntries(heap, ref) ==
