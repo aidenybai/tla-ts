@@ -471,6 +471,8 @@ ClampedIndex(index, length) ==
 ClampedCount(count, maximum) ==
   CASE count = NaN \\/ count = NegativeZero \\/ count = NegativeInfinity -> 0
     [] count = Infinity -> maximum
+    [] IsFraction(count) ->
+         IF Truncate(count) < 0 THEN 0 ELSE IF Truncate(count) > maximum THEN maximum ELSE Truncate(count)
     [] count < 0 -> 0
     [] count > maximum -> maximum
     [] OTHER -> count

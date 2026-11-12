@@ -869,7 +869,7 @@ const translateSequenceOperation = (
             : argument.getText() === "Infinity"
               ? Infinity
               : ts.isNumericLiteral(argument)
-                ? Number(argument.text)
+                ? Math.trunc(Number(argument.text))
                 : undefined;
         if (depth === undefined || call.elementType === undefined) {
           throw new TlaTypeScriptError("Give flat() a depth that is a number literal", node);

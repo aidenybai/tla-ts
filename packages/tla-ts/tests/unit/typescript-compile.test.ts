@@ -7102,6 +7102,9 @@ describe("errors", () => {
         throw new Error("index");
       }
       if ((6.99 | 0) !== 6 || ~2.5 !== -3 || (-6.99 >> 0) !== -6) throw new Error("bits");
+      const items = [1, 2, 3];
+      const removed = items.splice(0, 1.5);
+      if (removed.length !== 1 || [[1], [[2], [3]]].flat(1.5).length !== 3) throw new Error("count");
       if (typeof 2.5 !== "number" || Number.isInteger(2.5) || !Number.isFinite(-2.5)) {
         throw new Error("kind");
       }
