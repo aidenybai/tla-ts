@@ -21,6 +21,7 @@ import {
   getCallee,
   getReturnedFunctions,
   getUndefined,
+  isInertValue,
   isMethodCall,
   isNestedFunction,
   skipCasts,
@@ -31,7 +32,7 @@ import { type Formula, ifThenElse, leaf } from "./formula";
 import { getBuiltIn } from "./intrinsics";
 import { getCandidateValue, getHeap, isProxyValue, translateObjectValue } from "./heap";
 import { useJavaScript } from "./javascript";
-import { getKind } from "./types";
+import { getKind, isHeapType } from "./types";
 import {
   apply,
   boolean,
@@ -259,6 +260,95 @@ export const read = (
     frame,
     continueWith,
   );
+
+// The key that a pattern's element reads, where a name or a string gives it.
+const getElementKey = (element: ts.BindingElement) => {
+  const name = element.propertyName ?? element.name;
+  return ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined;
+};
+
+// Whether binding a name runs code, through a default that isn't inert or a computed key.
+const isRunning = (name: ts.BindingName): boolean =>
+  !ts.isIdentifier(name) &&
+  name.elements.some(
+    (element) =>
+      !ts.isOmittedExpression(element) &&
+      ((element.initializer !== undefined && !isInertValue(element.initializer)) ||
+        (element.propertyName !== undefined && ts.isComputedPropertyName(element.propertyName)) ||
+        isRunning(element.name)),
+  );
+
+// The elements of an object pattern on an object whose getters the binding runs first: those that
+// read a key that the script defines a getter under, before any element whose default or key runs
+// code, after which a getter would run out of order.
+export const getGetterElements = (pattern: ts.BindingName, context: Context) => {
+  if (!ts.isObjectBindingPattern(pattern) || context.heap === undefined) return [];
+  const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(pattern));
+  if (!isHeapType(type, pattern, context)) return [];
+  const stop = pattern.elements.findIndex(
+    (element) => element.dotDotDotToken !== undefined || getElementKey(element) === undefined,
+  );
+  const plain = stop === -1 ? pattern.elements : pattern.elements.slice(0, stop);
+  const running = plain.findIndex(
+    (element) =>
+      (element.initializer !== undefined && !isInertValue(element.initializer)) ||
+      isRunning(element.name),
+  );
+  const keys = getGetterKeys(pattern);
+  return (running === -1 ? plain : plain.slice(0, running + 1)).filter((element) =>
+    keys.has(getElementKey(element) ?? ""),
+  );
+};
+
+// Reads the properties of an object pattern's elements whose getters may run, in order, so that
+// binding the pattern takes the values that they gave.
+export const readPatternGetters = (
+  pattern: ts.BindingName,
+  value: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const elements = getGetterElements(pattern, context);
+  const readFrom = (current: Path, values: readonly Expression[]): Formula => {
+    const element = elements.at(values.length);
+    if (element === undefined) {
+      return continueWith({
+        ...current,
+        scope: {
+          ...current.scope,
+          read: new Map([
+            ...(current.scope.read ?? []),
+            ...elements.map((inner, position): [ts.BindingElement, Expression] => [
+              inner,
+              values[position],
+            ]),
+          ]),
+        },
+      });
+    }
+    return read(
+      element,
+      value,
+      getElementKey(element) ?? "",
+      current,
+      context,
+      frame,
+      (after, got) => readFrom(after, [...values, got]),
+    );
+  };
+  return ifThenElse(
+    isNullish(value, context),
+    leaf(
+      apply("Assert", [
+        boolean(false),
+        string("tla-ts can't throw the TypeError of destructuring a value that isn't an object"),
+      ]),
+    ),
+    readFrom(path, []),
+  );
+};
 
 // The fields that ToPropertyDescriptor reads, in the order it reads them.
 const DESCRIPTOR_FIELDS = ["enumerable", "configurable", "value", "writable", "get", "set"];

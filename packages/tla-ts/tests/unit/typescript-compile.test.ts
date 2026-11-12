@@ -475,7 +475,7 @@ describe("top-level statements", () => {
     expect(result.failure?.message).toContain("tla-ts can't call getters");
   });
 
-  it("stop the check at a getter that a parameter pattern reads, though nothing uses it", async () => {
+  it("throws a getter's error that a parameter pattern reads, though nothing uses it", async () => {
     const result = await checkModel(`
       const object = {
         get poisoned(): number {
@@ -485,7 +485,7 @@ describe("top-level statements", () => {
       const take = ({ poisoned }: { poisoned: number }) => {};
       take(object);
     `);
-    expect(result.failure?.message).toContain("tla-ts can't call getters");
+    expect(result.failure?.message).toContain("poisoned");
   });
 
   it("throws a getter's error that a call reads, though the statement drops its value", async () => {
@@ -3072,6 +3072,36 @@ describe("errors", () => {
     ).toThrow("tla-ts can't run this call of a function from inside itself");
   });
 
+  it("runs the getters of the properties that a pattern reads", async () => {
+    const result = await checkModel(`
+      const order: string[] = [];
+      const source = {
+        get a() { order.push("a"); return 1; },
+        get b() { order.push("b"); return 2; },
+      };
+      const { b, a } = source;
+      const take = ({ a }: { a: number }) => a;
+      if (take(source) !== 1 || a !== 1 || b !== 2 || order.join() !== "b,a,a") {
+        throw new Error(order.join());
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+    const thrown = await checkModel(`
+      class Poison extends Error {}
+      const poisoned = Object.defineProperty({}, "poisoned", {
+        get: function () { throw new Poison(); },
+      });
+      let caught = false;
+      try {
+        const { poisoned: value } = poisoned as { poisoned: number };
+      } catch (error) {
+        caught = error instanceof Poison;
+      }
+      if (!caught) throw new Error("caught");
+    `);
+    expect(thrown.failure).toBeUndefined();
+  });
+
   it("shares an array that a field holds and changes in place", async () => {
     const result = await checkModel(`
       interface Tree {
@@ -4524,7 +4554,7 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("stops on a getter that a pattern reads where the pattern runs", async () => {
+  it("runs or stops on a getter that a pattern reads where the pattern runs", async () => {
     const getSource = (statements: string) => `
       let count = 0;
       const source = {
@@ -4539,9 +4569,10 @@ describe("errors", () => {
     for (const statements of [
       "const { v } = source;",
       "function take({ v }: { v: number }) { return 1; } const taken = take(source);",
-      "for (const { v } of [source]) {}",
-      "let v = 0; ({ v } = source);",
     ]) {
+      expect((await checkModel(getSource(statements))).failure).toBeUndefined();
+    }
+    for (const statements of ["for (const { v } of [source]) {}", "let v = 0; ({ v } = source);"]) {
       expect((await checkModel(getSource(statements))).failure?.message).toContain(
         "tla-ts can't call getters",
       );

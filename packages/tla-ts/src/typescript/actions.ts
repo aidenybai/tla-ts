@@ -159,6 +159,7 @@ import {
 import {
   getDescriptorGetters,
   getElementGetters,
+  getGetterElements,
   getReadFunctions,
   isDescriptorRead,
   isDescriptorsRead,
@@ -167,6 +168,7 @@ import {
   isProxyOperation,
   readDescriptor,
   readDescriptors,
+  readPatternGetters,
   readWith,
   runGetterRead,
   runProxyOperation,
@@ -1861,6 +1863,40 @@ export const bindCall = (
   if (defaults.length > 0) {
     return allocateAll(defaults, path, context, (allocated) =>
       bindCall(node, callee, argumentNodes, receiver, allocated, context, frame, continueWith),
+    );
+  }
+  // A first parameter's pattern runs the getters of the properties it reads, after the call
+  // evaluates its only argument.
+  const only = argumentNodes.length === 1 ? argumentNodes[0] : undefined;
+  if (
+    first !== undefined &&
+    only !== undefined &&
+    !ts.isSpreadElement(only) &&
+    getGetterElements(first.name, context).some((element) => !path.scope.read?.has(element))
+  ) {
+    const name = context.names.getFresh("argument");
+    return bindOnce(
+      path,
+      name,
+      translateExpression(only, path.scope, context),
+      readPatternGetters(first.name, identifier(name), path, context, frame, (after) =>
+        bindCall(
+          node,
+          callee,
+          argumentNodes,
+          receiver,
+          {
+            ...after,
+            scope: {
+              ...after.scope,
+              results: new Map([...after.scope.results, [only, identifier(name)]]),
+            },
+          },
+          context,
+          frame,
+          continueWith,
+        ),
+      ),
     );
   }
   const callbacks = parameters.flatMap((parameter, position): [ts.Symbol, FunctionNode][] => {
@@ -4783,6 +4819,19 @@ const bindDeclaration = (
   continueWith: (path: Path) => Formula,
 ): Formula => {
   const declaration = declarations[0];
+  // A pattern runs the getters of the properties it reads before it binds them.
+  const getters = getGetterElements(declaration.name, context);
+  if (getters.some((element) => !path.scope.read?.has(element))) {
+    const name = context.names.getFresh("value");
+    return bindOnce(
+      path,
+      name,
+      value,
+      readPatternGetters(declaration.name, identifier(name), path, context, frame, (after) =>
+        bindDeclaration(declarations, identifier(name), after, context, frame, continueWith),
+      ),
+    );
+  }
   const taken =
     ts.isArrayBindingPattern(declaration.name) &&
     takeFromIterator(declaration.name, value, path, context, frame, (after, values) =>

@@ -34,6 +34,9 @@ export interface Scope {
   checked?: ReadonlySet<ts.Expression>;
   // The object that this names in the method that a call through it inlines.
   receiver?: Receiver;
+  // The values of an object pattern's elements whose getters ran before it binds, which binding
+  // the pattern takes, once each.
+  read?: ReadonlyMap<ts.BindingElement, Expression>;
 }
 
 export interface Receiver {
@@ -280,12 +283,18 @@ export const bindPatternInline = (
         : getPropertyKey(name);
     if (key === undefined) throw new TlaTypeScriptError("Unsupported key", element);
     if (isHeapType(type, pattern, context)) {
-      const part = useJavaScript(
-        "Get",
-        [getHeap(current, element, context), value, string(key)],
-        context,
-      );
-      return bindPatternInline(element.name, withDefault(part), current, context);
+      const got = current.read?.get(element);
+      const part =
+        got ??
+        useJavaScript("Get", [getHeap(current, element, context), value, string(key)], context);
+      const taken =
+        got === undefined
+          ? current
+          : {
+              ...current,
+              read: new Map([...(current.read ?? [])].filter((entry) => entry[0] !== element)),
+            };
+      return bindPatternInline(element.name, withDefault(part), taken, context);
     }
     if (isSequenceType(context.checker.getTypeAtLocation(pattern), context.checker)) {
       if (key !== "length" && !/^(0|[1-9][0-9]*)$/.test(key)) {
@@ -310,7 +319,7 @@ export const bindPatternInline = (
   // that TLC would find only where something reads what the pattern binds.
   if (!isHeapObject && !ts.isBindingElement(pattern.parent)) return bound;
   const keys = (isHeapObject ? pattern.elements : []).flatMap((element) => {
-    if (element.dotDotDotToken !== undefined) return [];
+    if (element.dotDotDotToken !== undefined || scope.read?.has(element)) return [];
     const name = element.propertyName ?? element.name;
     const key =
       ts.isIdentifier(name) || ts.isStringLiteral(name) ? getPropertyKey(name) : undefined;
