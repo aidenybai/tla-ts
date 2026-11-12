@@ -6317,6 +6317,37 @@ describe("errors", () => {
     ).toThrow("Unsupported call: valueOf.call");
   });
 
+  it("reads the Symbol.toStringTag of a primitive's prototype in Object.prototype.toString", async () => {
+    const source = `
+      const holder = { seen: "" };
+      const made = Symbol();
+      const read = (value: unknown) => Object.prototype.toString.call(value);
+      if (read(1) !== "[object Number]" || read("a") !== "[object String]" || read(true) !== "[object Boolean]") {
+        throw new Error("plain");
+      }
+      if (read(1n) !== "[object BigInt]" || read(made) !== "[object Symbol]") throw new Error("tagged");
+      Object.defineProperty(BigInt.prototype, Symbol.toStringTag, { value: 86 });
+      Object.defineProperty(String.prototype, Symbol.toStringTag, { value: "Y" });
+      if (read(1n) !== "[object Object]") throw new Error("bigint");
+      if (read("a") !== "[object Y]") throw new Error("string");
+      holder.seen = read(1);
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = [
+      ['read(1) !== "[object Number]"', 'read(1) !== "[object Y]"', '"plain"'],
+      ['read(made) !== "[object Symbol]"', 'read(made) !== "[object Object]"', '"tagged"'],
+      [
+        '"[object Object]") throw new Error("bigint")',
+        '"[object BigInt]") throw new Error("bigint")',
+        '"bigint"',
+      ],
+      ['"[object Y]")', '"[object String]")', '"string"'],
+    ];
+    for (const [from, to, message] of wrong) {
+      expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
+    }
+  });
+
   it("rejects new Object of a value whose type doesn't tell the object", () => {
     expect(() =>
       compile("const box = { prop: 1 };\nconst same: Object = new Object(box);"),

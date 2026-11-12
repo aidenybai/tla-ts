@@ -2818,9 +2818,14 @@ ObjectToString(heap, value, kind) ==
   "[object "
     \\o (CASE value = Undefined -> "Undefined"
           [] value = Null -> "Null"
-          [] TypeOf(value) = "number" -> "Number"
-          [] TypeOf(value) = "string" -> "String"
-          [] TypeOf(value) = "boolean" -> "Boolean"
+          [] TypeOf(value) \\in {"number", "string", "boolean", "bigint", "symbol"} ->
+               LET name == CASE TypeOf(value) = "number" -> "Number"
+                             [] TypeOf(value) = "string" -> "String"
+                             [] TypeOf(value) = "boolean" -> "Boolean"
+                             [] TypeOf(value) = "bigint" -> "BigInt"
+                             [] OTHER -> "Symbol"
+               IN Tagged(heap, Ref :> (name \\o ".prototype"),
+                         IF name \\in {"BigInt", "Symbol"} THEN "Object" ELSE name)
           [] ~IsRef(value) /\\ IsError(value) ->
                Tagged(heap, Get(heap, value.constructor, "prototype"), "Error")
           [] IsProxy(heap, value) ->
