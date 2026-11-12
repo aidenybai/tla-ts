@@ -129,9 +129,39 @@ val claset_json =
   ",\"dup\":" ^ netpair_json (#dup_netpair cs) ^
   ",\"extra\":" ^ ctx_netpair_json (#extra_netpair cs) ^ "}";
 
+(* Context_Rules hides its third netpair, of the rules declared with "?". A goal and a fact whose
+   conclusions are variables retrieve every rule of each netpair in the order the unweighted
+   retrieval uses, the elimination rules first. *)
+val var_prop = Var (("P", 0), propT);
+val all_intros = Context_Rules.find_rules ctxt false [] var_prop;
+val all_rules =
+  Context_Rules.find_rules ctxt false [Thm.trivial (Thm.cterm_of ctxt var_prop)] var_prop;
+val query_intros = nth all_intros 2;
+val query_elims = take (length (nth all_rules 2) - length query_intros) (nth all_rules 2);
+fun ids_json ths = "[" ^ commas (map (jint o thm_id) ths) ^ "]";
+
 val context_rules_json =
   "{\"bang\":" ^ ctx_netpair_json (Context_Rules.netpair_bang ctxt) ^
-  ",\"plain\":" ^ ctx_netpair_json (Context_Rules.netpair ctxt) ^ "}";
+  ",\"plain\":" ^ ctx_netpair_json (Context_Rules.netpair ctxt) ^
+  ",\"query\":[" ^ ids_json query_intros ^ "," ^ ids_json query_elims ^ "]}";
+
+(* The tags of Rule_Cases, which the cases method reads off its rule. *)
+val case_tag_names =
+  ["consumes", "constraints", "case_names", "cases_hyp_names", "case_conclusion", "inner_rule",
+    "cases_open"];
+fun case_tags th = filter (fn (a, _) => member (op =) case_tag_names a) (Thm.get_tags th);
+fun tags_json th =
+  "[" ^ commas (map (fn (a, b) => "[" ^ esc a ^ "," ^ esc b ^ "]") (case_tags th)) ^ "]";
+val fact_tags_json = "[" ^ commas (maps (fn (a, ths) =>
+  map_filter (fn (i, th) =>
+    if null (case_tags th) then NONE
+    else SOME ("[" ^ esc a ^ "," ^ jint i ^ "," ^ tags_json th ^ "]")) (map_index I ths))
+  facts) ^ "]";
+fun cases_json rules = "[" ^ commas (map (fn (a, th) =>
+  "[" ^ esc a ^ "," ^ jint (thm_id th) ^ "," ^ tags_json th ^ "]") rules) ^ "]";
+val {type_cases, pred_cases, ...} = Induct.dest_rules ctxt;
+val cases_rules_json =
+  "{\"type\":" ^ cases_json type_cases ^ ",\"pred\":" ^ cases_json pred_cases ^ "}";
 
 val json =
   "{\"types\":[" ^ commas (! type_out) ^ "]" ^
@@ -148,6 +178,8 @@ val json =
   ",\"safeSolvers\":" ^ strings_json safe_solvers ^
   ",\"claset\":" ^ claset_json ^
   ",\"contextRules\":" ^ context_rules_json ^
+  ",\"factTags\":" ^ fact_tags_json ^
+  ",\"casesRules\":" ^ cases_rules_json ^
   ",\"thms\":[" ^ commas (! thm_out) ^ "]}";
 
 val _ = File.write (Path.explode out_path) json;
