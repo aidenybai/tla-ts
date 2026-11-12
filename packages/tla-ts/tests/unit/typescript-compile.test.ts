@@ -2413,6 +2413,24 @@ describe("errors", () => {
     expect((await checkModel(getSource(2))).failure?.message).toContain("unexpected");
   });
 
+  it("reads a hole that a for-of's iterator reads from Array.prototype", async () => {
+    const getSource = (expected: string) => `
+      let count = 0;
+      let last: unknown = 0;
+      for (const item of [, 1]) {
+        if (item === undefined) count++;
+      }
+      for (const [x = 23] of [[,]]) last = x;
+      const getLast = (): unknown => last;
+      if (getLast() !== 23) throw new Error("default");
+      Object.defineProperty(Array.prototype, "0", { value: "proto", configurable: true });
+      for (const [x = "default"] of [[,]]) last = x;
+      if (count !== 1 || getLast() !== "${expected}") throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource("proto"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("default"))).failure?.message).toContain("unexpected");
+  });
+
   it("runs the setter of an object literal or a class that a computed key picks", async () => {
     const getSource = (written: string) => `
       let log = "";

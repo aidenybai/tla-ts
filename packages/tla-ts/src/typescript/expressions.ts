@@ -271,16 +271,53 @@ export const translateKey = (node: ts.ElementAccessExpression, scope: Scope, con
     : apply("+", [position, number(1)]);
 };
 
+// An array literal that only an array's iterator reads: one that a for-of iterates, or an element
+// of one where the for-of destructures each element with an array pattern.
+const isIteratedOnly = (node: ts.ArrayLiteralExpression): boolean => {
+  const parent = node.parent;
+  if (ts.isForOfStatement(parent)) return parent.expression === node;
+  if (!ts.isArrayLiteralExpression(parent) || !ts.isForOfStatement(parent.parent)) return false;
+  const initializer = parent.parent.initializer;
+  const target = ts.isVariableDeclarationList(initializer)
+    ? initializer.declarations.at(0)?.name
+    : initializer;
+  return (
+    isIteratedOnly(parent) &&
+    !parent.elements.some(ts.isSpreadElement) &&
+    target !== undefined &&
+    (ts.isArrayBindingPattern(target) || ts.isArrayLiteralExpression(target))
+  );
+};
+
 // The elements that an array literal or a call's arguments list, where runs of plain elements become
-// tuples, and each spread array stays a sequence of its own.
+// tuples, and each spread array stays a sequence of its own. A hole of a literal that only an
+// iterator reads gives what Array.prototype holds at its index.
 export const translateElements = (
   elements: readonly ts.Expression[],
   scope: Scope,
   context: Context,
+  literal?: ts.ArrayLiteralExpression,
 ) => {
-  const parts = elements.reduce<(Expression | Expression[])[]>((result, element) => {
+  const parts = elements.reduce<(Expression | Expression[])[]>((result, element, position) => {
     if (!ts.isSpreadElement(element)) {
-      const value = translateExpression(element, scope, context);
+      const isHole =
+        literal !== undefined &&
+        ts.isOmittedExpression(element) &&
+        isIteratedOnly(literal) &&
+        !literal.elements.some(ts.isSpreadElement);
+      const value = !isHole
+        ? translateExpression(element, scope, context)
+        : context.heap === undefined
+          ? getUndefined(context)
+          : useJavaScript(
+              "Get",
+              [
+                getHeap(scope, literal, context),
+                translateBuiltInValue("Array.prototype", literal, context),
+                string(String(position)),
+              ],
+              context,
+            );
       const last = result.at(-1);
       return Array.isArray(last)
         ? [...result.slice(0, -1), [...last, value]]
@@ -2406,7 +2443,7 @@ const translateNode = (
     if (contextualKeys.some((key) => !arrayKeys.has(key))) {
       throw new TlaTypeScriptError("Use an array only as an array, not as an object", node);
     }
-    return translateElements(node.elements, scope, context);
+    return translateElements(node.elements, scope, context, node);
   }
   if (ts.isObjectLiteralExpression(node)) return translateObjectLiteral(node, scope, context);
   if (ts.isPropertyAccessExpression(node)) return translatePropertyAccess(node, scope, context);
