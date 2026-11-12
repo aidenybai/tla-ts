@@ -4,6 +4,7 @@ import {
   checkElement,
   getCallbackReceiver,
   getHeapArrayChange,
+  translateArrayChange,
   translateHeapElements,
   getHeapRegExpCall,
   translateRegExpText,
@@ -1390,11 +1391,7 @@ export const translateCallStatement = (
       bindOnce(
         path,
         changeName,
-        useJavaScript(
-          "ArrayChange",
-          [heap, ref, string(method), tuple(translateArguments(arrayChange.items))],
-          context,
-        ),
+        translateArrayChange(method, heap, ref, arrayChange.items, path.scope, context),
         ifThenElse(
           field(change, "isThrown"),
           throwTypeError(withHeap(field(change, "heap")), expression, context, frame),

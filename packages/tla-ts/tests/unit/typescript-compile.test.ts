@@ -4319,6 +4319,33 @@ describe("errors", () => {
     expect((await checkModel(getSource(42, "a,b,next"))).failure?.message).toContain("order");
   });
 
+  it("sorts, reverses, and copies within an array with holes in place", async () => {
+    const result = await checkModel(`
+      const a = [3, , 1, undefined, 2];
+      a.sort();
+      const b = [1, , 3, 4];
+      const reversed = b.reverse();
+      const c = [0, , 2, 3, 4];
+      c.copyWithin(2, 0, 3);
+      if (
+        a.join(",") !== "1,2,3,," ||
+        !a.hasOwnProperty(3) ||
+        a.hasOwnProperty(4) ||
+        reversed !== b ||
+        b.hasOwnProperty(2) ||
+        b.join(",") !== "4,3,,1" ||
+        c.hasOwnProperty(1) ||
+        c.hasOwnProperty(3) ||
+        c.join(",") !== "0,,0,,2"
+      ) {
+        throw new Error("holes");
+      }
+      Object.freeze(a);
+      a.reverse();
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't reorder an array in place");
+  });
+
   it("runs the getters of an object literal that a method makes on each call", async () => {
     const getSource = (expected: string) => `
       const log: string[] = [];

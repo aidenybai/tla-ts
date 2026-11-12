@@ -44,6 +44,7 @@ import {
   not,
   number,
   quantify,
+  record,
   set,
   string,
   tuple,
@@ -1996,10 +1997,75 @@ export const getArrayLikeCall = (node: ts.CallExpression, context: Context) => {
     : undefined;
 };
 
-export const IN_PLACE_METHODS = new Set(["push", "pop", "shift", "unshift"]);
+export const IN_PLACE_METHODS = new Set([
+  "push",
+  "pop",
+  "shift",
+  "unshift",
+  "sort",
+  "reverse",
+  "copyWithin",
+]);
 
-// A call of push, pop, shift, or unshift on an array that the heap holds, which changes the array
-// in place.
+// What a method that changes an array that the heap holds does: the heap after, the value that it
+// gives, and whether it throws a TypeError.
+export const translateArrayChange = (
+  method: string,
+  heap: Expression,
+  ref: Expression,
+  items: readonly ts.Expression[],
+  scope: Scope,
+  context: Context,
+) => {
+  const translateNumber = (argument: ts.Expression) =>
+    isNumberLike(argument, context)
+      ? translateExpression(argument, scope, context)
+      : useJavaScript("ToNumber", [translateExpression(argument, scope, context)], context);
+  const [first, second, third] = items;
+  const reordered =
+    method === "reverse"
+      ? useJavaScript("ArrayReverse", [heap, ref], context)
+      : method === "sort"
+        ? useJavaScript(
+            "ArraySort",
+            [heap, ref, translateSortOrder(first, scope, context)],
+            context,
+          )
+        : method === "copyWithin"
+          ? useJavaScript(
+              "ArrayCopyWithin",
+              [
+                heap,
+                ref,
+                first === undefined ? number(0) : translateNumber(first),
+                second === undefined ? number(0) : translateNumber(second),
+                third === undefined ||
+                (context.checker.getTypeAtLocation(third).flags & ts.TypeFlags.Undefined) !== 0
+                  ? getUndefined(context)
+                  : translateNumber(third),
+              ],
+              context,
+            )
+          : undefined;
+  return reordered === undefined
+    ? useJavaScript(
+        "ArrayChange",
+        [
+          heap,
+          ref,
+          string(method),
+          tuple(items.map((item) => translateExpression(item, scope, context))),
+        ],
+        context,
+      )
+    : record("Record", [
+        { name: "heap", value: reordered },
+        { name: "value", value: ref },
+        { name: "isThrown", value: boolean(false) },
+      ]);
+};
+
+// A call of a method that changes an array that the heap holds in place.
 export const getHeapArrayChange = (node: ts.Node, context: Context) =>
   ts.isCallExpression(node) &&
   ts.isPropertyAccessExpression(node.expression) &&

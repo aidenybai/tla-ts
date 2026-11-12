@@ -3451,6 +3451,72 @@ LOCAL WithElements(heap, ref, elements, length) ==
             !.attributes = [key \\in kept |-> IF key \\in indices THEN Writable ELSE @[key]]])
      ELSE Assert(FALSE, "tla-ts can't add an element where the array can't take it")
 
+\\* The elements that an array holds at its own indices, by index, where it may have holes.
+LOCAL OwnElements(object) ==
+  [position \\in {ToIndex(key) : key \\in {key \\in DOMAIN object.values : IsIndex(key)}} |->
+     object.values[ToString(position)]]
+
+\\* The heap after an array's elements become the given ones by index, where each index that the
+\\* elements leave out becomes a hole. Only an array whose elements are ordinary data properties,
+\\* whose prototypes hold no elements, and that takes new ones, changes this way, as sort, reverse,
+\\* and copyWithin would otherwise run setters or throw.
+LOCAL WithOwnElements(heap, ref, elements) ==
+  LET object == Lookup(heap, ref)
+      old == {key \\in DOMAIN object.values : IsIndex(key)}
+      present == DOMAIN elements
+      ordered == [position \\in 1..Cardinality(present) |->
+                   CHOOSE element \\in present :
+                     Cardinality({other \\in present : other < element}) = position - 1]
+      indices == {ToString(position) : position \\in present}
+      kept == (DOMAIN object.values \\ old) \\cup indices
+  IN IF /\\ \\A key \\in old : object.attributes[key] = Writable
+        /\\ object.prototype = Null \\/ IndexKeys(heap, object.prototype) = {}
+        /\\ object.extensible
+     THEN Update(heap, ref, [object EXCEPT
+            !.keys = [position \\in DOMAIN ordered |-> ToString(ordered[position])]
+                       \\o SelectSeq(@, LAMBDA key : ~IsIndex(key)),
+            !.values = [key \\in kept |->
+                         IF key \\in indices THEN elements[ToIndex(key)] ELSE @[key]],
+            !.attributes = [key \\in kept |-> IF key \\in indices THEN Writable ELSE @[key]]])
+     ELSE Assert(FALSE, "tla-ts can't reorder an array in place with accessors, fixed elements, or inherited ones")
+
+\\* reverse() on an array that the heap holds, which moves each hole as it moves each element.
+ArrayReverse(heap, ref) ==
+  LET object == Lookup(heap, ref)
+      elements == OwnElements(object)
+      last == object.values["length"] - 1
+  IN WithOwnElements(heap, ref,
+       [position \\in {last - index : index \\in DOMAIN elements} |-> elements[last - position]])
+
+\\* sort() on an array that the heap holds, which sorts the elements it has to its start, with
+\\* undefined after them and the holes last.
+ArraySort(heap, ref, IsBefore(_, _)) ==
+  LET elements == OwnElements(Lookup(heap, ref))
+      present == DOMAIN elements
+      ordered == [position \\in 1..Cardinality(present) |->
+                   elements[CHOOSE element \\in present :
+                              Cardinality({other \\in present : other < element}) = position - 1]]
+      sorted == SortSequence(ordered, IsBefore)
+  IN WithOwnElements(heap, ref, [position \\in 0..(Len(sorted) - 1) |-> sorted[position + 1]])
+
+\\* copyWithin() on an array that the heap holds, where a hole that it copies deletes the element it
+\\* copies over. The indices are the numbers that its arguments give, and end is Undefined where it
+\\* takes the length.
+ArrayCopyWithin(heap, ref, target, start, end) ==
+  LET object == Lookup(heap, ref)
+      elements == OwnElements(object)
+      length == object.values["length"]
+      to == ClampedIndex(target, length)
+      from == ClampedIndex(start, length)
+      final == IF end = Undefined THEN length ELSE ClampedIndex(end, length)
+      count == IF final - from < length - to THEN final - from ELSE length - to
+      isCopied(position) == position >= to /\\ position < to + count
+      present == {position \\in DOMAIN elements : ~isCopied(position)}
+                   \\cup {position \\in to..(to + count - 1) : position - to + from \\in DOMAIN elements}
+  IN WithOwnElements(heap, ref,
+       [position \\in present |->
+          IF isCopied(position) THEN elements[position - to + from] ELSE elements[position]])
+
 \\* What push, pop, shift, or unshift does to an array that the heap holds: the heap after, the value
 \\* that the method gives, and whether it throws a TypeError. An array whose length is fixed throws
 \\* where the method sets its length, after a pop or a shift has moved and deleted its elements, and
