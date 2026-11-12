@@ -858,24 +858,27 @@ const getOwnValueGetters = (node: ts.Node, context: Context) => [
   ...new Set([...getGetterKeys(node)].flatMap((key) => getKeyGetters(node, key, context))),
 ];
 
-// Object.values or Object.entries of an object where a getter that tla-ts can run may answer a key.
+// Object.values or Object.entries of an object, or Object.assign from one source, where a getter
+// that tla-ts can run may answer a key.
 export const isOwnValuesRead = (node: ts.Node, context: Context): node is ts.CallExpression =>
   context.heap !== undefined &&
   ts.isCallExpression(node) &&
   ts.isPropertyAccessExpression(node.expression) &&
   node.expression.expression.getText() === "Object" &&
-  (getCallName(node) === "values" || getCallName(node) === "entries") &&
-  node.arguments.length === 1 &&
-  !ts.isSpreadElement(node.arguments[0]) &&
+  (((getCallName(node) === "values" || getCallName(node) === "entries") &&
+    node.arguments.length === 1) ||
+    (getCallName(node) === "assign" && node.arguments.length === 2)) &&
+  !node.arguments.some(ts.isSpreadElement) &&
   getOwnValueGetters(node, context).length > 0 &&
   getOwnValueGetters(node, context).every((getter) => isRunnableGetter(getter, context));
 
 export const getOwnValuesGetters = (node: ts.Node, context: Context) =>
   isOwnValuesRead(node, context) ? getOwnValueGetters(node, context) : [];
 
-// Object.values or Object.entries, which lists an object's own string keys, and then reads each
-// that is still an enumerable own property in turn, running its getter. The statement reads at
-// most a few keys.
+// Object.values, Object.entries, or Object.assign, which lists an object's own keys, and then
+// reads each that is still an enumerable own property in turn, running its getter. values and
+// entries read string keys and gather what they read, and assign reads symbols too and writes each
+// value to its target before it reads the next. The statement reads at most a few keys.
 export const readOwnValues = (
   site: ts.CallExpression,
   path: Path,
@@ -883,10 +886,11 @@ export const readOwnValues = (
   frame: Frame,
   continueWith: (path: Path, value: Expression) => Formula,
 ): Formula => {
-  const isEntries = getCallName(site) === "entries";
+  const method = getCallName(site);
   const getters = getOwnValueGetters(site, context);
   const readFrom = (
     current: Path,
+    target: Expression,
     object: Expression,
     keys: Expression,
     position: number,
@@ -895,7 +899,7 @@ export const readOwnValues = (
     if (position > KEYS_LIMIT) {
       return ifThenElse(
         apply("<=", [apply("Len", [keys]), number(KEYS_LIMIT)]),
-        continueWith(current, read),
+        continueWith(current, method === "assign" ? target : read),
         leaf(
           apply("Assert", [
             boolean(false),
@@ -905,11 +909,29 @@ export const readOwnValues = (
       );
     }
     const key = index(keys, [number(position)]);
+    const gather = (
+      after: Path,
+      value: Expression,
+      next: (inner: Path, read: Expression) => Formula,
+    ) =>
+      method === "assign"
+        ? bind(
+            after,
+            "heap",
+            useJavaScript(
+              "SetProperty",
+              [getHeap(after.scope, site, context), target, key, value],
+              context,
+            ),
+            context,
+            (written, heap) => next(withHeap(written, heap, context), read),
+          )
+        : next(after, apply("Append", [read, method === "entries" ? tuple([key, value]) : value]));
     return translateJoined(
       site,
       current,
       context,
-      (after, value) => readFrom(after, object, keys, position + 1, value ?? read),
+      (after, value) => readFrom(after, target, object, keys, position + 1, value ?? read),
       (next) =>
         ifThenElse(
           junction("And", [
@@ -921,40 +943,52 @@ export const readOwnValues = (
             ),
           ]),
           readWith(site, object, key, getters, current, context, frame, (after, value) =>
-            next(after, apply("Append", [read, isEntries ? tuple([key, value]) : value])),
+            gather(after, value, next),
           ),
           next(current, read),
         ),
     );
   };
-  return bind(
-    path,
-    "object",
-    translateExpression(site.arguments[0], path.scope, context),
-    context,
-    (bound, object) =>
-      ifThenElse(
-        isObjectArgument(object, context),
-        bind(
-          bound,
-          "keys",
-          useJavaScript(
+  const values = site.arguments.map((argument) =>
+    method === "assign"
+      ? translateObjectValue(argument, path.scope, context)
+      : translateExpression(argument, path.scope, context),
+  );
+  const target = values[0];
+  const object = values.at(-1) ?? target;
+  return ifThenElse(
+    junction(
+      "And",
+      values.map((value) => isObjectArgument(value, context)),
+    ),
+    bind(
+      path,
+      "keys",
+      method === "assign"
+        ? useJavaScript("PropertyKeysOf", [getHeap(path.scope, site, context), object], context)
+        : useJavaScript(
             "OwnKeys",
-            [useJavaScript("Lookup", [getHeap(bound.scope, site, context), object], context)],
+            [useJavaScript("Lookup", [getHeap(path.scope, site, context), object], context)],
             context,
           ),
-          context,
-          (listed, keys) => readFrom(listed, object, keys, 1, tuple([])),
-        ),
-        continueWith(
-          bound,
+      context,
+      (listed, keys) => readFrom(listed, target, object, keys, 1, tuple([])),
+    ),
+    method === "assign"
+      ? leaf(
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't run getters as Object.assign copies from or to a primitive"),
+          ]),
+        )
+      : continueWith(
+          path,
           useJavaScript(
-            isEntries ? "ObjectEntries" : "ObjectValues",
-            [getHeap(bound.scope, site, context), object],
+            method === "entries" ? "ObjectEntries" : "ObjectValues",
+            [getHeap(path.scope, site, context), object],
             context,
           ),
         ),
-      ),
   );
 };
 

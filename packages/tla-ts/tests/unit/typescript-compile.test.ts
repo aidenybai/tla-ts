@@ -1967,6 +1967,42 @@ describe("errors", () => {
     expect((await checkModel(getSource(3))).failure?.message).toContain("unexpected");
   });
 
+  it("runs a source's getters in key order as Object.assign copies them", async () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const first = Symbol("x");
+      const source = {};
+      Object.defineProperty(source, first, {
+        get: function () {
+          log += "x,";
+        },
+        enumerable: true,
+      });
+      Object.defineProperty(source, "a", {
+        get: function () {
+          log += "a,";
+        },
+        enumerable: true,
+      });
+      Object.assign({}, source);
+      const thrower = {
+        get attr() {
+          throw new RangeError("attr");
+        },
+      };
+      let isThrown = false;
+      try {
+        Object.assign({}, thrower);
+      } catch (error) {
+        isThrown = error instanceof RangeError;
+      }
+      if (!isThrown) throw new Error("thrown");
+      if (log !== "${expected}") throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource("a,x,"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("x,a,"))).failure?.message).toContain("unexpected");
+  });
+
   it("reads each element of an array-like object as its method visits it, running getters", async () => {
     const result = await checkModel(`
       let isFirstRead = false;
