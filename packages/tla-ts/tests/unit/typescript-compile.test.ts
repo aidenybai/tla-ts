@@ -5022,6 +5022,17 @@ describe("errors", () => {
     expect((await checkModel(getSource(13))).failure?.message).toContain("total");
   });
 
+  it("stops at a getter that a for-of's assignment runs before the body runs", async () => {
+    const result = await checkModel(`
+      let count = 0;
+      let rest: object = {};
+      for ({ ...rest } of [{ get v() { count++; return 2; } }]) {
+        if (count !== 1) throw new Error("count");
+      }
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't call getters");
+  });
+
   it("runs a class's static private accessors", async () => {
     const result = await checkModel(`
       let stringSet = "";

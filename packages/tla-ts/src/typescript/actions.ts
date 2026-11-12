@@ -7229,6 +7229,8 @@ const bindElement = (
   frame: Frame,
   continueWith: (path: Path) => Formula,
 ): Formula => {
+  // The heap after an assignment holds what its pattern read, which the body must not run before,
+  // so that a getter that tla-ts can't call stops the check first.
   if (!ts.isVariableDeclarationList(declared)) {
     return assignPatternWith(
       declared.parent,
@@ -7238,7 +7240,11 @@ const bindElement = (
       path,
       context,
       frame,
-      continueWith,
+      (after) => {
+        if (context.heap === undefined) return continueWith(after);
+        const heap = getHeap(after.scope, declared, context);
+        return ifThenElse(apply("=", [heap, heap]), continueWith(after), leaf(boolean(false)));
+      },
     );
   }
   if (declared.declarations.length !== 1) {
