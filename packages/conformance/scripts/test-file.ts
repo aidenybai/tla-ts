@@ -107,13 +107,13 @@ export const parseTest = (path: string, text: string): SuiteTest | undefined => 
   };
 };
 
-export const listFiles = (directory: string): string[] =>
-  readdirSync(directory)
-    .sort()
-    .flatMap((entry) => {
-      const path = join(directory, entry);
-      return statSync(path).isDirectory() ? listFiles(path) : [path];
-    });
+export const listFiles = (directory: string, isSorted = true): string[] => {
+  const entries = readdirSync(directory);
+  return (isSorted ? entries.sort() : entries).flatMap((entry) => {
+    const path = join(directory, entry);
+    return statSync(path).isDirectory() ? listFiles(path, isSorted) : [path];
+  });
+};
 
 export const findTests = (filters: string[]) =>
   listFiles(SUITE_DIRECTORY)
@@ -159,6 +159,9 @@ export const keepCorrection = (
   existing?.metadata.correct && existing.source.endsWith(`---*)\n${moduleText}`)
     ? { ...metadata, correct: existing.metadata.correct }
     : metadata;
+
+export const renderTest = (metadata: TestMetadata, moduleText: string) =>
+  `(*---\n${formatYaml(metadata)}\n---*)\n${moduleText}`;
 
 const isSameRecording = (left: Recording, right: Recording) =>
   left.exit === right.exit && left.transcript === right.transcript;

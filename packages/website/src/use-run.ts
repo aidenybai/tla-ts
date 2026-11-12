@@ -21,8 +21,6 @@ export const useRun = () => {
         title: "Error",
         name: undefined,
         summary: "",
-        trace: [],
-        loopStart: undefined,
         rows: [{ title: event.message, detail: "", isFailed: true }],
       });
     setIsRunning(true);

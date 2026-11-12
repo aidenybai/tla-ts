@@ -62,9 +62,13 @@ export const HOSTS: Record<string, Host> = {
   "tla-ts": { tlc: TLA_TS },
 };
 
+const QUOTED = /"([^"]*)"|'([^']*)'/g;
+const ARGUMENT = /(?:"[^"]*"|'[^']*'|[^\s"'])+/g;
+
 export const getHost = (name: string): Host => {
   const host = HOSTS[name];
-  if (!host) return { tlc: name.split(" ") };
+  if (!host)
+    return { tlc: (name.match(ARGUMENT) ?? []).map((part) => part.replace(QUOTED, "$1$2")) };
   if (host.tlc === HOSTS.tlc.tlc && !existsSync(TLC_JAR)) {
     console.error("Run `pnpm fetch-tlc` first");
     process.exit(1);
@@ -74,6 +78,8 @@ export const getHost = (name: string): Host => {
 
 export const getSuiteCommand = (host: Host, test: SuiteTest) =>
   test.suite === "tlc" ? host.tlc : undefined;
+
+export const CRASH_EXIT = -1;
 
 export interface HostResult {
   exit: number;
@@ -149,7 +155,7 @@ const spawnRun = (run: Run) =>
         clearTimeout(timer);
         clearInterval(poll);
         resolve({
-          exit: exitCode ?? (signal ? -1 : 0),
+          exit: exitCode ?? (signal ? CRASH_EXIT : 0),
           stdout: Buffer.concat(stdout).toString("utf8"),
           stderr: Buffer.concat(stderr).toString("utf8"),
           exceeded,
@@ -210,6 +216,15 @@ export const runTest = async (
   const result = await runTlc(command, test, context, directory, limits);
   rmSync(directory, { recursive: true, force: true });
   return result;
+};
+
+export const createProgress = (interval: number) => {
+  let nextCount = interval;
+  return (count: number) => {
+    if (count < nextCount) return false;
+    nextCount = count - (count % interval) + interval;
+    return true;
+  };
 };
 
 export const runPool = async <Item>(

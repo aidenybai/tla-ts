@@ -38,11 +38,13 @@ export const MAIN_THREAD_STACK_MB = 1.15;
 export const getCorpora = (): Corpus[] =>
   JSON.parse(readFileSync(join(CONFORMANCE_DIRECTORY, "corpora.json"), "utf8"));
 
-export const listFiles = (directory: string): string[] =>
-  readdirSync(directory).flatMap((entry) => {
+export const listFiles = (directory: string, isSorted = false): string[] => {
+  const entries = readdirSync(directory);
+  return (isSorted ? entries.sort() : entries).flatMap((entry) => {
     const path = join(directory, entry);
-    return statSync(path).isDirectory() ? listFiles(path) : [path];
+    return statSync(path).isDirectory() ? listFiles(path, isSorted) : [path];
   });
+};
 
 export interface CorpusModule {
   id: string;
@@ -116,16 +118,69 @@ export const getToolPath = (variable: string, tool: string) => {
   return path;
 };
 
-export const runProcess = (command: string, args: string[], directory: string) =>
-  new Promise<{ exitCode: number | null; output: string }>((resolve) => {
-    const child = spawn(command, args, { cwd: directory });
+interface ProcessRun {
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  /** Both streams, in the order their chunks arrived. */
+  output: string;
+  milliseconds: number;
+}
+
+export const runProcess = (
+  command: string,
+  args: string[],
+  directory?: string,
+  isOutputKept = true,
+) =>
+  new Promise<ProcessRun>((resolve) => {
+    const startedAt = performance.now();
+    const output = isOutputKept ? "pipe" : "ignore";
+    const child = spawn(command, args, { cwd: directory, stdio: ["pipe", output, output] });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
     const chunks: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => chunks.push(chunk));
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout.push(chunk);
+      chunks.push(chunk);
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr.push(chunk);
+      chunks.push(chunk);
+    });
     child.on("close", (exitCode) =>
-      resolve({ exitCode, output: Buffer.concat(chunks).toString("utf8") }),
+      resolve({
+        exitCode,
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+        output: Buffer.concat(chunks).toString("utf8"),
+        milliseconds: performance.now() - startedAt,
+      }),
     );
   });
+
+interface TlcCommand {
+  jarPath: string;
+  maximumHeap: string;
+  javaArgs?: string[];
+  tlcArgs: string[];
+  metadataDirectory: string;
+  specArgs: string[];
+}
+
+export const getTlcArgs = (command: TlcCommand) => [
+  "-XX:+UseParallelGC",
+  `-Xmx${command.maximumHeap}`,
+  ...(command.javaArgs ?? []),
+  "-cp",
+  command.jarPath,
+  "tlc2.TLC",
+  ...command.tlcArgs,
+  "-noGenerateSpecTE",
+  "-metadir",
+  command.metadataDirectory,
+  ...command.specArgs,
+];
 
 export const parseToolboxMessages = (output: string) =>
   output
@@ -174,3 +229,9 @@ export const reportModuleResults = (path: string, results: { verdict: string }[]
   );
   console.log(`modules: ${results.length} (${basename(path)} has the details)`);
 };
+
+export const getMedian = (values: number[]) =>
+  values.toSorted((left, right) => left - right)[Math.floor(values.length / 2)] ?? 0;
+
+export const formatSeconds = (milliseconds: number, digits = 2) =>
+  `${(milliseconds / 1000).toFixed(digits)} s`;
