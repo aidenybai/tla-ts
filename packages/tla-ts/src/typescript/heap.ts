@@ -729,6 +729,12 @@ const translateWrapperObject = (
   return useJavaScript("WrapperObject", [prototype, primitive], context);
 };
 
+// A heap class with the classes it derives from, the base first.
+const getChain = (current: HeapClass, context: Context): HeapClass[] => {
+  const base = ts.isClassLike(current) ? getBaseClass(current, context) : undefined;
+  return base === undefined ? [current] : [...getChain(base, context), current];
+};
+
 // An instance of a heap class with its fields, before the constructor runs. An instance of a class
 // with private methods or accessors has the class's key in its private names first.
 const translateInstance = (
@@ -738,10 +744,6 @@ const translateInstance = (
   scope: Scope,
   context: Context,
 ) => {
-  const getChain = (current: HeapClass): HeapClass[] => {
-    const base = ts.isClassLike(current) ? getBaseClass(current, context) : undefined;
-    return base === undefined ? [current] : [...getChain(base), current];
-  };
   const builtInBase = ts.isClassLike(created) ? getBuiltInBase(created, context) : undefined;
   // No constructor body runs, so the arguments and the parameters' defaults are only evaluated
   // where evaluating them can't throw or change anything. A wrapper base reads its first argument.
@@ -749,7 +751,7 @@ const translateInstance = (
     builtInBase === undefined || builtInBase === "Object"
       ? (node.arguments ?? [])
       : (node.arguments ?? []).slice(1);
-  const defaults = getChain(created).flatMap((current) =>
+  const defaults = getChain(created, context).flatMap((current) =>
     (ts.isClassLike(current)
       ? (current.members.find(ts.isConstructorDeclaration)?.parameters ?? [])
       : current.parameters
@@ -761,7 +763,7 @@ const translateInstance = (
   ) {
     throw new TlaTypeScriptError("Unsupported arguments to a constructor that runs no code", node);
   }
-  const members = getChain(created).flatMap((current) =>
+  const members = getChain(created, context).flatMap((current) =>
     ts.isClassLike(current) ? [...current.members] : [],
   );
   const empty = members.reduce<Expression>(
@@ -787,7 +789,7 @@ const translateInstance = (
       : translateWrapperObject(node, builtInBase, identifier("Null"), scope, context),
   );
   // TypeScript defines a class's parameter properties before its other fields.
-  const fields = getChain(created).flatMap((current) =>
+  const fields = getChain(created, context).flatMap((current) =>
     ts.isClassLike(current)
       ? [
           ...(current.members.find(ts.isConstructorDeclaration)?.parameters ?? []).filter(
@@ -1885,6 +1887,22 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
     nested.push(...getAllocated(child, context, isSometimes));
   });
   const created = getNewClass(node, context);
+  // The objects that the fields of a new's instance make, before the instance that holds them. Only
+  // a statement's one new makes them, as each instance needs its own.
+  const fields =
+    created !== undefined && !isSometimes && ts.isNewExpression(node) && isStatementNew(node)
+      ? getChain(created, context).flatMap((current) =>
+          ts.isClassLike(current)
+            ? current.members.flatMap((member) =>
+                ts.isPropertyDeclaration(member) &&
+                !isStatic(member) &&
+                member.initializer !== undefined
+                  ? getAllocated(member.initializer, context)
+                  : [],
+              )
+            : [],
+        )
+      : [];
   const isAllocated =
     (ts.isObjectLiteralExpression(node) && isObjectValue(node, context)) ||
     ((ts.isArrayLiteralExpression(node) || isHoleyNewArray(node)) &&
@@ -1902,7 +1920,7 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
       created !== undefined &&
       ts.isNewExpression(node) &&
       (getRunConstructor(created, context) === undefined || isStatementNew(node)));
-  return isAllocated ? [...nested, node] : nested;
+  return isAllocated ? [...nested, ...fields, node] : [...nested, ...fields];
 };
 
 // The Object functions that treat an array as an object, so that the heap holds the array.
@@ -2207,7 +2225,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
           addSource(initializer)
         );
       }
-      // A field, which only object literals give its arrays.
+      // A field, which object literals and its class's initializer give its arrays.
       const fieldDeclarations = symbol.declarations ?? [];
       nodes.push(...fieldDeclarations);
       names.add(symbol.name);
@@ -2218,7 +2236,12 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
             (ts.isPropertySignature(fieldDeclaration) &&
               fieldDeclaration.questionToken === undefined) ||
             ts.isPropertyAssignment(fieldDeclaration) ||
-            ts.isShorthandPropertyAssignment(fieldDeclaration),
+            ts.isShorthandPropertyAssignment(fieldDeclaration) ||
+            (ts.isPropertyDeclaration(fieldDeclaration) &&
+              !isStatic(fieldDeclaration) &&
+              fieldDeclaration.questionToken === undefined &&
+              fieldDeclaration.initializer !== undefined &&
+              addSource(fieldDeclaration.initializer)),
         ) &&
         objects.every((object) =>
           object.properties.every((property) => {

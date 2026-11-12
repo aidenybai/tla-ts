@@ -4762,6 +4762,39 @@ describe("errors", () => {
     expect((await checkModel(getSource("same"))).failure?.message).toContain("caught");
   });
 
+  it("holds an array that a class's field gives on the heap, which a name can share", async () => {
+    const getSource = (check: string) => `
+      class Bag {
+        items: number[] = [];
+        add(value: number) {
+          this.items.push(value);
+        }
+        alias() {
+          const held = this.items;
+          held.push(9);
+        }
+        rebuild() {
+          const old = this.items;
+          this.items = [];
+          for (let slot = 0; slot < old.length; slot++) this.items[slot] = old[slot] + 1;
+        }
+      }
+      const first = new Bag();
+      const second = new Bag();
+      first.add(1);
+      first.alias();
+      first.rebuild();
+      const items = first.items.join(",");
+      const other = second.items.length;
+      if (${check}) throw new Error("Bag");
+    `;
+    expect(
+      (await checkModel(getSource('items !== "2,10" || other !== 0'))).failure,
+    ).toBeUndefined();
+    expect((await checkModel(getSource('items === "2,10"'))).failure?.message).toContain("Bag");
+    expect((await checkModel(getSource("other === 0"))).failure?.message).toContain("Bag");
+  });
+
   it("lists no own keys of an error", async () => {
     const result = await checkModel(`
       const box = { seen: 0 };
