@@ -1010,6 +1010,25 @@ describe("values", () => {
     expect(await getMessage(getSource("type", 0))).toContain("written");
   });
 
+  it("runs an assignment in a property's value first where the object is a non-null name", async () => {
+    const getSource = (stored: number, count: number) => `
+      type Box = { stored?: number };
+      let count = 0;
+      const box = {} as Box | null;
+      box!.stored = count += 2;
+      if (box!.stored !== ${stored}) throw new Error("stored");
+      if (count !== ${count}) throw new Error("count");
+    `;
+    const getMessage = (source: string) =>
+      checkModel(source).then(
+        (result) => result.failure?.message,
+        (error: Error) => error.message,
+      );
+    expect(await getMessage(getSource(2, 2))).toBeUndefined();
+    expect(await getMessage(getSource(0, 2))).toContain("stored");
+    expect(await getMessage(getSource(2, 0))).toContain("count");
+  });
+
   it("gives what a compound assignment to a property writes, as its value", async () => {
     const getSource = (field: number, property: number, element: number, typed: number) => `
       class Counter {

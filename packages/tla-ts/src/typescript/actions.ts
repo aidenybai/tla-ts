@@ -8732,7 +8732,7 @@ const isPlainIncrement = (node: Increment, context: Context): boolean => {
 // Whether evaluating a node reads only names and keys that an assignment or an increment doesn't
 // write, so that it can run before it.
 const isUnaffected = (node: ts.Expression, operand: ts.Expression, context: Context): boolean =>
-  ts.isParenthesizedExpression(node)
+  ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node) || ts.isAsExpression(node)
     ? isUnaffected(node.expression, operand, context)
     : ts.isIdentifier(node)
       ? !ts.isIdentifier(operand) ||
