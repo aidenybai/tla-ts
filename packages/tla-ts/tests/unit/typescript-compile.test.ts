@@ -465,7 +465,7 @@ describe("top-level statements", () => {
     const result = await checkModel(`
       const holder: { [key: string]: unknown } = {};
       Object.defineProperty(holder, "length", {
-        get: function () {
+        get() {
           holder[2] = "two";
           return 3;
         },
