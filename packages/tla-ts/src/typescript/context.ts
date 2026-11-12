@@ -540,17 +540,26 @@ const isPrivateMethod = (node: ts.Node): node is ts.MethodDeclaration =>
 
 const brands = new WeakMap<ts.Node, string>();
 
-// The key that an object's private names hold a private field's value under, or that marks it
-// with its class's private methods and accessors, apart for the class's static ones. Two classes
-// can name private members alike.
-export const getPrivateKey = (member: ts.ClassElement, context: Context) => {
-  const owner = member.parent;
+const getBrand = (owner: ts.Node, context: Context) => {
   const brand =
     brands.get(owner) ??
     context.names.getFresh(
       ts.isClassLike(owner) && owner.name !== undefined ? owner.name.text : "Class",
     );
   brands.set(owner, brand);
+  return brand;
+};
+
+// The private key that marks the object of a class that a field holds, which a new of the field
+// checks, as a script could replace what the field holds.
+export const getClassKey = (node: ts.ClassLikeDeclaration, context: Context) =>
+  `${getBrand(node, context)} class`;
+
+// The key that an object's private names hold a private field's value under, or that marks it
+// with its class's private methods and accessors, apart for the class's static ones. Two classes
+// can name private members alike.
+export const getPrivateKey = (member: ts.ClassElement, context: Context) => {
+  const brand = getBrand(member.parent, context);
   return ts.isPropertyDeclaration(member) && ts.isPrivateIdentifier(member.name)
     ? `${brand}${member.name.text}`
     : isStatic(member)
@@ -989,7 +998,13 @@ export const getBaseClass = (node: ts.ClassLikeDeclaration, context: Context) =>
   const found =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
-      : declaration;
+      : declaration !== undefined &&
+          ts.isPropertyDeclaration(declaration) &&
+          declaration.initializer !== undefined &&
+          ts.isClassExpression(declaration.initializer) &&
+          isOnceField(declaration.initializer)
+        ? declaration.initializer
+        : declaration;
   return found !== undefined && ts.isClassLike(found) && found.end < node.getStart()
     ? found
     : undefined;
@@ -1066,13 +1081,73 @@ const heapClasses = new WeakMap<ts.ClassLikeDeclaration, boolean>();
 // A class that a script evaluates once into objects on the heap: a constructor object with the
 // static methods, and its prototype with the other methods. Its name never changes, so a new or
 // a method call can find the class it names.
+// A class without static fields or blocks that an instance field of a class makes, where the
+// script constructs that class at one place that runs once, and names the field only to construct
+// what it holds, so that the class runs once.
+export const isOnceField = (node: ts.ClassLikeDeclaration) => {
+  const field = node.parent;
+  if (
+    !ts.isClassExpression(node) ||
+    !ts.isPropertyDeclaration(field) ||
+    field.initializer !== node ||
+    isStatic(field) ||
+    !ts.isIdentifier(field.name) ||
+    // Nothing runs the static elements of a class that a field makes.
+    node.members.some(
+      (member) =>
+        ts.isClassStaticBlockDeclaration(member) ||
+        (ts.isPropertyDeclaration(member) && isStatic(member)),
+    )
+  ) {
+    return false;
+  }
+  const owner = field.parent;
+  const ownerName =
+    ts.isClassExpression(owner) && ts.isVariableDeclaration(owner.parent)
+      ? owner.parent.name
+      : owner.name;
+  if (ownerName === undefined || !ts.isIdentifier(ownerName)) return false;
+  const getUses = (name: ts.Identifier) =>
+    findNodes(
+      node.getSourceFile(),
+      (inner): inner is ts.Identifier =>
+        ts.isIdentifier(inner) &&
+        inner.text === name.text &&
+        inner !== name &&
+        // A base class's name is a value, though TypeScript parses it as a type's.
+        ts.findAncestor(
+          inner,
+          (ancestor) => ts.isTypeNode(ancestor) && !ts.isExpressionWithTypeArguments(ancestor),
+        ) === undefined,
+    );
+  const ownerUses = getUses(ownerName);
+  const construction = ownerUses.length === 1 ? ownerUses[0].parent : undefined;
+  return (
+    construction !== undefined &&
+    ts.isNewExpression(construction) &&
+    construction.expression === ownerUses[0] &&
+    ts.findAncestor(construction, (ancestor) => ancestor === owner) === undefined &&
+    isOnce(construction) &&
+    getUses(field.name).every(
+      (use) =>
+        ts.isPropertyAccessExpression(use.parent) &&
+        use.parent.name === use &&
+        ts.isNewExpression(use.parent.parent) &&
+        use.parent.parent.expression === use.parent,
+    )
+  );
+};
+
 export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): boolean => {
   if (context.heap === undefined) return false;
   const known = heapClasses.get(node);
   if (known !== undefined) return known;
   const declared = ts.isClassExpression(node) ? node.parent : node;
+  const isField = isOnceField(node);
   const nameNode =
-    ts.isClassDeclaration(node) || !ts.isVariableDeclaration(declared) ? node.name : declared.name;
+    ts.isVariableDeclaration(declared) || (isField && ts.isPropertyDeclaration(declared))
+      ? declared.name
+      : node.name;
   const symbol =
     nameNode === undefined || !ts.isIdentifier(nameNode)
       ? undefined
@@ -1089,7 +1164,7 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): bo
         (getBuiltInBase(base, context) === undefined ||
           getBuiltInBase(node, context) !== undefined)) &&
     symbol !== undefined &&
-    (ts.isClassDeclaration(node) || ts.isVariableDeclaration(declared)) &&
+    (ts.isClassDeclaration(node) || ts.isVariableDeclaration(declared) || isField) &&
     isOnce(node) &&
     node.members.every(
       (member) =>
@@ -1597,7 +1672,13 @@ export const getHeapClass = (node: ts.Expression, context: Context): HeapClass |
   const found =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
-      : declaration;
+      : declaration !== undefined &&
+          ts.isPropertyDeclaration(declaration) &&
+          declaration.initializer !== undefined &&
+          ts.isClassExpression(declaration.initializer) &&
+          isOnceField(declaration.initializer)
+        ? declaration.initializer
+        : declaration;
   return found !== undefined &&
     ((ts.isClassLike(found) && isHeapClass(found, context)) || isHeapFunction(found, context))
     ? found
