@@ -1,7 +1,6 @@
 interface OptionSpec {
   flag: string;
   isRepeatable?: boolean;
-  getArity?: (rest: string[]) => number;
 }
 
 interface ParsedOption {
@@ -22,31 +21,27 @@ export const defineCommand = (usage: string, specs: OptionSpec[]) => {
   const arities = new Map(
     specs.map((spec) => {
       const [name, ...values] = spec.flag.split(" ");
-      return [name, spec.getArity ?? (() => values.length)];
+      return [name, values.length];
     }),
   );
   const parse = (args: string[]): ParsedArgs => {
     const options: ParsedOption[] = [];
     const positionals: string[] = [];
     const unknown: string[] = [];
-    const incomplete: ParsedOption[] = [];
     for (let index = 0; index < args.length; index++) {
-      const getArity = arities.get(args[index]);
-      if (getArity === undefined) {
+      const arity = arities.get(args[index]);
+      if (arity === undefined) {
         (args[index].startsWith("-") ? unknown : positionals).push(args[index]);
         continue;
       }
-      const arity = getArity(args.slice(index + 1));
-      const option = { name: args[index], values: args.slice(index + 1, index + 1 + arity) };
-      options.push(option);
-      if (option.values.length < arity) incomplete.push(option);
+      options.push({ name: args[index], values: args.slice(index + 1, index + 1 + arity) });
       index += arity;
     }
     return {
       options,
       positionals,
       unknown,
-      incomplete: incomplete[0],
+      incomplete: options.find((option) => option.values.length < (arities.get(option.name) ?? 0)),
       has: (name) => options.some((option) => option.name === name),
       get: (name) => options.findLast((option) => option.name === name)?.values,
     };
@@ -59,26 +54,6 @@ export const defineCommand = (usage: string, specs: OptionSpec[]) => {
     parse,
   };
 };
-
-const CHECK_COMMAND = defineCommand("tla-ts <Spec.tla|Spec.cfg|spec.ts|glob>... {options}", [
-  { flag: "-config <Spec.cfg>" },
-  { flag: "-continue" },
-  { flag: "-deadlock" },
-  {
-    flag: "-dump [<format>] <file>",
-    getArity: (rest) => (rest.length > 1 && rest[0].startsWith("dot") ? 2 : 1),
-  },
-  { flag: "-fp <num>" },
-  { flag: "-lncheck <final|default|off>" },
-  { flag: "-maxSetSize <num>" },
-  { flag: "-metadir <directory>" },
-  { flag: "-nowarning" },
-  { flag: "-seed <num>" },
-  { flag: "-terse" },
-  { flag: "-tool" },
-  { flag: "-view" },
-  { flag: "-workers <count|auto>" },
-]);
 
 export const TLAPM_COMMAND = defineCommand("tla-ts tlapm {options} <Module.tla|glob>...", [
   { flag: "-N" },
@@ -107,7 +82,7 @@ export const TLAPM_COMMAND = defineCommand("tla-ts tlapm {options} <Module.tla|g
 ]);
 
 export const USAGE = [
-  `Usage: ${CHECK_COMMAND.usage}`,
+  "Usage: tla-ts <Spec.tla|Spec.cfg|spec.ts|glob>... [-config <Spec.cfg>] [-continue] [-deadlock] [-dump [<format>] <file>] [-fp <num>] [-lncheck <final|default|off>] [-maxSetSize <num>] [-metadir <directory>] [-nowarning] [-seed <num>] [-terse] [-tool] [-view] [-workers <count|auto>]",
   `       ${TLAPM_COMMAND.usage}`,
   "       tla-ts [<JVM option>]... tlc2.TLC <TLC option>... <Spec>",
   "       (-cp tla2tools.jar or -Dtla-ts.tlc=1.7.4 picks the TLC to reproduce)",
