@@ -11,6 +11,7 @@ import {
   SORT_BOOL,
 } from "./ast";
 import { hasUninterpreted, isAppOf, pushNotOwned } from "./ast-util";
+import { MBQI_MAX_ITERATIONS } from "./context";
 import { extractVars } from "./qe";
 import type { Goal } from "./goal";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
@@ -330,6 +331,7 @@ class Kernel {
   init() {
     this.kernel = new SmtKernel(this.manager, {
       isMbqi: true,
+      mbqiMaxIterations: MBQI_MAX_ITERATIONS,
       isFindingMacros: false,
       relevancyLevel: 0,
     });

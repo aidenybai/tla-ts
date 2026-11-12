@@ -70,6 +70,8 @@ const NEW_CLAUSE_RELEVANCY = 45;
 const OLD_CLAUSE_RELEVANCY = 6;
 const RESTART_AGILITY_THRESHOLD = 0.18;
 
+export const MBQI_MAX_ITERATIONS = 1000;
+
 export const CHECK_MODEL_SAT = 0;
 export const CHECK_MODEL_UNKNOWN = 1;
 export const CHECK_MODEL_RESTART = 2;
@@ -100,8 +102,9 @@ const isValidAssumption = (manager: AstManager, expr: number) => {
   return manager.getFamily(expr) !== FAMILY_BASIC && manager.getNumArgs(expr) === 0;
 };
 
-interface SmtParams {
+export interface SmtParams {
   isMbqi: boolean;
+  mbqiMaxIterations: number;
   relevancyLevel: 0 | 2;
 }
 
@@ -143,7 +146,10 @@ export class Context extends Internalizer {
   macros: MacroManager | undefined;
   hasQuantifiers = false;
 
-  constructor(manager: AstManager, params: SmtParams) {
+  constructor(
+    manager: AstManager,
+    readonly params: SmtParams,
+  ) {
     super(manager, params.relevancyLevel > 0, params.relevancyLevel > 0);
     this.qmanager = new DefaultQuantifierManager(this, params.isMbqi);
   }

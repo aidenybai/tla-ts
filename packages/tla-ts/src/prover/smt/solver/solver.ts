@@ -9,7 +9,7 @@ import {
 import type { DecideOptions, Verdict } from "../../verdict";
 import { AssertedFormulas } from "./asserted-formulas";
 import { AstManager } from "./ast";
-import { Context } from "./context";
+import { Context, MBQI_MAX_ITERATIONS } from "./context";
 import { L_FALSE, L_TRUE } from "./lbool";
 import { applyUfniaTactic } from "./quant-tactics";
 import { ResourceLimit } from "./rlimit";
@@ -17,11 +17,16 @@ import { parseSmtlib } from "./smtlib-parser";
 
 export interface KernelParams {
   isMbqi: boolean;
+  mbqiMaxIterations: number;
   isFindingMacros: boolean;
   relevancyLevel?: 0 | 2;
 }
 
-const DEFAULT_KERNEL_PARAMS: KernelParams = { isMbqi: true, isFindingMacros: false };
+const DEFAULT_KERNEL_PARAMS: KernelParams = {
+  isMbqi: true,
+  mbqiMaxIterations: MBQI_MAX_ITERATIONS,
+  isFindingMacros: false,
+};
 
 interface SmtCheck {
   verdict: Verdict;
@@ -32,7 +37,11 @@ interface SmtCheck {
 // next, before the formulas are reduced.
 export const solveGoal = (manager: AstManager, forms: number[], params: KernelParams) => {
   const asserted = new AssertedFormulas(manager, params.isFindingMacros);
-  const context = new Context(manager, { isMbqi: params.isMbqi, relevancyLevel: 2 });
+  const context = new Context(manager, {
+    isMbqi: params.isMbqi,
+    mbqiMaxIterations: params.mbqiMaxIterations,
+    relevancyLevel: 2,
+  });
   for (const form of forms) asserted.assertExpr(form);
   context.setupContext();
   context.internalizeAssertions(asserted);
@@ -66,7 +75,11 @@ export const solveAssuming = (
   params = DEFAULT_KERNEL_PARAMS,
 ) => {
   const asserted = new AssertedFormulas(manager, params.isFindingMacros);
-  const context = new Context(manager, { isMbqi: params.isMbqi, relevancyLevel: 2 });
+  const context = new Context(manager, {
+    isMbqi: params.isMbqi,
+    mbqiMaxIterations: params.mbqiMaxIterations,
+    relevancyLevel: 2,
+  });
   for (const assertion of assertions) asserted.assertExpr(assertion);
   context.setupContext();
   context.internalizeAssertions(asserted);

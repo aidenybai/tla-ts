@@ -15,6 +15,7 @@ export class SmtKernel {
     this.asserted = new AssertedFormulas(manager, params.isFindingMacros);
     this.context = new Context(manager, {
       isMbqi: params.isMbqi,
+      mbqiMaxIterations: params.mbqiMaxIterations,
       relevancyLevel: params.relevancyLevel ?? 2,
     });
   }

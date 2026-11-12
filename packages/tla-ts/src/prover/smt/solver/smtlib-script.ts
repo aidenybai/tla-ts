@@ -53,7 +53,7 @@ import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { isAstLess } from "./ast-lt";
 import { InvVarShifter } from "./rewriter-tpl";
 import { elimUnusedVars, getFreeVarSorts, VarSubst } from "./var-subst";
-import type { Context } from "./context";
+import { type Context, MBQI_MAX_ITERATIONS } from "./context";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { printModel } from "./model-printer";
 import { FuncInterp, getManagerSomeValue, ProtoModel } from "./proto-model";
@@ -311,6 +311,7 @@ export const runSmtlibScript = (
     isDiagnosticOnStdout: false,
     parameters: new Map<string, string>(),
     isMbqi: true,
+    mbqiMaxIterations: MBQI_MAX_ITERATIONS,
     isFindingMacros: false,
     isHiDiv0: true,
     encoding: UNICODE_ENCODING,
@@ -395,6 +396,7 @@ export const runSmtlibScript = (
       {
         manager,
         isMbqi: settings.isMbqi,
+        mbqiMaxIterations: settings.mbqiMaxIterations,
         isFindingMacros: settings.isFindingMacros,
         setup: getSetup(),
         write: () => {},
@@ -476,6 +478,7 @@ export const runSmtlibScript = (
       return {
         ...solveAssertions(state.manager, state.assertions, {
           isMbqi: settings.isMbqi || isMbqiByFeatures(getSetup(), hasQuantifiers),
+          mbqiMaxIterations: settings.mbqiMaxIterations,
           isFindingMacros: settings.isFindingMacros,
         }),
         model: undefined,
@@ -502,6 +505,7 @@ export const runSmtlibScript = (
         isAssuming || (state.isIncremental && !isOptimizing)
           ? solveAssuming(manager, getNamedAssertions(), isNamed ? [...names, ...extra] : extra, {
               isMbqi: settings.isMbqi || isMbqiByLogic(getSetup()),
+              mbqiMaxIterations: settings.mbqiMaxIterations,
               isFindingMacros: settings.isFindingMacros,
             })
           : undefined;
@@ -570,6 +574,7 @@ export const runSmtlibScript = (
   const getTacticEnvironment = () => ({
     manager: script.state.manager,
     isMbqi: settings.isMbqi,
+    mbqiMaxIterations: settings.mbqiMaxIterations,
     isFindingMacros: settings.isFindingMacros,
     setup: getSetup(),
     write,
@@ -1085,6 +1090,8 @@ export const runSmtlibScript = (
         settings.isPrintingSuccess = true;
       if (optionName === ":smt.mbqi") settings.isMbqi = isTrue;
       if (optionName === ":smt.macro_finder") settings.isFindingMacros = isTrue;
+      if (optionName === ":smt.mbqi.max_iterations" && value?.kind === "numeral")
+        settings.mbqiMaxIterations = Number(value.text);
       if (optionName === ":rlimit" && value?.kind === "numeral")
         settings.rlimit = Number(value.text);
       if (optionName === ":rewriter.hi_div0") {

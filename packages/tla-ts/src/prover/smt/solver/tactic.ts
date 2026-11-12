@@ -11,7 +11,7 @@ import { createQfufbvAckrTactic, runAckermannizeBv } from "./ackermannize-bv-tac
 import { AssertedFormulas } from "./asserted-formulas";
 import { createAigTactic } from "./aig-tactic";
 import { card2bv } from "./card2bv";
-import { Context } from "./context";
+import { Context, MBQI_MAX_ITERATIONS } from "./context";
 import { ctxSimplify } from "./ctx-simplify";
 import { createCtxSolverSimplify } from "./ctx-solver-simplify";
 import { type Definition, Goal } from "./goal";
@@ -101,6 +101,7 @@ export interface Tactic {
 export interface TacticEnvironment {
   manager: AstManager;
   isMbqi: boolean;
+  mbqiMaxIterations: number;
   isFindingMacros: boolean;
   setup: SmtSetup;
   write: (text: string, isDiagnostic: boolean) => void;
@@ -253,6 +254,7 @@ export const getRewriterOptions = (manager: AstManager, params: TacticParams): R
 // arith.nl.rounds only bounds arith.solver 2, which the port does not use.
 const SMT_DESCRS = getDescrs("smt", [
   ["mbqi", PARAM_BOOL, true, true],
+  ["mbqi.max_iterations", PARAM_UINT, MBQI_MAX_ITERATIONS, true],
   ["arith.nl.rounds", PARAM_UINT, 1024, true],
 ]);
 
@@ -263,6 +265,7 @@ const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: 
     isMbqi:
       getBool(params, "mbqi", environment.isMbqi) ||
       isMbqiByFeatures(environment.setup, hasQuantifiers),
+    mbqiMaxIterations: getUint(params, "mbqi.max_iterations", environment.mbqiMaxIterations),
     isFindingMacros: environment.isFindingMacros,
   });
   if (solved.result === L_UNDEF) throw new SmtTacticError(solved.context.getLastFailureMessage());
@@ -304,7 +307,11 @@ const runUnitSubsume = (environment: TacticEnvironment) => (goal: Goal) => {
   const deleted: number[] = [];
   for (const [index, clause] of clauses.entries()) {
     const asserted = new AssertedFormulas(manager);
-    const context = new Context(manager, { isMbqi: environment.isMbqi, relevancyLevel: 2 });
+    const context = new Context(manager, {
+      isMbqi: environment.isMbqi,
+      mbqiMaxIterations: environment.mbqiMaxIterations,
+      relevancyLevel: 2,
+    });
     for (const definition of definitions) asserted.assertExpr(definition);
     for (const [other, otherClause] of clauses.entries())
       if (other === index) asserted.assertExpr(manager.mkNot(clause));
@@ -541,6 +548,11 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         inPlace(
           createCtxSolverSimplify(environment.manager, {
             isMbqi: getBool(params, "mbqi", environment.isMbqi),
+            mbqiMaxIterations: getUint(
+              params,
+              "mbqi.max_iterations",
+              environment.mbqiMaxIterations,
+            ),
             isFindingMacros: environment.isFindingMacros,
           }),
         ),

@@ -2,7 +2,7 @@
 import { SmtInvariantError } from "../../../errors";
 import { KIND_APP, OP_NOT, OP_OR, SORT_BOOL, type AstManager } from "./ast";
 import { AssertedFormulas } from "./asserted-formulas";
-import { Context } from "./context";
+import { Context, type SmtParams } from "./context";
 import type { Enode } from "./enode";
 import { L_FALSE, L_TRUE } from "./lbool";
 import type { ModelFinder } from "./model-finder";
@@ -12,7 +12,6 @@ import { RefVector } from "./ref-vector";
 import { VarSubst } from "./var-subst";
 
 const MBQI_MAX_CEXS = 1;
-const MBQI_MAX_ITERATIONS = 1000;
 
 interface Instance {
   quantifier: number;
@@ -33,9 +32,12 @@ class AuxContext {
   // The context makes its asserted formulas first. Its theories hold only constants that exist by
   // now, so setup_context can run at once. init_aux_context copies the kernel's smt_params, so the
   // context has a model finder too, though it never sees a quantifier.
-  constructor(private manager: AstManager) {
+  constructor(
+    private manager: AstManager,
+    params: SmtParams,
+  ) {
     this.asserted = new AssertedFormulas(manager);
-    this.context = new Context(manager, { isMbqi: true, relevancyLevel: 0 });
+    this.context = new Context(manager, { ...params, relevancyLevel: 0 });
     this.context.setupContext();
   }
 
@@ -212,7 +214,7 @@ export class ModelChecker {
 
   private checkQuantifier(quantifier: number, model: ProtoModel) {
     const manager = this.manager;
-    const aux = this.aux ?? new AuxContext(manager);
+    const aux = this.aux ?? new AuxContext(manager, this.context.params);
     this.aux = aux;
     aux.push();
     // The fresh constants are released before the scope is popped.
@@ -283,7 +285,7 @@ export class ModelChecker {
   check(model: ProtoModel, root2value: Map<Enode, number>) {
     this.root2value = root2value;
     if (this.qmanager.quantifiers.length === 0) return true;
-    if (this.iterationIndex >= MBQI_MAX_ITERATIONS) return false;
+    if (this.iterationIndex >= this.context.params.mbqiMaxIterations) return false;
     this.value2expr = null;
     model.compress();
     const first = this.checkQuantifiers(model);

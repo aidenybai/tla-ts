@@ -22,6 +22,7 @@ import {
 } from "./ast";
 import { flattenAndVector, hasUninterpreted, isAppOf, mkNot } from "./ast-util";
 import { mkBvApp } from "./bv-decl-plugin";
+import { MBQI_MAX_ITERATIONS } from "./context";
 import { ExprSafeReplace } from "./expr-safe-replace";
 import type { Goal } from "./goal";
 import { ObjHashtable } from "./hashtable";
@@ -671,6 +672,7 @@ class QuantElimPlugin implements QeSolverContext {
     });
     this.solver = new SmtKernel(manager, {
       isMbqi: true,
+      mbqiMaxIterations: MBQI_MAX_ITERATIONS,
       isFindingMacros: false,
       relevancyLevel: 0,
     });
