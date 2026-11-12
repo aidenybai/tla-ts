@@ -44,7 +44,7 @@ import {
   type Scope,
   type State,
 } from "./evaluate";
-import { mapChildren } from "./instances";
+import { forEachChild } from "./instances";
 import { CORE_OPERATORS } from "./standard-modules";
 import { getRandomSubset, nextPrime, type JavaRandom } from "./tlc/random";
 import {
@@ -319,13 +319,12 @@ const getReadLocals = (
   }
   const names: string[] = [];
   let isReadOnly = true;
-  mapChildren(expression, (child, childNames) => {
+  forEachChild(expression, (child, childNames) => {
     const childLocals = isReadOnly
       ? getReadLocals(child, childNames.length === 0 ? bound : new Set([...bound, ...childNames]))
       : [];
     if (childLocals) names.push(...childLocals);
     else isReadOnly = false;
-    return child;
   });
   return isReadOnly ? names : undefined;
 };

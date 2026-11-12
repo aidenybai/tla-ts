@@ -151,12 +151,13 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
         return [{ ...declaration, level: data.level, operator: undefined, isLeibniz: true }];
       }
       const operand = analyzer.toOperand(expression, scope);
+      const operator = operand.kind === "Operator" ? operand.data : undefined;
       return [
         {
           ...declaration,
           level: operand.data.level,
-          operator: operand.operator,
-          isLeibniz: operand.operator === undefined || operand.operator.nonLeibniz.size === 0,
+          operator,
+          isLeibniz: operator === undefined || operator.nonLeibniz.size === 0,
         },
       ];
     });

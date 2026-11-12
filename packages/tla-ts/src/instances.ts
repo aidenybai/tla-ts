@@ -1,5 +1,6 @@
 import {
   getChildren,
+  getReferencedName,
   isLocallyResolved,
   type Bound,
   type BoundPattern,
@@ -228,6 +229,16 @@ export const mapChildren = (
   }
 };
 
+export const forEachChild = (
+  expression: Expression,
+  visit: (child: Expression, bound: string[]) => void,
+): void => {
+  mapChildren(expression, (child, bound) => {
+    visit(child, bound);
+    return child;
+  });
+};
+
 interface Instantiation {
   params: OperatorParam[];
   substitutions: Map<string, Expression>;
@@ -280,19 +291,13 @@ const isBoundOnce = (replacement: Expression, instantiation: Instantiation) => {
 };
 
 const getFreeNames = (expression: Expression, bound = new Set<string>()): string[] => {
-  const name =
-    expression.kind === "Identifier"
-      ? expression.name
-      : expression.kind === "Apply" || expression.kind === "OperatorReference"
-        ? expression.operator
-        : undefined;
+  const name = getReferencedName(expression);
   const names = name === undefined || bound.has(name) ? [] : [name];
-  mapChildren(expression, (child, childBound) => {
+  forEachChild(expression, (child, childBound) =>
     names.push(
       ...getFreeNames(child, childBound.length === 0 ? bound : new Set([...bound, ...childBound])),
-    );
-    return child;
-  });
+    ),
+  );
   return names;
 };
 
@@ -487,6 +492,30 @@ export const createLocalIdentifier = (name: string, location: SourceLocation): E
 export const createLocalArguments = (params: OperatorParam[], location: SourceLocation) =>
   params.map((param) => createLocalIdentifier(param.name, location));
 
+export const createLocalAlias = (
+  name: string,
+  key: string,
+  params: OperatorParam[],
+  forwarded: OperatorParam[],
+  location: SourceLocation,
+): Definition => ({
+  kind: "Operator",
+  name,
+  params,
+  body:
+    forwarded.length === 0
+      ? { kind: "Identifier", name: key, location }
+      : {
+          kind: "Apply",
+          operator: key,
+          args: createLocalArguments(forwarded, location),
+          location,
+        },
+  isLocal: true,
+  isRecursive: false,
+  location,
+});
+
 const getInstanceOperator = (
   key: string,
   params: OperatorParam[],
@@ -640,6 +669,14 @@ const substitute = (
     };
   }
   if (expression.kind === "OperatorReference" && isFree(expression.operator)) {
+    const replacement = instantiation.substitutions.get(expression.operator);
+    if (
+      replacement?.kind === "Identifier" ||
+      replacement?.kind === "OperatorReference" ||
+      replacement?.kind === "Lambda"
+    ) {
+      return withSubstitutionFrames(replacement, [expression]);
+    }
     const copy = getCopy(rewrite, expression.operator);
     if (copy === undefined) return expression;
     const definition = instantiation.getDefinition(expression.operator);

@@ -1,4 +1,4 @@
-import { getChildren, isLocallyResolved, type Expression } from "./ast";
+import { getChildren, getReferencedName, isLocallyResolved, type Expression } from "./ast";
 import {
   bindValue,
   expectBooleanBody,
@@ -25,6 +25,7 @@ import {
   resolveGlobalOperator,
   expectFunction,
   toKeepLazyContext,
+  toNextContext,
   createUnassignedError,
   getSortedFields,
   hasDuplicateFields,
@@ -122,13 +123,7 @@ const createGeneratedHelpers = () => ({
   unassigned: (name: string, expression: Expression): never => {
     throw createUnassignedError(name, expression);
   },
-  prime: (context: Context): Context => ({
-    environment: context.environment,
-    scope: context.scope,
-    state: context.next,
-    next: undefined,
-    isKeepLazy: context.isKeepLazy,
-  }),
+  prime: toNextContext,
   keepLazyContext: toKeepLazyContext,
   extend: (context: Context, names: string[], values: Value[]): Context => ({
     environment: context.environment,
@@ -164,8 +159,8 @@ const addReference = (generator: Generator, value: unknown) => {
 const createLocal = (generator: Generator) => `local${generator.counter++}`;
 
 const getFreeNames = (expression: Expression, names = new Set<string>()) => {
-  if (expression.kind === "Identifier") names.add(expression.name);
-  if (expression.kind === "Apply") names.add(expression.operator);
+  const name = getReferencedName(expression);
+  if (name !== undefined) names.add(name);
   getChildren(expression).forEach((child) => getFreeNames(child, names));
   return names;
 };
