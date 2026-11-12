@@ -6052,6 +6052,39 @@ describe("errors", () => {
     expect(wrong.failure?.message).toContain("iterator");
   });
 
+  it("reads the prototypes of the iterators that strings, maps, sets, and regexps make", async () => {
+    const result = await checkModel(`
+      const holder: { [key: string]: unknown } = {};
+      const StringIterator = Object.getPrototypeOf(""[Symbol.iterator]());
+      const MapIterator = Object.getPrototypeOf(new Map().values());
+      const SetIterator = Object.getPrototypeOf(new Set()[Symbol.iterator]());
+      const RegExpStringIterator = Object.getPrototypeOf(/./[Symbol.matchAll]("a"));
+      if (
+        Object.getPrototypeOf(StringIterator) !== Iterator.prototype ||
+        Object.getPrototypeOf(RegExpStringIterator) !== Iterator.prototype ||
+        MapIterator === SetIterator ||
+        MapIterator !== Object.getPrototypeOf(new Map().entries()) ||
+        StringIterator.next.name !== "next" ||
+        RegExpStringIterator[Symbol.toStringTag] !== "RegExp String Iterator"
+      ) {
+        throw new Error("prototypes");
+      }
+      const length = Object.getOwnPropertyDescriptor(Iterator.prototype[Symbol.iterator], "length");
+      if (length === undefined || length.value !== 0 || length.writable) throw new Error("length");
+    `);
+    expect(result.failure).toBeUndefined();
+    const replaced = await checkModel(`
+      const holder: { [key: string]: unknown } = {};
+      String.prototype[Symbol.iterator] = function () {
+        return [1].values();
+      } as unknown as (typeof String.prototype)[typeof Symbol.iterator];
+      const prototype = Object.getPrototypeOf(""[Symbol.iterator]());
+    `);
+    expect(replaced.failure?.message).toContain(
+      "tla-ts can't make an iterator where a script replaced String.prototype's method",
+    );
+  });
+
   it("flattens an array whose elements are all arrays, or none of them", async () => {
     const result = await checkModel(`
       const deep = [[[1]], [[2, 3]]];

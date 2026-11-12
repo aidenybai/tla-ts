@@ -906,6 +906,46 @@ export const BUILT_INS: Record<string, [string | null, boolean, boolean, string[
     ],
     false,
   ],
+  "%StringIteratorPrototype%": [
+    "Iterator.prototype",
+    false,
+    true,
+    [
+      ["next", "wc", "o%StringIteratorPrototype%.next"],
+      ["@@toStringTag", "c", "sString Iterator"],
+    ],
+    false,
+  ],
+  "%MapIteratorPrototype%": [
+    "Iterator.prototype",
+    false,
+    true,
+    [
+      ["next", "wc", "o%MapIteratorPrototype%.next"],
+      ["@@toStringTag", "c", "sMap Iterator"],
+    ],
+    false,
+  ],
+  "%SetIteratorPrototype%": [
+    "Iterator.prototype",
+    false,
+    true,
+    [
+      ["next", "wc", "o%SetIteratorPrototype%.next"],
+      ["@@toStringTag", "c", "sSet Iterator"],
+    ],
+    false,
+  ],
+  "%RegExpStringIteratorPrototype%": [
+    "Iterator.prototype",
+    false,
+    true,
+    [
+      ["next", "wc", "o%RegExpStringIteratorPrototype%.next"],
+      ["@@toStringTag", "c", "sRegExp String Iterator"],
+    ],
+    false,
+  ],
   "Object.prototype": [
     null,
     false,
@@ -3448,6 +3488,46 @@ export const BUILT_INS: Record<string, [string | null, boolean, boolean, string[
     [
       ["length", "c", "n0"],
       ["name", "c", "s[Symbol.asyncDispose]"],
+    ],
+    false,
+  ],
+  "%StringIteratorPrototype%.next": [
+    "Function.prototype",
+    true,
+    true,
+    [
+      ["length", "c", "n0"],
+      ["name", "c", "snext"],
+    ],
+    false,
+  ],
+  "%MapIteratorPrototype%.next": [
+    "Function.prototype",
+    true,
+    true,
+    [
+      ["length", "c", "n0"],
+      ["name", "c", "snext"],
+    ],
+    false,
+  ],
+  "%SetIteratorPrototype%.next": [
+    "Function.prototype",
+    true,
+    true,
+    [
+      ["length", "c", "n0"],
+      ["name", "c", "snext"],
+    ],
+    false,
+  ],
+  "%RegExpStringIteratorPrototype%.next": [
+    "Function.prototype",
+    true,
+    true,
+    [
+      ["length", "c", "n0"],
+      ["name", "c", "snext"],
     ],
     false,
   ],

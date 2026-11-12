@@ -130,6 +130,44 @@ const getName = (node: ts.Expression, context: Context): string | undefined => {
   return undefined;
 };
 
+// A call that makes one of the built-in iterators that no global reaches, from a receiver written
+// in place, which holds no method of its own: the iterator's prototype, and the built-in object and
+// the key that the call reads its method from.
+const getIteratorCall = (node: ts.Expression, context: Context) => {
+  if (context.heap === undefined || !ts.isCallExpression(node)) return undefined;
+  const read = getBuiltInKey(node.expression, context);
+  if (read === undefined) return undefined;
+  const key = read.name;
+  const receiver = read.owner;
+  const constructed =
+    ts.isNewExpression(receiver) && (receiver.arguments ?? []).length === 0
+      ? getBuiltIn(receiver.expression, context)
+      : undefined;
+  const isEmpty = node.arguments.length === 0;
+  const owner =
+    (ts.isStringLiteralLike(receiver) || constructed === "String") &&
+    key === "@@iterator" &&
+    isEmpty
+      ? "String"
+      : (constructed === "Map" || constructed === "Set") &&
+          ["@@iterator", "keys", "values", "entries"].includes(key) &&
+          isEmpty
+        ? constructed
+        : ts.isRegularExpressionLiteral(receiver) &&
+            key === "@@matchAll" &&
+            node.arguments.length === 1 &&
+            ts.isStringLiteralLike(node.arguments[0])
+          ? "RegExp"
+          : undefined;
+  return owner === undefined
+    ? undefined
+    : {
+        prototype: `%${owner === "RegExp" ? "RegExpString" : owner}IteratorPrototype%`,
+        owner,
+        key,
+      };
+};
+
 // The prototype object of a generator function that a script writes in place, or declares and only
 // calls and asks for its prototype and for the prototype of that object, so that the object is the
 // one the function starts with, which inherits from the built-in one.
@@ -179,6 +217,8 @@ const getPrototype = (node: ts.Expression, context: Context): string | undefined
   if (getArrayIteratorCall(node, context)?.kind !== undefined && !context.hasInheritedElements) {
     return "%ArrayIteratorPrototype%";
   }
+  const iteratorCall = getIteratorCall(node, context);
+  if (iteratorCall !== undefined) return iteratorCall.prototype;
   const generatorPrototype = getGeneratorObjectPrototype(node, context);
   if (generatorPrototype !== undefined) return generatorPrototype;
   const kind = getKind(node, context);
@@ -483,8 +523,76 @@ const translateBuiltIn = (
   }
   if (context.heap === undefined) return getBuiltInValue(name, node, context);
   context.builtIns.add(name);
+  const iteratorCall = getStartingIteratorCall(node, context);
+  if (iteratorCall !== undefined) {
+    const prototype = `${iteratorCall.owner}.prototype`;
+    context.builtIns.add(prototype);
+    const method = BUILT_INS[prototype][3]
+      .find((property) => property[0] === iteratorCall.key)?.[2]
+      .slice(1);
+    const heap = getHeap(scope, node, context);
+    // A regexp's @@matchAll also reads RegExp's @@species and RegExp.prototype's flags.
+    const holds =
+      iteratorCall.owner === "RegExp"
+        ? useJavaScript(
+            "RegExpFresh",
+            [
+              heap,
+              boolean(true),
+              set([getBuiltInValue("RegExp", node, context), string(prototype)]),
+            ],
+            context,
+          )
+        : useJavaScript(
+            "HoldsBuiltIn",
+            [
+              heap,
+              getBuiltInValue(prototype, node, context),
+              iteratorCall.key.startsWith("@@")
+                ? useJavaScript("WellKnownSymbol", [string(iteratorCall.key.slice(2))], context)
+                : string(iteratorCall.key),
+              string(method ?? iteratorCall.key),
+            ],
+            context,
+          );
+    return ifExpression(
+      holds,
+      translateBuiltInPath(name, node, scope, context),
+      apply("Assert", [
+        boolean(false),
+        string(`tla-ts can't make an iterator where a script replaced ${prototype}'s method`),
+      ]),
+    );
+  }
+  return translateBuiltInPath(name, node, scope, context);
+};
+
+// The iterator call that a chain of reads and getPrototypeOf calls starts from.
+const getStartingIteratorCall = (
+  node: ts.Expression,
+  context: Context,
+): ReturnType<typeof getIteratorCall> => {
+  if (
+    ts.isParenthesizedExpression(node) ||
+    ts.isPropertyAccessExpression(node) ||
+    ts.isElementAccessExpression(node)
+  ) {
+    return getStartingIteratorCall(node.expression, context);
+  }
+  return isPrototypeCall(node, context)
+    ? (getIteratorCall(node.arguments[0], context) ??
+        getStartingIteratorCall(node.arguments[0], context))
+    : undefined;
+};
+
+const translateBuiltInPath = (
+  name: string,
+  node: ts.Expression,
+  scope: Scope,
+  context: Context,
+): Expression => {
   const key = getBuiltInKey(ts.isParenthesizedExpression(node) ? node.expression : node, context);
-  if (key === undefined || !scope.bindings.has(context.heap)) {
+  if (key === undefined || context.heap === undefined || !scope.bindings.has(context.heap)) {
     return getBuiltInValue(name, node, context);
   }
   const owner = getName(key.owner, context);
@@ -626,7 +734,9 @@ const evaluate = (node: ts.Expression, scope: Scope, context: Context) => {
     const isBuiltInNew =
       ts.isNewExpression(child) && getBuiltIn(child.expression, context) !== undefined;
     if (
-      (ts.isCallExpression(child) && !isPrototypeCall(child, context)) ||
+      (ts.isCallExpression(child) &&
+        !isPrototypeCall(child, context) &&
+        getIteratorCall(child, context) === undefined) ||
       (ts.isNewExpression(child) && !isBuiltInNew)
     ) {
       throw new TlaTypeScriptError("Pass getPrototypeOf a value without calls", child);
@@ -634,7 +744,11 @@ const evaluate = (node: ts.Expression, scope: Scope, context: Context) => {
     ts.forEachChild(child, visit);
   };
   visit(node);
-  if (!ts.isFunctionLike(node) && getGeneratorObjectPrototype(node, context) === undefined) {
+  if (
+    !ts.isFunctionLike(node) &&
+    getIteratorCall(node, context) === undefined &&
+    getGeneratorObjectPrototype(node, context) === undefined
+  ) {
     translateExpression(node, scope, context);
   }
 };

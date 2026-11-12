@@ -102,6 +102,10 @@ visit(
   Object.getPrototypeOf(Object.getPrototypeOf(async function* () {}).prototype),
   "%AsyncIteratorPrototype%",
 );
+visit(Object.getPrototypeOf(""[Symbol.iterator]()), "%StringIteratorPrototype%");
+visit(Object.getPrototypeOf(new Map().values()), "%MapIteratorPrototype%");
+visit(Object.getPrototypeOf(new Set().values()), "%SetIteratorPrototype%");
+visit(Object.getPrototypeOf(/./[Symbol.matchAll]("")), "%RegExpStringIteratorPrototype%");
 
 const getValue = (value: unknown) => {
   if (value === undefined) return "u";
