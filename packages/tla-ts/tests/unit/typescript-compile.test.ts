@@ -2954,6 +2954,24 @@ describe("errors", () => {
     ).toThrow("tla-ts can't destructure a value that may be an object or another value");
   });
 
+  it("stops where a recursive function runs after a statement changes what it reads", () => {
+    expect(() =>
+      compile(`
+        interface Leaf { kind: "leaf"; value: number }
+        interface Pair { kind: "pair"; left: Item; right: Item }
+        type Item = Leaf | Pair;
+        const sum = (item: Item): number => {
+          if (item.kind === "pair") return sum(item.left) + sum(item.right);
+          return item.value;
+        };
+        const tree: Item = { kind: "pair", left: { kind: "leaf", value: 4 }, right: { kind: "leaf", value: 5 } };
+        if (sum(tree) !== 8) throw new Error(\`sum \${sum(tree)}\`);
+      `),
+    ).toThrow(
+      "tla-ts can't call a function that calls itself where a statement changed what it reads",
+    );
+  });
+
   it("gives the number an increment reads or writes", async () => {
     const result = await checkModel(`
       let x = 5;

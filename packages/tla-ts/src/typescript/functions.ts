@@ -365,6 +365,12 @@ export const translateHelperCall = (
   const argumentNodes = node?.arguments ?? [];
   if (definition.readsState && isStateModified(scope, context)) {
     const callee = getFunction(declaration);
+    if (callee !== undefined && context.inProgress.has(callee)) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't call a function that calls itself where a statement changed what it reads",
+        node ?? declaration,
+      );
+    }
     if (callee !== undefined) return inlineCall(callee, argumentNodes, scope, context);
     const initializer = getInitializer(declaration);
     if (initializer === undefined) throw new TlaTypeScriptError("Give this a body", declaration);
