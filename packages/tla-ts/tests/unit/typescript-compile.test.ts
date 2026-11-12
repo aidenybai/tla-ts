@@ -891,6 +891,33 @@ describe("values", () => {
     await expect(checkModel(getSource(2, 1, 4))).rejects.toThrow("declared");
   });
 
+  it("runs an assignment inside another's value first where it writes another name", async () => {
+    const getSource = (nested: number, stored: number, count: number) => `
+      function sum(first: number, second: number, third: number) {
+        return (first += second += third);
+      }
+      let count = 0;
+      const box: { stored?: number } = {};
+      box.stored = count += 2;
+      const expected: number[] = [${nested}, ${stored}, ${count}];
+      if (sum(10, 20, 30) !== expected[0]) throw new Error("nested");
+      if (box.stored !== expected[1] || count !== expected[2]) throw new Error("stored");
+    `;
+    expect((await checkModel(getSource(60, 2, 2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(50, 2, 2))).failure?.message).toContain("nested");
+    expect((await checkModel(getSource(60, 0, 2))).failure?.message).toContain("stored");
+    expect((await checkModel(getSource(60, 2, 0))).failure?.message).toContain("stored");
+    expect(() =>
+      compile(`
+        let value = 1;
+        function grow() {
+          return (value += value += 1);
+        }
+        if (grow() !== 3) throw new Error("self");
+      `),
+    ).toThrow("Unsupported operator: +=");
+  });
+
   it("gives what a compound assignment to a property writes, as its value", async () => {
     const getSource = (field: number, property: number, element: number, typed: number) => `
       class Counter {

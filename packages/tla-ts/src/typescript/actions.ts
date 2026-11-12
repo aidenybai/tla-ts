@@ -8515,12 +8515,11 @@ const isPlainIncrement = (node: Increment, context: Context) => {
   );
 };
 
-// Whether evaluating a node reads only names and keys that an increment doesn't write, so that
-// the increment can run before it.
-const isUnaffected = (node: ts.Expression, increment: Increment, context: Context): boolean => {
-  const operand = increment.operand;
-  return ts.isParenthesizedExpression(node)
-    ? isUnaffected(node.expression, increment, context)
+// Whether evaluating a node reads only names and keys that an assignment or an increment doesn't
+// write, so that it can run before it.
+const isUnaffected = (node: ts.Expression, operand: ts.Expression, context: Context): boolean =>
+  ts.isParenthesizedExpression(node)
+    ? isUnaffected(node.expression, operand, context)
     : ts.isIdentifier(node)
       ? !ts.isIdentifier(operand) ||
         getSymbol(node, context.checker) !== getSymbol(operand, context.checker)
@@ -8528,20 +8527,23 @@ const isUnaffected = (node: ts.Expression, increment: Increment, context: Contex
         ? node.questionDotToken === undefined &&
           !getGetterKeys(node).has(node.name.text) &&
           (!ts.isPropertyAccessExpression(operand) || node.name.text !== operand.name.text) &&
-          isUnaffected(node.expression, increment, context)
+          isUnaffected(node.expression, operand, context)
         : ts.isStringLiteral(node) ||
           ts.isNumericLiteral(node) ||
           node.kind === ts.SyntaxKind.ThisKeyword;
-};
 
-// Whether an assignment's target evaluates its object and key without what an increment writes.
-const isUnwritten = (target: ts.Expression, increment: Increment, context: Context) =>
+// Whether an assignment's target evaluates its object and key without what an earlier one writes.
+const isUnwritten = (target: ts.Expression, operand: ts.Expression, context: Context) =>
   ts.isPropertyAccessExpression(target)
-    ? target.questionDotToken === undefined && isUnaffected(target.expression, increment, context)
+    ? target.questionDotToken === undefined && isUnaffected(target.expression, operand, context)
     : ts.isElementAccessExpression(target) &&
       target.questionDotToken === undefined &&
-      isUnaffected(target.expression, increment, context) &&
-      isUnaffected(target.argumentExpression, increment, context);
+      isUnaffected(target.expression, operand, context) &&
+      isUnaffected(target.argumentExpression, operand, context);
+
+// What an increment, or an assignment to a name, writes, which runs no code that could write more.
+const getWrittenOperand = (node: ts.BinaryExpression | Increment) =>
+  isIncrement(node) ? node.operand : ts.isIdentifier(node.left) ? node.left : undefined;
 
 // A compound or logical assignment to a property whose object, key, and value read only names and
 // literals, so that it can run before the rest of its statement, which then reads its result.
@@ -8592,7 +8594,7 @@ const getLeadingAssignment = (
     return inKey !== undefined &&
       isIncrement(inKey) &&
       node.questionDotToken === undefined &&
-      isUnaffected(node.expression, inKey, context)
+      isUnaffected(node.expression, inKey.operand, context)
       ? inKey
       : undefined;
   }
@@ -8611,7 +8613,13 @@ const getLeadingAssignment = (
     const isAssignment =
       kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
     if (!isAssignment) return getLeadingAssignment(node.left, results, context);
-    return ts.isIdentifier(node.left) || isMemberUpdate(node) ? node : undefined;
+    if (!ts.isIdentifier(node.left)) return isMemberUpdate(node) ? node : undefined;
+    // A compound assignment reads its name before its value, which a logical one may not evaluate.
+    const inner = LOGICAL_OPERATORS.has(kind)
+      ? undefined
+      : getLeadingAssignment(node.right, results, context);
+    const written = inner === undefined ? undefined : getWrittenOperand(inner);
+    return written !== undefined && isUnaffected(node.left, written, context) ? inner : node;
   }
   const isPattern =
     ts.isArrayLiteralExpression(node.left) || ts.isObjectLiteralExpression(node.left);
@@ -8620,9 +8628,8 @@ const getLeadingAssignment = (
   }
   // A property's assignment evaluates its object and key, then its value.
   const inner = getLeadingAssignment(node.right, results, context);
-  return inner !== undefined && isIncrement(inner) && isUnwritten(node.left, inner, context)
-    ? inner
-    : undefined;
+  const written = inner === undefined ? undefined : getWrittenOperand(inner);
+  return written !== undefined && isUnwritten(node.left, written, context) ? inner : undefined;
 };
 
 // The await that a node evaluates before anything else.
