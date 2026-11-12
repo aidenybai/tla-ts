@@ -70,6 +70,11 @@ const tokenize = (text: string): Token[] => {
     }
     if (text.startsWith("\\<", position) && isLetter(text[position + 2] ?? "")) {
       const end = text.indexOf(">", position);
+      if (end < 0)
+        throw new TlaIsabelleError(
+          "ERROR",
+          `Inner lexical error at: ${text.slice(position, position + 20)}`,
+        );
       tokens.push({ kind: "delimiter", text: text.slice(position, end + 1) });
       position = end + 1;
       continue;
