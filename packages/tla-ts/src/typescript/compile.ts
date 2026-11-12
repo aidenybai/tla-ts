@@ -434,6 +434,12 @@ export const compile = (
                 { name: "value", value: identifier(fraction[1]) },
                 { name: "text", value: string(String(fraction[0])) },
                 { name: "floor", value: number(Math.floor(fraction[0])) },
+                {
+                  name: "round",
+                  value: Object.is(Math.round(fraction[0]), -0)
+                    ? identifier("NegativeZero")
+                    : number(Math.round(fraction[0])),
+                },
               ]),
             ),
         ),

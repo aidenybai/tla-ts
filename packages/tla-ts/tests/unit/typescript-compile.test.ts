@@ -7092,6 +7092,12 @@ describe("errors", () => {
       if (!Object.is(Math.ceil(-0.5), -0) || Math.ceil(2.5) !== 3 || Math.floor(7) !== 7) {
         throw new Error("integer");
       }
+      if (Math.round(2.5) !== 3 || Math.round(-2.5) !== -2 || !Object.is(Math.round(-0.4), -0)) {
+        throw new Error("round");
+      }
+      if (Math.sign(-2.5) !== -1 || Math.sign(0.5) !== 1 || !Object.is(Math.sign(-0), -0)) {
+        throw new Error("sign");
+      }
       if ([0, 1, 2, 3, 4].slice(2.5, 4).length !== 2 || [1, 2, 3].at(-1.5) !== 3) {
         throw new Error("index");
       }

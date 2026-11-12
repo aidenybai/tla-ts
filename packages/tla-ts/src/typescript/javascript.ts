@@ -48,7 +48,7 @@ LOCAL WellKnownSymbols == <<${WELL_KNOWN_SYMBOLS.map((name) => `"${name}"`).join
 IsSymbol(value) == \\E position \\in DOMAIN Symbols : Symbols[position] = value
 
 \\* Fractions holds the numbers that a script's literals give and that aren't integers, with their
-\\* negations, from the least. Each is a model value with its text and its floor.
+\\* negations, from the least. Each is a model value with its text, its floor, and Math.round of it.
 IsFraction(value) == \\E position \\in DOMAIN Fractions : Fractions[position].value = value
 
 LOCAL FractionPosition(value) ==
@@ -296,6 +296,15 @@ NumericLessOrEqual(left, right) == left # NaN /\\ right # NaN /\\ ~NumericLessTh
 
 \\* Math.abs.
 AbsoluteValue(value) == IF IsNegative(value) THEN Negate(value) ELSE value
+
+\\* Math.sign.
+Sign(value) ==
+  CASE value \\in {NaN, NegativeZero, 0} -> value
+    [] IsNegative(value) -> -1
+    [] OTHER -> 1
+
+\\* Math.round, which tla-ts works out for each fraction as it compiles.
+Round(value) == IF IsFraction(value) THEN Fractions[FractionPosition(value)].round ELSE value
 
 \\* ToInt32 of a number. TLC keeps integers in 32 bits, so it leaves an integer as it is.
 LOCAL Int32(value) ==

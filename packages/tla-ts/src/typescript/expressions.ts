@@ -453,6 +453,9 @@ const translateMath = (node: ts.CallExpression, method: string, scope: Scope, co
     const power = useJavaScript("Power", node.arguments.map(translate), context);
     return isSpecial ? power : useJavaScript("PlainNumber", [power], context);
   }
+  if ((method === "round" || method === "sign") && node.arguments.length === 1) {
+    return useJavaScript(method === "round" ? "Round" : "Sign", [translate(argument)], context);
+  }
   if (method === "ceil" && node.arguments.length === 1 && isSpecial) {
     // Math.ceil(x) is -Math.floor(-x).
     const negated = useJavaScript("Negate", [translate(argument)], context);
