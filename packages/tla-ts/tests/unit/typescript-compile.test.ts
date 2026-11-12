@@ -8856,6 +8856,72 @@ describe("errors", () => {
     );
   });
 
+  it("gives undefined where an optional chain removes from an array that is missing", async () => {
+    const declared = await checkModel(`
+      const pops: (number[] | undefined)[] = [undefined];
+      const shifts: (number[] | undefined)[] = [undefined];
+      const splices: (number[] | undefined)[] = [undefined];
+      const popped = pops[0]?.pop();
+      const shifted = shifts[0]?.shift();
+      const spliced = splices[0]?.splice(0, 1);
+      if (popped !== undefined || shifted !== undefined || spliced !== undefined || pops[0] !== undefined) {
+        throw new Error("declared");
+      }
+    `);
+    expect(declared.failure).toBeUndefined();
+  });
+
+  it("assigns undefined where an optional chain removes from an array that is missing", async () => {
+    const assigned = await checkModel(`
+      const pops: (number[] | undefined)[] = [undefined];
+      const shifts: (number[] | undefined)[] = [undefined];
+      const splices: (number[] | undefined)[] = [undefined];
+      let popped: number | undefined = 0;
+      let shifted: number | undefined = 0;
+      let spliced: number[] | undefined = [];
+      popped = pops[0]?.pop();
+      shifted = shifts[0]?.shift();
+      spliced = splices[0]?.splice(0, 1);
+      if (popped !== undefined || shifted !== undefined || spliced !== undefined) {
+        throw new Error("assigned");
+      }
+    `);
+    expect(assigned.failure).toBeUndefined();
+  });
+
+  it("removes through an optional chain from an array that is there", async () => {
+    const getSource = (expected: string) => `
+      const found: (number[] | undefined)[] = [[1, 2, 3, 4]];
+      let last: number | undefined = 0;
+      last = found[0]?.pop();
+      const first = found[0]?.shift();
+      let taken: number[] | undefined = [];
+      taken = found[0]?.splice(0, 1);
+      const result = [last, first, taken?.length, taken?.[0], found[0]?.length].join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("4;1;1;2;1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("4;1;1;3;1"))).failure?.message).toContain("4;1;1;2;1");
+  });
+
+  it("throws a TypeError where a non-null assertion removes from an array that is missing", async () => {
+    const getSource = (removal: string) => `
+      const queues: (number[] | undefined)[] = [undefined];
+      let removed: number | undefined = 0;
+      let isThrown = false;
+      try {
+        ${removal}
+      } catch (error) {
+        isThrown = error instanceof TypeError;
+      }
+      if (!isThrown || removed !== 0) throw new Error("thrown");
+    `;
+    expect(
+      (await checkModel(getSource("const value = queues[0]!.shift();"))).failure,
+    ).toBeUndefined();
+    expect((await checkModel(getSource("removed = queues[0]!.pop();"))).failure).toBeUndefined();
+  });
+
   it("runs first what an expression removes, and what a branch of it changes", async () => {
     const getSource = (expected: string) => `
       class Ids {
