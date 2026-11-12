@@ -25,6 +25,10 @@ const CASES: [string, string][] = [
   ["converting an array to a string", "label = `${values}`;"],
   ["delete", "delete record.a;"],
   [
+    "parameter properties",
+    "class Box { constructor(public amount: number) {} } count = new Box(1).amount;",
+  ],
+  [
     "a call that throws inside an expression in try",
     "const getChecked = (): number => { throw new Error('no'); }; try { count = getChecked(); } catch { count = 0; }",
   ],

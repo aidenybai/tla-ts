@@ -187,6 +187,15 @@ export const compile = (
   };
   const imported = getImported(effects.filter((statement) => !ts.isVariableStatement(statement)));
   const roots = [sourceFile, ...imported];
+  // TypeScript assigns a parameter property where its constructor starts, which tla-ts doesn't.
+  const findParameterProperty = (node: ts.Node): ts.Node | undefined =>
+    ts.isParameter(node) && ts.isParameterPropertyDeclaration(node, node.parent)
+      ? node
+      : ts.forEachChild(node, findParameterProperty);
+  roots.forEach((root) => {
+    const found = findParameterProperty(root);
+    if (found !== undefined) throw new TlaTypeScriptError("Unsupported parameter property", found);
+  });
   // A script, with no exported functions, gives the objects and classes it makes, or reads through
   // Object or hasOwnProperty, identity with a heap. The heap binds to the symbol of lib's PropertyKey type,
   // which no value can have.
