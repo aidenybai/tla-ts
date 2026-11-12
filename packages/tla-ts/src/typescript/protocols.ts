@@ -945,9 +945,17 @@ export const runGetterRead = (
 
 export const getReadFunctions = (node: ts.Node, context: Context) => {
   const trap = getProxyOperation(node, context)?.trap;
+  const rest = ts.isObjectBindingPattern(node) ? getRestGetter(node, context) : undefined;
+  const patternKeys = ts.isObjectBindingPattern(node)
+    ? [
+        ...getGetterElements(node, context).flatMap((element) => getElementKey(element) ?? []),
+        ...(rest === undefined ? [] : [rest.key]),
+      ]
+    : [];
   return [
     ...(isGetterRead(node, context) ? getReadGetters(node, context) : []),
     ...(trap === undefined ? [] : getMethods(node, trap, context)),
+    ...patternKeys.flatMap((key) => getKeyGetters(node, key, context)),
   ];
 };
 

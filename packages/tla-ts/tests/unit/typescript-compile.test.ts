@@ -3160,6 +3160,23 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("keeps what a pattern's getters change across a loop", async () => {
+    const getSource = (statements: string, expected: number) => `
+      let count = 0;
+      const source = { get v() { count = count + 1; return 2; } };
+      function take({ v }: { v: number }) { return v; }
+      ${statements}
+      if (count !== ${expected}) throw new Error("count");
+    `;
+    for (const statements of [
+      "for (let index = 0; index < 2; index++) { const { v } = source; }",
+      "let index = 0; while (index < 2) { take(source); index++; }",
+    ]) {
+      expect((await checkModel(getSource(statements, 2))).failure).toBeUndefined();
+      expect((await checkModel(getSource(statements, 1))).failure?.message).toContain("count");
+    }
+  });
+
   it("shares an array that a field holds and changes in place", async () => {
     const result = await checkModel(`
       interface Tree {
