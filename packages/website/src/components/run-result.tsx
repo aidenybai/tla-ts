@@ -62,10 +62,10 @@ interface RunDrawerProps {
 
 export const RunDrawer = (props: RunDrawerProps) => {
   const result = props.result;
-  const stepCount = result ? Math.max(result.trace.length, result.rows.length) : 0;
+  const stepCount =
+    result === undefined ? 0 : "trace" in result ? result.trace.length : result.rows.length;
   const playback = usePlayback(stepCount);
   if (result === undefined) return null;
-  const trace = result.trace;
   return (
     <>
       <div
@@ -138,13 +138,13 @@ export const RunDrawer = (props: RunDrawerProps) => {
             <X className="size-4" />
           </button>
         </header>
-        {trace.length > 0 ? (
+        {"trace" in result ? (
           <div
             data-drawer-scroll
             className="min-h-0 flex-1 overflow-auto overscroll-contain border-t"
           >
             <TraceTable
-              trace={trace}
+              trace={result.trace}
               loopStart={result.loopStart}
               failingIndex={result.isPassed ? undefined : playback.lastIndex}
               activeIndex={playback.stepIndex}
@@ -152,7 +152,7 @@ export const RunDrawer = (props: RunDrawerProps) => {
             />
             {result.loopStart !== undefined && (
               <p className="px-4 py-3 text-sm text-gray-1000">
-                {result.loopStart === trace.length - 1
+                {result.loopStart === result.trace.length - 1
                   ? "The last state stutters forever."
                   : `After the last state, the behavior loops back to state ${String(result.loopStart + 1).padStart(2, "0")} forever.`}
               </p>
