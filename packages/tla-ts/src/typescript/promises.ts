@@ -9,6 +9,7 @@ import {
   leaveBody,
   getBody,
   allocate,
+  getAsyncCallee,
   getCallback,
   getCast,
   inlineValues,
@@ -24,9 +25,10 @@ import {
   type FunctionNode,
   findNodes,
   getLocalCaptures,
+  getParameters,
   getSymbol,
   getUndefined,
-  isPlain,
+  isAsyncFunction,
 } from "./context";
 import { getCallbackReceiver } from "./collections";
 import { TlaTypeScriptError } from "../errors";
@@ -36,7 +38,7 @@ import { type Formula, ifThenElse, leaf, letIn } from "./formula";
 import { getCandidateValue, getHeap, translateFunctionValue } from "./heap";
 import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
-import { type Receiver } from "./scope";
+import { type Bound, bindValues, type Receiver } from "./scope";
 import {
   apply,
   boolean,
@@ -615,7 +617,7 @@ const getHandler = (
         ),
     };
   }
-  const callee = getCallback(cast, path, context);
+  const callee = getCallback(cast, path, context) ?? getAsyncCallee(cast, path, context);
   if (callee === undefined) {
     throw new TlaTypeScriptError("Pass then a function that tla-ts can follow", node);
   }
@@ -650,22 +652,35 @@ const getCallbackRunner =
     const captured = getLocalCaptures(callee, context);
     const keep = <Value>(runtime: Map<ts.Symbol, Value>, kept: Map<ts.Symbol, Value>) =>
       new Map([...runtime, ...[...kept].filter((entry) => captured.has(entry[0]))]);
-    return inlineValues(
-      callee,
-      values,
-      receiver,
-      {
-        ...current,
-        scope: {
-          ...current.scope,
-          bindings: keep(current.scope.bindings, path.scope.bindings),
-          functions: keep(current.scope.functions, path.scope.functions),
-        },
+    const kept = {
+      ...current,
+      scope: {
+        ...current.scope,
+        bindings: keep(current.scope.bindings, path.scope.bindings),
+        functions: keep(current.scope.functions, path.scope.functions),
       },
-      context,
-      { ...frame, throwTo: (after, thrown) => onThrow(after, thrown.value) },
-      (after, result) => onReturn(after, result ?? getUndefined(context)),
-    );
+    };
+    const callbackFrame: Frame = {
+      ...frame,
+      throwTo: (after, thrown) => onThrow(after, thrown.value),
+    };
+    const back = (after: Path, result?: Expression) =>
+      onReturn(after, result ?? getUndefined(context));
+    // An async callback gives the promise of its body, which settles as the body returns or throws.
+    return isAsyncFunction(callee)
+      ? runAsyncBody(
+          callee,
+          callee,
+          kept,
+          context,
+          callbackFrame,
+          (made, _rejectFrame, bindWith) => {
+            const bound = bindValues(getParameters(callee), values, made.scope, context);
+            return bindWith({ ...bound, scope: { ...bound.scope, receiver } }, made);
+          },
+          back,
+        )
+      : inlineValues(callee, values, receiver, kept, context, callbackFrame, back);
   };
 
 // Array.fromAsync of an array written in place, which reads the elements through an
@@ -682,12 +697,15 @@ const translateFromAsync = (
   const argument = node.arguments.at(0);
   const elements = argument && getCast(argument);
   const mapping = node.arguments.at(1);
-  const callee = mapping && getCallback(getCast(mapping), path, context);
+  const callee =
+    mapping &&
+    (getCallback(getCast(mapping), path, context) ??
+      getAsyncCallee(getCast(mapping), path, context));
   if (
     elements === undefined ||
     !ts.isArrayLiteralExpression(elements) ||
     elements.elements.some(ts.isSpreadElement) ||
-    (mapping !== undefined && (callee === undefined || !isPlain(callee)))
+    (mapping !== undefined && callee === undefined)
   ) {
     throw new TlaTypeScriptError(
       "Pass Array.fromAsync an array written in place and a function that tla-ts can follow",
@@ -1927,6 +1945,27 @@ export const translateAsyncCall = (
   frame: Frame,
   continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula =>
+  runAsyncBody(
+    node,
+    callee,
+    path,
+    context,
+    frame,
+    (made, rejectFrame, bindWith) =>
+      bindCall(node, callee, node.arguments, receiver, made, context, rejectFrame, bindWith),
+    continueWith,
+  );
+
+// Runs an async function's body once a call binds its parameters, and gives its promise.
+const runAsyncBody = (
+  node: ts.Node,
+  callee: FunctionNode,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  bind: (path: Path, frame: Frame, continueWith: (bound: Bound, path: Path) => Formula) => Formula,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula =>
   makePromise(path, node, context, (made, name) => {
     const ref = getPromise(made, node, name).ref;
     const captured = getLocalCaptures(callee, context);
@@ -1953,76 +1992,63 @@ export const translateAsyncCall = (
         continueWith(settle(current, node, name, thrown.value, true, context), ref),
     };
     const catching = { ...made, scope: { ...made.scope, isCatching: true } };
-    return bindCall(
-      node,
-      callee,
-      node.arguments,
-      receiver,
-      catching,
-      context,
-      rejectFrame,
-      (bound, inner) => {
-        // The heap changes as the body awaits, which makes promises.
-        const changed = [
-          ...new Set([
-            ...getChanged(callee, inner, context),
-            ...(context.heap === undefined ? [] : [context.heap]),
-          ]),
-        ];
-        const leave = (current: Path) => {
-          const caller = getCaller(current);
-          return { caller, left: leaveBody(current, caller.path, changed, isOuter) };
-        };
-        const finish = (current: Path, value: Expression, isThrown: boolean) => {
+    return bind(catching, rejectFrame, (bound, inner) => {
+      // The heap changes as the body awaits, which makes promises.
+      const changed = [
+        ...new Set([
+          ...getChanged(callee, inner, context),
+          ...(context.heap === undefined ? [] : [context.heap]),
+        ]),
+      ];
+      const leave = (current: Path) => {
+        const caller = getCaller(current);
+        return { caller, left: leaveBody(current, caller.path, changed, isOuter) };
+      };
+      const finish = (current: Path, value: Expression, isThrown: boolean) => {
+        const left = leave(current);
+        return isThrown
+          ? left.caller.resume(settle(left.left, node, name, value, true, context))
+          : resolve(left.left, node, name, value, undefined, context, left.caller.resume);
+      };
+      const bodyFrame: Frame = {
+        next: (current) => finish(current, getUndefined(context), false),
+        exit: (current, value) => finish(current, value ?? getUndefined(context), false),
+        breakTo: undefined,
+        continueTo: undefined,
+        throwTo: (current, thrown) => finish(current, thrown.value, true),
+        yieldTo: undefined,
+        awaitTo: (current, value, operand, onFulfilled, onRejected) => {
           const left = leave(current);
-          return isThrown
-            ? left.caller.resume(settle(left.left, node, name, value, true, context))
-            : resolve(left.left, node, name, value, undefined, context, left.caller.resume);
-        };
-        const bodyFrame: Frame = {
-          next: (current) => finish(current, getUndefined(context), false),
-          exit: (current, value) => finish(current, value ?? getUndefined(context), false),
-          breakTo: undefined,
-          continueTo: undefined,
-          throwTo: (current, thrown) => finish(current, thrown.value, true),
-          yieldTo: undefined,
-          awaitTo: (current, value, operand, onFulfilled, onRejected) => {
-            const left = leave(current);
-            return awaitIn(
-              left.left,
-              node,
-              value,
-              operand,
-              context,
-              (resumer, settled, isRejected, onReturn) =>
-                (isRejected ? onRejected : onFulfilled)(
-                  setCaller(
-                    enterBody(
-                      resumer,
-                      current,
-                      (symbol) => isOuter(symbol) && !captured.has(symbol),
-                    ),
-                    { path: resumer, resume: onReturn },
-                  ),
-                  settled,
-                ),
-              left.caller.resume,
-            );
-          },
-          inlining: new Set([...frame.inlining, callee]),
-        };
-        return letIn(
-          bound.definitions,
-          translateStatements(
-            getBody(callee),
-            setCaller(
-              { ...inner, scope: bound.scope },
-              { path: made, resume: (after) => continueWith(after, ref) },
-            ),
+          return awaitIn(
+            left.left,
+            node,
+            value,
+            operand,
             context,
-            bodyFrame,
+            (resumer, settled, isRejected, onReturn) =>
+              (isRejected ? onRejected : onFulfilled)(
+                setCaller(
+                  enterBody(resumer, current, (symbol) => isOuter(symbol) && !captured.has(symbol)),
+                  { path: resumer, resume: onReturn },
+                ),
+                settled,
+              ),
+            left.caller.resume,
+          );
+        },
+        inlining: new Set([...frame.inlining, callee]),
+      };
+      return letIn(
+        bound.definitions,
+        translateStatements(
+          getBody(callee),
+          setCaller(
+            { ...inner, scope: bound.scope },
+            { path: made, resume: (after) => continueWith(after, ref) },
           ),
-        );
-      },
-    );
+          context,
+          bodyFrame,
+        ),
+      );
+    });
   });

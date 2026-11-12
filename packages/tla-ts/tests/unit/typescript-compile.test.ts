@@ -7413,6 +7413,56 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs async functions that then, catch and Array.fromAsync call back", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      Promise.resolve(1)
+        .then(async (value) => {
+          log += "a" + String(value);
+          await null;
+          log += "w";
+          return value + 1;
+        })
+        .then((value) => {
+          log += "b" + String(value);
+        });
+      Promise.resolve()
+        .then(async () => {
+          throw "x";
+        })
+        .catch(async (error) => {
+          log += "c" + String(error);
+        });
+      const holder = { name: "h" };
+      Array.fromAsync(
+        [1, 2],
+        async function (this: { name: string }, value: number, k: number) {
+          log += this.name;
+          return value + k;
+        },
+        holder,
+      ).then((values) => {
+        log += "[" + values.join(",") + "]";
+      });
+      Promise.resolve()
+        .then(() => { log += "0"; })
+        .then(() => { log += "1"; })
+        .then(() => { log += "2"; })
+        .then(() => { log += "3"; })
+        .then(() => { log += "4"; })
+        .then(() => { log += "5"; })
+        .then(() => { log += "6"; })
+        .then(() => { log += "7"; })
+        .then(() => { log += "8"; })
+        .then(() => { log += "9"; });
+      setTimeout(() => {
+        if (log !== "a10wh12b2cx3h4567[1,3]89") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("takes Array.fromAsync's elements and mapped values a job apart", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;

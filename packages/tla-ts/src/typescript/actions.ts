@@ -2093,7 +2093,7 @@ const getGeneratorCallee = (node: ts.Expression, path: Path, context: Context) =
 
 // An async function that a callee names, other than a method, which a call runs only where the
 // object still holds it.
-const getAsyncCallee = (node: ts.Expression, path: Path, context: Context) => {
+export const getAsyncCallee = (node: ts.Expression, path: Path, context: Context) => {
   if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) return undefined;
   const symbol = getSymbol(node, context.checker);
   const assigned = symbol && path.scope.functions.get(symbol);
