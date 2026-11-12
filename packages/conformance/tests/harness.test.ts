@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { join } from "node:path";
+import { createProgress } from "../scripts/hosts";
 import {
   getContexts,
   getCorrection,
@@ -125,5 +126,14 @@ describe("normalizeTranscript", () => {
 describe("getMessageCodes", () => {
   it("ignores printed lines and message text", () => {
     expect(getMessageCodes("| 2190:0 printed\n2190:0 a\nb\n2199:0 c")).toBe("2190 2199");
+  });
+});
+
+describe("createProgress", () => {
+  it("reports once each time the run count passes the interval", () => {
+    const isProgressDue = createProgress(500);
+    expect(
+      [499, 500, 501, 504, 505, 998, 1003, 1004, 2600, 2601].map((count) => isProgressDue(count)),
+    ).toEqual([false, true, false, false, false, false, true, false, true, false]);
   });
 });

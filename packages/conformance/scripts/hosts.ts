@@ -214,6 +214,15 @@ export const runTest = async (
   return result;
 };
 
+export const createProgress = (interval: number) => {
+  let nextCount = interval;
+  return (count: number) => {
+    if (count < nextCount) return false;
+    nextCount = count - (count % interval) + interval;
+    return true;
+  };
+};
+
 export const runPool = async <Item>(
   items: Item[],
   concurrency: number,
