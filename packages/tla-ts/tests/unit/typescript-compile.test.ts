@@ -5253,6 +5253,33 @@ describe("errors", () => {
     ).toContain("Owner");
   });
 
+  it("runs as statements a method that changes an array or a map in place", async () => {
+    const getSource = (check: string) => `
+      class Pool {
+        items: number[] = [];
+        cache = new Map<number, number>();
+        add(value: number) {
+          for (let index = 0; index < value; index++) this.items.push(index);
+          this.cache.set(value, value);
+          return this.items.length;
+        }
+        alias() {
+          const held = this.items;
+          held.push(9);
+        }
+      }
+      const pool = new Pool();
+      const first = pool.add(2);
+      if (${check}) throw new Error("Pool");
+    `;
+    const passing = "first !== 2 || pool.items.length !== 2 || pool.cache.size !== 1";
+    expect((await checkModel(getSource(passing))).failure).toBeUndefined();
+    expect((await checkModel(getSource("first === 2"))).failure?.message).toContain("Pool");
+    expect((await checkModel(getSource("pool.cache.size === 1"))).failure?.message).toContain(
+      "Pool",
+    );
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`

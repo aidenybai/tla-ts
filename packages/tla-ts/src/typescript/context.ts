@@ -1070,6 +1070,23 @@ const isReturning = (node: ts.Node): boolean =>
 // as it does a heap class: a constructor object, and the prototype that its instances inherit.
 // Whether a function assigns a property or a variable it doesn't declare, itself or through the
 // functions it calls.
+// The built-in methods that change an array, a set, or a map in place.
+const IN_PLACE_CHANGES = new Set([
+  "push",
+  "pop",
+  "shift",
+  "unshift",
+  "splice",
+  "sort",
+  "reverse",
+  "fill",
+  "copyWithin",
+  "add",
+  "set",
+  "delete",
+  "clear",
+]);
+
 export const changesState = (
   callee: ts.Node,
   node: ts.Node,
@@ -1107,6 +1124,20 @@ export const changesState = (
     if (called !== undefined && !visited.has(called)) {
       visited.add(called);
       if (changesState(called, called, context, visited)) return true;
+    }
+    // A built-in method that changes in place an array or a collection that isn't a local.
+    const receiver = isMethodCall(node) ? skipCasts(node.expression.expression) : undefined;
+    const local =
+      receiver !== undefined && ts.isIdentifier(receiver)
+        ? context.checker.getSymbolAtLocation(receiver)?.valueDeclaration
+        : undefined;
+    if (
+      called === undefined &&
+      isMethodCall(node) &&
+      IN_PLACE_CHANGES.has(node.expression.name.text) &&
+      (local === undefined || local.pos < callee.pos || local.end > callee.end)
+    ) {
+      return true;
     }
   }
   return (
