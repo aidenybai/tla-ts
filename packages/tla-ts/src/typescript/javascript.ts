@@ -3082,6 +3082,8 @@ GetterCall(heap, getter, receiver) ==
                    Assert(FALSE, "tla-ts can't run a proxy's internal method here")
               [] IsRef(receiver) -> give(Prototype(heap, receiver))
               [] OTHER -> Assert(FALSE, "tla-ts can't read the prototype of " \\o ToString(receiver))
+       [] path \\in ViewGetters ->
+            IF ViewReceives(heap, path, receiver) THEN give(ViewGet(heap, path, receiver)) ELSE typeError
        [] OTHER -> Assert(FALSE, "tla-ts can't tell which function this value holds")
 
 LOCAL LastIndexValue(heap, ref) == heap.objects[ref[Ref]].values["lastIndex"]

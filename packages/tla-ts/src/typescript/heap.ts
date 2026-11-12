@@ -1765,6 +1765,9 @@ const GETTERS = new Map([
   ],
   ["Symbol", new Set(["description"])],
   ["Object", new Set(["__proto__"])],
+  ["ArrayBuffer", new Set(["byteLength", "maxByteLength", "resizable", "detached"])],
+  ["SharedArrayBuffer", new Set(["byteLength", "maxByteLength", "growable"])],
+  ["DataView", new Set(["buffer", "byteLength", "byteOffset"])],
 ]);
 
 // A call of a built-in getter that a variable holds from a descriptor, as in

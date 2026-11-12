@@ -2387,6 +2387,46 @@ describe("errors", () => {
     expect((await checkModel(getSource(4))).failure?.message).toContain("unexpected");
   });
 
+  it("calls a buffer's or a view's getter that a script takes from its descriptor", async () => {
+    const getSource = (expected: number) => `
+      let thrown = 0;
+      const attempt = (run: () => void) => {
+        try {
+          run();
+        } catch (error) {
+          if (error instanceof TypeError) thrown++;
+        }
+      };
+      const offset = Object.getOwnPropertyDescriptor(DataView.prototype, "byteOffset")!.get;
+      const length = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "byteLength")!.get;
+      const growable = Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, "growable")!.get;
+      const buffer = new ArrayBuffer(8);
+      const shared = new SharedArrayBuffer(4);
+      const view = new DataView(buffer, 2);
+      attempt(() => {
+        offset!();
+      });
+      attempt(() => {
+        offset!.call({});
+      });
+      attempt(() => {
+        offset!.call(buffer);
+      });
+      attempt(() => {
+        length!.call(shared);
+      });
+      attempt(() => {
+        growable!.call(buffer);
+      });
+      const offsetValue = offset!.call(view);
+      const lengthValue = length!.call(buffer);
+      const getThrown = (): number => thrown;
+      if (getThrown() !== 5 || offsetValue !== ${expected} || lengthValue !== 8) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(3))).failure?.message).toContain("unexpected");
+  });
+
   it("runs the getter that a rest pattern copies where the script defines getters under other keys", async () => {
     const getSource = (expected: number) => `
       let count = 0;
