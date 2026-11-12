@@ -9644,12 +9644,12 @@ describe("errors", () => {
       const holder = { seen: "" };
       const list = ["a", "b", "c"];
       const keys: unknown[] = ["1", 2, "length"];
-      const joined = list[keys[0] as number] + list[keys[1] as number];
-      if (joined !== "bc") throw new Error("joined " + joined);
+      const joined = list[keys[0] as number] + list[keys[1] as number] + list["0"];
+      if (joined !== "bca") throw new Error("joined " + joined);
       holder.seen = joined;
     `;
     expect((await checkModel(source)).failure).toBeUndefined();
-    const wrong = source.replace('"bc"', '"cb"');
+    const wrong = source.replace('"bca"', '"bcb"');
     expect((await checkModel(wrong)).failure?.message).toContain("joined");
     const named = source.replace(
       "holder.seen = joined;",
