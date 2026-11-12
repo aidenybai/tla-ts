@@ -184,11 +184,75 @@ const getDisposingFrame = (disposal: Disposal, context: Context): Frame => {
   };
 };
 
+// Adds a value that a using declaration binds to its block's resources, which the code after it
+// disposes. A resource is null, undefined, or an object whose Symbol.dispose method the declaration
+// reads once, or for an await using declaration its Symbol.asyncDispose method, or else its
+// Symbol.dispose method.
+export const addResource = (
+  block: ts.Node,
+  site: ts.Node,
+  value: Expression,
+  isAsync: boolean,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, frame: Frame) => Formula,
+): Formula => {
+  const current =
+    path.disposal?.block === block ? path.disposal : { block, resources: [], frame, path };
+  const add = (inner: Path, resource: Resource) => {
+    const disposal = { ...current, resources: [...current.resources, resource] };
+    return continueWith(
+      { ...inner, scope: { ...inner.scope, isCatching: true }, disposal },
+      getDisposingFrame(disposal, context),
+    );
+  };
+  const isFunction = (inner: Path, method: Expression) =>
+    apply("=", [
+      useJavaScript("TypeOfIn", [getHeap(inner.scope, site, context), method], context),
+      string("function"),
+    ]);
+  const readDispose = (inner: Path, isWrapped: boolean) =>
+    read(site, value, "@@dispose", inner, context, frame, (got, method) =>
+      ifThenElse(
+        isFunction(got, method),
+        add(got, { site, value, method, isAsync, isWrapped }),
+        throwTypeError(got, site, context, frame),
+      ),
+    );
+  return ifThenElse(
+    isNullish(value, context),
+    isAsync
+      ? add(path, { site, value, method: undefined, isAsync, isWrapped: false })
+      : continueWith(path, frame),
+    ifThenElse(
+      apply("\\in", [
+        useJavaScript("TypeOfIn", [getHeap(path.scope, site, context), value], context),
+        set([string("object"), string("function")]),
+      ]),
+      isAsync
+        ? read(site, value, "@@asyncDispose", path, context, frame, (got, method) =>
+            ifThenElse(
+              isNullish(method, context),
+              readDispose(got, true),
+              ifThenElse(
+                isFunction(got, method),
+                add(got, { site, value, method, isAsync, isWrapped: false }),
+                throwTypeError(got, site, context, frame),
+              ),
+            ),
+          )
+        : readDispose(path, false),
+      throwTypeError(path, site, context, frame),
+    ),
+  );
+};
+
+export const isAwaitUsing = (list: ts.VariableDeclarationList) =>
+  (list.flags & ts.NodeFlags.AwaitUsing) === ts.NodeFlags.AwaitUsing;
+
 // A using declaration, whose resources the code after it in its block disposes, in the reverse of
-// the order that the block adds them. A resource is null, undefined, or an object whose
-// Symbol.dispose method the declaration reads once, or for an await using declaration its
-// Symbol.asyncDispose method, or else its Symbol.dispose method. The block is a block's statements
-// or a for.
+// the order that the block adds them. The block is a block's statements or a for.
 export const translateUsing = (
   block: ts.Node,
   list: ts.VariableDeclarationList,
@@ -199,62 +263,21 @@ export const translateUsing = (
   run: (path: Path, frame: Frame) => Formula,
 ): Formula => {
   if (declarations.length === 0) return run(path, frame);
-  const isAsync = (list.flags & ts.NodeFlags.AwaitUsing) === ts.NodeFlags.AwaitUsing;
-  const current =
-    path.disposal?.block === block ? path.disposal : { block, resources: [], frame, path };
   const declaration = declarations[0];
   const name = declaration.name;
   // A using declaration binds only names.
   if (!ts.isIdentifier(name)) throw new TlaTypeScriptError("Unsupported using declaration", name);
-  const next = (inner: Path, innerFrame: Frame) =>
-    translateUsing(block, list, declarations.slice(1), inner, context, innerFrame, run);
-  const add = (inner: Path, resource: Resource) => {
-    const disposal = { ...current, resources: [...current.resources, resource] };
-    return next(
-      { ...inner, scope: { ...inner.scope, isCatching: true }, disposal },
-      getDisposingFrame(disposal, context),
-    );
-  };
-  const isFunction = (current: Path, method: Expression) =>
-    apply("=", [
-      useJavaScript("TypeOfIn", [getHeap(current.scope, declaration, context), method], context),
-      string("function"),
-    ]);
-  return translateDeclarations([declaration], path, context, frame, (after) => {
-    const value = translateExpression(name, after.scope, context);
-    const readDispose = (current: Path, isWrapped: boolean) =>
-      read(declaration, value, "@@dispose", current, context, frame, (got, method) =>
-        ifThenElse(
-          isFunction(got, method),
-          add(got, { site: declaration, value, method, isAsync, isWrapped }),
-          throwTypeError(got, declaration, context, frame),
-        ),
-      );
-    return ifThenElse(
-      isNullish(value, context),
-      isAsync
-        ? add(after, { site: declaration, value, method: undefined, isAsync, isWrapped: false })
-        : next(after, frame),
-      ifThenElse(
-        apply("\\in", [
-          useJavaScript("TypeOfIn", [getHeap(after.scope, declaration, context), value], context),
-          set([string("object"), string("function")]),
-        ]),
-        isAsync
-          ? read(declaration, value, "@@asyncDispose", after, context, frame, (got, method) =>
-              ifThenElse(
-                isNullish(method, context),
-                readDispose(got, true),
-                ifThenElse(
-                  isFunction(got, method),
-                  add(got, { site: declaration, value, method, isAsync, isWrapped: false }),
-                  throwTypeError(got, declaration, context, frame),
-                ),
-              ),
-            )
-          : readDispose(after, false),
-        throwTypeError(after, declaration, context, frame),
-      ),
-    );
-  });
+  return translateDeclarations([declaration], path, context, frame, (after) =>
+    addResource(
+      block,
+      declaration,
+      translateExpression(name, after.scope, context),
+      isAwaitUsing(list),
+      after,
+      context,
+      frame,
+      (inner, innerFrame) =>
+        translateUsing(block, list, declarations.slice(1), inner, context, innerFrame, run),
+    ),
+  );
 };

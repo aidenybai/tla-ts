@@ -362,12 +362,14 @@ export const compile = (
     (node.kind === ts.SyntaxKind.NullKeyword ||
       (ts.isIdentifier(node) && node.text === "undefined") ||
       (ts.isArrayLiteralExpression(node) && node.elements.length === 0));
-  // A script disposes the resources of a using declaration that a block or a for holds.
+  // A script disposes the resources of a using declaration that a block, a for, or a for-of
+  // holds.
   const isDisposed = (node: ts.VariableDeclarationList) =>
     context.heap !== undefined &&
     ((ts.isVariableStatement(node.parent) &&
       (ts.isBlock(node.parent.parent) || ts.isSourceFile(node.parent.parent))) ||
-      (ts.isForStatement(node.parent) && node.parent.initializer === node));
+      ((ts.isForStatement(node.parent) || ts.isForOfStatement(node.parent)) &&
+        node.parent.initializer === node));
   const findUsing = (node: ts.Node): ts.Node | undefined =>
     ts.isVariableDeclarationList(node) &&
     (node.flags & ts.NodeFlags.Using) !== 0 &&

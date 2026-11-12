@@ -211,7 +211,7 @@ import {
   runGetterRead,
   runProxyOperation,
 } from "./protocols";
-import { type Disposal, translateUsing } from "./disposal";
+import { addResource, type Disposal, isAwaitUsing, translateUsing } from "./disposal";
 import {
   bindPattern,
   bindPatternInline,
@@ -7000,7 +7000,7 @@ export const translateJoined = (
 // Binds what a for-of's head declares or assigns to an element, for an iteration's body.
 // An element that the code writes in place, as a source, lets the defaults it certainly evaluates
 // run as statements first.
-const bindIteration = (
+const bindElement = (
   declared: ts.ForInitializer,
   element: Expression,
   source: ts.Expression | undefined,
@@ -7033,7 +7033,7 @@ const bindIteration = (
       value,
       element,
       readPatternGetters(name, identifier(value), path, context, frame, (after) =>
-        bindIteration(declared, identifier(value), source, after, context, frame, continueWith),
+        bindElement(declared, identifier(value), source, after, context, frame, continueWith),
       ),
     );
   }
@@ -7046,13 +7046,13 @@ const bindIteration = (
       path,
       context,
       frame,
-      (after) => bindIteration(declared, element, source, after, context, frame, continueWith),
+      (after) => bindElement(declared, element, source, after, context, frame, continueWith),
     );
   if (defaulted !== undefined) return defaulted;
   const taken =
     ts.isArrayBindingPattern(name) &&
     takeFromIterator(name, element, path, context, frame, (after, values) =>
-      bindIteration(declared, values, source, after, context, frame, continueWith),
+      bindElement(declared, values, source, after, context, frame, continueWith),
     );
   if (taken) return taken;
   // A default that calls a function runs only where its element or property is undefined, before
@@ -7121,7 +7121,7 @@ const bindIteration = (
       path,
       context,
       (after, value) =>
-        bindIteration(
+        bindElement(
           declared,
           element,
           source,
@@ -7164,6 +7164,38 @@ const bindIteration = (
     );
   });
 };
+
+// Binds what a for-of's declaration takes from an element, where a using declaration adds it to
+// the iteration's resources, which the body's frame disposes.
+const bindIteration = (
+  declared: ts.ForInitializer,
+  element: Expression,
+  source: ts.Expression | undefined,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, frame: Frame) => Formula,
+): Formula =>
+  bindElement(declared, element, source, path, context, frame, (bound) => {
+    const name = ts.isVariableDeclarationList(declared)
+      ? declared.declarations[0]?.name
+      : undefined;
+    return ts.isVariableDeclarationList(declared) &&
+      (declared.flags & ts.NodeFlags.Using) !== 0 &&
+      name !== undefined &&
+      ts.isIdentifier(name)
+      ? addResource(
+          declared,
+          declared.declarations[0],
+          translateExpression(name, bound.scope, context),
+          isAwaitUsing(declared),
+          bound,
+          context,
+          frame,
+          continueWith,
+        )
+      : continueWith(bound, frame);
+  });
 
 // A for await over an array written in place. Each element reaches the body two jobs on, as the
 // async-from-sync iterator awaits the element and the loop then awaits the iterator's result, and
@@ -7254,7 +7286,8 @@ const translateForOfGenerator = (
             current,
             context,
             bodyFrame,
-            (bound) => translateStatements([loop.statement], bound, context, bodyFrame),
+            (bound, innerFrame) =>
+              translateStatements([loop.statement], bound, context, innerFrame),
           );
         return isResult && value !== undefined
           ? readValue(loop.expression, value, after, context, frame, runBody)
@@ -7376,8 +7409,14 @@ const translateForAwait = (
     source: ts.Expression | undefined,
     bodyFrame: Frame,
   ) =>
-    bindIteration(loop.initializer, value, source, current, context, bodyFrame, (bound) =>
-      translateStatements([loop.statement], bound, context, bodyFrame),
+    bindIteration(
+      loop.initializer,
+      value,
+      source,
+      current,
+      context,
+      bodyFrame,
+      (bound, innerFrame) => translateStatements([loop.statement], bound, context, innerFrame),
     );
   const declared = loop.initializer;
   const pattern =
@@ -7784,7 +7823,8 @@ const translateIterations = (
             taken,
             context,
             iterationFrame,
-            (bound) => translateStatements([loop.statement], bound, context, iterationFrame),
+            (bound, innerFrame) =>
+              translateStatements([loop.statement], bound, context, innerFrame),
           ),
         ),
     );
@@ -7882,7 +7922,7 @@ const translateIterations = (
         current,
         context,
         bodyFrame,
-        (bound) => translateStatements([loop.statement], bound, context, bodyFrame),
+        (bound, innerFrame) => translateStatements([loop.statement], bound, context, innerFrame),
       );
       return ts.isForOfStatement(iterated)
         ? keepHoles(iterated, element, identifier(position), current, context, run)

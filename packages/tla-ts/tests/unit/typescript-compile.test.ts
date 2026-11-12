@@ -7846,6 +7846,37 @@ describe("errors", () => {
     expect(wrong.failure?.message).toContain("body,c,b,a,run,0,1,loop,loop,for");
   });
 
+  it("disposes what a for-of's using declaration holds at the end of each iteration", async () => {
+    const source = (expected: string) => `
+      const order: string[] = [];
+      const make = (name: string) => ({
+        name,
+        [Symbol.dispose]() {
+          order.push(this.name);
+        },
+      });
+      const resources = [make("a"), make("b"), make("c")];
+      for (using held of resources) {
+        order.push("body");
+        if (held.name === "b") continue;
+        if (held.name === "c") break;
+      }
+      const run = () => {
+        for (using held of resources) {
+          order.push("run");
+          return 1;
+        }
+        return 2;
+      };
+      if (run() !== 1) throw new Error("run");
+      if (order.join() !== "${expected}") throw new Error(order.join());
+    `;
+    const result = await checkModel(source("body,a,body,b,body,c,run,a"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("body,a,body,b,body,c,a,run"));
+    expect(wrong.failure?.message).toContain("body,a,body,b,body,c,run,a");
+  });
+
   it("throws what disposing a resource throws, suppressing the error before it", async () => {
     const source = (expected: number) => `
       let count = 0;
