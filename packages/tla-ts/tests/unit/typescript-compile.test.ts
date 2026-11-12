@@ -3531,6 +3531,35 @@ describe("errors", () => {
     );
   });
 
+  it("evaluates a function's defaults on each call", async () => {
+    const getSource = (check: string) => `
+      let count = 0;
+      let total = 0;
+      const next = () => {
+        count++;
+        return count * 10;
+      };
+      const take = (value = next()) => {
+        total += value;
+      };
+      let calls = 0;
+      const make = (num: number, den = 1) => {
+        calls++;
+        return num * 100 + den;
+      };
+      take();
+      take();
+      take(1);
+      const half = make(1, 2);
+      const seven = make(7);
+      if (${check}) throw new Error("defaults");
+    `;
+    const passing = "total !== 31 || count !== 2 || half !== 102 || seven !== 701 || calls !== 2";
+    expect((await checkModel(getSource(passing))).failure).toBeUndefined();
+    expect((await checkModel(getSource("total === 31"))).failure?.message).toContain("defaults");
+    expect((await checkModel(getSource("seven === 701"))).failure?.message).toContain("defaults");
+  });
+
   it("gives each call of a function its own defaults", async () => {
     const getSource = (second: string, isSame: string) => `
       interface Box { size: number }
