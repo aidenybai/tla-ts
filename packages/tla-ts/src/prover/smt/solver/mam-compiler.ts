@@ -151,6 +151,7 @@ const mkInit = (numArgs: number) => {
 };
 
 export class Compiler {
+  private manager: AstManager;
   private registers: number[] = [];
   private todo: number[] = [];
   private aux: number[] = [];
@@ -177,10 +178,11 @@ export class Compiler {
   private seq: Instruction[] = [];
 
   constructor(
-    private manager: AstManager,
     private context: Context,
     private hasher: LabelHasher,
-  ) {}
+  ) {
+    this.manager = context.manager;
+  }
 
   private getRegister(reg: number) {
     return this.registers[reg] ?? -1;

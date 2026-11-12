@@ -11,6 +11,7 @@ import { RefVector } from "./ref-vector";
 import { shrink } from "./array";
 
 export class ModelFinder {
+  private manager: AstManager;
   private q2info = new Map<number, QuantifierInfo>();
   private quantifiers: number[] = [];
   private scopes: number[] = [];
@@ -20,13 +21,11 @@ export class ModelFinder {
   readonly aufSolver: AufSolver;
   private newConstraints: number[] = [];
 
-  constructor(
-    private manager: AstManager,
-    private context: Context,
-  ) {
-    this.rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
-    this.macroRewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
-    this.aufSolver = new AufSolver(manager, this.rewriter);
+  constructor(private context: Context) {
+    this.manager = context.manager;
+    this.rewriter = new Rewriter(this.manager, TACTIC_REWRITER_OPTIONS);
+    this.macroRewriter = new Rewriter(this.manager, TACTIC_REWRITER_OPTIONS);
+    this.aufSolver = new AufSolver(this.manager, this.rewriter);
   }
 
   getQuantifierInfo(quantifier: number) {
@@ -34,7 +33,7 @@ export class ModelFinder {
   }
 
   registerQuantifier(quantifier: number) {
-    const info = new QuantifierInfo(this.manager, this.context, quantifier, this.macroRewriter);
+    const info = new QuantifierInfo(this.context, quantifier, this.macroRewriter);
     this.q2info.set(quantifier, info);
     this.quantifiers.push(quantifier);
     new QuantifierAnalyzer(this.manager, this.rewriter, info).analyze();
@@ -93,10 +92,10 @@ export class ModelFinder {
     );
   }
 
-  getInv(quantifier: number, index: number, value: number, model: ProtoModel) {
+  getInv(quantifier: number, index: number, value: number) {
     const set = this.getUvarInstSet(quantifier, index);
     if (set === null) return null;
-    const term = set.getInv(value, model);
+    const term = set.getInv(value);
     if (term !== undefined && this.aufSolver.isDefaultRepresentative(term))
       return { term: value, generation: 0 };
     return term === undefined ? null : { term, generation: set.getGeneration(term) };

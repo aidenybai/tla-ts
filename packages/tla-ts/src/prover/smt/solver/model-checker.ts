@@ -182,7 +182,7 @@ export class ModelChecker {
       const sk = sks[numDecls - index - 1];
       let skValue = cex.getSomeConstInterp(manager.decls[sk]);
       if (isUsingInv) {
-        const inv = this.modelFinder.getInv(quantifier, index, skValue, cex);
+        const inv = this.modelFinder.getInv(quantifier, index, skValue);
         if (inv === null) return false;
         maxGeneration = Math.max(maxGeneration, inv.generation);
         skValue = inv.term;

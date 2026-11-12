@@ -74,7 +74,7 @@ export class Mam implements LabelHasher {
     private context: Context,
     onMatch: OnMatch,
   ) {
-    this.compiler = new Compiler(context.manager, context, this);
+    this.compiler = new Compiler(context, this);
     this.interpreter = new Interpreter(context, onMatch);
   }
 

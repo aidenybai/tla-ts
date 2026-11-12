@@ -71,12 +71,7 @@ export class TodoSet {
   }
 
   getMaxVar() {
-    let result = NULL_VAR;
-    for (const polynomial of this.polynomials) {
-      const variable = this.pm.maxVar(polynomial);
-      if (result === NULL_VAR || variable > result) result = variable;
-    }
-    return result;
+    return this.pm.getMaxVarOfPolys(this.polynomials);
   }
 
   extractMaxPolys(out: Polynomial[]) {
