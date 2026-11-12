@@ -7315,6 +7315,51 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("defines an accessor on a primitive's prototype under a key that tla-ts doesn't read", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      Object.defineProperty(Number.prototype, "next", {
+        get: function () {
+          throw new RangeError("getter");
+        },
+      });
+      let isThrown = false;
+      try {
+        Iterator.prototype.map.call(0, () => 0);
+      } catch (error) {
+        isThrown = error instanceof TypeError;
+      }
+      holder.count = 1;
+      if (isThrown) throw new Error("TypeError");
+    `);
+    expect(result.failure?.message).toContain("TypeError");
+  });
+
+  it("stops reading a primitive's property that an accessor on its prototype defines", async () => {
+    const result = await checkModel(`
+      Object.defineProperty(Number.prototype, "next", {
+        get: function () {
+          throw new RangeError("getter");
+        },
+      });
+      const next = (0 as unknown as { next: unknown }).next;
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't read the properties of 0");
+  });
+
+  it("stops defining an accessor on a primitive's prototype under a key that tla-ts reads", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      Object.defineProperty(Number.prototype, "toString", {
+        get: function () {
+          throw new RangeError("getter");
+        },
+      });
+      holder.count = 1;
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't define accessors on built-in objects");
+  });
+
   it("throws the TypeError of Iterator.prototype's methods on what isn't an iterator", async () => {
     const result = await checkModel(`
       const box = { seen: 0 };
