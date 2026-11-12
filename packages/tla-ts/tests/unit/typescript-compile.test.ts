@@ -811,6 +811,39 @@ describe("values", () => {
     `);
     expect(result.failure).toBeUndefined();
   });
+
+  it("gives what a compound assignment to a property writes, as its value", async () => {
+    const getSource = (field: number, property: number, element: number, typed: number) => `
+      class Counter {
+        #field = 1;
+        add() {
+          return (this.#field += 2);
+        }
+        value() {
+          return this.#field;
+        }
+      }
+      const counter = new Counter();
+      const echo = (value: unknown) => value;
+      const field: number = ${field};
+      const property: number = ${property};
+      const element: number = ${element};
+      const typed: number = ${typed};
+      if (counter.add() !== field || counter.value() !== 3) throw new Error("private");
+      const box: { count: number } = { count: 1 };
+      if (echo((box.count *= 5)) !== property || box.count !== 5) throw new Error("property");
+      const list = [1, 2];
+      const index = 1;
+      if ((list[index] -= 4) !== element || list[1] !== -2) throw new Error("element");
+      const bytes = new Uint8Array(1);
+      if (echo((bytes[0] += 300)) !== typed || bytes[0] !== 44) throw new Error("typed");
+    `;
+    expect((await checkModel(getSource(3, 5, -2, 300))).failure).toBeUndefined();
+    expect((await checkModel(getSource(1, 5, -2, 300))).failure?.message).toContain("private");
+    expect((await checkModel(getSource(3, 1, -2, 300))).failure?.message).toContain("property");
+    expect((await checkModel(getSource(3, 5, 2, 300))).failure?.message).toContain("element");
+    expect((await checkModel(getSource(3, 5, -2, 44))).failure?.message).toContain("typed");
+  });
 });
 
 describe("bounds", () => {

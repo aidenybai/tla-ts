@@ -1242,6 +1242,13 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
     functions.delete(symbol);
     return { ...after, scope: { ...after.scope, functions } };
   }
+  const update = getUpdate(expression, path, context);
+  return update === undefined ? undefined : assign(expression.left, path, context, update);
+};
+
+// How a compound or logical assignment changes what its target holds.
+const getUpdate = (expression: ts.BinaryExpression, path: Path, context: Context) => {
+  const kind = expression.operatorToken.kind;
   if (LOGICAL_OPERATORS.has(kind)) {
     if (!ts.isIdentifier(expression.left)) {
       throw new TlaTypeScriptError(
@@ -1251,7 +1258,7 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
     }
     const right = expression.right;
     const left = expression.left;
-    return assign(left, path, context, (current) => {
+    return (current: Expression) => {
       const isTruthy = isBooleanLike(left, context)
         ? current
         : useJavaScript("ToBoolean", [current], context);
@@ -1266,7 +1273,7 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
         : kind === ts.SyntaxKind.BarBarEqualsToken
           ? ifExpression(isTruthy, current, assigned)
           : ifExpression(isTruthy, assigned, current);
-    });
+    };
   }
   const arithmetic = ARITHMETIC_ASSIGNMENTS.get(kind);
   const bigIntOperator = arithmetic === undefined ? undefined : BIGINT_OPERATORS.get(arithmetic);
@@ -1276,9 +1283,7 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
     isBigIntLike(expression.right, context)
   ) {
     const value = translateExpression(expression.right, path.scope, context);
-    return assign(expression.left, path, context, (current) =>
-      useJavaScript(bigIntOperator, [current, value], context),
-    );
+    return (current: Expression) => useJavaScript(bigIntOperator, [current, value], context);
   }
   const isConcatenated =
     kind === ts.SyntaxKind.PlusEqualsToken && getKind(expression.left, context) === "string";
@@ -1300,18 +1305,15 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
   }
   if (bitwise !== undefined) {
     const value = translateExpression(expression.right, path.scope, context);
-    return assign(expression.left, path, context, (current) =>
-      useJavaScript(bitwise, [current, value], context),
-    );
+    return (current: Expression) => useJavaScript(bitwise, [current, value], context);
   }
   const value = isConcatenated
     ? translateToString(expression.right, path.scope, context)
     : translateExpression(expression.right, path.scope, context);
-  return assign(expression.left, path, context, (current) =>
+  return (current: Expression) =>
     isConcatenated
       ? apply(operator, [current, value])
-      : applyArithmetic(operator, [current, value], context),
-  );
+      : applyArithmetic(operator, [current, value], context);
 };
 
 export const translateCallStatement = (
@@ -8491,6 +8493,31 @@ const isUnwritten = (target: ts.Expression, increment: Increment, context: Conte
       isUnaffected(target.expression, increment, context) &&
       isUnaffected(target.argumentExpression, increment, context);
 
+// A compound or logical assignment to a property whose object, key, and value read only names and
+// literals, so that it can run before the rest of its statement, which then reads its result.
+const isMemberUpdate = (node: ts.BinaryExpression) => {
+  const isPlain = (part: ts.Expression) =>
+    ts.isIdentifier(part) ||
+    ts.isLiteralExpression(part) ||
+    [
+      ts.SyntaxKind.ThisKeyword,
+      ts.SyntaxKind.TrueKeyword,
+      ts.SyntaxKind.FalseKeyword,
+      ts.SyntaxKind.NullKeyword,
+    ].includes(part.kind);
+  const target = node.left;
+  return (
+    isPlain(node.right) &&
+    ((ts.isPropertyAccessExpression(target) &&
+      target.questionDotToken === undefined &&
+      isPlain(target.expression)) ||
+      (ts.isElementAccessExpression(target) &&
+        target.questionDotToken === undefined &&
+        isPlain(target.expression) &&
+        isPlain(target.argumentExpression)))
+  );
+};
+
 // The assignment that a statement evaluates first, inside an expression, which can run as a
 // statement before it, since nothing the statement evaluates before it sees the change.
 const getLeadingAssignment = (
@@ -8534,7 +8561,7 @@ const getLeadingAssignment = (
     const isAssignment =
       kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
     if (!isAssignment) return getLeadingAssignment(node.left, results, context);
-    return ts.isIdentifier(node.left) ? node : undefined;
+    return ts.isIdentifier(node.left) || isMemberUpdate(node) ? node : undefined;
   }
   const isPattern =
     ts.isArrayLiteralExpression(node.left) || ts.isObjectLiteralExpression(node.left);
@@ -9217,8 +9244,14 @@ export const translateStatements = (
     const target = ts.isIdentifier(hoisted.left)
       ? getSymbol(hoisted.left, context.checker)
       : undefined;
+    // An update to a property gives what it writes, which a typed array, say, may not hold.
+    const update = isMemberUpdate(hoisted) ? getUpdate(hoisted, path, context) : undefined;
     const value =
-      target === undefined ? translateExpression(hoisted.right, path.scope, context) : undefined;
+      update !== undefined
+        ? update(translateExpression(hoisted.left, path.scope, context))
+        : target === undefined
+          ? translateExpression(hoisted.right, path.scope, context)
+          : undefined;
     return translateExpressionStatement(hoisted, path, context, frame, (after) => {
       const result = value ?? (target === undefined ? undefined : after.scope.bindings.get(target));
       if (result === undefined) throw new TlaTypeScriptError("Unsupported assignment", hoisted);
