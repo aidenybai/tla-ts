@@ -1578,6 +1578,26 @@ describe("errors", () => {
     expect(() => compile(source)).toThrow("items would share an object that changes in place");
   });
 
+  it("shares a heap object's field while another field changes in place", async () => {
+    const result = await checkModel(`
+      const box = { seen: new Set<number>(), list: [1, 2] };
+      const pair = { names: box.list };
+      box.seen.add(2);
+      if (!box.seen.has(2) || pair.names.join() !== "1,2") throw new Error("fields");
+    `);
+    expect(result.failure).toBeUndefined();
+    expect(() =>
+      compile(
+        "const box = { seen: new Set<number>() };\nconst copy = box.seen;\nbox.seen.add(2);\nlet size = copy.size;",
+      ),
+    ).toThrow("box.seen would share an object that changes in place");
+    expect(() =>
+      compile(
+        "const items = new Set<number>();\nconst box = { kept: items };\nconst wrap = { inner: box.kept };\nwrap.inner.add(3);\nlet size = items.size;",
+      ),
+    ).toThrow("box.kept would share an object that changes in place");
+  });
+
   it("changes an object that a call makes, and returns a local in an object literal", async () => {
     const result = await checkModel(`
       interface Spot {

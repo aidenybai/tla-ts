@@ -49,6 +49,8 @@ interface Escape {
   target: ts.Symbol | undefined;
   source: number;
   landing: number;
+  // The field of a heap object that the value lands in, where the target is the heap.
+  field?: string;
 }
 
 interface Depths {
@@ -59,6 +61,8 @@ interface Depths {
 interface Written {
   symbol: ts.Symbol;
   depth: number;
+  // The field of a heap object that the path names, where it names one.
+  field?: string;
 }
 
 const isUpdate = (node: ts.Node, context: Context) =>
@@ -109,7 +113,11 @@ const getPath = (target: ts.Expression, context: Context, depth = 0): Written | 
   }
   if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
     return context.heap !== undefined && getKind(node.expression, context) === "object"
-      ? { symbol: context.heap, depth }
+      ? {
+          symbol: context.heap,
+          depth,
+          field: ts.isPropertyAccessExpression(node) ? node.name.text : undefined,
+        }
       : getPath(node.expression, context, depth + 1);
   }
   return isMethodCall(node) && node.expression.name.text === "get"
@@ -175,7 +183,14 @@ const land = (target: ts.Symbol[] | Written | undefined, depths: Depths): Escape
     ? [{ target: undefined, ...depths }]
     : Array.isArray(target)
       ? target.map((symbol) => ({ target: symbol, ...depths }))
-      : [{ target: target.symbol, source: depths.source, landing: depths.landing + target.depth }];
+      : [
+          {
+            target: target.symbol,
+            source: depths.source,
+            landing: depths.landing + target.depth,
+            field: target.field,
+          },
+        ];
 
 // The places that may keep the object a node evaluates to.
 // Whether a return gives the caller the only name for a local's object: the local belongs to the
@@ -289,7 +304,14 @@ const getEscapes = (
     const literal = parent.parent;
     // A heap object's fields are part of the heap, as where an assignment sets one.
     if (context.heap !== undefined && getKind(literal, context) === "object") {
-      return land([context.heap], depths);
+      return land(
+        {
+          symbol: context.heap,
+          depth: 0,
+          field: ts.isIdentifier(parent.name) ? parent.name.text : undefined,
+        },
+        depths,
+      );
     }
     // A local that a returned object literal holds, as one that a return gives, ends with the
     // caller holding its only name.
@@ -502,10 +524,30 @@ export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
 
   const reached = getReached(roots, context);
   const changed = new Map<ts.Symbol, number>();
+  // The heap objects' fields that change in place, by name, as one object may have many types.
+  const changedFields = new Map<string, number>();
   const addChanged = (written: Written[]) =>
     written.forEach((entry) =>
-      changed.set(entry.symbol, Math.max(changed.get(entry.symbol) ?? -1, entry.depth)),
+      entry.field === undefined
+        ? changed.set(entry.symbol, Math.max(changed.get(entry.symbol) ?? -1, entry.depth))
+        : changedFields.set(
+            entry.field,
+            Math.max(changedFields.get(entry.field) ?? -1, entry.depth),
+          ),
     );
+  // How deep a symbol's object changes, where a read of a heap object's field sees only that
+  // field's changes, and any other read of the heap sees every field's.
+  const getChangedDepth = (symbol: ts.Symbol, field: string | undefined) => {
+    const depths = [
+      changed.get(symbol),
+      ...(symbol !== context.heap
+        ? []
+        : field === undefined
+          ? changedFields.values()
+          : [changedFields.get(field)]),
+    ].filter((depth) => depth !== undefined);
+    return depths.length === 0 ? undefined : Math.max(...depths);
+  };
   const collect = (node: ts.Node) => {
     const written = getWritten(node);
     // An array that the heap holds keeps its identity as it changes in place.
@@ -530,7 +572,7 @@ export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
     ts.forEachChild(node, collect);
   };
   reached.forEach(collect);
-  if (changed.size === 0) return;
+  if (changed.size === 0 && changedFields.size === 0) return;
   const visit = (node: ts.Node) => {
     if (ts.isTypeNode(node)) return;
     const isName = ts.getNameOfDeclaration(node.parent as ts.Declaration) === node;
@@ -554,14 +596,21 @@ export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
         new Set(),
       );
       const sourceDepth =
-        symbol === undefined || isLastUse(node, symbol) ? undefined : changed.get(symbol);
+        symbol === undefined || isLastUse(node, symbol)
+          ? undefined
+          : getChangedDepth(
+              symbol,
+              isHeapRead && ts.isPropertyAccessExpression(node) ? node.name.text : undefined,
+            );
       // A target may change the top of a new object, which only it names.
       const freshDepth = isFreshCall(node, context) ? 1 : 0;
       const isShared = escapes.some((escape) => {
+        // A heap object's field that takes another's shares what changes in either.
         const targetDepth =
-          escape.target === undefined || escape.target === symbol
+          escape.target === undefined ||
+          (escape.target === symbol && escape.target !== context.heap)
             ? undefined
-            : changed.get(escape.target);
+            : getChangedDepth(escape.target, escape.field);
         return (
           (sourceDepth !== undefined && sourceDepth >= escape.source) ||
           (targetDepth !== undefined && targetDepth >= escape.landing + freshDepth)
