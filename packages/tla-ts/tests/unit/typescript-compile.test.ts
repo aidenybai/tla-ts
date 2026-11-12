@@ -6266,6 +6266,44 @@ describe("errors", () => {
     });
   });
 
+  it("reads the symbol of a Symbol object through valueOf", async () => {
+    const source = `
+      declare global {
+        interface ObjectConstructor {
+          // oxlint-disable-next-line typescript/no-wrapper-object-types
+          (value: symbol): Symbol;
+        }
+      }
+      const holder = { seen: 0 };
+      const valueOf = Symbol.prototype.valueOf;
+      const symbol = Symbol("s");
+      const wrapped = Object(symbol);
+      if (valueOf.call(wrapped) !== symbol || Symbol.prototype.valueOf.call(symbol) !== symbol) {
+        throw new Error("call");
+      }
+      if (wrapped.valueOf() !== symbol) throw new Error("method");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = [
+      ["valueOf.call(wrapped) !== symbol", "valueOf.call(wrapped) === symbol", '"call"'],
+      ["wrapped.valueOf() !== symbol", "wrapped.valueOf() === symbol", '"method"'],
+    ];
+    for (const [from, to, message] of wrong) {
+      expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
+    }
+    const replaced = `
+      const holder = { seen: 0 };
+      const symbol = Symbol("s");
+      Symbol.prototype.valueOf = function () { return Symbol("other"); };
+      if (Symbol.prototype.valueOf.call(symbol) === symbol) throw new Error("replaced");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(replaced)).failure?.message).toContain(
+      "tla-ts can't call Symbol.prototype.valueOf where a script replaced it",
+    );
+  });
+
   it("rejects new Object of a value whose type doesn't tell the object", () => {
     expect(() =>
       compile("const box = { prop: 1 };\nconst same: Object = new Object(box);"),
