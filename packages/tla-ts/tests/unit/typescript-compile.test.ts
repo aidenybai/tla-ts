@@ -403,6 +403,45 @@ describe("top-level statements", () => {
     expect(empty.failure?.message).toContain("TypeError");
   });
 
+  it("convert an array-like object's length that's an object with its valueOf and toString", async () => {
+    const source = (expected: string) => `
+      const calls: string[] = [];
+      const items = {
+        0: 12,
+        1: 11,
+        2: 9,
+        length: {
+          valueOf: () => {
+            calls.push("valueOf");
+            return {};
+          },
+          toString: () => {
+            calls.push("toString");
+            return "2";
+          },
+        },
+      };
+      const isAll = Array.prototype.every.call(items, (value: number) => value > 10);
+      const found = Array.prototype.indexOf.call({ 0: 4, length: { valueOf: () => 1 } }, 4);
+      let isThrown = false;
+      try {
+        Array.prototype.forEach.call(
+          { 0: 1, length: { valueOf: () => ({}), toString: () => ({}) } },
+          () => {
+            calls.push("callback");
+          },
+        );
+      } catch (error) {
+        isThrown = error instanceof TypeError;
+      }
+      if (!isAll || found !== 0 || !isThrown || calls.join() !== "${expected}") {
+        throw new Error("length");
+      }
+    `;
+    expect((await checkModel(source("valueOf,toString"))).failure).toBeUndefined();
+    expect((await checkModel(source("toString,valueOf"))).failure?.message).toContain("length");
+  });
+
   it("keep a hole in the array that map makes where the array it visits lacks an element", async () => {
     const source = (expected: number) => `
       const items: (number | undefined)[] = [1, , 3, 4];

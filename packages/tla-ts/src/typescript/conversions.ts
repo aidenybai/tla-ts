@@ -428,6 +428,32 @@ const toPrimitive = (
   );
 };
 
+// ToPrimitive of a value as a statement, which throws the TypeError where the object's methods give
+// no primitive.
+export const runToPrimitive = (
+  site: ts.Node,
+  value: Expression,
+  hint: Hint,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, primitive: Expression) => Formula,
+) =>
+  translateJoined(
+    site,
+    path,
+    context,
+    (after, primitive) => continueWith(after, primitive ?? value),
+    (next) =>
+      translateJoined(
+        site,
+        path,
+        context,
+        (after) => throwTypeError(after, site, context, frame),
+        (throwWith) => toPrimitive(site, value, hint, path, context, frame, throwWith, next),
+      ),
+  );
+
 // Runs a conversion as a statement: it makes each operand's objects and evaluates it, converts each
 // in turn, and gives the value that the operation computes from the primitives.
 export const runConversion = (
@@ -464,20 +490,14 @@ export const runConversion = (
     if (value === undefined) {
       return bind(current, "converted", conversion.combine(primitives), context, continueWith);
     }
-    return translateJoined(
+    return runToPrimitive(
       node,
+      value,
+      conversion.hint,
       current,
       context,
-      (after, primitive) => convert(after, values, [...primitives, primitive ?? value]),
-      (next) =>
-        translateJoined(
-          node,
-          current,
-          context,
-          (after) => throwTypeError(after, node, context, frame),
-          (throwWith) =>
-            toPrimitive(node, value, conversion.hint, current, context, frame, throwWith, next),
-        ),
+      frame,
+      (after, primitive) => convert(after, values, [...primitives, primitive]),
     );
   };
   return evaluate(path, conversion.operands, []);
