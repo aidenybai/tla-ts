@@ -38,7 +38,7 @@ const Block = (props: BlockProps) => {
   }
   if (block.kind === "code") {
     return (
-      <CodeRoot source={block.source}>
+      <CodeRoot source={block.source} isWrapped={false}>
         <CodeContent />
         <CodeActions>
           <CodeCopy />
@@ -50,7 +50,7 @@ const Block = (props: BlockProps) => {
     <div className="overflow-x-auto">
       <table className="w-full border-collapse text-left text-sm">
         <thead>
-          <tr className="border-b text-faint">
+          <tr className="border-b text-faint max-sm:hidden">
             {block.header.map((cell) => (
               <th key={cell} className="py-2 pr-4 font-normal">
                 {cell}
@@ -60,9 +60,12 @@ const Block = (props: BlockProps) => {
         </thead>
         <tbody>
           {block.rows.map((row) => (
-            <tr key={row[0]} className="border-b last:border-b-0">
+            <tr
+              key={row[0]}
+              className="border-b last:border-b-0 max-sm:flex max-sm:flex-col max-sm:py-2"
+            >
               {row.map((cell) => (
-                <td key={cell} className="py-2 pr-4 align-top first:whitespace-nowrap">
+                <td key={cell} className="py-2 pr-4 align-top first:whitespace-nowrap max-sm:py-1">
                   <Text text={cell} />
                 </td>
               ))}
