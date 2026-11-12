@@ -80,7 +80,7 @@ interface BlastedConst {
   bits: number;
 }
 
-class BitBlasterRewriter extends RewriterTpl {
+export class BitBlasterRewriter extends RewriterTpl {
   private blaster: BitBlaster;
   private in1: RefVector;
   private in2: RefVector;

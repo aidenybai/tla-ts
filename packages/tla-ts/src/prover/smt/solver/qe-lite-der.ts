@@ -43,7 +43,7 @@ export class EqDer {
   private var2pos: number[] = [];
   private inx2var: number[] = [];
   private order: number[] = [];
-  numVars = 0;
+  isVariableIndex: (index: number) => boolean = () => false;
 
   constructor(private manager: AstManager) {
     this.subst = new BetaReducer(manager);
@@ -54,7 +54,7 @@ export class EqDer {
 
   private isVariable(expr: number) {
     const manager = this.manager;
-    return manager.kinds[expr] === KIND_VAR && manager.values[expr] < this.numVars;
+    return manager.kinds[expr] === KIND_VAR && this.isVariableIndex(manager.values[expr]);
   }
 
   apply(conjs: RefVector) {

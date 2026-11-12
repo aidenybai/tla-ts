@@ -48,6 +48,7 @@ import { ModelEvaluator } from "./model-evaluator";
 import { FuncInterp, ProtoModel } from "./proto-model";
 import { isMbqiByFeatures, type SmtSetup } from "./smt-setup";
 import { compileProbe, formatProbeValue, isQfufbv, type Probe } from "./probes";
+import { runHorn } from "./muz/horn-tactic";
 import { runQe } from "./qe";
 import { applyQeLite } from "./qe-lite";
 import { QSAT_QE, QSAT_QE_REC, QSAT_SAT, runQsat } from "./qsat";
@@ -94,6 +95,7 @@ export interface TacticEnvironment {
   isFindingMacros: boolean;
   setup: SmtSetup;
   write: (text: string, isDiagnostic: boolean) => void;
+  parameters: ReadonlyMap<string, string>;
 }
 
 interface TacticBuilder {
@@ -899,6 +901,19 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     },
   ],
   [
+    "horn",
+    {
+      descrs: new Map(),
+      isRejectingUnknown: false,
+      build: (environment) =>
+        runHorn(
+          environment.manager,
+          environment.parameters,
+          getRewriterOptions(environment.manager, new Map()),
+        ),
+    },
+  ],
+  [
     "qe",
     {
       descrs: new Map(),
@@ -994,7 +1009,7 @@ const UNPORTED_TACTICS = new Set(
     "degree-shift demodulator diff-neq " +
     "elim-predicates elim-uncnstr2 " +
     "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv fm " +
-    "fold-unfold fpa2bv horn horn-simplify injectivity lia2pb " +
+    "fold-unfold fpa2bv horn-simplify injectivity lia2pb " +
     "nla2bv nlqsat nra pb-preprocess pb2bv pqffd " +
     "propagate-bv-bounds propagate-bv-bounds2 propagate-ineqs propagate-values2 psmt " +
     "qfbv-sls qffd qfnra " +

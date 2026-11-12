@@ -398,7 +398,8 @@ export class TermGraph {
 
   private mkAppCore(expr: number): number {
     const manager = this.manager;
-    if (manager.kinds[expr] !== KIND_APP) return expr;
+    // A constant rebuilt from its declaration is itself, and a numeral keeps its value this way.
+    if (manager.kinds[expr] !== KIND_APP || manager.getNumArgs(expr) === 0) return expr;
     // A value stays as it is, so a coefficient never becomes a variable that equals it.
     const kids = manager
       .getArgs(expr)

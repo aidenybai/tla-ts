@@ -407,6 +407,7 @@ export const runSmtlibScript = (
         isFindingMacros: settings.isFindingMacros,
         setup: getSetup(),
         write: () => {},
+        parameters: settings.parameters,
       },
       objectives,
     );
@@ -593,6 +594,7 @@ export const runSmtlibScript = (
     isFindingMacros: settings.isFindingMacros,
     setup: getSetup(),
     write,
+    parameters: settings.parameters,
   });
   const getTactic = (sexpr: SExpr, end: SmtList["end"]) =>
     compileTactic(getTacticEnvironment(), sexpr, end);

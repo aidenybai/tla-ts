@@ -1,6 +1,6 @@
 // Ported from Z3 (src/qe/qe.cpp, src/qe/qe_tactic.cpp, src/qe/qe_bool_plugin.cpp,
 // src/qe/qe_bv_plugin.cpp), MIT license, see z3-license.txt.
-import { SmtUnsupportedError } from "../../../errors";
+import { SmtInvariantError, SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
   FAMILY_ARRAY,
@@ -30,7 +30,7 @@ import type { ProtoModel } from "./proto-model";
 import { ArithPlugin } from "./qe-arith-plugin";
 import { RefVector } from "./ref-vector";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
-import { InvVarShifter } from "./rewriter-tpl";
+import { InvVarShifter, RewriterTpl, VarShifter } from "./rewriter-tpl";
 import { SmtKernel } from "./smt-kernel";
 import { VarSubst } from "./var-subst";
 
@@ -1292,6 +1292,172 @@ const eliminateQuantifiers = (quantElim: QuantElim, formula: number) => {
     return visited.get(root) as number;
   };
   return elim(formula);
+};
+
+// simplify_solver_context: only the solve step of the Boolean and arithmetic plugins.
+class SimplifySolverContext implements QeSolverContext {
+  private trail: RefVector;
+  private pos: ObjHashtable;
+  private neg: ObjHashtable;
+  private vars: number[] = [];
+  private containsApps: ContainsApp[] = [];
+  private formula = -1;
+  private arith: ArithPlugin;
+  private plugins: QeSolverPlugin[];
+
+  constructor(readonly manager: AstManager) {
+    this.trail = new RefVector(manager);
+    this.pos = new ObjHashtable((expr) => manager.hashes[expr]);
+    this.neg = new ObjHashtable((expr) => manager.hashes[expr]);
+    this.arith = new ArithPlugin(this);
+    this.plugins = [new BoolPlugin(this), this.arith];
+  }
+
+  release() {
+    this.arith.release();
+    this.trail.reset();
+  }
+
+  pin(expr: number) {
+    this.trail.push(expr);
+    return expr;
+  }
+
+  pinOwned(expr: number) {
+    this.trail.pushOwned(expr);
+    return expr;
+  }
+
+  posAtoms() {
+    return this.pos;
+  }
+
+  negAtoms() {
+    return this.neg;
+  }
+
+  getNumVars() {
+    return this.vars.length;
+  }
+
+  getVar(index: number) {
+    return this.vars[index];
+  }
+
+  getVars() {
+    return this.vars;
+  }
+
+  getVarIndex(expr: number) {
+    return this.vars.indexOf(expr);
+  }
+
+  contains(index: number) {
+    return this.containsApps[index];
+  }
+
+  elimVar(index: number, formula: number) {
+    this.formula = this.pin(formula);
+    this.vars[index] = this.vars[this.vars.length - 1];
+    this.vars.pop();
+    this.containsApps[index] = this.containsApps[this.containsApps.length - 1];
+    this.containsApps.pop();
+  }
+
+  addVar(x: number) {
+    this.vars.push(this.pin(x));
+    this.containsApps.push(new ContainsApp(this.manager, x));
+  }
+
+  addConstraint(): void {
+    throw new SmtInvariantError("simplify_solver_context adds no constraints");
+  }
+
+  blastOr(): number {
+    throw new SmtInvariantError("simplify_solver_context blasts no variables");
+  }
+
+  // The variables that remain and the formula over them.
+  solve(formula: number, vars: readonly number[]) {
+    const manager = this.manager;
+    this.vars = [...vars];
+    this.containsApps = vars.map((x) => new ContainsApp(manager, x));
+    this.formula = formula;
+    let isSolved = true;
+    while (isSolved) {
+      const conjs = getFlatConjuncts(manager, this.formula);
+      isSolved = this.plugins.some((plugin) => plugin.solve(conjs, this.formula));
+    }
+    return { formula: this.formula, vars: this.vars };
+  }
+}
+
+class SimplifyRewriter extends RewriterTpl {
+  private context: SimplifySolverContext;
+
+  constructor(manager: AstManager) {
+    super(manager);
+    this.context = new SimplifySolverContext(manager);
+  }
+
+  reduceQuantifier(expr: number, body: number) {
+    const manager = this.manager;
+    const context = this.context;
+    const data = manager.getQuantifier(expr);
+    const fresh = data.sorts.map((sort) => context.pin(manager.mkFreshConst("x", sort)));
+    const subst = new VarSubst(manager, true);
+    const substituted = context.pinOwned(subst.apply(body, fresh));
+    subst.release();
+    const invShifter = new InvVarShifter(manager);
+    let result = context.pinOwned(invShifter.shift(substituted, fresh.length));
+    invShifter.release();
+    if (data.isForall) result = context.pin(mkNot(manager, result));
+    const solved = context.solve(result, fresh);
+    result = solved.formula;
+    if (data.isForall)
+      result = context.pin(
+        manager.isNot(result) ? manager.getArg(result, 0) : mkNot(manager, result),
+      );
+    const vars = solved.vars;
+    const shifter = new VarShifter(manager);
+    result = context.pinOwned(shifter.shift(result, 0, vars.length, 0));
+    shifter.release();
+    if (vars.length === 0) {
+      manager.incRef(result);
+      return result;
+    }
+    const replace = new ExprSafeReplace(manager);
+    vars.forEach((x, index) =>
+      replace.insert(x, context.pin(manager.mkVar(vars.length - 1 - index, manager.sorts[x]))),
+    );
+    const abstracted = context.pinOwned(replace.apply(result));
+    replace.release();
+    const quantifier = manager.mkQuantifier({
+      isForall: data.isForall,
+      sorts: vars.map((x) => manager.sorts[x]),
+      names: vars.map((x) => manager.getDeclName(x)),
+      body: abstracted,
+      patterns: [],
+      noPatterns: [],
+      weight: 1,
+      qid: "",
+    });
+    manager.incRef(quantifier);
+    return quantifier;
+  }
+
+  release() {
+    super.release();
+    this.context.release();
+  }
+}
+
+// qe::simplify_rewriter_star: the result comes with a reference.
+export const simplifyQuantifiers = (manager: AstManager, formula: number) => {
+  const rewriter = new SimplifyRewriter(manager);
+  const result = rewriter.rewrite(formula);
+  rewriter.release();
+  return result;
 };
 
 export const runQe = (manager: AstManager) => (goal: Goal) => {
