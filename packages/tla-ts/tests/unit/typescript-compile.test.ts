@@ -7362,6 +7362,46 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("takes a for await's array pattern from the generators that an async yield* yields", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      const first = (function* () {
+        yield 1;
+        yield 2;
+        yield 3;
+      })();
+      const second = (function* () {
+        yield 4;
+      })();
+      const asyncIter = (async function* () {
+        yield* [first, second];
+      })();
+      async function fn() {
+        for await (const [a, b] of asyncIter) {
+          log += String(a) + String(b) + ";";
+        }
+      }
+      fn();
+      Promise.resolve(0)
+        .then(() => {
+          log += "1";
+        })
+        .then(() => {
+          log += "2";
+        })
+        .then(() => {
+          log += "3";
+        });
+      setTimeout(() => {
+        const rest = first.next();
+        log += rest.done ? "done" : "more";
+        if (log !== "1212;34undefined;done") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("takes a for await's array pattern from a generator element", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;

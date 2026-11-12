@@ -396,6 +396,27 @@ const isGeneratorMember = (type: ts.Type) =>
 export const isGeneratorType = (node: ts.Node, context: Context) =>
   getMembers(node, context).every(isGeneratorMember);
 
+export const mayBeGeneratorType = (node: ts.Node, context: Context) =>
+  getMembers(node, context).some(isGeneratorMember);
+
+// An array written in place that an async generator's yield* yields each element of, which a
+// for await that takes a pattern from each follows.
+const isAsyncDelegated = (node: ts.ArrayLiteralExpression) => {
+  const outer = ts.findAncestor(node.parent, (ancestor) => !ts.isParenthesizedExpression(ancestor));
+  const generator = ts.findAncestor(node, ts.isFunctionLike);
+  return (
+    outer !== undefined &&
+    ts.isYieldExpression(outer) &&
+    outer.asteriskToken !== undefined &&
+    generator !== undefined &&
+    (ts.isFunctionExpression(generator) ||
+      ts.isFunctionDeclaration(generator) ||
+      ts.isMethodDeclaration(generator)) &&
+    generator.asteriskToken !== undefined &&
+    (ts.getCombinedModifierFlags(generator) & ts.ModifierFlags.Async) !== 0
+  );
+};
+
 // A variable that a declaration without a type or a value gives a type that follows what it's
 // assigned.
 const isAutoTyped = (node: ts.Identifier, context: Context) => {
@@ -456,6 +477,7 @@ export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
         outer.expression === node &&
         (outer.awaitModifier !== undefined || isGeneratorType(node, context))) ||
       ts.isExpressionStatement(outer) ||
+      (ts.isArrayLiteralExpression(outer) && isAsyncDelegated(outer)) ||
       (ts.isReturnStatement(outer) && isPatternDefaultReturn(outer)));
   if (!isHeld) throw new TlaTypeScriptError("tla-ts can't follow a generator here", node);
 };

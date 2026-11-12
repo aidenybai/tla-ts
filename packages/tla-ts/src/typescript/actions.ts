@@ -247,6 +247,7 @@ import {
   isBigIntLike,
   isNumberLike,
   isGeneratorType,
+  mayBeGeneratorType,
   isSequenceType,
   rejectGeneratorUse,
   TYPED_ARRAYS,
@@ -3243,12 +3244,78 @@ const translateGeneratorCall = (
       );
 };
 
+// The values that an array pattern takes from a generator object that a receiver holds, which one
+// of the generator functions made. The pattern binds the values once the generator has run, so the
+// generator must not read what the pattern binds, and the pattern's defaults, like the evaluated
+// expressions, must not read what the generator changes.
+const takeFromHeld = (
+  pattern: ts.ArrayBindingPattern | ts.ArrayLiteralExpression,
+  receiver: Expression,
+  generators: FunctionNode[],
+  evaluated: readonly ts.Expression[],
+  current: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, values: Expression) => Formula,
+): Formula => {
+  const elements: readonly ts.Node[] = pattern.elements;
+  const restAt = elements.findIndex(
+    (element) =>
+      ts.isSpreadElement(element) ||
+      (ts.isBindingElement(element) && element.dotDotDotToken !== undefined),
+  );
+  const count = restAt === -1 ? elements.length : Infinity;
+  const targets = new Set(getSymbols(pattern, context));
+  const defaults = findNodes(
+    pattern,
+    (inner): inner is ts.BinaryExpression =>
+      ts.isBinaryExpression(inner) && inner.operatorToken.kind === ts.SyntaxKind.EqualsToken,
+  ).map((assignment) => assignment.right);
+  if (
+    generators.some(
+      (generator) =>
+        generator.body !== undefined &&
+        getSymbols(generator.body, context).some((symbol) => targets.has(symbol)),
+    )
+  ) {
+    throw new TlaTypeScriptError("tla-ts can't interleave this pattern with a generator", pattern);
+  }
+  rejectEarlyRun(
+    pattern,
+    generators,
+    [...getInitializers(pattern), ...defaults, ...evaluated],
+    current,
+    context,
+  );
+  const step = (inner: Path, values: Expression[]): Formula =>
+    values.length === count
+      ? resumeGenerator(pattern, receiver, "return", undefined, inner, context, frame, (after) =>
+          continueWith(after, tuple(values)),
+        )
+      : resumeGenerator(
+          pattern,
+          receiver,
+          "next",
+          undefined,
+          inner,
+          context,
+          frame,
+          (after, value, isDone, isResult) =>
+            isDone
+              ? continueWith(after, tuple(values))
+              : isResult && value !== undefined
+                ? readValue(pattern, value, after, context, frame, (read, taken) =>
+                    step(read, [...values, taken]),
+                  )
+                : step(after, [...values, value ?? getUndefined(context)]),
+        );
+  return step(current, []);
+};
+
 // The values that an array pattern takes from a generator object, through its next: one for each
 // element, or every one for a rest element, after which a pattern without one closes a generator
 // that isn't done. The source makes the generator object or names a variable that holds one, or
-// else this gives undefined. The pattern binds the values once the generator has run, so the
-// generator must not read what the pattern binds, and the pattern's defaults, like the other
-// expressions that evaluate before the pattern, must not read what the generator changes.
+// else this gives undefined.
 const takeFromGenerator = (
   pattern: ts.ArrayBindingPattern | ts.ArrayLiteralExpression,
   source: ts.Expression,
@@ -3258,63 +3325,17 @@ const takeFromGenerator = (
   frame: Frame,
   continueWith: (path: Path, values: Expression) => Formula,
 ): Formula | undefined => {
-  const elements: readonly ts.Node[] = pattern.elements;
-  const restAt = elements.findIndex(
-    (element) =>
-      ts.isSpreadElement(element) ||
-      (ts.isBindingElement(element) && element.dotDotDotToken !== undefined),
-  );
-  const count = restAt === -1 ? elements.length : Infinity;
-  const take = (receiver: Expression, generators: FunctionNode[], current: Path) => {
-    const targets = new Set(getSymbols(pattern, context));
-    const defaults = findNodes(
+  const take = (receiver: Expression, generators: FunctionNode[], current: Path) =>
+    takeFromHeld(
       pattern,
-      (inner): inner is ts.BinaryExpression =>
-        ts.isBinaryExpression(inner) && inner.operatorToken.kind === ts.SyntaxKind.EqualsToken,
-    ).map((assignment) => assignment.right);
-    if (
-      generators.some(
-        (generator) =>
-          generator.body !== undefined &&
-          getSymbols(generator.body, context).some((symbol) => targets.has(symbol)),
-      )
-    ) {
-      throw new TlaTypeScriptError(
-        "tla-ts can't interleave this pattern with a generator",
-        pattern,
-      );
-    }
-    rejectEarlyRun(
-      pattern,
+      receiver,
       generators,
-      [...getInitializers(pattern), ...defaults, ...others.filter((other) => other !== source)],
+      others.filter((other) => other !== source),
       current,
       context,
+      frame,
+      continueWith,
     );
-    const step = (inner: Path, values: Expression[]): Formula =>
-      values.length === count
-        ? resumeGenerator(pattern, receiver, "return", undefined, inner, context, frame, (after) =>
-            continueWith(after, tuple(values)),
-          )
-        : resumeGenerator(
-            pattern,
-            receiver,
-            "next",
-            undefined,
-            inner,
-            context,
-            frame,
-            (after, value, isDone, isResult) =>
-              isDone
-                ? continueWith(after, tuple(values))
-                : isResult && value !== undefined
-                  ? readValue(pattern, value, after, context, frame, (read, taken) =>
-                      step(read, [...values, taken]),
-                    )
-                  : step(after, [...values, value ?? getUndefined(context)]),
-          );
-    return step(current, []);
-  };
   const node = getCast(source);
   const created = ts.isCallExpression(node) ? getCreatedGenerator(node, path, context) : undefined;
   if (created !== undefined && ts.isCallExpression(node)) {
@@ -6518,6 +6539,33 @@ const translateForAwait = (
     bindIteration(loop.initializer, value, source, current, context, bodyFrame, (bound) =>
       translateStatements([loop.statement], bound, context, bodyFrame),
     );
+  const declared = loop.initializer;
+  const pattern =
+    ts.isVariableDeclarationList(declared) &&
+    declared.declarations.length === 1 &&
+    ts.isArrayBindingPattern(declared.declarations[0].name)
+      ? declared.declarations[0].name
+      : undefined;
+  // A value that an async generator yields, which an array pattern takes from where the value is
+  // a generator object.
+  const runYielded = (current: Path, value: Expression, bodyFrame: Frame) => {
+    if (pattern === undefined || !mayBeGeneratorType(pattern, context)) {
+      return runBody(current, value, undefined, bodyFrame);
+    }
+    if (!isGeneratorType(pattern, context)) {
+      throw new TlaTypeScriptError("tla-ts can't follow a generator here", pattern);
+    }
+    return takeFromHeld(
+      pattern,
+      value,
+      [...current.generators.values()].map((suspension) => suspension.generator),
+      [],
+      current,
+      context,
+      bodyFrame,
+      (after, values) => runBody(after, values, undefined, bodyFrame),
+    );
+  };
   // A for await over a generator, which it makes where it calls a generator function.
   const iterateGenerator = (start: Path, receiver: Expression) => {
     // Calls the generator's next or return, and awaits the promise it gives.
@@ -6561,7 +6609,7 @@ const translateForAwait = (
           const iteration = getIteration(fulfilled, loop, promise);
           return iteration.isDone
             ? continueWith(fulfilled)
-            : runBody(fulfilled, iteration.value, undefined, {
+            : runYielded(fulfilled, iteration.value, {
                 ...guardYields(frame),
                 next: iterate,
                 continueTo: iterate,
@@ -6602,13 +6650,6 @@ const translateForAwait = (
     awaitTo(current, getUndefined(context), undefined, next, next);
   // An array pattern takes its values from a generator element through the generator's next,
   // which the array then doesn't hold.
-  const declared = loop.initializer;
-  const pattern =
-    ts.isVariableDeclarationList(declared) &&
-    declared.declarations.length === 1 &&
-    ts.isArrayBindingPattern(declared.declarations[0].name)
-      ? declared.declarations[0].name
-      : undefined;
   const isTaken = (element: ts.Expression) =>
     pattern !== undefined && !ts.isOmittedExpression(element) && isGeneratorType(element, context);
   const iterate = (current: Path, position: number): Formula => {

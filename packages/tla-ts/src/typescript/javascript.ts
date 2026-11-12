@@ -1032,15 +1032,30 @@ Get(heap, ref, key) ==
          [] OTHER -> Get(heap, Get(heap, ref.constructor, "prototype"), key)
   ELSE GetFrom(heap, ref, key, ref)
 
+\\* A generator object that tla-ts follows, which is neither a promise nor a function.
+IsGeneratorObject(heap, ref) ==
+  LET object == heap.objects[ref[Ref]]
+  IN /\\ object.isOpaque
+     /\\ "code" \\notin DOMAIN object
+     /\\ ToString(object.prototype) # ToString(PromiseObject.prototype)
+
+\\* Whether any object on the heap, or any built-in that a script changed, has a then.
+HasAnyThen(heap) ==
+  \\/ \\E ref \\in DOMAIN heap.objects :
+       "values" \\in DOMAIN heap.objects[ref] /\\ "then" \\in DOMAIN heap.objects[ref].values
+  \\/ \\E key \\in DOMAIN heap.changed :
+       "values" \\in DOMAIN heap.changed[key] /\\ "then" \\in DOMAIN heap.changed[key].values
+
 \\* Whether resolving a promise with a value would call the value's then, which tla-ts doesn't, or
 \\* follow a promise that tla-ts can't tell. A then that isn't callable leaves the value a value, and
 \\* a getter that tla-ts can't call stops the check.
 \\* An object that tla-ts keeps outside the heap, such as an array, inherits from Array.prototype or
-\\* Object.prototype, which a script may give a then.
+\\* Object.prototype, which a script may give a then. A generator object's prototypes aren't on the
+\\* heap, so it may have a then only where some object does.
 IsThenable(heap, value, arrayPrototype, objectPrototype) ==
   IF IsRef(value)
   THEN IF IsHeap(value) /\\ heap.objects[value[Ref]].isOpaque
-       THEN TRUE
+       THEN IF IsGeneratorObject(heap, value) THEN HasAnyThen(heap) ELSE TRUE
        ELSE TypeOfIn(heap, Get(heap, value, "then")) = "function"
   ELSE /\\ value # Null
        /\\ TypeOf(value) = "object"
