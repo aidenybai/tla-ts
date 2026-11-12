@@ -51,6 +51,7 @@ import {
   isBooleanType,
   isEvery,
   isHeapArray,
+  isBigIntLike,
   isBooleanLike,
   isNumberLike,
   type Kind,
@@ -1373,7 +1374,9 @@ const getPrimitiveCall = (node: MethodCall, kind: Kind, context: Context) => {
         ? NUMBER_METHODS
         : isBooleanLike(receiver, context) || wrapper === "Boolean"
           ? BOOLEAN_METHODS
-          : undefined;
+          : isBigIntLike(receiver, context)
+            ? BIGINT_METHODS
+            : undefined;
   return (
     methods && {
       methods,
@@ -1501,6 +1504,11 @@ const NUMBER_METHODS = new Map<string, PrimitiveMethod>([
   ["valueOf", { operator: "PrimitiveOf", parameters: [] }],
 ]);
 
+const BIGINT_METHODS = new Map<string, PrimitiveMethod>([
+  ["toString", { operator: "BigIntToString", parameters: ["number"] }],
+  ["valueOf", { operator: "PrimitiveOf", parameters: [] }],
+]);
+
 const BOOLEAN_METHODS = new Map<string, PrimitiveMethod>([
   ["toString", { operator: "BooleanToString", parameters: [] }],
   ["valueOf", { operator: "PrimitiveOf", parameters: [] }],
@@ -1512,6 +1520,7 @@ const PRIMITIVE_PROTOTYPES = new Map([
   ["String.prototype", { methods: STRING_METHODS, converter: "ThisString" }],
   ["Number.prototype", { methods: NUMBER_METHODS, converter: "ThisNumber" }],
   ["Boolean.prototype", { methods: BOOLEAN_METHODS, converter: "ThisBoolean" }],
+  ["BigInt.prototype", { methods: BIGINT_METHODS, converter: "ThisBigInt" }],
 ]);
 
 export const ARRAY_LIKE_METHODS = new Set([

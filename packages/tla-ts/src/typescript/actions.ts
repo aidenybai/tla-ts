@@ -91,8 +91,10 @@ import {
   translateExpression,
   translateKey,
   translateSetKey,
+  translateBigInt,
   translateToString,
   ARITHMETIC_OPERATORS,
+  BIGINT_OPERATORS,
   BITWISE_OPERATORS,
 } from "./expressions";
 import { and, bindValue, DISABLED, type Formula, ifThenElse, letIn, leaf, render } from "./formula";
@@ -214,6 +216,7 @@ import {
   isHeapArray,
   getPathStep,
   isHeapType,
+  isBigIntLike,
   isNumberLike,
   isGeneratorType,
   isSequenceType,
@@ -410,6 +413,16 @@ const COMPOUND_OPERATORS = new Map([
   [ts.SyntaxKind.PercentEqualsToken, "%"],
   [ts.SyntaxKind.AsteriskAsteriskEqualsToken, "^"],
   [ts.SyntaxKind.SlashEqualsToken, "/"],
+]);
+
+// The arithmetic that compound assignments apply, as binary operators.
+const ARITHMETIC_ASSIGNMENTS = new Map([
+  [ts.SyntaxKind.PlusEqualsToken, ts.SyntaxKind.PlusToken],
+  [ts.SyntaxKind.MinusEqualsToken, ts.SyntaxKind.MinusToken],
+  [ts.SyntaxKind.AsteriskEqualsToken, ts.SyntaxKind.AsteriskToken],
+  [ts.SyntaxKind.PercentEqualsToken, ts.SyntaxKind.PercentToken],
+  [ts.SyntaxKind.AsteriskAsteriskEqualsToken, ts.SyntaxKind.AsteriskAsteriskToken],
+  [ts.SyntaxKind.SlashEqualsToken, ts.SyntaxKind.SlashToken],
 ]);
 
 // The operators on the bits of integers that compound assignments apply.
@@ -862,6 +875,15 @@ const getRemovedValue = (
 const getAssignedPath = (expression: ts.Expression, path: Path, context: Context) => {
   if (ts.isPostfixUnaryExpression(expression) || ts.isPrefixUnaryExpression(expression)) {
     const operator = INCREMENT_OPERATORS.get(expression.operator);
+    if (operator !== undefined && isBigIntLike(expression.operand, context)) {
+      return assign(expression.operand, path, context, (current) =>
+        useJavaScript(
+          operator === "+" ? "BigIntAdd" : "BigIntSubtract",
+          [current, translateBigInt(1, context)],
+          context,
+        ),
+      );
+    }
     if (operator !== undefined && !isNumberLike(expression.operand, context)) {
       throw new TlaTypeScriptError(`${expression.getText()} needs a number`, expression);
     }
@@ -921,6 +943,18 @@ const getAssignedPath = (expression: ts.Expression, path: Path, context: Context
           ? ifExpression(isTruthy, current, assigned)
           : ifExpression(isTruthy, assigned, current);
     });
+  }
+  const arithmetic = ARITHMETIC_ASSIGNMENTS.get(kind);
+  const bigIntOperator = arithmetic === undefined ? undefined : BIGINT_OPERATORS.get(arithmetic);
+  if (
+    bigIntOperator !== undefined &&
+    isBigIntLike(expression.left, context) &&
+    isBigIntLike(expression.right, context)
+  ) {
+    const value = translateExpression(expression.right, path.scope, context);
+    return assign(expression.left, path, context, (current) =>
+      useJavaScript(bigIntOperator, [current, value], context),
+    );
   }
   const isConcatenated =
     kind === ts.SyntaxKind.PlusEqualsToken && getKind(expression.left, context) === "string";

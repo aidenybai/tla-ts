@@ -209,7 +209,7 @@ const NUMBER_OPERATORS = new Map([
 ]);
 
 // The JavaScript module's operators on two BigInts.
-const BIGINT_OPERATORS = new Map([
+export const BIGINT_OPERATORS = new Map([
   [ts.SyntaxKind.PlusToken, "BigIntAdd"],
   [ts.SyntaxKind.MinusToken, "BigIntSubtract"],
   [ts.SyntaxKind.AsteriskToken, "BigIntMultiply"],

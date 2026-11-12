@@ -3,9 +3,9 @@ import type { Expression } from "../ast";
 import { type Context, getSymbol, getUndefined } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { formatString } from "../printer";
-import { translateExpression } from "./expressions";
+import { translateBigInt, translateExpression } from "./expressions";
 import type { Scope } from "./scope";
-import { getKind } from "./types";
+import { getKind, isBigIntLike } from "./types";
 import { apply, boolean, identifier, ifExpression, number, string } from "./tla";
 
 // The names of the well-known symbols, such as iterator for Symbol.iterator.
@@ -1360,6 +1360,27 @@ ThisNumber(value) ==
   THEN value
   ELSE Assert(FALSE, "tla-ts can't call a Number.prototype method on a value that isn't a number")
 
+\\* The BigInt that BigInt.prototype.method.call reads from the value that it calls the method on.
+ThisBigInt(value) ==
+  IF IsBigInt(value)
+  THEN value
+  ELSE Assert(FALSE, "tla-ts can't call a BigInt.prototype method on a value that isn't a BigInt")
+
+\\* BigInt(value) of a primitive, where a number must be an integer.
+ToBigInt(value) ==
+  CASE IsBigInt(value) -> value
+    [] value \\in {Undefined, Null} ->
+         Assert(FALSE, "tla-ts can't throw the TypeError of converting this value to a BigInt")
+    [] TypeOf(value) = "boolean" -> Big :> IF value THEN 1 ELSE 0
+    [] value = NegativeZero -> Big :> 0
+    [] IsInteger(value) -> Big :> value
+    [] TypeOf(value) = "number" ->
+         Assert(FALSE, "tla-ts can't throw the RangeError of converting this number to a BigInt")
+    [] OTHER -> Assert(FALSE, "tla-ts can't convert this value to a BigInt")
+
+\\* Number(value) of a BigInt.
+NumberOfBigInt(value) == value[Big]
+
 \\* ToIntegerOrInfinity of a number or undefined.
 LOCAL IntegerOf(value) == IF value \\in {Undefined, NaN, NegativeZero} THEN 0 ELSE value
 
@@ -1675,6 +1696,14 @@ NumberToString(value, radix) ==
         [] ~IsInteger(value) \\/ base = 10 -> StringOf(value)
         [] value < 0 -> "-" \\o RadixDigits(-value, base)
         [] OTHER -> RadixDigits(value, base)
+
+BigIntToString(value, radix) ==
+  LET base == IF radix = Undefined THEN 10 ELSE IntegerOf(radix)
+      integer == value[Big]
+  IN  CASE ~IsInteger(base) \\/ base < 2 \\/ base > 36 ->
+             Assert(FALSE, "tla-ts can't throw the RangeError of a radix outside 2 to 36")
+        [] integer < 0 -> "-" \\o RadixDigits(-integer, base)
+        [] OTHER -> RadixDigits(integer, base)
 
 \\* The characters that trim() removes: WhiteSpace and LineTerminator.
 LOCAL Spaces ==
@@ -3497,6 +3526,7 @@ export const isComparable = (left: ts.Expression, right: ts.Expression, context:
   );
 
 const CONVERSIONS = new Set([
+  "BigInt",
   "Boolean",
   "String",
   "Number",
@@ -3510,6 +3540,23 @@ const PARSERS = new Map<string, (text: string) => number>([
   ["parseInt", (text) => Number.parseInt(text)],
   ["parseFloat", Number.parseFloat],
 ]);
+
+// BigInt of a string, which reads an integer in decimal, or in binary, octal, or hexadecimal after
+// a prefix, between white space, and throws a SyntaxError otherwise.
+const translateBigIntText = (text: string, node: ts.Node, context: Context) => {
+  const isInteger = /^\s*(?:[+-]?\d+|0[bB][01]+|0[oO][0-7]+|0[xX][\da-fA-F]+)?\s*$/.test(text);
+  if (!isInteger) {
+    return apply("Assert", [
+      boolean(false),
+      string("tla-ts can't throw the SyntaxError of converting this string to a BigInt"),
+    ]);
+  }
+  const value = BigInt(text);
+  if (value > 2n ** 31n - 1n || value < -(2n ** 31n - 1n)) {
+    throw new TlaTypeScriptError(`TLC's integers have 32 bits, so ${text} is too big`, node);
+  }
+  return translateBigInt(Number(value), context);
+};
 
 const getInteger = (value: number, node: ts.Node) => {
   if (!Number.isInteger(value) || Object.is(value, -0) || Math.abs(value) > 2 ** 31 - 1) {
@@ -3601,6 +3648,22 @@ export const translateConversion = (node: ts.CallExpression, scope: Scope, conte
     if (parsed !== undefined) return parsed;
   }
   if (node.arguments.length > 1) throw unsupported;
+  if (
+    name === "BigInt" &&
+    (ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument))
+  ) {
+    return translateBigIntText(argument.text, node, context);
+  }
+  if (name === "BigInt" && getKind(argument, context) === "string") throw unsupported;
+  if (name === "BigInt") {
+    return useJavaScript("ToBigInt", [translateExpression(argument, scope, context)], context);
+  }
+  if (isBigIntLike(argument, context) && (name === "Number" || name === "Boolean")) {
+    const value = translateExpression(argument, scope, context);
+    return name === "Number"
+      ? useJavaScript("NumberOfBigInt", [value], context)
+      : useJavaScript("ToBoolean", [value], context);
+  }
   if (name === "Number") return translateToNumber(argument, node, scope, context);
   if (name === "isNaN") {
     context.prelude.add("JavaScript");

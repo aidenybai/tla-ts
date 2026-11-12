@@ -6432,6 +6432,26 @@ describe("BigInts", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("assigns, converts, and writes BigInts", async () => {
+    const result = await checkModel(`
+      let a = 5n;
+      a += 3n;
+      a *= 2n;
+      a -= 1n;
+      a++;
+      a--;
+      a %= 7n;
+      if (a !== 1n) throw new Error("compound");
+      if (BigInt(12) !== 12n || BigInt(true) !== 1n || BigInt("0x1f") !== 31n || BigInt("") !== 0n) {
+        throw new Error("convert");
+      }
+      if (Number(a) !== 1 || !Boolean(a)) throw new Error("number");
+      const big = 255n;
+      if (big.toString(16) !== "ff" || (-big).toString(2) !== "-11111111") throw new Error("radix");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops where a BigInt leaves 32 bits or divides by zero", async () => {
     const overflow = await checkModel(`
       let sum = 2147483647n;
