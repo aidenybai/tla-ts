@@ -113,6 +113,7 @@ import {
   translateBigInt,
   translateToString,
   getHoleChecks,
+  isInertBefore,
   ARITHMETIC_OPERATORS,
   BIGINT_OPERATORS,
   BITWISE_OPERATORS,
@@ -7543,34 +7544,6 @@ const translateForAwait = (
   );
 };
 
-// Whether a for-of's pattern takes the elements before a position without running code, as a
-// default that calls a function, a nested pattern, or a setter would.
-const isInertBefore = (initializer: ts.ForInitializer, count: number) => {
-  const pattern = ts.isVariableDeclarationList(initializer)
-    ? initializer.declarations.at(0)?.name
-    : initializer;
-  const elements =
-    pattern !== undefined &&
-    (ts.isArrayBindingPattern(pattern) || ts.isArrayLiteralExpression(pattern))
-      ? pattern.elements
-      : [];
-  return elements
-    .slice(0, count)
-    .every(
-      (element) =>
-        ts.isOmittedExpression(element) ||
-        ts.isIdentifier(element) ||
-        (ts.isBindingElement(element) &&
-          element.dotDotDotToken === undefined &&
-          ts.isIdentifier(element.name) &&
-          (element.initializer === undefined || isInertValue(element.initializer))) ||
-        (ts.isBinaryExpression(element) &&
-          element.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-          ts.isIdentifier(element.left) &&
-          isInertValue(element.right)),
-    );
-};
-
 // Runs an iteration of a for-of over a literal with holes, which the literal read from
 // Array.prototype when it was made, where Array.prototype still gives the same values, and stops
 // otherwise. The pattern reads the holes of each element in order, so nothing it runs before the
@@ -7597,7 +7570,11 @@ const keepHoles = (
         ],
   );
   if (kept.length === 0) return run;
-  if (!isInertBefore(loop.initializer, Math.max(0, ...checks.flatMap((check) => check.holes)))) {
+  const initializer = loop.initializer;
+  const pattern = ts.isVariableDeclarationList(initializer)
+    ? initializer.declarations.at(0)?.name
+    : initializer;
+  if (!isInertBefore(pattern, Math.max(0, ...checks.flatMap((check) => check.holes)))) {
     throw new TlaTypeScriptError(
       "tla-ts can't read the holes of an element after a pattern runs code",
       loop.initializer,

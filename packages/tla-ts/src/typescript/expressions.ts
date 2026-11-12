@@ -2281,33 +2281,104 @@ const readsArguments = (node: ts.Node): boolean =>
   (ts.isIdentifier(node) && node.text === "arguments") ||
   (ts.forEachChild(node, (child) => readsArguments(child) || undefined) ?? false);
 
-// Whether an array literal goes straight into an array pattern, which takes its elements in order,
-// so that nothing sees where it has holes.
-const isPatternSource = (node: ts.Expression, context: Context) => {
+// Whether a pattern takes the elements before a position without running code, as a default that
+// calls a function, a nested pattern, or a setter would.
+export const isInertBefore = (pattern: ts.Node | undefined, count: number) => {
+  const elements =
+    pattern !== undefined &&
+    (ts.isArrayBindingPattern(pattern) || ts.isArrayLiteralExpression(pattern))
+      ? pattern.elements
+      : [];
+  return elements
+    .slice(0, count)
+    .every(
+      (element) =>
+        ts.isOmittedExpression(element) ||
+        ts.isIdentifier(element) ||
+        (ts.isBindingElement(element) &&
+          element.dotDotDotToken === undefined &&
+          ts.isIdentifier(element.name) &&
+          (element.initializer === undefined || isInertValue(element.initializer))) ||
+        (ts.isBinaryExpression(element) &&
+          element.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          ts.isIdentifier(element.left) &&
+          isInertValue(element.right)),
+    );
+};
+
+// The array pattern that an array literal goes straight into, which takes its elements in order,
+// so that nothing sees where it has holes, with whether nothing runs between the literal and the
+// pattern: a call's later arguments, and the parameters before the pattern.
+const getSourcePattern = (node: ts.Expression, context: Context) => {
   const parent = node.parent;
   if (ts.isVariableDeclaration(parent) || ts.isParameter(parent) || ts.isBindingElement(parent)) {
-    return parent.initializer === node && ts.isArrayBindingPattern(parent.name);
+    return parent.initializer === node && ts.isArrayBindingPattern(parent.name)
+      ? { pattern: parent.name, isDirect: true }
+      : undefined;
   }
   if (ts.isBinaryExpression(parent)) {
-    return (
-      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    return parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
       parent.right === node &&
       ts.isArrayLiteralExpression(parent.left)
-    );
+      ? { pattern: parent.left, isDirect: true }
+      : undefined;
   }
-  if (!ts.isCallExpression(parent) && !ts.isNewExpression(parent)) return false;
+  if (!ts.isCallExpression(parent) && !ts.isNewExpression(parent)) return undefined;
   const position = parent.arguments?.indexOf(node) ?? -1;
   if (position === -1 || parent.arguments?.slice(0, position).some(ts.isSpreadElement)) {
-    return false;
+    return undefined;
   }
   const declaration = context.checker.getResolvedSignature(parent)?.getDeclaration();
   const parameter = declaration?.parameters.at(position);
-  return (
-    declaration !== undefined &&
+  return declaration !== undefined &&
     parameter !== undefined &&
     parameter.dotDotDotToken === undefined &&
     ts.isArrayBindingPattern(parameter.name) &&
     !readsArguments(declaration)
+    ? {
+        pattern: parameter.name,
+        isDirect:
+          (parent.arguments ?? []).slice(position + 1).every(isInertValue) &&
+          declaration.parameters
+            .slice(0, position)
+            .every(
+              (earlier) =>
+                ts.isIdentifier(earlier.name) &&
+                (earlier.initializer === undefined || isInertValue(earlier.initializer)),
+            ),
+      }
+    : undefined;
+};
+
+// A hole of a literal that an array pattern takes, which reads what Array.prototype holds at its
+// index, where nothing that runs before the pattern reads it may change Array.prototype.
+const translatePatternHole = (
+  node: ts.OmittedExpression,
+  literal: ts.ArrayLiteralExpression,
+  scope: Scope,
+  context: Context,
+) => {
+  const source = getSourcePattern(literal, context);
+  if (source === undefined) return undefined;
+  if (context.heap === undefined) return getUndefined(context);
+  const lastHole = literal.elements.reduce(
+    (last, element, position) => (ts.isOmittedExpression(element) ? position : last),
+    0,
+  );
+  if (!source.isDirect || !isInertBefore(source.pattern, lastHole)) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't read the holes of an array that a pattern takes after code runs",
+      node,
+    );
+  }
+  return useJavaScript(
+    "Get",
+    [
+      getHeap(scope, literal, context),
+      translateBuiltInValue("Array.prototype", literal, context),
+      string(String(literal.elements.indexOf(node))),
+    ],
+    context,
   );
 };
 
@@ -2361,13 +2432,11 @@ const translateNode = (
     !(ts.isOptionalChain(node.parent) && node.parent.expression === node);
   const chain = isChainEnd ? translateOptionalChain(node, scope, context) : undefined;
   if (chain !== undefined) return chain;
-  if (
-    ts.isOmittedExpression(node) &&
-    ts.isArrayLiteralExpression(node.parent) &&
-    isPatternSource(node.parent, context)
-  ) {
-    return getUndefined(context);
-  }
+  const hole =
+    ts.isOmittedExpression(node) && ts.isArrayLiteralExpression(node.parent)
+      ? translatePatternHole(node, node.parent, scope, context)
+      : undefined;
+  if (hole !== undefined) return hole;
   if (
     ts.isParenthesizedExpression(node) ||
     ts.isAsExpression(node) ||

@@ -2608,6 +2608,34 @@ describe("errors", () => {
     expect((await checkModel(getSource("0"))).failure?.message).toContain("unexpected");
   });
 
+  it("reads a hole that a pattern takes from Array.prototype", async () => {
+    const getSource = (expected: string) => `
+      const [plain = 1] = [,];
+      Array.prototype[0] = "proto";
+      const [x = 23] = [,];
+      let assigned: unknown = 0;
+      [assigned = 3] = [,];
+      const take = ([taken = 7]: unknown[]) => taken;
+      const fromCall = take([,]);
+      const getAll = (): unknown[] => [plain, x, assigned, fromCall];
+      const all = getAll();
+      if (all[0] !== 1 || all[1] !== ${expected} || all[2] !== "proto" || all[3] !== "proto") {
+        throw new Error("unexpected");
+      }
+    `;
+    expect((await checkModel(getSource('"proto"'))).failure).toBeUndefined();
+    expect((await checkModel(getSource("23"))).failure?.message).toContain("unexpected");
+    expect(() =>
+      compile(`
+        const change = () => {
+          Array.prototype[1] = "late";
+          return 0;
+        };
+        const [first = change(), second] = [, ,];
+      `),
+    ).toThrow("tla-ts can't read the holes of an array that a pattern takes after code runs");
+  });
+
   it("runs the setter of an object literal or a class that a computed key picks", async () => {
     const getSource = (written: string) => `
       let log = "";
