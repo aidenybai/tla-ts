@@ -23,7 +23,7 @@ export interface UpolynomialFactors {
   degrees: number[];
 }
 
-const mkFactors = (): UpolynomialFactors => ({ constant: 1n, factors: [], degrees: [] });
+export const mkFactors = (): UpolynomialFactors => ({ constant: 1n, factors: [], degrees: [] });
 
 const getTotalFactors = (fs: UpolynomialFactors) =>
   fs.degrees.reduce((total, degree) => total + degree, 0);

@@ -105,24 +105,6 @@ export class Explain {
     });
   }
 
-  private getMaxVarOfPolys(polynomials: readonly Polynomial[]) {
-    let result = NULL_VAR;
-    for (const polynomial of polynomials) {
-      const variable = this.pm.maxVar(polynomial);
-      if (result === NULL_VAR || variable > result) result = variable;
-    }
-    return result;
-  }
-
-  private getMaxVarOfLiterals(literals: readonly number[]) {
-    let result = NULL_VAR;
-    for (const literal of literals) {
-      const atom = this.context.atoms.getAtom(literal);
-      if (atom !== null && (result === NULL_VAR || atom.maxVar > result)) result = atom.maxVar;
-    }
-    return result;
-  }
-
   private addAssumption(kind: IneqKind, polynomial: Polynomial, isNeg = false) {
     const boolVar = this.context.atoms.mkIneqAtom(kind, [polynomial], [false]);
     this.addLiteral(2 * boolVar + (isNeg ? 0 : 1));
@@ -508,7 +490,7 @@ export class Explain {
   private explainCore(literals: readonly number[]) {
     if (literals.length === 0) return;
     const polynomials = [...this.collectPolys(literals), ...this.lowerStagePolys];
-    const maxVar = this.getMaxVarOfPolys(polynomials);
+    const maxVar = this.pm.getMaxVarOfPolys(polynomials);
     this.project(this.elimVanishingAll(polynomials), maxVar);
   }
 
@@ -517,7 +499,7 @@ export class Explain {
     const core = this.core;
     core.reset();
     for (const literal of literals) core.push(literal);
-    const max = this.getMaxVarOfLiterals(literals);
+    const max = this.context.atoms.getMaxVarOfLiterals(literals);
     this.normalizeCore(core, max);
     this.simplifyCore(core, max);
     this.explainCore(core.literals);
@@ -525,7 +507,10 @@ export class Explain {
   }
 
   computeConflictExplanation(literals: readonly number[], result: ScopedLiterals) {
-    if (this.getMaxVarOfLiterals(literals) === 0 && this.context.sample[0] === undefined) {
+    if (
+      this.context.atoms.getMaxVarOfLiterals(literals) === 0 &&
+      this.context.sample[0] === undefined
+    ) {
       result.reset();
       return;
     }
@@ -555,7 +540,7 @@ export class Explain {
     const polynomials = this.collectPolys(literals);
     try {
       if (polynomials.length > 0)
-        this.addCellLiterals(polynomials, this.getMaxVarOfPolys(polynomials) + 1, true);
+        this.addCellLiterals(polynomials, this.pm.getMaxVarOfPolys(polynomials) + 1, true);
     } finally {
       this.resetResult();
     }

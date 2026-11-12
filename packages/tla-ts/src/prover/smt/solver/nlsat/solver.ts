@@ -139,17 +139,8 @@ export class NlsatSolver {
     return linearize([this.lemmaAssumptions]);
   }
 
-  private getMaxVar(clause: Clause) {
-    let result = NULL_VAR;
-    for (const literal of clause.literals) {
-      const atom = this.atoms.getAtom(literal);
-      if (atom !== null && (result === NULL_VAR || atom.maxVar > result)) result = atom.maxVar;
-    }
-    return result;
-  }
-
   private getClauseDegree(clause: Clause) {
-    if (this.getMaxVar(clause) === NULL_VAR) return 0;
+    if (this.atoms.getMaxVarOfLiterals(clause.literals) === NULL_VAR) return 0;
     let max = 0;
     for (const literal of clause.literals) {
       const atom = this.atoms.getAtom(literal);
@@ -191,13 +182,13 @@ export class NlsatSolver {
   }
 
   private addClauseToWatches(clause: Clause) {
-    const variable = this.getMaxVar(clause);
+    const variable = this.atoms.getMaxVarOfLiterals(clause.literals);
     if (variable !== NULL_VAR) this.watches[variable].push(clause);
     else this.bwatches[Math.max(...clause.literals.map((literal) => literal >> 1))].push(clause);
   }
 
   private delClause(clause: Clause) {
-    const variable = this.getMaxVar(clause);
+    const variable = this.atoms.getMaxVarOfLiterals(clause.literals);
     const watches =
       variable !== NULL_VAR
         ? this.watches[variable]
@@ -720,12 +711,7 @@ export class NlsatSolver {
     this.resetMarks();
     const literals = this.lemma.literals;
     if (!isDecision) {
-      let maxVar = NULL_VAR;
-      for (const literal of literals) {
-        const variable = this.atoms.getMaxVar(literal);
-        if (variable !== NULL_VAR && (maxVar === NULL_VAR || variable > maxVar)) maxVar = variable;
-      }
-      this.undoUntilStage(maxVar);
+      this.undoUntilStage(this.atoms.getMaxVarOfLiterals(literals));
       return this.mkClause(literals, true, this.lemmaAssumptions);
     }
     if (literals.every((literal) => this.atoms.getAtom(literal) === null)) {
@@ -750,11 +736,14 @@ export class NlsatSolver {
     return level === -1 ? this.scopeLevel - 1 : level;
   }
 
+  private isRootLiteral(literal: number) {
+    const atom = this.atoms.getAtom(literal);
+    return atom !== null && !isIneqAtom(atom);
+  }
+
   private canReorder() {
     return [...this.learned, ...this.clauses].every((clause) =>
-      clause.literals.every(
-        (literal) => this.atoms.getAtom(literal)?.kind.startsWith("ROOT") !== true,
-      ),
+      clause.literals.every((literal) => !this.isRootLiteral(literal)),
     );
   }
 
@@ -803,8 +792,7 @@ export class NlsatSolver {
   private reorder(permutation: readonly number[]) {
     let kept = 0;
     for (const clause of this.learned) {
-      if (clause.literals.some((literal) => this.atoms.getAtom(literal)?.kind.startsWith("ROOT")))
-        this.delClause(clause);
+      if (clause.literals.some((literal) => this.isRootLiteral(literal))) this.delClause(clause);
       else this.learned[kept++] = clause;
     }
     this.learned.length = kept;
@@ -844,7 +832,7 @@ export class NlsatSolver {
 
   private reattachArithClauses(clauses: readonly Clause[]) {
     for (const clause of clauses) {
-      const variable = this.getMaxVar(clause);
+      const variable = this.atoms.getMaxVarOfLiterals(clause.literals);
       if (variable !== NULL_VAR) this.watches[variable].push(clause);
     }
   }
