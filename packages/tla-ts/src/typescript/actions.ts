@@ -5005,6 +5005,7 @@ const translateConstruction = (
   continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const instance = translateObjectValue(expression, path.scope, context);
+  const newTarget = getConstruction(expression, context)?.newTarget;
   const isNullBase = ts.isConstructorDeclaration(constructor) && isNullBased(constructor.parent);
   const isDerived =
     isNullBase ||
@@ -5019,7 +5020,12 @@ const translateConstruction = (
     expression,
     constructor,
     getConstruction(expression, context)?.arguments ?? [],
-    { value: instance, method: constructor },
+    {
+      value: instance,
+      method: constructor,
+      newTarget:
+        newTarget === undefined ? undefined : translateExpression(newTarget, path.scope, context),
+    },
     path,
     context,
     frame,
@@ -5103,7 +5109,7 @@ const translateSuperCall = (
     expression,
     called,
     expression.arguments,
-    { value: receiver.value, method: called },
+    { value: receiver.value, method: called, newTarget: receiver.newTarget },
     path,
     context,
     frame,

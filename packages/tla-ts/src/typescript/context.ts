@@ -1396,18 +1396,21 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
       ? undefined
       : getSymbol(nameNode, context.checker);
   const sourceFile = node.getSourceFile();
-  // A new constructs the function, or an Object function reads or changes it as an object.
+  // A new or Reflect.construct constructs the function or takes it as newTarget, or an Object
+  // function reads or changes it as an object.
   const isNewTarget = (child: ts.Node): boolean => {
-    const callee = getConstruction(child, context)?.callee;
-    const target =
+    const construction = getConstruction(child, context);
+    const targets =
       ts.isCallExpression(child) &&
       ts.isPropertyAccessExpression(child.expression) &&
       getBuiltIn(child.expression.expression, context) === "Object" &&
       OWN_PROPERTY_FUNCTIONS.has(child.expression.name.text)
-        ? child.arguments.at(0)
-        : callee;
+        ? child.arguments.slice(0, 1)
+        : construction === undefined
+          ? []
+          : [construction.callee, construction.newTarget];
     return (
-      (target !== undefined && getSymbol(skipCasts(target), context.checker) === symbol) ||
+      targets.some((target) => getSymbol(skipCasts(target), context.checker) === symbol) ||
       (ts.forEachChild(child, (inner) => isNewTarget(inner) || undefined) ?? false)
     );
   };

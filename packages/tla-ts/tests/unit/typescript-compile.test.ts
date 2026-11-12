@@ -3703,6 +3703,51 @@ describe("errors", () => {
     expect((await checkModel(sealed)).failure?.message).toContain("not sealed");
   });
 
+  it("reads new.target as the newTarget of a construction and undefined in a call", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const check = (actual: unknown, expected: unknown, message: string) => {
+        if (actual !== expected) throw new Error(message);
+      };
+      const state: { target: unknown; arrows: number } = { target: null, arrows: 0 };
+      function f(this: unknown) {
+        state.target = new.target;
+        if ((() => new.target)() !== undefined) state.arrows += 1;
+      }
+      f();
+      check(state.target, undefined, "call");
+      new (f as unknown as new () => object)();
+      check(state.target, f, "new");
+      const custom = function () {};
+      Reflect.construct(f, [], custom);
+      check(state.target, custom, "newTarget");
+      check(state.arrows, 2, "arrows");
+      class Base {
+        constructor() {
+          state.target = new.target;
+        }
+      }
+      class Child extends Base {
+        constructor() {
+          super();
+        }
+      }
+      new Child();
+      check(state.target, Child, "super");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const call = source.replace('state.target, undefined, "call"', 'state.target, f, "call"');
+    expect((await checkModel(call)).failure?.message).toContain('"call"');
+    const target = source.replace(
+      'state.target, custom, "newTarget"',
+      'state.target, f, "newTarget"',
+    );
+    expect((await checkModel(target)).failure?.message).toContain('"newTarget"');
+    const derived = source.replace('state.target, Child, "super"', 'state.target, Base, "super"');
+    expect((await checkModel(derived)).failure?.message).toContain('"super"');
+  });
+
   it("constructs through Reflect.construct as new does, with newTarget's prototype", async () => {
     const source = `
       const holder = { seen: 0 };
@@ -3973,12 +4018,23 @@ describe("errors", () => {
     expect(result.status).toBe("deadlock");
   });
 
-  it("rejects new.target rather than read it as the function it's in", () => {
+  it("reads new.target in a call as undefined rather than the function it's in", async () => {
+    const source = `
+      const box = { size: 1 };
+      const same = (actual: unknown) => actual === undefined;
+      function run() {
+        return same(new.target);
+      }
+      if (!run()) throw new Error("called");
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("if (!run())", "if (run())");
+    expect((await checkModel(wrong)).failure?.message).toContain('"called"');
     expect(() =>
       compile(
-        "const box = { size: 1 };\nconst same = (actual: unknown) => actual === undefined;\nfunction run() {\n  return same(new.target);\n}\nconst result = run();",
+        "const box = { size: 1 };\nfunction run() {\n  const read = () => new.target;\n  return read();\n}\nconst result = run();",
       ),
-    ).toThrow("spec.ts:4:15 Unsupported expression: new.target");
+    ).toThrow("spec.ts:3:22 Unsupported expression: new.target");
   });
 
   it("writes TLC's least integer as a literal", async () => {

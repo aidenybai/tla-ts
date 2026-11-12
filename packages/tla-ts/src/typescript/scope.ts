@@ -50,6 +50,8 @@ export interface Receiver {
     | ts.ClassStaticBlockDeclaration
     | ts.PropertyDeclaration
     | HeapFunction;
+  // The newTarget of a construction, which new.target reads in the constructor.
+  newTarget?: Expression;
 }
 
 export interface Bound {

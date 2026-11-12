@@ -2491,6 +2491,33 @@ const translateNode = (
         ts.isPropertyDeclaration(ancestor),
     ) === scope.receiver?.method;
   if (isReceived && scope.receiver !== undefined) return scope.receiver.value;
+  // new.target, which a construction gives its constructor and a call gives as undefined. An arrow
+  // function reads its owner's, so only one that runs where it's made can read it.
+  if (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.NewKeyword) {
+    const owner = ts.findAncestor(
+      node.parent,
+      (ancestor) =>
+        (ts.isFunctionLike(ancestor) && !ts.isArrowFunction(ancestor)) ||
+        ts.isClassStaticBlockDeclaration(ancestor) ||
+        ts.isPropertyDeclaration(ancestor) ||
+        (ts.isArrowFunction(ancestor) &&
+          !(
+            ts.isParenthesizedExpression(ancestor.parent) &&
+            ts.isCallExpression(ancestor.parent.parent) &&
+            ancestor.parent.parent.expression === ancestor.parent
+          )),
+    );
+    if (owner === undefined || ts.isArrowFunction(owner)) {
+      throw new TlaTypeScriptError(`Unsupported expression: ${node.getText()}`, node);
+    }
+    if (scope.receiver?.method === owner) {
+      return scope.receiver.newTarget ?? getUndefined(context);
+    }
+    if (ts.isConstructorDeclaration(owner)) {
+      throw new TlaTypeScriptError(`Unsupported expression: ${node.getText()}`, node);
+    }
+    return getUndefined(context);
+  }
   if (ts.isBigIntLiteral(node)) {
     const value = BigInt(node.text.slice(0, -1).replaceAll("_", ""));
     if (value > 2n ** 31n - 1n) {
