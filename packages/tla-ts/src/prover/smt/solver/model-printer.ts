@@ -3,6 +3,7 @@ import {
   type AstManager,
   FAMILY_ARITH,
   FAMILY_BV,
+  FAMILY_SEQ,
   FAMILY_USER,
   KIND_APP,
   KIND_QUANTIFIER,
@@ -18,6 +19,7 @@ import {
   OP_IDIV0,
   OP_MOD0,
   OP_POWER0,
+  OP_SEQ_NTH_U,
 } from "./ast";
 import { ObjHashtable } from "./hashtable";
 import type { ProtoModel } from "./proto-model";
@@ -45,6 +47,7 @@ const CONSIDERED_UNINTERPRETED_OPS = new Map([
     new Set([OP_NEG_ROOT, OP_U_ASIN, OP_U_ACOS, OP_DIV0, OP_IDIV0, OP_MOD0, OP_POWER0]),
   ],
   [FAMILY_BV, new Set([OP_BSDIV0, OP_BUDIV0, OP_BSREM0, OP_BUREM0, OP_BSMOD0])],
+  [FAMILY_SEQ, new Set([OP_SEQ_NTH_U])],
 ]);
 
 const isConsideredUninterpreted = (manager: AstManager, decl: number) => {

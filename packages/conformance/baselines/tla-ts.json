@@ -5,7 +5,6 @@
   "tlapm/backends/z3/z3test/regressions/longrunning/6117-3.smt2": "time-limit",
   "tlapm/backends/z3/z3test/regressions/smt2/3042.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/opt_nlsat_uf_fallback.smt2": "text-mismatch",
-  "tlapm/backends/z3/z3test/regressions/smt2/seq_foldl_nth_model_validation.smt2": "text-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/sine9.smt2": "message-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/string-ops.smt2": "text-mismatch",
   "tlapm/backends/z3/z3test/regressions/smt2/t114.smt2": "text-mismatch",

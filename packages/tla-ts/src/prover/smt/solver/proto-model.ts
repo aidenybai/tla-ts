@@ -1,7 +1,6 @@
 // Ported from Z3 (src/smt/proto_model/proto_model.cpp, src/model/func_interp.cpp,
 // src/model/value_factory.cpp, src/model/model_core.cpp, src/model/datatype_factory.cpp), MIT
 // license, see z3-license.txt.
-import { SmtUnsupportedError } from "../../../errors";
 import { TermEnumeration } from "./term-enumeration";
 import {
   AstManager,
@@ -21,6 +20,7 @@ import {
   OP_ITE,
   OP_SEQ_TO_RE,
   OP_STORE,
+  QUANTIFIER_LAMBDA,
   SORT_BOOL,
   isArithSort,
 } from "./ast";
@@ -241,19 +241,40 @@ export class FuncInterp {
     return this.entries.length + 1 === 2;
   }
 
-  // get_array_interp, without the lambda Z3 makes of an interpretation that is not ground.
+  // get_array_interp: an interpretation that is not ground becomes a lambda.
   getArrayInterp(decl: number) {
     const manager = this.manager;
     const elseExpr = this.elseExpr;
     if (elseExpr === null) return undefined;
+    const domain = manager.funcDecls[decl].domain;
     const isGround =
       manager.isGround(elseExpr) &&
       this.entries.every(
         (entry) =>
           manager.isGround(entry.result) && entry.args.every((arg) => manager.isGround(arg)),
       );
-    if (!isGround) throw new SmtUnsupportedError("lambdas");
-    const sort = manager.mkArraySort([...manager.funcDecls[decl].domain, manager.sorts[elseExpr]]);
+    if (!isGround) {
+      const interp = this.getInterp();
+      if (interp === null) return undefined;
+      const subst = new VarSubst(manager, false);
+      const body = subst.apply(
+        interp,
+        domain.map((sort, index) => manager.mkVar(this.arity - index - 1, sort)),
+      );
+      const lambda = manager.mkQuantifier({
+        kind: QUANTIFIER_LAMBDA,
+        sorts: [...domain],
+        names: domain.map((_, index) => index),
+        body,
+        patterns: [],
+        noPatterns: [],
+        weight: 0,
+        qid: "",
+      });
+      manager.decRef(body);
+      return lambda;
+    }
+    const sort = manager.mkArraySort([...domain, manager.sorts[elseExpr]]);
     return this.entries.reduce(
       (array, entry) =>
         entry.result === elseExpr
