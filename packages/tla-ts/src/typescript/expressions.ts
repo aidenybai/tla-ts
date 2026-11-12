@@ -36,6 +36,7 @@ import {
   getPrivateMember,
   getPrivateKey,
   isHeapFunction,
+  isInertValue,
   isMethodCall,
   share,
   translateString,
@@ -63,7 +64,7 @@ import {
   getSuperLookup,
   isCreation,
   isDescription,
-  isElementDescription,
+  getDescribedValue,
   isFromEntries,
   isSymbolCall,
   isNewObject,
@@ -690,25 +691,47 @@ const translateCall = (
         context,
       );
     }
-    // A number or a boolean converts to an object with no own properties.
-    if (isNumberLike(argument, context) || isBooleanLike(argument, context)) return tuple([]);
-    // An array or a string that isn't on the heap has no properties that symbols key.
+    // A number, a boolean, or a symbol converts to an object with no own properties.
     if (
-      method === "getOwnPropertySymbols" &&
-      ["sequence", "string"].includes(getKind(argument, context))
+      isNumberLike(argument, context) ||
+      isBooleanLike(argument, context) ||
+      isEvery(context.checker.getTypeAtLocation(argument), ts.TypeFlags.ESSymbolLike)
     ) {
       return tuple([]);
     }
-    if (getKind(argument, context) === "sequence" && method === "getOwnPropertyNames") {
+    const kind = getKind(argument, context);
+    // An array or a string that isn't on the heap has no properties that symbols key.
+    if (method === "getOwnPropertySymbols" && (kind === "sequence" || kind === "string")) {
+      return tuple([]);
+    }
+    if (kind === "sequence" && method === "getOwnPropertyNames") {
       return useJavaScript(
         "ElementNames",
         [translateExpression(argument, scope, context)],
         context,
       );
     }
-    if (getKind(argument, context) === "sequence") {
+    // A string converts to a String object, which holds its characters and its length.
+    if (kind === "string" && method === "getOwnPropertyNames") {
+      context.prelude.add("Null");
+      return useJavaScript(
+        "OwnKeys",
+        [
+          useJavaScript(
+            "WrapperObject",
+            [identifier("Null"), translateExpression(argument, scope, context)],
+            context,
+          ),
+        ],
+        context,
+      );
+    }
+    if (kind === "sequence" || kind === "string") {
+      const value = translateExpression(argument, scope, context);
       return share(
-        translateExpression(argument, scope, context),
+        kind === "sequence"
+          ? value
+          : useJavaScript("StringSplit", [value, string(""), getUndefined(context)], context),
         "elements",
         context,
         (elements) => {
@@ -806,26 +829,42 @@ const translateCall = (
     }
     return created;
   }
+  // A number, a boolean, or a symbol converts to an object with no own properties.
+  const [target, key] = node.arguments;
+  if (
+    global === "Object" &&
+    method === "getOwnPropertyDescriptor" &&
+    target !== undefined &&
+    key !== undefined &&
+    isInertValue(key) &&
+    (isInertValue(target) || isSymbolCall(target, context)) &&
+    (isNumberLike(target, context) ||
+      isBooleanLike(target, context) ||
+      isEvery(context.checker.getTypeAtLocation(target), ts.TypeFlags.ESSymbolLike))
+  ) {
+    return getUndefined(context);
+  }
   if (isDescription(node, context)) {
     const described = scope.allocated.get(node);
     if (described === undefined) {
       throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
     }
     const key = translatePropertyKey(node.arguments[1], scope, context);
+    const describedValue = getDescribedValue(node, context);
     return ifExpression(
-      isElementDescription(node, context)
+      describedValue === undefined
         ? useJavaScript(
-            "HasOwnElement",
-            [translateExpression(node.arguments[0], scope, context), key],
-            context,
-          )
-        : useJavaScript(
             "HasOwn",
             [
               getHeap(scope, node, context),
               translateObjectValue(node.arguments[0], scope, context),
               key,
             ],
+            context,
+          )
+        : useJavaScript(
+            `HasOwn${describedValue}`,
+            [translateExpression(node.arguments[0], scope, context), key],
             context,
           ),
       described,

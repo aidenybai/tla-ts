@@ -325,14 +325,16 @@ const translateUnordered = (
     const kind = getKind(argument, context);
     if (
       isBuiltInObject(argument, context) ||
-      (context.heap !== undefined && (kind === "object" || kind === "sequence"))
+      (context.heap !== undefined &&
+        (kind === "object" || kind === "sequence" || kind === "string"))
     ) {
       return undefined;
     }
-    // A number or a boolean converts to an object with no own properties.
+    // A number, a boolean, or a symbol converts to an object with no own properties.
     if (
       isNumberLike(argument, context) ||
-      isBooleanType(context.checker.getTypeAtLocation(argument))
+      isBooleanType(context.checker.getTypeAtLocation(argument)) ||
+      isEvery(context.checker.getTypeAtLocation(argument), ts.TypeFlags.ESSymbolLike)
     ) {
       return { set: set([]), isMapped: false };
     }

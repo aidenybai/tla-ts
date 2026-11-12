@@ -2502,6 +2502,11 @@ WrapperObject(prototype, primitive) ==
       extensible |-> TRUE, prototype |-> prototype, isCallable |-> FALSE, isConstructor |-> FALSE,
       isOpaque |-> FALSE, privates |-> <<>>, primitive |-> primitive]
 
+\\* The description of a property of the String object that a string converts to.
+DescribeString(text, key) == DescribeObject(WrapperObject(Null, text), key)
+
+HasOwnString(text, key) == key \\in DOMAIN WrapperObject(Null, text).values
+
 \\* A Date's time value is NaN, or the day since 1970 and the milliseconds within it, so that every
 \\* time value that TimeClip allows, up to 8.64e15 milliseconds, fits TLC's integers. tla-ts takes
 \\* local time to be UTC.

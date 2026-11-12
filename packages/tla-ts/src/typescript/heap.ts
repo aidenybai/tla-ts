@@ -1103,17 +1103,19 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   }
   if (ts.isCallExpression(node) && isDescription(node, context)) {
     const key = translatePropertyKey(node.arguments[1], scope, context);
-    const described = isElementDescription(node, context)
-      ? useJavaScript(
-          "DescribeElement",
-          [translateExpression(node.arguments[0], scope, context), key],
-          context,
-        )
-      : useJavaScript(
-          "Describe",
-          [heap, translateObjectValue(node.arguments[0], scope, context), key],
-          context,
-        );
+    const describedValue = getDescribedValue(node, context);
+    const described =
+      describedValue === undefined
+        ? useJavaScript(
+            "Describe",
+            [heap, translateObjectValue(node.arguments[0], scope, context), key],
+            context,
+          )
+        : useJavaScript(
+            `Describe${describedValue}`,
+            [translateExpression(node.arguments[0], scope, context), key],
+            context,
+          );
     return useJavaScript("Allocate", [heap, described], context);
   }
   if (ts.isCallExpression(node) && isFromEntries(node, context)) {
@@ -1161,10 +1163,14 @@ const isObjectValue = (node: ts.ObjectLiteralExpression, context: Context) => {
   );
 };
 
-// A description of a property of an array that a sequence holds, not of a built-in object.
-export const isElementDescription = (node: ts.CallExpression, context: Context) =>
-  getKind(node.arguments[0], context) === "sequence" &&
-  !isBuiltInObject(node.arguments[0], context);
+// What a description describes a property of where it isn't an object on the heap: an array that
+// a sequence holds, or the String object that Object.getOwnPropertyDescriptor converts a string to.
+export const getDescribedValue = (node: ts.CallExpression, context: Context) => {
+  const kind = isBuiltInObject(node.arguments[0], context)
+    ? "object"
+    : getKind(node.arguments[0], context);
+  return kind === "sequence" ? "Element" : kind === "string" ? "String" : undefined;
+};
 
 // Object.getOwnPropertyDescriptor, or Reflect's, which only differs where the target isn't an
 // object.
@@ -1174,7 +1180,9 @@ export const isDescription = (node: ts.Node, context: Context) =>
   node.expression.name.text === "getOwnPropertyDescriptor" &&
   node.arguments.length >= 2 &&
   (["object", "sequence"].includes(getKind(node.arguments[0], context)) ||
-    isBuiltInObject(node.arguments[0], context));
+    isBuiltInObject(node.arguments[0], context) ||
+    (node.expression.expression.getText() === "Object" &&
+      getKind(node.arguments[0], context) === "string"));
 
 // Object.create, with a prototype that tla-ts can tell is an object or null.
 export const isCreation = (node: ts.Node, context: Context) => {
@@ -2432,6 +2440,47 @@ export const isObjectChange = (node: ts.Node, context: Context): node is MethodC
       isDescriptorsRead(node, context))) ||
     isConstruct(node));
 
+// The Object functions that convert their first argument to an object, which throws a TypeError for
+// null and undefined, and those that give a primitive back, or test it, without converting it.
+const COERCING_READS = new Set([
+  "getOwnPropertyDescriptor",
+  "getOwnPropertyDescriptors",
+  "getOwnPropertyNames",
+  "getOwnPropertySymbols",
+  "keys",
+  "values",
+  "entries",
+  "getPrototypeOf",
+]);
+const PRIMITIVE_PASSES = new Set([
+  "freeze",
+  "seal",
+  "preventExtensions",
+  "isExtensible",
+  "isFrozen",
+  "isSealed",
+]);
+
+// A call of an Object function on a primitive whose value nothing reads, such as
+// Object.getOwnPropertyNames(0), with arguments that can't run code.
+export const getPrimitiveObjectCall = (node: ts.Node, context: Context) => {
+  if (!isMethodCall(node) || getBuiltIn(node.expression.expression, context) !== "Object") {
+    return undefined;
+  }
+  const method = node.expression.name.text;
+  const argument = node.arguments.at(0);
+  const names =
+    argument === undefined
+      ? undefined
+      : getTypeNames(context.checker.getTypeAtLocation(argument), context.checker);
+  return argument !== undefined &&
+    (COERCING_READS.has(method) || PRIMITIVE_PASSES.has(method)) &&
+    node.arguments.every(isInertValue) &&
+    names?.every((name) => name !== "object" && name !== "function")
+    ? { argument, method, isCoercing: COERCING_READS.has(method) }
+    : undefined;
+};
+
 // The errors that JavaScript itself may throw where a node runs, which instanceof checks for: a
 // failed definition or Reflect.construct, a new of a value that isn't a constructor, or a reduce
 // of an empty array, the RangeError of an array's invalid length, and a Date method's TypeError
@@ -2470,6 +2519,7 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
     return ["ReferenceError"];
   }
   return isFallible ||
+    getPrimitiveObjectCall(node, context)?.isCoercing === true ||
     (isObjectChange(node, context) && isConstruct(node)) ||
     isRevocable(node, context) ||
     ts.isNewExpression(node) ||

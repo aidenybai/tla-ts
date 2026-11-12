@@ -130,6 +130,7 @@ import {
   getGetterCall,
   translateNewBufferOf,
   isRevoke,
+  getPrimitiveObjectCall,
   isObjectChange,
   getDateCall,
   getDateSetter,
@@ -4353,6 +4354,33 @@ const translateExpressionStatement = (
             )
           : continueWith(after),
     );
+  }
+  // An Object function on a primitive changes nothing, and throws only where it converts null or
+  // undefined to an object.
+  const primitiveCall = getPrimitiveObjectCall(expression, context);
+  if (primitiveCall !== undefined) {
+    const value = translateExpression(primitiveCall.argument, path.scope, context);
+    context.prelude.add("Null");
+    const done = primitiveCall.isCoercing
+      ? ifThenElse(
+          apply("\\in", [value, set([getUndefined(context), identifier("Null")])]),
+          throwTypeError(path, expression, context, frame),
+          continueWith(path),
+        )
+      : continueWith(path);
+    // TypeScript can't see a callback assign a variable without a type an object.
+    return context.heap === undefined
+      ? done
+      : ifThenElse(
+          useJavaScript("IsRef", [value], context),
+          leaf(
+            apply("Assert", [
+              boolean(false),
+              string(`tla-ts can't tell what Object.${primitiveCall.method} reads`),
+            ]),
+          ),
+          done,
+        );
   }
   // A call's value runs though the statement drops it, so that a getter it reads, which tla-ts
   // can't call, stops the check: TLC would read only a value that something uses.

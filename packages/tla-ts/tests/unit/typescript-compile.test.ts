@@ -2468,6 +2468,48 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("converts a primitive that an Object function reads to an object", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      let count = 0;
+      try { Object.getOwnPropertyNames(undefined); } catch (error) { if (error instanceof TypeError) count += 1; }
+      try { Object.getOwnPropertyDescriptor(null, "foo"); } catch (error) { if (error instanceof TypeError) count += 10; }
+      try { Object.preventExtensions(null); } catch { count += 100; }
+      Object.getOwnPropertyDescriptor(true, "foo");
+      Object.getOwnPropertyNames("abc");
+      if (count !== 11) throw new Error("count");
+      if (Object.getOwnPropertyNames("ab").join() !== "0,1,length") throw new Error("names");
+      if (Object.keys("ab").join() !== "0,1") throw new Error("keys");
+      if (Object.values("ab").join() !== "a,b") throw new Error("values");
+      const entries = Object.entries("ab");
+      if (entries[1][0] !== "1" || entries[1][1] !== "b") throw new Error("entries");
+      if (Object.getOwnPropertySymbols(Symbol()).length !== 0) throw new Error("symbols");
+      if (Object.getOwnPropertyDescriptor(Symbol("foo"), "description") !== undefined) throw new Error("symbol");
+      if (Object.getOwnPropertyDescriptor(1, "x") !== undefined) throw new Error("number");
+      const described = Object.getOwnPropertyDescriptor("foo", "0");
+      if (described?.value !== "f" || described.writable || !described.enumerable) throw new Error("index");
+      const length = Object.getOwnPropertyDescriptor("foo", "length");
+      if (length?.value !== 3 || length.enumerable) throw new Error("length");
+      const missing = Object.getOwnPropertyDescriptor("", "0");
+      if (missing !== undefined) throw new Error("missing");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = [
+      ["count !== 11", "count !== 111"],
+      ['"a,b"', '"b,a"'],
+      ["length?.value !== 3", "length?.value !== 2"],
+    ];
+    for (const [from, to] of wrong) {
+      expect((await checkModel(source.replace(from, to))).failure).toBeDefined();
+    }
+    const thrown = source.replace(
+      'Object.getOwnPropertyNames("abc");',
+      "Object.getOwnPropertyNames(undefined);",
+    );
+    expect((await checkModel(thrown)).failure).toBeDefined();
+  });
+
   it("gives new Object's object argument back and wraps a primitive one", async () => {
     const result = await checkModel(`
       declare global {
