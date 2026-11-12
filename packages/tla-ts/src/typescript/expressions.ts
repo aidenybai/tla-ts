@@ -2868,15 +2868,41 @@ const translateNode = (
     return getUndefined(context);
   }
   // A static field's or static block's this is its class, which an arrow function there reads
-  // wherever it runs, where nothing assigns the class's name.
-  const staticClass =
+  // wherever it runs, where nothing assigns the class's name. A class expression has the name of
+  // the variable that it initializes only once the class is made, so only an arrow function that
+  // is a static field's value reads it, where making the class runs no code that could call it.
+  const isStatic =
     thisOwner !== undefined &&
     (ts.isClassStaticBlockDeclaration(thisOwner) ||
       (ts.isPropertyDeclaration(thisOwner) &&
-        (ts.getCombinedModifierFlags(thisOwner) & ts.ModifierFlags.Static) !== 0)) &&
-    ts.isClassDeclaration(thisOwner.parent)
-      ? thisOwner.parent.name
+        (ts.getCombinedModifierFlags(thisOwner) & ts.ModifierFlags.Static) !== 0));
+  const heldClass =
+    isStatic &&
+    ts.isPropertyDeclaration(thisOwner) &&
+    thisOwner.initializer !== undefined &&
+    ts.isArrowFunction(thisOwner.initializer) &&
+    ts.findAncestor(node.parent, ts.isArrowFunction) === thisOwner.initializer &&
+    ts.isClassExpression(thisOwner.parent) &&
+    thisOwner.parent.members.every(
+      (member) =>
+        !ts.isClassStaticBlockDeclaration(member) &&
+        (member.name === undefined || !ts.isComputedPropertyName(member.name)) &&
+        !(
+          ts.isPropertyDeclaration(member) &&
+          (ts.getCombinedModifierFlags(member) & ts.ModifierFlags.Static) !== 0 &&
+          member.initializer !== undefined &&
+          !ts.isArrowFunction(member.initializer) &&
+          !ts.isFunctionExpression(member.initializer) &&
+          !ts.isLiteralExpression(member.initializer)
+        ),
+    ) &&
+    ts.isVariableDeclaration(thisOwner.parent.parent) &&
+    thisOwner.parent.parent.initializer === thisOwner.parent &&
+    ts.isIdentifier(thisOwner.parent.parent.name)
+      ? thisOwner.parent.parent.name
       : undefined;
+  const staticClass =
+    isStatic && ts.isClassDeclaration(thisOwner.parent) ? thisOwner.parent.name : heldClass;
   const staticSymbol = staticClass && getSymbol(staticClass, context.checker);
   if (
     staticClass !== undefined &&
