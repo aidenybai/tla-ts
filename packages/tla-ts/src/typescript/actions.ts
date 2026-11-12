@@ -8756,6 +8756,72 @@ const isMemberUpdate = (node: ts.BinaryExpression) => {
   );
 };
 
+const SHORT_CIRCUITS = new Set([
+  ts.SyntaxKind.AmpersandAmpersandToken,
+  ts.SyntaxKind.BarBarToken,
+  ts.SyntaxKind.QuestionQuestionToken,
+]);
+
+// A name or a literal, or what a statement already evaluated, which reads no code, as does a comma
+// of them.
+const isPlainOperand = (node: ts.Expression, results: Scope["results"]): boolean =>
+  results.has(node) ||
+  ts.isIdentifier(node) ||
+  ts.isLiteralExpression(node) ||
+  [ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword, ts.SyntaxKind.NullKeyword].includes(
+    node.kind,
+  ) ||
+  (ts.isParenthesizedExpression(node) && isPlainOperand(node.expression, results)) ||
+  (ts.isBinaryExpression(node) &&
+    node.operatorToken.kind === ts.SyntaxKind.CommaToken &&
+    isPlainOperand(node.left, results) &&
+    isPlainOperand(node.right, results));
+
+// The reads of the name that a hoisted assignment writes, in the operands that its operators
+// evaluate before it, as they are before it runs.
+const getEarlierReads = (
+  hoisted: ts.BinaryExpression | Increment,
+  root: ts.Expression,
+  scope: Scope,
+  context: Context,
+) => {
+  const written = getWrittenOperand(hoisted);
+  const symbol =
+    written !== undefined && ts.isIdentifier(written)
+      ? getSymbol(written, context.checker)
+      : undefined;
+  const getEarlier = (node: ts.Node): ts.Expression[] => {
+    const parent = node.parent;
+    if (node === root || parent === undefined) return [];
+    const isOperand =
+      ts.isBinaryExpression(parent) &&
+      parent.right === node &&
+      !(
+        parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+      );
+    return [...(isOperand ? [parent.left] : []), ...getEarlier(parent)];
+  };
+  // Each earlier operand is plain, so it reads only names.
+  const getNames = (node: ts.Expression): ts.Identifier[] =>
+    scope.results.has(node)
+      ? []
+      : ts.isIdentifier(node)
+        ? [node]
+        : ts.isParenthesizedExpression(node)
+          ? getNames(node.expression)
+          : [];
+  return symbol === undefined
+    ? []
+    : getEarlier(hoisted)
+        .flatMap(getNames)
+        .filter((name) => getSymbol(name, context.checker) === symbol)
+        .map((name): [ts.Expression, Expression] => [
+          name,
+          translateExpression(name, scope, context),
+        ]);
+};
+
 // The assignment that a statement evaluates first, inside an expression, which can run as a
 // statement before it, since nothing the statement evaluates before it sees the change.
 const getLeadingAssignment = (
@@ -8787,8 +8853,8 @@ const getLeadingAssignment = (
   if (ts.isConditionalExpression(node))
     return getLeadingAssignment(node.condition, results, context);
   // A call evaluates its callee first, which reading a getter could make see the change.
-  if (ts.isCallExpression(node)) {
-    const first = node.arguments.at(0);
+  if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+    const first = node.arguments?.at(0);
     return first !== undefined && isPlainCallee(node.expression, context)
       ? getLeadingAssignment(first, results, context)
       : undefined;
@@ -8798,7 +8864,17 @@ const getLeadingAssignment = (
   if (kind !== ts.SyntaxKind.EqualsToken) {
     const isAssignment =
       kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
-    if (!isAssignment) return getLeadingAssignment(node.left, results, context);
+    if (!isAssignment) {
+      const inLeft = getLeadingAssignment(node.left, results, context);
+      if (inLeft !== undefined || SHORT_CIRCUITS.has(kind) || !isPlainOperand(node.left, results)) {
+        return inLeft;
+      }
+      // An operator reads a name or a literal before its right operand, which then assigns a name,
+      // which getEarlierReads keeps as the operator read it.
+      const inRight = getLeadingAssignment(node.right, results, context);
+      const written = inRight === undefined ? undefined : getWrittenOperand(inRight);
+      return written !== undefined && ts.isIdentifier(written) ? inRight : undefined;
+    }
     if (!ts.isIdentifier(node.left)) return isMemberUpdate(node) ? node : undefined;
     // A compound assignment reads its name before its value, which a logical one may not evaluate.
     const inner = LOGICAL_OPERATORS.has(kind)
@@ -9521,6 +9597,10 @@ export const translateStatements = (
     );
   }
   const hoisted = getHoistedAssignment(statement, path, context);
+  const earlier =
+    hoisted === undefined || evaluated === undefined
+      ? []
+      : getEarlierReads(hoisted, evaluated, path.scope, context);
   // An increment gives its operand's number from before, or after, as its prefix form does.
   if (hoisted !== undefined && isIncrement(hoisted)) {
     const before = translateExpression(hoisted.operand, path.scope, context);
@@ -9533,6 +9613,7 @@ export const translateStatements = (
             ...after.scope,
             results: new Map([
               ...after.scope.results,
+              ...earlier,
               [
                 hoisted,
                 ts.isPostfixUnaryExpression(hoisted)
@@ -9566,7 +9647,10 @@ export const translateStatements = (
         statements,
         {
           ...after,
-          scope: { ...after.scope, results: new Map([...after.scope.results, [hoisted, result]]) },
+          scope: {
+            ...after.scope,
+            results: new Map([...after.scope.results, ...earlier, [hoisted, result]]),
+          },
         },
         context,
         frame,

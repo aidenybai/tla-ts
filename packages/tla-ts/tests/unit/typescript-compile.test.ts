@@ -942,6 +942,31 @@ describe("values", () => {
     ).toThrow("Unsupported operator: +=");
   });
 
+  it("runs an assignment in an operator's right operand after its left operand's names", async () => {
+    const getSource = (second: number, increment: number, comma: number, argument: number) => `
+      let x = 0;
+      const expected: number[] = [${second}, ${increment}, ${comma}, ${argument}];
+      if (x + (x = 1) !== expected[0]) throw new Error("second " + (x + (x = 1)));
+      x = 0;
+      if (x - x++ !== expected[1] || x !== 1) throw new Error("increment");
+      let y = 0;
+      if ((x = 1, y = 2, x + y) !== expected[2]) throw new Error("comma");
+      x = 5;
+      const echo = (value: unknown) => value;
+      if (echo(x + (x = 7)) !== expected[3] || x !== 7) throw new Error("argument");
+    `;
+    const getMessage = (source: string) =>
+      checkModel(source).then(
+        (result) => result.failure?.message,
+        (error: Error) => error.message,
+      );
+    expect(await getMessage(getSource(1, 0, 3, 12))).toBeUndefined();
+    expect(await getMessage(getSource(2, 0, 3, 12))).toContain("second 2");
+    expect(await getMessage(getSource(1, 1, 3, 12))).toContain("increment");
+    expect(await getMessage(getSource(1, 0, 2, 12))).toContain("comma");
+    expect(await getMessage(getSource(1, 0, 3, 14))).toContain("argument");
+  });
+
   it("gives what a compound assignment to a property writes, as its value", async () => {
     const getSource = (field: number, property: number, element: number, typed: number) => `
       class Counter {
