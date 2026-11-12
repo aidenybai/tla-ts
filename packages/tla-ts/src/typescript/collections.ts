@@ -16,7 +16,7 @@ import {
 import type { Expression } from "../ast";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression, translateSetKey } from "./expressions";
-import { translateBody } from "./functions";
+import { mayThrow, translateBody } from "./functions";
 import { DATE_FIELDS, getHeap, getPrototypeMethod, isDateType, TIME_METHODS } from "./heap";
 import {
   isBuiltInObject,
@@ -1061,6 +1061,10 @@ const translateSortOrder = (
     return identifier("DefaultSortBefore");
   }
   const found = getCallback(comparator, scope, context);
+  // An order whose comparator throws would vanish where nothing reads the sorted array.
+  if (mayThrow(found.body, context)) {
+    throw new TlaTypeScriptError("Unsupported comparator: one that may throw", comparator);
+  }
   const names = [context.names.getFresh("left"), context.names.getFresh("right")];
   const inner = found.parameters.reduce(
     (current, parameter, position) =>

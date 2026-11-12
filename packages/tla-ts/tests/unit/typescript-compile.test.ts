@@ -3570,6 +3570,22 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("rejects a sort comparator that may throw", () => {
+    expect(() =>
+      compile(`
+        let isThrown = false;
+        try {
+          const x = [1, 0];
+          x.sort(() => {
+            throw new Error("compared");
+          });
+        } catch {
+          isThrown = true;
+        }
+      `),
+    ).toThrow("Unsupported comparator: one that may throw");
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`
