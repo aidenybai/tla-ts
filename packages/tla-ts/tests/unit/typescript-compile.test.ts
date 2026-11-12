@@ -8297,6 +8297,25 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("reads this in an arrow function of a static field or block as the class", async () => {
+    const source = `
+      const box = { seen: 0 };
+      class C {
+        static f = () => this;
+        static g: () => unknown;
+        static {
+          C.g = () => this;
+        }
+      }
+      class D extends C {}
+      if (C.f() !== C || C.g() !== C || D.f() !== C) throw new Error("this");
+      box.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("D.f() !== C", "D.f() !== D");
+    expect((await checkModel(wrong)).failure?.message).toContain('"this"');
+  });
+
   it("reads a module's this as undefined, and stops on a script's", async () => {
     const source = `
       const box = { seen: 0 };

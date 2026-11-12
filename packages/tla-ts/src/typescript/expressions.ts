@@ -32,6 +32,7 @@ import {
   getArgumentsOwner,
   isModuleFile,
   getSymbol,
+  isAssigned,
   skipCasts,
   isScript,
   getTopLevelDeclaration,
@@ -2547,6 +2548,24 @@ const translateNode = (
     isModuleFile(node.getSourceFile())
   ) {
     return getUndefined(context);
+  }
+  // A static field's or static block's this is its class, which an arrow function there reads
+  // wherever it runs, where nothing assigns the class's name.
+  const staticClass =
+    thisOwner !== undefined &&
+    (ts.isClassStaticBlockDeclaration(thisOwner) ||
+      (ts.isPropertyDeclaration(thisOwner) &&
+        (ts.getCombinedModifierFlags(thisOwner) & ts.ModifierFlags.Static) !== 0)) &&
+    ts.isClassDeclaration(thisOwner.parent)
+      ? thisOwner.parent.name
+      : undefined;
+  const staticSymbol = staticClass && getSymbol(staticClass, context.checker);
+  if (
+    staticClass !== undefined &&
+    staticSymbol !== undefined &&
+    !isAssigned(staticSymbol, node.getSourceFile(), context)
+  ) {
+    return translateExpression(staticClass, scope, context);
   }
   if (ts.isBigIntLiteral(node)) {
     const value = BigInt(node.text.slice(0, -1).replaceAll("_", ""));
