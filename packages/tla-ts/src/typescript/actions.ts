@@ -3770,9 +3770,48 @@ const translateHoldsIteratorPrototype = (
       );
 };
 
-// The most steps of an iterator helper that tla-ts translates, across the paths through its
-// callback.
+// The most steps of an iterator helper that tla-ts translates. Where flatMap's mapper returns arrays
+// of different lengths, how many values a step gives depends on the path through the mapper, so
+// the steps after it translate once for each path.
 const HELPER_STEP_LIMIT = 512;
+
+// The length of the array literals that a function returns, where it returns only array literals
+// of one length.
+const getReturnedLength = (callback: FunctionNode, context: Context) => {
+  const getLengths = (returned: ts.Expression | undefined): (number | undefined)[] => {
+    const inner = returned && getCast(returned);
+    if (inner !== undefined && ts.isConditionalExpression(inner)) {
+      return [...getLengths(inner.whenTrue), ...getLengths(inner.whenFalse)];
+    }
+    return inner !== undefined &&
+      ts.isArrayLiteralExpression(inner) &&
+      !inner.elements.some(ts.isSpreadElement) &&
+      !context.heapCollections.has(inner)
+      ? [inner.elements.length]
+      : [undefined];
+  };
+  const body = callback.body;
+  const returned =
+    body === undefined
+      ? []
+      : ts.isBlock(body)
+        ? findNodes(body, ts.isReturnStatement)
+            .filter(
+              (statement) => ts.findAncestor(statement.parent, ts.isFunctionLike) === callback,
+            )
+            .map((statement) => statement.expression)
+        : [body];
+  // A body whose end it may reach returns undefined there.
+  const signature = context.checker.getSignatureFromDeclaration(callback);
+  const type = signature && context.checker.getReturnTypeOfSignature(signature);
+  const isFallible =
+    type === undefined ||
+    (type.isUnion() ? type.types : [type]).some(
+      (member) => (member.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0,
+    );
+  const lengths = new Set(returned.flatMap(getLengths));
+  return lengths.size === 1 && !isFallible ? [...lengths][0] : undefined;
+};
 
 // Whether a function returns only primitives.
 const isPrimitiveReturn = (callback: FunctionNode, context: Context) => {
@@ -3916,8 +3955,6 @@ const translateIteratorHelper = (
   const stepFrom =
     (counter: number) =>
     (resumer: Path): Formula => {
-      // Each path through the callback translates the steps after it again, so a callback that
-      // returns from several places multiplies them.
       translatedSteps.count += 1;
       if (translatedSteps.count > HELPER_STEP_LIMIT) {
         throw new TlaTypeScriptError(
@@ -3975,10 +4012,57 @@ const translateIteratorHelper = (
           if (callback === undefined) throw new TlaTypeScriptError("Give this a body", node);
           const elementName = context.names.getFresh("element");
           const bound = identifier(elementName);
-          return bindOnce(
-            after,
-            elementName,
-            element,
+          // The callback's paths join into one result and heap, so the steps after it translate
+          // once, except where flatMap's arrays may have different lengths.
+          const length = method === "flatMap" ? getReturnedLength(callback, context) : undefined;
+          const finish = (done: Path, result: Expression | undefined): Formula => {
+            if (method === "flatMap") {
+              // A primitive isn't an iterator or an iterable that flatMap takes.
+              if (isPrimitiveReturn(callback, context)) {
+                return throwTypeError(done, node, context, getFrame(caller));
+              }
+              if (length !== undefined) {
+                const returned = result ?? getUndefined(context);
+                return flattenFrom(
+                  counter,
+                  Array.from({ length }, (_, position) => index(returned, [number(position + 1)])),
+                  0,
+                )(done);
+              }
+              const flatten = (returned: Expression | undefined): Formula => {
+                if (returned?.kind === "Tuple") {
+                  return flattenFrom(counter, returned.elements, 0)(done);
+                }
+                if (returned?.kind === "If") {
+                  return ifThenElse(
+                    returned.condition,
+                    flatten(returned.consequent),
+                    flatten(returned.alternative),
+                  );
+                }
+                throw new TlaTypeScriptError(
+                  "tla-ts can flatten only an array literal that the mapper returns",
+                  callback,
+                );
+              };
+              return flatten(result);
+            }
+            const resultName = context.names.getFresh("result");
+            const mapped = identifier(resultName);
+            return bindOnce(
+              done,
+              resultName,
+              result ?? getUndefined(context),
+              method === "map"
+                ? give(done, mapped, false)
+                : ifThenElse(
+                    useJavaScript("ToBoolean", [mapped], context),
+                    give(done, bound, false),
+                    stepFrom(counter + 1)(done),
+                  ),
+            );
+          };
+          const translateCallback = (next: (done: Path, result?: Expression) => Formula) =>
             inlineValues(
               callback,
               [bound, number(counter)],
@@ -3986,50 +4070,20 @@ const translateIteratorHelper = (
               after,
               context,
               getFrame(caller),
-              (done, result) => {
-                if (method === "flatMap") {
-                  // A primitive isn't an iterator or an iterable that flatMap takes.
-                  if (isPrimitiveReturn(callback, context)) {
-                    return throwTypeError(done, node, context, getFrame(caller));
-                  }
-                  const flatten = (returned: Expression | undefined): Formula => {
-                    if (returned?.kind === "Tuple") {
-                      return flattenFrom(counter, returned.elements, 0)(done);
-                    }
-                    if (returned?.kind === "If") {
-                      return ifThenElse(
-                        returned.condition,
-                        flatten(returned.consequent),
-                        flatten(returned.alternative),
-                      );
-                    }
-                    throw new TlaTypeScriptError(
-                      "tla-ts can flatten only an array literal that the mapper returns",
-                      callback,
-                    );
-                  };
-                  return flatten(result);
-                }
-                const resultName = context.names.getFresh("result");
-                const mapped = identifier(resultName);
-                return bindOnce(
-                  done,
-                  resultName,
-                  result ?? getUndefined(context),
-                  method === "map"
-                    ? give(done, mapped, false)
-                    : ifThenElse(
-                        useJavaScript("ToBoolean", [mapped], context),
-                        give(done, bound, false),
-                        stepFrom(counter + 1)(done),
-                      ),
-                );
-              },
-            ),
+              next,
+            );
+          return bindOnce(
+            after,
+            elementName,
+            element,
+            method === "flatMap" && length === undefined
+              ? translateCallback(finish)
+              : translateJoined(callback, after, context, finish, translateCallback),
           );
         },
       );
     };
+
   const made = leave(path, stepFrom(0));
   const created =
     heapSymbol === undefined
