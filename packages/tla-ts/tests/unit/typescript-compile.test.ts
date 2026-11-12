@@ -3281,6 +3281,37 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("tla-ts can't");
   });
 
+  it("sorts, reverses, fills, and copies within an array in place", async () => {
+    const result = await checkModel(`
+      const letters = ["z", "B", "a", "A"];
+      letters.sort();
+      const numbers = [10, 9, 1, 100];
+      numbers.sort();
+      const byValue = [3, 1, 2, 1];
+      byValue.sort((a, b) => a - b);
+      const holes: (number | undefined)[] = [undefined, 2, 1];
+      holes.sort();
+      const reversed = [1, 2, 3];
+      reversed.reverse();
+      const filled = [0, 0, 0, 0];
+      filled.fill(8, 1, -1);
+      const copied = [0, 1, 2, 3, 4].copyWithin(2, 0, -1);
+      if (
+        letters.join(",") !== "A,B,a,z" ||
+        numbers.join(",") !== "1,10,100,9" ||
+        byValue.join(",") !== "1,1,2,3" ||
+        holes[0] !== 1 ||
+        holes[2] !== undefined ||
+        reversed.join(",") !== "3,2,1" ||
+        filled.join(",") !== "0,8,8,0" ||
+        copied.join(",") !== "0,1,0,1,2"
+      ) {
+        throw new Error("arrays");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`

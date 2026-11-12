@@ -13,6 +13,7 @@ import {
   HOLE_SKIPPING_METHODS,
   translateMethodElements,
   MUTATING_METHODS,
+  REORDER_METHODS,
   removeLast,
   translatePrimitiveMethod,
 } from "./collections";
@@ -1632,7 +1633,11 @@ export const translateCallStatement = (
       return and([leaf(apply("Assert", [values[0], message])), continueWith(path)]);
     }
     const kind = getKind(receiver, context);
-    if (MUTATING_METHODS.has(method) && kind !== "other") {
+    if (
+      MUTATING_METHODS.has(method) &&
+      kind !== "other" &&
+      (kind === "sequence" || !REORDER_METHODS.has(method))
+    ) {
       const updated = continueWith(
         assign(receiver, path, context, (current) => {
           const value = getUpdatedValue(current, kind, expression, path.scope, context);

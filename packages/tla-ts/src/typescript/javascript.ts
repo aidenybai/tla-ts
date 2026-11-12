@@ -419,6 +419,40 @@ SequenceWith(sequence, index, value) ==
      THEN [sequence EXCEPT ![relative + 1] = value]
      ELSE Assert(FALSE, "tla-ts can't throw the RangeError of with()")
 
+\\* fill() over the positions after start and up to end, as ClampedIndex gives them.
+SequenceFill(sequence, value, start, end) ==
+  [position \\in DOMAIN sequence |->
+     IF position > start /\\ position <= end THEN value ELSE sequence[position]]
+
+\\* copyWithin(), which reads every element it copies before it writes any, as the spec's copy in
+\\* either direction does.
+SequenceCopyWithin(sequence, target, start, end) ==
+  LET count == IF end - start < Len(sequence) - target THEN end - start ELSE Len(sequence) - target
+  IN [position \\in DOMAIN sequence |->
+        IF position > target /\\ position <= target + count
+        THEN sequence[start + position - target]
+        ELSE sequence[position]]
+
+\\* Inserts a value after the sorted elements that don't come after it, which keeps equal elements
+\\* in their order, as sort() does.
+LOCAL SortedInsert(sorted, value, IsBefore(_, _)) ==
+  LET after == {position \\in DOMAIN sorted : IsBefore(value, sorted[position])}
+      at == IF after = {} THEN Len(sorted) + 1
+            ELSE CHOOSE position \\in after : \\A other \\in after : position <= other
+  IN SubSeq(sorted, 1, at - 1) \\o <<value>> \\o SubSeq(sorted, at, Len(sorted))
+
+RECURSIVE SortedPrefix(_, _, _)
+SortedPrefix(sequence, length, IsBefore(_, _)) ==
+  IF length = 0
+  THEN <<>>
+  ELSE SortedInsert(SortedPrefix(sequence, length - 1, IsBefore), sequence[length], IsBefore)
+
+\\* sort() with a comparator that orders its elements consistently, which puts undefined last.
+SortSequence(sequence, IsBefore(_, _)) ==
+  LET defined == SelectSeq(sequence, LAMBDA value : value # Undefined)
+  IN SortedPrefix(defined, Len(defined), IsBefore)
+       \\o [position \\in 1..(Len(sequence) - Len(defined)) |-> Undefined]
+
 RECURSIVE Join(_, _)
 Join(sequence, separator) ==
   CASE sequence = <<>> -> ""
@@ -1670,6 +1704,9 @@ StringLessThan(left, right) ==
     [] SubSeq(left, 1, 1) = SubSeq(right, 1, 1) ->
          StringLessThan(SubSeq(left, 2, Len(left)), SubSeq(right, 2, Len(right)))
     [] OTHER -> CharacterCode(SubSeq(left, 1, 1)) < CharacterCode(SubSeq(right, 1, 1))
+
+\\* sort()'s order without a comparator, which compares the strings of the elements.
+DefaultSortBefore(left, right) == StringLessThan(StringOf(left), StringOf(right))
 
 \\* The values that a for-of over a string visits, its code points, which are its characters where
 \\* each is ASCII.

@@ -11,6 +11,7 @@ import {
   isNameRead,
   type MethodCall,
   share,
+  skipCasts,
 } from "./context";
 import type { Expression } from "../ast";
 import { TlaTypeScriptError } from "../errors";
@@ -768,18 +769,7 @@ const translateSequenceOperation = (
           context,
         ),
     ],
-    [
-      "toReversed",
-      () => {
-        const position = context.names.getFresh("index");
-        return functionOf(
-          [bound(position, getDomain(sequence))],
-          index(sequence, [
-            apply("+", [apply("-", [getLength(), identifier(position)]), number(1)]),
-          ]),
-        );
-      },
-    ],
+    ["toReversed", () => reverseSequence(sequence, context)],
     ["map", translateEach((bounds, body) => functionOf(bounds, body))],
     ["every", translateEach((bounds, body) => quantify("Forall", bounds, body), translateTest)],
     ["some", translateEach((bounds, body) => quantify("Exists", bounds, body), translateTest)],
@@ -942,6 +932,131 @@ const translateMapMethod = (
 export const removeLast = (current: Expression) =>
   apply("SubSeq", [current, number(1), apply("-", [apply("Len", [current]), number(1)])]);
 
+// An index argument as ClampedIndex counts it, or a fallback where it's missing or undefined.
+const translateClampedIndex = (
+  argument: ts.Expression | undefined,
+  fallback: Expression,
+  length: Expression,
+  scope: Scope,
+  context: Context,
+) => {
+  if (argument === undefined) return fallback;
+  const value = translateExpression(argument, scope, context);
+  if (isNumberLike(argument, context)) {
+    return useJavaScript("ClampedIndex", [value, length], context);
+  }
+  return share(value, "index", context, (shared) =>
+    ifExpression(
+      apply("=", [shared, getUndefined(context)]),
+      fallback,
+      useJavaScript(
+        "ClampedIndex",
+        [useJavaScript("ToNumber", [shared], context), length],
+        context,
+      ),
+    ),
+  );
+};
+
+const reverseSequence = (sequence: Expression, context: Context) => {
+  const position = context.names.getFresh("index");
+  return functionOf(
+    [bound(position, apply("DOMAIN", [sequence]))],
+    index(sequence, [
+      apply("+", [apply("-", [apply("Len", [sequence]), identifier(position)]), number(1)]),
+    ]),
+  );
+};
+
+// The comparator that sort() orders by: whether its callback gives a number below 0, or else the
+// order of the elements' strings.
+const translateSortOrder = (
+  comparator: ts.Expression | undefined,
+  scope: Scope,
+  context: Context,
+) => {
+  if (
+    comparator === undefined ||
+    (context.checker.getTypeAtLocation(comparator).flags & ts.TypeFlags.Undefined) !== 0
+  ) {
+    return identifier("DefaultSortBefore");
+  }
+  const found = getCallback(comparator, scope, context);
+  const names = [context.names.getFresh("left"), context.names.getFresh("right")];
+  const inner = found.parameters.reduce(
+    (current, parameter, position) =>
+      position < names.length
+        ? bindPatternInline(parameter.name, identifier(names[position]), current, context)
+        : current,
+    found.scope(scope),
+  );
+  const result = translateCallback(comparator, inner, context);
+  const callee = getCallbackFunction(comparator, scope, context);
+  const returned =
+    callee === undefined
+      ? undefined
+      : context.checker.getSignatureFromDeclaration(callee)?.getReturnType();
+  const isNumber = returned !== undefined && isEvery(returned, ts.TypeFlags.NumberLike);
+  return lambda(
+    names,
+    isNumber && !context.hasSpecialNumbers
+      ? apply("<", [result, number(0)])
+      : useJavaScript(
+          "LessThan",
+          [isNumber ? result : useJavaScript("ToNumber", [result], context), number(0)],
+          context,
+        ),
+  );
+};
+
+// The methods that reorder or overwrite an array in place, and give the array.
+export const REORDER_METHODS = new Set(["sort", "reverse", "fill", "copyWithin"]);
+
+// A sequence after sort, reverse, fill, or copyWithin.
+const translateReorder = (
+  sequence: Expression,
+  node: MethodCall,
+  scope: Scope,
+  context: Context,
+) => {
+  const method = node.expression.name.text;
+  const [first, second, third] = node.arguments;
+  if (node.arguments.some(ts.isSpreadElement)) {
+    throw new TlaTypeScriptError(`Unsupported array method: ${method}`, node);
+  }
+  if (method === "reverse") return reverseSequence(sequence, context);
+  if (method === "sort") {
+    return useJavaScript(
+      "SortSequence",
+      [sequence, translateSortOrder(first, scope, context)],
+      context,
+    );
+  }
+  return share(sequence, "sequence", context, (shared) => {
+    const length = apply("Len", [shared]);
+    const clamp = (argument: ts.Expression | undefined, fallback: Expression) =>
+      translateClampedIndex(argument, fallback, length, scope, context);
+    return method === "fill"
+      ? useJavaScript(
+          "SequenceFill",
+          [
+            shared,
+            first === undefined
+              ? getUndefined(context)
+              : translateExpression(first, scope, context),
+            clamp(second, number(0)),
+            clamp(third, length),
+          ],
+          context,
+        )
+      : useJavaScript(
+          "SequenceCopyWithin",
+          [shared, clamp(first, number(0)), clamp(second, number(0)), clamp(third, length)],
+          context,
+        );
+  });
+};
+
 const UPDATES = new Map<Kind, Map<string, Update>>([
   [
     "sequence",
@@ -985,9 +1100,10 @@ const UPDATES = new Map<Kind, Map<string, Update>>([
   ],
 ]);
 
-export const MUTATING_METHODS = new Set(
-  [...UPDATES.values()].flatMap((updates) => [...updates.keys()]),
-);
+export const MUTATING_METHODS = new Set([
+  ...[...UPDATES.values()].flatMap((updates) => [...updates.keys()]),
+  ...REORDER_METHODS,
+]);
 
 // The value of a collection after a mutating method call, or undefined if the method doesn't
 // mutate.
@@ -998,6 +1114,9 @@ export const getUpdatedValue = (
   scope: Scope,
   context: Context,
 ) => {
+  if (kind === "sequence" && REORDER_METHODS.has(node.expression.name.text)) {
+    return translateReorder(current, node, scope, context);
+  }
   const values = node.arguments.map((argument, position) =>
     position === 0 && (kind === "set" || kind === "map")
       ? translateSetKey(argument, scope, context)
@@ -1028,6 +1147,14 @@ export const translateMethod = (
     ? getUpdatedValue(translateExpression(receiver, scope, context), kind, node, scope, context)
     : undefined;
   if (updated !== undefined) return updated;
+  // A fresh array literal that a method reorders in place is the array that the call gives.
+  if (
+    kind === "sequence" &&
+    REORDER_METHODS.has(node.expression.name.text) &&
+    ts.isArrayLiteralExpression(skipCasts(receiver))
+  ) {
+    return translateReorder(translateExpression(receiver, scope, context), node, scope, context);
+  }
   if (kind === "sequence") {
     const method = node.expression.name.text;
     const sequence = translateMethodElements(
