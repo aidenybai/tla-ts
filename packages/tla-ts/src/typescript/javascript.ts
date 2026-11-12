@@ -1270,6 +1270,8 @@ IsWritable(heap, ref, key) ==
      THEN object.attributes[key].writable
      ELSE object.prototype = Null \\/ IsWritable(heap, object.prototype, key)
 
+\\* Whether a write puts its value without a TypeError. %ThrowTypeError%, the setter of
+\\* Function.prototype's arguments and caller, always throws one.
 CanPut(heap, ref, key) ==
   LET accessor == AccessorOf(heap, ref, key)
       object == PropertiesOf(heap, ref, key)
@@ -1277,7 +1279,9 @@ CanPut(heap, ref, key) ==
        [] accessor = Undefined ->
             /\\ IsWritable(heap, ref, key)
             /\\ key \\in DOMAIN object.values \\/ object.extensible
-       [] OTHER -> accessor.set # Undefined
+       [] OTHER ->
+            /\\ accessor.set # Undefined
+            /\\ GetterPath(accessor.set) # "get Function.prototype.arguments"
 
 RECURSIVE IsPrototypeOf(_, _, _)
 IsPrototypeOf(heap, owner, ref) ==

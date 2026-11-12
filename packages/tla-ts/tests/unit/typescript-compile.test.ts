@@ -2254,6 +2254,28 @@ describe("errors", () => {
     expect((await checkModel(getSource("z7y1y2-"))).failure?.message).toContain("unexpected");
   });
 
+  it("throws a TypeError where a write finds %ThrowTypeError% as the setter", async () => {
+    const getSource = (expected: number) => `
+      function foo() {}
+      const obj = foo.bind({}) as unknown as { arguments: unknown; caller: unknown };
+      let thrown = 0;
+      try {
+        obj.arguments = 12;
+      } catch (error) {
+        if (error instanceof TypeError) thrown++;
+      }
+      try {
+        obj.caller = 12;
+      } catch (error) {
+        if (error instanceof TypeError) thrown++;
+      }
+      const getThrown = (): number => thrown;
+      if (getThrown() !== ${expected}) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(1))).failure?.message).toContain("unexpected");
+  });
+
   it("runs the setter of an object literal or a class that a computed key picks", async () => {
     const getSource = (written: string) => `
       let log = "";
