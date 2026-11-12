@@ -1014,87 +1014,98 @@ export const runSmtlibScript = (
           return undefined;
         }
       })();
-      if (goals === undefined) return;
-      const manager = state.manager;
-      const environment = getPrintEnvironment();
-      if (params.get("print") !== false)
-        print(
-          [
-            "(goals",
-            ...goals.map((goal) =>
-              [
-                "(goal",
-                ...goal.forms.items.flatMap((form, index) => [
-                  ...(isPrintingDependencies
-                    ? [
-                        [
-                          "  |-",
-                          ...getDependencyValues(goal.getDependency(index)).map(format),
-                        ].join(" "),
-                      ]
-                    : []),
-                  `  ${printExpr(state.manager, environment, form, 2)}`,
-                ]),
-                `  :precision ${PRECISION_NAMES[goal.precision]} :depth ${goal.depth})`,
-              ].join("\n"),
-            ),
-            ")",
-          ].join("\n"),
-        );
-      if (
-        params.get("print_model_converter") === true &&
-        input.converters.some((entry) => !("definitions" in entry) || entry.definitions.length > 0)
-      )
-        throw new SmtUnsupportedError("printing a model converter");
-      if (params.get("print_benchmark") !== true) return;
-      const assertions =
-        goals.length === 1
-          ? goals[0].forms.items
-          : [
-              manager.mkOr(
-                goals.map((goal) =>
-                  goal.forms.size === 1 ? goal.forms.items[0] : manager.mkAnd(goal.forms.items),
-                ),
+      // apply_tactic_cmd releases the result goals and then the input goal.
+      if (goals === undefined) {
+        input.reset();
+        return;
+      }
+      try {
+        const manager = state.manager;
+        const environment = getPrintEnvironment();
+        if (params.get("print") !== false)
+          print(
+            [
+              "(goals",
+              ...goals.map((goal) =>
+                [
+                  "(goal",
+                  ...goal.forms.items.flatMap((form, index) => [
+                    ...(isPrintingDependencies
+                      ? [
+                          [
+                            "  |-",
+                            ...getDependencyValues(goal.getDependency(index)).map(format),
+                          ].join(" "),
+                        ]
+                      : []),
+                    `  ${printExpr(state.manager, environment, form, 2)}`,
+                  ]),
+                  `  :precision ${PRECISION_NAMES[goal.precision]} :depth ${goal.depth})`,
+                ].join("\n"),
               ),
-            ];
-      for (const assertion of assertions) manager.incRef(assertion);
-      const visited = new Set<number>();
-      const decls = new Set<number>();
-      for (const assertion of assertions) {
-        const todo = [assertion];
-        while (todo.length > 0) {
-          const expr = todo.pop() as number;
-          if (visited.has(expr)) continue;
-          visited.add(expr);
-          if (manager.kinds[expr] === KIND_QUANTIFIER) {
-            const data = manager.getQuantifier(expr);
-            todo.push(data.body, ...data.patterns, ...data.noPatterns);
-          } else if (manager.kinds[expr] === KIND_APP) {
-            manager.pushArgs(expr, todo);
-            const decl = manager.decls[expr];
-            const family = manager.funcDecls[decl].family;
-            if (family === FAMILY_USER || family === FAMILY_MODEL_VALUE) decls.add(decl);
+              ")",
+            ].join("\n"),
+          );
+        if (
+          params.get("print_model_converter") === true &&
+          input.converters.some(
+            (entry) => !("definitions" in entry) || entry.definitions.length > 0,
+          )
+        )
+          throw new SmtUnsupportedError("printing a model converter");
+        if (params.get("print_benchmark") !== true) return;
+        const assertions =
+          goals.length === 1
+            ? goals[0].forms.items
+            : [
+                manager.mkOr(
+                  goals.map((goal) =>
+                    goal.forms.size === 1 ? goal.forms.items[0] : manager.mkAnd(goal.forms.items),
+                  ),
+                ),
+              ];
+        for (const assertion of assertions) manager.incRef(assertion);
+        const visited = new Set<number>();
+        const decls = new Set<number>();
+        for (const assertion of assertions) {
+          const todo = [assertion];
+          while (todo.length > 0) {
+            const expr = todo.pop() as number;
+            if (visited.has(expr)) continue;
+            visited.add(expr);
+            if (manager.kinds[expr] === KIND_QUANTIFIER) {
+              const data = manager.getQuantifier(expr);
+              todo.push(data.body, ...data.patterns, ...data.noPatterns);
+            } else if (manager.kinds[expr] === KIND_APP) {
+              manager.pushArgs(expr, todo);
+              const decl = manager.decls[expr];
+              const family = manager.funcDecls[decl].family;
+              if (family === FAMILY_USER || family === FAMILY_MODEL_VALUE) decls.add(decl);
+            }
           }
         }
+        const lines = [...decls].map((decl) => {
+          const funcDecl = manager.funcDecls[decl];
+          return renderFormat(
+            mkSeq1(
+              [
+                mkText(getQuotedName(funcDecl.name)),
+                mkSeq5(funcDecl.domain.map((sort) => formatSort(manager, sort))),
+                formatSort(manager, funcDecl.range),
+              ],
+              "declare-fun",
+            ),
+            environment.options,
+          );
+        });
+        for (const assertion of assertions)
+          lines.push(`(assert ${printExpr(manager, environment, assertion, 8)})`);
+        print([...lines, "(check-sat)"].join("\n"));
+        for (const assertion of assertions) manager.decRef(assertion);
+      } finally {
+        for (const goal of goals) if (goal !== input) goal.reset();
+        input.reset();
       }
-      const lines = [...decls].map((decl) => {
-        const funcDecl = manager.funcDecls[decl];
-        return renderFormat(
-          mkSeq1(
-            [
-              mkText(getQuotedName(funcDecl.name)),
-              mkSeq5(funcDecl.domain.map((sort) => formatSort(manager, sort))),
-              formatSort(manager, funcDecl.range),
-            ],
-            "declare-fun",
-          ),
-          environment.options,
-        );
-      });
-      for (const assertion of assertions)
-        lines.push(`(assert ${printExpr(manager, environment, assertion, 8)})`);
-      print([...lines, "(check-sat)"].join("\n"));
-      for (const assertion of assertions) manager.decRef(assertion);
     },
     "get-assertions": (list) => {
       if (!settings.isInteractive)
