@@ -15,7 +15,8 @@ import {
   SORT_BOOL,
 } from "./ast";
 import { isAstLess } from "./ast-lt";
-import type { Rewrite } from "./rewriter-tpl";
+import { InvVarShifter, type Rewrite, VarShifter } from "./rewriter-tpl";
+import { getFreeVarSorts, VarSubst } from "./var-subst";
 
 const L_TRUE = 1;
 const L_FALSE = -1;
@@ -119,6 +120,8 @@ export class ArrayRewriter {
         continue;
       }
       if (this.isOp(array, OP_CONST_ARRAY)) return manager.getArg(array, 0);
+      if (manager.isLambda(array))
+        return { expr: this.betaReduce(array, indices), depth: Infinity };
       if (this.isOp(array, OP_ARRAY_MAP)) {
         const decl = manager.funcDecls[manager.decls[array]].parameters[0];
         const selects = manager.mapArgs(array, (arg) => this.mkApp(OP_SELECT, [arg, ...indices]));
@@ -131,6 +134,44 @@ export class ArrayRewriter {
       }
       return undefined;
     }
+  }
+
+  // select(lambda(X) M, N) -> M[N/X], anywhere rather than to weak head normal form.
+  private betaReduce(lambda: number, indices: number[]) {
+    const manager = this.manager;
+    const count = indices.length;
+    const shifter = new VarShifter(manager);
+    const shifted = indices.map((index) => shifter.shift(index, 0, count, 0));
+    shifter.release();
+    const subst = new VarSubst(manager, true);
+    const substituted = subst.apply(manager.getQuantifier(lambda).body, shifted);
+    subst.release();
+    for (const index of shifted) manager.decRef(index);
+    const invShifter = new InvVarShifter(manager);
+    const result = invShifter.shift(substituted, count);
+    invShifter.release();
+    manager.decRef(substituted);
+    manager.releaseLater(result);
+    return result;
+  }
+
+  // Array eta-reduction: (lambda (x_0 ... x_{k-1}) (select a x_0 ... x_{k-1})) -> a, when a does not
+  // depend on the bound variables.
+  mkLambdaCore(lambda: number, body: number) {
+    const manager = this.manager;
+    const count = manager.getQuantifier(lambda).sorts.length;
+    if (!this.isOp(body, OP_SELECT) || manager.getNumArgs(body) !== count + 1) return -1;
+    for (let index = 0; index < count; index++) {
+      const arg = manager.getArg(body, index + 1);
+      if (!manager.isVar(arg) || manager.values[arg] !== count - 1 - index) return -1;
+    }
+    const array = manager.getArg(body, 0);
+    if (getFreeVarSorts(manager, array, count).some((sort) => sort !== undefined)) return -1;
+    const shifter = new InvVarShifter(manager);
+    const result = shifter.shift(array, count);
+    shifter.release();
+    manager.releaseLater(result);
+    return result;
   }
 
   private mkSelectCore(args: number[]): number | Rewrite | undefined {

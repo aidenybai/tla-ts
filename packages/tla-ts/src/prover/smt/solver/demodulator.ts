@@ -25,6 +25,7 @@ import {
   OP_OR,
   OP_XOR,
   SORT_BOOL,
+  QUANTIFIER_FORALL,
 } from "./ast";
 import type { Goal } from "./goal";
 import { ObjHashtable, ObjMap } from "./hashtable";
@@ -123,7 +124,10 @@ const getSizeOrder = (manager: AstManager, left: number, right: number) => {
 
 // is_demodulator: the rule comes with references to both sides, which the caller releases.
 const getDemodulator = (manager: AstManager, expr: number): Demodulator | undefined => {
-  if (manager.kinds[expr] !== KIND_QUANTIFIER || !manager.getQuantifier(expr).isForall)
+  if (
+    manager.kinds[expr] !== KIND_QUANTIFIER ||
+    manager.getQuantifier(expr).kind !== QUANTIFIER_FORALL
+  )
     return undefined;
   const body = manager.getQuantifier(expr).body;
   const own = (large: number, small: number) => {

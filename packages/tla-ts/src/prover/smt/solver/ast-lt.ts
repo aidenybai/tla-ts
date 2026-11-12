@@ -257,7 +257,7 @@ export const compareAsts = (manager: AstManager, first: number, second: number):
     const firstData = manager.getQuantifier(first);
     const secondData = manager.getQuantifier(second);
     const byHeader =
-      compareValues(firstData.isForall ? 0 : 1, secondData.isForall ? 0 : 1) ||
+      compareValues(firstData.kind, secondData.kind) ||
       compareValues(firstData.sorts.length, secondData.sorts.length) ||
       compareValues(firstData.patterns.length, secondData.patterns.length) ||
       compareValues(firstData.noPatterns.length, secondData.noPatterns.length) ||

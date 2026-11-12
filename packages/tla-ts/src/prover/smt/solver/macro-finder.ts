@@ -15,6 +15,7 @@ import {
   OP_NOT,
   SORT_BOOL,
   type AstManager,
+  QUANTIFIER_FORALL,
 } from "./ast";
 import { isAppOf } from "./ast-util";
 import type { Goal } from "./goal";
@@ -42,7 +43,7 @@ interface PseudoHead {
 }
 
 const isForall = (manager: AstManager, expr: number) =>
-  manager.kinds[expr] === KIND_QUANTIFIER && manager.getQuantifier(expr).isForall;
+  manager.kinds[expr] === KIND_QUANTIFIER && manager.getQuantifier(expr).kind === QUANTIFIER_FORALL;
 
 const collectUserDecls = (manager: AstManager, expr: number, decls: Set<number>) => {
   const visited = new Set<number>();

@@ -14,6 +14,10 @@ export const KIND_APP = 0;
 export const KIND_VAR = 1;
 export const KIND_QUANTIFIER = 2;
 
+export const QUANTIFIER_FORALL = 0;
+export const QUANTIFIER_EXISTS = 1;
+export const QUANTIFIER_LAMBDA = 2;
+
 export const SORT_BOOL = 0;
 export const SORT_INT = 1;
 export const SORT_REAL = 2;
@@ -345,7 +349,7 @@ export interface FuncDecl {
 }
 
 interface QuantifierData {
-  isForall: boolean;
+  kind: number;
   sorts: number[];
   // The names of the variables, which tell apart quantifiers that differ only in them, as in Z3.
   names: SmtSymbol[];
@@ -2197,7 +2201,7 @@ export class AstManager {
       throw new SmtInvariantError("a quantifier needs a name for each variable");
     // Z3 keeps no-patterns only on a quantifier without patterns.
     const noPatterns = data.patterns.length > 0 ? [] : data.noPatterns;
-    const key = `q${data.isForall ? 1 : 0}:${data.sorts.join(",")}:${JSON.stringify(data.names)}:${
+    const key = `q${data.kind}:${data.sorts.join(",")}:${JSON.stringify(data.names)}:${
       data.body
     }:${data.patterns.join(",")}:${noPatterns.join(",")}:${data.weight}`;
     const existing = this.table.get(key);
@@ -2213,10 +2217,12 @@ export class AstManager {
       KIND_QUANTIFIER,
       -1,
       [data.body],
-      SORT_BOOL,
+      data.kind === QUANTIFIER_LAMBDA
+        ? this.mkArraySort([...data.sorts, this.sorts[data.body]])
+        : SORT_BOOL,
       0,
       mkMix(
-        astArrayHash(data.sorts, this.sortHashes, data.isForall ? 31 : 19),
+        astArrayHash(data.sorts, this.sortHashes, data.kind === QUANTIFIER_FORALL ? 31 : 19),
         data.patterns.length,
         this.hashes[data.body],
       ),
@@ -2308,6 +2314,12 @@ export class AstManager {
 
   isApp(expr: number) {
     return this.kinds[expr] === KIND_APP;
+  }
+
+  isLambda(expr: number) {
+    return (
+      this.kinds[expr] === KIND_QUANTIFIER && this.getQuantifier(expr).kind === QUANTIFIER_LAMBDA
+    );
   }
 
   isVar(expr: number) {
@@ -2574,7 +2586,7 @@ export class AstManager {
     if (kind === KIND_VAR) return `(:var ${this.values[expr]})`;
     if (kind === KIND_QUANTIFIER) {
       const data = this.getQuantifier(expr);
-      return `(${data.isForall ? "forall" : "exists"} (${data.sorts.length}) ${this.toString(data.body)})`;
+      return `(${["forall", "exists", "lambda"][data.kind]} (${data.sorts.length}) ${this.toString(data.body)})`;
     }
     if (this.getOp(expr) === OP_BV_NUM)
       return `(_ bv${this.getBvNumeralValue(expr)} ${this.getBvSize(this.sorts[expr])})`;

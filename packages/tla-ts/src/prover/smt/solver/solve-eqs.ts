@@ -27,6 +27,7 @@ import {
   SORT_BOOL,
   SORT_INT,
   SORT_REAL,
+  QUANTIFIER_FORALL,
 } from "./ast";
 import { BoundManager } from "./bound-manager";
 import { mkBvApp } from "./bv-decl-plugin";
@@ -449,7 +450,11 @@ export class SolveEqs {
   // Array definitions by a universal quantifier need lambdas, which the port does not have.
   private checkArrayEqs(form: number) {
     const manager = this.manager;
-    if (manager.kinds[form] !== KIND_QUANTIFIER || !manager.getQuantifier(form).isForall) return;
+    if (
+      manager.kinds[form] !== KIND_QUANTIFIER ||
+      manager.getQuantifier(form).kind !== QUANTIFIER_FORALL
+    )
+      return;
     const numVars = manager.getQuantifier(form).sorts.length;
     const body = manager.getQuantifier(form).body;
     const [guard, eq] =

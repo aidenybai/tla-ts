@@ -9,6 +9,8 @@ import {
   OP_DISTINCT,
   OP_EQ,
   SORT_BOOL,
+  QUANTIFIER_EXISTS,
+  QUANTIFIER_FORALL,
 } from "./ast";
 import { hasUninterpreted, isAppOf, pushNotOwned } from "./ast-util";
 import { MBQI_MAX_ITERATIONS } from "./context";
@@ -662,7 +664,7 @@ export class Qsat {
       const data = manager.getQuantifier(expr);
       const vars = new RefVector(manager);
       let body = this.elimRec(this.pinOwned(extractVars(manager, expr, vars)));
-      if (data.isForall) body = this.pinOwned(pushNotOwned(manager, body));
+      if (data.kind === QUANTIFIER_FORALL) body = this.pinOwned(pushNotOwned(manager, body));
       const eliminated = this.elim(vars, body);
       vars.reset();
       todo.pop();
@@ -672,7 +674,9 @@ export class Qsat {
       }
       visited.set(
         expr,
-        data.isForall ? this.pinOwned(pushNotOwned(manager, eliminated)) : eliminated,
+        data.kind === QUANTIFIER_FORALL
+          ? this.pinOwned(pushNotOwned(manager, eliminated))
+          : eliminated,
       );
     }
     return visited.get(formula) as number;
@@ -685,7 +689,7 @@ export class Qsat {
     this.reset();
     const exists = this.pin(
       manager.mkQuantifier({
-        isForall: false,
+        kind: QUANTIFIER_EXISTS,
         sorts: vars.items.map((innerVar) => manager.sorts[innerVar]),
         names: vars.items.map((innerVar) => manager.getDeclName(innerVar)),
         body: this.abstractVars(vars, formula),
@@ -707,7 +711,7 @@ export class Qsat {
       for (const innerVar of freeVars) subVars.push(innerVar);
       result = this.pin(
         manager.mkQuantifier({
-          isForall: false,
+          kind: QUANTIFIER_EXISTS,
           sorts: freeVars.map((innerVar) => manager.sorts[innerVar]),
           names: freeVars.map((innerVar) => manager.getDeclName(innerVar)),
           body: this.abstractVars(subVars, result),

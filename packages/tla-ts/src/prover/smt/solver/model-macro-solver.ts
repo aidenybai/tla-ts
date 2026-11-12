@@ -16,6 +16,7 @@ import {
   OP_OR,
   SORT_BOOL,
   type AstManager,
+  QUANTIFIER_FORALL,
 } from "./ast";
 import { FuncInterp, type ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
@@ -158,11 +159,16 @@ export const collectMacroCandidates = (
   const data = manager.getQuantifier(quantifier);
   // qa: an existential quantifier becomes a universal one of the negated body until the candidates
   // are collected.
-  const qa = data.isForall
-    ? quantifier
-    : manager.withTemporaries(() =>
-        manager.mkQuantifier({ ...data, isForall: true, body: manager.mkNot(data.body) }),
-      );
+  const qa =
+    data.kind === QUANTIFIER_FORALL
+      ? quantifier
+      : manager.withTemporaries(() =>
+          manager.mkQuantifier({
+            ...data,
+            kind: QUANTIFIER_FORALL,
+            body: manager.mkNot(data.body),
+          }),
+        );
   const candidates = manager.hasQuantifierFlags[manager.getQuantifier(qa).body]
     ? []
     : collectCandidates(manager, rewriter, qa);

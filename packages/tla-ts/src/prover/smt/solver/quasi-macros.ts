@@ -11,6 +11,7 @@ import {
   OP_ITE,
   SORT_BOOL,
   type SmtSymbol,
+  QUANTIFIER_FORALL,
 } from "./ast";
 import type { Goal } from "./goal";
 import { MacroManager } from "./macro-finder";
@@ -102,7 +103,10 @@ class QuasiMacros {
 
   private getQuasiMacro(expr: number): QuasiMacro | undefined {
     const manager = this.manager;
-    if (manager.kinds[expr] !== KIND_QUANTIFIER || !manager.getQuantifier(expr).isForall)
+    if (
+      manager.kinds[expr] !== KIND_QUANTIFIER ||
+      manager.getQuantifier(expr).kind !== QUANTIFIER_FORALL
+    )
       return undefined;
     const numDecls = manager.getQuantifier(expr).sorts.length;
     const body = manager.getQuantifier(expr).body;
@@ -175,7 +179,7 @@ class QuasiMacros {
     const eq = manager.mkEq(app, ite);
     manager.incRef(eq);
     const result = manager.mkQuantifier({
-      isForall: true,
+      kind: QUANTIFIER_FORALL,
       sorts: [...newSorts.toReversed(), ...data.sorts],
       names: [...newNames.toReversed(), ...data.names],
       body: eq,

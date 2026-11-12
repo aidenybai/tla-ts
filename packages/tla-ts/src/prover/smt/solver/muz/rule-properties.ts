@@ -20,6 +20,7 @@ import {
   OP_POWER0,
   OP_REM,
   SORT_SIZE_INFINITE,
+  QUANTIFIER_EXISTS,
 } from "../ast";
 import type { DatalogContext } from "./dl-context";
 import type { Rule } from "./dl-rule";
@@ -123,7 +124,7 @@ export class RuleProperties {
 
   checkExistsFree() {
     for (const quantifier of this.quantifiers.keys())
-      if (!this.manager.getQuantifier(quantifier).isForall)
+      if (this.manager.getQuantifier(quantifier).kind === QUANTIFIER_EXISTS)
         throw new SmtTacticError("cannot process EXISTS quantifier in rule");
   }
 

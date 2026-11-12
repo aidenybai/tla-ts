@@ -68,6 +68,9 @@ import {
   SORT_INT,
   SORT_REAL,
   isArithSort,
+  QUANTIFIER_EXISTS,
+  QUANTIFIER_FORALL,
+  QUANTIFIER_LAMBDA,
 } from "./ast";
 import { getArraySignature, getMapSignature, mkAsArray } from "./array-decl-plugin";
 import { BV_OP_NAMES, getBvSignature } from "./bv-decl-plugin";
@@ -424,7 +427,7 @@ const ARITIES = new Map<number, [number, number]>([
   [OP_OR, [0, Infinity]],
   [OP_ITE, [3, 3]],
   [OP_EQ, [2, Infinity]],
-  [OP_DISTINCT, [2, Infinity]],
+  [OP_DISTINCT, [1, Infinity]],
   ...[OP_NOT, OP_UMINUS, OP_ABS, OP_TO_REAL, OP_TO_INT, OP_IS_INT, ...REAL_FUNCTION_OPS]
     .filter((op) => op !== OP_ATAN2)
     .map((op): [number, [number, number]] => [op, [1, 1]]),
@@ -1151,7 +1154,7 @@ export const createSmtlibReader = (
     binders.depth -= count;
   };
 
-  const parseQuantifier = (list: SmtList, isForall: boolean) => {
+  const parseQuantifier = (list: SmtList, kind: number) => {
     if (list.items.length !== 3)
       throw new SmtParseError(
         "invalid quantified expression, syntax error: (forall|exists ((<symbol> <sort>)*) <expr>) expected",
@@ -1169,7 +1172,7 @@ export const createSmtlibReader = (
     const isAnnotated = bodySExpr.kind === "list" && isSymbol(bodySExpr.items[0], "!");
     const annotations = bodySExpr.kind === "list" && isAnnotated ? bodySExpr.items : [];
     const parsedBody = parseTerm(isAnnotated ? annotations[1] : bodySExpr);
-    if (manager.sorts[parsedBody] !== SORT_BOOL)
+    if (kind !== QUANTIFIER_LAMBDA && manager.sorts[parsedBody] !== SORT_BOOL)
       throw new SmtParseError("expected a formula", bodySExpr);
     const attributes = Array.from(
       { length: Math.ceil((annotations.length - 2) / 2) },
@@ -1237,7 +1240,7 @@ export const createSmtlibReader = (
     if (patterns.length > 0 && noPatterns.length > 0)
       throw new SmtParseError("simultaneous patterns and no-patterns not supported", list.end);
     const quantifier = manager.mkQuantifier({
-      isForall,
+      kind,
       sorts: varSorts,
       names: bound.names,
       body,
@@ -1844,8 +1847,15 @@ export const createSmtlibReader = (
     }
     if (sexpr.kind !== "list") throw new SmtParseError("invalid expression", sexpr);
     const head = sexpr.items[0];
-    if (isSymbol(head, "forall") || isSymbol(head, "exists"))
-      return parseQuantifier(sexpr, head.text === "forall");
+    if (isSymbol(head, "forall") || isSymbol(head, "exists") || isSymbol(head, "lambda"))
+      return parseQuantifier(
+        sexpr,
+        head.text === "forall"
+          ? QUANTIFIER_FORALL
+          : head.text === "exists"
+            ? QUANTIFIER_EXISTS
+            : QUANTIFIER_LAMBDA,
+      );
     if (isSymbol(head, "let")) return parseLet(sexpr);
     // Each attribute applies to the expression the attributes before it made.
     return sexpr.items.slice(2).reduce(
@@ -2013,9 +2023,10 @@ export const createSmtlibReader = (
         results.push(parseRootObj(current));
         return;
       }
-      if (head.text === "as" || head.text === "lambda" || head.text === "match")
+      if (head.text === "as" || head.text === "match")
         throw new SmtUnsupportedError(`the expression ${head.text}`);
-      if (["forall", "exists", "let", "!"].includes(head.text)) results.push(parseLeaf(current));
+      if (["forall", "exists", "lambda", "let", "!"].includes(head.text))
+        results.push(parseLeaf(current));
       else frames.push({ head, indices: [], list: current, start: results.length, next: 1 });
     };
     enter(sexpr);

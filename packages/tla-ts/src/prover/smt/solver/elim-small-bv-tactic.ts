@@ -1,6 +1,13 @@
 // Ported from Z3 (src/tactic/bv/elim_small_bv_tactic.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../errors";
-import { type AstManager, OP_AND, OP_OR, SORT_BOOL } from "./ast";
+import {
+  type AstManager,
+  OP_AND,
+  OP_OR,
+  SORT_BOOL,
+  QUANTIFIER_FORALL,
+  QUANTIFIER_LAMBDA,
+} from "./ast";
 import { release } from "./expr-ref";
 import type { Goal } from "./goal";
 import { RefVector } from "./ref-vector";
@@ -52,6 +59,7 @@ class ElimSmallBvRewriter extends RewriterTpl {
   reduceQuantifier(expr: number, oldBody: number) {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
+    if (data.kind === QUANTIFIER_LAMBDA) return -1;
     const numDecls = data.sorts.length;
     const maxVarIdxP1 = manager.freeVarBounds[expr];
     let numReplaced = 0;
@@ -77,7 +85,11 @@ class ElimSmallBvRewriter extends RewriterTpl {
         newBodies.pushOwned(this.replaceVar(numDecls, maxVarIdxP1, index, body, manager.trueExpr));
         newBodies.pushOwned(this.replaceVar(numDecls, maxVarIdxP1, index, body, manager.falseExpr));
       } else continue;
-      const junction = manager.mkApp(data.isForall ? OP_AND : OP_OR, newBodies.items, SORT_BOOL);
+      const junction = manager.mkApp(
+        data.kind === QUANTIFIER_FORALL ? OP_AND : OP_OR,
+        newBodies.items,
+        SORT_BOOL,
+      );
       manager.incRef(junction);
       manager.decRef(body);
       body = this.simp.rewrite(junction);

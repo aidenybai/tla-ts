@@ -1,12 +1,25 @@
 // Ported from Z3 (src/ast/rewriter/inj_axiom.cpp), MIT license, see z3-license.txt.
-import { FAMILY_USER, KIND_APP, KIND_VAR, OP_EQ, OP_NOT, OP_OR, type AstManager } from "./ast";
+import {
+  FAMILY_USER,
+  KIND_APP,
+  KIND_VAR,
+  OP_EQ,
+  OP_NOT,
+  OP_OR,
+  type AstManager,
+  QUANTIFIER_FORALL,
+} from "./ast";
 import { isAppOf } from "./ast-util";
 
 // The result comes with a reference, which the caller releases.
 export const simplifyInjAxiom = (manager: AstManager, quantifier: number) => {
   const data = manager.getQuantifier(quantifier);
   const body = data.body;
-  if (!data.isForall || !isAppOf(manager, body, OP_OR) || manager.getNumArgs(body) !== 2)
+  if (
+    data.kind !== QUANTIFIER_FORALL ||
+    !isAppOf(manager, body, OP_OR) ||
+    manager.getNumArgs(body) !== 2
+  )
     return undefined;
   const isSwapped = isAppOf(manager, manager.getArg(body, 1), OP_NOT);
   const negated = manager.getArg(body, isSwapped ? 1 : 0);
@@ -76,7 +89,7 @@ export const simplifyInjAxiom = (manager: AstManager, quantifier: number) => {
       domain[index],
     );
     return manager.mkQuantifier({
-      isForall: true,
+      kind: QUANTIFIER_FORALL,
       sorts: sorts.reverse(),
       names,
       body: manager.mkEq(manager.mkApp(inverse, invArgs, domain[index]), inverted),

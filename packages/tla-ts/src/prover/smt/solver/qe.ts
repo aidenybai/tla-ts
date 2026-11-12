@@ -19,6 +19,8 @@ import {
   OP_ULEQ,
   OP_XOR,
   SORT_BOOL,
+  QUANTIFIER_EXISTS,
+  QUANTIFIER_FORALL,
 } from "./ast";
 import { flattenAndVector, hasUninterpreted, isAppOf, mkNot } from "./ast-util";
 import { mkBvApp } from "./bv-decl-plugin";
@@ -1222,7 +1224,7 @@ const mkExistsOver = (
   const body = quantElim.pinOwned(replace.apply(formula));
   replace.release();
   return manager.mkQuantifier({
-    isForall: false,
+    kind: QUANTIFIER_EXISTS,
     sorts: vars.map((x) => manager.sorts[x]),
     names: vars.map((x) => manager.getDeclName(x)),
     body,
@@ -1287,7 +1289,7 @@ const eliminateQuantifiers = (quantElim: QuantElim, formula: number) => {
       const vars = new RefVector(manager);
       const body = elim(quantElim.pinOwned(extractVars(manager, expr, vars)));
       for (const x of vars.items) quantElim.pin(x);
-      visited.set(expr, quantElim.eliminate(data.isForall, vars.items, body));
+      visited.set(expr, quantElim.eliminate(data.kind === QUANTIFIER_FORALL, vars.items, body));
       vars.reset();
       todo.pop();
     }
@@ -1413,10 +1415,10 @@ class SimplifyRewriter extends RewriterTpl {
     const invShifter = new InvVarShifter(manager);
     let result = context.pinOwned(invShifter.shift(substituted, fresh.length));
     invShifter.release();
-    if (data.isForall) result = context.pin(mkNot(manager, result));
+    if (data.kind === QUANTIFIER_FORALL) result = context.pin(mkNot(manager, result));
     const solved = context.solve(result, fresh);
     result = solved.formula;
-    if (data.isForall)
+    if (data.kind === QUANTIFIER_FORALL)
       result = context.pin(
         manager.isNot(result) ? manager.getArg(result, 0) : mkNot(manager, result),
       );
@@ -1435,7 +1437,7 @@ class SimplifyRewriter extends RewriterTpl {
     const abstracted = context.pinOwned(replace.apply(result));
     replace.release();
     const quantifier = manager.mkQuantifier({
-      isForall: data.isForall,
+      kind: data.kind,
       sorts: vars.map((x) => manager.sorts[x]),
       names: vars.map((x) => manager.getDeclName(x)),
       body: abstracted,

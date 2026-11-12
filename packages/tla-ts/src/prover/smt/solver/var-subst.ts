@@ -183,7 +183,10 @@ export class UnusedVarsEliminator {
   apply(expr: number) {
     const manager = this.manager;
     return manager.withoutTemporaries(() => {
-      const data = manager.kinds[expr] === KIND_QUANTIFIER ? manager.getQuantifier(expr) : null;
+      const data =
+        manager.kinds[expr] === KIND_QUANTIFIER && !manager.isLambda(expr)
+          ? manager.getQuantifier(expr)
+          : null;
       // ignore_patterns_on_ground_qbody: a ground body drops the patterns with the variables.
       const kept = data === null ? expr : manager.isGround(data.body) ? data.body : -1;
       if (kept !== -1 || data === null) {

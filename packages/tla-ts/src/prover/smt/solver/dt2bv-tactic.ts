@@ -14,6 +14,7 @@ import {
   OP_ITE,
   OP_ULEQ,
   SORT_BOOL,
+  QUANTIFIER_FORALL,
 } from "./ast";
 import { mkBvApp } from "./bv-decl-plugin";
 import {
@@ -168,11 +169,11 @@ class Enum2BvRewriter extends RewriterTpl {
       return bvSort;
     });
     if (!isFound) return -1;
-    if (bounds.size > 0 && !data.isForall) bounds.push(body);
+    if (bounds.size > 0 && data.kind !== QUANTIFIER_FORALL) bounds.push(body);
     const newBody =
       bounds.size === 0
         ? body
-        : data.isForall
+        : data.kind === QUANTIFIER_FORALL
           ? manager.mkApp(OP_IMPLIES, [manager.mkAnd(bounds.items), body], SORT_BOOL)
           : manager.mkAnd(bounds.items);
     const result = manager.mkQuantifier({
