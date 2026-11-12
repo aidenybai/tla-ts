@@ -6915,6 +6915,36 @@ describe("errors", () => {
     }
   });
 
+  it("joins the paths through an iterator helper's callback before its next step", async () => {
+    const source = `
+      const holder = { count: 0 };
+      function* count() {
+        for (let index = 0; index < 6; ++index) yield index;
+      }
+      const names = Array.from(
+        count().map((value) => {
+          holder.count += 1;
+          if (value === 0) return "zero";
+          if (value === 1) return "one";
+          if (value === 2) return "two";
+          return "many";
+        }),
+      );
+      const pairs = Array.from(count().flatMap((value) => (value === 1 ? [value, 0] : [0, value])));
+      if (names.join() !== "zero,one,two,many,many,many" || holder.count !== 6) {
+        throw new Error("names");
+      }
+      if (pairs.join() !== "0,0,1,0,0,2,0,3,0,4,0,5") throw new Error("pairs");
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    for (const [from, to, message] of [
+      ['return "two"', 'return "three"', "names"],
+      ["[value, 0]", "[0, value]", "pairs"],
+    ]) {
+      expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
+    }
+  });
+
   it("stops translating a helper whose callback's paths multiply its steps", () => {
     expect(() =>
       compile(`
