@@ -3811,6 +3811,16 @@ DefineProperty(heap, ref, key, descriptor) ==
   THEN DefineConverted(heap, ref, key, ToDescriptor(heap, descriptor))
   ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE]
 
+\\* Reflect.defineProperty, which throws a TypeError only where its target or its descriptor isn't
+\\* an object or the descriptor isn't valid, and gives whether it defined the key otherwise.
+ReflectDefineProperty(heap, ref, key, descriptor) ==
+  IF IsObjectArgument(ref) /\\ IsObjectArgument(descriptor)
+     /\\ ToDescriptor(heap, descriptor).isValid
+  THEN LET defined == DefineConverted(heap, ref, key, ToDescriptor(heap, descriptor))
+       IN [heap |-> defined.heap, isDone |-> ~defined.isRangeError,
+           isRangeError |-> defined.isRangeError, value |-> defined.isDone]
+  ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE, value |-> FALSE]
+
 DefineProperties(heap, ref, properties) ==
   LET source == Lookup(heap, properties)
       keys == EnumerableOwnKeys(source)

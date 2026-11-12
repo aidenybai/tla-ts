@@ -2954,6 +2954,12 @@ const FALLIBLE_CHANGES = new Set([
 const isConstruct = (node: MethodCall) =>
   node.expression.expression.getText() === "Reflect" && node.expression.name.text === "construct";
 
+// Reflect.defineProperty, which gives whether it defined the key rather than throwing where it
+// can't.
+export const isReflectDefinition = (node: MethodCall) =>
+  node.expression.expression.getText() === "Reflect" &&
+  node.expression.name.text === "defineProperty";
+
 // Object.create runs as a change only where nothing reads the object it makes, so that it can
 // throw.
 export const isObjectChange = (node: ts.Node, context: Context): node is MethodCall =>
@@ -2964,7 +2970,8 @@ export const isObjectChange = (node: ts.Node, context: Context): node is MethodC
       ts.isExpressionStatement(node.parent) ||
       isDescriptorsRead(node, context)) &&
     !isProxyOperation(node, context)) ||
-    (isConstruct(node) && getNewClass(node, context) === undefined));
+    (isConstruct(node) && getNewClass(node, context) === undefined) ||
+    (isReflectDefinition(node) && !isProxyOperation(node, context)));
 
 // The Object functions that convert their first argument to an object, which throws a TypeError for
 // null and undefined, and those that give a primitive back, or test it, without converting it.
@@ -3212,7 +3219,7 @@ export const translateObjectChange = (node: MethodCall, scope: Scope, context: C
   );
   return {
     change: useJavaScript(
-      change.operator,
+      isReflectDefinition(node) ? "ReflectDefineProperty" : change.operator,
       [
         getHeap(scope, node, context),
         ...(isAssign ? [values[0], tuple(values.slice(1))] : values),

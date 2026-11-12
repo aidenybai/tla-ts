@@ -3229,6 +3229,27 @@ describe("errors", () => {
     }
   });
 
+  it("gives whether Reflect.defineProperty defined a key", async () => {
+    const getSource = (isExpected: boolean) => `
+      const object: Record<string, number> = {};
+      const isDefined = Reflect.defineProperty(object, "attr", { value: 1, configurable: false });
+      if (!isDefined || object.attr !== 1) throw new Error("defined");
+      const isRedefined = Reflect.defineProperty(object, "attr", { value: 2 });
+      if (isRedefined !== ${isExpected}) throw new Error("unexpected");
+      Reflect.defineProperty(object, "other", { value: 3, enumerable: true });
+      if (object.other !== 3 || Object.keys(object).length !== 1) throw new Error("other");
+      let isTypeError = false;
+      try {
+        Reflect.defineProperty(object, "mixed", { value: 1, get: () => 1 });
+      } catch (error) {
+        isTypeError = error instanceof TypeError;
+      }
+      if (!isTypeError) throw new Error("mixed");
+    `;
+    expect((await checkModel(getSource(false))).failure).toBeUndefined();
+    expect((await checkModel(getSource(true))).failure?.message).toContain("unexpected");
+  });
+
   it("describes each own property that Object.getOwnPropertyDescriptors reads", async () => {
     const source = `
       const check = (actual: unknown, expected: unknown, message: string) => {
@@ -10605,6 +10626,29 @@ describe("proxies", () => {
     `;
     expect((await checkModel(getSource(3))).failure).toBeUndefined();
     expect((await checkModel(getSource(4))).failure?.message).toContain("unexpected");
+  });
+
+  it("runs Reflect.defineProperty in a trap that Object.seal runs", async () => {
+    const getSource = (expected: number) => `
+      const target: Record<string | symbol, number> = {};
+      const symbol = Symbol();
+      target[symbol] = 1;
+      target.foo = 2;
+      target[0] = 3;
+      const keys: (string | symbol)[] = [];
+      const getCount = (): number => keys.length;
+      const proxy = new Proxy(target, {
+        defineProperty(innerTarget, key, descriptor) {
+          keys.push(key);
+          return Reflect.defineProperty(innerTarget, key, descriptor);
+        },
+      });
+      Object.seal(proxy);
+      if (keys[0] !== "0" || keys[2] !== symbol || !Object.isSealed(target)) throw new Error("seal");
+      if (getCount() !== ${expected}) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(3))).failure).toBeUndefined();
+    expect((await checkModel(getSource(2))).failure?.message).toContain("unexpected");
   });
 
   it("stops the check where something else reads a proxy", async () => {

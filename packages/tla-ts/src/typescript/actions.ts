@@ -147,6 +147,7 @@ import {
   isRevoke,
   getPrimitiveObjectCall,
   isObjectChange,
+  isReflectDefinition,
   isUnreachableChange,
   getDateCall,
   getDateSetter,
@@ -1951,12 +1952,15 @@ export const translateCallStatement = (
   if (isObjectChange(expression, context) && heapSymbol !== undefined) {
     const translated = translateObjectChange(expression, path.scope, context);
     const name = context.names.getFresh(translated.isFallible ? "change" : "heap");
-    // Each change but Reflect.construct gives the object it changes.
+    // Each change gives the object it changes, but Reflect.construct, and Reflect.defineProperty,
+    // which gives whether it defined the key.
     const target = expression.arguments.at(0);
     const value =
       expression.expression.name.text === "construct" || target === undefined
         ? undefined
-        : translateObjectValue(target, path.scope, context);
+        : isReflectDefinition(expression)
+          ? field(identifier(name), "value")
+          : translateObjectValue(target, path.scope, context);
     if (isDescriptorRead(expression, context) && "values" in translated) {
       return readDescriptor(expression, translated.values, path, context, frame, continueWith);
     }
@@ -6116,7 +6120,8 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     isRevoke(node, context) ||
     (isObjectChange(node, context) &&
       node.expression.name.text !== "construct" &&
-      isHeapType(context.checker.getTypeAtLocation(node), context)) ||
+      (isReflectDefinition(node) ||
+        isHeapType(context.checker.getTypeAtLocation(node), context))) ||
     isGeneratorStep(node, context) ||
     getGeneratorMethod(node, context) !== undefined ||
     isPromiseCall(node, context) ||
@@ -8900,7 +8905,8 @@ export const translateStatements = (
         ts.isCallExpression(returned) &&
         (!isLibraryCall(returned, context) ||
           isPromiseCall(returned, context) ||
-          getLoopCall(returned, inner, context) !== undefined)
+          getLoopCall(returned, inner, context) !== undefined ||
+          isObjectChange(returned, context))
       ) {
         return translateCallStatement(returned, inner, context, frame, frame.exit);
       }
