@@ -2322,11 +2322,7 @@ export const getBody = (callee: FunctionNode) => {
   if (calleeBody === undefined) throw new TlaTypeScriptError("Give this a body", callee);
   return ts.isBlock(calleeBody)
     ? calleeBody.statements
-    : [
-        getWritten(calleeBody) === undefined
-          ? ts.factory.createReturnStatement(calleeBody)
-          : ts.factory.createExpressionStatement(calleeBody),
-      ];
+    : [ts.factory.createReturnStatement(calleeBody)];
 };
 
 // Runs a function's body as statements, for a call or a new that a statement makes.
@@ -3751,11 +3747,7 @@ const translateLoopCall = (
     const body = callback.body;
     const statements = ts.isBlock(body)
       ? body.statements
-      : [
-          getWritten(body) === undefined
-            ? ts.factory.createReturnStatement(body)
-            : ts.factory.createExpressionStatement(body),
-        ];
+      : [ts.factory.createReturnStatement(body)];
     const getChecked = (value: Expression, at: number) =>
       loop.isArrayLike
         ? checkElement(

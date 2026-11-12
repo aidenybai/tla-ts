@@ -3241,6 +3241,27 @@ describe("errors", () => {
     expect((await checkModel(getSource("2", "!=="))).failure?.message).toContain('"make"');
   });
 
+  it("returns what an increment gives from an arrow whose body is the increment", async () => {
+    const getSource = (prefix: string, postfix: string, made: string) => `
+      let count = 0;
+      const next = () => ++count;
+      const take = () => count++;
+      next();
+      const prefixed = next();
+      const postfixed = take();
+      const made = [5, 6].map(() => count++);
+      const found = [5, 6, 7].findIndex(() => ++count > 6);
+      if (prefixed !== ${prefix} || postfixed !== ${postfix} || made.join(",") !== "${made}") {
+        throw new Error("count");
+      }
+      if (found !== 1 || count !== 7) throw new Error("found");
+    `;
+    expect((await checkModel(getSource("2", "2", "3,4"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1", "2", "3,4"))).failure?.message).toContain('"count"');
+    expect((await checkModel(getSource("2", "3", "3,4"))).failure?.message).toContain('"count"');
+    expect((await checkModel(getSource("2", "2", "4,5"))).failure?.message).toContain('"count"');
+  });
+
   it("gives the number an increment reads or writes", async () => {
     const result = await checkModel(`
       let x = 5;
