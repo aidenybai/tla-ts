@@ -1777,8 +1777,8 @@ FromCharCodes(codes, isCodePoint) ==
   ELSE LET code == Head(codes)
            point == CASE code \\in {NaN, Infinity, NegativeInfinity, NegativeZero} -> 0
                       [] isCodePoint -> code
-                      [] OTHER -> code % 65536
-       IN  CASE isCodePoint /\\ (code \\in {NaN, Infinity, NegativeInfinity} \\/ point < 0 \\/ point > 1114111) ->
+                      [] OTHER -> IntegerOf(code) % 65536
+       IN  CASE isCodePoint /\\ (code \\in {NaN, Infinity, NegativeInfinity} \\/ IsFraction(code) \\/ point < 0 \\/ point > 1114111) ->
                   Assert(FALSE, "tla-ts can't throw the RangeError of String.fromCodePoint")
              [] point >= 128 -> Assert(FALSE, "tla-ts can't make a character outside ASCII")
              [] OTHER ->

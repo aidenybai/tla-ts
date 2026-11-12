@@ -7054,8 +7054,18 @@ describe("errors", () => {
       if (String.fromCharCode() !== "" || String.fromCharCode(65, code, 65601, -65471) !== "ABAA") throw new Error("char");
       if (String.fromCharCode(NaN).charCodeAt(0) !== 0) throw new Error("special");
       if (String.fromCodePoint(65, 90, -0) !== "AZ\\x00") throw new Error("point");
+      if (String.fromCharCode(65.7, -65470.5) !== "AB") throw new Error("fraction");
     `);
     expect(result.failure).toBeUndefined();
+    const fraction = (expected: string) =>
+      `const box = { size: 0 };\nif (String.fromCharCode(65.7, -65470.5) !== "${expected}") throw new Error("fraction");`;
+    expect((await checkModel(fraction("BB"))).failure?.message).toContain("fraction");
+    const fractionPoint = await checkModel(
+      `const box = { size: 0 };\nconst made = String.fromCodePoint(65.5);`,
+    );
+    expect(fractionPoint.failure?.message).toContain(
+      "tla-ts can't throw the RangeError of String.fromCodePoint",
+    );
     const outside = await checkModel(
       `const box = { size: 0 };\nconst code: number = -1;\nconst made = String.fromCodePoint(code);`,
     );
