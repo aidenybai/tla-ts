@@ -108,7 +108,6 @@ const destConjunctions = (term: Term): Term[] =>
     ? [...destConjunctions(term.fun.arg), ...destConjunctions(term.arg)]
     : [term];
 
-// Object_Logic.drop_judgment
 export const dropJudgment = (term: Term) =>
   term.kind === "App" && term.fun.kind === "Const" && term.fun.name === "PredicateLogic.Trueprop"
     ? term.arg
