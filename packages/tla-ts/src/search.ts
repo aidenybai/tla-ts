@@ -158,6 +158,12 @@ const createIdentifier = (name: string): Expression => ({
   location: START,
 });
 
+const createNamedIdentifier = (name: string): NamedExpression => ({
+  name,
+  expression: createIdentifier(name),
+  scope: undefined,
+});
+
 const UNNAMED_ARGUMENT_KINDS = new Set(["name", "property"]);
 
 const getConfigOperator = (kind: string, name: string, environment: Environment) => {
@@ -272,7 +278,7 @@ const getInvariants = (names: string[], environment: Environment) => {
         EXIT_STATUS.safetyEvaluationFailure,
       );
     }
-    return [{ name, expression: createIdentifier(name), scope: undefined }];
+    return [createNamedIdentifier(name)];
   });
 };
 
@@ -555,9 +561,7 @@ const getNamedExpressions = (
   environment: Environment,
 ): NamedExpression[] =>
   names.flatMap((name) =>
-    getConfigPredicate(kind, name, environment)
-      ? [{ name, expression: createIdentifier(name), scope: undefined }]
-      : [],
+    getConfigPredicate(kind, name, environment) ? [createNamedIdentifier(name)] : [],
   );
 
 const getBodyRange = (name: string, environment: Environment) => {
@@ -571,13 +575,13 @@ const getPossiblePredicates = (names: string[], environment: Environment) =>
       throw new TlaConfigError(`_POSSIBLE lists ${name} more than once`);
     }
     getConfigDefinition("possible", name, environment);
-    const expression = createIdentifier(name);
-    if (getLevel(expression, undefined, environment) === TEMPORAL_LEVEL) {
+    const possible = createNamedIdentifier(name);
+    if (getLevel(possible.expression, undefined, environment) === TEMPORAL_LEVEL) {
       throw new TlaConfigError(
         `The possible of ${name} is equal to a temporal formula; only state- and action-level predicates are supported`,
       );
     }
-    return { name, expression, scope: undefined };
+    return possible;
   });
 
 const getMembership = (
@@ -1014,10 +1018,7 @@ export const createSearch = (
       ? undefined
       : getConfigDefinition("view function", config.view, environment);
   const viewName = config.view ?? getModuleOperators("view")[0]?.name;
-  const view =
-    viewName === undefined
-      ? undefined
-      : { name: viewName, expression: createIdentifier(viewName), scope: undefined };
+  const view = viewName === undefined ? undefined : createNamedIdentifier(viewName);
   const actionProperties = properties.actionProperties.map((property) => {
     const unchanged: Expression = {
       kind: "Unchanged",
