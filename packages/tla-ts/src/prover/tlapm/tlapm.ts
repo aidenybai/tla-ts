@@ -1,4 +1,4 @@
-import { TlaUnsupportedError } from "../../errors";
+import { TlaProverError, TlaUnsupportedError } from "../../errors";
 
 // Loaded at runtime so browser bundles leave them out. prove loads this module only in Node and Bun.
 const childProcess = process.getBuiltinModule("node:child_process");
@@ -85,9 +85,13 @@ export const proveWithTlapm = async (
       options.onResult?.(id, result);
     });
   });
-  await new Promise((resolve) => child.on("close", resolve));
+  const failure = await new Promise<Error | undefined>((resolve) => {
+    child.on("error", resolve);
+    child.on("close", () => resolve(undefined));
+  });
   options.signal?.removeEventListener("abort", kill);
   fileSystem.rmSync(directory, { recursive: true, force: true });
   options.signal?.throwIfAborted();
+  if (failure) throw new TlaProverError(failure.message, failure);
   return results;
 };
