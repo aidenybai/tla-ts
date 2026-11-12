@@ -359,18 +359,17 @@ interface StringOrder {
   unorderedString: string | undefined;
 }
 
-const stringOrder: StringOrder = {
+const createStringOrder = (): StringOrder => ({
   ranks: Object.create(null),
   size: 0,
   searchRank: undefined,
   unorderedString: undefined,
-};
+});
+
+const stringOrder = createStringOrder();
 
 export const setStringOrder = (texts: Iterable<string>) => {
-  stringOrder.ranks = Object.create(null);
-  stringOrder.size = 0;
-  stringOrder.searchRank = undefined;
-  stringOrder.unorderedString = undefined;
+  Object.assign(stringOrder, createStringOrder());
   modelValues.clear();
   for (const text of texts) rankString(text);
 };
