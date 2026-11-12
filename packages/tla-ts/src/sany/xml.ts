@@ -514,34 +514,26 @@ const exportSpecification = (
         if (body === undefined || module === undefined) {
           throw new Error(`The definition of ${node.name} has no body`);
         }
-        if (isTlc174) {
-          return withLevel(
-            createElement("UserDefinedOpKind", [
-              createText("uniquename", node.name),
-              createText("arity", node.arity),
-              createElement("body", [exportExpression(body, JAVA_CALLS.body)]),
-              ...(node.params
-                ? [getParamsElement(params, node.isLeibnizArg, JAVA_CALLS.param)]
-                : []),
-              ...(node.inRecursive ? [createElement("recursive")] : []),
-            ]),
-            node,
-          );
-        }
         return withLevel(
           createElement("UserDefinedOpKind", [
             createText("uniquename", node.name),
             createText("arity", node.arity),
-            createElement("originalOperator", [getReference(node.source ?? node)]),
-            createElement("originallyDefinedInModule", [getReference(module)]),
+            ...(isTlc174
+              ? []
+              : [
+                  createElement("originalOperator", [getReference(node.source ?? node)]),
+                  createElement("originallyDefinedInModule", [getReference(module)]),
+                ]),
             createElement("body", [exportExpression(body, JAVA_CALLS.body)]),
-            getParamsElement(params, node.isLeibnizArg, JAVA_CALLS.param),
-            ...getPreCommentsElement(node.preComments),
+            ...(node.params || !isTlc174
+              ? [getParamsElement(params, node.isLeibnizArg, JAVA_CALLS.param)]
+              : []),
+            ...(isTlc174 ? [] : getPreCommentsElement(node.preComments)),
             ...(node.inRecursive ? [createElement("recursive")] : []),
-            ...(node.recursiveSection >= 0
+            ...(node.recursiveSection >= 0 && !isTlc174
               ? [createText("recursiveSection", node.recursiveSection)]
               : []),
-            ...(node.isLocal ? [createElement("local")] : []),
+            ...(node.isLocal && !isTlc174 ? [createElement("local")] : []),
           ]),
           node,
         );
@@ -635,7 +627,7 @@ const exportSpecification = (
     );
 
   const exportApplication = (node: OpApplNode) => {
-    if (node.isNull && isTlc174) {
+    if (node.nullKind !== undefined && isTlc174) {
       throw getJavaException(getUnsupportedKind(0), [
         JAVA_CALLS.operator,
         ...getDefinitionFrames("OpDef", IN_BUILTINS),
@@ -698,7 +690,7 @@ const exportSpecification = (
     call: JavaFrame | JavaExpressionCall,
   ): XmlElement => {
     if (!isTlc174) return exportLevelNode(node);
-    if (node.kind === "OpAppl" && node.isAbsent && "nullType" in call) {
+    if (node.kind === "OpAppl" && node.nullKind === "absent" && "nullType" in call) {
       throw getNullPointerException(call);
     }
     return withFrames(

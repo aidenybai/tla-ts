@@ -153,12 +153,11 @@ export interface OpApplNode extends LevelFields {
   tupleOrs: boolean[] | undefined;
   ranges: ExprNode[];
   location: SanyLocation;
-  isNull?: boolean;
-  isAbsent?: boolean;
+  nullKind?: "null" | "absent";
 }
 
 export const isAbsent = (node: LevelNode | undefined) =>
-  node?.kind === "OpAppl" && node.isAbsent === true;
+  node?.kind === "OpAppl" && node.nullKind === "absent";
 
 export interface NumeralNode extends LevelFields {
   kind: "Numeral";
