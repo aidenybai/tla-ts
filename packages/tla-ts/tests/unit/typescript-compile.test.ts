@@ -3694,6 +3694,27 @@ describe("errors", () => {
     expect((await checkModel(getSource("2", "2", "4,5"))).failure?.message).toContain('"count"');
   });
 
+  it("runs the call whose result's method a statement calls first", async () => {
+    const getSource = (seen: string) => `
+      interface Branch { kind: "branch"; items: Value[]; seen: number }
+      type Value = number | Branch;
+      const touch = (value: Branch) => {
+        value.seen += 1;
+        return value.items.length;
+      };
+      const show = (value: Value): string => {
+        const format = (inner: Value) => show(inner);
+        if (typeof value === "number") return \`\${value}\`;
+        return \`\${touch(value)}[\${value.items.map(format).join(",")}]\`;
+      };
+      const inner: Branch = { kind: "branch", items: [2], seen: 0 };
+      const tree: Branch = { kind: "branch", items: [1, inner], seen: 0 };
+      if (show(tree) !== "2[1,1[2]]" || inner.seen !== ${seen}) throw new Error("show");
+    `;
+    expect((await checkModel(getSource("1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("2"))).failure?.message).toContain('"show"');
+  });
+
   it("gives the number an increment reads or writes", async () => {
     const result = await checkModel(`
       let x = 5;
