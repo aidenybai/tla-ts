@@ -3989,6 +3989,16 @@ ArrayLikeReverse(heap, ref) ==
       state == ArrayLikeSwaps([heap |-> heap, isThrown |-> FALSE], ref, lowers, length)
   IN [heap |-> state.heap, value |-> ref, isThrown |-> state.isThrown]
 
+\\* A set or a map that the heap holds, so that it keeps its identity as a script changes it, with
+\\* the value that it holds as its data.
+CollectionObject(prototype, data) == [data |-> data] @@ [EmptyObject EXCEPT !.prototype = prototype]
+
+\\* The value that a set or a map that the heap holds has, or undefined or null as an optional chain
+\\* reads them.
+CollectionData(heap, ref) == IF ref \\in {Undefined, Null} THEN ref ELSE heap.objects[ref[Ref]].data
+
+WithCollectionData(heap, ref, data) == [heap EXCEPT !.objects[ref[Ref]].data = data]
+
 \\* What a splice whose result nothing reads does to an array that the heap holds, which makes that
 \\* result through the array's constructor, where tla-ts follows only Array.
 ArraySplice(heap, ref, start, hasCount, count, items, array) ==

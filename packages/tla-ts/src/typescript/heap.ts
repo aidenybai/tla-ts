@@ -47,6 +47,7 @@ import {
   IN_PLACE_METHODS,
   isSpliceStatement,
   translateSpliced,
+  translateNew,
 } from "./collections";
 import { getJsonText, parseJson } from "./json";
 import { getCalledError, getConstructor, getErrorClass } from "./exceptions";
@@ -1082,6 +1083,27 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
       context,
     );
   }
+  if (ts.isNewExpression(node) && context.heapCollections.has(node)) {
+    return useJavaScript(
+      "Allocate",
+      [
+        heap,
+        useJavaScript(
+          "CollectionObject",
+          [
+            translateBuiltInValue(
+              getBuiltIn(node.expression, context) === "Map" ? "Map.prototype" : "Set.prototype",
+              node,
+              context,
+            ),
+            translateNew(node, scope, context),
+          ],
+          context,
+        ),
+      ],
+      context,
+    );
+  }
   const created = getNewClass(node, context);
   const construction = getConstruction(node, context);
   if (created !== undefined && construction !== undefined) {
@@ -1115,7 +1137,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     );
   }
   // A new array that a built-in call makes, as the call's sequence.
-  if (ts.isCallExpression(node) && context.heapArrays.has(node)) {
+  if (ts.isCallExpression(node) && context.heapCollections.has(node)) {
     const prototype = translateBuiltInValue("Array.prototype", node, context);
     // A splice gives the elements that it removes, which its statement then removes.
     const elements =
@@ -2116,8 +2138,11 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
     (ts.isObjectLiteralExpression(node) &&
       isObjectValue(node, context) &&
       !isProxyOperation(node, context)) ||
-    ((ts.isArrayLiteralExpression(node) || isHoleyNewArray(node) || ts.isCallExpression(node)) &&
-      context.heapArrays.has(node)) ||
+    ((ts.isArrayLiteralExpression(node) ||
+      isHoleyNewArray(node) ||
+      ts.isCallExpression(node) ||
+      ts.isNewExpression(node)) &&
+      context.heapCollections.has(node)) ||
     ts.isRegularExpressionLiteral(node) ||
     getMadeRegExp(node, context) !== undefined ||
     isNewObject(node, context) ||
@@ -2247,8 +2272,12 @@ const getCalledName = (owner: ts.SignatureDeclaration) => {
     : undefined;
 };
 
-const isPlainLiteral = (node: ts.Node | undefined): node is ts.ArrayLiteralExpression =>
-  node !== undefined && ts.isArrayLiteralExpression(node);
+// A new collection that the heap may hold: an array literal, or a new set or map.
+const isFreshCollection = (node: ts.Node | undefined, context: Context) =>
+  node !== undefined &&
+  (ts.isArrayLiteralExpression(node) ||
+    (ts.isNewExpression(node) &&
+      ["Set", "Map"].includes(getBuiltIn(node.expression, context) ?? "")));
 
 // The built-in methods that give the array they change rather than a new one.
 const SELF_RETURNING_METHODS = new Set(["sort", "reverse", "fill", "copyWithin"]);
@@ -2268,11 +2297,27 @@ const isFreshArrayCall = (node: ts.CallExpression, context: Context) => {
   );
 };
 
-// The arrays that a function the script reaches changes in place through a parameter, which
-// JavaScript shares with its caller, live in the heap, with every variable, parameter, and field
-// that may hold one, across the files that the script reaches. Each must start as an array
-// literal, each use must read the heap, and each object with such a field must go only where the
-// field keeps its name. Where any doesn't, the arrays stay values.
+// The methods that change a set or a map in place, and those that only read one.
+const SET_OR_MAP_CHANGES = new Set(["add", "set", "delete", "clear"]);
+const SET_OR_MAP_READS = new Set(["has", "get", "forEach", "keys", "values", "entries"]);
+
+// The array methods that look for an element by identity.
+const ELEMENT_SEARCH_METHODS = new Set(["includes", "indexOf", "lastIndexOf"]);
+
+// The array methods whose callback takes each element, and whose result holds none of them.
+const ELEMENT_CALLBACK_METHODS = new Set([
+  "some",
+  "every",
+  "forEach",
+  "findIndex",
+  "findLastIndex",
+]);
+
+// The arrays, sets, and maps that a script changes in place where another name may see them, which
+// JavaScript shares, live in the heap, with every variable, parameter, and field that may hold
+// one, across the files that the script reaches. Each must start new, each use must read the heap,
+// and each object with such a field must go only where the field keeps its name. Where any
+// doesn't, the collections stay values.
 export const findChangedArrays = (reached: readonly ts.Node[], context: Context) => {
   const checker = context.checker;
   const isReached = new Set(reached);
@@ -2321,15 +2366,63 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       (ts.isElementAccessExpression(parent) && parent.expression === use && isAssigned(parent))
     );
   };
-  const grow = (start: ts.Symbol[]) => {
+  const isSetOrMap = (node: ts.Expression) => ["set", "map"].includes(getKind(node, context));
+  // A call that changes a set or a map in place, whose receiver is the use.
+  const isSetOrMapChange = (use: ts.Expression) => {
+    const parent = use.parent;
+    return (
+      ts.isPropertyAccessExpression(parent) &&
+      parent.expression === use &&
+      SET_OR_MAP_CHANGES.has(parent.name.text) &&
+      ts.isCallExpression(parent.parent) &&
+      parent.parent.expression === parent &&
+      isSetOrMap(use)
+    );
+  };
+  // Whether nothing reads what a call gives: a statement makes it, or an arrow function's body that
+  // only statements and forEach call.
+  const isDiscarded = (call: ts.Expression) => {
+    const parent = call.parent;
+    if (ts.isExpressionStatement(parent)) return true;
+    if (!ts.isArrowFunction(parent) || parent.body !== call) return false;
+    const isForEachCallback = (node: ts.Expression) =>
+      ts.isCallExpression(node.parent) &&
+      node.parent.arguments[0] === node &&
+      ts.isPropertyAccessExpression(node.parent.expression) &&
+      node.parent.expression.name.text === "forEach";
+    const holder = parent.parent;
+    const symbol =
+      ts.isVariableDeclaration(holder) &&
+      holder.initializer === parent &&
+      (holder.parent.flags & ts.NodeFlags.Const) !== 0 &&
+      ts.isIdentifier(holder.name)
+        ? getSymbol(holder.name, checker)
+        : undefined;
+    return (
+      isForEachCallback(parent) ||
+      (symbol !== undefined &&
+        (references.get(symbol) ?? [])
+          .filter((reference) => reference.parent !== holder)
+          .every(
+            (reference) =>
+              isForEachCallback(reference) ||
+              (ts.isCallExpression(reference.parent) &&
+                reference.parent.expression === reference &&
+                ts.isExpressionStatement(reference.parent.parent)),
+          ))
+    );
+  };
+  const grow = (start: ts.Symbol[], startOuters: ts.Symbol[] = []) => {
     const group = new Set<ts.Node>();
     const names = new Set<string>();
     const nodes: ts.Node[] = [];
     const pending = [...start];
     // The functions whose results, and the holders whose arrays' elements, are the group's.
     const returns: ts.SignatureDeclaration[] = [];
-    const outers: ts.Symbol[] = [];
+    const outers = [...startOuters];
     const outerKeys = new Set<ts.Node>();
+    // The parameters of callbacks that take each element of an outer holder.
+    const elementParameters = new Set<ts.Node>();
     const isInGroup = (symbol: ts.Symbol) =>
       (symbol.declarations ?? []).some((declaration) => group.has(declaration));
     const isSame = (symbol: ts.Symbol, other: ts.Symbol) =>
@@ -2429,7 +2522,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       );
     };
     const addSource = (node: ts.Expression): boolean => {
-      if (isPlainLiteral(node)) {
+      if (isFreshCollection(node, context)) {
         nodes.push(node);
         return true;
       }
@@ -2451,7 +2544,11 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         nodes.push(node);
         return true;
       }
-      if (ts.isCallExpression(node)) {
+      // An element that at() reads, which addHolder takes, or what a function returns.
+      if (
+        ts.isCallExpression(node) &&
+        !(ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "at")
+      ) {
         const callee = getSymbol(node.expression, checker)?.valueDeclaration;
         const owner =
           callee !== undefined && ts.isVariableDeclaration(callee) ? callee.initializer : callee;
@@ -2499,6 +2596,24 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         parent.operatorToken.kind === ts.SyntaxKind.EqualsToken
       ) {
         return parent.left === use ? addSource(parent.right) : addHolder(parent.left);
+      }
+      if (ts.isNonNullExpression(parent)) return isUse(parent);
+      // A new set or map that copies one.
+      if (isFreshCollection(parent, context) && ts.isNewExpression(parent)) {
+        return parent.arguments?.[0] === use;
+      }
+      if (ts.isPropertyAccessExpression(parent) && isSetOrMap(use)) {
+        const call = parent.parent;
+        const method = parent.name.text;
+        return (
+          method === "size" ||
+          (ts.isCallExpression(call) &&
+            call.expression === parent &&
+            !call.arguments.some(ts.isSpreadElement) &&
+            (SET_OR_MAP_READS.has(method) ||
+              ["delete", "clear"].includes(method) ||
+              (["add", "set"].includes(method) && isDiscarded(call))))
+        );
       }
       if (ts.isPropertyAccessExpression(parent)) {
         const call = parent.parent;
@@ -2550,6 +2665,14 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         );
       }
       if (!ts.isCallExpression(parent) || parent.arguments.some(ts.isSpreadElement)) return false;
+      // An element that an outer holder takes, or looks for.
+      if (
+        ts.isPropertyAccessExpression(parent.expression) &&
+        (["push", "unshift"].includes(parent.expression.name.text) ||
+          (ELEMENT_SEARCH_METHODS.has(parent.expression.name.text) && parent.arguments[0] === use))
+      ) {
+        return addOuter(parent.expression.expression);
+      }
       const callee =
         ts.isIdentifier(parent.expression) || ts.isPropertyAccessExpression(parent.expression)
           ? getSymbol(parent.expression, checker)?.valueDeclaration
@@ -2568,6 +2691,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       const declaration = symbol.valueDeclaration;
       if (declaration !== undefined && ts.isParameter(declaration)) {
         nodes.push(declaration);
+        if (elementParameters.has(declaration)) return true;
         const owner = declaration.parent;
         const position = owner.parameters.indexOf(declaration);
         const name = getCalledName(owner);
@@ -2696,7 +2820,29 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
             return false;
           }
           if (method === "push" || method === "unshift") return call.arguments.every(addSource);
+          // A search compares each element with the one it looks for by identity.
+          if (ELEMENT_SEARCH_METHODS.has(method)) {
+            return call.arguments[0] !== undefined && addSource(call.arguments[0]);
+          }
           if (method === "pop" || method === "shift") return ts.isExpressionStatement(call.parent);
+          const callback = call.arguments[0];
+          const parameter =
+            callback !== undefined &&
+            (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback))
+              ? callback.parameters[0]
+              : undefined;
+          if (ELEMENT_CALLBACK_METHODS.has(method)) {
+            const symbol =
+              parameter !== undefined &&
+              ts.isIdentifier(parameter.name) &&
+              parameter.initializer === undefined &&
+              parameter.dotDotDotToken === undefined
+                ? getSymbol(parameter.name, checker)
+                : undefined;
+            if (parameter !== undefined) elementParameters.add(parameter);
+            if (symbol !== undefined) pending.push(symbol);
+            return symbol !== undefined && parameter?.parent.parameters.length === 1;
+          }
           return method === "at" && isUse(call);
         }
         if (
@@ -2707,7 +2853,10 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
           return false;
         }
         const assignment = parent.parent;
-        return ts.isBinaryExpression(assignment) && assignment.left === parent
+        return ts.isBinaryExpression(assignment) &&
+          assignment.left === parent &&
+          assignment.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+          assignment.operatorToken.kind <= ts.SyntaxKind.LastAssignment
           ? assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
               addSource(assignment.right)
           : isUse(parent);
@@ -2891,7 +3040,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       return declaration !== undefined &&
         ts.isVariableDeclaration(declaration) &&
         declaration.initializer !== undefined &&
-        !isPlainLiteral(declaration.initializer) &&
+        !isFreshCollection(declaration.initializer, context) &&
         isReachedNode(declaration) &&
         entry[1].some(isInPlace)
         ? [[entry[0]]]
@@ -2908,6 +3057,24 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
     if (start.every((symbol) => (symbol.declarations ?? []).some((node) => found.has(node))))
       return;
     grow(start).forEach((node) => found.add(node));
+  });
+  // The holders whose arrays' elements are sets or maps that change in place.
+  accesses.forEach((access) => {
+    const outers =
+      ts.isElementAccessExpression(access) &&
+      isReachedNode(access) &&
+      getAccessedFields(access, checker) === undefined &&
+      isNumberLike(access.argumentExpression, context) &&
+      isSetOrMapChange(access)
+        ? getHolders(access.expression, checker)
+        : [];
+    const isFound = outers.every((outer) =>
+      (outer.declarations ?? []).some((declaration) => {
+        const element = getElementTypeNode(declaration);
+        return element !== undefined && found.has(element);
+      }),
+    );
+    if (outers.length > 0 && !isFound) grow([], outers).forEach((node) => found.add(node));
   });
   return [...found];
 };
@@ -3237,7 +3404,7 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
     isObjectChange(node, context) && FALLIBLE_CHANGES.has(node.expression.name.text);
   if (
     isDefinition &&
-    context.heapArrays.size > 0 &&
+    context.heapCollections.size > 0 &&
     getArrayLiteral(node.arguments[0], context) !== undefined
   ) {
     return ["TypeError", "RangeError"];

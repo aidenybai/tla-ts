@@ -1,5 +1,6 @@
 import ts from "@typescript/typescript6";
 import {
+  getHeapSetOrMapChange,
   translateArrayConstructor,
   translateArrayLikeCall,
   translateFunctionConstructor,
@@ -151,6 +152,7 @@ import {
   isFieldName,
   isHeapArray,
   hasHeapType,
+  isHeapSetOrMap,
   isHeapType,
   isBigIntLike,
   isNumberLike,
@@ -2558,7 +2560,32 @@ export const translateExpression = (
   scope: Scope,
   context: Context,
   isDefined = false,
-): Expression => locate(translateNode(node, scope, context, isDefined), getLocation(node));
+): Expression => {
+  const translated = translateNode(node, scope, context, isDefined);
+  // The base of an optional chain that a check already read is the value that it read.
+  return locate(
+    isSetOrMapRead(node, context) &&
+      !(ts.isOptionalChain(node.parent) && scope.checked?.has(node.parent) === true)
+      ? useJavaScript("CollectionData", [getHeap(scope, node, context), translated], context)
+      : translated,
+    getLocation(node),
+  );
+};
+
+// Whether an expression gives a set or a map that the heap holds where a script reads its value,
+// rather than passes it on or changes it.
+const isSetOrMapRead = (node: ts.Expression, context: Context) => {
+  const parent = node.parent;
+  const isRead =
+    (ts.isPropertyAccessExpression(parent) &&
+      parent.expression === node &&
+      getHeapSetOrMapChange(parent.parent, context) === undefined) ||
+    (ts.isForOfStatement(parent) && parent.expression === node) ||
+    ts.isSpreadElement(parent) ||
+    (ts.isNewExpression(parent) &&
+      ["Set", "Map"].includes(getBuiltIn(parent.expression, context) ?? ""));
+  return isRead && isHeapSetOrMap(node, context);
+};
 
 const readsArguments = (node: ts.Node): boolean =>
   (ts.isIdentifier(node) && node.text === "arguments") ||
@@ -2902,7 +2929,7 @@ const translateNode = (
       translateExpression(node.whenFalse, scope, context),
     );
   }
-  if (ts.isArrayLiteralExpression(node) && !context.heapArrays.has(node)) {
+  if (ts.isArrayLiteralExpression(node) && !context.heapCollections.has(node)) {
     // A sequence has no properties but an array's, so a type that gives it others, as a script
     // writes them, needs an array that the heap holds.
     const checker = context.checker;
@@ -2959,7 +2986,7 @@ const translateNode = (
     }
     return allocated;
   }
-  if (ts.isCallExpression(node) && context.heapArrays.has(node)) {
+  if (ts.isCallExpression(node) && context.heapCollections.has(node)) {
     const made = scope.allocated.get(node);
     if (made === undefined) {
       throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
@@ -2997,7 +3024,7 @@ const translateNode = (
   if (errorClass !== undefined) return getConstructor(errorClass, context);
   const isHeapObject =
     ((ts.isArrayLiteralExpression(node) || isHoleyNewArray(node)) &&
-      context.heapArrays.has(node)) ||
+      context.heapCollections.has(node)) ||
     (ts.isClassExpression(node) && isHeapClass(node, context)) ||
     isHeapFunction(node, context) ||
     isFunctionObject(node, context) ||
@@ -3046,6 +3073,14 @@ const translateNode = (
     getKind(node, context) === getKind(passed, context)
   ) {
     return translateExpression(passed, scope, context);
+  }
+  // A set or a map that the heap holds, which a statement makes.
+  if (ts.isNewExpression(node) && context.heapCollections.has(node)) {
+    const made = scope.allocated.get(node);
+    if (made === undefined) {
+      throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
+    }
+    return made;
   }
   if (ts.isNewExpression(node)) {
     const classes = getErrorClass(getSymbol(node.expression, context.checker), context.checker);

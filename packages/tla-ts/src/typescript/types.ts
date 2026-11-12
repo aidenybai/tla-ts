@@ -342,9 +342,26 @@ export const getHolders = (node: ts.Expression, checker: ts.TypeChecker) => {
   return getAccessedFields(node, checker) ?? (symbol === undefined ? [] : [symbol]);
 };
 
-export const isHeapArray = (node: ts.Expression, context: Context): boolean => {
-  if (context.heapArrays.size === 0) return false;
-  if (ts.isParenthesizedExpression(node)) return isHeapArray(node.expression, context);
+// Whether an expression gives a set or a map that the heap holds, which keeps its identity as a
+// script changes it in place.
+export const isHeapSetOrMap = (node: ts.Expression, context: Context) => {
+  if (context.heapCollections.size === 0) return false;
+  const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(node));
+  return (isSetType(type) || isMapType(type)) && isHeld(node, context);
+};
+
+export const isHeapArray = (node: ts.Expression, context: Context) => {
+  if (context.heapCollections.size === 0) return false;
+  const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(node));
+  return !isSetType(type) && !isMapType(type) && isHeld(node, context);
+};
+
+// Whether an expression gives a collection that the heap holds: a literal or a new set or map that
+// it holds, or what a holder of them gives.
+const isHeld = (node: ts.Expression, context: Context): boolean => {
+  if (ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node)) {
+    return isHeld(node.expression, context);
+  }
   // An element of the arrays that a holder holds, where the heap holds those elements.
   const isElementHeld = (outer: ts.Expression) => {
     const holders = getHolders(outer, context.checker);
@@ -353,7 +370,7 @@ export const isHeapArray = (node: ts.Expression, context: Context): boolean => {
       holders.every((holder) =>
         (holder.declarations ?? []).every((declaration) => {
           const element = getElementTypeNode(declaration);
-          return element !== undefined && context.heapArrays.has(element);
+          return element !== undefined && context.heapCollections.has(element);
         }),
       )
     );
@@ -361,7 +378,7 @@ export const isHeapArray = (node: ts.Expression, context: Context): boolean => {
   if (ts.isCallExpression(node)) {
     const called = getCalledFunction(node, context.checker);
     return called !== undefined
-      ? context.heapArrays.has(called)
+      ? context.heapCollections.has(called)
       : ts.isPropertyAccessExpression(node.expression) &&
           node.expression.name.text === "at" &&
           isElementHeld(node.expression.expression);
@@ -374,7 +391,7 @@ export const isHeapArray = (node: ts.Expression, context: Context): boolean => {
     return isElementHeld(node.expression);
   }
   if (ts.isConditionalExpression(node)) {
-    return isHeapArray(node.whenTrue, context) && isHeapArray(node.whenFalse, context);
+    return isHeld(node.whenTrue, context) && isHeld(node.whenFalse, context);
   }
   const literal = getArraySource(node, context);
   const declaration = ts.isIdentifier(node)
@@ -387,18 +404,19 @@ export const isHeapArray = (node: ts.Expression, context: Context): boolean => {
   const returning =
     called !== undefined && ts.isVariableDeclaration(called) ? called.initializer : called;
   return (
-    (returning !== undefined && context.heapArrays.has(returning)) ||
-    (literal !== undefined && context.heapArrays.has(literal)) ||
+    (returning !== undefined && context.heapCollections.has(returning)) ||
+    (literal !== undefined && context.heapCollections.has(literal)) ||
+    (ts.isNewExpression(node) && context.heapCollections.has(node)) ||
     (declaration !== undefined &&
       (ts.isBindingElement(declaration) ||
         ts.isParameter(declaration) ||
         ts.isVariableDeclaration(declaration)) &&
-      context.heapArrays.has(declaration)) ||
+      context.heapCollections.has(declaration)) ||
     (fields !== undefined &&
       fields.length > 0 &&
       fields.every((field) =>
         (field.declarations ?? []).some((fieldDeclaration) =>
-          context.heapArrays.has(fieldDeclaration),
+          context.heapCollections.has(fieldDeclaration),
         ),
       ))
   );

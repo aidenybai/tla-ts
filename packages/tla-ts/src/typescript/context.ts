@@ -65,10 +65,9 @@ export interface Context {
   // The model values that stand for the numbers that a script's literals give and that aren't
   // integers, and for their negations, by number.
   fractions: Map<number, string>;
-  // The array literals and the rest elements that a script uses as objects, which its heap holds.
-  // The array literals, and the rest elements, parameters, and fields that hold arrays, which the
-  // heap holds.
-  heapArrays: Set<ts.Node>;
+  // The array literals, new sets and maps, and the rest elements, variables, parameters, fields,
+  // and functions that hold them, which the heap holds.
+  heapCollections: Set<ts.Node>;
   // Whether a script gives Array.prototype or Object.prototype properties, which an array reads
   // past its end.
   hasInheritedElements: boolean;
@@ -123,7 +122,7 @@ export const createContext = (checker: ts.TypeChecker): Context => ({
   hasSpecialNumbers: false,
   symbols: [],
   fractions: new Map(),
-  heapArrays: new Set(),
+  heapCollections: new Set(),
   hasInheritedElements: false,
   passed: new Map(),
 });

@@ -14,6 +14,7 @@ import {
   translateStoredCall,
   translateHoldsIteratorMethod,
   getHeapElements,
+  getHeapSetOrMapChange,
   translateHeapElements,
   translateArrayIteration,
   getHeapRegExpCall,
@@ -278,6 +279,7 @@ import {
   getKind,
   getArrayLiteral,
   isHeapArray,
+  isHeapSetOrMap,
   getPathStep,
   isHeapPattern,
   isHeapType,
@@ -1159,8 +1161,12 @@ const isRemoving = (node: ts.Expression, context: Context): boolean => {
   if (!isMethodCall(node)) return false;
   const method = node.expression.name.text;
   const kind = getKind(node.expression.expression, context);
+  // A set or a map that the heap holds changes as a statement's call.
   return (
-    (method === "delete" && (kind === "set" || kind === "map") && node.arguments.length === 1) ||
+    (method === "delete" &&
+      (kind === "set" || kind === "map") &&
+      !isHeapSetOrMap(node.expression.expression, context) &&
+      node.arguments.length === 1) ||
     (kind === "sequence" &&
       !node.arguments.some(ts.isSpreadElement) &&
       REMOVING_METHODS.has(method))
@@ -1209,7 +1215,7 @@ const getRemovedValue = (
               : index(sequence, [apply("Len", [sequence])]),
           );
   // A splice whose result the heap holds gives the array that its statement made.
-  const made = context.heapArrays.has(node) ? path.scope.allocated.get(node) : undefined;
+  const made = context.heapCollections.has(node) ? path.scope.allocated.get(node) : undefined;
   return {
     value: made ?? checkArrayMethod(value, node, path.scope, context),
     path: assign(
@@ -1749,6 +1755,54 @@ export const translateCallStatement = (
             field(change, "isThrown"),
             throwTypeError(withHeap(field(change, "heap")), expression, context, frame),
             continueWith(withHeap(field(change, "heap")), field(change, "value")),
+          ),
+        ),
+      ),
+    );
+  }
+  const collectionChange = getHeapSetOrMapChange(expression, context);
+  if (collectionChange !== undefined && isMethodCall(expression)) {
+    const heap = getHeap(path.scope, expression, context);
+    const collectionName = context.names.getFresh("collection");
+    const ref = identifier(collectionName);
+    const method = collectionChange.method;
+    const data = useJavaScript("CollectionData", [heap, ref], context);
+    const updated = getUpdatedValue(data, collectionChange.kind, expression, path.scope, context);
+    const key = expression.arguments[0];
+    const builtIn = `${collectionChange.kind === "set" ? "Set" : "Map"}.prototype.${method}`;
+    const value =
+      method === "delete" && key !== undefined
+        ? apply("\\in", [
+            translateSetKey(key, path.scope, context),
+            collectionChange.kind === "set" ? data : apply("DOMAIN", [data]),
+          ])
+        : method === "clear"
+          ? getUndefined(context)
+          : ref;
+    if (updated === undefined) {
+      throw new TlaTypeScriptError(`Unsupported method: ${method}`, expression);
+    }
+    // A holder that may hold undefined gives undefined to an optional chain, and throws otherwise.
+    return bindOnce(
+      path,
+      collectionName,
+      translateExpression(collectionChange.receiver, path.scope, context),
+      ifThenElse(
+        apply("\\in", [ref, set([getUndefined(context), identifier("Null")])]),
+        collectionChange.isOptional
+          ? continueWith(path, getUndefined(context))
+          : throwTypeError(path, expression, context, frame),
+        ifThenElse(
+          useJavaScript("HoldsBuiltIn", [heap, ref, string(method), string(builtIn)], context),
+          continueWith(
+            withHeap(useJavaScript("WithCollectionData", [heap, ref, updated], context)),
+            value,
+          ),
+          leaf(
+            apply("Assert", [
+              boolean(false),
+              string(`tla-ts can't call ${builtIn} where a script replaced it`),
+            ]),
           ),
         ),
       ),
@@ -6622,6 +6676,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getStackCall(node, context) !== undefined ||
     getHeapArrayChange(node, context) !== undefined ||
     isStoredChange(node, context) ||
+    getHeapSetOrMapChange(node, context) !== undefined ||
     getArrayIteratorCall(node, context) !== undefined ||
     getStringCall(node, context) !== undefined ||
     isDescriptorsRead(node, context) ||
@@ -7285,7 +7340,7 @@ export const getChanged = (
       (getAllocated(node, context).includes(node) &&
         !(isIdentityIgnored && isNewError(node, context))) ||
       (ts.isBindingElement(node) &&
-        (context.heapArrays.has(node) ||
+        (context.heapCollections.has(node) ||
           (node.dotDotDotToken !== undefined && ts.isObjectBindingPattern(node.parent)))) ||
       ts.isObjectLiteralExpression(node) ||
       ts.isDeleteExpression(node) ||
@@ -7298,6 +7353,7 @@ export const getChanged = (
       getHeapArrayChange(node, context) !== undefined ||
       isStoredChange(node, context) ||
       getArrayIteratorCall(node, context) !== undefined ||
+      getHeapSetOrMapChange(node, context) !== undefined ||
       isAllocation(node, context) ||
       (written !== undefined &&
         (ts.isPropertyAccessExpression(written) || ts.isElementAccessExpression(written)));

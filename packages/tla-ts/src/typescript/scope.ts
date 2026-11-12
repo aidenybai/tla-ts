@@ -267,7 +267,7 @@ export const bindPatternInline = (
         throw new TlaTypeScriptError("Spread a string with split('') instead", element);
       }
       const rest = apply("SubSeq", [iterated, number(position + 1), apply("Len", [iterated])]);
-      if (!context.heapArrays.has(element) || heapSymbol === undefined) {
+      if (!context.heapCollections.has(element) || heapSymbol === undefined) {
         return bindPatternInline(element.name, rest, current, context);
       }
       const heap = useJavaScript(

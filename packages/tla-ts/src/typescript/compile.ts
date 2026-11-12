@@ -322,7 +322,7 @@ export const compile = (
         ),
       ].forEach((name) => context.builtIns.add(name));
     }
-    context.heapArrays = findHeapArrays(roots, changedArrays, context);
+    context.heapCollections = findHeapArrays(roots, changedArrays, context);
     const prototypes = new Set(["Array.prototype", "Object.prototype"]);
     const changesPrototype = (node: ts.Node): boolean =>
       (ts.isCallExpression(node) &&

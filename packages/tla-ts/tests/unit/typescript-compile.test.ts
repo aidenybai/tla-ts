@@ -5843,6 +5843,74 @@ describe("errors", () => {
     ).toThrow("Unsupported array method: splice");
   });
 
+  it("keeps a set's identity through an array, a pop, and its own name", async () => {
+    const result = await checkModel(`
+      const scopes: Set<string>[] = [];
+      const declare = (name: string) => scopes[scopes.length - 1]?.add(name);
+      const isDeclared = (name: string) => scopes.some((scope) => scope.has(name));
+      const step = () => {
+        const scope = new Set<string>();
+        scopes.push(scope);
+        declare("a");
+        scopes.push(new Set());
+        declare("b");
+        const inner = isDeclared("a") && isDeclared("b");
+        scopes.pop();
+        scopes.pop();
+        declare("c");
+        return inner && scope.has("a") && !scope.has("b") && scope.size === 1;
+      };
+      declare("lost");
+      const twin = new Set(["a"]);
+      scopes.push(twin);
+      const copy = new Set(twin);
+      scopes[0].add("b");
+      if (!step() || scopes.length !== 1 || copy.size !== 1 || twin.size !== 3) {
+        throw new Error("scopes");
+      }
+      const other = new Set(["a", "b"]);
+      if (!scopes.includes(twin) || scopes.indexOf(other) !== -1) {
+        throw new Error("identity");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+    expect(() =>
+      checkModel(`
+        const scopes: Set<string>[] = [new Set()];
+        const first = scopes[0];
+        scopes[0].add("a");
+        const json = JSON.stringify(scopes);
+      `),
+    ).toThrow("scopes would share an object that changes in place");
+    expect(() =>
+      checkModel(`
+        const scopes: Set<string>[] = [new Set()];
+        const grown = scopes[0].add("a");
+      `),
+    ).toThrow("Unsupported Set method: add");
+  });
+
+  it("keeps a map's identity through an array", async () => {
+    const result = await checkModel(`
+      const tables: Map<string, number>[] = [new Map()];
+      const put = (key: string, value: number) => {
+        tables[tables.length - 1].set(key, value);
+      };
+      const table = tables[0];
+      put("a", 1);
+      tables.push(new Map([["z", 26]]));
+      put("b", 2);
+      const top = tables.at(-1);
+      tables.pop();
+      const isRemoved = tables[0].delete("a");
+      const isMissing = tables[0].delete("q");
+      if (!isRemoved || isMissing || table.size !== 0 || top?.get("b") !== 2 || top.size !== 2) {
+        throw new Error("maps");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("pushes the elements that a spread gives onto an array that the heap holds", async () => {
     const result = await checkModel(`
       interface Module { constants: string[]; units: { names: string[] }[] }

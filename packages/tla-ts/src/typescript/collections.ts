@@ -59,6 +59,7 @@ import {
   isHeapArray,
   ITERATOR_METHODS,
   isBigIntLike,
+  isHeapSetOrMap,
   isBooleanLike,
   isNumberLike,
   type Kind,
@@ -2370,6 +2371,22 @@ export const isSpliceStatement = (node: ts.CallExpression, context: Context) =>
   ts.isExpressionStatement(node.parent) &&
   node.arguments.length > 0 &&
   node.arguments.slice(0, 2).every((argument) => isNumberLike(argument, context));
+
+// A call of add, set, delete, or clear on a set or a map that the heap holds, which changes it in
+// place.
+export const getHeapSetOrMapChange = (node: ts.Node, context: Context) =>
+  ts.isCallExpression(node) &&
+  ts.isPropertyAccessExpression(node.expression) &&
+  ["add", "set", "delete", "clear"].includes(node.expression.name.text) &&
+  isHeapSetOrMap(node.expression.expression, context) &&
+  !node.arguments.some(ts.isSpreadElement)
+    ? {
+        method: node.expression.name.text,
+        receiver: node.expression.expression,
+        kind: getKind(node.expression.expression, context),
+        isOptional: node.expression.questionDotToken !== undefined,
+      }
+    : undefined;
 
 // A call of a method that changes an array that the heap holds in place.
 export const getHeapArrayChange = (node: ts.Node, context: Context) =>

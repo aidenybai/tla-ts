@@ -3,7 +3,7 @@ import { getWritten } from "./actions";
 import { MUTATING_METHODS } from "./collections";
 import { type Context, findNodes, getCallee, getSymbol, isMethodCall } from "./context";
 import { TlaTypeScriptError } from "../errors";
-import { getKind, isHeapArray, isHeapType } from "./types";
+import { getKind, isHeapArray, isHeapSetOrMap, isHeapType } from "./types";
 
 const COPYING_METHODS = new Set([
   "slice",
@@ -554,6 +554,7 @@ export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
     const isHeapChange =
       written !== undefined &&
       (isHeapArray(written, context) ||
+        isHeapSetOrMap(written, context) ||
         ((ts.isPropertyAccessExpression(written) || ts.isElementAccessExpression(written)) &&
           isHeapArray(written.expression, context)));
     if (isHeapChange) {
@@ -581,7 +582,9 @@ export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
       getKind(node.expression, context) === "object";
     // An array that the heap holds goes by reference, as JavaScript shares it.
     const symbol =
-      ts.isExpression(node) && !isName && isHeapArray(node, context)
+      ts.isExpression(node) &&
+      !isName &&
+      (isHeapArray(node, context) || isHeapSetOrMap(node, context))
         ? undefined
         : ts.isIdentifier(node) && !isName
           ? getSymbol(node, context.checker)
