@@ -3411,7 +3411,9 @@ describe("errors", () => {
       Array.prototype.at = () => 5;
       if ([1].at(0) !== 5) throw new Error("replaced");
     `);
-    expect(result.failure?.message).toContain("tla-ts can't call the at that a script put");
+    expect(result.failure?.message).toContain(
+      "tla-ts can't call an array method that a script put",
+    );
   });
 
   it("gives the length that a push or an unshift leaves", async () => {
@@ -3425,6 +3427,26 @@ describe("errors", () => {
       }
     `);
     expect(result.failure).toBeUndefined();
+  });
+
+  it("converts an array to a string through its join", async () => {
+    const result = await checkModel(`
+      if ([5, 6, 1].toString() !== "5,6,1" || ["a", "b"].toString() !== "a,b") {
+        throw new Error("strings");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("stops at a toString whose join a script replaced", async () => {
+    const result = await checkModel(`
+      // @ts-ignore
+      Array.prototype.join = () => "j";
+      if ([1].toString() !== "j") throw new Error("replaced");
+    `);
+    expect(result.failure?.message).toContain(
+      "tla-ts can't call an array method that a script put",
+    );
   });
 
   it("evaluates a declaration that nothing reads where it runs", async () => {

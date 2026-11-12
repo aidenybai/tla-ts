@@ -842,6 +842,21 @@ const translateSequenceOperation = (
       },
     ],
     [
+      "toString",
+      () => {
+        if (argument !== undefined) {
+          throw new TlaTypeScriptError(`Unsupported array method: ${method}`, node);
+        }
+        return useJavaScript(
+          call.elementType !== undefined && (call.elementType.flags & ts.TypeFlags.StringLike) !== 0
+            ? "Join"
+            : "JoinValues",
+          [sequence, string(",")],
+          context,
+        );
+      },
+    ],
+    [
       "join",
       () => {
         const isText = (type: ts.Type | undefined) =>
@@ -1144,22 +1159,29 @@ export const MUTATING_METHODS = new Set([
 // as a script that writes Array.prototype or Object.prototype may replace it.
 const checkArrayMethod = (value: Expression, node: MethodCall, scope: Scope, context: Context) => {
   const method = node.expression.name.text;
+  // toString runs the array's join.
+  const methods = method === "toString" ? [method, "join"] : [method];
   return context.hasInheritedElements && context.heap !== undefined
     ? ifExpression(
-        useJavaScript(
-          "HoldsBuiltIn",
-          [
-            getHeap(scope, node, context),
-            translateBuiltInValue("Array.prototype", node, context),
-            string(method),
-            string(`${method === "hasOwnProperty" ? "Object" : "Array"}.prototype.${method}`),
-          ],
-          context,
+        junction(
+          "And",
+          methods.map((checked) =>
+            useJavaScript(
+              "HoldsBuiltIn",
+              [
+                getHeap(scope, node, context),
+                translateBuiltInValue("Array.prototype", node, context),
+                string(checked),
+                string(`${checked === "hasOwnProperty" ? "Object" : "Array"}.prototype.${checked}`),
+              ],
+              context,
+            ),
+          ),
         ),
         value,
         apply("Assert", [
           boolean(false),
-          string(`tla-ts can't call the ${method} that a script put on a prototype`),
+          string("tla-ts can't call an array method that a script put on a prototype"),
         ]),
       )
     : value;
