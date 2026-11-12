@@ -2337,6 +2337,36 @@ describe("errors", () => {
     expect((await checkModel(getSource(3))).failure?.message).toContain("unexpected");
   });
 
+  it("throws the TypeError of a buffer's or a view's getter that a statement reads on a prototype", async () => {
+    const getSource = (expected: number) => `
+      let thrown = 0;
+      const attempt = (read: () => void) => {
+        try {
+          read();
+        } catch (error) {
+          if (error instanceof TypeError) thrown++;
+        }
+      };
+      attempt(() => {
+        ArrayBuffer.prototype.byteLength;
+      });
+      attempt(() => {
+        DataView.prototype.byteOffset;
+      });
+      attempt(() => {
+        Int8Array.prototype.buffer;
+      });
+      const buffer = new ArrayBuffer(4);
+      attempt(() => {
+        buffer.byteLength;
+      });
+      const getThrown = (): number => thrown;
+      if (getThrown() !== ${expected}) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(3))).failure).toBeUndefined();
+    expect((await checkModel(getSource(4))).failure?.message).toContain("unexpected");
+  });
+
   it("runs the setter of an object literal or a class that a computed key picks", async () => {
     const getSource = (written: string) => `
       let log = "";

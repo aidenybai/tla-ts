@@ -940,6 +940,17 @@ LOCAL ViewGet(heap, path, receiver) ==
                  [] field \\in {"resizable", "growable"} -> object.maxLength # Undefined
                  [] OTHER -> object.isDetached
 
+\\* Whether one of those getters reads the receiver's slots rather than throwing a TypeError: a typed
+\\* array getter a typed array's, a DataView getter a view's, and a buffer getter a buffer's of its
+\\* kind. A typed array's @@toStringTag gives undefined for any other value.
+LOCAL ViewReceives(heap, path, receiver) ==
+  CASE path = TypedArrayGetter \\o "@@toStringTag" -> TRUE
+    [] HasPrefix(path, TypedArrayGetter) -> IsTypedArray(heap, receiver)
+    [] HasPrefix(path, "get DataView.") -> IsDataView(heap, receiver)
+    [] OTHER ->
+         /\\ IsBuffer(heap, receiver)
+         /\\ heap.objects[receiver[Ref]].isShared = HasPrefix(path, "get Shared")
+
 \\* An object's own properties that hold a key, where a typed array's elements aren't properties.
 LOCAL PropertiesOf(heap, ref, key) ==
   IF IsTypedArray(heap, ref) /\\ TypedKey(key) = "property"
@@ -1274,6 +1285,12 @@ AccessorFieldOf(heap, ref, key, field) ==
 GetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "get")
 
 SetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "set")
+
+\\* The TypeError that a read throws where it runs a getter of a buffer or a view on another kind
+\\* of object, or "".
+ReadError(heap, ref, key) ==
+  LET path == GetterPath(GetterOf(heap, ref, key))
+  IN IF path \\in ViewGetters /\\ ~ViewReceives(heap, path, ref) THEN "TypeError" ELSE ""
 
 \\* Whether a write runs the __proto__ setter of Object.prototype.
 IsProtoWrite(heap, ref, key) == GetterPath(SetterOf(heap, ref, key)) = "set Object.prototype.__proto__"

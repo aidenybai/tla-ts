@@ -5198,9 +5198,38 @@ const translateExpressionStatement = (
   // it, so that a getter it reads, which tla-ts can't call, stops the check.
   if (isRead(expression, path.scope.results)) {
     const value = translateExpression(expression, path.scope, context);
-    return context.heap === undefined
-      ? continueWith(path)
-      : ifThenElse(apply("=", [value, value]), continueWith(path), leaf(boolean(false)));
+    if (context.heap === undefined) return continueWith(path);
+    const evaluated = ifThenElse(
+      apply("=", [value, value]),
+      continueWith(path),
+      leaf(boolean(false)),
+    );
+    // A read that runs a buffer's or a view's getter on another kind of object throws a TypeError.
+    const read = skipCasts(expression);
+    const isObjectRead =
+      (ts.isElementAccessExpression(read) ||
+        (ts.isPropertyAccessExpression(read) && !ts.isPrivateIdentifier(read.name))) &&
+      (isBuiltInObject(read.expression, context) || getKind(read.expression, context) === "object");
+    return isObjectRead
+      ? ifThenElse(
+          apply("=", [
+            useJavaScript(
+              "ReadError",
+              [
+                getHeap(path.scope, read, context),
+                translateObjectValue(read.expression, path.scope, context),
+                ts.isPropertyAccessExpression(read)
+                  ? string(read.name.text)
+                  : translatePropertyKey(read.argumentExpression, path.scope, context),
+              ],
+              context,
+            ),
+            string("TypeError"),
+          ]),
+          throwTypeError(path, expression, context, frame),
+          evaluated,
+        )
+      : evaluated;
   }
   // A pattern that writes a property runs the setter that the property holds.
   if (
