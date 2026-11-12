@@ -2741,8 +2741,16 @@ export const bindCall = (
       }
     });
   }
+  // What the getters of a parameter's pattern gave belongs to this call, not to a later one.
+  const getUnread = (current: Scope) =>
+    new Map(
+      [...(current.read ?? [])].filter(
+        (entry) => ts.findAncestor(entry[0], (ancestor) => ancestor === callee) === undefined,
+      ),
+    );
   const scope = {
     ...bound.scope,
+    read: getUnread(bound.scope),
     functions: new Map([...bound.scope.functions, ...callbacks]),
     receiver,
     arrowReceivers: getArrowReceivers(callbacks, path.scope),
@@ -2750,6 +2758,7 @@ export const bindCall = (
   // A parameter is a local binding, which the body may assign as it does a let.
   const changeable = {
     ...path,
+    scope: { ...path.scope, read: getUnread(path.scope) },
     mutable: new Set([
       ...path.mutable,
       ...parameters.flatMap((parameter, position) => {

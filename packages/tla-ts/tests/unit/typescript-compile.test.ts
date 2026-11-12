@@ -1116,6 +1116,34 @@ describe("values", () => {
     ).toContain("outcomes type");
   });
 
+  it("runs the getters of a parameter's pattern again at each call", async () => {
+    const getSource = (expected: string) => `
+      let count: number = 0;
+      const source = {
+        get value(): number {
+          count++;
+          return count;
+        },
+      };
+      const take = ({ value }: { value: number }) => value;
+      function* yields({ value }: { value: number }) {
+        yield value;
+      }
+      const first = take(source);
+      const second = take(source);
+      const iterator = yields(source);
+      const third = iterator.next().value;
+      const other = yields(source);
+      const fourth = other.next().value;
+      const outcomes = [first, second, third, fourth, count].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("1,2,3,4,4"))).failure).toBeUndefined();
+    for (const wrong of ["1,1,3,4,4", "1,2,3,3,4", "1,2,3,4,3"]) {
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain("outcomes 1,2,3,4,4");
+    }
+  });
+
   it("gives what a compound assignment to a property writes, as its value", async () => {
     const getSource = (field: number, property: number, element: number, typed: number) => `
       class Counter {
