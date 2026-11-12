@@ -258,27 +258,28 @@ const getSubclasses = (node: ts.Node, symbol: ts.Symbol, context: Context) => {
 
 export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, context: Context) => {
   const rightClasses = getErrorClass(getSymbol(node.right, context.checker), context.checker);
+  const isHeapClass = getHeapClass(node.right, context) !== undefined;
+  const isObject = getKind(node.left, context) === "object";
   // An object on the heap, such as an error that it holds, is an instance where the constructor's
-  // prototype is on its chain.
-  if (
-    (getHeapClass(node.right, context) !== undefined ||
-      (rightClasses !== undefined && isNative(rightClasses[0]))) &&
-    getKind(node.left, context) === "object"
-  ) {
+  // prototype is on its chain, and a value that may not be an object is one only where it is.
+  if (isHeapClass || (rightClasses !== undefined && isNative(rightClasses[0]) && isObject)) {
     const heap = getHeap(scope, node, context);
-    return useJavaScript(
-      "IsPrototypeOf",
-      [
-        heap,
-        useJavaScript(
-          "Get",
-          [heap, translateExpression(node.right, scope, context), string("prototype")],
-          context,
-        ),
-        translateObjectValue(node.left, scope, context),
-      ],
+    const prototype = useJavaScript(
+      "Get",
+      [heap, translateExpression(node.right, scope, context), string("prototype")],
       context,
     );
+    return isObject
+      ? useJavaScript(
+          "IsPrototypeOf",
+          [heap, prototype, translateObjectValue(node.left, scope, context)],
+          context,
+        )
+      : useJavaScript(
+          "InheritsFrom",
+          [heap, prototype, translateExpression(node.left, scope, context)],
+          context,
+        );
   }
   // A generator function whose prototype object the heap holds, and whose @@hasInstance is
   // Function.prototype's, which a script can't change.
