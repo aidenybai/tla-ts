@@ -1658,6 +1658,25 @@ describe("values", () => {
     );
   });
 
+  it("converts an increment's operand that holds undefined or null to a number", async () => {
+    const getSource = (expected: string) => `
+      const box: { n: number | undefined; m: number | null } = { n: undefined, m: null };
+      let x: number | undefined = undefined;
+      let y: number | null = null;
+      const a = x!++;
+      const b = y!++;
+      const c = ++box.n!;
+      const d = y!--;
+      box.m!++;
+      const outcomes = [isNaN(a), isNaN(x!), b, isNaN(c), d, y, box.m].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("true,true,0,true,1,0,1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("true,true,1,true,1,0,1"))).failure?.message).toContain(
+      "outcomes true,true,0,true,1,0,1",
+    );
+  });
+
   it("gives what a compound assignment to a property writes, as its value", async () => {
     const getSource = (field: number, property: number, element: number, typed: number) => `
       class Counter {
