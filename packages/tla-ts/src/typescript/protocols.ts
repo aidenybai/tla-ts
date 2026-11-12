@@ -1904,7 +1904,7 @@ export const runProxyOperation = (
       );
     const isPresent = (descriptor: Expression) => apply("#", [descriptor, getUndefined(context)]);
     const isEnumerable = (descriptor: Expression) =>
-      junction("And", [isPresent(descriptor), field(descriptor, "enumerable")]);
+      apply("/\\", [isPresent(descriptor), field(descriptor, "enumerable")]);
     // Object.seal and Object.freeze restrict each key of a proxy that stops growing, and
     // Object.isSealed and Object.isFrozen test each where it can't grow.
     const isFrozen = operation.method === "freeze" || operation.method === "isFrozen";
