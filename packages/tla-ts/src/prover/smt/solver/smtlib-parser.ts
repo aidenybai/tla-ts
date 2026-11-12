@@ -120,7 +120,7 @@ import {
   isSupportedLogic,
 } from "./smt-logics";
 import { setRecFunDefinition } from "./recfun-decl-plugin";
-import { replaceFreeVars } from "./var-subst";
+import { replaceFreeVars, VarSubst } from "./var-subst";
 import { UpolynomialManager } from "./nlsat/upolynomial";
 
 export interface ParserOptions {
@@ -1739,7 +1739,8 @@ export const createSmtlibReader = (
           ? mkSeqTerm(name, args, indices, at)
           : mkBvApp(name, args, indices, at);
     const macro = macros.get(name);
-    if (macro !== undefined) {
+    // macros_find: a macro of another arity leaves the name to a declaration.
+    if (macro !== undefined && (macro.domain.length === args.length || !funcs.has(name))) {
       const coerced = args.map((arg, index) => coerce(arg, macro.domain[index]));
       if (
         coerced.length !== macro.domain.length ||
@@ -2353,6 +2354,28 @@ export const createSmtlibReader = (
     setRecFunDefinition(manager, manager.recFunDefs.get(decl)!, false, parsed);
   };
 
+  // parse_define and insert_macro: Z3 declares a macro as a recursive function with one case, which
+  // a reference without arguments takes as an array. The reference that the body with its variables
+  // reversed keeps stands for Z3's macro_decls, and those of the variables for the definition's.
+  const defineMacroFunc = (name: string, domain: number[], body: number) => {
+    const count = domain.length;
+    if (count > 1) {
+      const subst = new VarSubst(manager, true);
+      subst.apply(
+        body,
+        domain.map((sort, index) => manager.mkVar(index, sort)),
+      );
+      subst.release();
+    }
+    for (const [index, sort] of domain.entries()) manager.incRef(manager.mkVar(index, sort));
+    const reversedVars = domain.map((_, index) => manager.mkVar(index, domain[count - index - 1]));
+    for (const reversedVar of reversedVars) manager.incRef(reversedVar);
+    const decl = manager.mkRecFuncDecl(name, domain, manager.sorts[body]);
+    for (const reversedVar of reversedVars) manager.decRef(reversedVar);
+    setRecFunDefinition(manager, manager.recFunDefs.get(decl)!, true, body);
+    declare(funcs, name, [...(funcs.get(name) ?? []), decl]);
+  };
+
   const declareCommand = (list: SmtList) => {
     const name = list.items[0].kind === "list" ? "" : list.items[0].text;
     if (name === "define-fun-rec") {
@@ -2459,6 +2482,7 @@ export const createSmtlibReader = (
         );
       manager.incRef(coerced);
       declare(macros, symbol.text, { domain: bound.varSorts, range, body: coerced });
+      if (bound.varSorts.length > 0) defineMacroFunc(symbol.text, bound.varSorts, coerced);
       return;
     }
     const domain = name === "declare-fun" ? parseDomain(list.items[2], list) : [];
