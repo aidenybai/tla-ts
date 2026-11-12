@@ -41,6 +41,7 @@ import {
   isPlain,
   getNewClass,
   isInertValue,
+  isLiteral,
   isNameRead,
   skipCasts,
   isPrivateMember,
@@ -2554,7 +2555,7 @@ const translateSelfCall = (
     parameters.some(
       (parameter) =>
         !ts.isIdentifier(parameter.name) ||
-        parameter.initializer !== undefined ||
+        (parameter.initializer !== undefined && !isLiteral(parameter.initializer)) ||
         parameter.dotDotDotToken !== undefined ||
         context.checker.getTypeAtLocation(parameter.name).getCallSignatures().length > 0,
     )
@@ -2722,11 +2723,13 @@ const translateSelfCall = (
   return letIn([operator], called);
 };
 
-// An exported function is a model's action, which no action calls.
-const isAction = (callee: FunctionNode) =>
+// An exported function is a model's action, which no action calls. A script, which keeps its objects
+// in a heap, has no actions.
+const isAction = (callee: FunctionNode, context: Context) =>
+  context.heap === undefined &&
   (ts.getCombinedModifierFlags(ts.isVariableDeclaration(callee.parent) ? callee.parent : callee) &
     ts.ModifierFlags.Export) !==
-  0;
+    0;
 
 export const inlineBody = (
   node: ts.Node,
@@ -2744,7 +2747,7 @@ export const inlineBody = (
   argumentNodes === node.arguments &&
   isLiftable(callee, context)
     ? continueWith(path, translateLiftedCall(callee, node, path.scope, context))
-    : frame.inlining.has(callee) && !isAction(callee)
+    : frame.inlining.has(callee) && !isAction(callee, context)
       ? translateSelfCall(node, callee, argumentNodes, receiver, path, context, frame, continueWith)
       : bindCall(node, callee, argumentNodes, receiver, path, context, frame, (bound, inner) => {
           // What the call evaluated or made of the function's own code, such as a default that it

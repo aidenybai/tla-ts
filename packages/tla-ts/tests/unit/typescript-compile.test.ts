@@ -3715,6 +3715,34 @@ describe("errors", () => {
     expect((await checkModel(getSource("2"))).failure?.message).toContain('"show"');
   });
 
+  it("runs a function that calls itself with defaults where a statement changed what it reads", async () => {
+    const getSource = (expected: string) => `
+      interface Box { size: number }
+      let scale = 1;
+      const box: Box = { size: 1 };
+      const total = (depth: number, step = 1): number => {
+        if (depth === 0) return scale * box.size;
+        return scale * box.size + total(depth - step, step);
+      };
+      scale = 2;
+      box.size = 3;
+      const first = total(2);
+      box.size = 4;
+      const second = total(4, 2);
+      if (\`\${first} \${second} \${total(1)}\` !== "${expected}") throw new Error("total");
+    `;
+    expect((await checkModel(getSource("18 24 16"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("18 24 12"))).failure?.message).toContain('"total"');
+  });
+
+  it("runs an exported function that a script imports, which calls itself", async () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/marking.ts");
+    const source = readFileSync(path, "utf8");
+    expect((await check(compile(source, path))).failure).toBeUndefined();
+    const wrong = source.replace("!inner.marked", "inner.marked");
+    expect((await check(compile(wrong, path))).failure?.message).toContain('"marked"');
+  });
+
   it("gives the number an increment reads or writes", async () => {
     const result = await checkModel(`
       let x = 5;
@@ -4092,16 +4120,17 @@ describe("errors", () => {
       fail(2);
     `);
     expect(uncaught.failure?.message).toContain("bottom");
-    expect(() =>
-      checkModel(`
-        let calls = 0;
-        const count = (n: number, step = 1): number => {
-          calls += step;
-          return n === 0 ? 0 : count(n - 1);
-        };
-        count(2);
-      `),
-    ).toThrow("tla-ts can't run this call of a function from inside itself");
+    const getDefaulted = (calls: string) => `
+      let calls = 0;
+      const count = (n: number, step = 1): number => {
+        calls += step;
+        return n === 0 ? 0 : count(n - 1);
+      };
+      count(2);
+      if (calls !== ${calls}) throw new Error("calls");
+    `;
+    expect((await checkModel(getDefaulted("3"))).failure).toBeUndefined();
+    expect((await checkModel(getDefaulted("2"))).failure?.message).toContain('"calls"');
   });
 
   it("runs the getters of the properties that a pattern reads", async () => {
