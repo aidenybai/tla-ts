@@ -22,6 +22,7 @@ import {
   getFunction,
   getFunctionCandidates,
   getParameters,
+  getFactoryCall,
   getFunctionValue,
   getNewClass,
   getArgumentsOwner,
@@ -574,7 +575,8 @@ const translateCall = (
   if (
     helper !== undefined &&
     ts.isVariableDeclaration(helper) &&
-    (helper.initializer === undefined || !ts.isFunctionLike(helper.initializer))
+    (helper.initializer === undefined || !ts.isFunctionLike(helper.initializer)) &&
+    getFactoryCall(helper.initializer, context) === undefined
   ) {
     throw new TlaTypeScriptError(`Unsupported call: ${node.expression.getText()}`, node);
   }
@@ -1445,6 +1447,12 @@ const translateDeclared = (
   }
   const declaration = getTopLevelDeclaration(symbol);
   if (declaration === undefined) return undefined;
+  if (ts.isVariableDeclaration(declaration) && getFactoryCall(declaration.initializer, context)) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't use a function that a factory returns as a value",
+      node,
+    );
+  }
   // A function passes as its operator's name, and a constant as its value.
   return getFunction(declaration) === undefined
     ? translateHelperCall(declaration, undefined, scope, context)

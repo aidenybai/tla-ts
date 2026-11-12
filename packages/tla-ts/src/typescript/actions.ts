@@ -155,6 +155,7 @@ import {
 } from "./intrinsics";
 import { getTypeNames, getURICall, translateToNumber, useJavaScript } from "./javascript";
 import {
+  bindFactory,
   forceHeap,
   getReceiver,
   mayThrow,
@@ -2094,7 +2095,13 @@ export const bindCall = (
   const bound = bindValues(
     parameters.filter((_, position) => isValue(position)),
     values.shared,
-    made.scope,
+    ts.isCallExpression(node)
+      ? bindFactory(
+          getSymbol(node.expression, context.checker)?.valueDeclaration,
+          made.scope,
+          context,
+        )
+      : made.scope,
     context,
   );
   const scope = {

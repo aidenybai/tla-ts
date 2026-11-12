@@ -3146,6 +3146,51 @@ describe("errors", () => {
     ).toThrow("tla-ts can't destructure a value that may be an object or another value");
   });
 
+  it("calls the functions that a factory returns, which call each other", async () => {
+    const getSource = (isLooseSame: string) => `
+      interface Branch { kind: "branch"; items: Value[] }
+      type Value = number | Branch;
+      const createCheck = (isStrict: boolean) => {
+        const areSame = (left: Value[], right: Value[]) => {
+          if (left.length !== right.length) return false;
+          for (let index = 0; index < left.length; index++) {
+            if (!isSame(left[index], right[index])) return false;
+          }
+          return true;
+        };
+        const isSame = (left: Value, right: Value): boolean => {
+          if (left === right) return true;
+          if (typeof left !== "object" || typeof right !== "object") return false;
+          return !isStrict && areSame(left.items, right.items);
+        };
+        return isSame;
+      };
+      const isLoose = createCheck(false);
+      const isStrict = createCheck(true);
+      const first: Branch = { kind: "branch", items: [1, { kind: "branch", items: [2] }] };
+      const second: Branch = { kind: "branch", items: [1, { kind: "branch", items: [2] }] };
+      const third: Branch = { kind: "branch", items: [1, { kind: "branch", items: [3] }] };
+      if (${isLooseSame} || isLoose(first, third)) throw new Error("loose");
+      if (isStrict(first, second) || !isStrict(first, first)) throw new Error("strict");
+    `;
+    expect((await checkModel(getSource("!isLoose(first, second)"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("isLoose(first, second)"))).failure?.message).toContain(
+      '"loose"',
+    );
+    expect(() =>
+      compile(`
+        const createAdd = (amount: number) => {
+          const add = (value: number) => value + amount;
+          return add;
+        };
+        const addTwo = createAdd(2);
+        const addThree = createAdd(3);
+        const box = { size: 1 };
+        if (addTwo === addThree) throw new Error("same");
+      `),
+    ).toThrow("tla-ts can't use a function that a factory returns as a value");
+  });
+
   it("stops where a recursive function runs after a statement changes what it reads", () => {
     expect(() =>
       compile(`

@@ -317,6 +317,7 @@ export const isInlined = (node: ts.Node | undefined, context: Context) => {
   const found = getAnyFunction(node);
   return (
     (found !== undefined && !isHeapFunction(found, context)) ||
+    getFactoryCall(node, context) !== undefined ||
     (node !== undefined &&
       ts.isClassExpression(node) &&
       isInert(node) &&
@@ -1395,12 +1396,88 @@ export const getCalledMethod = (
     : { method, receiver: node.expression, key: name.text, getter };
 };
 
-// The function that a callee or callback names: one written in place, one declared elsewhere, or
-// a method of a known class.
-const resolve = (node: ts.Expression, context: Context) =>
-  getAnyFunction(skipCasts(node)) ??
-  getAnyFunction(getSymbol(skipCasts(node), context.checker)?.valueDeclaration) ??
-  getMethod(node, context);
+interface FactoryCall {
+  closure: FunctionNode;
+  bindings: [ts.Symbol, ts.Expression][];
+}
+
+// The function that a call to a factory returns, where the factory only declares functions before
+// it returns one, and the call passes it literals. A constant that the call initializes stands for
+// that function, which reads each parameter of the factory as the literal that the call passes.
+export const getFactoryCall = (
+  node: ts.Node | undefined,
+  context: Context,
+): FactoryCall | undefined => {
+  if (node === undefined || !ts.isCallExpression(node)) return undefined;
+  const factory = getAnyFunction(getSymbol(node.expression, context.checker)?.valueDeclaration);
+  const body = factory?.body;
+  if (factory === undefined || !isPlain(factory) || body === undefined || !ts.isBlock(body)) {
+    return undefined;
+  }
+  const returned = body.statements.at(-1);
+  const isDeclaringFunctions = body.statements
+    .slice(0, -1)
+    .every((statement) =>
+      ts.isVariableStatement(statement)
+        ? (statement.declarationList.flags & ts.NodeFlags.Const) !== 0 &&
+          statement.declarationList.declarations.every(
+            (declaration) =>
+              ts.isIdentifier(declaration.name) && getAnyFunction(declaration) !== undefined,
+          )
+        : ts.isFunctionDeclaration(statement) && statement.body !== undefined,
+    );
+  const expression =
+    returned !== undefined && ts.isReturnStatement(returned) ? returned.expression : undefined;
+  const closure =
+    expression === undefined
+      ? undefined
+      : (getAnyFunction(expression) ??
+        getAnyFunction(getSymbol(expression, context.checker)?.valueDeclaration));
+  const isLiteral = (argument: ts.Expression) =>
+    ts.isLiteralExpression(argument) ||
+    [ts.SyntaxKind.NullKeyword, ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword].includes(
+      argument.kind,
+    );
+  if (
+    !isDeclaringFunctions ||
+    closure === undefined ||
+    !isPlain(closure) ||
+    ts.findAncestor(closure, (ancestor) => ancestor === body) === undefined ||
+    node.arguments.length !== factory.parameters.length ||
+    !node.arguments.every(isLiteral)
+  ) {
+    return undefined;
+  }
+  const bindings = factory.parameters.flatMap(
+    (parameter, position): [ts.Symbol, ts.Expression][] => {
+      const symbol = getSymbol(parameter.name, context.checker);
+      return symbol === undefined ? [] : [[symbol, node.arguments[position]]];
+    },
+  );
+  return bindings.length === factory.parameters.length &&
+    factory.parameters.every(
+      (parameter) =>
+        ts.isIdentifier(parameter.name) &&
+        parameter.initializer === undefined &&
+        parameter.dotDotDotToken === undefined,
+    )
+    ? { closure, bindings }
+    : undefined;
+};
+
+// The function that a callee or callback names: one written in place, one declared elsewhere, one
+// that a factory returns, or a method of a known class.
+const resolve = (node: ts.Expression, context: Context) => {
+  const declaration = getSymbol(skipCasts(node), context.checker)?.valueDeclaration;
+  return (
+    getAnyFunction(skipCasts(node)) ??
+    getAnyFunction(declaration) ??
+    (declaration !== undefined && ts.isVariableDeclaration(declaration)
+      ? getFactoryCall(declaration.initializer, context)?.closure
+      : undefined) ??
+    getMethod(node, context)
+  );
+};
 
 export const getCallee = (node: ts.Expression, context: Context) => {
   const found = resolve(node, context);

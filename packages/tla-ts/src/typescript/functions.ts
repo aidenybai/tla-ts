@@ -8,6 +8,7 @@ import {
   findNodes,
   getAnyFunction,
   getCallee,
+  getFactoryCall,
   getFunction,
   getGetters,
   getSymbol,
@@ -125,6 +126,31 @@ const rejectCaught = (node: ts.Node, callee: ts.Node, scope: Scope, context: Con
 const getInitializer = (declaration: HelperDeclaration) =>
   ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
 
+// A scope that binds the parameters of the factory whose call a constant holds, for the function
+// that the factory returns to read.
+export const bindFactory = (declaration: ts.Node | undefined, scope: Scope, context: Context) => {
+  const factory =
+    declaration !== undefined && ts.isVariableDeclaration(declaration)
+      ? getFactoryCall(declaration.initializer, context)
+      : undefined;
+  return factory === undefined
+    ? scope
+    : {
+        ...scope,
+        bindings: new Map([
+          ...scope.bindings,
+          ...factory.bindings.map((binding): [ts.Symbol, Expression] => [
+            binding[0],
+            translateExpression(binding[1], scope, context),
+          ]),
+        ]),
+      };
+};
+
+// The function that a helper is, or that the factory call it holds returns.
+const getHelper = (declaration: HelperDeclaration, context: Context) =>
+  getFunction(declaration) ?? getFactoryCall(getInitializer(declaration), context)?.closure;
+
 // Compiles a top-level helper function or constant into a TLA+ definition, after the definitions
 // it uses.
 export const getDefinition = (declaration: HelperDeclaration, context: Context): Definition => {
@@ -135,7 +161,7 @@ export const getDefinition = (declaration: HelperDeclaration, context: Context):
   }
   if (declaration.name === undefined)
     throw new TlaTypeScriptError("Name this function", declaration);
-  const callee = getFunction(declaration);
+  const callee = getHelper(declaration, context);
   const parameters = declareParameters(callee?.parameters ?? [], context);
   // An operator parameter declares how many arguments it takes, as in F(_, _).
   const declared = parameters.map((parameter) => {
@@ -180,7 +206,11 @@ export const getDefinition = (declaration: HelperDeclaration, context: Context):
     ts.forEachChild(node, rejectValues);
   };
   if (operators.size > 0) rejectValues(body);
-  const value = translateBody(body, bindNames(createStateScope(context), parameters), context);
+  const value = translateBody(
+    body,
+    bindNames(bindFactory(declaration, createStateScope(context), context), parameters),
+    context,
+  );
   context.inProgress.delete(declaration);
   context.output.push(
     link(
@@ -391,7 +421,8 @@ export const translateHelperCall = (
   context: Context,
 ) => {
   rejectCaught(node ?? declaration, declaration, scope, context);
-  const helper = getFunction(declaration);
+  const helper = getHelper(declaration, context);
+  const helperScope = bindFactory(declaration, scope, context);
   if (
     node !== undefined &&
     helper !== undefined &&
@@ -408,19 +439,18 @@ export const translateHelperCall = (
         node,
       );
     }
-    return inlineCall(helper, node.arguments, scope, context);
+    return inlineCall(helper, node.arguments, helperScope, context);
   }
   const definition = getDefinition(declaration, context);
   const argumentNodes = node?.arguments ?? [];
   if (definition.readsState && isStateModified(scope, context)) {
-    const callee = getFunction(declaration);
-    if (callee !== undefined && context.inProgress.has(callee)) {
+    if (helper !== undefined && context.inProgress.has(helper)) {
       throw new TlaTypeScriptError(
         "tla-ts can't call a function that calls itself where a statement changed what it reads",
         node ?? declaration,
       );
     }
-    if (callee !== undefined) return inlineCall(callee, argumentNodes, scope, context);
+    if (helper !== undefined) return inlineCall(helper, argumentNodes, helperScope, context);
     const initializer = getInitializer(declaration);
     if (initializer === undefined) throw new TlaTypeScriptError("Give this a body", declaration);
     return translateExpression(initializer, scope, context);
