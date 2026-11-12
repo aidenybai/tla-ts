@@ -32,12 +32,7 @@ import {
 import { TlaTypeScriptError } from "../errors";
 import { translateCondition, translateExpression, translateNegatedCondition } from "./expressions";
 import { type Formula, ifThenElse, letIn, render, leaf } from "./formula";
-import {
-  getCandidateValue,
-  getSuperLookup,
-  translateFunctionValue,
-  translateObjectValue,
-} from "./heap";
+import { getCandidateValue, getSuperLookup, translateObjectValue } from "./heap";
 import { mayBeNumber, useJavaScript } from "./javascript";
 import {
   type Bound,
