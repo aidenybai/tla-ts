@@ -8,6 +8,7 @@ import {
   getStoredCall,
   isArrayIteration,
   isStoredChange,
+  isStoredStatement,
   isUntypedStoredCall,
   translateArrayChange,
   translateArrayIteratorPrototype,
@@ -1728,8 +1729,9 @@ export const translateCallStatement = (
       ),
     );
   }
-  // A call of a key under which a script stores a built-in method that changes its receiver.
-  const storedCall = isStoredChange(expression, context)
+  // A call of a key under which a script stores a built-in method that changes its receiver or
+  // throws.
+  const storedCall = isStoredStatement(expression, context)
     ? getStoredCall(expression, context)
     : undefined;
   if (storedCall !== undefined) {
@@ -6907,7 +6909,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getGetterCall(node, context) !== undefined ||
     getStackCall(node, context) !== undefined ||
     getHeapArrayChange(node, context) !== undefined ||
-    isStoredChange(node, context) ||
+    isStoredStatement(node, context) ||
     getHeapSetOrMapChange(node, context) !== undefined ||
     getArrayIteratorCall(node, context) !== undefined ||
     getStringCall(node, context) !== undefined ||

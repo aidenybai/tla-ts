@@ -2598,12 +2598,28 @@ const getUntypedStoredCall = (node: ts.Node, context: Context) =>
 export const isUntypedStoredCall = (node: ts.Node, context: Context) =>
   getUntypedStoredCall(node, context) !== undefined;
 
+// A reduce or a reduceRight without an initial value, which throws a TypeError where its receiver
+// has no element below its length.
+const isUnseededReduce = (call: StoredCall, builtIn: StoredBuiltIn) =>
+  ["reduce", "reduceRight"].includes(getStoredMethod(builtIn)) && call.node.arguments.length < 2;
+
 // Whether such a call may run a built-in method that changes its receiver in place, which only
 // statements can run.
 export const isStoredChange = (node: ts.Node, context: Context) =>
   getUntypedStoredCall(node, context)?.builtIns.some((builtIn) =>
     STORED_ARRAY_CHANGES.has(getStoredMethod(builtIn)),
   ) === true;
+
+// Whether such a call may change its receiver or throw, which only statements can run.
+export const isStoredStatement = (node: ts.Node, context: Context) => {
+  const call = getUntypedStoredCall(node, context);
+  return (
+    call?.builtIns.some(
+      (builtIn) =>
+        STORED_ARRAY_CHANGES.has(getStoredMethod(builtIn)) || isUnseededReduce(call, builtIn),
+    ) === true
+  );
+};
 
 // What a call of a key under which a script stores built-in methods does where the value that it
 // calls is one of them: the heap after, the value that it gives, and whether it throws a TypeError.
@@ -2638,12 +2654,27 @@ export const translateStoredCall = (
         context,
       );
     }
-    const read = translateArrayLikeCall(node, scope, context, {
-      method,
-      object: call.receiver,
-      methodArguments: node.arguments,
-    });
-    return giving(read ?? getUndefined(context));
+    const read = giving(
+      translateArrayLikeCall(node, scope, context, {
+        method,
+        object: call.receiver,
+        methodArguments: node.arguments,
+      }) ?? getUndefined(context),
+    );
+    return isStatement && isUnseededReduce(call, builtIn)
+      ? ifExpression(
+          apply("=", [
+            field(useJavaScript("PresentElements", [heap, ref], context), "values"),
+            tuple([]),
+          ]),
+          record("Record", [
+            { name: "heap", value: heap },
+            { name: "value", value: getUndefined(context) },
+            { name: "isThrown", value: boolean(true) },
+          ]),
+          read,
+        )
+      : read;
   };
   return call.builtIns
     .filter((builtIn) => isStatement || !STORED_ARRAY_CHANGES.has(getStoredMethod(builtIn)))
