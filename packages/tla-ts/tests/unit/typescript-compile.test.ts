@@ -6817,6 +6817,40 @@ describe("errors", () => {
     );
   });
 
+  it("calls a method that changes objects from inside itself", async () => {
+    const getSource = (expected: string) => `
+      class Tree {
+        ids = [-1, -1, -1, -1];
+        children = [[1, 2], [3], [], []];
+        order: number[] = [];
+        next = 0;
+        revive(node: number) {
+          if (this.ids[node] === -1) this.register(node);
+          return node;
+        }
+        register(node: number) {
+          this.ids[node] = this.next++;
+          for (const child of this.children[node]) this.order.push(this.revive(child));
+        }
+      }
+      const tree = new Tree();
+      const other = new Tree();
+      tree.revive(0);
+      other.revive(1);
+      const result = [
+        tree.ids.join(","),
+        tree.order.join(","),
+        other.ids.join(","),
+        other.order.join(","),
+      ].join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("0,1,3,2;3,1,2;-1,0,-1,1;3"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("0,1,3,2;3,1,2;-1,0,-1,2;3"))).failure?.message).toContain(
+      "-1,0,-1,1;3",
+    );
+  });
+
   it("makes the objects of a callback that an array literal's method calls", async () => {
     const getSource = (expected: number) => `
       const size = [1].map((value) => ({ value })).length;

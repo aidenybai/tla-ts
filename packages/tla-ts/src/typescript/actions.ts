@@ -2800,7 +2800,8 @@ export const getBody = (callee: FunctionNode) => {
 
 // Runs a function's body as statements, for a call or a new that a statement makes.
 // A call to a function that changes state from inside itself, as a call of a recursive operator.
-// The operator takes the arguments and the values that the function changes outside itself, and,
+// The operator takes the arguments, a method's this, and the values that the function changes
+// outside itself, and,
 // as a loop's does, gives how the body ended, its value or what it threw, the message of a throw
 // that nothing catches, and the changed values. The first such call defines it, and the calls
 // inside its body call it.
@@ -2821,7 +2822,6 @@ const translateSelfCall = (
     body === undefined ||
     isAnyGenerator(callee) ||
     isAsyncFunction(callee) ||
-    (receiver !== undefined && !ts.isArrowFunction(callee)) ||
     argumentNodes.length > parameters.length ||
     argumentNodes.some(ts.isSpreadElement) ||
     findNodes(
@@ -2846,6 +2846,7 @@ const translateSelfCall = (
       (declaration) =>
         ts.findAncestor(declaration, (ancestor) => ancestor === callee) !== undefined,
     );
+  const isMethod = receiver !== undefined && !ts.isArrowFunction(callee);
   const defined = context.selfCalls.get(callee);
   const selfCall = defined ?? {
     name: context.names.getFresh("Call"),
@@ -2904,6 +2905,7 @@ const translateSelfCall = (
       result,
       call(selfCall.name, [
         ...parameters.map((_, position) => values.shared.at(position) ?? getUndefined(context)),
+        ...(isMethod ? [receiver.value] : []),
         ...getValues(path),
       ]),
       ended,
@@ -2911,9 +2913,10 @@ const translateSelfCall = (
     leaf(boolean(false)),
   );
   if (defined !== undefined) return called;
-  const parameterNames = parameters.map((parameter) =>
-    context.names.getFresh(parameter.name.getText()),
-  );
+  const parameterNames = [
+    ...parameters.map((parameter) => context.names.getFresh(parameter.name.getText())),
+    ...(isMethod ? [context.names.getFresh("this")] : []),
+  ];
   const changedNames = changed.map((symbol) => {
     const binding = path.scope.bindings.get(symbol);
     return context.names.getFresh(binding?.kind === "Identifier" ? binding.name : "value");
@@ -2932,7 +2935,9 @@ const translateSelfCall = (
       // What the call's own statements evaluated belongs to that call, not this one.
       results: new Map([...outer.scope.results].filter((entry) => !isInside(entry[0]))),
       allocated: new Map([...outer.scope.allocated].filter((entry) => !isInside(entry[0]))),
-      receiver,
+      receiver: isMethod
+        ? { ...receiver, value: identifier(parameterNames[parameters.length]) }
+        : receiver,
     },
     context,
   );
