@@ -778,14 +778,17 @@ interface TargetAssigner<Result> {
   ): Result;
 }
 
-// Runs a default that assigns, as a statement, where the value that its target takes is undefined.
-interface DefaultRunner<Result> {
-  (
+// What only statements can run as a pattern assigns: a default that assigns, where the value that
+// its target takes is undefined, and the TypeError of a nested pattern that destructures null or
+// undefined.
+interface PatternStatements<Result> {
+  runDefault: (
     assignment: ts.BinaryExpression | Increment,
     part: Expression,
     path: Path,
     continueWith: (path: Path, value: Expression) => Result,
-  ): Result;
+  ) => Result;
+  throwOnNullish: (value: Expression, path: Path, rest: () => Result) => Result;
 }
 
 const PRIMITIVE_TYPES =
@@ -810,7 +813,7 @@ const assignPattern = <Result>(
   context: Context,
   assignTarget: TargetAssigner<Result>,
   continueWith: (path: Path) => Result,
-  runDefault?: DefaultRunner<Result>,
+  statements?: PatternStatements<Result>,
 ): Result => {
   // A part takes its default where it's undefined, which only a statement can run where it assigns.
   const assignDefaulted = (
@@ -822,13 +825,18 @@ const assignPattern = <Result>(
     next: (path: Path) => Result,
   ) => {
     const assignment = initializer && skipCasts(initializer);
+    const assignInner = (after: Path, innerValue: Expression) =>
+      assignPattern(inner, innerSource, innerValue, after, context, assignTarget, next, statements);
     const assignWith = (after: Path, innerValue: Expression) =>
-      assignPattern(inner, innerSource, innerValue, after, context, assignTarget, next, runDefault);
-    return runDefault !== undefined &&
+      statements !== undefined &&
+      (ts.isArrayLiteralExpression(inner) || ts.isObjectLiteralExpression(inner))
+        ? statements.throwOnNullish(innerValue, after, () => assignInner(after, innerValue))
+        : assignInner(after, innerValue);
+    return statements !== undefined &&
       assignment !== undefined &&
       isAssignment(assignment) &&
       !current.scope.results.has(assignment)
-      ? runDefault(assignment, part, current, assignWith)
+      ? statements.runDefault(assignment, part, current, assignWith)
       : assignWith(current, getDefaulted(part, initializer, current.scope, context));
   };
   if (ts.isArrayLiteralExpression(target)) {
@@ -903,7 +911,7 @@ const assignPattern = <Result>(
             context,
             assignTarget,
             next,
-            runDefault,
+            statements,
           );
         }
         // An object pattern reads the indices and the length of the array that the rest makes.
@@ -1180,12 +1188,22 @@ const assignPatternWith = (
           );
     },
     continueWith,
-    (assignment, part, current, assignWith) =>
-      ifThenElse(
-        apply("=", [part, getUndefined(context)]),
-        runAssignment(assignment, current, context, frame, assignWith),
-        assignWith(current, part),
-      ),
+    {
+      runDefault: (assignment, part, current, assignWith) =>
+        ifThenElse(
+          apply("=", [part, getUndefined(context)]),
+          runAssignment(assignment, current, context, frame, assignWith),
+          assignWith(current, part),
+        ),
+      throwOnNullish: (innerValue, current, rest) => {
+        context.prelude.add("Null");
+        return ifThenElse(
+          isNullish(innerValue, context),
+          throwTypeError(current, target, context, frame),
+          rest(),
+        );
+      },
+    },
   );
 
 const REMOVING_METHODS = new Set(["push", "unshift", "splice", "shift", "pop"]);
@@ -6877,7 +6895,8 @@ const translateExpressionStatement = (
       continueWith(path),
     );
   }
-  // A pattern whose default assigns runs the default as a statement as it assigns its target.
+  // A pattern whose default assigns, or which nests a pattern that may destructure null or
+  // undefined, runs what only statements can as it assigns its targets.
   if (
     ts.isBinaryExpression(expression) &&
     expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
@@ -6889,7 +6908,11 @@ const translateExpressionStatement = (
         : ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken
           ? node.right
           : undefined;
-      return initializer !== undefined && isAssignment(skipCasts(initializer));
+      return (
+        (initializer !== undefined && isAssignment(skipCasts(initializer))) ||
+        (node !== expression.left &&
+          (ts.isArrayLiteralExpression(node) || ts.isObjectLiteralExpression(node)))
+      );
     }).length > 0
   ) {
     return assignPatternWith(
