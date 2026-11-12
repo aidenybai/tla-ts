@@ -136,8 +136,81 @@ export const getArgumentsOwner = (node: ts.Node, checker: ts.TypeChecker) => {
 };
 
 // A name that no declaration binds, whose reading throws a ReferenceError.
-export const isUnresolved = (node: ts.Node, context: Context) =>
+export const isUnresolved = (node: ts.Node, context: Context): node is ts.Identifier =>
   ts.isIdentifier(node) && context.checker.getSymbolAtLocation(node) === undefined;
+
+// Whether a literal is truthy, where its value is certain.
+const getLiteralTruth = (node: ts.Expression) => {
+  if (node.kind === ts.SyntaxKind.TrueKeyword) return true;
+  if (node.kind === ts.SyntaxKind.FalseKeyword || node.kind === ts.SyntaxKind.NullKeyword) {
+    return false;
+  }
+  if (ts.isStringLiteral(node)) return node.text !== "";
+  const value = ts.isNumericLiteral(node) ? Number(node.text) : Number.NaN;
+  return Number.isNaN(value) ? undefined : value !== 0;
+};
+
+// The unresolved name that an expression reads before it evaluates anything that could change
+// state or throw, which throws a ReferenceError there.
+export const getUnresolvedRead = (
+  node: ts.Expression,
+  context: Context,
+): ts.Identifier | undefined => {
+  if (ts.isIdentifier(node)) return isUnresolved(node, context) ? node : undefined;
+  // Reads each operand in order while the ones before it are literals.
+  const readInOrder = (operands: readonly ts.Expression[]): ts.Identifier | undefined => {
+    const first = operands.at(0);
+    if (first === undefined || ts.isSpreadElement(first)) return undefined;
+    const read = getUnresolvedRead(first, context);
+    if (read !== undefined || getLiteralTruth(first) === undefined) return read;
+    return readInOrder(operands.slice(1));
+  };
+  if (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isTypeAssertionExpression(node) ||
+    ts.isNonNullExpression(node) ||
+    ts.isSatisfiesExpression(node) ||
+    ts.isVoidExpression(node) ||
+    ts.isPropertyAccessExpression(node) ||
+    ts.isElementAccessExpression(node)
+  ) {
+    return getUnresolvedRead(node.expression, context);
+  }
+  if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
+    return getUnresolvedRead(node.operand, context);
+  }
+  if (ts.isConditionalExpression(node)) {
+    const truth = getLiteralTruth(node.condition);
+    return truth === undefined
+      ? getUnresolvedRead(node.condition, context)
+      : getUnresolvedRead(truth ? node.whenTrue : node.whenFalse, context);
+  }
+  if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+    if (isUnresolved(node.expression, context)) return node.expression;
+    // A function declaration binds its name before any code runs, so reading it can't throw.
+    const declaration = ts.isIdentifier(node.expression)
+      ? context.checker.getSymbolAtLocation(node.expression)?.valueDeclaration
+      : undefined;
+    return declaration !== undefined && ts.isFunctionDeclaration(declaration)
+      ? readInOrder(node.arguments ?? [])
+      : undefined;
+  }
+  if (!ts.isBinaryExpression(node)) return undefined;
+  const operator = node.operatorToken.kind;
+  // An assignment to a name reads its value only after it evaluates the value it assigns.
+  if (operator === ts.SyntaxKind.EqualsToken) {
+    return ts.isIdentifier(node.left) ? getUnresolvedRead(node.right, context) : undefined;
+  }
+  const truth = getLiteralTruth(node.left);
+  const isShortCircuit =
+    (operator === ts.SyntaxKind.AmpersandAmpersandToken && truth === false) ||
+    (operator === ts.SyntaxKind.BarBarToken && truth === true) ||
+    (operator === ts.SyntaxKind.QuestionQuestionToken &&
+      node.left.kind !== ts.SyntaxKind.NullKeyword &&
+      truth !== undefined);
+  return isShortCircuit ? undefined : readInOrder([node.left, node.right]);
+};
 
 // TypeScript gives new.target the symbol of the function it's in, which isn't its value.
 export const getSymbol = (node: ts.Node, checker: ts.TypeChecker) => {

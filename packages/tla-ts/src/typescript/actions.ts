@@ -60,6 +60,7 @@ import {
   share,
   isInlined,
   getFunctionOfKind,
+  getUnresolvedRead,
   isUnresolved,
   getBound,
   getBaseClass,
@@ -6934,6 +6935,11 @@ export const translateStatements = (
   if (invalidRegExp !== undefined) {
     return throwError("SyntaxError", path, invalidRegExp, context, frame);
   }
+  // A statement that reads a name that no declaration binds, before anything else it evaluates
+  // runs, throws a ReferenceError there.
+  const unresolved = evaluated === undefined ? undefined : getUnresolvedRead(evaluated, context);
+  if (unresolved !== undefined)
+    return throwError("ReferenceError", path, unresolved, context, frame);
   // An await statement whose promise fulfilled, or a conversion that ran, drops the value.
   if (
     ts.isExpressionStatement(statement) &&

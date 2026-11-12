@@ -3338,6 +3338,35 @@ describe("errors", () => {
     ).toThrow("tla-ts can't iterate a generator where a script may change how it iterates");
   });
 
+  it("throws a ReferenceError where an operation first reads a name that nothing binds", async () => {
+    const result = await checkModel(`
+      const box = { caught: 0 };
+      function f(first: unknown, second: unknown) {
+        return first;
+      }
+      try {
+        // @ts-ignore
+        1 - y;
+      } catch (error) {
+        if (error instanceof ReferenceError) box.caught += 1;
+      }
+      try {
+        // @ts-ignore
+        f(x, (box.caught = 10));
+      } catch (error) {
+        if (error instanceof ReferenceError) box.caught += 1;
+      }
+      try {
+        // @ts-ignore
+        if (true ? ~x : 0) box.caught = 10;
+      } catch (error) {
+        if (error instanceof ReferenceError) box.caught += 1;
+      }
+      if (box.caught !== 3) throw new Error("caught");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("sorts, reverses, fills, and copies within an array in place", async () => {
     const result = await checkModel(`
       const letters = ["z", "B", "a", "A"];
