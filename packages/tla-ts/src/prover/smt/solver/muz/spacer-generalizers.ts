@@ -1,6 +1,7 @@
 // Ported from Z3 (src/muz/spacer/spacer_ind_lemma_generalizer.cpp,
 // src/muz/spacer/spacer_generalizers.cpp, src/muz/spacer/spacer_util.cpp), MIT license, see
 // z3-license.txt.
+import { MBQI_MAX_ITERATIONS } from "../context";
 import { SmtUnsupportedError } from "../../../../errors";
 import {
   type AstManager,
@@ -192,7 +193,11 @@ const mkArrayEqGeneralizer =
         const mkConst = (decl: number) => manager.mkApp(decl, [], manager.funcDecls[decl].range);
         eqs.push(pin(manager, manager.mkEq(mkConst(symbols[first]), mkConst(symbols[second]))));
       }
-    const solver = new SmtKernel(manager, { isMbqi: true, isFindingMacros: false });
+    const solver = new SmtKernel(manager, {
+      isMbqi: true,
+      isFindingMacros: false,
+      mbqiMaxIterations: MBQI_MAX_ITERATIONS,
+    });
     const lits = [...core];
     let isDirty = false;
     for (let index = 0; index < core.length; index++) {

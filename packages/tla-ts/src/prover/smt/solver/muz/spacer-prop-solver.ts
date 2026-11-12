@@ -1,5 +1,6 @@
 // Ported from Z3 (src/muz/spacer/spacer_prop_solver.cpp, src/muz/spacer/spacer_iuc_solver.cpp),
 // MIT license, see z3-license.txt. Cores are subset cores: the port has no proofs to interpolate.
+import { MBQI_MAX_ITERATIONS } from "../context";
 import { type AstManager, KIND_APP, SORT_BOOL } from "../ast";
 import { flattenAndVector } from "../ast-util";
 import { L_FALSE, L_TRUE } from "../lbool";
@@ -36,7 +37,11 @@ export class IucSolver {
     private manager: AstManager,
     private spacerManager: SpacerManager,
   ) {
-    this.kernel = new SmtKernel(manager, { isMbqi: true, isFindingMacros: false });
+    this.kernel = new SmtKernel(manager, {
+      isMbqi: true,
+      isFindingMacros: false,
+      mbqiMaxIterations: MBQI_MAX_ITERATIONS,
+    });
   }
 
   assertExpr(expr: number) {
