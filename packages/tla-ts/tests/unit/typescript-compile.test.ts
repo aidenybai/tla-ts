@@ -2527,6 +2527,14 @@ describe("definitions", () => {
     expect(wrong.failure?.message).toContain("stepped");
   });
 
+  it("makes once the object that another file's constant holds", async () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/reasoning.ts");
+    const source = readFileSync(path, "utf8");
+    expect((await check(compile(source, path))).failure).toBeUndefined();
+    const wrong = await check(compile(source.replace("second.why !==", "second.why ==="), path));
+    expect(wrong.failure?.message).toContain("shared");
+  });
+
   it("skips the code of a class that a file names only as a type", async () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/chain-typing.ts");
     const source = readFileSync(path, "utf8");
