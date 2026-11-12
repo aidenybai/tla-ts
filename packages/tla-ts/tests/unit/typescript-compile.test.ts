@@ -1327,6 +1327,52 @@ describe("values", () => {
     }
   });
 
+  it("throws the TypeError of a nested assignment pattern that destructures undefined", async () => {
+    const getSource = (expected: string) => `
+      let x: number | undefined;
+      let y: number | undefined;
+      const outcomes: string[] = [];
+      const empty: { x: number }[][] = [[]];
+      try {
+        for ([{ x }] of empty) outcomes.push("body");
+      } catch (error) {
+        outcomes.push(error instanceof TypeError ? "type" : "other");
+      }
+      const holes: number[][][] = [[]];
+      try {
+        for ([[y]] of holes) outcomes.push("body");
+      } catch (error) {
+        outcomes.push(error instanceof TypeError ? "type" : "other");
+      }
+      const missing = [{}] as { inner: { x: number } }[];
+      try {
+        for ({ inner: { x } } of missing) outcomes.push("body");
+      } catch (error) {
+        outcomes.push(error instanceof TypeError ? "type" : "other");
+      }
+      const values: { x: number }[] = [];
+      try {
+        [{ x }] = values;
+      } catch (error) {
+        outcomes.push(error instanceof TypeError ? "type" : "other");
+      }
+      const present: { x: number }[][] = [[{ x: 3 }]];
+      for ([{ x }] of present) outcomes.push(String(x));
+      if (outcomes.join() !== "${expected}") throw new Error("outcomes " + outcomes.join());
+    `;
+    const expected = "type,type,type,type,3";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    for (const wrong of [
+      "type,type,type,other,3",
+      "type,other,type,type,3",
+      "type,type,type,type,4",
+    ]) {
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(
+        `outcomes ${expected}`,
+      );
+    }
+  });
+
   it("gives what a compound assignment to a property writes, as its value", async () => {
     const getSource = (field: number, property: number, element: number, typed: number) => `
       class Counter {
