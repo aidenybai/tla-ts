@@ -860,7 +860,7 @@ const getOwnValueGetters = (node: ts.Node, context: Context) => [
 
 // Object.values or Object.entries of an object, or Object.assign from one source, where a getter
 // that tla-ts can run may answer a key.
-export const isOwnValuesRead = (node: ts.Node, context: Context): node is ts.CallExpression =>
+export const isOwnValuesRead = (node: ts.Node, context: Context) =>
   context.heap !== undefined &&
   ts.isCallExpression(node) &&
   ts.isPropertyAccessExpression(node.expression) &&
