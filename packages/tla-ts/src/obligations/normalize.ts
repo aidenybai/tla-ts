@@ -15,6 +15,7 @@ import {
   getLocationText,
   getLocusPrefix,
   getScopeHyps,
+  getTrue,
   mapAccumulate,
   type Defn,
   type Expr,
@@ -74,7 +75,7 @@ const lambdifyTheorem = (
     const message = `${error.failure}\nCould not instantiate the theorem ${name === undefined ? "" : `named: ${name}, `}at: ${getLocationText(location)}`;
     pipeline.onWarning({ text: `${getAtPrefix(location)}[ERROR]${message}`, channel: "stdout" });
     pipeline.onWarning({ text: message, channel: "toolboxOnly" });
-    return { context: [], active: at({ kind: "Internal", builtin: "TRUE" }, sequent.active) };
+    return { context: [], active: getTrue(sequent.active) };
   }
 };
 

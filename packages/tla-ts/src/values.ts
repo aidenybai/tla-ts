@@ -359,18 +359,17 @@ interface StringOrder {
   unorderedString: string | undefined;
 }
 
-const stringOrder: StringOrder = {
+const createStringOrder = (): StringOrder => ({
   ranks: Object.create(null),
   size: 0,
   searchRank: undefined,
   unorderedString: undefined,
-};
+});
+
+const stringOrder = createStringOrder();
 
 export const setStringOrder = (texts: Iterable<string>) => {
-  stringOrder.ranks = Object.create(null);
-  stringOrder.size = 0;
-  stringOrder.searchRank = undefined;
-  stringOrder.unorderedString = undefined;
+  Object.assign(stringOrder, createStringOrder());
   modelValues.clear();
   for (const text of texts) rankString(text);
 };
@@ -844,24 +843,9 @@ const toTlcRecord = (value: Value) => {
   return isRecordDomain(functionValue.domain) ? functionValue : undefined;
 };
 
-const compareModelValueWith = (modelValue: ModelValue, other: Value) => {
-  checkModelValueTypes(other, modelValue, false);
+const compareModelValueWith = (modelValue: ModelValue, other: Value, isEquality: boolean) => {
+  checkModelValueTypes(other, modelValue, isEquality);
   return 1;
-};
-
-const equalsModelValueWith = (modelValue: ModelValue, other: Value) => {
-  checkModelValueTypes(other, modelValue, true);
-  return false;
-};
-
-const compareModelValue = (left: ModelValue, right: Value) => {
-  if (left.type !== undefined) checkModelValueTypes(left, right, false);
-  return isModelValue(right) ? left.rank - right.rank : -1;
-};
-
-const equalsModelValue = (left: ModelValue, right: Value) => {
-  if (left.type !== undefined) checkModelValueTypes(left, right, true);
-  return isModelValue(right) && left.name === right.name;
 };
 
 const SCALAR_KINDS = {
@@ -882,31 +866,40 @@ const describeScalarMismatch = (
   return `Attempted to ${isEquality ? kind.equality : "compare"} ${kind.name} ${formatValue(left)} with ${kind.other}:\n${formatValue(right)}`;
 };
 
-const compareTlcFunctions = (functionValue: TlcFunction, left: Value, right: Value) => {
+const getComparisonVerb = (isEquality: boolean) => (isEquality ? "check equality of" : "compare");
+
+const compareTlcFunctions = (
+  functionValue: TlcFunction,
+  left: Value,
+  right: Value,
+  isEquality: boolean,
+) => {
   const other = toTlcFunction(right);
   if (!other) {
-    if (isModelValue(right)) return compareModelValueWith(right, left);
+    if (isModelValue(right)) return compareModelValueWith(right, left, isEquality);
     throw new TlaEvaluationError(
-      `Attempted to compare the function ${formatValue(left)} with the value:\n${formatValue(right)}`,
+      `Attempted to ${getComparisonVerb(isEquality)} the function ${formatValue(left)} with the value:\n${formatValue(right)}`,
     );
   }
   if (functionValue.range.length !== other.range.length)
     return functionValue.range.length - other.range.length;
-  const compareRanges = () => compareElementsLikeTlc(functionValue.range, other.range);
+  const compareRanges = () => compareElementsLikeTlc(functionValue.range, other.range, isEquality);
   if (functionValue.low !== undefined && functionValue.range.length === 0) return 0;
   if (functionValue.low !== undefined && other.low !== undefined) {
     return functionValue.low === other.low ? compareRanges() : functionValue.low - other.low;
   }
   const intervalLow = functionValue.low ?? other.low;
   if (intervalLow === undefined) {
-    return compareElementsLikeTlc(functionValue.domain, other.domain) || compareRanges();
+    return (
+      compareElementsLikeTlc(functionValue.domain, other.domain, isEquality) || compareRanges()
+    );
   }
   const keys = functionValue.low === undefined ? functionValue.domain : other.domain;
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index];
     if (typeof key !== "number") {
       throw new TlaEvaluationError(
-        `Attempted to compare integer with non-integer${functionValue.low === undefined ? "" : ":"}\n${formatValue(key)}.`,
+        `Attempted to compare ${isEquality ? "an " : ""}integer with non-integer${isEquality || functionValue.low !== undefined ? ":" : ""}\n${formatValue(key)}.`,
       );
     }
     const difference =
@@ -916,42 +909,47 @@ const compareTlcFunctions = (functionValue: TlcFunction, left: Value, right: Val
   return compareRanges();
 };
 
-const compareElementsLikeTlc = (left: Value[], right: Value[]) => {
+const compareElementsLikeTlc = (left: Value[], right: Value[], isEquality: boolean) => {
   for (let index = 0; index < left.length; index++) {
-    const comparison = compareLikeTlc(left[index], right[index]);
+    const comparison = compareOrEqualLikeTlc(left[index], right[index], isEquality);
     if (comparison !== 0) return comparison;
   }
   return 0;
 };
 
-const compareFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: Value) => {
+const compareFunctionLikeTlc = (
+  left: FunctionValue | LazyFunctionValue,
+  right: Value,
+  isEquality: boolean,
+) => {
   const functionValue = toFiniteFunction(left);
   if (getFunctionClass(left) === "tuple") {
     const tuple = isFunctionValue(right) ? getSequenceElements(right) : undefined;
-    if (!tuple) return compareTlcFunctions({ ...functionValue, low: 1 }, left, right);
+    if (!tuple) return compareTlcFunctions({ ...functionValue, low: 1 }, left, right, isEquality);
     return (
       functionValue.range.length - tuple.length ||
-      compareElementsLikeTlc(functionValue.range, tuple)
+      compareElementsLikeTlc(functionValue.range, tuple, isEquality)
     );
   }
   if (getFunctionClass(left) === "record") {
     const record = toTlcRecord(right);
     if (!record) {
-      if (isModelValue(right)) return compareModelValueWith(right, left);
+      if (isModelValue(right)) return compareModelValueWith(right, left, isEquality);
       throw new TlaEvaluationError(
-        `Attempted to compare record:\n${formatValue(left)}\nwith non-record\n${formatValue(right)}`,
+        `Attempted to ${getComparisonVerb(isEquality)} record:\n${formatValue(left)}\nwith non-record\n${formatValue(right)}`,
       );
     }
     return (
       functionValue.domain.length - record.domain.length ||
-      compareElementsLikeTlc(functionValue.domain, record.domain) ||
-      compareElementsLikeTlc(functionValue.range, record.range)
+      compareElementsLikeTlc(functionValue.domain, record.domain, isEquality) ||
+      compareElementsLikeTlc(functionValue.range, record.range, isEquality)
     );
   }
   return compareTlcFunctions(
     { ...functionValue, low: getIntervalLow(left, functionValue.domain) },
     left,
     right,
+    isEquality,
   );
 };
 
@@ -971,128 +969,47 @@ const getSetElementsLikeTlc = (left: SetValue | MixedSetValue, right: Value) => 
   return { elements: toFiniteSet(left).elements, otherElements: toFiniteSet(other).elements };
 };
 
-const compareSetLikeTlc = (left: ObjectValue, right: Value): number => {
-  if (isComparedByClass(left, right)) return compareValues(left, right);
-  if (!isEnumeratedSet(left)) return compareSetLikeTlc(toFiniteSet(left), right);
+const compareSetLikeTlc = (left: ObjectValue, right: Value, isEquality: boolean): number => {
+  if (isComparedByClass(left, right)) {
+    if (!isEquality) return compareValues(left, right);
+    return valuesEqual(left, right) ? 0 : 1;
+  }
+  if (!isEnumeratedSet(left)) return compareSetLikeTlc(toFiniteSet(left), right, isEquality);
   if (!isSetValue(right)) {
-    if (isModelValue(right)) return compareModelValueWith(right, left);
+    if (isModelValue(right)) return compareModelValueWith(right, left, isEquality);
     throw new TlaEvaluationError(
-      `Attempted to compare the set ${formatValue(left)} with the value:\n${formatValue(right)}`,
+      `Attempted to ${getComparisonVerb(isEquality)} the set ${formatValue(left)} with the value:\n${formatValue(right)}`,
     );
   }
   const sets = getSetElementsLikeTlc(left, right);
   return (
     sets.elements.length - sets.otherElements.length ||
-    compareElementsLikeTlc(sets.elements, sets.otherElements)
+    compareElementsLikeTlc(sets.elements, sets.otherElements, isEquality)
   );
 };
 
-const compareLikeTlc = (left: Value, right: Value): number => {
+const compareOrEqualLikeTlc = (left: Value, right: Value, isEquality: boolean): number => {
   if (typeof left !== "object") {
-    if (typeof right === typeof left) return compareValues(left, right);
-    if (isModelValue(right)) return compareModelValueWith(right, left);
-    throw new TlaEvaluationError(describeScalarMismatch(left, right, false));
-  }
-  if (left.kind === "ModelValue") return compareModelValue(left, right);
-  if (isFunctionValue(left)) return compareFunctionLikeTlc(left, right);
-  return compareSetLikeTlc(left, right);
-};
-
-const equalsElementsLikeTlc = (left: Value[], right: Value[]) =>
-  left.every((element, index) => equalsLikeTlc(element, right[index]));
-
-const equalsTlcFunctions = (functionValue: TlcFunction, left: Value, right: Value) => {
-  const other = toTlcFunction(right);
-  if (!other) {
-    if (isModelValue(right)) return equalsModelValueWith(right, left);
-    throw new TlaEvaluationError(
-      `Attempted to check equality of the function ${formatValue(left)} with the value:\n${formatValue(right)}`,
-    );
-  }
-  if (functionValue.range.length !== other.range.length) return false;
-  if (functionValue.low !== undefined && other.low !== undefined) {
-    return (
-      (functionValue.range.length === 0 || functionValue.low === other.low) &&
-      equalsElementsLikeTlc(functionValue.range, other.range)
-    );
-  }
-  const intervalLow = functionValue.low ?? other.low;
-  if (intervalLow === undefined) {
-    return (
-      equalsElementsLikeTlc(functionValue.domain, other.domain) &&
-      equalsElementsLikeTlc(functionValue.range, other.range)
-    );
-  }
-  const keys = functionValue.low === undefined ? functionValue.domain : other.domain;
-  return (
-    keys.every((key, index) => {
-      if (typeof key !== "number") {
-        throw new TlaEvaluationError(
-          `Attempted to compare an integer with non-integer:\n${formatValue(key)}.`,
-        );
-      }
-      return key === intervalLow + index;
-    }) && equalsElementsLikeTlc(functionValue.range, other.range)
-  );
-};
-
-const equalsFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: Value) => {
-  const functionValue = toFiniteFunction(left);
-  if (getFunctionClass(left) === "tuple") {
-    const tuple = isFunctionValue(right) ? getSequenceElements(right) : undefined;
-    if (!tuple) return equalsTlcFunctions({ ...functionValue, low: 1 }, left, right);
-    return (
-      functionValue.range.length === tuple.length &&
-      equalsElementsLikeTlc(functionValue.range, tuple)
-    );
-  }
-  if (getFunctionClass(left) === "record") {
-    const record = toTlcRecord(right);
-    if (!record) {
-      if (isModelValue(right)) return equalsModelValueWith(right, left);
-      throw new TlaEvaluationError(
-        `Attempted to check equality of record:\n${formatValue(left)}\nwith non-record\n${formatValue(right)}`,
-      );
+    if (typeof right === typeof left) {
+      if (!isEquality) return compareValues(left, right);
+      return left === right ? 0 : 1;
     }
-    return (
-      functionValue.domain.length === record.domain.length &&
-      equalsElementsLikeTlc(functionValue.domain, record.domain) &&
-      equalsElementsLikeTlc(functionValue.range, record.range)
-    );
+    if (isModelValue(right)) return compareModelValueWith(right, left, isEquality);
+    throw new TlaEvaluationError(describeScalarMismatch(left, right, isEquality));
   }
-  return equalsTlcFunctions(
-    { ...functionValue, low: getIntervalLow(left, functionValue.domain) },
-    left,
-    right,
-  );
+  if (left.kind === "ModelValue") {
+    if (left.type !== undefined) checkModelValueTypes(left, right, isEquality);
+    if (!isModelValue(right)) return -1;
+    if (!isEquality) return left.rank - right.rank;
+    return left.name === right.name ? 0 : 1;
+  }
+  if (isFunctionValue(left)) return compareFunctionLikeTlc(left, right, isEquality);
+  return compareSetLikeTlc(left, right, isEquality);
 };
 
-const equalsSetLikeTlc = (left: ObjectValue, right: Value): boolean => {
-  if (isComparedByClass(left, right)) return valuesEqual(left, right);
-  if (!isEnumeratedSet(left)) return equalsSetLikeTlc(toFiniteSet(left), right);
-  if (!isSetValue(right)) {
-    if (isModelValue(right)) return equalsModelValueWith(right, left);
-    throw new TlaEvaluationError(
-      `Attempted to check equality of the set ${formatValue(left)} with the value:\n${formatValue(right)}`,
-    );
-  }
-  const sets = getSetElementsLikeTlc(left, right);
-  return (
-    sets.elements.length === sets.otherElements.length &&
-    equalsElementsLikeTlc(sets.elements, sets.otherElements)
-  );
-};
+const compareLikeTlc = (left: Value, right: Value) => compareOrEqualLikeTlc(left, right, false);
 
-const equalsLikeTlc = (left: Value, right: Value): boolean => {
-  if (typeof left !== "object") {
-    if (typeof right === typeof left) return left === right;
-    if (isModelValue(right)) return equalsModelValueWith(right, left);
-    throw new TlaEvaluationError(describeScalarMismatch(left, right, true));
-  }
-  if (left.kind === "ModelValue") return equalsModelValue(left, right);
-  if (isFunctionValue(left)) return equalsFunctionLikeTlc(left, right);
-  return equalsSetLikeTlc(left, right);
-};
+const equalsLikeTlc = (left: Value, right: Value) => compareOrEqualLikeTlc(left, right, true) === 0;
 
 const sortLikeTlc = (elements: Value[]) => {
   const sorted: Value[] = [];

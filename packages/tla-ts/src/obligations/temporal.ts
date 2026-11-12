@@ -8,6 +8,7 @@ import {
   getFresh,
   getLocalDefn,
   getScopeAt,
+  getTrue,
   isBuiltinApply,
   mapChildren,
   type Builtin,
@@ -31,7 +32,7 @@ export const rewriteUnchanged = (expression: Expr): Expr => {
   const flatten = (inner: Expr): Expr[] =>
     inner.kind === "Tuple" ? inner.elements.flatMap(flatten) : [inner];
   const items = flatten(expression);
-  if (items.length === 0) return at({ kind: "Internal", builtin: "TRUE" }, expression);
+  if (items.length === 0) return getTrue(expression);
   if (items.length === 1) return getEquality(items[0]);
   return at({ kind: "List", bullet: "And", items: items.map(getEquality) }, expression);
 };
