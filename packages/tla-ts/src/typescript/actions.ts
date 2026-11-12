@@ -1329,6 +1329,11 @@ const getUpdate = (expression: ts.BinaryExpression, path: Path, context: Context
       : applyArithmetic(operator, [current, value], context);
 };
 
+// The call whose result a chain of property reads reads, as a first argument that reads properties
+// of a call's result runs the call first.
+const getRootCall = (node: ts.Expression | undefined): ts.Expression | undefined =>
+  node !== undefined && ts.isPropertyAccessExpression(node) ? getRootCall(node.expression) : node;
+
 export const translateCallStatement = (
   expression: ts.CallExpression,
   path: Path,
@@ -1343,9 +1348,6 @@ export const translateCallStatement = (
   if (loop !== undefined) {
     return translateLoopCall(expression, loop, path, context, frame, continueWith);
   }
-  // A first argument that reads properties of a call's result runs the call first.
-  const getRootCall = (node: ts.Expression | undefined): ts.Expression | undefined =>
-    node !== undefined && ts.isPropertyAccessExpression(node) ? getRootCall(node.expression) : node;
   const first = getRootCall(expression.arguments.at(0));
   if (
     first !== undefined &&
@@ -6780,6 +6782,47 @@ export const translateDeclarations = (
       (after, values) => bindDeclaration(declarations, values, after, context, frame, continueWith),
     );
     if (taken !== undefined) return taken;
+  }
+  // A call that only statements can run, as the first argument of the call whose result the
+  // declaration reads, runs first, where the callee runs no call of its own and, unless it's a
+  // built-in's method, doesn't read what the argument changes.
+  const getReadCall = (node: ts.Expression): ts.Expression => {
+    const read = skipCasts(node);
+    return ts.isPropertyAccessExpression(read) ? getReadCall(read.expression) : read;
+  };
+  const outer = initializer && getReadCall(initializer);
+  const first =
+    outer !== undefined && ts.isCallExpression(outer)
+      ? getRootCall(outer.arguments.at(0))
+      : undefined;
+  if (
+    outer !== undefined &&
+    ts.isCallExpression(outer) &&
+    first !== undefined &&
+    ts.isCallExpression(first) &&
+    !path.scope.results.has(first) &&
+    !isGeneratorType(first, context) &&
+    isStatementCall(first, path, context) &&
+    findNodes(outer.expression, ts.isCallExpression).length === 0 &&
+    ((ts.isPropertyAccessExpression(outer.expression) &&
+      getBuiltIn(outer.expression.expression, context) !== undefined) ||
+      getEarlyReads([first], [outer.expression], path, context).length === 0)
+  ) {
+    return translateCallStatement(first, path, context, frame, (after, value) =>
+      translateDeclarations(
+        declarations,
+        {
+          ...after,
+          scope: {
+            ...after.scope,
+            results: new Map([...after.scope.results, [first, value ?? getUndefined(context)]]),
+          },
+        },
+        context,
+        frame,
+        continueWith,
+      ),
+    );
   }
   const defaulted = runCertainDefault(
     [declaration.name],

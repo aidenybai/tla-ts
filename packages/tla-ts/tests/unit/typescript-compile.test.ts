@@ -8297,6 +8297,34 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs a call that makes an object before a declaration reads it through another call", async () => {
+    const source = `
+      const box = { seen: 0 };
+      const value = Object.getOwnPropertyDescriptor(
+        (function () {
+          return { a: 1 };
+        })(),
+        "a",
+      )!.value;
+      if (value !== 1) throw new Error("value");
+      const thrower = Object.getOwnPropertyDescriptor(
+        (function () {
+          "use strict";
+          return arguments;
+        })(),
+        "callee",
+      )!.get;
+      const caller = Object.getOwnPropertyDescriptor(Function.prototype, "caller")!.get;
+      if (thrower !== caller) throw new Error("thrower");
+      box.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const value = source.replace("value !== 1", "value !== 2");
+    expect((await checkModel(value)).failure?.message).toContain('"value"');
+    const thrower = source.replace("thrower !== caller", "thrower === caller");
+    expect((await checkModel(thrower)).failure?.message).toContain('"thrower"');
+  });
+
   it("makes an arguments object for each call to a function that names it", async () => {
     const result = await check(
       compile(
