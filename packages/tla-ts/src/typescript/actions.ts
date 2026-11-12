@@ -10571,13 +10571,18 @@ const findLeadingCall = (
   if (ts.isTemplateExpression(node)) {
     return thenConverted(inOrder(node.templateSpans.map((span) => span.expression)));
   }
-  // An operand that runs a call that only statements can run, an increment, or a branch of these.
+  // An operand that runs a call that only statements can run, an increment, an assignment to a
+  // name of a value that runs nothing, or a branch of these.
   const isBranchRun = (operand: ts.Expression) => {
     const run = skipCasts(operand);
     const found = findLeadingCall(run, [], path, context);
     return (
       found.call !== undefined ||
       (isIncrement(run) && isPlainIncrement(run, context)) ||
+      (ts.isBinaryExpression(run) &&
+        isAssignment(run) &&
+        ts.isIdentifier(run.left) &&
+        isPlainOperand(run.right)) ||
       found.branch === run
     );
   };
@@ -11109,17 +11114,8 @@ export const translateStatements = (
         const run = skipCasts(operand);
         const inner = findLeadingCall(run, [], next, context).branch;
         if (inner !== undefined && inner === run) return runBranch(inner, next, withValue);
-        // An increment gives its operand's number from before, or after, as its prefix form does.
-        if (isIncrement(run) && isPlainIncrement(run, context)) {
-          const before = translateExpression(run.operand, next.scope, context);
-          return translateExpressionStatement(run, next, context, frame, (after) =>
-            withValue(
-              after,
-              ts.isPostfixUnaryExpression(run)
-                ? before
-                : translateExpression(run.operand, after.scope, context),
-            ),
-          );
+        if (isAssignment(run) && (!isIncrement(run) || isPlainIncrement(run, context))) {
+          return runAssignment(run, next, context, frame, withValue);
         }
         if (ts.isCallExpression(run) && !next.scope.results.has(run)) {
           return allocate(run, next, context, (allocated) =>

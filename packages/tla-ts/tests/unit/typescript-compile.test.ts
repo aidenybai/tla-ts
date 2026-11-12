@@ -1625,6 +1625,39 @@ describe("values", () => {
     expect((await checkModel(getSource("21,3,4"))).failure?.message).toContain("outcomes 12,3,4");
   });
 
+  it("assigns where a short-circuit evaluates an assignment", async () => {
+    const getSource = (expected: string) => `
+      let x = false;
+      let y = 0;
+      let z: number | null = null;
+      const first = x && (x = true);
+      const second = (y || (y = 7)) + y;
+      const third = \`\${z ?? (z = 3)}:\${z}\`;
+      const outcomes = [first, x, second, y, third].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("false,false,14,7,3:3"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("false,true,14,7,3:3"))).failure?.message).toContain(
+      "outcomes false,false,14,7,3:3",
+    );
+  });
+
+  it("assigns where a conditional or a condition evaluates an assignment", async () => {
+    const getSource = (expected: string) => `
+      let w = 1;
+      let flag = true;
+      let t = 5;
+      const fourth = w > 0 ? (w += 10) : (w = -1);
+      if ((flag && (flag = false)) !== false || flag) t = 0;
+      const outcomes = [fourth, w, flag, t].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("11,11,false,5"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("11,11,false,0"))).failure?.message).toContain(
+      "outcomes 11,11,false,5",
+    );
+  });
+
   it("gives what a compound assignment to a property writes, as its value", async () => {
     const getSource = (field: number, property: number, element: number, typed: number) => `
       class Counter {
