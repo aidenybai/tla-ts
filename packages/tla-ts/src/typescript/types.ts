@@ -103,6 +103,7 @@ const LIBRARY_OBJECTS = new Set([
   "PropertyDescriptor",
   "TypedPropertyDescriptor",
   "PropertyDescriptorMap",
+  "ProxyHandler",
   "IteratorYieldResult",
   "IteratorReturnResult",
   "ArrayIterator",

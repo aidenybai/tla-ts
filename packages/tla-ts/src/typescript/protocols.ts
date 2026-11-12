@@ -37,6 +37,7 @@ import {
   getHeap,
   getIsConstructor,
   getProxyTarget,
+  isNewProxy,
   isProxyValue,
   translateObjectValue,
   translatePropertyKey,
@@ -1712,9 +1713,19 @@ const getTargets = (
       ]
     : [expression];
 
+// Whether the script makes a proxy whose handler is a proxy, whose get trap gives the traps.
+const hasProxyHandler = (site: ts.Node, context: Context) =>
+  findNodes(site.getSourceFile(), (inner): inner is ts.NewExpression =>
+    isNewProxy(inner, context),
+  ).some((created) => {
+    const handler = created.arguments?.[1];
+    return handler !== undefined && isProxyValue(handler, context);
+  });
+
 // Runs a proxy's internal method, as ECMAScript's proxy objects do: the handler's trap, called
 // with the target and the values, where the handler has one, or else what forward does with the
-// target. A revoked proxy, or a trap that isn't a function, throws a TypeError.
+// target. A revoked proxy, or a trap that isn't a function, throws a TypeError. A handler that's
+// a proxy gives the trap through its own get trap, where it isn't itself a proxy's handler.
 const runTrap = (
   site: ts.Node,
   proxy: Expression,
@@ -1725,8 +1736,70 @@ const runTrap = (
   frame: Frame,
   forward: (path: Path, target: Expression) => Formula,
   check: (path: Path, target: Expression, result: Expression) => Formula,
+  isHandler = false,
 ): Formula => {
   const heap = getHeap(path.scope, site, context);
+  const getTrap = (
+    current: Path,
+    handler: Expression,
+    then: (path: Path, method: Expression) => Formula,
+  ) =>
+    isHandler || !hasProxyHandler(site, context)
+      ? bind(
+          current,
+          "trap",
+          useJavaScript("Get", [heap, handler, string(trap)], context),
+          context,
+          then,
+        )
+      : ifThenElse(
+          useJavaScript("IsProxy", [heap, handler], context),
+          runTrap(
+            site,
+            handler,
+            "get",
+            [string(trap), handler],
+            current,
+            context,
+            frame,
+            (forwarded, target) =>
+              bind(
+                forwarded,
+                "trap",
+                useJavaScript(
+                  "Get",
+                  [getHeap(forwarded.scope, site, context), target, string(trap)],
+                  context,
+                ),
+                context,
+                then,
+              ),
+            (after, target, result) =>
+              ifThenElse(
+                useJavaScript(
+                  "ProxyAgrees",
+                  [
+                    getHeap(after.scope, site, context),
+                    target,
+                    string(trap),
+                    result,
+                    string("get"),
+                  ],
+                  context,
+                ),
+                then(after, result),
+                throwTypeError(after, site, context, frame),
+              ),
+            true,
+          ),
+          bind(
+            current,
+            "trap",
+            useJavaScript("Get", [heap, handler, string(trap)], context),
+            context,
+            then,
+          ),
+        );
   return bind(
     path,
     "handler",
@@ -1742,45 +1815,40 @@ const runTrap = (
           useJavaScript("ProxyTarget", [heap, proxy], context),
           context,
           (withTarget, target) =>
-            bind(
-              withTarget,
-              "trap",
-              useJavaScript("Get", [heap, handler, string(trap)], context),
-              context,
-              (withTrap, method) =>
-                ifThenElse(
-                  isNullish(method, context),
-                  forward(withTrap, target),
-                  callValue(
-                    site,
-                    getMethods(site, trap, context),
-                    method,
-                    handler,
-                    [target, ...values],
-                    withTrap,
-                    context,
-                    frame,
-                    () =>
-                      ifThenElse(
-                        apply("=", [
-                          useJavaScript(
-                            "TypeOfIn",
-                            [getHeap(withTrap.scope, site, context), method],
-                            context,
-                          ),
-                          string("function"),
-                        ]),
-                        leaf(
-                          apply("Assert", [
-                            boolean(false),
-                            string("tla-ts can't tell which function this trap calls"),
-                          ]),
+            getTrap(withTarget, handler, (withTrap, method) =>
+              ifThenElse(
+                isNullish(method, context),
+                forward(withTrap, target),
+                callValue(
+                  site,
+                  getMethods(site, trap, context),
+                  method,
+                  handler,
+                  [target, ...values],
+                  withTrap,
+                  context,
+                  frame,
+                  () =>
+                    ifThenElse(
+                      apply("=", [
+                        useJavaScript(
+                          "TypeOfIn",
+                          [getHeap(withTrap.scope, site, context), method],
+                          context,
                         ),
-                        throwTypeError(withTrap, site, context, frame),
+                        string("function"),
+                      ]),
+                      leaf(
+                        apply("Assert", [
+                          boolean(false),
+                          string("tla-ts can't tell which function this trap calls"),
+                        ]),
                       ),
-                    (after, result) => check(after, target, result),
-                  ),
+                      throwTypeError(withTrap, site, context, frame),
+                    ),
+                  (after, result) => check(after, target, result),
                 ),
+              ),
             ),
         ),
       ),
@@ -2145,7 +2213,8 @@ export const runProxyOperation = (
       const traps = ["getOwnPropertyDescriptor", ...(listing === "keys" ? [] : ["get"])];
       if (
         ["keys", "values", "entries"].includes(listing) &&
-        traps.every((trap) => getMethods(node, trap, context).length === 0)
+        traps.every((trap) => getMethods(node, trap, context).length === 0) &&
+        !hasProxyHandler(node, context)
       ) {
         return next(
           after,

@@ -11565,6 +11565,37 @@ describe("proxies", () => {
     expect((await checkModel(getSource("last"))).failure?.message).toContain("unexpected");
   });
 
+  it("looks up the traps of a handler that's a proxy through its get trap", async () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const getLog = (): string => log;
+      const object = { a: 0, b: 0 };
+      const handler: ProxyHandler<{ a: number; b: number }> = {
+        get(target, key) {
+          log += \`|get:\${typeof key === "string" ? key : "symbol"}\`;
+          return 1;
+        },
+      };
+      const check: ProxyHandler<ProxyHandler<{ a: number; b: number }>> = {
+        get(target, key) {
+          log += \`|trap:\${typeof key === "string" ? key : "symbol"}\`;
+          return key in target ? target[key as keyof typeof target] : undefined;
+        },
+      };
+      const proxy = new Proxy(object, new Proxy(handler, check));
+      if (proxy.a !== 1 || getLog() !== "|trap:get|get:a") throw new Error("get");
+      const keys = Object.keys(proxy);
+      if (keys.length !== 2) throw new Error("keys");
+      if (getLog() !== "${expected}") throw new Error("unexpected");
+    `;
+    const expected =
+      "|trap:get|get:a|trap:ownKeys|trap:getOwnPropertyDescriptor|trap:getOwnPropertyDescriptor";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect((await checkModel(getSource("|trap:get|get:a"))).failure?.message).toContain(
+      "unexpected",
+    );
+  });
+
   it("stops the check where something else reads a proxy", async () => {
     const result = await checkModel(`
       const proxy = new Proxy({ attr: { value: 1 } }, {});
