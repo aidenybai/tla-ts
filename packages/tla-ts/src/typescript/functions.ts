@@ -41,6 +41,7 @@ import {
   bindValues,
   createStateScope,
   declareParameters,
+  getArrowReceivers,
   type Scope,
 } from "./scope";
 import {
@@ -336,6 +337,7 @@ const inlineCall = (
       ...bound.scope,
       functions: new Map([...bound.scope.functions, ...callbacks]),
       receiver: getReceiver(scope, context, called),
+      arrowReceivers: getArrowReceivers(callbacks, scope),
     },
     context,
   );

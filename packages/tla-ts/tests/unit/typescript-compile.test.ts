@@ -6851,6 +6851,27 @@ describe("errors", () => {
     );
   });
 
+  it("reads this in an arrow function that a method gives another method", async () => {
+    const getSource = (expected: string) => `
+      class Table {
+        sorts = [5, 6, 7];
+        args = [2, 0];
+        mapArgs<T>(map: (arg: number) => T) {
+          const result: T[] = [];
+          for (const arg of this.args) result.push(map(arg));
+          return result;
+        }
+        signature() {
+          return this.mapArgs((arg) => this.sorts[arg]).join(",");
+        }
+      }
+      const table = new Table();
+      if (table.signature() !== "${expected}") throw new Error(table.signature());
+    `;
+    expect((await checkModel(getSource("7,5"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("7,6"))).failure?.message).toContain("7,5");
+  });
+
   it("makes the objects of a callback that an array literal's method calls", async () => {
     const getSource = (expected: number) => `
       const size = [1].map((value) => ({ value })).length;

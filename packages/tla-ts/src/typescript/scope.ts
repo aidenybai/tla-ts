@@ -35,6 +35,8 @@ export interface Scope {
   checked?: ReadonlySet<ts.Expression>;
   // The object that this names in the method that a call through it inlines.
   receiver?: Receiver;
+  // The object that this names in each arrow function that a call takes, from where it was written.
+  arrowReceivers?: ReadonlyMap<ts.Node, Receiver>;
   // The values of an object pattern's elements whose getters ran before it binds, which binding
   // the pattern takes, once each.
   read?: ReadonlyMap<ts.BindingElement, Expression>;
@@ -53,6 +55,35 @@ export interface Receiver {
   // The newTarget of a construction, which new.target reads in the constructor.
   newTarget?: Expression;
 }
+
+// The function, static block, or field whose this a node's this names.
+export const getThisOwner = (node: ts.Node) =>
+  ts.findAncestor(
+    node.parent,
+    (ancestor) =>
+      (ts.isFunctionLike(ancestor) && !ts.isArrowFunction(ancestor)) ||
+      ts.isClassStaticBlockDeclaration(ancestor) ||
+      ts.isPropertyDeclaration(ancestor),
+  );
+
+// The receivers of the arrow functions that a call takes, with the scope's receiver for those
+// written in its method.
+export const getArrowReceivers = (
+  callbacks: readonly [ts.Symbol, FunctionNode][],
+  scope: Scope,
+): ReadonlyMap<ts.Node, Receiver> => {
+  const receiver = scope.receiver;
+  return new Map([
+    ...(scope.arrowReceivers ?? []),
+    ...callbacks.flatMap(([, callback]): [ts.Node, Receiver][] =>
+      receiver !== undefined &&
+      ts.isArrowFunction(callback) &&
+      getThisOwner(callback) === receiver.method
+        ? [[callback, receiver]]
+        : [],
+    ),
+  ]);
+};
 
 export interface Bound {
   definitions: OperatorDefinition[];

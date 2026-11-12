@@ -231,6 +231,7 @@ import {
   type Bound,
   bindValues,
   createStateScope,
+  getArrowReceivers,
   getDefaulted,
   getOptionalField,
   initialize,
@@ -2582,6 +2583,7 @@ export const bindCall = (
     ...bound.scope,
     functions: new Map([...bound.scope.functions, ...callbacks]),
     receiver,
+    arrowReceivers: getArrowReceivers(callbacks, path.scope),
   };
   // A parameter is a local binding, which the body may assign as it does a let.
   const changeable = {

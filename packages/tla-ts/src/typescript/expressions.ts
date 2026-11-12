@@ -114,7 +114,7 @@ import {
   translateTypeOf,
   useJavaScript,
 } from "./javascript";
-import { rejectBeforeDeclaration, type Scope } from "./scope";
+import { getThisOwner, rejectBeforeDeclaration, type Scope } from "./scope";
 import {
   apply,
   boolean,
@@ -2493,16 +2493,17 @@ const translateNode = (
   }
   const result = scope.results.get(node);
   if (result !== undefined) return result;
-  const isReceived =
-    node.kind === ts.SyntaxKind.ThisKeyword &&
-    ts.findAncestor(
-      node.parent,
-      (ancestor) =>
-        (ts.isFunctionLike(ancestor) && !ts.isArrowFunction(ancestor)) ||
-        ts.isClassStaticBlockDeclaration(ancestor) ||
-        ts.isPropertyDeclaration(ancestor),
-    ) === scope.receiver?.method;
-  if (isReceived && scope.receiver !== undefined) return scope.receiver.value;
+  const thisOwner = node.kind === ts.SyntaxKind.ThisKeyword ? getThisOwner(node) : undefined;
+  if (thisOwner !== undefined && thisOwner === scope.receiver?.method) return scope.receiver.value;
+  // An arrow function that a call took names the this of where it was written.
+  const arrow = ts.findAncestor(
+    node,
+    (ancestor) =>
+      ancestor === thisOwner ||
+      (ts.isArrowFunction(ancestor) && scope.arrowReceivers?.get(ancestor)?.method === thisOwner),
+  );
+  const arrowReceiver = arrow === undefined ? undefined : scope.arrowReceivers?.get(arrow);
+  if (thisOwner !== undefined && arrowReceiver !== undefined) return arrowReceiver.value;
   // new.target, which a construction gives its constructor and a call gives as undefined. An arrow
   // function reads its owner's, so only one that runs where it's made can read it.
   if (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.NewKeyword) {
