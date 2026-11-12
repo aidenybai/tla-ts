@@ -53,7 +53,9 @@ import {
   getKind,
   isBooleanType,
   isEvery,
+  getKeptIterator,
   isHeapArray,
+  ITERATOR_METHODS,
   isBigIntLike,
   isBooleanLike,
   isNumberLike,
@@ -1114,8 +1116,6 @@ const flattenTypes = (
   );
 };
 
-const ITERATOR_METHODS = ["keys", "values", "entries"];
-
 // An array's keys(), values(), or entries() that a for-of or a spread reads at once, which visits
 // what a sequence of them holds. Anywhere else the iterator is an object, whose identity and
 // progress a sequence can't show.
@@ -1126,6 +1126,71 @@ export const isArrayIteration = (node: ts.Node, context: Context) =>
   getKind(node.expression.expression, context) === "sequence" &&
   ((ts.isForOfStatement(node.parent) && node.parent.expression === node) ||
     ts.isSpreadElement(node.parent));
+
+// A call that makes an array's iterator as an object in the heap, or a call of that iterator's
+// next. The iterator reads an array that the heap holds as it steps, or a literal that nothing
+// else holds, which can't change.
+export const getArrayIteratorCall = (node: ts.Node, context: Context) => {
+  if (
+    context.heap === undefined ||
+    !ts.isCallExpression(node) ||
+    node.arguments.length > 0 ||
+    !(
+      ts.isPropertyAccessExpression(node.expression) ||
+      ts.isElementAccessExpression(node.expression)
+    ) ||
+    node.expression.questionDotToken !== undefined
+  ) {
+    return undefined;
+  }
+  const callee = node.expression;
+  const receiver = callee.expression;
+  if (ts.isPropertyAccessExpression(callee) && callee.name.text === "next") {
+    return context.checker.getTypeAtLocation(receiver).getSymbol()?.name === "ArrayIterator"
+      ? { kind: undefined, receiver, key: "next", path: "%ArrayIteratorPrototype%.next" }
+      : undefined;
+  }
+  const kind = getKeptIterator(node, context);
+  return kind !== undefined &&
+    (isHeapArray(receiver, context) ||
+      (ts.isArrayLiteralExpression(receiver) && getKind(receiver, context) === "sequence"))
+    ? {
+        kind,
+        receiver,
+        key: ts.isElementAccessExpression(callee) ? "@@iterator" : kind,
+        path: `Array.prototype.${kind}`,
+      }
+    : undefined;
+};
+
+// %ArrayIteratorPrototype%, with its next, whose own properties a script may read.
+export const translateArrayIteratorPrototype = (node: ts.Node, context: Context) => {
+  context.builtIns.add("%ArrayIteratorPrototype%.next");
+  return translateBuiltInValue("%ArrayIteratorPrototype%", node, context);
+};
+
+// Whether the receiver of an array iterator call still reads the built-in method it calls.
+export const translateHoldsIteratorMethod = (
+  call: NonNullable<ReturnType<typeof getArrayIteratorCall>>,
+  heap: Expression,
+  receiver: Expression,
+  context: Context,
+) => {
+  // A sequence reads its methods from Array.prototype.
+  context.builtIns.add("Array.prototype");
+  return useJavaScript(
+    "HoldsBuiltIn",
+    [
+      heap,
+      receiver,
+      call.key === "@@iterator"
+        ? useJavaScript("WellKnownSymbol", [string("iterator")], context)
+        : string(call.key),
+      string(call.path),
+    ],
+    context,
+  );
+};
 
 // An index argument as ClampedIndex counts it, or a fallback where it's missing or undefined.
 const translateClampedIndex = (

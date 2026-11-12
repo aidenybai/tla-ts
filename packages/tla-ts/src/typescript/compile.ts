@@ -30,7 +30,7 @@ import { TlaTypeScriptError } from "../errors";
 import { translateStep } from "./steps";
 import { apply, define, getLocation, getModuleName, identifier, locate, tuple } from "./tla";
 import { BUILT_INS } from "./built-ins";
-import { getDomain, TYPED_ARRAYS } from "./types";
+import { getDomain, getKeptIterator, TYPED_ARRAYS } from "./types";
 
 // A state variable starts at its initializer, or at every value of its type without one.
 const translateInitial = (variable: Variable, context: Context) => {
@@ -234,6 +234,7 @@ export const compile = (
       ].includes(node.text)) ||
     node.kind === ts.SyntaxKind.AsyncKeyword ||
     isHoleyArray(node) ||
+    getKeptIterator(node, context) !== undefined ||
     // An array that a script gives a named property, which only an object can hold.
     (ts.isBinaryExpression(node) &&
       node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&

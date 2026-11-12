@@ -5053,8 +5053,59 @@ describe("errors", () => {
       }
     `);
     expect(result.failure).toBeUndefined();
-    expect(() => compile(`const it = ["a"].values(); it.next();`)).toThrow(
-      "Iterate values() only in a for-of or a spread",
+    expect(() =>
+      compile(`
+        const arr = ["a"];
+        const count = (values: string[]) => values.length;
+        const it = arr.values();
+        count(arr);
+      `),
+    ).toThrow("Iterate values() only in a for-of or a spread");
+  });
+
+  it("steps an array's iterator with next as the array changes", async () => {
+    const result = await checkModel(`
+      const arr = ["a", "b"];
+      const it = arr[Symbol.iterator]();
+      const first = it.next();
+      const holey = [, "y"];
+      const holes = holey.values();
+      const hole = holes.next();
+      arr.push("d");
+      it.next();
+      const last = it.next();
+      const done = it.next();
+      arr.push("e");
+      const after = it.next();
+      const entries = ["x"].entries();
+      const entry = entries.next().value;
+      const prototype = Object.getPrototypeOf([].keys());
+      if (
+        first.value !== "a" ||
+        hole.value !== undefined ||
+        hole.done ||
+        last.value !== "d" ||
+        !done.done ||
+        !after.done ||
+        entry === undefined ||
+        entry[0] !== 0 ||
+        entry[1] !== "x" ||
+        Object.getPrototypeOf(entries) !== prototype ||
+        prototype[Symbol.toStringTag] !== "Array Iterator"
+      ) {
+        throw new Error("stepped");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+    const replaced = await checkModel(`
+      Array.prototype[Symbol.iterator] = function () {
+        return [9].values();
+      } as typeof Array.prototype.values;
+      const it = [1][Symbol.iterator]();
+      it.next();
+    `);
+    expect(replaced.failure?.message).toContain(
+      "tla-ts can't call Array.prototype.values where a script replaced it",
     );
   });
 

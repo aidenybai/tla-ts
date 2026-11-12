@@ -99,6 +99,7 @@ import {
   TYPED_ARRAYS,
   isHoleyNewArray,
   getArraySource,
+  getKeptIterator,
 } from "./types";
 
 const SHORT_CIRCUITS = new Set([
@@ -2795,8 +2796,8 @@ export const findHeapArrays = (
     }
   });
   // An array literal that a variable holds, where the script gives the array a property that isn't
-  // its length or an index and reads it only as an object, as a test of exec builds the array it
-  // expects.
+  // its length or an index, as a test of exec builds the array it expects, or keeps an iterator of
+  // it, which sees the array change. The script must read it only as an object.
   const isNamedWrite = (use: ts.Identifier) =>
     ts.isPropertyAccessExpression(use.parent) &&
     use.parent.expression === use &&
@@ -2819,7 +2820,9 @@ export const findHeapArrays = (
       literal.elements.every(
         (element) => !ts.isSpreadElement(element) && !ts.isOmittedExpression(element),
       ) &&
-      reads.some(isNamedWrite) &&
+      reads.some(
+        (use) => isNamedWrite(use) || getKeptIterator(use.parent.parent, context) !== undefined,
+      ) &&
       reads.every((use) => isArrayObjectUse(use, context))
     ) {
       arrays.add(literal);

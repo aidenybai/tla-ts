@@ -1240,6 +1240,31 @@ ArrayLike(heap, ref) ==
      THEN Assert(FALSE, "tla-ts can't read an array-like object with holes")
      ELSE Read([position \\in 1..length |-> Get(heap, ref, ToString(position - 1))])
 
+\\* An iterator of an array's keys, values, or entries, which reads the array as next steps it, so
+\\* that it sees what the script changes in the array meanwhile.
+ArrayIterator(heap, array, kind, prototype) ==
+  LET allocated == Allocate(heap, [EmptyObject EXCEPT !.prototype = prototype]
+                                    @@ [iterated |-> array, index |-> 0, kind |-> kind])
+  IN [heap |-> allocated, value |-> Allocated(allocated), isThrown |-> FALSE]
+
+\\* %ArrayIteratorPrototype%.next, which gives a new result object and forgets the array once done.
+ArrayIteratorNext(heap, ref) ==
+  LET iterator == heap.objects[ref[Ref]]
+      array == iterator.iterated
+      index == iterator.index
+      isDone == array = Undefined \\/ index >= ToLength(Get(heap, array, "length"))
+      element == Get(heap, array, ToString(index))
+      value == CASE isDone -> Undefined
+                 [] iterator.kind = "keys" -> index
+                 [] iterator.kind = "values" -> element
+                 [] OTHER -> <<index, element>>
+      stepped == [heap EXCEPT !.objects[ref[Ref]] =
+                    IF isDone THEN [@ EXCEPT !.iterated = Undefined] ELSE [@ EXCEPT !.index = index + 1]]
+      allocated == Allocate(stepped, IteratorResult(value, isDone))
+  IN IF IsHeap(ref) /\\ "iterated" \\in DOMAIN iterator
+     THEN [heap |-> allocated, value |-> Allocated(allocated), isThrown |-> FALSE]
+     ELSE Assert(FALSE, "tla-ts can't step an iterator that isn't an array's with its next")
+
 \\* The values of an array-like object at each index below its length, which Get reads, so that a
 \\* hole gives what a prototype holds there, or undefined.
 ArrayLikeValues(heap, ref) ==

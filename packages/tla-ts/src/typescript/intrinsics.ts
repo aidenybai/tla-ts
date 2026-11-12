@@ -1,6 +1,11 @@
 import ts from "@typescript/typescript6";
 import { type Context, getSymbol, getUndefined, share } from "./context";
 import { TlaTypeScriptError } from "../errors";
+import {
+  getArrayIteratorCall,
+  translateArrayIteratorPrototype,
+  translateHoldsIteratorMethod,
+} from "./collections";
 import { getConstructor, getErrorClass, NATIVE_ERRORS } from "./exceptions";
 import { translateExpression } from "./expressions";
 import { getHeap } from "./heap";
@@ -93,6 +98,9 @@ const getPrototype = (node: ts.Expression, context: Context): string | undefined
   if (type.flags & ts.TypeFlags.StringLike) return "String.prototype";
   if (type.flags & ts.TypeFlags.BooleanLike) return "Boolean.prototype";
   if (type.flags & ts.TypeFlags.BigIntLike) return "BigInt.prototype";
+  if (getArrayIteratorCall(node, context)?.kind !== undefined && !context.hasInheritedElements) {
+    return "%ArrayIteratorPrototype%";
+  }
   const kind = getKind(node, context);
   if (kind === "object") return undefined;
   if (kind === "sequence") return "Array.prototype";
@@ -320,6 +328,7 @@ export const translateBuiltInValue = (
     | "DataView.prototype"
     | "Symbol.prototype"
     | "Iterator.prototype"
+    | "%ArrayIteratorPrototype%"
     | "Promise"
     | "Promise.prototype"
     | "JSON"
@@ -539,6 +548,26 @@ const evaluate = (node: ts.Expression, scope: Scope, context: Context) => {
 // A built-in object, or Object.getPrototypeOf or isPrototypeOf on built-in objects, or undefined
 // for any other node.
 export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: Context) => {
+  // The prototype of an array iterator that a call makes, which nothing else can read.
+  const iteratorCall = isPrototypeCall(node, context)
+    ? getArrayIteratorCall(node.arguments[0], context)
+    : undefined;
+  if (iteratorCall?.kind !== undefined) {
+    return share(
+      translateExpression(iteratorCall.receiver, scope, context),
+      "array",
+      context,
+      (array) =>
+        ifExpression(
+          translateHoldsIteratorMethod(iteratorCall, getHeap(scope, node, context), array, context),
+          translateArrayIteratorPrototype(node, context),
+          apply("Assert", [
+            boolean(false),
+            string(`tla-ts can't call ${iteratorCall.path} where a script replaced it`),
+          ]),
+        ),
+    );
+  }
   // A script's heap holds the built-in objects it names, which its statements may change.
   const isOfObject =
     (isPrototypeOfCall(node) || isPrototypeCall(node, context)) &&

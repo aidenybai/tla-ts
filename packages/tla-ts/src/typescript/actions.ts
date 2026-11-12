@@ -3,9 +3,12 @@ import type { ExceptPathStep, Expression, OperatorDefinition } from "../ast";
 import {
   checkElement,
   getCallbackReceiver,
+  getArrayIteratorCall,
   getHeapArrayChange,
   isArrayIteration,
   translateArrayChange,
+  translateArrayIteratorPrototype,
+  translateHoldsIteratorMethod,
   translateHeapElements,
   getHeapRegExpCall,
   translateRegExpText,
@@ -1599,6 +1602,47 @@ export const translateCallStatement = (
           ? continueWith(path, getUndefined(context))
           : throwTypeError(path, expression, context, frame),
         changeArray,
+      ),
+    );
+  }
+  const iteratorCall = getArrayIteratorCall(expression, context);
+  if (iteratorCall !== undefined) {
+    const heap = getHeap(path.scope, expression, context);
+    const receiverName = context.names.getFresh("receiver");
+    const receiver = identifier(receiverName);
+    const changeName = context.names.getFresh("change");
+    const change = identifier(changeName);
+    const operation =
+      iteratorCall.kind === undefined
+        ? useJavaScript("ArrayIteratorNext", [heap, receiver], context)
+        : useJavaScript(
+            "ArrayIterator",
+            [
+              heap,
+              receiver,
+              string(iteratorCall.kind),
+              translateArrayIteratorPrototype(expression, context),
+            ],
+            context,
+          );
+    return bindOnce(
+      path,
+      receiverName,
+      translateExpression(iteratorCall.receiver, path.scope, context),
+      ifThenElse(
+        translateHoldsIteratorMethod(iteratorCall, heap, receiver, context),
+        bindOnce(
+          path,
+          changeName,
+          operation,
+          continueWith(withHeap(field(change, "heap")), field(change, "value")),
+        ),
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string(`tla-ts can't call ${iteratorCall.path} where a script replaced it`),
+          ]),
+        ),
       ),
     );
   }
@@ -5513,6 +5557,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
   getViewCall(node, context) !== undefined ||
   getGetterCall(node, context) !== undefined ||
   getHeapArrayChange(node, context) !== undefined ||
+  getArrayIteratorCall(node, context) !== undefined ||
   getStringCall(node, context) !== undefined ||
   isDescriptorsRead(node, context) ||
   isOwnValuesRead(node, context) ||
@@ -6099,6 +6144,7 @@ export const getChanged = (loop: ts.Node, path: Path, context: Context) => {
       getHeapRegExpCall(node, context) !== undefined ||
       getViewCall(node, context) !== undefined ||
       getHeapArrayChange(node, context) !== undefined ||
+      getArrayIteratorCall(node, context) !== undefined ||
       isAllocation(node, context) ||
       (written !== undefined &&
         (ts.isPropertyAccessExpression(written) || ts.isElementAccessExpression(written)));

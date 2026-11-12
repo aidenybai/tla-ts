@@ -103,6 +103,7 @@ const LIBRARY_OBJECTS = new Set([
   "PropertyDescriptorMap",
   "IteratorYieldResult",
   "IteratorReturnResult",
+  "ArrayIterator",
   "IArguments",
   "ArrayLike",
   "Date",
@@ -424,6 +425,37 @@ const isRegExpGroups = (node: ts.Expression, context: Context): boolean => {
         );
 };
 
+export const ITERATOR_METHODS = ["keys", "values", "entries"];
+
+// The kind of iterator that a call of an array's keys(), values(), entries(), or [Symbol.iterator]()
+// makes, where no for-of or spread reads it at once, so that the iterator is an object.
+export const getKeptIterator = (node: ts.Node, context: Context) => {
+  if (
+    !ts.isCallExpression(node) ||
+    node.arguments.length > 0 ||
+    !(
+      ts.isPropertyAccessExpression(node.expression) ||
+      ts.isElementAccessExpression(node.expression)
+    ) ||
+    !isSequenceType(
+      context.checker.getTypeAtLocation(node.expression.expression),
+      context.checker,
+    ) ||
+    (ts.isForOfStatement(node.parent) && node.parent.expression === node) ||
+    ts.isSpreadElement(node.parent)
+  ) {
+    return undefined;
+  }
+  const callee = node.expression;
+  if (ts.isPropertyAccessExpression(callee) && ITERATOR_METHODS.includes(callee.name.text)) {
+    return callee.name.text;
+  }
+  return ts.isElementAccessExpression(callee) &&
+    callee.argumentExpression.getText() === "Symbol.iterator"
+    ? "values"
+    : undefined;
+};
+
 export const getKind = (node: ts.Expression, context: Context): Kind => {
   if (isHeapArray(node, context) || getBound(node, context) !== undefined) return "object";
   const checker = context.checker;
@@ -439,6 +471,21 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
   if (
     declaredMembers.length > 0 &&
     declaredMembers.every((member) => isPlainObject(member, context))
+  ) {
+    return "object";
+  }
+  // A variable that holds the prototype of an array iterator, which getPrototypeOf types as any.
+  const initializer =
+    symbol?.valueDeclaration !== undefined && ts.isVariableDeclaration(symbol.valueDeclaration)
+      ? symbol.valueDeclaration.initializer
+      : undefined;
+  if (
+    context.heap !== undefined &&
+    initializer !== undefined &&
+    ts.isCallExpression(initializer) &&
+    initializer.expression.getText() === "Object.getPrototypeOf" &&
+    initializer.arguments.length === 1 &&
+    getKeptIterator(initializer.arguments[0], context) !== undefined
   ) {
     return "object";
   }
