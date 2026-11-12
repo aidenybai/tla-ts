@@ -542,7 +542,9 @@ const loosen = () => {
       node.type === undefined &&
       initializer !== undefined &&
       ts.isCallExpression(initializer) &&
-      ["Object.create", "Object.fromEntries"].includes(initializer.expression.getText())
+      ["Object.create", "Object.fromEntries", "Reflect.construct"].includes(
+        initializer.expression.getText(),
+      )
     ) {
       edits.set(node.name.getEnd(), ": { [key: string | symbol]: unknown }");
     }
