@@ -5382,6 +5382,15 @@ const translateElements = (
             define(after, value ?? getUndefined(context)),
           );
         }
+        // A field whose value is an assignment runs it as a statement.
+        const assignment = initializer === undefined ? undefined : skipCasts(initializer);
+        if (
+          assignment !== undefined &&
+          (isIncrement(assignment) ||
+            (ts.isBinaryExpression(assignment) && getWritten(assignment) !== undefined))
+        ) {
+          return runAssignment(assignment, withReceiver, context, frame, define);
+        }
         return define(
           allocated,
           initializer === undefined
@@ -8784,6 +8793,42 @@ const isMemberUpdate = (node: ts.BinaryExpression) => {
   );
 };
 
+// Runs an assignment or an increment as a statement, which gives what it evaluates to.
+const runAssignment = (
+  node: ts.BinaryExpression | Increment,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value: Expression) => Formula,
+): Formula => {
+  // An increment gives its operand's number from before, or after, as its prefix form does.
+  if (isIncrement(node)) {
+    const before = translateExpression(node.operand, path.scope, context);
+    return translateExpressionStatement(node, path, context, frame, (after) =>
+      continueWith(
+        after,
+        ts.isPostfixUnaryExpression(node)
+          ? before
+          : translateExpression(node.operand, after.scope, context),
+      ),
+    );
+  }
+  const target = ts.isIdentifier(node.left) ? getSymbol(node.left, context.checker) : undefined;
+  // An update to a property gives what it writes, which a typed array, say, may not hold.
+  const update = isMemberUpdate(node) ? getUpdate(node, path, context) : undefined;
+  const value =
+    update !== undefined
+      ? update(translateExpression(node.left, path.scope, context))
+      : target === undefined
+        ? translateExpression(node.right, path.scope, context)
+        : undefined;
+  return translateExpressionStatement(node, path, context, frame, (after) => {
+    const result = value ?? (target === undefined ? undefined : after.scope.bindings.get(target));
+    if (result === undefined) throw new TlaTypeScriptError("Unsupported assignment", node);
+    return continueWith(after, result);
+  });
+};
+
 const SHORT_CIRCUITS = new Set([
   ts.SyntaxKind.AmpersandAmpersandToken,
   ts.SyntaxKind.BarBarToken,
@@ -9632,61 +9677,21 @@ export const translateStatements = (
     hoisted === undefined || evaluated === undefined
       ? []
       : getEarlierReads(hoisted, evaluated, path.scope, context);
-  // An increment gives its operand's number from before, or after, as its prefix form does.
-  if (hoisted !== undefined && isIncrement(hoisted)) {
-    const before = translateExpression(hoisted.operand, path.scope, context);
-    return translateExpressionStatement(hoisted, path, context, frame, (after) =>
+  if (hoisted !== undefined) {
+    return runAssignment(hoisted, path, context, frame, (after, value) =>
       translateStatements(
         statements,
         {
           ...after,
           scope: {
             ...after.scope,
-            results: new Map([
-              ...after.scope.results,
-              ...earlier,
-              [
-                hoisted,
-                ts.isPostfixUnaryExpression(hoisted)
-                  ? before
-                  : translateExpression(hoisted.operand, after.scope, context),
-              ],
-            ]),
+            results: new Map([...after.scope.results, ...earlier, [hoisted, value]]),
           },
         },
         context,
         frame,
       ),
     );
-  }
-  if (hoisted !== undefined) {
-    const target = ts.isIdentifier(hoisted.left)
-      ? getSymbol(hoisted.left, context.checker)
-      : undefined;
-    // An update to a property gives what it writes, which a typed array, say, may not hold.
-    const update = isMemberUpdate(hoisted) ? getUpdate(hoisted, path, context) : undefined;
-    const value =
-      update !== undefined
-        ? update(translateExpression(hoisted.left, path.scope, context))
-        : target === undefined
-          ? translateExpression(hoisted.right, path.scope, context)
-          : undefined;
-    return translateExpressionStatement(hoisted, path, context, frame, (after) => {
-      const result = value ?? (target === undefined ? undefined : after.scope.bindings.get(target));
-      if (result === undefined) throw new TlaTypeScriptError("Unsupported assignment", hoisted);
-      return translateStatements(
-        statements,
-        {
-          ...after,
-          scope: {
-            ...after.scope,
-            results: new Map([...after.scope.results, ...earlier, [hoisted, result]]),
-          },
-        },
-        context,
-        frame,
-      );
-    });
   }
   const hoistedRead = getHoistedRead(statement, path, context);
   if (hoistedRead !== undefined) {

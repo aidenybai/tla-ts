@@ -1029,6 +1029,24 @@ describe("values", () => {
     expect(await getMessage(getSource(2, 0))).toContain("count");
   });
 
+  it("runs a static field's assignment as a statement that gives the field its value", async () => {
+    const getSource = (named: string, after: number, added: number) => `
+      let className = "";
+      let count = 0;
+      class Named {
+        static f = (className = this.name);
+        static g = count++;
+        static h = (count += 5);
+      }
+      if (className !== "Named" || Named.f !== "${named}") throw new Error("name");
+      if (Named.g !== ${after} || Named.h !== ${added} || count !== 6) throw new Error("count");
+    `;
+    expect((await checkModel(getSource("Named", 0, 6))).failure).toBeUndefined();
+    expect((await checkModel(getSource("", 0, 6))).failure?.message).toContain("name");
+    expect((await checkModel(getSource("Named", 1, 6))).failure?.message).toContain("count");
+    expect((await checkModel(getSource("Named", 0, 5))).failure?.message).toContain("count");
+  });
+
   it("gives what a compound assignment to a property writes, as its value", async () => {
     const getSource = (field: number, property: number, element: number, typed: number) => `
       class Counter {
