@@ -2529,6 +2529,23 @@ describe("errors", () => {
     expect((await checkModel(frozen)).failure).toBeDefined();
   });
 
+  it("tests the extensibility of a function that the heap holds", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      function F(this: { a: number }) { this.a = 1; }
+      const made = new (F as unknown as new () => { a: number })();
+      const before = Object.isExtensible(F);
+      Object.freeze(F);
+      const frozen = Object.isFrozen(F);
+      if (!before || !frozen || Object.isExtensible(F)) throw new Error("frozen");
+      if (!Object.isExtensible(() => {}) || Object.isFrozen(function () {})) throw new Error("fresh");
+      holder.seen = made.a;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("!frozen ||", "frozen ||");
+    expect((await checkModel(wrong)).failure?.message).toContain("frozen");
+  });
+
   it("gives new Object's object argument back and wraps a primitive one", async () => {
     const result = await checkModel(`
       declare global {

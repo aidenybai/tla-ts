@@ -775,7 +775,14 @@ const translateCall = (
   if (global === "Object" && test !== undefined && node.arguments.length > 0) {
     const argument = node.arguments[0];
     const names = getTypeNames(context.checker.getTypeAtLocation(argument), context.checker);
-    const isFunction = ts.isIdentifier(argument) && names?.every((name) => name === "function");
+    // A function that the heap doesn't hold stays extensible, as only freeze, seal, and
+    // preventExtensions of objects on the heap make an object inextensible.
+    const isFunction =
+      ts.isArrowFunction(argument) ||
+      ts.isFunctionExpression(argument) ||
+      (ts.isIdentifier(argument) &&
+        names?.every((name) => name === "function") &&
+        getKind(argument, context) !== "object");
     const isBuiltIn = isBuiltInObject(argument, context);
     if (isBuiltIn && context.heap !== undefined) {
       return useJavaScript(
