@@ -14,7 +14,7 @@ import { createTracingEnvironment } from "./evaluate";
 import { EXIT_STATUS, getMessageExitStatus, withLivenessExitCode } from "./exit-codes";
 import { createLivenessChecker } from "./liveness-checker";
 import { getIncompleteSuccessorMessage, prepareSearch, reportAssumptionViolation } from "./search";
-import { getNextActions, type SpecAction } from "./spec-description";
+import type { SpecAction } from "./spec-description";
 import { forEachInitialState, forEachSuccessor } from "./successors";
 import {
   formatNestedMessage,
@@ -163,7 +163,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   );
   if (assumptionStatus !== undefined) return assumptionStatus;
 
-  const nextActions = getNextActions(config, environment, prepared.specification.instanceActions);
+  const nextActions = prepared.getDescription().actions;
   const statuses = new Map<bigint, number>();
   const fingerprintSet = { level: 1, leveled: 0, buckets: INITIAL_BUCKETS };
   const setStatus = (fingerprint: bigint, status: number) => {

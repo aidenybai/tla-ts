@@ -13,13 +13,7 @@ import {
 import { EXIT_STATUS, getMessageExitStatus, withLivenessExitCode } from "./exit-codes";
 import { createLivenessChecker } from "./liveness-checker";
 import { getIncompleteSuccessorMessage, prepareSearch, reportAssumptionViolation } from "./search";
-import {
-  getActionLabel,
-  getInitActions,
-  getNextActions,
-  toActionValue,
-  type SpecAction,
-} from "./spec-description";
+import { getActionLabel, toActionValue, type SpecAction } from "./spec-description";
 import { forEachInitialState, forEachSuccessor } from "./successors";
 import {
   formatInnerMessage,
@@ -126,8 +120,9 @@ export const simulate = (options: SimulationOptions): number => {
     output({ kind: "message", code, isError, message: text, toolMessage: toolText });
   const printSummary = () => output({ kind: "summary", statistics: { ...statistics } });
   const nodes = new WeakMap<(Value | undefined)[], TraceNode>();
-  const initActions = getInitActions(config, environment, specification.instanceActions);
-  const nextActions = getNextActions(config, environment, specification.instanceActions);
+  const description = prepared.getDescription();
+  const initActions = description.inits;
+  const nextActions = description.actions;
   let traceCount = 0;
   let currentTrace = 0;
   runtime.getLevel = (state) => nodes.get(state)?.level ?? 0;

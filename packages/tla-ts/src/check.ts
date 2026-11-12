@@ -68,11 +68,11 @@ import {
 import {
   getActionLabel,
   getActionSignature,
-  getInitActions,
-  getNextActions,
+  getSpecDescription,
   getSpecificationValue,
   toActionValue,
   type SpecAction,
+  type SpecDescription,
 } from "./spec-description";
 import {
   createStateWriter,
@@ -388,13 +388,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const runtime = environment.runtime;
   const is174 = runtime.version === "1.7.4";
   runtime.pause = options.onPause ?? (() => {});
+  let description: SpecDescription | undefined;
+  const getDescription = () =>
+    (description ??= getSpecDescription(config, environment, specification.instanceActions));
   runtime.getSpecification = () =>
-    getSpecificationValue(
-      config,
-      environment,
-      specification.variableLocations,
-      specification.instanceActions,
-    );
+    getSpecificationValue(getDescription(), config, environment, specification.variableLocations);
   let searchDepth = 0;
   let computedInitialStates: InitialStates | undefined;
   const getTraceSpec = (trace: TraceStep[], loopStart: number | undefined) =>
@@ -550,13 +548,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   };
   const spec = search.spec;
   const getFingerprintState = search.getFingerprintState;
-  let specNextActions: SpecAction[] | undefined;
-  const getSpecNextActions = () =>
-    (specNextActions ??= getNextActions(config, environment, specification.instanceActions));
   // Tool's constructor splits the next-state relation into actions before TLC checks anything.
-  getSpecNextActions();
+  const nextActions = getDescription().actions;
   runtime.getSuccessorAction = (state, next) =>
-    getSpecNextActions().find((action) =>
+    nextActions.find((action) =>
       getSuccessors(action.expression, state, environment, action.scope).some((successor) =>
         successor.state.every((value, index) => isSameValue(value, next[index])),
       ),
@@ -574,11 +569,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           )
         : -1,
     }));
-  const coverageInits = addCoverageRelations(
-    "init",
-    coverage ? getInitActions(config, environment, specification.instanceActions) : [],
-  );
-  const coverageActions = addCoverageRelations("next", coverage ? getSpecNextActions() : []);
+  const coverageInits = addCoverageRelations("init", coverage ? getDescription().inits : []);
+  const coverageActions = addCoverageRelations("next", coverage ? nextActions : []);
   if (coverage) buildCoverage(coverage, environment, getPrimedRanges(coverageActions, environment));
   const walkCoveredSuccessors = (
     action: CoveredAction,
@@ -645,38 +637,34 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const deferred: unknown[] = [];
     const addReplayed = createReplayedStates();
     return getReplayFailure(environment, (tracing) => {
-      replayInitialStates(
-        getInitActions(config, environment, specification.instanceActions),
-        tracing,
-        (state) => {
-          reportInitialStatesProgress(replayedCount, (progress) => capturedLines?.push(progress));
-          replayedCount++;
-          runtime.generatedStates = replayedCount;
-          if (deferred.length > 0) return;
-          try {
-            const addFingerprint = () => {
-              if (!addReplayed(state, tracing.callStack)) return;
-              runtime.queueSize++;
-              liveness?.addInitialState(states.length, state, tracing);
-            };
-            const violation = search.checkReplayedInitialState(state, tracing, addFingerprint);
-            if (violation) {
-              const traced = traces.toTrace([{ action: undefined, state }], []).trace[0].state;
-              capturedLines?.push({
-                kind: "initial-state-violation",
-                ...violation,
-                state: traced,
-              });
-              throw STOP_REPLAY;
-            }
-          } catch (error) {
-            const isFingerprintFailure =
-              error instanceof TlaEvaluationError && tracing.callStack?.fingerprint !== undefined;
-            if (!isFingerprintFailure && !isStackOverflow(error)) throw error;
-            deferred.push(error);
+      replayInitialStates(getDescription().inits, tracing, (state) => {
+        reportInitialStatesProgress(replayedCount, (progress) => capturedLines?.push(progress));
+        replayedCount++;
+        runtime.generatedStates = replayedCount;
+        if (deferred.length > 0) return;
+        try {
+          const addFingerprint = () => {
+            if (!addReplayed(state, tracing.callStack)) return;
+            runtime.queueSize++;
+            liveness?.addInitialState(states.length, state, tracing);
+          };
+          const violation = search.checkReplayedInitialState(state, tracing, addFingerprint);
+          if (violation) {
+            const traced = traces.toTrace([{ action: undefined, state }], []).trace[0].state;
+            capturedLines?.push({
+              kind: "initial-state-violation",
+              ...violation,
+              state: traced,
+            });
+            throw STOP_REPLAY;
           }
-        },
-      );
+        } catch (error) {
+          const isFingerprintFailure =
+            error instanceof TlaEvaluationError && tracing.callStack?.fingerprint !== undefined;
+          if (!isFingerprintFailure && !isStackOverflow(error)) throw error;
+          deferred.push(error);
+        }
+      });
       if (deferred.length > 0) throw deferred[0];
     });
   };
@@ -685,7 +673,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       const state = states[index];
       const source = stateWriter && getGraphState(state, depths[index]);
       const addReplayed = createReplayedStates();
-      replaySuccessors(getSpecNextActions(), state, tracing, (next, action) => {
+      replaySuccessors(nextActions, state, tracing, (next, action) => {
         const addFingerprint = () => {
           const isUnseen = addReplayed(next, tracing.callStack);
           if (source) {
@@ -815,9 +803,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   };
   const reportIncompleteSuccessor = (index: number, error: TlaIncompleteSuccessorError) => {
     runtime.generatedStates++;
-    const actions = getSpecNextActions();
     const named =
-      actions.length === 1 ? actions : actions.filter((item) => item.name === error.action);
+      nextActions.length === 1
+        ? nextActions
+        : nextActions.filter((item) => item.name === error.action);
     const action =
       named.length === 1
         ? named[0]
@@ -829,7 +818,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const message = getIncompleteSuccessorMessage(
       error.variables,
       error.action,
-      actions.length,
+      nextActions.length,
       options.version,
     );
     const undefinedValue = createModelValue("null");
@@ -893,7 +882,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     options,
     environment,
     search,
-    nextActions: getSpecNextActions(),
+    nextActions,
     current,
     states,
     fingerprintStates,
@@ -906,7 +895,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     findSuccessorAction: (state, isMatch) =>
       coverage
         ? coverageActions.find((item) => getCoveredSuccessors(item, state).some(isMatch))
-        : getSpecNextActions().find((item) =>
+        : nextActions.find((item) =>
             getSuccessors(item.expression, state, environment, item.scope).some(isMatch),
           ),
   });
@@ -1228,7 +1217,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       );
     }
     let isStopped = false;
-    return getSpecNextActions().reduce((count, action) => {
+    return nextActions.reduce((count, action) => {
       if (isStopped) return count;
       return (
         count +

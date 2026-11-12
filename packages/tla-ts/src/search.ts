@@ -57,7 +57,12 @@ import {
 import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty } from "./liveness";
 import { prettyPrint } from "./pretty-print";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
-import { getSpecificationValue, getSubscriptVariables } from "./spec-description";
+import {
+  getSpecDescription,
+  getSpecificationValue,
+  getSubscriptVariables,
+  type SpecDescription,
+} from "./spec-description";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import {
   formatInnerMessage,
@@ -838,13 +843,11 @@ export const prepareSearch = (options: CheckOptions) => {
   const specification = created.specification;
   reportStartup(specification, config, options.onProgress);
   const environment = specification.environment;
+  let description: SpecDescription | undefined;
+  const getDescription = () =>
+    (description ??= getSpecDescription(config, environment, specification.instanceActions));
   environment.runtime.getSpecification = () =>
-    getSpecificationValue(
-      config,
-      environment,
-      specification.variableLocations,
-      specification.instanceActions,
-    );
+    getSpecificationValue(getDescription(), config, environment, specification.variableLocations);
   const search = createSearch(
     config,
     environment,
@@ -853,7 +856,7 @@ export const prepareSearch = (options: CheckOptions) => {
     options.onProgress,
     specification.moduleOperators,
   );
-  return { config, specification, environment, search };
+  return { config, specification, environment, search, getDescription };
 };
 
 export const reportAssumptionViolation = (
