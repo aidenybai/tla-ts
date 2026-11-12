@@ -6914,6 +6914,27 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("reads the properties of a promise's reason without a type", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      Promise.any([Promise.reject("reason"), Promise.reject(2)]).then(undefined, (error) => {
+        log +=
+          String(error instanceof AggregateError) +
+          String(error.errors.length) +
+          error.errors[0] +
+          String(error.errors[1]);
+      });
+      Promise.reject({ code: 3 }).catch((error) => {
+        log += String(error.code);
+      });
+      setTimeout(() => {
+        if (log !== "3true2reason2") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops where it can't tell whether a promise's reason is an instance of an error", async () => {
     const result = await checkModel(`
       const reason: object = Object.create(TypeError.prototype);

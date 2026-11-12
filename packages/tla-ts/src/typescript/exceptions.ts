@@ -225,6 +225,13 @@ const isCaught = (node: ts.Expression, context: Context): boolean => {
   );
 };
 
+// A caught value without a type, or a property of one, whose reads Get runs, as it may be any value.
+export const isCaughtRead = (node: ts.Expression, context: Context): boolean =>
+  (context.checker.getTypeAtLocation(node).flags & ts.TypeFlags.Any) !== 0 &&
+  (isCaught(node, context) ||
+    ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+      isCaughtRead(node.expression, context)));
+
 const getSubclasses = (node: ts.Node, symbol: ts.Symbol, context: Context) => {
   const found = new Map<ts.Symbol, Expression>();
   const visit = (child: ts.Node) => {

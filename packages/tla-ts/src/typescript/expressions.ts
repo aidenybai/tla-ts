@@ -49,6 +49,7 @@ import { translateJsonCall } from "./json";
 import {
   getConstructor,
   getErrorClass,
+  isCaughtRead,
   translateInstanceOf,
   translateNewError,
 } from "./exceptions";
@@ -1861,6 +1862,13 @@ const translatePropertyAccess = (
   ) {
     throw new TlaTypeScriptError(`Unsupported property: ${node.getText()}`, node);
   }
+  if (context.heap !== undefined && isCaughtRead(receiver, context)) {
+    return useJavaScript(
+      "Get",
+      [getHeap(scope, node, context), translateExpression(receiver, scope, context), string(name)],
+      context,
+    );
+  }
   rejectAnyReceiver(receiver, context);
   return getField(translateExpression(receiver, scope, context), name);
 };
@@ -1927,6 +1935,17 @@ const translateElementAccess = (
       translateObjectValue(node.expression, scope, context),
       translatePropertyKey(node.argumentExpression, scope, context),
       scope,
+      context,
+    );
+  }
+  if (context.heap !== undefined && isCaughtRead(node.expression, context)) {
+    return useJavaScript(
+      "Get",
+      [
+        getHeap(scope, node, context),
+        translateExpression(node.expression, scope, context),
+        translatePropertyKey(node.argumentExpression, scope, context),
+      ],
       context,
     );
   }
