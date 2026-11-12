@@ -48,36 +48,38 @@ import {
   type Usable,
 } from "./proof";
 
-const BUILTINS: Record<string, Builtin> = {
-  "=>": "Implies",
-  "<=>": "Equiv",
-  "/\\": "Conj",
-  "\\/": "Disj",
-  "~": "Neg",
-  "=": "Eq",
-  "#": "Neq",
-  SUBSET: "SUBSET",
-  UNION: "UNION",
-  DOMAIN: "DOMAIN",
-  "\\subseteq": "Subseteq",
-  "\\in": "Mem",
-  "\\notin": "Notmem",
-  "\\": "Setminus",
-  "\\cap": "Cap",
-  "\\cup": "Cup",
-  "'": "Prime",
-  "~>": "Leadsto",
-  ENABLED: "ENABLED",
-  UNCHANGED: "UNCHANGED",
-  "\\cdot": "Cdot",
-  "-+->": "Actplus",
-  "[]": "BoxTrue",
-  "<>": "Diamond",
-  TRUE: "TRUE",
-  FALSE: "FALSE",
-  BOOLEAN: "BOOLEAN",
-  STRING: "STRING",
-};
+const BUILTINS = new Map<string, Builtin>(
+  Object.entries({
+    "=>": "Implies",
+    "<=>": "Equiv",
+    "/\\": "Conj",
+    "\\/": "Disj",
+    "~": "Neg",
+    "=": "Eq",
+    "#": "Neq",
+    SUBSET: "SUBSET",
+    UNION: "UNION",
+    DOMAIN: "DOMAIN",
+    "\\subseteq": "Subseteq",
+    "\\in": "Mem",
+    "\\notin": "Notmem",
+    "\\": "Setminus",
+    "\\cap": "Cap",
+    "\\cup": "Cup",
+    "'": "Prime",
+    "~>": "Leadsto",
+    ENABLED: "ENABLED",
+    UNCHANGED: "UNCHANGED",
+    "\\cdot": "Cdot",
+    "-+->": "Actplus",
+    "[]": "BoxTrue",
+    "<>": "Diamond",
+    TRUE: "TRUE",
+    FALSE: "FALSE",
+    BOOLEAN: "BOOLEAN",
+    STRING: "STRING",
+  }),
+);
 
 const getCanonicalName = (name: string) => lookupOperator(name).name;
 
@@ -158,7 +160,7 @@ export const createModuleConverter = (
 
   const convertOperator = (name: string, location: Locus | undefined): Expr => {
     const canonical = getCanonicalName(name);
-    const builtin = BUILTINS[canonical];
+    const builtin = BUILTINS.get(canonical);
     return at(builtin ? { kind: "Internal", builtin } : { kind: "Opaque", name: canonical }, {
       location,
     });
@@ -174,7 +176,7 @@ export const createModuleConverter = (
       const operator = at({ kind: "Opaque", name }, { location });
       return at({ kind: "Bang", expression: operator, selectors: [] }, { location });
     }
-    const builtin = BUILTINS[name];
+    const builtin = BUILTINS.get(name);
     if (builtin && args.length === 0) return at({ kind: "Internal", builtin }, { location });
     const names = name.split("!");
     if (names.length === 1) {
