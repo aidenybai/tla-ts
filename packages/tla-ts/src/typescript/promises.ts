@@ -29,6 +29,7 @@ import {
   getSymbol,
   getUndefined,
   isAsyncFunction,
+  translateString,
 } from "./context";
 import { getCallbackReceiver } from "./collections";
 import { TlaTypeScriptError } from "../errors";
@@ -39,18 +40,7 @@ import { getCandidateValue, getHeap, translateFunctionValue } from "./heap";
 import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { type Bound, bindValues, type Receiver } from "./scope";
-import {
-  apply,
-  boolean,
-  define,
-  identifier,
-  index,
-  junction,
-  not,
-  number,
-  string,
-  tuple,
-} from "./tla";
+import { apply, boolean, define, identifier, index, junction, number, string, tuple } from "./tla";
 
 // The jobs and timers that a script queues, and the promises it makes, which tla-ts follows as it
 // compiles, as JavaScript runs each job once the script and the jobs before it finish.
@@ -683,10 +673,38 @@ const getCallbackRunner =
       : inlineValues(callee, values, receiver, kept, context, callbackFrame, back);
   };
 
-// Array.fromAsync of an array written in place, which reads the elements through an
-// async-from-sync iterator: each element takes a job to settle the iterator's result and another
-// to await it, as does the end. A mapping function's result takes a job to await, and a throw
-// from it or a rejection of it another, to await the iterator's return.
+// The object literal that an array-like names, written in place or as a const's value, and the
+// length that it writes.
+const getArrayLike = (node: ts.Expression, context: Context) => {
+  const declaration = ts.isIdentifier(node)
+    ? getSymbol(node, context.checker)?.valueDeclaration
+    : undefined;
+  const literal =
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0 &&
+    declaration.initializer !== undefined
+      ? getCast(declaration.initializer)
+      : node;
+  if (!ts.isObjectLiteralExpression(literal)) return undefined;
+  const getProperty = (key: string) =>
+    literal.properties.find(
+      (property): property is ts.PropertyAssignment =>
+        ts.isPropertyAssignment(property) &&
+        (ts.isIdentifier(property.name) || ts.isNumericLiteral(property.name)) &&
+        property.name.text === key,
+    )?.initializer;
+  const length = getProperty("length");
+  return length !== undefined && ts.isNumericLiteral(length)
+    ? { length, count: Number(length.text), getProperty }
+    : undefined;
+};
+
+// Array.fromAsync of an array or a string written in place, which it reads through an
+// async-from-sync iterator, or of an array-like object, which it reads by index. An iterator's
+// element takes a job to settle the iterator's result and another to await it, as does its end,
+// and a mapping function's throw or rejection takes another, to await the iterator's return. An
+// array-like's element, like a mapping function's result, takes a job to await.
 const translateFromAsync = (
   node: ts.CallExpression,
   path: Path,
@@ -695,29 +713,40 @@ const translateFromAsync = (
   continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const argument = node.arguments.at(0);
-  const elements = argument && getCast(argument);
+  const items = argument && getCast(argument);
   const mapping = node.arguments.at(1);
   const callee =
     mapping &&
     (getCallback(getCast(mapping), path, context) ??
       getAsyncCallee(getCast(mapping), path, context));
+  const arrayLike =
+    items && !ts.isArrayLiteralExpression(items) ? getArrayLike(items, context) : undefined;
+  const elements =
+    items !== undefined && ts.isArrayLiteralExpression(items)
+      ? items.elements.map((element) => (ts.isOmittedExpression(element) ? undefined : element))
+      : undefined;
+  const text = items !== undefined && ts.isStringLiteralLike(items) ? items.text : undefined;
   if (
-    elements === undefined ||
-    !ts.isArrayLiteralExpression(elements) ||
-    elements.elements.some(ts.isSpreadElement) ||
+    items === undefined ||
+    (elements === undefined && text === undefined && arrayLike === undefined) ||
+    (elements ?? []).some((element) => element !== undefined && ts.isSpreadElement(element)) ||
     (mapping !== undefined && callee === undefined)
   ) {
     throw new TlaTypeScriptError(
-      "Pass Array.fromAsync an array written in place and a function that tla-ts can follow",
+      "Pass Array.fromAsync an array, a string or an array-like object written in place, and a function that tla-ts can follow",
       node,
     );
   }
-  const ran = runLeadingCall(elements, path, context, frame, (after) =>
-    translateFromAsync(node, after, context, frame, continueWith),
-  );
+  const ran =
+    elements === undefined
+      ? undefined
+      : runLeadingCall(items, path, context, frame, (after) =>
+          translateFromAsync(node, after, context, frame, continueWith),
+        );
   if (ran !== undefined) return ran;
-  const sequence = context.names.getFresh("sequence");
-  return allocate(elements, path, context, (allocated) =>
+  const source = context.names.getFresh("items");
+  const count = arrayLike?.count ?? elements?.length ?? [...(text ?? "")].length;
+  return allocate(items, path, context, (allocated) =>
     makePromise(allocated, node, context, (made, name) => {
       const runMapping =
         mapping === undefined || callee === undefined
@@ -743,63 +772,129 @@ const translateFromAsync = (
           (resumer, _settled, _isRejected, onReturn) => next(resumer, onReturn),
           exit,
         );
+      // A rejection that closes the iterator, which fromAsync awaits, or that ends an array-like.
       const reject = (current: Path, reason: Expression, exit: (path: Path) => Formula) =>
-        tick(
-          current,
-          (closed, onReturn) => onReturn(settle(closed, node, name, reason, true, context)),
-          exit,
-        );
+        arrayLike === undefined
+          ? tick(
+              current,
+              (closed, onReturn) => onReturn(settle(closed, node, name, reason, true, context)),
+              exit,
+            )
+          : exit(settle(current, node, name, reason, true, context));
+      // The value at a position, which an array-like gives as fromAsync reads it.
+      const read = (current: Path, position: number) =>
+        arrayLike === undefined
+          ? index(identifier(source), [number(position + 1)])
+          : useJavaScript(
+              "Get",
+              [getHeap(current.scope, node, context), identifier(source), string(String(position))],
+              context,
+            );
       const take = (
         current: Path,
         position: number,
         values: Expression[],
         exit: (path: Path) => Formula,
       ): Formula => {
-        const isDone = position === elements.elements.length;
-        const element = elements.elements[position];
+        const isDone = position === count;
+        if (isDone && arrayLike !== undefined) {
+          return resolve(current, node, name, tuple(values), undefined, context, exit);
+        }
         return awaitIn(
           current,
           node,
-          isDone ? getUndefined(context) : index(identifier(sequence), [number(position + 1)]),
-          isDone || ts.isOmittedExpression(element) ? undefined : element,
+          isDone ? getUndefined(context) : read(current, position),
+          isDone ? undefined : (arrayLike?.getProperty(String(position)) ?? elements?.[position]),
           context,
-          (resumer, settled, isRejected, onReturn) =>
-            tick(
-              resumer,
-              (resumed, back) =>
-                isRejected
-                  ? back(settle(resumed, node, name, settled, true, context))
-                  : isDone
-                    ? resolve(resumed, node, name, tuple(values), undefined, context, back)
-                    : runMapping === undefined
-                      ? take(resumed, position + 1, [...values, settled], back)
-                      : runMapping(
-                          resumed,
-                          [settled, number(position)],
-                          (mapped, result) =>
-                            awaitIn(
-                              mapped,
-                              node,
-                              result,
-                              undefined,
-                              context,
-                              (awaited, value, isMappedRejected, onAwaited) =>
-                                isMappedRejected
-                                  ? reject(awaited, value, onAwaited)
-                                  : take(awaited, position + 1, [...values, value], onAwaited),
-                              back,
-                            ),
-                          (thrown, reason) => reject(thrown, reason, back),
-                        ),
-              onReturn,
-            ),
+          (resumer, settled, isRejected, onReturn) => {
+            const next = (resumed: Path, back: (path: Path) => Formula) =>
+              isRejected
+                ? back(settle(resumed, node, name, settled, true, context))
+                : isDone
+                  ? resolve(resumed, node, name, tuple(values), undefined, context, back)
+                  : runMapping === undefined
+                    ? take(resumed, position + 1, [...values, settled], back)
+                    : runMapping(
+                        resumed,
+                        [settled, number(position)],
+                        (mapped, result) =>
+                          awaitIn(
+                            mapped,
+                            node,
+                            result,
+                            undefined,
+                            context,
+                            (awaited, value, isMappedRejected, onAwaited) =>
+                              isMappedRejected
+                                ? reject(awaited, value, onAwaited)
+                                : take(awaited, position + 1, [...values, value], onAwaited),
+                            back,
+                          ),
+                        (thrown, reason) => reject(thrown, reason, back),
+                      );
+            return arrayLike === undefined
+              ? tick(resumer, next, onReturn)
+              : next(resumer, onReturn);
+          },
           exit,
         );
       };
       const heap = getHeap(made.scope, node, context);
-      const prototype = translateBuiltInValue("Array.prototype", node, context);
+      const getSymbolMethod = (object: Expression, symbol: string) =>
+        useJavaScript(
+          "Get",
+          [heap, object, useJavaScript("WellKnownSymbol", [string(symbol)], context)],
+          context,
+        );
+      const isUndefined = (value: Expression) =>
+        useJavaScript("SameValue", [value, getUndefined(context)], context);
+      const iterated = identifier(source);
+      const prototype = translateBuiltInValue(
+        text === undefined ? "Array.prototype" : "String.prototype",
+        node,
+        context,
+      );
+      // What fromAsync reads of its items before it runs: their iterators, which an array or a
+      // string inherits, or else an array-like's length.
+      const reads =
+        arrayLike === undefined
+          ? [
+              useJavaScript(
+                "HoldsBuiltIn",
+                [
+                  heap,
+                  prototype,
+                  useJavaScript("WellKnownSymbol", [string("iterator")], context),
+                  string(
+                    text === undefined ? "Array.prototype.values" : "String.prototype.@@iterator",
+                  ),
+                ],
+                context,
+              ),
+              isUndefined(getSymbolMethod(prototype, "asyncIterator")),
+            ]
+          : [
+              isUndefined(getSymbolMethod(iterated, "asyncIterator")),
+              isUndefined(getSymbolMethod(iterated, "iterator")),
+              useJavaScript(
+                "SameValue",
+                [
+                  useJavaScript("Get", [heap, iterated, string("length")], context),
+                  translateExpression(arrayLike.length, made.scope, context),
+                ],
+                context,
+              ),
+            ];
       return letIn(
-        [define(sequence, [], translateExpression(elements, made.scope, context))],
+        [
+          define(
+            source,
+            [],
+            text === undefined
+              ? translateExpression(items, made.scope, context)
+              : tuple([...text].map((character) => translateString(character, context))),
+          ),
+        ],
         ifThenElse(
           junction("And", [
             useJavaScript(
@@ -812,27 +907,7 @@ const translateFromAsync = (
               ],
               context,
             ),
-            useJavaScript(
-              "HoldsBuiltIn",
-              [
-                heap,
-                prototype,
-                useJavaScript("WellKnownSymbol", [string("iterator")], context),
-                string("Array.prototype.values"),
-              ],
-              context,
-            ),
-            not(
-              useJavaScript(
-                "Has",
-                [
-                  heap,
-                  prototype,
-                  useJavaScript("WellKnownSymbol", [string("asyncIterator")], context),
-                ],
-                context,
-              ),
-            ),
+            ...reads,
           ]),
           take(made, 0, [], (after) => continueWith(after, getPromise(after, node, name).ref)),
           leaf(

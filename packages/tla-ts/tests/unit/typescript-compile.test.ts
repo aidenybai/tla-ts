@@ -7463,6 +7463,49 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs Array.fromAsync of an array-like object and of a string", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      const items = { length: 2, 0: 1, 1: Promise.resolve(2) };
+      Array.fromAsync(items, (value: number, k: number) => {
+        log += "m";
+        return value * 10 + k;
+      }).then((values) => {
+        log += "[" + values.join(",") + "]";
+      });
+      Array.fromAsync("ab").then((values) => {
+        log += "(" + values.join(",") + ")";
+      });
+      Array.fromAsync({ length: 1, 0: Promise.reject("r") }).catch((error) => {
+        log += "<" + String(error) + ">";
+      });
+      Promise.resolve()
+        .then(() => {
+          log += "0";
+        })
+        .then(() => {
+          log += "1";
+        })
+        .then(() => {
+          log += "2";
+        })
+        .then(() => {
+          log += "3";
+        })
+        .then(() => {
+          log += "4";
+        })
+        .then(() => {
+          log += "5";
+        });
+      setTimeout(() => {
+        if (log !== "m0<r>1m23[10,21]45(a,b)") throw new Error(log);
+      });
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("takes Array.fromAsync's elements and mapped values a job apart", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;
