@@ -19,7 +19,7 @@ import {
   writeMarshaled,
   type OcamlValue,
 } from "./ocaml-marshal";
-import type { ProofAttempt } from "../prove";
+import { getFailureReason, isProvedAttempt, type ProofAttempt } from "../prove";
 import { BACKENDS, type Backend } from "../verdict";
 
 export type FingerprintTable = Map<string, OcamlValue[]>;
@@ -115,13 +115,13 @@ const decodeResult = (
   const tactic = prover === "isabelle" ? getField(argument, 1) : undefined;
   const reason = getField(getField(outcome, 0), 0);
   return {
+    kind: "stored",
     method: {
       prover,
       timeLimitMs: seconds * 1000,
       ...(typeof tactic === "string" && { tactic }),
     },
     isProved: outcome === 0,
-    isReused: false,
     ...(reason !== undefined && {
       reason: typeof reason === "number" ? REASONS[reason] : String(getField(reason, 0)),
     }),
@@ -139,18 +139,19 @@ const encodeResult = (prover: Backend, attempt: ProofAttempt) => {
       : prover === "isabelle"
         ? createBlock(0, createBlock(0, timeout), method.tactic ?? "auto")
         : createBlock(0, timeout);
-  const reasonIndex = REASONS.indexOf(attempt.reason ?? "");
+  const failure = getFailureReason(attempt);
+  const reasonIndex = REASONS.indexOf(failure ?? "");
   const reason =
-    attempt.reason === undefined
+    failure === undefined
       ? 0
-      : createBlock(0, reasonIndex === -1 ? createBlock(0, attempt.reason) : reasonIndex);
+      : createBlock(0, reasonIndex === -1 ? createBlock(0, failure) : reasonIndex);
   return createBlock(
     0,
     createBlock(
       0,
       createBlock(
         0,
-        attempt.isProved ? 0 : createBlock(0, reason),
+        isProvedAttempt(attempt) ? 0 : createBlock(0, reason),
         createBlock(PROVERS[prover].tag, argument),
       ),
       createBlock(

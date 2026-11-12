@@ -63,14 +63,11 @@ export interface ProveOptions {
   workers?: number;
 }
 
-export interface ProofAttempt {
-  method: Method;
-  isProved: boolean;
-  isReused: boolean;
-  reason?: string;
-  verdict?: Verdict;
-  timeUsedMs?: number;
-}
+export type ProofAttempt =
+  | { kind: "decided"; method: Method; verdict: Verdict; timeUsedMs: number }
+  | { kind: "error"; method: Method }
+  | { kind: "skipped"; method: Method; reason: string }
+  | { kind: "stored" | "reused"; method: Method; isProved: boolean; reason?: string };
 
 interface ProofReport {
   obligation: ProofObligation;
@@ -163,6 +160,23 @@ const getUnprovedReport = (
   attempts: ProofAttempt[] = [],
 ): ProofReport => ({ obligation: { ...getObligationBase(obligation), status, reason }, attempts });
 
+export const isProvedAttempt = (attempt: ProofAttempt) =>
+  attempt.kind === "decided"
+    ? attempt.verdict === "unsat"
+    : (attempt.kind === "stored" || attempt.kind === "reused") && attempt.isProved;
+
+export const getFailureReason = (attempt: ProofAttempt) => {
+  switch (attempt.kind) {
+    case "decided":
+      if (attempt.verdict === "unsat") return undefined;
+      return attempt.timeUsedMs >= attempt.method.timeLimitMs ? "timeout" : "false";
+    case "error":
+      return "false";
+    default:
+      return attempt.reason;
+  }
+};
+
 export const formatNormalized = (obligation: PrintedObligation, isReused: boolean) =>
   `${formatObligation(
     isReused
@@ -181,7 +195,9 @@ export const encodeProofTheory = (
       report.attempts
         .filter(
           (attempt) =>
-            attempt.method.prover === "isabelle" && attempt.isProved && !attempt.isReused,
+            attempt.method.prover === "isabelle" &&
+            attempt.kind === "decided" &&
+            attempt.verdict === "unsat",
         )
         .map((attempt) => ({
           id: report.obligation.id,
@@ -250,7 +266,12 @@ const proveWithBackends = async (
   };
   const getBudget = (method: Method) => method.rlimit ?? method.timeLimitMs / 1000;
   const reuse = (prior: ProofAttempt) =>
-    attempts.push({ ...prior, isReused: true, timeUsedMs: undefined });
+    attempts.push({
+      kind: "reused",
+      method: prior.method,
+      isProved: isProvedAttempt(prior),
+      reason: getFailureReason(prior),
+    });
   const record = (attempt: ProofAttempt) => {
     attempts.push(attempt);
     run.results.set(
@@ -259,11 +280,11 @@ const proveWithBackends = async (
     );
   };
   const skip = (method: Method, reason: string) => {
-    attempts.push({ method, isProved: false, isReused: false, reason });
+    attempts.push({ kind: "skipped", method, reason });
     failures.push({ reason, isDecided: false });
   };
   const firstPrior = getPrior(methods.provers[0]);
-  if (firstPrior?.isProved) {
+  if (firstPrior && isProvedAttempt(firstPrior)) {
     reuse(firstPrior);
     return getProvedReport(firstPrior.method.prover);
   }
@@ -274,7 +295,7 @@ const proveWithBackends = async (
   }
   for (const method of methods.provers) {
     const prior = getPrior(method);
-    if (prior?.isProved) {
+    if (prior && isProvedAttempt(prior)) {
       reuse(prior);
       return getProvedReport(method.prover);
     }
@@ -305,22 +326,12 @@ const proveWithBackends = async (
         { timeLimitMs: method.timeLimitMs, signal },
         index,
       );
-      const isProved = decision.verdict === "unsat";
-      record({
-        method,
-        isProved,
-        isReused: false,
-        ...(!isProved && {
-          reason: decision.timeUsedMs >= method.timeLimitMs ? "timeout" : "false",
-        }),
-        verdict: decision.verdict,
-        timeUsedMs: decision.timeUsedMs,
-      });
-      if (isProved) return getProvedReport(method.prover);
+      record({ kind: "decided", method, ...decision });
+      if (decision.verdict === "unsat") return getProvedReport(method.prover);
       failures.push({ reason: `${method.prover} answered ${decision.verdict}`, isDecided: true });
     } catch (error) {
       if (error instanceof TlaProverError) {
-        record({ method, isProved: false, isReused: false, reason: "false" });
+        record({ kind: "error", method });
         failures.push({ reason: `${method.prover} failed: ${error.message}`, isDecided: true });
         continue;
       }

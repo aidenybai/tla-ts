@@ -17,6 +17,8 @@ import { printSequent } from "../obligations/printer";
 import {
   encodeProofTheory,
   formatNormalized,
+  getFailureReason,
+  isProvedAttempt,
   proveObligations,
   type ProofAttempt,
 } from "../prover/prove";
@@ -112,7 +114,7 @@ const generateObligations = (generate: () => ModuleObligations[]) => {
 const printAttempt = (obligation: PrintedObligation, attempt: ProofAttempt) => {
   const timeLimitMs = attempt.method.timeLimitMs;
   const used =
-    attempt.timeUsedMs === undefined
+    attempt.kind !== "decided"
       ? ""
       : `; time-used: ${(attempt.timeUsedMs / 1000).toFixed(1)} (${Math.round((100 * attempt.timeUsedMs) / timeLimitMs)}%)`;
   const times =
@@ -121,20 +123,21 @@ const printAttempt = (obligation: PrintedObligation, attempt: ProofAttempt) => {
       : `time-limit: ${timeLimitMs === Infinity ? "inf" : Number((timeLimitMs / 1000).toPrecision(6))}${used}`;
   const method = [attempt.method.tactic, times].filter(Boolean).join("; ");
   const isSmt = attempt.method.prover === "smt" || attempt.method.prover === "z3";
+  const reason = getFailureReason(attempt);
   const note =
-    isSmt && attempt.reason === "false" && attempt.verdict
+    isSmt && attempt.kind === "decided" && reason === "false"
       ? `(* SMT failed with status = ${attempt.verdict}\n *)\n`
       : "";
-  printObligationMessage(obligation, attempt.isProved ? "proved" : "failed", [
+  const isProved = isProvedAttempt(attempt);
+  const isReused = attempt.kind === "reused";
+  printObligationMessage(obligation, isProved ? "proved" : "failed", [
     `prover:${attempt.method.prover}`,
     ...(method === "" ? [] : [`meth:${method}`]),
-    ...(attempt.reason === undefined ? [] : [`reason:${attempt.reason}`]),
-    `already:${attempt.isReused}`,
-    ...(attempt.isProved
+    ...(reason === undefined ? [] : [`reason:${reason}`]),
+    `already:${isReused}`,
+    ...(isProved
       ? []
-      : [
-          `obl:${attempt.isReused ? "" : `\n${note}`}${formatNormalized(obligation, attempt.isReused)}`,
-        ]),
+      : [`obl:${isReused ? "" : `\n${note}`}${formatNormalized(obligation, isReused)}`]),
   ]);
 };
 
