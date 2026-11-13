@@ -1726,11 +1726,11 @@ ValueOf(heap, value, prototypes) ==
                                                  [] OTHER -> 3], "valueOf")
        [] /\\ IsHeap(value)
           /\\ "symbol" \\in DOMAIN Lookup(heap, value)
-          /\\ Get(heap, value, "valueOf") = Ref :> "Symbol.prototype.valueOf" ->
+          /\\ HoldsBuiltIn(heap, value, "valueOf", "Symbol.prototype.valueOf") ->
             Lookup(heap, value).symbol
        [] /\\ IsHeap(value)
           /\\ "bigint" \\in DOMAIN Lookup(heap, value)
-          /\\ Get(heap, value, "valueOf") = Ref :> "BigInt.prototype.valueOf" ->
+          /\\ HoldsBuiltIn(heap, value, "valueOf", "BigInt.prototype.valueOf") ->
             Lookup(heap, value).bigint
        [] /\\ IsHeap(value)
           /\\ IsRef(Get(heap, value, "valueOf"))
@@ -1755,7 +1755,7 @@ ThisNumber(value) ==
 \\* The symbol that Symbol.prototype.valueOf reads from the value that it calls the method on, a
 \\* symbol or a Symbol object, while Symbol.prototype holds the built-in method.
 ThisSymbol(heap, value) ==
-  CASE Get(heap, Ref :> "Symbol.prototype", "valueOf") # Ref :> "Symbol.prototype.valueOf" ->
+  CASE ~HoldsBuiltIn(heap, Ref :> "Symbol.prototype", "valueOf", "Symbol.prototype.valueOf") ->
          Assert(FALSE, "tla-ts can't call Symbol.prototype.valueOf where a script replaced it")
     [] IsSymbol(value) -> value
     [] IsHeap(value) /\\ "symbol" \\in DOMAIN Lookup(heap, value) -> Lookup(heap, value).symbol
@@ -1764,7 +1764,7 @@ ThisSymbol(heap, value) ==
 \\* The BigInt that BigInt.prototype.valueOf reads from a BigInt or a BigInt object, while
 \\* BigInt.prototype holds the built-in method.
 ThisBigIntObject(heap, value) ==
-  CASE Get(heap, Ref :> "BigInt.prototype", "valueOf") # Ref :> "BigInt.prototype.valueOf" ->
+  CASE ~HoldsBuiltIn(heap, Ref :> "BigInt.prototype", "valueOf", "BigInt.prototype.valueOf") ->
          Assert(FALSE, "tla-ts can't call BigInt.prototype.valueOf where a script replaced it")
     [] IsBigInt(value) -> value
     [] IsHeap(value) /\\ "bigint" \\in DOMAIN Lookup(heap, value) -> Lookup(heap, value).bigint
