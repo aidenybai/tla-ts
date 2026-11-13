@@ -674,6 +674,8 @@ export const translateFunctionConstructor = (
     ts.isIdentifier(pair.elements[0]) &&
     pair.elements[0].text === parameter.name.text;
   if (source === undefined || !isKeyedByParameter) {
+    // Entries that a map of a sequence gives otherwise build the map in their order.
+    if (getKind(node, context) === "sequence") return undefined;
     throw new TlaTypeScriptError(
       "Build a Map or record from a set with set.values().map((key) => [key, value])",
       node,

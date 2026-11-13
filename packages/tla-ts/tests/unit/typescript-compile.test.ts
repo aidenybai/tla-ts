@@ -3203,6 +3203,17 @@ describe("values", () => {
     await expect(checkModel(getSource("0,2"))).rejects.toThrow("2,2");
   });
 
+  it("makes a map from the entries that a map of an array gives, where a later entry of a key wins", async () => {
+    const getSource = (expected: string) => `
+      const spelled: Record<string, string> = { "+": "plus", "-": "minus", "*": "plus" };
+      const unspelled = new Map(Object.entries(spelled).map((entry) => [entry[1], entry[0]]));
+      const result = [unspelled.get("plus"), unspelled.get("minus"), unspelled.size].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("*,-,2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("+,-,2"))).failure?.message).toContain("*,-,2");
+  });
+
   it("spreads a string's code points into an array", async () => {
     const getSource = (expected: string) => `
       const word = "hi";
