@@ -25,6 +25,7 @@ import {
   hasPrototypeArray,
   isDateType,
   TIME_METHODS,
+  isDescriptionOfAll,
 } from "./heap";
 import {
   getBuiltInKey,
@@ -406,6 +407,7 @@ const translateUnordered = (
     const kind = getKind(argument, context);
     if (
       isBuiltInObject(argument, context) ||
+      isDescriptionOfAll(argument, context) ||
       (context.heap !== undefined &&
         (kind === "object" || kind === "sequence" || kind === "string"))
     ) {

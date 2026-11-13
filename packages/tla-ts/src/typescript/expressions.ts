@@ -921,7 +921,8 @@ export const translateCall = (
     if (
       getKind(argument, context) === "object" ||
       isBuiltInObject(argument, context) ||
-      isFunctionValue(argument, context)
+      isFunctionValue(argument, context) ||
+      isDescriptionOfAll(argument, context)
     ) {
       return useJavaScript(
         ownKeys,
