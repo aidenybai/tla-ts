@@ -15,6 +15,7 @@ export interface Search {
 }
 
 const SHOWN_STATES = 8;
+const WHOLE_STATE_LENGTH = 24;
 const CHART_STATES = 24;
 const EDGE = /^(-?\d+) -> (-?\d+) \[label="((?:[^"\\]|\\.)*)"/;
 const NODE = /^(-?\d+) \[label="((?:[^"\\]|\\.)*)"/;
@@ -50,7 +51,11 @@ export const getSearch = (
       call: steps.get(node[1])?.call,
       line: getLine(steps.get(node[1])?.call),
       text,
-      change: (changed.length > 0 ? changed : variables).join(", "),
+      // A short state is shown whole, because two states can share a change.
+      change:
+        text.length <= WHOLE_STATE_LENGTH
+          ? text
+          : (changed.length > 0 ? changed : variables).join(", "),
       isFailing: text === failingState,
     });
   }
