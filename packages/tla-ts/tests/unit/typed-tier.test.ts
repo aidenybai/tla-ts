@@ -131,6 +131,23 @@ describe("typed tier matches TLC", () => {
     expect(typed).toEqual(interpreted);
   });
 
+  it("prints a constant definition once, as TLC does as it starts", async () => {
+    const getLines = async (isTyped: boolean) => {
+      const lines: string[] = [];
+      await check({
+        source: readFileSync(join(FIXTURES, "PrintedConstants.tla"), "utf8"),
+        config: readFileSync(join(FIXTURES, "PrintedConstants.cfg"), "utf8"),
+        isFingerprintDistanceSkipped: isTyped,
+        isWarningEnabled: false,
+        onPrint: (line) => lines.push(String(line)),
+      });
+      return lines;
+    };
+    const expected = ['"hello"', '"unused"'];
+    expect(await getLines(true)).toEqual(expected);
+    expect(await getLines(false)).toEqual(expected);
+  });
+
   it("branches on the right side of => only with warnings off, like TLC", async () => {
     const results = await Promise.all([
       checkFixture("ImpliesBranches", false),

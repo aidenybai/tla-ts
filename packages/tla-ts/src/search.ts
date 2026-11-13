@@ -22,7 +22,12 @@ import {
   type Coverage,
   type CoverageKind,
 } from "./coverage";
-import { getReadVariables, isConstantLevel } from "./dependencies";
+import {
+  getReadVariables,
+  isConstantLevel,
+  isExpressionImpure,
+  isImpureDefinition,
+} from "./dependencies";
 import { createEnvironment, type ResolvedModuleOperator } from "./environment";
 import {
   isStackOverflow,
@@ -1173,17 +1178,52 @@ export const createSearch = (
         properties.actionProperties.some((property) => property.scope !== undefined) ||
         properties.liveness.length > 0 ||
         properties.initialPredicates.some((predicate) => predicate.scope !== undefined);
-      return isInterpreted || spec.init === undefined || spec.next === undefined
+      if (isInterpreted || spec.init === undefined || spec.next === undefined) return undefined;
+      const invariantExpressions = invariantPredicates.map((invariant) => invariant.predicate);
+      const constraintExpressions = [
+        ...new Set(constraints.map((constraint) => constraint.predicate)),
+      ];
+      const initialExpressions = properties.initialPredicates.map(
+        (predicate) => predicate.expression,
+      );
+      const definitions = [...environment.facts.ids.keys()];
+      // The interpreter evaluates again what the tier evaluated before it fell back. TLC evaluates
+      // a constant definition once as it starts, and a LET in Init can reach any definition.
+      const hasRepeatedEffects =
+        spec.scope === undefined
+          ? definitions.some(
+              (definition) =>
+                isConstantLevel(definition, environment) &&
+                isImpureDefinition(definition, environment, "repeated"),
+            ) ||
+            isExpressionImpure(
+              [
+                spec.init,
+                spec.next,
+                ...invariantExpressions,
+                ...constraintExpressions,
+                ...initialExpressions,
+                ...properties.actionProperties.flatMap((property) => [
+                  property.action,
+                  property.subscript,
+                ]),
+                ...(view ? [view.expression] : []),
+              ],
+              environment,
+              "repeated",
+            )
+          : definitions.some((definition) =>
+              isImpureDefinition(definition, environment, "repeated"),
+            );
+      return hasRepeatedEffects
         ? undefined
         : {
             init: spec.init,
             next: spec.next,
             scope: spec.scope,
-            invariants: invariantPredicates.map((invariant) => invariant.predicate),
-            constraints: [...new Set(constraints.map((constraint) => constraint.predicate))],
-            initialPredicates: properties.initialPredicates.map(
-              (predicate) => predicate.expression,
-            ),
+            invariants: invariantExpressions,
+            constraints: constraintExpressions,
+            initialPredicates: initialExpressions,
             actionProperties: properties.actionProperties,
             symmetry: symmetryGroup,
             view: view?.expression,

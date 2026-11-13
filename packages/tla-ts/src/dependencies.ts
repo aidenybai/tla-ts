@@ -295,6 +295,12 @@ export const isConstantLevel = (definition: Definition, environment: Environment
 
 const EFFECT_FLAGS = { any: IMPURE, repeated: REPEATED_EFFECT, streamed: STREAMED };
 
+export const isExpressionImpure = (
+  expressions: Expression[],
+  environment: Environment,
+  effect: keyof typeof EFFECT_FLAGS,
+) => (getExpressionsRow(expressions, environment)[0] & EFFECT_FLAGS[effect]) !== 0;
+
 export const isImpureDefinition = (
   definition: Definition,
   environment: Environment,
