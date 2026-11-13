@@ -53,6 +53,7 @@ import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { getConsequences } from "./smt-consequences";
 import { getFdConsequences } from "./fd-solver";
 import { SmtKernel } from "./smt-kernel";
+import { AssertedFormulas } from "./asserted-formulas";
 import { isAstLess } from "./ast-lt";
 import { InvVarShifter } from "./rewriter-tpl";
 import { elimUnusedVars, getFreeVarSorts, VarSubst } from "./var-subst";
@@ -293,6 +294,9 @@ interface ScriptState {
   hasChecked: boolean;
   // The datalog context of the declare-rel, declare-var, rule and query commands.
   datalog: DatalogContext | undefined;
+  // The formulas of combined_solver's incremental smt kernel, which rewrites each assertion when it
+  // is asserted and keeps it, or undefined while Z3 has made no such kernel.
+  kernelFormulas: AssertedFormulas | undefined;
 }
 
 // Z3 fixes the proof mode at the first command that needs terms.
@@ -352,6 +356,7 @@ export const runSmtlibScript = (
       isIncremental: false,
       hasChecked: false,
       datalog: undefined,
+      kernelFormulas: undefined,
     };
   };
   const script = { state: createState() };
@@ -576,6 +581,34 @@ export const runSmtlibScript = (
     script.state.check?.model?.decRef();
     script.state.check = undefined;
   };
+  // cmd_context::mk_solver: mk_solver_for_logic makes the incremental solver the smt kernel unless
+  // the logic, the default tactic or the sat parameters pick a sat solver, which only stores its
+  // assertions.
+  const mkKernelFormulas = () => {
+    const state = script.state;
+    const logic = state.logic;
+    const parameters = settings.parameters;
+    const isProofsEnabled = settings.isProducingProofs || state.isProofsEnabled === true;
+    const isSatSolver =
+      ((logic === "QF_FD" || logic === "SAT") && !isProofsEnabled) ||
+      logic === "SMTFD" ||
+      (logic === "QF_BV" && settings.isHiDiv0) ||
+      parameters.get("tactic.default_tactic") === "sat" ||
+      parameters.get("sat.smt") === "true" ||
+      parameters.get("sat.euf") === "true";
+    return isSatSolver ? undefined : new AssertedFormulas(state.manager, settings.isFindingMacros);
+  };
+  // solver_na2as asserts a named assertion as an implication from its name.
+  const assertInKernel = (formula: number, name: number) => {
+    const state = script.state;
+    const formulas = state.kernelFormulas;
+    if (formulas === undefined) return;
+    const manager = state.manager;
+    const asserted = name === -1 ? formula : manager.mkApp(OP_IMPLIES, [name, formula], SORT_BOOL);
+    manager.incRef(asserted);
+    formulas.assertExpr(asserted);
+    manager.decRef(asserted);
+  };
   let pendingText = "";
   const printDiagnostic = (line: string) => print(line, !settings.isDiagnosticOnStdout);
   const write = (text: string, isDiagnostic: boolean) => {
@@ -718,6 +751,7 @@ export const runSmtlibScript = (
         manager.incRef(answer);
         state.names.push(answer);
       }
+      assertInKernel(assertion.formula, state.names[state.names.length - 1]);
       clearCheck();
     },
     "check-sat": (list) => checkSat(parseFormulas(list.items.slice(1))),
@@ -916,6 +950,7 @@ export const runSmtlibScript = (
         });
         state.reader.push();
         state.isIncremental = true;
+        state.kernelFormulas?.push();
       }
     },
     pop: (list) => {
@@ -930,6 +965,7 @@ export const runSmtlibScript = (
       if (count === 0) return;
       state.isIncremental = true;
       const scope = state.scopes[state.scopes.length - count];
+      for (let index = 0; index < count; index++) state.kernelFormulas?.pop();
       for (let index = 0; index < count; index++) state.reader.pop();
       restoreAssertions(scope.assertions);
       resetOptimizer();
@@ -948,6 +984,10 @@ export const runSmtlibScript = (
       resetOptimizer();
       releaseObjectives(0, 0);
       state.scopes = state.scopes.map(() => ({ assertions: 0, objectives: 0, softTrail: 0 }));
+      if (state.isProofsEnabled !== undefined) {
+        state.kernelFormulas = mkKernelFormulas();
+        for (let index = 0; index < state.scopes.length; index++) state.kernelFormulas?.push();
+      }
       state.isIncremental = state.scopes.length > 0;
       state.hasChecked = false;
     },
@@ -1359,6 +1399,7 @@ export const runSmtlibScript = (
       }
       state.logic = logic.text;
       state.reader = createSmtlibReader(state.manager, logic.text, settings.parserOptions);
+      if (state.isProofsEnabled !== undefined) state.kernelFormulas = mkKernelFormulas();
       if (settings.isPrintingSuccess) print("success");
     },
     "set-info": () => {},
@@ -1371,8 +1412,10 @@ export const runSmtlibScript = (
       ? (declaration: SmtList) => script.state.reader.declareCommand(declaration)
       : runCommand[head.text];
     if (command === undefined) throw new SmtUnsupportedError(`the command ${head.text}`);
-    if (!MANAGERLESS_COMMANDS.has(head.text))
-      script.state.isProofsEnabled ??= settings.parameters.get("proof") === "true";
+    if (!MANAGERLESS_COMMANDS.has(head.text) && script.state.isProofsEnabled === undefined) {
+      script.state.isProofsEnabled = settings.parameters.get("proof") === "true";
+      script.state.kernelFormulas = mkKernelFormulas();
+    }
     command(list);
     if (settings.isPrintingSuccess && SILENT_COMMANDS.has(head.text)) print("success");
   };
