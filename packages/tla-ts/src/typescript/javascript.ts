@@ -1213,6 +1213,16 @@ LOCAL PropertiesOf(heap, ref, key) ==
   THEN heap.objects[ref[Ref]]
   ELSE Lookup(heap, ref)
 
+\\* The own properties that a read finds, where a promise that tla-ts follows has none, as a write to
+\\* one stops.
+LOCAL ReadPropertiesOf(heap, ref, key) ==
+  IF /\\ IsHeap(ref)
+     /\\ heap.objects[ref[Ref]].isOpaque
+     /\\ "code" \\notin DOMAIN heap.objects[ref[Ref]]
+     /\\ ToString(heap.objects[ref[Ref]].prototype) = ToString(Ref :> "Promise.prototype")
+  THEN heap.objects[ref[Ref]]
+  ELSE PropertiesOf(heap, ref, key)
+
 \\* A promise that tla-ts follows as it compiles, whose properties the heap doesn't hold.
 PromiseObject == [EmptyObject EXCEPT !.prototype = Ref :> "Promise.prototype", !.isOpaque = TRUE]
 
@@ -1229,7 +1239,7 @@ RECURSIVE Has(_, _, _)
 Has(heap, ref, key) ==
   IF IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
   THEN TypedKey(key) = "index" /\\ ToIndex(key) < ViewLength(heap, heap.objects[ref[Ref]])
-  ELSE \\/ key \\in DOMAIN PropertiesOf(heap, ref, key).values
+  ELSE \\/ key \\in DOMAIN ReadPropertiesOf(heap, ref, key).values
        \\/ LET prototype == Prototype(heap, ref) IN prototype # Null /\\ Has(heap, prototype, key)
 
 \\* An error is a record of its constructor, its message and its name, an AggregateError's also of its
@@ -1277,7 +1287,7 @@ GetFrom(heap, ref, key, receiver) ==
     [] IsTypedArray(heap, ref) /\\ TypedKey(key) # "property" ->
          IF TypedKey(key) = "index" THEN TypedElement(heap, ref, ToIndex(key)) ELSE Undefined
     [] OTHER ->
-         LET object == PropertiesOf(heap, ref, key)
+         LET object == ReadPropertiesOf(heap, ref, key)
              path == GetterPath(object.values[key].get)
          IN CASE key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
                    /\\ path \\in ViewGetters -> ViewGet(heap, path, receiver)

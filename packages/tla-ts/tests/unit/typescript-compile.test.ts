@@ -18238,6 +18238,38 @@ describe("errors", () => {
     });
   });
 
+  describe("read what a promise inherits from Promise.prototype", () => {
+    const getSource = (expected: string) => `
+      const p = Promise.resolve(3);
+      const result = [
+        p.finally === Promise.prototype.finally,
+        p.then === Promise.prototype.catch,
+        p.constructor === Promise,
+        "then" in p,
+        (p as unknown as { missing?: number }).missing === undefined,
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("reads each property from the prototype", async () => {
+      expect((await checkModel(getSource("true,false,true,true,true"))).failure).toBeUndefined();
+    });
+
+    it("doesn't read another", async () => {
+      expect((await checkModel(getSource("true,true,true,true,true"))).failure).toBeDefined();
+    });
+
+    it("stops where a script writes a promise's property", async () => {
+      const result = await checkModel(`
+        const p = Promise.resolve(3);
+        (p as unknown as { then: unknown }).then = () => 1;
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't read the properties of a generator or a promise",
+      );
+    });
+  });
+
   describe("take a pattern from each generator that a for-of's array makes", () => {
     const getSource = (expected: string) => `
       let log = "";
@@ -19653,10 +19685,10 @@ ${call}
     expect(result.failure).toBeUndefined();
   });
 
-  it("stops where a script reads a promise's properties", async () => {
+  it("stops where a script defines a promise's property", async () => {
     const result = await checkModel(`
       const promise = Promise.resolve(3);
-      if (promise.finally !== Promise.prototype.finally) throw new Error("no");
+      Object.defineProperty(promise, "then", { value: () => 1 });
     `);
     expect(result.failure?.message).toContain(
       "can't read the properties of a generator or a promise",
