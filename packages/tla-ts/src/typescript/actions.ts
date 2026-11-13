@@ -9124,9 +9124,14 @@ const isIteratedTypedArray = (node: ts.Expression, context: Context): node is ts
   );
 };
 
-// Makes a typed array of an object's iterator's values, as the constructor takes them through the
-// object's @@iterator method where a script gives it, or else of its first argument.
-const translateIteratedTypedArray = (
+// new of a buffer, a DataView, or a typed array, which a statement runs, as it may throw.
+const isNewBufferStatement = (node: ts.Expression, context: Context): node is ts.NewExpression =>
+  getNewBuffer(node, context) !== undefined;
+
+// Runs new of a buffer, a DataView, or a typed array, which throws the error its constructor does,
+// and makes a typed array of an object's iterator's values where a script's @@iterator method
+// gives them.
+const translateNewBufferStatement = (
   node: ts.NewExpression,
   path: Path,
   context: Context,
@@ -9143,8 +9148,11 @@ const translateIteratedTypedArray = (
       const values = (node.arguments ?? []).map((value) =>
         translateExpression(value, allocated.scope, context),
       );
-      const make = (current: Path, first: Expression) => {
+      const make = (current: Path, madeArguments: Expression[]) => {
         const heapSymbol = context.heap;
+        const heap = getHeap(current.scope, node, context);
+        const errorName = context.names.getFresh("error");
+        const error = identifier(errorName);
         const madeName = context.names.getFresh("heap");
         const made = identifier(madeName);
         const after =
@@ -9159,15 +9167,22 @@ const translateIteratedTypedArray = (
               };
         return bindOnce(
           current,
-          madeName,
-          translateNewBufferOf(
-            node,
-            getHeap(current.scope, node, context),
-            tuple([first, ...values.slice(1)]),
-            current.scope,
-            context,
+          errorName,
+          translateNewBufferOf(node, heap, tuple(madeArguments), current.scope, context, true),
+          ifThenElse(
+            apply("=", [error, string("")]),
+            bindOnce(
+              current,
+              madeName,
+              translateNewBufferOf(node, heap, tuple(madeArguments), current.scope, context),
+              continueWith(after, useJavaScript("Allocated", [made], context)),
+            ),
+            ifThenElse(
+              apply("=", [error, string("RangeError")]),
+              throwError("RangeError", current, node, context, frame),
+              throwTypeError(current, node, context, frame),
+            ),
           ),
-          continueWith(after, useJavaScript("Allocated", [made], context)),
         );
       };
       const throwWith = (after: Path) => throwTypeError(after, node, context, frame);
@@ -9194,29 +9209,31 @@ const translateIteratedTypedArray = (
               context,
               frame,
               throwWith,
-              (done) => make(done, tuple(taken)),
+              (done) => make(done, [tuple(taken), ...values.slice(1)]),
               (stepped, result) =>
                 readValue(node, result, stepped, context, frame, (read, value) =>
                   step(read, iterator, next, [...taken, value]),
                 ),
             );
-      return ifThenElse(
-        useJavaScript(
-          "IteratesScriptMethod",
-          [getHeap(allocated.scope, node, context), values[0]],
-          context,
-        ),
-        openIterator(
-          node,
-          values[0],
-          allocated,
-          context,
-          frame,
-          throwWith,
-          (opened, iterator, next) => step(opened, iterator, next, []),
-        ),
-        make(allocated, values[0]),
-      );
+      return isIteratedTypedArray(node, context)
+        ? ifThenElse(
+            useJavaScript(
+              "IteratesScriptMethod",
+              [getHeap(allocated.scope, node, context), values[0]],
+              context,
+            ),
+            openIterator(
+              node,
+              values[0],
+              allocated,
+              context,
+              frame,
+              throwWith,
+              (opened, iterator, next) => step(opened, iterator, next, []),
+            ),
+            make(allocated, values),
+          )
+        : make(allocated, values);
     },
   );
 
@@ -9513,9 +9530,9 @@ export const translateDeclarations = (
       translateDeclarations(declarations, allocated, context, frame, continueWith),
     );
   }
-  const iterated = initializer && skipCasts(initializer);
-  if (iterated !== undefined && isIteratedTypedArray(iterated, context)) {
-    return translateIteratedTypedArray(iterated, path, context, frame, (after, value) =>
+  const made = initializer && skipCasts(initializer);
+  if (made !== undefined && isNewBufferStatement(made, context)) {
+    return translateNewBufferStatement(made, path, context, frame, (after, value) =>
       bindDeclaration(declarations, value, after, context, frame, continueWith),
     );
   }
@@ -13568,14 +13585,20 @@ export const translateStatements = (
   if (
     assignment !== undefined &&
     assigned !== undefined &&
-    isIteratedTypedArray(assigned, context)
+    isNewBufferStatement(assigned, context)
   ) {
-    return translateIteratedTypedArray(assigned, path, context, frame, (after, value) =>
+    return translateNewBufferStatement(assigned, path, context, frame, (after, value) =>
       shareHeap(
         assign(assignment.left, after, context, () => value),
         context,
         continueWith,
       ),
+    );
+  }
+  const dropped = ts.isExpressionStatement(statement) ? skipCasts(statement.expression) : undefined;
+  if (dropped !== undefined && isNewBufferStatement(dropped, context)) {
+    return translateNewBufferStatement(dropped, path, context, frame, (after) =>
+      shareHeap(after, context, continueWith),
     );
   }
   if (ts.isExpressionStatement(statement)) {

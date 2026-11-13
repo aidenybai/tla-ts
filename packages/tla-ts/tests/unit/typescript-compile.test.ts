@@ -23223,6 +23223,63 @@ describe("buffers", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("throws the RangeError or the TypeError of new of a buffer, a DataView, or a typed array", async () => {
+    const result = await checkModel(`
+      function throws(expected: Function, func: () => unknown, message: string) {
+        try {
+          func();
+        } catch (thrown) {
+          if (typeof thrown !== "object" || thrown === null) throw new Error(message);
+          if (thrown.constructor !== expected) throw new Error(message);
+          return;
+        }
+        throw new Error(message);
+      }
+      const ab = new ArrayBuffer(4);
+      throws(RangeError, function () {
+        new DataView(ab, -1);
+      }, "negative offset");
+      throws(RangeError, function () {
+        new DataView(ab, -Infinity);
+      }, "infinite offset");
+      throws(RangeError, function () {
+        new DataView(ab, 5);
+      }, "offset past the end");
+      throws(RangeError, function () {
+        new DataView(ab, 1, 4);
+      }, "length past the end");
+      throws(TypeError, function () {
+        new DataView({} as never);
+      }, "not a buffer");
+      throws(RangeError, function () {
+        new ArrayBuffer(-1);
+      }, "negative length");
+      throws(RangeError, function () {
+        new ArrayBuffer(2, { maxByteLength: 1 });
+      }, "past the maximum");
+      throws(RangeError, function () {
+        new Int16Array(ab, 1);
+      }, "unaligned offset");
+      throws(RangeError, function () {
+        new Int8Array(-1);
+      }, "negative typed length");
+      throws(RangeError, function () {
+        const sample = new Int32Array(ab, 0, 2);
+      }, "declared past the end");
+      const moved = new ArrayBuffer(2);
+      moved.transfer();
+      throws(TypeError, function () {
+        new DataView(moved);
+      }, "detached");
+      throws(TypeError, function () {
+        new Uint8Array(moved);
+      }, "detached view");
+      const view = new DataView(ab, 1, 2);
+      if (view.byteLength !== 2) throw new Error("made");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops at a number a typed array's float can't hold exactly", async () => {
     const result = await checkModel(`
       const floats = new Float32Array(1);

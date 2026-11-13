@@ -2262,13 +2262,15 @@ export const getNewBuffer = (node: ts.Node, context: Context) => {
 };
 
 // The heap after new of a buffer, a DataView, or a typed array, of the values of its arguments,
-// which branches on the constructor that its callee holds where it isn't the global.
+// or with isError the error, if any, that it throws, which branches on the constructor that its
+// callee holds where it isn't the global.
 export const translateNewBufferOf = (
   node: ts.NewExpression,
   heap: Expression,
   values: Expression,
   scope: Scope,
   context: Context,
+  isError = false,
 ) => {
   const buffers = getNewBuffer(node, context) ?? [];
   const callee = translateExpression(node.expression, scope, context);
@@ -2281,12 +2283,14 @@ export const translateNewBufferOf = (
               [callee, translateBuiltInValue(buffer, node, context)],
               context,
             ),
-            translateNewBuffer(buffer, heap, values, node, context),
+            translateNewBuffer(buffer, heap, values, node, context, isError),
             rest,
           ),
-        apply("Assert", [boolean(false), string("tla-ts can't call this constructor")]),
+        isError
+          ? string("")
+          : apply("Assert", [boolean(false), string("tla-ts can't call this constructor")]),
       )
-    : translateNewBuffer(buffers[0], heap, values, node, context);
+    : translateNewBuffer(buffers[0], heap, values, node, context, isError);
 };
 
 const translateNewBuffer = (
@@ -2295,14 +2299,16 @@ const translateNewBuffer = (
   values: Expression,
   node: ts.NewExpression,
   context: Context,
+  isError: boolean,
 ) => {
   // The constructor, which the prototype's constructor property holds.
   context.builtIns.add(buffer);
   const prototype = translateBuiltInValue(`${buffer}.prototype`, node, context);
   const type = TYPED_ARRAYS.get(buffer);
+  const suffix = isError ? "Error" : "";
   return type !== undefined
     ? useJavaScript(
-        "NewTypedArray",
+        `NewTypedArray${suffix}`,
         [
           heap,
           string(type),
@@ -2313,9 +2319,9 @@ const translateNewBuffer = (
         context,
       )
     : buffer === "DataView"
-      ? useJavaScript("NewDataView", [heap, prototype, values], context)
+      ? useJavaScript(`NewDataView${suffix}`, [heap, prototype, values], context)
       : useJavaScript(
-          "NewBuffer",
+          `NewBuffer${suffix}`,
           [heap, prototype, values, boolean(buffer === "SharedArrayBuffer")],
           context,
         );

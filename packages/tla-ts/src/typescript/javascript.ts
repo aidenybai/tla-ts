@@ -3877,7 +3877,16 @@ IndexOfArgument(value) ==
 
 LOCAL MaxBytes == 65536
 
-LOCAL RangeError(what) == Assert(FALSE, "tla-ts can't throw the RangeError of " \\o what)
+\\* What a constructor of a buffer, a DataView, or a typed array gives where it throws: the error,
+\\* which only a statement can throw, in place of the heap with what it makes.
+LOCAL Failed(kind) == [error |-> kind]
+
+LOCAL Made(result) ==
+  IF "error" \\in DOMAIN result
+  THEN Assert(FALSE, "tla-ts can't throw the " \\o result.error \\o " of this constructor here")
+  ELSE result
+
+LOCAL ErrorOf(result) == IF "error" \\in DOMAIN result THEN result.error ELSE ""
 
 LOCAL ViewObject(prototype, buffer, offset, length) ==
   [viewed |-> buffer, byteOffset |-> offset, viewLength |-> length]
@@ -3889,15 +3898,15 @@ LOCAL BufferObject(prototype, bytes, maxLength, isShared) ==
 
 \\* The heap with a new ArrayBuffer or SharedArrayBuffer of a length, which options may make
 \\* resizable.
-NewBuffer(heap, prototype, arguments, isShared) ==
+LOCAL BufferMade(heap, prototype, arguments, isShared) ==
   LET argument(position) == IF Len(arguments) >= position THEN arguments[position] ELSE Undefined
       byteLength == IndexOfArgument(argument(1))
       options == argument(2)
       maximum == IF IsObjectIn(heap, options) THEN Get(heap, options, "maxByteLength") ELSE Undefined
       maxLength == IF maximum = Undefined THEN Undefined ELSE IndexOfArgument(maximum)
-  IN CASE byteLength = -1 -> RangeError("an invalid length")
-       [] maxLength = -1 -> RangeError("an invalid length")
-       [] maxLength # Undefined /\\ byteLength > maxLength -> RangeError("a length past the maximum")
+  IN CASE byteLength = -1 -> Failed("RangeError")
+       [] maxLength = -1 -> Failed("RangeError")
+       [] maxLength # Undefined /\\ byteLength > maxLength -> Failed("RangeError")
        [] byteLength > MaxBytes \\/ (maxLength # Undefined /\\ maxLength > MaxBytes) ->
             Assert(FALSE, "tla-ts can't make a buffer this big")
        [] OTHER ->
@@ -3905,19 +3914,19 @@ NewBuffer(heap, prototype, arguments, isShared) ==
                                         isShared))
 
 \\* The heap with a new DataView of a buffer.
-NewDataView(heap, prototype, arguments) ==
+LOCAL DataViewMade(heap, prototype, arguments) ==
   LET argument(position) == IF Len(arguments) >= position THEN arguments[position] ELSE Undefined
       buffer == argument(1)
       object == heap.objects[buffer[Ref]]
       offset == IndexOfArgument(argument(2))
       length == IF argument(3) = Undefined THEN Undefined ELSE IndexOfArgument(argument(3))
   IN CASE ~IsBuffer(heap, buffer) ->
-            Assert(FALSE, "tla-ts can't throw the TypeError of a DataView of something other than a buffer")
-       [] offset = -1 -> RangeError("an invalid offset")
-       [] object.isDetached -> Assert(FALSE, "tla-ts can't throw the TypeError of a detached buffer")
-       [] offset > Len(object.bytes) -> RangeError("an offset past the end")
-       [] length = -1 -> RangeError("an invalid length")
-       [] length # Undefined /\\ offset + length > Len(object.bytes) -> RangeError("a length past the end")
+            Failed("TypeError")
+       [] offset = -1 -> Failed("RangeError")
+       [] object.isDetached -> Failed("TypeError")
+       [] offset > Len(object.bytes) -> Failed("RangeError")
+       [] length = -1 -> Failed("RangeError")
+       [] length # Undefined /\\ offset + length > Len(object.bytes) -> Failed("RangeError")
        [] OTHER ->
             Allocate(heap, ViewObject(prototype, buffer, offset,
                                       CASE length # Undefined -> length
@@ -3926,7 +3935,7 @@ NewDataView(heap, prototype, arguments) ==
 
 \\* The heap with a new typed array of a length, of the elements of an array or a typed array, or
 \\* viewing a buffer.
-NewTypedArray(heap, type, prototype, bufferPrototype, arguments) ==
+LOCAL TypedArrayMade(heap, type, prototype, bufferPrototype, arguments) ==
   LET argument(position) == IF Len(arguments) >= position THEN arguments[position] ELSE Undefined
       size == ElementSize(type)
       first == argument(1)
@@ -3943,12 +3952,12 @@ NewTypedArray(heap, type, prototype, bufferPrototype, arguments) ==
             Assert(FALSE, "tla-ts can't hold BigInts in a typed array")
        [] ~IsObjectIn(heap, first) ->
             LET count == IndexOfArgument(first)
-            IN CASE count = -1 -> RangeError("an invalid length")
+            IN CASE count = -1 -> Failed("RangeError")
                  [] count * size > MaxBytes -> Assert(FALSE, "tla-ts can't make a buffer this big")
                  [] OTHER -> withBytes([position \\in 1..(count * size) |-> 0])
        [] IsTypedArray(heap, first) ->
             IF IsOutOfBounds(heap, object)
-            THEN Assert(FALSE, "tla-ts can't throw the TypeError of a typed array out of bounds")
+            THEN Failed("TypeError")
             ELSE withBytes(NumbersBytes(type, [position \\in 1..ViewLength(heap, object) |->
                                                  TypedElement(heap, first, position - 1)]))
        [] IsSequenceValue(first) ->
@@ -3962,17 +3971,34 @@ NewTypedArray(heap, type, prototype, bufferPrototype, arguments) ==
                                                     ToNumber(Get(heap, first, ToString(position - 1)))]))
                ELSE Assert(FALSE, "tla-ts can't make a typed array of this object")
        [] ~IsBuffer(heap, first) -> Assert(FALSE, "tla-ts can't make a typed array of this object")
-       [] offset = -1 \\/ offset % size # 0 -> RangeError("an invalid offset")
-       [] length = -1 -> RangeError("an invalid length")
-       [] object.isDetached -> Assert(FALSE, "tla-ts can't throw the TypeError of a detached buffer")
+       [] offset = -1 \\/ offset % size # 0 -> Failed("RangeError")
+       [] length = -1 -> Failed("RangeError")
+       [] object.isDetached -> Failed("TypeError")
        [] length = Undefined /\\ object.maxLength # Undefined ->
-            IF offset > byteLength THEN RangeError("an offset past the end") ELSE view(heap, first, offset, -1)
+            IF offset > byteLength THEN Failed("RangeError") ELSE view(heap, first, offset, -1)
        [] length = Undefined ->
             IF byteLength % size # 0 \\/ offset > byteLength
-            THEN RangeError("an invalid offset")
+            THEN Failed("RangeError")
             ELSE view(heap, first, offset, (byteLength - offset) \\div size)
-       [] offset + length * size > byteLength -> RangeError("a length past the end")
+       [] offset + length * size > byteLength -> Failed("RangeError")
        [] OTHER -> view(heap, first, offset, length)
+
+\\* The heap after new of a buffer, a DataView, or a typed array, or the error, if any, that it throws.
+NewBuffer(heap, prototype, arguments, isShared) ==
+  Made(BufferMade(heap, prototype, arguments, isShared))
+
+NewBufferError(heap, prototype, arguments, isShared) ==
+  ErrorOf(BufferMade(heap, prototype, arguments, isShared))
+
+NewDataView(heap, prototype, arguments) == Made(DataViewMade(heap, prototype, arguments))
+
+NewDataViewError(heap, prototype, arguments) == ErrorOf(DataViewMade(heap, prototype, arguments))
+
+NewTypedArray(heap, type, prototype, bufferPrototype, arguments) ==
+  Made(TypedArrayMade(heap, type, prototype, bufferPrototype, arguments))
+
+NewTypedArrayError(heap, type, prototype, bufferPrototype, arguments) ==
+  ErrorOf(TypedArrayMade(heap, type, prototype, bufferPrototype, arguments))
 
 \\* Whether new of a typed array iterates an object through an @@iterator method that a script
 \\* gives, which only statements can call.
