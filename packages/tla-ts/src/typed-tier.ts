@@ -11,7 +11,7 @@ import {
   type OperatorDefinition,
   type SourceLocation,
 } from "./ast";
-import { isConstantLevel } from "./dependencies";
+import { isConstantLevel, isExpressionImpure } from "./dependencies";
 import { isStackOverflow, TlaError } from "./errors";
 import { permuteValue, type Images } from "./symmetry";
 import { evaluate, findGlobalName, getDefinition, type Environment, type Scope } from "./evaluate";
@@ -22,6 +22,7 @@ import {
   compareValues,
   createSet,
   getMaximumSetSize,
+  getStreamedElements,
   isEnumerable,
   isSameValue,
   toFiniteSet,
@@ -731,8 +732,14 @@ const addConstant = (program: Program, plain: Plain) => {
   return `K[${program.constants.length - 1}]`;
 };
 
+// TLC streams a lazy set's duplicates, and binds a bound variable again to each. Streaming comes
+// first, since normalizing a lazy set caches its elements.
+const hasStreamedDuplicates = (value: Value) =>
+  getStreamedElements(value).length !== getElements(value).length;
+
 const compileConstant = (program: Program, value: Value): Compiled => {
   const type = getValueType(value, program.plains);
+  if (type.kind === "Set" && hasStreamedDuplicates(value)) return unsupported();
   if (type.kind === "Set" && getElements(value).length === 0) {
     return { type, emit: () => (isMask(type, program.plains) ? "0" : "H.EMPTY") };
   }
@@ -1290,7 +1297,7 @@ const compileBound = (
         header: (name) => `for (let ${name} = ${value.low}; ${name} <= ${value.high}; ${name}++)`,
       };
     }
-    if (getSize(value) > MAXIMUM_CONSTANT_SET) return unsupported();
+    if (getSize(value) > MAXIMUM_CONSTANT_SET || hasStreamedDuplicates(value)) return unsupported();
     const elements = getElements(value);
     const element: Type = createVar();
     elements.forEach((inner) => unify(element, getValueType(inner, program.plains)));
@@ -1426,6 +1433,32 @@ const getSetBound = (program: Program, set: Compiled) => ({
 const compileKeys = (target: Compiled): Compiled | undefined => {
   const map = expectMap(target.type);
   return map && { type: map.keys, emit: () => `(${target.emit()})[0]` };
+};
+
+// TLC binds a variable to each element it streams from a set that UNION or \cup builds, duplicates
+// included, and which of those sets it streams depends on how it built them.
+const rejectStreamedBound = (program: Program, set: Expression, scope: TierScope) => {
+  const visited = new Set<OperatorDefinition>();
+  const check = (root: Expression, inner: TierScope) => {
+    if (isExpressionImpure([root], program.environment, "streamed")) unsupported();
+    const findLocals = (expression: Expression): void => {
+      const name =
+        expression.kind === "Identifier" || expression.kind === "Apply"
+          ? expression.kind === "Identifier"
+            ? expression.name
+            : expression.operator
+          : undefined;
+      const binding = name === undefined ? undefined : inner.get(name);
+      const local = binding?.kind === "Code" ? binding.source : binding;
+      if (local && !visited.has(local.definition)) {
+        visited.add(local.definition);
+        check(local.definition.body, local.scope);
+      }
+      getChildren(expression).forEach(findLocals);
+    };
+    findLocals(root);
+  };
+  check(set, scope);
 };
 
 // TLC enumerates the bounds of an action's \E with the first varying fastest, each in the scope
@@ -3251,6 +3284,9 @@ const compileStep = (
       return () => branches.map((branch) => `{ ${branch()} }`).join(" ");
     }
     case "Exists": {
+      if (program.environment.runtime.version === "1.7.4") {
+        expression.bounds.forEach((bound) => rejectStreamedBound(program, bound.set, frame.scope));
+      }
       const bounds = compileBounds(program, expression.bounds, frame, true);
       const body = continueWith(bounds.scope, [expression.body]);
       return () => `${bounds.getHeaders()} { ${body()} }`;
@@ -3396,6 +3432,7 @@ const compileAssignment = (
     const value = expectType(compileValue(program, expression.args[1], frame), type);
     return () => `{ const ${name} = ${value.emit()}; ${tail()} }`;
   }
+  rejectStreamedBound(program, expression.args[1], frame.scope);
   const loop = compileBound(program, expression.args[1], frame);
   unify(loop.element, type);
   return () => `${loop.header(name)} { ${tail()} }`;
