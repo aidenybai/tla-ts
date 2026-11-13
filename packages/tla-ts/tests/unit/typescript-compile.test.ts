@@ -15506,6 +15506,94 @@ describe("errors", () => {
     expect(wrong.failure?.message).toContain("111111");
   });
 
+  describe("runs the dispose methods of Iterator.prototype and %AsyncIteratorPrototype%", () => {
+    const iteratorPrototype = `
+      const IteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()));
+    `;
+    const asyncIteratorPrototype = `
+      declare function setTimeout(callback: () => void): void;
+      async function* generator() {}
+      const AsyncIteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf(generator.prototype));
+      const order: string[] = [];
+    `;
+
+    it("returns undefined from Iterator.prototype[Symbol.dispose]", async () => {
+      const source = (expected: string) => `${iteratorPrototype}
+        const result = IteratorPrototype[Symbol.dispose]();
+        if (result !== ${expected}) throw new Error(String(result));
+      `;
+      expect((await checkModel(source("undefined"))).failure).toBeUndefined();
+      expect((await checkModel(source("null"))).failure?.message).toContain("undefined");
+    });
+
+    it("calls the return method of the iterator that Iterator.prototype[Symbol.dispose] takes", async () => {
+      const source = (expected: number) => `${iteratorPrototype}
+        const seen = { count: 0 };
+        const resource = { return() { seen.count += 1; return {}; } };
+        IteratorPrototype[Symbol.dispose].call(resource);
+        if (seen.count !== ${expected}) throw new Error(String(seen.count));
+      `;
+      expect((await checkModel(source(1))).failure).toBeUndefined();
+      expect((await checkModel(source(0))).failure?.message).toContain("1");
+    });
+
+    it("reads the return method of the iterator through its getter once", async () => {
+      const source = (expected: number) => `${iteratorPrototype}
+        const seen = { count: 0 };
+        const resource = { get return() { seen.count += 1; return undefined; } };
+        IteratorPrototype[Symbol.dispose].call(resource);
+        if (seen.count !== ${expected}) throw new Error(String(seen.count));
+      `;
+      expect((await checkModel(source(1))).failure).toBeUndefined();
+      expect((await checkModel(source(2))).failure?.message).toContain("1");
+    });
+
+    it("throws a TypeError where Iterator.prototype[Symbol.dispose] takes undefined", async () => {
+      const source = (expected: string) => `${iteratorPrototype}
+        const seen = { name: "none" };
+        try {
+          IteratorPrototype[Symbol.dispose].call(undefined);
+        } catch (error) {
+          seen.name = error instanceof TypeError ? "TypeError" : "other";
+        }
+        if (seen.name !== "${expected}") throw new Error(seen.name);
+      `;
+      expect((await checkModel(source("TypeError"))).failure).toBeUndefined();
+      expect((await checkModel(source("none"))).failure?.message).toContain("TypeError");
+    });
+
+    it("rejects the promise of %AsyncIteratorPrototype%[Symbol.asyncDispose] where return throws", async () => {
+      const source = (expected: string) => `${asyncIteratorPrototype}
+        const resource = { return() { throw new RangeError("return"); } };
+        const promise: Promise<unknown> = AsyncIteratorPrototype[Symbol.asyncDispose].call(resource);
+        promise.then(
+          () => order.push("fulfilled"),
+          (error: unknown) => order.push(error instanceof RangeError ? "rejected" : "other"),
+        );
+        order.push("after call");
+        setTimeout(() => {
+          if (order.join() !== "${expected}") throw new Error(order.join());
+        });
+      `;
+      expect((await checkModel(source("after call,rejected"))).failure).toBeUndefined();
+      expect((await checkModel(source("rejected,after call"))).failure).toBeDefined();
+    });
+
+    it("fulfills the promise of %AsyncIteratorPrototype%[Symbol.asyncDispose] with undefined", async () => {
+      const source = (expected: string) => `${asyncIteratorPrototype}
+        const resource = { return() { order.push("return"); return 1; } };
+        const promise: Promise<unknown> = AsyncIteratorPrototype[Symbol.asyncDispose].call(resource);
+        promise.then((value: unknown) => order.push(String(value)));
+        order.push("after call");
+        setTimeout(() => {
+          if (order.join() !== "${expected}") throw new Error(order.join());
+        });
+      `;
+      expect((await checkModel(source("return,after call,undefined"))).failure).toBeUndefined();
+      expect((await checkModel(source("return,after call,1"))).failure).toBeDefined();
+    });
+  });
+
   it("reads the properties of DisposableStack and AsyncDisposableStack", async () => {
     const source = (length: number) => `
       if (DisposableStack.prototype.adopt.length !== ${length}) throw new Error("adopt");

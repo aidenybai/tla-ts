@@ -244,7 +244,9 @@ import {
   getDescriptorGetters,
   getElementGetters,
   getDefinedGetters,
+  getMethods,
   getReadFunctions,
+  getWrittenFunctions,
   isDescriptorRead,
   isDescriptorsRead,
   isOwnValuesRead,
@@ -272,7 +274,14 @@ import {
   runGetterRead,
   runProxyOperation,
 } from "./protocols";
-import { addResource, type Disposal, isAwaitUsing, translateUsing } from "./disposal";
+import {
+  addResource,
+  type Disposal,
+  getIteratorDisposeCall,
+  isAwaitUsing,
+  translateIteratorDisposeCall,
+  translateUsing,
+} from "./disposal";
 import {
   getStackCall,
   getStackFunctions,
@@ -2454,6 +2463,9 @@ export const translateCallStatement = (
   }
   if (getStackCall(expression, context) !== undefined) {
     return translateStackCall(expression, path, context, frame, continueWith);
+  }
+  if (getIteratorDisposeCall(expression, context) !== undefined) {
+    return translateIteratorDisposeCall(expression, path, context, frame, continueWith);
   }
   const getterCall = getGetterCall(expression, context);
   if (getterCall !== undefined) {
@@ -8669,6 +8681,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getGetterCall(node, context) !== undefined ||
     getCalledThrough(node, context) !== undefined ||
     getStackCall(node, context) !== undefined ||
+    getIteratorDisposeCall(node, context) !== undefined ||
     getHeapArrayChange(node, context) !== undefined ||
     isStoredStatement(node, context) ||
     getArrayLikeChange(node, context) !== undefined ||
@@ -9412,6 +9425,8 @@ const getEffects = (
       isIteratedValue(node.expression, context));
   // A DisposableStack's method may run the functions that the stacks dispose with.
   const isStackCall = getStackCall(node, context) !== undefined;
+  // An iterator's dispose method runs the return method that the script may write, or its getter.
+  const isIteratorDispose = getIteratorDisposeCall(node, context) !== undefined;
   // A using declaration runs the dispose methods, and their getters, that the script writes, and
   // what the DisposableStacks it may hold dispose.
   const list = ts.isVariableDeclaration(node) ? node.parent : node;
@@ -9441,6 +9456,7 @@ const getEffects = (
     getters.length > 0 ||
     isIterated ||
     isStackCall ||
+    isIteratorDispose ||
     isStackConstruction(node, context) ||
     isUsing;
   const callees = ts.isCallExpression(node) ? [node.expression, ...node.arguments] : [];
@@ -9452,6 +9468,8 @@ const getEffects = (
       ...getters,
       ...(isIterated ? getIteratorFunctions(node, context) : []),
       ...(isStackCall || isUsing ? getStackFunctions(node, context) : []),
+      ...(isIteratorDispose ? getWrittenFunctions(node, "return", context) : []),
+      ...(isIteratorDispose ? getMethods(node, "return", context, true) : []),
       ...callees.flatMap((callee) => getFunctionNode(callee) ?? []),
       ...(ts.isCallExpression(node) && getFunctionNode(node.expression) === undefined
         ? (getDispatched(node, functions, context) ?? [])

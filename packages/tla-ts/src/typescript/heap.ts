@@ -91,6 +91,7 @@ import { isDescriptorsRead, isProxyOperation } from "./protocols";
 import { getReached } from "./aliasing";
 import { createStateScope, type Scope } from "./scope";
 import { getStackCall } from "./stacks";
+import { getIteratorDisposeCall } from "./disposal";
 import {
   apply,
   ifExpression,
@@ -4097,6 +4098,7 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
   if (getStackCall(node, context) !== undefined) {
     return ["TypeError", "ReferenceError", "SuppressedError"];
   }
+  if (getIteratorDisposeCall(node, context) !== undefined) return ["TypeError"];
   if (
     ts.isCallExpression(node) &&
     ts.isPropertyAccessExpression(node.expression) &&

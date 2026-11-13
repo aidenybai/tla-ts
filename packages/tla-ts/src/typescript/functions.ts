@@ -70,6 +70,7 @@ import { isBuiltInObject } from "./intrinsics";
 import { getStoredCall, translateStoredCall } from "./collections";
 import { link } from "./regions";
 import { getStackCall } from "./stacks";
+import { getIteratorDisposeCall } from "./disposal";
 import { getKind, hasHeapType, translateUnknown } from "./types";
 
 // Whether a step has changed a state variable, so that helpers reading state must see the change.
@@ -118,6 +119,7 @@ export const mayThrow = (
     ts.isThrowStatement(node) ||
     (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) ||
     getStackCall(node, context) !== undefined ||
+    getIteratorDisposeCall(node, context) !== undefined ||
     getImmutableWrite(node, context)?.isIgnored === false
   ) {
     return true;

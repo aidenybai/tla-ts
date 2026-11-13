@@ -622,6 +622,8 @@ export const translateBuiltInValue = (
     | "Symbol.prototype"
     | "Iterator"
     | "Iterator.prototype"
+    | "Iterator.prototype.@@dispose"
+    | "%AsyncIteratorPrototype%.@@asyncDispose"
     | "%ArrayIteratorPrototype%"
     | "%StringIteratorPrototype%"
     | "%GeneratorFunction%.prototype"
