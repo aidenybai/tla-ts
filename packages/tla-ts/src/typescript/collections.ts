@@ -358,14 +358,25 @@ const getEntries = (value: Expression, context: Context): Unordered => ({
 const getElements = (value: Expression, context: Context) =>
   mapKeys(value, "sequence", context, (shared, key) => index(shared, [key]));
 
-// The set of the elements of an argument, translated as value, that a parameter which only makes
-// a Set takes.
+// The set of the elements of an argument that a parameter which only makes a Set takes, where an
+// array literal gives those of its elements and of the collections it spreads, as nothing reads
+// its order.
 export const translateSetArgument = (
   node: ts.Expression,
-  value: Expression,
+  getValue: () => Expression,
   scope: Scope,
   context: Context,
-) => {
+): Expression => {
+  if (ts.isArrayLiteralExpression(node)) {
+    return node.elements
+      .map((element) =>
+        ts.isSpreadElement(element)
+          ? translateSet(element.expression, scope, context)
+          : set([translateSetKey(element, scope, context)]),
+      )
+      .reduce((left, right) => apply("\\cup", [left, right]), set([]));
+  }
+  const value = getValue();
   if (isHeapArray(node, context)) {
     return getElements(
       getHeapElements(getHeap(scope, node, context), value, node, context),

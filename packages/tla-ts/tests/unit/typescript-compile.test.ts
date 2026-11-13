@@ -2657,6 +2657,24 @@ describe("values", () => {
     expect((await checkModel(getSource("4,true,3"))).failure?.message).toContain("3,false,2");
   });
 
+  it("makes a set of an array literal that spreads a set into an iterable parameter", async () => {
+    const getSource = (expected: string) => `
+      const tokens = (kinds: Iterable<number>) => ({ type: "tokens", kinds: new Set(kinds) });
+      const PREFIX = tokens([1, 2, 2]);
+      const NONEXP = tokens([...PREFIX.kinds, 9, 1]);
+      const result = [NONEXP.kinds.size, NONEXP.kinds.has(2), NONEXP.kinds.has(9)].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("3,true,true"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("4,true,true"))).failure?.message).toContain("3,true,true");
+    expect(() =>
+      compile(`
+        const kinds = new Set([1, 2]);
+        const listed = [...kinds, 3];
+      `),
+    ).toThrow("Sets have no order");
+  });
+
   it("makes a map from an array of entries, where a later entry of a key wins", async () => {
     const getSource = (expected: string) => `
       const pairs: [string, number][] = [

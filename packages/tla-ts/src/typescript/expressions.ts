@@ -2722,15 +2722,20 @@ export const translateExpression = (
   context: Context,
   isDefined = false,
 ): Expression => {
-  const translated = translateNode(node, scope, context, isDefined);
   const call = node.parent;
   const parameter =
     (ts.isCallExpression(call) || ts.isNewExpression(call)) && call.arguments?.includes(node)
       ? getCallee(call.expression, context)?.parameters.at(call.arguments.indexOf(node))
       : undefined;
   if (parameter !== undefined && isSetSource(parameter, context)) {
-    return translateSetArgument(node, translated, scope, context);
+    return translateSetArgument(
+      node,
+      () => translateNode(node, scope, context, isDefined),
+      scope,
+      context,
+    );
   }
+  const translated = translateNode(node, scope, context, isDefined);
   // The base of an optional chain that a check already read is the value that it read.
   return locate(
     isSetOrMapRead(node, context) &&
