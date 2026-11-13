@@ -17997,6 +17997,30 @@ describe("regular expressions", () => {
     await expect(checkModel(getSource(3))).rejects.toThrow("search");
   });
 
+  it("run a regexp's methods under Symbol.match, Symbol.replace, Symbol.search, and Symbol.split", async () => {
+    const getSource = (flags: string) => `
+      const found = /b(.)/[Symbol.match]("abc");
+      if (found === null || found[0] !== "bc" || found[1] !== "c") throw new Error("match");
+      if (/x/[Symbol.search]("abx") !== 2) throw new Error("search");
+      if (/a/${flags}[Symbol.replace]("banana", "o") !== "bonono") throw new Error("replace");
+      const pieces = /,/[Symbol.split]("a,b,c", 2);
+      if (pieces.length !== 2 || pieces[1] !== "b") throw new Error("split");
+    `;
+    expect((await checkModel(getSource("g"))).failure).toBeUndefined();
+    expect((await checkModel(getSource(""))).failure?.message).toContain("replace");
+  });
+
+  it("call a replace function from a regexp's method under Symbol.replace", async () => {
+    const getSource = (expected: string) => `
+      const replaced = /(a)/g[Symbol.replace]("banana", (whole: string, first: string, index: number) =>
+        first.toUpperCase() + index,
+      );
+      if (replaced !== "${expected}") throw new Error("replacer");
+    `;
+    expect((await checkModel(getSource("bA1nA3nA5"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("bA1nA3nA4"))).failure?.message).toContain("replacer");
+  });
+
   it("run a String object's regexp methods on its string", async () => {
     const result = await checkModel(`
       const text = new String("hello");
