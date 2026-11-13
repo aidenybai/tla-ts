@@ -5924,6 +5924,18 @@ describe("errors", () => {
     });
   });
 
+  it("lists the keys of the descriptions of a primitive's own properties", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      if (Object.keys(Object.getOwnPropertyDescriptors(0)).length !== 0) throw new Error("number");
+      if (Object.entries(Object.getOwnPropertyDescriptors("a")).length !== 2) throw new Error("string");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("length !== 0", "length !== 1");
+    expect((await checkModel(wrong)).failure?.message).toContain('"number"');
+  });
+
   it("reads a negative number as a constant argument", async () => {
     const source = `
       Object.getOwnPropertyDescriptor(-2, "foo");
