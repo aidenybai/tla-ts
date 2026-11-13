@@ -808,6 +808,10 @@ export const translateLocalCall = (
   if (callee === undefined) {
     return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
   }
+  // A built-in that tla-ts doesn't model has only its declaration, as eval does.
+  if (callee.body === undefined && callee.getSourceFile().isDeclarationFile) {
+    throw new TlaTypeScriptError(`tla-ts can't run ${node.expression.getText()}`, node);
+  }
   rejectCaught(node, callee, scope, context);
   if (context.inProgress.has(callee)) return translateLiftedCall(callee, node, scope, context);
   return inlineCall(callee, node.arguments, scope, context, called);

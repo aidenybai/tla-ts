@@ -11429,6 +11429,12 @@ describe("errors", () => {
     ).rejects.toThrow("tla-ts can't make a character outside ASCII");
   });
 
+  it("names a built-in that tla-ts doesn't run where a script calls it", () => {
+    expect(() => compile(`let value: unknown = 0; value = eval("1");`)).toThrow(
+      "spec.ts:1:33 tla-ts can't run eval",
+    );
+  });
+
   it("takes a substring by its length", async () => {
     const result = await checkModel(`
       const text: string = "abcdef";
