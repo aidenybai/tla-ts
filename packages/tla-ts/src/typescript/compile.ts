@@ -296,6 +296,9 @@ export const compile = (
   const heap = program.checker
     .getSymbolsInScope(sourceFile, ts.SymbolFlags.TypeAlias)
     .find((symbol) => symbol.name === "PropertyKey");
+  // A class that the script declares, whose prototype only an object can hold.
+  const isScriptClass = (node: ts.Node | undefined) =>
+    node !== undefined && ts.isClassLike(node) && !node.getSourceFile().isDeclarationFile;
   const usesObjects = (node: ts.Node): boolean =>
     ts.isObjectLiteralExpression(node) ||
     (ts.isClassLike(node) &&
@@ -309,6 +312,9 @@ export const compile = (
     (ts.isPropertyAccessExpression(node) &&
       ((ts.isIdentifier(node.expression) && node.expression.text === "Object") ||
         node.name.text === "hasOwnProperty")) ||
+    (ts.isPropertyAccessExpression(node) &&
+      node.name.text === "prototype" &&
+      isScriptClass(getSymbol(node.expression, context.checker)?.valueDeclaration)) ||
     (ts.isNewExpression(node) &&
       ts.isIdentifier(node.expression) &&
       ["Boolean", "Number", "String", "Date"].includes(node.expression.text)) ||

@@ -2,7 +2,7 @@ import ts from "@typescript/typescript6";
 import type { Expression, OperatorDefinition, OperatorParam } from "../ast";
 import { getTypeNames, JAVASCRIPT_OPERATORS } from "./javascript";
 import { BUILT_INS } from "./built-ins";
-import { getErrorClass, NATIVE_ERRORS } from "./exceptions";
+import { getErrorClass, isNativeErrorName, isPrototypeRead, NATIVE_ERRORS } from "./exceptions";
 import { getBuiltIn, isHeldBuiltInObject } from "./intrinsics";
 import { isHeapArray, isHeapSetOrMap } from "./types";
 import { TlaTypeScriptError } from "../errors";
@@ -968,17 +968,30 @@ const isNullSafe = (node: ts.ClassLikeDeclaration, context: Context) => {
 };
 
 // The built-in constructor that makes the instances of a class without a constructor, which
-// extends it or extends a class that does. Its default constructor passes new's arguments on.
+// extends it or extends a class that does. Its default constructor passes new's arguments on. A
+// class that extends a native error is one only where the script reads its prototype, as its
+// errors are records otherwise.
 export const getBuiltInBase = (
   node: ts.ClassLikeDeclaration,
   context: Context,
-): "Object" | "Boolean" | "Number" | "String" | undefined => {
+): "Object" | "Boolean" | "Number" | "String" | `${string}Error` | undefined => {
   if (node.members.some(ts.isConstructorDeclaration)) return undefined;
   const heritage = node.heritageClauses?.find(
     (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
   )?.types[0]?.expression;
   const name = heritage === undefined ? undefined : getBuiltIn(heritage, context);
   if (name === "Object" || name === "Boolean" || name === "Number" || name === "String") {
+    return name;
+  }
+  const symbol = node.name === undefined ? undefined : getSymbol(node.name, context.checker);
+  if (
+    name !== undefined &&
+    isNativeErrorName(name) &&
+    name !== "AggregateError" &&
+    name !== "SuppressedError" &&
+    symbol !== undefined &&
+    isPrototypeRead(symbol, context.checker)
+  ) {
     return name;
   }
   const base = getBaseClass(node, context);

@@ -2,6 +2,7 @@ import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
 import {
   type Context,
+  findNodes,
   getHeapClass,
   getLiteralName,
   getSymbol,
@@ -30,6 +31,9 @@ export const NATIVE_ERRORS = new Set([
   "AggregateError",
 ]);
 
+export const isNativeErrorName = (name: string): name is `${string}Error` =>
+  NATIVE_ERRORS.has(name);
+
 const isNative = (symbol: ts.Symbol) =>
   NATIVE_ERRORS.has(symbol.name) &&
   (symbol.declarations ?? []).length > 0 &&
@@ -54,6 +58,22 @@ const isConstClass = (node: ts.Node): node is ts.ClassExpression =>
   (ts.getCombinedNodeFlags(node.parent) & ts.NodeFlags.Const) !== 0 &&
   isOnce(node.parent);
 
+// Whether a script reads a class's prototype, which an error that's a record can't inherit from, so
+// the class makes objects on the heap.
+export const isPrototypeRead = (symbol: ts.Symbol, checker: ts.TypeChecker) => {
+  const declaration = symbol.valueDeclaration;
+  return (
+    declaration !== undefined &&
+    findNodes(
+      declaration.getSourceFile(),
+      (node): node is ts.PropertyAccessExpression =>
+        ts.isPropertyAccessExpression(node) &&
+        node.name.text === "prototype" &&
+        getSymbol(node.expression, checker) === symbol,
+    ).length > 0
+  );
+};
+
 export const getErrorClass = (
   symbol: ts.Symbol | undefined,
   checker: ts.TypeChecker,
@@ -72,7 +92,8 @@ export const getErrorClass = (
   if (
     declaration === undefined ||
     !(ts.isClassDeclaration(declaration) || isConstClass(declaration)) ||
-    declaration.members.length > 0
+    declaration.members.length > 0 ||
+    isPrototypeRead(symbol, checker)
   ) {
     return undefined;
   }
