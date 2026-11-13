@@ -40,6 +40,7 @@ import {
   isAmbient,
   isInlineBase,
   isNullBased,
+  getLiveMaker,
   isNestedFunction,
   isClosure,
   getCaptures,
@@ -1023,26 +1024,38 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   }
   if (isNestedFunction(node, context)) {
     const isFunction = ts.isFunctionExpression(node);
+    const maker = getLiveMaker(node, context);
+    const environment = maker === undefined ? undefined : scope.activations?.get(maker);
+    if (maker !== undefined && environment === undefined) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't make a method that reads the locals of a function it can't follow",
+        node,
+      );
+    }
+    const made = useJavaScript(
+      isFunction ? "FunctionObject" : "MethodObject",
+      [
+        translateBuiltInValue("Function.prototype", node, context),
+        isFunction
+          ? translateFunctionValue(node, context)
+          : ts.isMethodDeclaration(node)
+            ? getMethodValue(node, context)
+            : getAccessorValue(node, context),
+      ],
+      context,
+    );
     return useJavaScript(
       "Allocate",
       [
         heap,
-        useJavaScript(
-          isFunction ? "FunctionObject" : "MethodObject",
-          [
-            translateBuiltInValue("Function.prototype", node, context),
-            isFunction
-              ? translateFunctionValue(node, context)
-              : ts.isMethodDeclaration(node)
-                ? getMethodValue(node, context)
-                : getAccessorValue(node, context),
-          ],
-          context,
-        ),
+        environment === undefined
+          ? made
+          : useJavaScript("ClosureObject", [made, environment], context),
       ],
       context,
     );
   }
+
   const binding = getBinding(node, context);
   if (binding !== undefined) {
     const length = getFunctionLength(getParameters(binding.target)) - binding.arguments.length;

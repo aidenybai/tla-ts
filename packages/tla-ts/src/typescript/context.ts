@@ -1241,7 +1241,7 @@ const LOGICAL_ASSIGNMENTS = new Set([
 // A function expression or a method that another function makes as the value of an object's
 // property, or a function expression that it returns, each time it runs, which is an object of its
 // own each time. It reads no name that the functions around it bind, so it runs the same wherever
-// tla-ts inlines it.
+// tla-ts inlines it, or it's a closure, which runs only in the call that made it.
 export const isNestedFunction = (
   node: ts.Node,
   context: Context,
@@ -1267,20 +1267,26 @@ export const isNestedFunction = (
   ((ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0 ||
     ts.isMethodDeclaration(node)) &&
   ts.findAncestor(node.parent, ts.isFunctionLike) !== undefined &&
-  findNodes(node, ts.isIdentifier).every((name) => {
+  (getOuterLocals(node, context).length === 0 || getLiveMaker(node, context) !== undefined);
+
+// The functions around a function that bind the locals it reads.
+const getOuterLocals = (node: ts.Node, context: Context) =>
+  findNodes(node, ts.isIdentifier).flatMap((name) => {
     const declaration = getSymbol(name, context.checker)?.valueDeclaration;
-    return (
-      declaration === undefined ||
-      !(
-        ts.isVariableDeclaration(declaration) ||
+    const owner =
+      declaration === undefined
+        ? undefined
+        : ts.findAncestor(declaration.parent, ts.isFunctionLike);
+    return declaration !== undefined &&
+      owner !== undefined &&
+      (ts.isVariableDeclaration(declaration) ||
         ts.isParameter(declaration) ||
         ts.isBindingElement(declaration) ||
         ts.isFunctionDeclaration(declaration) ||
-        ts.isClassDeclaration(declaration)
-      ) ||
-      ts.findAncestor(declaration, (ancestor) => ancestor === node) !== undefined ||
-      ts.findAncestor(declaration.parent, ts.isFunctionLike) === undefined
-    );
+        ts.isClassDeclaration(declaration)) &&
+      ts.findAncestor(declaration, (ancestor) => ancestor === node) === undefined
+      ? [owner]
+      : [];
   });
 
 // A function expression that a function makes and assigns to a name declared outside it, which
@@ -1377,6 +1383,29 @@ export const getCaptures = (node: ts.FunctionExpression, context: Context) => {
     }
   });
   return [...new Set(captures.map((capture) => capture.symbol))];
+};
+
+// The async function whose locals a method of an object literal that it makes reads. Each call of
+// the function makes the method anew, a closure that holds the call's environment, which runs only
+// where that call runs, and reads the locals that the call binds there, unlike a closure that
+// outlives its call.
+export const getLiveMaker = (node: ts.Node, context: Context) => {
+  const enclosing = ts.findAncestor(node.parent, ts.isFunctionLike);
+  const owners = getOuterLocals(node, context);
+  return ts.isMethodDeclaration(node) &&
+    ts.isObjectLiteralExpression(node.parent) &&
+    !isOnce(node.parent) &&
+    node.asteriskToken === undefined &&
+    enclosing !== undefined &&
+    (ts.isFunctionDeclaration(enclosing) ||
+      ts.isFunctionExpression(enclosing) ||
+      ts.isArrowFunction(enclosing) ||
+      ts.isMethodDeclaration(enclosing)) &&
+    isAsyncFunction(enclosing) &&
+    owners.length > 0 &&
+    owners.every((owner) => owner === enclosing)
+    ? enclosing
+    : undefined;
 };
 
 // Whether a node gives a named binding's default, through parentheses and the commas that end in it.

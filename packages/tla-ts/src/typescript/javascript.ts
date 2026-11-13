@@ -732,6 +732,13 @@ Captured(heap, closure, key) ==
 SetCaptured(heap, closure, key, value) ==
   [heap EXCEPT !.objects[heap.objects[closure[Ref]].environment[Ref]].bindings[key] = value]
 
+
+\\* The environment of the call that made a closure, or Undefined for a function that isn't one.
+EnvironmentOf(heap, value) ==
+  IF IsHeap(value) /\\ "environment" \\in DOMAIN heap.objects[value[Ref]]
+  THEN heap.objects[value[Ref]].environment
+  ELSE Undefined
+
 \\* The code that a value runs where a script calls it.
 CodeOf(heap, value) ==
   IF IsHeap(value) /\\ "code" \\in DOMAIN heap.objects[value[Ref]]

@@ -25,6 +25,7 @@ import {
   getUndefined,
   isInertValue,
   isMethodCall,
+  getLiveMaker,
   isNestedFunction,
   skipCasts,
 } from "./context";
@@ -188,16 +189,41 @@ export const callValue = (
         const received = ts.isArrowFunction(candidate)
           ? undefined
           : { value: receiver, method: candidate };
-        return ifThenElse(
-          apply("=", [
-            useJavaScript("CodeOf", [getHeap(path.scope, site, context), value], context),
-            candidateValue,
-          ]),
+        const heap = getHeap(path.scope, site, context);
+        const call = () =>
           isAsync(candidate)
             ? translateAsyncCall(site, candidate, received, path, context, frame, next)
             : values.length === 0
               ? inlineBody(site, candidate, [], received, path, context, frame, next)
-              : inlineValues(candidate, values, received, path, context, frame, next),
+              : inlineValues(candidate, values, received, path, context, frame, next);
+        // A method that reads the live locals of the function around it runs only in the call of
+        // that function whose environment it holds, outside a built-in's body.
+        const maker = getLiveMaker(candidate, context);
+        const environment =
+          maker !== undefined &&
+          ts.findAncestor(site, ts.isFunctionLike) === maker &&
+          path.scope.isBuiltInBody !== true
+            ? path.scope.activations?.get(maker)
+            : undefined;
+        const stop = leaf(
+          apply("Assert", [
+            boolean(false),
+            string(
+              "tla-ts can't call a method here that reads the locals of the function around it",
+            ),
+          ]),
+        );
+        return ifThenElse(
+          apply("=", [useJavaScript("CodeOf", [heap, value], context), candidateValue]),
+          maker === undefined
+            ? call()
+            : environment === undefined
+              ? stop
+              : ifThenElse(
+                  apply("=", [useJavaScript("EnvironmentOf", [heap, value], context), environment]),
+                  call(),
+                  stop,
+                ),
           rest,
         );
       }, otherwise(next)),

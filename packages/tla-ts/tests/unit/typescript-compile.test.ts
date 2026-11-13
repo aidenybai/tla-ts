@@ -10797,6 +10797,58 @@ describe("errors", () => {
     expect(wrong.failure).toBeDefined();
   });
 
+  it("runs a dispose method that reads the locals of the async call that made it", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let result = "";
+      const asyncTest = (body: () => Promise<void>) => {
+        body();
+      };
+      asyncTest(async () => {
+        const disposed: unknown[] = [];
+        const first = { async [Symbol.asyncDispose]() { disposed.push(this); } };
+        const second = { [Symbol.dispose]() { disposed.push(this); } };
+        {
+          await using _1 = first;
+          await using _2 = second;
+        }
+        result = [disposed[0] === second, disposed[1] === first, disposed.length].join();
+      });
+      setTimeout(() => {
+        if (result !== "${expected}") throw new Error(result);
+      });
+    `;
+    const result = await checkModel(source("true,true,2"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("false,true,2"));
+    expect(wrong.failure).toBeDefined();
+  });
+
+  it("stops where a method runs in a call other than the one that made it", async () => {
+    const result = await checkModel(`
+      declare function setTimeout(callback: () => void): void;
+      let kept: AsyncDisposable | undefined;
+      let count = 0;
+      const run = async (isFirst: boolean) => {
+        const label = isFirst ? "first" : "second";
+        const resource = { async [Symbol.asyncDispose]() { count += label === "first" ? 1 : 10; } };
+        if (isFirst) {
+          kept = resource;
+          return;
+        }
+        if (kept !== undefined) {
+          await using _ = kept;
+        }
+      };
+      run(true);
+      run(false);
+      setTimeout(() => {
+        if (count !== 1) throw new Error(String(count));
+      });
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't call a method here");
+  });
+
   it("awaits an async dispose method, which a function's object literal may hold", async () => {
     const source = (expected: string) => `
       declare function setTimeout(callback: () => void): void;
