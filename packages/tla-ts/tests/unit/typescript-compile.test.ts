@@ -2175,6 +2175,54 @@ describe("values", () => {
     ).toContain(expected);
   });
 
+  it("reads the name of a caught error that a class extending Error makes through a cast", async () => {
+    const getSource = (expected: string) => `
+      class BaseError extends Error {
+        constructor(message: string) {
+          super(message);
+          this.name = "BaseError";
+        }
+      }
+      let caught = "";
+      try {
+        throw new BaseError("negative");
+      } catch (error) {
+        caught = (error as Error).name;
+      }
+      if (caught !== "${expected}") throw new Error("caught " + caught);
+    `;
+    expect((await checkModel(getSource("BaseError"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("Error"))).failure?.message).toContain("caught BaseError");
+  });
+
+  it("reads a caught error that the heap holds or a record through a cast or an index", async () => {
+    const getSource = (expected: string) => `
+      class BaseError extends Error {
+        constructor(message: string, options?: ErrorOptions) {
+          super(message, options);
+          this.name = "BaseError";
+        }
+      }
+      const read = (isBase: boolean) => {
+        try {
+          if (isBase) throw new BaseError("negative", { cause: 7 });
+          throw new TypeError("plain");
+        } catch (error) {
+          const held = error as Error;
+          return [held.message, held["name"], \`\${held.cause}\`].join("+");
+        }
+      };
+      const result = [read(true), read(false)].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect(
+      (await checkModel(getSource("negative+BaseError+7,plain+TypeError+undefined"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("negative+Error+7,plain+TypeError+undefined"))).failure?.message,
+    ).toContain("negative+BaseError+7");
+  });
+
   it("throws the error that an arrow makes with a class that extends an error with fields", async () => {
     const getSource = (expected: string) => `
       class Coded extends TypeError {

@@ -62,6 +62,7 @@ import {
   getConstructor,
   getErrorClass,
   isCaughtRead,
+  isNativeErrorValue,
   translateInstanceOf,
   translateNewError,
 } from "./exceptions";
@@ -2156,6 +2157,27 @@ const translateRegExpKey = (key: ts.Expression, scope: Scope, context: Context) 
       ? translateExpression(key, scope, context)
       : undefined;
 
+// A read of a value of a native error's type, which may be an error that the heap holds. That one,
+// or a key that an error's record lacks, reads through Get, which looks on the error's prototypes.
+const translateNativeErrorRead = (
+  value: Expression,
+  key: Expression,
+  heap: Expression,
+  context: Context,
+) =>
+  share(value, "error", context, (error) =>
+    share(key, "key", context, (sharedKey) =>
+      ifExpression(
+        apply("\\/", [
+          useJavaScript("IsRef", [error], context),
+          not(apply("\\in", [sharedKey, apply("DOMAIN", [error])])),
+        ]),
+        useJavaScript("Get", [heap, error, sharedKey], context),
+        index(error, [sharedKey]),
+      ),
+    ),
+  );
+
 const translatePropertyAccess = (
   node: ts.PropertyAccessExpression,
   scope: Scope,
@@ -2317,6 +2339,14 @@ const translatePropertyAccess = (
     throw new TlaTypeScriptError(`tla-ts can't read a generator's ${name} as a value`, node);
   }
   rejectAnyReceiver(receiver, context);
+  if (context.heap !== undefined && isNativeErrorValue(receiver, context)) {
+    return translateNativeErrorRead(
+      translateExpression(receiver, scope, context),
+      string(name),
+      getHeap(scope, node, context),
+      context,
+    );
+  }
   return getField(translateExpression(receiver, scope, context), name);
 };
 
@@ -2642,6 +2672,18 @@ const translateElementRead = (
           getUndefined(context),
         ),
       ),
+    );
+  }
+  if (
+    kind === "other" &&
+    context.heap !== undefined &&
+    isNativeErrorValue(node.expression, context)
+  ) {
+    return translateNativeErrorRead(
+      value,
+      translatePropertyKey(node.argumentExpression, scope, context),
+      getHeap(scope, node, context),
+      context,
     );
   }
   if (kind !== "string") return index(value, [key]);

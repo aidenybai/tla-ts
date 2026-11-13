@@ -261,6 +261,15 @@ export const isCaughtRead = (node: ts.Expression, context: Context): boolean =>
     ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
       isCaughtRead(node.expression, context)));
 
+// A value of a native error's type, such as a caught one that a cast or a narrowing reads as an
+// error, which may be an object that the heap holds as well as an error that stays a record.
+export const isNativeErrorValue = (node: ts.Expression, context: Context) => {
+  const symbol = context.checker
+    .getNonNullableType(context.checker.getTypeAtLocation(node))
+    .getSymbol();
+  return symbol !== undefined && isNative(symbol);
+};
+
 const getSubclasses = (node: ts.Node, symbol: ts.Symbol, context: Context) => {
   const found = new Map<ts.Symbol, Expression>();
   const visit = (child: ts.Node) => {
