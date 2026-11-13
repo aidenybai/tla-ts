@@ -2852,6 +2852,75 @@ describe("values", () => {
     );
   });
 
+  it("throws a TypeError where a script sets the prototype of a class through a parameter, a property, or a call", async () => {
+    const getSource = (expected: string) => `
+      class Base {
+        seen = 1;
+      }
+      class Passed extends Base {
+        value = 2;
+      }
+      class Read extends Base {
+        value = 3;
+      }
+      class Returned extends Base {
+        value = 4;
+      }
+      class Nested extends Base {
+        value = 5;
+      }
+      class Kept extends Base {
+        value = 6;
+      }
+      const set = (target: { a: number }) => {
+        Object.setPrototypeOf(target, Math.sin);
+      };
+      set(Passed as unknown as { a: number });
+      const holder = { held: Read as unknown as { a: number } };
+      Object.setPrototypeOf(holder.held, Math.sin);
+      const give = () => Returned as unknown as { a: number };
+      Object.setPrototypeOf(give(), Math.sin);
+      const isNested = holder.held !== undefined;
+      Object.setPrototypeOf(isNested ? (Nested as unknown as { a: number }) : { a: 1 }, Math.sin);
+      Object.setPrototypeOf({ a: 1 }, null);
+      const results: string[] = [];
+      try {
+        const made = new Passed();
+        results.push(\`\${made.value}\`);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      try {
+        const made = new Read();
+        results.push(\`\${made.value}\`);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      try {
+        const made = new Returned();
+        results.push(\`\${made.value}\`);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      try {
+        const made = new Nested();
+        results.push(\`\${made.value}\`);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      const kept = new Kept();
+      results.push(\`\${kept.seen}\${kept.value}\`);
+      const result = results.join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect(
+      (await checkModel(getSource("TypeError,TypeError,TypeError,TypeError,16"))).failure,
+    ).toBeUndefined();
+    expect((await checkModel(getSource("2,3,4,5,16"))).failure?.message).toContain(
+      "TypeError,TypeError,TypeError,TypeError,16",
+    );
+  });
+
   it("stops where super calls another constructor that a script set as the prototype", async () => {
     const result = await checkModel(`
       class Base {

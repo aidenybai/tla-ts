@@ -997,9 +997,10 @@ export const isNullBased = (node: ts.ClassLikeDeclaration) =>
   getExtended(node)?.kind === ts.SyntaxKind.NullKeyword;
 
 // Whether a script may set a class's prototype, which a derived class's constructor calls. A call of
-// Object.setPrototypeOf or Reflect.setPrototypeOf, or a write of __proto__, sets it where the
-// target's type, or a type that a cast, a variable's initializer or a write of the variable gives
-// it, may hold the class. Any other use of those names may set any class's.
+// Object.setPrototypeOf or Reflect.setPrototypeOf, or a write of __proto__, may set it unless its
+// target's type rules the class out and the target is a value that the script makes there, or a
+// variable, function, or class whose initializers and writes each rule it out too. Any other use
+// of those names may set any class's.
 const isPrototypeSettable = (node: ts.ClassLikeDeclaration, context: Context) => {
   const symbol = node.name === undefined ? undefined : getSymbol(node.name, context.checker);
   if (symbol === undefined) return false;
@@ -1014,39 +1015,51 @@ const isPrototypeSettable = (node: ts.ClassLikeDeclaration, context: Context) =>
           0 || context.checker.isTypeAssignableTo(constructorType, type)
       );
     });
+    const isMadeHere =
+      ts.isObjectLiteralExpression(held) ||
+      ts.isArrayLiteralExpression(held) ||
+      ts.isFunctionExpression(held) ||
+      ts.isArrowFunction(held) ||
+      ts.isClassExpression(held) ||
+      ts.isLiteralExpression(held) ||
+      ts.isTemplateExpression(held) ||
+      [ts.SyntaxKind.NullKeyword, ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword].includes(
+        held.kind,
+      );
+    if (isTyped || isMadeHere) return isTyped;
     const heldSymbol = ts.isIdentifier(held) ? getSymbol(held, context.checker) : undefined;
-    if (isTyped || heldSymbol === undefined || traced.has(heldSymbol)) return isTyped;
+    if (heldSymbol === undefined) return true;
+    if (traced.has(heldSymbol)) return false;
     traced.add(heldSymbol);
     const declarations = heldSymbol.declarations ?? [];
-    // A name that a pattern or a for-of binds may hold any part of its value.
-    if (
-      declarations.some(
+    // A pattern or a for-of may bind any part of its value, and a parameter any argument.
+    const isTraceable =
+      declarations.length > 0 &&
+      declarations.every(
         (declaration) =>
-          ts.isBindingElement(declaration) ||
-          (ts.isVariableDeclaration(declaration) && ts.isForOfStatement(declaration.parent.parent)),
-      )
-    ) {
-      return true;
-    }
-    const writes = declarations.some(ts.isVariableDeclaration)
-      ? findNodes(held.getSourceFile(), (inner): inner is ts.Node => {
-          const written = getAssignedTarget(inner);
-          return (
-            written !== undefined &&
-            (isWrittenBy(written, heldSymbol, context) ||
-              (ts.isIdentifier(skipCasts(written)) &&
-                getSymbol(skipCasts(written), context.checker) === heldSymbol))
-          );
-        })
-      : [];
+          (ts.isVariableDeclaration(declaration) &&
+            ts.isIdentifier(declaration.name) &&
+            !ts.isForOfStatement(declaration.parent.parent)) ||
+          ts.isFunctionDeclaration(declaration) ||
+          ts.isClassDeclaration(declaration),
+      );
     return (
+      !isTraceable ||
       declarations.some(
         (declaration) =>
           ts.isVariableDeclaration(declaration) &&
           declaration.initializer !== undefined &&
           mayHold(declaration.initializer),
       ) ||
-      writes.some(
+      findNodes(held.getSourceFile(), (inner): inner is ts.Node => {
+        const written = getAssignedTarget(inner);
+        return (
+          written !== undefined &&
+          (isWrittenBy(written, heldSymbol, context) ||
+            (ts.isIdentifier(skipCasts(written)) &&
+              getSymbol(skipCasts(written), context.checker) === heldSymbol))
+        );
+      }).some(
         (write) =>
           !ts.isBinaryExpression(write) ||
           !ts.isIdentifier(skipCasts(write.left)) ||
