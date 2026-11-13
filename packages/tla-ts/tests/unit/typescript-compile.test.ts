@@ -384,15 +384,27 @@ describe("top-level statements", () => {
         if (position === 1) delete items[3];
         return (sum ?? 0) + (value ?? 0) + 10;
       });
+      if (total !== ${expected} || calls !== 1) throw new Error("reduce");
+    `;
+    expect((await checkModel(source(16))).failure).toBeUndefined();
+    expect((await checkModel(source(26))).failure?.message).toContain("reduce");
+  });
+
+  it("seed a reduceRight from the last element it finds as a callback that changes objects leaves it", async () => {
+    const source = (expected: number) => `
+      const items: (number | undefined)[] = [, 2, , 4];
       const right = items.reduceRight((sum: number | undefined, value) => {
         items[0] = 5;
         return (sum ?? 0) + (value ?? 0);
       });
-      if (total !== 16 || calls !== 1 || right !== ${expected}) throw new Error("reduce");
+      if (right !== ${expected}) throw new Error("reduce");
     `;
     expect((await checkModel(source(11))).failure).toBeUndefined();
     expect((await checkModel(source(6))).failure?.message).toContain("reduce");
-    const empty = await checkModel(`
+  });
+
+  it("throw a TypeError where a reduce without an initial value finds no element", async () => {
+    const result = await checkModel(`
       const empty: number[] & { tag?: string } = [];
       empty.tag = "t";
       empty.reduce((sum: number, value: number) => {
@@ -400,7 +412,7 @@ describe("top-level statements", () => {
         return sum + value;
       });
     `);
-    expect(empty.failure?.message).toContain("TypeError");
+    expect(result.failure?.message).toContain("TypeError");
   });
 
   it("skip a hole in the array that map makes where nothing reads the array", async () => {
@@ -418,7 +430,7 @@ describe("top-level statements", () => {
     expect((await checkModel(source(6))).failure?.message).toContain("map");
   });
 
-  it("throw what an array method's callback or getter throws to the try around the call", async () => {
+  it("throw what an array method's callback throws to the try around the call", async () => {
     const source = (expected: number) => `
       let visited = 0;
       let message = "";
@@ -430,6 +442,14 @@ describe("top-level statements", () => {
       } catch (error) {
         if (error instanceof RangeError) message = error.message;
       }
+      if (visited !== ${expected} || message !== "two") throw new Error("thrown");
+    `;
+    expect((await checkModel(source(3))).failure).toBeUndefined();
+    expect((await checkModel(source(6))).failure?.message).toContain("thrown");
+  });
+
+  it("throw what a getter that an array method runs throws to the try around the call", async () => {
+    const source = (expected: boolean) => `
       const like: { [key: string]: unknown } = { 0: 1, length: 3 };
       Object.defineProperty(like, "1", {
         get: function () {
@@ -442,10 +462,10 @@ describe("top-level statements", () => {
       } catch (error) {
         isTypeError = error instanceof TypeError;
       }
-      if (visited !== ${expected} || message !== "two" || !isTypeError) throw new Error("thrown");
+      if (isTypeError !== ${expected}) throw new Error("thrown");
     `;
-    expect((await checkModel(source(3))).failure).toBeUndefined();
-    expect((await checkModel(source(6))).failure?.message).toContain("thrown");
+    expect((await checkModel(source(true))).failure).toBeUndefined();
+    expect((await checkModel(source(false))).failure?.message).toContain("thrown");
   });
 
   it("convert an array-like object's length that's an object with its valueOf and toString", async () => {
@@ -467,52 +487,68 @@ describe("top-level statements", () => {
         },
       };
       const isAll = Array.prototype.every.call(items, (value: number) => value > 10);
-      const found = Array.prototype.indexOf.call({ 0: 4, length: { valueOf: () => 1 } }, 4);
-      let isThrown = false;
-      try {
-        Array.prototype.forEach.call(
-          { 0: 1, length: { valueOf: () => ({}), toString: () => ({}) } },
-          () => {
-            calls.push("callback");
-          },
-        );
-      } catch (error) {
-        isThrown = error instanceof TypeError;
-      }
-      if (!isAll || found !== 0 || !isThrown || calls.join() !== "${expected}") {
-        throw new Error("length");
-      }
+      if (!isAll || calls.join() !== "${expected}") throw new Error("length");
     `;
     expect((await checkModel(source("valueOf,toString"))).failure).toBeUndefined();
     expect((await checkModel(source("toString,valueOf"))).failure?.message).toContain("length");
   });
 
-  it("keep a hole in the array that map makes where the array it visits lacks an element", async () => {
+  it("search an array-like object whose length's valueOf gives it", async () => {
+    const source = (expected: number) => `
+      const found = Array.prototype.indexOf.call({ 0: 4, length: { valueOf: () => 1 } }, 4);
+      if (found !== ${expected}) throw new Error("length");
+    `;
+    expect((await checkModel(source(0))).failure).toBeUndefined();
+    expect((await checkModel(source(-1))).failure?.message).toContain("length");
+  });
+
+  it("throw a TypeError where neither the valueOf nor the toString of a length gives a primitive", async () => {
+    const source = (expected: boolean) => `
+      let isThrown = false;
+      try {
+        Array.prototype.forEach.call(
+          { 0: 1, length: { valueOf: () => ({}), toString: () => ({}) } },
+          () => {
+            isThrown = false;
+          },
+        );
+      } catch (error) {
+        isThrown = error instanceof TypeError;
+      }
+      if (isThrown !== ${expected}) throw new Error("length");
+    `;
+    expect((await checkModel(source(true))).failure).toBeUndefined();
+    expect((await checkModel(source(false))).failure?.message).toContain("length");
+  });
+
+  it("keep a hole in the array that map makes where a callback shortens the array", async () => {
     const source = (expected: number) => `
       const items: (number | undefined)[] = [1, , 3, 4];
       const doubled = items.map((value, position) => {
         if (position === 0) items.length = 3;
         return (value ?? 0) * 2;
       });
-      const like: { [key: string]: unknown } = { 0: 5, 2: 7, length: 4 };
-      const tripled = Array.prototype.map.call(like, (value: unknown) => {
-        delete like[2];
-        return (value as number) * 3;
-      });
-      if (
-        doubled.length !== 4 ||
-        1 in doubled ||
-        3 in doubled ||
-        doubled[2] !== ${expected} ||
-        tripled.length !== 4 ||
-        tripled[0] !== 15 ||
-        2 in tripled
-      ) {
+      if (doubled.length !== 4 || 1 in doubled || 3 in doubled || doubled[2] !== ${expected}) {
         throw new Error("map");
       }
     `;
     expect((await checkModel(source(6))).failure).toBeUndefined();
     expect((await checkModel(source(3))).failure?.message).toContain("map");
+  });
+
+  it("keep a hole in the array that map makes where a callback deletes an array-like element", async () => {
+    const source = (expected: number) => `
+      const like: { [key: string]: unknown } = { 0: 5, 2: 7, length: 4 };
+      const tripled = Array.prototype.map.call(like, (value: unknown) => {
+        delete like[2];
+        return (value as number) * 3;
+      });
+      if (tripled.length !== 4 || tripled[0] !== ${expected} || 2 in tripled) {
+        throw new Error("map");
+      }
+    `;
+    expect((await checkModel(source(15))).failure).toBeUndefined();
+    expect((await checkModel(source(5))).failure?.message).toContain("map");
   });
 
   it("make the objects of a parameter's default", async () => {
@@ -5583,6 +5619,9 @@ describe("errors", () => {
     `;
     expect((await checkModel(source(0))).failure).toBeUndefined();
     expect((await checkModel(source(1))).failure?.message).toContain("numbers");
+  });
+
+  it("stops where a script without special numbers computes with a read past an array's end", async () => {
     await expect(
       checkModel(`
         const items: number[] = [1];
@@ -5612,6 +5651,9 @@ describe("errors", () => {
     `;
     expect((await checkModel(source(2))).failure).toBeUndefined();
     expect((await checkModel(source(3))).failure?.message).toContain("names");
+  });
+
+  it("stops where a script without special numbers computes with a name that holds a read past an array's end", async () => {
     await expect(
       checkModel(`
         const items: number[] = [1];
