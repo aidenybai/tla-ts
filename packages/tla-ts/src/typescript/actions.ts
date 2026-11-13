@@ -10821,8 +10821,11 @@ const getHoistedCall = (statement: ts.Statement, path: Path, context: Context) =
   return getLeadingCall(
     evaluated,
     (call) =>
-      // An if or a switch statement evaluates its expression, and runs no call of it.
-      (call !== outer || ts.isIfStatement(statement) || ts.isSwitchStatement(statement)) &&
+      // An if, a switch, or a throw statement evaluates its expression, and runs no call of it.
+      (call !== outer ||
+        ts.isIfStatement(statement) ||
+        ts.isSwitchStatement(statement) ||
+        ts.isThrowStatement(statement)) &&
       !(
         ts.isBinaryExpression(outer) &&
         outer.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
