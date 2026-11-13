@@ -1128,7 +1128,8 @@ const ignoreSoundErrors = () => {
     return (
       (diagnostic.code === ARGUMENT_COUNT_ERROR && isShortBuiltInCall(node)) ||
       (diagnostic.code === MISSING_PROPERTY_ERROR && isPatternRead(node)) ||
-      (diagnostic.code === NOT_ITERABLE_ERROR && isNullableArrayPattern(node)) ||
+      ((diagnostic.code === NOT_ITERABLE_ERROR || NULLABLE_ERRORS.has(diagnostic.code)) &&
+        isNullableArrayPattern(node)) ||
       (UNASSIGNABLE_ERRORS.has(diagnostic.code) && isPatternArgument(node)) ||
       diagnostic.code === UNUSED_OPERAND_ERROR ||
       (diagnostic.code === UNINTENDED_COMPARISON_ERROR && isUnnarrowed(node, diagnostic)) ||
