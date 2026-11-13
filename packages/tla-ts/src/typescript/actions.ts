@@ -4892,25 +4892,49 @@ const getReturnedLength = (callback: FunctionNode, context: Context) => {
   return lengths.size === 1 && !isFallible ? [...lengths][0] : undefined;
 };
 
+const getReturnType = (callback: ts.SignatureDeclaration, context: Context) => {
+  const signature = context.checker.getSignatureFromDeclaration(callback);
+  return signature && context.checker.getReturnTypeOfSignature(signature);
+};
+
+const isPrimitiveType = (type: ts.Type) =>
+  (type.isUnion() ? type.types : [type]).every(
+    (member) =>
+      (member.flags &
+        (ts.TypeFlags.StringLike |
+          ts.TypeFlags.NumberLike |
+          ts.TypeFlags.BooleanLike |
+          ts.TypeFlags.BigIntLike |
+          ts.TypeFlags.Undefined |
+          ts.TypeFlags.Null |
+          ts.TypeFlags.Void)) !==
+      0,
+  );
+
 // Whether a function returns only primitives.
 const isPrimitiveReturn = (callback: ts.SignatureDeclaration, context: Context) => {
-  const signature = context.checker.getSignatureFromDeclaration(callback);
-  const returned = signature && context.checker.getReturnTypeOfSignature(signature);
-  return (
-    returned !== undefined &&
-    (returned.isUnion() ? returned.types : [returned]).every(
-      (type) =>
-        (type.flags &
-          (ts.TypeFlags.StringLike |
-            ts.TypeFlags.NumberLike |
-            ts.TypeFlags.BooleanLike |
-            ts.TypeFlags.BigIntLike |
-            ts.TypeFlags.Undefined |
-            ts.TypeFlags.Null |
-            ts.TypeFlags.Void)) !==
-        0,
-    )
-  );
+  const returned = getReturnType(callback, context);
+  return returned !== undefined && isPrimitiveType(returned);
+};
+
+// Whether a type holds only primitives, in arrays that the heap doesn't hold.
+const isValueType = (type: ts.Type, context: Context): boolean =>
+  (type.isUnion() ? type.types : [type]).every((member) => {
+    const element = context.checker.getIndexTypeOfType(member, ts.IndexKind.Number);
+    return (
+      isPrimitiveType(member) ||
+      (context.heapCollections.size === 0 &&
+        (context.checker.isArrayType(member) || context.checker.isTupleType(member)) &&
+        element !== undefined &&
+        isValueType(element, context))
+    );
+  });
+
+// Whether a function returns values that hold no objects, so that no one reaches the objects it
+// makes once it returns.
+export const isValueReturn = (callback: ts.SignatureDeclaration, context: Context) => {
+  const returned = getReturnType(callback, context);
+  return returned !== undefined && isValueType(returned, context);
 };
 
 // A call of Iterator.prototype's map, filter, flatMap, take, or drop on a generator object, which
@@ -12968,10 +12992,10 @@ export const translateLocalStatements = (
   context: Context,
 ): Formula => {
   const owner = body.parent;
-  // A function that returns only primitives may make objects and change them, as no one else can
+  // A function that returns only values may make objects and change them, as no one else can
   // reach them after it returns, where it changed no object that was there before.
   const heapSymbol =
-    ts.isFunctionLike(owner) && isPrimitiveReturn(owner, context) ? context.heap : undefined;
+    ts.isFunctionLike(owner) && isValueReturn(owner, context) ? context.heap : undefined;
   const state = [
     ...context.variables.keys(),
     ...(context.heap === undefined ? [] : [context.heap]),

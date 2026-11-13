@@ -30,13 +30,14 @@ import {
   getWrittenRoots,
   getImmutableWrite,
   throwOnUnentered,
+  isValueReturn,
   translateLocalStatements,
 } from "./actions";
 import { TlaTypeScriptError } from "../errors";
 import { getUncaughtText } from "./exceptions";
 import { translateCondition, translateExpression, translateNegatedCondition } from "./expressions";
 import { type Formula, ifThenElse, letIn, render, leaf } from "./formula";
-import { getCandidateValue, getSuperLookup, translateObjectValue } from "./heap";
+import { getAllocated, getCandidateValue, getSuperLookup, translateObjectValue } from "./heap";
 import { mayBeNumber, useJavaScript } from "./javascript";
 import {
   type Bound,
@@ -990,12 +991,27 @@ const isAssigning = (node: ts.Node): boolean =>
   (!ts.isFunctionLike(node) &&
     (ts.forEachChild(node, (child) => isAssigning(child) || undefined) ?? false));
 
-// A body of loops and assignments runs as statements that change only its locals.
+// A body of loops and assignments runs as statements that change only its locals, as does one
+// that makes objects, which only statements allocate. No one reaches those objects once it
+// returns, where it returns values that hold none of them.
 export const translateBody = (body: ts.ConciseBody, scope: Scope, context: Context): Expression => {
-  throwOnUnentered(body.parent, scope, context);
+  const owner = body.parent;
+  throwOnUnentered(owner, scope, context);
   if (!ts.isBlock(body)) return translateExpression(body, scope, context);
+  const literal = body.statements
+    .flatMap((statement) => getAllocated(statement, context))
+    .find((node) => ts.isObjectLiteralExpression(node) && !scope.allocated.has(node));
+  const isMaking =
+    literal !== undefined && ts.isFunctionLike(owner) && isValueReturn(owner, context);
+  const isPure = body.statements.every(isPureStatement);
+  if (literal !== undefined && isPure && !isMaking) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't make objects in a function that an expression calls and that may return them",
+      literal,
+    );
+  }
   return render(
-    body.statements.every(isPureStatement)
+    isPure && !isMaking
       ? translatePure(body.statements, scope, context, () => leaf(getUndefined(context)))
       : translateLocalStatements(body, scope, context),
   );

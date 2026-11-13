@@ -3571,6 +3571,62 @@ describe("calls", () => {
     );
   });
 
+  const getDigitsSource = (read: string, expected: string) => `
+    interface Box {
+      value: number;
+    }
+    const seen = { count: 0 };
+    const unbox = (box: Box) => box.value;
+    const count = (box: Box) => {
+      seen.count += 1;
+      return box.value;
+    };
+    const getDigits = (value: number): number[] => {
+      if (value < 10) return [${read}({ value })];
+      return [...getDigits(Math.floor(value / 10)), ${read}({ value: value % 10 })];
+    };
+    const format = (values: number[]) =>
+      ["digits", ...values.map((value) => getDigits(value).join(","))].join(";");
+    const text = format([1234, 56]);
+    if (text !== "${expected}") throw new Error(text);
+  `;
+
+  it("makes objects in a function that calls itself from an expression", async () => {
+    expect(
+      (await checkModel(getDigitsSource("unbox", "digits;1,2,3,4;5,6"))).failure,
+    ).toBeUndefined();
+  });
+
+  it("fails where the objects that a function calling itself makes give another value", async () => {
+    expect(
+      (await checkModel(getDigitsSource("unbox", "digits;1,2,3,5;5,6"))).failure?.message,
+    ).toContain('"digits;1,2,3,4;5,6"');
+  });
+
+  it("stops where a function that calls itself from an expression changes an object from before the call", async () => {
+    expect(
+      (await checkModel(getDigitsSource("count", "digits;1,2,3,4;5,6"))).failure?.message,
+    ).toContain("tla-ts can't change an object that was there before an expression's call");
+  });
+
+  it("rejects making objects in a function that an expression calls and that returns them", () => {
+    expect(() =>
+      compile(`
+        interface Box {
+          value: number;
+        }
+        const getBoxes = (value: number): Box[] => {
+          if (value < 10) return [{ value }];
+          return [...getBoxes(Math.floor(value / 10)), { value: value % 10 }];
+        };
+        const text = ["digits", ...[1234].map((value) => getBoxes(value).length)].join(";");
+        if (text !== "digits;4") throw new Error(text);
+      `),
+    ).toThrow(
+      "tla-ts can't make objects in a function that an expression calls and that may return them",
+    );
+  });
+
   it("rejects catching a throw from a local function that calls itself", () => {
     expect(() =>
       compile(`
