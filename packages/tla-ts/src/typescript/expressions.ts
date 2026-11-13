@@ -79,6 +79,7 @@ import {
   isCreation,
   isDescription,
   isDescriptionOfAll,
+  isValueOfCall,
   getDescribedValue,
   isFromEntries,
   isFunctionValue,
@@ -3185,6 +3186,7 @@ const translateNode = (
   if (
     ts.isCallExpression(node) &&
     !isObjectConversion(node, context) &&
+    !(isValueOfCall(node, context) && getNewWrapper(node, context) !== undefined) &&
     getNewClass(node, context) === undefined
   ) {
     return translateCall(node, scope, context, isDefined);
@@ -3227,7 +3229,25 @@ const translateNode = (
     if (allocated === undefined) {
       throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
     }
-    return allocated;
+    return isValueOfCall(node, context)
+      ? ifExpression(
+          useJavaScript(
+            "HoldsBuiltIn",
+            [
+              getHeap(scope, node, context),
+              translateBuiltInValue("Object.prototype", node, context),
+              string("valueOf"),
+              string("Object.prototype.valueOf"),
+            ],
+            context,
+          ),
+          allocated,
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't call an Object.prototype.valueOf that a script replaced"),
+          ]),
+        )
+      : allocated;
   }
   // new Object, or Object, of an object gives the object.
   const passed = isObjectConversion(node, context) ? node.arguments?.at(0) : undefined;

@@ -1734,8 +1734,19 @@ export const isAllocation = (node: ts.Node, context: Context) =>
   isRevocable(node, context) ||
   getNewWrapper(node, context) !== undefined;
 
-// The primitive that new Boolean, new Number, or new String wraps in an object, or that Object
-// wraps in a Symbol or BigInt object.
+// Object.prototype.valueOf.call of a value, which converts it to an object as Object does.
+export const isValueOfCall = (node: ts.Node, context: Context): node is MethodCall =>
+  context.heap !== undefined &&
+  isMethodCall(node) &&
+  node.expression.name.text === "call" &&
+  ts.isPropertyAccessExpression(node.expression.expression) &&
+  node.expression.expression.name.text === "valueOf" &&
+  ts.isPropertyAccessExpression(node.expression.expression.expression) &&
+  node.expression.expression.expression.name.text === "prototype" &&
+  getBuiltIn(node.expression.expression.expression.expression, context) === "Object";
+
+// The primitive that new Boolean, new Number, or new String wraps in an object, or that Object, or
+// Object.prototype.valueOf through call, wraps in an object.
 export const getNewWrapper = (node: ts.Node, context: Context) => {
   const called =
     context.heap !== undefined && ts.isNewExpression(node)
@@ -1744,11 +1755,14 @@ export const getNewWrapper = (node: ts.Node, context: Context) => {
         ? "Object"
         : undefined;
   // new Object, or Object, of a primitive wraps it as its own constructor would.
-  const argument = isObjectConversion(node, context) ? node.arguments?.at(0) : undefined;
+  const argument =
+    isObjectConversion(node, context) || isValueOfCall(node, context)
+      ? node.arguments?.at(0)
+      : undefined;
   const isWrapped =
-    called === "Object" &&
     argument !== undefined &&
-    isHeapType(context.checker.getTypeAtLocation(node), context);
+    (isValueOfCall(node, context) ||
+      (called === "Object" && isHeapType(context.checker.getTypeAtLocation(node), context)));
   const names = isWrapped
     ? getTypeNames(context.checker.getTypeAtLocation(argument), context.checker)
     : undefined;
