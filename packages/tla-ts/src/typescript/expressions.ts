@@ -2207,6 +2207,33 @@ const translateNativeErrorRead = (
     ),
   );
 
+// A boolean or a number has no properties of its own, so it reads them from its prototype.
+const translatePrimitiveRead = (
+  node: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  getKey: () => Expression,
+  scope: Scope,
+  context: Context,
+) => {
+  const names = getTypeNames(context.checker.getTypeAtLocation(node.expression), context.checker);
+  const prototype =
+    names?.length !== 1
+      ? undefined
+      : names[0] === "boolean"
+        ? "Boolean.prototype"
+        : names[0] === "number"
+          ? "Number.prototype"
+          : undefined;
+  if (prototype === undefined) return undefined;
+  if (context.heap === undefined) {
+    throw new TlaTypeScriptError(`Unsupported property: ${node.getText()}`, node);
+  }
+  return useJavaScript(
+    "Get",
+    [getHeap(scope, node, context), translateBuiltInValue(prototype, node, context), getKey()],
+    context,
+  );
+};
+
 const translatePropertyAccess = (
   node: ts.PropertyAccessExpression,
   scope: Scope,
@@ -2259,6 +2286,8 @@ const translatePropertyAccess = (
       context,
     );
   }
+  const primitiveRead = translatePrimitiveRead(node, () => string(name), scope, context);
+  if (primitiveRead !== undefined) return primitiveRead;
   // A value of type Function, such as an object's constructor, may be a built-in function, which
   // only the heap knows the properties of.
   const isFunctionType =
@@ -2624,6 +2653,13 @@ const translateElementRead = (
   if (builtIn !== undefined) return builtIn;
   const getterRead = translateGetterRead(node, scope, context);
   if (getterRead !== undefined) return getterRead;
+  const primitiveRead = translatePrimitiveRead(
+    node,
+    () => translatePropertyKey(node.argumentExpression, scope, context),
+    scope,
+    context,
+  );
+  if (primitiveRead !== undefined) return primitiveRead;
   const kind = getKind(node.expression, context);
   if (kind === "object" || isHeapBuiltIn(node.expression, scope, context)) {
     // A built-in object's symbol may key an object whose type isn't one that the heap holds, such

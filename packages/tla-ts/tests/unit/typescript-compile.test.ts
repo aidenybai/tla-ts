@@ -20880,6 +20880,34 @@ describe("BigInts", () => {
     );
   });
 
+  const getPrimitiveMethodSource = (read: string, expected: string) => `
+      const holder = { seen: 0 };
+      const key = "toString";
+      const method: unknown = ${read};
+      if (method !== ${expected}) throw new Error("method");
+  `;
+
+  it("reads a boolean's method from Boolean.prototype", async () => {
+    const source = getPrimitiveMethodSource('false["toString"]', "Boolean.prototype.toString");
+    expect((await checkModel(source)).failure).toBeUndefined();
+  });
+
+  it("reads no other method for a boolean's property", async () => {
+    const source = getPrimitiveMethodSource("true.toString", "Number.prototype.toString");
+    expect((await checkModel(source)).failure?.message).toContain('"method"');
+  });
+
+  it("reads a number's method from Number.prototype through a key", async () => {
+    const source = getPrimitiveMethodSource("(5)[key]", "Number.prototype.toString");
+    expect((await checkModel(source)).failure).toBeUndefined();
+  });
+
+  it("stops at a primitive's property in a script without objects", () => {
+    expect(() => compile('const method: unknown = false["toString"];')).toThrow(
+      'Unsupported property: false["toString"]',
+    );
+  });
+
   it("assigns, converts, and writes BigInts", async () => {
     const result = await checkModel(`
       let a = 5n;
