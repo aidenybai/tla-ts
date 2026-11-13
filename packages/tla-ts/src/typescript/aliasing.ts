@@ -468,7 +468,8 @@ export const getReached = (roots: readonly ts.Node[], context: Context) => {
   return reached;
 };
 
-// Whether a node may make an object literal, itself or through a function that it names.
+// Whether a node may make an object or a regexp literal, itself or through a function that it
+// names.
 export const isMakingObjects = (node: ts.Node, context: Context) =>
   getReached([node], context).some(hasObjectLiteral);
 

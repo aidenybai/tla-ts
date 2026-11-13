@@ -4234,6 +4234,14 @@ describe("definitions", () => {
     expect(wrong.failure?.message).toContain("precedence");
   });
 
+  it("makes once the regexp that another file's constant holds", async () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/reading.ts");
+    const source = readFileSync(path, "utf8");
+    expect((await check(compile(source, path))).failure).toBeUndefined();
+    const wrong = await check(compile(source.replace('"12@0;3@3"', '"12@0;3@2"'), path));
+    expect(wrong.failure?.message).toContain('"12@0;3@3"');
+  });
+
   it("makes once the objects that a constant makes through a function that a recursive function reads", async () => {
     const getSource = (total: number) => `
       const createPrecedence = (low: number, high: number) => ({ low, high });
