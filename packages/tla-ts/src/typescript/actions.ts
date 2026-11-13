@@ -11588,7 +11588,18 @@ const findLeadingCall = (
         ? findLeadingCall(receiver, before, path, context)
         : none;
     if (fromReceiver.call !== undefined || fromReceiver.isBlocked) return fromReceiver;
-    if (!isListed && !isPlainCallee(node.expression, context, path.scope.results)) return blocked;
+    // A regexp's method under a well-known symbol reads no getter.
+    const isRegExpMethod =
+      ts.isElementAccessExpression(node.expression) &&
+      getHeapRegExpCall(node, context) !== undefined &&
+      isPlainCallee(getCast(node.expression.expression), context, path.scope.results);
+    if (
+      !isListed &&
+      !isRegExpMethod &&
+      !isPlainCallee(node.expression, context, path.scope.results)
+    ) {
+      return blocked;
+    }
     const found = thenConverted(inOrder(node.arguments));
     if (found.call !== undefined || found.isBlocked) return found;
     if (isGeneratorType(node, context)) return blocked;

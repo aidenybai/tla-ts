@@ -27,6 +27,7 @@ import {
   TIME_METHODS,
 } from "./heap";
 import {
+  getBuiltInKey,
   getStoredBuiltIn,
   isBuiltInObject,
   translateBuiltInValue,
@@ -1907,11 +1908,14 @@ interface RegExpCall {
   values: readonly ts.Expression[];
 }
 
-// A regexp's exec or test of a string, or a string's method that calls a regexp's.
+// A regexp's exec or test of a string, its method under Symbol.match, Symbol.replace,
+// Symbol.search, or Symbol.split, or a string's method that calls a regexp's.
 const getRegExpCall = (node: ts.Node, context: Context): RegExpCall | undefined => {
-  if (!isMethodCall(node)) return undefined;
-  const receiver = node.expression.expression;
-  const method = node.expression.name.text;
+  const key = ts.isCallExpression(node) ? getBuiltInKey(node.expression, context) : undefined;
+  if (!ts.isCallExpression(node) || key === undefined) return undefined;
+  const receiver = key.owner;
+  const isSymbol = key.name.startsWith("@@");
+  const method = isSymbol ? key.name.slice(2) : key.name;
   const values = node.arguments;
   const isRegExp = (value: ts.Expression | undefined) =>
     value !== undefined && context.checker.getTypeAtLocation(value).getSymbol()?.name === "RegExp";
@@ -1932,9 +1936,13 @@ const getRegExpCall = (node: ts.Node, context: Context): RegExpCall | undefined 
     isWrapped: text === receiver && isWrapped,
     values: rest,
   });
-  if (isRegExp(receiver) && (method === "exec" || method === "test")) {
-    return values.length === 1 && isText(values[0]) ? getCall(receiver, values[0], []) : undefined;
+  if (isRegExp(receiver) && (isSymbol || method === "exec" || method === "test")) {
+    const isKnown =
+      values.length === (method === "replace" ? 2 : 1) ||
+      (method === "split" && values.length === 2 && isNumberLike(values[1], context));
+    return isKnown && isText(values[0]) ? getCall(receiver, values[0], values.slice(1)) : undefined;
   }
+  if (isSymbol) return undefined;
   // search and match make a regexp of a string.
   const isMade =
     (method === "search" || method === "match") && getStringRegExp(values[0]) !== undefined;
@@ -1977,7 +1985,7 @@ export const getHeapRegExpCall = (node: ts.Node, context: Context) => {
 // an expression only one that reads a literal and gives no object, so that no one can observe the
 // object that the literal makes. tla-ts then follows the built-in methods only while a script
 // hasn't changed those that the call reads.
-const translateRegExpCall = (node: MethodCall, scope: Scope, context: Context) => {
+export const translateRegExpCall = (node: ts.CallExpression, scope: Scope, context: Context) => {
   const call = getRegExpCall(node, context);
   if (
     call === undefined ||

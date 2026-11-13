@@ -88,7 +88,7 @@ const getFunctionPrototype = (type: ts.Type) => {
 
 // The object and the key that a read names, as BUILT_INS writes it: a property's name, or a
 // well-known symbol's, as "@@iterator".
-const getBuiltInKey = (node: ts.Expression, context: Context) => {
+export const getBuiltInKey = (node: ts.Expression, context: Context) => {
   if (ts.isPropertyAccessExpression(node) && !ts.isPrivateIdentifier(node.name)) {
     return { owner: node.expression, name: node.name.text };
   }

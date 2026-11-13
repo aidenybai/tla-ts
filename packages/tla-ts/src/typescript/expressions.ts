@@ -8,6 +8,7 @@ import {
   translateArrayIteration,
   translateMethod,
   translateNew,
+  translateRegExpCall,
   translateSet,
   translateSize,
   isArrayIteration,
@@ -712,7 +713,8 @@ export const translateCall = (
   const converted =
     translateConversion(node, scope, context) ??
     translateIntrinsic(node, scope, context) ??
-    translateJsonCall(node, scope, context);
+    translateJsonCall(node, scope, context) ??
+    (isMethodCall(node) ? undefined : translateRegExpCall(node, scope, context));
   if (converted !== undefined) return converted;
   // decodeURI and decodeURIComponent may throw, so only a statement runs them.
   const uriCall = getURICall(node, context);
