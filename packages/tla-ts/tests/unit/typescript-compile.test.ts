@@ -4817,12 +4817,37 @@ describe("errors", () => {
       }
     `);
     expect(result.failure).toBeUndefined();
+  });
+
+  it("changes the case of characters outside ASCII that a script holds", async () => {
+    const getSource = (expected: string) => `
+      if ("straße".toUpperCase() !== "${expected}" || "\u00c9COLE".toLowerCase() !== "\u00e9cole") {
+        throw new Error("case");
+      }
+      if ("\u0130".toLowerCase().length !== 2 || "\u00ff".toUpperCase().charCodeAt(0) !== 0x178) {
+        throw new Error("special");
+      }
+    `;
+    expect((await checkModel(getSource("STRASSE"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("STRAßE"))).rejects.toThrow("case");
+  });
+
+  it("changes the case of a code point that a surrogate pair makes", async () => {
+    const getSource = (expected: string) => `
+      const high = "\uD801";
+      const low = "\uDC28";
+      if ((high + low + "x").toUpperCase() !== "${expected}X" || high.toUpperCase() !== high) {
+        throw new Error("pair");
+      }
+    `;
+    expect((await checkModel(getSource("\\u{10400}"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("\\u{10428}"))).rejects.toThrow("pair");
+  });
+
+  it("stops where it lowers a capital sigma, whose case depends on the letters around it", async () => {
     await expect(
-      checkModel(`
-        const text = "\u00c9";
-        if (text.toLowerCase() !== "\u00e9") throw new Error("wide");
-      `),
-    ).rejects.toThrow("tla-ts can't change the case of a character outside ASCII");
+      checkModel(`if ("\u0391\u03a3".toLowerCase() === "") throw new Error("never");`),
+    ).rejects.toThrow("tla-ts can't lower the case of a capital sigma");
   });
 
   it("parses an integer in a radix with parseInt", async () => {

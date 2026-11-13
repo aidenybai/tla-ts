@@ -288,6 +288,7 @@ export const emit = (
                 "  Symbols <- UsedSymbols",
                 "  Fractions <- UsedFractions",
                 "  Characters <- UsedCharacters",
+                "  Cases <- UsedCases",
               ]
             : []),
         ]
