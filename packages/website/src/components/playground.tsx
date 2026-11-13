@@ -1,5 +1,5 @@
 import { CaretDown } from "@phosphor-icons/react";
-import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import type { Compilation } from "../compile-worker";
@@ -10,6 +10,7 @@ import { PLAYGROUND_EXAMPLES } from "../playground-examples";
 import type { RunResult } from "../run-worker";
 import type { Mark, Source } from "../site-data";
 import { useCompile } from "../use-compile";
+import { useIsHydrated } from "../use-is-hydrated";
 import { useMediaQuery } from "../use-media-query";
 import { useRun } from "../use-run";
 import { CodeEditor } from "./code-editor";
@@ -18,6 +19,7 @@ import { Connector } from "./connector";
 import { GitHubIcon } from "./github-icon";
 import { Logo } from "./logo";
 import { RunIcon } from "./run-icon";
+import { SearchCell, useSearchPath } from "./search-cell";
 import { ThemeMenu } from "./theme-menu";
 import { Verdict } from "./verdict";
 import { Button } from "./ui/button";
@@ -97,6 +99,7 @@ export const PlaygroundRoot = (props: PartProps) => {
       source: compilation.tla,
       config: compilation.config,
       modules: compilation.modules,
+      isSearchShown: true,
     });
   };
   useEffect(() => {
@@ -198,11 +201,16 @@ const Pane = (props: PaneProps) => (
 export const PlaygroundPanes = () => {
   const state = playgroundContext.useParts();
   const isWide = useMediaQuery("(min-width: 48rem)");
-  const isHydrated = useSyncExternalStore(
-    subscribeToNothing,
-    () => true,
-    () => false,
-  );
+  const isHydrated = useIsHydrated();
+  const search = state.result?.search;
+  const path = useSearchPath(search);
+  const outputRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const output = outputRef.current;
+    (
+      output?.querySelector('[data-state="failing"]') ?? output?.querySelector("[data-state]")
+    )?.scrollIntoView({ block: "center" });
+  }, [search]);
   const source = (
     <Pane name="source">
       <CodeEditor
@@ -219,6 +227,7 @@ export const PlaygroundPanes = () => {
   const output = (
     <Pane name="output">
       <code
+        ref={outputRef}
         onPointerOver={(event) =>
           state.setHoveredName(
             event.target instanceof HTMLElement ? event.target.dataset.region : undefined,
@@ -242,7 +251,22 @@ export const PlaygroundPanes = () => {
               hoveredName={state.hoveredName}
               colors={state.colors}
               note={state.result?.notes.find((note) => note.line === line.number)}
-              isActive={state.result?.activeLine === line.number}
+              isActive={(path.states.at(0)?.line ?? state.result?.activeLine) === line.number}
+              isDimmed={
+                path.states.length > 0 &&
+                path.states.every((innerState) => innerState.line !== line.number)
+              }
+              aside={
+                search && (
+                  <SearchCell
+                    search={search}
+                    line={line.number}
+                    path={path.states}
+                    onHover={path.hover}
+                    className="max-sm:pl-10"
+                  />
+                )
+              }
               className="-mr-4 -ml-4 pr-4 pl-4"
             />
           ))}

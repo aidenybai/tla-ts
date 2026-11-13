@@ -34,7 +34,12 @@ export const ExampleRoot = (props: RootProps) => {
   const [phase, setPhase] = useState<"idle" | "rewinding" | "compiling">("idle");
   const [hasRun, setHasRun] = useState(false);
   const isRunning = phase !== "idle" || runner.isRunning;
-  const request = { source: example.tla.code, config: example.config };
+  const request = {
+    source: example.tla.code,
+    config: example.config,
+    modules: example.modules,
+    isSearchShown: true,
+  };
   return (
     <exampleContext.PartsContext
       value={{
@@ -136,6 +141,7 @@ export const ExampleSource = () => {
       source={state.isCompiled ? state.example.tla : state.example.typescript}
       activeLine={state.result?.activeLine}
       notes={state.result?.notes}
+      search={state.result?.search}
       highlights={state.example.highlights}
       onMorphEnd={state.finishMorph}
     >

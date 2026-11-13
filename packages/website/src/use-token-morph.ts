@@ -1,4 +1,4 @@
-import { useEffectEvent, useLayoutEffect, useRef, type RefObject } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, type RefObject } from "react";
 
 const MORPH_DURATION_MS = 600;
 const HIGHLIGHT_DURATION_MS = 1400;
@@ -85,6 +85,22 @@ export const useTokenMorph = (
 ) => {
   const snapshotRef = useRef<CodeSnapshot | undefined>(undefined);
   const finish = useEffectEvent(() => onFinish?.());
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (container === null) return;
+    const observer = new ResizeObserver(() => {
+      const snapshot = snapshotRef.current;
+      if (snapshot === undefined || container.getAnimations().length > 0) return;
+      snapshotRef.current = {
+        code: snapshot.code,
+        tokens: getTokenSnapshots(container),
+        height: container.offsetHeight,
+      };
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [containerRef]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;

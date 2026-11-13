@@ -39,12 +39,12 @@ export const App = () => (
     <div className="mt-12 flex flex-col gap-12">
       <Section.Root>
         <Section.Title>How it works</Section.Title>
-        <ol className="flex list-decimal flex-col gap-1.5 pl-5 marker:text-faint">
+        <ol className="flex list-decimal flex-col gap-1.5 pl-5 text-pretty marker:text-faint">
           <li>
             Run <InlineCode>npx tla-ts [file].ts</InlineCode>
           </li>
-          <li>TLA-ts transpiles TypeScript into TLA+</li>
-          <li>TLA-ts model checks TypeScript code and finds violations</li>
+          <li>TLA-ts converts it into TLA+ and formally checks every state</li>
+          <li>Get any violations, with the steps that caused them</li>
         </ol>
         <Example.Root>
           <Example.Description />
