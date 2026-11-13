@@ -14086,6 +14086,24 @@ describe("errors", () => {
     );
   });
 
+  it("converts a primitive that a string method takes as a number", async () => {
+    const getSource = (expected: string) => `
+      const outcomes = [
+        // @ts-ignore
+        "abc".charAt(true),
+        // @ts-ignore
+        "abc".slice(null, "2"),
+        // @ts-ignore
+        "abc".substring(false, true),
+        // @ts-ignore
+        String("aXbX".indexOf("X", "2")),
+      ].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("b,ab,a,3"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("a,ab,a,1"))).rejects.toThrow("outcomes b,ab,a,3");
+  });
+
   it("converts a primitive that a string method takes as a string", async () => {
     const getSource = (expected: string) => `
       const outcomes = [

@@ -2001,12 +2001,25 @@ export const translateMethod = (
       : primitiveCall.converter === undefined
         ? translateExpression(receiver, scope, context)
         : useJavaScript(primitiveCall.converter, [translateOptional(primitiveCall.owner)], context),
-    primitiveCall.methodArguments.map((argument, position) =>
-      getPrimitiveArgument(primitiveCall.method, primitiveMethod, position, argument, context) ===
-      "converted"
-        ? translateToString(argument, scope, context)
-        : translateExpression(argument, scope, context),
-    ),
+    primitiveCall.methodArguments.map((argument, position) => {
+      if (
+        getPrimitiveArgument(primitiveCall.method, primitiveMethod, position, argument, context) !==
+        "converted"
+      ) {
+        return translateExpression(argument, scope, context);
+      }
+      if (primitiveMethod.parameters[position] === "string") {
+        return translateToString(argument, scope, context);
+      }
+      const converted = useJavaScript(
+        "ToNumber",
+        [translateExpression(argument, scope, context)],
+        context,
+      );
+      return context.hasSpecialNumbers
+        ? converted
+        : useJavaScript("PlainNumber", [converted], context);
+    }),
     context,
   );
 };
@@ -2014,9 +2027,9 @@ export const translateMethod = (
 // The string parameters that read undefined as their own default, rather than as "undefined".
 const UNDEFINED_DEFAULTS = new Set(["split 0", "padStart 1", "padEnd 1", "normalize 0"]);
 
-// How a primitive's method takes a primitive argument: a number for a number parameter as it is, and
-// for a string parameter a string as it is or another primitive converted by ToString. A parameter
-// that reads undefined as its default takes it as it is.
+// How a primitive's method takes a primitive argument: a number for a number parameter as it is or
+// another primitive converted by ToNumber, and for a string parameter a string as it is or another
+// primitive converted by ToString. A parameter that reads undefined as its default takes it as it is.
 export const getPrimitiveArgument = (
   method: string,
   primitiveMethod: PrimitiveMethod,
@@ -2028,7 +2041,9 @@ export const getPrimitiveArgument = (
   if (primitiveMethod.parameters[position] === "number") {
     return isNumberLike(argument, context) || isEvery(type, ts.TypeFlags.Undefined)
       ? "kept"
-      : undefined;
+      : isEvery(type, ts.TypeFlags.StringLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.Null)
+        ? "converted"
+        : undefined;
   }
   const isDefaulted = UNDEFINED_DEFAULTS.has(`${method} ${position}`);
   const kept = isDefaulted
