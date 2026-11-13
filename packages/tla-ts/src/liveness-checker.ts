@@ -1,4 +1,5 @@
 import { TlaEvaluationError } from "./errors";
+import { isExpressionImpure } from "./dependencies";
 import { hasRepeatedEffects, type Environment } from "./evaluate";
 import {
   evaluateLive,
@@ -190,6 +191,28 @@ const UNVISITED = -1;
 
 const MAXIMUM_LINK = Number.MAX_SAFE_INTEGER;
 
+const getScopedExpressions = (expression: LiveExpression): ScopedExpression[] => {
+  switch (expression.kind) {
+    case "Boolean":
+      return [];
+    case "State":
+      return [expression];
+    case "Enabled":
+      return [{ expression: expression.step, scope: expression.scope }];
+    case "Action": {
+      const scope = expression.scope;
+      return [expression.expression, expression.subscript].flatMap((inner) =>
+        inner ? [{ expression: inner, scope }] : [],
+      );
+    }
+    case "And":
+    case "Or":
+      return expression.operands.flatMap(getScopedExpressions);
+    default:
+      return getScopedExpressions(expression.body);
+  }
+};
+
 export const createLivenessChecker = (
   properties: TemporalProperty[],
   temporals: ScopedExpression[],
@@ -233,7 +256,16 @@ export const createLivenessChecker = (
   }));
   let capacityMultiplier = 1;
 
-  const isShared = !hasRepeatedEffects(environment);
+  // A check evaluated once for a state shows what TLC shows when no check repeats an effect. A
+  // definition TLC evaluates as it starts repeats nothing, but a scope can bind any definition.
+  const checked = getScopedExpressions(formula);
+  const isShared = checked.every((item) => item.scope === undefined)
+    ? !isExpressionImpure(
+        checked.map((item) => item.expression),
+        environment,
+        "repeated",
+      )
+    : !hasRepeatedEffects(environment);
   let evaluationEnvironment = environment;
   const sharedStates = new Map<Value[], Map<LiveExpression, boolean>>();
   const sharedActions = new Map<Value[], Map<Value[], Int8Array>>();

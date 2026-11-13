@@ -41,6 +41,16 @@ describe("liveness matches TLC", () => {
     expect([result.generatedStates, result.distinctStates]).toEqual([92, 36]);
   });
 
+  it("evaluates a fairness check that prints on each step, as TLC does", async () => {
+    const printed: string[] = [];
+    await check({
+      source: readFileSync(join(DIRECTORY, "PrintedFairness.tla"), "utf8"),
+      config: readFileSync(join(DIRECTORY, "PrintedFairness.cfg"), "utf8"),
+      onPrint: (text) => printed.push(String(text)),
+    });
+    expect(printed).toEqual(Array(9).fill('"a"'));
+  });
+
   it("finds a lasso in the part of the graph that TLC's periodic check sees", async () => {
     const result = await check({
       source:
