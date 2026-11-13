@@ -12,7 +12,7 @@ export interface RunRequest {
 export interface LineNote {
   line: number;
   text: string;
-  tone: "neutral" | "danger" | "hint";
+  tone: "neutral" | "danger";
 }
 
 export interface RunResult {
