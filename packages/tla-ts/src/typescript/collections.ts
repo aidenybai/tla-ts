@@ -451,12 +451,33 @@ const translateUnordered = (
   if (kind === "map" && method === "values") return getValues(translate(receiver), context);
   if (kind === "map" && method === "entries") return getEntries(translate(receiver), context);
   if (method === "toArray") return translateUnordered(receiver, scope, context);
-  if (method !== "filter" && method !== "map") return undefined;
+  if (method !== "filter" && method !== "map" && method !== "flatMap") return undefined;
   const source = translateUnordered(receiver, scope, context);
   if (source === undefined) return undefined;
   const callback = node.arguments[0];
+  // flatMap of a callback that gives an array that the heap doesn't hold takes its elements.
+  const flattened =
+    ts.isArrowFunction(callback) && !ts.isBlock(callback.body) ? callback.body : undefined;
+  if (
+    method === "flatMap" &&
+    (flattened === undefined ||
+      getKind(flattened, context) !== "sequence" ||
+      isHeapArray(flattened, context))
+  ) {
+    return undefined;
+  }
   rejectIndex(callback, "Elements of a set have no index", scope, context);
   const element = bindElement(callback, scope, context);
+  if (method === "flatMap") {
+    return {
+      set: apply("UNION", [
+        map(getElements(translateCallback(callback, element.scope, context), context), [
+          bound(element.variable, source.set),
+        ]),
+      ]),
+      isMapped: true,
+    };
+  }
   return method === "filter"
     ? {
         set: filter(
