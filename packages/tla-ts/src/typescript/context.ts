@@ -59,6 +59,9 @@ export interface Context {
   // The literal that each function a script holds as a value returns, by its model value's name,
   // for the functions that return only a literal.
   constantFunctions: Map<string, Expression>;
+  // The object of each method that a script makes once, by its model value's name, which the heap
+  // reads the method's properties from.
+  methodObjects: Map<string, Expression>;
   // Whether a script names NaN, Infinity, or -0, so that its numbers compute as JavaScript's.
   hasSpecialNumbers: boolean;
   // The file of a script without exported actions that reports what it doesn't catch as Node does,
@@ -140,6 +143,7 @@ export const createContext = (checker: ts.TypeChecker): Context => ({
   heap: undefined,
   builtIns: new Set(),
   constantFunctions: new Map(),
+  methodObjects: new Map(),
   hasSpecialNumbers: false,
   script: undefined,
   symbols: [],

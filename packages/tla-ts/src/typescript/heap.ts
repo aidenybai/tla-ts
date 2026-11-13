@@ -279,8 +279,65 @@ export const getMethodValue = (
     : getSymbol(method.name, context.checker);
   if (symbol === undefined) throw new TlaTypeScriptError("Name this method", method);
   const name = ts.isComputedPropertyName(method.name) ? "computed" : method.name.getText();
-  return getModelValue(method, symbol, `${name}Method`, context);
+  const value = getModelValue(method, symbol, `${name}Method`, context);
+  const methodName =
+    ts.isMethodDeclaration(method) && isMethodObject(method, context)
+      ? getMethodName(method, context)
+      : undefined;
+  if (methodName !== undefined && value.kind === "Identifier") {
+    context.methodObjects.set(
+      value.name,
+      useJavaScript(
+        "ArrowObject",
+        [
+          translateBuiltInValue("Function.prototype", method, context),
+          string(methodName),
+          number(getFunctionLength(getParameters(method))),
+        ],
+        context,
+      ),
+    );
+  }
+  return value;
 };
+
+// A method's name, as its key gives it, where a symbol that a variable holds gives its description
+// in brackets, or no name where it has none.
+const getMethodName = (method: ts.MethodDeclaration, context: Context) => {
+  const key = method.name;
+  if (ts.isIdentifier(key) || ts.isStringLiteral(key)) return key.text;
+  if (!ts.isComputedPropertyName(key) || !ts.isIdentifier(key.expression)) return undefined;
+  const symbol = getSymbol(key.expression, context.checker);
+  const declaration = symbol?.valueDeclaration;
+  const made =
+    declaration !== undefined && ts.isVariableDeclaration(declaration)
+      ? declaration.initializer
+      : undefined;
+  if (
+    symbol === undefined ||
+    made === undefined ||
+    !ts.isCallExpression(made) ||
+    getBuiltIn(made.expression, context) !== "Symbol" ||
+    isAssigned(symbol, method.getSourceFile(), context)
+  ) {
+    return undefined;
+  }
+  const description = made.arguments.at(0);
+  if (description === undefined) return "";
+  return made.arguments.length === 1 && ts.isStringLiteral(description)
+    ? `[${description.text}]`
+    : undefined;
+};
+
+// A plain method that a class or an object literal makes once, so that its model value stands for
+// one function object, whose properties the heap holds.
+export const isMethodObject = (node: ts.MethodDeclaration, context: Context) =>
+  context.heap !== undefined &&
+  node.body !== undefined &&
+  isPlain(node) &&
+  getMethodName(node, context) !== undefined &&
+  (ts.isObjectLiteralExpression(node.parent) || ts.isClassLike(node.parent)) &&
+  isOnce(node.parent);
 
 // The model value of a function that a value may hold.
 export const getCandidateValue = (node: FunctionNode, context: Context) =>

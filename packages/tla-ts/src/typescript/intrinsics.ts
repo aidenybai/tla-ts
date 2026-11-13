@@ -795,7 +795,8 @@ const translateBuiltInProperty = (value: string, node: ts.Node, context: Context
   return value.startsWith("n") ? getNumberValue(Number(payload), context) : undefined;
 };
 
-// The built-in objects that a script's heap holds: those the script names, and their prototypes.
+// The built-in objects that a script's heap holds: those the script names, their prototypes, and
+// the objects of the methods that it makes once.
 export const translateBuiltIns = (node: ts.Node, context: Context) => {
   const included = new Set<string>();
   const include = (name: string | null) => {
@@ -830,6 +831,10 @@ export const translateBuiltIns = (node: ts.Node, context: Context) => {
   ]);
   return functionFrom([
     ...stubs,
+    ...[...context.methodObjects].map((entry): [Expression, Expression] => [
+      identifier(entry[0]),
+      entry[1],
+    ]),
     ...[...included].map((name): [Expression, Expression] => {
       const entry = BUILT_INS[name];
       const properties = entry[3];

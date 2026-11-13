@@ -7602,6 +7602,87 @@ describe("errors", () => {
     });
   });
 
+  describe("reads the properties of a method that a script makes once from the heap", () => {
+    const getMethodSource = (checked: string, expected: string) => `
+      const seen = { count: 0 };
+      const check = (target: object, key: string) => {
+        const descriptor = Object.getOwnPropertyDescriptor(target, key);
+        if (descriptor === undefined) return "missing";
+        const flags = [descriptor.writable, descriptor.enumerable, descriptor.configurable];
+        return \`\${String(descriptor.value)} \${flags.join()}\`;
+      };
+      class Counter {
+        add(a: number, b = 1) { return a + b; }
+        static make() { return 2; }
+      }
+      const literal = { method(a: number, b: number) { return a + b; } };
+      const described = [${checked}].join(" | ");
+      const called = new Counter().add(1) + Counter.make() + literal.method(1, 2);
+      if (\`\${described} | \${called}\` !== "${expected}") throw new Error(described);
+    `;
+
+    it("reads the name and the length of class methods", async () => {
+      const checked = 'check(Counter.prototype.add, "name"), check(Counter.make, "length")';
+      const source = (expected: string) => getMethodSource(checked, `${expected} | 7`);
+      expect(
+        (await checkModel(source("add false,false,true | 0 false,false,true"))).failure,
+      ).toBeUndefined();
+      expect(
+        (await checkModel(source("add false,false,true | 1 false,false,true"))).failure?.message,
+      ).toContain("| 0 false");
+    });
+
+    it("reads the length of an object literal's method, which has no prototype", async () => {
+      const checked = 'check(literal.method, "length"), check(literal.method, "prototype")';
+      const source = (expected: string) => getMethodSource(checked, `${expected} | 7`);
+      expect((await checkModel(source("2 false,false,true | missing"))).failure).toBeUndefined();
+      expect((await checkModel(source("1 false,false,true | missing"))).failure?.message).toContain(
+        "2 false",
+      );
+    });
+
+    it("names a method by the description of the symbol that its key holds", async () => {
+      const source = (expected: string) => `
+        const seen = { count: 0 };
+        const getName = (target: object) => {
+          const descriptor = Object.getOwnPropertyDescriptor(target, "name");
+          return descriptor === undefined ? "missing" : String(descriptor.value);
+        };
+        const named = Symbol("test262");
+        const anonymous = Symbol();
+        class Keyed {
+          [named]() { return 1; }
+          static [anonymous]() { return 2; }
+        }
+        const literal = { [named]() { return 3; } };
+        const names = [getName(Keyed.prototype[named]), getName(Keyed[anonymous]), getName(literal[named])];
+        const called = new Keyed()[named]() + Keyed[anonymous]() + literal[named]();
+        const result = \`\${names.join("|")} \${called}\`;
+        if (result !== "${expected}") throw new Error(result);
+      `;
+      expect((await checkModel(source("[test262]||[test262] 6"))).failure).toBeUndefined();
+      expect((await checkModel(source("[test262]|anonymous|[test262] 6"))).failure).toBeDefined();
+    });
+
+    it("reads the name of a method that a call deletes, and still calls it", async () => {
+      const source = (expected: string) => `
+        const seen = { count: 0 };
+        const remove = (target: object) => {
+          delete (target as { name?: string }).name;
+        };
+        class Counter {
+          add() { return 1; }
+        }
+        remove(Counter.prototype.add);
+        const name: string = Counter.prototype.add.name;
+        const result = \`\${name} \${new Counter().add()}\`;
+        if (result !== "${expected}") throw new Error(result);
+      `;
+      expect((await checkModel(source(" 1"))).failure).toBeUndefined();
+      expect((await checkModel(source("add 1"))).failure?.message).toContain(" 1");
+    });
+  });
+
   it("writes the name and message of an error that the heap holds in its toString", async () => {
     const source = `
       const holder = { seen: 0 };
