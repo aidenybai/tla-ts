@@ -131,12 +131,21 @@ export const getWrittenFunctions = (node: ts.Node, key: string, context: Context
   return found.get(key) ?? [];
 };
 
-// The methods that a script writes under a key, which are async only where the caller awaits
-// what they give.
+// The methods that a script writes under a key, or that its getters there return, which are async
+// only where the caller awaits what they give.
 export const getMethods = (node: ts.Node, key: string, context: Context, isAwaited = false) =>
-  getWrittenFunctions(node, key, context).filter(
-    (candidate) => !ts.isGetAccessorDeclaration(candidate) && (isAwaited || !isAsync(candidate)),
-  );
+  getWrittenFunctions(node, key, context)
+    .flatMap((candidate) =>
+      ts.isGetAccessorDeclaration(candidate)
+        ? findNodes(candidate, ts.isReturnStatement).flatMap((statement) =>
+            statement.expression !== undefined &&
+            ts.findAncestor(statement, ts.isFunctionLike) === candidate
+              ? getFunctionCandidates(statement.expression, context)
+              : [],
+          )
+        : [candidate],
+    )
+    .filter((candidate) => isAwaited || !isAsync(candidate));
 
 const getKeyGetters = (node: ts.Node, key: string, context: Context) => [
   ...getWrittenFunctions(node, key, context).filter(ts.isGetAccessorDeclaration),

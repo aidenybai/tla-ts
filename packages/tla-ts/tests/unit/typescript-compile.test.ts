@@ -12591,6 +12591,77 @@ describe("errors", () => {
     expect(wrong.failure).toBeDefined();
   });
 
+  it("calls the dispose method that a getter returns, as a DisposableStack disposes", async () => {
+    const source = (expected: string) => `
+      const resource = {
+        disposed: false,
+        get [Symbol.dispose]() {
+          return function (this: { disposed: boolean }) {
+            this.disposed = true;
+          };
+        },
+      };
+      const stack = new DisposableStack();
+      stack.use(resource);
+      stack.dispose();
+      if (String(resource.disposed) !== "${expected}") throw new Error(String(resource.disposed));
+    `;
+    const result = await checkModel(source("true"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("false"));
+    expect(wrong.failure).toBeDefined();
+  });
+
+  it("reads the dispose getter of what a using declaration holds once", async () => {
+    const source = (expected: number) => `
+      let count = 0;
+      const resource = {
+        get [Symbol.dispose]() {
+          count += 1;
+          return function () {};
+        },
+      };
+      {
+        using held = resource;
+      }
+      if (count !== ${expected}) throw new Error(String(count));
+    `;
+    const result = await checkModel(source(1));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source(2));
+    expect(wrong.failure).toBeDefined();
+  });
+
+  it("awaits the async function that an asyncDispose getter returns, as an AsyncDisposableStack disposes", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let count = 0;
+      const resource = {
+        disposed: false,
+        get [Symbol.asyncDispose]() {
+          count += 1;
+          return async function (this: { disposed: boolean }) {
+            this.disposed = true;
+          };
+        },
+      };
+      const run = async () => {
+        const stack = new AsyncDisposableStack();
+        stack.use(resource);
+        await stack.disposeAsync();
+      };
+      run();
+      setTimeout(() => {
+        const result = \`\${resource.disposed} \${count}\`;
+        if (result !== "${expected}") throw new Error(result);
+      });
+    `;
+    const result = await checkModel(source("true 1"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("false 1"));
+    expect(wrong.failure).toBeDefined();
+  });
+
   it("awaits an async dispose method, which a function's object literal may hold", async () => {
     const source = (expected: string) => `
       declare function setTimeout(callback: () => void): void;
