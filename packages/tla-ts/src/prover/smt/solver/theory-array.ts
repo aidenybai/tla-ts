@@ -122,7 +122,7 @@ export class TheoryArray extends Theory {
   }
 
   private foundUnsupportedOp() {
-    if (this.isUnsupportedOpFound) return;
+    if (this.isUnsupportedOpFound || this.context.params.isArrayFakeSupport) return;
     this.isUnsupportedOpFound = true;
     this.context.pushTrail(() => {
       this.isUnsupportedOpFound = false;
@@ -749,6 +749,7 @@ export class TheoryArray extends Theory {
   private hasNonBetaAsArray() {
     const context = this.context;
     const manager = this.manager;
+    if (context.params.isArrayFakeSupport) return false;
     for (const node of this.asArrayNodes)
       for (const parent of node.parents)
         if (

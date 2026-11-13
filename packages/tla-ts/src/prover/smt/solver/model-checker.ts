@@ -37,7 +37,7 @@ class AuxContext {
     params: SmtParams,
   ) {
     this.asserted = new AssertedFormulas(manager);
-    this.context = new Context(manager, { ...params, relevancyLevel: 0 });
+    this.context = new Context(manager, { ...params, relevancyLevel: 0, isArrayFakeSupport: true });
     this.context.setupContext();
   }
 

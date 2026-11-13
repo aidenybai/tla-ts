@@ -108,6 +108,8 @@ export interface SmtParams {
   isMbqi: boolean;
   mbqiMaxIterations: number;
   relevancyLevel: 0 | 2;
+  // The model checker's auxiliary context pretends every array operation is supported.
+  isArrayFakeSupport?: boolean;
 }
 
 export class Context extends Internalizer {
