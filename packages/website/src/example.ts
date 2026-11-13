@@ -2,7 +2,7 @@ import { examples } from "virtual:site-data";
 import { getHighlightColors } from "./highlight-colors";
 
 const LABELS: Record<string, { article: string; label: string }> = {
-  "counter.ts": { article: "a", label: "counter" },
+  "likes.ts": { article: "a", label: "like button" },
   "overdraft.ts": { article: "a", label: "bank transfer" },
   "hour-clock.ts": { article: "a", label: "clock" },
 };

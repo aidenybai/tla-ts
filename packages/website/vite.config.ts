@@ -14,7 +14,7 @@ import type { Benchmark, CompiledExample, ReferenceBlock, ReferenceSection } fro
 const SITE_DATA = "virtual:site-data";
 const README_URL = new URL("../../README.md", import.meta.url);
 const EXAMPLE_PATHS = [
-  "./src/examples/counter.ts",
+  "./src/examples/likes.ts",
   "../tla-ts/tests/fixtures/typescript/cli/failing/overdraft.ts",
   "../tla-ts/tests/fixtures/typescript/examples/hour-clock/hour-clock.ts",
 ];
