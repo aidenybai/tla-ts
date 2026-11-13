@@ -15,7 +15,14 @@ import {
 import { isConstantLevel, isExpressionImpure } from "./dependencies";
 import { isStackOverflow, TlaError } from "./errors";
 import { permuteValue, type Images } from "./symmetry";
-import { evaluate, findGlobalName, getDefinition, type Environment, type Scope } from "./evaluate";
+import {
+  evaluate,
+  findGlobalName,
+  getDefinition,
+  getStartupValue,
+  type Environment,
+  type Scope,
+} from "./evaluate";
 import { getContext } from "./search";
 import { forEachInitialState, hasBranches } from "./successors";
 import { extendFunction, extendSet, extendValue, getExtendedFingerprints } from "./tlc/fingerprint";
@@ -1395,7 +1402,12 @@ const compileIdentifier = (program: Program, name: string, frame: Frame): Compil
     }
     if (definition.params.length > 0) return unsupported();
     if (isConstantLevel(definition, program.environment)) {
-      return compileConstant(program, evaluateConstant(program, definition.body));
+      // TLC evaluates a constant definition once, as it starts.
+      return compileConstant(
+        program,
+        getStartupValue(definition, program.environment) ??
+          evaluateConstant(program, definition.body),
+      );
     }
     return inline(program, definition, () =>
       compileValue(program, definition.body, { ...frame, scope: new Map() }),

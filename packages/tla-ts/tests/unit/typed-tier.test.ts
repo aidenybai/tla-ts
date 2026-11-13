@@ -191,6 +191,24 @@ describe("typed tier matches TLC", () => {
     expect(await getLines(false)).toEqual(expected);
   });
 
+  it("prints a constant definition once with a replaced TLC module, as TLC does as it starts", async () => {
+    const directory = join(FIXTURES, "bound-print");
+    const getLines = async (isTyped: boolean) => {
+      const lines: string[] = [];
+      await check({
+        source: readFileSync(join(directory, "BoundPrint.tla"), "utf8"),
+        config: readFileSync(join(directory, "BoundPrint.cfg"), "utf8"),
+        maxSetSize: isTyped ? undefined : INTERPRETED_SET_SIZE,
+        loadModule: (name) =>
+          name === "TLC" ? readFileSync(join(directory, "TLC.tla"), "utf8") : undefined,
+        onPrint: (line) => lines.push(String(line)),
+      });
+      return lines;
+    };
+    expect(await getLines(true)).toEqual(['"x"  TRUE']);
+    expect(await getLines(false)).toEqual(['"x"  TRUE']);
+  });
+
   it("branches on the right side of => only with warnings off, like TLC", async () => {
     const results = await Promise.all([
       checkFixture("ImpliesBranches", false),
