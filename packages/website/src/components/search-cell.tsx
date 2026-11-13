@@ -120,7 +120,7 @@ export const SearchCell = (props: SearchCellProps) => {
           {hiddenCount > 0 && index === SHOWN_ROWS && <SearchMore count={hiddenCount} />}
           <span
             className={cn(
-              "relative flex min-h-[22px] items-center py-px transition-opacity duration-150 ease",
+              "relative flex min-h-[22px] items-center py-px transition-opacity duration-150 ease-[ease]",
               path.length > 0 && !path.includes(row.state) && "opacity-40",
             )}
           >

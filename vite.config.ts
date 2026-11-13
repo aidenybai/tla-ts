@@ -15,6 +15,7 @@ export default defineConfig({
     ],
   },
   lint: {
+    jsPlugins: ["@shadcn/lint"],
     rules: {
       "no-unused-vars": [
         "warn",
@@ -28,6 +29,13 @@ export default defineConfig({
       "no-console": "off",
     },
     overrides: [
+      {
+        files: ["packages/website/src/**/*.tsx"],
+        rules: {
+          "shadcn/no-raw-colors": "error",
+          "shadcn/no-unknown-classes": "error",
+        },
+      },
       {
         // TypeScript that tla-ts checks declares a variable without a value to start it at every
         // value of its type, and compares sets and records by value.
