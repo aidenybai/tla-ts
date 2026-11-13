@@ -7723,14 +7723,38 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("helper");
   });
 
+  it("makes a generator object inherit from its function's prototype object", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      function* g() {}
+      function* h() {}
+      if (Object.getPrototypeOf(g()) !== g.prototype || h() instanceof g) throw new Error("other");
+      holder.count = 1;
+      if (g() instanceof g && g() instanceof Iterator) throw new Error("instance");
+    `);
+    expect(result.failure?.message).toContain("instance");
+  });
+
+  it("makes a generator object inherit from the prototype object of a variable's function", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      const g = function* () {};
+      holder.count = 1;
+      if (g() instanceof g) throw new Error("instance");
+    `);
+    expect(result.failure?.message).toContain("instance");
+  });
+
   it("stops telling what a generator object inherits from", async () => {
     const result = await checkModel(`
       const holder = { count: 0 };
-      function* count() {
-        yield 1;
-      }
+      const source = {
+        *count() {
+          yield 1;
+        },
+      };
       holder.count = 1;
-      if (count() instanceof Iterator) throw new Error("generator");
+      if (source.count() instanceof Iterator) throw new Error("generator");
     `);
     expect(result.failure?.message).toContain("tla-ts can't tell what a generator inherits from");
   });

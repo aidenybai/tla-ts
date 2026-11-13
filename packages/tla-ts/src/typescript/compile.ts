@@ -20,7 +20,7 @@ import {
   isPrototypeArray,
   translateConstantFunctions,
 } from "./heap";
-import { translateBuiltIns } from "./intrinsics";
+import { findGeneratorPrototypes, translateBuiltIns } from "./intrinsics";
 import { WELL_KNOWN_SYMBOLS } from "./javascript";
 import { type Exported, isDeclaration, type Model, readModel, type Variable } from "./model";
 import { createProgram } from "./program";
@@ -326,6 +326,7 @@ export const compile = (
       ].forEach((name) => context.builtIns.add(name));
     }
     context.heapCollections = findHeapArrays(roots, changedArrays, context);
+    context.generatorPrototypes = findGeneratorPrototypes(sourceFile, context);
     const prototypes = new Set(["Array.prototype", "Object.prototype"]);
     const changesPrototype = (node: ts.Node): boolean =>
       (ts.isCallExpression(node) &&

@@ -12,10 +12,10 @@ import {
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
 import { getEngineErrors, getHeap, translateObjectValue } from "./heap";
-import { translateBuiltInInstanceOf } from "./intrinsics";
+import { getGeneratorPrototypeRef, translateBuiltInInstanceOf } from "./intrinsics";
 import { getTypeNames, useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
-import { getKind } from "./types";
+import { getKind, isGeneratorType } from "./types";
 import { apply, field, identifier, ifExpression, record, set, string } from "./tla";
 
 export const NATIVE_ERRORS = new Set([
@@ -276,6 +276,20 @@ export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, con
           context,
         ),
         translateObjectValue(node.left, scope, context),
+      ],
+      context,
+    );
+  }
+  // A generator function whose prototype object the heap holds, and whose @@hasInstance is
+  // Function.prototype's, which a script can't change.
+  const generatorPrototype = getGeneratorPrototypeRef(node.right, context);
+  if (generatorPrototype !== undefined) {
+    return useJavaScript(
+      isGeneratorType(node.left, context) ? "GeneratorInheritsFrom" : "InheritsFrom",
+      [
+        getHeap(scope, node, context),
+        generatorPrototype,
+        translateExpression(node.left, scope, context),
       ],
       context,
     );

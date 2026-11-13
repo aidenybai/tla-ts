@@ -679,8 +679,11 @@ Put(object, key, value) ==
 \\* A generator object, whose properties tla-ts doesn't model, as only its methods' calls run.
 GeneratorObject == [EmptyObject EXCEPT !.isOpaque = TRUE]
 
+\\* A generator object that inherits from a prototype that tla-ts holds.
+GeneratorObjectOf(prototype) == [GeneratorObject EXCEPT !.prototype = prototype]
+
 \\* An iterator helper, which tla-ts follows as a generator, inherits from %IteratorHelperPrototype%.
-IteratorHelperObject == [GeneratorObject EXCEPT !.prototype = Ref :> "%IteratorHelperPrototype%"]
+IteratorHelperObject == GeneratorObjectOf(Ref :> "%IteratorHelperPrototype%")
 
 IteratorResult(value, isDone) == Put(Put(EmptyObject, "value", value), "done", isDone)
 
@@ -1491,13 +1494,18 @@ IsPrototypeOf(heap, owner, ref) ==
      /\\ \\/ ToString(prototype) = ToString(owner)
         \\/ IsPrototypeOf(heap, owner, prototype)
 
-\\* Whether a generator or an iterator helper inherits from a prototype. tla-ts doesn't hold the
-\\* prototype that a generator's function gives it, which a script may change.
-GeneratorInheritsFrom(heap, owner, ref) ==
+\\* The prototype of a generator object or an iterator helper, where tla-ts holds it: a generator
+\\* object starts with the Object.prototype of GeneratorObject only where tla-ts doesn't.
+GeneratorPrototype(heap, ref) ==
   LET prototype == heap.objects[ref[Ref]].prototype
-  IN IF ToString(prototype) = ToString(IteratorHelperObject.prototype)
-     THEN ToString(prototype) = ToString(owner) \\/ IsPrototypeOf(heap, owner, prototype)
-     ELSE Assert(FALSE, "tla-ts can't tell what a generator inherits from")
+  IN IF ToString(prototype) = ToString(GeneratorObject.prototype)
+     THEN Assert(FALSE, "tla-ts can't tell what a generator inherits from")
+     ELSE prototype
+
+\\* Whether a generator or an iterator helper inherits from a prototype.
+GeneratorInheritsFrom(heap, owner, ref) ==
+  LET prototype == GeneratorPrototype(heap, ref)
+  IN ToString(prototype) = ToString(owner) \\/ IsPrototypeOf(heap, owner, prototype)
 
 \\* Whether a value of any type inherits from a prototype, where only an object can.
 InheritsFrom(heap, owner, value) ==

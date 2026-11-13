@@ -190,6 +190,7 @@ import {
   isBuiltInObject,
   isInvalidRegExp,
   translateBuiltInValue,
+  getGeneratorPrototypeRef,
 } from "./intrinsics";
 import { getTypeNames, getURICall, translateToNumber, useJavaScript } from "./javascript";
 import {
@@ -297,6 +298,7 @@ import {
   isBigIntLike,
   isNumberLike,
   isGeneratorType,
+  isPrototypeRead,
   mayBeGeneratorType,
   ITERATOR_CONSUMERS,
   getIteratorFrom,
@@ -3924,6 +3926,7 @@ export const makeGenerator = (
       queue: [],
     };
     const made = { ...inner, generators: new Map([...inner.generators, [name, suspension]]) };
+    const prototype = getGeneratorPrototypeRef(callee, context);
     // A generator's call binds its parameters, which throws before the body first runs.
     if (heapSymbol === undefined) {
       return letIn(
@@ -3943,7 +3946,14 @@ export const makeGenerator = (
           name,
           useJavaScript(
             "Allocate",
-            [getHeap(bound.scope, node, context), identifier("GeneratorObject")],
+            [
+              getHeap(bound.scope, node, context),
+              // A generator object inherits from its function's prototype object, where the heap
+              // holds it.
+              prototype === undefined
+                ? identifier("GeneratorObject")
+                : useJavaScript("GeneratorObjectOf", [prototype], context),
+            ],
             context,
           ),
           continueWith(
@@ -10791,15 +10801,14 @@ const findLeadingCall = (
   }
   if (ts.isCallExpression(node)) {
     // A call that makes a generator runs first, with what makes its receiver, where instanceof
-    // reads what it makes.
+    // or getPrototypeOf reads what it makes.
     const outer = ts.findAncestor(
       node.parent,
       (ancestor) => !ts.isParenthesizedExpression(ancestor),
     );
     if (
       outer !== undefined &&
-      ts.isBinaryExpression(outer) &&
-      outer.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
+      isPrototypeRead(outer, node) &&
       isGeneratorType(node, context) &&
       isStatementCall(node, path, context)
     ) {
@@ -11666,7 +11675,35 @@ export const translateScript = (
         bindings:
           context.heap === undefined
             ? bindings
-            : new Map([...bindings, [context.heap, identifier("EmptyHeap")]]),
+            : new Map([
+                ...bindings,
+                [
+                  context.heap,
+                  // The prototype objects of the generator functions that the script declares.
+                  [...context.generatorPrototypes.keys()].reduce<Expression>(
+                    (heap, declaration) =>
+                      useJavaScript(
+                        "Allocate",
+                        [
+                          heap,
+                          useJavaScript(
+                            "GeneratorPrototypeObject",
+                            [
+                              translateBuiltInValue(
+                                "%GeneratorFunction%.prototype.prototype",
+                                declaration,
+                                context,
+                              ),
+                            ],
+                            context,
+                          ),
+                        ],
+                        context,
+                      ),
+                    identifier("EmptyHeap"),
+                  ),
+                ],
+              ]),
         uninitialized: new Set(declared),
       },
       mutable: new Set(context.variables.keys()),
