@@ -1784,6 +1784,26 @@ describe("values", () => {
     expect((await checkModel(getSource("3"))).failure?.message).toContain("outcomes 30");
   });
 
+  it("runs a call that changes state before a throw statement throws its value", async () => {
+    const getSource = (expected: string) => `
+      let i = 0;
+      const adding = () => {
+        i++;
+        return i * 10;
+      };
+      let caught: unknown;
+      try {
+        throw adding();
+      } catch (error) {
+        caught = error;
+      }
+      const outcomes = [caught, i].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("10,1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("0,1"))).failure?.message).toContain("outcomes 10,1");
+  });
+
   it("converts an increment's operand that holds undefined or null to a number", async () => {
     const getSource = (expected: string) => `
       const box: { n: number | undefined; m: number | null } = { n: undefined, m: null };
