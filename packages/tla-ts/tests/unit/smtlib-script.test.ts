@@ -435,6 +435,50 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ).toThrow(SmtUnsupportedError);
   });
 
+  it("answers uninterpreted functions with sat.euf's solver", () => {
+    const header = ["(set-option :sat.euf true)", "(declare-sort U 0)"];
+    expect(
+      run([
+        ...header,
+        "(declare-fun f (U) U)",
+        "(declare-fun a () U)",
+        "(declare-fun b () U)",
+        "(declare-fun p (U) Bool)",
+        "(assert (= (f a) b))",
+        "(assert (not (= (f b) a)))",
+        "(assert (or (p a) (p (f a))))",
+        "(assert (not (p b)))",
+        "(check-sat)",
+        "(get-value ((p a) (= (f b) b) (= a b)))",
+        "(reset)",
+        ...header,
+        "(declare-fun f (U) U)",
+        "(declare-fun a () U)",
+        "(assert (= (f (f (f a))) a))",
+        "(assert (= (f (f (f (f (f a))))) a))",
+        "(assert (not (= (f a) a)))",
+        "(check-sat)",
+        "(reset)",
+        ...header,
+        "(declare-fun x () Bool)",
+        "(declare-fun y () Bool)",
+        "(declare-fun g (Bool) U)",
+        "(declare-fun a () U)",
+        "(assert (= (g x) a))",
+        "(assert (not (= (g y) a)))",
+        "(assert (or x y))",
+        "(check-sat)",
+        "(get-value (x y (= (g true) a)))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(((p a) true)\n ((= (f b) b) false)\n ((= a b) false))",
+      "unsat",
+      "sat",
+      "((x false)\n (y true)\n ((= (g true) a) false))",
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),

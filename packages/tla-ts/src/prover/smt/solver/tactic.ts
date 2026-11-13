@@ -34,6 +34,7 @@ import { runBvDivremBounds } from "./bv-divrem-bounds";
 import { runBv1Blast } from "./bv1-blast";
 import { runReduceBvSize } from "./reduce-bv-size";
 import { createSatTactic } from "./sat/sat-tactic";
+import { mkThSolver } from "./euf/th-solvers";
 import { createFdTactic } from "./fd-solver";
 import { elimUncnstr } from "./elim-uncnstr";
 import { rewriteUfbv } from "./demodulator";
@@ -312,8 +313,32 @@ const mkCoreDependency = (core: number[]) =>
     undefined,
   );
 
+// The sat.* parameters, as the sat_params of a sat solver read them.
+const getSatParams = (environment: TacticEnvironment) =>
+  new Map(
+    [...environment.parameters]
+      .filter((entry) => entry[0].startsWith("sat."))
+      .map((entry) => {
+        const value = entry[1];
+        const number = Number(value);
+        return [
+          entry[0].slice(4),
+          value === "true"
+            ? true
+            : value === "false"
+              ? false
+              : Number.isNaN(number)
+                ? value
+                : number,
+        ];
+      }),
+  );
+
 const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: Goal) => {
   const manager = environment.manager;
+  // mk_smt_tactic: with sat.euf, the smt tactic is the sat tactic.
+  if (environment.parameters.get("sat.euf") === "true")
+    return createSatTactic(manager, getSatParams(environment), mkThSolver)(goal);
   const kernelParams = getKernelParams(environment, params, goal);
   const extracted = extractClauses(manager, goal);
   const solved =
