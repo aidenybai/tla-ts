@@ -13537,6 +13537,36 @@ describe("errors", () => {
     );
   });
 
+  it("converts a primitive that a string method takes as a string", async () => {
+    const getSource = (expected: string) => `
+      const outcomes = [
+        // @ts-ignore
+        "1234567890".split(null).length,
+        // @ts-ignore
+        "undefinedd".split(undefined)[0],
+        // @ts-ignore
+        "a1b1c".split(1).join("-"),
+        // @ts-ignore
+        "null-x".indexOf(null),
+        // @ts-ignore
+        "xundefined".indexOf(undefined),
+        // @ts-ignore
+        "atrue".replace(true, "T"),
+        // @ts-ignore
+        "ab".concat(undefined, null, 1),
+        // @ts-ignore
+        "a".padEnd(3, undefined) + "|",
+      ].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect(
+      (await checkModel(getSource("1,undefinedd,a-b-c,0,1,aT,abundefinednull1,a  |"))).failure,
+    ).toBeUndefined();
+    await expect(checkModel(getSource("1,undefinedd,a-b-c,0,1,aT,ab1,a  |"))).rejects.toThrow(
+      "outcomes 1,undefinedd,a-b-c,0,1,aT,abundefinednull1,a  |",
+    );
+  });
+
   it("repeats, concatenates, normalizes, and compares strings of ASCII", async () => {
     const result = await checkModel(`
       const box = { size: 0 };

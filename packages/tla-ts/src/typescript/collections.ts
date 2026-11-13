@@ -16,7 +16,12 @@ import {
 } from "./context";
 import type { Expression } from "../ast";
 import { TlaTypeScriptError } from "../errors";
-import { translateElements, translateExpression, translateSetKey } from "./expressions";
+import {
+  translateElements,
+  translateExpression,
+  translateSetKey,
+  translateToString,
+} from "./expressions";
 import { callStateOperator, mayThrow, translateBody, translateLocalCall } from "./functions";
 import {
   DATE_FIELDS,
@@ -1937,7 +1942,7 @@ export const translateMethod = (
       primitiveMethod.parameters[position] === "number"
         ? isNumberLike(argument, context) ||
           isEvery(context.checker.getTypeAtLocation(argument), ts.TypeFlags.Undefined)
-        : isEvery(context.checker.getTypeAtLocation(argument), ts.TypeFlags.StringLike),
+        : getStringArgument(primitiveCall.method, position, argument, context) !== undefined,
     );
   if (
     primitiveCall === undefined &&
@@ -1967,9 +1972,38 @@ export const translateMethod = (
       : primitiveCall.converter === undefined
         ? translateExpression(receiver, scope, context)
         : useJavaScript(primitiveCall.converter, [translateOptional(primitiveCall.owner)], context),
-    primitiveCall.methodArguments.map(translateOptional),
+    primitiveCall.methodArguments.map((argument, position) =>
+      primitiveMethod.parameters[position] === "string" &&
+      getStringArgument(primitiveCall.method, position, argument, context) === "converted"
+        ? translateToString(argument, scope, context)
+        : translateExpression(argument, scope, context),
+    ),
     context,
   );
+};
+
+// The string parameters that read undefined as their own default, rather than as "undefined".
+const UNDEFINED_DEFAULTS = new Set(["split 0", "padStart 1", "padEnd 1", "normalize 0"]);
+
+// How a string method takes an argument for a string parameter: a string as it is, or a primitive
+// converted by ToString. A parameter that reads undefined as its default takes it as it is.
+const getStringArgument = (
+  method: string,
+  position: number,
+  argument: ts.Expression,
+  context: Context,
+) => {
+  const type = context.checker.getTypeAtLocation(argument);
+  const isDefaulted = UNDEFINED_DEFAULTS.has(`${method} ${position}`);
+  const kept = isDefaulted
+    ? ts.TypeFlags.StringLike | ts.TypeFlags.Undefined
+    : ts.TypeFlags.StringLike;
+  const converted =
+    ts.TypeFlags.NumberLike |
+    ts.TypeFlags.BooleanLike |
+    ts.TypeFlags.Null |
+    (isDefaulted ? 0 : ts.TypeFlags.StringLike | ts.TypeFlags.Undefined);
+  return isEvery(type, kept) ? "kept" : isEvery(type, converted) ? "converted" : undefined;
 };
 
 // The JavaScript module's operators for each method that runs a regexp, without objects and with
