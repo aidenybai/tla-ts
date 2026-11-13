@@ -1083,6 +1083,19 @@ const ignoreSoundErrors = () => {
           ts.isArrayLiteralExpression(call.arguments[position])))
     );
   };
+  // A nested array pattern whose value's type is an array's, or null or undefined, which
+  // TypeScript rejects where the value may be null or undefined. JavaScript then throws the
+  // TypeError that tla-ts throws too, and tla-ts reads an array as its type says.
+  const isNullableArrayPattern = (node: ts.Node) => {
+    if (!ts.isArrayBindingPattern(node)) return false;
+    const type = checker.getNonNullableType(checker.getTypeAtLocation(node));
+    return (
+      (type.flags & ts.TypeFlags.Never) !== 0 ||
+      (type.isUnion() ? type.types : [type]).every(
+        (member) => checker.isArrayType(member) || checker.isTupleType(member),
+      )
+    );
+  };
   // A call of a built-in that SHORT_CALLED_BUILT_INS lists, with fewer arguments than its type
   // takes, which passes undefined for the others as JavaScript does.
   const isShortBuiltInCall = (node: ts.Node) => {
@@ -1112,6 +1125,7 @@ const ignoreSoundErrors = () => {
     return (
       (diagnostic.code === ARGUMENT_COUNT_ERROR && isShortBuiltInCall(node)) ||
       (diagnostic.code === MISSING_PROPERTY_ERROR && isPatternRead(node)) ||
+      (diagnostic.code === NOT_ITERABLE_ERROR && isNullableArrayPattern(node)) ||
       (UNASSIGNABLE_ERRORS.has(diagnostic.code) && isPatternArgument(node)) ||
       diagnostic.code === UNUSED_OPERAND_ERROR ||
       (diagnostic.code === UNINTENDED_COMPARISON_ERROR && isUnnarrowed(node, diagnostic)) ||
