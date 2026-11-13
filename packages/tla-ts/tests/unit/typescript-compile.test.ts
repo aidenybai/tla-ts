@@ -2769,6 +2769,31 @@ describe("values", () => {
     await expect(checkModel(getSource("(?:),,false"))).rejects.toThrow("(?:),,true");
   });
 
+  it("makes the regexps whose pattern and flags primitive literals give", async () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      // @ts-ignore
+      seen.push(new RegExp(undefined).source, RegExp(void 0, undefined).source, new RegExp(true, "m").source);
+      // @ts-ignore
+      seen.push(new RegExp(null).source, String(new RegExp(1.0).test("a1")));
+      try {
+        // @ts-ignore
+        new RegExp(".", true);
+        seen.push("none");
+      } catch (error) {
+        seen.push(error instanceof SyntaxError ? "syntax" : "other");
+      }
+      const outcomes = seen.join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect(
+      (await checkModel(getSource("(?:),(?:),true,null,true,syntax"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("(?:),(?:),true,null,true,none"))).failure?.message,
+    ).toContain("outcomes (?:),(?:),true,null,true,syntax");
+  });
+
   it("makes a set of what flatMap gives of a map's keys", async () => {
     const getSource = (expected: string) => `
       const LITERALS = new Map([

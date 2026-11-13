@@ -1808,6 +1808,8 @@ const getRegExpTexts = (node: ts.Node, context: Context) => {
         ];
   }
   const texts = values.map((value) => {
+    const primitive = getPrimitiveText(value, context);
+    if (primitive !== undefined) return [primitive];
     const constants = getConstantValues(value, context, new Set());
     const strings = constants?.filter((constant) => typeof constant === "string");
     return getKind(value, context) === "string" && strings?.length === constants?.length
@@ -1819,6 +1821,24 @@ const getRegExpTexts = (node: ts.Node, context: Context) => {
   return values.length > 2 || patterns === undefined || flags === undefined
     ? undefined
     : patterns.flatMap((pattern) => flags.map((flag) => ({ pattern, flags: flag })));
+};
+
+// The text that RegExp takes from a primitive literal other than a string: none from undefined, and
+// what ToString gives from the others.
+const getPrimitiveText = (node: ts.Expression, context: Context) => {
+  const inner = skipCasts(node);
+  if (
+    (ts.isIdentifier(inner) &&
+      inner.text === "undefined" &&
+      (context.checker.getTypeAtLocation(inner).flags & ts.TypeFlags.Undefined) !== 0) ||
+    (ts.isVoidExpression(inner) && ts.isLiteralExpression(inner.expression))
+  ) {
+    return "";
+  }
+  if (inner.kind === ts.SyntaxKind.TrueKeyword) return "true";
+  if (inner.kind === ts.SyntaxKind.FalseKeyword) return "false";
+  if (inner.kind === ts.SyntaxKind.NullKeyword) return "null";
+  return ts.isNumericLiteral(inner) ? String(Number(inner.text)) : undefined;
 };
 
 const getValidRegExp = (texts: { pattern: string; flags: string }) => {
@@ -1868,9 +1888,12 @@ export const translateRegExpValue = (node: ts.Node, scope: Scope, context: Conte
       (argument) => ts.isStringLiteralLike(argument) || ts.isRegularExpressionLiteral(argument),
     )
   ) {
-    const values = (node.arguments ?? []).map((argument) =>
-      translateExpression(argument, scope, context),
-    );
+    const values = (node.arguments ?? []).map((argument) => {
+      const primitive = getPrimitiveText(argument, context);
+      return primitive === undefined
+        ? translateExpression(argument, scope, context)
+        : string(primitive);
+    });
     return share(values[0], "pattern", context, (pattern) =>
       share(values.at(1) ?? string(""), "flags", context, (flags) =>
         made.reduceRight<Expression>(
