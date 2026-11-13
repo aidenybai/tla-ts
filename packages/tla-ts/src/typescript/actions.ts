@@ -363,6 +363,7 @@ import {
   isNullishArrayMethodCall,
   getArrayMethodCall,
 } from "./types";
+import { getReached } from "./aliasing";
 
 export interface Path {
   scope: Scope;
@@ -3827,22 +3828,16 @@ export const getBody = (callee: FunctionNode, scope: Scope, context: Context) =>
 // as a loop's does, gives how the body ended, its value or what it threw, the message of a throw
 // that nothing catches, and the changed values. The first such call defines it, and the calls
 // inside its body call it.
-const translateSelfCall = (
-  node: ts.Node,
+// The functions that a call's parameters run, which the call passes or a default writes, and which
+// the recursive operator holds rather than takes.
+const getSelfCallFunctions = (
   callee: FunctionNode,
   argumentNodes: readonly ts.Expression[],
-  receiver: Receiver | undefined,
+  argumentValues: Expression[] | undefined,
   path: Path,
   context: Context,
-  frame: Frame,
-  continueWith: (path: Path, value?: Expression) => Formula,
-  argumentValues?: Expression[],
-): Formula => {
-  const parameters = getParameters(callee);
-  const body = callee.body;
-  // A parameter that takes a function runs the one that the call passes, or that its default
-  // writes, which the recursive operator holds rather than takes.
-  const functions = parameters.map((parameter, position) => {
+) =>
+  getParameters(callee).map((parameter, position) => {
     if (context.checker.getTypeAtLocation(parameter.name).getCallSignatures().length === 0) {
       return undefined;
     }
@@ -3853,14 +3848,17 @@ const translateSelfCall = (
         : getAnyFunction(parameter.initializer)
       : getCallback(argument, path, context);
   });
-  // Each set of functions that the parameters run has its own recursive operator.
-  const defined = context.selfCalls
-    .get(callee)
-    ?.find((selfCall) =>
-      selfCall.functions.every((called, position) => called === functions[position]),
-    );
-  if (
-    body === undefined ||
+
+// Whether a recursive operator can run a call, which takes its arguments by name.
+const isSelfCallable = (
+  callee: FunctionNode,
+  argumentNodes: readonly ts.Expression[],
+  functions: readonly (FunctionNode | undefined)[],
+  context: Context,
+) => {
+  const parameters = getParameters(callee);
+  return !(
+    callee.body === undefined ||
     isAnyGenerator(callee) ||
     isAsyncFunction(callee) ||
     argumentNodes.length > parameters.length ||
@@ -3877,7 +3875,41 @@ const translateSelfCall = (
           ? functions[position]?.body === undefined
           : parameter.initializer !== undefined && !isLiteral(parameter.initializer)),
     )
-  ) {
+  );
+};
+
+// Whether a top-level function may call itself, through the functions that it names. A local one
+// may read its call's locals, which only a copy of its body at each call has.
+const isCallingItself = (callee: FunctionNode, context: Context) => {
+  const declaration = ts.isVariableDeclaration(callee.parent) ? callee.parent : callee;
+  return (
+    callee.body !== undefined &&
+    ts.findAncestor(callee.parent, ts.isFunctionLike) === undefined &&
+    getReached([callee.body], context).includes(declaration)
+  );
+};
+
+const translateSelfCall = (
+  node: ts.Node,
+  callee: FunctionNode,
+  argumentNodes: readonly ts.Expression[],
+  receiver: Receiver | undefined,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+  argumentValues?: Expression[],
+): Formula => {
+  const parameters = getParameters(callee);
+  const body = callee.body;
+  const functions = getSelfCallFunctions(callee, argumentNodes, argumentValues, path, context);
+  // Each set of functions that the parameters run has its own recursive operator.
+  const defined = context.selfCalls
+    .get(callee)
+    ?.find((selfCall) =>
+      selfCall.functions.every((called, position) => called === functions[position]),
+    );
+  if (body === undefined || !isSelfCallable(callee, argumentNodes, functions, context)) {
     throw new TlaTypeScriptError(
       "tla-ts can't run this call of a function from inside itself",
       node,
@@ -4177,7 +4209,17 @@ export const inlineBody = (
   argumentNodes === node.arguments &&
   isLiftable(callee, context)
     ? continueWith(path, translateLiftedCall(callee, node, path.scope, context))
-    : frame.inlining.has(callee) && !isAction(callee, context)
+    : // A function that calls itself runs as one recursive operator, which each call inside it
+      // calls, rather than as a copy of its body at each call.
+      !isAction(callee, context) &&
+        (frame.inlining.has(callee) ||
+          (isCallingItself(callee, context) &&
+            isSelfCallable(
+              callee,
+              argumentNodes,
+              getSelfCallFunctions(callee, argumentNodes, undefined, path, context),
+              context,
+            )))
       ? translateSelfCall(node, callee, argumentNodes, receiver, path, context, frame, continueWith)
       : bindCall(node, callee, argumentNodes, receiver, path, context, frame, (bound, inner) => {
           // What the call evaluated or made of the function's own code, such as a default that it
