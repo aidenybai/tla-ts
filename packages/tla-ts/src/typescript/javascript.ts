@@ -4414,7 +4414,9 @@ ArrayLikeReverse(heap, ref) ==
       lowers == {index \\in indices \\cup {length - index - 1 : index \\in indices} :
                    index >= 0 /\\ index < length \\div 2}
       state == ArrayLikeSwaps([heap |-> heap, isThrown |-> FALSE], ref, lowers, length)
-  IN [heap |-> state.heap, value |-> ref, isThrown |-> state.isThrown]
+  IN IF length < 2
+     THEN [heap |-> heap, value |-> ref, isThrown |-> FALSE]
+     ELSE [heap |-> state.heap, value |-> ref, isThrown |-> state.isThrown]
 
 \\* A set or a map that the heap holds, so that it keeps its identity as a script changes it, with
 \\* the value that it holds as its data.

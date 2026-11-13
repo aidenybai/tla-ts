@@ -11680,6 +11680,15 @@ describe("errors", () => {
     ).toThrow("Unsupported call: Array.prototype.reverse.call");
   });
 
+  it("reads the length of an object that reverse through call has nothing to swap in", async () => {
+    const result = await checkModel(`
+      const object: { [key: string | symbol]: unknown } = {};
+      object.length = Symbol("length");
+      Array.prototype.reverse.call(object);
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't convert Symbol to a length");
+  });
+
   it("runs [].method.call as Array.prototype.method.call, through the object's getters", async () => {
     const result = await checkModel(`
       class Abrupt extends Error {}
