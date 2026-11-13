@@ -3651,7 +3651,7 @@ export const inlineValues = (
   return letIn(
     bound.definitions,
     translateStatements(
-      getBody(callee),
+      getBody(callee, bound.scope, context),
       { ...path, scope: { ...bound.scope, receiver } },
       context,
       {
@@ -3668,7 +3668,17 @@ export const inlineValues = (
   );
 };
 
-export const getBody = (callee: FunctionNode) => {
+// A closure reads its locals from its environment, which only a call that enters it binds.
+export const throwOnUnentered = (callee: ts.Node, scope: Scope, context: Context) => {
+  if (isClosure(callee, context) && scope.entered !== callee) {
+    throw new TlaTypeScriptError("tla-ts can't tell which call made this function", callee);
+  }
+};
+
+// A function's body, which a closure runs only where a call entered it, as its environment binds
+// the locals it reads.
+export const getBody = (callee: FunctionNode, scope: Scope, context: Context) => {
+  throwOnUnentered(callee, scope, context);
   const calleeBody = callee.body;
   if (calleeBody === undefined) throw new TlaTypeScriptError("Give this a body", callee);
   return ts.isBlock(calleeBody)
@@ -3867,7 +3877,7 @@ const translateSelfCall = (
     ...changedNames.map((name) => identifier(name)),
   ]);
   context.selfCalls.set(callee, selfCall);
-  const translated = translateStatements(getBody(callee), inner, context, {
+  const translated = translateStatements(getBody(callee, inner.scope, context), inner, context, {
     next: (current) => end(current, "return", getUndefined(context), string("")),
     exit: (current, returned) =>
       returned === undefined
@@ -3922,7 +3932,7 @@ const isAction = (callee: FunctionNode, context: Context) =>
 // Binds the locals that a closure reads to those its environment holds, for a call of the closure
 // that a value holds. Once the call returns or throws, the environment holds the locals that the
 // closure changed, and the caller's bindings are as they were.
-const enterClosure = (
+export const enterClosure = (
   closure: Closure,
   value: Expression,
   path: Path,
@@ -3941,6 +3951,7 @@ const enterClosure = (
     ),
     scope: {
       ...after.scope,
+      entered: path.scope.entered,
       allocated: new Map([
         ...[...after.scope.allocated].filter((entry) => entry[0] !== argumentsBody),
         ...[...path.scope.allocated].filter((entry) => entry[0] === argumentsBody),
@@ -3993,6 +4004,7 @@ const enterClosure = (
                   useJavaScript("Captured", [heap, value, string("arguments")], context),
                 ],
               ]),
+        entered: closure,
         bindings: new Map([
           ...path.scope.bindings,
           ...captures.map((symbol): [ts.Symbol, Expression] => [
@@ -4065,7 +4077,7 @@ export const inlineBody = (
                   inner.scope,
                   bound.scope,
                   translateStatements(
-                    getBody(callee),
+                    getBody(callee, bound.scope, context),
                     { ...inner, scope: { ...bound.scope, destructured: undefined } },
                     context,
                     bodyFrame,
@@ -4311,7 +4323,12 @@ export const makeGenerator = (
       ref,
       generator: callee,
       resume: (resumer) =>
-        translateStatements(getBody(callee), enter(resumer, start), context, bodyFrame),
+        translateStatements(
+          getBody(callee, start.scope, context),
+          enter(resumer, start),
+          context,
+          bodyFrame,
+        ),
       isStarted: false,
       isGuarded: false,
       isAsync,

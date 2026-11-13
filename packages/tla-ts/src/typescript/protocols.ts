@@ -3,6 +3,7 @@ import type { Expression, OperatorDefinition } from "../ast";
 import {
   allocate,
   bindOnce,
+  enterClosure,
   getChanged,
   type Frame,
   inlineBody,
@@ -23,6 +24,7 @@ import {
   getCallee,
   getReturnedFunctions,
   getUndefined,
+  isClosure,
   isInertValue,
   isMethodCall,
   getLiveMaker,
@@ -199,14 +201,19 @@ export const callValue = (
           ? undefined
           : { value: receiver, method: candidate };
         const heap = getHeap(path.scope, site, context);
-        const call = () =>
+        const call = (
+          inner: Path,
+          innerFrame: Frame,
+          after: (path: Path, value?: Expression) => Formula,
+        ) =>
           isAsync(candidate)
-            ? translateAsyncCall(site, candidate, received, path, context, frame, next)
+            ? translateAsyncCall(site, candidate, received, inner, context, innerFrame, after)
             : values.length === 0
-              ? inlineBody(site, candidate, [], received, path, context, frame, next)
-              : inlineValues(candidate, values, received, path, context, frame, next);
+              ? inlineBody(site, candidate, [], received, inner, context, innerFrame, after)
+              : inlineValues(candidate, values, received, inner, context, innerFrame, after);
         // A method that reads the live locals of the function around it runs only in the call of
-        // that function whose environment it holds.
+        // that function whose environment it holds. A closure that outlives its call reads them from
+        // its environment.
         const maker = getLiveMaker(candidate, context);
         const environment =
           maker !== undefined && ts.findAncestor(site, ts.isFunctionLike) === maker
@@ -222,15 +229,22 @@ export const callValue = (
         );
         return ifThenElse(
           apply("=", [useJavaScript("CodeOf", [heap, value], context), candidateValue]),
-          maker === undefined
-            ? call()
-            : environment === undefined
-              ? stop
-              : ifThenElse(
-                  apply("=", [useJavaScript("EnvironmentOf", [heap, value], context), environment]),
-                  call(),
-                  stop,
-                ),
+          isClosure(candidate, context)
+            ? enterClosure(candidate, value, path, context, frame, (inner, innerFrame, leave) =>
+                call(inner, innerFrame, (after, result) => next(leave(after), result)),
+              )
+            : maker === undefined
+              ? call(path, frame, next)
+              : environment === undefined
+                ? stop
+                : ifThenElse(
+                    apply("=", [
+                      useJavaScript("EnvironmentOf", [heap, value], context),
+                      environment,
+                    ]),
+                    call(path, frame, next),
+                    stop,
+                  ),
           rest,
         );
       }, otherwise(next)),

@@ -11626,6 +11626,70 @@ describe("errors", () => {
     expect((await checkModel(getArrowArgumentsSource(4))).failure?.message).toContain("arguments");
   });
 
+  const getIteratorSource = (expected: number) => `
+      const seen = { count: 0 };
+      const iterable = {
+        [Symbol.iterator]: function () {
+          let count = 0;
+          return {
+            next: function () {
+              count += 1;
+              return { value: count, done: count > 2 };
+            },
+          };
+        },
+      };
+      let total = 0;
+      for (const value of iterable) total += value;
+      for (const value of iterable) total += value * 10;
+      if (total !== ${expected}) throw new Error("iter");
+  `;
+
+  const getEscapedNextSource = (expected: number) => `
+      const seen = { count: 0 };
+      let next: (() => { value: number; done: boolean }) | undefined;
+      function make(limit: number) {
+        let count = 0;
+        next = function () {
+          count += 1;
+          return { value: count, done: count > limit };
+        };
+      }
+      make(2);
+      const iterable = { [Symbol.iterator]() { return { next: next! }; } };
+      let total = 0;
+      for (const value of iterable) total += value;
+      if (total !== ${expected}) throw new Error("iter");
+  `;
+
+  it("calls a closure that outlives its call through the iterator protocol", async () => {
+    expect((await checkModel(getEscapedNextSource(3))).failure).toBeUndefined();
+  });
+
+  it("reads what a closure keeps in its environment where a protocol calls it", async () => {
+    expect((await checkModel(getEscapedNextSource(6))).failure?.message).toContain("iter");
+  });
+
+  it("calls a closure that an object's property holds through the iterator protocol", async () => {
+    expect((await checkModel(getIteratorSource(33))).failure).toBeUndefined();
+  });
+
+  it("gives each call that makes a closure an environment of its own", async () => {
+    expect((await checkModel(getIteratorSource(34))).failure?.message).toContain("iter");
+  });
+
+  it("stops where a call doesn't enter the closure that it runs", () => {
+    expect(() =>
+      compile(`
+        const seen = { count: 0 };
+        function make(x: number) {
+          return { get: function () { return x; } };
+        }
+        if (make(3).get() !== 3) throw new Error("get");
+      `),
+    ).toThrow("tla-ts can't tell which call made this function");
+  });
+
   const getCounterSource = (expected: string) => `
       const seen = { count: 0 };
       let next: (() => number) | undefined;

@@ -557,7 +557,7 @@ const runThen = (
           return ifThenElse(
             apply("=", [code, candidateValue]),
             translateStatements(
-              getBody(candidate),
+              getBody(candidate, start.scope, context),
               {
                 ...start,
                 mutable: new Set([...start.mutable, ...locals.map((local) => local.symbol)]),
@@ -1783,7 +1783,7 @@ export const translatePromiseConstruction = (
           }),
         ]);
         return translateStatements(
-          getBody(executor),
+          getBody(executor, start.scope, context),
           {
             ...start,
             scope: {
@@ -2006,7 +2006,7 @@ const translateCapability = (
         );
   };
   return translateStatements(
-    getBody(constructor),
+    getBody(constructor, start.scope, context),
     {
       ...start,
       scope: { ...start.scope, isCatching: true, receiver: undefined },
@@ -2698,7 +2698,7 @@ const runAsyncBody = (
       const run =
         typeof body === "function"
           ? body(start, bodyFrame)
-          : translateStatements(getBody(body), start, context, bodyFrame);
+          : translateStatements(getBody(body, start.scope, context), start, context, bodyFrame);
       return letIn(
         bound.definitions,
         environment === undefined

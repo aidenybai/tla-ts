@@ -29,6 +29,7 @@ import {
   isArgumentsRead,
   getWrittenRoots,
   getImmutableWrite,
+  throwOnUnentered,
   translateLocalStatements,
 } from "./actions";
 import { TlaTypeScriptError } from "../errors";
@@ -954,6 +955,7 @@ const isAssigning = (node: ts.Node): boolean =>
 
 // A body of loops and assignments runs as statements that change only its locals.
 export const translateBody = (body: ts.ConciseBody, scope: Scope, context: Context): Expression => {
+  throwOnUnentered(body.parent, scope, context);
   if (!ts.isBlock(body)) return translateExpression(body, scope, context);
   return render(
     body.statements.every(isPureStatement)
