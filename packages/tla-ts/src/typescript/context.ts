@@ -60,8 +60,8 @@ export interface Context {
   // for the functions that return only a literal.
   constantFunctions: Map<string, Expression>;
   // The object of each function that a model value stands for, by the value's name, which the heap
-  // reads the function's properties from.
-  functionObjects: Map<string, Expression>;
+  // reads the function's properties from, and the object that its prototype property starts with.
+  functionObjects: Map<string, FunctionObject>;
   // Whether a script names NaN, Infinity, or -0, so that its numbers compute as JavaScript's.
   hasSpecialNumbers: boolean;
   // The file of a script without exported actions that reports what it doesn't catch as Node does,
@@ -92,6 +92,11 @@ export interface Context {
   // What each function that a statement runs changes, with the functions that it runs in turn, by
   // the functions that the paths bind to the parameters that they call.
   changeSummaries: Map<string, Map<ts.Node, ChangeSummary>>;
+}
+
+export interface FunctionObject {
+  object: Expression;
+  prototype: { key: string; object: Expression } | undefined;
 }
 
 export interface ChangeSummary {
@@ -189,6 +194,30 @@ const hasTopLevelAwait = (node: ts.Node): boolean =>
 // Node runs another file as a script where it strips its types.
 export const isModuleFile = (file: ts.SourceFile) =>
   file.statements.some(isModuleSyntax) || hasTopLevelAwait(file);
+
+const hasStrictDirective = (statements: readonly ts.Statement[]) =>
+  statements.some(
+    (statement) =>
+      ts.isExpressionStatement(statement) &&
+      ts.isStringLiteral(statement.expression) &&
+      statement.expression.getText().slice(1, -1) === "use strict",
+  );
+
+// Code that runs in strict mode wherever it runs: in a class, under a "use strict" directive, or in
+// a module.
+export const isStrictCode = (node: ts.Node): boolean =>
+  ts.findAncestor(
+    node,
+    (ancestor) =>
+      ts.isClassLike(ancestor) ||
+      (ts.isFunctionLike(ancestor) &&
+        "body" in ancestor &&
+        ancestor.body !== undefined &&
+        ts.isBlock(ancestor.body) &&
+        hasStrictDirective(ancestor.body.statements)) ||
+      (ts.isSourceFile(ancestor) &&
+        (hasStrictDirective(ancestor.statements) || isModuleFile(ancestor))),
+  ) !== undefined;
 
 // The function whose arguments object a name reads, which for an arrow is the function around it.
 export const getArgumentsOwner = (node: ts.Node, checker: ts.TypeChecker) => {

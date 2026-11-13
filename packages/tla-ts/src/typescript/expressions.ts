@@ -2319,15 +2319,20 @@ const translatePropertyAccess = (
     return getPreviousVariable(name, node, context);
   }
   // A function that isn't an object keeps the length and the name it starts with. tla-ts tells the
-  // name only where the function's own syntax gives it. The heap holds those of a held function's
-  // object.
+  // name only where the function's own syntax gives it. The heap holds the properties of a held
+  // function's object.
+  const symbol = ts.isIdentifier(receiver) ? getSymbol(receiver, context.checker) : undefined;
+  const held = symbol === undefined ? undefined : scope.functions.get(symbol);
+  const isHeld = (candidate: FunctionNode) => getHeldName(candidate, context) !== undefined;
   if (
-    (name === "length" || name === "name") &&
-    context.checker.getTypeAtLocation(receiver).getCallSignatures().length > 0
+    context.checker.getTypeAtLocation(receiver).getCallSignatures().length > 0 &&
+    (name === "length" ||
+      name === "name" ||
+      (held === undefined ? getFunctionCandidates(receiver, context).some(isHeld) : isHeld(held)))
   ) {
     const getProperty = (candidate: FunctionNode) => {
       const candidateValue = getCandidateValue(candidate, context);
-      if (getHeldName(candidate, context) !== undefined && candidateValue !== undefined) {
+      if (isHeld(candidate) && candidateValue !== undefined) {
         return useJavaScript(
           "Get",
           [getHeap(scope, node, context), candidateValue, string(name)],
@@ -2335,6 +2340,7 @@ const translatePropertyAccess = (
         );
       }
       if (name === "length") return number(getFunctionLength(getParameters(candidate)));
+      if (name !== "name") return undefined;
       const parent = candidate.parent;
       const given =
         (ts.isFunctionDeclaration(candidate) || ts.isFunctionExpression(candidate)) &&
@@ -2353,8 +2359,6 @@ const translatePropertyAccess = (
               : undefined;
       return given === undefined ? undefined : string(given.text);
     };
-    const symbol = ts.isIdentifier(receiver) ? getSymbol(receiver, context.checker) : undefined;
-    const held = symbol === undefined ? undefined : scope.functions.get(symbol);
     const heldProperty = held === undefined ? undefined : getProperty(held);
     if (heldProperty !== undefined) return heldProperty;
     if (held !== undefined || context.heap === undefined) {

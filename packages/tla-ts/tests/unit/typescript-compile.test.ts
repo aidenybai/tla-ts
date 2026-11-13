@@ -8199,6 +8199,115 @@ describe("errors", () => {
     });
   });
 
+  describe("reads the prototype of a function that a script makes once from the heap", () => {
+    const getSource = (made: string, read: string, expected: string) => `
+      "use strict";
+      const seen = { count: 0 };
+      const getValue = (target: object, key: string) => {
+        const descriptor = Object.getOwnPropertyDescriptor(target, key);
+        return descriptor === undefined ? undefined : descriptor.value;
+      };
+      const getFlags = (target: object, key: string) => {
+        const descriptor = Object.getOwnPropertyDescriptor(target, key);
+        return descriptor === undefined
+          ? "missing"
+          : \`\${descriptor.writable},\${descriptor.enumerable},\${descriptor.configurable}\`;
+      };
+      ${made}
+      const result = ${read};
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expectResult = async (made: string, read: string, expected: string, wrong: string) => {
+      expect((await checkModel(getSource(made, read, expected))).failure).toBeUndefined();
+      expect((await checkModel(getSource(made, read, wrong))).failure?.message).toContain(expected);
+    };
+
+    it("makes a generator's objects inherit from its prototype", async () => {
+      const made = "function* g(a: number, b: number) { yield a + b; }";
+      const read =
+        '`${getFlags(g, "prototype")} ${getValue(g, "name")} ${Object.getPrototypeOf(g(1, 2)) === g.prototype}`';
+      await expectResult(made, read, "true,false,false g true", "true,false,false g false");
+    });
+
+    it("makes a generator's objects inherit from what a script replaces its prototype with", async () => {
+      const made = `
+        function* g() { yield 1; }
+        const replace = (target: object, prototype: unknown) => {
+          (target as { prototype: unknown }).prototype = prototype;
+        };
+        const replacement = {};
+        replace(g, replacement);
+        const replaced = Object.getPrototypeOf(g()) === replacement;
+        replace(g, 1);
+        const anonymous: object = Object.getPrototypeOf(function* () {}());
+        const intrinsic: object = Object.getPrototypeOf(anonymous);
+      `;
+      const read = "`${replaced} ${Object.getPrototypeOf(g()) === intrinsic}`";
+      await expectResult(made, read, "true true", "true false");
+    });
+
+    it("makes a generator method's objects inherit from its prototype", async () => {
+      const made = "const holder = { *m() { yield 1; } }; class C { static *s() { yield 2; } }";
+      const read =
+        "`${Object.getPrototypeOf(holder.m()) === holder.m.prototype} ${Object.getPrototypeOf(C.s()) === C.s.prototype}`";
+      await expectResult(made, read, "true true", "true false");
+    });
+
+    it("reads the prototype and its constructor of a plain function in strict code", async () => {
+      const made = `
+        let assigned: (() => void) | undefined;
+        assigned = function () {};
+        const prototype: object = assigned.prototype;
+        const flags = getFlags(assigned, "prototype");
+        const constructorFlags = getFlags(prototype, "constructor");
+        const isConstructor = getValue(prototype, "constructor") === assigned;
+      `;
+      const read =
+        "`${Object.getOwnPropertyNames(assigned).join()} ${flags} ${constructorFlags} ${isConstructor}`";
+      await expectResult(
+        made,
+        read,
+        "length,name,prototype true,false,false true,false,true true",
+        "length,name,prototype true,false,false true,false,true false",
+      );
+    });
+
+    it("stops where a script constructs a plain function that it holds", async () => {
+      const source = `
+        "use strict";
+        const seen = { count: 0 };
+        let assigned: (() => void) | undefined;
+        assigned = function () {};
+        const made = new (assigned as unknown as new () => object)();
+        if (Object.getPrototypeOf(made) !== assigned.prototype) throw new Error("prototype");
+      `;
+      expect((await checkModel(source)).failure?.message).toContain(
+        "tla-ts can't call this constructor",
+      );
+    });
+
+    it("throws a TypeError where a script constructs a generator that it holds", async () => {
+      const made = `
+        function* g() { yield 1; }
+        const name = getValue(g, "name");
+        let isThrown = false;
+        try {
+          new (g as unknown as new () => object)();
+        } catch (error) {
+          isThrown = error instanceof TypeError;
+        }
+      `;
+      await expectResult(made, "`${name} ${isThrown}`", "g true", "g false");
+    });
+
+    it("reads the name of an async function, which inherits from AsyncFunction.prototype", async () => {
+      const made = "async function run(a: number) { return a; }";
+      const read =
+        '`${getValue(run, "name")} ${getFlags(run, "prototype")} ${Object.getPrototypeOf(run) === Function.prototype}`';
+      await expectResult(made, read, "run missing false", "run missing true");
+    });
+  });
+
   it("writes the name and message of an error that the heap holds in its toString", async () => {
     const source = `
       const holder = { seen: 0 };
@@ -11891,8 +12000,8 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("instance");
   });
 
-  it("stops telling what a generator object inherits from", async () => {
-    const result = await checkModel(`
+  describe("tells that a generator method's object inherits from Iterator.prototype", () => {
+    const source = (check: string) => `
       const holder = { count: 0 };
       const source = {
         *count() {
@@ -11900,7 +12009,28 @@ describe("errors", () => {
         },
       };
       holder.count = 1;
-      if (source.count() instanceof Iterator) throw new Error("generator");
+      if (${check}) throw new Error("generator");
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(source("!(source.count() instanceof Iterator)"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      const result = await checkModel(source("source.count() instanceof Iterator"));
+      expect(result.failure?.message).toContain('"generator"');
+    });
+  });
+
+  it("stops telling what a generator object inherits from", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      const count = function* () {
+        yield 1;
+      };
+      holder.count = Object.keys(count as object).length;
+      if (count() instanceof Iterator) throw new Error("generator");
     `);
     expect(result.failure?.message).toContain("tla-ts can't tell what a generator inherits from");
   });

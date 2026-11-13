@@ -646,6 +646,9 @@ export const translateBuiltInValue = (
     | "%StringIteratorPrototype%"
     | "%GeneratorFunction%.prototype"
     | "%GeneratorFunction%.prototype.prototype"
+    | "%AsyncFunction%.prototype"
+    | "%AsyncGeneratorFunction%.prototype"
+    | "%AsyncGeneratorFunction%.prototype.prototype"
     | "Promise"
     | "Promise.prototype"
     | "JSON"
@@ -796,7 +799,8 @@ const translateBuiltInProperty = (value: string, node: ts.Node, context: Context
 };
 
 // The built-in objects that a script's heap holds: those the script names, their prototypes, and
-// the objects of the functions that model values stand for.
+// the objects of the functions that model values stand for, with the prototype objects they start
+// with.
 export const translateBuiltIns = (node: ts.Node, context: Context) => {
   const included = new Set<string>();
   const include = (name: string | null) => {
@@ -833,8 +837,11 @@ export const translateBuiltIns = (node: ts.Node, context: Context) => {
     ...stubs,
     ...[...context.functionObjects].map((entry): [Expression, Expression] => [
       identifier(entry[0]),
-      entry[1],
+      entry[1].object,
     ]),
+    ...[...context.functionObjects.values()].flatMap((entry): [Expression, Expression][] =>
+      entry.prototype === undefined ? [] : [[string(entry.prototype.key), entry.prototype.object]],
+    ),
     ...[...included].map((name): [Expression, Expression] => {
       const entry = BUILT_INS[name];
       const properties = entry[3];

@@ -720,6 +720,10 @@ LOCAL IsBuiltIn(ref) ==
   /\\ BuiltInKey(ref) \\in DOMAIN BuiltIns
   /\\ ~BuiltIns[BuiltInKey(ref)].isOpaque
 
+\\* Whether a value is an object that the heap or the built-in objects hold, as they hold the object of
+\\* a function that a model value stands for.
+IsHeldObject(value) == IsRef(value) \\/ IsBuiltIn(value)
+
 \\* A proxy, whose target and handler revoking it sets to null. Statements run its traps, and tla-ts
 \\* stops wherever anything else reads it.
 IsProxy(heap, value) == IsHeap(value) /\\ "handler" \\in DOMAIN heap.objects[value[Ref]]
@@ -922,6 +926,16 @@ GeneratorFunctionObject(functionPrototype, name, length, prototype) ==
 
 GeneratorPrototypeObject(generatorPrototype) ==
   [EmptyObject EXCEPT !.prototype = generatorPrototype]
+
+\\* A generator object that inherits from its function's prototype property, or from the realm's
+\\* prototype of generator objects where that isn't an object.
+GeneratorObjectFrom(heap, function, generatorPrototype) ==
+  LET prototype == Lookup(heap, function).values["prototype"]
+  IN GeneratorObjectOf(IF IsObjectIn(heap, prototype) THEN prototype ELSE generatorPrototype)
+
+\\* A plain function, whose prototype property holds what the objects its new makes inherit from.
+PlainFunctionObject(functionPrototype, name, length, prototype) ==
+  [GeneratorFunctionObject(functionPrototype, name, length, prototype) EXCEPT !.isConstructor = TRUE]
 
 \\* Whether one string of digits is below another of the same length.
 RECURSIVE DigitsBelow(_, _)

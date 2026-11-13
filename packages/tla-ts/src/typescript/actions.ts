@@ -92,7 +92,7 @@ import {
   getWrittenProperties,
   changesState,
   getArgumentsOwner,
-  isModuleFile,
+  isStrictCode,
   getSymbol,
   isAssigned,
   getTopLevelDeclaration,
@@ -194,6 +194,7 @@ import {
   isMade,
   isNewError,
   getCandidateValue,
+  getHeldName,
   getHeap,
   hasPrototypeArray,
   getNewWrapper,
@@ -3743,30 +3744,6 @@ export const isArgumentsRead = (read: ts.Identifier, context: Context) => {
   );
 };
 
-const hasStrictDirective = (statements: readonly ts.Statement[]) =>
-  statements.some(
-    (statement) =>
-      ts.isExpressionStatement(statement) &&
-      ts.isStringLiteral(statement.expression) &&
-      statement.expression.getText().slice(1, -1) === "use strict",
-  );
-
-// Code that runs in strict mode wherever it runs: in a class, under a "use strict" directive, or in
-// a module.
-const isStrictCode = (node: ts.Node): boolean =>
-  ts.findAncestor(
-    node,
-    (ancestor) =>
-      ts.isClassLike(ancestor) ||
-      (ts.isFunctionLike(ancestor) &&
-        "body" in ancestor &&
-        ancestor.body !== undefined &&
-        ts.isBlock(ancestor.body) &&
-        hasStrictDirective(ancestor.body.statements)) ||
-      (ts.isSourceFile(ancestor) &&
-        (hasStrictDirective(ancestor.statements) || isModuleFile(ancestor))),
-  ) !== undefined;
-
 // Outside strict mode, a function with simple parameters has an arguments object that maps them,
 // so that writing one changes the other, which tla-ts's arguments object doesn't follow. Only a
 // parameter that changes where the object's elements are read, or a parameter read where the
@@ -4605,6 +4582,8 @@ export const makeGenerator = (
     };
     const made = { ...inner, generators: new Map([...inner.generators, [name, suspension]]) };
     const prototype = getGeneratorPrototypeRef(callee, context);
+    const held =
+      getHeldName(callee, context) === undefined ? undefined : getCandidateValue(callee, context);
     // A generator's call binds its parameters, which throws before the body first runs.
     if (heapSymbol === undefined) {
       return letIn(
@@ -4627,10 +4606,26 @@ export const makeGenerator = (
             [
               getHeap(bound.scope, node, context),
               // A generator object inherits from its function's prototype object, where the heap
-              // holds it.
-              prototype === undefined
-                ? identifier("GeneratorObject")
-                : useJavaScript("GeneratorObjectOf", [prototype], context),
+              // holds it, or from what the prototype property of the function's object holds.
+              prototype !== undefined
+                ? useJavaScript("GeneratorObjectOf", [prototype], context)
+                : held === undefined
+                  ? identifier("GeneratorObject")
+                  : useJavaScript(
+                      "GeneratorObjectFrom",
+                      [
+                        getHeap(bound.scope, node, context),
+                        held,
+                        translateBuiltInValue(
+                          isAsync
+                            ? "%AsyncGeneratorFunction%.prototype.prototype"
+                            : "%GeneratorFunction%.prototype.prototype",
+                          node,
+                          context,
+                        ),
+                      ],
+                      context,
+                    ),
             ],
             context,
           ),

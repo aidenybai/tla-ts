@@ -53,6 +53,8 @@ import {
   getFunctionValue,
   isAnyGenerator,
   isAsyncFunction,
+  isAsyncGenerator,
+  isStrictCode,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import {
@@ -74,6 +76,7 @@ import {
 } from "./expressions";
 import {
   getBuiltIn,
+  getGeneratorPrototypeRef,
   isBuiltInObject,
   translateBuiltInObject,
   translateBuiltInValue,
@@ -181,7 +184,7 @@ export const translateFunctionObject = (node: ts.Expression, scope: Scope, conte
   context.builtIns.add("get Function.prototype.arguments");
   return share(translateExpression(node, scope, context), "function", context, (value) =>
     ifExpression(
-      useJavaScript("IsRef", [value], context),
+      useJavaScript("IsHeldObject", [value], context),
       value,
       apply("Assert", [boolean(false), string("tla-ts can't read this function as an object")]),
     ),
@@ -282,23 +285,73 @@ export const getMethodValue = (
   return holdObject(method, getModelValue(method, symbol, `${name}Method`, context), context);
 };
 
-// The heap holds the object of a function that a model value stands for, where it knows its name.
+// The heap holds the object of a function that a model value stands for, where it knows its name,
+// with the object that its prototype property starts with, where the heap doesn't hold that yet: a
+// generator's objects inherit from it, and a plain function's new would make them.
 const holdObject = (node: FunctionNode, value: Expression, context: Context) => {
   const name = getHeldName(node, context);
-  if (name !== undefined && value.kind === "Identifier") {
-    context.functionObjects.set(
-      value.name,
-      useJavaScript(
-        "ArrowObject",
+  if (name === undefined || value.kind !== "Identifier") return value;
+  const isGenerator = isAnyGenerator(node);
+  const isConstructor =
+    (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) && isPlain(node);
+  const key = `${value.name}.prototype`;
+  const kept = getGeneratorPrototypeRef(node, context);
+  const prototype = isGenerator
+    ? useJavaScript(
+        "GeneratorPrototypeObject",
         [
-          translateBuiltInValue("Function.prototype", node, context),
-          string(name),
-          number(getFunctionLength(getParameters(node))),
+          translateBuiltInValue(
+            isAsyncGenerator(node)
+              ? "%AsyncGeneratorFunction%.prototype.prototype"
+              : "%GeneratorFunction%.prototype.prototype",
+            node,
+            context,
+          ),
         ],
         context,
-      ),
-    );
-  }
+      )
+    : isConstructor
+      ? useJavaScript(
+          "Define",
+          [
+            identifier("EmptyObject"),
+            string("constructor"),
+            value,
+            ...[true, false, true].map(boolean),
+          ],
+          context,
+        )
+      : undefined;
+  context.functionObjects.set(value.name, {
+    object: useJavaScript(
+      isGenerator
+        ? "GeneratorFunctionObject"
+        : isConstructor
+          ? "PlainFunctionObject"
+          : "ArrowObject",
+      [
+        translateBuiltInValue(
+          isAsyncGenerator(node)
+            ? "%AsyncGeneratorFunction%.prototype"
+            : isGenerator
+              ? "%GeneratorFunction%.prototype"
+              : isAsyncFunction(node)
+                ? "%AsyncFunction%.prototype"
+                : "Function.prototype",
+          node,
+          context,
+        ),
+        string(name),
+        number(getFunctionLength(getParameters(node))),
+        ...(prototype === undefined
+          ? []
+          : [kept ?? useJavaScript(":>", [identifier("Ref"), string(key)], context)]),
+      ],
+      context,
+    ),
+    prototype:
+      prototype === undefined || kept !== undefined ? undefined : { key, object: prototype },
+  });
   return value;
 };
 
@@ -329,9 +382,10 @@ const getKeyName = (key: ts.PropertyName, context: Context) => {
     : undefined;
 };
 
-// The name of an arrow, which the binding, the assignment or the property that it initializes
-// gives, and which is empty where it's an argument, an element or an operand of in.
-const getArrowName = (node: ts.ArrowFunction, context: Context) => {
+// The name of an anonymous function, which the binding, the assignment to a name or the property
+// that it initializes gives, and which is empty where it's an argument, an element, an operand of
+// in, or what an assignment to anything else assigns.
+const getAnonymousName = (node: ts.ArrowFunction | ts.FunctionExpression, context: Context) => {
   const named = ts.findAncestor(node.parent, (parent) => !ts.isParenthesizedExpression(parent));
   if (named === undefined) return undefined;
   if (ts.isVariableDeclaration(named)) {
@@ -341,7 +395,7 @@ const getArrowName = (node: ts.ArrowFunction, context: Context) => {
     return getKeyName(named.name, context);
   }
   if (ts.isBinaryExpression(named) && NAMING_ASSIGNMENTS.has(named.operatorToken.kind)) {
-    return ts.isIdentifier(named.left) ? named.left.text : undefined;
+    return ts.isIdentifier(named.left) ? named.left.text : "";
   }
   return ts.isCallExpression(named) ||
     ts.isArrayLiteralExpression(named) ||
@@ -350,22 +404,36 @@ const getArrowName = (node: ts.ArrowFunction, context: Context) => {
     : undefined;
 };
 
-// The name of a plain method, or of an arrow, that the script makes once and holds as a model value,
-// which stands for one function object whose properties the heap holds.
-export const getHeldName = (node: FunctionNode, context: Context) =>
-  context.heap === undefined || node.body === undefined || !isOnce(node.parent)
-    ? undefined
-    : ts.isMethodDeclaration(node) &&
-        isPlain(node) &&
-        (ts.isObjectLiteralExpression(node.parent) || ts.isClassLike(node.parent))
+// The name of a function or a method that the script makes once and holds as a model value, which
+// stands for one function object whose properties the heap holds. A function in sloppy code also
+// has its own arguments and caller, which the heap doesn't hold.
+export const getHeldName = (node: FunctionNode, context: Context) => {
+  if (context.heap === undefined || node.body === undefined || !isOnce(node.parent)) {
+    return undefined;
+  }
+  if (ts.isMethodDeclaration(node)) {
+    return ts.isObjectLiteralExpression(node.parent) ||
+      (ts.isClassLike(node.parent) && !isFunctionObject(node.parent, context))
       ? getKeyName(node.name, context)
-      : ts.isArrowFunction(node) &&
-          !isAsyncFunction(node) &&
-          !isFunctionObject(node, context) &&
-          !isNestedFunction(node, context) &&
-          !isClosure(node, context)
-        ? getArrowName(node, context)
-        : undefined;
+      : undefined;
+  }
+  if (
+    !(
+      ts.isArrowFunction(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isFunctionDeclaration(node)
+    ) ||
+    [isFunctionObject, isHeapFunction, isNestedFunction, isClosure].some((isMade) =>
+      isMade(node, context),
+    ) ||
+    (!ts.isArrowFunction(node) && isPlain(node) && !isStrictCode(node))
+  ) {
+    return undefined;
+  }
+  return ts.isArrowFunction(node) || (ts.isFunctionExpression(node) && node.name === undefined)
+    ? getAnonymousName(node, context)
+    : node.name?.text;
+};
 
 // The model value of a function that a value may hold.
 export const getCandidateValue = (node: FunctionNode, context: Context) =>
