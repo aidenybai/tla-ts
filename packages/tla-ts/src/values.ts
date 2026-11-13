@@ -254,11 +254,14 @@ const getWrittenKeys = (functionValue: FunctionValue) =>
     ? undefined
     : functionValue.writtenKeys) ?? functionValue.domain;
 
-export const getWrittenPairs = (functionValue: FunctionValue): [Value, Value][] =>
-  getWrittenKeys(functionValue).map((key) => [
-    key,
-    functionValue.range[functionValue.domain.indexOf(key)],
-  ]);
+export const getWrittenPairs = (functionValue: FunctionValue): [Value, Value][] => {
+  const keys = getWrittenKeys(functionValue);
+  const domain = functionValue.domain;
+  const range = functionValue.range;
+  if (keys === domain) return domain.map((key, index) => [key, range[index]]);
+  const indexes = new Map(domain.map((key, index) => [key, index]));
+  return keys.map((key) => [key, range[indexes.get(key) ?? -1]]);
+};
 
 export const getPrintedPairs = (functionValue: FunctionValue): [Value, Value][] =>
   functionValue.domain.every((key) => typeof key === "number")
