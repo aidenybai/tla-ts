@@ -343,6 +343,44 @@ describe("top-level statements", () => {
     expect(getTrace(result)?.[0]).toMatchObject({ calls: "2", isAll: "FALSE" });
   });
 
+  const getFlatSource = (expected: string) => `
+    let calls = 0;
+    const flat = [1, 2, 3].flatMap((value) => {
+      calls += value;
+      return [value, value * calls];
+    });
+    if (flat.join() !== "${expected}") throw new Error(flat.join());
+  `;
+
+  it("run a flatMap callback that changes state as a loop", async () => {
+    expect((await checkModel(getFlatSource("1,1,2,6,3,18"))).failure).toBeUndefined();
+  });
+
+  it("fail where a flatMap callback that changes state gives other arrays", async () => {
+    expect((await checkModel(getFlatSource("1,1,2,2,3,3"))).failure?.message).toContain(
+      '"1,1,2,6,3,18"',
+    );
+  });
+
+  const getMadeSource = (expected: number) => `
+    const holder = { value: 1 };
+    holder.value += 1;
+    const getChildren = (list: number[], getElements = (inner: number[]) => inner) =>
+      getElements(list);
+    const enumerate = (list: number[], depth: number): number[] =>
+      getChildren(list).flatMap((child) => (depth > 0 ? enumerate([child, child], depth - 1) : [child]));
+    const count = enumerate([1, 2], 2).length;
+    if (count !== ${expected}) throw new Error(\`\${count}\`);
+  `;
+
+  it("make the objects of a function that a flatMap callback calls back into", async () => {
+    expect((await checkModel(getMadeSource(8))).failure).toBeUndefined();
+  });
+
+  it("fail where a function that a flatMap callback calls back into gives another array", async () => {
+    expect((await checkModel(getMadeSource(4))).failure?.message).toContain('"8"');
+  });
+
   it("skip the holes of an array-like object in callbacks that change state", async () => {
     const result = await checkModel(`
       let seen = "";

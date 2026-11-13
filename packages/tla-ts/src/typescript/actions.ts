@@ -37,6 +37,7 @@ import {
   translatePrimitiveMethod,
   translateSizeGetter,
   translateSortArguments,
+  flattenReturned,
 } from "./collections";
 import {
   findNodes,
@@ -5871,7 +5872,7 @@ const SORT_METHODS = new Set(["sort", "toSorted"]);
 const UNCALLED_METHODS = new Set(["indexOf", "lastIndexOf", "includes", "toReversed", "with"]);
 
 // The array methods that gather what they read into the array that they give.
-const GATHERING_METHODS = new Set(["filter", "map", "toReversed", "with"]);
+const GATHERING_METHODS = new Set(["filter", "map", "flatMap", "toReversed", "with"]);
 
 // The callback of an array method that changes what a statement can see, such as a count of its
 // calls, or a search that may run getters, which the method runs as a loop of statements.
@@ -6008,7 +6009,7 @@ const getLoopTarget = (node: ts.Node, context: Context) => {
   const isUnordered = method === "forEach" && isOrderFreeForEach(node, receiver, context);
   return (LOOP_METHODS.has(method) ||
     UNCALLED_METHODS.has(method) ||
-    (SORT_METHODS.has(method) && !isArrayLike)) &&
+    ((SORT_METHODS.has(method) || method === "flatMap") && !isArrayLike)) &&
     (isArrayLike || isUnordered || getKind(receiver, context) === "sequence")
     ? {
         method,
@@ -6117,8 +6118,10 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
       : undefined;
   }
   const callback = argument && getCallback(argument, path, context);
+  // A flatMap whose array the heap holds runs as an expression.
   return argument !== undefined &&
     callback?.body !== undefined &&
+    !(target.method === "flatMap" && context.heapCollections.has(node)) &&
     (ts.isArrowFunction(callback) ||
       ts.isFunctionExpression(callback) ||
       ts.isFunctionDeclaration(callback)) &&
@@ -6313,7 +6316,10 @@ const translateLoopCall = (
         repeat(current, kept),
       );
     }
-    return repeat(current, method === "map" ? getMapped(result, false) : result);
+    return repeat(
+      current,
+      method === "map" || method === "flatMap" ? getMapped(result, false) : result,
+    );
   };
   const finished =
     new Map([
@@ -6327,9 +6333,11 @@ const translateLoopCall = (
     ]).get(method) ??
     (isSort
       ? useJavaScript("SortResult", [kept], context)
-      : GATHERING_METHODS.has(method) || isReduce
-        ? kept
-        : getUndefined(context));
+      : method === "flatMap"
+        ? flattenReturned(kept, callback, expression, context)
+        : GATHERING_METHODS.has(method) || isReduce
+          ? kept
+          : getUndefined(context));
   const inner = {
     ...withValues(
       path,

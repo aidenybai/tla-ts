@@ -1095,23 +1095,13 @@ const translateSequenceOperation = (
     ],
     [
       "flatMap",
-      () => {
-        const callee = getCallbackFunction(argument, scope, context);
-        const returned =
-          callee === undefined
-            ? undefined
-            : context.checker.getSignatureFromDeclaration(callee)?.getReturnType();
-        if (returned === undefined) {
-          throw new TlaTypeScriptError("Give flatMap() a callback whose type tells", node);
-        }
-        return flattenTypes(
+      () =>
+        flattenReturned(
           translateEach((bounds, body) => functionOf(bounds, body))(),
-          [returned],
-          1,
+          getCallbackFunction(argument, scope, context),
           node,
           context,
-        );
-      },
+        ),
     ],
     ["every", translateEach((bounds, body) => quantify("Forall", bounds, body), translateTest)],
     ["some", translateEach((bounds, body) => quantify("Exists", bounds, body), translateTest)],
@@ -1288,6 +1278,23 @@ const translateMapMethod = (
 
 const removeLast = (current: Expression) =>
   apply("SubSeq", [current, number(1), apply("-", [apply("Len", [current]), number(1)])]);
+
+// The array that flatMap gives from the values that its callback returns.
+export const flattenReturned = (
+  mapped: Expression,
+  callee: FunctionNode | undefined,
+  node: ts.Node,
+  context: Context,
+) => {
+  const returned =
+    callee === undefined
+      ? undefined
+      : context.checker.getSignatureFromDeclaration(callee)?.getReturnType();
+  if (returned === undefined) {
+    throw new TlaTypeScriptError("Give flatMap() a callback whose type tells", node);
+  }
+  return flattenTypes(mapped, [returned], 1, node, context);
+};
 
 // Flattens a sequence by levels while its elements' types are all arrays, and stops at a level
 // whose types hold no array. A level that may hold both has elements that tla-ts can't tell apart.
