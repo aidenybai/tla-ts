@@ -1416,30 +1416,6 @@ ArrayIterator(heap, array, kind, prototype) ==
                                     @@ [iterated |-> array, index |-> 0, kind |-> kind])
   IN [heap |-> allocated, value |-> Allocated(allocated), isThrown |-> FALSE]
 
-\\* A step of an array's iterator, which forgets the array once done: the heap after it, the value
-\\* it gives, and whether it's done.
-ArrayIteratorStep(heap, ref) ==
-  LET iterator == heap.objects[ref[Ref]]
-      array == iterator.iterated
-      index == iterator.index
-      isDone == array = Undefined \\/ index >= ToLength(Get(heap, array, "length"))
-      element == Get(heap, array, ToString(index))
-      value == CASE isDone -> Undefined
-                 [] iterator.kind = "keys" -> index
-                 [] iterator.kind = "values" -> element
-                 [] OTHER -> <<index, element>>
-      stepped == [heap EXCEPT !.objects[ref[Ref]] =
-                    IF isDone THEN [@ EXCEPT !.iterated = Undefined] ELSE [@ EXCEPT !.index = index + 1]]
-  IN [heap |-> stepped, value |-> value, isDone |-> isDone]
-
-\\* %ArrayIteratorPrototype%.next, which gives a new result object.
-ArrayIteratorNext(heap, ref) ==
-  IF IsHeap(ref) /\\ "iterated" \\in DOMAIN heap.objects[ref[Ref]]
-  THEN LET step == ArrayIteratorStep(heap, ref)
-           allocated == Allocate(step.heap, IteratorResult(step.value, step.isDone))
-       IN [heap |-> allocated, value |-> Allocated(allocated), isThrown |-> FALSE]
-  ELSE Assert(FALSE, "tla-ts can't step an iterator that isn't an array's with its next")
-
 \\* The values of an array-like object at each index below its length, which Get reads, so that a
 \\* hole gives what a prototype holds there, or undefined.
 ArrayLikeValues(heap, ref) ==
@@ -2195,6 +2171,54 @@ RecasedPoints(points, isUpper) ==
 ToLowerCase(value) == RecasedPoints(StringCharacters(Text(value)), FALSE)
 
 ToUpperCase(value) == RecasedPoints(StringCharacters(Text(value)), TRUE)
+
+\\* An iterator of a string's characters, which reads them as next steps it.
+StringIterator(heap, string, prototype) == ArrayIterator(heap, string, "string", prototype)
+
+\\* The string that String.prototype[Symbol.iterator] reads through ToString: a string, or what a
+\\* String object holds where it has no Symbol.toPrimitive and reads the built-in toString.
+IteratedString(heap, value) ==
+  CASE TypeOf(value) = "string" -> value
+    [] Get(heap, value, WellKnownSymbol("toPrimitive")) = Undefined ->
+         WrappedPrimitive(heap, value, "String", "toString")
+    [] OTHER -> Assert(FALSE, "tla-ts can't read the string of an object with a Symbol.toPrimitive")
+
+\\* A step of an array's or a string's iterator, which forgets what it iterates once done: the heap
+\\* after it, the value it gives, and whether it's done.
+BuiltInIteratorStep(heap, ref) ==
+  LET iterator == heap.objects[ref[Ref]]
+      iterated == iterator.iterated
+      index == iterator.index
+      isString == iterator.kind = "string"
+      isDone == \\/ iterated = Undefined
+                \\/ index >= IF isString
+                            THEN Len(StringCharacters(iterated))
+                            ELSE ToLength(Get(heap, iterated, "length"))
+      element == IF isString THEN StringCharacters(iterated)[index + 1] ELSE Get(heap, iterated, ToString(index))
+      value == CASE isDone -> Undefined
+                 [] iterator.kind = "keys" -> index
+                 [] iterator.kind \\in {"values", "string"} -> element
+                 [] OTHER -> <<index, element>>
+      stepped == [heap EXCEPT !.objects[ref[Ref]] =
+                    IF isDone THEN [@ EXCEPT !.iterated = Undefined] ELSE [@ EXCEPT !.index = index + 1]]
+  IN [heap |-> stepped, value |-> value, isDone |-> isDone]
+
+\\* Whether an array's or a string's iterator reads the built-in next.
+HoldsIteratorNext(heap, ref) ==
+  HoldsBuiltIn(heap, ref, "next",
+               IF heap.objects[ref[Ref]].kind = "string"
+               THEN "%StringIteratorPrototype%.next"
+               ELSE "%ArrayIteratorPrototype%.next")
+
+\\* %ArrayIteratorPrototype%.next or %StringIteratorPrototype%.next, which gives a new result object.
+BuiltInIteratorNext(heap, ref, isString) ==
+  IF /\\ IsHeap(ref)
+     /\\ "iterated" \\in DOMAIN heap.objects[ref[Ref]]
+     /\\ (heap.objects[ref[Ref]].kind = "string") = isString
+  THEN LET step == BuiltInIteratorStep(heap, ref)
+           allocated == Allocate(step.heap, IteratorResult(step.value, step.isDone))
+       IN [heap |-> allocated, value |-> Allocated(allocated), isThrown |-> FALSE]
+  ELSE Assert(FALSE, "tla-ts can't step an iterator that isn't an array's or a string's with its next")
 
 \\* A filler repeated and cut to a length.
 RECURSIVE FillTo(_, _)

@@ -323,7 +323,15 @@ const getPrototype = (node: ts.Expression, context: Context): string | undefined
   if (type.flags & ts.TypeFlags.StringLike) return "String.prototype";
   if (type.flags & ts.TypeFlags.BooleanLike) return "Boolean.prototype";
   if (type.flags & ts.TypeFlags.BigIntLike) return "BigInt.prototype";
-  if (getArrayIteratorCall(node, context)?.kind !== undefined && !context.hasInheritedElements) {
+  // Iterator.from's iterator is wrapped where its prototype no longer inherits from
+  // Iterator.prototype, and getIteratorCall reads a string's.
+  const arrayIteratorCall = getArrayIteratorCall(node, context);
+  if (
+    arrayIteratorCall?.kind !== undefined &&
+    arrayIteratorCall.kind !== "string" &&
+    arrayIteratorCall.isFrom !== true &&
+    !context.hasInheritedElements
+  ) {
     return "%ArrayIteratorPrototype%";
   }
   const iteratorCall = getIteratorCall(node, context);
@@ -613,6 +621,7 @@ export const translateBuiltInValue = (
     | "Iterator"
     | "Iterator.prototype"
     | "%ArrayIteratorPrototype%"
+    | "%StringIteratorPrototype%"
     | "%GeneratorFunction%.prototype"
     | "%GeneratorFunction%.prototype.prototype"
     | "Promise"
@@ -922,7 +931,11 @@ export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: C
   const iteratorCall = isPrototypeCall(node, context)
     ? getArrayIteratorCall(node.arguments[0], context)
     : undefined;
-  if (iteratorCall?.kind !== undefined) {
+  if (
+    iteratorCall?.kind !== undefined &&
+    iteratorCall.kind !== "string" &&
+    iteratorCall.isFrom !== true
+  ) {
     return share(
       translateExpression(iteratorCall.receiver, scope, context),
       "array",
@@ -939,8 +952,10 @@ export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: C
     );
   }
   // A script's heap holds the built-in objects it names, which its statements may change.
+  // A built-in iterator that a call makes reads its prototype as getIteratorCall tells.
   const isOfObject =
     (isPrototypeOfCall(node) || isPrototypeCall(node, context)) &&
+    getIteratorCall(node.arguments[0], context) === undefined &&
     (getKind(node.arguments[0], context) === "object" ||
       (context.heap !== undefined &&
         scope.bindings.has(context.heap) &&

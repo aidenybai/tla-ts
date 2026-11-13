@@ -8825,6 +8825,76 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("rest");
   });
 
+  it("steps a string's iterator with next", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      const iterator = "ab"[Symbol.iterator]();
+      const first = iterator.next();
+      if (first.value !== "a" || first.done) throw new Error("first");
+      iterator.next();
+      holder.count = 1;
+      if (iterator.next().done) throw new Error("done");
+    `);
+    expect(result.failure?.message).toContain("done");
+  });
+
+  it("steps a string's iterator by code points", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      const pair = "\\uD834\\uDF06";
+      const iterator = pair[Symbol.iterator]();
+      if (iterator.next().value !== pair) throw new Error("pair");
+      holder.count = 1;
+      if (iterator.next().done) throw new Error("done");
+    `);
+    expect(result.failure?.message).toContain("done");
+  });
+
+  it("gives a string's iterator back from Iterator.from", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      const characters = Array.from(Iterator.from("ab"));
+      holder.count = 1;
+      if (characters.join() === "a,b") throw new Error("from");
+    `);
+    expect(result.failure?.message).toContain("from");
+  });
+
+  it("iterates the string that a String object holds", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      const characters = Array.from(Iterator.from(new String("ab")));
+      holder.count = 1;
+      if (characters.join() === "a,b") throw new Error("wrapped");
+    `);
+    expect(result.failure?.message).toContain("wrapped");
+  });
+
+  it("makes a string's iterator inherit from %StringIteratorPrototype%", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      const prototype = Object.getPrototypeOf(""[Symbol.iterator]());
+      const iteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf([].values()));
+      if (prototype === iteratorPrototype) throw new Error("same");
+      holder.count = 1;
+      if (Object.getPrototypeOf(prototype) === iteratorPrototype) throw new Error("ancestry");
+    `);
+    expect(result.failure?.message).toContain("ancestry");
+  });
+
+  it("runs a for-of over a variable's string iterator from where next left it", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      const iterator = "ab"[Symbol.iterator]();
+      iterator.next();
+      let joined = "";
+      for (const character of iterator) joined += character;
+      holder.count = 1;
+      if (joined === "b") throw new Error("rest");
+    `);
+    expect(result.failure?.message).toContain("rest");
+  });
+
   it("takes or drops up to Infinity or Number.MAX_SAFE_INTEGER", async () => {
     const result = await checkModel(`
       function* g(): Generator<number> {

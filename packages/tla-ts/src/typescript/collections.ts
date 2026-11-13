@@ -63,6 +63,8 @@ import {
   isBooleanType,
   isEvery,
   getIteratedArray,
+  getIteratedString,
+  getIteratorFromArgument,
   getKeptIterator,
   isHeapArray,
   ITERATOR_METHODS,
@@ -1255,6 +1257,16 @@ export const isArrayIteration = (node: ts.Node, context: Context) =>
 // next. The iterator reads an array that the heap holds as it steps, or a literal that nothing
 // else holds, which can't change.
 export const getArrayIteratorCall = (node: ts.Node, context: Context) => {
+  const iteratedString = getIteratedString(node, context);
+  if (context.heap !== undefined && iteratedString !== undefined) {
+    return {
+      kind: "string",
+      receiver: iteratedString,
+      key: "@@iterator",
+      path: "String.prototype.@@iterator",
+      isFrom: getIteratorFromArgument(node) !== undefined,
+    };
+  }
   const iterated = getIteratedArray(node, context);
   if (
     context.heap !== undefined &&
@@ -1285,8 +1297,9 @@ export const getArrayIteratorCall = (node: ts.Node, context: Context) => {
   const callee = node.expression;
   const receiver = callee.expression;
   if (ts.isPropertyAccessExpression(callee) && callee.name.text === "next") {
-    return context.checker.getTypeAtLocation(receiver).getSymbol()?.name === "ArrayIterator"
-      ? { kind: undefined, receiver, key: "next", path: "%ArrayIteratorPrototype%.next" }
+    const name = context.checker.getTypeAtLocation(receiver).getSymbol()?.name;
+    return name === "ArrayIterator" || name === "StringIterator"
+      ? { kind: undefined, receiver, key: "next", path: `%${name}Prototype%.next` }
       : undefined;
   }
   const kind = getKeptIterator(node, context);
@@ -1308,6 +1321,12 @@ export const translateArrayIteratorPrototype = (node: ts.Node, context: Context)
   return translateBuiltInValue("%ArrayIteratorPrototype%", node, context);
 };
 
+// %StringIteratorPrototype%, with its next, whose own properties a script may read.
+export const translateStringIteratorPrototype = (node: ts.Node, context: Context) => {
+  context.builtIns.add("%StringIteratorPrototype%.next");
+  return translateBuiltInValue("%StringIteratorPrototype%", node, context);
+};
+
 // Whether the receiver of an array iterator call still reads the built-in method it calls.
 export const translateHoldsIteratorMethod = (
   call: NonNullable<ReturnType<typeof getArrayIteratorCall>>,
@@ -1315,13 +1334,19 @@ export const translateHoldsIteratorMethod = (
   receiver: Expression,
   context: Context,
 ) => {
-  // A sequence reads its methods from Array.prototype.
+  // A sequence reads its methods from Array.prototype, and a string from String.prototype.
   context.builtIns.add("Array.prototype");
   return useJavaScript(
     "HoldsBuiltIn",
     [
       heap,
-      receiver,
+      call.kind === "string"
+        ? ifExpression(
+            apply("=", [useJavaScript("TypeOf", [receiver], context), string("string")]),
+            translateBuiltInValue("String.prototype", call.receiver, context),
+            receiver,
+          )
+        : receiver,
       call.key === "@@iterator"
         ? useJavaScript("WellKnownSymbol", [string("iterator")], context)
         : string(call.key),
