@@ -1,5 +1,5 @@
 import ts from "@typescript/typescript6";
-import type { Expression } from "../ast";
+import { type Expression, getChildren } from "../ast";
 import {
   type CalledMethod,
   type Context,
@@ -229,6 +229,21 @@ export const getDefinition = (declaration: HelperDeclaration, context: Context):
     bindNames(bindFactory(declaration, createStateScope(context), context), parameters),
     context,
   );
+  // What the body translates to may read the state where its code names none of it, such as the
+  // heap that an array's iterator or a typeof reads.
+  const stateNames = new Set([
+    ...[...context.variables.values()].flatMap((variable) =>
+      variable.kind === "Identifier" ? [variable.name] : [],
+    ),
+    ...[...context.definitions.values()].flatMap((defined) =>
+      defined.readsState ? [defined.name] : [],
+    ),
+  ]);
+  const isReading = (expression: Expression): boolean =>
+    (expression.kind === "Identifier" && stateNames.has(expression.name)) ||
+    (expression.kind === "Apply" && stateNames.has(expression.operator)) ||
+    getChildren(expression).some(isReading);
+  definition.readsState = definition.readsState || isReading(value);
   context.inProgress.delete(declaration);
   context.output.push(
     link(

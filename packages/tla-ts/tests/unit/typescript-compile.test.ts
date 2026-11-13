@@ -3757,6 +3757,21 @@ describe("calls", () => {
     ).toContain('"digits;1,2,3,4;5,6;6"');
   });
 
+  it("reads the heap as it is in a function whose spreads read it, where an expression calls it", async () => {
+    const getSource = (expected: string) => `
+      interface Box {
+        value: number;
+      }
+      const box: Box = { value: 1 };
+      const join = (items: string[][]) =>
+        items.length === 0 ? [""] : items.reduce<string[]>((lines, item) => [...lines, ...item], []);
+      const text = ["a", ...[box.value].map((value) => join([["x"], [String(value)]]).join(","))].join(";");
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect((await checkModel(getSource("a;x,1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("a;x,2"))).failure?.message).toContain('"a;x,1"');
+  });
+
   it("runs a function that calls itself as one operator, so its size grows with its cases", async () => {
     const getSource = (cases: number, expected: string) => {
       const kinds = Array.from({ length: cases }, (_, position) => `K${position}`);
