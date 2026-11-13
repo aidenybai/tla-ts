@@ -816,20 +816,22 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
     return {
       ...target,
       update: (getValue) =>
-        target.update((sequence) =>
-          share(key, "position", context, (position) =>
-            ifExpression(
-              apply("\\in", [position, apply("DOMAIN", [sequence])]),
-              except(sequence, [
-                { path: [{ kind: "Index", args: [position] }], value: getValue(exceptAt()) },
-              ]),
+        target.update((value) =>
+          share(value, "sequence", context, (sequence) =>
+            share(key, "position", context, (position) =>
               ifExpression(
-                apply("=", [position, apply("+", [apply("Len", [sequence]), number(1)])]),
-                apply("Append", [sequence, getValue(getUndefined(context))]),
-                apply("Assert", [
-                  boolean(false),
-                  string("TLA+ sequences can't have holes, so write at most one past the end"),
+                apply("\\in", [position, apply("DOMAIN", [sequence])]),
+                except(sequence, [
+                  { path: [{ kind: "Index", args: [position] }], value: getValue(exceptAt()) },
                 ]),
+                ifExpression(
+                  apply("=", [position, apply("+", [apply("Len", [sequence]), number(1)])]),
+                  apply("Append", [sequence, getValue(getUndefined(context))]),
+                  apply("Assert", [
+                    boolean(false),
+                    string("TLA+ sequences can't have holes, so write at most one past the end"),
+                  ]),
+                ),
               ),
             ),
           ),

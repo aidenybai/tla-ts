@@ -12834,6 +12834,19 @@ describe("errors", () => {
     expect((await checkModel(getSource(10, 7))).failure?.message).toContain("removed");
   });
 
+  it("names an array before it writes an element, so that later writes read the name", async () => {
+    const getSource = (count: number, expected: number) => `
+      const values: number[] = [];
+      ${Array.from({ length: count }, (_, position) => `values[${position}] = ${position + 1};`).join("\n")}
+      if (values.length !== ${count} || values[${count - 1}] !== ${expected}) throw new Error("written");
+    `;
+    const getSize = (count: number) =>
+      printModule(compile(getSource(count, 0), "spec.ts").source).length;
+    expect(getSize(8)).toBeLessThan(3 * getSize(4));
+    expect((await checkModel(getSource(8, 8))).failure).toBeUndefined();
+    expect((await checkModel(getSource(8, 7))).failure?.message).toContain("written");
+  });
+
   it("gives undefined where an optional chain removes from an array that is missing", async () => {
     const declared = await checkModel(`
       const pops: (number[] | undefined)[] = [undefined];
