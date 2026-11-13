@@ -63,7 +63,7 @@ import {
   getSubscriptVariables,
   type SpecDescription,
 } from "./spec-description";
-import { getRepresentative, getSymmetryGroup } from "./symmetry";
+import { getRepresentative, getSymmetryGroup, type Images } from "./symmetry";
 import {
   formatInnerMessage,
   formatNestedMessage,
@@ -680,6 +680,20 @@ export interface Search {
   getTlcOrder: () => number[];
   isSymmetric: boolean;
   isConstrained: boolean;
+  getTypedChecks: () =>
+    | {
+        init: Expression;
+        next: Expression;
+        scope: Scope | undefined;
+        invariants: Expression[];
+        constraints: Expression[];
+        initialPredicates: Expression[];
+        actionProperties: ActionProperty[];
+        symmetry: Images[] | undefined;
+        view: Expression | undefined;
+        variableOrder: number[];
+      }
+    | undefined;
   findViolatedInvariant: (state: Value[], parent?: Value[]) => StateCheck | undefined;
   getViolatedInvariants: (state: Value[]) => StateCheck[];
   checkReplayedInitialState: (
@@ -724,7 +738,7 @@ export const getIncompleteSuccessorMessage = (
   return `Successor state is not completely specified by ${subject}. The following variable${missing.length > 1 ? "s are" : " is"} not ${verb}: ${missing.join(", ")}.\n`;
 };
 
-const getContext = (
+export const getContext = (
   environment: Environment,
   state: Value[] | undefined,
   next: Value[] | undefined,
@@ -1149,6 +1163,33 @@ export const createSearch = (
     },
     isSymmetric: symmetryGroup !== undefined,
     isConstrained: constraints.length > 0 || actionConstraints.length > 0,
+    getTypedChecks: () => {
+      const isInterpreted =
+        coverage !== undefined ||
+        possible.length > 0 ||
+        config.periodic !== undefined ||
+        [...invariants, ...constraints].some((check) => check.scope !== undefined) ||
+        actionConstraints.length > 0 ||
+        properties.actionProperties.some((property) => property.scope !== undefined) ||
+        properties.liveness.length > 0 ||
+        properties.initialPredicates.some((predicate) => predicate.scope !== undefined);
+      return isInterpreted || spec.init === undefined || spec.next === undefined
+        ? undefined
+        : {
+            init: spec.init,
+            next: spec.next,
+            scope: spec.scope,
+            invariants: invariantPredicates.map((invariant) => invariant.predicate),
+            constraints: [...new Set(constraints.map((constraint) => constraint.predicate))],
+            initialPredicates: properties.initialPredicates.map(
+              (predicate) => predicate.expression,
+            ),
+            actionProperties: properties.actionProperties,
+            symmetry: symmetryGroup,
+            view: view?.expression,
+            variableOrder: getTlcOrder(),
+          };
+    },
     getTlcOrder,
     getStoredFingerprints: (states, fingerprintStates) => {
       if (view !== undefined || isFingerprintedLikeTlc) {

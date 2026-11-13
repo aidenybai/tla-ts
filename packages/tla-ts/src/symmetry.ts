@@ -20,7 +20,7 @@ import {
   type Value,
 } from "./values";
 
-type Images = Map<string, ModelValue>;
+export type Images = Map<string, ModelValue>;
 
 const getPermutationKey = (permutation: Images) =>
   [...permutation]
@@ -222,7 +222,7 @@ const permuteSortedElements = (elements: Value[], images: Images) => {
   return merged;
 };
 
-const permuteValue = (value: Value, images: Images): Value => {
+export const permuteValue = (value: Value, images: Images): Value => {
   if (typeof value !== "object") return value;
   const kind = value.kind;
   if (kind === "ModelValue") return images.get(value.name) ?? value;

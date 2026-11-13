@@ -28,6 +28,7 @@ const checkModel = async (specPath: string, configPath: string): Promise<ModelOu
   }
   const result = await check({
     isWarningEnabled: false,
+    isFingerprintDistanceSkipped: true,
     source,
     config: readFileSync(configPath, "utf8"),
     loadModule: (name) => {

@@ -329,7 +329,7 @@ const getReadLocals = (
   return isReadOnly ? names : undefined;
 };
 
-const hasBranches = (
+export const hasBranches = (
   expression: Expression,
   environment: Environment,
   visited: Set<Definition>,

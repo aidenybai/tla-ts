@@ -24,6 +24,7 @@ import {
 import {
   describeRange,
   getDefinition,
+  hasRepeatedEffects,
   type CallStack,
   type Environment,
   type FingerprintFailure,
@@ -109,6 +110,7 @@ import {
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createActionRecord, createCounterExample } from "./tlc/tlcext-operators";
 import type { TlcVersion } from "./tlc/version";
+import { runTypedSearch } from "./typed-tier";
 import {
   createCanonicalizer,
   createModelValue,
@@ -148,6 +150,8 @@ export interface CheckOptions {
   isTool?: boolean;
   /** TLC's -continue: reports each violation through onProgress and goes on. */
   isContinued?: boolean;
+  /** Skips fingerprintDistance, which takes fingerprinting every state again after the search. */
+  isFingerprintDistanceSkipped?: boolean;
   moduleOperators?: ModuleOperator[];
   /** TLC's trace exploration spec, and the binary trace TLC records for it unless -noTEBin. */
   traceSpec?: TraceSpecOptions;
@@ -457,14 +461,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const createSuccess = (): CheckResult => ({
     ...createResult("success"),
     outDegrees: [...outDegrees],
-    fingerprintDistance: getFingerprintDistance(
-      runtime.distinctStates,
-      runtime.generatedStates,
-      () =>
-        search
-          ? search.getStoredFingerprints(states, fingerprintStates)
-          : BigInt64Array.from(states, runtime.getFingerprint),
-    ),
+    fingerprintDistance: options.isFingerprintDistanceSkipped
+      ? undefined
+      : getFingerprintDistance(runtime.distinctStates, runtime.generatedStates, () =>
+          search
+            ? search.getStoredFingerprints(states, fingerprintStates)
+            : BigInt64Array.from(states, runtime.getFingerprint),
+        ),
   });
 
   const search = createSearch(
@@ -1096,6 +1099,31 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const assumptionViolation = findViolatedAssumption();
   if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
   options.onProgress?.({ kind: "initial-states-started" });
+  const typedChecks =
+    !options.isContinued &&
+    options.isFingerprintDistanceSkipped === true &&
+    options.dump === undefined &&
+    !hasPostconditions &&
+    // The interpreter evaluates again what the tier evaluated before it fell back.
+    !hasRepeatedEffects(environment)
+      ? search.getTypedChecks()
+      : undefined;
+  const typed =
+    typedChecks &&
+    runTypedSearch(environment, { ...typedChecks, isDeadlockChecked: config.checkDeadlock });
+  if (typed && !typed.deadlock) {
+    options.onProgress?.({ kind: "initial-states-computed", initialStates: typed.initialStates });
+    return {
+      ...createResult("success"),
+      generatedStates: typed.generatedStates,
+      distinctStates: typed.distinctStates,
+      queuedStates: 0,
+      depth: typed.generatedStates === 0 ? 0 : Math.max(typed.depth, 1),
+      initialStates: typed.initialStates,
+      outDegrees: typed.outDegrees,
+      fingerprintDistance: undefined,
+    };
+  }
   if (spec.init !== undefined) {
     let overflowState: Value[] | undefined;
     const reportInitialFailure = (error: unknown, state: Value[]) => {
@@ -1489,6 +1517,45 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     periodic.time += performance.now() - now;
     return lasso;
   };
+  // The tier found a state without successors. The interpreter rebuilds the tier's path to it and
+  // reports the deadlock from it, as it would after its own search.
+  const deadlock = typed?.deadlock;
+  const initialIndex = deadlock ? states.findIndex((state) => deadlock.isPathState(0, state)) : -1;
+  if (typed && deadlock && initialIndex !== -1) {
+    const steps: { successor: Successor; action: SpecAction | undefined }[] = [];
+    const getLastState = () => steps.at(-1)?.successor.state ?? states[initialIndex];
+    for (
+      let position = 1;
+      position === steps.length + 1 && position < deadlock.length;
+      position++
+    ) {
+      forEachActionSuccessor(getLastState(), undefined, (successor, action) => {
+        if (!deadlock.isPathState(position, successor.state)) return false;
+        steps.push({ successor, action });
+        return true;
+      });
+    }
+    const isDeadlocked =
+      steps.length === deadlock.length - 1 &&
+      forEachActionSuccessor(getLastState(), undefined, () => true) === 0;
+    if (isDeadlocked) {
+      const parent = { index: initialIndex };
+      for (const step of steps) {
+        visitSuccessor(parent.index, step.successor, [], undefined, step.action);
+        parent.index = states.length - 1;
+      }
+      runtime.generatedStates = typed.generatedStates;
+      runtime.distinctStates = typed.distinctStates;
+      runtime.queueSize = typed.queuedStates;
+      runtime.diameter = typed.depth;
+      searchDepth = typed.depth;
+      outDegrees.splice(0, outDegrees.length, ...typed.outDegrees);
+      newStateCount = 0;
+      Object.assign(current, { index: parent.index, candidate: undefined, isExpanding: true });
+      const result = expandState(parent.index, []);
+      if (result) return result;
+    }
+  }
   for (let index = 0; index < states.length && !runtime.isStopped; index++) {
     current.index = index;
     current.candidate = undefined;

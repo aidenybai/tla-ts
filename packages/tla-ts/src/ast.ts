@@ -42,7 +42,7 @@ interface IdentifierExpression {
   resolution?: LocalResolution;
 }
 
-interface ApplyExpression {
+export interface ApplyExpression {
   kind: "Apply";
   operator: string;
   spelling?: string;
@@ -186,7 +186,7 @@ interface TupleExpression {
   location: SourceLocation;
 }
 
-interface FunctionConstructionExpression {
+export interface FunctionConstructionExpression {
   kind: "FunctionConstruction";
   bounds: Bound[];
   body: Expression;
