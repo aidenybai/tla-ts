@@ -7039,6 +7039,14 @@ const translateDelegatedYield = (
       continueWith,
     );
   }
+  if (
+    yieldTo !== undefined &&
+    awaitTo === undefined &&
+    iterated !== undefined &&
+    isGeneratorType(iterated, context)
+  ) {
+    return delegateToGenerator(node, iterated, yieldTo, path, context, frame, continueWith);
+  }
   const elements =
     iterated !== undefined && ts.isArrayLiteralExpression(iterated) ? iterated.elements : undefined;
   if (
@@ -7112,6 +7120,56 @@ const translateDelegatedYield = (
 };
 
 const DELEGATION_LIMIT = 3;
+
+// A generator's yield* over another generator, which resumes it with next and passes on what it
+// yields until it returns. A return or a throw while it delegates would call the generator's return
+// or throw, which tla-ts doesn't follow.
+const delegateToGenerator = (
+  node: ts.YieldExpression,
+  iterated: ts.Expression,
+  yieldTo: NonNullable<Frame["yieldTo"]>,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const uncaught = apply("Assert", [boolean(false), string(node.getText())]);
+  const throwTo = frame.throwTo;
+  const throwWith = (current: Path, value: Expression) =>
+    throwTo === undefined ? leaf(uncaught) : throwTo(current, { value, uncaught });
+  const delegate = (current: Path, generator: Expression, count: number): Formula =>
+    count > DELEGATION_LIMIT
+      ? leaf(
+          apply("Assert", [
+            boolean(false),
+            string(`tla-ts can't follow more than ${DELEGATION_LIMIT} values of a yield*`),
+          ]),
+        )
+      : resumeGenerator(
+          node,
+          generator,
+          "next",
+          undefined,
+          current,
+          context,
+          frame,
+          (stepped, value, isDone, isResult) =>
+            isDone
+              ? continueWith(stepped)
+              : yieldTo(
+                  stepped,
+                  value,
+                  (resumed) => delegate(resumed, generator, count + 1),
+                  throwWith,
+                  { isDelegated: true, isGuarded: true, isResult },
+                ),
+        );
+  return ts.isCallExpression(iterated)
+    ? translateCallStatement(iterated, path, context, frame, (after, generator) =>
+        delegate(after, generator ?? getUndefined(context), 0),
+      )
+    : delegate(path, translateExpression(iterated, path.scope, context), 0);
+};
 
 // A generator's yield* over an object's iterator, which passes on each of the iterator's results
 // until one is done. A return or a throw while it delegates would call the iterator's return or

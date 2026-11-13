@@ -774,7 +774,7 @@ export const isPrototypeRead = (outer: ts.Node, node: ts.Expression) => {
 
 // A generator object goes only where tla-ts follows it: into a variable that holds generators, to a
 // call of its methods or Iterator.prototype's, into Iterator.from, into a comparison, an instanceof,
-// or a getPrototypeOf, or into a for-of or a for await.
+// or a getPrototypeOf, into a for-of or a for await, or into a generator's yield*.
 // Elsewhere, such as an array pattern, a spread, or a function's parameter, code would iterate it
 // in ways that tla-ts doesn't follow.
 export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
@@ -811,6 +811,9 @@ export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
         outer.expression === node &&
         (outer.awaitModifier !== undefined || isGeneratorType(node, context))) ||
       ts.isExpressionStatement(outer) ||
+      (ts.isYieldExpression(outer) &&
+        outer.asteriskToken !== undefined &&
+        isGeneratorType(node, context)) ||
       (ts.isCallExpression(outer) && isComparedArgument(node, outer, context)) ||
       (ts.isArrayLiteralExpression(outer) && isAsyncDelegated(outer)) ||
       (ts.isReturnStatement(outer) && isPatternDefaultReturn(outer)) ||
