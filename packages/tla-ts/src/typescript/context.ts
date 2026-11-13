@@ -1809,9 +1809,19 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
     node.body !== undefined &&
     isPlain(node) &&
     isOnce(node.parent) &&
-    !isReturning(node.body) &&
     !isAssigned(symbol, sourceFile, context) &&
-    isNewTarget(sourceFile);
+    (isNewTarget(sourceFile)
+      ? !isReturning(node.body)
+      : // An assignment writes one of its properties.
+        findNodes(
+          sourceFile,
+          (child): child is ts.BinaryExpression =>
+            ts.isBinaryExpression(child) &&
+            child.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+            (ts.isPropertyAccessExpression(child.left) ||
+              ts.isElementAccessExpression(child.left)) &&
+            getSymbol(skipCasts(child.left.expression), context.checker) === symbol,
+        ).length > 0);
   heapFunctions.set(node, isHeap);
   return isHeap;
 };

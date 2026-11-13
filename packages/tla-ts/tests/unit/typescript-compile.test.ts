@@ -1717,6 +1717,32 @@ describe("values", () => {
     );
   });
 
+  it("writes the properties of a function that a script declares", async () => {
+    const getSource = (expected: string) => `
+      const box: { a: number } = { a: 1 };
+      box.a = 2;
+      let calls = 0;
+      function read(this: { [key: string | symbol]: unknown }, value: number) {
+        return this.res;
+      }
+      function foo() {
+        calls++;
+        return 7;
+      }
+      foo.res = true;
+      foo.count = 1;
+      foo.count += 2;
+      const read1 = [1].map(read, foo);
+      const called = foo();
+      const outcomes = [read1[0], foo.res, foo.count, called, calls, typeof foo].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("true,true,3,7,1,function"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("true,true,1,7,1,function"))).failure?.message).toContain(
+      "outcomes true,true,3,7,1,function",
+    );
+  });
+
   it("converts an increment's operand that holds undefined or null to a number", async () => {
     const getSource = (expected: string) => `
       const box: { n: number | undefined; m: number | null } = { n: undefined, m: null };
