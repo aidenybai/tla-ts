@@ -18777,6 +18777,17 @@ describe("regular expressions", () => {
     expect((await checkModel(getSource("bA1nA3nA4"))).failure?.message).toContain("replacer");
   });
 
+  it("escape a string's syntax, punctuation, white space, and leading digit with RegExp.escape", async () => {
+    const getSource = (expected: string) => `
+      const escaped = [RegExp.escape("1a.b"), RegExp.escape("x,\\t\\u00a0\\ud800")].join(" ");
+      if (escaped !== String.raw\`${expected}\`) throw new Error(escaped);
+    `;
+    expect(
+      (await checkModel(getSource("\\x31a\\.b \\x78\\x2c\\t\\xa0\\ud800"))).failure,
+    ).toBeUndefined();
+    await expect(checkModel(getSource("1a\\.b x\\x2c\\t\\xa0\\ud800"))).rejects.toThrow("x31a");
+  });
+
   it("run a String object's regexp methods on its string", async () => {
     const result = await checkModel(`
       const text = new String("hello");

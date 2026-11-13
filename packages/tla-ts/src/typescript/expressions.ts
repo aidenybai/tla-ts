@@ -786,6 +786,16 @@ export const translateCall = (
   if (global === "Math" && method !== "hasOwnProperty") {
     return translateMath(node, method, scope, context);
   }
+  const escaped = node.arguments.at(0);
+  if (
+    getBuiltIn(receiver, context) === "RegExp" &&
+    method === "escape" &&
+    node.arguments.length === 1 &&
+    escaped !== undefined &&
+    getKind(escaped, context) === "string"
+  ) {
+    return useJavaScript("RegExpEscape", [translateExpression(escaped, scope, context)], context);
+  }
   const parsed =
     global === "Number" && method === "parseInt"
       ? translateParseInt(node, scope, context)

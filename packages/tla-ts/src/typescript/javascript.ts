@@ -2328,6 +2328,45 @@ StringTrim(value, isStart, isEnd) ==
   LET started == IF isStart THEN TrimStart(Text(value)) ELSE Text(value)
   IN  IF isEnd THEN TrimEnd(started) ELSE started
 
+RECURSIVE LowercaseHex(_, _)
+\\* A code's width lowercase hexadecimal digits.
+LowercaseHex(code, width) ==
+  IF width = 0
+  THEN ""
+  ELSE LowercaseHex(code \\div 16, width - 1)
+         \\o SubSeq("0123456789abcdef", (code % 16) + 1, (code % 16) + 1)
+
+\\* A code point's escape as a code unit's \\x or each code unit's \\u.
+LOCAL HexEscape(character) ==
+  IF Len(character) = 1 /\\ CharacterCode(character) <= 255
+  THEN "\\\\x" \\o LowercaseHex(CharacterCode(character), 2)
+  ELSE "\\\\u" \\o LowercaseHex(CharacterCode(character), 4)
+
+\\* EncodeForRegExpEscape, which escapes a code point that a pattern reads as syntax, punctuation that
+\\* some contexts do, white space, and a lone surrogate.
+LOCAL RegExpEscaped(character) ==
+  LET controls == ("\\t" :> "t") @@ ("\\n" :> "n") @@ ("\u000B" :> "v") @@ ("\\f" :> "f") @@ ("\\r" :> "r")
+  IN  CASE character \\in CharactersOf("^$\\\\.*+?()[]{}|/") -> "\\\\" \\o character
+        [] character \\in DOMAIN controls -> "\\\\" \\o controls[character]
+        [] \\/ character \\in CharactersOf(",-=<>#&!%:;@~'\`\\"")
+           \\/ character \\in Spaces
+           \\/ /\\ Len(character) = 1
+              /\\ \\/ IsHighSurrogate(CharacterCode(character))
+                 \\/ IsLowSurrogate(CharacterCode(character)) ->
+             HexEscape(character)
+        [] OTHER -> character
+
+RECURSIVE RegExpEscapedAll(_)
+RegExpEscapedAll(characters) ==
+  IF characters = <<>> THEN "" ELSE RegExpEscaped(Head(characters)) \\o RegExpEscapedAll(Tail(characters))
+
+\\* RegExp.escape, which escapes a leading decimal digit or ASCII letter too.
+RegExpEscape(value) ==
+  LET characters == StringCharacters(Text(value))
+  IN  IF characters # <<>> /\\ Head(characters) \\in CharactersOf(Alphanumerics)
+      THEN HexEscape(Head(characters)) \\o RegExpEscapedAll(Tail(characters))
+      ELSE RegExpEscapedAll(characters)
+
 \\* Regular expressions. The compiler gives a pattern as the tree of matchers that the spec's
 \\* CompilePattern makes, and RegExpStep runs a matcher with the continuation that a stack of frames
 \\* holds, backtracking where the spec's continuations fail.
