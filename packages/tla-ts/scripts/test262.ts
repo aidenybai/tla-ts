@@ -795,6 +795,16 @@ const annotate = (text: string) => {
   setText(text);
   typeCallbacks();
   for (;;) {
+    const sourceFile = service.getProgram()?.getSourceFile(PROGRAM_PATH);
+    // A variable that an empty array literal initializes holds an array, which the fix infers as
+    // unknown where the test only destructures it.
+    const isEmptyArrayName = (node: ts.Node, position: number): boolean =>
+      (ts.isVariableDeclaration(node) &&
+        node.name.getEnd() === position &&
+        node.initializer !== undefined &&
+        ts.isArrayLiteralExpression(node.initializer) &&
+        node.initializer.elements.length === 0) ||
+      (ts.forEachChild(node, (child) => isEmptyArrayName(child, position) || undefined) ?? false);
     const fix = service
       .getSemanticDiagnostics(PROGRAM_PATH)
       .values()
@@ -811,13 +821,18 @@ const annotate = (text: string) => {
         : fix.changes
             .flatMap((change) => change.textChanges)
             .toSorted((left, right) => right.span.start - left.span.start)
-            .reduce(
-              (current, change) =>
+            .reduce((current, change) => {
+              const inferred = change.newText.replaceAll(/\bany\b/g, "unknown");
+              return (
                 current.slice(0, change.span.start) +
-                change.newText.replaceAll(/\bany\b/g, "unknown") +
-                current.slice(change.span.start + change.span.length),
-              file.text,
-            );
+                (inferred === ": unknown" &&
+                sourceFile !== undefined &&
+                isEmptyArrayName(sourceFile, change.span.start)
+                  ? ": unknown[]"
+                  : inferred) +
+                current.slice(change.span.start + change.span.length)
+              );
+            }, file.text);
     if (annotated === file.text) break;
     setText(annotated);
   }
