@@ -1523,6 +1523,25 @@ describe("values", () => {
     expect(await getMessage(getSource(-3, 3))).toContain("void");
   });
 
+  it("runs an assignment to a property that a statement nests first, giving what it assigns", async () => {
+    const getSource = (stored: number, given: number) => `
+      const array: (number | undefined)[] = [5, 6, 7];
+      array[0] = array[1] = undefined;
+      const box = { a: 1, b: 2 };
+      let named = 0;
+      named = box.a = 9;
+      const sum = (box.b = 4) + named;
+      const bytes = new Uint8Array(2);
+      let big = 300;
+      const given = (bytes[0] = bytes[1] = big);
+      if (array[0] !== undefined || array[1] !== undefined || array[2] !== 7) throw new Error("array");
+      if (named !== 9 || box.a !== 9 || box.b !== 4 || sum !== 13) throw new Error("box");
+      if (bytes[0] !== ${stored} || bytes[1] !== ${stored} || given !== ${given}) throw new Error("bytes");
+    `;
+    expect((await checkModel(getSource(44, 300))).failure).toBeUndefined();
+    expect((await checkModel(getSource(44, 44))).failure?.message).toContain("bytes");
+  });
+
   describe("throws the TypeError of writing a property of null to a value off the heap", () => {
     const getSource = (caught: string, written: number) => `
       type Box = { prop?: number };

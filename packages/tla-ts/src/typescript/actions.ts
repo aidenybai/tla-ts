@@ -12511,40 +12511,39 @@ const getLeadingAssignment = (
   // A value that assigns a property, as in a = b.x = v, runs first, since the setter it may run
   // can't change which binding a name or a pattern writes.
   if (ts.isIdentifier(node.left) || isPattern) {
-    return (
-      getLeadingAssignment(node.right, results, context) ??
-      getPropertySet(node.right, results) ??
-      node
-    );
+    return getLeadingAssignment(node.right, results, context) ?? node;
   }
   // A property's assignment evaluates its object and key, then its value.
   const inner = getLeadingAssignment(node.right, results, context);
   const written = inner === undefined ? undefined : getWrittenOperand(inner);
   if (written !== undefined) return isUnwritten(node.left, written, context) ? inner : undefined;
-  // A property of this or of a name that no write changes, as in a.x = b.y = v, evaluates to the
-  // same object after what its value assigns, which can run first.
-  const target = node.left;
-  return ts.isPropertyAccessExpression(target) &&
-    target.questionDotToken === undefined &&
-    (target.expression.kind === ts.SyntaxKind.ThisKeyword ||
-      (ts.isIdentifier(target.expression) &&
-        getImmutable(target.expression, context) !== undefined))
-    ? (inner ?? getPropertySet(node.right, results))
+  // An assignment of a property that its value, which makes no call, nests runs first, as in
+  // a.x = b.y = v, where the target evaluates to the same object and key after it.
+  if (inner !== undefined) return isUnmoved(node.left, inner, results, context) ? inner : undefined;
+  return isPlainTarget(node.left) && (results.has(node.right) || !hasCall(node.right, context))
+    ? node
     : undefined;
 };
 
-// An assignment of a property with =, which gives the value it assigns.
-const getPropertySet = (
-  node: ts.Expression,
+// Whether a property's target evaluates to the same object and key after an assignment of another
+// property, which reads only names and literals where a setter it runs could write a name.
+const isUnmoved = (
+  target: ts.Expression,
+  assignment: ts.BinaryExpression | Increment,
   results: ReadonlyMap<ts.Expression, Expression>,
-): ts.BinaryExpression | undefined => {
-  const inner = skipCasts(node);
-  return !results.has(inner) &&
-    ts.isBinaryExpression(inner) &&
-    inner.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-    (ts.isPropertyAccessExpression(inner.left) || ts.isElementAccessExpression(inner.left))
-    ? inner
-    : undefined;
+  context: Context,
+) => {
+  if (!isPlainTarget(target) || isIncrement(assignment)) return false;
+  const parts = ts.isElementAccessExpression(target)
+    ? [target.expression, target.argumentExpression]
+    : ts.isPropertyAccessExpression(target)
+      ? [target.expression]
+      : [target];
+  return (
+    parts.every((part) => !ts.isIdentifier(part) || getImmutable(part, context) !== undefined) ||
+    (getPropertySetters(assignment.left, context).length === 0 &&
+      isPlainOperand(assignment.right, results))
+  );
 };
 
 // The await that a node evaluates before anything else.
