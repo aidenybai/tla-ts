@@ -168,6 +168,107 @@ const getIteratorCall = (node: ts.Expression, context: Context) => {
       };
 };
 
+// Whether an expression is only read, where a write such as an assignment, a delete, or a pattern
+// that a destructuring assignment writes can't reach it.
+const isRead = (node: ts.Expression): boolean => {
+  const outer = node.parent;
+  if (ts.isParenthesizedExpression(outer)) return isRead(outer);
+  return !(
+    (ts.isBinaryExpression(outer) &&
+      outer.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      outer.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      outer.left === node) ||
+    ts.isDeleteExpression(outer) ||
+    ((ts.isPrefixUnaryExpression(outer) || ts.isPostfixUnaryExpression(outer)) &&
+      (outer.operator === ts.SyntaxKind.PlusPlusToken ||
+        outer.operator === ts.SyntaxKind.MinusMinusToken)) ||
+    ((ts.isForInStatement(outer) || ts.isForOfStatement(outer)) && outer.initializer === node) ||
+    ts.isArrayLiteralExpression(outer) ||
+    ts.isObjectLiteralExpression(outer) ||
+    ts.isPropertyAssignment(outer) ||
+    ts.isSpreadElement(outer) ||
+    ts.isSpreadAssignment(outer)
+  );
+};
+
+interface NamedGenerator {
+  name: ts.Identifier;
+  generator: ts.FunctionDeclaration | ts.FunctionExpression;
+}
+
+// The generator functions that a script declares at its top, or that a variable there holds, whose
+// prototype objects the heap holds from the start, by the place on the heap of each. A script names
+// such a function only to call it, read its prototype, check what is an instance of it, or ask for
+// its prototype, so that the function's prototype property keeps the object it starts with.
+export const findGeneratorPrototypes = (sourceFile: ts.SourceFile, context: Context) => {
+  const isGenerator = (node: ts.Node | undefined) =>
+    node !== undefined &&
+    (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) &&
+    node.asteriskToken !== undefined &&
+    node.body !== undefined &&
+    (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0;
+  const named = sourceFile.statements.flatMap<NamedGenerator>((statement) =>
+    ts.isFunctionDeclaration(statement) && statement.name !== undefined && isGenerator(statement)
+      ? [{ name: statement.name, generator: statement }]
+      : ts.isVariableStatement(statement)
+        ? statement.declarationList.declarations.flatMap((declaration) =>
+            ts.isIdentifier(declaration.name) &&
+            declaration.initializer !== undefined &&
+            ts.isFunctionExpression(declaration.initializer) &&
+            isGenerator(declaration.initializer)
+              ? [{ name: declaration.name, generator: declaration.initializer }]
+              : [],
+          )
+        : [],
+  );
+  const references = findNodes(sourceFile, ts.isIdentifier);
+  const isKept = (name: ts.Identifier) => {
+    const symbol = getSymbol(name, context.checker);
+    return references.every((reference) => {
+      const parent = reference.parent;
+      return (
+        getSymbol(reference, context.checker) !== symbol ||
+        reference === name ||
+        (ts.isCallExpression(parent) && parent.expression === reference) ||
+        (ts.isPropertyAccessExpression(parent) &&
+          parent.expression === reference &&
+          parent.name.text === "prototype" &&
+          isRead(parent)) ||
+        (ts.isBinaryExpression(parent) &&
+          parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
+          parent.right === reference) ||
+        (isPrototypeCall(parent, context) && parent.arguments[0] === reference)
+      );
+    });
+  };
+  return new Map(
+    named
+      .filter((entry) => isKept(entry.name))
+      .map((entry, position) => [entry.generator, position + 1]),
+  );
+};
+
+// The prototype object that the heap holds for a generator function that a script declares or
+// holds in a variable.
+export const getGeneratorPrototypeRef = (node: ts.Node | undefined, context: Context) => {
+  const declaration =
+    node === undefined || ts.isFunctionLike(node)
+      ? node
+      : getSymbol(node, context.checker)?.valueDeclaration;
+  const generator =
+    declaration !== undefined && ts.isVariableDeclaration(declaration)
+      ? declaration.initializer
+      : declaration;
+  const position =
+    generator !== undefined &&
+    (ts.isFunctionDeclaration(generator) || ts.isFunctionExpression(generator))
+      ? context.generatorPrototypes.get(generator)
+      : undefined;
+  return position === undefined
+    ? undefined
+    : useJavaScript(":>", [identifier("Ref"), number(position)], context);
+};
+
 // The prototype object of a generator function that a script writes in place, or declares and only
 // calls and asks for its prototype and for the prototype of that object, so that the object is the
 // one the function starts with, which inherits from the built-in one.
@@ -782,6 +883,31 @@ const evaluate = (node: ts.Expression, scope: Scope, context: Context) => {
 // A built-in object, or Object.getPrototypeOf or isPrototypeOf on built-in objects, or undefined
 // for any other node.
 export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: Context) => {
+  // The prototype object of a generator function that the heap holds from the start.
+  const generatorPrototype =
+    ts.isPropertyAccessExpression(node) && node.name.text === "prototype"
+      ? getGeneratorPrototypeRef(node.expression, context)
+      : undefined;
+  if (generatorPrototype !== undefined) return generatorPrototype;
+  // The prototype of a generator object, or of a generator function's prototype object, that the
+  // heap holds.
+  const argument = isPrototypeCall(node, context) ? node.arguments[0] : undefined;
+  const ofGenerator =
+    argument !== undefined && context.heap !== undefined && isGeneratorType(argument, context)
+      ? "GeneratorPrototype"
+      : argument !== undefined &&
+          ts.isPropertyAccessExpression(argument) &&
+          argument.name.text === "prototype" &&
+          getGeneratorPrototypeRef(argument.expression, context) !== undefined
+        ? "Prototype"
+        : undefined;
+  if (argument !== undefined && ofGenerator !== undefined) {
+    return useJavaScript(
+      ofGenerator,
+      [getHeap(scope, node, context), translateExpression(argument, scope, context)],
+      context,
+    );
+  }
   // The prototype of an array iterator that a call makes, which nothing else can read.
   const iteratorCall = isPrototypeCall(node, context)
     ? getArrayIteratorCall(node.arguments[0], context)

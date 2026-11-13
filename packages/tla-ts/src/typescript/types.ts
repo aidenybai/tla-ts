@@ -703,9 +703,25 @@ export const getIteratorFrom = (node: ts.CallExpression, context: Context) => {
     : undefined;
 };
 
+// Whether instanceof or getPrototypeOf reads the prototype of a value, which parentheses may wrap.
+export const isPrototypeRead = (outer: ts.Node, node: ts.Expression) => {
+  const unwrap = (value: ts.Expression): ts.Expression =>
+    ts.isParenthesizedExpression(value) ? unwrap(value.expression) : value;
+  return (
+    (ts.isBinaryExpression(outer) &&
+      outer.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
+      unwrap(outer.left) === node) ||
+    (ts.isCallExpression(outer) &&
+      ts.isPropertyAccessExpression(outer.expression) &&
+      outer.expression.name.text === "getPrototypeOf" &&
+      outer.arguments.length === 1 &&
+      unwrap(outer.arguments[0]) === node)
+  );
+};
+
 // A generator object goes only where tla-ts follows it: into a variable that holds generators, to a
-// call of its methods or Iterator.prototype's, into Iterator.from, into a comparison or an
-// instanceof, or into a for-of or a for await.
+// call of its methods or Iterator.prototype's, into Iterator.from, into a comparison, an instanceof,
+// or a getPrototypeOf, or into a for-of or a for await.
 // Elsewhere, such as an array pattern, a spread, or a function's parameter, code would iterate it
 // in ways that tla-ts doesn't follow.
 export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
@@ -736,9 +752,7 @@ export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
           ts.SyntaxKind.EqualsEqualsEqualsToken,
           ts.SyntaxKind.ExclamationEqualsEqualsToken,
         ].includes(outer.operatorToken.kind)) ||
-      (ts.isBinaryExpression(outer) &&
-        outer.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
-        outer.left === node) ||
+      isPrototypeRead(outer, node) ||
       (ts.isPropertyAccessExpression(outer) && isGeneratorType(node, context)) ||
       (ts.isForOfStatement(outer) &&
         outer.expression === node &&
