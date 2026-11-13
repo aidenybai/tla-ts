@@ -1,9 +1,10 @@
-import { Check, X } from "@phosphor-icons/react";
+import { CaretRight, X } from "@phosphor-icons/react";
 import { Fragment, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import { EXAMPLES } from "../example";
 import type { RunResult } from "../run-worker";
+import type { Search, SearchState } from "../search";
 import { useRun } from "../use-run";
 import { CodeActions, CodeContent, CodeCopy, CodeFooter, CodeRoot, CodeRun } from "./code";
 import { Button } from "./ui/button";
@@ -177,45 +178,75 @@ export const ExampleSource = () => {
   );
 };
 
-const STEP_DELAY_MS = 120;
+const STEP_DELAY_MS = 150;
+
+interface SearchNodeProps {
+  search: Search;
+  state: SearchState;
+}
+
+const SearchNode = (props: SearchNodeProps) => {
+  const delay = `${props.search.states.indexOf(props.state) * STEP_DELAY_MS}ms`;
+  const children = props.search.states.filter((state) => state.parentId === props.state.id);
+  return (
+    <div className="flex items-start">
+      <span
+        style={{ transitionDelay: delay }}
+        className={cn(
+          "flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 whitespace-nowrap transition-[opacity,scale] duration-200 ease-out starting:scale-95 starting:opacity-0",
+          props.state.isFailing ? "bg-destructive/15 text-destructive" : "bg-muted text-foreground",
+        )}
+      >
+        {props.state.isFailing && <X weight="bold" />}
+        {props.state.text}
+      </span>
+      {children.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          {children.map((child) => (
+            <div
+              key={child.id}
+              className="relative flex items-start before:absolute before:-top-1.5 before:bottom-0 before:left-0 before:w-px before:bg-input first:before:top-3.5 last:before:bottom-[calc(100%-0.875rem)]"
+            >
+              <span
+                style={{
+                  transitionDelay: `${props.search.states.indexOf(child) * STEP_DELAY_MS}ms`,
+                }}
+                className="flex h-7 shrink-0 items-center text-xs text-muted-foreground transition-opacity duration-200 ease-out starting:opacity-0"
+              >
+                <span className="h-px w-3 bg-input" />
+                <span className="px-1.5">{child.call}</span>
+                <span className="h-px w-2 bg-input" />
+                <CaretRight weight="fill" className="-ml-1 size-2.5 text-input" />
+              </span>
+              <SearchNode search={props.search} state={child} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const ExampleSearch = () => {
   const state = exampleContext.useParts();
   const search = state.result?.search;
   if (!search) return null;
   return (
-    <figure className="flex flex-col gap-1 font-mono text-[13px]/[1.7]">
-      {search.steps
-        .map((step, index) => ({ step, order: index }))
-        .map((item) => (
-          <div
-            key={item.order}
-            style={{ transitionDelay: `${item.order * STEP_DELAY_MS}ms` }}
-            className={cn(
-              "flex items-center gap-2 transition-[opacity,translate] duration-200 ease-out starting:translate-y-1 starting:opacity-0",
-              item.step.isFailing ? "text-destructive" : "text-muted-foreground",
-            )}
-          >
-            {item.step.isFailing ? (
-              <X weight="bold" className="shrink-0" />
-            ) : (
-              <Check weight="bold" className="shrink-0 text-faint" />
-            )}
-            <span className="min-w-0 truncate">
-              {item.step.calls.length > 0 ? item.step.calls.join(" → ") : "start"}
-            </span>
-            <span className={cn("ml-auto shrink-0", !item.step.isFailing && "text-faint")}>
-              {item.step.state}
-            </span>
-          </div>
-        ))}
+    <figure className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1.5 overflow-x-auto font-mono text-[13px]">
+        {search.states
+          .filter((root) => root.parentId === undefined)
+          .map((root) => (
+            <SearchNode key={root.id} search={search} state={root} />
+          ))}
+      </div>
       <figcaption
-        style={{ transitionDelay: `${search.steps.length * STEP_DELAY_MS}ms` }}
-        className="mt-1 font-sans text-sm text-faint transition-opacity duration-200 ease-out starting:opacity-0"
+        style={{ transitionDelay: `${search.states.length * STEP_DELAY_MS}ms` }}
+        className="text-sm text-faint transition-opacity duration-200 ease-out starting:opacity-0"
       >
         {search.stateCount} states checked
-        {search.stateCount > search.steps.length &&
-          `, ${search.stateCount - search.steps.length} not shown`}
+        {search.stateCount > search.states.length &&
+          `, ${search.stateCount - search.states.length} not shown`}
       </figcaption>
     </figure>
   );
