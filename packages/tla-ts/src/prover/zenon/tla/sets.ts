@@ -25,6 +25,20 @@ const decomposeAdd = (set: Expr): [Expr[], Expr] => {
   return [elements, rest];
 };
 
+const BINARY_SET_RULES = new Map<
+  string,
+  [
+    "in_cup" | "in_cap" | "in_setminus",
+    "notin_cup" | "notin_cap" | "notin_setminus",
+    boolean,
+    boolean,
+  ]
+>([
+  ["TLA.cup", ["in_cup", "notin_cup", true, false]],
+  ["TLA.cap", ["in_cap", "notin_cap", false, true]],
+  ["TLA.setminus", ["in_setminus", "notin_setminus", false, true]],
+]);
+
 export const getMembershipNodes = (literal: Literal): Item[] | undefined => {
   const exprs = literal.context.exprs;
   const formula = literal.formula;
@@ -137,20 +151,7 @@ export const getMembershipNodes = (literal: Literal): Item[] | undefined => {
             [[exists]],
           );
     }
-    const binarySetRules: Record<
-      string,
-      [
-        "in_cup" | "in_cap" | "in_setminus",
-        "notin_cup" | "notin_cap" | "notin_setminus",
-        boolean,
-        boolean,
-      ]
-    > = {
-      "TLA.cup": ["in_cup", "notin_cup", true, false],
-      "TLA.cap": ["in_cap", "notin_cap", false, true],
-      "TLA.setminus": ["in_setminus", "notin_setminus", false, true],
-    };
-    const binarySetRule = set.kind === "app" ? binarySetRules[set.symbol] : undefined;
+    const binarySetRule = set.kind === "app" ? BINARY_SET_RULES.get(set.symbol) : undefined;
     if (binarySetRule !== undefined && set.args.length === 2) {
       const first = member(exprs, element, set.args[0]);
       const secondPositive = member(exprs, element, set.args[1]);

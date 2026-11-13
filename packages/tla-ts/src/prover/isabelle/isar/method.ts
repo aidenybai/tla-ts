@@ -2,7 +2,7 @@
 
 import { TlaIsabelleError } from "../../../errors";
 import { asmRl, isNormHhf, normHhfEq, reflexiveThm, termI } from "../pure/drule";
-import { isEquals, stripImpPrems, stripAssumsConcl } from "../pure/logic";
+import { isEquals, isImplies, stripImpPrems, stripAssumsConcl } from "../pure/logic";
 import { makeSimpContext, type Simpset } from "../pure/raw-simplifier";
 import { genericRewriteGoalTac } from "../pure/rewriter";
 import { filterSeq, mapsSeq, singleSeq, type Seq } from "../pure/seq";
@@ -12,6 +12,7 @@ import type { Limits } from "../pure/interrupt";
 import { assumeTac, eresolveTac, flexflexTac, matchTac, resolveTac } from "../pure/tactic";
 import {
   allGoals,
+  allTac,
   appendGoal,
   changedProp,
   noTac,
@@ -21,6 +22,7 @@ import {
   thenAllNew,
   thenGoal,
   thenTac,
+  tryTac,
   type GoalTactic,
   type Tactic,
 } from "../pure/tactical";
@@ -44,7 +46,7 @@ import {
 } from "../provers/classical";
 import { proverTac, type IntuitionisticContext } from "../tools/intuitionistic";
 import { insertTac } from "./proof";
-import type { OuterToken } from "./theory";
+import { syntaxError, type OuterToken } from "./theory";
 
 interface Modifier {
   readonly kind: "intro" | "dest";
@@ -76,12 +78,6 @@ export interface ProofContext {
   readonly blastTac: (context: ClassicalContext) => GoalTactic;
   readonly getFact: (name: string) => readonly Thm[];
 }
-
-const syntaxError = (token: OuterToken | undefined) =>
-  new TlaIsabelleError(
-    "ERROR",
-    `Outer syntax error at: ${token === undefined ? "end of input" : token.text}`,
-  );
 
 export const parseProofText = (tokens: readonly OuterToken[]): ProofText => {
   let position = 0;
@@ -138,22 +134,18 @@ export const parseProofText = (tokens: readonly OuterToken[]): ProofText => {
   };
   const readParenthesized = (): MethodText => {
     expectSymbol("(");
-    const elements = [
-      readSuffixed(isSymbol("(") ? readParenthesized() : readMethod(readWord(), true)),
-    ];
+    const elements = [readElement(true)];
     while (isSymbol(",")) {
       position += 1;
-      elements.push(
-        readSuffixed(isSymbol("(") ? readParenthesized() : readMethod(readWord(), true)),
-      );
+      elements.push(readElement(true));
     }
     expectSymbol(")");
     return elements.length === 1 ? elements[0] : { kind: "then", methods: elements };
   };
-  const readAtom = () =>
-    readSuffixed(isSymbol("(") ? readParenthesized() : readMethod(readWord(), false));
-  const initial = readAtom();
-  const terminal = position < tokens.length ? readAtom() : undefined;
+  const readElement = (hasArgs: boolean) =>
+    readSuffixed(isSymbol("(") ? readParenthesized() : readMethod(readWord(), hasArgs));
+  const initial = readElement(false);
+  const terminal = position < tokens.length ? readElement(false) : undefined;
   if (position !== tokens.length) throw syntaxError(peek());
   return { initial, terminal };
 };
@@ -246,7 +238,7 @@ const evaluate = (context: ProofContext, text: MethodText): Method => {
     }
     case "try": {
       const method = evaluate(context, text.method);
-      return (facts) => orElse(method(facts), (state) => singleSeq(state));
+      return (facts) => tryTac(method(facts));
     }
   }
 };
@@ -257,7 +249,7 @@ const normHhfTac = (limits: Limits): GoalTactic => {
     resolveTac(limits, [asmRl]),
     subgoal((goal, index) =>
       isNormHhf(false, goal)
-        ? (state) => singleSeq(state)
+        ? allTac
         : genericRewriteGoalTac(
             { simprem: true, useprem: false, mutsimp: false },
             () => undefined,
@@ -284,11 +276,8 @@ const assumeRuleTac = (limits: Limits): GoalTactic =>
       );
       const rules = stripImpPrems(body).filter(
         (prem) =>
-          prem.kind === "App" &&
-          ((prem.fun.kind === "App" &&
-            prem.fun.fun.kind === "Const" &&
-            prem.fun.fun.name === "Pure.imp") ||
-            (prem.fun.kind === "Const" && prem.fun.name === "Pure.all")),
+          isImplies(prem) ||
+          (prem.kind === "App" && prem.fun.kind === "Const" && prem.fun.name === "Pure.all"),
       );
       return rules.reduceRight<GoalTactic>(
         (tactic, rule) =>

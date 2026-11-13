@@ -1,4 +1,4 @@
-import { getValueFingerprint, getValueHash, type Value } from "./values";
+import { combineHash, getValueFingerprint, getValueHash, isSameValue, type Value } from "./values";
 
 const EMPTY = 0;
 const INITIAL_CAPACITY = 1 << 12;
@@ -57,6 +57,70 @@ export const createFingerprintTable = (): FingerprintTable => {
       return true;
     },
   };
+};
+
+export interface StateTable {
+  slots: Int32Array;
+  size: number;
+  shift: number;
+  states: Value[][];
+}
+
+// A Map holds at most 2^24 entries, so an open-addressing table keeps each hash and index + 1.
+export const createStateTable = (states: Value[][]): StateTable => ({
+  slots: new Int32Array(1 << 17),
+  size: 0,
+  shift: 16,
+  states,
+});
+
+export const getStateHash = (state: Value[]) => {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < state.length; index++)
+    hash = combineHash(hash, getValueHash(state[index]));
+  return hash & 0x3fffffff;
+};
+
+export const isSameState = (stored: Value[], state: Value[]) => {
+  for (let position = 0; position < state.length; position++) {
+    if (!isSameValue(stored[position], state[position])) return false;
+  }
+  return true;
+};
+
+const getSlot = (table: StateTable, hash: number) =>
+  (Math.imul(hash, 0x9e3779b1) >>> table.shift) << 1;
+
+export const findStateIndex = (table: StateTable, hash: number, state: Value[]) => {
+  const mask = table.slots.length - 1;
+  for (let slot = getSlot(table, hash); ; slot = (slot + 2) & mask) {
+    const entry = table.slots[slot + 1];
+    if (entry === 0) return -1;
+    if (table.slots[slot] === hash && isSameState(table.states[entry - 1], state)) {
+      return entry - 1;
+    }
+  }
+};
+
+const insertSeenState = (table: StateTable, hash: number, entry: number) => {
+  const mask = table.slots.length - 1;
+  let slot = getSlot(table, hash);
+  while (table.slots[slot + 1] !== 0) slot = (slot + 2) & mask;
+  table.slots[slot] = hash;
+  table.slots[slot + 1] = entry;
+};
+
+export const markSeenState = (table: StateTable, hash: number, index: number) => {
+  table.size++;
+  if (table.size * 4 > table.slots.length) {
+    const slots = table.slots;
+    table.slots = new Int32Array(slots.length * 2);
+    table.shift--;
+    for (let slot = 0; slot < slots.length; slot += 2) {
+      if (slots[slot + 1] !== 0) insertSeenState(table, slots[slot], slots[slot + 1]);
+    }
+  }
+  insertSeenState(table, hash, index + 1);
 };
 
 export interface SharedFingerprints {

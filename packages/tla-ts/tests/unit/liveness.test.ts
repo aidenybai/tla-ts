@@ -4,19 +4,14 @@ import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
 import { getUnexpectedException } from "../../src/errors";
 import type { TlcVersion } from "../../src/tlc/version";
+import { checkFixture } from "./check-harness";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/liveness");
 
 const SOURCE = readFileSync(join(DIRECTORY, "Liveness.tla"), "utf8");
 
-const GITHUB710 = join(import.meta.dirname, "../fixtures/github710");
-
 const checkGithub710 = (configName: string, version?: TlcVersion) =>
-  check({
-    source: readFileSync(join(GITHUB710, "Github710d.tla"), "utf8"),
-    config: readFileSync(join(GITHUB710, `${configName}.cfg`), "utf8"),
-    version,
-  });
+  checkFixture("github710", "Github710d", configName, { version });
 
 const TLC_VERDICTS: [string, string][] = [
   ["Unfair-ReachesLimit", "liveness-violation"],

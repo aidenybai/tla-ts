@@ -150,7 +150,7 @@ export class ExprSafeReplace {
       shifter.release();
       replace.release();
     }
-    const result = manager.mkQuantifier({ ...data, body, patterns: [...patterns.items] });
+    const result = manager.mkQuantifier({ ...data, body, patterns: patterns.items });
     this.refs.push(result);
     this.cache.set(quantifier, result);
     todo.pop();

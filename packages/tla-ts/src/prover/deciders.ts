@@ -2,7 +2,7 @@ import { SmtParseError, TlaProverError } from "../errors";
 import { decideIsabelle } from "./isabelle/decide";
 import { decidePtl } from "./ptl/decide";
 import { decideSmt } from "./smt/solver/solver";
-import type { DecideOptions, Decision, Verdict } from "./verdict";
+import type { Backend, DecideOptions, Decision, Verdict } from "./verdict";
 import { decideZenon } from "./zenon/decide";
 
 const decideZ3 = (text: string, options: DecideOptions) => {
@@ -14,7 +14,7 @@ const decideZ3 = (text: string, options: DecideOptions) => {
   }
 };
 
-export const DECIDERS: Record<string, (text: string, options: DecideOptions) => Verdict> = {
+const DECIDERS: Record<Backend, (text: string, options: DecideOptions) => Verdict> = {
   smt: decideZ3,
   z3: decideZ3,
   zenon: (text, options) => decideZenon(text, options).verdict,
@@ -22,7 +22,7 @@ export const DECIDERS: Record<string, (text: string, options: DecideOptions) => 
   ls4: decidePtl,
 };
 
-export const decide = (prover: string, text: string, options: DecideOptions): Decision => {
+export const decide = (prover: Backend, text: string, options: DecideOptions): Decision => {
   const start = performance.now();
   const verdict = DECIDERS[prover](text, options);
   return { verdict, timeUsedMs: performance.now() - start };

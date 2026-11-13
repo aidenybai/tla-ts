@@ -499,8 +499,4 @@ export class ProtoModel {
   getSomeConstInterp(decl: number) {
     return this.constInterps.get(decl) ?? this.getSomeValue(this.manager.funcDecls[decl].range);
   }
-
-  areEqual(first: number, second: number) {
-    return first === second;
-  }
 }

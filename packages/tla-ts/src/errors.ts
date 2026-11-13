@@ -216,8 +216,6 @@ export class TlaWarningAsError extends TlaEvaluationError {
   }
 }
 
-export class TlaNullPointerError extends TlaEvaluationError {}
-
 export class TlaIllegalStateError extends TlaEvaluationError {
   state: (Value | undefined)[];
 
@@ -280,6 +278,9 @@ export class TlaIsabelleError {
     this.message = message;
   }
 }
+
+export const isIsabelleError = (error: unknown, exception: IsabelleException): boolean =>
+  error instanceof TlaIsabelleError && error.exception === exception;
 
 export class TlaUnsupportedError extends TlaError {
   constructor(message: string, cause?: unknown) {

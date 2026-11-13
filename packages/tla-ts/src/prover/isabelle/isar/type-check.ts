@@ -109,11 +109,14 @@ const unify = (inference: Inference, left: Typ, right: Typ) => {
   throw new TlaIsabelleError("ERROR", "Type unification failed");
 };
 
+const getSchemeKey = (atom: Exclude<Typ, { kind: "Type" }>) =>
+  atom.kind === "TFree" ? atom.name : `${atom.name}.${atom.index}`;
+
 const instantiateScheme = (inference: Inference, type: Typ) => {
   const params = new Map<string, Typ>();
   const instantiate = (current: Typ): Typ => {
     if (current.kind === "Type") return mkType(current.name, current.args.map(instantiate));
-    const key = current.kind === "TFree" ? current.name : `${current.name}.${current.index}`;
+    const key = getSchemeKey(current);
     const known = params.get(key);
     if (known !== undefined) return known;
     const param = createParam(inference);
@@ -186,10 +189,7 @@ const matchScheme = (pattern: Typ, object: Typ, instantiation: Map<string, Typ>)
       pattern.args.forEach((arg, index) => matchScheme(arg, object.args[index], instantiation));
     return;
   }
-  instantiation.set(
-    pattern.kind === "TFree" ? pattern.name : `${pattern.name}.${pattern.index}`,
-    object,
-  );
+  instantiation.set(getSchemeKey(pattern), object);
 };
 
 const instantiateMatched = (type: Typ, instantiation: ReadonlyMap<string, Typ>): Typ =>
@@ -198,7 +198,7 @@ const instantiateMatched = (type: Typ, instantiation: ReadonlyMap<string, Typ>):
         type.name,
         type.args.map((arg) => instantiateMatched(arg, instantiation)),
       )
-    : (instantiation.get(type.kind === "TFree" ? type.name : `${type.name}.${type.index}`) ?? type);
+    : (instantiation.get(getSchemeKey(type)) ?? type);
 
 const expandAbbreviations = (scope: NameScope, term: Term): Term => {
   const [head, args] = stripComb(term);

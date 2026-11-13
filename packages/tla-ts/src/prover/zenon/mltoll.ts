@@ -1,7 +1,7 @@
 // Ported from Zenon's mltoll.ml, as shipped in tlapm. Copyright 2004 INRIA, see LICENSE.
 
 import { TlaZenonError } from "../../errors";
-import type { Direction, Origin, Relations } from "./eqrel";
+import type { Direction, Origin, RelationProperty, Relations } from "./eqrel";
 import {
   difference,
   union,
@@ -10,7 +10,7 @@ import {
   type Expressions,
   type VarExpr,
 } from "./expr";
-import { connect, type Connective, type Lemma, type LlProof, type LlRule } from "./llproof";
+import type { Connective, Lemma, LlProof, LlRule } from "./llproof";
 import type { Definition, Phrase } from "./parse";
 import type { Rule } from "./proof";
 import { getTlaLlProof } from "./tla/llproof";
@@ -31,8 +31,6 @@ interface TranslateContext {
   sharedProofs: ReadonlySet<MlProof>;
   relations: Relations;
 }
-
-type RelationProperty = "reflexive" | "symmetric" | "transitive";
 
 type HypothesisKind =
   | { kind: "reflexive"; origin: Origin }
@@ -145,10 +143,8 @@ export const translateProof = (
 ): Lemma[] => {
   const exprs = context.exprs;
   const translatedExprs = new Map<Expr, Expr>();
-  const lemmaNumbers = new Map<MlProof, number>();
-  const lemmaTable = new Map<string, [Lemma, Expr[]]>();
+  const lemmaTable = new Map<MlProof, [Lemma, Expr[]]>();
   const lemmas: Lemma[] = [];
-  const getLemmaName = (number: number) => `${LEMMA_PREFIX}${number}_`;
 
   const equal = (left: Expr, right: Expr) => exprs.eapp("=", [left, right]);
 
@@ -175,13 +171,13 @@ export const translateProof = (
         case "imply":
         case "equiv": {
           const right = translateExpr(expression.args[1]);
-          return connect(exprs, expression.kind, translateExpr(expression.args[0]), right);
+          return exprs.binary(expression.kind, translateExpr(expression.args[0]), right);
         }
         case "all":
         case "ex":
         case "tau":
         case "lam":
-          return makeBinder(
+          return exprs.binder(
             expression.kind,
             expression.args[0],
             expression.symbol,
@@ -194,15 +190,6 @@ export const translateProof = (
     translatedExprs.set(expression, result);
     return result;
   };
-
-  const makeBinder = (kind: BinderExpr["kind"], variable: VarExpr, type: string, body: Expr) =>
-    kind === "all"
-      ? exprs.eall(variable, type, body)
-      : kind === "ex"
-        ? exprs.eex(variable, type, body)
-        : kind === "tau"
-          ? exprs.etau(variable, type, body)
-          : exprs.elam(variable, type, body);
 
   const translateRule = (rule: MlRule): LlRule => {
     switch (rule.name) {
@@ -374,8 +361,7 @@ export const translateProof = (
   };
 
   const getLemmaReference = (proof: MlProof): Translated => {
-    const number = lemmaNumbers.get(proof);
-    const entry = number === undefined ? undefined : lemmaTable.get(getLemmaName(number));
+    const entry = lemmaTable.get(proof);
     if (entry === undefined) throw new TlaZenonError("Zenon: a lemma that was never made");
     const lemma = entry[0];
     return [
@@ -389,19 +375,17 @@ export const translateProof = (
   };
 
   const makeLemma = (translated: LlProof, extras: Expr[], proof: MlProof) => {
-    const number = lemmas.length + 1;
-    lemmaNumbers.set(proof, number);
     const lemma = {
-      name: getLemmaName(number),
+      name: `${LEMMA_PREFIX}${lemmas.length + 1}_`,
       params: translated.conclusions.reduce(getParams, []),
       proof: translated,
     };
-    lemmaTable.set(lemma.name, [lemma, extras]);
+    lemmaTable.set(proof, [lemma, extras]);
     lemmas.push(lemma);
   };
 
   const translate = (proof: MlProof): Translated => {
-    if (lemmaNumbers.has(proof)) return getLemmaReference(proof);
+    if (lemmaTable.has(proof)) return getLemmaReference(proof);
     const result = isDerived(proof.rule)
       ? translateDerived(proof)
       : ((): Translated => {
@@ -422,7 +406,7 @@ export const translateProof = (
   };
 
   const isSharedProof = (proof: MlProof) =>
-    context.sharedProofs.has(proof) && !lemmaNumbers.has(proof);
+    context.sharedProofs.has(proof) && !lemmaTable.has(proof);
 
   const translateAll = (proofs: MlProof[]): [LlProof[], Expr[]] => {
     const translated = proofs.map(translate);
@@ -1420,10 +1404,10 @@ export const translateProof = (
     ) {
       if (left.args[0] === right.args[0]) {
         const diff = findDiff(variable, left.args[1], right.args[1]);
-        return [connect(exprs, left.kind, left.args[0], diff[0]), diff[1], diff[2]];
+        return [exprs.binary(left.kind, left.args[0], diff[0]), diff[1], diff[2]];
       }
       const diff = findDiff(variable, left.args[0], right.args[0]);
-      return [connect(exprs, left.kind, diff[0], left.args[1]), diff[1], diff[2]];
+      return [exprs.binary(left.kind, diff[0], left.args[1]), diff[1], diff[2]];
     }
     if (
       left.kind === right.kind &&

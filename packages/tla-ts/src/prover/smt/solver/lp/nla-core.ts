@@ -174,10 +174,6 @@ export class NlaCore {
     };
   }
 
-  private get settings() {
-    return this.lra.settings;
-  }
-
   get stats() {
     return this.lra.settings.stats;
   }
@@ -552,11 +548,11 @@ export class NlaCore {
   }
 
   random() {
-    return this.settings.getRandomNext();
+    return this.lra.settings.getRandomNext();
   }
 
   isCanceled() {
-    return this.settings.isCanceled();
+    return this.lra.settings.isCanceled();
   }
 
   checkBoundedDivisions() {

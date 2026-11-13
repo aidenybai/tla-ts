@@ -82,22 +82,19 @@ const getDefinitions = (text: string) =>
     .map((definition) => definition.trimEnd())
     .filter((definition) => definition !== "");
 
+const getHeader = (definition: string) =>
+  definition.split("\n").find((line) => !line.startsWith("\\*")) ?? "";
+
 const isEager = (definition: string) => {
-  const header = definition.split("\n").find((line) => !line.startsWith("\\*")) ?? "";
-  const match = /^[A-Z][A-Za-z0-9_]*(\((.*)\))?\s*==/.exec(header);
+  const match = /^[A-Z][A-Za-z0-9_]*(\((.*)\))?\s*==/.exec(getHeader(definition));
   return match !== null && (match[1] === undefined || match[2].includes("("));
 };
 
-const getName = (definition: string) =>
-  /^([A-Z][A-Za-z0-9_]*)/m.exec(
-    definition.split("\n").find((line) => !line.startsWith("\\*")) ?? "",
-  )?.[1];
+const getName = (definition: string) => /^([A-Z][A-Za-z0-9_]*)/m.exec(getHeader(definition))?.[1];
 
 const STEP_PATTERN = /^([A-Z][A-Za-z0-9_]*Then)\(([^()]*)\)\s*==/;
 const getStep = (definition: string) => {
-  const match = STEP_PATTERN.exec(
-    definition.split("\n").find((line) => !line.startsWith("\\*")) ?? "",
-  );
+  const match = STEP_PATTERN.exec(getHeader(definition));
   if (!match) return undefined;
   const parameters = match[2].split(",").map((parameter) => parameter.trim());
   return { name: match[1], args: parameters.slice(0, -1), result: parameters.at(-1) ?? "" };
@@ -129,7 +126,6 @@ operators.push({ name: "ResumeFrame", parameters: ["frame", "r"] });
 const definitions = [...partDefinitions.map(addSuspension), ...joinedDefinitions, resumeFrame];
 
 const eagerDefinitions = definitions.filter(isEager);
-const eagerNames = new Set(eagerDefinitions.map(getName));
 const orderedEagerDefinitions: string[] = [];
 const visit = (definition: string, visiting: Set<string>) => {
   const name = getName(definition) ?? "";
@@ -137,7 +133,7 @@ const visit = (definition: string, visiting: Set<string>) => {
   visiting.add(name);
   for (const match of definition.matchAll(/\b[A-Z][A-Za-z0-9_]*\b/g)) {
     const dependency = eagerDefinitions.find((other) => getName(other) === match[0]);
-    if (match[0] !== name && eagerNames.has(match[0]) && dependency) visit(dependency, visiting);
+    if (match[0] !== name && dependency) visit(dependency, visiting);
   }
   orderedEagerDefinitions.push(definition);
 };

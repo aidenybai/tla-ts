@@ -1,7 +1,8 @@
 import { TlaIsabelleError } from "../../../errors";
 import type { ProofContext } from "../isar/method";
 import type { Limits } from "../pure/interrupt";
-import { blastDepthTac, blastTac, type BlastContext } from "../provers/blast/blast";
+import { blastDepthTac, blastTac } from "../provers/blast/blast";
+import type { BlastContext } from "../provers/blast/state";
 import type { ClassicalContext } from "../provers/classical";
 import { blastHypSubstTac } from "../provers/hypsubst";
 import {
@@ -26,8 +27,12 @@ const ATOMIZE_RULES = [
 
 export const getProofContext = (logic: TlaLogic, limits: Limits): ProofContext => {
   const atomizeRules = ATOMIZE_RULES.map((name) => getFact(logic, name));
-  const classical = { limits, claset: getClaset(logic, limits), data: getClassicalData(logic) };
   const hypsubst = getHypsubstData(logic);
+  const classical = {
+    limits,
+    claset: getClaset(logic, limits),
+    data: getClassicalData(logic, hypsubst),
+  };
   const toBlastContext = (context: ClassicalContext): BlastContext => ({
     limits: context.limits,
     claset: context.claset,

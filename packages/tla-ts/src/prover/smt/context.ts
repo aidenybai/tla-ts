@@ -40,7 +40,7 @@ export const createContext = () => {
 
 export const createPrinter = (declared: Map<string, Identifier>) => {
   const context = createContext();
-  const resolve = (line: string) => {
+  return (line: string) => {
     const declaration = /^\(declare-fun (\S+)/.exec(line)?.[1];
     if (declaration !== undefined) {
       const identifier = declared.get(declaration);
@@ -97,5 +97,4 @@ export const createPrinter = (declared: Map<string, Identifier>) => {
       })
       .join("");
   };
-  return { resolve };
 };

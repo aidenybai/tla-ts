@@ -14,6 +14,7 @@ import {
   getParamFresh,
   getScopeAt,
   isBuiltinApply,
+  mapChildren,
   mapScoped,
   stripProps,
   type Expr,
@@ -45,14 +46,6 @@ const NESTED_CDOT =
   "Nested occurrence of the operator `\\cdot` found in scope of `ENABLED` when expanding `ENABLED`. Using the proof directive `ExpandCdot` from the module `TLAPS` is expected to avoid this error.";
 
 const NESTED_CDOT_SPACED = `${NESTED_CDOT} For example, writing \`BY ExpandCdot\`.`;
-
-const mapVisibleChildren = (expression: Expr, map: (child: Expr) => Expr) =>
-  mapScoped(
-    undefined,
-    expression,
-    (_state, child) => map(child),
-    () => undefined,
-  );
 
 const getHyp = (scope: Scope | undefined, index: number) => {
   const hyp = getScopeAt(scope, index - 1)?.hyp;
@@ -392,7 +385,7 @@ const renameParams = (isKeepingNames: boolean, expression: Expr): Expr => {
       ],
     };
   }
-  return mapVisibleChildren(expression, (child) => renameParams(isKeepingNames, child));
+  return mapChildren(expression, (child) => renameParams(isKeepingNames, child), "visible");
 };
 
 const checkArity = (expression: Expr): Expr => {
@@ -403,7 +396,7 @@ const checkArity = (expression: Expr): Expr => {
   ) {
     throw new TlapmBugError();
   }
-  return mapVisibleChildren(expression, checkArity);
+  return mapChildren(expression, checkArity, "visible");
 };
 
 const lambdifyOperators = (
@@ -516,7 +509,7 @@ const commuteExistsDisjunction = (expression: Expr): Expr => {
       });
     }
   }
-  return mapVisibleChildren(expression, commuteExistsDisjunction);
+  return mapChildren(expression, commuteExistsDisjunction, "visible");
 };
 
 export const expandActionOperators = (

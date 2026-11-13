@@ -1,5 +1,6 @@
 import {
   getChildren,
+  getReferencedName,
   isLocallyResolved,
   type Bound,
   type BoundPattern,
@@ -872,7 +873,7 @@ const forceThunk = (thunk: Thunk, context: Context) => {
   return value;
 };
 
-const getDefinitionClosure = (definition: Definition & { kind: "Operator" }): Closure => ({
+export const getDefinitionClosure = (definition: Definition & { kind: "Operator" }): Closure => ({
   kind: "Closure",
   name: definition.name,
   params: definition.params,
@@ -1212,7 +1213,7 @@ const isRebindable = (value: Value): value is RebindableFilteredSet | Rebindable
   (value.kind === "FilteredSet" || value.kind === "LazyFunction") &&
   "rebind" in value;
 
-const toNextContext = (context: Context): Context => ({
+export const toNextContext = (context: Context): Context => ({
   environment: context.environment,
   scope: context.scope,
   state: context.next,
@@ -1666,8 +1667,8 @@ const getScopeNames = (expression: Expression) => {
   const names = new Set<string>();
   const visit = (node: Expression): boolean => {
     if (node.kind === "Subexpression") return false;
-    if (node.kind === "Identifier") names.add(node.name);
-    if (node.kind === "Apply" || node.kind === "OperatorReference") names.add(node.operator);
+    const name = getReferencedName(node);
+    if (name !== undefined) names.add(name);
     if (node.kind === "ExceptAt") names.add(EXCEPT_AT);
     return getChildren(node).every(visit);
   };

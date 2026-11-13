@@ -44,7 +44,7 @@ import {
   type Scope,
   type State,
 } from "./evaluate";
-import { mapChildren } from "./instances";
+import { forEachChild } from "./instances";
 import { CORE_OPERATORS } from "./standard-modules";
 import { getRandomSubset, nextPrime, type JavaRandom } from "./tlc/random";
 import {
@@ -319,13 +319,12 @@ const getReadLocals = (
   }
   const names: string[] = [];
   let isReadOnly = true;
-  mapChildren(expression, (child, childNames) => {
+  forEachChild(expression, (child, childNames) => {
     const childLocals = isReadOnly
       ? getReadLocals(child, childNames.length === 0 ? bound : new Set([...bound, ...childNames]))
       : [];
     if (childLocals) names.push(...childLocals);
     else isReadOnly = false;
-    return child;
   });
   return isReadOnly ? names : undefined;
 };
@@ -615,11 +614,10 @@ const compileFunctionAction = (
 };
 
 const compileUnchanged = (expression: Expression, environment: Environment): Runner => {
-  if (getUnchangedVariables(expression, environment))
-    return compileConjunction([getUnchangedWrapper(expression)], environment, false);
-  if (expression.kind === "Tuple")
-    return getRunner(getUnchangedWrapper(expression), environment, false);
   const unchanged = getUnchangedWrapper(expression);
+  if (getUnchangedVariables(expression, environment))
+    return compileConjunction([unchanged], environment, false);
+  if (expression.kind === "Tuple") return getRunner(unchanged, environment, false);
   return (run, scope, partial, action, isFixed, onComplete) => {
     const binding =
       expression.kind === "Identifier" ? lookupScope(scope, expression.name) : undefined;

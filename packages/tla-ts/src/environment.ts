@@ -1,5 +1,7 @@
 import {
   getChildren,
+  getDefinitionExpressions,
+  getReferencedName,
   type Assumption,
   type Declaration,
   type Definition,
@@ -10,7 +12,8 @@ import {
   type SourceLocation,
 } from "./ast";
 import type { ModuleOperator } from "./check";
-import type { ConfigValue, ModelConfig } from "./config";
+import type { ModelConfig } from "./config";
+import { applyConfig, type CopySource } from "./environment-config";
 import type { FileSystem } from "./json";
 import {
   createSanyError,
@@ -19,27 +22,24 @@ import {
   formatSanyWarnings,
   TlaConfigError,
   TlaEvaluationError,
-  TlaFeatureUnsupportedError,
-  TlaModuleError,
   TlaSyntaxError,
-  UNEXPECTED_EXCEPTION,
   type SanyError,
 } from "./errors";
-import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   bindOperatorArguments,
   createBigNumberError,
   createRealNumberError,
   evaluate,
   getDefinition,
+  getDefinitionClosure,
   type Builtin,
   type BuiltinArgument,
-  type Closure,
   type Context,
   type Environment,
 } from "./evaluate";
 import {
   createInstantiation,
+  createLocalAlias,
   createLocalArguments,
   createLocalIdentifier,
   getEnabledVariableName,
@@ -70,9 +70,10 @@ import { getSanyParseError } from "./sany/parse-error";
 import {
   CORE_OPERATORS,
   getJavaOverrides,
-  getStandardModule,
+  getStandardOperators,
   getTraceSpecArithmetic,
   STANDARD_DEPENDENCIES,
+  STANDARD_EXTENDS,
 } from "./standard-modules";
 import { getStandardRange, STANDARD_LEVELS } from "./standard-definitions";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
@@ -81,15 +82,7 @@ import { createInstanceChecker, type InstanceCheck } from "./substitution-levels
 import { isEvalException } from "./tlc/messages";
 import { createDefinitionFacts } from "./dependencies";
 import { createTlcOrder, type TlcOrder } from "./tlc/order";
-import {
-  isTlcInteger,
-  createModelValue,
-  formatValue,
-  valuesEqual,
-  toFiniteSet,
-  type Value,
-  markNormalized,
-} from "./values";
+import { isTlcInteger, type Value } from "./values";
 import type { TlcVersion } from "./tlc/version";
 
 interface EnvironmentOptions {
@@ -130,46 +123,7 @@ export interface InstanceAction {
 
 const ANNOTATED_OVERRIDE_MODULES = new Set(["IOUtils", "Json", "TLCExt"]);
 
-const toValue = (value: ConfigValue): Value => {
-  switch (value.kind) {
-    case "Number":
-      // Deviation from TLC: ModelConfig#parseValue lets Integer.parseInt fail on a number too big, where tla-ts reports it as TLC reports such a number in a module.
-      if (!isTlcInteger(value.value)) {
-        throw setExitCode(
-          new TlaModuleError(`TLC can't handle a number this big.\n${value.value}`),
-          EXIT_STATUS.error,
-        );
-      }
-      return value.value;
-    case "String":
-    case "Boolean":
-      return value.value;
-    case "ModelValue":
-      return createModelValue(value.name);
-    case "Set":
-      return toFiniteSet({ kind: "MixedSet", elements: value.elements.map(toValue) });
-  }
-};
-
-const toConstantValue = (value: ConfigValue) => {
-  try {
-    return toValue(value);
-  } catch (error) {
-    if (
-      !(error instanceof TlaEvaluationError) ||
-      error instanceof TlaModuleError ||
-      error instanceof TlaFeatureUnsupportedError
-    ) {
-      throw error;
-    }
-    throw setExitCode(
-      new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${error.message}`),
-      EXIT_STATUS.error,
-    );
-  }
-};
-
-interface LinkedModule {
+export interface LinkedModule {
   module: Module;
   constants: Declaration[];
   variables: string[];
@@ -253,41 +207,13 @@ const createLocalFunction = (definition: Definition, key: string): Definition =>
   location: definition.location,
 });
 
-const createOperatorTable = (name: string, arity: number, rows: [Value[], Value][]): Builtin => {
-  const table = `{ ${rows.map((row) => `<${[...row[0], row[1]].map((value) => formatValue(value)).join(", ")}>`).join(", ")}}`;
-  return {
-    kind: "Builtin",
-    name,
-    arity,
-    evaluate: (args) => {
-      const row = rows.find((candidate) => {
-        if (candidate[0].length !== args.length) {
-          throw new TlaEvaluationError(
-            `Attempted to apply the operator ${table}\nwith wrong number of arguments.`,
-          );
-        }
-        return candidate[0].every((value, index) => {
-          const argument = args[index];
-          return (
-            !(typeof argument === "object" && argument.kind === "Operator") &&
-            valuesEqual(value, argument)
-          );
-        });
-      });
-      if (row) return row[1];
-      throw new TlaEvaluationError(
-        `Attempted to apply operator:\n${table}\nto arguments (${args.map((argument) => (typeof argument === "object" && argument.kind === "Operator" ? argument.name : formatValue(argument))).join(", ")}), which is undefined.`,
-      );
-    },
-    evaluateUnary: undefined,
-    evaluateBinary: undefined,
-  };
+const mentionsName = (expression: Expression, names: Set<string>): boolean => {
+  const name = getReferencedName(expression);
+  return (
+    (name !== undefined && names.has(name)) ||
+    getChildren(expression).some((child) => mentionsName(child, names))
+  );
 };
-
-const mentionsName = (expression: Expression, names: Set<string>): boolean =>
-  (expression.kind === "Identifier" && names.has(expression.name)) ||
-  (expression.kind === "Apply" && names.has(expression.operator)) ||
-  getChildren(expression).some((child) => mentionsName(child, names));
 
 const getVariableIndex = (variables: string[], declared: string[]) => {
   const index = new Map(variables.map((name, position) => [name, position]));
@@ -323,7 +249,7 @@ export const createEnvironment = (
   const root = order.parseModule(options.source);
   const definitions = new Map<string, Definition>();
   const parameterized = new Map<string, boolean>();
-  const copySources = new Map<string, { source: string; prefix: number }>();
+  const copySources = new Map<string, CopySource>();
   const substitutedDefinitions = new Set<Definition>();
   const instanceParams = new Set<OperatorParam>();
   const builtins = new Map<string, Builtin>(
@@ -372,16 +298,16 @@ export const createEnvironment = (
   const addStandardModule = (name: string): Symbols | undefined => {
     const cached = standardExports.get(name);
     if (cached) return cached;
-    const standardModule = getStandardModule(name, options.print, runtime, options.files, builtins);
-    if (!standardModule) return undefined;
+    const operators = getStandardOperators(name, options.print, runtime, options.files, builtins);
+    if (!operators) return undefined;
     STANDARD_DEPENDENCIES.get(name)?.forEach(addStandardModule);
     const exported: Symbols = new Map();
-    standardModule.extends.forEach((extended) =>
+    STANDARD_EXTENDS.get(name)?.forEach((extended) =>
       addStandardModule(extended)?.forEach((symbol, symbolName) =>
         exported.set(symbolName, symbol),
       ),
     );
-    standardModule.operators.forEach((operator) => {
+    operators.forEach((operator) => {
       builtins.set(operator.name, operator);
       exported.set(operator.name, {
         key: operator.name,
@@ -410,11 +336,7 @@ export const createEnvironment = (
 
   const rejectModuleLiterals = (module: Module): Module => {
     rejectLiterals([
-      ...module.definitions.flatMap((definition) =>
-        definition.kind === "Function"
-          ? [...definition.bounds.map((bound) => bound.set), definition.body]
-          : [definition.body],
-      ),
+      ...module.definitions.flatMap(getDefinitionExpressions),
       ...module.assumptions.map((assumption) => assumption.expression),
       ...module.theorems.flatMap((theorem) =>
         theorem.statement.kind === "AssumeProve" ? [] : [theorem.statement],
@@ -504,16 +426,9 @@ export const createEnvironment = (
       if (definition?.kind !== "Operator" || !context || expressions.length !== args.length) {
         throw new TlaEvaluationError(`No definition of ${operator} to fall back to`);
       }
-      const closure: Closure = {
-        kind: "Closure",
-        name: definition.name,
-        params: definition.params,
-        body: definition.body,
-        scope: undefined,
-      };
       return evaluate(definition.body, {
         environment: context.environment,
-        scope: bindOperatorArguments(closure, expressions, context),
+        scope: bindOperatorArguments(getDefinitionClosure(definition), expressions, context),
         state: context.state,
         next: context.next,
         isKeepLazy: context.isKeepLazy,
@@ -670,30 +585,6 @@ export const createEnvironment = (
         }),
     );
   };
-
-  const createLocalAlias = (
-    name: string,
-    key: string,
-    params: OperatorParam[],
-    forwarded: OperatorParam[],
-    location: SourceLocation,
-  ): Definition => ({
-    kind: "Operator",
-    name,
-    params,
-    body:
-      forwarded.length === 0
-        ? { kind: "Identifier", name: key, location }
-        : {
-            kind: "Apply",
-            operator: key,
-            args: createLocalArguments(forwarded, location),
-            location,
-          },
-    isLocal: true,
-    isRecursive: false,
-    location,
-  });
 
   const createArgumentParams = (arity: number) =>
     Array.from({ length: arity }, (_value, index) => ({ name: `argument${index}`, arity: 0 }));
@@ -1135,7 +1026,6 @@ export const createEnvironment = (
   );
   linkOrder.push(...linkOrder.splice(linkOrder.indexOf(linkedRoot), 1));
   if (warnings.length > 0 && !options.isSanyReported) options.print(formatSanyWarnings(warnings));
-  const getRootKey = (name: string) => linkedRoot.visible.get(name)?.key ?? name;
   linkedRoot.visible.forEach((symbol, name) => {
     const definition = definitions.get(symbol.key);
     if (definition && symbol.key !== name) definitions.set(name, definition);
@@ -1158,208 +1048,30 @@ export const createEnvironment = (
   const declaredConstants = linkedRoot.constants.map((constant) => constant.name);
   const variables = linkedRoot.variables;
 
-  const moduleSymbols = new Map([
-    ...standardExports,
-    ...[...linkedModules].map(([name, linked]): [string, Symbols] => [name, linked.visible]),
-    [root.name, linkedRoot.visible],
-  ]);
-  const getScopedSymbol = (item: { name: string; module?: string }) => {
-    const symbol = moduleSymbols.get(item.module ?? "")?.get(item.name);
-    return symbol?.kind === "Definition" ? symbol : undefined;
-  };
-  const getSubstitutedKeys = (item: { name: string; module?: string }) => {
-    if (item.module === undefined) return [item.name, getRootKey(item.name)];
-    const symbol = getScopedSymbol(item);
-    return symbol ? [symbol.key] : [];
-  };
-  const getScopedKeys = (item: { name: string; module?: string }) =>
-    item.module === root.name ? [] : getSubstitutedKeys(item);
-  const getKeyArity = (key: string) => {
-    const definition = definitions.get(key);
-    return definition?.kind === "Operator"
-      ? definition.params.length
-      : (linkedRoot.constants.find((constant) => constant.name === key)?.arity ??
-          builtins.get(key)?.arity ??
-          0);
-  };
-  const constants = new Map<string, Value>();
-  const operatorKeys = new Set<string>();
-  const setOperator = (key: string, operator: Builtin) => {
-    builtins.set(key, operator);
-    definitions.delete(key);
-    constants.delete(key);
-    operatorKeys.add(key);
-  };
-  config.constants
-    .filter((assignment) => assignment.args === undefined)
-    .forEach((assignment) => {
-      const value = toConstantValue(assignment.value);
-      markNormalized(value);
-      getScopedKeys(assignment).forEach((key) => {
-        const arity = getKeyArity(key);
-        if (arity === 0) constants.set(key, value);
-        else
-          setOperator(key, {
-            kind: "Builtin",
-            name: key,
-            arity,
-            evaluate: () => value,
-            evaluateUnary: undefined,
-            evaluateBinary: undefined,
-            isLazy: true,
-          });
-      });
-    });
-  const tables = new Map<string, { name: string; module?: string; rows: [Value[], Value][] }>();
-  config.constants.forEach((assignment) => {
-    if (assignment.args === undefined) return;
-    const tableKey = `${assignment.module ?? ""}!${assignment.name}`;
-    const table = tables.get(tableKey) ?? {
-      name: assignment.name,
-      module: assignment.module,
-      rows: [],
-    };
-    if (table.rows.length > 0 && table.rows[0][0].length !== assignment.args.length) {
-      throw new TlaConfigError(
-        `The arity of the operator ${assignment.name} is inconsistent in the configuration file.`,
-      );
-    }
-    table.rows.push([assignment.args.map(toValue), toValue(assignment.value)]);
-    tables.set(tableKey, table);
-  });
-  tables.forEach((table) =>
-    getScopedKeys(table).forEach((key) =>
-      setOperator(key, createOperatorTable(table.name, getKeyArity(key), table.rows)),
+  const applied = applyConfig(config, {
+    root: linkedRoot,
+    moduleSymbols: new Map([
+      ...standardExports,
+      ...[...linkedModules].map(([name, linked]): [string, Symbols] => [name, linked.visible]),
+      [root.name, linkedRoot.visible],
+    ]),
+    definitions,
+    builtins,
+    copySources,
+    operatorConstants: new Map(
+      moduleOperators.flatMap((operator) =>
+        getLinkedModule(operator.module, root.name).constants.flatMap(
+          (constant): [string, Value][] => {
+            const value = operator.constants?.[constant.name];
+            return value === undefined ? [] : [[constant.name, value]];
+          },
+        ),
+      ),
     ),
-  );
-  const substitutions = new Map(
-    config.substitutions.flatMap((substitution) =>
-      getSubstitutedKeys(substitution).map((key): [string, string] => [
-        key,
-        getRootKey(substitution.target),
-      ]),
-    ),
-  );
-  [...substitutions.keys()].forEach((key) => constants.delete(key));
-  const checkSubstitutionTarget = (name: string, target: string, arity: number | undefined) => {
-    const targetKey = getRootKey(target);
-    const definition = definitions.get(targetKey);
-    const isDefined =
-      definition !== undefined ||
-      builtins.has(targetKey) ||
-      constants.has(targetKey) ||
-      declaredConstants.includes(target) ||
-      variables.includes(target);
-    if (!isDefined) {
-      throw new TlaConfigError(
-        `The configuration file substitutes for ${name} with the undefined identifier ${target}.`,
-      );
-    }
-    if (definition?.kind === "Operator" && definition.params.length !== arity) {
-      throw new TlaConfigError(
-        `The configuration file substitutes for ${name} with ${target} of different number of arguments.`,
-      );
-    }
-  };
-  config.substitutions
-    .filter((substitution) => substitution.module === undefined)
-    .forEach((substitution) => {
-      const name = substitution.name;
-      const target = substitution.target;
-      if (!declaredConstants.includes(name) && !linkedRoot.visible.has(name)) {
-        throw new TlaConfigError(
-          `In the configuration file, the identifier ${name} does not appear in the specification.`,
-        );
-      }
-      if (config.substitutions.some((other) => other.name === target)) {
-        throw new TlaConfigError(
-          `In the configuration file, the identifier ${target} appears\non the right-hand side of a <- after already appearing on the\nleft-hand side of one.`,
-        );
-      }
-      checkSubstitutionTarget(
-        name,
-        target,
-        linkedRoot.constants.find((constant) => constant.name === name)?.arity ??
-          linkedRoot.visible.get(name)?.arity,
-      );
-    });
-  const scopedSubstitutions = config.substitutions.filter(
-    (substitution) => substitution.module !== undefined,
-  );
-  [...moduleSymbols.keys()].forEach((name) => {
-    const inModule = scopedSubstitutions.filter((substitution) => substitution.module === name);
-    inModule.forEach((substitution) => {
-      const symbol = getScopedSymbol(substitution);
-      if (!symbol) return;
-      if (inModule.some((other) => other.name === substitution.target)) {
-        throw new TlaConfigError(
-          `In the configuration file, the identifier ${substitution.target} appears\non the right-hand side of a <- after already appearing on the\nleft-hand side of one.`,
-        );
-      }
-      checkSubstitutionTarget(substitution.name, substitution.target, symbol.arity);
-    });
-    const missing = inModule.find((substitution) => !getScopedSymbol(substitution));
-    if (missing) {
-      throw new TlaConfigError(
-        `In the configuration file, the identifier ${missing.name} does not appear in the specification.`,
-      );
-    }
+    order,
   });
-  const unknownModule = scopedSubstitutions.find(
-    (substitution) => !moduleSymbols.has(substitution.module ?? ""),
-  );
-  if (unknownModule) {
-    throw new TlaConfigError(
-      `In the configuration file, the module name ${unknownModule.module} is not a module in the specification.`,
-    );
-  }
-  const scopedKeys = new Set(
-    [...config.constants, ...config.substitutions]
-      .filter((item) => item.module !== undefined)
-      .flatMap(getScopedKeys),
-  );
-  const getOverride = (
-    key: string,
-    prefix: number,
-  ): { key: string; prefix: number } | undefined => {
-    if (scopedKeys.has(key)) return { key, prefix };
-    const copy = copySources.get(key);
-    return copy && getOverride(copy.source, prefix + copy.prefix);
-  };
-  copySources.forEach((copy, key) => {
-    const override = getOverride(copy.source, copy.prefix);
-    const definition = definitions.get(key);
-    if (!override || !definition) return;
-    const params = definition.kind === "Operator" ? definition.params : [];
-    const alias = createLocalAlias(
-      key,
-      override.key,
-      params,
-      params.slice(override.prefix),
-      definition.location,
-    );
-    definitions.set(key, alias);
-    linkedRoot.visible.forEach((symbol, name) => {
-      if (symbol.key === key && name !== key) definitions.set(name, alias);
-    });
-  });
-  moduleOperators.forEach((operator) =>
-    getLinkedModule(operator.module, root.name).constants.forEach((constant) => {
-      const value = operator.constants?.[constant.name];
-      if (value !== undefined) constants.set(constant.name, value);
-    }),
-  );
-  const unassigned = declaredConstants.filter(
-    (name) => !constants.has(name) && !substitutions.has(name) && !operatorKeys.has(name),
-  );
-  if (unassigned.length > 0) {
-    const name =
-      order.getDeclarationOrder("constant").find((constant) => unassigned.includes(constant)) ??
-      unassigned[0];
-    throw new TlaConfigError(
-      `The constant parameter ${name} is not assigned a value by the configuration file.`,
-    );
-  }
+  const constants = applied.constants;
+  const substitutions = applied.substitutions;
 
   if (traceFile !== undefined) {
     builtins.forEach((builtin, name) => {

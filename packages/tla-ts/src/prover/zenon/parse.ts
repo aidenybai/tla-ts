@@ -123,16 +123,13 @@ export const parseZenon = (exprs: Expressions, text: string): Phrase[] => {
   };
   const tokens = tokenize(text);
   let position = 0;
-  const peek = () => tokens[position];
   const next = () => tokens[position++];
-  const expect = (kind: TokenKind, value?: string) => {
+  const expect = (kind: TokenKind) => {
     const token = next();
-    if (token.kind !== kind || (value !== undefined && token.text !== value))
-      throw new TlaZenonError(`Zenon: line ${token.line}: syntax error`);
+    if (token.kind !== kind) throw new TlaZenonError(`Zenon: line ${token.line}: syntax error`);
     return token;
   };
-  const isAt = (kind: TokenKind, value?: string) =>
-    peek().kind === kind && (value === undefined || peek().text === value);
+  const isAt = (kind: TokenKind) => tokens[position].kind === kind;
 
   const parseLambda = () => {
     expect("open");

@@ -278,10 +278,7 @@ export class DiophantineSolver {
       return;
     }
     explanation.pushDependency(
-      this.explainFixedInMetaTerm(
-        this.getRowMonomials(this.lMatrix, this.conflictRow),
-        this.conflictGcd,
-      ),
+      this.explainFixedInMetaTerm(this.lMatrix.rows[this.conflictRow], this.conflictGcd),
     );
   }
 
@@ -799,10 +796,6 @@ export class DiophantineSolver {
 
   private getSignInERow(row: number, column: number) {
     return this.getCoeffInERow(row, column).isPositive() ? 1 : -1;
-  }
-
-  private getRowMonomials(matrix: StaticMatrix, row: number): Monomial[] {
-    return matrix.rows[row].map((cell) => ({ coeff: cell.coeff, column: cell.column }));
   }
 
   private tightenTermsWithS(): DioMove {

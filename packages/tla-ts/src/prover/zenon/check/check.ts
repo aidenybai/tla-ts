@@ -87,8 +87,7 @@ export const checkProof = (root: Proof<Term>, context: CheckContext, limits: Lim
         if (!needed.has(subproof)) stack.push([subproof, false]);
     }
     const hypotheses = new Set(context.hypotheses.map(keys.getTopKey));
-    const missing = [...(needed.get(root) ?? [])].filter((key) => !hypotheses.has(key));
-    return missing.length === 0;
+    return [...(needed.get(root) ?? [])].every((key) => hypotheses.has(key));
   } catch (error) {
     if (error instanceof UncheckedError) return false;
     throw error;

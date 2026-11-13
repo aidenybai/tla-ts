@@ -1,9 +1,9 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { TlaUnsupportedError } from "../src/errors";
 import { decidePtl } from "../src/prover/ptl/decide";
 import { encodeForBackend } from "../src/prover/prove";
-import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getOption } from "./corpora";
+import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getOption, listFiles } from "./corpora";
 import {
   getLs4Digest,
   getLs4Verdict,
@@ -18,10 +18,9 @@ const TIME_LIMIT_MS = 10_000;
 
 const listLs4Files = (directory: string): string[] =>
   existsSync(directory)
-    ? readdirSync(directory, { recursive: true, encoding: "utf8" })
+    ? listFiles(directory)
         .filter((path) => path.endsWith(".ls4"))
         .sort()
-        .map((path) => join(directory, path))
     : [];
 
 const isVerbose = process.argv.includes("--verbose");

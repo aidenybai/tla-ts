@@ -89,14 +89,14 @@ const containsAlways = (expression: LiveExpression): boolean => {
   }
 };
 
+const isEmptyModel = (model: Solution["models"][number]) =>
+  model.eventuallyAlways.length === 0 &&
+  model.infinitelyOftenStates.length === 0 &&
+  model.infinitelyOftenActions.length === 0;
+
 const isCycleConstrained = (solution: Solution) =>
   solution.promises.some((promise) => containsAlways(promise.body)) ||
-  solution.models.some(
-    (model) =>
-      model.eventuallyAlways.length > 0 ||
-      model.infinitelyOftenStates.length > 0 ||
-      model.infinitelyOftenActions.length > 0,
-  );
+  solution.models.some((model) => !isEmptyModel(model));
 
 const isSameState = (left: Value[], right: Value[]) =>
   left.every((value, position) => isSameValue(value, right[position]));
@@ -315,13 +315,6 @@ export const createLivenessChecker = (
       tableauNode.successors[0] === node
     );
   };
-  const hasEmptyModel = (behavior: BehaviorGraph) =>
-    behavior.solution.models.some(
-      (model) =>
-        model.eventuallyAlways.length === 0 &&
-        model.infinitelyOftenStates.length === 0 &&
-        model.infinitelyOftenActions.length === 0,
-    );
 
   const getNodeId = (behavior: BehaviorGraph, state: number, tableauNode: number) => {
     if (!behavior.solution.tableau) return state;
@@ -429,7 +422,7 @@ export const createLivenessChecker = (
       if (
         isAccepting(tableau, next) &&
         behavior.errorNode === undefined &&
-        hasEmptyModel(behavior)
+        behavior.solution.models.some(isEmptyModel)
       ) {
         behavior.errorNode = node;
         return;
@@ -493,12 +486,9 @@ export const createLivenessChecker = (
       });
       writeNode(behavior, node, successors, actions, stateResults);
     }
-    if (behavior.errorNode === undefined) return undefined;
-    return removeRepeats(
-      getPath(behavior, behavior.errorNode)
-        .reverse()
-        .map((node) => behavior.nodeStates[node]),
-    );
+    return behavior.errorNode === undefined
+      ? undefined
+      : getStatePath(behavior, behavior.errorNode);
   };
 
   const addPlainState = (
@@ -544,6 +534,13 @@ export const createLivenessChecker = (
     }
     throw new TlaEvaluationError(`Couldn't re-create liveness trace (path) starting at: ${target}`);
   };
+
+  const getStatePath = (behavior: BehaviorGraph, target: number) =>
+    removeRepeats(
+      getPath(behavior, target)
+        .reverse()
+        .map((node) => behavior.nodeStates[node]),
+    );
 
   const findLassoInModel = (
     behavior: BehaviorGraph,
@@ -606,11 +603,7 @@ export const createLivenessChecker = (
       members: Set<number>,
       membersByState: Map<number, number[]>,
     ) => {
-      const prefix = removeRepeats(
-        getPath(behavior, root)
-          .reverse()
-          .map((node) => behavior.nodeStates[node]),
-      );
+      const prefix = getStatePath(behavior, root);
       const cycleStack: number[] = [];
       const seen = new Set<number>([root]);
       const stateDone = model.infinitelyOftenStates.map(() => false);
@@ -618,7 +611,6 @@ export const createLivenessChecker = (
       const promiseDone = solution.promises.map(() => false);
       let remainingCount = stateDone.length + actionDone.length + promiseDone.length;
       let currentNode = root;
-      const isMember = (node: number) => members.has(node);
       const moveTo = (next: number) => {
         cycleStack.push(currentNode);
         currentNode = next;
@@ -644,7 +636,7 @@ export const createLivenessChecker = (
           const countBeforeActions = remainingCount;
           const isTaken = getNodeSuccessors(behavior, currentNode).some((next, edge) => {
             if (membersByState.has(behavior.nodeStates[next])) {
-              if (!isMember(next) || !isAllowed(currentNode, edge)) return false;
+              if (!members.has(next) || !isAllowed(currentNode, edge)) return false;
               lastNext = next;
               model.infinitelyOftenActions.forEach((position, slot) => {
                 if (!actionDone[slot] && getAction(currentNode, edge, position)) {
@@ -658,7 +650,7 @@ export const createLivenessChecker = (
               seen.clear();
               return true;
             }
-            if (isMember(next) && !seen.has(next)) unvisitedNext = next;
+            if (members.has(next) && !seen.has(next)) unvisitedNext = next;
             return false;
           });
           if (isTaken) break;
@@ -677,14 +669,14 @@ export const createLivenessChecker = (
             currentNode = previous;
             unvisitedNext =
               getNodeSuccessors(behavior, previous).find(
-                (next) => isMember(next) && !seen.has(next),
+                (next) => members.has(next) && !seen.has(next),
               ) ?? -1;
           }
           moveTo(unvisitedNext);
           seen.add(unvisitedNext);
         }
       }
-      const postfix = getClosingPath(root, currentNode, membersByState, isAllowed);
+      const postfix = getClosingPath(root, currentNode, membersByState);
       for (let position = cycleStack.length - 1; position >= 0; position--) {
         const state = behavior.nodeStates[cycleStack[position]];
         if (postfix[postfix.length - 1] !== state) postfix.push(state);
@@ -698,12 +690,7 @@ export const createLivenessChecker = (
       };
     };
 
-    const getClosingPath = (
-      root: number,
-      end: number,
-      membersByState: Map<number, number[]>,
-      isAllowedEdge: (node: number, edge: number) => boolean,
-    ) => {
+    const getClosingPath = (root: number, end: number, membersByState: Map<number, number[]>) => {
       if (end === root) return [];
       const start = behavior.nodeStates[end];
       const parents = new Map<number, number>();
@@ -712,7 +699,7 @@ export const createLivenessChecker = (
       for (let state = start, parent = -1, position = 0; ; position++) {
         for (const node of membersByState.get(state) ?? []) {
           for (const [edge, next] of getNodeSuccessors(behavior, node).entries()) {
-            if (next === node || !isAllowedEdge(node, edge)) continue;
+            if (next === node || !isAllowed(node, edge)) continue;
             if (next === root) {
               const path: number[] = [];
               for (let item = state, itemParent = parent; item !== start;) {

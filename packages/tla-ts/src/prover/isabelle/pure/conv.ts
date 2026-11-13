@@ -1,7 +1,7 @@
 // Ported from Isabelle2025's Pure/conv.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
-import { destEquals, destImplies, implies, isImplies } from "./logic";
+import { destEquals, destImplies, implies, isAllAbs, isImplies } from "./logic";
 import { declareName, makeNameContext, variantName, type NameContext } from "./name";
 import { aconv, addFreeNames, mkFree, substBound, type Term } from "./term";
 import {
@@ -36,13 +36,7 @@ export const paramsConv = (convert: Conversion): Conversion => {
   const under =
     (names: NameContext): Conversion =>
     (term) => {
-      if (
-        term.kind !== "App" ||
-        term.fun.kind !== "Const" ||
-        term.fun.name !== "Pure.all" ||
-        term.arg.kind !== "Abs"
-      )
-        return convert(term);
+      if (!isAllAbs(term)) return convert(term);
       const abs = term.arg;
       const [name, nextNames] = variantName(abs.name, names);
       const free = mkFree(name, abs.type);

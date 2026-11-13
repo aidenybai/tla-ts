@@ -75,7 +75,7 @@ export const printError = (error: TlaError, printer: MessagePrinter) => {
 
 export const reportErrors = async (
   run: () => number | Promise<number>,
-  printer = createMessagePrinter(false),
+  printer = createMessagePrinter({ isTool: false }),
 ) => {
   try {
     return await run();

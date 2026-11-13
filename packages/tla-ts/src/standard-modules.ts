@@ -35,7 +35,6 @@ import {
   createSet,
   createSortedSet,
   compareValues,
-  describeKind,
   createTuple,
   getSortedDifference,
   formatValue,
@@ -75,11 +74,6 @@ import {
 } from "./values";
 import type { TlcVersion } from "./tlc/version";
 import { getSanyStandardModules } from "./sany/modules";
-
-interface StandardModule {
-  extends: string[];
-  operators: Builtin[];
-}
 
 const isSubsetOf = (left: Value[], right: Value) =>
   left.every((element) => isElementOf(element, right));
@@ -501,16 +495,7 @@ const createSequencesOperators = (version: TlcVersion) =>
 
 const createFiniteSetsOperators = (version: TlcVersion) =>
   withJavaMethods("FiniteSets", [
-    defineOperator("IsFiniteSet", 1, (args) => {
-      const value = getValue(args, 0, "IsFiniteSet");
-      if (isSetValue(value)) return isFiniteSet(value);
-      if (typeof value === "object" && value.kind === "Function") return true;
-      throw new TlaEvaluationError(
-        typeof value === "object" && value.kind === "LazyFunction"
-          ? `Attempted to check if the function:\n${formatValue(value)}\nis a finite set.`
-          : `Attempted to check if the ${describeKind(value)} ${formatValue(value)} is a finite set.`,
-      );
-    }),
+    defineOperator("IsFiniteSet", 1, (args) => isFiniteSet(getValue(args, 0, "IsFiniteSet"))),
     defineOperator("Cardinality", 1, (args) => {
       const set = getValue(args, 0, "Cardinality");
       if (
@@ -593,7 +578,7 @@ export const getJavaOverrides = (
   if (name === "IOUtils") return createIoUtilsOperators(files, evaluateReplaced);
   if (name === "_TLCTrace") return createTlcTraceOperators(files);
   if (!getSanyStandardModules(runtime.version).has(name)) return undefined;
-  const operators = getStandardModule(name, print, runtime, files, builtins)?.operators;
+  const operators = getStandardOperators(name, print, runtime, files, builtins);
   return name === "Randomization" && operators
     ? [...operators, createRandomSubsetSet(runtime)]
     : operators;
@@ -611,37 +596,36 @@ export const STANDARD_DEPENDENCIES = new Map([
   ["TLCExt", ["TLC", "Integers", "Naturals", "Sequences", "FiniteSets"]],
 ]);
 
-export const getStandardModule = (
+export const STANDARD_EXTENDS = new Map([["Integers", ["Naturals"]]]);
+
+export const getStandardOperators = (
   name: string,
   print: (text: string) => void,
   runtime: CheckerRuntime,
   files: FileSystem,
   builtins: ReadonlyMap<string, Builtin>,
-): StandardModule | undefined => {
+): Builtin[] | undefined => {
   switch (name) {
     case "Naturals":
-      return { extends: [], operators: NATURALS_OPERATORS };
+      return NATURALS_OPERATORS;
     case "Integers":
-      return { extends: ["Naturals"], operators: INTEGERS_OPERATORS };
+      return INTEGERS_OPERATORS;
     case "Sequences":
-      return { extends: [], operators: createSequencesOperators(runtime.version) };
+      return createSequencesOperators(runtime.version);
     case "FiniteSets":
-      return { extends: [], operators: createFiniteSetsOperators(runtime.version) };
+      return createFiniteSetsOperators(runtime.version);
     case "TLC":
-      return { extends: [], operators: withJavaMethods("TLC", createTlcOperators(print, runtime)) };
+      return withJavaMethods("TLC", createTlcOperators(print, runtime));
     case "Randomization":
-      return { extends: [], operators: createRandomizationOperators(runtime) };
+      return createRandomizationOperators(runtime);
     case "_Possible":
-      return { extends: [], operators: createPossibleOperators(print, runtime) };
+      return createPossibleOperators(print, runtime);
     case "Json":
-      return { extends: [], operators: createJsonOperators(files) };
+      return createJsonOperators(files);
     case "Bags":
-      return { extends: [], operators: withJavaMethods("Bags", createBagsOperators(builtins)) };
+      return withJavaMethods("Bags", createBagsOperators(builtins));
     case "TLCExt":
-      return {
-        extends: [],
-        operators: withJavaMethods("TLCExt", createTlcExtOperators(print, runtime)),
-      };
+      return withJavaMethods("TLCExt", createTlcExtOperators(print, runtime));
     default:
       return undefined;
   }

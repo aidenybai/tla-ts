@@ -70,6 +70,11 @@ const tokenize = (text: string): Token[] => {
     }
     if (text.startsWith("\\<", position) && isLetter(text[position + 2] ?? "")) {
       const end = text.indexOf(">", position);
+      if (end < 0)
+        throw new TlaIsabelleError(
+          "ERROR",
+          `Inner lexical error at: ${text.slice(position, position + 20)}`,
+        );
       tokens.push({ kind: "delimiter", text: text.slice(position, end + 1) });
       position = end + 1;
       continue;
@@ -274,11 +279,11 @@ class Parser {
     throw new TlaIsabelleError("ERROR", `Undefined type name: ${name}`);
   }
 
-  private parseBinders(isConstrainable: boolean): TypedName[] {
+  private parseBinders(): TypedName[] {
     const binders: TypedName[] = [];
     while (this.peek().kind === "id") {
       const name = this.parseIdentifier();
-      if (isConstrainable && this.isDelimiter("::")) {
+      if (this.isDelimiter("::")) {
         this.position += 1;
         binders.push({ name, type: this.parseType() });
       } else binders.push({ name, type: undefined });
@@ -418,7 +423,7 @@ class Parser {
       case "%":
       case "\\<lambda>": {
         if (minimum > 3) throw this.syntaxError();
-        const binders = this.parseBinders(true);
+        const binders = this.parseBinders();
         this.expect(".");
         const body = this.parseLogic(3);
         return toTerm(
@@ -436,7 +441,7 @@ class Parser {
       }
       case "\\<And>": {
         if (minimum > 0) throw this.syntaxError();
-        const binders = this.parseBinders(true);
+        const binders = this.parseBinders();
         this.expect(".");
         const body = this.parseProp(0);
         return {

@@ -7,7 +7,7 @@ import {
   DEFAULT_FACTOR_PARAMS,
   factorSquareFree,
   getExactSquareRoot,
-  type UpolynomialFactors,
+  mkFactors,
 } from "./upolynomial-factorization";
 
 export const NULL_VAR = -1;
@@ -462,6 +462,15 @@ export class PolynomialManager {
     return polynomial.size === 0 ? NULL_VAR : polynomial.ms[0].maxVar;
   }
 
+  getMaxVarOfPolys(polynomials: readonly Polynomial[]) {
+    let result = NULL_VAR;
+    for (const polynomial of polynomials) {
+      const variable = this.maxVar(polynomial);
+      if (result === NULL_VAR || variable > result) result = variable;
+    }
+    return result;
+  }
+
   degree(polynomial: Polynomial, variable: number) {
     let result = 0;
     for (const monomial of polynomial.ms) result = Math.max(result, monomial.degreeOf(variable));
@@ -910,7 +919,7 @@ export class PolynomialManager {
 
   private factorSqfPpUniv(polynomial: Polynomial, k: number, result: Factors) {
     const variable = this.maxVar(polynomial);
-    const fs: UpolynomialFactors = { constant: 1n, factors: [], degrees: [] };
+    const fs = mkFactors();
     factorSquareFree(this.um, this.toCoeffs(polynomial), fs, 1, DEFAULT_FACTOR_PARAMS);
     if (fs.factors.length === 1 && fs.degrees[0] === 1) {
       this.pushFactor(result, polynomial, k);
@@ -1226,7 +1235,7 @@ export class PolynomialManager {
             if (!this.isUnivariate(univariate)) continue;
             if (this.degree(univariate, mainVar) !== degMain) continue;
             if (!this.isSquareFreeIn(univariate, mainVar)) continue;
-            const univariateFs: UpolynomialFactors = { constant: 1n, factors: [], degrees: [] };
+            const univariateFs = mkFactors();
             factorSquareFree(
               this.um,
               this.um.getPrimitive(this.toCoeffs(univariate)),

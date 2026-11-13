@@ -7,7 +7,6 @@ import {
   type InitialStates,
 } from "./check";
 import { parseConfig, type ModelConfig } from "./config";
-import { createEnvironment } from "./environment";
 import { TlaEvaluationError } from "./errors";
 import { isImpure } from "./evaluate";
 import {
@@ -19,43 +18,36 @@ import {
   type SharedFingerprints,
 } from "./fingerprints";
 import {
+  createCheckEnvironment,
   createSearch,
   findAssumptionViolation,
   reportInitialStatesProgress,
   reportStartup,
 } from "./search";
 import { getInitialStates } from "./successors";
-import { setFingerprintPolynomial } from "./tlc/fingerprint";
-import { createTlcOrder } from "./tlc/order";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateEncoder, type EncodedStates } from "./transfer";
-import type { TlcVersion } from "./tlc/version";
-import {
-  createCanonicalizer,
-  freezeStringOrder,
-  getUnorderedString,
-  setStringOrder,
-  setValueOptions,
-  type Value,
-} from "./values";
+import { createCanonicalizer, getUnorderedString, type Value } from "./values";
 import { spawnWorker, type Port } from "./worker";
 
-export interface StartMessage {
+export interface StartMessage extends Pick<
+  CheckOptions,
+  | "source"
+  | "isTool"
+  | "traceSpec"
+  | "isWarningEnabled"
+  | "version"
+  | "fingerprintPolynomial"
+  | "maxSetSize"
+  | "isLazyValueExpanded"
+> {
   type: "start";
-  source: string;
   config: ModelConfig;
   modules: [string, string | undefined][];
   classes: [string, Uint8Array | undefined][];
   index: number;
   ports: (Port | undefined)[];
   seed: EncodedStates;
-  isTool: boolean | undefined;
-  traceFile: string | undefined;
-  isWarningEnabled: boolean | undefined;
-  version: TlcVersion | undefined;
-  fingerprintPolynomial: number | undefined;
-  maxSetSize: number | undefined;
-  isLazyValueExpanded: boolean | undefined;
   fingerprints: SharedFingerprints;
   requests: Int32Array;
   remaining: Int32Array;
@@ -136,38 +128,23 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     classes.set(name, bytes);
     return bytes;
   };
-  const order = createTlcOrder(options.source, loadModule);
-  setStringOrder(order.getStringOrder(config));
-  setValueOptions(options);
-  setFingerprintPolynomial(options.fingerprintPolynomial ?? 0);
-  freezeStringOrder();
-  const specification = createEnvironment(config, {
-    source: options.source,
-    loadModule,
-    order,
-    loadClass,
-    print: (text) => {
+  const created = createCheckEnvironment(
+    config,
+    { ...options, loadModule, loadClass, seed: undefined, moduleOperators: undefined },
+    (text) => {
       printedCount++;
       print(text);
     },
-    files: {
-      readFile: options.readFile,
-      writeFile: options.writeFile,
-      makeDirectory: options.makeDirectory,
-    },
-    isTool: options.isTool,
-    traceFile: options.traceSpec?.traceFile,
-    isSanyReported: options.isSanyReported,
-    isWarningEnabled: options.isWarningEnabled,
-    version: options.version,
-  });
+    true,
+  );
+  const specification = created.specification;
   reportStartup(specification, config, report);
   const environment = specification.environment;
   const search = createSearch(
     config,
     environment,
     specification.variableLocations,
-    () => order.getDeclarationOrder("variable"),
+    () => created.order.getDeclarationOrder("variable"),
     report,
   );
   if (findAssumptionViolation(specification.assumptions, environment)) return fallBack();
@@ -302,7 +279,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       ports,
       seed,
       isTool: options.isTool,
-      traceFile: options.traceSpec?.traceFile,
+      traceSpec: options.traceSpec,
       isWarningEnabled: options.isWarningEnabled,
       version: options.version,
       fingerprintPolynomial: options.fingerprintPolynomial,

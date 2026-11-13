@@ -1,9 +1,9 @@
 import { TlaProverError } from "../errors";
 import { spawnWorker, type WorkerHandle } from "../worker";
-import type { DecideOptions, Decision } from "./verdict";
+import type { Backend, DecideOptions, Decision } from "./verdict";
 
 export interface DecideRequest {
-  prover: string;
+  prover: Backend;
   text: string;
   timeLimitMs: number;
 }
@@ -19,7 +19,7 @@ interface PendingDecision {
 
 export interface DecidePool {
   decide: (
-    prover: string,
+    prover: Backend,
     text: string,
     options: DecideOptions,
     priority: number,

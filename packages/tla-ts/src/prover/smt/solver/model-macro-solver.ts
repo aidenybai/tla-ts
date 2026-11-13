@@ -538,12 +538,9 @@ const collectNgFuncDecls = (manager: AstManager, expr: number) => {
     if (visited.has(current)) return;
     visited.add(current);
     const kind = manager.kinds[current];
-    if (kind === KIND_VAR) return;
-    if (kind === KIND_QUANTIFIER) return;
-    for (let index = 0; index < manager.getNumArgs(current); index++) {
-      const arg = manager.getArg(current, index);
-      visit(arg);
-    }
+    if (kind === KIND_VAR || kind === KIND_QUANTIFIER) return;
+    for (let index = 0; index < manager.getNumArgs(current); index++)
+      visit(manager.getArg(current, index));
     if (
       manager.getNumArgs(current) > 0 &&
       !manager.isGround(current) &&
@@ -555,15 +552,11 @@ const collectNgFuncDecls = (manager: AstManager, expr: number) => {
   return decls;
 };
 
-const nonAufMacroSolver =
-  (
-    manager: AstManager,
-    model: ProtoModel,
-    getInfo: GetInfo,
-    dependencies: Map<number, Set<number>>,
-    forceTemplate: number,
-  ): Process =>
-  (qs, newQs, residue) => {
+const MBQI_FORCE_TEMPLATE = 10;
+
+const nonAufMacroSolver = (manager: AstManager, model: ProtoModel, getInfo: GetInfo): Process => {
+  const dependencies = new Map<number, Set<number>>();
+  return (qs, newQs, residue) => {
     const addMacro = (decl: number, elseExpr: number) => {
       if (dependencies.has(decl)) return false;
       dependencies.set(decl, collectNgFuncDecls(manager, elseExpr));
@@ -603,7 +596,7 @@ const nonAufMacroSolver =
       const info = getInfo(quantifier);
       for (const macro of info.condMacros) {
         if (macro.isHint) continue;
-        if (isUnconditional(macro) && (!info.isAuf || macro.weight >= forceTemplate)) {
+        if (isUnconditional(macro) && (!info.isAuf || macro.weight >= MBQI_FORCE_TEMPLATE)) {
           fullMacros.set(macro.decl, { macro, quantifier });
           condMacros.delete(macro.decl);
         } else if (!fullMacros.has(macro.decl) && !info.isAuf) condMacros.add(macro.decl);
@@ -650,22 +643,21 @@ const nonAufMacroSolver =
     }
     return removed.size > 0;
   };
+};
 
 export const solveMacros = (
   manager: AstManager,
   model: ProtoModel,
   qs: number[],
   getInfo: GetInfo,
-  forceTemplate: number,
 ) => {
   const residue: number[] = [];
   const afterSimple = runMacroSolver(qs, residue, simpleMacroSolver(manager, model, getInfo));
   const afterHint = runMacroSolver(afterSimple, residue, hintMacroSolver(manager, model, getInfo));
-  const dependencies = new Map<number, Set<number>>();
   const afterNonAuf = runMacroSolver(
     afterHint,
     residue,
-    nonAufMacroSolver(manager, model, getInfo, dependencies, forceTemplate),
+    nonAufMacroSolver(manager, model, getInfo),
   );
   return [...afterNonAuf, ...residue];
 };

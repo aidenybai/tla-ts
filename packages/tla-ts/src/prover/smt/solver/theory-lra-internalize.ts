@@ -265,10 +265,8 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
       toEnsureEnode.push(term);
       const op = manager.getOp(term);
       if (op === OP_ADD) {
-        for (let argIndex = 0; argIndex < manager.getNumArgs(term); argIndex++) {
-          const arg = manager.getArg(term, argIndex);
-          push(arg, coeffs[index]);
-        }
+        for (let argIndex = 0; argIndex < manager.getNumArgs(term); argIndex++)
+          push(manager.getArg(term, argIndex), coeffs[index]);
         if (terms.size !== index + 1) {
           terms.set(index, terms.items[terms.size - 1]);
           coeffs[index] = coeffs[coeffs.length - 1];
@@ -324,10 +322,7 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
           if (op === OP_DIV) {
             const divisor = context.rewriter.rewrite(manager.getArg(term, 1));
             if (!this.isNonzeroNumeral(divisor)) this.foundUnderspecified(term);
-            for (let argIndex = 0; argIndex < manager.getNumArgs(term); argIndex++) {
-              const arg = manager.getArg(term, argIndex);
-              toEnsureVar.push(arg);
-            }
+            manager.pushArgs(term, toEnsureVar);
           } else if (op === OP_IDIV) {
             if (!this.isNonzeroNumeral(manager.getArg(term, 1))) this.foundUnderspecified(term);
             const remainder = manager.mkApp(OP_MOD, manager.getArgs(term), SORT_INT);
@@ -362,16 +357,10 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
               nla.divisions.addDivisibility(this.registerDivision(quotient, term));
             }
           } else if (op === OP_IDIV0 || op === OP_MOD0) {
-            for (let argIndex = 0; argIndex < manager.getNumArgs(term); argIndex++) {
-              const arg = manager.getArg(term, argIndex);
-              toEnsureVar.push(arg);
-            }
+            manager.pushArgs(term, toEnsureVar);
           } else if (op !== OP_TO_INT && op !== OP_DIV0) {
             this.foundUnsupported(term);
-            for (let argIndex = 0; argIndex < manager.getNumArgs(term); argIndex++) {
-              const arg = manager.getArg(term, argIndex);
-              toEnsureVar.push(arg);
-            }
+            manager.pushArgs(term, toEnsureVar);
           }
           if (!context.relevancy.isEnabled && op !== OP_MOD) this.relevantEh(term);
         }

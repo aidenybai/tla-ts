@@ -1,21 +1,14 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { findTests } from "./test-file";
+import { findTests, listFiles } from "./test-file";
 import { getMessageCodes } from "./transcript";
 
 const SOURCE_DIRECTORY = join(process.argv[2], "tlatools/org.lamport.tlatools/src");
 
-const listJavaFiles = (directory: string): string[] =>
-  readdirSync(directory).flatMap((entry) => {
-    const path = join(directory, entry);
-    if (statSync(path).isDirectory()) return listJavaFiles(path);
-    return path.endsWith(".java") ? [path] : [];
-  });
-
 const codeSource = readFileSync(join(SOURCE_DIRECTORY, "tlc2/output/EC.java"), "utf8");
 const toolSource = readFileSync(join(SOURCE_DIRECTORY, "tlc2/TLC.java"), "utf8");
-const allSource = listJavaFiles(SOURCE_DIRECTORY)
-  .filter((path) => !path.endsWith("/EC.java"))
+const allSource = listFiles(SOURCE_DIRECTORY, false)
+  .filter((path) => path.endsWith(".java") && !path.endsWith("/EC.java"))
   .map((path) => readFileSync(path, "utf8"))
   .join("\n");
 

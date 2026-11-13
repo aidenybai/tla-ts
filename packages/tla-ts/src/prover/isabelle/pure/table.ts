@@ -157,7 +157,8 @@ export const fastStringOrd = (left: string, right: string) =>
         ? -1
         : 1;
 
-const stringOrd = (left: string, right: string) => (left === right ? 0 : left < right ? -1 : 1);
+export const stringOrd = (left: string, right: string) =>
+  left === right ? 0 : left < right ? -1 : 1;
 
 export interface IndexKey {
   readonly name: string;

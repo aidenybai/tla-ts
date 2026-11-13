@@ -4,6 +4,8 @@ import { TRUE, type Expr, type Expressions } from "./expr";
 
 export type Direction = "left" | "right";
 
+export type RelationProperty = "reflexive" | "symmetric" | "transitive";
+
 export interface Origin {
   formula: Expr;
   directions: Direction[];

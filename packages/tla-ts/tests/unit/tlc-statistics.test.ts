@@ -2,14 +2,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vite-plus/test";
 import { check } from "../../src";
+import { checkFixture } from "./check-harness";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-statistics");
 
 it("counts states for TLCGet while it generates them, as TLC does", async () => {
   const printed: string[] = [];
-  const result = await check({
-    source: readFileSync(join(DIRECTORY, "Statistics.tla"), "utf8"),
-    config: readFileSync(join(DIRECTORY, "Statistics.cfg"), "utf8"),
+  const result = await checkFixture("tlc-statistics", "Statistics", "Statistics", {
     onPrint: (text) => printed.push(text),
   });
   expect(result.status).toBe("success");

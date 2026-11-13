@@ -18,6 +18,12 @@ export interface TheoryText {
   readonly method: readonly OuterToken[];
 }
 
+export const syntaxError = (token: OuterToken | undefined) =>
+  new TlaIsabelleError(
+    "ERROR",
+    `Outer syntax error at: ${token === undefined ? "end of input" : token.text}`,
+  );
+
 const isWordChar = (char: string) => /[A-Za-z0-9_'.]/.test(char);
 
 const readString = (text: string, start: number): [string, number] => {
@@ -96,28 +102,23 @@ export const parseTheory = (text: string): TheoryText => {
   let position = 0;
   const peek = () => tokens[position];
   const isWord = (word: string) => peek()?.kind === "word" && peek().text === word;
-  const syntaxError = () =>
-    new TlaIsabelleError(
-      "ERROR",
-      `Outer syntax error at: ${peek() === undefined ? "end of input" : peek().text}`,
-    );
   const expectWord = (word: string) => {
-    if (!isWord(word)) throw syntaxError();
+    if (!isWord(word)) throw syntaxError(peek());
     position += 1;
   };
   const expectSymbol = (symbol: string) => {
-    if (peek()?.kind !== "symbol" || peek().text !== symbol) throw syntaxError();
+    if (peek()?.kind !== "symbol" || peek().text !== symbol) throw syntaxError(peek());
     position += 1;
   };
   const expectName = () => {
     const token = peek();
-    if (token?.kind !== "word" || KEYWORDS.has(token.text)) throw syntaxError();
+    if (token?.kind !== "word" || KEYWORDS.has(token.text)) throw syntaxError(token);
     position += 1;
     return token.text;
   };
   const expectString = () => {
     const token = peek();
-    if (token?.kind !== "string") throw syntaxError();
+    if (token?.kind !== "string") throw syntaxError(token);
     position += 1;
     return token.text;
   };
@@ -176,6 +177,6 @@ export const parseTheory = (text: string): TheoryText => {
   const method = tokens.slice(methodStart, position);
   expectWord("qed");
   expectWord("end");
-  if (position !== tokens.length) throw syntaxError();
+  if (position !== tokens.length) throw syntaxError(peek());
   return { name: theoryName, consts, elements, shows, isUsingAssms, method };
 };

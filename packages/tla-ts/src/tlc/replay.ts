@@ -776,17 +776,16 @@ const visitUnchanged = (
 
 const createReplay = (
   environment: Environment,
-  isInit: boolean,
+  kind: "init" | "next" | "enabled",
   current: Value[] | undefined,
   onState: (state: Value[]) => void,
-  isEnabled = false,
   onIncomplete?: (state: State) => void,
 ): Replay => ({
   environment,
   callStack: environment.callStack,
   coverage: environment.coverage,
-  isInit,
-  isEnabled,
+  isInit: kind === "init",
+  isEnabled: kind === "enabled",
   current,
   onState,
   onIncomplete,
@@ -800,15 +799,9 @@ export const replayEnabled = (
   state: Value[],
   environment: Environment,
 ) => {
-  const replay = createReplay(
-    environment,
-    false,
-    state,
-    () => {
-      throw ENABLED_FOUND;
-    },
-    true,
-  );
+  const replay = createReplay(environment, "enabled", state, () => {
+    throw ENABLED_FOUND;
+  });
   const callStack = replay.callStack;
   const depth = callStack?.expressions.length ?? 0;
   try {
@@ -837,7 +830,7 @@ export const replayInitialStates = (
 ) => {
   const [first, ...others] = inits;
   if (first === undefined) return;
-  const replay = createReplay(environment, true, undefined, onState, false, onIncomplete);
+  const replay = createReplay(environment, "init", undefined, onState, onIncomplete);
   const rest = others.reduceRight<ActionItem | undefined>(
     (tail, init) => createItem("Predicate", init.expression, init.scope, init.node ?? -1, tail),
     undefined,
@@ -867,7 +860,7 @@ export const walkSuccessors = (
   onState: (state: Value[]) => void,
   onIncomplete?: (state: State) => void,
 ) => {
-  const replay = createReplay(environment, false, state, onState, false, onIncomplete);
+  const replay = createReplay(environment, "next", state, onState, onIncomplete);
   visit(replay, action.expression, undefined, action.scope, getEmptyState(environment), node);
 };
 

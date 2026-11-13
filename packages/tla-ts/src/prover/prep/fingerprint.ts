@@ -4,11 +4,11 @@ import {
   type Bound,
   type Builtin,
   type Expr,
-  type Hyp,
   type Scope,
   type Sequent,
 } from "../../obligations/expression";
 import { isConstant } from "../../obligations/temporal";
+import { LEVEL_PREFIXES } from "./action";
 import { getMd5 } from "./md5";
 
 const BUILTIN_NUMBERS: Builtin[] = [
@@ -135,9 +135,6 @@ const getBuiltin = (builtin: Builtin) => {
   if (builtin === "BoxFalse") return "$FakeBox";
   return `$${BUILTIN_NUMBERS.indexOf(builtin)}`;
 };
-
-const getFreshLabel = (hyp: Extract<Hyp, { kind: "Fresh" }>) =>
-  hyp.level === "Unknown" ? "Unknown" : hyp.level.toUpperCase();
 
 const getFingerprintText = (sequent: Sequent) => {
   const stack: Entry[] = [];
@@ -333,7 +330,7 @@ const getFingerprintText = (sequent: Sequent) => {
       switch (hyp.kind) {
         case "Fresh": {
           if (!hyp.domain) {
-            const label = getFreshLabel(hyp);
+            const label = LEVEL_PREFIXES[hyp.level];
             const after = getRest({ kind: "Hyp", label });
             return after.entry.isUsed ? `${after.rest}${label}${hyp.name}` : after.rest;
           }

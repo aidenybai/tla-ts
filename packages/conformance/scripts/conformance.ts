@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
+  CRASH_EXIT,
+  createProgress,
   getHost,
   getSuiteCommand,
   HOSTS,
@@ -35,8 +37,6 @@ interface ResultEntry {
   expected: Recording | undefined;
   actual: HostResult;
 }
-
-const CRASH_EXIT = -1;
 
 const args = process.argv.slice(2);
 const getOption = (name: string) => {
@@ -82,6 +82,7 @@ const tests = getShard(
   shard,
 );
 const results: ResultEntry[] = [];
+const isProgressDue = createProgress(500);
 
 await runPool(tests, WORKERS, async (test) => {
   for (const context of getContexts(test)) {
@@ -96,7 +97,7 @@ await runPool(tests, WORKERS, async (test) => {
       actual,
     });
   }
-  if (results.length % 500 < 5) console.log(`${results.length} runs`);
+  if (isProgressDue(results.length)) console.log(`${results.length} runs`);
 });
 results.sort((left, right) => (left.id < right.id ? -1 : 1));
 

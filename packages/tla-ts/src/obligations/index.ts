@@ -21,7 +21,7 @@ import { formatObligation } from "./printer";
 import type { Counter, ObligationKind } from "./proof";
 import type { OldMethod } from "./pragma";
 import { createSimplifier } from "./simplify";
-import { createSource } from "./source";
+import { createModuleConverter } from "./source";
 import { tokenize } from "../lexer";
 import { parseTlapmModule } from "../parser";
 import type { Module } from "../ast";
@@ -137,7 +137,7 @@ const loadMule = (
     onWarning({ text: `${errorPrefix}Error: ${message}`, channel: "stderr" });
     throw new TlaProofError(message, { failure: "Module.Parser.parse_file" });
   }
-  const mule = createSource(input.file, input.source, counter, isMain).convertModule(parsed);
+  const mule = createModuleConverter(input.file, input.source, counter, isMain)(parsed);
   const fileName = input.file.slice(input.file.lastIndexOf("/") + 1);
   const name = fileName.replace(/\.tla$/, "");
   if (mule.name === name) return mule;

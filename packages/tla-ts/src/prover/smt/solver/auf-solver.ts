@@ -35,11 +35,8 @@ export class InstantiationSet {
     for (const entry of this.elems) this.manager.decRef(entry[0]);
   }
 
-  getInv(value: number, model: ProtoModel) {
-    const term = this.inv.get(value);
-    if (term !== undefined) return term;
-    for (const entry of this.inv) if (model.areEqual(entry[0], value)) return entry[1];
-    return undefined;
+  getInv(value: number) {
+    return this.inv.get(value);
   }
 
   getGeneration(term: number) {

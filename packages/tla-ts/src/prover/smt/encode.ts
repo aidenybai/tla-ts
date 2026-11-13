@@ -11,7 +11,19 @@ import { createPrinter } from "./context";
 import { getSymbolSpec, type CollectState, type SymbolSpec } from "./data";
 import type { Entry } from "./flatten";
 import { declare, getTlaName, MEM } from "./format";
-import { createEncoder, type Binding, type EncodingSession, type Env, type Mode } from "./rewrite";
+import {
+  createEncoder,
+  encodeBool,
+  encodeIdv,
+  getEntries,
+  getUniqueName,
+  push,
+  type Binding,
+  type Encoder,
+  type EncodingSession,
+  type Env,
+  type Mode,
+} from "./rewrite";
 import { compareAxioms, getAxiomKey, type Axiom } from "./table";
 
 type RecordExpr = Extract<Expr, { kind: "Record" }>;
@@ -97,7 +109,7 @@ const collectSymbols = (entries: Entry[], encoder: Encoder) => {
         if (pending.at(-1)?.depth === depth) visit(pending.pop()?.text ?? "");
         return depth - 1;
       }
-      const flat = encoder.flattened.get(token);
+      const flat = encoder.flattener.flattened.get(token);
       if (!flat) {
         const builtin = getTlaName(token);
         if (builtin !== undefined) add(builtin);
@@ -115,8 +127,6 @@ const collectSymbols = (entries: Entry[], encoder: Encoder) => {
   });
   return { symbols, axioms };
 };
-
-type Encoder = ReturnType<typeof createEncoder>;
 
 const HYPOTHESIS: Mode = { isOmitted: false, polarity: "Negative", at: undefined, depth: 0 };
 
@@ -137,12 +147,12 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
   context.reduce<EncodedContext>(
     (state, hyp) => {
       const extend = (binding: Binding, entries: Entry[] = []) => ({
-        env: encoder.push(state.env, binding),
+        env: push(state.env, binding),
         entries: [...state.entries, ...entries],
       });
       switch (hyp.kind) {
         case "Fresh": {
-          const symbol = encoder.getUniqueName(hyp.name);
+          const symbol = getUniqueName(encoder, hyp.name);
           const binding: Binding =
             hyp.shape === 0
               ? { kind: "constant", symbol }
@@ -150,12 +160,12 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
           const declaration = declare(symbol, hyp.shape);
           if (!hyp.domain || hyp.domainVisibility === "Hidden")
             return extend(binding, [declaration]);
-          const fact = `(assert (${MEM} ${symbol} ${encoder.encodeIdv(hyp.domain, state.env, HYPOTHESIS)}))`;
-          return extend(binding, [declaration, ...encoder.getEntries(fact)]);
+          const fact = `(assert (${MEM} ${symbol} ${encodeIdv(encoder, hyp.domain, state.env, HYPOTHESIS)}))`;
+          return extend(binding, [declaration, ...getEntries(encoder, fact)]);
         }
         case "Flex": {
-          const symbol = encoder.getUniqueName(hyp.name);
-          const primed = encoder.getUniqueName(`${hyp.name}_prime`);
+          const symbol = getUniqueName(encoder, hyp.name);
+          const primed = getUniqueName(encoder, `${hyp.name}_prime`);
           return extend({ kind: "variable", name: hyp.name, symbol, primed }, [
             declare(symbol, 0),
             declare(primed, 0),
@@ -168,7 +178,7 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
           if (definition.kind === "Instance")
             return extend({ kind: "unsupported", reason: "an instance" });
           if (definition.kind === "Recursive") {
-            const symbol = encoder.getUniqueName(`CONSTANT_${definition.name}_`);
+            const symbol = getUniqueName(encoder, `CONSTANT_${definition.name}_`);
             return extend({ kind: "operator", symbol, arity: definition.shape }, [
               declare(symbol, definition.shape),
             ]);
@@ -183,7 +193,7 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
               name: definition.name,
               shapes: params.map((param) => param.shape),
             });
-          const symbol = encoder.getUniqueName(definition.name);
+          const symbol = getUniqueName(encoder, definition.name);
           return extend({ kind: "operator", symbol, arity: params.length }, [
             declare(symbol, params.length),
           ]);
@@ -192,8 +202,9 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
           const binding: Binding = { kind: "unsupported", reason: "a reference to a fact" };
           if (hyp.visibility === "Hidden") return extend(binding);
           const isOmitted = isSecondOrder(hyp.expression);
-          const entries = encoder.getEntries(
-            `(assert ${encoder.encodeBool(hyp.expression, state.env, { ...HYPOTHESIS, isOmitted })})`,
+          const entries = getEntries(
+            encoder,
+            `(assert ${encodeBool(encoder, hyp.expression, state.env, { ...HYPOTHESIS, isOmitted })})`,
           );
           return extend(
             binding,
@@ -216,11 +227,12 @@ export const encodeSmt = (prepared: Sequent, session: EncodingSession) => {
   const context = encodeContext(sequent.context, encoder);
   const goal = isSecondOrder(sequent.active)
     ? []
-    : encoder.getEntries(
-        `(assert (! (not ${encoder.encodeBool(sequent.active, context.env, { ...HYPOTHESIS, polarity: "Positive" })}) :named |Goal|))`,
+    : getEntries(
+        encoder,
+        `(assert (! (not ${encodeBool(encoder, sequent.active, context.env, { ...HYPOTHESIS, polarity: "Positive" })}) :named |Goal|))`,
       );
   const entries = [...context.entries, ...goal];
-  const printer = createPrinter(encoder.declared);
+  const resolve = createPrinter(encoder.declared);
   const collected = collectSymbols(entries, encoder);
   const declarations = [...collected.symbols]
     .toSorted((left, right) => compareStrings(left[0], right[0]))
@@ -248,7 +260,7 @@ export const encodeSmt = (prepared: Sequent, session: EncodingSession) => {
         !isExpanded(hyp),
     );
   return ["(set-logic UFNIA)", ...(isIdvUsed ? ["(declare-sort Idv 0)"] : []), ...lines]
-    .map(printer.resolve)
+    .map(resolve)
     .concat("(check-sat)", "(exit)")
     .join("\n");
 };

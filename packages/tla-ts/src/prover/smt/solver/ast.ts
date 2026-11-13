@@ -1148,26 +1148,4 @@ export class AstManager {
     if (args.length === 1) return args[0];
     return this.mkApp(OP_AND, args, SORT_BOOL);
   }
-
-  getDeclName(expr: number) {
-    return getSymbolName(this.funcDecls[this.decls[expr]].name);
-  }
-
-  toString(expr: number): string {
-    const kind = this.kinds[expr];
-    if (kind === KIND_VAR) return `(:var ${this.values[expr]})`;
-    if (kind === KIND_QUANTIFIER) {
-      const data = this.getQuantifier(expr);
-      return `(${data.isForall ? "forall" : "exists"} (${data.sorts.length}) ${this.toString(data.body)})`;
-    }
-    if (this.getOp(expr) === OP_NUM) {
-      const value = this.getRationalValue(expr);
-      if (this.sorts[expr] === SORT_INT) return String(value.num);
-      return value.isInt() ? `${value.num}.0` : `(/ ${value.num}.0 ${value.den}.0)`;
-    }
-    const name = this.getDeclName(expr);
-    return this.getNumArgs(expr) === 0
-      ? name
-      : `(${name} ${this.mapArgs(expr, (innerArg) => this.toString(innerArg)).join(" ")})`;
-  }
 }

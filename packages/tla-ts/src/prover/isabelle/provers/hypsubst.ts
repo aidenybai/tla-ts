@@ -1,12 +1,19 @@
 // Ported from Isabelle2025's Provers/hypsubst.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
-import { TlaIsabelleError } from "../../../errors";
+import { isIsabelleError, TlaIsabelleError } from "../../../errors";
 import { asmRl, compIncr, revcutRl, thinRl, zeroVarIndexes } from "../pure/drule";
 import { aeconv, etaContract } from "../pure/envir";
-import { occs, stripAssumsConcl, stripAssumsHyp, stripParams } from "../pure/logic";
+import {
+  isAllAbs,
+  isImplies,
+  occs,
+  stripAssumsConcl,
+  stripAssumsHyp,
+  stripParams,
+} from "../pure/logic";
 import { isBoundName } from "../pure/name";
 import { emptySimpset, type SimpContext } from "../pure/raw-simplifier";
-import { listOfSeq } from "../pure/seq";
+import { seqHead } from "../pure/seq";
 import { asmLrSimpTac } from "../pure/simplifier";
 import {
   determ,
@@ -77,11 +84,6 @@ interface HypsubstContext {
 class NoMatch {}
 class EqVar {}
 
-const isTermError = (error: unknown) =>
-  error instanceof TlaIsabelleError && error.exception === "TERM";
-const isThmError = (error: unknown) =>
-  error instanceof TlaIsabelleError && error.exception === "THM";
-
 const inspectContract = (term: Term) => {
   const contracted = etaContract(term);
   return contracted.kind === "Free" && isBoundName(contracted.name) ? mkBound(0) : contracted;
@@ -141,19 +143,8 @@ const eqVar = (
     term: Term,
     hyps: readonly Term[],
   ): [number, [boolean, boolean]] => {
-    if (
-      term.kind === "App" &&
-      term.fun.kind === "Const" &&
-      term.fun.name === "Pure.all" &&
-      term.arg.kind === "Abs"
-    )
-      return visit(count, term.arg.body, hyps);
-    if (
-      term.kind === "App" &&
-      term.fun.kind === "App" &&
-      term.fun.fun.kind === "Const" &&
-      term.fun.fun.name === "Pure.imp"
-    ) {
+    if (isAllAbs(term)) return visit(count, term.arg.body, hyps);
+    if (isImplies(term)) {
       const premise = term.fun.arg;
       const conclusion = term.arg;
       try {
@@ -161,7 +152,7 @@ const eqVar = (
         const [orientation, variable] = inspectPair(isBound, isNoVars, left, right);
         return [count, checkFree([conclusion, ...hyps], orientation, variable)];
       } catch (error) {
-        if (!isTermError(error) && !(error instanceof NoMatch)) throw error;
+        if (!isIsabelleError(error, "TERM") && !(error instanceof NoMatch)) throw error;
         return visit(count + 1, conclusion, [premise, ...hyps]);
       }
     }
@@ -175,7 +166,7 @@ const withEqVar = (build: (goal: Term, index: number) => Tactic): GoalTactic =>
     try {
       return build(goal, index);
     } catch (error) {
-      if (error instanceof EqVar || isThmError(error)) return noTac;
+      if (error instanceof EqVar || isIsabelleError(error, "THM")) return noTac;
       throw error;
     }
   });
@@ -187,7 +178,7 @@ const mkEqs = (data: HypsubstData, isBound: boolean, thm: Thm): Thm[] => {
       ? [rs(thm, data.eqReflection)]
       : [symmetric(rs(thm, data.eqReflection))];
   } catch (error) {
-    if (isTermError(error) || error instanceof NoMatch) return [];
+    if (isIsabelleError(error, "TERM") || error instanceof NoMatch) return [];
     throw error;
   }
 };
@@ -228,7 +219,7 @@ const instSubstTac = (context: HypsubstContext, isLeft: boolean, rule: Thm): Goa
         const [left, right] = data.destEq(data.destTrueprop(hyp));
         return [etaContract(left), etaContract(right)] as const;
       } catch (error) {
-        if (isTermError(error)) return undefined;
+        if (isIsabelleError(error, "TERM")) return undefined;
         throw error;
       }
     })();
@@ -340,7 +331,7 @@ const varsGenHypSubstTac = (context: HypsubstContext, isBound: boolean): GoalTac
   });
 
 const revDupElim = (thm: Thm) => {
-  const result = listOfSeq(assumption(undefined, 2, rsn(thm, 2, revcutRl)))[0];
+  const result = seqHead(assumption(undefined, 2, rsn(thm, 2, revcutRl)));
   if (result === undefined) throw new TlaIsabelleError("THM", "rev_dup_elim");
   return result;
 };

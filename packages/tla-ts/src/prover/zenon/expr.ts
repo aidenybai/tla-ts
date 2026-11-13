@@ -217,6 +217,11 @@ export const isApp = <Symbol extends string>(
   expression.symbol === symbol &&
   (arity === undefined || expression.args.length === arity);
 
+export const getStringName = (expression: Expr) =>
+  isApp(expression, "$string", 1) && expression.args[0].kind === "var"
+    ? expression.args[0].symbol
+    : undefined;
+
 export const isMeta = (expression: Expr): expression is MetaExpr => expression.kind === "meta";
 
 export const isRelation = (expression: Expr): expression is RelationExpr =>
@@ -504,6 +509,8 @@ export const createExpressions = () => {
     emeta,
     eapp,
     enot,
+    binary,
+    binder,
     eand: (left: Expr, right: Expr) => binary("and", left, right),
     eor: (left: Expr, right: Expr) => binary("or", left, right),
     eimply: (left: Expr, right: Expr) => binary("imply", left, right),

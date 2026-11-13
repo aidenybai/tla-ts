@@ -1,6 +1,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getOption, writeResults } from "./corpora";
+import {
+  CONFORMANCE_DIRECTORY,
+  CORPORA_DIRECTORY,
+  formatSeconds,
+  getMedian,
+  getOption,
+  writeResults,
+} from "./corpora";
 import { tlaTs } from "./dist";
 import { runModuleWorkers } from "./module-workers";
 import { getModuleLoader, readProofRecords, type ModuleProofRecord } from "./proof-records";
@@ -19,13 +26,6 @@ interface Timing extends ModuleTime {
 const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".prove-benchmark.json");
 
 const workers = Number(getOption("--workers") ?? 1);
-
-const formatSeconds = (milliseconds: number) => `${(milliseconds / 1000).toFixed(2)} s`;
-
-const getMedian = (values: number[]) => {
-  const sorted = values.toSorted((left, right) => left - right);
-  return sorted[Math.floor(sorted.length / 2)] ?? 0;
-};
 
 const timeModule = async (record: ModuleProofRecord): Promise<ModuleTime | undefined> => {
   const path = join(CORPORA_DIRECTORY, record.id);

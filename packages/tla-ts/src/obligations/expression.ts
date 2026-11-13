@@ -259,6 +259,10 @@ export const at = (core: ExprCore, from: ExprProps): Expr => {
   return from.isAtomic ? { ...located, isAtomic: true } : located;
 };
 
+export const AT_NOWHERE: Expr = { kind: "At", isExcept: false };
+
+export const getTrue = (from: ExprProps) => at({ kind: "Internal", builtin: "TRUE" }, from);
+
 export const getHypName = (hyp: Hyp) => {
   switch (hyp.kind) {
     case "Fresh":
@@ -393,6 +397,14 @@ export const getFact = (
   time: Time,
   location: Locus | undefined,
 ) => ({ kind: "Fact", expression, visibility, time, location }) satisfies Hyp;
+
+export const getDefinitionHyp = (
+  definition: Defn,
+  whereDefined: WhereDefined,
+  visibility: Visibility,
+  isLocal: boolean,
+  location: Locus | undefined,
+) => ({ kind: "Defn", definition, whereDefined, visibility, isLocal, location }) satisfies Hyp;
 
 export const getBoundFresh = (bound: Bound) => getFresh(bound.name, bound.level);
 
@@ -582,13 +594,17 @@ export const mapScoped = <State>(
   }
 };
 
-export const mapChildren = (expression: Expr, map: (inner: Expr) => Expr): Expr =>
+export const mapChildren = (
+  expression: Expr,
+  map: (inner: Expr) => Expr,
+  hyps: "visible" | "all" = "all",
+): Expr =>
   mapScoped(
     undefined,
     expression,
     (_state, inner) => map(inner),
     () => undefined,
-    "all",
+    hyps,
   );
 
 export const getChildren = (expression: Expr) => {

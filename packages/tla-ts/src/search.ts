@@ -57,7 +57,12 @@ import {
 import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty } from "./liveness";
 import { prettyPrint } from "./pretty-print";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
-import { getSpecificationValue, getSubscriptVariables } from "./spec-description";
+import {
+  getSpecDescription,
+  getSpecificationValue,
+  getSubscriptVariables,
+  type SpecDescription,
+} from "./spec-description";
 import { getRepresentative, getSymmetryGroup } from "./symmetry";
 import {
   formatInnerMessage,
@@ -71,6 +76,7 @@ import { getTlcFingerprint, getTlcFingerprints, setFingerprintPolynomial } from 
 import type { TlcVersion } from "./tlc/version";
 import {
   formatValue,
+  freezeStringOrder,
   getWrittenPairs,
   isFunctionValue,
   isUpdatedElementOf,
@@ -81,6 +87,27 @@ import {
   toFiniteFunction,
   type Value,
 } from "./values";
+
+interface EnvironmentSettings extends Pick<
+  CheckOptions,
+  | "source"
+  | "loadModule"
+  | "loadClass"
+  | "readFile"
+  | "writeFile"
+  | "makeDirectory"
+  | "seed"
+  | "isTool"
+  | "traceSpec"
+  | "isSanyReported"
+  | "isWarningEnabled"
+  | "version"
+  | "moduleOperators"
+  | "fingerprintPolynomial"
+  | "maxSetSize"
+  | "isLazyValueExpanded"
+  | "isViewPrinted"
+> {}
 
 interface NamedExpression {
   name: string;
@@ -134,6 +161,12 @@ const createIdentifier = (name: string): Expression => ({
   kind: "Identifier",
   name,
   location: START,
+});
+
+const createNamedIdentifier = (name: string): NamedExpression => ({
+  name,
+  expression: createIdentifier(name),
+  scope: undefined,
 });
 
 const UNNAMED_ARGUMENT_KINDS = new Set(["name", "property"]);
@@ -250,7 +283,7 @@ const getInvariants = (names: string[], environment: Environment) => {
         EXIT_STATUS.safetyEvaluationFailure,
       );
     }
-    return [{ name, expression: createIdentifier(name), scope: undefined }];
+    return [createNamedIdentifier(name)];
   });
 };
 
@@ -533,9 +566,7 @@ const getNamedExpressions = (
   environment: Environment,
 ): NamedExpression[] =>
   names.flatMap((name) =>
-    getConfigPredicate(kind, name, environment)
-      ? [{ name, expression: createIdentifier(name), scope: undefined }]
-      : [],
+    getConfigPredicate(kind, name, environment) ? [createNamedIdentifier(name)] : [],
   );
 
 const getBodyRange = (name: string, environment: Environment) => {
@@ -549,13 +580,13 @@ const getPossiblePredicates = (names: string[], environment: Environment) =>
       throw new TlaConfigError(`_POSSIBLE lists ${name} more than once`);
     }
     getConfigDefinition("possible", name, environment);
-    const expression = createIdentifier(name);
-    if (getLevel(expression, undefined, environment) === TEMPORAL_LEVEL) {
+    const possible = createNamedIdentifier(name);
+    if (getLevel(possible.expression, undefined, environment) === TEMPORAL_LEVEL) {
       throw new TlaConfigError(
         `The possible of ${name} is equal to a temporal formula; only state- and action-level predicates are supported`,
       );
     }
-    return { name, expression, scope: undefined };
+    return possible;
   });
 
 const getMembership = (
@@ -634,7 +665,7 @@ const hasWideString = (config: ModelConfig, environment: Environment) =>
         definition.bounds.some((bound) => isWideExpression(bound.set))),
   );
 
-interface Search {
+export interface Search {
   properties: Properties;
   toRecord: (state: Value[]) => Record<string, Value>;
   evaluateAlias: (
@@ -770,21 +801,23 @@ export const findAssumptionViolation = (
   return undefined;
 };
 
-export const prepareSearch = (options: CheckOptions) => {
-  const config =
-    typeof options.config === "string"
-      ? parseConfig(options.config, options.version)
-      : options.config;
+export const createCheckEnvironment = (
+  config: ModelConfig,
+  options: EnvironmentSettings,
+  print: (text: string) => void,
+  isStringOrderFrozen = false,
+) => {
   const order = createTlcOrder(options.source, options.loadModule);
   setStringOrder(order.getStringOrder(config));
   setValueOptions(options);
   setFingerprintPolynomial(options.fingerprintPolynomial ?? 0);
+  if (isStringOrderFrozen) freezeStringOrder();
   const specification = createEnvironment(config, {
     source: options.source,
     loadModule: options.loadModule,
     order,
     loadClass: options.loadClass,
-    print: options.onPrint ?? console.log,
+    print,
     files: {
       readFile: options.readFile,
       writeFile: options.writeFile,
@@ -798,24 +831,32 @@ export const prepareSearch = (options: CheckOptions) => {
     version: options.version,
     moduleOperators: options.moduleOperators,
   });
+  return { order, specification };
+};
+
+export const prepareSearch = (options: CheckOptions) => {
+  const config =
+    typeof options.config === "string"
+      ? parseConfig(options.config, options.version)
+      : options.config;
+  const created = createCheckEnvironment(config, options, options.onPrint ?? console.log);
+  const specification = created.specification;
   reportStartup(specification, config, options.onProgress);
   const environment = specification.environment;
+  let description: SpecDescription | undefined;
+  const getDescription = () =>
+    (description ??= getSpecDescription(config, environment, specification.instanceActions));
   environment.runtime.getSpecification = () =>
-    getSpecificationValue(
-      config,
-      environment,
-      specification.variableLocations,
-      specification.instanceActions,
-    );
+    getSpecificationValue(getDescription(), config, environment, specification.variableLocations);
   const search = createSearch(
     config,
     environment,
     specification.variableLocations,
-    () => order.getDeclarationOrder("variable"),
+    () => created.order.getDeclarationOrder("variable"),
     options.onProgress,
     specification.moduleOperators,
   );
-  return { config, specification, environment, search };
+  return { config, specification, environment, search, getDescription };
 };
 
 export const reportAssumptionViolation = (
@@ -980,10 +1021,7 @@ export const createSearch = (
       ? undefined
       : getConfigDefinition("view function", config.view, environment);
   const viewName = config.view ?? getModuleOperators("view")[0]?.name;
-  const view =
-    viewName === undefined
-      ? undefined
-      : { name: viewName, expression: createIdentifier(viewName), scope: undefined };
+  const view = viewName === undefined ? undefined : createNamedIdentifier(viewName);
   const actionProperties = properties.actionProperties.map((property) => {
     const unchanged: Expression = {
       kind: "Unchanged",

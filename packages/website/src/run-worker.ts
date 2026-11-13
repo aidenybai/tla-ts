@@ -10,15 +10,23 @@ export interface TraceStepSummary {
   variables: [string, string][];
 }
 
-export interface RunResult {
+interface RunOutcome {
   isPassed: boolean;
   title: string;
   name: string | undefined;
   summary: string;
+}
+
+interface TraceResult extends RunOutcome {
   trace: TraceStepSummary[];
   loopStart: number | undefined;
+}
+
+interface RowsResult extends RunOutcome {
   rows: RunRow[];
 }
+
+export type RunResult = TraceResult | RowsResult;
 
 export interface RunRow {
   title: string;
@@ -45,8 +53,6 @@ const getErrorResult = (title: string, message: string, summary = ""): RunResult
   title,
   name: undefined,
   summary,
-  trace: [],
-  loopStart: undefined,
   rows: [{ title: message, detail: "", isFailed: true }],
 });
 
@@ -56,12 +62,17 @@ const getCheckResult = async (source: string, config: string): Promise<RunResult
   if (result.failure) {
     return getErrorResult("Error", result.failure.message, getElapsed(startedAt));
   }
-  return {
+  const outcome = {
     isPassed: result.status === "success",
     title: STATUS_TITLES[result.status],
     name: result.status === "deadlock" ? undefined : result.violation?.name,
     summary: `${result.distinctStates.toLocaleString()} states, depth ${result.depth}, ${getElapsed(startedAt)}`,
-    trace: (result.violation?.trace ?? []).map((step, index) => ({
+  };
+  const violation = result.violation;
+  if (violation === undefined || violation.trace.length === 0) return { ...outcome, rows: [] };
+  return {
+    ...outcome,
+    trace: violation.trace.map((step, index) => ({
       number: index + 1,
       action:
         step.action === undefined ? undefined : (step.label ?? step.action).split(" line ")[0],
@@ -70,8 +81,7 @@ const getCheckResult = async (source: string, config: string): Promise<RunResult
         formatValue(value),
       ]),
     })),
-    loopStart: result.violation?.loopStart,
-    rows: [],
+    loopStart: violation.loopStart,
   };
 };
 
@@ -90,8 +100,6 @@ const getProveResult = async (source: string): Promise<RunResult> => {
         : `${provedCount} of ${count} obligations proved`,
     name: undefined,
     summary: getElapsed(startedAt),
-    trace: [],
-    loopStart: undefined,
     rows: result.obligations.map((obligation) => ({
       title: `Line ${obligation.location.split(":")[0]}, ${
         obligation.status === "proved"

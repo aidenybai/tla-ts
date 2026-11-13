@@ -22,11 +22,17 @@ import type { SanyResult } from "./record-sany";
 
 type Verdict = "match" | "accepted" | "rejected" | "unsupported" | "digest";
 
-interface ParseOutcome {
-  status: "ok" | "error" | "unsupported";
-  error: string | undefined;
-  module?: ModuleDigest;
+interface ParsedModule {
+  status: "ok";
+  module: ModuleDigest | undefined;
 }
+
+interface ParseFailure {
+  status: "error" | "unsupported";
+  error: string;
+}
+
+type ParseOutcome = ParsedModule | ParseFailure;
 
 const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".sany-results.json");
 
@@ -67,7 +73,7 @@ const findDifference = (expected: unknown, actual: unknown, path: string): strin
     .find((difference) => difference !== undefined);
 };
 
-const getDigestDifference = (expected: SanyResult, actual: ParseOutcome) =>
+const getDigestDifference = (expected: SanyResult, actual: ParsedModule) =>
   findDifference(
     expected.module && JSON.parse(JSON.stringify(sortUnits(expected.module))),
     actual.module && JSON.parse(JSON.stringify(sortUnits(actual.module))),
@@ -101,7 +107,7 @@ const analyze = (path: string): ParseOutcome => {
         error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
       };
   }
-  return { status: "ok", error: undefined, module: getDigest(parseModule(source)) };
+  return { status: "ok", module: getDigest(parseModule(source)) };
 };
 
 const getVerdict = (expected: SanyResult, actual: ParseOutcome): Verdict => {
@@ -122,15 +128,19 @@ const results = expected
   .map((result) => {
     const actual = analyze(join(CORPORA_DIRECTORY, result.id));
     const verdict = getVerdict(result, actual);
-    const difference = verdict === "digest" ? getDigestDifference(result, actual) : undefined;
+    const difference =
+      verdict === "digest" && actual.status === "ok"
+        ? getDigestDifference(result, actual)
+        : undefined;
+    const error = actual.status === "ok" ? undefined : actual.error;
     if (verdict !== "match") console.log(`${verdict.padEnd(11)} ${result.id}`);
     if (difference) console.log(`  ${difference}`);
     if (verdict !== "match" && !difference) {
       console.log(
         `  SANY:   ${(result.error ?? "ok").split("\n").find((line) => line.trim()) ?? ""}`,
       );
-      console.log(`  tla-ts: ${actual.error ?? "ok"}`);
+      console.log(`  tla-ts: ${error ?? "ok"}`);
     }
-    return { id: result.id, verdict, expected: result.error, actual: actual.error, difference };
+    return { id: result.id, verdict, expected: result.error, actual: error, difference };
   });
 reportModuleResults(RESULTS_PATH, results);

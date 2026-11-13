@@ -48,36 +48,38 @@ import {
   type Usable,
 } from "./proof";
 
-const BUILTINS: Record<string, Builtin> = {
-  "=>": "Implies",
-  "<=>": "Equiv",
-  "/\\": "Conj",
-  "\\/": "Disj",
-  "~": "Neg",
-  "=": "Eq",
-  "#": "Neq",
-  SUBSET: "SUBSET",
-  UNION: "UNION",
-  DOMAIN: "DOMAIN",
-  "\\subseteq": "Subseteq",
-  "\\in": "Mem",
-  "\\notin": "Notmem",
-  "\\": "Setminus",
-  "\\cap": "Cap",
-  "\\cup": "Cup",
-  "'": "Prime",
-  "~>": "Leadsto",
-  ENABLED: "ENABLED",
-  UNCHANGED: "UNCHANGED",
-  "\\cdot": "Cdot",
-  "-+->": "Actplus",
-  "[]": "BoxTrue",
-  "<>": "Diamond",
-  TRUE: "TRUE",
-  FALSE: "FALSE",
-  BOOLEAN: "BOOLEAN",
-  STRING: "STRING",
-};
+const BUILTINS = new Map<string, Builtin>(
+  Object.entries({
+    "=>": "Implies",
+    "<=>": "Equiv",
+    "/\\": "Conj",
+    "\\/": "Disj",
+    "~": "Neg",
+    "=": "Eq",
+    "#": "Neq",
+    SUBSET: "SUBSET",
+    UNION: "UNION",
+    DOMAIN: "DOMAIN",
+    "\\subseteq": "Subseteq",
+    "\\in": "Mem",
+    "\\notin": "Notmem",
+    "\\": "Setminus",
+    "\\cap": "Cap",
+    "\\cup": "Cup",
+    "'": "Prime",
+    "~>": "Leadsto",
+    ENABLED: "ENABLED",
+    UNCHANGED: "UNCHANGED",
+    "\\cdot": "Cdot",
+    "-+->": "Actplus",
+    "[]": "BoxTrue",
+    "<>": "Diamond",
+    TRUE: "TRUE",
+    FALSE: "FALSE",
+    BOOLEAN: "BOOLEAN",
+    STRING: "STRING",
+  }),
+);
 
 const getCanonicalName = (name: string) => lookupOperator(name).name;
 
@@ -105,7 +107,7 @@ const TUPLY_FAILURE = "use instead the class`E_visit.iter_concrete`";
 const isDitto = (bounds: QuantifierExpression["bounds"], index: number) =>
   index > 0 && bounds[index - 1].set === bounds[index].set;
 
-export const createSource = (
+export const createModuleConverter = (
   file: string,
   text: string,
   counter: Counter,
@@ -158,7 +160,7 @@ export const createSource = (
 
   const convertOperator = (name: string, location: Locus | undefined): Expr => {
     const canonical = getCanonicalName(name);
-    const builtin = BUILTINS[canonical];
+    const builtin = BUILTINS.get(canonical);
     return at(builtin ? { kind: "Internal", builtin } : { kind: "Opaque", name: canonical }, {
       location,
     });
@@ -174,7 +176,7 @@ export const createSource = (
       const operator = at({ kind: "Opaque", name }, { location });
       return at({ kind: "Bang", expression: operator, selectors: [] }, { location });
     }
-    const builtin = BUILTINS[name];
+    const builtin = BUILTINS.get(name);
     if (builtin && args.length === 0) return at({ kind: "Internal", builtin }, { location });
     const names = name.split("!");
     if (names.length === 1) {
@@ -552,22 +554,14 @@ export const createSource = (
       case "Always":
       case "Eventually": {
         const inner = expression.expression;
-        if (expression.kind === "Always" && inner.kind === "BoxAction") {
+        if (
+          (expression.kind === "Always" && inner.kind === "BoxAction") ||
+          (expression.kind === "Eventually" && inner.kind === "AngleAction")
+        ) {
           return at(
             {
               kind: "Tsub",
-              modal: "Box",
-              action: recurse(inner.action),
-              subscript: recurse(inner.subscript),
-            },
-            { location },
-          );
-        }
-        if (expression.kind === "Eventually" && inner.kind === "AngleAction") {
-          return at(
-            {
-              kind: "Tsub",
-              modal: "Dia",
+              modal: expression.kind === "Always" ? "Box" : "Dia",
               action: recurse(inner.action),
               subscript: recurse(inner.subscript),
             },
@@ -672,20 +666,16 @@ export const createSource = (
         ? "-."
         : getCanonicalName(definition.name);
     const body = convertExpression(definition.body, isExcept);
-    if (definition.kind === "Function" && hasTuple(definition.bounds)) {
-      return {
-        kind: "Operator",
-        name,
-        body: expandTuples(expandFcn(getTuplyBounds(definition.bounds, isExcept), body), location),
-        location,
-      };
-    }
     if (definition.kind === "Function") {
-      const bounds = convertBounds(definition.bounds, isExcept);
       return {
         kind: "Operator",
         name,
-        body: at({ kind: "Fcn", bounds, body }, { location }),
+        body: hasTuple(definition.bounds)
+          ? expandTuples(expandFcn(getTuplyBounds(definition.bounds, isExcept), body), location)
+          : at(
+              { kind: "Fcn", bounds: convertBounds(definition.bounds, isExcept), body },
+              { location },
+            ),
         location,
       };
     }
@@ -1018,5 +1008,5 @@ export const createSource = (
     }),
   });
 
-  return { convertModule };
+  return convertModule;
 };

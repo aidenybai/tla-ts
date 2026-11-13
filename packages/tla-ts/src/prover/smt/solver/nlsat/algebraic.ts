@@ -81,6 +81,14 @@ interface SignedRoots {
 const getMinBq = (first: Mpbq, second: Mpbq) => (second.compare(first) < 0 ? second : first);
 const getMaxBq = (first: Mpbq, second: Mpbq) => (second.compare(first) > 0 ? second : first);
 
+const getIntervalPower = (base: BqInterval, exponent: number): BqInterval => {
+  const lower = base.lower.power(exponent);
+  const upper = base.upper.power(exponent);
+  if (exponent % 2 === 1 || !base.lower.isNeg) return { lower, upper };
+  if (base.upper.isNeg) return { lower: upper, upper: lower };
+  return { lower: Mpbq.zero, upper: getMaxBq(lower, upper) };
+};
+
 const INTERVAL_OPS: ValueOps<BqInterval> = {
   fromInteger: (value) => ({ lower: Mpbq.of(value), upper: Mpbq.of(value) }),
   add: (first, second) => ({
@@ -96,15 +104,7 @@ const INTERVAL_OPS: ValueOps<BqInterval> = {
     ];
     return { lower: products.reduce(getMinBq), upper: products.reduce(getMaxBq) };
   },
-  power: (base, exponent) => getIntervalPower(base, exponent),
-};
-
-const getIntervalPower = (base: BqInterval, exponent: number): BqInterval => {
-  const lower = base.lower.power(exponent);
-  const upper = base.upper.power(exponent);
-  if (exponent % 2 === 1 || !base.lower.isNeg) return { lower, upper };
-  if (base.upper.isNeg) return { lower: upper, upper: lower };
-  return { lower: Mpbq.zero, upper: getMaxBq(lower, upper) };
+  power: getIntervalPower,
 };
 
 const containsZero = (interval: BqInterval) => interval.lower.isNeg && interval.upper.isPos;

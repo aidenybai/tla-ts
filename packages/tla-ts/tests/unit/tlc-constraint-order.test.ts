@@ -1,15 +1,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vite-plus/test";
-import { check } from "../../src";
+import { checkFixture } from "./check-harness";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-constraint-order");
 
 it("evaluates constraints before the duplicate check and invariants, as TLC does", async () => {
   const printed: string[] = [];
-  const result = await check({
-    source: readFileSync(join(DIRECTORY, "Order.tla"), "utf8"),
-    config: readFileSync(join(DIRECTORY, "Order.cfg"), "utf8"),
+  const result = await checkFixture("tlc-constraint-order", "Order", "Order", {
     onPrint: (text) => printed.push(text),
   });
   expect(result.status).toBe("success");

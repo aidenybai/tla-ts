@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ModelOutcome } from "./check-model";
@@ -8,6 +7,7 @@ import {
   findModels,
   getOption,
   runConcurrently,
+  runProcess,
   sortById,
   writeResults,
   type CorpusModel,
@@ -56,26 +56,19 @@ const compareOutcome = (expected: ExpectedResult, actual: ModelOutcome) => {
   return differences.length > 0 ? differences.join("; ") : undefined;
 };
 
-const runModel = (specPath: string, configPath: string) =>
-  new Promise<ModelOutcome | undefined>((resolve) => {
-    const child = spawn(
-      process.execPath,
-      [
-        "--stack-size=8000",
-        "--max-old-space-size=6144",
-        join(import.meta.dirname, "check-model.js"),
-        specPath,
-        configPath,
-      ],
-      { stdio: ["ignore", "pipe", "pipe"] },
-    );
-    const chunks: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
-    child.on("close", () => {
-      const output = Buffer.concat(chunks).toString("utf8");
-      resolve(output.startsWith("{") ? JSON.parse(output) : undefined);
-    });
-  });
+const runModel = async (
+  specPath: string,
+  configPath: string,
+): Promise<ModelOutcome | undefined> => {
+  const run = await runProcess(process.execPath, [
+    "--stack-size=8000",
+    "--max-old-space-size=6144",
+    join(import.meta.dirname, "check-model.js"),
+    specPath,
+    configPath,
+  ]);
+  return run.stdout.startsWith("{") ? JSON.parse(run.stdout) : undefined;
+};
 
 const expectedResults: ExpectedResult[] = JSON.parse(readFileSync(EXPECTED_PATH, "utf8"));
 const expectedById = new Map(expectedResults.map((result) => [result.id, result]));

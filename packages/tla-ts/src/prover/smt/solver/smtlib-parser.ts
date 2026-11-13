@@ -30,7 +30,6 @@ import {
   OP_TRUE,
   OP_FALSE,
   OP_UMINUS,
-  OP_UNINTERPRETED,
   OP_XOR,
   SORT_BOOL,
   SORT_INT,
@@ -58,36 +57,56 @@ interface ApplicationFrame {
   next: number;
 }
 
-const BUILTIN_OPS = new Map<string, number>([
-  ["and", OP_AND],
-  ["or", OP_OR],
-  ["not", OP_NOT],
-  ["=>", OP_IMPLIES],
-  ["xor", OP_XOR],
-  ["ite", OP_ITE],
-  ["distinct", OP_DISTINCT],
-  ["+", OP_ADD],
-  ["*", OP_MUL],
-  ["/", OP_DIV],
-  ["div", OP_IDIV],
-  ["mod", OP_MOD],
-  ["abs", OP_ABS],
-  ["to_real", OP_TO_REAL],
-  ["to_int", OP_TO_INT],
-  ["is_int", OP_IS_INT],
-]);
+interface Operator {
+  op: number;
+  symbol?: string;
+  isChainable?: boolean;
+  arity: [min: number, max: number];
+  domain: "join" | "branches" | "arith" | "first" | number;
+  range: "domain" | number;
+}
 
-const COERCING_OPS = new Set([OP_ADD, OP_SUB, OP_UMINUS, OP_MUL, OP_LE, OP_GE, OP_LT, OP_GT]);
+const OPERATORS: Operator[] = [
+  { op: OP_AND, symbol: "and", arity: [0, Infinity], domain: SORT_BOOL, range: SORT_BOOL },
+  { op: OP_OR, symbol: "or", arity: [0, Infinity], domain: SORT_BOOL, range: SORT_BOOL },
+  { op: OP_NOT, symbol: "not", arity: [1, 1], domain: SORT_BOOL, range: SORT_BOOL },
+  { op: OP_IMPLIES, symbol: "=>", arity: [2, 2], domain: SORT_BOOL, range: SORT_BOOL },
+  { op: OP_XOR, symbol: "xor", arity: [2, 2], domain: SORT_BOOL, range: SORT_BOOL },
+  { op: OP_ITE, symbol: "ite", arity: [3, 3], domain: "branches", range: "domain" },
+  { op: OP_DISTINCT, symbol: "distinct", arity: [2, Infinity], domain: "join", range: SORT_BOOL },
+  { op: OP_ADD, symbol: "+", arity: [1, Infinity], domain: "arith", range: "domain" },
+  { op: OP_MUL, symbol: "*", arity: [1, Infinity], domain: "arith", range: "domain" },
+  { op: OP_DIV, symbol: "/", arity: [2, 2], domain: SORT_REAL, range: SORT_REAL },
+  { op: OP_IDIV, symbol: "div", arity: [2, 2], domain: SORT_INT, range: SORT_INT },
+  { op: OP_MOD, symbol: "mod", arity: [2, 2], domain: SORT_INT, range: SORT_INT },
+  { op: OP_ABS, symbol: "abs", arity: [1, 1], domain: "first", range: "domain" },
+  { op: OP_TO_REAL, symbol: "to_real", arity: [1, 1], domain: "first", range: SORT_REAL },
+  { op: OP_TO_INT, symbol: "to_int", arity: [1, 1], domain: "first", range: SORT_INT },
+  { op: OP_IS_INT, symbol: "is_int", arity: [1, 1], domain: SORT_REAL, range: SORT_BOOL },
+  {
+    op: OP_EQ,
+    symbol: "=",
+    isChainable: true,
+    arity: [2, Infinity],
+    domain: "join",
+    range: SORT_BOOL,
+  },
+  { op: OP_LE, symbol: "<=", isChainable: true, arity: [2, 2], domain: "arith", range: SORT_BOOL },
+  { op: OP_GE, symbol: ">=", isChainable: true, arity: [2, 2], domain: "arith", range: SORT_BOOL },
+  { op: OP_LT, symbol: "<", isChainable: true, arity: [2, 2], domain: "arith", range: SORT_BOOL },
+  { op: OP_GT, symbol: ">", isChainable: true, arity: [2, 2], domain: "arith", range: SORT_BOOL },
+  { op: OP_SUB, arity: [1, Infinity], domain: "arith", range: "domain" },
+  { op: OP_UMINUS, arity: [1, 1], domain: "arith", range: "domain" },
+];
+
+const OPERATORS_BY_OP = new Map<number, Operator>();
+const OPERATORS_BY_SYMBOL = new Map<string, Operator>();
+for (const operator of OPERATORS) {
+  OPERATORS_BY_OP.set(operator.op, operator);
+  if (operator.symbol !== undefined) OPERATORS_BY_SYMBOL.set(operator.symbol, operator);
+}
 
 const DECIMAL = /^([0-9]+)\.([0-9]+)$/;
-
-const CHAINABLE_OPS = new Map<string, number>([
-  ["=", OP_EQ],
-  ["<=", OP_LE],
-  [">=", OP_GE],
-  ["<", OP_LT],
-  [">", OP_GT],
-]);
 
 const tokenize = (text: string) => {
   const tokens: string[] = [];
@@ -183,29 +202,12 @@ export const parseSmtlib = (
     return argSorts.includes(SORT_REAL) ? SORT_REAL : SORT_INT;
   };
 
-  const getDomainSort = (op: number, args: number[]) => {
-    if (op === OP_ITE) return getJoin(args.slice(1));
-    if (op === OP_EQ || op === OP_DISTINCT) return getJoin(args);
-    if (COERCING_OPS.has(op)) return getJoin(args) === SORT_REAL ? SORT_REAL : SORT_INT;
-    if (op === OP_ABS || op === OP_TO_REAL || op === OP_TO_INT) return manager.sorts[args[0]];
-    if (op === OP_IDIV || op === OP_MOD) return SORT_INT;
-    if (op === OP_DIV || op === OP_IS_INT) return SORT_REAL;
-    return SORT_BOOL;
+  const getDomainSort = (operator: Operator, args: number[]) => {
+    if (operator.domain === "branches") return getJoin(args.slice(1));
+    if (operator.domain === "join") return getJoin(args);
+    if (operator.domain === "arith") return getJoin(args) === SORT_REAL ? SORT_REAL : SORT_INT;
+    return operator.domain === "first" ? manager.sorts[args[0]] : operator.domain;
   };
-
-  const getRange = (op: number, domainSort: number) =>
-    op === OP_TO_REAL || op === OP_DIV
-      ? SORT_REAL
-      : op === OP_TO_INT || op === OP_IDIV || op === OP_MOD
-        ? SORT_INT
-        : op === OP_ITE ||
-            op === OP_ABS ||
-            op === OP_ADD ||
-            op === OP_SUB ||
-            op === OP_UMINUS ||
-            op === OP_MUL
-          ? domainSort
-          : SORT_BOOL;
 
   const coerce = (arg: number, sort: number) => {
     const argSort = manager.sorts[arg];
@@ -216,61 +218,44 @@ export const parseSmtlib = (
   };
 
   const mkApp = (decl: number, inputArgs: number[], domainSort?: number) => {
-    const op = manager.funcDecls[decl].op;
-    const name = manager.funcDecls[decl].name;
-    const isUninterpreted = op === OP_UNINTERPRETED;
-    const domain = manager.funcDecls[decl].domain;
-    const builtinSort = isUninterpreted ? -1 : (domainSort ?? getDomainSort(op, inputArgs));
+    const funcDecl = manager.funcDecls[decl];
+    const operator = OPERATORS_BY_OP.get(funcDecl.op);
+    const builtinSort =
+      operator === undefined ? -1 : (domainSort ?? getDomainSort(operator, inputArgs));
     const getExpected = (index: number) =>
-      isUninterpreted ? domain[index] : op === OP_ITE && index === 0 ? SORT_BOOL : builtinSort;
+      operator === undefined
+        ? funcDecl.domain[index]
+        : operator.op === OP_ITE && index === 0
+          ? SORT_BOOL
+          : builtinSort;
     const args = inputArgs.map((arg, index) =>
       getExpected(index) === undefined ? arg : coerce(arg, getExpected(index)),
     );
-    const isArity = (min: number, max: number) => args.length >= min && args.length <= max;
-    const isArityOk = isUninterpreted
-      ? args.length === domain.length
-      : op === OP_AND || op === OP_OR
-        ? true
-        : op === OP_ITE
-          ? isArity(3, 3)
-          : op === OP_EQ || op === OP_DISTINCT
-            ? isArity(2, Infinity)
-            : op === OP_NOT ||
-                op === OP_UMINUS ||
-                op === OP_ABS ||
-                op === OP_TO_REAL ||
-                op === OP_TO_INT ||
-                op === OP_IS_INT
-              ? isArity(1, 1)
-              : op === OP_IMPLIES ||
-                  op === OP_XOR ||
-                  op === OP_IDIV ||
-                  op === OP_MOD ||
-                  op === OP_DIV ||
-                  op === OP_LE ||
-                  op === OP_GE ||
-                  op === OP_LT ||
-                  op === OP_GT
-                ? isArity(2, 2)
-                : isArity(1, Infinity);
-    const isBuiltinArith = manager.funcDecls[decl].family === FAMILY_ARITH;
+    const isArityOk =
+      operator === undefined
+        ? args.length === funcDecl.domain.length
+        : args.length >= operator.arity[0] && args.length <= operator.arity[1];
     const isWellSorted =
       isArityOk &&
-      (!isBuiltinArith || isArithSort(builtinSort)) &&
+      (funcDecl.family !== FAMILY_ARITH || isArithSort(builtinSort)) &&
       args.every((arg, index) => manager.sorts[arg] === getExpected(index));
-    if (!isWellSorted) throw new SmtParseError(`ill-sorted application of ${name}`);
+    if (!isWellSorted) throw new SmtParseError(`ill-sorted application of ${funcDecl.name}`);
     return manager.mkApp(
       decl,
       args,
-      isUninterpreted ? manager.funcDecls[decl].range : getRange(op, builtinSort),
+      operator === undefined
+        ? funcDecl.range
+        : operator.range === "domain"
+          ? builtinSort
+          : operator.range,
     );
   };
 
-  const mkChain = (op: number, args: number[]) => {
-    const domainSort = getDomainSort(op, args);
+  const mkChain = (operator: Operator, args: number[]) => {
+    const domainSort = getDomainSort(operator, args);
     const pairs: number[] = [];
     for (let index = 0; index + 1 < args.length; index++)
-      pairs.push(mkApp(op, [args[index], args[index + 1]], domainSort));
+      pairs.push(mkApp(operator.op, [args[index], args[index + 1]], domainSort));
     return pairs.length === 1 ? pairs[0] : mkApp(OP_AND, pairs);
   };
 
@@ -384,15 +369,14 @@ export const parseSmtlib = (
   };
 
   const parseApp = (name: string, args: number[]) => {
-    const chainable = CHAINABLE_OPS.get(name);
-    if (chainable !== undefined) return mkChain(chainable, args);
     if (name === "-") return mkApp(args.length === 1 ? OP_UMINUS : OP_SUB, args);
     if (name === "/" && args.length > 2)
       return args
         .slice(1)
         .reduce((dividend, divisor) => mkApp(OP_DIV, [dividend, divisor]), args[0]);
-    const op = BUILTIN_OPS.get(name);
-    if (op !== undefined) return mkApp(op, args);
+    const operator = OPERATORS_BY_SYMBOL.get(name);
+    if (operator?.isChainable) return mkChain(operator, args);
+    if (operator !== undefined) return mkApp(operator.op, args);
     const decl = funcs.get(name);
     if (decl === undefined) throw new SmtParseError(`unknown function ${name}`);
     return mkApp(decl, args);

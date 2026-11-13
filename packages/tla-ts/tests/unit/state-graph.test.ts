@@ -1,11 +1,10 @@
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vite-plus/test";
-import { check, type CheckOptions } from "../../src";
-
-const FIXTURES = join(import.meta.dirname, "../fixtures");
+import { afterAll, describe, expect, it } from "vite-plus/test";
+import type { CheckOptions } from "../../src";
+import { checkFixture, FIXTURES, getModuleLoader } from "./check-harness";
+import { runCliWith } from "./cli-harness";
 
 const readTlcDump = (name: string) => readFileSync(join(FIXTURES, "state-graph", name), "utf8");
 
@@ -16,13 +15,8 @@ const dumpFixture = async (
   options: Partial<CheckOptions> = {},
 ) => {
   const written = new Map<string, string>();
-  const result = await check({
-    source: readFileSync(join(FIXTURES, directory, `${name}.tla`), "utf8"),
-    config: readFileSync(join(FIXTURES, directory, `${name}.cfg`), "utf8"),
-    loadModule: (module) => {
-      const path = join(FIXTURES, directory, `${module}.tla`);
-      return existsSync(path) ? readFileSync(path, "utf8") : undefined;
-    },
+  const result = await checkFixture(directory, name, name, {
+    loadModule: getModuleLoader(directory),
     onPrint: () => {},
     writeFile: (path, content) => written.set(path, String(content)),
     dump,
@@ -173,15 +167,23 @@ describe("check dumps the state graph like TLC's -dump", () => {
   });
 });
 
-const runCli = (args: string[]) =>
-  spawnSync("bun", [join(import.meta.dirname, "../../src/cli.ts"), "Counter.tla", ...args], {
-    cwd: join(FIXTURES, "counter"),
-    encoding: "utf8",
-  });
+const runCli = (args: string[]) => runCliWith("counter", ["Counter.tla", ...args]);
+
+const directories: string[] = [];
+
+afterAll(() =>
+  directories.forEach((directory) => rmSync(directory, { recursive: true, force: true })),
+);
+
+const createDirectory = () => {
+  const directory = mkdtempSync(join(tmpdir(), "tla-ts-dump-"));
+  directories.push(directory);
+  return directory;
+};
 
 describe("the CLI takes TLC's -dump flag", () => {
   it("adds the extension of the format to the file name", () => {
-    const directory = mkdtempSync(join(tmpdir(), "tla-ts-dump-"));
+    const directory = createDirectory();
     runCli(["-dump", "dot,actionlabels", join(directory, "Counter")]);
     runCli(["-dump", join(directory, "Counter")]);
     expect(readFileSync(join(directory, "Counter.dot"), "utf8")).toBe(readTlcDump("Counter.dot"));
@@ -199,7 +201,7 @@ describe("the CLI takes TLC's -dump flag", () => {
   });
 
   it("takes the options of a dot format", () => {
-    const directory = mkdtempSync(join(tmpdir(), "tla-ts-dump-"));
+    const directory = createDirectory();
     runCli(["-dump", "dot,actionlabels,strict,stuttering,constrained", join(directory, "Counter")]);
     expect(readFileSync(join(directory, "Counter.dot"), "utf8")).toBe(readTlcDump("Counter.dot"));
   });

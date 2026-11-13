@@ -410,14 +410,13 @@ const getBoundedInstances = (context: TlaContext, formula: Expr, goalness: numbe
 
 const makePropositionEqualityNode = (
   exprs: Expressions,
-  name: "p_eq_l" | "p_eq_r" | "np_eq_l" | "np_eq_r",
+  isNegated: boolean,
+  isLeft: boolean,
   formula: Expr,
   left: Expr,
   right: Expr,
   goalness: number,
 ): Node => {
-  const isNegated = name === "np_eq_l" || name === "np_eq_r";
-  const isLeft = name === "p_eq_l" || name === "np_eq_l";
   const proposition = isNegated && formula.kind === "not" ? formula.args[0] : formula;
   const equality = equal(exprs, left, right);
   const differ = exprs.enot(equal(exprs, proposition, isLeft ? left : right));
@@ -426,7 +425,7 @@ const makePropositionEqualityNode = (
   return {
     conclusions: [formula, equality],
     rule: makeRule(
-      name,
+      isNegated ? (isLeft ? "np_eq_l" : "np_eq_r") : isLeft ? "p_eq_l" : "p_eq_r",
       isNegated
         ? [formula, equality, differ, rest, proposition, left, right]
         : [formula, equality, differ, other, formula, left, right],
@@ -446,7 +445,8 @@ const getPropositionEqualityNodes = (context: TlaContext, formula: Expr, goalnes
   const make = (isLeft: boolean) => (entry: [RelationExpr, number]) =>
     makePropositionEqualityNode(
       exprs,
-      isNegated ? (isLeft ? "np_eq_l" : "np_eq_r") : isLeft ? "p_eq_l" : "p_eq_r",
+      isNegated,
+      isLeft,
       formula,
       entry[0].args[0],
       entry[0].args[1],
@@ -471,7 +471,8 @@ const getEqualityPropositionNodes = (
   const make = (isNegated: boolean) => (entry: [Expr, number]) =>
     makePropositionEqualityNode(
       exprs,
-      isNegated ? (isLeft ? "np_eq_l" : "np_eq_r") : isLeft ? "p_eq_l" : "p_eq_r",
+      isNegated,
+      isLeft,
       entry[0],
       formula.args[0],
       formula.args[1],

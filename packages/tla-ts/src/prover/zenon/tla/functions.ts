@@ -68,7 +68,7 @@ export const getFunctionSetNodes = (literal: Literal): Item[] | undefined => {
             "arity",
             makeRule("except_notin_funcset", [
               formula,
-              exprs.enot(member(exprs, fcn.args[0], exprs.eapp("TLA.FuncSet", [source, target]))),
+              exprs.enot(member(exprs, fcn.args[0], set)),
               exprs.enot(member(exprs, fcn.args[2], target)),
               fcn.args[0],
               fcn.args[1],
@@ -77,7 +77,7 @@ export const getFunctionSetNodes = (literal: Literal): Item[] | undefined => {
               target,
             ]),
             [
-              [exprs.enot(member(exprs, fcn.args[0], exprs.eapp("TLA.FuncSet", [source, target])))],
+              [exprs.enot(member(exprs, fcn.args[0], set))],
               [exprs.enot(member(exprs, fcn.args[2], target))],
             ],
           )

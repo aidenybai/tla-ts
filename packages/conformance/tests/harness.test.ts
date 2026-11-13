@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { join } from "node:path";
+import { createProgress, getHost } from "../scripts/hosts";
 import {
   getContexts,
   getCorrection,
@@ -125,5 +126,28 @@ describe("normalizeTranscript", () => {
 describe("getMessageCodes", () => {
   it("ignores printed lines and message text", () => {
     expect(getMessageCodes("| 2190:0 printed\n2190:0 a\nb\n2199:0 c")).toBe("2190 2199");
+  });
+});
+
+describe("getHost", () => {
+  it("splits a custom host command into its arguments", () => {
+    expect(getHost("node --stack-size=8000 cli.js")).toEqual({
+      tlc: ["node", "--stack-size=8000", "cli.js"],
+    });
+  });
+
+  it("keeps a quoted path with a space as one argument", () => {
+    expect(getHost(`node "/my tools/cli.js" --library='/a b'  -deadlock`)).toEqual({
+      tlc: ["node", "/my tools/cli.js", "--library=/a b", "-deadlock"],
+    });
+  });
+});
+
+describe("createProgress", () => {
+  it("reports once each time the run count passes the interval", () => {
+    const isProgressDue = createProgress(500);
+    expect(
+      [499, 500, 501, 504, 505, 998, 1003, 1004, 2600, 2601].map((count) => isProgressDue(count)),
+    ).toEqual([false, true, false, false, false, false, true, false, true, false]);
   });
 });

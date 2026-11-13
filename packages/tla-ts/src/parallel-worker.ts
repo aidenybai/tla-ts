@@ -1,4 +1,3 @@
-import { createEnvironment } from "./environment";
 import {
   createFingerprintTable,
   insertSharedFingerprint,
@@ -6,20 +5,11 @@ import {
   writeStateFingerprint,
 } from "./fingerprints";
 import type { CoordinatorMessage, StartMessage, WorkerMessage } from "./parallel";
-import { createSearch } from "./search";
+import { createCheckEnvironment, createSearch } from "./search";
 import { getSuccessors, type Successor } from "./successors";
-import { setFingerprintPolynomial } from "./tlc/fingerprint";
-import { createTlcOrder } from "./tlc/order";
 import { OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateDecoder, createStateEncoder, type EncodedStates } from "./transfer";
-import {
-  createCanonicalizer,
-  freezeStringOrder,
-  getUnorderedString,
-  setStringOrder,
-  setValueOptions,
-  type Value,
-} from "./values";
+import { createCanonicalizer, getUnorderedString, type Value } from "./values";
 import { createBreak, getParentPort, type Port } from "./worker";
 
 const LOCKED = -1;
@@ -43,26 +33,16 @@ const runWorker = (start: StartMessage, parent: Port) => {
   const modules = new Map(start.modules);
   const loadModule = (name: string) => modules.get(name);
   const classes = new Map(start.classes);
-  const order = createTlcOrder(start.source, loadModule);
-  setStringOrder(order.getStringOrder(start.config));
-  setValueOptions(start);
-  setFingerprintPolynomial(start.fingerprintPolynomial ?? 0);
-  freezeStringOrder();
-  const specification = createEnvironment(start.config, {
-    source: start.source,
-    loadModule,
-    order,
-    loadClass: (name) => classes.get(name),
-    print: () => {},
-    files: { readFile: undefined, writeFile: undefined, makeDirectory: undefined },
-    isTool: start.isTool,
-    traceFile: start.traceFile,
-    isWarningEnabled: start.isWarningEnabled,
-    version: start.version,
-  });
+  const created = createCheckEnvironment(
+    start.config,
+    { ...start, loadModule, loadClass: (name) => classes.get(name), seed: undefined },
+    () => {},
+    true,
+  );
+  const specification = created.specification;
   const environment = specification.environment;
   const search = createSearch(start.config, environment, specification.variableLocations, () =>
-    order.getDeclarationOrder("variable"),
+    created.order.getDeclarationOrder("variable"),
   );
   const nextAction = search?.spec.next;
   if (!search || nextAction === undefined)

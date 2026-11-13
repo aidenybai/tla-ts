@@ -1,8 +1,7 @@
-import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getToolPath } from "./corpora";
+import { getTlcArgs, getToolPath, runProcess } from "./corpora";
 
 interface Measurement {
   milliseconds: number;
@@ -30,31 +29,22 @@ const parseStatistics = (output: string) => {
   };
 };
 
-const measure = (command: string, args: string[], cwd: string): Measurement => {
-  const startedAt = performance.now();
-  const result = spawnSync(command, args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-  const milliseconds = performance.now() - startedAt;
-  return { milliseconds, ...parseStatistics(`${result.stdout}${result.stderr}`) };
+const measure = async (command: string, args: string[], cwd: string): Promise<Measurement> => {
+  const run = await runProcess(command, args, cwd);
+  return { milliseconds: run.milliseconds, ...parseStatistics(`${run.stdout}${run.stderr}`) };
 };
 
-const runTlc = (directory: string, specFile: string) => {
+const runTlc = async (directory: string, specFile: string) => {
   const metadataDirectory = mkdtempSync(join(tmpdir(), "tla-ts-bench-"));
-  const measurement = measure(
+  const measurement = await measure(
     "java",
-    [
-      "-XX:+UseParallelGC",
-      "-Xmx4g",
-      "-cp",
+    getTlcArgs({
       jarPath,
-      "tlc2.TLC",
-      "-workers",
-      "1",
-      "-nowarning",
-      "-noGenerateSpecTE",
-      "-metadir",
+      maximumHeap: "4g",
+      tlcArgs: ["-workers", "1", "-nowarning"],
       metadataDirectory,
-      specFile,
-    ],
+      specArgs: [specFile],
+    }),
     directory,
   );
   rmSync(metadataDirectory, { recursive: true, force: true });
@@ -64,35 +54,36 @@ const runTlc = (directory: string, specFile: string) => {
 const runTlaTs = (directory: string, specFile: string) =>
   measure(process.execPath, ["--max-old-space-size=6144", CLI_PATH, specFile], directory);
 
-const getMedian = (measurements: Measurement[]) =>
-  [...measurements].sort((left, right) => left.milliseconds - right.milliseconds)[
+const getMedianRun = async (run: () => Promise<Measurement>) => {
+  const measurements: Measurement[] = [];
+  for (let count = 0; count < RUNS; count++) measurements.push(await run());
+  return measurements.sort((left, right) => left.milliseconds - right.milliseconds)[
     Math.floor(measurements.length / 2)
   ];
+};
 
 const formatSeconds = (milliseconds: number) => `${(milliseconds / 1000).toFixed(2)}s`;
 
-const rows = readdirSync(BENCHMARKS_DIRECTORY)
-  .sort()
-  .map((name) => {
-    const directory = join(BENCHMARKS_DIRECTORY, name);
-    const specFile = readdirSync(directory).find((file) => file.endsWith(".tla"));
-    if (!specFile) return undefined;
-    const tlc = getMedian(Array.from({ length: RUNS }, () => runTlc(directory, specFile)));
-    const tlaTs = getMedian(Array.from({ length: RUNS }, () => runTlaTs(directory, specFile)));
-    const isMatching =
-      tlc.generatedStates === tlaTs.generatedStates && tlc.distinctStates === tlaTs.distinctStates;
-    return {
-      benchmark: name,
-      distinct: tlc.distinctStates ?? 0,
-      tlc: formatSeconds(tlc.milliseconds),
-      "tla-ts": formatSeconds(tlaTs.milliseconds),
-      speedup: `${(tlc.milliseconds / tlaTs.milliseconds).toFixed(2)}x`,
-      counts: isMatching
-        ? "match"
-        : `tlc ${tlc.generatedStates}/${tlc.distinctStates}, tla-ts ${tlaTs.generatedStates}/${tlaTs.distinctStates}`,
-    };
-  })
-  .filter((row) => row !== undefined);
+const rows = [];
+for (const name of readdirSync(BENCHMARKS_DIRECTORY).sort()) {
+  const directory = join(BENCHMARKS_DIRECTORY, name);
+  const specFile = readdirSync(directory).find((file) => file.endsWith(".tla"));
+  if (!specFile) continue;
+  const tlc = await getMedianRun(() => runTlc(directory, specFile));
+  const tlaTs = await getMedianRun(() => runTlaTs(directory, specFile));
+  const isMatching =
+    tlc.generatedStates === tlaTs.generatedStates && tlc.distinctStates === tlaTs.distinctStates;
+  rows.push({
+    benchmark: name,
+    distinct: tlc.distinctStates ?? 0,
+    tlc: formatSeconds(tlc.milliseconds),
+    "tla-ts": formatSeconds(tlaTs.milliseconds),
+    speedup: `${(tlc.milliseconds / tlaTs.milliseconds).toFixed(2)}x`,
+    counts: isMatching
+      ? "match"
+      : `tlc ${tlc.generatedStates}/${tlc.distinctStates}, tla-ts ${tlaTs.generatedStates}/${tlaTs.distinctStates}`,
+  });
+}
 
 console.log(`Median of ${RUNS} runs, single worker, wall time including process startup`);
 console.table(rows);

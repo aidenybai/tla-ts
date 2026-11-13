@@ -2,7 +2,7 @@
 
 import { TlaZenonError } from "../../../errors";
 import { difference, union, type Expr, type Expressions } from "../expr";
-import { connect, type Lemma, type LlProof, type LlRule } from "../llproof";
+import type { Lemma, LlProof, LlRule } from "../llproof";
 import type { MlProof, Translated } from "../mltoll";
 
 type LlArgs = [string, Expr[], Expr[], Expr[][]];
@@ -121,11 +121,7 @@ const SHAPES: Record<string, Shape> = {
     if (third === undefined) throw getShapeError(name);
     return [`zenon_${name}`, rest, [conclusion], [[first, second, third]]];
   },
-  except_notin_funcset: (name, args) => {
-    const [conclusion, first, second, ...rest] = args;
-    if (second === undefined) throw getShapeError(name);
-    return [`zenon_${name}`, rest, [conclusion], [[first], [second]]];
-  },
+  except_notin_funcset: beta,
   notin_funcset: (name, args) => {
     const [conclusion, first, second, third, ...rest] = args;
     if (third === undefined) throw getShapeError(name);
@@ -381,16 +377,18 @@ export const postprocessTla = (exprs: Expressions, lemmas: Lemma[]): Lemma[] => 
         case "imply":
         case "equiv": {
           const right = postprocess(expression.args[1]);
-          return connect(exprs, expression.kind, postprocess(expression.args[0]), right);
+          return exprs.binary(expression.kind, postprocess(expression.args[0]), right);
         }
         case "all":
-          return exprs.eall(expression.args[0], expression.symbol, postprocess(expression.args[1]));
         case "ex":
-          return exprs.eex(expression.args[0], expression.symbol, postprocess(expression.args[1]));
         case "tau":
-          return exprs.etau(expression.args[0], expression.symbol, postprocess(expression.args[1]));
         case "lam":
-          return exprs.elam(expression.args[0], expression.symbol, postprocess(expression.args[1]));
+          return exprs.binder(
+            expression.kind,
+            expression.args[0],
+            expression.symbol,
+            postprocess(expression.args[1]),
+          );
       }
     })();
     cache.set(expression, result);

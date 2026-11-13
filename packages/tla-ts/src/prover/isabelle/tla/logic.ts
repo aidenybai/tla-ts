@@ -1,5 +1,7 @@
 import { axiomThm, type Thm } from "../pure/thm";
 import type { ClassicalRule } from "../provers/classical";
+import type { TaggedRule } from "../pure/tactic";
+import type { ContextRule } from "../tools/intuitionistic";
 import {
   mkAbs,
   mkApp,
@@ -50,7 +52,6 @@ interface LogicJson {
     safep: [NetItem[], NetItem[]];
     unsafe: [NetItem[], NetItem[]];
     dup: [NetItem[], NetItem[]];
-    extra: [ExtraNetItem[], ExtraNetItem[]];
   };
   contextRules: { bang: [ExtraNetItem[], ExtraNetItem[]]; plain: [ExtraNetItem[], ExtraNetItem[]] };
 }
@@ -59,16 +60,6 @@ export interface ConstInfo {
   readonly type: Typ;
   readonly typargs: readonly TypargPosition[];
   readonly abbreviation: Term | undefined;
-}
-
-export interface LogicNetItem {
-  readonly tag: number;
-  readonly isElim: boolean;
-  readonly rule: Thm;
-}
-
-export interface LogicExtraNetItem extends LogicNetItem {
-  readonly weight: number;
 }
 
 export interface LogicNetPair<Item> {
@@ -94,14 +85,14 @@ export interface TlaLogic {
     readonly safeEs: readonly ClassicalRule[];
     readonly unsafeIs: readonly ClassicalRule[];
     readonly unsafeEs: readonly ClassicalRule[];
-    readonly safe0: LogicNetPair<LogicNetItem>;
-    readonly safep: LogicNetPair<LogicNetItem>;
-    readonly unsafe: LogicNetPair<LogicNetItem>;
-    readonly dup: LogicNetPair<LogicNetItem>;
+    readonly safe0: LogicNetPair<TaggedRule>;
+    readonly safep: LogicNetPair<TaggedRule>;
+    readonly unsafe: LogicNetPair<TaggedRule>;
+    readonly dup: LogicNetPair<TaggedRule>;
   };
   readonly contextRules: {
-    readonly bang: LogicNetPair<LogicExtraNetItem>;
-    readonly plain: LogicNetPair<LogicExtraNetItem>;
+    readonly bang: LogicNetPair<ContextRule>;
+    readonly plain: LogicNetPair<ContextRule>;
   };
 }
 
@@ -149,15 +140,13 @@ const parseLogic = (): TlaLogic => {
     dup: thms[raw[3]],
     dupSwapped: raw[4].map((id) => thms[id]),
   });
-  const toItems = (pair: [NetItem[], NetItem[]]): LogicNetPair<LogicNetItem> => {
+  const toItems = (pair: [NetItem[], NetItem[]]): LogicNetPair<TaggedRule> => {
     const [intro, elim] = pair.map((side) =>
       side.map((item) => ({ tag: item[0], isElim: item[1] === 1, rule: thms[item[2]] })),
     );
     return { intro, elim };
   };
-  const toExtraItems = (
-    pair: [ExtraNetItem[], ExtraNetItem[]],
-  ): LogicNetPair<LogicExtraNetItem> => {
+  const toExtraItems = (pair: [ExtraNetItem[], ExtraNetItem[]]): LogicNetPair<ContextRule> => {
     const [intro, elim] = pair.map((side) =>
       side.map((item) => ({
         weight: item[0],

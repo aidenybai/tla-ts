@@ -1,8 +1,14 @@
-import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CONFORMANCE_DIRECTORY, findModels, getToolPath } from "./corpora";
+import {
+  CONFORMANCE_DIRECTORY,
+  findModels,
+  getMedian,
+  getTlcArgs,
+  getToolPath,
+  runProcess,
+} from "./corpora";
 
 interface ConformanceResult {
   id: string;
@@ -25,12 +31,6 @@ if (!existsSync(CLI_PATH) || !existsSync(RESULTS_PATH)) {
   process.exit(1);
 }
 
-const time = (command: string, args: string[], cwd: string) => {
-  const startedAt = performance.now();
-  spawnSync(command, args, { cwd, stdio: "ignore", maxBuffer: 64 * 1024 * 1024 });
-  return performance.now() - startedAt;
-};
-
 const results: ConformanceResult[] = JSON.parse(readFileSync(RESULTS_PATH, "utf8"));
 const matching = new Set(
   results
@@ -39,41 +39,34 @@ const matching = new Set(
 );
 const models = findModels().filter((model) => matching.has(model.id));
 
-const timings: Timing[] = models.map((model, index) => {
+const time = async (command: string, args: string[], directory: string) =>
+  (await runProcess(command, args, directory, false)).milliseconds;
+
+const timings: Timing[] = [];
+for (const model of models) {
   const metadataDirectory = mkdtempSync(join(tmpdir(), "tla-ts-corpus-"));
-  const tlc = time(
+  const tlc = await time(
     "java",
-    [
-      "-XX:+UseParallelGC",
-      "-Xmx2g",
-      "-cp",
+    getTlcArgs({
       jarPath,
-      "tlc2.TLC",
-      "-seed",
-      "0",
-      "-workers",
-      "1",
-      "-nowarning",
-      "-noGenerateSpecTE",
-      "-metadir",
+      maximumHeap: "2g",
+      tlcArgs: ["-seed", "0", "-workers", "1", "-nowarning"],
       metadataDirectory,
-      "-config",
-      model.configPath,
-      model.specPath,
-    ],
+      specArgs: ["-config", model.configPath, model.specPath],
+    }),
     model.directory,
   );
   rmSync(metadataDirectory, { recursive: true, force: true });
-  const tlaTs = time(
+  const tlaTs = await time(
     process.execPath,
     ["--max-old-space-size=6144", CLI_PATH, model.specPath, "-config", model.configPath],
     model.directory,
   );
+  timings.push({ id: model.id, tlc, tlaTs });
   console.log(
-    `[${index + 1}/${models.length}] ${(tlc / tlaTs).toFixed(2)}x  tlc ${Math.round(tlc)}ms  tla-ts ${Math.round(tlaTs)}ms  ${model.id}`,
+    `[${timings.length}/${models.length}] ${(tlc / tlaTs).toFixed(2)}x  tlc ${Math.round(tlc)}ms  tla-ts ${Math.round(tlaTs)}ms  ${model.id}`,
   );
-  return { id: model.id, tlc, tlaTs };
-});
+}
 
 const totalTlc = timings.reduce((sum, timing) => sum + timing.tlc, 0);
 const totalTlaTs = timings.reduce((sum, timing) => sum + timing.tlaTs, 0);
@@ -90,7 +83,7 @@ console.log(
   `total: TLC ${(totalTlc / 1000).toFixed(1)}s, tla-ts ${(totalTlaTs / 1000).toFixed(1)}s (${(totalTlc / totalTlaTs).toFixed(2)}x)`,
 );
 console.log(
-  `speedup: geometric mean ${geometricMean.toFixed(2)}x, median ${ratios[Math.floor(ratios.length / 2)].toFixed(2)}x, slowest ${ratios[0].toFixed(2)}x`,
+  `speedup: geometric mean ${geometricMean.toFixed(2)}x, median ${getMedian(ratios).toFixed(2)}x, slowest ${ratios[0].toFixed(2)}x`,
 );
 console.log(`tla-ts slower than TLC on ${slower.length} models`);
 slower

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { encodeForBackend } from "../src/prover/prove";
 import type { PrintedObligation } from "../src/obligations";
 import { runZenon } from "../src/prover/zenon/decide";
-import { CORPORA_DIRECTORY, getOption } from "./corpora";
+import { CORPORA_DIRECTORY, formatSeconds, getMedian, getOption } from "./corpora";
 import {
   getInputDigest,
   getObligationsById,
@@ -17,13 +17,6 @@ const TIME_LIMIT_MS = 10_000;
 
 const shard = (getOption("--shard") ?? "1/1").split("/").map(Number);
 const zenonPath = process.env.ZENON;
-
-const getMedian = (values: number[]) => {
-  const sorted = values.toSorted((left, right) => left - right);
-  return sorted.length === 0 ? 0 : sorted[Math.floor((sorted.length - 1) / 2)];
-};
-
-const formatSeconds = (milliseconds: number) => `${(milliseconds / 1000).toFixed(3)} s`;
 
 const runs = readProofRecords()
   .flatMap((module) =>
@@ -131,7 +124,7 @@ const referenceTimes = proverResults.flatMap((result) =>
   result.reference?.isProved === true ? [result.reference.elapsed] : [],
 );
 const formatTimes = (times: number[]) =>
-  `median ${formatSeconds(getMedian(times))}, worst ${formatSeconds(Math.max(0, ...times))}`;
+  `median ${formatSeconds(getMedian(times), 3)}, worst ${formatSeconds(Math.max(0, ...times), 3)}`;
 
 console.log("");
 console.log(`obligations: ${results.length}`);

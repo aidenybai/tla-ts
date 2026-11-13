@@ -8,6 +8,7 @@ import {
   formatValue,
   getFunctionDomain,
   isEmptySet,
+  MAXIMUM_INTEGER,
   toFiniteSet,
   type Value,
 } from "../values";
@@ -21,7 +22,6 @@ export interface JavaRandom {
 
 const MULTIPLIER = 0x5deece66dn;
 const SEED_MASK = (1n << 48n) - 1n;
-const MAXIMUM_INT = 2147483647;
 
 export const createJavaRandom = (seed: bigint): JavaRandom => {
   let state = (BigInt.asUintN(64, seed) ^ MULTIPLIER) & SEED_MASK;
@@ -39,7 +39,7 @@ export const createJavaRandom = (seed: bigint): JavaRandom => {
       if ((bound & mask) === 0) return Number((BigInt(bound) * BigInt(first)) >> 31n);
       for (let candidate = first; ; candidate = next(31)) {
         const value = candidate % bound;
-        if (candidate - value + mask <= MAXIMUM_INT) return value;
+        if (candidate - value + mask <= MAXIMUM_INTEGER) return value;
       }
     },
     nextLong: () => BigInt.asIntN(64, (BigInt(next(32)) << 32n) + BigInt(next(32))),
@@ -111,7 +111,7 @@ const getSubsetIndicesMaster = (count: number, size: number, random: JavaRandom)
 
 const getSubsetIndices174 = (count: number, size: number, random: JavaRandom) => {
   if (size <= 0) return [];
-  const stride = BigInt(size < 191 ? 191 : MAXIMUM_INT);
+  const stride = BigInt(size < 191 ? 191 : MAXIMUM_INTEGER);
   const offset = BigInt(random.nextInt(size));
   return Array.from(
     { length: Math.min(count, size) },
@@ -192,7 +192,7 @@ export const getRandomSubset = (
   if (product) {
     const size = product.lists.reduce((total, list) => total * BigInt(list.length), 1n);
     const indices =
-      size > BigInt(MAXIMUM_INT)
+      size > BigInt(MAXIMUM_INTEGER)
         ? getLargeSubsetIndices(count, size, random)
         : getSubsetIndices(count, Number(size), random);
     return indices.map((index) => product.create(getProductElements(product.lists, index)));

@@ -15,14 +15,14 @@ import {
   normalizeExpand,
   normalizeSequent,
 } from "./prep/normalize";
-import { findMethods, type Method } from "./prep/methods";
+import { findMethods, getBudget, type Method } from "./prep/methods";
 import { encodePtl } from "./ptl/encode";
 import { encodeSmt } from "./smt/encode";
 import type { EncodingSession } from "./smt/rewrite";
 import { encodeZenon } from "./zenon/encode";
 import type { TlapmResult } from "./tlapm/tlapm";
 import { TLAPS_MODULE } from "./tlaps-module";
-import type { Verdict } from "./verdict";
+import { isBackend, type Backend, type Verdict } from "./verdict";
 
 interface ObligationBase {
   id: number;
@@ -63,14 +63,11 @@ export interface ProveOptions {
   workers?: number;
 }
 
-export interface ProofAttempt {
-  method: Method;
-  isProved: boolean;
-  isReused: boolean;
-  reason?: string;
-  verdict?: Verdict;
-  timeUsedMs?: number;
-}
+export type ProofAttempt =
+  | { kind: "decided"; method: Method; verdict: Verdict; timeUsedMs: number }
+  | { kind: "error"; method: Method }
+  | { kind: "skipped"; method: Method; reason: string }
+  | { kind: "stored" | "reused"; method: Method; isProved: boolean; reason?: string };
 
 interface ProofReport {
   obligation: ProofObligation;
@@ -83,7 +80,9 @@ interface MethodFailure {
 }
 
 interface ObligationTask {
+  report: Promise<ProofReport>;
   done: Promise<void>;
+  isSettled: boolean;
   session: { initial: number; current: EncodingSession } | undefined;
 }
 
@@ -92,25 +91,33 @@ interface ProveRun {
   results: Map<string, Map<string, ProofAttempt>>;
   isFingerprinted: (obligation: PrintedObligation) => boolean;
   isProving: boolean;
-  lastByFingerprint: Map<string, Promise<void>>;
+  lastByFingerprint: Map<string, number>;
   decide: DecidePool["decide"];
 }
 
-type Encoder = (id: number, sequent: Sequent, method: Method, session: EncodingSession) => string;
+interface Encoder {
+  encode: (id: number, sequent: Sequent, method: Method, session: EncodingSession) => string;
+  isCaseNumbered?: boolean;
+}
 
 const shipFirstOrder = (sequent: Sequent) => flatten(processObligation(sequent));
 
-const encodeSmtProblem: Encoder = (_id, sequent, method, session) =>
-  (method.rlimit === undefined ? "" : `(set-option :rlimit ${method.rlimit})\n`) +
-  encodeSmt(shipFirstOrder(sequent), session);
+const SMT_ENCODER: Encoder = {
+  encode: (_id, sequent, method, session) =>
+    (method.rlimit === undefined ? "" : `(set-option :rlimit ${method.rlimit})\n`) +
+    encodeSmt(shipFirstOrder(sequent), session),
+  isCaseNumbered: true,
+};
 
-const ENCODERS: Record<string, Encoder> = {
-  smt: encodeSmtProblem,
-  z3: encodeSmtProblem,
-  zenon: (id, sequent) => encodeZenon(id, shipFirstOrder(sequent)),
-  isabelle: (id, sequent, method) =>
-    encodeIsabelle(id, shipFirstOrder(sequent), method.tactic ?? "auto"),
-  ls4: (_id, sequent) => encodePtl(sequent),
+const ENCODERS: Record<Backend, Encoder> = {
+  smt: SMT_ENCODER,
+  z3: SMT_ENCODER,
+  zenon: { encode: (id, sequent) => encodeZenon(id, shipFirstOrder(sequent)) },
+  isabelle: {
+    encode: (id, sequent, method) =>
+      encodeIsabelle(id, shipFirstOrder(sequent), method.tactic ?? "auto"),
+  },
+  ls4: { encode: (_id, sequent) => encodePtl(sequent) },
 };
 
 const hasIncompleteCase = (expression: Expr): boolean =>
@@ -151,6 +158,23 @@ const getUnprovedReport = (
   attempts: ProofAttempt[] = [],
 ): ProofReport => ({ obligation: { ...getObligationBase(obligation), status, reason }, attempts });
 
+export const isProvedAttempt = (attempt: ProofAttempt) =>
+  attempt.kind === "decided"
+    ? attempt.verdict === "unsat"
+    : (attempt.kind === "stored" || attempt.kind === "reused") && attempt.isProved;
+
+export const getFailureReason = (attempt: ProofAttempt) => {
+  switch (attempt.kind) {
+    case "decided":
+      if (attempt.verdict === "unsat") return undefined;
+      return attempt.timeUsedMs >= attempt.method.timeLimitMs ? "timeout" : "false";
+    case "error":
+      return "false";
+    default:
+      return attempt.reason;
+  }
+};
+
 export const formatNormalized = (obligation: PrintedObligation, isReused: boolean) =>
   `${formatObligation(
     isReused
@@ -169,7 +193,9 @@ export const encodeProofTheory = (
       report.attempts
         .filter(
           (attempt) =>
-            attempt.method.prover === "isabelle" && attempt.isProved && !attempt.isReused,
+            attempt.method.prover === "isabelle" &&
+            attempt.kind === "decided" &&
+            attempt.verdict === "unsat",
         )
         .map((attempt) => ({
           id: report.obligation.id,
@@ -181,17 +207,20 @@ export const encodeProofTheory = (
 
 export const encodeForBackend = (
   obligation: PrintedObligation,
-  prover: string,
+  prover: Backend,
   session: EncodingSession,
 ) => {
-  const encode = ENCODERS[prover];
-  if (!encode) throw new TlaUnsupportedError(`the ${prover} backend`);
   const methods = findMethods(obligation);
   const method = methods.provers.find((candidate) => candidate.prover === prover) ?? {
     prover,
     timeLimitMs: Infinity,
   };
-  return encode(obligation.id, normalizeExpand(obligation, methods), method, session);
+  return ENCODERS[prover].encode(
+    obligation.id,
+    normalizeExpand(obligation, methods),
+    method,
+    session,
+  );
 };
 
 const getSession = async (run: ProveRun, index: number) => {
@@ -220,8 +249,8 @@ const proveWithBackends = async (
   const methods = findMethods(obligation);
   const fingerprint = getFingerprint(obligation.sequent);
   const earlier = run.lastByFingerprint.get(fingerprint);
-  run.lastByFingerprint.set(fingerprint, run.tasks[index].done);
-  await earlier;
+  run.lastByFingerprint.set(fingerprint, index);
+  await (earlier === undefined ? undefined : run.tasks[earlier].done);
   const attempts: ProofAttempt[] = [];
   const failures: MethodFailure[] = [];
   const getProvedReport = (prover: string): ProofReport => ({
@@ -233,9 +262,13 @@ const proveWithBackends = async (
     const prior = run.results.get(fingerprint)?.get(method.prover);
     return prior?.method.tactic === method.tactic ? prior : undefined;
   };
-  const getBudget = (method: Method) => method.rlimit ?? method.timeLimitMs / 1000;
   const reuse = (prior: ProofAttempt) =>
-    attempts.push({ ...prior, isReused: true, timeUsedMs: undefined });
+    attempts.push({
+      kind: "reused",
+      method: prior.method,
+      isProved: isProvedAttempt(prior),
+      reason: getFailureReason(prior),
+    });
   const record = (attempt: ProofAttempt) => {
     attempts.push(attempt);
     run.results.set(
@@ -244,11 +277,11 @@ const proveWithBackends = async (
     );
   };
   const skip = (method: Method, reason: string) => {
-    attempts.push({ method, isProved: false, isReused: false, reason });
+    attempts.push({ kind: "skipped", method, reason });
     failures.push({ reason, isDecided: false });
   };
   const firstPrior = getPrior(methods.provers[0]);
-  if (firstPrior?.isProved) {
+  if (firstPrior && isProvedAttempt(firstPrior)) {
     reuse(firstPrior);
     return getProvedReport(firstPrior.method.prover);
   }
@@ -259,7 +292,7 @@ const proveWithBackends = async (
   }
   for (const method of methods.provers) {
     const prior = getPrior(method);
-    if (prior?.isProved) {
+    if (prior && isProvedAttempt(prior)) {
       reuse(prior);
       return getProvedReport(method.prover);
     }
@@ -273,39 +306,29 @@ const proveWithBackends = async (
     }
     if (!run.isProving) continue;
     if (method.prover === "trivial") return getProvedReport(method.prover);
-    const encode = ENCODERS[method.prover];
-    if (!encode) {
+    if (!isBackend(method.prover)) {
       skip(method, `tla-ts has no ${method.prover} backend`);
       continue;
     }
     try {
+      const encoder = ENCODERS[method.prover];
       const isCaseNumbered =
-        encode === encodeSmtProblem &&
+        encoder.isCaseNumbered &&
         (sequent.context.some(isIncompleteCaseHyp) || hasIncompleteCase(sequent.active));
       const session = isCaseNumbered ? await getSession(run, index) : { caseErrors: 0 };
-      const text = encode(obligation.id, sequent, method, session);
+      const text = encoder.encode(obligation.id, sequent, method, session);
       const decision = await run.decide(
         method.prover,
         text,
         { timeLimitMs: method.timeLimitMs, signal },
         index,
       );
-      const isProved = decision.verdict === "unsat";
-      record({
-        method,
-        isProved,
-        isReused: false,
-        ...(!isProved && {
-          reason: decision.timeUsedMs >= method.timeLimitMs ? "timeout" : "false",
-        }),
-        verdict: decision.verdict,
-        timeUsedMs: decision.timeUsedMs,
-      });
-      if (isProved) return getProvedReport(method.prover);
+      record({ kind: "decided", method, ...decision });
+      if (decision.verdict === "unsat") return getProvedReport(method.prover);
       failures.push({ reason: `${method.prover} answered ${decision.verdict}`, isDecided: true });
     } catch (error) {
       if (error instanceof TlaProverError) {
-        record({ method, isProved: false, isReused: false, reason: "false" });
+        record({ kind: "error", method });
         failures.push({ reason: `${method.prover} failed: ${error.message}`, isDecided: true });
         continue;
       }
@@ -357,14 +380,12 @@ export const proveObligations = async (
       pool?.decide ?? (async (prover, text, decideOptions) => decide(prover, text, decideOptions)),
   };
   const limit = pool ? workerCount * 4 : 1;
-  const pending: Promise<ProofReport>[] = [];
-  const isSettled: boolean[] = [];
   const running = new Set<Promise<void>>();
   const reports: ProofReport[] = [];
   const reportSettled = async () => {
-    while (isSettled[reports.length]) {
+    while (reports.length < run.tasks.length && run.tasks[reports.length].isSettled) {
       options.signal?.throwIfAborted();
-      const report = await pending[reports.length];
+      const report = await run.tasks[reports.length].report;
       reports.push(report);
       options.onReport?.(report, obligations[reports.length - 1]);
       // HACK: backends on this thread run synchronously, so yield to let an abort land.
@@ -374,19 +395,21 @@ export const proveObligations = async (
   try {
     for (const [index, obligation] of obligations.entries()) {
       options.signal?.throwIfAborted();
-      const done = Promise.withResolvers<void>();
-      run.tasks.push({ done: done.promise, session: undefined });
       const report = proveWithBackends(obligation, index, run, options.signal).catch(
         (error: unknown) => getErrorReport(obligation, error),
       );
-      pending.push(report);
-      running.add(done.promise);
       const settle = () => {
-        isSettled[index] = true;
-        running.delete(done.promise);
-        done.resolve();
+        task.isSettled = true;
+        running.delete(task.done);
       };
-      void report.then(settle, settle);
+      const task: ObligationTask = {
+        report,
+        done: report.then(settle, settle),
+        isSettled: false,
+        session: undefined,
+      };
+      run.tasks.push(task);
+      running.add(task.done);
       if (running.size >= limit) await Promise.race(running);
       await reportSettled();
     }

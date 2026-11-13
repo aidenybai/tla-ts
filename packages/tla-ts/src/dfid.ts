@@ -14,7 +14,7 @@ import { createTracingEnvironment } from "./evaluate";
 import { EXIT_STATUS, getMessageExitStatus, withLivenessExitCode } from "./exit-codes";
 import { createLivenessChecker } from "./liveness-checker";
 import { getIncompleteSuccessorMessage, prepareSearch, reportAssumptionViolation } from "./search";
-import { getNextActions, type SpecAction } from "./spec-description";
+import type { SpecAction } from "./spec-description";
 import { forEachInitialState, forEachSuccessor } from "./successors";
 import {
   formatNestedMessage,
@@ -52,7 +52,8 @@ interface CheckerState {
   continuedCode: number;
   isKeepingCallStack: boolean;
   errorEntry: StateEntry | undefined;
-  stopCode: number;
+  /** DFIDWorker's stopCode: 0 while it searches, 1 once every initial state is done, 2 after an error. */
+  stopCode: "searching" | "done" | "error";
   isMoreLevel: boolean;
 }
 
@@ -163,7 +164,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   );
   if (assumptionStatus !== undefined) return assumptionStatus;
 
-  const nextActions = getNextActions(config, environment, prepared.specification.instanceActions);
+  const nextActions = prepared.getDescription().actions;
   const statuses = new Map<bigint, number>();
   const fingerprintSet = { level: 1, leveled: 0, buckets: INITIAL_BUCKETS };
   const setStatus = (fingerprint: bigint, status: number) => {
@@ -188,7 +189,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     continuedCode: NO_ERROR,
     isKeepingCallStack: false,
     errorEntry: undefined,
-    stopCode: 0,
+    stopCode: "searching",
     isMoreLevel: false,
   };
   const setErrorState = (entry: StateEntry, isKeepingCallStack: boolean, code: number) => {
@@ -197,7 +198,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     checker.errorCode = code;
     checker.isDone = true;
     checker.isKeepingCallStack = isKeepingCallStack;
-    checker.stopCode = 2;
+    checker.stopCode = "error";
     return true;
   };
   const toRecord = (state: (Value | undefined)[]) =>
@@ -442,28 +443,28 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
       throw failure;
     }
   };
-  const getNextIndex = (successors: StateEntry[], level: number) => {
+  const hasNext = (successors: StateEntry[], level: number) => {
     while (successors.length > 0) {
       const status = getStatus(successors[0].fingerprint);
-      if (!isCompleted(status) && level < status >>> 2) return 0;
+      if (!isCompleted(status) && level < status >>> 2) return true;
       successors[0] = successors[successors.length - 1];
       successors.pop();
     }
-    return -1;
+    return false;
   };
   const searchLevel = (toLevel: number) => {
     const initials = [...initialEntries];
-    checker.stopCode = 0;
+    checker.stopCode = "searching";
     checker.isMoreLevel = false;
     let stackLevel = 0;
     try {
-      while (checker.stopCode === 0) {
+      while (checker.stopCode === "searching") {
         while (initials.length > 0 && isCompleted(getStatus(initials[0].fingerprint))) {
           initials[0] = initials[initials.length - 1];
           initials.pop();
         }
         if (initials.length === 0) {
-          checker.stopCode = 1;
+          checker.stopCode = "done";
           return;
         }
         stack[0] = initials[0];
@@ -474,8 +475,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
         checker.isMoreLevel ||= !isInitialNoLeaf;
         stackLevel = 1;
         while (!isInitialLeaf) {
-          const index = getNextIndex(successorStack[stackLevel - 1], stackLevel);
-          if (index === -1) {
+          if (!hasNext(successorStack[stackLevel - 1], stackLevel)) {
             const entry = stack[stackLevel - 1];
             statuses.set(
               entry.fingerprint,
@@ -485,7 +485,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
             stackLevel--;
             continue;
           }
-          stack[stackLevel] = successorStack[stackLevel - 1][index];
+          stack[stackLevel] = successorStack[stackLevel - 1][0];
           successorStack[stackLevel] = [];
           const isLeaf = stackLevel >= toLevel - 1;
           const isNoLeaf = expandState(stackLevel, isLeaf, successorStack[stackLevel]);
@@ -496,7 +496,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
       }
     } catch (error) {
       if (!(error instanceof TlaEvaluationError)) throw error;
-      checker.stopCode = 2;
+      checker.stopCode = "error";
       if (setErrorState(stack[stackLevel], true, MESSAGE_CODE.general)) {
         const unexpected = getUnexpectedMessage("", error);
         message(
@@ -612,7 +612,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     checker.isDone = false;
     levelCode = checker.isKeepingCallStack ? NO_ERROR : checker.errorCode;
     if (levelCode !== NO_ERROR) return finish(levelCode);
-    isTerminated = checker.stopCode === 2 || !checker.isMoreLevel;
+    isTerminated = checker.stopCode === "error" || !checker.isMoreLevel;
   }
   return finish(levelCode);
 };
