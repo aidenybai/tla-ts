@@ -17540,6 +17540,47 @@ describe("errors", () => {
     });
   });
 
+  describe("keep what a generator's body changes where an async function awaits after resuming it", () => {
+    const getSource = (expected: string) => `
+      let steps = 0;
+      let log = "";
+      function* count() {
+        steps += 1;
+        yield 1;
+        steps += 1;
+        yield 2;
+      }
+      async function* countLater() {
+        steps += 10;
+        yield 1;
+      }
+      const one = count();
+      const two = count();
+      const three = countLater();
+      (async () => {
+        one.next();
+        await 0;
+        log += steps;
+        for await (const [first] of [two]) {
+          log += "," + (steps + first - 1);
+        }
+        log += "," + steps;
+        three.next();
+        await 0;
+        log += "," + steps;
+        if (log !== "${expected}") throw new Error(log);
+      })();
+    `;
+
+    it("keeps the changes", async () => {
+      expect((await checkModel(getSource("1,2,2,12"))).failure).toBeUndefined();
+    });
+
+    it("doesn't drop them", async () => {
+      expect((await checkModel(getSource("0,1,0,0"))).failure).toBeDefined();
+    });
+  });
+
   describe("read what a symbol keys on a Map or a Set", () => {
     const getSource = (expected: string) => `
       const o = { a: 1 };

@@ -9574,6 +9574,20 @@ const getEffects = (
     (ts.isForOfStatement(node) &&
       getKind(node.expression, context) !== "sequence" &&
       isIteratedValue(node.expression, context));
+  // A method call on a generator object, a call it's passed to, or a pattern, a for-of, a spread,
+  // or a yield* that iterates one resumes the body of a generator that may have made it.
+  const isResumed =
+    (ts.isCallExpression(node) &&
+      ((ts.isPropertyAccessExpression(node.expression) &&
+        mayBeGeneratorType(node.expression.expression, context)) ||
+        node.arguments.some((argument) => mayBeGeneratorType(argument, context)))) ||
+    (ts.isArrayBindingPattern(node) && mayBeGeneratorType(node, context)) ||
+    (ts.isBinaryExpression(node) &&
+      ts.isArrayLiteralExpression(node.left) &&
+      mayBeGeneratorType(node.right, context)) ||
+    ((ts.isSpreadElement(node) || ts.isYieldExpression(node) || ts.isForOfStatement(node)) &&
+      node.expression !== undefined &&
+      mayBeGeneratorType(node.expression, context));
   // A DisposableStack's method may run the functions that the stacks dispose with.
   const isStackCall = getStackCall(node, context) !== undefined;
   // An iterator's dispose method runs the return method that the script may write, or its getter.
@@ -9618,6 +9632,16 @@ const getEffects = (
       ...(conversions ?? []),
       ...getters,
       ...(isIterated ? getIteratorFunctions(node, context) : []),
+      ...(isResumed
+        ? findNodes(
+            node.getSourceFile(),
+            (inner): inner is FunctionNode =>
+              (ts.isFunctionDeclaration(inner) ||
+                ts.isFunctionExpression(inner) ||
+                ts.isMethodDeclaration(inner)) &&
+              inner.asteriskToken !== undefined,
+          )
+        : []),
       ...(isStackCall || isUsing ? getStackFunctions(node, context) : []),
       ...(isIteratorDispose ? getWrittenFunctions(node, "return", context) : []),
       ...(isIteratorDispose ? getMethods(node, "return", context, true) : []),
