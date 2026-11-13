@@ -29,7 +29,7 @@ import {
   getNonRecConstructor,
   isRecursiveDatatype,
 } from "./datatype-decl-plugin";
-import { mkArrayApp } from "./array-decl-plugin";
+import { mkArrayApp, mkAsArray } from "./array-decl-plugin";
 import { mkFpNumeral, mkRmNumeral } from "./fpa-decl-plugin";
 import { MPF_ROUND_TOWARD_ZERO, mkZero } from "./mpf";
 import { RandomGen } from "./random-gen";
@@ -308,6 +308,8 @@ export class ProtoModel {
   private enumeratedTerms: RefVector;
   private freshEnumerations = new Map<number, TermEnumeration>();
   private nextValue = new Map<number, number>();
+  // array_factory::m_ranges: the ranges whose fresh value an array's fresh value is waiting for.
+  private freshArrayRanges: number[] = [];
   private finiteSorts = new Set<number>();
   private boolRandom: RandomGen;
   private evaluator: ModelEvaluator;
@@ -511,7 +513,41 @@ export class ProtoModel {
     }
     if (set !== undefined && set.size > 0)
       return set[Symbol.iterator]().next().value ?? this.mkValue(0, sort);
+    if (manager.isArraySort(sort)) {
+      const array = this.mkArrayInterp(sort);
+      array.interp.setElse(this.getSomeValue(manager.getArrayRange(sort)));
+      return array.value;
+    }
     return this.mkValue(0, sort);
+  }
+
+  // array_factory::mk_array_interp: as-array of a fresh function, whose interpretation the caller
+  // fills in.
+  private mkArrayInterp(sort: number) {
+    const manager = this.manager;
+    const domain = manager.getSortParameters(sort).slice(0, -1);
+    const decl = manager.mkFreshFuncDecl(null, domain, manager.getArrayRange(sort));
+    const interp = new FuncInterp(manager, domain.length);
+    this.registerFunc(decl, interp);
+    const value = mkAsArray(manager, decl);
+    this.addValue(sort, value);
+    return { value, interp };
+  }
+
+  // array_factory::get_fresh_value. Z3 falls back to two fresh indexes when the range has no fresh
+  // value; that case is left to the caller as a failure.
+  private getFreshArrayValue(sort: number) {
+    const manager = this.manager;
+    if (this.getValueSet(sort).size === 0) return this.getSomeValue(sort);
+    const range = manager.getArrayRange(sort);
+    if (this.freshArrayRanges.includes(range)) return null;
+    this.freshArrayRanges.push(range);
+    const rangeValue = this.getFreshValue(range);
+    this.freshArrayRanges.pop();
+    if (rangeValue === null) return null;
+    const array = this.mkArrayInterp(sort);
+    array.interp.setElse(rangeValue);
+    return array.value;
   }
 
   private getFreshRecursiveValue(sort: number) {
@@ -585,6 +621,7 @@ export class ProtoModel {
     if (this.manager.isFpSort(sort) || this.manager.isRmSort(sort))
       return getManagerSomeValue(this.manager, sort);
     if (this.manager.isDatatypeSort(sort)) return this.getFreshDatatypeValue(sort);
+    if (this.manager.isArraySort(sort)) return this.getFreshArrayValue(sort);
     const set = this.getValueSet(sort);
     const start = this.nextValue.get(sort) ?? 0;
     const manager = this.manager;
