@@ -25,7 +25,8 @@ import {
   temporal,
   tuple,
 } from "./tla";
-import { JAVASCRIPT_MODULE, SPECIAL_NUMBERS } from "./javascript";
+import { getJavaScriptModule, SPECIAL_NUMBERS } from "./javascript";
+import { printModule } from "../printer";
 import { getRegions, type Region } from "./regions";
 
 // The parts of a spec and its config, in the order that the model declares them.
@@ -306,7 +307,10 @@ export const emit = (
     name: moduleName,
     source,
     config,
-    loadModule: (name) => (isJavaScript && name === "JavaScript" ? JAVASCRIPT_MODULE : undefined),
+    loadModule: (name) =>
+      isJavaScript && name === "JavaScript"
+        ? getJavaScriptModule(`${printModule(source)}\n${config}`)
+        : undefined,
     regions: getRegions(source, sourceFile, model, context),
     variables: model.variables.map((variable) => {
       const declaration = variable.declaration;

@@ -4680,6 +4680,57 @@ JSONStringify(heap, value, replacer, space, escapes, arrayPrototype, functionPro
 
 ===============================================================================`;
 
+// The lines of the JavaScript module, in units that each start at a line that isn't indented or a
+// comment, such as a definition, a RECURSIVE declaration, or the header's EXTENDS and CONSTANTS.
+const MODULE_LINES = JAVASCRIPT_MODULE.split("\n");
+const getDeclaredNames = (line: string) => {
+  if (line.startsWith("RECURSIVE ")) {
+    return [...line.matchAll(/([A-Z]\w*)\(/g)].map((match) => match[1]);
+  }
+  const match = /^(?:LOCAL )?([A-Z]\w*)(?:\(| ==)/.exec(line);
+  return match === null ? [] : [match[1]];
+};
+const getReadNames = (text: string) => [...(text.match(/\b[A-Z]\w*\b/g) ?? [])];
+const UNIT_STARTS = MODULE_LINES.flatMap((line, position) =>
+  /^[^\s\\(]/.test(line) ? [position] : [],
+);
+// The last unit is the line that closes the module.
+const MODULE_UNITS = UNIT_STARTS.map((start, position) => {
+  const lines = MODULE_LINES.slice(start, UNIT_STARTS[position + 1]);
+  return {
+    lines,
+    names: getDeclaredNames(lines[0]),
+    // A RECURSIVE declaration reads nothing; the definition it declares reads what it reads.
+    reads: lines[0].startsWith("RECURSIVE ") ? [] : getReadNames(lines.join("\n")),
+  };
+});
+const UNITS_BY_NAME = Map.groupBy(
+  MODULE_UNITS.flatMap((unit) => unit.names.map((name) => ({ name, unit }))),
+  (entry) => entry.name,
+);
+// A unit that defines nothing, such as the header or an ASSUME, stays with what it reads.
+const ROOT_READS = MODULE_UNITS.filter((unit) => unit.names.length === 0).flatMap(
+  (unit) => unit.reads,
+);
+
+// The JavaScript module with only the definitions that a spec and its config read, directly or
+// through other definitions, so that a check parses and analyzes only those. Every other line is
+// blank, so each definition keeps its line.
+export const getJavaScriptModule = (text: string) => {
+  const kept = new Set<string>();
+  const keep = (name: string) => {
+    if (kept.has(name)) return;
+    kept.add(name);
+    UNITS_BY_NAME.get(name)?.forEach((entry) => entry.unit.reads.forEach(keep));
+  };
+  [...getReadNames(text), ...ROOT_READS].forEach(keep);
+  return MODULE_UNITS.flatMap((unit) =>
+    unit.names.length === 0 || unit.names.some((name) => kept.has(name))
+      ? unit.lines
+      : unit.lines.map(() => ""),
+  ).join("\n");
+};
+
 // The model values that stand for the numbers that TLA+ integers can't hold.
 export const SPECIAL_NUMBERS = ["NaN", "Infinity", "NegativeInfinity", "NegativeZero"];
 
