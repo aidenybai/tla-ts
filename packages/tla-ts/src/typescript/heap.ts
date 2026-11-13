@@ -3718,22 +3718,68 @@ const PRIMITIVE_PASSES = new Set([
   "isSealed",
 ]);
 
+// The Object.prototype methods that a call on a primitive this runs only to convert this to an
+// object, which throws for null and undefined. toLocaleString calls the toString of a primitive
+// other than those, and isPrototypeOf converts this only where it takes an object.
+const PROTOTYPE_CALLS = new Set([
+  "hasOwnProperty",
+  "propertyIsEnumerable",
+  "isPrototypeOf",
+  "valueOf",
+  "toLocaleString",
+]);
+
+// Object.prototype's method that a call through call names, as Object.prototype.valueOf.call(null).
+const getPrototypeCall = (node: MethodCall, context: Context) => {
+  const method = node.expression.expression;
+  return node.expression.name.text === "call" &&
+    ts.isPropertyAccessExpression(method) &&
+    ts.isPropertyAccessExpression(method.expression) &&
+    method.expression.name.text === "prototype" &&
+    getBuiltIn(method.expression.expression, context) === "Object" &&
+    PROTOTYPE_CALLS.has(method.name.text)
+    ? method.name.text
+    : undefined;
+};
+
 // A call of an Object function on a primitive whose value nothing reads, such as
-// Object.getOwnPropertyNames(0), with arguments that can't run code.
+// Object.getOwnPropertyNames(0) or Object.prototype.valueOf.call(null), with arguments that can't
+// run code.
 export const getPrimitiveObjectCall = (node: ts.Node, context: Context) => {
-  if (!isMethodCall(node) || getBuiltIn(node.expression.expression, context) !== "Object") {
-    return undefined;
-  }
-  const method = node.expression.name.text;
-  const argument = node.arguments.at(0);
-  const names =
+  if (!isMethodCall(node) || !node.arguments.every(isInertValue)) return undefined;
+  const getNames = (argument: ts.Expression | undefined) =>
     argument === undefined
       ? undefined
       : getTypeNames(context.checker.getTypeAtLocation(argument), context.checker);
+  const isPrimitive = (argument: ts.Expression | undefined) =>
+    getNames(argument)?.every((name) => name !== "object" && name !== "function") === true;
+  const argument = node.arguments.at(0);
+  const prototypeCall = getPrototypeCall(node, context);
+  if (prototypeCall !== undefined) {
+    const other = node.arguments.at(1);
+    const isNullish =
+      getNames(argument)?.every((name) => name === "undefined" || name === "null") === true;
+    const isObject =
+      getNames(other)?.every((name) => name === "object" || name === "function") === true;
+    const isSupported =
+      prototypeCall === "isPrototypeOf"
+        ? node.arguments.length === 2 && (isObject || isPrimitive(other))
+        : prototypeCall === "valueOf" || prototypeCall === "toLocaleString"
+          ? node.arguments.length === 1 && (prototypeCall === "valueOf" || isNullish)
+          : node.arguments.length === 2 && isPrimitive(other);
+    return argument !== undefined && isPrimitive(argument) && isSupported
+      ? {
+          argument,
+          method: `prototype.${prototypeCall}`,
+          isCoercing: prototypeCall !== "isPrototypeOf" || isObject,
+        }
+      : undefined;
+  }
+  if (getBuiltIn(node.expression.expression, context) !== "Object") return undefined;
+  const method = node.expression.name.text;
   return argument !== undefined &&
     (COERCING_READS.has(method) || PRIMITIVE_PASSES.has(method)) &&
-    node.arguments.every(isInertValue) &&
-    names?.every((name) => name !== "object" && name !== "function")
+    isPrimitive(argument)
     ? { argument, method, isCoercing: COERCING_READS.has(method) }
     : undefined;
 };

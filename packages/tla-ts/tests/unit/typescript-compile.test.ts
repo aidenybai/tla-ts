@@ -5924,6 +5924,46 @@ describe("errors", () => {
     });
   });
 
+  it("throws the TypeError of an Object.prototype method that call gives null or undefined", async () => {
+    const source = `
+      let count = 0;
+      try { Object.prototype.hasOwnProperty.call(undefined, "foo"); } catch (error) { if (error instanceof TypeError) count += 1; }
+      try { Object.prototype.propertyIsEnumerable.call(null, "foo"); } catch (error) { if (error instanceof TypeError) count += 10; }
+      try { Object.prototype.valueOf.call(undefined); } catch (error) { if (error instanceof TypeError) count += 100; }
+      try { Object.prototype.toLocaleString.call(null); } catch (error) { if (error instanceof TypeError) count += 1000; }
+      if (count !== 1111) throw new Error("count");
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("hasOwnProperty.call(undefined", "hasOwnProperty.call(0");
+    expect((await checkModel(wrong)).failure?.message).toContain('"count"');
+  });
+
+  it("converts this to an object only where isPrototypeOf takes an object", async () => {
+    const source = `
+      let count = 0;
+      try { Object.prototype.isPrototypeOf.call(null, {}); } catch (error) { if (error instanceof TypeError) count += 1; }
+      try { Object.prototype.isPrototypeOf.call(undefined, 1); } catch { count += 10; }
+      try { Object.prototype.valueOf.call(true); } catch { count += 100; }
+      if (count !== 1) throw new Error("count");
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace(
+      "isPrototypeOf.call(undefined, 1)",
+      "isPrototypeOf.call(undefined, {})",
+    );
+    expect((await checkModel(wrong)).failure?.message).toContain('"count"');
+  });
+
+  it("stops calling an Object.prototype method that a script replaced", async () => {
+    const result = await checkModel(`
+      Object.prototype.valueOf = () => 0;
+      Object.prototype.valueOf.call(undefined);
+    `);
+    expect(result.failure?.message).toContain(
+      "tla-ts can't call an Object.prototype.valueOf that a script replaced",
+    );
+  });
+
   describe("seals what a new of a built-in makes where nothing else reaches it", () => {
     const source = `
       const holder = { seen: 0 };

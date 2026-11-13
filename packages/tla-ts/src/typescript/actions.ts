@@ -7421,6 +7421,7 @@ const translateExpressionStatement = (
   const primitiveCall = getPrimitiveObjectCall(expression, context);
   if (primitiveCall !== undefined) {
     const value = translateExpression(primitiveCall.argument, path.scope, context);
+    const name = `Object.${primitiveCall.method}`;
     context.prelude.add("Null");
     const done = primitiveCall.isCoercing
       ? ifThenElse(
@@ -7429,18 +7430,29 @@ const translateExpressionStatement = (
           continueWith(path),
         )
       : continueWith(path);
+    const stop = (message: string) => leaf(apply("Assert", [boolean(false), string(message)]));
     // TypeScript can't see a callback assign a variable without a type an object.
     return context.heap === undefined
       ? done
       : ifThenElse(
           useJavaScript("IsRef", [value], context),
-          leaf(
-            apply("Assert", [
-              boolean(false),
-              string(`tla-ts can't tell what Object.${primitiveCall.method} reads`),
-            ]),
-          ),
-          done,
+          stop(`tla-ts can't tell what ${name} reads`),
+          primitiveCall.method.startsWith("prototype.")
+            ? ifThenElse(
+                useJavaScript(
+                  "HoldsBuiltIn",
+                  [
+                    getHeap(path.scope, expression, context),
+                    translateBuiltInValue("Object.prototype", expression, context),
+                    string(primitiveCall.method.slice("prototype.".length)),
+                    string(name),
+                  ],
+                  context,
+                ),
+                done,
+                stop(`tla-ts can't call an ${name} that a script replaced`),
+              )
+            : done,
         );
   }
   // A call's value runs though the statement drops it, so that a getter it reads, which tla-ts
