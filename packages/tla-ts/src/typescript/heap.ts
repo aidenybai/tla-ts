@@ -123,6 +123,7 @@ import {
   getIteratedArray,
   getKeptIterator,
   isBigIntLike,
+  getWrappedThis,
 } from "./types";
 
 const SHORT_CIRCUITS = new Set([
@@ -1534,6 +1535,25 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
       context,
     );
   }
+  const wrapped = getWrappedThis(node, context);
+  if (wrapped !== undefined && ts.isExpression(node)) {
+    context.builtIns.add(wrapped);
+    return useJavaScript(
+      "Allocate",
+      [
+        heap,
+        useJavaScript(
+          "WrapperObject",
+          [
+            translateBuiltInValue(`${wrapped}.prototype`, node, context),
+            translateExpression(node, scope, context),
+          ],
+          context,
+        ),
+      ],
+      context,
+    );
+  }
   const wrapper = getNewWrapper(node, context);
   if (wrapper !== undefined && (ts.isNewExpression(node) || ts.isCallExpression(node))) {
     // The wrapper's constructor, which its prototype's constructor property holds.
@@ -2531,6 +2551,7 @@ export const isMade = (node: ts.Node, context: Context, isSometimes = false): bo
     isNewProxy(node, context) ||
     getNewBuffer(node, context) !== undefined ||
     getNewWrapper(node, context) !== undefined ||
+    getWrappedThis(node, context) !== undefined ||
     isHeldError(node, context) ||
     isParsedObject(node, context) ||
     (!isSometimes && isAllocation(node, context)) ||

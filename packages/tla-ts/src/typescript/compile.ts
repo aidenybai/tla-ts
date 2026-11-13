@@ -43,7 +43,7 @@ import {
 } from "./tla";
 import { BUILT_INS } from "./built-ins";
 import { isEsModule, NATIVE_ERRORS } from "./exceptions";
-import { getDomain, getKeptIterator, TYPED_ARRAYS } from "./types";
+import { getDomain, getKeptIterator, getWrappedThis, TYPED_ARRAYS } from "./types";
 
 // A state variable starts at its initializer, or at every value of its type without one.
 const translateInitial = (variable: Variable, context: Context) => {
@@ -350,6 +350,7 @@ export const compile = (
     isHoleyArray(node) ||
     isPrototypeArray(node) ||
     getKeptIterator(node, context) !== undefined ||
+    getWrappedThis(node, context) !== undefined ||
     // An array that a script gives a named property, which only an object can hold.
     (ts.isBinaryExpression(node) &&
       node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&

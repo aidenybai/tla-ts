@@ -615,7 +615,30 @@ export const isNullishArrayMethodCall = (node: ts.CallExpression, context: Conte
   );
 };
 
+// The wrapper that ToObject makes of the boolean, number, or string that a call of
+// Array.prototype's method runs on, which the statement makes on the heap before the call runs.
+export const getWrappedThis = (node: ts.Node, context: Context) => {
+  const parent = node.parent;
+  if (
+    parent === undefined ||
+    !ts.isCallExpression(parent) ||
+    parent.arguments.at(0) !== node ||
+    getArrayMethodCall(parent, context) === undefined
+  ) {
+    return undefined;
+  }
+  const type = context.checker.getTypeAtLocation(node);
+  return isEvery(type, ts.TypeFlags.BooleanLike)
+    ? "Boolean"
+    : isEvery(type, ts.TypeFlags.NumberLike)
+      ? "Number"
+      : isEvery(type, ts.TypeFlags.StringLike)
+        ? "String"
+        : undefined;
+};
+
 export const getKind = (node: ts.Expression, context: Context): Kind => {
+  if (context.heap !== undefined && getWrappedThis(node, context) !== undefined) return "object";
   if (isHeapArray(node, context) || getBound(node, context) !== undefined) return "object";
   const checker = context.checker;
   if (isHeldErrorName(node, context)) return "object";

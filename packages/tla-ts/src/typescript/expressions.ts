@@ -168,6 +168,7 @@ import {
   mayBeGeneratorType,
   isBuiltInIteratorType,
   isGeneratorType,
+  getWrappedThis,
   rejectGeneratorUse,
   isNumericKey,
   isObject,
@@ -3015,6 +3016,9 @@ const translateNode = (
       ? translatePatternHole(node, node.parent, scope, context)
       : undefined;
   if (hole !== undefined) return hole;
+  // The wrapper that the statement made of the value that Array.prototype's method runs on.
+  const wrapper = getWrappedThis(node, context) && scope.allocated.get(node);
+  if (wrapper !== undefined) return wrapper;
   if (
     ts.isParenthesizedExpression(node) ||
     ts.isAsExpression(node) ||

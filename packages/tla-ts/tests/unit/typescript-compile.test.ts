@@ -11348,6 +11348,19 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("thrown");
   });
 
+  it("runs an Array.prototype method on a boolean, a number, or a string through its wrapper", async () => {
+    const result = await checkModel(`
+      const found = Array.prototype.indexOf.call("abc", "b");
+      const joined = Array.prototype.join.call(true);
+      const isWrapped = Array.prototype.some.call(
+        "a",
+        (value: string, index: number, object: unknown) => typeof object === "object",
+      );
+      if (found === 1 && joined === "" && isWrapped) throw new Error("wrapped");
+    `);
+    expect(result.failure?.message).toContain("wrapped");
+  });
+
   it("takes or drops up to Infinity or Number.MAX_SAFE_INTEGER", async () => {
     const result = await checkModel(`
       function* g(): Generator<number> {
