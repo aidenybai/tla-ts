@@ -8063,6 +8063,9 @@ const throwReadError = (
     : read;
 };
 
+// The constructors that, without arguments, only make an empty object or collection.
+const EMPTY_CONSTRUCTORS = new Set(["Array", "Object", "Map", "Set", "WeakMap", "WeakSet"]);
+
 // Whether an expression only reads values, once the awaits in it settled: it calls, makes, and
 // changes nothing.
 const isRead = (node: ts.Node, results: ReadonlyMap<ts.Expression, Expression>): boolean => {
@@ -8520,8 +8523,16 @@ const translateExpressionStatement = (
   ) {
     return continueWith(path);
   }
-  // An object that a statement makes, such as new ArrayBuffer, and drops is done once it's made.
-  if (path.scope.allocated.has(expression)) return continueWith(path);
+  // An object that a statement makes, such as new ArrayBuffer, and drops is done once it's made, as
+  // is a new that only makes an empty object or collection.
+  if (
+    path.scope.allocated.has(expression) ||
+    (ts.isNewExpression(expression) &&
+      (expression.arguments ?? []).length === 0 &&
+      EMPTY_CONSTRUCTORS.has(getBuiltIn(expression.expression, context) ?? ""))
+  ) {
+    return continueWith(path);
+  }
   if (isForeignNew(expression, context)) {
     return translateForeignNew(expression, path, context, frame);
   }

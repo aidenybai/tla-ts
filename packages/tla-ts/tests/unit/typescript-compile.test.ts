@@ -23280,6 +23280,20 @@ describe("buffers", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs on past an empty object or collection that a statement makes and drops", async () => {
+    const result = await checkModel(`
+      new Array();
+      new Map();
+      new Set();
+      new WeakMap();
+      new WeakSet();
+      new Object();
+      let done = 1;
+      if (done !== 1) throw new Error("runs on");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops at a number a typed array's float can't hold exactly", async () => {
     const result = await checkModel(`
       const floats = new Float32Array(1);
