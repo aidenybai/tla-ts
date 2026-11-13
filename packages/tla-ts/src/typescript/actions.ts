@@ -2234,6 +2234,18 @@ export const translateCallStatement = (
     );
   }
   const iteratorCall = getArrayIteratorCall(expression, context);
+  // The objects that the receiver makes, such as new String(), come first.
+  const receiverObjects =
+    iteratorCall === undefined
+      ? []
+      : getAllocated(iteratorCall.receiver, context).filter(
+          (inner) => !path.scope.allocated.has(inner),
+        );
+  if (receiverObjects.length > 0) {
+    return allocateAll(receiverObjects, path, context, (allocated) =>
+      translateCallStatement(expression, allocated, context, frame, continueWith),
+    );
+  }
   if (iteratorCall !== undefined) {
     const heap = getHeap(path.scope, expression, context);
     const receiverName = context.names.getFresh("receiver");

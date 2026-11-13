@@ -11222,6 +11222,18 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("done");
   });
 
+  it("makes the String object that a string iterator's receiver makes first", async () => {
+    const result = await checkModel(`
+      const prototype = Object.getPrototypeOf(new String()[Symbol.iterator]());
+      const iterator = new String("ab")[Symbol.iterator]();
+      iterator.next();
+      if (prototype.next.name === "next" && iterator.next().value === "b") {
+        throw new Error("made");
+      }
+    `);
+    expect(result.failure?.message).toContain("made");
+  });
+
   it("gives a string's iterator back from Iterator.from", async () => {
     const result = await checkModel(`
       const holder = { count: 0 };
