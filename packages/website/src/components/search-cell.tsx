@@ -47,7 +47,7 @@ interface StateValuesProps {
   state: SearchState;
 }
 
-export const StateValues = (props: StateValuesProps) =>
+const StateValues = (props: StateValuesProps) =>
   props.state.isFailing
     ? props.state.change
     : (props.state.change.match(VALUES) ?? []).map((value, index) => (
