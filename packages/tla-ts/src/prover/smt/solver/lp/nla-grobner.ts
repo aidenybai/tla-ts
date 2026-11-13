@@ -97,9 +97,9 @@ const isPerfectSquareCross = (
 };
 
 export class Grobner {
-  private readonly propagatesQuotients = NLA_PARAMS.grobnerPropagateQuotients;
-  private readonly hasGcdTest = NLA_PARAMS.grobnerGcdTest;
-  private readonly expandsTerms = NLA_PARAMS.grobnerExpandTerms;
+  private propagatesQuotients = false;
+  private hasGcdTest = false;
+  private expandsTerms = false;
   private readonly manager: PddManager;
   private readonly solver: PddSolver;
   private readonly nexCreator = new NexCreator();
@@ -114,6 +114,12 @@ export class Grobner {
   constructor(private core: NlaCore) {
     this.manager = new PddManager(core.lra.getColumnCount());
     this.solver = new PddSolver(this.manager, () => core.isCanceled());
+  }
+
+  updateParams() {
+    this.propagatesQuotients = NLA_PARAMS.grobnerPropagateQuotients;
+    this.hasGcdTest = NLA_PARAMS.grobnerGcdTest;
+    this.expandsTerms = NLA_PARAMS.grobnerExpandTerms;
   }
 
   run() {

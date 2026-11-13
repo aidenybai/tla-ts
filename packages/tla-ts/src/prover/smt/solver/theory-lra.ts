@@ -1,5 +1,6 @@
 // Ported from Z3 (src/smt/theory_lra.cpp, src/smt/arith_eq_adapter.cpp, src/math/lp/lp_api.h), MIT license, see z3-license.txt.
 import { shrink } from "./array";
+import { coeffsToApp, getTermCoeffs } from "./arith-terms";
 import { OP_GE, OP_GT, OP_LE, SORT_BOOL, SORT_INT, SORT_REAL } from "./ast";
 import type { Enode } from "./enode";
 import { InfEps } from "./inf-eps";
@@ -150,9 +151,11 @@ export class TheoryLra extends TheoryLraFinalCheck {
     const column = this.solver.externalToLocalColumn(thVar);
     const term = this.getExpr(thVar);
     if (!this.solver.hasTerm(column)) return term;
-    return this.coeffsToApp(
-      this.getTermCoeffs(this.solver.getTerm(column)),
+    return coeffsToApp(
+      this.manager,
+      getTermCoeffs(this.solver, this.solver.getTerm(column)),
       this.manager.isInt(term),
+      (other) => this.getExpr(other),
     );
   }
 

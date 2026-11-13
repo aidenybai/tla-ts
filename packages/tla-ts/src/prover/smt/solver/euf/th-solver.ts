@@ -41,6 +41,12 @@ export interface ThExplain {
 
 export type Dependencies = Map<Enode, Enode[] | null>;
 
+export const addDependency = (deps: Dependencies, node: Enode, dep: Enode) => {
+  const existing = deps.get(node);
+  if (existing === undefined || existing === null) deps.set(node, [dep]);
+  else if (!existing.includes(dep)) existing.push(dep);
+};
+
 export abstract class ThSolver {
   protected var2enode: Enode[] = [];
   private var2enodeLim: number[] = [];
@@ -224,14 +230,14 @@ export abstract class ThSolver {
 
   addUnit(lit: number) {
     const wasTrue = this.isTrue(lit);
-    this.ctx.addClause([lit]);
+    this.ctx.addClause([lit], false);
     return !wasTrue;
   }
 
-  addClause(lits: number[]) {
+  addClause(lits: number[], isRedundant = false) {
     let wasTrue = false;
     for (const lit of lits) wasTrue ||= this.isTrue(lit);
-    this.ctx.addClause(lits);
+    this.ctx.addClause(lits, isRedundant);
     return !wasTrue;
   }
 

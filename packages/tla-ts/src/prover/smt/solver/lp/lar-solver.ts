@@ -241,6 +241,15 @@ export class LarSolver {
     }
   }
 
+  areEqual(first: number, second: number) {
+    const term = new LarTerm([
+      [first, Rational.one],
+      [second, Rational.minusOne],
+    ]);
+    this.substKnownTerms(term);
+    return term.size === 0;
+  }
+
   addTerm(coeffs: [number, Rational][], external: number) {
     const term = new LarTerm(coeffs);
     this.substKnownTerms(term);

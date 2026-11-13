@@ -31,7 +31,9 @@ export const createSatTactic =
         if (value === L_TRUE) model.registerConst(manager.decls[expr], manager.trueExpr);
         else if (value === L_FALSE) model.registerConst(manager.decls[expr], manager.falseExpr);
       }
-      goal.model = (goal2sat.euf?.updateModel(model) ?? model).mkModel();
+      const euf = goal2sat.euf;
+      goal.model = (euf?.updateModel(model) ?? model).mkModel();
+      euf?.validateModel(goal.model);
     } else {
       solver.popToBaseLevel();
       sat2goal(manager, solver, goal2sat.atoms, goal);

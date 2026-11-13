@@ -240,6 +240,7 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     for (let index = 0; index < this.scopes.length; index++) nla.push();
     nla.isRelevant = (lpVar) =>
       this.context.isRelevant(this.getExpr(this.solver.getExternal(lpVar)));
+    nla.grobner.updateParams();
     this.nla = nla;
     return nla;
   }

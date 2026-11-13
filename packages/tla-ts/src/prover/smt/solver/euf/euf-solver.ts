@@ -1,7 +1,7 @@
 // Ported from Z3 (src/sat/smt/euf_solver.h, src/sat/smt/euf_solver.cpp,
 // src/sat/smt/euf_internalize.cpp, src/sat/smt/euf_model.cpp, src/util/top_sort.h), MIT license,
 // see z3-license.txt.
-import { SmtUnsupportedError } from "../../../../errors";
+import { SmtInvariantError, SmtUnsupportedError } from "../../../../errors";
 import {
   type AstManager,
   FAMILY_BASIC,
@@ -30,7 +30,13 @@ import {
   type Solver,
 } from "../sat/solver";
 import { Egraph, type Enode, getClass, mkExternal, NULL_BOOL_VAR } from "./egraph";
-import { type Dependencies, type ThExplain, type ThSolver, TrailStack } from "./th-solver";
+import {
+  addDependency,
+  type Dependencies,
+  type ThExplain,
+  type ThSolver,
+  TrailStack,
+} from "./th-solver";
 
 // The sat_internalizer that goal2sat gives the euf solver.
 export interface EufInternalizer {
@@ -494,8 +500,8 @@ export class EufSolver implements SatExtension {
     return node;
   }
 
-  addClause(lits: number[]) {
-    this.s.mkClause(lits);
+  addClause(lits: number[], isRedundant: boolean) {
+    this.s.mkClause(lits, isRedundant, true);
   }
 
   // euf_solver.cpp
@@ -923,6 +929,23 @@ export class EufSolver implements SatExtension {
     return model;
   }
 
+  // validate_model, for its side effect: evaluating an application of a partial theory function,
+  // such as a division by zero, completes its interpretation with some value.
+  validateModel(model: ProtoModel) {
+    if (this.hasUnhandled() || this.solvers.some((solver) => solver.hasUnhandled())) return;
+    const manager = this.manager;
+    for (const node of this.egraph.nodes) {
+      const expr = node.owner;
+      if (!manager.isBool(expr) || manager.hasQuantifierFlags[expr] === 1) continue;
+      if (node.boolVar === NULL_BOOL_VAR) continue;
+      const value = model.eval(expr, false);
+      if (
+        this.s.value(2 * node.boolVar) === L_TRUE ? manager.isFalse(value) : manager.isTrue(value)
+      )
+        throw new SmtInvariantError("the euf model falsifies an assignment");
+    }
+  }
+
   private includeFuncInterp(decl: number) {
     const info = this.manager.funcDecls[decl];
     if (info.family === FAMILY_USER) return true;
@@ -952,7 +975,7 @@ export class EufSolver implements SatExtension {
           manager.sorts[root.owner] === manager.sorts[node.owner] &&
           !freshSet.has(root)
         )
-          deps.add(node, root);
+          addDependency(deps.deps, node, root);
   }
 
   private dependencies2values(userSorts: UserSortValues, deps: EnodeTopSort, model: ProtoModel) {
@@ -1010,7 +1033,7 @@ export class EufSolver implements SatExtension {
         continue;
       const value = values[node.root.owner];
       if (value === undefined) continue;
-      const arity = manager.funcDecls[decl].domain.length;
+      const arity = node.numArgs;
       if (arity === 0) {
         model.registerConst(decl, value);
         continue;
@@ -1102,12 +1125,6 @@ class EnodeTopSort {
 
   insert(node: Enode, deps: Enode[] | null) {
     this.deps.set(node, deps);
-  }
-
-  add(node: Enode, dep: Enode) {
-    const existing = this.deps.get(node);
-    if (existing === undefined || existing === null) this.deps.set(node, [dep]);
-    else if (!existing.includes(dep)) existing.push(dep);
   }
 
   sort() {

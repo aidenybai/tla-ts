@@ -1,11 +1,14 @@
 // Ported from Z3 (src/sat/smt/euf_solver.cpp), MIT license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../../errors";
+import { FAMILY_ARITH } from "../ast";
+import { ArithSolver } from "./arith-solver";
 import type { EufSolver } from "./euf-solver";
 import type { ThSolver } from "./th-solver";
 
-// euf::solver::get_solver: the theory solver of a family, or of quantifiers for family -1. The port
-// has none of them yet, so a goal that needs one goes back to the smt kernel.
-export const mkThSolver = (_ctx: EufSolver, family: number): ThSolver => {
+// euf::solver::get_solver: the theory solver of a family, or of quantifiers for family -1. A goal
+// that needs a solver the port lacks goes back to the smt kernel.
+export const mkThSolver = (ctx: EufSolver, family: number): ThSolver => {
+  if (family === FAMILY_ARITH) return new ArithSolver(ctx, family);
   throw new SmtUnsupportedError(
     family === -1 ? "sat.euf quantifiers" : `sat.euf theory of family ${family}`,
   );
