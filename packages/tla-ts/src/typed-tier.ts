@@ -1585,6 +1585,8 @@ const compileKeys = (target: Compiled): Compiled | undefined => {
 // TLC binds a variable to each element it streams from a set that UNION or \cup builds, duplicates
 // included, and which of those sets it streams depends on how it built them.
 const rejectStreamedBound = (program: Program, set: Expression, scope: TierScope) => {
+  // compileBound streams a constant set to find its duplicates.
+  if (isConstantExpression(program, set, scope)) return;
   const visited = new Set<OperatorDefinition>();
   const check = (root: Expression, inner: TierScope) => {
     if (isExpressionImpure([root], program.environment, "streamed")) unsupported();
