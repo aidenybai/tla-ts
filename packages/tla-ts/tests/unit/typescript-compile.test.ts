@@ -16798,6 +16798,34 @@ describe("calls through values", () => {
     `);
     expect(result.failure).toBeUndefined();
   });
+
+  it("rejects the promise of an async function whose default calls null", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let result = "";
+      const held: any = null;
+      async function run(value = held()) {}
+      run().then(
+        () => { result = "fulfilled"; },
+        (error) => { result = error instanceof TypeError ? "TypeError" : "other"; },
+      );
+      setTimeout(() => {
+        if (result !== "${expected}") throw new Error(result);
+      });
+    `;
+    expect((await checkModel(source("TypeError"))).failure).toBeUndefined();
+    expect((await checkModel(source("fulfilled"))).failure).toBeDefined();
+  });
+
+  it("stops where a default may call its own async function through a value", async () => {
+    const result = await checkModel(`
+      let held: any = null;
+      const run = async (value = held()) => {};
+      held = run;
+      run().catch(() => {});
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't tell which function this call runs");
+  });
 });
 
 describe("buffers", () => {
