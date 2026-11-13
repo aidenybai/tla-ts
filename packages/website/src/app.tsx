@@ -49,11 +49,6 @@ export const App = () => (
           <Example.Search />
           <Example.Hint />
         </Example.Root>
-        <p className="mt-6 text-pretty">
-          You write the state, the functions that change it, and a rule that must stay true.{" "}
-          <span className="whitespace-nowrap">TLA-ts</span> calls the functions in every order and
-          checks the rule after each call. This is called model checking.
-        </p>
       </Section.Root>
       <Section.Root>
         <Section.Title>Install</Section.Title>
