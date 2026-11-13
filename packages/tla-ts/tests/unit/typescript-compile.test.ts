@@ -1960,6 +1960,49 @@ describe("values", () => {
     );
   });
 
+  it("throws where a write in strict mode names no binding or a global that can't change", async () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      let count: number = 0;
+      const results: string[] = [];
+      try {
+        // @ts-ignore
+        missing = 1;
+      } catch (error) {
+        results.push(error instanceof ReferenceError ? "reference" : "other");
+      }
+      try {
+        // @ts-ignore
+        for ([unknown] of [[]]) count += 1;
+      } catch (error) {
+        results.push(error instanceof ReferenceError ? "reference" : "other");
+      }
+      try {
+        // @ts-ignore
+        NaN = 12;
+      } catch (error) {
+        results.push(error instanceof TypeError ? "type" : "other");
+      }
+      const outcomes = [...results, count].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("reference,reference,type,0"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("reference,reference,type,1"))).failure?.message).toContain(
+      "outcomes reference,reference,type,0",
+    );
+  });
+
+  it("stops where a write outside strict mode names no binding", () => {
+    expect(() =>
+      compile(`
+        let count: number = 0;
+        // @ts-ignore
+        missing = 1;
+        count = 1;
+      `),
+    ).toThrow("tla-ts can't write a global outside strict mode");
+  });
+
   it("assigns a catch's parameter as it does a let", async () => {
     const getSource = (expected: string) => `
       let seen = "";

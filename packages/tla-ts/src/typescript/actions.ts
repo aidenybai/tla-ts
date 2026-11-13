@@ -615,6 +615,28 @@ const getHeapWrite = (node: ts.Expression, path: Path, context: Context): HeapWr
   };
 };
 
+// The error that a write to a name throws in strict mode: a ReferenceError where no binding has the
+// name, and a TypeError where it names a global that can't change. Outside strict mode, the write
+// makes a global or does nothing, which tla-ts doesn't follow.
+const getNameError = (node: ts.Expression, context: Context) => {
+  const name = skipCasts(node);
+  if (!ts.isIdentifier(name)) return undefined;
+  const symbol = getSymbol(name, context.checker);
+  const error =
+    symbol === undefined
+      ? "ReferenceError"
+      : ["NaN", "Infinity", "undefined"].includes(name.text) &&
+          (symbol.declarations ?? []).every(
+            (declaration) => declaration.getSourceFile().isDeclarationFile,
+          )
+        ? "TypeError"
+        : undefined;
+  if (error !== undefined && !isStrictCode(name)) {
+    throw new TlaTypeScriptError("tla-ts can't write a global outside strict mode", name);
+  }
+  return error;
+};
+
 // The current value of an assignment target, and how to replace it.
 const getTarget = (node: ts.Expression, path: Path, context: Context): Target => {
   if (ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node)) {
@@ -1193,6 +1215,8 @@ const assignPatternWith = (
     path,
     context,
     (inner, innerValue, current, next) => {
+      const nameError = getNameError(inner, context);
+      if (nameError !== undefined) return throwError(nameError, current, inner, context, frame);
       const setters =
         ts.isPropertyAccessExpression(inner) || ts.isElementAccessExpression(inner)
           ? getPropertySetters(inner, context).filter((setter) => !frame.inlining.has(setter))
@@ -7598,16 +7622,19 @@ const translateWriteStatement = (
   frame: Frame,
   continueWith: (path: Path) => Formula,
 ): Formula => {
-  const assigned = getAssignedPath(expression, path, context);
-  if (assigned === undefined) {
-    throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
-  }
-  // A write to a property that can't change throws a TypeError, as scripts run in strict mode.
   const written = ts.isBinaryExpression(expression)
     ? expression.left
     : ts.isPrefixUnaryExpression(expression) || ts.isPostfixUnaryExpression(expression)
       ? expression.operand
       : undefined;
+  const nameError =
+    written === undefined || !isAssignment(expression) ? undefined : getNameError(written, context);
+  if (nameError !== undefined) return throwError(nameError, path, expression, context, frame);
+  const assigned = getAssignedPath(expression, path, context);
+  if (assigned === undefined) {
+    throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
+  }
+  // A write to a property that can't change throws a TypeError, as scripts run in strict mode.
   const write = written === undefined ? undefined : getHeapWrite(written, path, context);
   // A write to a property of null or undefined throws a TypeError.
   const receiver =
