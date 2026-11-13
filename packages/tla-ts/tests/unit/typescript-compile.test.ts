@@ -2140,6 +2140,44 @@ describe("values", () => {
     );
   });
 
+  it("continues a loop from a case of a switch, which ends the case", async () => {
+    const getSource = (expected: string) => `
+      const getUnits = (words: string[]) => {
+        const units: string[] = [];
+        let index = 0;
+        while (true) {
+          const word = words[index];
+          index++;
+          if (word === "end") return units;
+          switch (word) {
+            case "skip":
+              continue;
+            case "VARIABLE":
+            case "VARIABLES": {
+              units.push(\`variable \${words[index]}\`);
+              index++;
+              continue;
+            }
+            case "pair": {
+              units.push(\`pair \${words[index]}\`);
+              index++;
+              break;
+            }
+          }
+          units.push(\`after \${word}\`);
+        }
+      };
+      const units = getUnits(["skip", "VARIABLE", "count", "pair", "x", "other", "end"]).join(";");
+      if (units !== "${expected}") throw new Error("units " + units);
+    `;
+    expect(
+      (await checkModel(getSource("variable count;pair x;after pair;after other"))).failure,
+    ).toBeUndefined();
+    await expect(
+      checkModel(getSource("variable count;pair x;after pair;after skip;after other")),
+    ).rejects.toThrow("units variable count;pair x;after pair;after other");
+  });
+
   it("runs a switch's expression in order where a call in it changes what it reads", async () => {
     const getSource = (expected: string) => `
       const box = { v: 1 };
