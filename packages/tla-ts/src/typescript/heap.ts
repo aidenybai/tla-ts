@@ -2698,6 +2698,34 @@ const isFreshCollection = (node: ts.Node | undefined, context: Context) =>
 // The built-in methods that give the array they change rather than a new one.
 const SELF_RETURNING_METHODS = new Set(["sort", "reverse", "fill", "copyWithin"]);
 
+// The built-in methods that give a new array, rather than one that something holds, as get or find
+// gives.
+const FRESH_ARRAY_METHODS = new Set([
+  ...SELF_RETURNING_METHODS,
+  "from",
+  "of",
+  "slice",
+  "splice",
+  "concat",
+  "map",
+  "filter",
+  "flat",
+  "flatMap",
+  "toSorted",
+  "toReversed",
+  "toSpliced",
+  "with",
+  "keys",
+  "values",
+  "entries",
+  "getOwnPropertyNames",
+  "getOwnPropertySymbols",
+  "ownKeys",
+  "split",
+  "match",
+  "exec",
+]);
+
 // A built-in call that makes a new array, such as Array.from(...) or a map, whose sequence the
 // heap can hold. A method that gives the array it changes gives a new one where that array is new.
 const isFreshArrayCall = (node: ts.CallExpression, context: Context): boolean => {
@@ -2708,6 +2736,7 @@ const isFreshArrayCall = (node: ts.CallExpression, context: Context): boolean =>
     declaration !== undefined &&
     declaration.getSourceFile().isDeclarationFile &&
     getKind(node, context) === "sequence" &&
+    (method === undefined || FRESH_ARRAY_METHODS.has(method.name.text)) &&
     (method === undefined ||
       receiver === undefined ||
       !SELF_RETURNING_METHODS.has(method.name.text) ||
@@ -2719,6 +2748,9 @@ const isFreshArrayCall = (node: ts.CallExpression, context: Context): boolean =>
 // The methods that change a set or a map in place, and those that only read one.
 const SET_OR_MAP_CHANGES = new Set(["add", "set", "delete", "clear"]);
 const SET_OR_MAP_READS = new Set(["has", "get", "forEach", "keys", "values", "entries"]);
+
+// The methods of a set or a map that find what it holds by a key.
+const KEY_METHODS = new Set(["add", "has", "delete", "set", "get"]);
 
 // The array methods that look for an element by identity.
 const ELEMENT_SEARCH_METHODS = new Set(["includes", "indexOf", "lastIndexOf"]);
@@ -2819,7 +2851,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
           ))
     );
   };
-  const grow = (start: ts.Symbol[], startOuters: ts.Symbol[] = []) => {
+  const grow = (start: ts.Symbol[], startOuters: ts.Symbol[] = [], seeds: ts.Expression[] = []) => {
     const group = new Set<ts.Node>();
     const names = new Set<string>();
     const nodes: ts.Node[] = [];
@@ -3071,7 +3103,24 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
           kind === ts.SyntaxKind.ExclamationEqualsEqualsToken
         );
       }
+      // An element of the array that an outer holder starts with.
+      if (ts.isArrayLiteralExpression(parent)) {
+        const holder = parent.parent;
+        return (
+          ts.isVariableDeclaration(holder) &&
+          holder.initializer === parent &&
+          ts.isIdentifier(holder.name) &&
+          addOuter(holder.name)
+        );
+      }
       if (!ts.isCallExpression(parent) || parent.arguments.some(ts.isSpreadElement)) return false;
+      if (
+        parent.arguments[0] === use &&
+        ts.isPropertyAccessExpression(parent.expression) &&
+        KEY_METHODS.has(parent.expression.name.text)
+      ) {
+        return isKeyedOnly(parent.expression.expression);
+      }
       // An element that an outer holder takes, or looks for.
       if (
         ts.isPropertyAccessExpression(parent.expression) &&
@@ -3092,6 +3141,44 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
           : undefined;
       return (
         parameter !== undefined && ts.isIdentifier(parameter.name) && addHolder(parameter.name)
+      );
+    };
+    // A set or a map that a constant holds from its start, which only finds what it holds by its
+    // key, so that its keys stay in it. Each array that it takes as a key joins the group.
+    const isKeyedOnly = (receiver: ts.Expression) => {
+      const symbol = ts.isIdentifier(receiver) ? getSymbol(receiver, checker) : undefined;
+      const declaration = symbol?.valueDeclaration;
+      const initializer =
+        declaration !== undefined && ts.isVariableDeclaration(declaration)
+          ? declaration.initializer
+          : undefined;
+      return (
+        symbol !== undefined &&
+        declaration !== undefined &&
+        (declaration.parent.flags & ts.NodeFlags.Const) !== 0 &&
+        initializer !== undefined &&
+        ts.isNewExpression(initializer) &&
+        (initializer.arguments ?? []).length === 0 &&
+        ["Set", "Map", "WeakSet", "WeakMap"].includes(
+          getBuiltIn(initializer.expression, context) ?? "",
+        ) &&
+        (references.get(symbol) ?? [])
+          .filter((reference) => reference !== ts.getNameOfDeclaration(declaration))
+          .every((reference) => {
+            const access = reference.parent;
+            const call = access.parent;
+            const key = ts.isCallExpression(call) ? call.arguments[0] : undefined;
+            return (
+              ts.isPropertyAccessExpression(access) &&
+              access.expression === reference &&
+              (access.name.text === "size" ||
+                (KEY_METHODS.has(access.name.text) &&
+                  ts.isCallExpression(call) &&
+                  call.expression === access &&
+                  key !== undefined &&
+                  (getKind(key, context) !== "sequence" || addSource(key))))
+            );
+          })
       );
     };
     const isHolder = (symbol: ts.Symbol): boolean => {
@@ -3437,7 +3524,9 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       isGrown() &&
       expressions.every((node) => !holdsField(checker.getTypeAtLocation(node)) || isKept(node)) &&
       (pending.length === 0 || isSettled());
-    return isSettled() ? [...nodes, ...group] : [];
+    return seeds.every((seed) => addSource(seed) && isUse(seed)) && isSettled()
+      ? [...nodes, ...group]
+      : [];
   };
   const isReachedNode = (node: ts.Node) =>
     ts.findAncestor(node, (ancestor) => isReached.has(ancestor)) !== undefined;
@@ -3475,6 +3564,43 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
     if (start.every((symbol) => (symbol.declarations ?? []).some((node) => found.has(node))))
       return;
     grow(start).forEach((node) => found.add(node));
+  });
+  // The arrays that a script compares by identity, finds by it as an element, or takes as a key of a
+  // set or a map, which a sequence lacks. Both sides of a comparison join one group.
+  const isIdentityComparison = (node: ts.Node): node is ts.BinaryExpression =>
+    ts.isBinaryExpression(node) &&
+    [
+      ts.SyntaxKind.EqualsEqualsEqualsToken,
+      ts.SyntaxKind.ExclamationEqualsEqualsToken,
+      ts.SyntaxKind.EqualsEqualsToken,
+      ts.SyntaxKind.ExclamationEqualsToken,
+    ].includes(node.operatorToken.kind);
+  expressions.forEach((node) => {
+    const key =
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      (KEY_METHODS.has(node.expression.name.text) ||
+        ELEMENT_SEARCH_METHODS.has(node.expression.name.text))
+        ? node.arguments.at(0)
+        : undefined;
+    const seeds = isIdentityComparison(node)
+      ? [node.left, node.right]
+      : key === undefined
+        ? []
+        : [key];
+    const isFound = seeds.every((seed) =>
+      getHolders(seed, checker).some((symbol) =>
+        (symbol.declarations ?? []).some((declaration) => found.has(declaration)),
+      ),
+    );
+    if (
+      seeds.length > 0 &&
+      !isFound &&
+      isReachedNode(node) &&
+      seeds.every((seed) => getKind(seed, context) === "sequence")
+    ) {
+      grow([], [], seeds).forEach((inner) => found.add(inner));
+    }
   });
   // The holders whose arrays' elements are sets or maps that change in place.
   accesses.forEach((access) => {

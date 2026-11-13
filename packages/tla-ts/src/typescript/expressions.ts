@@ -171,6 +171,7 @@ import {
   isEvery,
   isRegExpArray,
   isSequenceType,
+  mayBeSequenceType,
   translateUnknown,
   isHoleyNewArray,
   isNewArrayOfElements,
@@ -1381,6 +1382,19 @@ export const translateCall = (
 
 // A value that a Set or a Map keeps as a key, where -0 is 0.
 export const translateSetKey = (node: ts.Expression, scope: Scope, context: Context) => {
+  // A set or a map finds a key by identity, which a sequence lacks.
+  if (
+    getKind(node, context) !== "object" &&
+    mayBeSequenceType(
+      context.checker.getNonNullableType(context.checker.getTypeAtLocation(node)),
+      context.checker,
+    )
+  ) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't tell whether two equal arrays are the same array",
+      node,
+    );
+  }
   const value = translateExpression(node, scope, context);
   return context.hasSpecialNumbers && mayBeNumber(node, context)
     ? useJavaScript("KeyOf", [value], context)

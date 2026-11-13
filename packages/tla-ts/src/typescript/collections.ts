@@ -28,6 +28,7 @@ import {
   isDescriptionOfAll,
 } from "./heap";
 import {
+  getBuiltIn,
   getBuiltInKey,
   getStoredBuiltIn,
   isBuiltInObject,
@@ -77,6 +78,7 @@ import {
   type Kind,
   translateUnknown,
   isTypeReference,
+  mayBeSequenceType,
 } from "./types";
 
 interface Unordered {
@@ -828,8 +830,15 @@ const translateSequenceOperation = (
   const withSearch = (
     isLast: boolean,
     use: (isFound: (position: Expression) => Expression) => Expression,
-  ) =>
-    share(translate(argument), "value", context, (value) => {
+  ) => {
+    // A search compares by identity, which a sequence lacks.
+    if (getKind(argument, context) === "sequence") {
+      throw new TlaTypeScriptError(
+        "tla-ts can't tell whether two equal arrays are the same array",
+        argument,
+      );
+    }
+    return share(translate(argument), "value", context, (value) => {
       const checker = context.checker;
       const elementType = call.elementType;
       const isComparableElement =
@@ -872,6 +881,7 @@ const translateSequenceOperation = (
         ),
       );
     });
+  };
   const getSearchIndex = (isLast: boolean) => () =>
     withSearch(isLast, (isFound) => {
       const position = context.names.getFresh("index");
@@ -3020,6 +3030,32 @@ const translateNewCollection = (
         node,
       );
     }
+  }
+  // The keys that an array gives are sequences, which lack the identity that a key needs. Entries
+  // and keys come from unique keys, so no two of them are equal.
+  const type = context.checker.getTypeAtLocation(node);
+  const keyType = isTypeReference(type) ? context.checker.getTypeArguments(type).at(0) : undefined;
+  const source = argument === undefined ? undefined : skipCasts(argument);
+  const isDistinct =
+    source !== undefined &&
+    ts.isCallExpression(source) &&
+    ts.isPropertyAccessExpression(source.expression) &&
+    (getBuiltIn(source.expression.expression, context) === "Object"
+      ? source.expression.name.text === "entries"
+      : ["entries", "keys"].includes(source.expression.name.text) &&
+        ["set", "map", "sequence"].includes(getKind(source.expression.expression, context)));
+  if (
+    argument !== undefined &&
+    !isDistinct &&
+    !ts.isArrayLiteralExpression(argument) &&
+    !["set", "map"].includes(getKind(argument, context)) &&
+    keyType !== undefined &&
+    mayBeSequenceType(keyType, context.checker)
+  ) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't tell whether two equal arrays are the same array",
+      argument,
+    );
   }
   if (kind === "Set") {
     if (argument === undefined) return set([]);

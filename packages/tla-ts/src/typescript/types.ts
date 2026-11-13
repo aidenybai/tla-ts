@@ -72,6 +72,10 @@ export const isSequenceType = (type: ts.Type, checker: ts.TypeChecker): boolean 
     ? type.types.every((member) => isSequenceType(member, checker))
     : checker.isArrayType(type) || checker.isTupleType(type);
 
+// Whether any member of a type is an array or a tuple, which a sequence holds without its identity.
+export const mayBeSequenceType = (type: ts.Type, checker: ts.TypeChecker) =>
+  (type.isUnion() ? type.types : [type]).some((member) => isSequenceType(member, checker));
+
 // Whether every member of a type, such as each literal in a union, has the given flags.
 export const isEvery = (type: ts.Type, flags: ts.TypeFlags): boolean =>
   type.isUnion()

@@ -7607,12 +7607,173 @@ describe("errors", () => {
     ).toThrow("spec.ts:3:18 first would share an object that changes in place, so copy it");
   });
 
+  describe("compares the arrays of a script by identity", () => {
+    const getSource = (expected: boolean) => `
+      const source = [1, 2];
+      const copy = source.slice();
+      const same = source;
+      if ((copy === source) !== ${expected} || same !== source) throw new Error("identity");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(false))).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(getSource(true))).failure?.message).toContain('"identity"');
+    });
+  });
+
+  describe("finds the arrays that a set or a map takes as keys by identity", () => {
+    const getSource = (expected: boolean) => `
+      const keys = new Map<number[], number>();
+      const members = new Set<number[]>();
+      const first = [1, 2];
+      const second = [1, 2];
+      keys.set(first, 1);
+      members.add(first);
+      members.add(second);
+      if (keys.has(second) !== ${expected} || keys.get(first) !== 1 || members.size !== 2) {
+        throw new Error("keys");
+      }
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(false))).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(getSource(true))).failure?.message).toContain('"keys"');
+    });
+  });
+
+  describe("finds an array by identity among the elements of an array", () => {
+    const getSource = (expected: number) => `
+      const first = [1];
+      const list: number[][] = [first, [1]];
+      const other = [1];
+      if (list.indexOf(other) !== ${expected} || list.indexOf(first) !== 0) {
+        throw new Error("index");
+      }
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(-1))).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(getSource(1))).failure?.message).toContain('"index"');
+    });
+  });
+
+  describe("finds an array that a function shares by identity, or a weak map holds", () => {
+    const getSource = (expected: boolean) => `
+      const members = new WeakMap<number[], number>();
+      const shared: number[][] = [];
+      const getShared = (size: number): number[] => {
+        const cached = shared[size - 1];
+        if (cached) return cached;
+        const made = Array.from({ length: size }, (_, index) => index + 1);
+        shared.push(made);
+        return made;
+      };
+      const isShared = (domain: number[]) =>
+        domain === shared[domain.length - 1] || members.has(domain);
+      const copy = [1];
+      const fresh = [1, 2];
+      members.set(copy, 3);
+      const first = getShared(1);
+      const second = getShared(2);
+      if (!isShared(first) || !isShared(second) || !isShared(copy)) throw new Error("shared");
+      if (isShared(fresh) !== ${expected}) throw new Error("fresh");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(false))).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(getSource(true))).failure?.message).toContain('"fresh"');
+    });
+  });
+
+  // Node finds each of these arrays by identity, where a sequence compares by value.
+  describe("stops where a script finds an array by its identity", () => {
+    [
+      {
+        name: "a member of a set that a literal makes",
+        source:
+          'const members = new Set([[1], [1]]);\nif (members.size !== 2) throw new Error("size");',
+      },
+      {
+        name: "the members of a set that an array gives",
+        source:
+          'const list = [[1], [1]];\nconst members = new Set(list);\nif (members.size !== 2) throw new Error("size");',
+      },
+      {
+        name: "the keys of a map that an array gives",
+        source:
+          'const list: [number[], number][] = [[[1], 1], [[1], 2]];\nconst keys = new Map(list);\nif (keys.size !== 2) throw new Error("size");',
+      },
+      {
+        name: "the members of a set that a map's values give",
+        source:
+          'const shared = [1];\nconst holder = new Map([["a", shared], ["b", shared]]);\nconst members = new Set(holder.values());\nif (members.size !== 1) throw new Error("size");',
+      },
+      {
+        name: "an element that indexOf looks for",
+        source: 'const list = [[1], [2]];\nif (list.indexOf([1]) !== -1) throw new Error("index");',
+      },
+      {
+        name: "an element that lastIndexOf looks for",
+        source:
+          'const list = [[1], [2]];\nif (list.lastIndexOf([1]) !== -1) throw new Error("index");',
+      },
+      {
+        name: "an element that includes looks for",
+        source: 'const list = [[1], [2]];\nif (list.includes([1])) throw new Error("includes");',
+      },
+      {
+        name: "a case of a switch",
+        source:
+          'const first = [1];\nconst second = [1];\nswitch (first) {\n  case second:\n    throw new Error("case");\n}',
+      },
+    ].forEach((entry) =>
+      it(entry.name, () => {
+        expect(() => compile(entry.source)).toThrow(
+          "tla-ts can't tell whether two equal arrays are the same array",
+        );
+      }),
+    );
+  });
+
+  // Entries and keys come from unique keys, so a set holds each of them, as Node does.
+  describe("holds the entries of a map, a set, or an object in a set", () => {
+    const getSource = (expected: number) => `
+      const counts = new Map([["a", 1], ["b", 1]]);
+      const pairs = new Set(counts.entries());
+      const named = new Set(Object.entries({ a: 1, b: 1 }));
+      const doubled = new Set(new Set([1, 2]).entries());
+      if (pairs.size + named.size + doubled.size !== ${expected}) {
+        throw new Error("size");
+      }
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(6))).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(getSource(3))).failure?.message).toContain('"size"');
+    });
+  });
+
   it("stops where two equal arrays of a script may be two arrays", async () => {
     await expect(
       checkModel(`
         const source = [1, 2];
-        const copy = source.slice();
-        if (copy === source) throw new Error("same");
+        const holder = new Map([["source", source]]);
+        if (holder.get("source") === source) throw new Error("same");
       `),
     ).rejects.toThrow("tla-ts can't tell whether two equal arrays are the same array");
     const result = await checkModel(`

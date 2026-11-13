@@ -67,7 +67,7 @@ import { isBuiltInObject } from "./intrinsics";
 import { getStoredCall, translateStoredCall } from "./collections";
 import { link } from "./regions";
 import { getStackCall } from "./stacks";
-import { hasHeapType, translateUnknown } from "./types";
+import { getKind, hasHeapType, translateUnknown } from "./types";
 
 // Whether a step has changed a state variable, so that helpers reading state must see the change.
 const isStateModified = (scope: Scope, context: Context) =>
@@ -1114,6 +1114,16 @@ export const translateSwitch = (
     );
     if (group.some(ts.isDefaultClause)) return formula;
     const conditions = group.filter(ts.isCaseClause).map((clause) => {
+      // A case compares by identity, which a sequence lacks.
+      if (
+        getKind(statement.expression, context) === "sequence" &&
+        getKind(clause.expression, context) === "sequence"
+      ) {
+        throw new TlaTypeScriptError(
+          "tla-ts can't tell whether two equal arrays are the same array",
+          clause.expression,
+        );
+      }
       const value = translateExpression(clause.expression, scope, context);
       return context.hasSpecialNumbers && mayBeNumber(statement.expression, context)
         ? useJavaScript("StrictEquals", [subject, value], context)
