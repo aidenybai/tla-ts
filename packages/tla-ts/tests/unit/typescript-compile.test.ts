@@ -17721,6 +17721,70 @@ describe("errors", () => {
     });
   });
 
+  describe("await each element of an array that a variable holds in a for await", () => {
+    const getSource = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      const values: (number | Promise<number>)[] = [Promise.resolve(1), 2];
+      const order: string[] = [];
+      (async () => {
+        for await (const value of values) {
+          order.push(\`v\${value}\`);
+        }
+      })();
+      Promise.resolve()
+        .then(() => order.push("t1"))
+        .then(() => order.push("t2"));
+      setTimeout(() => {
+        if (order.join() !== "${expected}") throw new Error(order.join());
+      });
+    `;
+
+    it("awaits each in turn", async () => {
+      expect((await checkModel(getSource("t1,v1,t2,v2"))).failure).toBeUndefined();
+    });
+
+    it("doesn't run the body before the first await", async () => {
+      expect((await checkModel(getSource("v1,t1,t2,v2"))).failure).toBeDefined();
+    });
+
+    it("stops where the script changes the array", () => {
+      expect(() =>
+        compile(
+          "const values = [1, 2];\n(async () => {\n  for await (const value of values) {}\n})();\nvalues.push(3);",
+        ),
+      ).toThrow("Don't change an array while a for-of iterates it");
+    });
+  });
+
+  describe("throw the rejection of an element of an array that a variable holds in a for await", () => {
+    const getSource = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      const error = new Error("boom");
+      const values: (number | Promise<number>)[] = [1, Promise.reject(error), 3];
+      let log = "";
+      (async () => {
+        try {
+          for await (const value of values) {
+            log += value;
+          }
+        } catch (caught) {
+          log += caught === error ? "caught" : "other";
+        }
+      })();
+      setTimeout(() => {
+        if (log !== "${expected}") throw new Error(log);
+      });
+    `;
+
+    it("leaves the loop with the rejection", async () => {
+      expect((await checkModel(getSource("1caught"))).failure).toBeUndefined();
+    });
+
+    it("doesn't run the body after it", async () => {
+      expect((await checkModel(getSource("13caught"))).failure).toBeDefined();
+    });
+  });
+
   describe("take a pattern from each generator that a for-of's array makes", () => {
     const getSource = (expected: string) => `
       let log = "";

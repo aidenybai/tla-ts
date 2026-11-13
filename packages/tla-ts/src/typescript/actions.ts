@@ -10619,7 +10619,33 @@ const translateForAwait = (
       );
     return iterate(start);
   };
-  if (!ts.isArrayLiteralExpression(iterated)) {
+  // An array that a variable holds, which the script never changes, holds the elements that its
+  // declaration wrote, other than generators, which taking from would make again.
+  const declaration = ts.isIdentifier(iterated)
+    ? getSymbol(iterated, context.checker)?.valueDeclaration
+    : undefined;
+  const initializer =
+    declaration !== undefined && ts.isVariableDeclaration(declaration) && declaration.initializer
+      ? getCast(declaration.initializer)
+      : undefined;
+  const written =
+    initializer !== undefined &&
+    ts.isArrayLiteralExpression(initializer) &&
+    !isHeapArray(iterated, context) &&
+    initializer.elements.every((element) => !isGeneratorType(element, context))
+      ? initializer
+      : undefined;
+  if (written !== undefined) {
+    const symbol = getSymbol(iterated, context.checker);
+    if (
+      symbol !== undefined &&
+      getChanged(iterated.getSourceFile(), path, context).includes(symbol)
+    ) {
+      throw new TlaTypeScriptError("Don't change an array while a for-of iterates it", iterated);
+    }
+  }
+  const literal = ts.isArrayLiteralExpression(iterated) ? iterated : written;
+  if (literal === undefined) {
     const created = ts.isCallExpression(iterated)
       ? getCreatedGenerator(iterated, path, context)
       : undefined;
@@ -10633,8 +10659,8 @@ const translateForAwait = (
     }
     return iterateGenerator(path, translateExpression(iterated, path.scope, context));
   }
-  if (iterated.elements.some((element) => ts.isSpreadElement(element))) {
-    throw new TlaTypeScriptError("for await iterates only arrays and async generators", iterated);
+  if (literal.elements.some((element) => ts.isSpreadElement(element))) {
+    throw new TlaTypeScriptError("for await iterates only arrays and async generators", literal);
   }
   const sequence = context.names.getFresh("sequence");
   const tick = (current: Path, next: (path: Path) => Formula) =>
@@ -10644,10 +10670,10 @@ const translateForAwait = (
   const isTaken = (element: ts.Expression) =>
     pattern !== undefined && !ts.isOmittedExpression(element) && isGeneratorType(element, context);
   const iterate = (current: Path, position: number): Formula => {
-    if (position === iterated.elements.length) {
+    if (position === literal.elements.length) {
       return tick(current, (resumed) => tick(resumed, continueWith));
     }
-    const element = iterated.elements[position];
+    const element = literal.elements[position];
     const bodyFrame: Frame = {
       ...guardYields(frame),
       next: (after) => iterate(after, position + 1),
@@ -10704,9 +10730,9 @@ const translateForAwait = (
         define(
           sequence,
           [],
-          iterated.elements.some(isTaken)
+          literal.elements.some(isTaken)
             ? tuple(
-                iterated.elements.map((element) =>
+                literal.elements.map((element) =>
                   isTaken(element) || ts.isOmittedExpression(element)
                     ? getUndefined(context)
                     : translateExpression(element, inner.scope, context),
