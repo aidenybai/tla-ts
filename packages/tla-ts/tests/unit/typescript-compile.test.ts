@@ -1295,7 +1295,38 @@ describe("values", () => {
   it("runs a parameter's default that assigns where the call binds the parameter", async () => {
     const getSource = (expected: string) => `
       let count: number = 0;
+      const sum = (a = ++count, b = count) => a * 10 + b;
+      const before = count;
+      const summed = sum();
+      const added = sum(4);
+      const outcomes = [before, summed, added, count].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("0,11,41,1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("0,11,42,1"))).failure?.message).toContain(
+      "outcomes 0,11,41,1",
+    );
+  });
+
+  it("runs parameters' defaults that assign in order", async () => {
+    const getSource = (expected: string) => `
+      let count: number = 0;
       let cached: number | undefined = undefined;
+      const steps = (a = count++, b = (count += 5), c = (cached ??= 3)) => [a, b, c].join(" ");
+      const stepped = steps();
+      const given = steps(1, 2, 4);
+      const outcomes = [stepped, given, count, cached].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("0 6 3,1 2 4,6,3"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1 6 3,1 2 4,6,3"))).failure?.message).toContain(
+      "outcomes 0 6 3,1 2 4,6,3",
+    );
+  });
+
+  it("runs a pattern's default that assigns where a parameter's property is undefined", async () => {
+    const getSource = (expected: string) => `
+      let count: number = 0;
       let caught = "none";
       const poisoned = {
         get value(): number | undefined {
@@ -1308,8 +1339,20 @@ describe("values", () => {
       } catch (error) {
         caught = error instanceof RangeError ? "range" : "other";
       }
-      const sum = (a = ++count, b = count) => a * 10 + b;
-      const steps = (a = count++, b = (count += 5), c = (cached ??= 3)) => [a, b, c].join(" ");
+      const defaulted = take({});
+      const passed = take({ value: 7 });
+      const outcomes = [caught, defaulted, passed, count].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("range,1,7,1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("range,1,7,2"))).failure?.message).toContain(
+      "outcomes range,1,7,1",
+    );
+  });
+
+  it("runs the defaults that assign of a class's methods", async () => {
+    const getSource = (expected: string) => `
+      let count: number = 0;
       class Counter {
         method({ value = ++count }: { value?: number }) {
           return value;
@@ -1318,50 +1361,28 @@ describe("values", () => {
           return a + b;
         }
       }
+      const counted = new Counter().method({});
+      const made = Counter.make(1);
+      const outcomes = [counted, made, count].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("1,12,11"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1,11,11"))).failure?.message).toContain("outcomes 1,12,11");
+  });
+
+  it("runs a generator's default that assigns where the call binds the parameter", async () => {
+    const getSource = (expected: string) => `
+      let count: number = 0;
       function* yields(a = ++count) {
         yield a;
       }
-      const before = count;
-      const defaulted = take({});
-      const passed = take({ value: 7 });
-      const summed = sum();
-      const added = sum(4);
-      const stepped = steps();
-      const given = steps(1, 2, 4);
-      const counted = new Counter().method({});
-      const made = Counter.make(1);
       const iterator = yields();
       const yielded = iterator.next().value;
-      const outcomes = [
-        caught,
-        before,
-        defaulted,
-        passed,
-        summed,
-        added,
-        stepped,
-        given,
-        counted,
-        made,
-        yielded,
-        count,
-        cached,
-      ].join(",");
+      const outcomes = [yielded, count].join(",");
       if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
     `;
-    const expected = "range,0,1,7,22,42,2 8 3,1 2 4,9,20,20,20,3";
-    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
-    for (const wrong of [
-      "range,1,1,7,22,42,2 8 3,1 2 4,9,20,20,20,3",
-      "range,0,1,8,22,42,2 8 3,1 2 4,9,20,20,20,3",
-      "range,0,1,7,21,42,2 8 3,1 2 4,9,20,20,20,3",
-      "range,0,1,7,22,42,2 7 3,1 2 4,9,20,20,20,3",
-      "range,0,1,7,22,42,2 8 3,1 2 4,9,19,20,20,3",
-    ]) {
-      expect((await checkModel(getSource(wrong))).failure?.message).toContain(
-        `outcomes ${expected}`,
-      );
-    }
+    expect((await checkModel(getSource("1,1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("0,1"))).failure?.message).toContain("outcomes 1,1");
   });
 
   it("translates what follows a default that assigns once, whichever value it takes", async () => {
