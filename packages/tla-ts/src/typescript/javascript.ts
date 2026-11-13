@@ -2109,6 +2109,21 @@ DecodeURI(text, reserved) ==
          IN  (IF character \\in reserved THEN SubSeq(text, 1, 3) ELSE character)
                \\o DecodeURI(SubSeq(text, 4, Len(text)), reserved)
 
+\\* unescape, of Annex B, which decodes each escape %XX and %uXXXX and keeps any other character,
+\\* such as a % that starts neither.
+RECURSIVE Unescape(_)
+Unescape(text) ==
+  LET isLong == /\\ Len(text) >= 6
+                /\\ SubSeq(text, 1, 2) = "%u"
+                /\\ \\A position \\in 3..6 : SubSeq(text, position, position) \\in DigitsOf(16)
+      length == CASE isLong -> 6 [] IsEscapeAt(text, 1) -> 3 [] OTHER -> 1
+      code == IF isLong THEN ByteAt(text, 2) * 256 + ByteAt(text, 4) ELSE ByteAt(text, 1)
+  IN  CASE text = "" -> ""
+        [] length > 1 /\\ code >= 128 -> Assert(FALSE, "tla-ts can't make a character outside ASCII")
+        [] OTHER ->
+             (IF length = 1 THEN SubSeq(text, 1, 1) ELSE SubSeq(AsciiCharacters, code + 1, code + 1))
+               \\o Unescape(SubSeq(text, length + 1, Len(text)))
+
 \\* JavaScript's < of two strings, which compares the codes of their first different characters.
 RECURSIVE StringLessThan(_, _)
 StringLessThan(left, right) ==
@@ -4861,13 +4876,16 @@ export const translateParseInt = (node: ts.CallExpression, scope: Scope, context
 // other call.
 const URI_ALPHANUMERICS = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
-// The characters that each URI function keeps: those that encodeURI and encodeURIComponent don't
-// escape, and those whose escapes decodeURI and decodeURIComponent don't decode.
+// The characters that each URI function keeps: those that encodeURI, encodeURIComponent, and
+// escape don't escape, and those whose escapes decodeURI and decodeURIComponent don't decode.
+// unescape decodes every escape.
 const URI_FUNCTIONS = new Map([
   ["encodeURI", `${URI_ALPHANUMERICS}-_.!~*'();/?:@&=+$,#`],
   ["encodeURIComponent", `${URI_ALPHANUMERICS}-_.!~*'()`],
+  ["escape", `${URI_ALPHANUMERICS}@*_+-./`],
   ["decodeURI", ";/?:@&=+$,#"],
   ["decodeURIComponent", ""],
+  ["unescape", ""],
 ]);
 
 // A call of a URI function on a string.
@@ -4884,6 +4902,7 @@ export const getURICall = (node: ts.Node, context: Context) => {
     getKind(text, context) === "string"
     ? {
         isDecode: node.expression.text.startsWith("decode"),
+        isUnescape: node.expression.text === "unescape",
         text,
         kept: set([...kept].map(string)),
       }
