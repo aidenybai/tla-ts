@@ -16446,7 +16446,7 @@ describe("errors", () => {
   });
 
   it("rejects a symbol key on a value that isn't an object", () => {
-    expect(() => compile("const map = new Map();\nconst read = map[Symbol.iterator];")).toThrow(
+    expect(() => compile("const list = [1, 2];\nconst read = list[Symbol.iterator];")).toThrow(
       "tla-ts can't read what a symbol keys on this value",
     );
   });
