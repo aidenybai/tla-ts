@@ -82,7 +82,7 @@ export const CodeContent = () => {
     <code
       ref={contentRef}
       className={cn(
-        "relative w-full min-w-0 font-mono text-[13px]/[1.7] text-foreground",
+        "@container relative w-full min-w-0 font-mono text-[13px]/[1.7] text-foreground",
         !code.isWrapped && "overflow-x-auto",
       )}
     >

@@ -66,11 +66,24 @@ export const SearchCell = (props: SearchCellProps) => {
   const lastTrunkLine = Math.max(...rows.filter(isTrunkRow).map((row) => row.state.line ?? 0));
   const lastTrunkIndex = lineRows.findLastIndex(isTrunkRow);
   const isBelowRoot = props.line > firstLine;
+  // A line with no states gives its width back to the code. The trunk keeps its place, half the
+  // code block from the right, and is cut where the code reaches it.
+  if (lineRows.length === 0)
+    return (
+      isBelowRoot &&
+      props.line < lastTrunkLine && (
+        <span
+          data-trunk
+          className="relative min-w-0 flex-1 self-stretch overflow-hidden max-sm:hidden"
+        >
+          <span className="absolute top-0 right-[calc(50cqw-13px)] h-full w-px bg-input" />
+        </span>
+      )
+    );
   return (
     <span
       className={cn(
         "relative flex w-1/2 shrink-0 flex-col self-stretch text-xs max-sm:w-full",
-        lineRows.length === 0 && "pointer-events-none -ml-[calc(50%+1rem)] max-sm:hidden",
         props.className,
       )}
     >
