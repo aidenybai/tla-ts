@@ -28,7 +28,8 @@ import {
   findNodes,
   getLocalCaptures,
   getFunctionOfKind,
-  getLiveMaker,
+  getKeptLocals,
+  getKeptMaker,
   getParameters,
   getSymbol,
   getUndefined,
@@ -48,7 +49,18 @@ import { useJavaScript } from "./javascript";
 import { getKeptIterator } from "./types";
 import { type Bound, bindValues, type Receiver } from "./scope";
 import type { TrackedStack } from "./stacks";
-import { apply, boolean, define, identifier, index, junction, number, string, tuple } from "./tla";
+import {
+  apply,
+  boolean,
+  define,
+  functionFrom,
+  identifier,
+  index,
+  junction,
+  number,
+  string,
+  tuple,
+} from "./tla";
 
 // The jobs and timers that a script queues, and the promises it makes, which tla-ts follows as it
 // compiles, as JavaScript runs each job once the script and the jobs before it finish.
@@ -2444,7 +2456,16 @@ const runAsyncBody = (
   makePromise(path, node, context, (made, name) => {
     const ref = getPromise(made, node, name).ref;
     const callee = typeof body === "function" ? undefined : body;
-    const captured = callee === undefined ? new Set() : getLocalCaptures(callee, context);
+    // A call of a function whose locals functions inside it read has an environment of its own,
+    // which holds those locals while it waits, and which its live methods hold, so that only that
+    // call runs them.
+    const environment =
+      callee !== undefined &&
+      context.heap !== undefined &&
+      getKeptLocals(callee, context).length > 0
+        ? context.names.getFresh("environment")
+        : undefined;
+    const keptMaker = callee === undefined ? undefined : getKeptMaker(callee, context);
     const isOuter = (symbol: ts.Symbol) =>
       !(symbol.declarations ?? []).some(
         (declaration) =>
@@ -2469,16 +2490,107 @@ const runAsyncBody = (
     };
     const catching = { ...made, scope: { ...made.scope, isCatching: true } };
     return bind(catching, rejectFrame, (bound, inner) => {
+      const scope =
+        environment === undefined || callee === undefined
+          ? bound.scope
+          : {
+              ...bound.scope,
+              bindings:
+                context.heap === undefined
+                  ? bound.scope.bindings
+                  : new Map([...bound.scope.bindings, [context.heap, identifier(environment)]]),
+              activations: new Map([
+                ...(bound.scope.activations ?? []),
+                [callee, useJavaScript("Allocated", [identifier(environment)], context)],
+              ]),
+            };
+      // While a body waits, the environments of the calls that it runs within hold the locals that
+      // functions inside those calls read, which the body reads again as it resumes.
+      const kept = [...(scope.activations ?? [])].map((entry) => ({
+        activation: entry[1],
+        locals: getKeptLocals(entry[0], context),
+      }));
+      const captured =
+        callee === undefined || (keptMaker !== undefined && scope.activations?.has(keptMaker))
+          ? new Set<ts.Symbol>()
+          : getLocalCaptures(callee, context);
       // The heap changes as the body awaits, which makes promises.
       const changed = [
         ...new Set([
           ...getChanged(callee ?? node, inner, context),
           ...(context.heap === undefined ? [] : [context.heap]),
+          ...kept.flatMap((entry) => entry.locals.map((local) => local.symbol)),
         ]),
       ];
+      const heapSymbol = context.heap;
       const leave = (current: Path) => {
         const caller = getCaller(current);
-        return { caller, left: leaveBody(current, caller.path, changed, isOuter) };
+        const left = leaveBody(current, caller.path, changed, isOuter);
+        return {
+          caller,
+          left:
+            heapSymbol === undefined
+              ? left
+              : {
+                  ...left,
+                  scope: {
+                    ...left.scope,
+                    bindings: new Map([
+                      ...left.scope.bindings,
+                      [
+                        heapSymbol,
+                        kept.reduce(
+                          (heap, entry) => {
+                            const values = entry.locals.flatMap(
+                              (local): [Expression, Expression][] => {
+                                const value = current.scope.bindings.get(local.symbol);
+                                return value === undefined ? [] : [[string(local.key), value]];
+                              },
+                            );
+                            return values.length === 0
+                              ? heap
+                              : useJavaScript(
+                                  "SetEnvironment",
+                                  [heap, entry.activation, functionFrom(values)],
+                                  context,
+                                );
+                          },
+                          getHeap(left.scope, node, context),
+                        ),
+                      ],
+                    ]),
+                  },
+                },
+        };
+      };
+      const enter = (resumer: Path, current: Path) => {
+        const entered = enterBody(
+          resumer,
+          current,
+          (symbol) => isOuter(symbol) && !captured.has(symbol),
+        );
+        const heap = getHeap(entered.scope, node, context);
+        return {
+          ...entered,
+          scope: {
+            ...entered.scope,
+            bindings: new Map([
+              ...entered.scope.bindings,
+              ...kept.flatMap((entry) =>
+                entry.locals
+                  .filter((local) => entered.scope.bindings.has(local.symbol))
+                  .map((local): [ts.Symbol, Expression] => [
+                    local.symbol,
+                    useJavaScript(
+                      "EnvironmentValue",
+                      [heap, entry.activation, string(local.key)],
+                      context,
+                    ),
+                  ]),
+              ),
+            ]),
+          },
+        };
       };
       const finish = (current: Path, value: Expression, isThrown: boolean) => {
         const left = leave(current);
@@ -2503,10 +2615,7 @@ const runAsyncBody = (
             context,
             (resumer, settled, isRejected, onReturn) =>
               (isRejected ? onRejected : onFulfilled)(
-                setCaller(
-                  enterBody(resumer, current, (symbol) => isOuter(symbol) && !captured.has(symbol)),
-                  { path: resumer, resume: onReturn },
-                ),
+                setCaller(enter(resumer, current), { path: resumer, resume: onReturn }),
                 settled,
               ),
             left.caller.resume,
@@ -2514,31 +2623,6 @@ const runAsyncBody = (
         },
         inlining: callee === undefined ? frame.inlining : new Set([...frame.inlining, callee]),
       };
-      // A call of a function that makes methods which read its live locals has an environment of its
-      // own, which those methods hold, so that only that call runs them.
-      const environment =
-        callee !== undefined &&
-        findNodes(callee, (node): node is ts.Node => getLiveMaker(node, context) === callee)
-          .length > 0
-          ? context.names.getFresh("environment")
-          : undefined;
-      const scope =
-        callee === undefined
-          ? { ...bound.scope, isBuiltInBody: true }
-          : environment === undefined
-            ? { ...bound.scope, isBuiltInBody: false }
-            : {
-                ...bound.scope,
-                bindings:
-                  context.heap === undefined
-                    ? bound.scope.bindings
-                    : new Map([...bound.scope.bindings, [context.heap, identifier(environment)]]),
-                activations: new Map([
-                  ...(bound.scope.activations ?? []),
-                  [callee, useJavaScript("Allocated", [identifier(environment)], context)],
-                ]),
-                isBuiltInBody: false,
-              };
       const start = setCaller(
         { ...inner, scope },
         { path: made, resume: (after) => continueWith(after, ref) },

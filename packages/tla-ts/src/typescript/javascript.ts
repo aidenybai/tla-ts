@@ -747,6 +747,13 @@ Captured(heap, closure, key) ==
 SetCaptured(heap, closure, key, value) ==
   [heap EXCEPT !.objects[heap.objects[closure[Ref]].environment[Ref]].bindings[key] = value]
 
+\\* A heap where an environment holds the values that the locals of its call have now.
+SetEnvironment(heap, environment, bindings) ==
+  [heap EXCEPT !.objects[environment[Ref]].bindings = bindings @@ @]
+
+\\* A local that an environment holds.
+EnvironmentValue(heap, environment, key) == heap.objects[environment[Ref]].bindings[key]
+
 \\* The environment of the call that made a closure, or Undefined for a function that isn't one.
 EnvironmentOf(heap, value) ==
   IF IsHeap(value) /\\ "environment" \\in DOMAIN heap.objects[value[Ref]]
