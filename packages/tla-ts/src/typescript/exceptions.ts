@@ -20,7 +20,7 @@ import { getEngineErrors, getHeap, translateObjectValue } from "./heap";
 import { getGeneratorPrototypeRef, translateBuiltInInstanceOf } from "./intrinsics";
 import { getTypeNames, useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
-import { getKind, isGeneratorType } from "./types";
+import { getKind, isGeneratorType, isHeapArray } from "./types";
 import { apply, boolean, field, identifier, ifExpression, record, set, string } from "./tla";
 
 export const NATIVE_ERRORS = new Set([
@@ -567,6 +567,7 @@ export const translateThrown = (node: ts.Expression, scope: Scope, context: Cont
   if (
     !isPrimitive &&
     !isHeapObject &&
+    !isHeapArray(node, context) &&
     getErrorClass(type.getSymbol(), context.checker) === undefined &&
     !isCaught(node, context)
   ) {

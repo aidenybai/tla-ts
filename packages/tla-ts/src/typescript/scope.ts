@@ -12,9 +12,16 @@ import {
 } from "./context";
 import { getWritten } from "./actions";
 import { TlaTypeScriptError } from "../errors";
-import { isIteratedPattern, isSteppedPattern, isTaken, isUntypedPattern } from "./iterators";
+import {
+  getTakenValue,
+  isIteratedPattern,
+  isSteppedPattern,
+  isTaken,
+  isUntypedPattern,
+} from "./iterators";
 import type { Expression, OperatorDefinition } from "../ast";
-import { translateArrayIteration, translatePatternIteration } from "./collections";
+import { getHeapElements, translateArrayIteration, translatePatternIteration } from "./collections";
+import { isNullish } from "./protocols";
 import { translateElements, translateExpression } from "./expressions";
 import {
   apply,
@@ -271,6 +278,62 @@ export const getOptionalField = (value: Expression, key: string, context: Contex
   );
 };
 
+// A pattern that a catch binds, or one nested in it, whose value is what the try threw.
+const isCaughtPattern = (pattern: ts.BindingPattern): boolean => {
+  const declaration = ts.findAncestor(
+    pattern,
+    (ancestor) =>
+      !ts.isBindingElement(ancestor) &&
+      !ts.isArrayBindingPattern(ancestor) &&
+      !ts.isObjectBindingPattern(ancestor),
+  );
+  return (
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    ts.isCatchClause(declaration.parent)
+  );
+};
+
+// The elements that a catch's array pattern takes from a value of any type: an array's, where the
+// heap holds the array or it's a sequence. Null and undefined stay, for the TypeError that the
+// pattern throws, and tla-ts doesn't follow the iterator of another value.
+const getCaughtElements = (
+  value: Expression,
+  heap: Expression,
+  pattern: ts.ArrayBindingPattern,
+  context: Context,
+) =>
+  getTakenValue(
+    share(value, "caught", context, (caught) =>
+      ifExpression(
+        useJavaScript("IsRef", [caught], context),
+        ifExpression(
+          apply("/\\", [
+            apply("~", [useJavaScript("IsProxy", [heap, caught], context)]),
+            useJavaScript("IsArray", [heap, caught], context),
+          ]),
+          getHeapElements(heap, caught, pattern, context),
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't destructure an object through its iterator"),
+          ]),
+        ),
+        ifExpression(
+          isNullish(caught, context),
+          caught,
+          ifExpression(
+            useJavaScript("IsSequenceValue", [caught], context),
+            translateArrayIteration(caught, heap, pattern, context),
+            apply("Assert", [
+              boolean(false),
+              string("tla-ts can't destructure this value through its iterator"),
+            ]),
+          ),
+        ),
+      ),
+    ),
+  );
+
 // Binds the names in a destructuring pattern to parts of a value, without LET definitions.
 export const bindPatternInline = (
   pattern: ts.BindingName,
@@ -303,11 +366,19 @@ export const bindPatternInline = (
     ...scope,
     destructured: [...(scope.destructured ?? []), { pattern, value }],
   };
+  const heapSymbol = context.heap;
   if (ts.isArrayBindingPattern(pattern) && isUntypedPattern(pattern, context) && !isTaken(value)) {
-    throw new TlaTypeScriptError("Give this pattern's value an array type", pattern);
+    if (heapSymbol === undefined || !isCaughtPattern(pattern)) {
+      throw new TlaTypeScriptError("Give this pattern's value an array type", pattern);
+    }
+    return bindPatternInline(
+      pattern,
+      getCaughtElements(value, getHeap(scope, pattern, context), pattern, context),
+      scope,
+      context,
+    );
   }
   const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(pattern));
-  const heapSymbol = context.heap;
   // An array pattern runs the iterator of an array, which may be one that a script replaced.
   const isIterated =
     ts.isArrayBindingPattern(pattern) &&

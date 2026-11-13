@@ -21,11 +21,13 @@ const taken = new WeakSet<Expression>();
 
 export const isTaken = (value: Expression) => taken.has(value);
 
-export const getTaken = (values: Expression[]) => {
-  const held = tuple(values);
-  taken.add(held);
-  return held;
+// A value that gives the list of what a pattern takes, which the pattern binds as an array's.
+export const getTakenValue = (value: Expression) => {
+  taken.add(value);
+  return value;
 };
+
+export const getTaken = (values: Expression[]) => getTakenValue(tuple(values));
 
 // The values that a rest element or a spread takes from an iterator before tla-ts stops following
 // it.

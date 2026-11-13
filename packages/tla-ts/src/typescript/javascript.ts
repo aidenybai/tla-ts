@@ -1245,7 +1245,7 @@ IsError(value) ==
 \\* that JavaScript throws differs between engines, and tla-ts gives it none. A script can't read or
 \\* change the prototype of an error class that isn't an object tla-ts holds, so its constructor
 \\* property is still the class.
-LOCAL IsSequenceValue(value) ==
+IsSequenceValue(value) ==
   ~IsRef(value) /\\ TypeOf(value) = "object" /\\ SubSeq(ToString(value), 1, 2) = "<<"
 
 LOCAL IsRegExp(heap, value) == IsHeap(value) /\\ "regexp" \\in DOMAIN heap.objects[value[Ref]]

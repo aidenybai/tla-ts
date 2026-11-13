@@ -17,6 +17,7 @@ import {
   findChangedArrays,
   findHeapArrays,
   isHoleyArray,
+  isThrownArray,
   isPrototypeArray,
   translateConstantFunctions,
 } from "./heap";
@@ -348,6 +349,7 @@ export const compile = (
     (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) ||
     node.kind === ts.SyntaxKind.AsyncKeyword ||
     isHoleyArray(node) ||
+    isThrownArray(node) ||
     isPrototypeArray(node) ||
     getKeptIterator(node, context) !== undefined ||
     getWrappedThis(node, context) !== undefined ||

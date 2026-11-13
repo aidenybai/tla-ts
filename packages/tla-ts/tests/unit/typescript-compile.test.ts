@@ -774,6 +774,52 @@ describe("top-level statements", () => {
     expect(result.failure?.message).toContain("tla-ts can't run a default that assigns");
   });
 
+  it("catch a thrown array as the same array", async () => {
+    const getSource = (operator: string) => `
+      let first: unknown = 0;
+      let same = false;
+      try {
+        throw [1, 2];
+      } catch (error) {
+        first = error;
+        try {
+          throw error;
+        } catch (again) {
+          same = again ${operator} first;
+        }
+      }
+      if (!same) throw new Error("same");
+    `;
+    expect((await checkModel(getSource("==="))).failure).toBeUndefined();
+    expect((await checkModel(getSource("!=="))).failure?.message).toContain("same");
+  });
+
+  it("destructure a thrown array in a catch's pattern", async () => {
+    const getSource = (expected: string) => `
+      let found = "";
+      try {
+        throw [1, [2, 3]];
+        // @ts-ignore
+      } catch ([first, [second, third] = [9]]) {
+        found = [first, second, third].join();
+      }
+      if (found !== "${expected}") throw new Error("caught");
+    `;
+    expect((await checkModel(getSource("1,2,3"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1,9,"))).failure?.message).toContain("caught");
+  });
+
+  it("stop the check at a catch's array pattern over a thrown object", async () => {
+    const result = await checkModel(`
+      const box = { size: 1 };
+      try {
+        throw box;
+        // @ts-ignore
+      } catch ([first]) {}
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't destructure an object");
+  });
+
   it("stop the check at a setter it can't call, before what follows", async () => {
     const result = await checkModel(`
       let count = 0;

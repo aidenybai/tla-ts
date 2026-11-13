@@ -2648,6 +2648,13 @@ export const isPrototypeArray = (node: ts.Node) =>
 export const hasPrototypeArray = (context: Context) =>
   [...context.heapCollections].some(isPrototypeArray);
 
+// An array that a throw makes, which keeps its identity, as an object does, so that what catches it
+// sees the same array.
+export const isThrownArray = (node: ts.Node) =>
+  ts.isArrayLiteralExpression(node) &&
+  ts.isThrowStatement(node.parent) &&
+  !node.elements.some(ts.isSpreadElement);
+
 export const isHoleyArray = (node: ts.Node) => {
   const isHeld =
     node.parent !== undefined &&
@@ -3692,6 +3699,7 @@ export const findHeapArrays = (
     }
     if (isHoleyArray(node)) arrays.add(node);
     if (isPrototypeArray(node)) arrays.add(node);
+    if (isThrownArray(node)) arrays.add(node);
     ts.forEachChild(node, find);
   };
   roots.forEach(find);
