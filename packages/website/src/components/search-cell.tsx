@@ -18,7 +18,7 @@ interface SearchCellProps {
 
 export const useSearchPath = (search: Search | undefined) => {
   const [hoveredStateId, setHoveredStateId] = useState<string>();
-  return { states: search ? getPath(search, hoveredStateId) : [], hover: setHoveredStateId };
+  return { states: search ? getPath(search.states, hoveredStateId) : [], hover: setHoveredStateId };
 };
 
 interface SearchRow {
@@ -42,6 +42,26 @@ const getBranch = (search: Search, state: SearchState, parent?: SearchRow): Sear
       .flatMap((child) => getBranch(search, child, row)),
   ];
 };
+
+interface StateValuesProps {
+  state: SearchState;
+}
+
+const StateValues = (props: StateValuesProps) =>
+  props.state.isFailing
+    ? props.state.change
+    : (props.state.change.match(VALUES) ?? []).map((value, index) => (
+        <span
+          key={index}
+          className={cn(
+            value.startsWith('"') && "text-success",
+            /^-?\d/.test(value) && "text-syntax-number",
+            /^(TRUE|FALSE)$/.test(value) && "text-syntax-keyword",
+          )}
+        >
+          {value}
+        </span>
+      ));
 
 interface SearchMoreProps {
   count: number;
@@ -140,20 +160,7 @@ export const SearchCell = (props: SearchCellProps) => {
             >
               {row.state.isFailing && <X weight="bold" className="shrink-0" />}
               <span className="min-w-0 wrap-anywhere">
-                {row.state.isFailing
-                  ? row.state.change
-                  : (row.state.change.match(VALUES) ?? []).map((value, index) => (
-                      <span
-                        key={index}
-                        className={cn(
-                          value.startsWith('"') && "text-success",
-                          /^-?\d/.test(value) && "text-syntax-number",
-                          /^(TRUE|FALSE)$/.test(value) && "text-syntax-keyword",
-                        )}
-                      >
-                        {value}
-                      </span>
-                    ))}
+                <StateValues state={row.state} />
               </span>
             </span>
           </span>

@@ -10,10 +10,12 @@ export interface SearchState {
 
 export interface Search {
   states: SearchState[];
+  chartStates: SearchState[];
   stateCount: number;
 }
 
 const SHOWN_STATES = 8;
+const CHART_STATES = 24;
 const EDGE = /^(-?\d+) -> (-?\d+) \[label="((?:[^"\\]|\\.)*)"/;
 const NODE = /^(-?\d+) \[label="((?:[^"\\]|\\.)*)"/;
 
@@ -52,19 +54,20 @@ export const getSearch = (
       isFailing: text === failingState,
     });
   }
-  const shown = new Set([...states.keys()].slice(0, SHOWN_STATES));
-  let failing = [...states.values()].find((state) => state.isFailing);
-  while (failing) {
-    shown.add(failing.id);
-    failing = failing.parentId === undefined ? undefined : states.get(failing.parentId);
-  }
+  const failing = [...states.values()].find((state) => state.isFailing);
+  const failingIds = getPath([...states.values()], failing?.id).map((state) => state.id);
+  const getShown = (count: number) => {
+    const shown = new Set([...[...states.keys()].slice(0, count), ...failingIds]);
+    return [...states.values()].filter((state) => shown.has(state.id));
+  };
   return {
-    states: [...states.values()].filter((state) => shown.has(state.id)),
+    states: getShown(SHOWN_STATES),
+    chartStates: getShown(CHART_STATES),
     stateCount: states.size,
   };
 };
 
-export const getPath = (search: Search, stateId: string | undefined): SearchState[] => {
-  const state = search.states.find((innerState) => innerState.id === stateId);
-  return state ? [state, ...getPath(search, state.parentId)] : [];
+export const getPath = (states: SearchState[], stateId: string | undefined): SearchState[] => {
+  const state = states.find((innerState) => innerState.id === stateId);
+  return state ? [state, ...getPath(states, state.parentId)] : [];
 };
