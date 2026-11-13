@@ -54,6 +54,7 @@ import {
   getAccessorFunctions,
   getCalledMethod,
   getCallee,
+  isFunctionObject,
   getElement,
   getAnyFunction,
   getCaptures,
@@ -3403,9 +3404,11 @@ export const bindCall = (
   // function.
   const callbacks = parameters.flatMap((parameter, position): [ts.Symbol, FunctionNode][] => {
     const argument = argumentNodes.at(position);
+    const held = argument === undefined ? undefined : getCallee(argument, context);
     const isObject =
       argument !== undefined &&
-      getHeapClass(argument, context) !== undefined &&
+      (getHeapClass(argument, context) !== undefined ||
+        (held !== undefined && isFunctionObject(held, context))) &&
       context.checker.getTypeAtLocation(parameter).getCallSignatures().length === 0;
     // A parameter that the call passes nothing takes the function that its default writes.
     const callback =

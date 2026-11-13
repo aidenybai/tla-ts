@@ -7504,6 +7504,71 @@ describe("errors", () => {
     });
   });
 
+  describe("holds a function that a call passes as an object on the heap", () => {
+    const getDescriptorSource = (passed: string, key: string, expected: string) => `
+      const seen = { count: 0 };
+      const check = (target: object) => {
+        const descriptor = Object.getOwnPropertyDescriptor(target, "${key}");
+        if (descriptor === undefined) throw new Error("missing");
+        const flags = [descriptor.writable, descriptor.enumerable, descriptor.configurable];
+        return \`\${String(descriptor.value)} \${flags.join()}\`;
+      };
+      function declared(a: number, b = 1) { return a + b; }
+      const arrow = (a: number) => a;
+      const generator = function* (a: number) { yield a; };
+      const described = check(${passed});
+      if (described !== "${expected}") throw new Error(described);
+    `;
+
+    it("reads the name of a function declaration", async () => {
+      const source = (expected: string) =>
+        getDescriptorSource("declared", "name", `${expected} false,false,true`);
+      expect((await checkModel(source("declared"))).failure).toBeUndefined();
+      expect((await checkModel(source("other"))).failure?.message).toContain("declared");
+    });
+
+    it("reads the length of an arrow that a constant holds", async () => {
+      const source = (expected: string) =>
+        getDescriptorSource("arrow", "length", `${expected} false,false,true`);
+      expect((await checkModel(source("1"))).failure).toBeUndefined();
+      expect((await checkModel(source("2"))).failure?.message).toContain("1 false");
+    });
+
+    it("reads the name of a function expression that the call passes", async () => {
+      const source = (expected: string) =>
+        getDescriptorSource("function () {}", "name", `${expected} false,false,true`);
+      expect((await checkModel(source(""))).failure).toBeUndefined();
+      expect((await checkModel(source("anonymous"))).failure).toBeDefined();
+    });
+
+    it("reads the length of a generator that a constant holds", async () => {
+      const source = (expected: string) =>
+        getDescriptorSource("generator", "length", `${expected} false,false,true`);
+      expect((await checkModel(source("1"))).failure).toBeUndefined();
+      expect((await checkModel(source("0"))).failure?.message).toContain("1 false");
+    });
+
+    it("reads the name that a call deletes, and still calls the functions", async () => {
+      const source = (expected: string) => `
+        const seen = { count: 0 };
+        const remove = (target: object) => {
+          delete (target as { name?: string }).name;
+        };
+        function declared(a: number) { return a; }
+        const arrow = (a: number, b: number) => a + b;
+        const generator = function* (a: number) { yield a; };
+        remove(declared);
+        remove(arrow);
+        const names: string[] = [declared.name, arrow.name];
+        const [first] = generator(4);
+        const result = \`\${names.join()} \${declared(1) + arrow(1, 2) + first}\`;
+        if (result !== "${expected}") throw new Error(result);
+      `;
+      expect((await checkModel(source(", 8"))).failure).toBeUndefined();
+      expect((await checkModel(source("declared,arrow 8"))).failure?.message).toContain(", 8");
+    });
+  });
+
   it("writes the name and message of an error that the heap holds in its toString", async () => {
     const source = `
       const holder = { seen: 0 };

@@ -424,7 +424,7 @@ export const getClass = (node: ts.Node | undefined, context: Context) => {
 export const isInlined = (node: ts.Node | undefined, context: Context) => {
   const found = getAnyFunction(node);
   return (
-    (found !== undefined && !isHeapFunction(found, context)) ||
+    (found !== undefined && !isHeapFunction(found, context) && !isFunctionObject(found, context)) ||
     getFactoryCall(node, context) !== undefined ||
     (node !== undefined &&
       ts.isClassExpression(node) &&
@@ -1312,7 +1312,34 @@ export const isFunctionObject = (
           (ts.isPropertyDeclaration(member) && !isStatic(member) && ts.isIdentifier(member.name)),
       ))) &&
   (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0 &&
-  (isDefault(node) || (ts.isClassExpression(node) && isReadClass(node)));
+  (isDefault(node) ||
+    (ts.isClassExpression(node) && isReadClass(node)) ||
+    isPassedFunction(node, context));
+
+// A function that a call passes as an object, or an arrow or a generator that a name holds which a
+// call passes, that the script makes once. A plain function that a name holds is a heap function.
+const isPassedFunction = (node: ts.Node, context: Context) => {
+  if ((!ts.isArrowFunction(node) && !ts.isFunctionExpression(node)) || !isOnce(node.parent)) {
+    return false;
+  }
+  if (isObjectArgument(node, context)) return true;
+  const declaration = node.parent;
+  if (
+    (ts.isFunctionExpression(node) && node.asteriskToken === undefined) ||
+    !ts.isVariableDeclaration(declaration) ||
+    declaration.initializer !== node ||
+    !ts.isIdentifier(declaration.name)
+  ) {
+    return false;
+  }
+  const symbol = getSymbol(declaration.name, context.checker);
+  const sourceFile = node.getSourceFile();
+  return (
+    symbol !== undefined &&
+    !isAssigned(symbol, sourceFile, context) &&
+    isPassedAsObject(symbol, sourceFile, context)
+  );
+};
 
 // Whether a class expression is only read where it runs: the object of a property access, a
 // call's argument, or the value of a logical assignment to a name.
@@ -2009,6 +2036,30 @@ export const getHasInstanceReceiver = (node: ts.CallExpression, context: Context
     ? node.expression.expression
     : undefined;
 
+// Whether a call's argument is where its parameter's type is an object's, so the callee may read,
+// write or delete the properties of a function that it passes.
+const isObjectArgument = (argument: ts.Expression, context: Context) => {
+  const type = context.checker.getContextualType(argument);
+  return (
+    ts.isCallExpression(argument.parent) &&
+    argument.parent.arguments.includes(argument) &&
+    type !== undefined &&
+    (type.flags & (ts.TypeFlags.NonPrimitive | ts.TypeFlags.Object)) !== 0 &&
+    type.getCallSignatures().length === 0 &&
+    type.getConstructSignatures().length === 0
+  );
+};
+
+// Whether a call passes what a name holds as an object.
+const isPassedAsObject = (symbol: ts.Symbol, sourceFile: ts.SourceFile, context: Context) =>
+  findNodes(sourceFile, ts.isCallExpression).some((call) =>
+    call.arguments.some(
+      (argument) =>
+        getSymbol(skipCasts(argument), context.checker) === symbol &&
+        isObjectArgument(argument, context),
+    ),
+  );
+
 export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFunction => {
   if (context.heap === undefined) return false;
   if (!ts.isFunctionDeclaration(node) && !ts.isFunctionExpression(node)) return false;
@@ -2055,7 +2106,7 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
     !isAssigned(symbol, sourceFile, context) &&
     (isNewTarget(sourceFile)
       ? !isReturning(node.body)
-      : // An assignment writes one of its properties.
+      : // An assignment writes one of its properties, or a call passes it as an object.
         findNodes(
           sourceFile,
           (child): child is ts.BinaryExpression =>
@@ -2064,7 +2115,7 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
             (ts.isPropertyAccessExpression(child.left) ||
               ts.isElementAccessExpression(child.left)) &&
             getSymbol(skipCasts(child.left.expression), context.checker) === symbol,
-        ).length > 0);
+        ).length > 0 || isPassedAsObject(symbol, sourceFile, context));
   heapFunctions.set(node, isHeap);
   return isHeap;
 };
