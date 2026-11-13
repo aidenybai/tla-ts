@@ -7530,6 +7530,37 @@ describe("errors", () => {
     );
   });
 
+  it("takes or drops up to Infinity or Number.MAX_SAFE_INTEGER", async () => {
+    const result = await checkModel(`
+      function* g(): Generator<number> {
+        yield 0;
+        yield 1;
+      }
+      const largest = g().take(Number.MAX_SAFE_INTEGER).toArray();
+      const unlimited = g().take(Infinity).toArray();
+      const dropped = g().drop(Infinity).toArray();
+      if (largest.join() !== "0,1" || unlimited.join() !== "0,1" || dropped.length !== 0) {
+        throw new Error("limit");
+      }
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("takes or drops up to a fraction's whole part", async () => {
+    await expect(
+      checkModel(`
+        function* g(): Generator<number> {
+          yield 0;
+          yield 1;
+        }
+        const truncated = g().take(1.9).toArray();
+        const halfDropped = g().drop(1.5).toArray();
+        if (truncated.join() !== "0" || halfDropped.join() !== "1") throw new Error("limit");
+        if (truncated.length === 1) throw new Error("one");
+      `),
+    ).rejects.toThrow("one");
+  });
+
   it("steps an array's iterator with next as the array changes", async () => {
     const result = await checkModel(`
       const arr = ["a", "b"];
