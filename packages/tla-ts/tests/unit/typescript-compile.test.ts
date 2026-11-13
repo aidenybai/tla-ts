@@ -10564,6 +10564,18 @@ describe("errors", () => {
         if (held.name === "b") continue;
         if (held.name === "c") break;
       }
+      if (order.join() !== "${expected}") throw new Error(order.join());
+    `;
+    const result = await checkModel(source("body,a,body,b,body,c"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("body,body,a,b,body,c"));
+    expect(wrong.failure).toBeDefined();
+  });
+
+  it("disposes what a for-of's using declaration holds where its body returns", async () => {
+    const source = (expected: string) => `
+      const order: string[] = [];
+      const resources = [{ [Symbol.dispose]() { order.push("disposed"); } }];
       const run = () => {
         for (using held of resources) {
           order.push("run");
@@ -10574,10 +10586,10 @@ describe("errors", () => {
       if (run() !== 1) throw new Error("run");
       if (order.join() !== "${expected}") throw new Error(order.join());
     `;
-    const result = await checkModel(source("body,a,body,b,body,c,run,a"));
+    const result = await checkModel(source("run,disposed"));
     expect(result.failure).toBeUndefined();
-    const wrong = await checkModel(source("body,a,body,b,body,c,a,run"));
-    expect(wrong.failure?.message).toContain("body,a,body,b,body,c,run,a");
+    const wrong = await checkModel(source("disposed,run"));
+    expect(wrong.failure).toBeDefined();
   });
 
   it("throws what disposing a resource throws, suppressing the error before it", async () => {
@@ -10730,37 +10742,82 @@ describe("errors", () => {
     expect(wrong.failure).toBeDefined();
   });
 
-  it("awaits what an AsyncDisposableStack disposes, as Node does", async () => {
+  it("awaits the async dispose method of what an AsyncDisposableStack uses, as Node does", async () => {
     const source = (expected: string) => `
       declare function setTimeout(callback: () => void): void;
       const order: string[] = [];
       const stack = new AsyncDisposableStack();
-      const resource = { async [Symbol.asyncDispose]() { order.push("async"); } };
-      const syncResource = { [Symbol.dispose]() { order.push("sync"); } };
-      function onDefer() { order.push("defer"); }
-      stack.use(resource);
-      stack.use(null);
-      stack.use(syncResource);
-      stack.defer(onDefer);
-      const done = stack.disposeAsync();
+      stack.use({ async [Symbol.asyncDispose]() { order.push("async"); } });
+      stack.disposeAsync().then(() => order.push("done"));
       order.push("after call");
       Promise.resolve()
         .then(() => order.push("tick 1"))
-        .then(() => order.push("tick 2"))
-        .then(() => order.push("tick 3"))
-        .then(() => order.push("tick 4"));
-      done.then((value) => order.push("done " + String(value) + " " + String(stack.disposed)));
+        .then(() => order.push("tick 2"));
       setTimeout(() => {
         if (order.join() !== "${expected}") throw new Error(order.join());
       });
     `;
-    const result = await checkModel(
-      source("defer,after call,sync,tick 1,async,tick 2,tick 3,done undefined true,tick 4"),
-    );
+    const result = await checkModel(source("async,after call,tick 1,done,tick 2"));
     expect(result.failure).toBeUndefined();
-    const wrong = await checkModel(
-      source("defer,after call,sync,tick 1,tick 2,async,tick 3,done undefined true,tick 4"),
-    );
+    const wrong = await checkModel(source("async,after call,done,tick 1,tick 2"));
+    expect(wrong.failure).toBeDefined();
+  });
+
+  it("awaits each function and resource that an AsyncDisposableStack disposes, as Node does", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      const order: string[] = [];
+      const stack = new AsyncDisposableStack();
+      stack.use({ [Symbol.dispose]() { order.push("sync"); } });
+      stack.defer(() => { order.push("defer"); });
+      stack.disposeAsync();
+      order.push("after call");
+      Promise.resolve().then(() => order.push("tick 1"));
+      setTimeout(() => {
+        if (order.join() !== "${expected}") throw new Error(order.join());
+      });
+    `;
+    const result = await checkModel(source("defer,after call,sync,tick 1"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("defer,sync,after call,tick 1"));
+    expect(wrong.failure).toBeDefined();
+  });
+
+  it("awaits once for null that an AsyncDisposableStack uses, as Node does", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      const order: string[] = [];
+      const stack = new AsyncDisposableStack();
+      stack.use(null);
+      stack.disposeAsync().then(() => order.push("done"));
+      Promise.resolve()
+        .then(() => order.push("tick 1"))
+        .then(() => order.push("tick 2"));
+      setTimeout(() => {
+        if (order.join() !== "${expected}") throw new Error(order.join());
+      });
+    `;
+    const result = await checkModel(source("tick 1,done,tick 2"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("done,tick 1,tick 2"));
+    expect(wrong.failure).toBeDefined();
+  });
+
+  it("fulfills disposeAsync's promise with undefined once the AsyncDisposableStack is disposed", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      const order: string[] = [];
+      const stack = new AsyncDisposableStack();
+      stack.defer(() => { order.push("defer"); });
+      stack.disposeAsync().then((value) => order.push(\`done \${value} \${stack.disposed}\`));
+      order.push("after call");
+      setTimeout(() => {
+        if (order.join() !== "${expected}") throw new Error(order.join());
+      });
+    `;
+    const result = await checkModel(source("defer,after call,done undefined true"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("defer,after call,done undefined false"));
     expect(wrong.failure).toBeDefined();
   });
 
