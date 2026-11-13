@@ -53,7 +53,6 @@ import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { getConsequences } from "./smt-consequences";
 import { getFdConsequences } from "./fd-solver";
 import { SmtKernel } from "./smt-kernel";
-import { AssertedFormulas } from "./asserted-formulas";
 import { isAstLess } from "./ast-lt";
 import { InvVarShifter } from "./rewriter-tpl";
 import { elimUnusedVars, getFreeVarSorts, VarSubst } from "./var-subst";
@@ -294,9 +293,9 @@ interface ScriptState {
   hasChecked: boolean;
   // The datalog context of the declare-rel, declare-var, rule and query commands.
   datalog: DatalogContext | undefined;
-  // The formulas of combined_solver's incremental smt kernel, which rewrites each assertion when it
-  // is asserted and keeps it, or undefined while Z3 has made no such kernel.
-  kernelFormulas: AssertedFormulas | undefined;
+  // combined_solver's incremental smt kernel, which keeps one context across the checks, or
+  // undefined while Z3 has made no such kernel.
+  kernel: SmtKernel | undefined;
 }
 
 // Z3 fixes the proof mode at the first command that needs terms.
@@ -356,7 +355,7 @@ export const runSmtlibScript = (
       isIncremental: false,
       hasChecked: false,
       datalog: undefined,
-      kernelFormulas: undefined,
+      kernel: undefined,
     };
   };
   const script = { state: createState() };
@@ -504,6 +503,12 @@ export const runSmtlibScript = (
       };
     }
   };
+  const getKernelParams = () => ({
+    isMbqi: settings.isMbqi || isMbqiByLogic(getSetup()),
+    mbqiMaxIterations: settings.mbqiMaxIterations,
+    isFindingMacros: settings.isFindingMacros,
+    setup: getSetup(),
+  });
   const checkSat = (extra: number[]) => {
     const state = script.state;
     state.manager.limit.restart(Date.now() + options.timeLimitMs);
@@ -525,15 +530,12 @@ export const runSmtlibScript = (
         (state.logic === "QF_FD" || state.logic === "SAT") &&
         !settings.isProducingProofs &&
         !settings.parameters.has("tactic.default_tactic");
-      const kernel =
-        isAssuming || (state.isIncremental && !isOptimizing && !isFd)
-          ? solveAssuming(manager, getNamedAssertions(), isNamed ? [...names, ...extra] : extra, {
-              isMbqi: settings.isMbqi || isMbqiByLogic(getSetup()),
-              mbqiMaxIterations: settings.mbqiMaxIterations,
-              isFindingMacros: settings.isFindingMacros,
-              setup: getSetup(),
-            })
-          : undefined;
+      const assumptions = isNamed ? [...names, ...extra] : extra;
+      const kernel = !(isAssuming || (state.isIncremental && !isOptimizing && !isFd))
+        ? undefined
+        : state.kernel === undefined
+          ? solveAssuming(manager, getNamedAssertions(), assumptions, getKernelParams())
+          : { result: state.kernel.check(assumptions), context: state.kernel.context };
       // Z3 retries a quantifier-free problem with its tactic when the incremental kernel gives up.
       const solved =
         kernel === undefined ||
@@ -563,6 +565,7 @@ export const runSmtlibScript = (
       };
       print("unknown");
     } finally {
+      state.manager.limit.release();
       state.manager.limit.pop();
     }
   };
@@ -586,7 +589,7 @@ export const runSmtlibScript = (
   // cmd_context::mk_solver: mk_solver_for_logic makes the incremental solver the smt kernel unless
   // the logic, the default tactic or the sat parameters pick a sat solver, which only stores its
   // assertions.
-  const mkKernelFormulas = () => {
+  const mkKernel = () => {
     const state = script.state;
     const logic = state.logic;
     const parameters = settings.parameters;
@@ -598,17 +601,17 @@ export const runSmtlibScript = (
       parameters.get("tactic.default_tactic") === "sat" ||
       parameters.get("sat.smt") === "true" ||
       parameters.get("sat.euf") === "true";
-    return isSatSolver ? undefined : new AssertedFormulas(state.manager, settings.isFindingMacros);
+    return isSatSolver ? undefined : new SmtKernel(state.manager, getKernelParams());
   };
   // solver_na2as asserts a named assertion as an implication from its name.
   const assertInKernel = (formula: number, name: number) => {
     const state = script.state;
-    const formulas = state.kernelFormulas;
-    if (formulas === undefined) return;
+    const kernel = state.kernel;
+    if (kernel === undefined) return;
     const manager = state.manager;
     const asserted = name === -1 ? formula : manager.mkApp(OP_IMPLIES, [name, formula], SORT_BOOL);
     manager.incRef(asserted);
-    formulas.assertExpr(asserted);
+    kernel.assertExpr(asserted);
     manager.decRef(asserted);
   };
   let pendingText = "";
@@ -892,13 +895,9 @@ export const runSmtlibScript = (
           found.consequences.reset();
           return;
         }
-        const kernel = new SmtKernel(manager, {
-          isMbqi: settings.isMbqi || isMbqiByLogic(getSetup()),
-          mbqiMaxIterations: settings.mbqiMaxIterations,
-          isFindingMacros: settings.isFindingMacros,
-          setup: getSetup(),
-        });
-        for (const assertion of getNamedAssertions()) kernel.assertExpr(assertion);
+        const kernel = state.kernel ?? new SmtKernel(manager, getKernelParams());
+        if (state.kernel === undefined)
+          for (const assertion of getNamedAssertions()) kernel.assertExpr(assertion);
         const found = getConsequences(kernel, [...names, ...assumptions], vars);
         state.check = {
           status: found.result,
@@ -953,7 +952,7 @@ export const runSmtlibScript = (
         });
         state.reader.push();
         state.isIncremental = true;
-        state.kernelFormulas?.push();
+        state.kernel?.push();
       }
     },
     pop: (list) => {
@@ -968,7 +967,7 @@ export const runSmtlibScript = (
       if (count === 0) return;
       state.isIncremental = true;
       const scope = state.scopes[state.scopes.length - count];
-      for (let index = 0; index < count; index++) state.kernelFormulas?.pop();
+      state.kernel?.pop(count);
       for (let index = 0; index < count; index++) state.reader.pop();
       restoreAssertions(scope.assertions);
       resetOptimizer();
@@ -988,8 +987,8 @@ export const runSmtlibScript = (
       releaseObjectives(0, 0);
       state.scopes = state.scopes.map(() => ({ assertions: 0, objectives: 0, softTrail: 0 }));
       if (state.isProofsEnabled !== undefined) {
-        state.kernelFormulas = mkKernelFormulas();
-        for (let index = 0; index < state.scopes.length; index++) state.kernelFormulas?.push();
+        state.kernel = mkKernel();
+        for (let index = 0; index < state.scopes.length; index++) state.kernel?.push();
       }
       state.isIncremental = state.scopes.length > 0;
       state.hasChecked = false;
@@ -1402,7 +1401,7 @@ export const runSmtlibScript = (
       }
       state.logic = logic.text;
       state.reader = createSmtlibReader(state.manager, logic.text, settings.parserOptions);
-      if (state.isProofsEnabled !== undefined) state.kernelFormulas = mkKernelFormulas();
+      if (state.isProofsEnabled !== undefined) state.kernel = mkKernel();
       if (settings.isPrintingSuccess) print("success");
     },
     "set-info": () => {},
@@ -1417,7 +1416,7 @@ export const runSmtlibScript = (
     if (command === undefined) throw new SmtUnsupportedError(`the command ${head.text}`);
     if (!MANAGERLESS_COMMANDS.has(head.text) && script.state.isProofsEnabled === undefined) {
       script.state.isProofsEnabled = settings.parameters.get("proof") === "true";
-      script.state.kernelFormulas = mkKernelFormulas();
+      script.state.kernel = mkKernel();
     }
     command(list);
     if (settings.isPrintingSuccess && SILENT_COMMANDS.has(head.text)) print("success");

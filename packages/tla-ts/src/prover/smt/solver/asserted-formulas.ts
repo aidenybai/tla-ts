@@ -178,7 +178,9 @@ export class AssertedFormulas {
     this.formulas = new RefVector(manager);
     this.macros = new MacroManager(manager);
     this.substitution = new Substitution(manager);
-    this.rewriter = new Rewriter(manager, KERNEL_REWRITER_OPTIONS);
+    // set_eliminate_and turns coalesce_chars off when smt.string_solver is seq, its default, so
+    // string literals reach the seq theory as concatenations of units.
+    this.rewriter = new Rewriter(manager, { ...KERNEL_REWRITER_OPTIONS, isCoalescingChars: false });
     this.names = new DefinedNames(manager);
     this.patternInference = new PatternInferenceRw(manager, new PatternInference(manager));
     this.bvSharing = new MaxBvSharing(manager);

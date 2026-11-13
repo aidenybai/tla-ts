@@ -379,6 +379,27 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ).toEqual(["unsat", "sat", "((x 2.0))"]);
   });
 
+  // From z3test's string-ops.smt2. The second check goes on from the unfolding depth the first
+  // raised, and sees the string literals as units, as Z3's one incremental kernel does.
+  it("keeps one kernel across incremental checks, as in z3test's string-ops.smt2", () => {
+    expect(
+      run([
+        "(declare-const a String)",
+        "(push)",
+        '(assert (= (str.len a) (+ 3 (str.indexof a "abc"))))',
+        "(assert (= (str.len a) 4))",
+        "(check-sat)",
+        "(pop)",
+        "(push)",
+        '(assert (str.contains "abc" a))',
+        '(assert (str.contains "bcd" a))',
+        "(check-sat)",
+        "(get-model)",
+        "(pop)",
+      ]),
+    ).toEqual(["sat", "sat", '(\n  (define-fun a () String\n    "b")\n)']);
+  });
+
   it("throws at the dependencies of a tactic that drops them", () => {
     expect(() =>
       run([
