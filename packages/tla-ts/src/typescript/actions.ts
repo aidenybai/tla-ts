@@ -10071,6 +10071,11 @@ const translateTry = (
       declaration === undefined
         ? { definitions: [], scope: caught.scope }
         : bindPattern(declaration.name, thrown.value, caught.scope, context);
+    // A catch's parameter is a local binding, which the block may assign as it does a let.
+    const parameter =
+      declaration !== undefined && ts.isIdentifier(declaration.name)
+        ? getSymbol(declaration.name, context.checker)
+        : undefined;
     const bodyFrame = statement.finallyBlock === undefined ? outer : guardYields(outer);
     return letIn(
       bound.definitions,
@@ -10084,7 +10089,12 @@ const translateTry = (
           bound.scope,
           translateStatements(
             catchClause.block.statements,
-            { ...caught, scope: { ...bound.scope, destructured: undefined } },
+            {
+              ...caught,
+              scope: { ...bound.scope, destructured: undefined },
+              mutable:
+                parameter === undefined ? caught.mutable : new Set([...caught.mutable, parameter]),
+            },
             context,
             bodyFrame,
           ),

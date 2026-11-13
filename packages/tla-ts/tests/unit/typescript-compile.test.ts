@@ -1743,6 +1743,47 @@ describe("values", () => {
     );
   });
 
+  it("assigns a catch's parameter as it does a let", async () => {
+    const getSource = (expected: string) => `
+      let seen = "";
+      const run = (a: number) => {
+        try {
+          throw "stuff1";
+        } catch (a) {
+          seen += String(a);
+          a = 2;
+          seen += String(a);
+        }
+        return a;
+      };
+      const out = run(1);
+      const outcomes = [seen, out].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("stuff12,1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("stuff1stuff1,1"))).failure?.message).toContain(
+      "outcomes stuff12,1",
+    );
+  });
+
+  it("assigns a catch's parameter in a loop's body", async () => {
+    const getSource = (expected: string) => `
+      let total = 0;
+      for (let k = 0; k < 3; k++) {
+        try {
+          throw k;
+        } catch (e) {
+          e = (e as number) * 10;
+          total += e as number;
+        }
+      }
+      const outcomes = String(total);
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("30"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("3"))).failure?.message).toContain("outcomes 30");
+  });
+
   it("converts an increment's operand that holds undefined or null to a number", async () => {
     const getSource = (expected: string) => `
       const box: { n: number | undefined; m: number | null } = { n: undefined, m: null };
