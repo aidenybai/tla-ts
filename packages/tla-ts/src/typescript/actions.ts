@@ -6,6 +6,7 @@ import {
   getArrayIteratorCall,
   getHeapArrayChange,
   getStoredCall,
+  getArrayLikeChange,
   isArrayIteration,
   isStoredChange,
   isStoredStatement,
@@ -2033,6 +2034,36 @@ export const translateCallStatement = (
               throwTypeError(path, expression, context, frame),
             )
           : run,
+      ),
+    );
+  }
+  const arrayLikeChange = getArrayLikeChange(expression, context);
+  if (arrayLikeChange !== undefined) {
+    const changeName = context.names.getFresh("change");
+    const change = identifier(changeName);
+    const heap = getHeap(path.scope, expression, context);
+    const ref = translateExpression(arrayLikeChange.object, path.scope, context);
+    return bindOnce(
+      path,
+      changeName,
+      arrayLikeChange.method === "reverse"
+        ? useJavaScript("ArrayLikeReverse", [heap, ref], context)
+        : useJavaScript(
+            "ArrayChange",
+            [
+              heap,
+              ref,
+              string(arrayLikeChange.method),
+              tuple(
+                arrayLikeChange.items.map((item) => translateExpression(item, path.scope, context)),
+              ),
+            ],
+            context,
+          ),
+      ifThenElse(
+        field(change, "isThrown"),
+        throwTypeError(withHeap(field(change, "heap")), expression, context, frame),
+        continueWith(withHeap(field(change, "heap")), field(change, "value")),
       ),
     );
   }
@@ -8594,6 +8625,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getStackCall(node, context) !== undefined ||
     getHeapArrayChange(node, context) !== undefined ||
     isStoredStatement(node, context) ||
+    getArrayLikeChange(node, context) !== undefined ||
     getHeapSetOrMapChange(node, context) !== undefined ||
     getArrayIteratorCall(node, context) !== undefined ||
     isNullishArrayMethodCall(node, context) ||

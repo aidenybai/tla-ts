@@ -11361,6 +11361,37 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("wrapped");
   });
 
+  it("pushes, pops, shifts, unshifts, and reverses an array-like object through call", async () => {
+    const result = await checkModel(`
+      const object = { 0: "a", 1: "b", length: 2 };
+      const pushed = Array.prototype.push.call(object, "c");
+      const shifted = Array.prototype.shift.call(object);
+      Array.prototype.reverse.call(object);
+      const popped = Array.prototype.pop.call(object);
+      const unshifted = Array.prototype.unshift.call(true, 1);
+      if (
+        pushed === 3 &&
+        shifted === "a" &&
+        popped === "b" &&
+        unshifted === 1 &&
+        object[0] === "c" &&
+        object.length === 1
+      ) {
+        throw new Error("changed");
+      }
+    `);
+    expect(result.failure?.message).toContain("changed");
+  });
+
+  it("stops a reverse through call whose object a script reads", () => {
+    expect(() =>
+      checkModel(`
+        const reversed = Array.prototype.reverse.call(true);
+        if (!(reversed instanceof Boolean)) throw new Error("reversed");
+      `),
+    ).toThrow("Unsupported call: Array.prototype.reverse.call");
+  });
+
   it("takes or drops up to Infinity or Number.MAX_SAFE_INTEGER", async () => {
     const result = await checkModel(`
       function* g(): Generator<number> {

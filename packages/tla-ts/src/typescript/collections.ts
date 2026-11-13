@@ -84,6 +84,7 @@ import {
   translateUnknown,
   isTypeReference,
   mayBeSequenceType,
+  getArrayMethodCall,
 } from "./types";
 
 interface Unordered {
@@ -2816,6 +2817,21 @@ const STORED_ARRAY_READS = new Set([
   "reduceRight",
 ]);
 const STORED_ARRAY_CHANGES = new Set(["push", "pop", "shift", "unshift", "reverse"]);
+
+// A call of Array.prototype's method that changes an object in place, which call runs on the object.
+export const getArrayLikeChange = (node: ts.CallExpression, context: Context) => {
+  const method = getArrayMethodCall(node, context);
+  const object = node.arguments.at(0);
+  // reverse gives the object, whose type the call's says is an array, so only a statement drops it.
+  return method !== undefined &&
+    STORED_ARRAY_CHANGES.has(method) &&
+    (method !== "reverse" || ts.isExpressionStatement(node.parent)) &&
+    object !== undefined &&
+    getKind(object, context) === "object" &&
+    !node.arguments.some(ts.isSpreadElement)
+    ? { method, object, items: node.arguments.slice(1) }
+    : undefined;
+};
 
 type StoredBuiltIn = "Object.prototype.toString" | `Array.prototype.${string}`;
 
