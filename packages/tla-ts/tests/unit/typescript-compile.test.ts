@@ -5936,6 +5936,18 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain('"number"');
   });
 
+  it("describes the own properties of a constant number", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      if (Object.keys(Object.getOwnPropertyDescriptors(-Infinity)).length !== 0) throw new Error("infinity");
+      if (Object.keys(Object.getOwnPropertyDescriptors(Math.PI)).length !== 0) throw new Error("pi");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("(Math.PI)).length !== 0", "(Math.PI)).length !== 1");
+    expect((await checkModel(wrong)).failure?.message).toContain('"pi"');
+  });
+
   it("reads a negative number as a constant argument", async () => {
     const source = `
       Object.getOwnPropertyDescriptor(-2, "foo");
