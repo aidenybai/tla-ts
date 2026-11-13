@@ -8569,6 +8569,38 @@ describe("errors", () => {
     ).toThrow("tla-ts can't follow a function that outlives its call");
   });
 
+  const getOwnNameSource = (operator: string) => `
+      const seen = { count: 0 };
+      var probe: (() => unknown) | undefined;
+      var func = function f(): unknown {
+        probe = function () { return f; };
+        return f;
+      };
+      var f = "outside";
+      const returned = func();
+      if (f !== "outside" || returned !== func || probe!() ${operator} func) throw new Error("own");
+  `;
+
+  it("reads the name that a function expression gives itself as the function", async () => {
+    expect((await checkModel(getOwnNameSource("!=="))).failure).toBeUndefined();
+  });
+
+  it("reads the name that a function expression gives itself as no other value", async () => {
+    expect((await checkModel(getOwnNameSource("==="))).failure?.message).toContain("own");
+  });
+
+  it("stops where a function that the script makes as an object reads its own name", () => {
+    expect(() =>
+      compile(`
+        const seen = { count: 0 };
+        function make() { return function f(): unknown { return f; }; }
+        const made = make();
+        const other = make();
+        if (made() !== made || other() !== other) throw new Error("own");
+      `),
+    ).toThrow("tla-ts can't read f, the name that this function gives itself");
+  });
+
   const getCounterSource = (expected: string) => `
       const seen = { count: 0 };
       let next: (() => number) | undefined;
