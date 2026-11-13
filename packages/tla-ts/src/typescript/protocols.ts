@@ -452,6 +452,52 @@ const getRestGetter = (pattern: ts.BindingName, context: Context) => {
   return keys.length > 0 ? { element, keys } : undefined;
 };
 
+// Reads the keys that an object rest element copies through getters that the script writes, which
+// gives what it read as a function of keys to values. The rest copies a key's value, running its
+// getter, where the object has it as its own enumerable property. Where it has more than one of the
+// keys, their getters run in an order that tla-ts doesn't follow.
+export const readRestGetters = (
+  site: ts.Node,
+  keys: readonly string[],
+  value: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, read: Expression) => Formula,
+): Formula => {
+  const isOwn = (key: string) =>
+    useJavaScript(
+      "IsEnumerableOwn",
+      [getHeap(path.scope, site, context), value, string(key)],
+      context,
+    );
+  return keys.reduceRight(
+    (otherwise, key) => {
+      const others = keys.filter((other) => other !== key);
+      const copy = read(site, value, key, path, context, frame, (after, got) =>
+        continueWith(after, apply(":>", [string(key), got])),
+      );
+      return ifThenElse(
+        isOwn(key),
+        others.length === 0
+          ? copy
+          : ifThenElse(
+              junction("Or", others.map(isOwn)),
+              leaf(
+                apply("Assert", [
+                  boolean(false),
+                  string("tla-ts can't copy the properties of more than one getter in order"),
+                ]),
+              ),
+              copy,
+            ),
+        otherwise,
+      );
+    },
+    continueWith(path, tuple([])),
+  );
+};
+
 // Whether a pattern's binding runs getters that haven't run yet.
 export const isGetterPattern = (pattern: ts.BindingName, path: Path, context: Context) =>
   [...getGetterElements(pattern, context), getRestGetter(pattern, context)?.element].some(
@@ -485,40 +531,15 @@ export const readPatternGetters = (
     });
   const readFrom = (current: Path, values: readonly Expression[]): Formula => {
     const element = elements.at(values.length);
-    // The rest copies a key's value, running its getter, where the object has it as its own
-    // enumerable property. Where it has more than one of the keys, their getters run in an order
-    // that tla-ts doesn't follow.
     if (element === undefined && rest !== undefined) {
-      const isOwn = (key: string) =>
-        useJavaScript(
-          "IsEnumerableOwn",
-          [getHeap(current.scope, rest.element, context), value, string(key)],
-          context,
-        );
-      return rest.keys.reduceRight(
-        (otherwise, key) => {
-          const others = rest.keys.filter((other) => other !== key);
-          const copy = read(rest.element, value, key, current, context, frame, (after, got) =>
-            finish(after, [...values, apply(":>", [string(key), got])]),
-          );
-          return ifThenElse(
-            isOwn(key),
-            others.length === 0
-              ? copy
-              : ifThenElse(
-                  junction("Or", others.map(isOwn)),
-                  leaf(
-                    apply("Assert", [
-                      boolean(false),
-                      string("tla-ts can't copy the properties of more than one getter in order"),
-                    ]),
-                  ),
-                  copy,
-                ),
-            otherwise,
-          );
-        },
-        finish(current, [...values, tuple([])]),
+      return readRestGetters(
+        rest.element,
+        rest.keys,
+        value,
+        current,
+        context,
+        frame,
+        (after, got) => finish(after, [...values, got]),
       );
     }
     if (element === undefined) return finish(current, values);

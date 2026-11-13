@@ -8958,6 +8958,36 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs the getter that an assignment's object rest copies", async () => {
+    const getSource = (expected: number) => `
+      let x: { v?: number; w?: number } = {};
+      let w = 0;
+      let count = 0;
+      for ({ w, ...x } of [{ w: 5, get v() { count++; return 2; } }]) {
+        if (count !== 1 || w !== 5 || x.v !== ${expected} || x.w !== undefined) {
+          throw new Error("rest");
+        }
+      }
+    `;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(3))).failure?.message).toContain("rest");
+  });
+
+  it("throws what the getter that an assignment's object rest copies throws", async () => {
+    const getSource = (expected: string) => `
+      let x: { v?: number } = {};
+      let caught = "";
+      try {
+        ({ ...x } = { get v(): number { throw new RangeError("v"); } });
+      } catch (error) {
+        caught = (error as Error).message;
+      }
+      if (caught !== "${expected}" || x.v !== undefined) throw new Error("rest");
+    `;
+    expect((await checkModel(getSource("v"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("w"))).failure?.message).toContain("rest");
+  });
+
   it("holds a getter in an object literal of a function that the script calls once", async () => {
     const result = await checkModel(`
       const make = () => ({ get v() { return 2; } });

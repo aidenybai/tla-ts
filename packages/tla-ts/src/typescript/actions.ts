@@ -260,6 +260,7 @@ import {
   readDescriptors,
   read,
   readPatternGetters,
+  readRestGetters,
   readWith,
   writeWith,
   withHeap,
@@ -882,6 +883,13 @@ interface PatternStatements<Result> {
     continueWith: (path: Path, value: Expression) => Result,
   ) => Result;
   throwOnNullish: (value: Expression, path: Path, rest: () => Result) => Result;
+  readRest: (
+    site: ts.Node,
+    keys: readonly string[],
+    value: Expression,
+    path: Path,
+    continueWith: (path: Path, read: Expression) => Result,
+  ) => Result;
 }
 
 const PRIMITIVE_TYPES =
@@ -897,6 +905,19 @@ const getDefaultedTarget = (node: ts.Expression) =>
   ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken
     ? { target: node.left, initializer: node.right }
     : { target: node, initializer: undefined };
+
+// The keys that an object pattern's rest element leaves out: those its other properties name.
+const getRestExcluded = (target: ts.ObjectLiteralExpression) =>
+  target.properties.flatMap((property) =>
+    property.name !== undefined && ts.isIdentifier(property.name) ? [property.name.text] : [],
+  );
+
+// The keys that an object pattern's rest element may copy through getters that the script writes,
+// which it runs where a statement assigns it.
+const getRestGetterKeys = (target: ts.ObjectLiteralExpression) =>
+  target.properties.some(ts.isSpreadAssignment)
+    ? [...getGetterKeys(target)].filter((key) => !getRestExcluded(target).includes(key))
+    : [];
 
 const assignPattern = <Result>(
   target: ts.Expression,
@@ -1169,34 +1190,40 @@ const assignPattern = <Result>(
         (isHeapObject || isPrimitiveRest) &&
         heapSymbol !== undefined
       ) {
-        const excluded = target.properties.flatMap((other) =>
-          other !== property && other.name !== undefined && ts.isIdentifier(other.name)
-            ? [string(other.name.text)]
-            : [],
-        );
-        const heap = getHeap(current.scope, property, context);
-        const allocated = useJavaScript(
-          "Allocate",
-          [
-            heap,
-            isHeapObject
-              ? useJavaScript("RestObject", [heap, value, set(excluded), tuple([])], context)
-              : useJavaScript("RestPrimitive", [value], context),
-          ],
-          context,
-        );
-        return assignTarget(
-          property.expression,
-          useJavaScript("Allocated", [allocated], context),
-          {
-            ...current,
-            scope: {
-              ...current.scope,
-              bindings: new Map([...current.scope.bindings, [heapSymbol, allocated]]),
+        const excluded = getRestExcluded(target);
+        const copy = (after: Path, read: Expression) => {
+          const heap = getHeap(after.scope, property, context);
+          const allocated = useJavaScript(
+            "Allocate",
+            [
+              heap,
+              isHeapObject
+                ? useJavaScript(
+                    "RestObject",
+                    [heap, value, set(excluded.map(string)), read],
+                    context,
+                  )
+                : useJavaScript("RestPrimitive", [value], context),
+            ],
+            context,
+          );
+          return assignTarget(
+            property.expression,
+            useJavaScript("Allocated", [allocated], context),
+            {
+              ...after,
+              scope: {
+                ...after.scope,
+                bindings: new Map([...after.scope.bindings, [heapSymbol, allocated]]),
+              },
             },
-          },
-          next,
-        );
+            next,
+          );
+        };
+        const getterKeys = isHeapObject ? getRestGetterKeys(target) : [];
+        return statements === undefined || getterKeys.length === 0
+          ? copy(current, tuple([]))
+          : statements.readRest(property, getterKeys, value, current, copy);
       }
       if (
         !(ts.isShorthandPropertyAssignment(property) || ts.isPropertyAssignment(property)) ||
@@ -1316,6 +1343,8 @@ const assignPatternWith = (
           rest(),
         );
       },
+      readRest: (restSite, keys, innerValue, current, next) =>
+        readRestGetters(restSite, keys, innerValue, current, context, frame, next),
     },
   );
 
@@ -7991,15 +8020,18 @@ const translateExpressionStatement = (
         )
       : evaluated;
   }
-  // A pattern that writes a property runs the setter that the property holds.
+  // A pattern that writes a property runs the setter that the property holds, and one whose rest
+  // copies a property runs its getter.
   if (
     ts.isBinaryExpression(expression) &&
     expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
     (ts.isArrayLiteralExpression(expression.left) ||
       ts.isObjectLiteralExpression(expression.left)) &&
-    getWrittenProperties(expression.left).some(
+    (getWrittenProperties(expression.left).some(
       (property) => getPropertySetters(property, context).length > 0,
-    )
+    ) ||
+      (ts.isObjectLiteralExpression(expression.left) &&
+        getRestGetterKeys(expression.left).length > 0))
   ) {
     return assignPatternWith(
       expression,
