@@ -39,8 +39,22 @@ export const JUSTIFICATION_BINARY = 1;
 export const JUSTIFICATION_CLAUSE = 2;
 export const JUSTIFICATION_EXT = 3;
 
+export const CR_DONE = 0;
+export const CR_CONTINUE = 1;
+export const CR_GIVEUP = 2;
+
 export interface SatExtension {
   propagated(lit: number, index: number): boolean;
+  unitPropagate?(): boolean;
+  canPropagate?(): boolean;
+  asserted?(lit: number): void;
+  check?(): number;
+  getReasonUnknown?(): string;
+  getPhase?(boolVar: number): number;
+  initSearch?(): void;
+  preSimplify?(): void;
+  isExternal?(boolVar: number): boolean;
+  setEliminated?(boolVar: number): void;
   getAntecedents(lit: number, index: number, antecedents: number[]): void;
   resolveConflict(): number;
   push(): void;
@@ -118,6 +132,10 @@ export class Solver {
   probing: Probing;
   ext: SatExtension | null = null;
   isProbing = false;
+  private isGivenUp = false;
+  private activeVars: number[] = [];
+  private varsLim: number[] = [];
+  varsToReinit: number[] = [];
   model = new Int8Array(0);
   isModelCurrent = false;
   isInconsistent = false;
@@ -315,6 +333,7 @@ export class Solver {
   mkVar(isExternal: boolean, isDecision: boolean) {
     this.isModelCurrent = false;
     const boolVar = this.varCount++;
+    this.activeVars.push(boolVar);
     if (boolVar === this.justLevel.length) {
       const assignment = new Int8Array(4 * boolVar);
       assignment.set(this.assignment);
@@ -347,7 +366,17 @@ export class Solver {
   }
 
   setEliminated(boolVar: number, isEliminated: boolean) {
+    if (this.eliminated[boolVar] === isEliminated) return;
     this.eliminated[boolVar] = isEliminated;
+    if (isEliminated) this.ext?.setEliminated?.(boolVar);
+  }
+
+  setNonExternal(boolVar: number) {
+    this.external[boolVar] = false;
+  }
+
+  private isExtPropagating() {
+    return this.ext !== null && (!this.isProbing || this.atBaseLvl());
   }
 
   mkClause(lits: number[], isLearned = false) {
@@ -683,6 +712,7 @@ export class Solver {
   }
 
   propagateCore(isUpdating: boolean) {
+    if (this.isExtPropagating()) this.ext?.unitPropagate?.();
     while (this.qhead < this.trail.length && !this.isInconsistent) {
       do {
         this.checkpoint();
@@ -691,6 +721,7 @@ export class Solver {
         this.qhead++;
         if (!this.propagateLiteral(lit, isUpdating)) return false;
       } while (this.qhead < this.trail.length);
+      if (this.isExtPropagating()) this.ext?.unitPropagate?.();
     }
     return !this.isInconsistent;
   }
@@ -836,6 +867,7 @@ export class Solver {
       this.propagateClause(clause, isUpdating, assignLevel, first);
     }
     wlist.setEnd(target);
+    if (this.external[lit >> 1] && this.isExtPropagating()) this.ext?.asserted?.(lit);
     return true;
   }
 
@@ -848,6 +880,7 @@ export class Solver {
     this.reasonUnknown = "no reason given";
     this.popToBaseLevel();
     this.isSearching = true;
+    this.isGivenUp = false;
     try {
       this.initSearch();
       if (this.checkInconsistent()) return L_FALSE;
@@ -869,7 +902,7 @@ export class Solver {
       if (this.config.maxConflicts > 0 && this.config.burstSearch > 0) {
         this.restartThreshold = this.config.burstSearch;
         const result = this.boundedSearch();
-        if (result !== L_UNDEF) return result;
+        if (result !== L_UNDEF || this.isGivenUp) return result;
         this.popReinit(this.scopeLvl);
         this.conflictsSinceRestart = 0;
         this.restartThreshold = this.config.restartInitial;
@@ -1057,6 +1090,8 @@ export class Solver {
   }
 
   private guess(next: number) {
+    const extPhase = this.ext?.getPhase?.(next) ?? L_UNDEF;
+    if (extPhase !== L_UNDEF) return extPhase === L_TRUE;
     switch (this.config.phase) {
       case PS_ALWAYS_TRUE:
         return true;
@@ -1095,9 +1130,10 @@ export class Solver {
 
   private basicSearch() {
     let result = L_UNDEF;
-    while (result === L_UNDEF && !this.shouldCancel()) {
+    while (result === L_UNDEF && !this.isGivenUp && !this.shouldCancel()) {
       if (this.isInconsistent) result = this.resolveConflictCore();
-      else if (this.qhead < this.trail.length) this.propagate(true);
+      else if (this.qhead < this.trail.length || this.ext?.canPropagate?.() === true)
+        this.propagate(true);
       else if (this.doCleanup(false)) continue;
       else if (this.shouldGc()) this.doGc();
       else if (this.shouldRephase()) this.doRephase();
@@ -1105,12 +1141,28 @@ export class Solver {
         if (!this.isRestartEnabled) return L_UNDEF;
         this.doRestart(!this.config.isRestartFast);
       } else if (this.shouldSimplify()) this.doSimplify();
-      else if (!this.decide()) {
-        this.mkModel();
-        result = L_TRUE;
-      }
+      else if (!this.decide()) result = this.finalCheck();
     }
     return result;
+  }
+
+  private finalCheck() {
+    const ext = this.ext;
+    if (ext?.check === undefined) {
+      this.mkModel();
+      return L_TRUE;
+    }
+    switch (ext.check()) {
+      case CR_DONE:
+        this.mkModel();
+        return L_TRUE;
+      case CR_GIVEUP:
+        this.reasonUnknown = ext.getReasonUnknown?.() ?? "unknown";
+        this.isGivenUp = true;
+        return L_UNDEF;
+      default:
+        return L_UNDEF;
+    }
   }
 
   initSearch() {
@@ -1139,6 +1191,7 @@ export class Solver {
     this.asymmBranch.initSearch();
     this.core = [];
     this.simplifier.initSearch();
+    this.ext?.initSearch?.();
   }
 
   private shouldSimplify() {
@@ -1151,6 +1204,7 @@ export class Solver {
     this.pop(this.scopeLvl);
     this.cleaner.run(this.config.isForcingCleanup);
     this.scc.run();
+    this.ext?.preSimplify?.();
     this.simplifier.run(false);
     if (this.learned.length > 0) this.simplifier.run(true);
     this.sortWatchLits();
@@ -1659,7 +1713,10 @@ export class Solver {
       clausesToReinitLim: this.clausesToReinit.length,
     });
     this.scopeLvl++;
-    this.ext?.push();
+    if (this.ext !== null) {
+      this.varsLim.push(this.activeVars.length);
+      this.ext.push();
+    }
   }
 
   popReinit(numScopes: number) {
@@ -1667,9 +1724,25 @@ export class Solver {
     this.reinitAssumptions();
   }
 
+  // pop_vars keeps every variable made in the popped scopes: no variable is freed for reuse.
+  private popVars(numScopes: number) {
+    this.varsToReinit = [];
+    const oldNumVars = this.varsLim[this.varsLim.length - numScopes];
+    this.varsLim.length -= numScopes;
+    const newLvl = this.scopes.length - numScopes;
+    for (let index = oldNumVars; index < this.activeVars.length; index++) {
+      const boolVar = this.activeVars[index];
+      this.varsToReinit.push(boolVar);
+      this.varScope[boolVar] = newLvl;
+    }
+  }
+
   pop(numScopes: number) {
     if (numScopes === 0) return;
-    this.ext?.pop(numScopes);
+    if (this.ext !== null) {
+      this.popVars(numScopes);
+      this.ext.pop(numScopes);
+    }
     const newLvl = this.scopeLvl - numScopes;
     const scope = this.scopes[newLvl];
     this.isInconsistent = false;

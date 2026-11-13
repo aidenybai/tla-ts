@@ -769,7 +769,11 @@ export class Simplifier {
   isExternal(boolVar: number) {
     const solver = this.solver;
     if (!solver.isExternal(boolVar)) return solver.isAssumption(boolVar);
-    return solver.isIncremental() || this.extUseVars.has(boolVar);
+    return (
+      solver.isIncremental() ||
+      solver.ext?.isExternal?.(boolVar) === true ||
+      this.extUseVars.has(boolVar)
+    );
   }
 
   private isBceEnabledBase() {
