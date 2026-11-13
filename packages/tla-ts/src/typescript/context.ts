@@ -1988,6 +1988,9 @@ export const isInertValue = (argument: ts.Expression): boolean =>
   [ts.SyntaxKind.NullKeyword, ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword].includes(
     argument.kind,
   ) ||
+  (ts.isPrefixUnaryExpression(argument) &&
+    argument.operator === ts.SyntaxKind.MinusToken &&
+    (ts.isNumericLiteral(argument.operand) || ts.isBigIntLiteral(argument.operand))) ||
   (ts.isArrayLiteralExpression(argument) && argument.elements.every(isInertValue)) ||
   (ts.isObjectLiteralExpression(argument) &&
     argument.properties.every(
