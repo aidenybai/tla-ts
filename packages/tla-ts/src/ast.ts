@@ -118,7 +118,7 @@ interface CaseExpression {
   location: SourceLocation;
 }
 
-interface LetExpression {
+export interface LetExpression {
   kind: "Let";
   definitions: Definition[];
   instances?: Instance[];

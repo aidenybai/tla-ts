@@ -8,6 +8,7 @@ import {
   type Expression,
   type FunctionConstructionExpression,
   type FunctionDefinition,
+  type LetExpression,
   type OperatorDefinition,
   type SourceLocation,
 } from "./ast";
@@ -2873,53 +2874,11 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
       };
     }
     case "Let": {
-      const names: LazyDefinition[] = [];
-      const scope = expression.definitions.reduce<TierScope>((current, definition) => {
-        if (definition.kind === "Function") {
-          const bound = definition.bounds[0];
-          if (definition.bounds.length !== 1 || bound.pattern.kind !== "Name") return unsupported();
-          const name = getName(program, "l");
-          const argument = getName(program, "a");
-          const type: LambdaType = { kind: "Lambda", argument: createVar(), result: createVar() };
-          const inner = bindCode(current, definition.name, type, getLazyCode(name));
-          const isInDomain = compileMembership(
-            program,
-            { type: type.argument, emit: () => argument },
-            bound.set,
-            { ...frame, scope: inner },
-          );
-          const body = expectType(
-            compileValue(program, definition.body, {
-              ...frame,
-              scope: bindCode(inner, bound.pattern.name, type.argument, argument),
-            }),
-            type.result,
-          );
-          names.push({
-            name,
-            value: {
-              type,
-              emit: () => `(${argument}) => (${isInDomain.emit()}) ? ${body.emit()} : H.deopt()`,
-            },
-          });
-          return inner;
-        }
-        if (definition.params.length > 0) {
-          return withBinding(current, definition.name, {
-            kind: "Operator",
-            definition,
-            scope: current,
-          });
-        }
-        const value = compileValue(program, definition.body, { ...frame, scope: current });
-        const name = getName(program, "l");
-        names.push({ name, value });
-        return bindDefinition(current, definition, value, name);
-      }, frame.scope);
-      const body = compileValue(program, expression.body, { ...frame, scope });
+      const bindings = bindLet(program, expression, frame);
+      const body = compileValue(program, expression.body, { ...frame, scope: bindings.scope });
       return {
         type: body.type,
-        emit: () => `(() => { ${getDeclarations(names)} return ${body.emit()}; })()`,
+        emit: () => `(() => { ${getDeclarations(bindings.names)} return ${body.emit()}; })()`,
       };
     }
     case "Forall":
@@ -3161,10 +3120,67 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
 
 // TLC evaluates UNCHANGED e outside an action's conjuncts as e' = e, which for a tuple holds when
 // each element is unchanged.
+// Binds the definitions of a LET, each compiled where the LET is.
+const bindLet = (program: Program, expression: LetExpression, frame: Frame) => {
+  const names: LazyDefinition[] = [];
+  const scope = expression.definitions.reduce<TierScope>((current, definition) => {
+    if (definition.kind === "Function") {
+      const bound = definition.bounds[0];
+      if (definition.bounds.length !== 1 || bound.pattern.kind !== "Name") return unsupported();
+      const name = getName(program, "l");
+      const argument = getName(program, "a");
+      const type: LambdaType = { kind: "Lambda", argument: createVar(), result: createVar() };
+      const inner = bindCode(current, definition.name, type, getLazyCode(name));
+      const isInDomain = compileMembership(
+        program,
+        { type: type.argument, emit: () => argument },
+        bound.set,
+        { ...frame, scope: inner },
+      );
+      const body = expectType(
+        compileValue(program, definition.body, {
+          ...frame,
+          scope: bindCode(inner, bound.pattern.name, type.argument, argument),
+        }),
+        type.result,
+      );
+      names.push({
+        name,
+        value: {
+          type,
+          emit: () => `(${argument}) => (${isInDomain.emit()}) ? ${body.emit()} : H.deopt()`,
+        },
+      });
+      return inner;
+    }
+    if (definition.params.length > 0) {
+      return withBinding(current, definition.name, {
+        kind: "Operator",
+        definition,
+        scope: current,
+      });
+    }
+    const value = compileValue(program, definition.body, { ...frame, scope: current });
+    const name = getName(program, "l");
+    names.push({ name, value });
+    return bindDefinition(current, definition, value, name);
+  }, frame.scope);
+  return { names, scope };
+};
+
 const compileUnchanged = (program: Program, expression: Expression, frame: Frame): Compiled => {
   const body = getDefinitionBody(program, expression, frame);
-  if (body?.kind === "Tuple")
+  if (body?.kind === "Tuple" || body?.kind === "Let")
     return compileUnchanged(program, body, { ...frame, scope: new Map() });
+  // INSTANCE binds a substitution as a LET around what it substitutes into.
+  if (expression.kind === "Let") {
+    const bindings = bindLet(program, expression, frame);
+    const body = compileUnchanged(program, expression.body, { ...frame, scope: bindings.scope });
+    return {
+      type: createBool(),
+      emit: () => `(() => { ${getDeclarations(bindings.names)} return ${body.emit()}; })()`,
+    };
+  }
   if (expression.kind === "Tuple") {
     const elements = expression.elements.map((element) =>
       compileUnchanged(program, element, frame),
