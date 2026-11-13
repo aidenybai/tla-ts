@@ -17,7 +17,7 @@ import {
   isNestedFunction,
   isRestOnly,
 } from "./context";
-import { isHeldBuiltInObject } from "./intrinsics";
+import { getBuiltIn, isHeldBuiltInObject } from "./intrinsics";
 import { KEYWORDS } from "../lexer";
 import { TlaTypeScriptError } from "../errors";
 import {
@@ -538,6 +538,35 @@ export const getKeptIterator = (node: ts.Node, context: Context) => {
     : undefined;
 };
 
+// A parameter that takes any iterable, which its function only makes a Set of. A call passes it
+// the set of the elements of the array or the set that it passes, as their order is lost.
+export const isSetSource = (parameter: ts.ParameterDeclaration, context: Context) => {
+  const type = parameter.type;
+  if (
+    !ts.isIdentifier(parameter.name) ||
+    parameter.dotDotDotToken !== undefined ||
+    type === undefined ||
+    !ts.isTypeReferenceNode(type) ||
+    !["Iterable", "IterableIterator"].includes(type.typeName.getText())
+  ) {
+    return false;
+  }
+  const symbol = getSymbol(parameter.name, context.checker);
+  const uses = findNodes(parameter.parent, ts.isIdentifier).filter(
+    (name) => name !== parameter.name && getSymbol(name, context.checker) === symbol,
+  );
+  return (
+    uses.length > 0 &&
+    uses.every(
+      (use) =>
+        ts.isNewExpression(use.parent) &&
+        use.parent.arguments?.length === 1 &&
+        use.parent.arguments[0] === use &&
+        getBuiltIn(use.parent.expression, context) === "Set",
+    )
+  );
+};
+
 export const getKind = (node: ts.Expression, context: Context): Kind => {
   if (isHeapArray(node, context) || getBound(node, context) !== undefined) return "object";
   const checker = context.checker;
@@ -545,6 +574,10 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
   // An object stays one where TypeScript narrows its type, as instanceof Object narrows it to the
   // library's Object.
   const symbol = ts.isIdentifier(node) ? getSymbol(node, checker) : undefined;
+  const parameter = symbol?.valueDeclaration;
+  if (parameter !== undefined && ts.isParameter(parameter) && isSetSource(parameter, context)) {
+    return "set";
+  }
   const declared =
     symbol === undefined || context.heap === undefined
       ? undefined

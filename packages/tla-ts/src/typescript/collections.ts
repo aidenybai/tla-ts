@@ -358,6 +358,32 @@ const getEntries = (value: Expression, context: Context): Unordered => ({
 const getElements = (value: Expression, context: Context) =>
   mapKeys(value, "sequence", context, (shared, key) => index(shared, [key]));
 
+// The set of the elements of an argument, translated as value, that a parameter which only makes
+// a Set takes.
+export const translateSetArgument = (
+  node: ts.Expression,
+  value: Expression,
+  scope: Scope,
+  context: Context,
+) => {
+  if (isHeapArray(node, context)) {
+    return getElements(
+      getHeapElements(getHeap(scope, node, context), value, node, context),
+      context,
+    );
+  }
+  if (isHeapSetOrMap(node, context)) {
+    return useJavaScript("CollectionData", [getHeap(scope, node, context), value], context);
+  }
+  const kind = getKind(node, context);
+  if (kind === "set") return value;
+  if (kind === "sequence") return getElements(value, context);
+  throw new TlaTypeScriptError(
+    "tla-ts can't pass this to a parameter that only makes a Set of it",
+    node,
+  );
+};
+
 // Whether a value of a node's type may be an error, as any type that an Error is assignable to.
 const mayBeError = (node: ts.Expression, context: Context) => {
   const error = context.checker

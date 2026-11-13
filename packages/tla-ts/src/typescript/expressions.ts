@@ -10,6 +10,7 @@ import {
   translateNew,
   translateRegExpCall,
   translateSet,
+  translateSetArgument,
   translateSize,
   isArrayIteration,
 } from "./collections";
@@ -152,6 +153,7 @@ import {
   rejectAnyReceiver,
   getField,
   getKind,
+  isSetSource,
   getPathStep,
   getPropertyKey,
   isBooleanLike,
@@ -2721,6 +2723,14 @@ export const translateExpression = (
   isDefined = false,
 ): Expression => {
   const translated = translateNode(node, scope, context, isDefined);
+  const call = node.parent;
+  const parameter =
+    (ts.isCallExpression(call) || ts.isNewExpression(call)) && call.arguments?.includes(node)
+      ? getCallee(call.expression, context)?.parameters.at(call.arguments.indexOf(node))
+      : undefined;
+  if (parameter !== undefined && isSetSource(parameter, context)) {
+    return translateSetArgument(node, translated, scope, context);
+  }
   // The base of an optional chain that a check already read is the value that it read.
   return locate(
     isSetOrMapRead(node, context) &&

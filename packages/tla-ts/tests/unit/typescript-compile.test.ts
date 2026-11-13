@@ -2627,6 +2627,36 @@ describe("values", () => {
     await expect(checkModel(getSource("4,10,10"))).rejects.toThrow("4,10,20");
   });
 
+  it("makes a set of what an iterable parameter takes, from a set or an array", async () => {
+    const getSource = (expected: string) => `
+      const INFIX = new Set([3, 1, 2]);
+      const tokens = (kinds: Iterable<number>) => ({ type: "tokens", kinds: new Set(kinds) });
+      const fromSet = tokens(INFIX);
+      const fromArray = tokens([5, 5, 4]);
+      const result = [fromSet.kinds.size, fromSet.kinds.has(1), fromArray.kinds.size].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("3,true,2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("3,true,3"))).failure?.message).toContain("3,true,2");
+  });
+
+  it("makes a set of what an iterable parameter takes, from a set or an array the heap holds", async () => {
+    const getSource = (expected: string) => `
+      const INFIX = new Set([3, 1]);
+      INFIX.add(2);
+      const PREFIX = [5, 5];
+      PREFIX.push(4);
+      const tokens = (kinds: Iterable<number>) => ({ type: "tokens", kinds: new Set(kinds) });
+      const fromSet = tokens(INFIX);
+      const fromArray = tokens(PREFIX);
+      INFIX.add(7);
+      const result = [fromSet.kinds.size, fromSet.kinds.has(7), fromArray.kinds.size].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("3,false,2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("4,true,3"))).failure?.message).toContain("3,false,2");
+  });
+
   it("makes a map from an array of entries, where a later entry of a key wins", async () => {
     const getSource = (expected: string) => `
       const pairs: [string, number][] = [
