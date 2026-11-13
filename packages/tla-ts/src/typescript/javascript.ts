@@ -674,6 +674,9 @@ NextRef(heap, offset) == Ref :> (Len(heap.objects) + offset)
 \\* Allocates objects in turn, which may hold the refs that NextRef gives each.
 AllocateEach(heap, objects) == [heap EXCEPT !.objects = @ \\o objects]
 
+\\* Whether a heap holds what another does, and only adds objects after them.
+IsExtendedHeap(heap, before) == [heap EXCEPT !.objects = SubSeq(@, 1, Len(before.objects))] = before
+
 LOCAL BuiltInKey(ref) == IF IsRef(ref) THEN ref[Ref] ELSE ref
 
 LOCAL IsBuiltIn(ref) ==

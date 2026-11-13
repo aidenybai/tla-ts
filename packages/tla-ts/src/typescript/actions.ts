@@ -4829,7 +4829,7 @@ const getReturnedLength = (callback: FunctionNode, context: Context) => {
 };
 
 // Whether a function returns only primitives.
-const isPrimitiveReturn = (callback: FunctionNode, context: Context) => {
+const isPrimitiveReturn = (callback: ts.SignatureDeclaration, context: Context) => {
   const signature = context.checker.getSignatureFromDeclaration(callback);
   const returned = signature && context.checker.getReturnTypeOfSignature(signature);
   return (
@@ -12765,10 +12765,15 @@ export const translateLocalStatements = (
   scope: Scope,
   context: Context,
 ): Formula => {
+  const owner = body.parent;
+  // A function that returns only primitives may make objects and change them, as no one else can
+  // reach them after it returns, where it changed no object that was there before.
+  const heapSymbol =
+    ts.isFunctionLike(owner) && isPrimitiveReturn(owner, context) ? context.heap : undefined;
   const state = [
     ...context.variables.keys(),
     ...(context.heap === undefined ? [] : [context.heap]),
-  ];
+  ].filter((symbol) => symbol !== heapSymbol);
   const leave = (path: Path, value: Expression) => {
     if (state.some((symbol) => path.scope.bindings.get(symbol) !== scope.bindings.get(symbol))) {
       throw new TlaTypeScriptError(
@@ -12776,22 +12781,35 @@ export const translateLocalStatements = (
         body,
       );
     }
-    return leaf(value);
+    const before = heapSymbol === undefined ? undefined : scope.bindings.get(heapSymbol);
+    const after = heapSymbol === undefined ? undefined : path.scope.bindings.get(heapSymbol);
+    return leaf(
+      before === undefined || after === undefined || after === before
+        ? value
+        : ifExpression(
+            useJavaScript("IsExtendedHeap", [after, before], context),
+            value,
+            apply("Assert", [
+              boolean(false),
+              string("tla-ts can't change an object that was there before an expression's call"),
+            ]),
+          ),
+    );
   };
-  const owner = body.parent;
   return translateStatements(
     body.statements,
     {
       scope,
       // A parameter is a local binding, which the body may assign as it does a let.
-      mutable: new Set(
-        (ts.isFunctionLike(owner) ? owner.parameters : []).flatMap((parameter) => {
+      mutable: new Set([
+        ...(heapSymbol === undefined ? [] : [heapSymbol]),
+        ...(ts.isFunctionLike(owner) ? owner.parameters : []).flatMap((parameter) => {
           const symbol = ts.isIdentifier(parameter.name)
             ? getSymbol(parameter.name, context.checker)
             : undefined;
           return symbol !== undefined && scope.bindings.has(symbol) ? [symbol] : [];
         }),
-      ),
+      ]),
       isAssigned: false,
       isLast: false,
       // Its leaves are values, as a loop body's are.

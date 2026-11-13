@@ -17489,6 +17489,26 @@ ${call}
     expect((await checkModel(getSource("A"))).failure?.message).toContain("Unknown kind Y");
   });
 
+  it("evaluates where it is a call whose arguments ran first and that may throw", async () => {
+    const getSource = (expected: string) => `
+      interface Tree { left?: Tree; right?: Tree; hash: number }
+      const getPair = (left: Tree, right: Tree) => Math.imul(getHash(left), 5) + getHash(right);
+      const getHash = (tree: Tree): number => {
+        if (tree.hash > 99) throw new RangeError("big");
+        if (tree.left !== undefined && tree.right !== undefined) {
+          tree.hash = getPair(tree.left, tree.right);
+        }
+        return tree.hash;
+      };
+      const leaf: Tree = { hash: 2 };
+      const tree: Tree = { left: leaf, right: { left: leaf, right: { hash: 3 }, hash: 0 }, hash: 0 };
+      const result = [getHash(tree), tree.right?.hash].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("23,13"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("23,0"))).failure?.message).toContain("23,13");
+  });
+
   it("describes a property with Reflect.getOwnPropertyDescriptor", async () => {
     const result = await checkModel(`
       const object = {};
