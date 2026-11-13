@@ -63,7 +63,7 @@ interface Constraint {
   readonly owner: ThSolver | null;
   readonly kind: number;
   readonly node: Enode | null;
-  readonly data: ThExplain | null;
+  readonly data: unknown;
 }
 
 // The external justification of an egraph merge: a literal, or the index of a theory constraint.
@@ -506,7 +506,7 @@ export class EufSolver implements SatExtension {
 
   // euf_solver.cpp
 
-  mkConstraint(owner: ThSolver, data: ThExplain) {
+  mkConstraint(owner: ThSolver, data: unknown) {
     return this.pushConstraint({ owner, kind: K_LIT, node: null, data });
   }
 
@@ -576,6 +576,10 @@ export class EufSolver implements SatExtension {
     this.egraph.explainEq(this.explanation, first, second);
     this.explainQueue(antecedents);
     this.egraph.endExplain();
+  }
+
+  addEqAntecedent(first: Enode, second: Enode) {
+    this.egraph.explainEq(this.explanation, first, second);
   }
 
   getThAntecedents(explain: ThExplain, antecedents: number[]) {
@@ -901,7 +905,9 @@ export class EufSolver implements SatExtension {
     return false;
   }
 
-  flushRoots() {}
+  flushRoots() {
+    for (const solver of this.solvers) solver.flushRoots();
+  }
 
   initUseList() {}
 

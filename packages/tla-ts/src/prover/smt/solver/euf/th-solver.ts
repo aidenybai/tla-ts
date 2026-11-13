@@ -1,5 +1,7 @@
 // Ported from Z3 (src/sat/smt/sat_th.h, src/sat/smt/sat_th.cpp, src/util/trail.h), MIT license,
 // see z3-license.txt.
+import { SmtCanceledError } from "../../../../errors";
+import { mkNot } from "../ast-util";
 import type { ProtoModel } from "../proto-model";
 import { L_TRUE, L_UNDEF } from "../lbool";
 import { NULL_LITERAL } from "../sat/clause";
@@ -49,6 +51,7 @@ export const addDependency = (deps: Dependencies, node: Enode, dep: Enode) => {
 
 export abstract class ThSolver {
   protected var2enode: Enode[] = [];
+  protected stack: { expr: number; index: number }[] = [];
   private var2enodeLim: number[] = [];
   protected numScopes = 0;
 
@@ -99,6 +102,7 @@ export abstract class ThSolver {
   }
   preSimplify() {}
   simplify() {}
+  flushRoots() {}
   finalize() {}
   relevantEh(_node: Enode) {}
   isShared(_thVar: number) {
@@ -124,6 +128,44 @@ export abstract class ThSolver {
     return false;
   }
   collectStatistics(_stats: Map<string, number>) {}
+
+  protected visit(_expr: number) {
+    return false;
+  }
+
+  protected visited(_expr: number) {
+    return false;
+  }
+
+  protected postVisit(_expr: number, _isSign: boolean, _isRoot: boolean) {
+    return false;
+  }
+
+  // sat::th_internalizer::visit_rec
+  protected visitRec(expr: number, isSign: boolean, isRoot: boolean) {
+    const manager = this.manager;
+    const stack = this.stack;
+    const base = stack.length;
+    this.visit(expr);
+    loop: while (stack.length > base) {
+      if (!manager.limit.inc()) throw new SmtCanceledError();
+      const frame = stack[stack.length - 1];
+      const current = frame.expr;
+      if (this.visited(current)) {
+        stack.pop();
+        continue;
+      }
+      const numArgs = manager.isApp(current) ? manager.getNumArgs(current) : 0;
+      while (frame.index < numArgs)
+        if (!this.visit(manager.getArg(current, frame.index++))) continue loop;
+      if (!this.visited(current) && !this.postVisit(current, isSign, isRoot && current === expr)) {
+        stack.length = base;
+        return false;
+      }
+      stack.pop();
+    }
+    return true;
+  }
 
   mkVar(node: Enode) {
     this.forcePush();
@@ -218,6 +260,16 @@ export abstract class ThSolver {
 
   expr2literal(expr: number) {
     return this.ctx.expr2literal(expr);
+  }
+
+  literal2expr(lit: number) {
+    const expr = this.ctx.boolVar2expr(lit >> 1) as number;
+    return (lit & 1) === 1 ? mkNot(this.manager, expr) : expr;
+  }
+
+  boolVar2enode(boolVar: number) {
+    const expr = this.ctx.boolVar2expr(boolVar);
+    return expr === undefined ? undefined : this.expr2enode(expr);
   }
 
   boolVar2expr(boolVar: number) {

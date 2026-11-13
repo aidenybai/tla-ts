@@ -553,6 +553,77 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("answers bit-vectors with sat.euf's bv solver", () => {
+    const header = ["(set-option :sat.euf true)", "(set-option :tactic.default_tactic smt)"];
+    expect(
+      run([
+        ...header,
+        "(declare-const x (_ BitVec 16))",
+        "(declare-const y (_ BitVec 16))",
+        "(assert (= (bvudiv x y) #x0003))",
+        "(assert (= (bvurem x y) #x0002))",
+        "(assert (bvult y #x0010))",
+        "(assert (bvugt y #x0004))",
+        "(check-sat)",
+        "(get-value (x y))",
+        "(reset)",
+        ...header,
+        "(declare-fun f ((_ BitVec 8)) (_ BitVec 8))",
+        "(declare-fun g ((_ BitVec 8)) (_ BitVec 8))",
+        "(declare-const x (_ BitVec 8))",
+        "(declare-const y (_ BitVec 8))",
+        "(assert (= (f (bvadd x #x01)) (g y)))",
+        "(assert (not (= (f (bvadd y #x01)) (g x))))",
+        "(assert (= x y))",
+        "(check-sat)",
+        "(reset)",
+        ...header,
+        "(declare-const x (_ BitVec 8))",
+        "(declare-const n Int)",
+        "(assert (= (bv2nat x) n))",
+        "(assert (> n 200))",
+        "(assert (< n 202))",
+        "(check-sat)",
+        "(get-value (x n))",
+        "(reset)",
+        ...header,
+        "(declare-fun p ((_ BitVec 4)) Bool)",
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const y (_ BitVec 4))",
+        "(declare-const z (_ BitVec 4))",
+        "(assert (p x))",
+        "(assert (p y))",
+        "(assert (not (p z)))",
+        "(assert (= (bvadd x y) z))",
+        "(assert (= (bvadd x z) y))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "((x #x0017)\n (y #x0007))",
+      "unsat",
+      "sat",
+      "((x #xc9)\n (n 201))",
+      "sat",
+      [
+        "(",
+        "  (define-fun y () (_ BitVec 4)",
+        "    #x1)",
+        "  (define-fun z () (_ BitVec 4)",
+        "    #x9)",
+        "  (define-fun x () (_ BitVec 4)",
+        "    #x8)",
+        "  (define-fun p ((x!1 (_ BitVec 4))) Bool",
+        "    (ite (= x!1 #x8) true",
+        "    (ite (= x!1 #x1) true",
+        "    (ite (= x!1 #x9) false",
+        "      #unspecified))))",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),
