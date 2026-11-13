@@ -84,12 +84,14 @@ const FAILURE_OK = 0;
 const FAILURE_THEORY = 1;
 const FAILURE_QUANTIFIERS = 2;
 const FAILURE_CANCELED = 3;
+const FAILURE_NUM_CONFLICTS = 4;
 
 type SearchFailure =
   | typeof FAILURE_OK
   | typeof FAILURE_THEORY
   | typeof FAILURE_QUANTIFIERS
-  | typeof FAILURE_CANCELED;
+  | typeof FAILURE_CANCELED
+  | typeof FAILURE_NUM_CONFLICTS;
 
 type ModelState =
   | { kind: "none" }
@@ -135,6 +137,7 @@ export class Context extends Internalizer {
   private bvarInc = 1;
   private agility = 0;
   private numConflicts = 0;
+  maxConflicts = Infinity;
   private numConflictsSinceRestart = 0;
   private numConflictsSinceLemmaGc = 0;
   private restartThreshold = RESTART_INITIAL;
@@ -1168,6 +1171,10 @@ export class Context extends Internalizer {
             this.scopeLevel - this.baseLevel > 2
           )
             return L_UNDEF;
+          if (this.numConflicts > this.maxConflicts) {
+            this.lastSearchFailure = FAILURE_NUM_CONFLICTS;
+            return L_UNDEF;
+          }
         }
         if (this.numConflictsSinceLemmaGc > LEMMA_GC_INITIAL) this.delInactiveLemmas();
         this.dynAck.propagateEh();
@@ -1217,6 +1224,7 @@ export class Context extends Internalizer {
   // add_rec_funs gives each named expression without an interpretation its expression.
   getLastFailureMessage() {
     if (this.lastSearchFailure === FAILURE_CANCELED) return "canceled";
+    if (this.lastSearchFailure === FAILURE_NUM_CONFLICTS) return "max-conflicts-reached";
     if (this.lastSearchFailure === FAILURE_QUANTIFIERS) return "(incomplete quantifiers)";
     if (this.lastSearchFailure === FAILURE_THEORY)
       return `(incomplete (theory${this.incompleteTheories.map((theory) => ` ${theory.name}`).join("")}))`;

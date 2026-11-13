@@ -165,6 +165,7 @@ export class AssertedFormulas {
   hasQuantifiers = false;
   readonly macros: MacroManager;
   isInconsistent = false;
+  isPreprocessing = true;
   private numLazyScopes = 0;
   private scopes: AssertedScope[] = [];
 
@@ -216,12 +217,16 @@ export class AssertedFormulas {
     this.forcePush();
     const manager = this.manager;
     if (this.isInconsistent || manager.isTrue(expr)) return;
+    if (manager.hasQuantifierFlags[expr]) this.hasQuantifiers = true;
+    this.isReducePending = true;
+    if (!this.isPreprocessing) {
+      this.pushAssertion(expr, this.formulas);
+      return;
+    }
     this.setEliminateAnd(false);
     const rewritten = this.rewriter.rewrite(expr);
-    if (manager.hasQuantifierFlags[expr]) this.hasQuantifiers = true;
     this.pushAssertion(rewritten, this.formulas);
     manager.decRef(rewritten);
-    this.isReducePending = true;
   }
 
   getNumFormulas() {
@@ -235,7 +240,7 @@ export class AssertedFormulas {
   // Like internalize_assertions, nothing is committed once the formulas are inconsistent.
   reduce() {
     if (this.qhead === this.formulas.size) return [];
-    if (!this.isInconsistent) this.reduceCore();
+    if (!this.isInconsistent && (this.hasQuantifiers || this.isPreprocessing)) this.reduceCore();
     if (this.isInconsistent) return [];
     const result = this.formulas.items.slice(this.qhead);
     if (this.isFindingMacros) this.macros.markForbidden(result);

@@ -27,6 +27,16 @@ export class SmtKernel {
     this.context.setupContext();
   }
 
+  // context::copy sets up and internalizes a copy as soon as it makes it.
+  internalize() {
+    this.setupContext();
+    this.context.internalizeAssertions(this.asserted);
+  }
+
+  setPreprocess(isPreprocessing: boolean) {
+    this.asserted.isPreprocessing = isPreprocessing;
+  }
+
   assertExpr(expr: number) {
     this.context.popToBaseLevel();
     this.asserted.assertExpr(expr);

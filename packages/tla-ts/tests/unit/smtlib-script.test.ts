@@ -294,6 +294,30 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ).toEqual(["unsat", "(c f b a)", "unsat", "(f e a b)"]);
   });
 
+  // z3test's regressions/smt2/3042.smt2, then an unsat core and a parallel parameter.
+  it("decides with psmt, the parallel smt tactic", () => {
+    expect(
+      run([
+        "(set-option :smt.arith.solver 6)",
+        "(set-option :produce-unsat-cores true)",
+        "(declare-fun a () Int)",
+        "(declare-fun b () Int)",
+        "(declare-fun c () Int)",
+        "(declare-fun d () Int)",
+        "(declare-fun e () Int)",
+        "(assert (let ((f (< 0 e d))) (or (and (= c (/ 2.0 e)) (forall ((g Int)) " +
+          "(= (<= g d) (forall ((h Int)) (> h g))))) (< b a) f)))",
+        "(check-sat-using psmt)",
+        "(assert (! (> a 5) :named n1))",
+        "(assert (! (< a 3) :named n2))",
+        "(check-sat-using psmt)",
+        "(get-unsat-core)",
+        "(set-option :parallel.num_bb_threads 3)",
+        "(check-sat-using psmt)",
+      ]),
+    ).toEqual(["sat", "unsat", "(n1 n2)", "unknown"]);
+  });
+
   it("counts each propagate-values pass as a round", () => {
     expect(
       run([

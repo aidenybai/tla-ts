@@ -84,6 +84,7 @@ import {
   type SmtList,
   type SmtToken,
 } from "./smtlib-parser";
+import { solveParallel } from "./parallel-tactic";
 import { solveAssuming, solveGoal } from "./solver";
 import { tseitinCnf } from "./tseitin-cnf";
 
@@ -276,10 +277,10 @@ const SMT_DESCRS = getDescrs("smt", [
 
 // The dependencies are assertion names, which are Boolean constants, so each one is its own
 // assumption.
-const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: Goal) => {
+const getKernelParams = (environment: TacticEnvironment, params: TacticParams, goal: Goal) => {
   const manager = environment.manager;
   const hasQuantifiers = goal.forms.items.some((form) => manager.hasQuantifierFlags[form]);
-  const kernelParams = {
+  return {
     isMbqi:
       getBool(params, "mbqi", environment.isMbqi) ||
       isMbqiByFeatures(environment.setup, hasQuantifiers),
@@ -287,6 +288,10 @@ const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: 
     isFindingMacros: environment.isFindingMacros,
     isSetupUnknown: isSetupUnknownByFeatures(environment.setup),
   };
+};
+
+// extract_clauses_and_dependencies: each form's clause gets the negations of its dependencies.
+const extractClauses = (manager: AstManager, goal: Goal) => {
   const assumptions: number[] = [];
   const clauses = new RefVector(manager);
   for (const [index, form] of goal.forms.items.entries()) {
@@ -298,22 +303,63 @@ const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: 
       ),
     );
   }
+  return { clauses, assumptions };
+};
+
+const mkCoreDependency = (core: number[]) =>
+  core.reduce<Dependency | undefined>(
+    (dependency, value) => joinDependencies(dependency, mkDependencyLeaf(value)),
+    undefined,
+  );
+
+const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: Goal) => {
+  const manager = environment.manager;
+  const kernelParams = getKernelParams(environment, params, goal);
+  const extracted = extractClauses(manager, goal);
   const solved =
-    assumptions.length === 0
+    extracted.assumptions.length === 0
       ? solveGoal(manager, goal.forms.items, kernelParams)
-      : solveAssuming(manager, clauses.items, assumptions, kernelParams);
-  clauses.reset();
+      : solveAssuming(manager, extracted.clauses.items, extracted.assumptions, kernelParams);
+  extracted.clauses.reset();
   if (solved.result === L_UNDEF) throw new SmtTacticError(solved.context.getLastFailureMessage());
   goal.reset();
   if (solved.result === L_FALSE)
-    goal.assert(
-      environment.manager.falseExpr,
-      solved.context.unsatCore.reduce<Dependency | undefined>(
-        (core, value) => joinDependencies(core, mkDependencyLeaf(value)),
-        undefined,
-      ),
-    );
+    goal.assert(environment.manager.falseExpr, mkCoreDependency(solved.context.unsatCore));
   else goal.model = solved.context.getModel();
+  return [goal];
+};
+
+const getParameter = (environment: TacticEnvironment, name: string, defaultValue: string) =>
+  environment.parameters.get(name) ?? defaultValue;
+
+const runParallelSmt = (environment: TacticEnvironment) => (goal: Goal) => {
+  if (goal.isProofsEnabled)
+    throw new SmtTacticError("parallel_tactic does not support proof production");
+  const manager = environment.manager;
+  const extracted = extractClauses(manager, goal);
+  const solved = solveParallel(
+    manager,
+    getKernelParams(environment, new Map(), goal),
+    {
+      threadsMax: Number(getParameter(environment, "parallel.threads.max", "10000")),
+      numBbThreads: Number(getParameter(environment, "parallel.num_bb_threads", "2")),
+      isAblatingBacktracking:
+        getParameter(environment, "parallel.ablate_backtracking", "false") === "true",
+    },
+    extracted.clauses.items,
+    extracted.assumptions,
+  );
+  extracted.clauses.reset();
+  if (solved.status === L_TRUE) {
+    goal.reset();
+    goal.model = solved.model;
+  }
+  if (solved.status === L_FALSE)
+    goal.assert(
+      manager.falseExpr,
+      mkCoreDependency(solved.core.filter((literal) => extracted.assumptions.includes(literal))),
+    );
+  if (solved.status === L_UNDEF && !manager.limit.inc()) throw new SmtCanceledError();
   return [goal];
 };
 
@@ -1146,6 +1192,14 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     },
   ],
   [
+    "psmt",
+    {
+      descrs: new Map(),
+      isTrackingDependencies: true,
+      build: runParallelSmt,
+    },
+  ],
+  [
     "nlsat",
     {
       descrs: NLSAT_DESCRS,
@@ -1291,7 +1345,7 @@ const UNPORTED_TACTICS = new Set(
     "elim-predicates elim-uncnstr2 " +
     "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv fold-unfold fpa2bv " +
     "horn-simplify injectivity pb-preprocess pqffd propagate-bv-bounds " +
-    "propagate-bv-bounds2 propagate-values2 psmt qfbv-sls qfufbv recover-01 reduce-args2 " +
+    "propagate-bv-bounds2 propagate-values2 qfbv-sls qfufbv recover-01 reduce-args2 " +
     "sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
     "split-clause subpaving symmetry-reduce"
   ).split(" "),
