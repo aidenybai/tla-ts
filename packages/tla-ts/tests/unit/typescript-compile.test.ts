@@ -2230,6 +2230,43 @@ describe("values", () => {
     expect(wrong.failure?.message).toContain("result 2,5,6");
   });
 
+  it("runs the call that makes an object in a loop condition's short-circuit only where it runs", async () => {
+    const getSource = (expected: string) => `
+      interface Token {
+        kind: "Identifier" | "End";
+        text: string;
+        column: number;
+      }
+      const tokens: Token[] = [
+        { kind: "Identifier", text: "a", column: 2 },
+        { kind: "Identifier", text: ",", column: 3 },
+        { kind: "Identifier", text: "b", column: 4 },
+        { kind: "Identifier", text: ",", column: 1 },
+        { kind: "Identifier", text: "c", column: 5 },
+        { kind: "End", text: "", column: 6 },
+      ];
+      const cursor = { index: 0, offside: 1, peeks: 0 };
+      const peek = (offset = 0) => {
+        cursor.peeks++;
+        const token = tokens[Math.min(cursor.index + offset, tokens.length - 1)];
+        return token.column <= cursor.offside ? { ...token, kind: "End" as const, text: "" } : token;
+      };
+      const isAt = (text: string, offset = 0) => peek(offset).text === text;
+      const offset = { value: 0 };
+      while (peek(offset.value).kind === "Identifier" && isAt(",", offset.value + 1)) offset.value += 2;
+      let count = 0;
+      for (let index = 0; index < 3 || peek(index).text === "c"; index++) count++;
+      let skipped = 0;
+      do skipped++;
+      while (cursor.peeks > 100 ? false : peek(skipped).kind === "End" || skipped < 4);
+      const result = [offset.value, count, skipped, cursor.peeks].join(",");
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+    expect((await checkModel(getSource("2,3,4,9"))).failure).toBeUndefined();
+    const wrong = await checkModel(getSource("2,3,4,10"));
+    expect(wrong.failure?.message).toContain("result 2,3,4,9");
+  });
+
   it("runs a switch's expression in order where a call in it changes what it reads", async () => {
     const getSource = (expected: string) => `
       const box = { v: 1 };

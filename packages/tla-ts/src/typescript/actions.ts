@@ -11454,6 +11454,37 @@ const translateIterations = (
           ),
         );
       }
+      // A short-circuit whose operand runs such a call runs it only where the operand runs.
+      const branch = getBranch(condition, current, context);
+      if (branch !== undefined) {
+        const kept = branch.reads.map((read): [ts.Expression, Expression] => [
+          read,
+          translateExpression(read, current.scope, context),
+        ]);
+        return translateJoined(
+          branch.node,
+          current,
+          context,
+          (after, value) =>
+            test(
+              {
+                ...after,
+                scope: {
+                  ...after.scope,
+                  results: new Map([
+                    ...after.scope.results,
+                    ...kept,
+                    [branch.node, value ?? getUndefined(context)],
+                  ]),
+                },
+              },
+              whenTrue,
+              whenFalse,
+              tested,
+            ),
+          (next) => runBranch(branch.node, current, context, bodyFrame, next),
+        );
+      }
       const untested = { ...current, scope: { ...current.scope, results: tested.scope.results } };
       return ifThenElse(
         iterated !== undefined
@@ -12720,12 +12751,107 @@ const withLeadingResults = (
   },
 });
 
-// The short-circuit or the conditional that a statement's expression evaluates first whose operand
-// that runs only sometimes is a call that only statements can run, and the names, properties, and
-// calls that can't throw that the statement evaluates before it and that read what the call
-// changes, which keep the values that they had then.
-const getHoistedBranch = (statement: ts.Statement, path: Path, context: Context) => {
-  const evaluated = getEvaluated(statement);
+// Runs a short-circuit or a conditional whose operand runs a call that only statements can run, so
+// that each operand runs only where it gives the value. A branch whose operand is a branch runs that
+// one where it runs.
+const runBranch = (
+  node: NonNullable<LeadingCall["branch"]>,
+  current: Path,
+  context: Context,
+  frame: Frame,
+  withValue: (after: Path, value: Expression) => Formula,
+): Formula => {
+  // An operand runs the calls in it that only statements can run, in order, before the rest.
+  const evaluate = (operand: ts.Expression, next: Path, withOperand = withValue): Formula => {
+    const run = skipCasts(operand);
+    const inner = findLeadingCall(run, [], next, context).branch;
+    if (inner !== undefined && inner === run)
+      return runBranch(inner, next, context, frame, withOperand);
+    if (isAssignment(run) && (!isIncrement(run) || isPlainIncrement(run, context))) {
+      return runAssignment(run, next, context, frame, withOperand);
+    }
+    if (ts.isCallExpression(run) && !next.scope.results.has(run)) {
+      return allocate(run, next, context, (allocated) =>
+        translateCallStatement(run, allocated, context, frame, (after, value) =>
+          withOperand(after, value ?? getUndefined(context)),
+        ),
+      );
+    }
+    const leading = getLeadingCall(operand, () => true, next, context);
+    // An operand makes the objects in it only where its branch runs.
+    return leading === undefined
+      ? allocate(operand, next, context, (allocated) =>
+          withOperand(allocated, translateExpression(operand, allocated.scope, context)),
+        )
+      : allocate(leading.call, next, context, (allocated) =>
+          translateCallStatement(leading.call, allocated, context, frame, (after, value) =>
+            evaluate(
+              operand,
+              withLeadingResults(leading, allocated, after, value, context),
+              withOperand,
+            ),
+          ),
+        );
+  };
+  if (ts.isConditionalExpression(node)) {
+    return ifThenElse(
+      translateCondition(node.condition, current.scope, context),
+      evaluate(node.whenTrue, current),
+      evaluate(node.whenFalse, current),
+    );
+  }
+  // A logical assignment reads its target and its key before its value runs, and then writes
+  // the value.
+  if (LOGICAL_OPERATORS.has(node.operatorToken.kind)) {
+    const target = node.left;
+    const held = translateExpression(target, current.scope, context);
+    const key = ts.isElementAccessExpression(target) ? target.argumentExpression : undefined;
+    const reads: [ts.Expression, Expression][] = [
+      [target, held],
+      ...(key === undefined
+        ? []
+        : [[key, translateExpression(key, current.scope, context)] as [ts.Expression, Expression]]),
+    ];
+    return ifThenElse(
+      isLogicallyWritten(node, held, context),
+      evaluate(node.right, current, (after, assigned) =>
+        runAssignment(
+          node,
+          {
+            ...after,
+            scope: {
+              ...after.scope,
+              results: new Map([...after.scope.results, ...reads, [node.right, assigned]]),
+            },
+          },
+          context,
+          frame,
+          withValue,
+        ),
+      ),
+      withValue(current, held),
+    );
+  }
+  const kind = node.operatorToken.kind;
+  context.prelude.add("Null");
+  context.prelude.add("Undefined");
+  const isRight =
+    kind === ts.SyntaxKind.QuestionQuestionToken
+      ? apply("\\in", [
+          translateExpression(node.left, current.scope, context),
+          set([identifier("Null"), identifier("Undefined")]),
+        ])
+      : kind === ts.SyntaxKind.AmpersandAmpersandToken
+        ? translateCondition(node.left, current.scope, context)
+        : not(translateCondition(node.left, current.scope, context));
+  return ifThenElse(isRight, evaluate(node.right, current), evaluate(node.left, current));
+};
+
+// The short-circuit or the conditional that an expression evaluates first whose operand that runs
+// only sometimes is a call that only statements can run, and the names, properties, and calls that
+// can't throw that the expression evaluates before it and that read what the call changes, which
+// keep the values that they had then.
+const getBranch = (evaluated: ts.Expression | undefined, path: Path, context: Context) => {
   if (evaluated === undefined) return undefined;
   const before: ts.Node[] = [];
   const node = findLeadingCall(evaluated, before, path, context).branch;
@@ -13054,103 +13180,8 @@ export const translateStatements = (
       ),
     );
   }
-  const branch = getHoistedBranch(statement, path, context);
+  const branch = getBranch(getEvaluated(statement), path, context);
   if (branch !== undefined) {
-    // A branch whose operand is a branch runs that one where it runs.
-    const runBranch = (
-      node: NonNullable<LeadingCall["branch"]>,
-      current: Path,
-      withValue: (after: Path, value: Expression) => Formula,
-    ): Formula => {
-      // An operand runs the calls in it that only statements can run, in order, before the rest.
-      const evaluate = (operand: ts.Expression, next: Path, withOperand = withValue): Formula => {
-        const run = skipCasts(operand);
-        const inner = findLeadingCall(run, [], next, context).branch;
-        if (inner !== undefined && inner === run) return runBranch(inner, next, withOperand);
-        if (isAssignment(run) && (!isIncrement(run) || isPlainIncrement(run, context))) {
-          return runAssignment(run, next, context, frame, withOperand);
-        }
-        if (ts.isCallExpression(run) && !next.scope.results.has(run)) {
-          return allocate(run, next, context, (allocated) =>
-            translateCallStatement(run, allocated, context, frame, (after, value) =>
-              withOperand(after, value ?? getUndefined(context)),
-            ),
-          );
-        }
-        const leading = getLeadingCall(operand, () => true, next, context);
-        // An operand makes the objects in it only where its branch runs.
-        return leading === undefined
-          ? allocate(operand, next, context, (allocated) =>
-              withOperand(allocated, translateExpression(operand, allocated.scope, context)),
-            )
-          : allocate(leading.call, next, context, (allocated) =>
-              translateCallStatement(leading.call, allocated, context, frame, (after, value) =>
-                evaluate(
-                  operand,
-                  withLeadingResults(leading, allocated, after, value, context),
-                  withOperand,
-                ),
-              ),
-            );
-      };
-      if (ts.isConditionalExpression(node)) {
-        return ifThenElse(
-          translateCondition(node.condition, current.scope, context),
-          evaluate(node.whenTrue, current),
-          evaluate(node.whenFalse, current),
-        );
-      }
-      // A logical assignment reads its target and its key before its value runs, and then writes
-      // the value.
-      if (LOGICAL_OPERATORS.has(node.operatorToken.kind)) {
-        const target = node.left;
-        const held = translateExpression(target, current.scope, context);
-        const key = ts.isElementAccessExpression(target) ? target.argumentExpression : undefined;
-        const reads: [ts.Expression, Expression][] = [
-          [target, held],
-          ...(key === undefined
-            ? []
-            : [
-                [key, translateExpression(key, current.scope, context)] as [
-                  ts.Expression,
-                  Expression,
-                ],
-              ]),
-        ];
-        return ifThenElse(
-          isLogicallyWritten(node, held, context),
-          evaluate(node.right, current, (after, assigned) =>
-            runAssignment(
-              node,
-              {
-                ...after,
-                scope: {
-                  ...after.scope,
-                  results: new Map([...after.scope.results, ...reads, [node.right, assigned]]),
-                },
-              },
-              context,
-              frame,
-              withValue,
-            ),
-          ),
-          withValue(current, held),
-        );
-      }
-      const kind = node.operatorToken.kind;
-      context.prelude.add("Null");
-      context.prelude.add("Undefined");
-      const isRight =
-        kind === ts.SyntaxKind.QuestionQuestionToken
-          ? apply("\\in", [
-              translateExpression(node.left, current.scope, context),
-              set([identifier("Null"), identifier("Undefined")]),
-            ])
-          : kind === ts.SyntaxKind.AmpersandAmpersandToken
-            ? translateCondition(node.left, current.scope, context)
-            : not(translateCondition(node.left, current.scope, context));
-      return ifThenElse(isRight, evaluate(node.right, current), evaluate(node.left, current));
-    };
     // What follows translates once, for each operand that gives the value.
     const kept = branch.reads.map((read): [ts.Expression, Expression] => [
       read,
@@ -13177,7 +13208,7 @@ export const translateStatements = (
           context,
           frame,
         ),
-      (next) => runBranch(branch.node, path, next),
+      (next) => runBranch(branch.node, path, context, frame, next),
     );
   }
   const hoisted = getHoistedAssignment(statement, path, context);
