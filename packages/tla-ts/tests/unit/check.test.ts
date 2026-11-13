@@ -748,6 +748,16 @@ ASSUME TLCFP(a) = -887695703
     expect(printed).toEqual([]);
   });
 
+  it("assigns variables in a LET definition that calls Assert", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLES x, y\nInit == \\E h \\in {1, 2} : LET J == IF h > 5 THEN Assert(FALSE, "big") ELSE /\\ x = h /\\ y = h + 1 IN J\nNext == LET K == IF x > 5 THEN Assert(FALSE, "big") ELSE /\\ x\' = x /\\ y\' = y IN K\nInv == y = x + 1\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([4, 2, 1]);
+  });
+
   it("stops branching on initial conjuncts once every variable is assigned", async () => {
     const result = await checkFixture("initial-states", "InitialStates");
     expect(result.status).toBe("success");

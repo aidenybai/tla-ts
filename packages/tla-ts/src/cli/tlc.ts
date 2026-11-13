@@ -38,6 +38,7 @@ import {
 import { EXIT_STATUS, setExitCode } from "../exit-codes";
 import { check } from "../parallel";
 import { parseModule } from "../parser";
+import { printModule } from "../printer";
 import type { StateDump } from "../state-graph";
 import {
   formatProbability,
@@ -75,7 +76,7 @@ import {
   toLibraryPath,
   type JavaProperties,
 } from "./shared";
-import { writeTypeScriptSpec } from "./typescript";
+import { compileTypeScriptFile, type CompiledInput } from "./typescript";
 
 const EXIT_CODES: Record<CheckStatus, number> = {
   success: EXIT_STATUS.success,
@@ -596,6 +597,8 @@ const createFileDescriber = (
   java: JavaProperties,
   metadir: string | undefined,
   version: TlcVersion,
+  // The file SANY names for the root module when it has no file of its own.
+  rootFile?: string,
 ) => {
   const temporary = java.temporaryDirectory ?? tmpdir();
   const temporaryDirectory = existsSync(temporary) ? realpathSync(temporary) : resolve(temporary);
@@ -603,6 +606,7 @@ const createFileDescriber = (
   const jar = getToolsJar(java);
   return (name: string, origin: SanyModuleOrigin) => {
     const fileName = `${name}.tla`;
+    if (origin === "file" && rootFile && name === basename(specPath, ".tla")) return rootFile;
     if (origin === "file") return realpathSync(findModuleFile(directories, name) ?? specPath);
     // TLC 1.7.4 copies a standard module into the temporary directory itself.
     if (version === "1.7.4") return join(temporaryDirectory, fileName);
@@ -658,6 +662,7 @@ const checkSpec = async (
   args: ParsedArgs,
   java: JavaProperties,
   printer: MessagePrinter,
+  compiled?: CompiledInput,
 ) => {
   // TLC.handleParameters: TLC reads its options before it says which version it is.
   const seed = args.has("-seed") ? args.get("-seed")?.[0] : "0";
@@ -700,7 +705,14 @@ const checkSpec = async (
   const configPath =
     args.get("-config")?.[0] ??
     (args.has("-config") ? undefined : specPath.replace(/\.tla$/, ".cfg"));
-  if (!configPath || !existsSync(configPath)) {
+  // A spec compiled from TypeScript has its config with it, unless -config names another.
+  const configSource =
+    compiled && !args.has("-config")
+      ? compiled.config
+      : configPath && existsSync(configPath)
+        ? readFileSync(configPath, "utf8")
+        : undefined;
+  if (configSource === undefined) {
     printer.print(
       MESSAGE_CODE.configFileError,
       MESSAGE_LEVEL.error,
@@ -739,7 +751,7 @@ const checkSpec = async (
   // when it can't read it.
   const config = (() => {
     try {
-      return parseConfig(readFileSync(configPath, "utf8"), version);
+      return parseConfig(configSource, version);
     } catch (error) {
       if (!(error instanceof TlaConfigError)) throw error;
       return error;
@@ -759,7 +771,8 @@ const checkSpec = async (
   if (args.has("-deadlock")) config.checkDeadlock = false;
   const directory = dirname(specPath);
   const directories = [directory, ...java.libraries];
-  const loadModule = createModuleLoader(directories);
+  const loadFile = createModuleLoader(directories);
+  const loadModule = (name: string) => compiled?.loadModule(name) ?? loadFile(name);
   const isRecorded = isTraceRecorded(args, version);
   if (printer.isTool) {
     printer.print(MESSAGE_CODE.startingSany, MESSAGE_LEVEL.none, "Starting SANY...");
@@ -770,13 +783,14 @@ const checkSpec = async (
   const isAbsoluteSpec = isAbsolute(specPath);
   const specName = isAbsoluteSpec ? fileName : specPath.replace(/\.tla$/, "");
   const jar = getToolsJar(java);
+  const isSpecFound = compiled !== undefined || existsSync(specPath);
   const reportMissingFile =
     version === "1.7.4" ? createMissingFilePrinter174(specPath, java, jar) : undefined;
   if (reportMissingFile) {
-    if (!existsSync(specPath) && !SANY_174_STANDARD_MODULES.has(fileName)) {
+    if (!isSpecFound && !SANY_174_STANDARD_MODULES.has(fileName)) {
       reportMissingFile(`${fileName}.tla`);
     }
-  } else if (!existsSync(specPath) && !SANY_STANDARD_MODULES.has(fileName)) {
+  } else if (!isSpecFound && !SANY_STANDARD_MODULES.has(fileName)) {
     printMissingFile(
       isAbsoluteSpec ? directory : process.cwd(),
       isAbsoluteSpec ? `${fileName}.tla` : `./${specName}.tla`,
@@ -789,12 +803,14 @@ const checkSpec = async (
     reportMissingFile ? reportMissingModules174(loadModule, reportMissingFile) : loadModule,
     {
       fileName: specName,
+      rootSource: compiled && printModule(compiled.source),
       describeFile: createFileDescriber(
         specPath,
         directories,
         java,
         args.get("-metadir")?.[0],
         version,
+        compiled && resolve(compiled.path),
       ),
       version,
       // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
@@ -810,8 +826,8 @@ const checkSpec = async (
     return EXIT_STATUS.specParseError;
   }
   try {
-    const source = readFileSync(specPath, "utf8");
-    const moduleName = parseModule(source).name;
+    const source = compiled?.source ?? readFileSync(specPath, "utf8");
+    const moduleName = typeof source === "string" ? parseModule(source).name : source.name;
     if (moduleName !== fileName) {
       throw new TlaSanyFatalError(
         `File name '${fileName}' does not match the name '${moduleName}' of the top level module it contains.`,
@@ -917,12 +933,16 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     );
     exitCodes.push(
       await reportErrors(async () => {
-        const specPath = path.endsWith(".ts") ? await writeTypeScriptSpec(path) : path;
+        const compiled = path.endsWith(".ts") ? await compileTypeScriptFile(path) : undefined;
         // TLC checks one spec, so tla-ts names each of several it checks.
         if (paths.length > 1) {
-          console.log(`Checking ${basename(specPath)} with ${basename(specPath, ".tla")}.cfg`);
+          console.log(
+            compiled
+              ? `Checking ${basename(path)}`
+              : `Checking ${basename(path)} with ${basename(path, ".tla")}.cfg`,
+          );
         }
-        return checkSpec(specPath, parsed, java, printer);
+        return checkSpec(compiled?.specPath ?? path, parsed, java, printer, compiled);
       }, printer),
     );
   }

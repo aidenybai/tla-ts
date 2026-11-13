@@ -1,12 +1,22 @@
 import ts from "@typescript/typescript6";
+import type { Expression } from "../ast";
 import { translateAction } from "./actions";
 import { type Context, getSymbol, isMethodCall } from "./context";
 import type { Sections } from "./emit";
 import { translateExpression } from "./expressions";
-import { render, wrap } from "./formula";
+import { render } from "./formula";
 import type { Exported } from "./model";
+import { link } from "./regions";
 import { bindNames, createStateScope, declareParameters, type Parameter } from "./scope";
-import { collectUnknowns, defineWithUnknowns, findDomain, getDomain, isSet } from "./types";
+import { apply, bound, call, fairness as getFairness, identifier, junction, quantify } from "./tla";
+import {
+  collectUnknowns,
+  defineWithUnknowns,
+  findDomain,
+  getDomain,
+  isInfinite,
+  isSet,
+} from "./types";
 
 interface Guard {
   parameter: Parameter;
@@ -15,7 +25,7 @@ interface Guard {
 }
 
 interface Chosen {
-  domain: string;
+  domain: Expression;
   // Whether the set uses parameters that earlier guards chose.
   isDependent: boolean;
 }
@@ -119,19 +129,36 @@ export const translateStep = (definition: Exported, sections: Sections, context:
   const action = collectUnknowns(definition.node, context, () =>
     translateAction(guards.remaining, bindNames(createStateScope(context), parameters), context),
   );
-  const head =
-    parameters.length === 0
-      ? name
-      : `${name}(${parameters.map((parameter) => parameter.name).join(", ")})`;
-  sections.actions.push(defineWithUnknowns(head, "\\E", render(action.value), action.unknowns));
+  const head = call(
+    name,
+    parameters.map((parameter) => identifier(parameter.name)),
+  );
+  const node = definition.declaration;
+  sections.actions.push(
+    link(
+      context,
+      "action",
+      name,
+      node,
+      defineWithUnknowns(
+        definition.node,
+        name,
+        parameters.map((parameter) => ({ name: parameter.name, arity: 0 })),
+        "Exists",
+        render(action.value),
+        action.unknowns,
+      ),
+    ),
+  );
   const fairness = definition.tags.has("strongFair")
-    ? "SF_vars"
+    ? "StrongFairness"
     : definition.tags.has("fair")
-      ? "WF_vars"
+      ? "WeakFairness"
       : undefined;
   if (parameters.length === 0) {
-    sections.next.push(name);
-    if (fairness !== undefined) sections.fairness.push(`${fairness}(${name})`);
+    sections.next.push(link(context, "next", name, node, head));
+    if (fairness !== undefined)
+      sections.fairness.push(getFairness(fairness, identifier("vars"), head));
     return;
   }
   const getType = (parameter: Parameter) => context.checker.getTypeAtLocation(parameter.node.name);
@@ -143,14 +170,20 @@ export const translateStep = (definition: Exported, sections: Sections, context:
   const independent = parameters.flatMap((parameter, index) =>
     guards.chosen.get(parameter)?.isDependent === true
       ? []
-      : [`${parameter.name} \\in ${domains[index]}`],
+      : [bound(parameter.name, domains[index])],
   );
   // Guards run in order, so each dependent parameter is chosen after the ones its set uses.
-  const dependent = [...guards.chosen]
-    .filter((entry) => entry[1].isDependent)
-    .map((entry) => `\\E ${entry[0].name} \\in ${entry[1].domain} : `);
-  const step = `\\E ${independent.join(", ")} : ${dependent.join("")}${head}`;
-  sections.next.push(step);
+  const step = quantify(
+    "Exists",
+    independent,
+    [...guards.chosen]
+      .filter((entry) => entry[1].isDependent)
+      .reduceRight(
+        (inner, entry) => quantify("Exists", [bound(entry[0].name, entry[1].domain)], inner),
+        head,
+      ),
+  );
+  sections.next.push(link(context, "next", name, node, step));
   if (fairness === undefined) return;
   // Fairness holds for each parameter value when every parameter has a finite type, with the
   // guards that chose parameters kept inside the action.
@@ -158,16 +191,25 @@ export const translateStep = (definition: Exported, sections: Sections, context:
     guards.chosen.has(parameter) ? findDomain(getType(parameter), context) : domains[index],
   );
   const conditions = parameters.flatMap((parameter, index) =>
-    guards.chosen.has(parameter) ? [`${parameter.name} \\in ${wrap(domains[index])}`] : [],
+    guards.chosen.has(parameter)
+      ? [apply("\\in", [identifier(parameter.name), domains[index]])]
+      : [],
   );
-  if (!typeDomains.every((domain): domain is string => typeof domain === "string")) {
-    sections.fairness.push(`${fairness}(${step})`);
+  const finite = typeDomains.flatMap((domain) => (isInfinite(domain) ? [] : [domain]));
+  if (finite.length < typeDomains.length) {
+    sections.fairness.push(getFairness(fairness, identifier("vars"), step));
     return;
   }
-  const forAll = parameters.map(
-    (parameter, index) => `${parameter.name} \\in ${typeDomains[index]}`,
-  );
+  const guarded = [...conditions, head];
   sections.fairness.push(
-    `\\A ${forAll.join(", ")} : ${fairness}(${[...conditions, head].join(" /\\ ")})`,
+    quantify(
+      "Forall",
+      parameters.map((parameter, index) => bound(parameter.name, finite[index])),
+      getFairness(
+        fairness,
+        identifier("vars"),
+        guarded.length === 1 ? guarded[0] : junction("And", guarded),
+      ),
+    ),
   );
 };

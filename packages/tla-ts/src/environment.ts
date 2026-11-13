@@ -86,7 +86,7 @@ import {
 import type { TlcVersion } from "./tlc/version";
 
 interface EnvironmentOptions {
-  source: string;
+  source: string | Module;
   loadModule: ((name: string) => string | undefined) | undefined;
   loadClass?: (name: string) => Uint8Array | undefined;
   print: (text: string) => void;
@@ -299,7 +299,7 @@ export const createEnvironment = (
   config: ModelConfig,
   options: EnvironmentOptions,
 ): Specification => {
-  const root = parseModule(options.source);
+  const root = typeof options.source === "string" ? parseModule(options.source) : options.source;
   const definitions = new Map<string, Definition>();
   const parameterized = new Map<string, boolean>();
   // The definition each instance copy came from, and the instance parameters the copy adds.
@@ -415,7 +415,7 @@ export const createEnvironment = (
     const source =
       options.loadModule?.(name) ??
       BUNDLED_MODULES.get(name) ??
-      extractModule(options.source, name);
+      (typeof options.source === "string" ? extractModule(options.source, name) : undefined);
     if (source === undefined) throw createMissingModuleError(name, importer);
     const module = parseModuleFile(source, name);
     if (module.name !== name) {

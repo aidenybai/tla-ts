@@ -3,13 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>tla-ts</title>
+    <title>TLA-ts</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="alternate" type="text/markdown" href="/index.md" />
     <meta
       name="description"
-      content="A TLA+ interpreter and model checker in TypeScript, 2× faster than TLC."
+      content="Formal verification for your existing TypeScript code via TLA+."
     />
+    <script>
+      document.documentElement.classList.toggle(
+        "dark",
+        (localStorage.getItem("tla-ts-theme") ??
+          (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")) === "dark",
+      );
+    </script>
   </head>
   <body>
     <div id="root"></div>

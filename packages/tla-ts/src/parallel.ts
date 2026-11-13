@@ -1,4 +1,4 @@
-import type { Expression } from "./ast";
+import type { Expression, Module } from "./ast";
 import {
   checkSequentially,
   type CheckOptions,
@@ -40,7 +40,7 @@ import { spawnWorker, type Port } from "./worker";
 
 export interface StartMessage {
   type: "start";
-  source: string;
+  source: string | Module;
   config: ModelConfig;
   modules: [string, string | undefined][];
   classes: [string, Uint8Array | undefined][];

@@ -1,27 +1,53 @@
-# tla-ts
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="packages/website/public/logo-dark.svg">
+    <img src="packages/website/public/logo-light.svg" width="36" alt="" valign="middle" />
+  </picture>
+  TLA-ts
+</h1>
 
 [![version](https://img.shields.io/npm/v/tla-ts?style=flat&colorA=000000&colorB=000000)](https://npmjs.com/package/tla-ts)
 [![downloads](https://img.shields.io/npm/dt/tla-ts.svg?style=flat&colorA=000000&colorB=000000)](https://npmjs.com/package/tla-ts)
 
-tla-ts is a drop-in replacement for [TLC](https://github.com/tlaplus/tlaplus) that's **2× faster**.
+Formal verification for your existing TypeScript code via [TLA+](https://lamport.azurewebsites.net/tla/tla.html).
 
-TLA+ lets you write formal models of a system, and TLC model checks them. But TLC is written in Java and needs the JVM. tla-ts runs anywhere JavaScript runs, such as the browser, Node, and Bun. Try it in the [playground](https://tla-ts.aidenybai.com).
+Under the hood, TLA-ts is a transpiler that turns TypeScript/JavaScript into TLA+. It uses a 1:1 reimplementation of [TLC](https://github.com/tlaplus/tlaplus)/[TLAPM](https://proofs.tlapl.us) in TypeScript that runs 2× faster.
+
+[View playground](https://tla-ts.aidenybai.com)
+
+## How it works
+
+1. Run `npx tla-ts [file].ts`.
+2. TLA-ts transpiles TypeScript into TLA+.
+3. TLA-ts model checks TypeScript code and finds violations.
+
+Here, TLA-ts checks a counter:
 
 ```ts
-import { check } from "tla-ts";
+// counter.ts
+let count = 0;
 
-const result = await check({
-  source: `---- MODULE Counter ----
-EXTENDS Naturals
-VARIABLE x
-Init == x = 0
-Next == x' = x + 1
-Small == x < 3
-====`,
-  config: "INIT Init NEXT Next INVARIANT Small",
-});
+export const increment = () => {
+  count += 1;
+};
 
-result.status; // "invariant-violation"
+export const small = () => count < 3;
+```
+
+TLA-ts transpiles it into this TLA+ module:
+
+```tla
+---- MODULE Counter ----
+EXTENDS Integers, Sequences, FiniteSets, TLC
+VARIABLES count
+vars == <<count>>
+Init == count = 0
+increment == count' = count + 1
+Next == increment
+Spec == /\ Init
+        /\ [][Next]_vars
+small == count < 3 \* violated after three calls to increment
+====
 ```
 
 ## Install
@@ -30,33 +56,24 @@ result.status; // "invariant-violation"
 npm install tla-ts
 ```
 
-## Command line
+You can also skip the install and run `npx tla-ts [file].ts`.
+
+## CLI
+
+Pass a TypeScript file, a TLA+ spec, or a TLA+ module with proofs:
 
 ```shell
-npx tla-ts Spec.tla          # check a spec with TLC's options
-npx tla-ts bank.ts           # compile TypeScript to TLA+ and check it
-npx tla-ts tlapm Module.tla  # tlapm's command line, with tla-ts's provers
+# transpile TypeScript to TLA+ and check it
+npx tla-ts counter.ts
+
+# check a TLA+ spec
+npx tla-ts Counter.tla
+
+# prove a TLA+ module with TLAPM
+npx tla-ts tlapm Module.tla
 ```
 
-## Check TypeScript
-
-tla-ts compiles a TypeScript file to a TLA+ spec and config, writes them beside the file, and checks them. Variables become state, exported functions that change state become actions, and exported functions that return a boolean become invariants.
-
-```ts
-// bank.ts
-type Account = "alice" | "bob";
-
-let balances: Record<Account, number> = { alice: 10, bob: 10 };
-
-export const transfer = (from: Account, to: Account, amount: 1 | 2 | 3) => {
-  balances[from] -= amount;
-  balances[to] += amount;
-};
-
-export const noOverdraft = () => balances.alice >= 0 && balances.bob >= 0;
-```
-
-`npx tla-ts bank.ts` writes `Bank.tla` and `Bank.cfg`, and reports that `noOverdraft` is violated after four transfers from `bob`. [Check TypeScript](https://github.com/aidenybai/tla-ts/blob/main/docs/typescript.md) lists every construct tla-ts compiles.
+For a TLA+ spec, TLA-ts reads `Counter.cfg` from the same folder and takes TLC's options.
 
 ## API
 
@@ -120,13 +137,13 @@ formatValue(step.state.queue); // "<<1, 2>>"
 | `TlaSyntaxError`      | The module doesn't parse                        |
 | `TlaConfigError`      | The configuration is invalid                    |
 | `TlaEvaluationError`  | Evaluating the spec fails                       |
-| `TlaUnsupportedError` | The spec or call uses something tla-ts can't do |
+| `TlaUnsupportedError` | The spec or call uses something TLA-ts can't do |
 
 ## Benchmarks
 
 Wall time on one worker, including JVM and Node startup. Both checkers report the same state counts on every model.
 
-| Spec                                                           | Distinct states |     TLC |  tla-ts | Speedup |
+| Spec                                                           | Distinct states |     TLC |  TLA-ts | Speedup |
 | -------------------------------------------------------------- | --------------: | ------: | ------: | ------: |
 | [Two-phase commit](packages/tla-ts/benchmarks/commit)          |         282,251 |  4.32 s |  2.01 s |    2.2× |
 | [Dining philosophers](packages/tla-ts/benchmarks/philosophers) |         128,889 |  1.06 s |  0.71 s |    1.5× |
@@ -135,7 +152,7 @@ Wall time on one worker, including JVM and Node startup. Both checkers report th
 
 Wall time on 8 workers, also including startup. Each time is the median of 3 runs on an Apple M4 Pro.
 
-| Spec                                                                                                                  | Distinct states |     TLC | tla-ts | Speedup |
+| Spec                                                                                                                  | Distinct states |     TLC | TLA-ts | Speedup |
 | --------------------------------------------------------------------------------------------------------------------- | --------------: | ------: | -----: | ------: |
 | [Raft with reconfiguration](https://github.com/will62794/tla-web/blob/8193eb0/specs/RaftWithReconfigSingleServer.tla) |         298,493 | 10.50 s | 8.96 s |    1.2× |
 | [Sailfish](https://github.com/tlaplus/Examples/tree/0cab2b3/specifications/dag-consensus)                             |         109,604 |  4.34 s | 4.07 s |    1.1× |
@@ -150,7 +167,7 @@ pnpm test
 pnpm dev
 ```
 
-`pnpm dev` starts the playground in `packages/website`.
+`pnpm dev` starts the website in `packages/website`.
 
 Run the conformance suite against TLC's recorded results:
 

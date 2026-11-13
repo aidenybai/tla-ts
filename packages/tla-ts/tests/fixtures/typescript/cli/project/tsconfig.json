@@ -1,0 +1,6 @@
+{
+  "compilerOptions": {
+    "paths": { "@limits/*": ["./limits/*"] }
+  },
+  "include": ["**/*.ts"]
+}

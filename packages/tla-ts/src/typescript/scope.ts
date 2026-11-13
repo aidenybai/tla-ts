@@ -1,17 +1,100 @@
 import ts from "@typescript/typescript6";
-import { type Context, getSymbol } from "./context";
+import {
+  type HeapFunction,
+  type Context,
+  type FunctionNode,
+  getElement,
+  getSymbol,
+  getUndefined,
+  share,
+} from "./context";
 import { TlaTypeScriptError } from "../errors";
-import { indent, wrap } from "./formula";
+import { isIteratedPattern, isTaken, isUntypedPattern } from "./iterators";
+import type { Expression, OperatorDefinition } from "../ast";
+import { translateArrayIteration } from "./collections";
+import { translateExpression } from "./expressions";
+import { apply, define, identifier, ifExpression, number, set, string, tuple } from "./tla";
+import { getHeap } from "./heap";
+import { translateBuiltInValue } from "./intrinsics";
+import { useJavaScript } from "./javascript";
+import { getField, getPathStep, getPropertyKey, isHeapPattern, isSequenceType } from "./types";
 
 export interface Scope {
   // The TLA+ expression for each variable, parameter, and local in scope.
-  bindings: Map<ts.Symbol, string>;
+  bindings: Map<ts.Symbol, Expression>;
   // The parameter that names the state before a step, in action properties and constraints.
   previous: ts.Symbol | undefined;
+  functions: Map<ts.Symbol, FunctionNode>;
+  isCatching: boolean;
+  uninitialized: ReadonlySet<ts.Symbol>;
+  allocated: ReadonlyMap<ts.Node, Expression>;
+  // The results of the calls that only statements can run, and of assignments inside
+  // expressions, which ran before the statement that holds them.
+  results: ReadonlyMap<ts.Expression, Expression>;
+  // The links of optional chains whose base tla-ts found isn't null or undefined.
+  checked?: ReadonlySet<ts.Expression>;
+  // The object that this names in the method that a call through it inlines.
+  receiver?: Receiver;
+  // The object that this names in each arrow function that a call takes, from where it was written.
+  arrowReceivers?: ReadonlyMap<ts.Node, Receiver>;
+  // The values of an object pattern's elements whose getters ran before it binds, which binding
+  // the pattern takes, once each.
+  read?: ReadonlyMap<ts.BindingElement, Expression>;
+  // The values that patterns destructure, which throw a TypeError where they are null or undefined
+  // though nothing reads what the patterns bind, and which the next statement checks.
+  destructured?: readonly Destructured[];
 }
 
+export interface Destructured {
+  pattern: ts.BindingPattern;
+  value: Expression;
+}
+
+export interface Receiver {
+  value: Expression;
+  method:
+    | ts.MethodDeclaration
+    | ts.ConstructorDeclaration
+    | ts.GetAccessorDeclaration
+    | ts.SetAccessorDeclaration
+    | ts.ClassStaticBlockDeclaration
+    | ts.PropertyDeclaration
+    | HeapFunction;
+  // The newTarget of a construction, which new.target reads in the constructor.
+  newTarget?: Expression;
+}
+
+// The function, static block, or field whose this a node's this names.
+export const getThisOwner = (node: ts.Node) =>
+  ts.findAncestor(
+    node.parent,
+    (ancestor) =>
+      (ts.isFunctionLike(ancestor) && !ts.isArrowFunction(ancestor)) ||
+      ts.isClassStaticBlockDeclaration(ancestor) ||
+      ts.isPropertyDeclaration(ancestor),
+  );
+
+// The receivers of the arrow functions that a call takes, with the scope's receiver for those
+// written in its method.
+export const getArrowReceivers = (
+  callbacks: readonly [ts.Symbol, FunctionNode][],
+  scope: Scope,
+): ReadonlyMap<ts.Node, Receiver> => {
+  const receiver = scope.receiver;
+  return new Map([
+    ...(scope.arrowReceivers ?? []),
+    ...callbacks.flatMap(([, callback]): [ts.Node, Receiver][] =>
+      receiver !== undefined &&
+      ts.isArrowFunction(callback) &&
+      getThisOwner(callback) === receiver.method
+        ? [[callback, receiver]]
+        : [],
+    ),
+  ]);
+};
+
 export interface Bound {
-  definitions: string[];
+  definitions: OperatorDefinition[];
   scope: Scope;
 }
 
@@ -22,23 +105,30 @@ export interface Parameter {
 }
 
 interface Named {
-  name: string;
+  name: string | Expression;
   symbol: ts.Symbol | undefined;
 }
 
 export const createStateScope = (context: Context): Scope => ({
   bindings: new Map(context.variables),
   previous: undefined,
+  functions: new Map(),
+  isCatching: false,
+  uninitialized: new Set(),
+  allocated: new Map(),
+  results: new Map(),
 });
 
 export const bindNames = (scope: Scope, named: Named[]): Scope => ({
+  ...scope,
   bindings: new Map([
     ...scope.bindings,
-    ...named.flatMap((item): [ts.Symbol, string][] =>
-      item.symbol === undefined ? [] : [[item.symbol, item.name]],
+    ...named.flatMap((item): [ts.Symbol, Expression][] =>
+      item.symbol === undefined
+        ? []
+        : [[item.symbol, typeof item.name === "string" ? identifier(item.name) : item.name]],
     ),
   ]),
-  previous: scope.previous,
 });
 
 export const declareParameter = (
@@ -48,7 +138,6 @@ export const declareParameter = (
   if (
     !ts.isIdentifier(parameter.name) ||
     parameter.initializer !== undefined ||
-    parameter.questionToken !== undefined ||
     parameter.dotDotDotToken !== undefined
   ) {
     throw new TlaTypeScriptError(`Use a plain parameter here: ${parameter.getText()}`, parameter);
@@ -65,52 +154,322 @@ export const declareParameters = (
   context: Context,
 ) => parameters.map((parameter) => declareParameter(parameter, context));
 
+export const rejectBeforeDeclaration = (node: ts.Identifier, scope: Scope, context: Context) => {
+  const symbol = getSymbol(node, context.checker);
+  const declaration = symbol?.valueDeclaration;
+  if (
+    !scope.isCatching ||
+    symbol === undefined ||
+    declaration === undefined ||
+    !ts.isVariableDeclaration(declaration) ||
+    !ts.isVariableDeclarationList(declaration.parent) ||
+    (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0
+  ) {
+    return;
+  }
+  const isUninitialized = ts.isSourceFile(declaration.parent.parent.parent)
+    ? scope.uninitialized.has(symbol)
+    : node.getStart() < declaration.getStart();
+  if (isUninitialized) {
+    throw new TlaTypeScriptError(`Inside try, use ${node.text} after its declaration`, node);
+  }
+};
+
+export const initialize = (
+  scope: Scope,
+  declaration: ts.VariableDeclaration,
+  context: Context,
+): Scope => {
+  const symbol = getSymbol(declaration.name, context.checker);
+  return symbol === undefined || !scope.uninitialized.has(symbol)
+    ? scope
+    : {
+        ...scope,
+        uninitialized: new Set([...scope.uninitialized].filter((other) => other !== symbol)),
+      };
+};
+
+export const getDefaulted = (
+  part: Expression,
+  initializer: ts.Expression | undefined,
+  scope: Scope,
+  context: Context,
+) =>
+  initializer === undefined
+    ? part
+    : share(part, "element", context, (shared) =>
+        ifExpression(
+          apply("=", [shared, getUndefined(context)]),
+          translateExpression(initializer, scope, context),
+          shared,
+        ),
+      );
+
+export const getOptionalField = (value: Expression, key: string, context: Context) => {
+  const step = getPathStep(key);
+  return ifExpression(
+    apply("\\in", [
+      step.kind === "Field" ? string(step.name) : step.args[0],
+      apply("DOMAIN", [value]),
+    ]),
+    getField(value, key),
+    getUndefined(context),
+  );
+};
+
 // Binds the names in a destructuring pattern to parts of a value, without LET definitions.
 export const bindPatternInline = (
   pattern: ts.BindingName,
-  value: string,
+  value: Expression,
   scope: Scope,
   context: Context,
 ): Scope => {
   if (ts.isIdentifier(pattern)) {
     return bindNames(scope, [{ name: value, symbol: getSymbol(pattern, context.checker) }]);
   }
-  return pattern.elements.reduce((current, element, index) => {
+  if (ts.isArrayBindingPattern(pattern) && isIteratedPattern(pattern, context) && !isTaken(value)) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't destructure this object through its iterator",
+      pattern,
+    );
+  }
+  // A nested pattern that destructures null or undefined throws before the getters of the elements
+  // after it run, which ran before the pattern binds.
+  if (ts.isBindingElement(pattern.parent) && (scope.read?.size ?? 0) > 0) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't destructure a nested pattern before the getters that follow it",
+      pattern,
+    );
+  }
+  const destructuring: Scope = {
+    ...scope,
+    destructured: [...(scope.destructured ?? []), { pattern, value }],
+  };
+  if (ts.isArrayBindingPattern(pattern) && isUntypedPattern(pattern, context) && !isTaken(value)) {
+    throw new TlaTypeScriptError("Give this pattern's value an array type", pattern);
+  }
+  const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(pattern));
+  const heapSymbol = context.heap;
+  // An array pattern runs the iterator of an array, which may be one that a script replaced.
+  const isIterated =
+    ts.isArrayBindingPattern(pattern) &&
+    !isTaken(value) &&
+    !(context.checker.getTypeAtLocation(pattern).flags & ts.TypeFlags.StringLike);
+  const heap = heapSymbol === undefined ? undefined : getHeap(destructuring, pattern, context);
+  const iterated =
+    isIterated && heap !== undefined
+      ? translateArrayIteration(value, heap, pattern, context)
+      : value;
+  const iterating =
+    isIterated && heapSymbol !== undefined && heap !== undefined
+      ? {
+          ...destructuring,
+          bindings: new Map([
+            ...destructuring.bindings,
+            [heapSymbol, translateArrayIteration(heap, heap, pattern, context)],
+          ]),
+        }
+      : destructuring;
+  const bound = pattern.elements.reduce((current, element, position) => {
     if (ts.isOmittedExpression(element)) return current;
-    if (element.dotDotDotToken !== undefined || element.initializer !== undefined) {
-      throw new TlaTypeScriptError("Rest elements and default values aren't supported", element);
+    const initializer = element.initializer;
+    const withDefault = (part: Expression) => getDefaulted(part, initializer, current, context);
+    if (ts.isArrayBindingPattern(pattern)) {
+      if (element.dotDotDotToken === undefined) {
+        return bindPatternInline(
+          element.name,
+          withDefault(getElement(iterated, number(position + 1), context)),
+          current,
+          context,
+        );
+      }
+      if (context.checker.getTypeAtLocation(pattern).flags & ts.TypeFlags.StringLike) {
+        throw new TlaTypeScriptError("Spread a string with split('') instead", element);
+      }
+      const rest = apply("SubSeq", [iterated, number(position + 1), apply("Len", [iterated])]);
+      if (!context.heapCollections.has(element) || heapSymbol === undefined) {
+        return bindPatternInline(element.name, rest, current, context);
+      }
+      const heap = useJavaScript(
+        "Allocate",
+        [
+          getHeap(current, element, context),
+          useJavaScript(
+            "ArrayObject",
+            [translateBuiltInValue("Array.prototype", element, context), rest],
+            context,
+          ),
+        ],
+        context,
+      );
+      return bindNames(
+        { ...current, bindings: new Map([...current.bindings, [heapSymbol, heap]]) },
+        [
+          {
+            name: useJavaScript("Allocated", [heap], context),
+            symbol: getSymbol(element.name, context.checker),
+          },
+        ],
+      );
     }
-    const part = ts.isArrayBindingPattern(pattern)
-      ? `${wrap(value)}[${index + 1}]`
-      : `${wrap(value)}.${(element.propertyName ?? element.name).getText()}`;
-    return bindPatternInline(element.name, part, current, context);
-  }, scope);
+    if (element.dotDotDotToken !== undefined) {
+      // A new object with the properties that the other elements don't name.
+      const excluded = pattern.elements.flatMap((other) => {
+        if (other === element) return [];
+        const otherName = other.propertyName ?? other.name;
+        const otherKey =
+          ts.isIdentifier(otherName) ||
+          ts.isStringLiteral(otherName) ||
+          ts.isNumericLiteral(otherName)
+            ? getPropertyKey(otherName)
+            : undefined;
+        if (otherKey === undefined) {
+          throw new TlaTypeScriptError(
+            "Object rest elements need the other keys to be names",
+            other,
+          );
+        }
+        return [string(otherKey)];
+      });
+      if (heapSymbol === undefined || !isHeapPattern(type, pattern, context)) {
+        throw new TlaTypeScriptError("Object rest elements need an object in a script", element);
+      }
+      const heap = getHeap(current, element, context);
+      const allocated = useJavaScript(
+        "Allocate",
+        [
+          heap,
+          useJavaScript(
+            "RestObject",
+            [heap, value, set(excluded), current.read?.get(element) ?? tuple([])],
+            context,
+          ),
+        ],
+        context,
+      );
+      return bindNames(
+        {
+          ...current,
+          bindings: new Map([...current.bindings, [heapSymbol, allocated]]),
+          read: new Map([...(current.read ?? [])].filter((entry) => entry[0] !== element)),
+        },
+        [
+          {
+            name: useJavaScript("Allocated", [allocated], context),
+            symbol: getSymbol(element.name, context.checker),
+          },
+        ],
+      );
+    }
+    const name = element.propertyName ?? element.name;
+    const key =
+      ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)
+        ? undefined
+        : getPropertyKey(name);
+    if (key === undefined) throw new TlaTypeScriptError("Unsupported key", element);
+    if (isHeapPattern(type, pattern, context)) {
+      const got = current.read?.get(element);
+      const part =
+        got ??
+        useJavaScript("Get", [getHeap(current, element, context), value, string(key)], context);
+      const taken =
+        got === undefined
+          ? current
+          : {
+              ...current,
+              read: new Map([...(current.read ?? [])].filter((entry) => entry[0] !== element)),
+            };
+      return bindPatternInline(element.name, withDefault(part), taken, context);
+    }
+    if (isSequenceType(context.checker.getTypeAtLocation(pattern), context.checker)) {
+      if (key !== "length" && !/^(0|[1-9][0-9]*)$/.test(key)) {
+        throw new TlaTypeScriptError(`Unsupported array property: ${key}`, element);
+      }
+      return bindPatternInline(
+        element.name,
+        key === "length"
+          ? apply("Len", [value])
+          : withDefault(getElement(value, number(Number(key) + 1), context)),
+        current,
+        context,
+      );
+    }
+    // A record may lack the field that a default or a nested pattern reads, which then reads
+    // undefined.
+    const part =
+      initializer === undefined && ts.isIdentifier(element.name)
+        ? getField(value, key)
+        : getOptionalField(value, key, context);
+    return bindPatternInline(element.name, withDefault(part), current, context);
+  }, iterating);
+  if (heapSymbol === undefined) return bound;
+  const isHeapObject = ts.isObjectBindingPattern(pattern) && isHeapPattern(type, pattern, context);
+  // A nested pattern may destructure an element that an array lacks, which throws a TypeError
+  // that TLC would find only where something reads what the pattern binds.
+  if (!isHeapObject && !ts.isBindingElement(pattern.parent)) return bound;
+  const keys = (isHeapObject ? pattern.elements : []).flatMap((element) => {
+    if (element.dotDotDotToken !== undefined || scope.read?.has(element)) return [];
+    const name = element.propertyName ?? element.name;
+    const key =
+      ts.isIdentifier(name) || ts.isStringLiteral(name) ? getPropertyKey(name) : undefined;
+    return key === undefined ? [] : [string(key)];
+  });
+  const read = useJavaScript(
+    "ReadKeys",
+    [getHeap(bound, pattern, context), value, set(keys)],
+    context,
+  );
+  return { ...bound, bindings: new Map([...bound.bindings, [heapSymbol, read]]) };
 };
 
 // Binds the names in a declaration to LET definitions.
 export const bindPattern = (
   pattern: ts.BindingName,
-  value: string,
+  value: Expression,
   scope: Scope,
   context: Context,
 ): Bound => {
+  if (isTaken(value)) {
+    return { definitions: [], scope: bindPatternInline(pattern, value, scope, context) };
+  }
   const name = context.names.getFresh(ts.isIdentifier(pattern) ? pattern.text : "value");
   return {
-    definitions: [`${name} == ${indent(value, "      ")}`],
-    scope: bindPatternInline(pattern, name, scope, context),
+    definitions: [define(name, [], value)],
+    scope: bindPatternInline(pattern, identifier(name), scope, context),
   };
 };
 
 // Binds parameters to argument values with LET definitions, as when inlining a call.
 export const bindValues = (
-  patterns: ts.BindingName[],
-  values: string[],
+  parameters: readonly ts.ParameterDeclaration[],
+  values: Expression[],
   scope: Scope,
   context: Context,
 ) =>
-  patterns.reduce<Bound>(
-    (current, pattern, index) => {
-      const bound = bindPattern(pattern, values[index], current.scope, context);
+  parameters.reduce<Bound>(
+    (current, parameter, position) => {
+      // A rest parameter takes the values that the parameters before it don't.
+      const value =
+        parameter.dotDotDotToken === undefined
+          ? values.at(position)
+          : tuple(values.slice(position));
+      const initializer = parameter.initializer;
+      const getDefault = () =>
+        initializer === undefined
+          ? getUndefined(context)
+          : translateExpression(initializer, current.scope, context);
+      const bound = bindPattern(
+        parameter.name,
+        value === undefined
+          ? getDefault()
+          : initializer === undefined
+            ? value
+            : share(value, "argument", context, (shared) =>
+                ifExpression(apply("=", [shared, getUndefined(context)]), getDefault(), shared),
+              ),
+        current.scope,
+        context,
+      );
       return { definitions: [...current.definitions, ...bound.definitions], scope: bound.scope };
     },
     { definitions: [], scope },
