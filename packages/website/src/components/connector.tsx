@@ -15,16 +15,19 @@ interface ConnectorProps {
   color: string | undefined;
 }
 
-const getBox = (container: Element, pane: string) => {
-  const boxes = [...container.querySelectorAll(`[data-pane="${pane}"] [data-linked]`)].map(
-    (element) => element.getBoundingClientRect(),
-  );
-  return boxes.length === 0
+const getBox = (container: Element, name: string) => {
+  const pane = container.querySelector(`[data-pane="${name}"]`);
+  const elements = [...(pane?.querySelectorAll("[data-linked]") ?? [])];
+  const boxes = elements.map((element) => element.getBoundingClientRect());
+  const view = pane?.getBoundingClientRect();
+  const middle = boxes.length === 0 ? 0 : boxes[0].top + boxes[0].height / 2;
+  return view === undefined || middle < view.top || middle > view.bottom
     ? undefined
     : {
-        left: Math.min(...boxes.map((box) => box.left)),
+        left:
+          elements[0].parentElement?.parentElement?.getBoundingClientRect().left ?? boxes[0].left,
         right: Math.max(...boxes.filter((box) => box.top === boxes[0].top).map((box) => box.right)),
-        middle: boxes[0].top + boxes[0].height / 2,
+        middle,
       };
 };
 
@@ -36,17 +39,27 @@ export const Connector = (props: ConnectorProps) => {
   useLayoutEffect(() => {
     const container = svgRef.current?.parentElement;
     if (!container || props.name === undefined) return setLink(undefined);
-    const origin = container.getBoundingClientRect();
-    const source = getBox(container, "source");
-    const output = getBox(container, "output");
-    setLink(
-      source && output
-        ? {
-            from: { x: source.right - origin.left + 6, y: source.middle - origin.top },
-            to: { x: output.left - origin.left - 8, y: output.middle - origin.top },
-          }
-        : undefined,
-    );
+    const update = () => {
+      const origin = container.getBoundingClientRect();
+      const source = getBox(container, "source");
+      const output = getBox(container, "output");
+      setLink(
+        source && output
+          ? {
+              from: { x: source.right - origin.left + 6, y: source.middle - origin.top },
+              to: { x: output.left - origin.left + 10, y: output.middle - origin.top },
+            }
+          : undefined,
+      );
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    for (const content of container.querySelectorAll("[data-pane] > *")) observer.observe(content);
+    container.addEventListener("scroll", update, { capture: true, passive: true });
+    return () => {
+      observer.disconnect();
+      container.removeEventListener("scroll", update, { capture: true });
+    };
   }, [props.name]);
 
   const middle = link ? (link.from.x + link.to.x) / 2 : 0;

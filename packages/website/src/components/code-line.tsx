@@ -42,34 +42,46 @@ interface CodeWordsProps {
 }
 
 // Memoized so hovering a state, which re-renders every line, does not re-tokenize the code.
-const CodeWords = memo((props: CodeWordsProps) =>
-  getWords(props.tokens).map((word) => {
-    if (/^\s/.test(word.text)) return word.text;
+const CodeWords = memo((props: CodeWordsProps) => {
+  const color = props.hoveredName && props.colors?.[props.hoveredName];
+  const words = getWords(props.tokens).map((word) => {
     const start = (props.offset ?? 0) + word.column;
     const marks = (props.marks ?? []).filter((mark) => mark.start <= start && start < mark.end);
-    const color = props.hoveredName && props.colors?.[props.hoveredName];
-    const tint =
-      color && marks.some((mark) => mark.name === props.hoveredName)
+    const isTinted =
+      !/^\s/.test(word.text) && color && marks.some((mark) => mark.name === props.hoveredName);
+    return {
+      ...word,
+      region: marks.at(0)?.name,
+      tint: isTinted
         ? `color-mix(in srgb, ${color} ${marks[0].name === props.hoveredName ? 28 : 12}%, transparent)`
-        : undefined;
+        : undefined,
+    };
+  });
+  return words.map((word, index) => {
+    if (/^\s/.test(word.text)) return word.text;
+    // A tint spills 2px past the word, except toward a tinted neighbor, where two would overlap.
+    const edges = [
+      words[index + 1]?.tint === undefined && `2px 0 0 ${word.tint}`,
+      words[index - 1]?.tint === undefined && `-2px 0 0 ${word.tint}`,
+    ].filter(Boolean);
     return (
       <span
         key={`${word.column}:${word.text}`}
         data-token
-        data-region={marks.at(0)?.name}
-        data-linked={tint && marks[0].name === props.hoveredName ? "" : undefined}
+        data-region={word.region}
+        data-linked={word.tint && word.region === props.hoveredName ? "" : undefined}
         style={{
           ...word.style,
-          backgroundColor: tint,
-          boxShadow: tint && `2px 0 0 ${tint}, -2px 0 0 ${tint}`,
+          backgroundColor: word.tint,
+          boxShadow: word.tint && edges.length > 0 ? edges.join(", ") : undefined,
         }}
         className="inline-block rounded-xs leading-[1.35] text-(--token-light) dark:text-(--token-dark)"
       >
         {word.text}
       </span>
     );
-  }),
-);
+  });
+});
 
 interface CodeLineProps {
   tokens: Token[];
@@ -99,7 +111,7 @@ export const CodeLine = (props: CodeLineProps) => (
     {props.number !== undefined && <LineNumber number={props.number} />}
     <span
       className={cn(
-        "min-w-0 flex-1 transition-opacity duration-150 ease",
+        "min-w-0 flex-1 transition-opacity duration-150 ease has-[+[data-trunk]]:flex-initial",
         props.isDimmed && "opacity-40",
         props.isWrapped === false ? "whitespace-pre" : "break-words whitespace-pre-wrap",
       )}

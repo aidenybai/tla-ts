@@ -235,7 +235,7 @@ export const PlaygroundPanes = () => {
         }
         onPointerLeave={() => state.setHoveredName(undefined)}
         className={cn(
-          "block font-mono text-[13px]/[1.7] text-foreground transition-opacity duration-150 ease-out",
+          "@container block font-mono text-[13px]/[1.7] text-foreground transition-opacity duration-150 ease-out",
           (state.isCompiling || state.error) && "opacity-50",
         )}
       >
