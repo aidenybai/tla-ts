@@ -1065,7 +1065,7 @@ const translateSequenceOperation = (
       () =>
         useJavaScript(
           "SortSequence",
-          [sequence, translateSortOrder(argument, scope, context)],
+          [sequence, ...translateSortArguments(argument, scope, context)],
           context,
         ),
     ],
@@ -1532,9 +1532,10 @@ const reverseSequence = (sequence: Expression, context: Context) => {
   );
 };
 
-// The comparator that sort() orders by: whether its callback gives a number below 0, or else the
-// order of the elements' strings.
-export const translateSortOrder = (
+// The arguments that SortSequence takes for a comparator: the order that it sorts by, whether its
+// callback gives a number below 0, or else the order of the elements' strings, and whether the
+// callback may throw.
+export const translateSortArguments = (
   comparator: ts.Expression | undefined,
   scope: Scope,
   context: Context,
@@ -1543,12 +1544,16 @@ export const translateSortOrder = (
     comparator === undefined ||
     (context.checker.getTypeAtLocation(comparator).flags & ts.TypeFlags.Undefined) !== 0
   ) {
-    return identifier("DefaultSortBefore");
+    return [identifier("DefaultSortBefore"), boolean(false)];
   }
   const found = getCallback(comparator, scope, context);
-  // An order whose comparator throws would vanish where nothing reads the sorted array.
-  if (mayThrow(found.body, context)) {
-    throw new TlaTypeScriptError("Unsupported comparator: one that may throw", comparator);
+  const isThrowing = mayThrow(found.body, context);
+  // A throw that a try catches would vanish where nothing reads the sorted array.
+  if (isThrowing && scope.isCatching) {
+    throw new TlaTypeScriptError(
+      "Unsupported comparator: one that may throw inside try",
+      comparator,
+    );
   }
   const names = [context.names.getFresh("left"), context.names.getFresh("right")];
   const inner = found.parameters.reduce(
@@ -1565,16 +1570,19 @@ export const translateSortOrder = (
       ? undefined
       : context.checker.getSignatureFromDeclaration(callee)?.getReturnType();
   const isNumber = returned !== undefined && isEvery(returned, ts.TypeFlags.NumberLike);
-  return lambda(
-    names,
-    isNumber && !context.hasSpecialNumbers
-      ? apply("<", [result, number(0)])
-      : useJavaScript(
-          "LessThan",
-          [isNumber ? result : useJavaScript("ToNumber", [result], context), number(0)],
-          context,
-        ),
-  );
+  return [
+    lambda(
+      names,
+      isNumber && !context.hasSpecialNumbers
+        ? apply("<", [result, number(0)])
+        : useJavaScript(
+            "LessThan",
+            [isNumber ? result : useJavaScript("ToNumber", [result], context), number(0)],
+            context,
+          ),
+    ),
+    boolean(isThrowing),
+  ];
 };
 
 // The methods that reorder or overwrite an array in place, and give the array.
@@ -1614,7 +1622,7 @@ const translateReorder = (
   if (method === "sort") {
     return useJavaScript(
       "SortSequence",
-      [sequence, translateSortOrder(first, scope, context)],
+      [sequence, ...translateSortArguments(first, scope, context)],
       context,
     );
   }
@@ -2530,7 +2538,7 @@ export const translateArrayChange = (
       : method === "sort"
         ? useJavaScript(
             "ArraySort",
-            [heap, ref, translateSortOrder(first, scope, context)],
+            [heap, ref, ...translateSortArguments(first, scope, context)],
             context,
           )
         : method === "copyWithin"

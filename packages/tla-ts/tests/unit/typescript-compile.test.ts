@@ -9842,20 +9842,108 @@ describe("errors", () => {
     expect((await checkModel(getEscaped(2))).failure?.message).toContain("length 1");
   });
 
-  it("rejects a sort comparator that may throw", () => {
-    expect(() =>
-      compile(`
-        let isThrown = false;
-        try {
-          const x = [1, 0];
-          x.sort(() => {
-            throw new Error("compared");
-          });
-        } catch {
-          isThrown = true;
-        }
-      `),
-    ).toThrow("Unsupported comparator: one that may throw");
+  // V8 sorts fewer than 64 elements by the run that starts them, which it reverses where it
+  // descends, and then inserts each element after the run by binary search.
+  describe("calls a sort comparator on the pairs that V8 compares, in its order", () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      const items = [5, 4, 3, 1, 2, 3];
+      const result = items.sort((a, b) => {
+        log.push(\`\${a}\${b}\`);
+        return a - b;
+      });
+      if (log.join() !== "${expected}" || items.join() !== "1,2,3,3,4,5" || result.length !== 6) {
+        throw new Error("log " + log.join());
+      }
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("45,34,13,21,24,23,21,33,35,34"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect(
+        (await checkModel(getSource("45,34,13,21,24,23,21,33,34,35"))).failure?.message,
+      ).toContain("log ");
+    });
+  });
+
+  describe("throws from a sort comparator only where V8 compares the pair", () => {
+    const getSource = (expected: number) => `
+      let calls = 0;
+      let isThrown = false;
+      try {
+        [1, 2, 3].toSorted((a, b) => {
+          calls += 1;
+          if (a === 3 && b === 1) throw new Error("compared 3 with 1");
+          if (a === 3 && b === 2) throw new Error("compared 3 with 2");
+          return a - b;
+        });
+      } catch {
+        isThrown = true;
+      }
+      const sorted = [1, 2, 3].sort((a, b) => {
+        if (a === 3 && b === 1) throw new Error("compared 3 with 1");
+        return a - b;
+      });
+      if (!isThrown || calls !== ${expected} || sorted.join() !== "1,2,3") {
+        throw new Error("calls " + calls);
+      }
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(getSource(3))).failure?.message).toContain("calls 2");
+    });
+  });
+
+  describe("sorts by a comparator that orders inconsistently as V8 does", () => {
+    const getSource = (expected: string) => `
+      const sorted = [1, 4, 2, 5, 3].sort((a, b) => ((a * 7 + b) % 5) - 2);
+      if (sorted.join() !== "${expected}") throw new Error("sorted " + sorted.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,4,2,3,5"))).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      await expect(checkModel(getSource("2,3,5,1,4"))).rejects.toThrow("sorted 1,4,2,3,5");
+    });
+  });
+
+  describe("sorts fewer than 64 elements with a comparator that runs statements or may throw", () => {
+    // V8 merges runs of 64 or more elements, which tla-ts doesn't follow.
+    const getSource = (length: number, comparator: string, expected: number) => `
+      let calls = 0;
+      const items = [${Array.from({ length }, (_, index) => length - index).join(", ")}];
+      items.sort(${comparator});
+      if (items[0] !== 1 || calls !== ${expected}) throw new Error("calls " + calls);
+    `;
+    const counted = "(a, b) => { calls += 1; return a - b; }";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(63, counted, 62))).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(getSource(63, counted, 63))).failure?.message).toContain("calls 62");
+    });
+
+    it("stops at 64 elements", async () => {
+      expect((await checkModel(getSource(64, counted, 63))).failure?.message).toContain(
+        "tla-ts can't sort 64 or more elements with a comparator that runs statements",
+      );
+      const throwing = '(a, b) => { if (a < 0) throw new Error("negative"); return a - b; }';
+      expect((await checkModel(getSource(64, throwing, 0))).failure?.message).toContain(
+        "tla-ts can't sort 64 or more elements with a comparator that may throw",
+      );
+    });
   });
 
   it("delegates an async generator's yield* to an object's async iterator", async () => {

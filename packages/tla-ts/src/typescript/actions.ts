@@ -36,7 +36,7 @@ import {
   checkArrayMethod,
   translatePrimitiveMethod,
   translateSizeGetter,
-  translateSortOrder,
+  translateSortArguments,
 } from "./collections";
 import {
   findNodes,
@@ -5799,6 +5799,10 @@ const LOOP_METHODS = new Set([
   "reduceRight",
 ]);
 
+// The array methods that sort an array value with a comparator, which V8 calls on the pairs that it
+// compares, in its order.
+const SORT_METHODS = new Set(["sort", "toSorted"]);
+
 // The array methods that read an array-like object's elements without a callback: those that search
 // for a value and those that copy the elements. Each runs as a loop where a getter may answer the
 // object's length or an element.
@@ -5940,7 +5944,9 @@ const getLoopTarget = (node: ts.Node, context: Context) => {
     isCall && ts.isPropertyAccessExpression(target) ? target.name.text : node.expression.name.text;
   const receiver = isCall ? node.arguments[0] : target;
   const isUnordered = method === "forEach" && isOrderFreeForEach(node, receiver, context);
-  return (LOOP_METHODS.has(method) || UNCALLED_METHODS.has(method)) &&
+  return (LOOP_METHODS.has(method) ||
+    UNCALLED_METHODS.has(method) ||
+    (SORT_METHODS.has(method) && !isArrayLike)) &&
     (isArrayLike || isUnordered || getKind(receiver, context) === "sequence")
     ? {
         method,
@@ -6091,6 +6097,7 @@ const translateLoopCall = (
     method === "lastIndexOf" ||
     method === "toReversed";
   const isReduce = method.startsWith("reduce");
+  const isSort = SORT_METHODS.has(method);
   // Where a getter may answer an array-like object's length or element, or the callback may change
   // objects, the method reads its length and then each element as it visits it, as JavaScript
   // does. reduce without an initial value takes the first element that it finds as its
@@ -6133,8 +6140,9 @@ const translateLoopCall = (
     !loop.isArrayLike &&
     ts.isIdentifier(receiver) &&
     changed.some((symbol) => symbol === getSymbol(receiver, context.checker));
-  // An array-like object's method reads it through the reference that it took before the loop.
-  if (!loop.isArrayLike && !isLive && isReceiverChanged(receiver)) {
+  // An array-like object's method reads it through the reference that it took before the loop, and
+  // sort writes back the elements that it read.
+  if (!loop.isArrayLike && (isSort || !isLive) && isReceiverChanged(receiver)) {
     throw new TlaTypeScriptError("Don't change an array while its method calls back", receiver);
   }
   if (changed.some((symbol) => path.scope.functions.has(symbol))) {
@@ -6204,6 +6212,23 @@ const translateLoopCall = (
   const getAfterCallback = (element: Expression) => (current: Path, value?: Expression) => {
     const result = value ?? getUndefined(context);
     const isTruthy = useJavaScript("ToBoolean", [result], context);
+    if (isSort) {
+      return repeat(
+        current,
+        useJavaScript(
+          "SortNext",
+          [
+            kept,
+            useJavaScript(
+              "LessThan",
+              [useJavaScript("ToNumber", [result], context), number(0)],
+              context,
+            ),
+          ],
+          context,
+        ),
+      );
+    }
     if (method === "forEach") return repeat(current, kept);
     if (method === "every")
       return ifThenElse(isTruthy, repeat(current, kept), done(current, boolean(false)));
@@ -6237,7 +6262,12 @@ const translateLoopCall = (
       ["indexOf", number(-1)],
       ["lastIndexOf", number(-1)],
       ["includes", boolean(false)],
-    ]).get(method) ?? (GATHERING_METHODS.has(method) || isReduce ? kept : getUndefined(context));
+    ]).get(method) ??
+    (isSort
+      ? useJavaScript("SortResult", [kept], context)
+      : GATHERING_METHODS.has(method) || isReduce
+        ? kept
+        : getUndefined(context));
   const inner = {
     ...withValues(
       path,
@@ -6285,18 +6315,20 @@ const translateLoopCall = (
             context,
           )
         : value;
-    const passed = [
-      ...(isReduce ? [getChecked(kept, 0)] : []),
-      getChecked(element, isReduce ? 1 : 0),
-      isSkippingHoles
-        ? index(field(identifier(presentName), "indices"), [identifier(position)])
-        : apply("-", [identifier(position), number(1)]),
-      loop.isArrayLike
-        ? owner
-        : isLive
-          ? translateExpression(receiver, current.scope, context)
-          : sequence,
-    ];
+    const passed = isSort
+      ? [index(element, [number(1)]), index(element, [number(2)])]
+      : [
+          ...(isReduce ? [getChecked(kept, 0)] : []),
+          getChecked(element, isReduce ? 1 : 0),
+          isSkippingHoles
+            ? index(field(identifier(presentName), "indices"), [identifier(position)])
+            : apply("-", [identifier(position), number(1)]),
+          loop.isArrayLike
+            ? owner
+            : isLive
+              ? translateExpression(receiver, current.scope, context)
+              : sequence,
+        ];
     const afterCallback = getAfterCallback(element);
     const callbackReceiver = getCallbackReceiver(loop.argument, callback, current.scope, context);
     // A callback that the method runs from inside itself calls itself, as a call in it would.
@@ -6415,9 +6447,11 @@ const translateLoopCall = (
     );
   };
   const length = getters === undefined ? apply("Len", [sequence]) : identifier(lengthName);
-  const isInRange = isReversed
-    ? apply(">=", [identifier(position), number(1)])
-    : apply("<=", [identifier(position), length]);
+  const isInRange = isSort
+    ? apply("#", [field(kept, "stage"), string("done")])
+    : isReversed
+      ? apply(">=", [identifier(position), number(1)])
+      : apply("<=", [identifier(position), length]);
   const operator: OperatorDefinition = {
     ...define(
       name,
@@ -6431,7 +6465,12 @@ const translateLoopCall = (
             ? visitLazily(getters)
             : isLive
               ? visitLive()
-              : visit(inner, index(sequence, [identifier(position)])),
+              : visit(
+                  inner,
+                  isSort
+                    ? useJavaScript("SortPair", [kept], context)
+                    : index(sequence, [identifier(position)]),
+                ),
           done(inner, finished),
         ),
       ),
@@ -6485,9 +6524,16 @@ const translateLoopCall = (
     };
     const value = index(identifier(result), [number(1)]);
     const heapName = context.names.getFresh("heap");
+    // sort writes the sorted elements back to the array that a name or a property holds.
+    const sorted = skipCasts(receiver);
+    const isWrittenBack =
+      method === "sort" &&
+      (ts.isIdentifier(sorted) ||
+        ts.isPropertyAccessExpression(sorted) ||
+        ts.isElementAccessExpression(sorted));
     const finish = (): Formula =>
       !isHeapMap || context.heap === undefined
-        ? continueWith(after, value)
+        ? continueWith(isWrittenBack ? assign(receiver, after, context, () => value) : after, value)
         : bindOnce(
             after,
             heapName,
@@ -6554,11 +6600,13 @@ const translateLoopCall = (
       ? runLoop(
           current,
           start,
-          isHeapMap
-            ? tuple([tuple([]), set([])])
-            : GATHERING_METHODS.has(method)
-              ? tuple([])
-              : getUndefined(context),
+          isSort
+            ? useJavaScript("SortStart", [sequence], context)
+            : isHeapMap
+              ? tuple([tuple([]), set([])])
+              : GATHERING_METHODS.has(method)
+                ? tuple([])
+                : getUndefined(context),
         )
       : initial !== undefined
         ? runLoop(current, start, translateExpression(initial, current.scope, context))
@@ -9516,7 +9564,7 @@ const translateIndexedSort = (
   const length = identifier(lengthName);
   const sortedName = context.names.getFresh("sorted");
   const sorted = identifier(sortedName);
-  const order = translateSortOrder(comparator, path.scope, context);
+  const sortArguments = translateSortArguments(comparator, path.scope, context);
   const getHeapNow = (current: Path) => getHeap(current.scope, site, context);
   const join = (
     current: Path,
@@ -9573,7 +9621,7 @@ const translateIndexedSort = (
       ? bindOnce(
           current,
           sortedName,
-          useJavaScript("SortSequence", [items, order], context),
+          useJavaScript("SortSequence", [items, ...sortArguments], context),
           write(current, 0),
         )
       : join(

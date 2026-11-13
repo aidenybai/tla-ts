@@ -535,11 +535,84 @@ SortedPrefix(sequence, length, IsBefore(_, _)) ==
   THEN <<>>
   ELSE SortedInsert(SortedPrefix(sequence, length - 1, IsBefore), sequence[length], IsBefore)
 
-\\* sort() with a comparator that orders its elements consistently, which puts undefined last.
-SortSequence(sequence, IsBefore(_, _)) ==
+\\* sort() as V8 runs it on fewer than 64 elements, between the calls of its comparator: it takes the
+\\* run that starts the elements, reversed where it descends, and inserts each element after it by
+\\* binary search. The state holds the elements other than undefined, the run or the elements that it
+\\* sorted so far, and the pair that it compares next.
+SortState(sequence) ==
   LET defined == SelectSeq(sequence, LAMBDA value : value # Undefined)
-  IN SortedPrefix(defined, Len(defined), IsBefore)
-       \\o [position \\in 1..(Len(sequence) - Len(defined)) |-> Undefined]
+  IN [items |-> defined, trailing |-> Len(sequence) - Len(defined), sorted |-> defined,
+      stage |-> IF Len(defined) < 2 THEN "done" ELSE "first", isDescending |-> FALSE, at |-> 2,
+      left |-> 1, right |-> 1]
+
+\\* The state of sort() with a comparator that runs as statements.
+SortStart(sequence) ==
+  IF Len(SelectSeq(sequence, LAMBDA value : value # Undefined)) >= 64
+  THEN Assert(FALSE, "tla-ts can't sort 64 or more elements with a comparator that runs statements")
+  ELSE SortState(sequence)
+
+\\* Inserts the element at a position on, or ends where none is left.
+LOCAL SortInsertFrom(state, sorted, at) ==
+  IF at > Len(state.items)
+  THEN [state EXCEPT !.stage = "done", !.sorted = sorted]
+  ELSE [state EXCEPT !.stage = "insert", !.sorted = sorted, !.at = at, !.left = 1,
+          !.right = Len(sorted) + 1]
+
+\\* Ends the run before the element at the state's position, ascending.
+LOCAL SortRunEnd(state) ==
+  LET run == SubSeq(state.items, 1, state.at - 1)
+  IN SortInsertFrom(state,
+       IF state.isDescending THEN [position \\in DOMAIN run |-> run[Len(run) - position + 1]]
+       ELSE run,
+       state.at)
+
+\\* Ends the run where the elements end.
+LOCAL SortRun(state) == IF state.at <= Len(state.items) THEN state ELSE SortRunEnd(state)
+
+\\* The pair that sort() compares next.
+SortPair(state) ==
+  CASE state.stage = "first" -> <<state.items[2], state.items[1]>>
+    [] state.stage = "run" -> <<state.items[state.at], state.items[state.at - 1]>>
+    [] OTHER -> <<state.items[state.at], state.sorted[state.left + (state.right - state.left) \\div 2]>>
+
+\\* The state after the comparator tells whether the first of the pair comes before the second.
+SortNext(state, isBefore) ==
+  CASE state.stage = "first" ->
+         SortRun([state EXCEPT !.stage = "run", !.isDescending = isBefore, !.at = 3])
+    [] state.stage = "run" ->
+         IF isBefore = state.isDescending
+         THEN SortRun([state EXCEPT !.at = @ + 1])
+         ELSE SortRunEnd(state)
+    [] OTHER ->
+         LET middle == state.left + (state.right - state.left) \\div 2
+             next == IF isBefore THEN [state EXCEPT !.right = middle]
+                     ELSE [state EXCEPT !.left = middle + 1]
+         IN IF next.left < next.right
+            THEN next
+            ELSE SortInsertFrom(next,
+                   SubSeq(next.sorted, 1, next.left - 1) \\o <<next.items[next.at]>>
+                     \\o SubSeq(next.sorted, next.left, Len(next.sorted)),
+                   next.at + 1)
+
+\\* The array that sort() gives, with undefined last.
+SortResult(state) == state.sorted \\o [position \\in 1..state.trailing |-> Undefined]
+
+RECURSIVE SortedState(_, _)
+SortedState(state, IsBefore(_, _)) ==
+  IF state.stage = "done"
+  THEN state
+  ELSE LET pair == SortPair(state)
+       IN SortedState(SortNext(state, IsBefore(pair[1], pair[2])), IsBefore)
+
+\\* sort(). V8 merges runs of 64 or more elements, which only a comparator that can't throw and
+\\* orders them consistently sorts alike.
+SortSequence(sequence, IsBefore(_, _), mayThrow) ==
+  LET defined == SelectSeq(sequence, LAMBDA value : value # Undefined)
+  IN CASE Len(defined) < 64 -> SortResult(SortedState(SortState(sequence), IsBefore))
+       [] mayThrow ->
+            Assert(FALSE, "tla-ts can't sort 64 or more elements with a comparator that may throw")
+       [] OTHER -> SortedPrefix(defined, Len(defined), IsBefore)
+            \\o [position \\in 1..(Len(sequence) - Len(defined)) |-> Undefined]
 
 RECURSIVE Join(_, _)
 Join(sequence, separator) ==
@@ -4099,13 +4172,13 @@ ArrayDeleteFrom(heap, ref, from, to) ==
 
 \\* sort() on an array that the heap holds, which sorts the elements it has to its start, with
 \\* undefined after them and the holes last.
-ArraySort(heap, ref, IsBefore(_, _)) ==
+ArraySort(heap, ref, IsBefore(_, _), mayThrow) ==
   LET elements == OwnElements(Lookup(heap, ref))
       present == DOMAIN elements
       ordered == [position \\in 1..Cardinality(present) |->
                    elements[CHOOSE element \\in present :
                               Cardinality({other \\in present : other < element}) = position - 1]]
-      sorted == SortSequence(ordered, IsBefore)
+      sorted == SortSequence(ordered, IsBefore, mayThrow)
   IN WithOwnElements(heap, ref, [position \\in 0..(Len(sorted) - 1) |-> sorted[position + 1]],
        present # {})
 
