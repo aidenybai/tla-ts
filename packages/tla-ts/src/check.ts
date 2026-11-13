@@ -1100,7 +1100,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   options.onProgress?.({ kind: "initial-states-started" });
   const typedChecks =
     !options.isContinued &&
-    options.isFingerprintDistanceSkipped === true &&
     options.dump === undefined &&
     // A set of small integers on the tier is a 31-bit mask, which a lower bound could overflow.
     options.maxSetSize === undefined &&
@@ -1120,7 +1119,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       depth: typed.generatedStates === 0 ? 0 : Math.max(typed.depth, 1),
       initialStates: typed.initialStates,
       outDegrees: typed.outDegrees,
-      fingerprintDistance: undefined,
+      fingerprintDistance: options.isFingerprintDistanceSkipped
+        ? undefined
+        : getFingerprintDistance(typed.distinctStates, typed.generatedStates, () =>
+            typed.getFingerprints(runtime.getFingerprint),
+          ),
     };
   }
   if (spec.init !== undefined) {

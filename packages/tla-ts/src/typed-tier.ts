@@ -20,7 +20,12 @@ import { forEachInitialState, hasBranches } from "./successors";
 import { OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import {
   compareValues,
+  createFunction,
   createSet,
+  createSortedFunction,
+  createSortedRecord,
+  createSortedSet,
+  createTuple,
   getMaximumSetSize,
   getStreamedElements,
   isEnumerable,
@@ -187,6 +192,7 @@ export interface TypedResult {
   initialStates: { generated: number; distinct: number };
   outDegrees: number[];
   deadlock: TypedDeadlock | undefined;
+  getFingerprints: (getFingerprint: (state: Value[]) => bigint) => BigInt64Array;
 }
 
 // The path from an initial state to a state without successors, which the interpreter rebuilds
@@ -701,6 +707,81 @@ const toPlain = (value: Value, type: Type, plains: Plains): Plain => {
     return value.range.map((inner) => toPlain(inner, resolved.range, plains));
   }
   return unsupported();
+};
+
+const getMaskElements = (mask: number) => {
+  const elements: number[] = [];
+  for (let rest = mask; rest !== 0; rest &= rest - 1) elements.push(31 - Math.clz32(rest & -rest));
+  return elements;
+};
+
+const getItems = (plain: Plain) => (Array.isArray(plain) ? plain : []);
+
+// Reads the value a plain of the type stands for.
+const createValueReader = (type: Type, plains: Plains): ((plain: Plain) => Value) => {
+  const resolved = resolveType(type);
+  if (resolved.kind === "Int" || resolved.kind === "Bool")
+    return (plain) => (Array.isArray(plain) ? unsupported() : plain);
+  if (resolved.kind === "Str") return (plain) => plains.values[Number(plain)];
+  if (resolved.kind === "Opt") {
+    return (plain) => (typeof plain === "boolean" ? plain : plains.values[Number(plain)]);
+  }
+  if (resolved.kind === "Mix") {
+    return (plain) => {
+      const scalar = Number(plain);
+      return scalar < ATOM_BASE ? scalar : plains.values[scalar - ATOM_BASE];
+    };
+  }
+  if (resolved.kind === "Set") {
+    if (isMask(resolved, plains)) return (plain) => createSortedSet(getMaskElements(Number(plain)));
+    const readElement = createValueReader(resolved.element, plains);
+    return (plain) => createSet(getItems(plain).map(readElement));
+  }
+  if (resolved.kind === "Seq") {
+    const readElement = createValueReader(resolved.element, plains);
+    return (plain) => createTuple(getItems(plain).map(readElement));
+  }
+  if (resolved.kind === "Fn") {
+    const readRange = createValueReader(resolved.range, plains);
+    return (plain) => createSortedFunction(resolved.domain, getItems(plain).map(readRange));
+  }
+  if (resolved.kind === "Map") {
+    const readKey = createValueReader(resolved.keys.element, plains);
+    const readValue = createValueReader(resolved.values.element, plains);
+    const isMasked = isMask(resolved.keys, plains);
+    return (plain) => {
+      const [keys, values] = getItems(plain);
+      const domain = isMasked ? getMaskElements(Number(keys)) : getItems(keys).map(readKey);
+      const range = getItems(values);
+      return createFunction(domain.map((key, index) => [key, readValue(range[index])]));
+    };
+  }
+  if (resolved.kind !== "Rec") return unsupported();
+  // A shape lists its fields by name, but TLC orders a record's fields as it first saw the names.
+  const shapes = resolved.shapes.map((names) => {
+    const order = names
+      .map((_, index) => index)
+      .sort((left, right) => compareValues(names[left], names[right]));
+    return {
+      names: order.map((index) => names[index]),
+      order,
+      isNull: names.length === 1 && names[0] === NULL_FIELD,
+      readers: order.map((index) =>
+        createValueReader(getFieldType(resolved, names[index]), plains),
+      ),
+    };
+  });
+  const isTagged = shapes.length > 1;
+  return (plain) => {
+    const items = getItems(plain);
+    const shape = shapes[isTagged ? Number(items[0]) : 0];
+    const fields = isTagged ? items.slice(1) : items;
+    if (shape.isNull) return plains.values[Number(fields[0])];
+    return createSortedRecord(
+      shape.names,
+      shape.order.map((field, index) => shape.readers[index](fields[field])),
+    );
+  };
 };
 
 interface Program {
@@ -4892,6 +4973,12 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     initialStates,
     outDegrees,
     deadlock,
+    getFingerprints: (getFingerprint) => {
+      const readers = program.variableTypes.map((type) => createValueReader(type, program.plains));
+      return BigInt64Array.from({ length: statistics.distinct }, (_, index) =>
+        getFingerprint(getState(index).map((plain, variable) => readers[variable](plain))),
+      );
+    },
   });
   for (let index = 0; index < statistics.distinct; index++) {
     if (index === level.end) {

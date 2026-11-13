@@ -2,14 +2,18 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
+import { getActualProbability } from "../../src/tlc/summary";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures/typed-tier");
+
+// TLC's default set bound, given explicitly, keeps the search on the interpreter.
+const INTERPRETED_SET_SIZE = 1_000_000;
 
 const checkFixture = (
   name: string,
   isWarningEnabled: boolean,
   isTyped = true,
-  maxSetSize?: number,
+  maxSetSize = isTyped ? undefined : INTERPRETED_SET_SIZE,
 ) =>
   check({
     source: readFileSync(join(FIXTURES, `${name}.tla`), "utf8"),
@@ -18,7 +22,6 @@ const checkFixture = (
       const path = join(FIXTURES, `${module}.tla`);
       return existsSync(path) ? readFileSync(path, "utf8") : undefined;
     },
-    isFingerprintDistanceSkipped: isTyped,
     isWarningEnabled,
     maxSetSize,
   });
@@ -131,14 +134,25 @@ describe("typed tier matches TLC", () => {
     expect(typed).toEqual(interpreted);
   });
 
+  it("finds the fingerprint distance TLC reports, as the interpreter does", async () => {
+    const [typed, interpreted] = await Promise.all([
+      checkFixture("Torus", false),
+      checkFixture("Torus", false, false),
+    ]);
+    expect([typed.generatedStates, typed.distinctStates]).toEqual([90153, 45076]);
+    expect(typed.fingerprintDistance).toBeDefined();
+    expect(typed.fingerprintDistance).toBe(interpreted.fingerprintDistance);
+    expect(getActualProbability(typed.fingerprintDistance ?? 0n)).toBe(2.8e-13);
+  });
+
   it("prints a constant definition once, as TLC does as it starts", async () => {
     const getLines = async (isTyped: boolean) => {
       const lines: string[] = [];
       await check({
         source: readFileSync(join(FIXTURES, "PrintedConstants.tla"), "utf8"),
         config: readFileSync(join(FIXTURES, "PrintedConstants.cfg"), "utf8"),
-        isFingerprintDistanceSkipped: isTyped,
         isWarningEnabled: false,
+        maxSetSize: isTyped ? undefined : INTERPRETED_SET_SIZE,
         onPrint: (line) => lines.push(String(line)),
       });
       return lines;
