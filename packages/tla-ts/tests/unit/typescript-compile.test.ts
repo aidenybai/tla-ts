@@ -11429,6 +11429,26 @@ describe("errors", () => {
     ).rejects.toThrow("tla-ts can't make a character outside ASCII");
   });
 
+  it("escapes and unescapes strings of ASCII", async () => {
+    const getSource = (expected: string) => `
+      const outcomes = [
+        escape("a b*@+-./_,~"),
+        unescape("%0%u00410%41%%0000%u004%7A%u007a"),
+        unescape("%U0000%zz%"),
+      ].join("|");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect(
+      (await checkModel(getSource("a%20b*@+-./_%2C%7E|%0A0A%\\x0000%u004zz|%U0000%zz%"))).failure,
+    ).toBeUndefined();
+    await expect(
+      checkModel(getSource("a%20b*@+-./_%2C%7E|%0A0A%\\x0000%u004zz|%U0000%zz")),
+    ).rejects.toThrow("outcomes");
+    await expect(
+      checkModel(`if (unescape("%u00E9") === "") throw new Error("never");`),
+    ).rejects.toThrow("tla-ts can't make a character outside ASCII");
+  });
+
   it("names a built-in that tla-ts doesn't run where a script calls it", () => {
     expect(() => compile(`let value: unknown = 0; value = eval("1");`)).toThrow(
       "spec.ts:1:33 tla-ts can't run eval",
