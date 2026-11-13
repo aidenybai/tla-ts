@@ -312,6 +312,16 @@ const getGeneratorObjectPrototype = (node: ts.Expression, context: Context) => {
     : undefined;
 };
 
+// The types of the values that aren't objects.
+const PRIMITIVE_TYPES =
+  ts.TypeFlags.NumberLike |
+  ts.TypeFlags.StringLike |
+  ts.TypeFlags.BooleanLike |
+  ts.TypeFlags.BigIntLike |
+  ts.TypeFlags.ESSymbolLike |
+  ts.TypeFlags.Undefined |
+  ts.TypeFlags.Null;
+
 // The built-in object that is the prototype of a node's value, or "null".
 const getPrototype = (node: ts.Expression, context: Context): string | undefined => {
   const name = getName(node, context);
@@ -369,17 +379,7 @@ export const translateBuiltInInstanceOf = (
   }
   const left = node.left;
   const type = context.checker.getTypeAtLocation(left);
-  const isPrimitive =
-    !type.isUnion() &&
-    (type.flags &
-      (ts.TypeFlags.NumberLike |
-        ts.TypeFlags.StringLike |
-        ts.TypeFlags.BooleanLike |
-        ts.TypeFlags.BigIntLike |
-        ts.TypeFlags.ESSymbolLike |
-        ts.TypeFlags.Undefined |
-        ts.TypeFlags.Null)) !==
-      0;
+  const isPrimitive = !type.isUnion() && (type.flags & PRIMITIVE_TYPES) !== 0;
   const isObject = getKind(left, context) === "object";
   const isGenerator = !isPrimitive && !isObject && isGeneratorType(left, context);
   const parent = isPrimitive || isObject || isGenerator ? undefined : getPrototype(left, context);
@@ -1000,11 +1000,17 @@ export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: C
   if (isPrototypeOfCall(node) && ts.isPropertyAccessExpression(node.expression)) {
     const owner = getName(node.expression.expression, context);
     if (owner === undefined) return undefined;
+    const argumentType = context.checker.getTypeAtLocation(node.arguments[0]);
+    // isPrototypeOf gives false for a value that isn't an object, before it reads this.
+    const isPrimitive = (argumentType.isUnion() ? argumentType.types : [argumentType]).every(
+      (type) => (type.flags & PRIMITIVE_TYPES) !== 0,
+    );
     const first = getPrototype(node.arguments[0], context);
-    if (first === undefined) {
+    if (first === undefined && !isPrimitive) {
       throw new TlaTypeScriptError("isPrototypeOf needs a value whose type tells", node);
     }
     evaluate(node.arguments[0], scope, context);
+    if (isPrimitive || first === undefined) return boolean(false);
     const getChain = (name: string): string[] =>
       name === "null" ? [] : [name, ...getChain(getParent(name))];
     return boolean(getChain(first).includes(owner));

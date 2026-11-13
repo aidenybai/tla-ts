@@ -6566,6 +6566,26 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain('"count"');
   });
 
+  const getPrimitiveSource = (isHeap: boolean, check: string) => `
+      ${isHeap ? "const holder = { seen: 0 };" : ""}
+      if (${check}) throw new Error("primitive");
+  `;
+  const PRIMITIVE_CHECK =
+    "Number.prototype.isPrototypeOf(5) || String.prototype.isPrototypeOf('a') || Object.prototype.isPrototypeOf(1n)";
+
+  it("answers false where isPrototypeOf takes a primitive", async () => {
+    expect((await checkModel(getPrimitiveSource(true, PRIMITIVE_CHECK))).failure).toBeUndefined();
+  });
+
+  it("answers false where isPrototypeOf takes a primitive in a script without objects", async () => {
+    expect((await checkModel(getPrimitiveSource(false, PRIMITIVE_CHECK))).failure).toBeUndefined();
+  });
+
+  it("finds no prototype chain where isPrototypeOf takes a primitive", async () => {
+    const result = await checkModel(getPrimitiveSource(true, "!Number.prototype.isPrototypeOf(5)"));
+    expect(result.failure?.message).toContain('"primitive"');
+  });
+
   it("gives back the primitive that Object.setPrototypeOf takes", async () => {
     const source = `
       const symbol = Symbol("s");
