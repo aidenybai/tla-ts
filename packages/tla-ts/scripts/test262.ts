@@ -1114,6 +1114,24 @@ const ignoreSoundErrors = () => {
       )
     );
   };
+  // An array pattern that a catch binds, or one nested in it, whose value of type unknown tla-ts
+  // destructures as an array where it is one and refuses to otherwise.
+  const isCaughtArrayPattern = (node: ts.Node) => {
+    const declaration = ts.findAncestor(
+      node,
+      (ancestor) =>
+        !ts.isBindingElement(ancestor) &&
+        !ts.isArrayBindingPattern(ancestor) &&
+        !ts.isObjectBindingPattern(ancestor),
+    );
+    return (
+      ts.isArrayBindingPattern(node) &&
+      (checker.getTypeAtLocation(node).flags & ts.TypeFlags.Unknown) !== 0 &&
+      declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      ts.isCatchClause(declaration.parent)
+    );
+  };
   // A call of a built-in that SHORT_CALLED_BUILT_INS lists, with fewer arguments than its type
   // takes, which passes undefined for the others as JavaScript does.
   const isShortBuiltInCall = (node: ts.Node) => {
@@ -1145,6 +1163,7 @@ const ignoreSoundErrors = () => {
       (diagnostic.code === MISSING_PROPERTY_ERROR && isPatternRead(node)) ||
       ((diagnostic.code === NOT_ITERABLE_ERROR || NULLABLE_ERRORS.has(diagnostic.code)) &&
         isNullableArrayPattern(node)) ||
+      (diagnostic.code === NOT_ITERABLE_ERROR && isCaughtArrayPattern(node)) ||
       (UNASSIGNABLE_ERRORS.has(diagnostic.code) && isPatternArgument(node)) ||
       diagnostic.code === UNUSED_OPERAND_ERROR ||
       (diagnostic.code === UNINTENDED_COMPARISON_ERROR && isUnnarrowed(node, diagnostic)) ||
