@@ -615,6 +615,14 @@ const readsThis = (node: ts.Node): boolean =>
   (!(ts.isFunctionLike(node) && !ts.isArrowFunction(node)) &&
     (ts.forEachChild(node, (child) => readsThis(child) || undefined) ?? false));
 
+// The operators that compare values of any type.
+const COMPARISONS = new Set([
+  ts.SyntaxKind.EqualsEqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsEqualsToken,
+  ts.SyntaxKind.EqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsToken,
+]);
+
 // The array methods that pass the array they visit to their callback.
 const ARRAY_CALLBACK_METHODS = new Set([
   "every",
@@ -708,11 +716,45 @@ const typeCallbacks = () => {
       // The method's own type takes an array there, which the object isn't.
       edits.set(passed.getEnd(), " as (...args: unknown[]) => unknown");
     }
+    // An element may come from a getter or a prototype, whatever the array's own type, so a value
+    // parameter that the callback only compares takes any value.
+    const calledMethod =
+      method ??
+      (ts.isCallExpression(call) &&
+      call.arguments[0] === passed &&
+      ts.isPropertyAccessExpression(callee)
+        ? callee.name.text
+        : undefined);
+    const valueParameter =
+      calledMethod === undefined || !ARRAY_CALLBACK_METHODS.has(calledMethod)
+        ? undefined
+        : declaration.parameters.at(calledMethod.startsWith("reduce") ? 1 : 0);
+    const valueSymbol =
+      valueParameter === undefined ? undefined : checker.getSymbolAtLocation(valueParameter.name);
+    const isCompared = (use: ts.Node) =>
+      ts.isTypeOfExpression(use.parent) ||
+      (ts.isBinaryExpression(use.parent) && COMPARISONS.has(use.parent.operatorToken.kind));
+    const uses: ts.Identifier[] = [];
+    const findUses = (node: ts.Node): void => {
+      if (ts.isIdentifier(node) && checker.getSymbolAtLocation(node) === valueSymbol) {
+        uses.push(node);
+      }
+      ts.forEachChild(node, findUses);
+    };
+    if (valueSymbol !== undefined && declaration.body !== undefined) findUses(declaration.body);
+    const isUnknownValue =
+      valueParameter !== undefined &&
+      valueParameter.type === undefined &&
+      ts.isIdentifier(valueParameter.name) &&
+      uses.length > 0 &&
+      uses.every(isCompared);
+    if (isUnknownValue) edits.set(valueParameter.name.getEnd(), ": unknown");
     const signatures = checker.getContextualType(passed)?.getCallSignatures() ?? [];
     if (signatures.length !== 1) return;
     declaration.parameters.forEach((parameter, position) => {
       const given = signatures[0].parameters.at(position);
       if (
+        (isUnknownValue && parameter === valueParameter) ||
         given === undefined ||
         parameter.type !== undefined ||
         parameter.initializer !== undefined ||
