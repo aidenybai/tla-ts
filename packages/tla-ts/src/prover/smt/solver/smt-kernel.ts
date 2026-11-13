@@ -2,7 +2,7 @@
 // z3-license.txt.
 import { SmtCanceledError } from "../../../errors";
 import { type AstManager } from "./ast";
-import { isSetupUnknown, type SmtSetup } from "./smt-setup";
+import type { SmtSetup } from "./smt-setup";
 import { AssertedFormulas } from "./asserted-formulas";
 import { Context } from "./context";
 import type { KernelParams } from "./solver";
@@ -26,15 +26,7 @@ export class SmtKernel {
   private setupContext(isUsingStaticFeatures: boolean) {
     if (this.isSetUp) return;
     this.isSetUp = true;
-    const context = this.context;
-    context.setupContext(
-      isSetupUnknown(
-        context.manager,
-        this.setup,
-        isUsingStaticFeatures,
-        this.asserted.getFormulas(),
-      ),
-    );
+    this.context.setupContext(this.setup, isUsingStaticFeatures, this.asserted);
   }
 
   assertExpr(expr: number) {

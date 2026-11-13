@@ -5,6 +5,7 @@ import type { Context } from "./context";
 import type { Enode } from "./enode";
 import { type BoolVar, FALSE_LITERAL, type Literal, negate, TRUE_LITERAL } from "./literal";
 import type { ProtoModel } from "./proto-model";
+import { L_UNDEF } from "./lbool";
 
 export const FC_DONE = 0;
 export const FC_CONTINUE = 1;
@@ -120,6 +121,10 @@ export abstract class Theory {
   }
 
   restartEh() {}
+
+  getPhase(_boolVar: BoolVar) {
+    return L_UNDEF;
+  }
 
   initSearchEh() {}
 

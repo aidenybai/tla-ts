@@ -6,7 +6,8 @@ import { shrink } from "./array";
 import { OP_GE, OP_GT, OP_LE, SORT_BOOL, SORT_INT, SORT_REAL } from "./ast";
 import type { Enode } from "./enode";
 import { InfEps } from "./inf-eps";
-import { L_TRUE } from "./lbool";
+import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
+import type { BoolVar } from "./literal";
 import { LP_FEASIBLE, LP_OPTIMAL, LP_UNBOUNDED } from "./lp/core-solver";
 import { type Dependency, linearize } from "./lp/dependency";
 import { NULL_LPVAR } from "./lp/lar-solver";
@@ -44,6 +45,16 @@ export class TheoryLra extends TheoryLraFinalCheck {
     const value = column === NULL_LPVAR ? undefined : this.solver.getExactValue(column);
     if (value === undefined) return undefined;
     return this.isIntVar(node.getThVar(this.id)) && !value.isInt() ? undefined : value;
+  }
+
+  // The phase that holds in the current assignment, so that the decision takes no pivot.
+  getPhase(boolVar: BoolVar) {
+    const bound = this.boolVarToBound[boolVar];
+    if (bound === undefined) return L_UNDEF;
+    const comparison = this.solver
+      .getValue(this.registerVar(bound.thVar))
+      .compare(new Impq(bound.value, Rational.zero));
+    return (bound.isLower ? comparison >= 0 : comparison <= 0) ? L_TRUE : L_FALSE;
   }
 
   addObjective(term: number) {

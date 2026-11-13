@@ -359,7 +359,7 @@ const runUnitSubsume = (environment: TacticEnvironment) => (goal: Goal) => {
       if (other === index) asserted.assertExpr(manager.mkNot(clause));
       else if (!deleted.includes(other)) asserted.assertExpr(otherClause);
     // The context has no logic, so setup_default picks setup_unknown.
-    context.setupContext(true);
+    context.setupContext(undefined, false, asserted);
     context.internalizeAssertions(asserted);
     if (!context.isInconsistent()) context.propagate();
     if (context.isInconsistent()) deleted.push(index);

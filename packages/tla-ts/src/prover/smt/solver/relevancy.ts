@@ -36,7 +36,7 @@ export class RelevancyPropagator {
   // At relevancy level 0 every expression is relevant and nothing propagates.
   constructor(
     private context: RelevancyContext,
-    readonly isEnabled: boolean,
+    public isEnabled: boolean,
   ) {}
 
   isRelevant(expr: number) {

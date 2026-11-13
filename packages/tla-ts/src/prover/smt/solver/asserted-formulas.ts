@@ -22,6 +22,7 @@ import { PullQuant } from "./pull-quant";
 import { RefVector } from "./ref-vector";
 import { KERNEL_REWRITER_OPTIONS, Rewriter } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
+import type { SmtConfig } from "./smt-setup";
 
 // Its cache lives as long as the assertions, like Z3's.
 class PatternInferenceRw extends RewriterTpl {
@@ -159,6 +160,8 @@ export class AssertedFormulas {
   private rewriter: Rewriter;
   private isEliminatingAnd = false;
   private isReducePending = true;
+  private isNnfCnf = true;
+  private isEq2Ineq = false;
   private names: DefinedNames;
   private patternInference: PatternInferenceRw;
   private bvSharing: MaxBvSharing;
@@ -224,6 +227,13 @@ export class AssertedFormulas {
     this.isReducePending = true;
   }
 
+  // The setup's parameters, which set_eliminate_and gives the rewriter.
+  setup(config: SmtConfig) {
+    this.isNnfCnf = config.isNnfCnf;
+    this.isEq2Ineq = config.isEq2Ineq;
+    this.isFindingMacros ||= config.isFindingMacros;
+  }
+
   getNumFormulas() {
     return this.formulas.size;
   }
@@ -252,9 +262,11 @@ export class AssertedFormulas {
     if (this.isInconsistent) return;
     this.findMacros();
     if (this.isInconsistent) return;
-    this.isReducePending = true;
-    this.nnfCnf();
-    if (this.isInconsistent) return;
+    if (this.isNnfCnf || this.hasQuantifiers) {
+      this.isReducePending = true;
+      this.nnfCnf();
+      if (this.isInconsistent) return;
+    }
     this.setEliminateAnd(true);
     this.reduceAsserted();
     if (this.isInconsistent) return;
@@ -336,6 +348,7 @@ export class AssertedFormulas {
     this.isEliminatingAnd = isEliminatingAnd;
     this.isReducePending = true;
     this.rewriter.setEliminatingAnd(isEliminatingAnd);
+    this.rewriter.setEq2Ineq(this.isEq2Ineq);
     this.flushCache();
   }
 

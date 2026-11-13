@@ -56,6 +56,7 @@ import { KERNEL_REWRITER_OPTIONS, Rewriter } from "./rewriter";
 import { sortNumbers } from "./sort";
 import type { Theory } from "./theory";
 import { setAt, shrink } from "./array";
+import { DEFAULT_CONFIG, IA_RANDOM, IA_RANDOM_WHEN_SEARCHING } from "./smt-setup";
 import { StickyGenerations } from "./sticky-generations";
 
 const DEEP_EXPR_THRESHOLD = 1024;
@@ -163,6 +164,7 @@ export abstract class Internalizer {
   protected cachedGeneration = new Map<number, number>();
   private randomSeed = 0;
   isSearching = false;
+  config = DEFAULT_CONFIG;
 
   constructor(
     readonly manager: AstManager,
@@ -471,7 +473,12 @@ export abstract class Internalizer {
     this.boolVarData[2 * boolVar] = 0;
     this.boolVarData[2 * boolVar + 1] = this.scopeLevel;
     this.justifications[boolVar] = null;
-    this.activity[boolVar] = this.isSearching ? -((this.getRandomValue() % 1000) / 1000) : 0;
+    const initialActivity = this.config.randomInitialActivity;
+    this.activity[boolVar] =
+      initialActivity === IA_RANDOM ||
+      (initialActivity === IA_RANDOM_WHEN_SEARCHING && this.isSearching)
+        ? -((this.getRandomValue() % 1000) / 1000)
+        : 0;
     this.assignment[literal] = L_UNDEF;
     this.assignment[literal + 1] = L_UNDEF;
     this.resetWatches(literal);

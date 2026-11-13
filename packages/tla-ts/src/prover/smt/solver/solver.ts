@@ -14,7 +14,7 @@ import { L_FALSE, L_TRUE } from "./lbool";
 import { applyUfniaTactic } from "./quant-tactics";
 import { ResourceLimit } from "./rlimit";
 import { parseSmtlib } from "./smtlib-parser";
-import { isSetupUnknown, type SmtSetup } from "./smt-setup";
+import type { SmtSetup } from "./smt-setup";
 
 export interface KernelParams {
   isMbqi: boolean;
@@ -46,7 +46,7 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
     relevancyLevel: 2,
   });
   for (const form of forms) asserted.assertExpr(form);
-  context.setupContext(isSetupUnknown(manager, params.setup, true, asserted.getFormulas()));
+  context.setupContext(params.setup, true, asserted);
   context.internalizeAssertions(asserted);
   const theoryAssumptions: number[] = [];
   context.addTheoryAssumptions(theoryAssumptions);
@@ -84,7 +84,7 @@ export const solveAssuming = (
     relevancyLevel: 2,
   });
   for (const assertion of assertions) asserted.assertExpr(assertion);
-  context.setupContext(isSetupUnknown(manager, params.setup, false, asserted.getFormulas()));
+  context.setupContext(params.setup, false, asserted);
   context.internalizeAssertions(asserted);
   const result = context.checkResearching(asserted, assumptions);
   manager.limit.release();

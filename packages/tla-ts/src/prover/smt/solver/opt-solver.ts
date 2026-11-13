@@ -1,6 +1,6 @@
 // Ported from Z3 (src/opt/opt_solver.cpp, src/opt/opt_search.h), MIT license, see z3-license.txt.
 import { SmtCanceledError } from "../../../errors";
-import type { AstManager } from "./ast";
+import { type AstManager, FAMILY_ARITH, FAMILY_PB } from "./ast";
 import { InfEps } from "./inf-eps";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { AlgebraicManager } from "./nlsat/algebraic";
@@ -59,7 +59,11 @@ export class OptSolver {
     private readonly manager: AstManager,
     params: KernelParams,
   ) {
-    this.kernel = new SmtKernel(manager, params);
+    this.kernel = new SmtKernel(manager, {
+      ...params,
+      setup: params.setup && { ...params.setup, isArithAutoConfigSimplex: true },
+    });
+    this.kernel.context.registerFamily(FAMILY_PB);
     this.pinned = new RefVector(manager);
   }
 
@@ -73,8 +77,11 @@ export class OptSolver {
     return this.hold(this.kernel.context.getModel());
   }
 
+  // get_optimizer makes an arithmetic theory when the setup made none.
   private get arith() {
-    return this.kernel.context.arith;
+    const context = this.kernel.context;
+    context.registerFamily(FAMILY_ARITH);
+    return context.arith!;
   }
 
   assertExpr(expr: number) {
