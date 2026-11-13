@@ -6766,6 +6766,35 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("tla-ts can't tell which function this call runs");
   });
 
+  const getUncallableSource = (expected: string) => `
+      const holder = { seen: 0 };
+      const GeneratorFunctionPrototype = Object.getPrototypeOf(function* () {});
+      let caught = "none";
+      try {
+        GeneratorFunctionPrototype(1, "two");
+      } catch (error) {
+        caught = error instanceof TypeError ? "TypeError" : "other";
+      }
+      if (caught !== "${expected}") throw new Error("caught");
+  `;
+
+  it("throws the TypeError of calling an object that isn't callable", async () => {
+    expect((await checkModel(getUncallableSource("TypeError"))).failure).toBeUndefined();
+  });
+
+  it("throws no other error for calling an object that isn't callable", async () => {
+    expect((await checkModel(getUncallableSource("other"))).failure?.message).toContain('"caught"');
+  });
+
+  it("stops where a value of type any holds a function it can't name", async () => {
+    const result = await checkModel(`
+      const holder = { seen: 0 };
+      const FunctionPrototype = Object.getPrototypeOf(function () {});
+      FunctionPrototype();
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't tell which function this call runs");
+  });
+
   describe("tests the extensibility of a function that a variable holds where it runs", () => {
     const source = `
       const holder = { seen: 0 };

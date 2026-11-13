@@ -2969,22 +2969,30 @@ export const translateCallStatement = (
     const value = translateExpression(expression, path.scope, context);
     return ifThenElse(apply("=", [value, value]), continueWith(path, value), leaf(boolean(false)));
   }
-  // A call of a function value that tla-ts can't name throws the TypeError where the value is
-  // undefined or %ThrowTypeError%, and stops where it's another function.
+  // A call of a value that tla-ts can't name throws the TypeError where the value isn't callable
+  // or is %ThrowTypeError%, and stops where it's another function.
   const target = getCast(expression.expression);
   if (
     callee === undefined &&
     expression.questionDotToken === undefined &&
     ts.isIdentifier(skipCasts(target)) &&
-    isFunctionValue(target, context) &&
+    (isFunctionValue(target, context) ||
+      (context.heap !== undefined &&
+        context.modelValues.size === 0 &&
+        (context.checker.getTypeAtLocation(target).flags &
+          (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
+          0)) &&
     expression.arguments.every(isInertValue)
   ) {
     const value = translateExpression(target, path.scope, context);
     return ifThenElse(
-      apply("\\in", [
-        value,
-        set([
-          getUndefined(context),
+      apply("\\/", [
+        apply("#", [
+          useJavaScript("TypeOfIn", [getHeap(path.scope, expression, context), value], context),
+          string("function"),
+        ]),
+        apply("=", [
+          value,
           translateBuiltInValue("get Function.prototype.arguments", expression, context),
         ]),
       ]),
