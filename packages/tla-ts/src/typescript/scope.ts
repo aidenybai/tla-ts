@@ -64,6 +64,9 @@ export interface Scope {
   activations?: ReadonlyMap<ts.Node, Expression>;
   // The function that a call entered, whose environment or factory call binds the locals it reads.
   entered?: FunctionNode;
+  // The values that a for's let bindings had before its first iteration, for each read of them in
+  // the functions that its initializer makes.
+  initialReads?: ReadonlyMap<ts.Expression, Expression>;
 }
 
 export interface Destructured {

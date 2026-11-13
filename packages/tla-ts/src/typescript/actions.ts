@@ -10687,11 +10687,51 @@ const translateLoop = (
       (inner, innerFrame) => translateIterations(loop, inner, context, innerFrame, innerFrame.next),
     );
   }
-  return ts.isVariableDeclarationList(initializer)
-    ? translateDeclarations(initializer.declarations, path, context, frame, runLoop)
-    : allocate(initializer, path, context, (inner) =>
-        translateExpressionStatement(initializer, inner, context, frame, runLoop),
-      );
+  if (!ts.isVariableDeclarationList(initializer)) {
+    return allocate(initializer, path, context, (inner) =>
+      translateExpressionStatement(initializer, inner, context, frame, runLoop),
+    );
+  }
+  // A function that a let's initializer makes reads the bindings from before the first iteration,
+  // which each iteration copies, so it reads the values that they had then.
+  const heads =
+    (initializer.flags & ts.NodeFlags.Let) === 0
+      ? []
+      : initializer.declarations.flatMap((declaration) =>
+          findNodes(declaration.name, ts.isIdentifier).flatMap(
+            (name) => getSymbol(name, context.checker) ?? [],
+          ),
+        );
+  const reads = initializer.declarations
+    .flatMap((declaration) => findNodes(declaration, ts.isFunctionLike))
+    .flatMap((made) => {
+      const written = heads.find((head) => isAssigned(head, made, context));
+      if (written !== undefined) {
+        throw new TlaTypeScriptError(
+          "tla-ts can't write a for's binding in a function that its initializer makes",
+          made,
+        );
+      }
+      return findNodes(made, ts.isIdentifier).filter((name) => {
+        const symbol = getSymbol(name, context.checker);
+        return symbol !== undefined && heads.includes(symbol);
+      });
+    });
+  return translateDeclarations(initializer.declarations, path, context, frame, (inner) =>
+    runLoop({
+      ...inner,
+      scope: {
+        ...inner.scope,
+        initialReads: new Map([
+          ...(inner.scope.initialReads ?? []),
+          ...reads.map((read): [ts.Expression, Expression] => [
+            read,
+            translateExpression(read, inner.scope, context),
+          ]),
+        ]),
+      },
+    }),
+  );
 };
 
 interface OpenedIterator {

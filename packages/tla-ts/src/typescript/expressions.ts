@@ -3084,7 +3084,7 @@ const translateNode = (
   if (ts.isNonNullExpression(node)) {
     return translateExpression(node.expression, scope, context, true);
   }
-  const result = scope.results.get(node);
+  const result = scope.results.get(node) ?? scope.initialReads?.get(node);
   if (result !== undefined) return result;
   const thisOwner = node.kind === ts.SyntaxKind.ThisKeyword ? getThisOwner(node) : undefined;
   if (thisOwner !== undefined && thisOwner === scope.receiver?.method) return scope.receiver.value;

@@ -1886,6 +1886,34 @@ describe("values", () => {
     );
   });
 
+  it("calls a function that a for's let makes with the bindings from before its first iteration", async () => {
+    const getSource = (expected: string) => `
+      let seen = "";
+      for (var i = 0, f = function () { return i; }; i < 3; ++i) seen += \`\${f()}\`;
+      for (let j = 0, g = () => j; j < 4; j++) {
+        seen += \`\${g()}\${j}\`;
+        j += 1;
+      }
+      for (let k = 0, read = () => k; k < 2; k++) {
+        const inner = () => k;
+        seen += \`\${read()}\${inner()}\`;
+      }
+      if (seen !== "${expected}") throw new Error(seen);
+    `;
+    expect((await checkModel(getSource("01200020001"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("01202020101"))).failure?.message).toContain("01200020001");
+  });
+
+  it("stops where a function that a for's let makes writes its binding", () => {
+    expect(() =>
+      compile(`
+        let seen = "";
+        for (let i = 0, bump = () => i++; i < 2; i++) seen += \`\${bump()}\`;
+        if (seen !== "01") throw new Error(seen);
+      `),
+    ).toThrow("tla-ts can't write a for's binding in a function that its initializer makes");
+  });
+
   it("runs the calls of a for's condition before each test", async () => {
     const getSource = (expected: string) => `
       let n: number = 0;
