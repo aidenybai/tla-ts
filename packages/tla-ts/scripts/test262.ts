@@ -947,9 +947,12 @@ const ignoreSoundErrors = () => {
     );
   };
   // An object that the test declares and a pattern or a loop iterates, whose iterator tla-ts reads
-  // from its properties or refuses to follow.
+  // from its properties or refuses to follow. An array assignment pattern's own type is the array
+  // literal's, not its value's.
   const isPlainObject = (node: ts.Node) => {
-    const type = checker.getTypeAtLocation(node);
+    const type = ts.isArrayLiteralExpression(node)
+      ? checker.getTypeOfAssignmentPattern(node)
+      : checker.getTypeAtLocation(node);
     const declarations = type.getSymbol()?.declarations ?? [];
     return (
       !type.isUnion() &&
