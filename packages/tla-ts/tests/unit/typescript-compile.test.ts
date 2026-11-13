@@ -5102,6 +5102,54 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain('"object"');
   });
 
+  it("makes the objects that JSON.parse makes of a literal's text", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const text = '{"b":{"c":3},"a":1}';
+      const parsed: { a: number; b: { c: number } } = JSON.parse(text);
+      if (parsed.a !== 1 || parsed.b.c !== 3) throw new Error("values");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("parsed.b.c !== 3", "parsed.b.c !== 2");
+    expect((await checkModel(wrong)).failure?.message).toContain('"values"');
+  });
+
+  it("orders the keys of the object that JSON.parse makes", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const parsed: object = JSON.parse('{"b":0,"a":1,"2":0,"__proto__":5}');
+      if (Object.keys(parsed).join() !== "2,b,a,__proto__") throw new Error("keys");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace('"2,b,a,__proto__"', '"b,a,2,__proto__"');
+    expect((await checkModel(wrong)).failure?.message).toContain('"keys"');
+  });
+
+  it("makes an ordinary object of JSON.parse's text", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const parsed: object = JSON.parse('{"__proto__":5}');
+      if (Object.getPrototypeOf(parsed) !== Object.prototype || !Object.hasOwn(parsed, "__proto__")) {
+        throw new Error("own");
+      }
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("!Object.hasOwn", "Object.hasOwn");
+    expect((await checkModel(wrong)).failure?.message).toContain('"own"');
+  });
+
+  it("stops where a type keeps the arrays that JSON.parse makes outside the heap", () => {
+    expect(() =>
+      compile(`
+        const parsed: number[] = JSON.parse("[1, 2]");
+        if (parsed.length !== 2) throw new Error("length");
+      `),
+    ).toThrow("Unsupported call");
+  });
+
   it("stops where JSON.stringify would call a script's function", async () => {
     const result = await checkModel(`
       const value = { a: 1, toJSON: () => 2 };
