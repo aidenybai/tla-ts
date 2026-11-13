@@ -170,6 +170,7 @@ const hasTopLevelAwait = (node: ts.Node): boolean =>
 export const isModuleFile = (file: ts.SourceFile) =>
   file.statements.some(isModuleSyntax) || hasTopLevelAwait(file);
 
+// The function whose arguments object a name reads, which for an arrow is the function around it.
 export const getArgumentsOwner = (node: ts.Node, checker: ts.TypeChecker) => {
   if (!ts.isIdentifier(node) || node.text !== "arguments") return undefined;
   const symbol = checker.getSymbolAtLocation(node);
@@ -178,17 +179,11 @@ export const getArgumentsOwner = (node: ts.Node, checker: ts.TypeChecker) => {
     (ancestor): ancestor is FunctionNode =>
       ts.isFunctionDeclaration(ancestor) ||
       ts.isFunctionExpression(ancestor) ||
-      ts.isArrowFunction(ancestor) ||
       ts.isMethodDeclaration(ancestor) ||
       ts.isConstructorDeclaration(ancestor) ||
       ts.isAccessor(ancestor),
   );
-  return symbol === undefined ||
-    symbol.declarations !== undefined ||
-    owner === undefined ||
-    ts.isArrowFunction(owner)
-    ? undefined
-    : owner;
+  return symbol === undefined || symbol.declarations !== undefined ? undefined : owner;
 };
 
 // A name that no declaration binds, whose reading throws a ReferenceError.
@@ -1325,9 +1320,8 @@ export type Closure = ts.FunctionExpression | ts.ArrowFunction;
 
 // A function that a function makes and that outlives the call that made it, which reads the locals
 // of that call from its environment: one that the function assigns to a name declared outside it,
-// or an async one that it returns. An arrow reads the this and arguments of the function around
-// it, which the environment doesn't hold, and an async closure that awaits would resume after its
-// call returns.
+// or an async one that it returns. An arrow reads the this of the function around it, which the
+// environment doesn't hold, and an async closure that awaits would resume after its call returns.
 export const isClosure = (node: ts.Node, context: Context): node is Closure => {
   if (
     context.heap === undefined ||
@@ -1340,8 +1334,7 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure => {
   const isLexical = (inner: ts.Node): inner is ts.Node =>
     inner.kind === ts.SyntaxKind.ThisKeyword ||
     inner.kind === ts.SyntaxKind.SuperKeyword ||
-    ts.isMetaProperty(inner) ||
-    (ts.isIdentifier(inner) && inner.text === "arguments");
+    ts.isMetaProperty(inner);
   const isAwaiting = (inner: ts.Node): inner is ts.Node =>
     ts.isAwaitExpression(inner) ||
     (ts.isForOfStatement(inner) && inner.awaitModifier !== undefined);
@@ -1367,6 +1360,27 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure => {
     (declaration !== undefined &&
       ts.findAncestor(declaration, (ancestor) => ancestor === maker) === undefined)
   );
+};
+
+// The function around an arrow closure whose arguments object the closure reads, which must be the
+// function that makes it.
+export const getCapturedArguments = (node: Closure, context: Context) => {
+  const owners = new Set(
+    findNodes(node, ts.isIdentifier).flatMap((name) => {
+      const owner = getArgumentsOwner(name, context.checker);
+      return owner === undefined || ts.findAncestor(owner, (ancestor) => ancestor === node)
+        ? []
+        : [owner];
+    }),
+  );
+  const maker = ts.findAncestor(node.parent, ts.isFunctionLike);
+  if ([...owners].some((owner) => owner !== maker)) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't follow a function that outlives its call and reads this arguments object",
+      node,
+    );
+  }
+  return [...owners].at(0);
 };
 
 // The locals of the function that makes a closure that the closure reads, each once. tla-ts copies

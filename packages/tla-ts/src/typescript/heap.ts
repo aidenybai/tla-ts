@@ -44,6 +44,7 @@ import {
   isNestedFunction,
   isClosure,
   getCaptures,
+  getCapturedArguments,
   skipCasts,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
@@ -985,16 +986,29 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     );
   }
   if (isClosure(node, context)) {
-    const bindings = getCaptures(node, context).map((symbol): [Expression, Expression] => {
-      const value = scope.bindings.get(symbol);
-      if (value === undefined) {
-        throw new TlaTypeScriptError(
-          `tla-ts can't follow a function that outlives its call and reads ${symbol.name}`,
-          node,
-        );
-      }
-      return [string(symbol.name), value];
-    });
+    const argumentsOwner = getCapturedArguments(node, context);
+    const argumentsObject = argumentsOwner?.body && scope.allocated.get(argumentsOwner.body);
+    if (argumentsOwner !== undefined && argumentsObject === undefined) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't follow a function that outlives its call and reads this arguments object",
+        node,
+      );
+    }
+    const bindings = [
+      ...getCaptures(node, context).map((symbol): [Expression, Expression] => {
+        const value = scope.bindings.get(symbol);
+        if (value === undefined) {
+          throw new TlaTypeScriptError(
+            `tla-ts can't follow a function that outlives its call and reads ${symbol.name}`,
+            node,
+          );
+        }
+        return [string(symbol.name), value];
+      }),
+      ...(argumentsObject === undefined
+        ? []
+        : [[string("arguments"), argumentsObject] satisfies [Expression, Expression]]),
+    ];
     return useJavaScript(
       "Allocate",
       [
