@@ -12662,6 +12662,79 @@ describe("errors", () => {
     expect(wrong.failure).toBeDefined();
   });
 
+  it("runs a DisposableStack's dispose that Function.prototype.call runs, which throws a TypeError for another this", async () => {
+    const source = (expected: string) => `
+      const dispose: (this: unknown) => void = DisposableStack.prototype.dispose;
+      const results: string[] = [];
+      const stack = new DisposableStack();
+      try {
+        dispose.call(1);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      dispose.call(stack);
+      results.push(String(stack.disposed));
+      if (results.join() !== "${expected}") throw new Error(results.join());
+    `;
+    const result = await checkModel(source("TypeError,true"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("TypeError,false"));
+    expect(wrong.failure).toBeDefined();
+  });
+
+  it("throws a TypeError where move runs on a stack of the other kind", async () => {
+    const source = (expected: string) => `
+      const move: (this: unknown) => DisposableStack = DisposableStack.prototype.move;
+      const results: string[] = [];
+      const asyncStack = new AsyncDisposableStack();
+      const other = new DisposableStack();
+      const attempt = (receiver: unknown) => {
+        try {
+          move.call(receiver);
+          results.push("ok");
+        } catch (error) {
+          results.push(error instanceof TypeError ? "TypeError" : "other");
+        }
+      };
+      attempt(DisposableStack.prototype);
+      attempt(asyncStack);
+      attempt(other);
+      if (results.join() !== "${expected}") throw new Error(results.join());
+    `;
+    const result = await checkModel(source("TypeError,TypeError,ok"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("TypeError,ok,ok"));
+    expect(wrong.failure).toBeDefined();
+  });
+
+  it("rejects the promise of a disposeAsync that Function.prototype.call runs on another this", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      const disposeAsync: (this: unknown) => Promise<void> = AsyncDisposableStack.prototype.disposeAsync;
+      const results: string[] = [];
+      const other = new DisposableStack();
+      const run = async () => {
+        try {
+          await disposeAsync.call(other);
+          results.push("ok");
+        } catch (error) {
+          results.push(error instanceof TypeError ? "TypeError" : "other");
+        }
+        const stack = new AsyncDisposableStack();
+        await disposeAsync.call(stack);
+        results.push(String(stack.disposed));
+      };
+      run();
+      setTimeout(() => {
+        if (results.join() !== "${expected}") throw new Error(results.join());
+      });
+    `;
+    const result = await checkModel(source("TypeError,true"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("ok,true"));
+    expect(wrong.failure).toBeDefined();
+  });
+
   it("awaits an async dispose method, which a function's object literal may hold", async () => {
     const source = (expected: string) => `
       declare function setTimeout(callback: () => void): void;
