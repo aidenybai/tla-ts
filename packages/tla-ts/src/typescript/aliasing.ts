@@ -1,7 +1,14 @@
 import ts from "@typescript/typescript6";
 import { getWritten } from "./actions";
 import { MUTATING_METHODS } from "./collections";
-import { type Context, findNodes, getCallee, getSymbol, isMethodCall } from "./context";
+import {
+  type Context,
+  findNodes,
+  getCallee,
+  getSymbol,
+  hasObjectLiteral,
+  isMethodCall,
+} from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { getKind, isHeapArray, isHeapSetOrMap, isHeapType } from "./types";
 
@@ -460,6 +467,10 @@ export const getReached = (roots: readonly ts.Node[], context: Context) => {
   roots.forEach(visit);
   return reached;
 };
+
+// Whether a node may make an object literal, itself or through a function that it names.
+export const isMakingObjects = (node: ts.Node, context: Context) =>
+  getReached([node], context).some(hasObjectLiteral);
 
 // Whether a call gives a new object each time: its callee returns only object literals, which
 // nothing else can name, though the objects inside them may still be shared.

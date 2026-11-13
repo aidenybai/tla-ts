@@ -3756,6 +3756,34 @@ describe("definitions", () => {
     expect(wrong.failure?.message).toContain("shared");
   });
 
+  it("makes once the objects that another file's constants make through a function", async () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/precedence.ts");
+    const source = readFileSync(path, "utf8");
+    expect((await check(compile(source, path))).failure).toBeUndefined();
+    const wrong = await check(compile(source.replace("!== 6", "!== 7"), path));
+    expect(wrong.failure?.message).toContain("precedence");
+  });
+
+  it("makes once the objects that a constant makes through a function that a recursive function reads", async () => {
+    const getSource = (total: number) => `
+      const createPrecedence = (low: number, high: number) => ({ low, high });
+      const PRECEDENCES = new Map([
+        ["=>", createPrecedence(1, 1)],
+        ["#", createPrecedence(5, 5)],
+      ]);
+      const getPrecedence = (operator: string) => PRECEDENCES.get(operator);
+      const getTotal = (operators: string[]): number =>
+        operators.length === 0
+          ? 0
+          : (getPrecedence(operators[0])?.high ?? 0) + getTotal(operators.slice(1));
+      if (getPrecedence("#") !== PRECEDENCES.get("#") || getTotal(["=>", "#"]) !== ${total}) {
+        throw new Error("precedence");
+      }
+    `;
+    expect((await checkModel(getSource(6))).failure).toBeUndefined();
+    expect((await checkModel(getSource(7))).failure?.message).toContain("precedence");
+  });
+
   it("skips the code of a class that a file names only as a type", async () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/chain-typing.ts");
     const source = readFileSync(path, "utf8");

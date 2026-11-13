@@ -1,13 +1,12 @@
 import ts from "@typescript/typescript6";
 import { getWritten, getWrittenRoots, translateScript, writesState } from "./actions";
-import { getReached, rejectSharing } from "./aliasing";
+import { getReached, isMakingObjects, rejectSharing } from "./aliasing";
 import {
   type Context,
   createContext,
   findNodes,
   getCallee,
   getSymbol,
-  hasObjectLiteral,
   isInertValue,
   isScript,
 } from "./context";
@@ -264,11 +263,12 @@ export const compile = (
           ]
         : [];
     });
-    // An object that a variable makes keeps its identity, so its file makes it once.
+    // An object that a variable makes, itself or through a function that it calls, keeps its
+    // identity, so its file makes it once.
     const states =
       declared.some((state) => state.isChanged) || run.length > 0
         ? declared
-        : declared.filter((state) => hasObjectLiteral(state.statement));
+        : declared.filter((state) => isMakingObjects(state.statement, context));
     // A class of an imported file that the model reaches, which its file makes where it declares it.
     const classes = getReached([sourceFile, ...run], context).filter(
       (node): node is ts.ClassDeclaration =>
@@ -365,7 +365,7 @@ export const compile = (
   if (
     heap !== undefined &&
     isScript(sourceFile) &&
-    (changedArrays.length > 0 || roots.some(usesObjects))
+    (changedArrays.length > 0 || getReached(roots, context).some(usesObjects))
   ) {
     context.heap = heap;
     context.variables.set(heap, identifier(context.names.getFresh("heap")));

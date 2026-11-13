@@ -5,7 +5,6 @@ import {
   type FunctionNode,
   getFunction,
   getSymbol,
-  hasObjectLiteral,
   type HelperDeclaration,
   isHeapClass,
   isHeapFunction,
@@ -14,6 +13,7 @@ import {
 } from "./context";
 import type { Expression } from "../ast";
 import { getWritten, getWrittenRoots } from "./actions";
+import { isMakingObjects } from "./aliasing";
 import { TlaTypeScriptError } from "../errors";
 import { getAllocated } from "./heap";
 import { VALUE_TAGS } from "./properties";
@@ -96,7 +96,7 @@ const isLet = (declared: Declared, changed: ReadonlySet<ts.Symbol>, context: Con
       (symbol !== undefined && changed.has(symbol)) ||
       (context.heap !== undefined &&
         declaration.initializer !== undefined &&
-        (hasObjectLiteral(declaration.initializer) ||
+        (isMakingObjects(declaration.initializer, context) ||
           getAllocated(declaration.initializer, context).length > 0))) &&
     !isInlined(declaration.initializer, context)
   );
