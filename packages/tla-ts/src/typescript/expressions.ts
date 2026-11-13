@@ -2663,6 +2663,22 @@ const translateElementRead = (
   );
   if (primitiveRead !== undefined) return primitiveRead;
   const kind = getKind(node.expression, context);
+  // A Map or a Set off the heap has no own properties, so a symbol reads its prototype's.
+  if (
+    (kind === "map" || kind === "set") &&
+    context.heap !== undefined &&
+    isSymbolKey(node.argumentExpression, context)
+  ) {
+    return useJavaScript(
+      "Get",
+      [
+        getHeap(scope, node, context),
+        translateBuiltInValue(kind === "map" ? "Map.prototype" : "Set.prototype", node, context),
+        translatePropertyKey(node.argumentExpression, scope, context),
+      ],
+      context,
+    );
+  }
   if (kind === "object" || isHeapBuiltIn(node.expression, scope, context)) {
     // A built-in object's symbol may key an object whose type isn't one that the heap holds, such
     // as Array.prototype[Symbol.unscopables].

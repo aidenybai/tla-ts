@@ -16886,6 +16886,33 @@ describe("errors", () => {
     });
   });
 
+  describe("read what a symbol keys on a Map or a Set", () => {
+    const getSource = (expected: string) => `
+      const o = { a: 1 };
+      o.a = 2;
+      const m = new Map([[1, 2]]);
+      const s = new Set([1]);
+      let log = "";
+      try {
+        new (m[Symbol.iterator] as unknown as new () => object)();
+      } catch (error) {
+        log += error instanceof TypeError;
+      }
+      log += m[Symbol.iterator] === Map.prototype.entries;
+      log += s[Symbol.iterator] === Set.prototype.values;
+      log += String(s[Symbol.toStringTag]);
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("reads its prototype's", async () => {
+      expect((await checkModel(getSource("truetruetrueSet"))).failure).toBeUndefined();
+    });
+
+    it("doesn't read another prototype's", async () => {
+      expect((await checkModel(getSource("truetruetrueMap"))).failure).toBeDefined();
+    });
+  });
+
   describe("call a function's Symbol.hasInstance", () => {
     const getSource = (expected: string) => `
       function F() {}
