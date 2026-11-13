@@ -11412,6 +11412,24 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("found");
   });
 
+  it("concats an object or a primitive through call as one element of a new array", async () => {
+    const result = await checkModel(`
+      const object = { length: 0 };
+      const added = Array.prototype.concat.call(object, [1], 2);
+      const wrapped = Array.prototype.concat.call(true);
+      if (
+        Array.isArray(added) &&
+        added.length === 3 &&
+        added[0] === object &&
+        added[1] === 1 &&
+        wrapped[0] instanceof Boolean
+      ) {
+        throw new Error("concat");
+      }
+    `);
+    expect(result.failure?.message).toContain("concat");
+  });
+
   it("takes or drops up to Infinity or Number.MAX_SAFE_INTEGER", async () => {
     const result = await checkModel(`
       function* g(): Generator<number> {

@@ -2548,10 +2548,19 @@ export const getArrayLikeCall = (node: ts.CallExpression, context: Context) => {
   const isCall = called !== undefined;
   const method = called ?? callee.name.text;
   const object = isCall ? node.arguments.at(0) : isHeapArray(target, context) ? target : undefined;
-  return ARRAY_LIKE_METHODS.has(method) &&
-    object !== undefined &&
-    getKind(object, context) === "object"
-    ? { method, object, methodArguments: isCall ? node.arguments.slice(1) : node.arguments }
+  const methodArguments = isCall ? node.arguments.slice(1) : node.arguments;
+  // concat spreads only the arrays that it adds, so tla-ts adds no object that may be one.
+  const isConcat =
+    isCall &&
+    method === "concat" &&
+    methodArguments.every(
+      (argument) => !ts.isSpreadElement(argument) && getKind(argument, context) !== "object",
+    );
+  const kind = object === undefined ? undefined : getKind(object, context);
+  return object !== undefined &&
+    ((ARRAY_LIKE_METHODS.has(method) && kind === "object") ||
+      (isConcat && (kind === "object" || kind === "sequence")))
+    ? { method, object, methodArguments }
     : undefined;
 };
 
@@ -2775,6 +2784,45 @@ export const translateArrayLikeCall = (
       context,
       false,
     );
+  // concat adds the object as one element, unless it's an array or Symbol.isConcatSpreadable
+  // marks it, as it is for its arguments.
+  if (method === "concat") {
+    return share(translateExpression(object, scope, context), "object", context, (owner) => {
+      if (getKind(object, context) === "sequence") {
+        return operate(
+          owner,
+          translateMethodElements(method, owner, undefined, node, scope, context),
+        );
+      }
+      const heap = getHeap(scope, node, context);
+      return ifExpression(
+        apply("=", [
+          useJavaScript(
+            "Get",
+            [
+              heap,
+              owner,
+              useJavaScript("WellKnownSymbol", [string("isConcatSpreadable")], context),
+            ],
+            context,
+          ),
+          getUndefined(context),
+        ]),
+        operate(
+          owner,
+          ifExpression(
+            useJavaScript("IsArray", [heap, owner], context),
+            translateMethodElements(method, owner, "ArrayLike", node, scope, context),
+            tuple([owner]),
+          ),
+        ),
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't concat an object that Symbol.isConcatSpreadable marks"),
+        ]),
+      );
+    });
+  }
   // A search from an index counts from the length, which the present elements don't have.
   const isSkippingHoles =
     HOLE_SKIPPING_METHODS.has(method) && (!method.endsWith("ndexOf") || methodArguments.length < 2);
