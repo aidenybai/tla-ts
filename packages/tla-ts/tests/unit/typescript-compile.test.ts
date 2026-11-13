@@ -5018,6 +5018,24 @@ describe("errors", () => {
     );
   });
 
+  it("gives the object that Object.setPrototypeOf changes", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const propValue = {};
+      const newProto = { test262prop: propValue };
+      const obj: { test262prop?: object } = {};
+      let result: unknown;
+      result = Object.setPrototypeOf(obj, newProto);
+      if (result !== obj) throw new Error("result");
+      if (Object.prototype.hasOwnProperty.call(obj, "test262prop")) throw new Error("own");
+      if (obj.test262prop !== propValue) throw new Error("inherited");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("result !== obj", "result === obj");
+    expect((await checkModel(wrong)).failure?.message).toContain('"result"');
+  });
+
   it("throws the TypeError of JSON.stringify of a BigInt", async () => {
     const source = `
       declare global {
