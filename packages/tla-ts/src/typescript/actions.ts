@@ -1604,6 +1604,21 @@ export const translateCallStatement = (
     return translateSuperCall(expression, path, context, frame, continueWith);
   }
   const loop = getLoopCall(expression, path, context);
+  // A receiver or a later argument that only statements can run runs first, where what evaluates
+  // before it doesn't read what it changes.
+  const getLeading = () => getLeadingCall(expression, (call) => call !== expression, path, context);
+  const runLeading = (leading: { call: ts.CallExpression; reads: readonly ts.Expression[] }) =>
+    translateCallStatement(leading.call, path, context, frame, (after, value) =>
+      translateCallStatement(
+        expression,
+        withLeadingResults(leading, path, after, value, context),
+        context,
+        frame,
+        continueWith,
+      ),
+    );
+  const leadingLoop = loop === undefined ? undefined : getLeading();
+  if (leadingLoop !== undefined) return runLeading(leadingLoop);
   if (loop?.isInherited === true) {
     return ifThenElse(
       apply("=", [
@@ -1646,20 +1661,8 @@ export const translateCallStatement = (
       ),
     );
   }
-  // A later argument that only statements can run runs first too, where what evaluates before it
-  // doesn't read what it changes.
-  const leading = getLeadingCall(expression, (call) => call !== expression, path, context);
-  if (leading !== undefined) {
-    return translateCallStatement(leading.call, path, context, frame, (after, value) =>
-      translateCallStatement(
-        expression,
-        withLeadingResults(leading, path, after, value, context),
-        context,
-        frame,
-        continueWith,
-      ),
-    );
-  }
+  const leading = getLeading();
+  if (leading !== undefined) return runLeading(leading);
   // A receiver that may be undefined or null gives undefined to an optional chain, and throws a
   // TypeError otherwise.
   const guardReceiver = (receiver: ts.Expression, changed: Formula) => {

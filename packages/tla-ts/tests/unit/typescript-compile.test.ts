@@ -2879,6 +2879,27 @@ describe("values", () => {
     );
   });
 
+  it("runs the call that a conditional's branch maps over before it maps", async () => {
+    const getSource = (expected: string) => `
+      interface Token {
+        text: string;
+      }
+      const tokenize = (source: string): Token[] => {
+        const tokens: Token[] = [];
+        for (const part of source.split(" ")) tokens.push({ text: part });
+        return tokens;
+      };
+      const upper = (token: Token): Token => ({ text: token.text.toUpperCase() });
+      const read = (source: string, isRaw: boolean) =>
+        isRaw ? tokenize(source) : tokenize(source).map(upper);
+      const getText = (tokens: Token[]) => tokens.map((token) => token.text).join("");
+      const result = [getText(read("a b", true)), getText(read("a b", false))].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("ab,AB"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("ab,ab"))).failure?.message).toContain("ab,AB");
+  });
+
   it("reads a property before a branch whose call changes it", async () => {
     const getSource = (expected: string) => `
       class Box {
