@@ -1187,11 +1187,16 @@ HasAnyThen(heap) ==
 \\* a getter that tla-ts can't call stops the check.
 \\* An object that tla-ts keeps outside the heap, such as an array, inherits from Array.prototype or
 \\* Object.prototype, which a script may give a then. A generator object's prototypes aren't on the
-\\* heap, so it may have a then only where some object does.
+\\* heap, so it may have a then only where some object does. A script can't give a function that a
+\\* function makes a property, so it has a then only where its prototypes do, which for an async
+\\* function are AsyncFunction.prototype, which a script can't reach, and Function.prototype.
 IsThenable(heap, value, arrayPrototype, objectPrototype) ==
   IF IsRef(value)
   THEN IF IsHeap(value) /\\ heap.objects[value[Ref]].isOpaque
-       THEN IF IsGeneratorObject(heap, value) THEN HasAnyThen(heap) ELSE TRUE
+       THEN CASE IsGeneratorObject(heap, value) -> HasAnyThen(heap)
+              [] "code" \\in DOMAIN heap.objects[value[Ref]] ->
+                   TypeOfIn(heap, Get(heap, heap.objects[value[Ref]].prototype, "then")) = "function"
+              [] OTHER -> TRUE
        ELSE TypeOfIn(heap, Get(heap, value, "then")) = "function"
   ELSE /\\ value # Null
        /\\ TypeOf(value) = "object"

@@ -1006,8 +1006,12 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
         useJavaScript(
           "ClosureObject",
           [
+            // An arrow or an async function can't construct.
             useJavaScript(
-              "FunctionObject",
+              ts.isFunctionExpression(node) &&
+                (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0
+                ? "FunctionObject"
+                : "MethodObject",
               [
                 translateBuiltInValue("Function.prototype", node, context),
                 translateFunctionValue(node, context),

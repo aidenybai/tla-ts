@@ -8601,6 +8601,32 @@ describe("errors", () => {
     ).toThrow("tla-ts can't read f, the name that this function gives itself");
   });
 
+  const getAsyncClosureSource = (expected: number) => `
+      "use strict";
+      let count = 0;
+      const make = async function make(x: number) {
+        return async () => [x, true];
+      };
+      const other = { async method(y: number) { return async function () { return y; }; } };
+      make(1).then((first) => {
+        count++;
+        return first();
+      }).then((result) => {
+        if (result[0] !== 1 || result[1] !== true) throw new Error("async");
+        return other.method(2);
+      }).then((second) => second()).then((result) => {
+        if (result !== ${expected} || count !== 1) throw new Error("async");
+      });
+  `;
+
+  it("calls an async closure that a promise gives with the locals of the call that made it", async () => {
+    expect((await checkModel(getAsyncClosureSource(2))).failure).toBeUndefined();
+  });
+
+  it("rejects where an async closure gives another value", async () => {
+    expect((await checkModel(getAsyncClosureSource(3))).failure?.message).toContain("rejected");
+  });
+
   const getCounterSource = (expected: string) => `
       const seen = { count: 0 };
       let next: (() => number) | undefined;

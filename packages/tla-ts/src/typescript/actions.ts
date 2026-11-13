@@ -54,6 +54,7 @@ import {
   getCaptures,
   getClosures,
   isClosure,
+  type Closure,
   getFactoryCall,
   isAsyncFunction,
   isAsyncGenerator,
@@ -2632,15 +2633,27 @@ export const translateCallStatement = (
                   frame,
                   continueWith,
                 )
-              : translateAsyncCall(
-                  expression,
-                  candidate,
-                  candidateReceiver,
-                  path,
-                  context,
-                  frame,
-                  continueWith,
-                ),
+              : isClosure(candidate, context)
+                ? enterClosure(candidate, value, path, context, frame, (inner, innerFrame, leave) =>
+                    translateAsyncCall(
+                      expression,
+                      candidate,
+                      candidateReceiver,
+                      inner,
+                      context,
+                      innerFrame,
+                      (after, result) => continueWith(leave(after), result),
+                    ),
+                  )
+                : translateAsyncCall(
+                    expression,
+                    candidate,
+                    candidateReceiver,
+                    path,
+                    context,
+                    frame,
+                    continueWith,
+                  ),
           otherwise,
         );
       },
@@ -3604,7 +3617,7 @@ const isAction = (callee: FunctionNode, context: Context) =>
 // that a value holds. Once the call returns or throws, the environment holds the locals that the
 // closure changed, and the caller's bindings are as they were.
 const enterClosure = (
-  closure: ts.FunctionExpression,
+  closure: Closure,
   value: Expression,
   path: Path,
   context: Context,

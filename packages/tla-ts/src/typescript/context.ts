@@ -1321,19 +1321,38 @@ const getOuterLocals = (node: ts.Node, context: Context) =>
       : [];
   });
 
-// A function expression that a function makes and assigns to a name declared outside it, which
-// outlives the call that made it, and reads the locals of that call from its environment.
-export const isClosure = (node: ts.Node, context: Context): node is ts.FunctionExpression => {
+export type Closure = ts.FunctionExpression | ts.ArrowFunction;
+
+// A function that a function makes and that outlives the call that made it, which reads the locals
+// of that call from its environment: one that the function assigns to a name declared outside it,
+// or an async one that it returns. An arrow reads the this and arguments of the function around
+// it, which the environment doesn't hold, and an async closure that awaits would resume after its
+// call returns.
+export const isClosure = (node: ts.Node, context: Context): node is Closure => {
   if (
     context.heap === undefined ||
-    !ts.isFunctionExpression(node) ||
-    node.name !== undefined ||
-    node.asteriskToken !== undefined ||
-    (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) !== 0
+    !(ts.isFunctionExpression(node) || ts.isArrowFunction(node)) ||
+    (ts.isFunctionExpression(node) && (node.name !== undefined || node.asteriskToken !== undefined))
   ) {
     return false;
   }
+  const isAsync = (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) !== 0;
+  const isLexical = (inner: ts.Node): inner is ts.Node =>
+    inner.kind === ts.SyntaxKind.ThisKeyword ||
+    inner.kind === ts.SyntaxKind.SuperKeyword ||
+    ts.isMetaProperty(inner) ||
+    (ts.isIdentifier(inner) && inner.text === "arguments");
+  const isAwaiting = (inner: ts.Node): inner is ts.Node =>
+    ts.isAwaitExpression(inner) ||
+    (ts.isForOfStatement(inner) && inner.awaitModifier !== undefined);
   const maker = ts.findAncestor(node.parent, ts.isFunctionLike);
+  if (
+    maker === undefined ||
+    (ts.isArrowFunction(node) && findNodes(node, isLexical).length > 0) ||
+    (isAsync && findNodes(node, isAwaiting).length > 0)
+  ) {
+    return false;
+  }
   const assignment = node.parent;
   const declaration =
     ts.isBinaryExpression(assignment) &&
@@ -1344,16 +1363,16 @@ export const isClosure = (node: ts.Node, context: Context): node is ts.FunctionE
       ? getSymbol(assignment.left, context.checker)?.valueDeclaration
       : undefined;
   return (
-    maker !== undefined &&
-    declaration !== undefined &&
-    ts.findAncestor(declaration, (ancestor) => ancestor === maker) === undefined
+    (isAsync && ts.isReturnStatement(node.parent) && node.parent.expression === node) ||
+    (declaration !== undefined &&
+      ts.findAncestor(declaration, (ancestor) => ancestor === maker) === undefined)
   );
 };
 
 // The locals of the function that makes a closure that the closure reads, each once. tla-ts copies
 // them to the closure's environment where the function makes it, so each must hold its value by
 // then, and keep it.
-export const getCaptures = (node: ts.FunctionExpression, context: Context) => {
+export const getCaptures = (node: Closure, context: Context) => {
   const maker = ts.findAncestor(node.parent, ts.isFunctionLike);
   // A loop between a node and the function that makes the closure, which runs it again.
   const isRepeated = (inner: ts.Node) =>
@@ -2487,7 +2506,7 @@ export const getFunctionCandidates = (callee: ts.Expression, context: Context) =
 export const getClosures = (callee: ts.Expression, context: Context) => {
   if (isHeldBuiltInObject(callee, context)) return [];
   const type = context.checker.getTypeAtLocation(callee);
-  return findNodes(callee.getSourceFile(), (inner): inner is ts.FunctionExpression =>
+  return findNodes(callee.getSourceFile(), (inner): inner is Closure =>
     isClosure(inner, context),
   ).filter((closure) =>
     context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(closure), type),
