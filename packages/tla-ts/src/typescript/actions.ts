@@ -4140,14 +4140,28 @@ const translateIteratorHelper = (
   const isCounted = method === "take" || method === "drop";
   const callback =
     !isCounted && argument !== undefined ? getCallback(argument, path, context) : undefined;
+  // A limit that a literal, Infinity, or Number.MAX_SAFE_INTEGER gives, which ToIntegerOrInfinity
+  // truncates. Neither global can change.
   const limit =
-    isCounted && argument !== undefined && ts.isNumericLiteral(argument)
-      ? Number(argument.text)
-      : undefined;
-  if (isCounted ? limit === undefined || !Number.isInteger(limit) : callback?.body === undefined) {
+    !isCounted || argument === undefined
+      ? undefined
+      : ts.isNumericLiteral(argument)
+        ? Math.trunc(Number(argument.text))
+        : ts.isIdentifier(argument) &&
+            argument.text === "Infinity" &&
+            (getSymbol(argument, context.checker)?.declarations ?? []).every(
+              (declaration) => declaration.getSourceFile().isDeclarationFile,
+            )
+          ? Infinity
+          : ts.isPropertyAccessExpression(argument) &&
+              getBuiltIn(argument.expression, context) === "Number" &&
+              argument.name.text === "MAX_SAFE_INTEGER"
+            ? Number.MAX_SAFE_INTEGER
+            : undefined;
+  if (isCounted ? limit === undefined : callback?.body === undefined) {
     throw new TlaTypeScriptError(
       isCounted
-        ? `Give ${method} a whole number literal`
+        ? `Give ${method} a number literal, Infinity, or Number.MAX_SAFE_INTEGER`
         : `Give ${method} a function that tla-ts can tell`,
       argument ?? node,
     );
