@@ -11456,6 +11456,15 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("concat");
   });
 
+  it("gives Object.prototype.toString's tag where Array.prototype.toString finds no join", async () => {
+    const result = await checkModel(`
+      const tag = Array.prototype.toString.call(true);
+      const objectTag = Array.prototype.toString.call({ length: 0 });
+      if (tag === "[object Boolean]" && objectTag === "[object Object]") throw new Error("tag");
+    `);
+    expect(result.failure?.message).toContain("tag");
+  });
+
   it("takes or drops up to Infinity or Number.MAX_SAFE_INTEGER", async () => {
     const result = await checkModel(`
       function* g(): Generator<number> {

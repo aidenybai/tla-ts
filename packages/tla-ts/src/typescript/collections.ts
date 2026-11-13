@@ -2579,6 +2579,7 @@ export const getArrayLikeCall = (node: ts.CallExpression, context: Context) => {
   const kind = object === undefined ? undefined : getKind(object, context);
   return object !== undefined &&
     ((ARRAY_LIKE_METHODS.has(method) && kind === "object") ||
+      (isCall && method === "toString" && kind === "object") ||
       (isConcat && (kind === "object" || kind === "sequence")))
     ? { method, object, methodArguments }
     : undefined;
@@ -2804,6 +2805,23 @@ export const translateArrayLikeCall = (
       context,
       false,
     );
+  // toString joins an object that has a join, and otherwise gives Object.prototype.toString's tag.
+  if (method === "toString") {
+    return share(translateExpression(object, scope, context), "object", context, (owner) => {
+      const heap = getHeap(scope, node, context);
+      return ifExpression(
+        apply("=", [
+          useJavaScript("Get", [heap, owner, string("join")], context),
+          getUndefined(context),
+        ]),
+        useJavaScript("ObjectToString", [heap, owner, string("")], context),
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't call the join that this object holds"),
+        ]),
+      );
+    });
+  }
   // concat adds the object as one element, unless it's an array or Symbol.isConcatSpreadable
   // marks it, as it is for its arguments.
   if (method === "concat") {
