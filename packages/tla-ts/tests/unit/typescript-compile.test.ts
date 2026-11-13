@@ -5102,6 +5102,87 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain('"object"');
   });
 
+  it("converts the object that a definition gives an array's length twice", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const arr: number[] = [];
+      let count = 0;
+      const convertible = {
+        valueOf: () => {
+          count += 1;
+          return 2;
+        },
+      };
+      Object.defineProperty(arr, "length", { value: convertible });
+      if (arr.length !== 2 || count !== 2) throw new Error("define");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("count !== 2", "count !== 1");
+    expect((await checkModel(wrong)).failure?.message).toContain('"define"');
+  });
+
+  it("converts the length that Object.defineProperties defines", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const other: number[] = [];
+      Object.defineProperties(other, { length: { value: { toString: () => "3" } } });
+      if (other.length !== 3) throw new Error("properties");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("other.length !== 3", "other.length !== 0");
+    expect((await checkModel(wrong)).failure?.message).toContain('"properties"');
+  });
+
+  it("throws the TypeError of a length that converts to no primitive", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      let isThrown = false;
+      try {
+        Object.defineProperty([], "length", { value: { valueOf: () => ({}), toString: () => ({}) } });
+      } catch (error) {
+        isThrown = error instanceof TypeError;
+      }
+      if (!isThrown) throw new Error("primitive");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("if (!isThrown)", "if (isThrown)");
+    expect((await checkModel(wrong)).failure?.message).toContain('"primitive"');
+  });
+
+  it("throws the RangeError of a length that converts to no array length", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      let isThrown = false;
+      try {
+        Object.defineProperty([], "length", { value: { valueOf: () => -1 } });
+      } catch (error) {
+        isThrown = error instanceof RangeError;
+      }
+      if (!isThrown) throw new Error("range");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("() => -1", "() => 1");
+    expect((await checkModel(wrong)).failure?.message).toContain('"range"');
+  });
+
+  it("converts the length that Reflect.defineProperty defines", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const third: number[] = [];
+      Object.preventExtensions(third);
+      const isDefined = Reflect.defineProperty(third, "length", { value: { valueOf: () => 0 } });
+      if (!isDefined || third.length !== 0) throw new Error("reflect");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("!isDefined ||", "isDefined ||");
+    expect((await checkModel(wrong)).failure?.message).toContain('"reflect"');
+  });
+
   it("makes the objects that JSON.parse makes of a literal's text", async () => {
     const source = `
       const holder = { seen: 0 };

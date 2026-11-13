@@ -2568,20 +2568,97 @@ export const translateCallStatement = (
         continueWith(withHeap(identifier(name)), value),
       );
     }
-    const after = withHeap(field(identifier(name), "heap"));
-    return bindOnce(
-      path,
-      name,
-      translated.change,
-      ifThenElse(
-        field(identifier(name), "isDone"),
-        continueWith(after, value),
+    const finish = (current: Path, change: Expression) => {
+      const after = {
+        ...current,
+        scope: {
+          ...current.scope,
+          bindings: new Map([
+            ...current.scope.bindings,
+            [heapSymbol, field(identifier(name), "heap")],
+          ]),
+        },
+      };
+      return bindOnce(
+        current,
+        name,
+        change,
         ifThenElse(
-          field(identifier(name), "isRangeError"),
-          throwError("RangeError", after, expression, context, frame),
-          throwTypeError(after, expression, context, frame),
+          field(identifier(name), "isDone"),
+          continueWith(after, value),
+          ifThenElse(
+            field(identifier(name), "isRangeError"),
+            throwError("RangeError", after, expression, context, frame),
+            throwTypeError(after, expression, context, frame),
+          ),
         ),
-      ),
+      );
+    };
+    if (!("values" in translated) || !mayDefineObjectLength(expression, context)) {
+      return finish(path, translated.change);
+    }
+    // ArraySetLength converts an object to a number twice, running its valueOf and toString each
+    // time, after the definition reads its descriptor.
+    const values = translated.values;
+    return translateJoined(
+      expression,
+      path,
+      context,
+      (joined, change) => finish(joined, change ?? translated.change),
+      (next) =>
+        bind(
+          path,
+          "descriptor",
+          expression.expression.name.text === "defineProperties"
+            ? useJavaScript(
+                "PropertiesLengthDescriptor",
+                [getHeap(path.scope, expression, context), values[0], values[1]],
+                context,
+              )
+            : useJavaScript(
+                "LengthDescriptor",
+                [getHeap(path.scope, expression, context), ...values],
+                context,
+              ),
+          context,
+          (bound, descriptor) =>
+            ifThenElse(
+              apply("=", [descriptor, identifier("Null")]),
+              next(bound, translated.change),
+              runToPrimitive(
+                expression,
+                field(descriptor, "value"),
+                "number",
+                bound,
+                context,
+                frame,
+                (converted, first) =>
+                  runToPrimitive(
+                    expression,
+                    field(descriptor, "value"),
+                    "number",
+                    converted,
+                    context,
+                    frame,
+                    (again, second) =>
+                      next(
+                        again,
+                        useJavaScript(
+                          isReflectDefinition(expression) ? "ReflectDefineLength" : "DefineLength",
+                          [
+                            getHeap(again.scope, expression, context),
+                            values[0],
+                            descriptor,
+                            first,
+                            second,
+                          ],
+                          context,
+                        ),
+                      ),
+                  ),
+              ),
+            ),
+        ),
     );
   }
   const called = getCalledMethod(expression.expression, context);
@@ -5881,6 +5958,46 @@ const isObjectLength = (receiver: ts.Node, context: Context) => {
   );
 };
 
+// Whether Object.defineProperty, Reflect.defineProperty, or Object.defineProperties may define an
+// array's length with an object as its value.
+const mayDefineObjectLength = (node: MethodCall, context: Context) => {
+  const checker = context.checker;
+  const isOpen = (type: ts.Type) => (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+  const getMember = (type: ts.Type | undefined, key: string) => {
+    if (type === undefined || isOpen(type)) return type;
+    const property = type.getProperty(key);
+    return property === undefined ? undefined : checker.getTypeOfSymbol(property);
+  };
+  const mayBeObject = (type: ts.Type | undefined) =>
+    type !== undefined &&
+    (type.isUnion() ? type.types : [type]).some(
+      (member) =>
+        (member.flags &
+          (ts.TypeFlags.Object |
+            ts.TypeFlags.NonPrimitive |
+            ts.TypeFlags.Any |
+            ts.TypeFlags.Unknown |
+            ts.TypeFlags.TypeParameter)) !==
+        0,
+    );
+  const key = node.arguments.at(1);
+  const descriptor = node.arguments.at(2);
+  if (node.expression.name.text === "defineProperties") {
+    return (
+      key !== undefined &&
+      mayBeObject(getMember(getMember(checker.getTypeAtLocation(key), "length"), "value"))
+    );
+  }
+  return (
+    node.expression.name.text === "defineProperty" &&
+    key !== undefined &&
+    ts.isStringLiteralLike(key) &&
+    key.text === "length" &&
+    descriptor !== undefined &&
+    mayBeObject(getMember(checker.getTypeAtLocation(descriptor), "value"))
+  );
+};
+
 const getSpeciesGetters = (method: string, receiver: ts.Node, context: Context) =>
   method === "map" || method === "filter"
     ? getDefinedGetters(receiver, "constructor", context)
@@ -8846,9 +8963,11 @@ const getEffects = (
         });
   const isObjectMade = isMade(node, context);
   const isErrorMade = isObjectMade && isNewError(node, context);
-  // An operation that converts an object runs its valueOf and toString methods.
+  // An operation that converts an object runs its valueOf and toString methods, as does a definition
+  // of an array's length.
   const conversions =
-    ts.isExpression(node) && getConversion(node, context) !== undefined
+    (ts.isExpression(node) && getConversion(node, context) !== undefined) ||
+    (isObjectChange(node, context) && mayDefineObjectLength(node, context))
       ? getConversionFunctions(node, context)
       : undefined;
   // A definition that reads its descriptor's fields, a read of a key with getters, or an
