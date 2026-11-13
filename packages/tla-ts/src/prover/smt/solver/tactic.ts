@@ -24,7 +24,7 @@ import {
 } from "./goal";
 import type { AckrSolver } from "./lackr";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
-import { Der } from "./der";
+import { DerRewriter } from "./der";
 import { fixDlVar } from "./fix-dl-var";
 import { runFpa2Bv } from "./fpa2bv-tactic";
 import { type BitBlasterRewriter, runBitBlast } from "./bit-blast-tactic";
@@ -74,7 +74,6 @@ import { QSAT_QE, QSAT_QE_REC, QSAT_SAT, runQsat } from "./qsat";
 import { simplifyGoal } from "./quant-tactics";
 import { SolveEqs } from "./solve-eqs";
 import { RefVector } from "./ref-vector";
-import { RewriterTpl } from "./rewriter-tpl";
 import { type RewriterOptions, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { lia2card } from "./lia2card";
 import { LOGIC_TACTICS, QFAUFBV, QFUFBV_ACKR_PREAMBLE } from "./logic-tactics";
@@ -445,22 +444,6 @@ const inPlace = (run: (goal: Goal) => void) => (goal: Goal) => {
   run(goal);
   return [goal];
 };
-
-class DerRewriter extends RewriterTpl {
-  readonly der: Der;
-
-  constructor(manager: AstManager) {
-    super(manager);
-    this.der = new Der(manager);
-  }
-
-  reduceQuantifier(expr: number, body: number, patterns: number[]) {
-    const manager = this.manager;
-    return manager.withTemporaries(() =>
-      this.der.apply(manager.mkQuantifier({ ...manager.getQuantifier(expr), body, patterns })),
-    );
-  }
-}
 
 const runDer = (manager: AstManager) => (goal: Goal) => {
   const rewriter = new DerRewriter(manager);

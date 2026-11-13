@@ -24,7 +24,7 @@ import { KERNEL_REWRITER_OPTIONS, Rewriter } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
 import type { SmtConfig } from "./smt-setup";
 
-class PatternInferenceRw extends RewriterTpl {
+export class PatternInferenceRw extends RewriterTpl {
   constructor(
     manager: AstManager,
     private inference: PatternInference,

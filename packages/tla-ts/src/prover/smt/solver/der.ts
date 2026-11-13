@@ -10,6 +10,7 @@ import {
 } from "./ast";
 import { flattenAndVector, flattenOrVector } from "./ast-util";
 import { RefVector } from "./ref-vector";
+import { RewriterTpl } from "./rewriter-tpl";
 import { collectUsedVars, elimUnusedVars, VarSubst } from "./var-subst";
 
 interface VarDefinition {
@@ -213,5 +214,22 @@ export class Der {
     manager.releaseLater(body);
     manager.decRef(combined);
     return result;
+  }
+}
+
+// der_rewriter: der on every quantifier of an expression.
+export class DerRewriter extends RewriterTpl {
+  readonly der: Der;
+
+  constructor(manager: AstManager) {
+    super(manager);
+    this.der = new Der(manager);
+  }
+
+  reduceQuantifier(expr: number, body: number, patterns: number[]) {
+    const manager = this.manager;
+    return manager.withTemporaries(() =>
+      this.der.apply(manager.mkQuantifier({ ...manager.getQuantifier(expr), body, patterns })),
+    );
   }
 }
