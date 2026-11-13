@@ -1946,6 +1946,15 @@ export const getGetters = (node: ts.Node, context: Context) =>
       !changesState(getter, getter.body, context, new Set([getter])),
   );
 
+// The function whose @@hasInstance F[Symbol.hasInstance](value) calls.
+export const getHasInstanceReceiver = (node: ts.CallExpression, context: Context) =>
+  ts.isElementAccessExpression(node.expression) &&
+  ts.isPropertyAccessExpression(node.expression.argumentExpression) &&
+  getBuiltIn(node.expression.argumentExpression.expression, context) === "Symbol" &&
+  node.expression.argumentExpression.name.text === "hasInstance"
+    ? node.expression.expression
+    : undefined;
+
 export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFunction => {
   if (context.heap === undefined) return false;
   if (!ts.isFunctionDeclaration(node) && !ts.isFunctionExpression(node)) return false;
@@ -1961,19 +1970,24 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
       ? undefined
       : getSymbol(nameNode, context.checker);
   const sourceFile = node.getSourceFile();
-  // A new or Reflect.construct constructs the function or takes it as newTarget, or an Object
-  // function reads or changes it as an object.
+  // A new or Reflect.construct constructs the function or takes it as newTarget, an Object
+  // function reads or changes it as an object, or its @@hasInstance reads its prototype.
   const isNewTarget = (child: ts.Node): boolean => {
     const construction = getConstruction(child, context);
+    const receiver = ts.isCallExpression(child)
+      ? getHasInstanceReceiver(child, context)
+      : undefined;
     const targets =
       ts.isCallExpression(child) &&
       ts.isPropertyAccessExpression(child.expression) &&
       getBuiltIn(child.expression.expression, context) === "Object" &&
       OWN_PROPERTY_FUNCTIONS.has(child.expression.name.text)
         ? child.arguments.slice(0, 1)
-        : construction === undefined
-          ? []
-          : [construction.callee, construction.newTarget];
+        : receiver !== undefined
+          ? [receiver]
+          : construction === undefined
+            ? []
+            : [construction.callee, construction.newTarget];
     return (
       targets.some((target) => getSymbol(skipCasts(target), context.checker) === symbol) ||
       (ts.forEachChild(child, (inner) => isNewTarget(inner) || undefined) ?? false)

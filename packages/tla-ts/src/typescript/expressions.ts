@@ -63,6 +63,7 @@ import {
   getErrorClass,
   isCaughtRead,
   isNativeErrorValue,
+  translateHasInstanceCall,
   translateInstanceOf,
   translateNewError,
 } from "./exceptions";
@@ -745,6 +746,7 @@ export const translateCall = (
     return bound;
   }
   const converted =
+    translateHasInstanceCall(node, scope, context) ??
     translateConversion(node, scope, context) ??
     translateIntrinsic(node, scope, context) ??
     translateJsonCall(node, scope, context) ??

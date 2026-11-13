@@ -16886,6 +16886,30 @@ describe("errors", () => {
     });
   });
 
+  describe("call a function's Symbol.hasInstance", () => {
+    const getSource = (expected: string) => `
+      function F() {}
+      function G() {}
+      const made = new (F as unknown as new () => object)();
+      const result = [
+        F[Symbol.hasInstance](made),
+        F[Symbol.hasInstance](Object.create(made) as object),
+        G[Symbol.hasInstance](made),
+        F[Symbol.hasInstance](Object.create(null) as object),
+        F[Symbol.hasInstance](1),
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("finds the function's prototype on each value's chain", async () => {
+      expect((await checkModel(getSource("true,true,false,false,false"))).failure).toBeUndefined();
+    });
+
+    it("doesn't find another function's", async () => {
+      expect((await checkModel(getSource("true,true,true,false,false"))).failure).toBeDefined();
+    });
+  });
+
   describe("construct a capability with a function that has properties or that a variable holds", () => {
     const getSource = (expected: string) => `
       let log = "";

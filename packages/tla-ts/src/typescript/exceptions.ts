@@ -4,6 +4,7 @@ import type { Expression } from "../ast";
 import {
   type Context,
   findNodes,
+  getHasInstanceReceiver,
   getHeapClass,
   getLiteralName,
   getSymbol,
@@ -20,7 +21,7 @@ import { getGeneratorPrototypeRef, translateBuiltInInstanceOf } from "./intrinsi
 import { getTypeNames, useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
 import { getKind, isGeneratorType } from "./types";
-import { apply, field, identifier, ifExpression, record, set, string } from "./tla";
+import { apply, boolean, field, identifier, ifExpression, record, set, string } from "./tla";
 
 export const NATIVE_ERRORS = new Set([
   "Error",
@@ -391,6 +392,62 @@ const getSubclasses = (node: ts.Node, symbol: ts.Symbol, context: Context) => {
   };
   visit(node.getSourceFile());
   return [...found.values()];
+};
+
+// F[Symbol.hasInstance](value) of a function that the heap holds, which runs Function.prototype's
+// @@hasInstance where F keeps it: OrdinaryHasInstance, whose F's prototype must be an object.
+export const translateHasInstanceCall = (
+  node: ts.CallExpression,
+  scope: Scope,
+  context: Context,
+) => {
+  const receiver = getHasInstanceReceiver(node, context);
+  const argument = node.arguments.at(0);
+  if (
+    receiver === undefined ||
+    getHeapClass(receiver, context) === undefined ||
+    node.arguments.length !== 1 ||
+    argument === undefined ||
+    ts.isSpreadElement(argument)
+  ) {
+    return undefined;
+  }
+  const heap = getHeap(scope, node, context);
+  const constructor = translateExpression(receiver, scope, context);
+  return share(
+    useJavaScript("Get", [heap, constructor, string("prototype")], context),
+    "prototype",
+    context,
+    (prototype) =>
+      ifExpression(
+        useJavaScript(
+          "HoldsBuiltIn",
+          [
+            heap,
+            constructor,
+            useJavaScript("WellKnownSymbol", [string("hasInstance")], context),
+            string("Function.prototype.@@hasInstance"),
+          ],
+          context,
+        ),
+        ifExpression(
+          useJavaScript("IsRef", [prototype], context),
+          useJavaScript(
+            "InheritsFrom",
+            [heap, prototype, translateExpression(argument, scope, context)],
+            context,
+          ),
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't throw the TypeError of a prototype that isn't an object"),
+          ]),
+        ),
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't call a Symbol.hasInstance that a script defined"),
+        ]),
+      ),
+  );
 };
 
 export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, context: Context) => {
