@@ -4970,6 +4970,54 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs an object's toString and toLocaleString through Object.prototype's", async () => {
+    const source = `
+      const holder = { seen: "" };
+      const obj = new Object() as { [key: string]: unknown };
+      const tagged = { [Symbol.toStringTag]: "T" };
+      const one = {}.toString();
+      const two = {}.toLocaleString();
+      if (Object.prototype.toString() !== "[object Object]") throw new Error("proto");
+      if (Object.prototype.toLocaleString() !== Object.prototype.toString()) throw new Error("locale");
+      if (one !== "[object Object]" || two !== "[object Object]") throw new Error("literal");
+      if (obj.valueOf().toString() !== "[object Object]") throw new Error("valueOf");
+      if (tagged.toString() !== "[object T]" || tagged.toLocaleString() !== "[object T]") {
+        throw new Error("tag");
+      }
+      holder.seen = one;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = [
+      [
+        'Object.prototype.toString() !== "[object Object]"',
+        'Object.prototype.toString() !== "[object Obj]"',
+        '"proto"',
+      ],
+      ['two !== "[object Object]"', 'two === "[object Object]"', '"literal"'],
+      [
+        'obj.valueOf().toString() !== "[object Object]"',
+        'obj.valueOf().toString() === "[object Object]"',
+        '"valueOf"',
+      ],
+      [
+        'tagged.toLocaleString() !== "[object T]"',
+        'tagged.toLocaleString() !== "[object Object]"',
+        '"tag"',
+      ],
+    ];
+    for (const [from, to, message] of wrong) {
+      expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
+    }
+    const own = `
+      const holder = { seen: "" };
+      const own = { toString: () => "own" };
+      holder.seen = own.toLocaleString();
+    `;
+    expect((await checkModel(own)).failure?.message).toContain(
+      "tla-ts can't tell which method this call runs",
+    );
+  });
+
   it("throws the TypeError of JSON.stringify of a BigInt", async () => {
     const source = `
       declare global {

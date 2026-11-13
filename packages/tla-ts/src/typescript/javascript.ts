@@ -2856,6 +2856,14 @@ ObjectToString(heap, value, kind) ==
           [] OTHER -> Assert(FALSE, "tla-ts can't tell the kind of " \\o ToString(value)))
     \\o "]"
 
+\\* An object's toString or toLocaleString, where it reads Object.prototype's, which calls the
+\\* object's toString, and that's Object.prototype's too.
+ObjectMethodString(heap, ref, method) ==
+  IF /\\ HoldsBuiltIn(heap, ref, method, "Object.prototype." \\o method)
+     /\\ HoldsBuiltIn(heap, ref, "toString", "Object.prototype.toString")
+  THEN ObjectToString(heap, ref, "")
+  ELSE Assert(FALSE, "tla-ts can't tell which method this call runs")
+
 \\* ToPrimitive of an object, which tla-ts follows where the object reads the built-in valueOf and
 \\* toString and has no Symbol.toPrimitive.
 LOCAL LoosePrimitive(heap, ref) ==
