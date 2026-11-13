@@ -11727,6 +11727,23 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("tag");
   });
 
+  it("runs an Array.prototype method that call gives Math or JSON", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      const math = Math as unknown as { [key: string]: unknown };
+      math[1] = true;
+      math.length = 2;
+      const found = Array.prototype.indexOf.call(Math, true);
+      const last = Array.prototype.lastIndexOf.call(JSON, true);
+      const isMath = (value: unknown, index: unknown, object: typeof Math) =>
+        Object.prototype.toString.call(object) === "[object Math]" && object.PI > 3;
+      const isSome = Array.prototype.some.call(Math, isMath as (...args: unknown[]) => unknown);
+      holder.count = 1;
+      if (found === 1 && last === -1 && isSome) throw new Error("built-in");
+    `);
+    expect(result.failure?.message).toContain("built-in");
+  });
+
   it("takes or drops up to Infinity or Number.MAX_SAFE_INTEGER", async () => {
     const result = await checkModel(`
       function* g(): Generator<number> {

@@ -17,7 +17,12 @@ import {
   isNestedFunction,
   isRestOnly,
 } from "./context";
-import { getBuiltIn, isHeldBuiltInObject } from "./intrinsics";
+import {
+  getBuiltIn,
+  isBuiltInObject,
+  isBuiltInObjectType,
+  isHeldBuiltInObject,
+} from "./intrinsics";
 import { KEYWORDS } from "../lexer";
 import { TlaTypeScriptError } from "../errors";
 import {
@@ -686,6 +691,14 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
   }
   if (isHeldBuiltInObject(node, context)) return "object";
   const type = checker.getNonNullableType(checker.getTypeAtLocation(node));
+  // A value of a built-in object's type, other than the global that names it, holds that object.
+  if (
+    context.heap !== undefined &&
+    isBuiltInObjectType(type, context) &&
+    !isBuiltInObject(node, context)
+  ) {
+    return "object";
+  }
   if (isRegExpArray(type)) return context.heap === undefined ? "other" : "object";
   if (
     context.heap !== undefined &&

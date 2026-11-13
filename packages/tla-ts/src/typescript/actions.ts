@@ -6108,7 +6108,8 @@ const getLoopTarget = (node: ts.Node, context: Context) => {
   const isCall =
     called !== undefined &&
     node.arguments.length > 0 &&
-    getKind(node.arguments[0], context) === "object";
+    (getKind(node.arguments[0], context) === "object" ||
+      isBuiltInObject(node.arguments[0], context));
   const isArrayLike = isCall || isHeapArray(target, context);
   const method = isCall ? called : node.expression.name.text;
   const receiver = isCall ? node.arguments[0] : target;

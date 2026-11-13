@@ -2610,7 +2610,8 @@ export const getArrayLikeCall = (node: ts.CallExpression, context: Context) => {
     );
   const kind = object === undefined ? undefined : getKind(object, context);
   return object !== undefined &&
-    ((ARRAY_LIKE_METHODS.has(method) && kind === "object") ||
+    ((ARRAY_LIKE_METHODS.has(method) &&
+      (kind === "object" || (isCall && isBuiltInObject(object, context)))) ||
       (isCall && method === "toString" && kind === "object") ||
       (isConcat && (kind === "object" || kind === "sequence")))
     ? { method, object, methodArguments }

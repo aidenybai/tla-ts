@@ -52,6 +52,18 @@ export const getBuiltIn = (node: ts.Expression, context: Context) => {
     : undefined;
 };
 
+// The type of a built-in object that a global holds, such as Math's, which no other value has.
+export const isBuiltInObjectType = (type: ts.Type, context: Context) => {
+  const symbol = type.getSymbol();
+  return (
+    symbol !== undefined &&
+    isGlobal(symbol.name) &&
+    isLibrary(symbol) &&
+    (symbol.flags & ts.SymbolFlags.Value) !== 0 &&
+    context.checker.getTypeOfSymbol(symbol) === type
+  );
+};
+
 // The prototype of a built-in object, which "null" names.
 const getParent = (name: string) => {
   const entry = BUILT_INS[name];
