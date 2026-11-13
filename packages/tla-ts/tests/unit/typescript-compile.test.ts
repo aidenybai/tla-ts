@@ -2213,8 +2213,8 @@ describe("values", () => {
     expect((await checkModel(getSource("110"))).failure?.message).toContain("outcomes 100");
   });
 
-  it("stops where a skipped operand makes an object that runs code", async () => {
-    const getSource = (operand: string) => `
+  it("stops where a skipped operand spreads an object with a getter", async () => {
+    const source = `
       let count: number = 0;
       const source = {
         get value(): number {
@@ -2222,6 +2222,15 @@ describe("values", () => {
           return 1;
         },
       };
+      if ((false && { ...source }) === undefined) count += 100;
+      if (count !== 0) throw new Error("outcomes " + count);
+    `;
+    expect((await checkModel(source)).failure?.message).toContain("tla-ts can't call getters");
+  });
+
+  describe("runs the code of an operand that makes an object only where the operand runs", () => {
+    const getSource = (operand: string) => `
+      let count: number = 0;
       const bump = (): number => {
         count += 10;
         return 1;
@@ -2229,14 +2238,19 @@ describe("values", () => {
       if ((${operand}) === undefined) count += 100;
       if (count !== 0) throw new Error("outcomes " + count);
     `;
-    expect((await checkModel(getSource("false && { ...source }"))).failure?.message).toContain(
-      "tla-ts can't call getters",
+
+    it.each(["true || { x: bump() }", "true ? 1 : new Boolean(bump())"])(
+      "skips %s",
+      async (operand) => {
+        expect((await checkModel(getSource(operand))).failure).toBeUndefined();
+      },
     );
-    for (const operand of ["true || { x: bump() }", "true ? 1 : new Boolean(bump())"]) {
-      expect(() => compile(getSource(operand))).toThrow(
-        "Make objects only where a statement always runs",
+
+    it("runs false || { x: bump() }", async () => {
+      expect((await checkModel(getSource("false || { x: bump() }"))).failure?.message).toContain(
+        "outcomes 10",
       );
-    }
+    });
   });
 
   it("makes the objects of what a throw statement throws", async () => {
