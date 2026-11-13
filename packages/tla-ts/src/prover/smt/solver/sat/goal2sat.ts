@@ -1,5 +1,5 @@
 // Ported from Z3 (src/sat/tactic/goal2sat.h, src/sat/tactic/goal2sat.cpp,
-// src/ast/expr2var.cpp), MIT license, see z3-license.txt.
+// src/ast/expr2var.cpp, src/sat/smt/atom2bool_var.cpp), MIT license, see z3-license.txt.
 import { SmtCanceledError, SmtTacticError } from "../../../../errors";
 import {
   type AstManager,
@@ -8,12 +8,15 @@ import {
   OP_AND,
   OP_DISTINCT,
   OP_EQ,
+  OP_FALSE,
   OP_IMPLIES,
   OP_ITE,
   OP_NOT,
   OP_OR,
+  OP_TRUE,
   OP_XOR,
 } from "../ast";
+import { EufSolver, type EufInternalizer, type ThSolverFactory } from "../euf/euf-solver";
 import { DEFAULT_PRINT_OPTIONS, printExpr } from "../smt2-printer";
 import { NULL_LITERAL } from "./clause";
 import { PbSolver, type SatInternalizer } from "./pb-solver";
@@ -32,18 +35,143 @@ interface Frame {
   index: number;
 }
 
-export class Goal2Sat implements SatInternalizer {
+export class Goal2Sat implements SatInternalizer, EufInternalizer {
   readonly atoms = new Map<number, number>();
   readonly unhandledFuns: number[] = [];
   private frames: Frame[] = [];
   private results: number[] = [];
   private app2lit = new Map<number, number>();
+  private lit2app = new Map<number, number>();
+  private cacheTrail: number[] = [];
+  private cacheLim: number[] = [];
+  private recentAtoms: number[] = [];
+  private atomsLim: number[] = [];
+  private numScopes = 0;
+  private expr2varReplay: Map<number, number> | null = null;
+  euf: EufSolver | null = null;
 
+  // A theory factory puts goal2sat in sat.euf mode, where atoms go to the euf solver.
   constructor(
     private manager: AstManager,
     private solver: Solver,
     private isIteExtra: boolean,
+    private mkThSolver: ThSolverFactory | null = null,
   ) {}
+
+  ensureEuf() {
+    if (this.euf !== null) return this.euf;
+    const solver = this.solver;
+    if (solver.ext !== null) throw new SmtTacticError("cannot convert to euf");
+    const euf = new EufSolver(this.manager, this, solver, this.mkThSolver as ThSolverFactory);
+    solver.ext = euf;
+    this.euf = euf;
+    return euf;
+  }
+
+  private convertEuf(expr: number, isRoot: boolean, isSign: boolean) {
+    const lit = this.ensureEuf().internalize(expr, isSign, isRoot);
+    if (lit === NULL_LITERAL) return;
+    if (isRoot) this.mkClause([lit]);
+    else this.results.push(lit);
+  }
+
+  private forcePush() {
+    for (; this.numScopes > 0; this.numScopes--) {
+      this.atomsLim.push(this.recentAtoms.length);
+      this.cacheLim.push(this.cacheTrail.length);
+    }
+  }
+
+  push() {
+    this.numScopes++;
+  }
+
+  pop(numScopes: number) {
+    if (numScopes <= this.numScopes) {
+      this.numScopes -= numScopes;
+      return;
+    }
+    const remaining = numScopes - this.numScopes;
+    this.numScopes = 0;
+    const manager = this.manager;
+    const atomsLim = this.atomsLim[this.atomsLim.length - remaining];
+    for (let index = this.recentAtoms.length; index-- > atomsLim;) {
+      const expr = this.recentAtoms[index];
+      this.atoms.delete(expr);
+      manager.decRef(expr);
+    }
+    this.recentAtoms.length = atomsLim;
+    this.atomsLim.length -= remaining;
+    const cacheLim = this.cacheLim[this.cacheLim.length - remaining];
+    for (let index = this.cacheTrail.length; index-- > cacheLim;) {
+      const expr = this.cacheTrail[index];
+      const lit = this.app2lit.get(expr);
+      if (lit === undefined) continue;
+      this.app2lit.delete(expr);
+      this.lit2app.delete(lit);
+    }
+    this.cacheTrail.length = cacheLim;
+    this.cacheLim.length -= remaining;
+  }
+
+  private insertAtom(expr: number, boolVar: number) {
+    this.atoms.set(expr, boolVar);
+    if (this.mkThSolver === null) return;
+    this.manager.incRef(expr);
+    this.recentAtoms.push(expr);
+  }
+
+  uncache(lit: number) {
+    const expr = this.lit2app.get(lit);
+    if (expr === undefined) return;
+    this.lit2app.delete(lit);
+    this.app2lit.delete(expr);
+  }
+
+  isCached(expr: number, lit: number) {
+    return this.app2lit.get(expr) === lit;
+  }
+
+  setExpr2VarReplay(replay: Map<number, number> | null) {
+    this.expr2varReplay = replay;
+  }
+
+  toBoolVar(expr: number) {
+    const boolVar = this.atoms.get(expr);
+    if (boolVar !== undefined) return boolVar;
+    const lit = this.app2lit.get(expr);
+    return lit !== undefined && (lit & 1) === 0 ? lit >> 1 : -1;
+  }
+
+  addBoolVar(expr: number) {
+    this.forcePush();
+    const boolVar = this.atoms.get(expr);
+    if (boolVar === undefined) return this.mkBoolVar(expr);
+    this.solver.setExternal(boolVar);
+    return boolVar;
+  }
+
+  isBoolOp(expr: number) {
+    const manager = this.manager;
+    if (!manager.isApp(expr)) return false;
+    if (manager.getFamily(expr) === FAMILY_BASIC)
+      switch (manager.getOp(expr)) {
+        case OP_OR:
+        case OP_AND:
+        case OP_TRUE:
+        case OP_FALSE:
+        case OP_NOT:
+        case OP_IMPLIES:
+        case OP_XOR:
+          return true;
+        case OP_ITE:
+        case OP_EQ:
+          return manager.isBool(manager.getArg(expr, 1));
+        default:
+          return false;
+      }
+    return this.mkThSolver === null && manager.getFamily(expr) === FAMILY_PB;
+  }
 
   private throwOpNotHandled(expr: number) {
     throw new SmtTacticError(
@@ -55,13 +183,15 @@ export class Goal2Sat implements SatInternalizer {
     this.solver.mkClause(lits);
   }
 
-  private addVar(isExternal: boolean) {
-    return this.solver.mkVar(isExternal, true);
+  private addVar(isExternal: boolean, expr: number) {
+    const replayed = this.expr2varReplay?.get(expr);
+    return replayed ?? this.solver.mkVar(isExternal, true);
   }
 
   private mkBoolVar(expr: number) {
-    const boolVar = this.addVar(true);
-    this.atoms.set(expr, boolVar);
+    this.forcePush();
+    const boolVar = this.addVar(true, expr);
+    this.insertAtom(expr, boolVar);
     return boolVar;
   }
 
@@ -80,6 +210,9 @@ export class Goal2Sat implements SatInternalizer {
       const falseLit = 2 * this.mkBoolVar(expr);
       this.mkClause([falseLit ^ 1]);
       lit = isSign ? falseLit ^ 1 : falseLit;
+    } else if (this.mkThSolver !== null) {
+      this.convertEuf(expr, isRoot, isSign);
+      return;
     } else {
       if (!manager.isUninterpretedConst(expr)) {
         if (!manager.isApp(expr)) this.throwOpNotHandled(expr);
@@ -107,7 +240,7 @@ export class Goal2Sat implements SatInternalizer {
       return true;
     }
     if (this.processCached(expr, isRoot, isSign)) return true;
-    if (manager.getFamily(expr) === FAMILY_PB) {
+    if (manager.getFamily(expr) === FAMILY_PB && this.mkThSolver === null) {
       this.frames.push({ expr, isRoot, isSign, index: 0 });
       return false;
     }
@@ -132,7 +265,9 @@ export class Goal2Sat implements SatInternalizer {
         this.convertAtom(expr, isRoot, isSign);
         return true;
       case OP_DISTINCT:
-        return this.throwOpNotHandled(expr);
+        if (this.mkThSolver === null) return this.throwOpNotHandled(expr);
+        this.convertEuf(expr, isRoot, isSign);
+        return true;
       default:
         this.convertAtom(expr, isRoot, isSign);
         return true;
@@ -140,8 +275,8 @@ export class Goal2Sat implements SatInternalizer {
   }
 
   private mkTseitinVar(expr: number) {
-    const lit = 2 * this.addVar(false);
-    this.app2lit.set(expr, lit);
+    const lit = 2 * this.addVar(false, expr);
+    this.cache(expr, lit);
     return lit;
   }
 
@@ -269,13 +404,13 @@ export class Goal2Sat implements SatInternalizer {
       return;
     }
     if (this.processCached(expr, isRoot, isSign)) return;
-    const lit = 2 * this.addVar(false);
+    const lit = 2 * this.addVar(false, expr);
     if (isXor) first ^= 1;
     this.mkClause([lit ^ 1, first, second ^ 1]);
     this.mkClause([lit ^ 1, first ^ 1, second]);
     this.mkClause([lit, first, second]);
     this.mkClause([lit, first ^ 1, second ^ 1]);
-    this.app2lit.set(expr, lit);
+    this.cache(expr, lit);
     results.push(isSign ? lit ^ 1 : lit);
   }
 
@@ -352,7 +487,8 @@ export class Goal2Sat implements SatInternalizer {
     this.process(atom, false);
     const result = this.results.pop() as number;
     if ((result & 1) === 0 && !this.atoms.has(atom)) {
-      this.atoms.set(atom, result >> 1);
+      this.forcePush();
+      this.insertAtom(atom, result >> 1);
       this.solver.setExternal(result >> 1);
     }
     return isNot ? result ^ 1 : result;
@@ -363,7 +499,10 @@ export class Goal2Sat implements SatInternalizer {
   }
 
   cache(expr: number, lit: number) {
+    this.forcePush();
     this.app2lit.set(expr, lit);
+    this.lit2app.set(lit, expr);
+    this.cacheTrail.push(expr);
   }
 
   // insert_dep on an assumption, an uninterpreted constant or its negation.
@@ -376,12 +515,14 @@ export class Goal2Sat implements SatInternalizer {
   }
 
   run(forms: readonly number[]) {
+    if (this.mkThSolver !== null) this.ensureEuf();
     try {
       for (const form of forms) this.process(form, true);
     } finally {
       this.frames = [];
       this.results = [];
       this.app2lit = new Map();
+      this.lit2app = new Map();
     }
   }
 }
