@@ -114,6 +114,7 @@ import {
   isHoleyNewArray,
   isNewArrayOfElements,
   getArraySource,
+  getIteratedArray,
   getKeptIterator,
 } from "./types";
 
@@ -2367,6 +2368,8 @@ const isArrayObjectUse = (node: ts.Expression, context: Context): boolean => {
     return true;
   }
   if (ts.isSpreadElement(parent)) return true;
+  // Iterator.from runs the array's iterator too.
+  if (getIteratedArray(parent, context) === node) return true;
   if (ts.isVariableDeclaration(parent)) return ts.isArrayBindingPattern(parent.name);
   if (ts.isBinaryExpression(parent)) {
     const kind = parent.operatorToken.kind;
@@ -3422,7 +3425,8 @@ export const findHeapArrays = (
         (use) =>
           isNamedWrite(use) ||
           isPatternResult(use) ||
-          getKeptIterator(use.parent.parent, context) !== undefined,
+          getKeptIterator(use.parent.parent, context) !== undefined ||
+          getIteratedArray(use.parent, context) === use,
       ) &&
       reads.every((use) => isArrayObjectUse(use, context))
     ) {
