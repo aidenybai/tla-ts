@@ -108,6 +108,7 @@ const LIBRARY_OBJECTS = new Set([
   "IteratorYieldResult",
   "IteratorReturnResult",
   "ArrayIterator",
+  "StringIterator",
   "IArguments",
   "ArrayLike",
   "Date",
@@ -464,21 +465,52 @@ const isRegExpGroups = (node: ts.Expression, context: Context): boolean => {
 
 export const ITERATOR_METHODS = ["keys", "values", "entries"];
 
-// The array that Iterator.from takes, whose Symbol.iterator method makes the iterator it gives, as
-// an array's iterator inherits from Iterator.prototype.
-export const getIteratedArray = (node: ts.Node, context: Context) =>
+// The value that Iterator.from takes.
+export const getIteratorFromArgument = (node: ts.Node) =>
   ts.isCallExpression(node) &&
   node.expression.getText() === "Iterator.from" &&
   node.arguments.length === 1 &&
-  !ts.isSpreadElement(node.arguments[0]) &&
-  isSequenceType(context.checker.getTypeAtLocation(node.arguments[0]), context.checker)
+  !ts.isSpreadElement(node.arguments[0])
     ? node.arguments[0]
     : undefined;
+
+// The array that Iterator.from takes, whose Symbol.iterator method makes the iterator it gives, as
+// an array's iterator inherits from Iterator.prototype.
+export const getIteratedArray = (node: ts.Node, context: Context) => {
+  const argument = getIteratorFromArgument(node);
+  return argument !== undefined &&
+    isSequenceType(context.checker.getTypeAtLocation(argument), context.checker)
+    ? argument
+    : undefined;
+};
+
+// The string, or String object, whose iterator Iterator.from or a call of its [Symbol.iterator]()
+// makes, where no for-of or spread reads it at once.
+export const getIteratedString = (node: ts.Node, context: Context) => {
+  const iterated =
+    getIteratorFromArgument(node) ??
+    (ts.isCallExpression(node) &&
+    node.arguments.length === 0 &&
+    ts.isElementAccessExpression(node.expression) &&
+    node.expression.questionDotToken === undefined &&
+    node.expression.argumentExpression.getText() === "Symbol.iterator" &&
+    !(ts.isForOfStatement(node.parent) && node.parent.expression === node) &&
+    !ts.isSpreadElement(node.parent)
+      ? node.expression.expression
+      : undefined);
+  const type = iterated && context.checker.getTypeAtLocation(iterated);
+  return type !== undefined &&
+    ((type.flags & ts.TypeFlags.StringLike) !== 0 ||
+      ((type.flags & ts.TypeFlags.Object) !== 0 && type.getSymbol()?.name === "String"))
+    ? iterated
+    : undefined;
+};
 
 // The kind of iterator that a call of an array's keys(), values(), entries(), or [Symbol.iterator]()
 // makes, where no for-of or spread reads it at once, so that the iterator is an object.
 export const getKeptIterator = (node: ts.Node, context: Context) => {
   if (getIteratedArray(node, context) !== undefined) return "values";
+  if (getIteratedString(node, context) !== undefined) return "string";
   if (
     !ts.isCallExpression(node) ||
     node.arguments.length > 0 ||
@@ -543,7 +575,7 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
     ts.isCallExpression(initializer) &&
     initializer.expression.getText() === "Object.getPrototypeOf" &&
     initializer.arguments.length === 1 &&
-    getKeptIterator(initializer.arguments[0], context) !== undefined
+    ![undefined, "string"].includes(getKeptIterator(initializer.arguments[0], context))
   ) {
     return "object";
   }
@@ -578,11 +610,13 @@ const getMembers = (node: ts.Node, context: Context) => {
 const isGeneratorMember = (type: ts.Type) =>
   ["Generator", "AsyncGenerator", "IteratorObject"].includes(type.getSymbol()?.name ?? "");
 
-// An array's iterator, whose type tells, which the code that steps generators steps through its
-// heap object.
-export const isArrayIteratorType = (node: ts.Node, context: Context) =>
+// An array's or a string's iterator, whose type tells, which the code that steps generators steps
+// through its heap object.
+export const isBuiltInIteratorType = (node: ts.Node, context: Context) =>
   context.heap !== undefined &&
-  getMembers(node, context).every((type) => type.getSymbol()?.name === "ArrayIterator");
+  getMembers(node, context).every((type) =>
+    ["ArrayIterator", "StringIterator"].includes(type.getSymbol()?.name ?? ""),
+  );
 
 export const isGeneratorType = (node: ts.Node, context: Context) =>
   getMembers(node, context).every(isGeneratorMember);

@@ -12,6 +12,7 @@ import {
   isUntypedStoredCall,
   translateArrayChange,
   translateArrayIteratorPrototype,
+  translateStringIteratorPrototype,
   translateStoredCall,
   translateHoldsIteratorMethod,
   getHeapElements,
@@ -19,7 +20,6 @@ import {
   translateHeapElements,
   translateArrayIteration,
   holdsArrayIteration,
-  holdsArrayIteratorNext,
   ARRAY_ITERATOR_REPLACED,
   getHeapRegExpCall,
   translateRegExpText,
@@ -300,7 +300,7 @@ import {
   isHeapType,
   isBigIntLike,
   isNumberLike,
-  isArrayIteratorType,
+  isBuiltInIteratorType,
   isGeneratorType,
   isPrototypeRead,
   mayBeGeneratorType,
@@ -1634,8 +1634,8 @@ export const translateCallStatement = (
             : translateGeneratorConsumer)(
             expression,
             consumer,
-            consumer.receiver !== undefined && isArrayIteratorType(consumer.receiver, context)
-              ? withArrayIterator(
+            consumer.receiver !== undefined && isBuiltInIteratorType(consumer.receiver, context)
+              ? withBuiltInIterator(
                   expression,
                   current,
                   translateExpression(consumer.receiver, current.scope, context),
@@ -2078,17 +2078,31 @@ export const translateCallStatement = (
     const change = identifier(changeName);
     const operation =
       iteratorCall.kind === undefined
-        ? useJavaScript("ArrayIteratorNext", [heap, receiver], context)
-        : useJavaScript(
-            "ArrayIterator",
-            [
-              heap,
-              receiver,
-              string(iteratorCall.kind),
-              translateArrayIteratorPrototype(expression, context),
-            ],
+        ? useJavaScript(
+            "BuiltInIteratorNext",
+            [heap, receiver, boolean(iteratorCall.path.startsWith("%StringIterator"))],
             context,
-          );
+          )
+        : iteratorCall.kind === "string"
+          ? useJavaScript(
+              "StringIterator",
+              [
+                heap,
+                useJavaScript("IteratedString", [heap, receiver], context),
+                translateStringIteratorPrototype(expression, context),
+              ],
+              context,
+            )
+          : useJavaScript(
+              "ArrayIterator",
+              [
+                heap,
+                receiver,
+                string(iteratorCall.kind),
+                translateArrayIteratorPrototype(expression, context),
+              ],
+              context,
+            );
     return bindOnce(
       path,
       receiverName,
@@ -2116,7 +2130,7 @@ export const translateCallStatement = (
                     context,
                   ),
                   continueWith(
-                    withArrayIterator(
+                    withBuiltInIterator(
                       expression,
                       withHeap(field(change, "heap")),
                       field(change, "value"),
@@ -2139,7 +2153,11 @@ export const translateCallStatement = (
         leaf(
           apply("Assert", [
             boolean(false),
-            string(`tla-ts can't call ${iteratorCall.path} where a script replaced it`),
+            string(
+              iteratorCall.kind === "string"
+                ? "tla-ts can't make an iterator where a script replaced String.prototype's method"
+                : `tla-ts can't call ${iteratorCall.path} where a script replaced it`,
+            ),
           ]),
         ),
       ),
@@ -4326,14 +4344,19 @@ const translateHoldsIteratorPrototype = (
       );
 };
 
-// The most steps of an array's iterator that the code that steps generators follows, as whether
-// the iterator is done depends on the array's length as it steps.
-const ARRAY_ITERATOR_STEP_LIMIT = 16;
+// The most steps of an array's or a string's iterator that the code that steps generators follows,
+// as whether the iterator is done depends on the array's length as it steps.
+const BUILT_IN_ITERATOR_STEP_LIMIT = 16;
 
-// Steps an array's iterator for the code that steps generators, by its suspension: a next steps the
-// iterator on the heap, and a return leaves the iterator as it is, as an array's iterator has no
-// return method.
-const withArrayIterator = (node: ts.Node, path: Path, ref: Expression, context: Context): Path => {
+// Steps an array's or a string's iterator for the code that steps generators, by its suspension: a
+// next steps the iterator on the heap, and a return leaves the iterator as it is, as neither
+// iterator has a return method.
+const withBuiltInIterator = (
+  node: ts.Node,
+  path: Path,
+  ref: Expression,
+  context: Context,
+): Path => {
   if ([...path.generators.values()].some((suspension) => isSameExpression(suspension.ref, ref))) {
     return path;
   }
@@ -4369,13 +4392,16 @@ const withArrayIterator = (node: ts.Node, path: Path, ref: Expression, context: 
               apply("Assert", [
                 boolean(false),
                 string(
-                  "tla-ts can't close an array's iterator through a return that a script gives",
+                  "tla-ts can't close an array's or a string's iterator through a return that a script gives",
                 ),
               ]),
             ),
           )
         : leaf(
-            apply("Assert", [boolean(false), string(`tla-ts can't ${method} an array's iterator`)]),
+            apply("Assert", [
+              boolean(false),
+              string(`tla-ts can't ${method} an array's or a string's iterator`),
+            ]),
           ),
     isAsync: false,
     queue: [],
@@ -4383,12 +4409,12 @@ const withArrayIterator = (node: ts.Node, path: Path, ref: Expression, context: 
   const stepFrom =
     (count: number) =>
     (resumer: Path): Formula => {
-      if (count >= ARRAY_ITERATOR_STEP_LIMIT) {
+      if (count >= BUILT_IN_ITERATOR_STEP_LIMIT) {
         return leaf(
           apply("Assert", [
             boolean(false),
             string(
-              `tla-ts can't step an array's iterator more than ${ARRAY_ITERATOR_STEP_LIMIT} times`,
+              `tla-ts can't step an array's or a string's iterator more than ${BUILT_IN_ITERATOR_STEP_LIMIT} times`,
             ),
           ]),
         );
@@ -4412,11 +4438,11 @@ const withArrayIterator = (node: ts.Node, path: Path, ref: Expression, context: 
               },
             };
       return ifThenElse(
-        holdsArrayIteratorNext(heap, node, context),
+        useJavaScript("HoldsIteratorNext", [heap, ref], context),
         bindOnce(
           resumer,
           stepName,
-          useJavaScript("ArrayIteratorStep", [heap, ref], context),
+          useJavaScript("BuiltInIteratorStep", [heap, ref], context),
           ifThenElse(
             field(stepped, "isDone"),
             caller.step(leave(after, undefined), undefined, true),
@@ -4426,7 +4452,7 @@ const withArrayIterator = (node: ts.Node, path: Path, ref: Expression, context: 
         leaf(
           apply("Assert", [
             boolean(false),
-            string("tla-ts can't call %ArrayIteratorPrototype%.next where a script replaced it"),
+            string("tla-ts can't step an iterator whose next a script replaced"),
           ]),
         ),
       );
@@ -5479,7 +5505,7 @@ const getGeneratorMethod = (node: ts.CallExpression, context: Context) => {
   return (ITERATOR_CONSUMERS.has(method) || ITERATOR_HELPERS.has(method) || isFrom) &&
     receiver !== undefined &&
     (isGeneratorType(receiver, context) ||
-      isArrayIteratorType(receiver, context) ||
+      isBuiltInIteratorType(receiver, context) ||
       invalid !== undefined)
     ? {
         method,
@@ -9362,8 +9388,8 @@ const translateForOfGenerator = (
           : runBody(after, value ?? getUndefined(context));
       });
     return next(
-      isArrayIteratorType(iterated, context)
-        ? withArrayIterator(loop.expression, start, receiver, context)
+      isBuiltInIteratorType(iterated, context)
+        ? withBuiltInIterator(loop.expression, start, receiver, context)
         : start,
     );
   };
@@ -11781,7 +11807,7 @@ export const translateStatements = (
     ts.isForOfStatement(statement) &&
     context.heap !== undefined &&
     (isGeneratorType(statement.expression, context) ||
-      (isArrayIteratorType(statement.expression, context) &&
+      (isBuiltInIteratorType(statement.expression, context) &&
         !ts.isCallExpression(getCast(statement.expression))))
   ) {
     return translateForOfGenerator(statement, path, context, frame, continueWith);
