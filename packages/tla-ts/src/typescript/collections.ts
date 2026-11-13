@@ -2544,11 +2544,9 @@ export const getArrayLikeCall = (node: ts.CallExpression, context: Context) => {
   const callee = node.expression;
   if (!ts.isPropertyAccessExpression(callee)) return undefined;
   const target = callee.expression;
-  const isCall =
-    callee.name.text === "call" &&
-    ts.isPropertyAccessExpression(target) &&
-    target.expression.getText() === "Array.prototype";
-  const method = isCall ? target.name.text : callee.name.text;
+  const called = getArrayMethodCall(node, context);
+  const isCall = called !== undefined;
+  const method = called ?? callee.name.text;
   const object = isCall ? node.arguments.at(0) : isHeapArray(target, context) ? target : undefined;
   return ARRAY_LIKE_METHODS.has(method) &&
     object !== undefined &&

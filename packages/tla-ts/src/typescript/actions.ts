@@ -345,6 +345,7 @@ import {
   rejectGeneratorUse,
   TYPED_ARRAYS,
   isNullishArrayMethodCall,
+  getArrayMethodCall,
 } from "./types";
 
 export interface Path {
@@ -6041,15 +6042,13 @@ const getLoopTarget = (node: ts.Node, context: Context) => {
   }
   if (!isMethodCall(node)) return undefined;
   const target = node.expression.expression;
+  const called = getArrayMethodCall(node, context);
   const isCall =
-    node.expression.name.text === "call" &&
-    ts.isPropertyAccessExpression(target) &&
-    target.expression.getText() === "Array.prototype" &&
+    called !== undefined &&
     node.arguments.length > 0 &&
     getKind(node.arguments[0], context) === "object";
   const isArrayLike = isCall || isHeapArray(target, context);
-  const method =
-    isCall && ts.isPropertyAccessExpression(target) ? target.name.text : node.expression.name.text;
+  const method = isCall ? called : node.expression.name.text;
   const receiver = isCall ? node.arguments[0] : target;
   const isUnordered = method === "forEach" && isOrderFreeForEach(node, receiver, context);
   return (LOOP_METHODS.has(method) ||

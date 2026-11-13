@@ -11392,6 +11392,26 @@ describe("errors", () => {
     ).toThrow("Unsupported call: Array.prototype.reverse.call");
   });
 
+  it("runs [].method.call as Array.prototype.method.call, through the object's getters", async () => {
+    const result = await checkModel(`
+      class Abrupt extends Error {}
+      const object = { length: 1 };
+      Object.defineProperty(object, 0, {
+        get: function () {
+          throw new Abrupt();
+        },
+      });
+      let isThrown = false;
+      try {
+        [].find.call(object, function () {});
+      } catch (error) {
+        isThrown = error instanceof Abrupt;
+      }
+      if (isThrown) throw new Error("found");
+    `);
+    expect(result.failure?.message).toContain("found");
+  });
+
   it("takes or drops up to Infinity or Number.MAX_SAFE_INTEGER", async () => {
     const result = await checkModel(`
       function* g(): Generator<number> {
