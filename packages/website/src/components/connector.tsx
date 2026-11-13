@@ -15,23 +15,31 @@ interface ConnectorProps {
   color: string | undefined;
 }
 
+// Points at the first linked row in view, so code that is linked twice still gets an arrow when
+// its first use is scrolled away.
 const getBox = (container: Element, name: string) => {
   const pane = container.querySelector(`[data-pane="${name}"]`);
-  const elements = [...(pane?.querySelectorAll("[data-linked]") ?? [])];
-  const boxes = elements.map((element) => element.getBoundingClientRect());
   const view = pane?.getBoundingClientRect();
-  const middle = boxes.length === 0 ? 0 : boxes[0].top + boxes[0].height / 2;
-  return view === undefined || middle < view.top || middle > view.bottom
-    ? undefined
-    : {
-        left:
-          elements[0].parentElement?.parentElement?.getBoundingClientRect().left ?? boxes[0].left,
-        right: Math.min(
-          view.right,
-          Math.max(...boxes.filter((box) => box.top === boxes[0].top).map((box) => box.right)),
+  if (!pane || !view) return undefined;
+  const rows = [...pane.querySelectorAll("[data-linked]")].map((element) => ({
+    line: element.parentElement?.parentElement?.getBoundingClientRect(),
+    box: element.getBoundingClientRect(),
+  }));
+  const first = rows.find(
+    (row) => row.box.top + row.box.height / 2 > view.top && row.box.bottom < view.bottom,
+  );
+  return (
+    first && {
+      left: first.line?.left ?? first.box.left,
+      right: Math.min(
+        view.right,
+        Math.max(
+          ...rows.filter((row) => row.box.top === first.box.top).map((row) => row.box.right),
         ),
-        middle,
-      };
+      ),
+      middle: first.box.top + first.box.height / 2,
+    }
+  );
 };
 
 export const Connector = (props: ConnectorProps) => {
