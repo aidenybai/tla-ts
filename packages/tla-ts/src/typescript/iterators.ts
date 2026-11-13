@@ -21,6 +21,12 @@ const taken = new WeakSet<Expression>();
 
 export const isTaken = (value: Expression) => taken.has(value);
 
+export const getTaken = (values: Expression[]) => {
+  const held = tuple(values);
+  taken.add(held);
+  return held;
+};
+
 // The values that a rest element or a spread takes from an iterator before tla-ts stops following
 // it.
 const TAKE_LIMIT = 3;
@@ -45,6 +51,20 @@ export const isIteratedPattern = (
       : context.checker.getTypeOfAssignmentPattern(pattern),
     context,
   );
+
+// An array pattern whose value may be an array's or a string's iterator, which the code that steps
+// generators steps, and whose indices don't hold its elements.
+export const isSteppedPattern = (
+  pattern: ts.ArrayBindingPattern | ts.ArrayLiteralExpression,
+  context: Context,
+) => {
+  const type = ts.isArrayBindingPattern(pattern)
+    ? context.checker.getTypeAtLocation(pattern)
+    : context.checker.getTypeOfAssignmentPattern(pattern);
+  return (type.isUnion() ? type.types : [type]).some((member) =>
+    ["ArrayIterator", "StringIterator"].includes(member.getSymbol()?.name ?? ""),
+  );
+};
 
 // A value that a for-of iterates through its object's iterator, as a pattern would destructure it.
 export const isIteratedValue = (node: ts.Expression, context: Context) =>

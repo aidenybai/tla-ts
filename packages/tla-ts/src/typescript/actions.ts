@@ -19,6 +19,7 @@ import {
   getHeapSetOrMapChange,
   translateHeapElements,
   translateArrayIteration,
+  translatePatternIteration,
   holdsArrayIteration,
   ARRAY_ITERATOR_REPLACED,
   getHeapRegExpCall,
@@ -116,7 +117,9 @@ import {
   closeIterator,
   getIteratedSpreads,
   getIteratorFunctions,
+  getTaken,
   isIteratedPattern,
+  isSteppedPattern,
   isIteratedValue,
   isTaken,
   isUntypedPattern,
@@ -859,7 +862,7 @@ const assignPattern = <Result>(
     // A pattern destructures a list where it took values from an iterator, or where a rest element
     // made the array.
     const isList = ts.isSpreadElement(target.parent) || isTaken(value);
-    if (!isList && isIteratedPattern(target, context)) {
+    if (!isList && (isIteratedPattern(target, context) || isSteppedPattern(target, context))) {
       throw new TlaTypeScriptError(
         "tla-ts can't destructure this object through its iterator",
         target,
@@ -880,7 +883,17 @@ const assignPattern = <Result>(
       !(context.checker.getTypeAtLocation(target).flags & ts.TypeFlags.StringLike);
     const heap = isIterated ? getHeap(path.scope, target, context) : undefined;
     const iterated =
-      heap === undefined ? value : translateArrayIteration(value, heap, target, context);
+      heap === undefined
+        ? value
+        : isList
+          ? translateArrayIteration(value, heap, target, context)
+          : translatePatternIteration(
+              value,
+              heap,
+              target,
+              context.checker.getTypeOfAssignmentPattern(target),
+              context,
+            );
     const assignFrom = (position: number, current: Path, wasDone: Expression): Result => {
       if (position === target.elements.length) return continueWith(current);
       const element = target.elements[position];
@@ -2908,7 +2921,7 @@ export const bindCall = (
     return ts.isArrayBindingPattern(parameter.name) &&
       source !== undefined &&
       !path.scope.results.has(source) &&
-      isGeneratorType(source, context)
+      (isGeneratorType(source, context) || isBuiltInIteratorType(source, context))
       ? [{ pattern: parameter.name, source }]
       : [];
   })[0];
@@ -5177,7 +5190,7 @@ const takeFromHeld = (
   const step = (inner: Path, values: Expression[]): Formula =>
     values.length === count
       ? resumeGenerator(pattern, receiver, "return", undefined, inner, context, frame, (after) =>
-          continueWith(after, tuple(values)),
+          continueWith(after, getTaken(values)),
         )
       : resumeGenerator(
           pattern,
@@ -5189,7 +5202,7 @@ const takeFromHeld = (
           frame,
           (after, value, isDone, isResult) =>
             isDone
-              ? continueWith(after, tuple(values))
+              ? continueWith(after, getTaken(values))
               : isResult && value !== undefined
                 ? readValue(pattern, value, after, context, frame, (read, taken) =>
                     step(read, [...values, taken]),
@@ -5212,13 +5225,14 @@ const takeFromGenerator = (
   frame: Frame,
   continueWith: (path: Path, values: Expression) => Formula,
 ): Formula | undefined => {
+  const isBuiltIn = isBuiltInIteratorType(source, context);
   const take = (receiver: Expression, generators: FunctionNode[], current: Path) =>
     takeFromHeld(
       pattern,
       receiver,
       generators,
       others.filter((other) => other !== source),
-      current,
+      isBuiltIn ? withBuiltInIterator(pattern, current, receiver, context) : current,
       context,
       frame,
       continueWith,
@@ -5232,7 +5246,7 @@ const takeFromGenerator = (
   }
   // A default that calls a function in place, which gives a generator object that the statements
   // made.
-  if (ts.isCallExpression(node) && isGeneratorType(node, context)) {
+  if (ts.isCallExpression(node) && (isGeneratorType(node, context) || isBuiltIn)) {
     return translateCallStatement(node, path, context, frame, (after, ref) =>
       take(
         ref ?? getUndefined(context),
@@ -7370,7 +7384,7 @@ const translateExpressionStatement = (
     ts.isBinaryExpression(expression) &&
     expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
     ts.isArrayLiteralExpression(expression.left) &&
-    isGeneratorType(expression.right, context)
+    (isGeneratorType(expression.right, context) || isBuiltInIteratorType(expression.right, context))
   ) {
     const left = expression.left;
     const taken = takeFromGenerator(
@@ -8285,7 +8299,7 @@ export const translateDeclarations = (
   if (
     initializer !== undefined &&
     ts.isArrayBindingPattern(declaration.name) &&
-    isGeneratorType(initializer, context)
+    (isGeneratorType(initializer, context) || isBuiltInIteratorType(initializer, context))
   ) {
     const taken = takeFromGenerator(
       declaration.name,
