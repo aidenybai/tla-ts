@@ -11904,10 +11904,7 @@ const findLeadingCall = (
         ? getCast(node.expression)
         : undefined;
     // An array literal's method runs its elements first.
-    const isListed =
-      receiver !== undefined &&
-      ts.isArrayLiteralExpression(receiver) &&
-      !receiver.elements.some(ts.isSpreadElement);
+    const isListed = receiver !== undefined && ts.isArrayLiteralExpression(receiver);
     const fromReceiver =
       receiver !== undefined && (ts.isCallExpression(receiver) || isListed)
         ? findLeadingCall(receiver, before, path, context)

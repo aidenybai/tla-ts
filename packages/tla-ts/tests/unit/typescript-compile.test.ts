@@ -12779,6 +12779,27 @@ describe("errors", () => {
     expect((await checkModel(getSource(3))).failure?.message).toContain("map");
   });
 
+  it("runs the callback of a spread array's method in a branch", async () => {
+    const getSource = (expected: string) => `
+      let calls = 0;
+      const list = [3, 1, 2];
+      const sorted = list.length < 2 ? list : [...list].sort((left, right) => {
+        calls += 1;
+        return left - right;
+      });
+      const doubled = list.length > 2 ? list : [...list].map((value) => {
+        calls += 100;
+        return value * 2;
+      });
+      const result = [sorted.join(), doubled.join(), list.join(), calls > 0].join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("1,2,3;3,1,2;3,1,2;true"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1,2,3;6,2,4;3,1,2;true"))).failure?.message).toContain(
+      "1,2,3;3,1,2;3,1,2;true",
+    );
+  });
+
   it("changes a collection that may be missing only where an optional chain finds it", async () => {
     const result = await checkModel(`
       const scopes: (Set<string> | undefined)[] = [undefined];
