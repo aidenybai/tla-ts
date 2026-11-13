@@ -27,6 +27,7 @@ export const getSearch = (
 ): Search => {
   const steps = new Map<string, { parentId: string; call: string }>();
   const states = new Map<string, SearchState>();
+  const changes = new Map<string, string[]>();
   for (const line of graph.split("\n")) {
     const edge = EDGE.exec(line);
     if (edge && !states.has(edge[2]) && !steps.has(edge[2])) {
@@ -34,24 +35,22 @@ export const getSearch = (
     }
     const node = edge ? null : NODE.exec(line);
     if (!node || states.has(node[1])) continue;
-    const text = getText(node[2]).replaceAll("/\\ ", "").replaceAll("\n", ", ");
+    const variables = getText(node[2]).replaceAll("/\\ ", "").trim().split("\n");
+    const text = variables.join(", ");
+    const parentId = steps.get(node[1])?.parentId;
+    const changed = variables.filter(
+      (variable) => !changes.get(parentId ?? "")?.includes(variable),
+    );
+    changes.set(node[1], variables);
     states.set(node[1], {
       id: node[1],
-      parentId: steps.get(node[1])?.parentId,
+      parentId,
       call: steps.get(node[1])?.call,
       line: getLine(steps.get(node[1])?.call),
       text,
-      change: text,
+      change: (changed.length > 0 ? changed : variables).join(", "),
       isFailing: text === failingState,
     });
-  }
-  for (const state of states.values()) {
-    const parent = state.parentId === undefined ? undefined : states.get(state.parentId);
-    if (!parent) continue;
-    const variables = state.text
-      .split(", ")
-      .filter((variable) => !parent.text.split(", ").includes(variable));
-    if (variables.length > 0) state.change = variables.join(", ");
   }
   const shown = new Set([...states.keys()].slice(0, SHOWN_STATES));
   let failing = [...states.values()].find((state) => state.isFailing);
