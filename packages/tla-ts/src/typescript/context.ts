@@ -2052,9 +2052,21 @@ export const getReturnedFunctions = (node: ts.Node, context: Context) => {
 };
 
 // The getters that a read can run as an expression, which take no argument, change nothing, and
-// make no function or object.
+// make no function or object: those that descriptors give, that functions return, and, for a read
+// of super, which reads no getter through its own name, that a class or an object literal declares
+// under the name that the read resolves to.
 export const getGetters = (node: ts.Node, context: Context) =>
-  [...getAccessorFunctions(node, "get", context), ...getReturnedFunctions(node, context)].filter(
+  [
+    ...getAccessorFunctions(node, "get", context),
+    ...getReturnedFunctions(node, context),
+    ...((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+    node.expression.kind === ts.SyntaxKind.SuperKeyword
+      ? (getSymbol(
+          ts.isPropertyAccessExpression(node) ? node.name : node.argumentExpression,
+          context.checker,
+        )?.declarations?.filter(ts.isGetAccessorDeclaration) ?? [])
+      : []),
+  ].filter(
     (getter) =>
       getParameters(getter).length === 0 &&
       getter.body !== undefined &&

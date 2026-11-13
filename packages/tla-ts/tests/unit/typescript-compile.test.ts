@@ -14103,6 +14103,30 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs a getter that super reads with this as its receiver", async () => {
+    const getSource = (expected: number) => `
+      class Parent {
+        size = 2;
+        get doubled(): number {
+          return this.size * 2;
+        }
+        get self(): Parent {
+          return this;
+        }
+      }
+      class Child extends Parent {
+        read(): number {
+          return super.doubled + (super["self"] === this ? 1 : 0);
+        }
+      }
+      const child = new Child();
+      child.size = 5;
+      if (child.read() !== ${expected}) throw new Error("read");
+    `;
+    expect((await checkModel(getSource(11))).failure).toBeUndefined();
+    expect((await checkModel(getSource(5))).failure?.message).toContain("read");
+  });
+
   it("rejects a derived constructor that runs code before super", () => {
     expect(() =>
       compile(
