@@ -9816,6 +9816,106 @@ describe("errors", () => {
     expect((await checkModel(getSource("tttt"))).failure?.message).toContain("brand");
   });
 
+  const getConstSource = (write: string, caught: number) => `
+      const seen = { count: 0 };
+      const fixed = 1;
+      try {
+        // @ts-ignore
+        ${write};
+      } catch (error) {
+        seen.count += error instanceof TypeError ? 1 : 10;
+      }
+      if (fixed !== 1 || seen.count !== ${caught}) throw new Error("const");
+  `;
+
+  it("throws the TypeError of an assignment to a const", async () => {
+    expect((await checkModel(getConstSource("fixed = 2", 1))).failure).toBeUndefined();
+  });
+
+  it("throws the TypeError of a compound assignment to a const", async () => {
+    expect((await checkModel(getConstSource("fixed += 2", 1))).failure).toBeUndefined();
+  });
+
+  it("throws the TypeError of an increment of a const", async () => {
+    expect((await checkModel(getConstSource("fixed++", 1))).failure).toBeUndefined();
+  });
+
+  it("leaves a const that a logical assignment doesn't write as it is", async () => {
+    expect((await checkModel(getConstSource("fixed ||= 2", 0))).failure).toBeUndefined();
+  });
+
+  it("throws no other error for an assignment to a const", async () => {
+    expect((await checkModel(getConstSource("fixed = 2", 10))).failure?.message).toContain("const");
+  });
+
+  it("throws the TypeError of a write to a const that a closure reads", async () => {
+    expect(
+      (
+        await checkModel(`
+          const seen = { count: 0 };
+          let probe: (() => void) | undefined;
+          function make() {
+            const kept = 1;
+            probe = function () {
+              // @ts-ignore
+              kept = 2;
+            };
+          }
+          make();
+          try {
+            probe!();
+          } catch (error) {
+            seen.count += error instanceof TypeError ? 1 : 10;
+          }
+          if (seen.count !== 1) throw new Error("const");
+        `)
+      ).failure,
+    ).toBeUndefined();
+  });
+
+  const getOwnNameWriteSource = (directive: string, expected: string) => `
+      ${directive}
+      const seen = { count: 0 };
+      const func = function f() {
+        // @ts-ignore
+        f = 1;
+        if (typeof f !== "function") throw new Error("changed");
+      };
+      let result = "none";
+      try {
+        func();
+        result = "ran";
+      } catch (error) {
+        result = error instanceof TypeError ? "TypeError" : "other";
+      }
+      if (result !== "${expected}") throw new Error("own " + result);
+  `;
+
+  it("ignores a write to a function expression's own name outside strict code", async () => {
+    expect((await checkModel(getOwnNameWriteSource("", "ran"))).failure).toBeUndefined();
+  });
+
+  it("throws the TypeError of a write to a function expression's own name in strict code", async () => {
+    expect(
+      (await checkModel(getOwnNameWriteSource('"use strict";', "TypeError"))).failure,
+    ).toBeUndefined();
+  });
+
+  it("stops where a pattern writes a const", () => {
+    expect(() =>
+      compile(`
+        const seen = { count: 0 };
+        const pair = 1;
+        try {
+          // @ts-ignore
+          [pair] = [5];
+        } catch (error) {
+          seen.count += 1;
+        }
+      `),
+    ).toThrow("tla-ts can't follow this write to pair");
+  });
+
   const getClosureSource = (expected: string) => `
       const seen = { count: 0 };
       let probe: (() => { greeting: string }) | undefined;
