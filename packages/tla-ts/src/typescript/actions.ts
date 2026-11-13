@@ -8143,7 +8143,10 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     (isObjectChange(node, context) &&
       node.expression.name.text !== "construct" &&
       (isReflectDefinition(node) ||
-        isHeapType(context.checker.getTypeAtLocation(node), context))) ||
+        isHeapType(context.checker.getTypeAtLocation(node), context) ||
+        // A change of an object gives the object, though TypeScript types what it gives as any.
+        (node.arguments.length > 0 &&
+          isHeapType(context.checker.getTypeAtLocation(node.arguments[0]), context)))) ||
     isGeneratorStep(node, context) ||
     getGeneratorMethod(node, context) !== undefined ||
     getIteratorFrom(node, context) !== undefined ||
