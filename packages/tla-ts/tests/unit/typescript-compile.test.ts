@@ -4345,6 +4345,9 @@ describe("errors", () => {
       if (box.digits !== "15") throw new Error("iterate");
     `);
     expect(result.failure).toBeUndefined();
+  });
+
+  it("reads the code of a character outside ASCII that a script writes", async () => {
     const wide = await checkModel(`
       const text = "a\u00e9";
       if (text.charCodeAt(1) !== 233) throw new Error("wide");
@@ -4370,12 +4373,6 @@ describe("errors", () => {
     `;
     expect((await checkModel(getSource(32769))).failure).toBeUndefined();
     await expect(checkModel(getSource(32768))).rejects.toThrow("codes");
-    await expect(
-      checkModel(`
-        const code = 0x4e00;
-        if (String.fromCharCode(code) === "") throw new Error("never");
-      `),
-    ).rejects.toThrow("tla-ts can't make a character outside ASCII");
   });
 
   it("reads a string's code units outside ASCII and iterates its code points", async () => {
@@ -4405,6 +4402,9 @@ describe("errors", () => {
         if (points.length !== 3) throw new Error("units");
       `),
     ).rejects.toThrow("units");
+  });
+
+  it("stops where it can't make or encode a character outside ASCII", async () => {
     await expect(
       checkModel(`
         const code = 0x4e00;
