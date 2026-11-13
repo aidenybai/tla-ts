@@ -2482,6 +2482,50 @@ describe("values", () => {
     );
   });
 
+  it("throws a TypeError where a script sets the prototype of a class through a name of another type", async () => {
+    const getSource = (expected: string) => `
+      class Base {
+        seen = 1;
+      }
+      class Derived extends Base {
+        value = 2;
+      }
+      class Cast extends Base {
+        value = 3;
+      }
+      class Kept extends Base {
+        value = 4;
+      }
+      const target: object = Derived;
+      Object.setPrototypeOf(target, Math.sin);
+      const hidden = Cast as unknown as { a: number };
+      Object.setPrototypeOf(hidden, Math.sin);
+      const shaped: { seen: number; value: number } = new Kept();
+      Object.setPrototypeOf(shaped, null);
+      const results: string[] = [];
+      try {
+        const made = new Derived();
+        results.push(\`\${made.value}\`);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      try {
+        const made = new Cast();
+        results.push(\`\${made.value}\`);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      const kept = new Kept();
+      results.push(\`\${kept.seen}\${kept.value}\`);
+      const result = results.join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("TypeError,TypeError,14"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("2,3,14"))).failure?.message).toContain(
+      "TypeError,TypeError,14",
+    );
+  });
+
   it("stops where super calls another constructor that a script set as the prototype", async () => {
     const result = await checkModel(`
       class Base {

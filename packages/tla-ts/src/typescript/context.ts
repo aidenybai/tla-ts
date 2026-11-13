@@ -960,36 +960,63 @@ export const getExtended = (node: ts.ClassLikeDeclaration) =>
 export const isNullBased = (node: ts.ClassLikeDeclaration) =>
   getExtended(node)?.kind === ts.SyntaxKind.NullKeyword;
 
-// Whether a script may set a class's prototype, which a derived class's constructor calls: through
-// Object.setPrototypeOf, Reflect.setPrototypeOf, or __proto__ of the class or of a value whose type
-// doesn't tell.
+// Whether a script may set a class's prototype, which a derived class's constructor calls. A call of
+// Object.setPrototypeOf or Reflect.setPrototypeOf, or a write of __proto__, sets it where the
+// target's type, or a type that a cast or a constant's initializer gives it, may hold the class. Any
+// other use of those names may set any class's.
 const isPrototypeSettable = (node: ts.ClassLikeDeclaration, context: Context) => {
   const symbol = node.name === undefined ? undefined : getSymbol(node.name, context.checker);
   if (symbol === undefined) return false;
-  const isClassOrUntyped = (target: ts.Expression | undefined) => {
-    const type = target === undefined ? undefined : context.checker.getTypeAtLocation(target);
+  const constructorType = context.checker.getTypeOfSymbol(symbol);
+  const mayHold = (target: ts.Expression): boolean => {
+    const held = skipCasts(target);
+    const declaration = ts.isIdentifier(held)
+      ? getSymbol(held, context.checker)?.valueDeclaration
+      : undefined;
+    const initializer =
+      declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0
+        ? declaration.initializer
+        : undefined;
     return (
-      type !== undefined &&
-      ((type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
-        type.getSymbol() === symbol)
+      [target, held].some((expression) => {
+        const type = context.checker.getTypeAtLocation(expression);
+        return (
+          (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Instantiable)) !==
+            0 || context.checker.isTypeAssignableTo(constructorType, type)
+        );
+      }) ||
+      (initializer !== undefined && mayHold(initializer))
     );
   };
-  const source = node.getSourceFile();
-  return (
-    findNodes(source, ts.isCallExpression).some(
-      (call) =>
-        ts.isPropertyAccessExpression(call.expression) &&
-        call.expression.name.text === "setPrototypeOf" &&
-        ["Object", "Reflect"].includes(call.expression.expression.getText()) &&
-        isClassOrUntyped(call.arguments.at(0)),
-    ) ||
-    findNodes(source, ts.isPropertyAccessExpression).some(
-      (access) =>
-        access.name.text === "__proto__" &&
-        getAssignedTarget(access.parent) === access &&
-        isClassOrUntyped(access.expression),
-    )
-  );
+  const isSetting = (name: ts.Identifier | ts.StringLiteralLike) => {
+    const parent = name.parent;
+    if (name.text === "setPrototypeOf") {
+      const call = parent.parent;
+      const target = ts.isCallExpression(call) ? call.arguments.at(0) : undefined;
+      return !(
+        ts.isPropertyAccessExpression(parent) &&
+        parent.name === name &&
+        ["Object", "Reflect"].includes(parent.expression.getText()) &&
+        ts.isCallExpression(call) &&
+        call.expression === parent &&
+        target !== undefined &&
+        !mayHold(target)
+      );
+    }
+    if (ts.isPropertyAccessExpression(parent) && parent.name === name) {
+      return getAssignedTarget(parent.parent) === parent && mayHold(parent.expression);
+    }
+    // An object literal's __proto__ sets the prototype of the object it makes.
+    return !(ts.isPropertyAssignment(parent) && parent.name === name);
+  };
+  return findNodes(
+    node.getSourceFile(),
+    (inner): inner is ts.Identifier | ts.StringLiteralLike =>
+      (ts.isIdentifier(inner) || ts.isStringLiteralLike(inner)) &&
+      (inner.text === "setPrototypeOf" || inner.text === "__proto__"),
+  ).some(isSetting);
 };
 
 // The derived classes without a constructor, from a class through the ones that it extends, whose
