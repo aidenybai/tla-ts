@@ -7365,6 +7365,26 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  const getKnownSource = (expected: number) => `
+    const known = new WeakMap<number[], number>();
+    const isKnown = (items: number[]) => items.length > 0 && known.has(items);
+    const rank = (items: number[], isKept: boolean): number => {
+      const elements = items;
+      return isKnown(elements) && !isKept ? 1 : 2;
+    };
+    const items = [1, 2];
+    known.set(items, 1);
+    if (rank(items, false) !== 1 || rank(items, true) !== ${expected}) throw new Error("rank");
+  `;
+
+  it("returns a conditional whose condition calls a function that reads objects", async () => {
+    expect((await checkModel(getKnownSource(2))).failure).toBeUndefined();
+  });
+
+  it("fails where a conditional whose condition reads objects gives another value", async () => {
+    expect((await checkModel(getKnownSource(3))).failure?.message).toContain('"rank"');
+  });
+
   describe("runs a function that changes state and calls itself", () => {
     const getDefaulted = (calls: string) => `
       let calls = 0;
