@@ -363,6 +363,22 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ).toEqual(["unsat", "unsat", "unsat", "unsat", "unsat", "sat"]);
   });
 
+  it("refines transcendental functions in the nlsat tactic", () => {
+    expect(
+      run([
+        "(declare-fun x () Real)",
+        "(push)",
+        "(assert (> (exp (exp x)) 100.0))",
+        "(assert (< x 0.0))",
+        "(check-sat-using qfnra-nlsat)",
+        "(pop)",
+        "(assert (> (exp x) 2.0))",
+        "(check-sat-using qfnra-nlsat)",
+        "(get-value (x))",
+      ]),
+    ).toEqual(["unsat", "sat", "((x 2.0))"]);
+  });
+
   it("throws at the dependencies of a tactic that drops them", () => {
     expect(() =>
       run([

@@ -1,18 +1,28 @@
 // Ported from Z3 (src/nlsat/tactic/nlsat_tactic.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError, SmtUnsupportedError } from "../../../errors";
-import { type AstManager, SORT_INT } from "./ast";
+import { type AstManager, FAMILY_ARITH, KIND_APP, OP_ATAN2, OP_PI, SORT_INT } from "./ast";
 import type { Goal } from "./goal";
 import { goal2nlsat } from "./goal2nlsat";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { NlsatSolver } from "./nlsat/solver";
+import { TRANSCENDENTAL_OPS } from "./nlsat/transcendental-eval";
 import { ProtoModel } from "./proto-model";
 
-// Goal2nlsat rejects transcendental applications, so every other variable term is unsupported.
+const isSupportedTranscendental = (manager: AstManager, term: number) =>
+  manager.kinds[term] === KIND_APP &&
+  manager.getFamily(term) === FAMILY_ARITH &&
+  (TRANSCENDENTAL_OPS.has(manager.getOp(term)) ||
+    manager.getOp(term) === OP_ATAN2 ||
+    manager.getOp(term) === OP_PI);
+
 const containsUnsupported = (
   manager: AstManager,
   t2x: ReadonlyMap<number, number>,
   a2b: ReadonlyMap<number, number>,
-) => [...t2x.keys(), ...a2b.keys()].some((term) => !manager.isUninterpretedConst(term));
+) =>
+  [...t2x.keys()].some(
+    (term) => !manager.isUninterpretedConst(term) && !isSupportedTranscendental(manager, term),
+  ) || [...a2b.keys()].some((atom) => !manager.isUninterpretedConst(atom));
 
 // Undefined when nlsat assigns a fraction to an integer variable.
 const mkModel = (
@@ -23,6 +33,7 @@ const mkModel = (
 ) => {
   const model = new ProtoModel(manager);
   for (const [term, variable] of t2x) {
+    if (!manager.isUninterpretedConst(term)) continue;
     const value = solver.getValue(variable);
     if (manager.sorts[term] === SORT_INT && !solver.am.isInt(value)) return undefined;
     model.registerConst(
