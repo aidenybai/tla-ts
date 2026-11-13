@@ -1382,6 +1382,24 @@ export const getArrayIteratorCall = (node: ts.Node, context: Context) => {
       isFrom: true,
     };
   }
+  // Array.prototype.values.call(object) makes an iterator of any object, through its length.
+  const called = ts.isCallExpression(node) ? getArrayMethodCall(node, context) : undefined;
+  const calledObject = ts.isCallExpression(node) ? node.arguments.at(0) : undefined;
+  if (
+    context.heap !== undefined &&
+    called !== undefined &&
+    ITERATOR_METHODS.includes(called) &&
+    calledObject !== undefined &&
+    getKind(calledObject, context) === "object"
+  ) {
+    return {
+      kind: called,
+      receiver: calledObject,
+      key: called,
+      path: `Array.prototype.${called}`,
+      isCalled: true,
+    };
+  }
   if (
     context.heap === undefined ||
     !ts.isCallExpression(node) ||
@@ -1440,13 +1458,15 @@ export const translateHoldsIteratorMethod = (
     "HoldsBuiltIn",
     [
       heap,
-      call.kind === "string"
-        ? ifExpression(
-            apply("=", [useJavaScript("TypeOf", [receiver], context), string("string")]),
-            translateBuiltInValue("String.prototype", call.receiver, context),
-            receiver,
-          )
-        : receiver,
+      call.isCalled === true
+        ? translateBuiltInValue("Array.prototype", call.receiver, context)
+        : call.kind === "string"
+          ? ifExpression(
+              apply("=", [useJavaScript("TypeOf", [receiver], context), string("string")]),
+              translateBuiltInValue("String.prototype", call.receiver, context),
+              receiver,
+            )
+          : receiver,
       call.key === "@@iterator"
         ? useJavaScript("WellKnownSymbol", [string("iterator")], context)
         : string(call.key),

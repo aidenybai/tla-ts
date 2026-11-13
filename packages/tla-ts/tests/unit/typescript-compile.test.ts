@@ -11234,6 +11234,20 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("made");
   });
 
+  it("makes an array iterator of an object through Array.prototype.entries.call", async () => {
+    const result = await checkModel(`
+      const object = { 0: "a", 1: "b", length: 2 };
+      const entries = Array.prototype.entries.call(object);
+      const prototype = Object.getPrototypeOf([][Symbol.iterator]());
+      entries.next();
+      const second = entries.next().value!;
+      if (Object.getPrototypeOf(entries) === prototype && second[0] === 1 && second[1] === "b") {
+        throw new Error("entries");
+      }
+    `);
+    expect(result.failure?.message).toContain("entries");
+  });
+
   it("gives a string's iterator back from Iterator.from", async () => {
     const result = await checkModel(`
       const holder = { count: 0 };
