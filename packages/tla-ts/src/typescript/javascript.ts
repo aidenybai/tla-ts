@@ -718,10 +718,9 @@ FunctionObject(functionPrototype, code) ==
 MethodObject(functionPrototype, code) ==
   [FunctionObject(functionPrototype, code) EXCEPT !.isConstructor = FALSE]
 
-\\* A function that a function makes, which outlives the call that made it, and the environment
-\\* that holds the locals it reads from that call, by key.
-ClosureObject(functionPrototype, code, environment) ==
-  [environment |-> environment] @@ FunctionObject(functionPrototype, code)
+\\* A function object that reads the locals of the call that made it, with the environment of that
+\\* call, which holds the locals that it reads once it outlives the call, by key.
+ClosureObject(function, environment) == [environment |-> environment] @@ function
 
 EnvironmentObject(bindings) == [bindings |-> bindings] @@ [EmptyObject EXCEPT !.isOpaque = TRUE]
 

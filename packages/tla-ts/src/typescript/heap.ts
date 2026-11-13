@@ -1005,8 +1005,14 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
         useJavaScript(
           "ClosureObject",
           [
-            translateBuiltInValue("Function.prototype", node, context),
-            translateFunctionValue(node, context),
+            useJavaScript(
+              "FunctionObject",
+              [
+                translateBuiltInValue("Function.prototype", node, context),
+                translateFunctionValue(node, context),
+              ],
+              context,
+            ),
             useJavaScript("NextRef", [heap, number(1)], context),
           ],
           context,
