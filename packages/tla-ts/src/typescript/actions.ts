@@ -11548,8 +11548,22 @@ export const translateStatements = (
     });
   }
   if (ts.isTryStatement(statement)) {
-    return translateJoined(statement, path, context, continueWith, (next) =>
-      translateTry(statement, path, context, frame, next),
+    // A TypeError that the try throws without a new, such as of a pattern that destructures
+    // undefined, is a new object on the heap that the catch continues with.
+    const changed = getChanged(statement, path, context);
+    const heap = context.heap;
+    return translateJoined(
+      statement,
+      path,
+      context,
+      continueWith,
+      (next) => translateTry(statement, path, context, frame, next),
+      statement.catchClause !== undefined &&
+        heap !== undefined &&
+        path.mutable.has(heap) &&
+        !changed.includes(heap)
+        ? [...changed, heap]
+        : changed,
     );
   }
   if (ts.isSwitchStatement(statement)) {

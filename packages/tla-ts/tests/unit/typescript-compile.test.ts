@@ -1292,6 +1292,26 @@ describe("values", () => {
     ).toContain("outcomes type");
   });
 
+  it("joins the paths through each catch of a TypeError that no new makes", async () => {
+    // Each catch translates what follows it once, so eight of them stay small.
+    const getSource = (expected: number) => `
+      const box = {};
+      const empty: { x: number }[] = [];
+      let caught = 0;
+      ${Array.from(
+        { length: 8 },
+        () => `try {
+        const [{ x }] = empty;
+      } catch (error) {
+        if (error instanceof TypeError) caught++;
+      }`,
+      ).join("\n")}
+      if (caught !== ${expected}) throw new Error(String(caught));
+    `;
+    expect((await checkModel(getSource(8))).failure).toBeUndefined();
+    expect((await checkModel(getSource(7))).failure?.message).toContain("8");
+  });
+
   it("runs a parameter's default that assigns where the call binds the parameter", async () => {
     const getSource = (expected: string) => `
       let count: number = 0;
