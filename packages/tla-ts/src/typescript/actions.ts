@@ -216,6 +216,7 @@ import {
   type Collection,
   getBuiltIn,
   isBuiltInObject,
+  getMadeRegExp,
   isInvalidRegExp,
   translateBuiltInValue,
   getGeneratorPrototypeRef,
@@ -7863,21 +7864,28 @@ const translateExpressionStatement = (
       throwTypeError(path, expression, context, frame),
     );
   }
-  if (isForeignNew(expression, context)) {
-    return translateForeignNew(expression, path, context, frame);
-  }
-  // An object that a statement makes and drops, whose members evaluate nothing, changes nothing.
+  // A regexp that a statement makes of literals and drops, or an object whose members evaluate
+  // nothing, changes nothing.
   if (
-    ts.isObjectLiteralExpression(expression) &&
-    expression.properties.every(
-      (property) =>
-        (ts.isMethodDeclaration(property) ||
-          ts.isAccessor(property) ||
-          (ts.isPropertyAssignment(property) && isLiteral(property.initializer))) &&
-        !ts.isComputedPropertyName(property.name),
-    )
+    ts.isRegularExpressionLiteral(expression) ||
+    ((ts.isNewExpression(expression) || ts.isCallExpression(expression)) &&
+      (expression.arguments ?? []).every(
+        (argument) => ts.isStringLiteralLike(argument) || ts.isRegularExpressionLiteral(argument),
+      ) &&
+      getMadeRegExp(expression, context) !== undefined) ||
+    (ts.isObjectLiteralExpression(expression) &&
+      expression.properties.every(
+        (property) =>
+          (ts.isMethodDeclaration(property) ||
+            ts.isAccessor(property) ||
+            (ts.isPropertyAssignment(property) && isLiteral(property.initializer))) &&
+          !ts.isComputedPropertyName(property.name),
+      ))
   ) {
     return continueWith(path);
+  }
+  if (isForeignNew(expression, context)) {
+    return translateForeignNew(expression, path, context, frame);
   }
   // A statement that only reads, such as void await x once x settles, evaluates its value and drops
   // it, so that a getter it reads, which tla-ts can't call, stops the check.

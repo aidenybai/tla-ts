@@ -18932,6 +18932,17 @@ describe("regular expressions", () => {
     await expect(checkModel(getSource("i"))).rejects.toThrow("copied");
   });
 
+  it("drop a regexp that a statement makes of literals", async () => {
+    const getSource = (count: number) => `
+      /(?i-s:)/;
+      new RegExp("(?m:)", "i");
+      const count: number = ${count};
+      if (count !== 1) throw new Error("count");
+    `;
+    expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    await expect(checkModel(getSource(2))).rejects.toThrow("count");
+  });
+
   it("run a String object's regexp methods on its string", async () => {
     const result = await checkModel(`
       const text = new String("hello");
