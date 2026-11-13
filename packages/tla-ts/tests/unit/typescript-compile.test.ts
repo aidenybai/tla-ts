@@ -8525,8 +8525,7 @@ describe("errors", () => {
     expect((await checkModel(getSource("tttt"))).failure?.message).toContain("brand");
   });
 
-  it("calls a function that outlives the call that made it with the locals of that call", async () => {
-    const getSource = (expected: string) => `
+  const getClosureSource = (expected: string) => `
       const seen = { count: 0 };
       let probe: (() => { greeting: string }) | undefined;
       let kept: (() => { greeting: string }) | undefined;
@@ -8544,9 +8543,17 @@ describe("errors", () => {
       if (both !== "${expected}" || seen.count !== 2 || greeting !== "outside") {
         throw new Error("closures");
       }
-    `;
-    expect((await checkModel(getSource("hi ahi b"))).failure).toBeUndefined();
-    expect((await checkModel(getSource("hi bhi b"))).failure?.message).toContain("closures");
+  `;
+
+  it("calls a function that outlives the call that made it with the locals of that call", async () => {
+    expect((await checkModel(getClosureSource("hi ahi b"))).failure).toBeUndefined();
+  });
+
+  it("reads the locals of the call that made a closure, not of a later call", async () => {
+    expect((await checkModel(getClosureSource("hi bhi b"))).failure?.message).toContain("closures");
+  });
+
+  it("stops where a function that made a closure changes a local after making it", () => {
     expect(() =>
       compile(`
         const seen = { count: 0 };
@@ -8562,8 +8569,7 @@ describe("errors", () => {
     ).toThrow("tla-ts can't follow a function that outlives its call");
   });
 
-  it("keeps the locals that a closure changes in its environment", async () => {
-    const getSource = (expected: string) => `
+  const getCounterSource = (expected: string) => `
       const seen = { count: 0 };
       let next: (() => number) | undefined;
       let other: (() => number) | undefined;
@@ -8587,9 +8593,19 @@ describe("errors", () => {
       if ([first, second, third, fourth, thrown].join() !== "${expected}") {
         throw new Error("counters");
       }
-    `;
-    expect((await checkModel(getSource("1,2,4,11,1"))).failure).toBeUndefined();
-    expect((await checkModel(getSource("1,2,3,11,1"))).failure?.message).toContain("counters");
+  `;
+
+  it("keeps the locals that a closure changes in its environment", async () => {
+    expect((await checkModel(getCounterSource("1,2,4,11,1"))).failure).toBeUndefined();
+  });
+
+  it("keeps a closure's change to a local where the closure throws", async () => {
+    expect((await checkModel(getCounterSource("1,2,3,11,1"))).failure?.message).toContain(
+      "counters",
+    );
+  });
+
+  it("stops where a function reads a local after a closure that changes it is made", () => {
     expect(() =>
       compile(`
         const seen = { count: 0 };
