@@ -70,21 +70,20 @@ const getCheckResult = async (request: RunRequest): Promise<RunResult> => {
       : result.violation?.name,
   );
   const actionLine = / line (\d+), col/.exec(lastStep?.label ?? "")?.[1];
+  const initLine = getDefinitionLine(/\bINIT\s+(\w+)/.exec(config)?.[1] ?? "Init");
   return {
     isPassed: result.status === "success",
     title: getTitle(result),
     activeLine:
-      lastStep?.label === undefined
-        ? getDefinitionLine(/\bINIT\s+(\w+)/.exec(config)?.[1] ?? "Init")
-        : actionLine
-          ? Number(actionLine)
-          : undefined,
+      lastStep?.label === undefined ? initLine : actionLine ? Number(actionLine) : undefined,
     search:
       graphs.length > 0
-        ? getSearch(graphs[0], lastStep && getStateText(lastStep.state))
+        ? getSearch(graphs[0], lastStep && getStateText(lastStep.state), (call) =>
+            call === undefined ? initLine : getDefinitionLine(call.replace(/\(.*$/, "")),
+          )
         : undefined,
     notes: [
-      ...(lastStep === undefined || variableLine === undefined
+      ...(lastStep === undefined || variableLine === undefined || request.isSearchShown
         ? []
         : [getNote(variableLine, getStateText(lastStep.state), "neutral")]),
       ...(lastStep === undefined || violatedLine === undefined

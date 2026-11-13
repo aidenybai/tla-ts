@@ -143,6 +143,7 @@ export const ExampleSource = () => {
       source={state.isCompiled ? state.example.tla : state.example.typescript}
       activeLine={state.result?.activeLine}
       notes={state.result?.notes ?? (state.isCompiled ? undefined : state.example.hints)}
+      search={state.result?.search}
       highlights={state.example.highlights}
       onMorphEnd={state.finishMorph}
     >
@@ -233,7 +234,7 @@ export const ExampleSearch = () => {
   if (!search) return null;
   return (
     <figure className="flex flex-col gap-3">
-      <div className="flex flex-col gap-1.5 overflow-x-auto font-mono text-[13px]">
+      <div className="flex flex-col gap-1.5 overflow-x-auto font-mono text-[13px] sm:hidden">
         {search.states
           .filter((root) => root.parentId === undefined)
           .map((root) => (

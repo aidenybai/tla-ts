@@ -1,4 +1,5 @@
 import { X } from "@phosphor-icons/react";
+import type { ReactNode } from "react";
 import { cn } from "cn";
 import type { Mark, Token } from "../site-data";
 import type { LineNote } from "../run-worker";
@@ -36,6 +37,7 @@ interface CodeLineProps {
   tokens: Token[];
   number?: number;
   note?: LineNote;
+  aside?: ReactNode;
   isActive?: boolean;
   isWrapped?: boolean;
   offset?: number;
@@ -90,6 +92,7 @@ export const CodeLine = (props: CodeLineProps) => (
         );
       })}
     </span>
+    {props.aside}
     {props.note?.tone === "hint" && (
       <span
         aria-hidden

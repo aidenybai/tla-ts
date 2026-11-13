@@ -2,11 +2,13 @@ import { useRef, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import type { LineNote } from "../run-worker";
+import type { Search } from "../search";
 import type { Source } from "../site-data";
 import { useTokenMorph } from "../use-token-morph";
 import { CodeLine } from "./code-line";
 import { CopyIcon } from "./copy-icon";
 import { RunIcon } from "./run-icon";
+import { SearchCell } from "./search-cell";
 import { Button } from "./ui/button";
 
 const COPIED_MS = 1500;
@@ -18,6 +20,7 @@ interface CodeState {
   isWrapped: boolean;
   activeLine: number | undefined;
   notes: LineNote[];
+  search: Search | undefined;
   highlights: Record<string, string>;
   onMorphEnd: (() => void) | undefined;
 }
@@ -28,6 +31,7 @@ interface RootProps {
   source: Source;
   activeLine?: number;
   notes?: LineNote[];
+  search?: Search;
   highlights?: Record<string, string>;
   isWrapped?: boolean;
   onMorphEnd?: () => void;
@@ -44,6 +48,7 @@ export const CodeRoot = (props: RootProps) => {
         isWrapped: props.isWrapped ?? true,
         activeLine: props.activeLine,
         notes: props.notes ?? [],
+        search: props.search,
         highlights: props.highlights ?? NO_HIGHLIGHTS,
         onMorphEnd: props.onMorphEnd,
       }}
@@ -87,6 +92,7 @@ export const CodeContent = () => {
             note={code.notes.find((note) => note.line === line.number)}
             isActive={code.activeLine === line.number}
             isWrapped={code.isWrapped}
+            aside={code.search && <SearchCell search={code.search} line={line.number} />}
             className={cn(
               code.isWrapped ? "-mr-4 -ml-4 pr-4 pl-4" : "w-max min-w-full",
               line.number === 1 && "pr-14",
