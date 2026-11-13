@@ -624,6 +624,45 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("answers floating point with sat.euf's fpa solver", () => {
+    const header = [
+      "(set-option :sat.euf true)",
+      "(set-option :tactic.default_tactic smt)",
+      "(declare-const x (_ FloatingPoint 3 5))",
+    ];
+    expect(
+      run([
+        ...header,
+        "(declare-const b (_ BitVec 8))",
+        "(assert (= ((_ to_fp 3 5) b) x))",
+        "(assert (fp.isNegative x))",
+        "(assert (fp.isNormal x))",
+        "(assert (= ((_ fp.to_ubv 4) RTZ (fp.abs x)) #x3))",
+        "(check-sat)",
+        "(get-value (x b))",
+        "(reset)",
+        ...header,
+        "(declare-const y (_ FloatingPoint 3 5))",
+        "(assert (fp.isNormal x))",
+        "(assert (fp.isSubnormal y))",
+        "(check-sat)",
+        "(get-value (x y))",
+        "(reset)",
+        ...header,
+        "(assert (fp.gt x (fp #b0 #b010 #x0)))",
+        "(check-sat)",
+        "(get-value (x))",
+      ]),
+    ).toEqual([
+      "sat",
+      "((x (fp #b1 #b100 #xb))\n (b #xcb))",
+      "sat",
+      "((x (fp #b0 #b010 #x0))\n (y (fp #b0 #b000 #x1)))",
+      "sat",
+      "((x (fp #b0 #b010 #x1)))",
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),

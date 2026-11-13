@@ -1,6 +1,7 @@
 // Ported from Z3 (src/smt/theory_fpa.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import {
+  type AstManager,
   FAMILY_FPA,
   OP_CONCAT,
   OP_FPA_BV2RM,
@@ -45,6 +46,66 @@ const CONVERTED_OPS = new Set([
   OP_FPA_TO_IEEE_BV,
 ]);
 
+// m_th_rw, with arith_lhs, and the converter and the rewriter that share it.
+export const mkFpaConversion = (manager: AstManager) => {
+  const theoryRewriter = new Rewriter(manager, {
+    isEliminatingAnd: false,
+    arith: { ...TACTIC_ARITH_OPTIONS, isArithIneqLhs: true },
+    isRewritingPatterns: true,
+  });
+  const simp = new Rewriter(manager, {
+    isEliminatingAnd: false,
+    arith: TACTIC_ARITH_OPTIONS,
+    isRewritingPatterns: false,
+  });
+  const converter = new WrappedFpa2BvConverter(manager, simp, theoryRewriter);
+  return { theoryRewriter, converter, rewriter: new Fpa2BvRewriter(manager, converter) };
+};
+
+// fpa2bv_converter_wrapped::bv2rm_value
+export const mkRmValue = (manager: AstManager, value: number) => {
+  const rm = Number(manager.getBvNumeralValue(value));
+  return mkRmNumeral(manager, rm <= 3 ? rm : 4);
+};
+
+// fpa2bv_converter_wrapped::bv2fpa_value, of the sign, exponent and significand or of their
+// concatenation.
+export const mkFpValue = (manager: AstManager, sort: number, values: number[]) => {
+  const sbits = BigInt(manager.getSbits(sort));
+  const parts = values.map((value) => manager.getBvNumeralValue(value));
+  const bits =
+    parts.length === 1
+      ? parts[0]
+      : (parts[0] << (BigInt(manager.getEbits(sort)) + sbits - 1n)) |
+        (parts[1] << (sbits - 1n)) |
+        parts[2];
+  return mkFpNumeralOfBits(manager, sort, bits);
+};
+
+export const mkFpZero = (manager: AstManager, sort: number) =>
+  mkFpNumeral(manager, mkZero(manager.getEbits(sort), manager.getSbits(sort), false));
+
+// finalize_model: the model of the floating-point functions that the conversion made.
+export const finalizeFpaModel = (
+  manager: AstManager,
+  converter: WrappedFpa2BvConverter,
+  model: ProtoModel,
+) => {
+  const target = new ProtoModel(manager);
+  target.incRef();
+  const seen = new ObjHashtable((decl) => manager.getDeclHash(decl));
+  convertMinMaxSpecials(converter, model, target, seen);
+  convertUf2BvUf(converter, model, target, seen);
+  for (const decl of seen) model.unregisterDecl(decl);
+  for (const decl of target.getConstDecls())
+    model.registerConst(decl, target.getSomeConstInterp(decl));
+  for (const decl of target.getFuncDecls()) {
+    const interp = target.funcInterps.get(decl);
+    if (interp !== undefined) model.registerFunc(decl, interp.copy());
+  }
+  target.decRef();
+};
+
 export class TheoryFpa extends Theory {
   readonly name = "fpa";
   private theoryRewriter: Rewriter;
@@ -57,19 +118,10 @@ export class TheoryFpa extends Theory {
 
   constructor(context: Context) {
     super(context, FAMILY_FPA);
-    const manager = context.manager;
-    this.theoryRewriter = new Rewriter(manager, {
-      isEliminatingAnd: false,
-      arith: { ...TACTIC_ARITH_OPTIONS, isArithIneqLhs: true },
-      isRewritingPatterns: true,
-    });
-    const simp = new Rewriter(manager, {
-      isEliminatingAnd: false,
-      arith: TACTIC_ARITH_OPTIONS,
-      isRewritingPatterns: false,
-    });
-    this.converter = new WrappedFpa2BvConverter(manager, simp, this.theoryRewriter);
-    this.rewriter = new Fpa2BvRewriter(manager, this.converter);
+    const conversion = mkFpaConversion(context.manager);
+    this.theoryRewriter = conversion.theoryRewriter;
+    this.converter = conversion.converter;
+    this.rewriter = conversion.rewriter;
   }
 
   private isFloat(expr: number) {
@@ -342,21 +394,21 @@ export class TheoryFpa extends Theory {
     if (op === OP_FPA_FP)
       return {
         dependencies: getEnodes(this.converter.splitFp(owner)),
-        mkValue: (values) => this.mkFpValue(sort, values),
+        mkValue: (values) => mkFpValue(manager, sort, values),
       };
     if (op === OP_FPA_BV2RM)
       return {
         dependencies: getEnodes([manager.getArg(owner, 0)]),
-        mkValue: (values) => this.mkRmValue(values[0]),
+        mkValue: (values) => mkRmValue(manager, values[0]),
       };
     const wrapped = this.converter.wrap(owner);
     if (context.isEInternalized(wrapped))
       return {
         dependencies: getEnodes([wrapped]),
         mkValue: (values) =>
-          manager.isRmSort(sort) ? this.mkRmValue(values[0]) : this.mkFpValue(sort, values),
+          manager.isRmSort(sort) ? mkRmValue(manager, values[0]) : mkFpValue(manager, sort, values),
       };
-    return mkFpNumeral(manager, mkZero(manager.getEbits(sort), manager.getSbits(sort), false));
+    return mkFpZero(manager, sort);
   }
 
   override initModel(model: ProtoModel) {
@@ -364,39 +416,8 @@ export class TheoryFpa extends Theory {
   }
 
   override finalizeModel() {
-    const manager = this.manager;
     const model = this.model;
     if (model === undefined) throw new SmtInvariantError("the model was not initialized");
-    const target = new ProtoModel(manager);
-    target.incRef();
-    const seen = new ObjHashtable((decl) => manager.getDeclHash(decl));
-    convertMinMaxSpecials(this.converter, model, target, seen);
-    convertUf2BvUf(this.converter, model, target, seen);
-    for (const decl of seen) model.unregisterDecl(decl);
-    for (const decl of target.getConstDecls())
-      model.registerConst(decl, target.getSomeConstInterp(decl));
-    for (const decl of target.getFuncDecls()) {
-      const interp = target.funcInterps.get(decl);
-      if (interp !== undefined) model.registerFunc(decl, interp.copy());
-    }
-    target.decRef();
-  }
-
-  private mkRmValue(value: number) {
-    const rm = Number(this.manager.getBvNumeralValue(value));
-    return mkRmNumeral(this.manager, rm <= 3 ? rm : 4);
-  }
-
-  private mkFpValue(sort: number, values: number[]) {
-    const manager = this.manager;
-    const sbits = BigInt(manager.getSbits(sort));
-    const parts = values.map((value) => manager.getBvNumeralValue(value));
-    const bits =
-      parts.length === 1
-        ? parts[0]
-        : (parts[0] << (BigInt(manager.getEbits(sort)) + sbits - 1n)) |
-          (parts[1] << (sbits - 1n)) |
-          parts[2];
-    return mkFpNumeralOfBits(manager, sort, bits);
+    finalizeFpaModel(this.manager, this.converter, model);
   }
 }
