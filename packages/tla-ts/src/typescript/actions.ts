@@ -2666,6 +2666,12 @@ export const translateCallStatement = (
       ),
     );
   }
+  // An array method whose callback changes nothing evaluates as an expression, though the
+  // statement drops its value.
+  if (callee === undefined && getLoopTarget(expression, context) !== undefined) {
+    const value = translateExpression(expression, path.scope, context);
+    return ifThenElse(apply("=", [value, value]), continueWith(path, value), leaf(boolean(false)));
+  }
   if (callee?.body === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
   }
@@ -5591,6 +5597,7 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
       ts.isFunctionExpression(callback) ||
       ts.isFunctionDeclaration(callback)) &&
     (getChanged(callback, path, context).length > 0 ||
+      (path.scope.isCatching && mayThrow(callback, context)) ||
       getLoopGetters(node, context).length > 0 ||
       context.heapCollections.has(node))
     ? {
