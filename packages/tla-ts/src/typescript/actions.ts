@@ -4141,6 +4141,7 @@ export const inlineBody = (
             scope: {
               ...current.scope,
               previous: inner.scope.previous,
+              entered: inner.scope.entered,
               results: new Map([...current.scope.results].filter((entry) => !isOwn(entry))),
               allocated: new Map([...current.scope.allocated].filter((entry) => !isOwn(entry))),
             },

@@ -1,6 +1,5 @@
 import ts from "@typescript/typescript6";
 import {
-  type Closure,
   type HeapFunction,
   type Context,
   type FunctionNode,
@@ -63,8 +62,8 @@ export interface Scope {
   // The environment of the call of each async function whose body runs, which tells the closures
   // that read its locals which call made them.
   activations?: ReadonlyMap<ts.Node, Expression>;
-  // The closure that a call entered, whose environment binds the locals it reads.
-  entered?: Closure;
+  // The function that a call entered, whose environment or factory call binds the locals it reads.
+  entered?: FunctionNode;
 }
 
 export interface Destructured {

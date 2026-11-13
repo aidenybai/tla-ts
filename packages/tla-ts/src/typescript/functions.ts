@@ -141,7 +141,7 @@ const getInitializer = (declaration: HelperDeclaration) =>
   ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
 
 // A scope that binds the parameters of the factory whose call a constant holds, for the function
-// that the factory returns to read.
+// that the factory returns to read, so it enters that function.
 export const bindFactory = (declaration: ts.Node | undefined, scope: Scope, context: Context) => {
   const factory =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
@@ -151,6 +151,7 @@ export const bindFactory = (declaration: ts.Node | undefined, scope: Scope, cont
     ? scope
     : {
         ...scope,
+        entered: factory.closure,
         bindings: new Map([
           ...scope.bindings,
           ...factory.bindings.map((binding): [ts.Symbol, Expression] => [
