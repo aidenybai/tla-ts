@@ -533,6 +533,33 @@ describe("top-level statements", () => {
     expect((await checkModel(source(false))).failure?.message).toContain("length");
   });
 
+  it("run an array method's call whose value a statement drops", async () => {
+    const source = (expected: number) => `
+      const values = [1, 2, 3];
+      values.map((value: number) => value * 2);
+      if (values[0] !== ${expected}) throw new Error("map");
+    `;
+    expect((await checkModel(source(1))).failure).toBeUndefined();
+    await expect(checkModel(source(2))).rejects.toThrow("map");
+  });
+
+  it("catch what an array method's callback throws where nothing else makes the call run as statements", async () => {
+    const source = (expected: number) => `
+      let caught = 0;
+      try {
+        [1, 2].filter((value: number) => {
+          if (value === 2) throw new RangeError("two");
+          return true;
+        });
+      } catch (error) {
+        if (error instanceof RangeError) caught = 1;
+      }
+      if (caught !== ${expected}) throw new Error("filter");
+    `;
+    expect((await checkModel(source(1))).failure).toBeUndefined();
+    expect((await checkModel(source(0))).failure?.message).toContain("filter");
+  });
+
   it("keep a hole in the array that map makes over an array-like object that lacks an index", async () => {
     const source = (expected: string) => `
       const like = { 0: 5, length: 3 };
