@@ -43,6 +43,7 @@ import {
   tuple,
 } from "./tla";
 import { BUILT_INS } from "./built-ins";
+import { NATIVE_ERRORS } from "./exceptions";
 import { getDomain, getKeptIterator, TYPED_ARRAYS } from "./types";
 
 // A state variable starts at its initializer, or at every value of its type without one.
@@ -315,6 +316,14 @@ export const compile = (
     (ts.isPropertyAccessExpression(node) &&
       node.name.text === "prototype" &&
       isScriptClass(getSymbol(node.expression, context.checker)?.valueDeclaration)) ||
+    // A class with members that extends a native error, whose errors only objects can be.
+    (ts.isClassLike(node) &&
+      node.members.length > 0 &&
+      (node.heritageClauses ?? []).some((clause) =>
+        clause.types.some(
+          (type) => ts.isIdentifier(type.expression) && NATIVE_ERRORS.has(type.expression.text),
+        ),
+      )) ||
     (ts.isNewExpression(node) &&
       ts.isIdentifier(node.expression) &&
       ["Boolean", "Number", "String", "Date"].includes(node.expression.text)) ||

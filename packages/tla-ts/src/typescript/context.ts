@@ -980,19 +980,20 @@ const isNullSafe = (node: ts.ClassLikeDeclaration, context: Context) => {
 
 // The built-in constructor that makes the instances of a class without a constructor, which
 // extends it or extends a class that does. Its default constructor passes new's arguments on. A
-// class that extends a native error is one only where the script reads its prototype, as its
-// errors are records otherwise.
+// class that extends a native error is one where it has members or the script reads its
+// prototype, as its errors are records otherwise, and its constructors may run, as super(...)
+// gives the error its message and cause.
 export const getBuiltInBase = (
   node: ts.ClassLikeDeclaration,
   context: Context,
 ): "Object" | "Boolean" | "Number" | "String" | `${string}Error` | undefined => {
-  if (node.members.some(ts.isConstructorDeclaration)) return undefined;
+  const hasConstructor = node.members.some(ts.isConstructorDeclaration);
   const heritage = node.heritageClauses?.find(
     (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
   )?.types[0]?.expression;
   const name = heritage === undefined ? undefined : getBuiltIn(heritage, context);
   if (name === "Object" || name === "Boolean" || name === "Number" || name === "String") {
-    return name;
+    return hasConstructor ? undefined : name;
   }
   const symbol = node.name === undefined ? undefined : getSymbol(node.name, context.checker);
   if (
@@ -1001,12 +1002,15 @@ export const getBuiltInBase = (
     name !== "AggregateError" &&
     name !== "SuppressedError" &&
     symbol !== undefined &&
-    isPrototypeRead(symbol, context.checker)
+    (node.members.length > 0 || isPrototypeRead(symbol, context.checker))
   ) {
     return name;
   }
   const base = getBaseClass(node, context);
-  return base === undefined ? undefined : getBuiltInBase(base, context);
+  const inherited = base === undefined ? undefined : getBuiltInBase(base, context);
+  return inherited !== undefined && (!hasConstructor || isNativeErrorName(inherited))
+    ? inherited
+    : undefined;
 };
 
 // An empty class that a class's extends clause makes, which the class makes its objects after.
@@ -1091,11 +1095,14 @@ const isDerivedSafe = (
   context: Context,
 ) => {
   const constructor = node.members.find(ts.isConstructorDeclaration);
+  // A constructor defines the fields with plain names once super(...) returns.
   const isAdding =
     node.members.some(
       (member) =>
         !isStatic(member) &&
-        ((ts.isPropertyDeclaration(member) && !isAmbient(member)) ||
+        ((ts.isPropertyDeclaration(member) &&
+          !isAmbient(member) &&
+          (constructor === undefined || isPrivateMember(member))) ||
           (isPrivateMember(member) && !ts.isConstructorDeclaration(member))),
     ) ||
     (constructor?.parameters.some((parameter) =>
@@ -2266,14 +2273,30 @@ export const getRunFields = (node: HeapClass, context: Context) => {
   return first === -1 ? [] : fields.slice(first);
 };
 
-// Whether a new is all that a statement evaluates, besides the variable it initializes or
-// assigns, so the statement can run the constructor.
+// The fields of a derived class whose constructor defines them once super(...) returns, as its
+// base's constructor runs code, which would see them otherwise.
+export const getFieldsAfterSuper = (node: HeapClass, context: Context) => {
+  const base = ts.isClassLike(node) ? getBaseClass(node, context) : undefined;
+  return ts.isClassLike(node) &&
+    node.members.some(ts.isConstructorDeclaration) &&
+    base !== undefined &&
+    getRunConstructor(base, context) !== undefined
+    ? node.members.filter(
+        (member): member is ts.PropertyDeclaration =>
+          ts.isPropertyDeclaration(member) && !isStatic(member) && !isAmbient(member),
+      )
+    : [];
+};
+
+// Whether a new is all that a statement, or an arrow's body, evaluates, besides the variable it
+// initializes or assigns, so the statement can run the constructor.
 export const isStatementNew = (node: ts.Expression) => {
   const parent = node.parent;
   return (
     ts.isExpressionStatement(parent) ||
     ts.isReturnStatement(parent) ||
     ts.isThrowStatement(parent) ||
+    (ts.isArrowFunction(parent) && parent.body === node) ||
     (ts.isPropertyDeclaration(parent) &&
       parent.initializer === node &&
       (isStatic(parent) || !hasExtends(parent.parent))) ||

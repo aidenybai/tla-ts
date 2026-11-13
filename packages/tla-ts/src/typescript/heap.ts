@@ -17,6 +17,7 @@ import {
   getObjectMethod,
   getRunConstructor,
   getRunFields,
+  getFieldsAfterSuper,
   getSymbol,
   getUndefined,
   getClassKey,
@@ -847,33 +848,53 @@ const translateWrapperObject = (
   return useJavaScript("WrapperObject", [prototype, primitive], context);
 };
 
-// The object that a new of a class that extends a native error makes, whose message, from the new's
-// first argument, is an own property that isn't enumerable.
-const translateErrorObject = (node: ts.NewExpression, scope: Scope, context: Context) => {
-  const error = useJavaScript("ErrorObject", [identifier("Null")], context);
-  const message = node.arguments?.at(0);
-  if (message === undefined) return error;
-  if (
-    getTypeNames(context.checker.getTypeAtLocation(message), context.checker)?.includes(
-      "undefined",
-    ) !== false
-  ) {
-    throw new TlaTypeScriptError(
-      "tla-ts can't tell whether this error's message is undefined",
-      message,
+// An error that the Error constructor gives a message and options to: the message, where it isn't
+// undefined, as an own property that isn't enumerable, and so the options' cause where they have
+// one.
+export const translateErrorFields = (
+  error: Expression,
+  args: readonly ts.Expression[],
+  heap: Expression,
+  scope: Scope,
+  context: Context,
+) => {
+  const message = args.at(0);
+  const options = args.at(1);
+  const define = (object: Expression, key: string, value: Expression) =>
+    useJavaScript(
+      "Define",
+      [object, string(key), value, boolean(true), boolean(false), boolean(true)],
+      context,
     );
+  const names =
+    message === undefined
+      ? ["undefined"]
+      : getTypeNames(context.checker.getTypeAtLocation(message), context.checker);
+  if (names === undefined || names.some((name) => name === "object" || name === "function")) {
+    throw new TlaTypeScriptError("tla-ts can't convert this error's message to a string", message);
   }
-  return useJavaScript(
-    "Define",
-    [
-      error,
-      string("message"),
-      translateToString(message, scope, context),
-      boolean(true),
-      boolean(false),
-      boolean(true),
-    ],
-    context,
+  const withMessage =
+    message === undefined
+      ? error
+      : names.includes("undefined")
+        ? ifExpression(
+            apply("=", [translateExpression(message, scope, context), getUndefined(context)]),
+            error,
+            define(error, "message", translateToString(message, scope, context)),
+          )
+        : define(error, "message", translateToString(message, scope, context));
+  if (options === undefined) return withMessage;
+  if (isProxyValue(options, context)) {
+    throw new TlaTypeScriptError("tla-ts can't read the cause of a proxy", options);
+  }
+  const value = translateExpression(options, scope, context);
+  return ifExpression(
+    junction("And", [
+      useJavaScript("IsRef", [value], context),
+      useJavaScript("Has", [heap, value, string("cause")], context),
+    ]),
+    define(withMessage, "cause", useJavaScript("Get", [heap, value, string("cause")], context)),
+    withMessage,
   );
 };
 
@@ -904,8 +925,9 @@ const translateInstance = (
     throw new TlaTypeScriptError("Unsupported Reflect.construct of a wrapper's subclass", node);
   }
   // No constructor body runs, so the arguments and the parameters' defaults are only evaluated
-  // where evaluating them can't throw or change anything. A wrapper base reads its first argument.
-  const dropped = isWrapped ? construction.arguments.slice(1) : construction.arguments;
+  // where evaluating them can't throw or change anything. A wrapper base reads its first argument,
+  // and an error its message and options.
+  const dropped = construction.arguments.slice(wrapper !== undefined ? 1 : isError ? 2 : 0);
   const defaults = getChain(created, context).flatMap((current) =>
     (ts.isClassLike(current)
       ? (current.members.find(ts.isConstructorDeclaration)?.parameters ?? [])
@@ -943,7 +965,19 @@ const translateInstance = (
     wrapper !== undefined && ts.isNewExpression(node)
       ? translateWrapperObject(node, wrapper, identifier("Null"), scope, context)
       : isError && ts.isNewExpression(node)
-        ? translateErrorObject(node, scope, context)
+        ? translateErrorFields(
+            useJavaScript("ErrorObject", [identifier("Null")], context),
+            // A constructor gives the error its message as it calls super(...).
+            getChain(created, context).some(
+              (current) =>
+                ts.isClassLike(current) && current.members.some(ts.isConstructorDeclaration),
+            )
+              ? []
+              : construction.arguments,
+            heap,
+            scope,
+            context,
+          )
         : identifier("EmptyObject"),
   );
   // TypeScript defines a class's parameter properties before its other fields. The construction
@@ -956,7 +990,11 @@ const translateInstance = (
           ),
           ...current.members.filter(
             (member) =>
-              !ts.isPropertyDeclaration(member) || !getRunFields(current, context).includes(member),
+              !ts.isPropertyDeclaration(member) ||
+              ![
+                ...getRunFields(current, context),
+                ...getFieldsAfterSuper(current, context),
+              ].includes(member),
           ),
         ]
       : [],
@@ -2442,7 +2480,8 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
                 ts.isPropertyDeclaration(member) &&
                 !isStatic(member) &&
                 member.initializer !== undefined &&
-                !getRunFields(current, context).includes(member)
+                !getRunFields(current, context).includes(member) &&
+                !getFieldsAfterSuper(current, context).includes(member)
                   ? getAllocated(member.initializer, context)
                   : [],
               )

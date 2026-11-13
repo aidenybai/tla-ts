@@ -57,6 +57,7 @@ import {
   getCapturedArguments,
   getClosures,
   isClosure,
+  getBuiltInBase,
   isNestedFunction,
   type Closure,
   getFactoryCall,
@@ -79,6 +80,7 @@ import {
   getParameters,
   getRunConstructor,
   getRunFields,
+  getFieldsAfterSuper,
   getSetters,
   getPropertySetters,
   getWrittenProperties,
@@ -153,7 +155,13 @@ import {
   BITWISE_OPERATORS,
 } from "./expressions";
 import { and, bindValue, DISABLED, type Formula, ifThenElse, letIn, leaf, render } from "./formula";
-import { getCalledError, getErrorClass, translateEngineError, translateThrown } from "./exceptions";
+import {
+  getCalledError,
+  getErrorClass,
+  isNativeErrorName,
+  translateEngineError,
+  translateThrown,
+} from "./exceptions";
 import {
   dispatchFollowed,
   drainTasks,
@@ -202,6 +210,7 @@ import {
   isFunctionValue,
   getOwnFunctionKeys,
   translatePropertyKey,
+  translateErrorFields,
 } from "./heap";
 import {
   type Collection,
@@ -6835,6 +6844,47 @@ const translateSuperCall = (
   if (isReturning) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
   }
+  const builtInBase = getBuiltInBase(constructor.parent, context);
+  const heapSymbol = context.heap;
+  // The Error constructor gives the error that the new made its message and cause.
+  if (
+    called === undefined &&
+    builtInBase !== undefined &&
+    isNativeErrorName(builtInBase) &&
+    heapSymbol !== undefined
+  ) {
+    const heap = getHeap(path.scope, expression, context);
+    const name = context.names.getFresh("heap");
+    return bindOnce(
+      path,
+      name,
+      useJavaScript(
+        "Update",
+        [
+          heap,
+          receiver.value,
+          translateErrorFields(
+            useJavaScript("Lookup", [heap, receiver.value], context),
+            expression.arguments,
+            heap,
+            path.scope,
+            context,
+          ),
+        ],
+        context,
+      ),
+      continueWith(
+        {
+          ...path,
+          scope: {
+            ...path.scope,
+            bindings: new Map([...path.scope.bindings, [heapSymbol, identifier(name)]]),
+          },
+        },
+        receiver.value,
+      ),
+    );
+  }
   if (called === undefined || called.body === undefined) {
     if (expression.arguments.length > 0) {
       throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
@@ -6849,7 +6899,15 @@ const translateSuperCall = (
     path,
     context,
     frame,
-    (after) => continueWith({ ...after, scope: { ...after.scope, receiver } }, receiver.value),
+    (after) =>
+      translateElements(
+        getFieldsAfterSuper(constructor.parent, context),
+        receiver.value,
+        { ...after, scope: { ...after.scope, receiver } },
+        context,
+        frame,
+        (defined) => continueWith(defined, receiver.value),
+      ),
   );
 };
 

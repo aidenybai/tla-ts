@@ -2091,14 +2091,86 @@ describe("values", () => {
     expect((await checkModel(getSource("true,true,true,true,thrown"))).failure?.message).toContain(
       "outcomes true,true,true,false,thrown",
     );
-    expect(() =>
-      compile(`
-        class Err extends Error {}
-        Err.prototype.message = "custom";
-        const make = (message?: string) => new Err(message);
-        if (make().message !== "custom") throw new Error("message");
-      `),
-    ).toThrow("tla-ts can't tell whether this error's message is undefined");
+  });
+
+  it("gives an error a message only where its message isn't undefined", async () => {
+    const getSource = (expected: string) => `
+      class Err extends Error {}
+      Err.prototype.message = "custom";
+      const make = (message?: string) => new Err(message);
+      const result = [make().message, make("own").message, Object.hasOwn(make(), "message")];
+      if (result.join(",") !== "${expected}") throw new Error(result.join(","));
+    `;
+    expect((await checkModel(getSource("custom,own,false"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("custom,own,true"))).failure?.message).toContain(
+      "custom,own,false",
+    );
+  });
+
+  it("runs the constructors of a class that extends Error, which give its error a message and a cause", async () => {
+    const getSource = (expected: string) => `
+      class BaseError extends Error {
+        seen: string;
+        constructor(message?: string, cause?: unknown) {
+          super(message, cause === undefined ? {} : { cause });
+          this.seen = "line" in this ? "early" : "late";
+          this.name = "BaseError";
+        }
+      }
+      class LineError extends BaseError {
+        line: number | undefined;
+        constructor(message: string, line?: number) {
+          super(message, line);
+          this.name = "LineError";
+          this.line = line;
+        }
+      }
+      const plain = new BaseError();
+      const caused = new LineError("bad", 3);
+      const result = [
+        Object.hasOwn(plain, "message"),
+        plain.message,
+        Object.hasOwn(plain, "cause"),
+        caused.cause,
+        caused.seen,
+        Object.keys(caused).join("+"),
+        caused instanceof LineError,
+        caused instanceof BaseError,
+        caused instanceof Error,
+        plain instanceof LineError,
+        Object.getPrototypeOf(caused) === LineError.prototype,
+        \`\${caused.name}: \${caused.message}\`,
+      ].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "false,,false,3,late,seen+name+line,true,true,true,false,true,LineError: bad";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource(expected.replace("late", "early")))).failure?.message,
+    ).toContain(expected);
+  });
+
+  it("throws the error that an arrow makes with a class that extends an error with fields", async () => {
+    const getSource = (expected: string) => `
+      class Coded extends TypeError {
+        code = 7;
+      }
+      const make = (message: string) => new Coded(message, { cause: "why" });
+      let caught = "";
+      try {
+        throw make("bad");
+      } catch (error) {
+        caught =
+          error instanceof Coded && error instanceof TypeError
+            ? [error.code, error.message, error.cause, Object.keys(error).join("+")].join(",")
+            : "other";
+      }
+      if (caught !== "${expected}") throw new Error(caught);
+    `;
+    expect((await checkModel(getSource("7,bad,why,code"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("7,bad,,code"))).failure?.message).toContain(
+      "7,bad,why,code",
+    );
   });
 
   it("makes the objects of what an if or a switch tests", async () => {
