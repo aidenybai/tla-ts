@@ -2316,27 +2316,43 @@ export const translatePromiseCall = (
 // Runs the jobs that the path queued, in order, and then its timers, each with the jobs it queues.
 // As Node does by default, a promise that is rejected with no reaction once the jobs run out ends
 // the program.
-export const drainTasks = (path: Path, finish: (path: Path) => Formula): Formula => {
+export const drainTasks = (
+  path: Path,
+  context: Context,
+  finish: (path: Path) => Formula,
+): Formula => {
   const tasks = path.tasks;
   if (tasks === undefined) return finish(path);
   const job = tasks.jobs.at(0);
   if (job !== undefined) {
     return job.run(withTasks(path, { ...tasks, jobs: tasks.jobs.slice(1) }), (after) =>
-      drainTasks(after, finish),
+      drainTasks(after, context, finish),
     );
   }
-  if (
-    [...tasks.promises.values()].some(
-      (promise) => promise.state === "rejected" && !promise.isHandled,
-    )
-  ) {
-    return leaf(apply("Assert", [boolean(false), string("A promise rejected with no handler")]));
+  const unhandled = [...tasks.promises.values()].filter(
+    (promise) => promise.state === "rejected" && !promise.isHandled,
+  );
+  if (unhandled.length > 0) {
+    // A script reports the one promise that rejected with a primitive as Node does, which says
+    // the reason.
+    return leaf(
+      apply("Assert", [
+        boolean(false),
+        context.script !== undefined && unhandled.length === 1
+          ? useJavaScript(
+              "UnhandledRejection",
+              [unhandled[0].value ?? getUndefined(context)],
+              context,
+            )
+          : string("A promise rejected with no handler"),
+      ]),
+    );
   }
   const timer = tasks.timers.at(0);
   return timer === undefined
     ? finish(path)
     : timer.run(withTasks(path, { ...tasks, timers: tasks.timers.slice(1) }), (after) =>
-        drainTasks(after, finish),
+        drainTasks(after, context, finish),
       );
 };
 

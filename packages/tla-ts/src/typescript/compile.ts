@@ -93,8 +93,8 @@ const translateExported = (
 // Compiles a TypeScript file into a TLA+ spec and the config that checks it. Imports resolve
 // relative to fileName, and the module takes its name, so die-hard.ts is the module DieHard.
 // Without a file system, as in a browser, libraries holds TypeScript's declaration files by name.
-// Where the CLI runs a script in Node's place, isNodeScript has the script report a throw that
-// nothing catches with the text Node prints.
+// Where the CLI runs a script in Node's place, isNodeScript has the script report a throw or a
+// rejection that nothing handles with the text Node prints.
 export const compile = (
   source: string,
   fileName = "spec.ts",

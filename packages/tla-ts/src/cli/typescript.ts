@@ -26,8 +26,8 @@ const TLC_ESCAPES = new Map([
 ]);
 
 // What Node writes to stderr and the code it exits with, for the script at path whose spec fails an
-// Assert with what Node reports: a top-level await that never settles, or a throw that nothing
-// catches.
+// Assert with what Node reports: a top-level await that never settles, or a throw or a rejection
+// that nothing handles.
 export const getNodeExit = (message: string, path: string) => {
   const quoted = message
     .split('The first argument of Assert evaluated to FALSE; the second argument was:\n"')

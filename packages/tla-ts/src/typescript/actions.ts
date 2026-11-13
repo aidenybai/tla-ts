@@ -12924,8 +12924,8 @@ export const translateScript = (
     },
     context,
     {
-      next: (path) => drainTasks(path, finish),
-      exit: (path) => drainTasks(path, finish),
+      next: (path) => drainTasks(path, context, finish),
+      exit: (path) => drainTasks(path, context, finish),
       breakTo: undefined,
       continueTo: undefined,
       throwTo: undefined,
@@ -12950,7 +12950,7 @@ export const translateScript = (
             ),
           // The jobs ran out before a job resumed the body, which Node reports for a script.
           (suspended) =>
-            drainTasks(suspended, (unsettled) =>
+            drainTasks(suspended, context, (unsettled) =>
               isLast
                 ? leaf(
                     apply("Assert", [

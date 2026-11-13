@@ -135,6 +135,21 @@ describe("the CLI with TypeScript files", () => {
       'await Promise.resolve();\nthrow "after";\n',
       'await Promise.resolve();\ntry {\n  throw "after";\n} catch {}\n',
     ],
+    [
+      "a rejection with a string",
+      'Promise.reject("no");\n',
+      'Promise.reject("no").catch(() => {});\n',
+    ],
+    [
+      "a rejection with undefined",
+      "Promise.reject(undefined);\n",
+      "Promise.reject(undefined).catch(() => {});\n",
+    ],
+    [
+      "a throw in an async function",
+      "const fail = async () => {\n  throw 1;\n};\nfail();\n",
+      "const fail = async () => {\n  throw 1;\n};\nfail().catch(() => {});\n",
+    ],
   ])("exits with Node's code and stderr where a script leaves %s uncaught", (_, script, caught) => {
     const directory = copyFixtures("passing");
     writeFileSync(join(directory, "uncaught.ts"), script);

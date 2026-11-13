@@ -1685,6 +1685,13 @@ StringOf(value) ==
     [] IsBigInt(value) -> ToString(value[Big])
     [] OTHER -> Assert(FALSE, "tla-ts can't convert objects to strings")
 
+\\* What Node prints for a promise that rejects with a primitive and that nothing handles, but for
+\\* the stack frames.
+UnhandledRejection(reason) ==
+  IF reason \\in {Undefined, Null} \\/ TypeOf(reason) \\in {"boolean", "string", "number", "bigint"}
+  THEN "node:internal/process/promises:392\\n      new UnhandledPromiseRejection(reason);\\n      ^\\n\\nUnhandledPromiseRejection: This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason \\"" \\o StringOf(reason) \\o "\\". {\\n  code: 'ERR_UNHANDLED_REJECTION'\\n}"
+  ELSE "A promise rejected with no handler"
+
 \\* Array.prototype.join of values that aren't all strings, which writes undefined and null as
 \\* empty strings.
 JoinValues(sequence, separator) ==
