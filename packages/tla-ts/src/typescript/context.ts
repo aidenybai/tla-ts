@@ -2409,11 +2409,9 @@ export const getFactoryCall = (
   if (node === undefined || !ts.isCallExpression(node)) return undefined;
   const factory = getAnyFunction(getSymbol(node.expression, context.checker)?.valueDeclaration);
   const body = factory?.body;
-  if (factory === undefined || !isPlain(factory) || body === undefined || !ts.isBlock(body)) {
-    return undefined;
-  }
-  const returned = body.statements.at(-1);
-  const statements = body.statements.slice(0, -1);
+  if (factory === undefined || !isPlain(factory) || body === undefined) return undefined;
+  const returned = ts.isBlock(body) ? body.statements.at(-1) : undefined;
+  const statements = ts.isBlock(body) ? body.statements.slice(0, -1) : [];
   const variables = statements.flatMap((statement) =>
     ts.isVariableStatement(statement)
       ? statement.declarationList.declarations.filter(
@@ -2462,8 +2460,12 @@ export const getFactoryCall = (
               ? context.checker.getShorthandAssignmentValueSymbol(inner.parent)
               : getSymbol(inner, context.checker)) !== factorySymbol,
         )));
-  const expression =
-    returned !== undefined && ts.isReturnStatement(returned) ? returned.expression : undefined;
+  // An arrow whose body is an expression returns it.
+  const expression = !ts.isBlock(body)
+    ? body
+    : returned !== undefined && ts.isReturnStatement(returned)
+      ? returned.expression
+      : undefined;
   const closure =
     expression === undefined
       ? undefined

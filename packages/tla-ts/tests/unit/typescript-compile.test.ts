@@ -7456,6 +7456,27 @@ describe("errors", () => {
     ).toThrow("tla-ts can't destructure a value that may be an object or another value");
   });
 
+  it("calls the functions that an arrow returns as its body, once for each constant", async () => {
+    const getSource = (expected: string) => `
+      interface Repeat {
+        type: string;
+        body: string[];
+      }
+      const repeat =
+        (type: string) =>
+        (...parts: string[]): Repeat => ({ type, body: parts });
+      const zeroOrMore = repeat("zeroOrMore");
+      const optional = repeat("optional");
+      const units = [zeroOrMore("a", "b"), optional("c")];
+      const result = units.map((unit) => \`\${unit.type}:\${unit.body.join("+")}\`).join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("zeroOrMore:a+b,optional:c"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("optional:a+b,optional:c"))).failure?.message).toContain(
+      "zeroOrMore:a+b,optional:c",
+    );
+  });
+
   it("calls the functions that a factory returns, which call each other", async () => {
     const getSource = (isLooseSame: string) => `
       interface Branch { kind: "branch"; items: Value[] }
