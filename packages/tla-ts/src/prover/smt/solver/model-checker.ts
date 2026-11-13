@@ -106,7 +106,7 @@ export class ModelChecker {
     const value2expr = new Map<number, number>();
     for (const entry of this.root2value) {
       const node = this.getEqEnodeWithMinGen(entry[0]);
-      if (!this.manager.isUniqueValue(node.owner)) value2expr.set(entry[1], node.owner);
+      if (!this.manager.isValue(node.owner)) value2expr.set(entry[1], node.owner);
     }
     this.value2expr = value2expr;
     return value2expr;

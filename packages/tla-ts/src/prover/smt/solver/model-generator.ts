@@ -36,15 +36,15 @@ export const mkModel = (context: Context): GeneratedModel => {
       );
   }
   // mk_values: the values of the classes of a theory's sort that the theory does not know are
-  // fresh, so they come after all the other values. Like Z3, that includes the class of a numeral
-  // without a theory variable, such as a coefficient.
+  // fresh, so they come after all the other values. A class whose root is a value keeps it, but
+  // like Z3 still takes the fresh value, as the class of a coefficient numeral does.
   const root2value = new Map<Enode, number>();
   const freshRoots: Enode[] = [];
   const dependentValues = new Map<Enode, DependentValue>();
   for (const node of context.enodes) {
     if (node.root !== node) continue;
     const expr = node.owner;
-    if (!context.isRelevant(expr) && !manager.isUniqueValue(expr)) continue;
+    if (!context.isRelevant(expr) && !manager.isValue(expr)) continue;
     const sort = manager.sorts[expr];
     const theory = context.getTheory(manager.getSortFamily(sort));
     if (sort === SORT_BOOL)
@@ -53,15 +53,20 @@ export const mkModel = (context: Context): GeneratedModel => {
     else if (theory !== undefined && theory.buildModels()) {
       const value = node.getThVar(theory.id) < 0 ? undefined : theory.mkValue(node);
       if (value === undefined) freshRoots.push(node);
-      else if (typeof value === "number") root2value.set(node, value);
+      else if (typeof value === "number")
+        root2value.set(node, manager.isValue(expr) ? expr : value);
       else dependentValues.set(node, value);
-    } else root2value.set(node, model.getFreshValue(sort) ?? model.getSomeValue(sort));
+    } else {
+      const value = model.getFreshValue(sort) ?? model.getSomeValue(sort);
+      root2value.set(node, manager.isValue(expr) ? expr : value);
+    }
   }
   for (const value of root2value.values()) model.registerValue(value);
   // A value that depends on others comes after them, and before the fresh values of its sort.
   const getFreshValue = (node: Enode) => {
     const sort = manager.sorts[node.owner];
-    const value = model.getFreshValue(sort) ?? model.getSomeValue(sort);
+    const freshValue = model.getFreshValue(sort) ?? model.getSomeValue(sort);
+    const value = manager.isValue(node.owner) ? node.owner : freshValue;
     root2value.set(node, value);
     return value;
   };
@@ -71,14 +76,14 @@ export const mkModel = (context: Context): GeneratedModel => {
     const dependent = dependentValues.get(node);
     if (dependent === undefined) return getFreshValue(node);
     dependentValues.delete(node);
-    const value = dependent.mkValue(
-      dependent.dependencies.map((dependency) => {
-        if (dependency instanceof Enode) return getDependentValue(dependency.root);
-        dependency.value ??=
-          model.getFreshValue(dependency.sort) ?? model.getSomeValue(dependency.sort);
-        return dependency.value;
-      }),
-    );
+    const values = dependent.dependencies.map((dependency) => {
+      if (dependency instanceof Enode) return getDependentValue(dependency.root);
+      dependency.value ??=
+        model.getFreshValue(dependency.sort) ?? model.getSomeValue(dependency.sort);
+      return dependency.value;
+    });
+    // A class whose root is a value, such as a constant array, takes it after its dependencies.
+    const value = manager.isValue(node.owner) ? node.owner : dependent.mkValue(values);
     model.registerValue(value);
     root2value.set(node, value);
     return value;
