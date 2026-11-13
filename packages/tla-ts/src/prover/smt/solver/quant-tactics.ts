@@ -1,5 +1,6 @@
-// license, see z3-license.txt. This strategy skips elim-uncnstr's elimination and the simplifier's
-// local_ctx option, as they change almost none of tlapm's obligations.
+// Ported from Z3 (src/tactic/smtlogics/quant_tactics.cpp, src/tactic/core/simplify_tactic.cpp), MIT license, see z3-license.txt.
+// This strategy skips elim-uncnstr's elimination and the simplifier's local_ctx option, as they
+// change almost none of tlapm's obligations.
 import type { AstManager } from "./ast";
 import { ctxSimplify } from "./ctx-simplify";
 import { collectUnconstrained, disableQuantified } from "./elim-uncnstr";

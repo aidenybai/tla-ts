@@ -1,4 +1,4 @@
-// license, see z3-license.txt.
+// Ported from Z3 (src/ast/rewriter/th_rewriter.cpp, bool_rewriter.cpp, arith_rewriter.cpp), MIT license, see z3-license.txt.
 import { mkArrayApp } from "./array-decl-plugin";
 import { ArrayRewriter } from "./array-rewriter";
 import { mkRecFunApp } from "./recfun-rewriter";

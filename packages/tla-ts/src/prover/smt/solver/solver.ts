@@ -1,4 +1,5 @@
-// license, see z3-license.txt. It decides like `z3 -smt2 AUTO_CONFIG=false smt.MBQI=true`.
+// Ported from Z3 (src/smt/smt_solver.cpp, src/smt/smt_kernel.cpp, src/smt/smt_setup.cpp), MIT license, see z3-license.txt.
+// It decides like `z3 -smt2 AUTO_CONFIG=false smt.MBQI=true`.
 import {
   isStackOverflow,
   SmtCanceledError,
