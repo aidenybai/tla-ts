@@ -1624,11 +1624,25 @@ export const isDescription = (node: ts.Node, context: Context) =>
     (node.expression.expression.getText() === "Object" &&
       getKind(node.arguments[0], context) === "string"));
 
+// A number that reading changes nothing, such as -Infinity or Math.PI.
+const isConstantNumber = (node: ts.Expression, context: Context): boolean =>
+  ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.MinusToken
+    ? isConstantNumber(node.operand, context)
+    : (ts.isIdentifier(node) &&
+        ["Infinity", "NaN"].includes(node.text) &&
+        (getSymbol(node, context.checker)?.declarations ?? []).every(
+          (declaration) => declaration.getSourceFile().isDeclarationFile,
+        )) ||
+      (ts.isPropertyAccessExpression(node) &&
+        getBuiltIn(node.expression, context) === "Math" &&
+        /^[A-Z0-9_]+$/.test(node.name.text));
+
 // The kind of primitive that a description converts to an object: a string, whose object holds
 // its characters, or a number, a boolean, or a symbol, whose object holds no properties.
 const getDescribedPrimitive = (node: ts.Expression, context: Context) => {
   const names = getTypeNames(context.checker.getTypeAtLocation(node), context.checker);
-  const isInert = isInertValue(node) || isSymbolCall(node, context);
+  const isInert =
+    isInertValue(node) || isSymbolCall(node, context) || isConstantNumber(node, context);
   return !isInert || names === undefined || names.length !== 1
     ? undefined
     : names[0] === "string"
