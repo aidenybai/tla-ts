@@ -2705,6 +2705,27 @@ describe("values", () => {
     expect((await checkModel(getSource("wrap:a!"))).failure?.message).toContain("wrap:a!b!");
   });
 
+  it("makes the object of a conditional's branch beside a branch that calls a function", async () => {
+    const getSource = (expected: string) => `
+      interface Unit {
+        type: string;
+        name: string;
+      }
+      const make = (name: string): Unit => ({ type: "tokens", name });
+      const toUnit = (part: string): Unit =>
+        part.startsWith("<") ? make(part) : { type: "call", name: part };
+      const first = toUnit("<A>");
+      const second = toUnit("b");
+      const third = toUnit("b");
+      const result = [first.type, second.type, second === third].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("tokens,call,false"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("tokens,call,true"))).failure?.message).toContain(
+      "tokens,call,false",
+    );
+  });
+
   it("makes a map from an array of entries, where a later entry of a key wins", async () => {
     const getSource = (expected: string) => `
       const pairs: [string, number][] = [

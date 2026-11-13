@@ -8529,8 +8529,8 @@ const translateIteratedTypedArray = (
   );
 
 // Makes the objects that a node's object literals create, before the statement that evaluates
-// them runs, since an expression can't change the heap. A conversion or a call that ran already
-// made those of its operands.
+// them runs, since an expression can't change the heap. An expression that ran already, such as
+// a conversion, a call, or a branch that a statement runs first, made those in it.
 export const allocate = (
   node: ts.Node | undefined,
   path: Path,
@@ -8545,9 +8545,7 @@ export const allocate = (
             ts.findAncestor(allocation.parent, (ancestor) =>
               ts.isFunctionLike(ancestor)
                 ? "quit"
-                : ts.isExpression(ancestor) &&
-                  path.scope.results.has(ancestor) &&
-                  (getConversion(ancestor, context) !== undefined || ts.isCallExpression(ancestor)),
+                : ts.isExpression(ancestor) && path.scope.results.has(ancestor),
             ) === undefined,
         ),
     path,
@@ -12095,8 +12093,11 @@ export const translateStatements = (
           );
         }
         const leading = getLeadingCall(operand, () => true, next, context);
+        // An operand makes the objects in it only where its branch runs.
         return leading === undefined
-          ? withValue(next, translateExpression(operand, next.scope, context))
+          ? allocate(operand, next, context, (allocated) =>
+              withValue(allocated, translateExpression(operand, allocated.scope, context)),
+            )
           : allocate(leading.call, next, context, (allocated) =>
               translateCallStatement(leading.call, allocated, context, frame, (after, value) =>
                 evaluate(operand, withLeadingResults(leading, allocated, after, value, context)),
