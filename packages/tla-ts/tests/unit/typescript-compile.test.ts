@@ -12118,6 +12118,47 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("wrapped");
   });
 
+  describe("runs the getter that answers the element that pop or shift removes", () => {
+    const getSource = (expected: number) => `
+      const arr: number[] = [5, 6];
+      let reads = 0;
+      const getReads = (): number => reads;
+      Object.defineProperty(arr, "1", {
+        get() {
+          reads += 1;
+          return 60;
+        },
+        configurable: true,
+      });
+      const popped = arr.pop();
+      if (popped !== 60 || arr.length !== 1 || reads !== 1) throw new Error("pop");
+      const holed: number[] = new Array(1);
+      Object.defineProperty(Array.prototype, "0", {
+        get() {
+          Object.freeze(holed);
+          reads += 10;
+          return 1;
+        },
+        configurable: true,
+      });
+      let isThrown = false;
+      try {
+        holed.shift();
+      } catch (error) {
+        isThrown = error instanceof TypeError;
+      }
+      if (!isThrown || getReads() !== ${expected}) throw new Error("shift");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(11))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 1", async () => {
+      expect((await checkModel(getSource(1))).failure?.message).toContain("shift");
+    });
+  });
+
   it("pushes, pops, shifts, unshifts, and reverses an array-like object through call", async () => {
     const result = await checkModel(`
       const object = { 0: "a", 1: "b", length: 2 };

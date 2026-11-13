@@ -2202,40 +2202,106 @@ export const translateCallStatement = (
             ),
           )
         : inPlace;
+    // pop and shift read the length and then the element that they remove, which a getter may
+    // answer, before they change the array.
+    const removedGetters = getRemovedGetters(expression, context);
+    const lengthName = context.names.getFresh("length");
+    const length = identifier(lengthName);
+    const removeFrom = (current: Path, first: Expression) => {
+      const after: Path =
+        heapSymbol === undefined
+          ? current
+          : {
+              ...current,
+              scope: {
+                ...current.scope,
+                bindings: new Map([...current.scope.bindings, [heapSymbol, field(change, "heap")]]),
+              },
+            };
+      return bindOnce(
+        current,
+        changeName,
+        useJavaScript(
+          "ArrayChangeFrom",
+          [
+            getHeap(current.scope, expression, context),
+            ref,
+            string(method),
+            tuple([]),
+            length,
+            first,
+          ],
+          context,
+        ),
+        ifThenElse(
+          field(change, "isThrown"),
+          throwTypeError(after, expression, context, frame),
+          continueWith(after, field(change, "value")),
+        ),
+      );
+    };
     const changeArray = ifThenElse(
       useJavaScript(
         "HoldsBuiltIn",
         [heap, ref, string(method), string(`Array.prototype.${method}`)],
         context,
       ),
-      sortsInPlace(
-        bindOnce(
-          path,
-          changeName,
-          method === "splice"
-            ? useJavaScript(
-                "ArraySplice",
-                [
-                  heap,
-                  ref,
-                  translateExpression(arrayChange.items[0], path.scope, context),
-                  boolean(arrayChange.items.length > 1),
-                  arrayChange.items.length > 1
-                    ? translateExpression(arrayChange.items[1], path.scope, context)
-                    : getUndefined(context),
-                  tuple(translateArguments(arrayChange.items.slice(2))),
-                  translateBuiltInValue("Array", expression, context),
-                ],
+      removedGetters.length > 0
+        ? bindOnce(
+            path,
+            lengthName,
+            useJavaScript(
+              "ToLength",
+              [useJavaScript("Get", [heap, ref, string("length")], context)],
+              context,
+            ),
+            ifThenElse(
+              apply("=", [length, number(0)]),
+              removeFrom(path, getUndefined(context)),
+              readWith(
+                expression,
+                ref,
+                useJavaScript(
+                  "ToString",
+                  [method === "pop" ? apply("-", [length, number(1)]) : number(0)],
+                  context,
+                ),
+                removedGetters,
+                path,
                 context,
-              )
-            : translateArrayChange(method, heap, ref, arrayChange.items, path.scope, context),
-          ifThenElse(
-            field(change, "isThrown"),
-            throwTypeError(withHeap(field(change, "heap")), expression, context, frame),
-            continueWith(withHeap(field(change, "heap")), field(change, "value")),
+                frame,
+                removeFrom,
+              ),
+            ),
+          )
+        : sortsInPlace(
+            bindOnce(
+              path,
+              changeName,
+              method === "splice"
+                ? useJavaScript(
+                    "ArraySplice",
+                    [
+                      heap,
+                      ref,
+                      translateExpression(arrayChange.items[0], path.scope, context),
+                      boolean(arrayChange.items.length > 1),
+                      arrayChange.items.length > 1
+                        ? translateExpression(arrayChange.items[1], path.scope, context)
+                        : getUndefined(context),
+                      tuple(translateArguments(arrayChange.items.slice(2))),
+                      translateBuiltInValue("Array", expression, context),
+                    ],
+                    context,
+                  )
+                : translateArrayChange(method, heap, ref, arrayChange.items, path.scope, context),
+              ifThenElse(
+                field(change, "isThrown"),
+                throwTypeError(withHeap(field(change, "heap")), expression, context, frame),
+                continueWith(withHeap(field(change, "heap")), field(change, "value")),
+              ),
+            ),
           ),
-        ),
-      ),
       leaf(
         apply("Assert", [
           boolean(false),
@@ -6200,6 +6266,15 @@ const getLoopTarget = (node: ts.Node, context: Context) => {
     : undefined;
 };
 
+// The getters that pop or shift may run as it reads the element that it removes from an array that
+// the heap holds, where a script defines them under an index.
+const getRemovedGetters = (node: ts.Node, context: Context) => {
+  const arrayChange = getHeapArrayChange(node, context);
+  return arrayChange !== undefined && ["pop", "shift"].includes(arrayChange.method)
+    ? (getElementGetters(arrayChange.receiver, context) ?? [])
+    : [];
+};
+
 // The getters that an array-like object's method may run as it reads its length, the constructor
 // that map and filter make their array through, and each element.
 const getLoopGetters = (node: ts.Node, context: Context) => {
@@ -9679,6 +9754,7 @@ const getEffects = (
     ...getOwnValuesGetters(node, context),
     ...getReadFunctions(node, context),
     ...getLoopGetters(node, context),
+    ...getRemovedGetters(node, context),
     ...(written === undefined ? [] : getRestCopyGetters(written, context)),
   ];
   // A pattern that destructures an object, or a for-of, a spread, or a yield* that iterates one,

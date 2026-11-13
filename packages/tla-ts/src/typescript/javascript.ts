@@ -4316,16 +4316,15 @@ ArraySets(state, ref, from, items) ==
 \\* elements are its own writable data properties, whose prototypes hold no elements, and that takes
 \\* new ones and a new length changes in one step. Any other changes index by index as the spec runs
 \\* it, where a move reads each index through the prototypes, and only the indices that the object or
-\\* its prototypes hold, or that a move deletes, move.
-ArrayChange(heap, ref, method, items) ==
+\\* its prototypes hold, or that a move deletes, move. The length and the element that pop or shift
+\\* gives are those it read, which a getter may have answered before the heap became this one.
+ArrayChangeFrom(heap, ref, method, items, length, first) ==
   LET object == Lookup(heap, ref)
-      length == ToLength(Get(heap, ref, "length"))
       indices == {ToIndex(key) : key \\in IndexKeys(heap, ref)}
       own == {ToIndex(key) : key \\in {key \\in DOMAIN object.values : IsIndex(key)}}
       count == Len(items)
       start == [heap |-> heap, isThrown |-> FALSE]
       setLength(state, value) == AndThen(state, LAMBDA after : ArraySet(after, ref, "length", value))
-      first == Get(heap, ref, ToString(IF method = "pop" THEN length - 1 ELSE 0))
       removed == AndThen(
                    IF method = "shift"
                    THEN ArrayMoves(start, ref,
@@ -4366,6 +4365,11 @@ ArrayChange(heap, ref, method, items) ==
                        [] length = 0 -> Undefined
                        [] OTHER -> first,
            isThrown |-> state.isThrown]
+
+ArrayChange(heap, ref, method, items) ==
+  LET length == ToLength(Get(heap, ref, "length"))
+  IN ArrayChangeFrom(heap, ref, method, items, length,
+                     Get(heap, ref, ToString(IF method = "pop" THEN length - 1 ELSE 0)))
 
 \\* copyWithin() on an array-like object that the heap holds, as the spec runs it index by index,
 \\* backward where the indices it copies to overlap the end of those it copies from, where only the
