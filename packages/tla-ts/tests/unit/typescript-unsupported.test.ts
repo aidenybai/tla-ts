@@ -63,8 +63,8 @@ const CASES: [string, string][] = [
     "try { const read = () => later; count = read(); } catch { count = 0; } let later = 1;",
   ],
   [
-    "instanceof on a value that isn't caught or an error",
-    "const value: unknown = count; if (value instanceof Error) count = 1;",
+    "instanceof on a value that isn't caught, an error, or of type unknown or any",
+    "const value: object = record; if (value instanceof Error) count = 1;",
   ],
   ["labels", "outer: { count++; }"],
   ["an increment after a comma", "count = (label, count++);"],
