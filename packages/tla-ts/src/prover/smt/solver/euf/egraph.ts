@@ -68,8 +68,10 @@ export class Enode {
   isRelevant = false;
   isShared = L_UNDEF;
   lblHash = -1;
-  lbls = 0n;
-  plbls = 0n;
+  lbls = 0;
+  lblsHigh = 0;
+  plbls = 0;
+  plblsHigh = 0;
 
   constructor(
     readonly owner: number,
@@ -206,8 +208,7 @@ interface UpdateRecord {
   r1: Enode | null;
   n1: Enode | null;
   num: number;
-  oldThVar: number;
-  lbls: bigint;
+  num2: number;
 }
 
 const TO_MERGE_PLAIN = 0;
@@ -256,7 +257,7 @@ export class Egraph {
   constructor(private manager: AstManager) {}
 
   private push(tag: number, r1: Enode | null, n1: Enode | null = null, num = 0) {
-    this.updates.push({ tag, r1, n1, num, oldThVar: 0, lbls: 0n });
+    this.updates.push({ tag, r1, n1, num, num2: 0 });
   }
 
   find(expr: number) {
@@ -468,8 +469,7 @@ export class Egraph {
       r1: node,
       n1: null,
       num: id,
-      oldThVar: old,
-      lbls: 0n,
+      num2: old,
     });
     this.addThEq(id, thVar, rootVar, node, root);
   }
@@ -521,33 +521,15 @@ export class Egraph {
   }
 
   setLblHash(node: Enode, hash: number) {
-    this.updates.push({
-      tag: U_LBL_HASH,
-      r1: node,
-      n1: null,
-      num: node.lblHash,
-      oldThVar: 0,
-      lbls: 0n,
-    });
+    this.push(U_LBL_HASH, node, null, node.lblHash);
     node.lblHash = hash;
     const root = node.root;
-    const bit = 1n << BigInt(hash);
-    if ((root.lbls & bit) === 0n) {
-      this.updates.push({
-        tag: U_LBL_SET,
-        r1: root,
-        n1: null,
-        num: 0,
-        oldThVar: 0,
-        lbls: root.lbls,
-      });
-      root.lbls |= bit;
-    }
-  }
-
-  setLbls(node: Enode, lbls: bigint) {
-    this.updates.push({ tag: U_LBL_SET, r1: node, n1: null, num: 0, oldThVar: 0, lbls: node.lbls });
-    node.lbls = lbls;
+    const isLow = hash < 32;
+    const bit = 1 << hash;
+    if (((isLow ? root.lbls : root.lblsHigh) & bit) !== 0) return;
+    this.updates.push({ tag: U_LBL_SET, r1: root, n1: null, num: root.lbls, num2: root.lblsHigh });
+    if (isLow) root.lbls |= bit;
+    else root.lblsHigh |= bit;
   }
 
   popScopes(numScopes: number) {
@@ -586,7 +568,7 @@ export class Egraph {
           this.undoAddThVar(r1, record.num);
           break;
         case U_REPLACE_TH_VAR:
-          r1.replaceThVar(record.oldThVar, record.num);
+          r1.replaceThVar(record.num2, record.num);
           break;
         case U_NEW_TH_EQ:
           this.newThEqs.pop();
@@ -604,7 +586,8 @@ export class Egraph {
           r1.lblHash = record.num;
           break;
         case U_LBL_SET:
-          r1.lbls = record.lbls;
+          r1.lbls = record.num;
+          r1.lblsHigh = record.num2;
           break;
         case U_SET_RELEVANT:
           r1.isRelevant = false;
