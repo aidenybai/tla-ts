@@ -1294,6 +1294,39 @@ export const translateCall = (
         ),
     );
   }
+  // An object's toString or toLocaleString that TypeScript types as Object's, or Object.prototype's
+  // own, where it reads Object.prototype's.
+  if (
+    (method === "toString" || method === "toLocaleString") &&
+    node.arguments.length === 0 &&
+    context.heap !== undefined &&
+    context.checker
+      .getSymbolAtLocation(node.expression.name)
+      ?.declarations?.some(
+        (declaration) =>
+          ts.isInterfaceDeclaration(declaration.parent) &&
+          declaration.parent.name.text === "Object",
+      ) === true &&
+    // A wrapper object reads its prototype's toString.
+    !["Boolean", "Number", "String", "Symbol", "BigInt"].includes(
+      context.checker.getTypeAtLocation(receiver).getSymbol()?.name ?? "",
+    ) &&
+    (getKind(receiver, context) === "object" ||
+      context.checker.getTypeAtLocation(receiver).getSymbol()?.name === "Object" ||
+      (ts.isPropertyAccessExpression(receiver) &&
+        receiver.name.text === "prototype" &&
+        getBuiltIn(receiver.expression, context) === "Object"))
+  ) {
+    return useJavaScript(
+      "ObjectMethodString",
+      [
+        getHeap(scope, node, context),
+        translateObjectValue(receiver, scope, context),
+        string(method),
+      ],
+      context,
+    );
+  }
   const constructed =
     global === "Object" && method === "fromEntries"
       ? translateFunctionConstructor(node.arguments[0], scope, context)
