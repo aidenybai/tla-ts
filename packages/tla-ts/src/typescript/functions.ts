@@ -619,8 +619,8 @@ const getCaptured = (callee: FunctionNode, context: Context) => {
 
 // Whether tla-ts can compile a local function as a definition that takes the names it reads from
 // the functions around it: one that changes none of them and reads no state, which a definition
-// would read as the step began.
-export const isLiftable = (callee: FunctionNode, context: Context) => {
+// would read as the step began, unless the definition takes the state too.
+export const isLiftable = (callee: FunctionNode, context: Context, isStateTaken = false) => {
   if (ts.findAncestor(callee.parent, ts.isFunctionLike) === undefined) return false;
   const found = getCaptured(callee, context);
   const isCapturedWritten = (node: ts.Node) => {
@@ -634,7 +634,7 @@ export const isLiftable = (callee: FunctionNode, context: Context) => {
     );
   };
   return (
-    context.heap === undefined &&
+    (isStateTaken || context.heap === undefined) &&
     (ts.isArrowFunction(callee) ||
       ts.isFunctionExpression(callee) ||
       ts.isFunctionDeclaration(callee)) &&
@@ -649,7 +649,7 @@ export const isLiftable = (callee: FunctionNode, context: Context) => {
     ) &&
     found.reached.every(
       (reached) =>
-        !readsState(reached, context, new Set()) &&
+        (isStateTaken || !readsState(reached, context, new Set())) &&
         findNodes(reached, (inner): inner is ts.Node => isCapturedWritten(inner)).length === 0,
     )
   );
@@ -658,7 +658,7 @@ export const isLiftable = (callee: FunctionNode, context: Context) => {
 // A local function that a call reaches again while tla-ts inlines it, compiled once as a definition
 // beside the top-level ones. It takes the names it reads from the functions around it as
 // parameters, which a call passes as they are then, as JavaScript reads them then. It may change
-// none of them, and reads no state, which a definition would read as the step began.
+// none of them. One that reads state, or the heap, takes the state as the call reads it too.
 export const translateLiftedCall = (
   callee: FunctionNode,
   node: ts.CallExpression,
@@ -667,17 +667,22 @@ export const translateLiftedCall = (
 ) => {
   rejectCaught(node, callee, scope, context);
   const found = getCaptured(callee, context);
-  if (!isLiftable(callee, context) || callee.body === undefined) {
+  if (!isLiftable(callee, context, true) || callee.body === undefined) {
     throw new TlaTypeScriptError(
       "A local function can't call itself, so declare it at the top level",
       node,
     );
   }
+  const variables = isLiftable(callee, context) ? [] : [...context.variables];
   const existing = context.definitions.get(callee);
   if (existing !== undefined) context.recursive.add(callee);
   const definition =
     existing ??
     (() => {
+      const states = variables.map((entry) => ({
+        symbol: entry[0],
+        name: context.names.getFresh(entry[0].name),
+      }));
       const parameters = declareParameters(callee.parameters, context);
       const captured = found.captured.map((symbol) => ({
         symbol,
@@ -688,7 +693,7 @@ export const translateLiftedCall = (
         name: context.names.getFresh(
           named !== undefined && ts.isIdentifier(named) ? named.text : "local",
         ),
-        parameters: [...parameters, ...captured].map((parameter) => ({
+        parameters: [...parameters, ...captured, ...states].map((parameter) => ({
           name: parameter.name,
           arity: 0,
         })),
@@ -699,7 +704,7 @@ export const translateLiftedCall = (
       context.inProgress = new Set([callee]);
       const value = translateBody(
         callee.body,
-        bindNames(createStateScope(context), [...parameters, ...captured]),
+        bindNames(createStateScope(context), [...parameters, ...captured, ...states]),
         context,
       );
       context.inProgress = outer;
@@ -733,7 +738,13 @@ export const translateLiftedCall = (
   );
   return render(
     values.evaluate(
-      leaf(call(definition.name, [...operands, ...capturedValues])),
+      leaf(
+        call(definition.name, [
+          ...operands,
+          ...capturedValues,
+          ...variables.map((entry) => scope.bindings.get(entry[0]) ?? entry[1]),
+        ]),
+      ),
       leaf(getUndefined(context)),
     ),
   );

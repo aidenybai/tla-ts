@@ -2792,6 +2792,59 @@ describe("calls", () => {
     await expect(checkModel(getSource(5))).rejects.toThrow("total");
   });
 
+  const getShownSource = (expected: string) => `
+    interface Node { size: number; children: Node[] }
+    const show = (text: string, tree: Node) => {
+      const getText = (node: Node) => text.slice(0, node.size);
+      const format = (node: Node, width: number): string | undefined => {
+        if (node.size <= width) return getText(node);
+        return formatItems(node.children, width - 1);
+      };
+      const formatItems = (items: Node[], width: number) => {
+        const parts = items.map((item) => format(item, width));
+        return parts.includes(undefined) ? undefined : parts.join(",");
+      };
+      return format(tree, 3) ?? text;
+    };
+    const tree: Node = {
+      size: 5,
+      children: [{ size: 2, children: [] }, { size: 4, children: [{ size: 1, children: [] }] }],
+    };
+    const shown = show("abcdef", tree);
+    if (shown !== "${expected}") throw new Error(shown);
+  `;
+
+  it("runs local functions that call each other through an array method's callback", async () => {
+    expect((await checkModel(getShownSource("ab,a"))).failure).toBeUndefined();
+  });
+
+  it("fails where local functions that call each other through a callback give another value", async () => {
+    expect((await checkModel(getShownSource("ab,b"))).failure?.message).toContain('"ab,a"');
+  });
+
+  const getTotalSource = (expected: number) => `
+    interface Node { size: number; children: Node[] }
+    const total = (tree: Node) => {
+      const holder = { extra: 0 };
+      const sizeOf = (node: Node): number =>
+        node.size +
+        holder.extra +
+        node.children.map((child) => sizeOf(child)).reduce((sum, size) => sum + size, 0);
+      holder.extra = 1;
+      return sizeOf(tree);
+    };
+    const result = total({ size: 2, children: [{ size: 3, children: [] }] });
+    if (result !== ${expected}) throw new Error(\`\${result}\`);
+  `;
+
+  it("reads the objects that a local function that calls itself reads where it runs", async () => {
+    expect((await checkModel(getTotalSource(7))).failure).toBeUndefined();
+  });
+
+  it("fails where a local function that calls itself reads objects that give another value", async () => {
+    expect((await checkModel(getTotalSource(6))).failure?.message).toContain('"7"');
+  });
+
   it("rejects catching a throw from a local function that calls itself", () => {
     expect(() =>
       compile(`
