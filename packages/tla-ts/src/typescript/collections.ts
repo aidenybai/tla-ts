@@ -637,14 +637,18 @@ export const translateArrayConstructor = (node: MethodCall, scope: Scope, contex
     node.arguments.length === 2 &&
     ts.isObjectLiteralExpression(options)
   ) {
-    const length = options.properties.find((property) => property.name?.getText() === "length");
-    if (length === undefined || !ts.isPropertyAssignment(length)) {
-      throw new TlaTypeScriptError("Array.from needs { length: n }", node);
-    }
+    const property = options.properties.find((inner) => inner.name?.getText() === "length");
+    const length =
+      property !== undefined && ts.isPropertyAssignment(property)
+        ? property.initializer
+        : property !== undefined && ts.isShorthandPropertyAssignment(property)
+          ? property.name
+          : undefined;
+    if (length === undefined) throw new TlaTypeScriptError("Array.from needs { length: n }", node);
     const position = context.names.getFresh("index");
     const inner = bindIndexed(callback, undefined, identifier(position), scope, context);
     return functionOf(
-      [bound(position, getIndices(length.initializer, "ToLength"))],
+      [bound(position, getIndices(length, "ToLength"))],
       translateCallback(callback, inner, context),
     );
   }
