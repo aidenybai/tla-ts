@@ -2139,6 +2139,19 @@ describe("values", () => {
     expect((await checkModel(getSource("3,8"))).failure?.message).toContain("outcomes 3,7");
   });
 
+  it("makes a regexp that a function returns each time the function runs", async () => {
+    const getSource = (expected: string) => `
+      const makeRegExp = () => /(?:)/;
+      const holder = { first: makeRegExp() };
+      const outcomes = [holder.first === makeRegExp(), makeRegExp().source].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("false,(?:)"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("true,(?:)"))).failure?.message).toContain(
+      "outcomes false,(?:)",
+    );
+  });
+
   it("assigns a catch's parameter as it does a let", async () => {
     const getSource = (expected: string) => `
       let seen = "";

@@ -7807,7 +7807,13 @@ const rejectCatchRedeclaration = (declaration: ts.VariableDeclaration) => {
 // Whether a function, or one it calls, makes or reads objects, which only statements can do.
 const usesHeap = (node: ts.Node, context: Context, visited: Set<ts.Node>): boolean => {
   if (ts.isTypeNode(node)) return false;
-  if (ts.isObjectLiteralExpression(node) || isAllocation(node, context)) return true;
+  if (
+    ts.isObjectLiteralExpression(node) ||
+    ts.isRegularExpressionLiteral(node) ||
+    isAllocation(node, context)
+  ) {
+    return true;
+  }
   const isRead =
     (ts.isIdentifier(node) && getKind(node, context) === "object") ||
     ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
