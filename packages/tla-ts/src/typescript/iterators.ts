@@ -102,24 +102,47 @@ export const getIteratorFunctions = (pattern: ts.Node, context: Context) => [
   ...getAccessorFunctions(pattern, "get", context),
 ];
 
-// A pattern whose elements only bind names, which nothing outside the function that holds the
-// pattern reads. Binding them can't throw or run code, and the functions of the iterator can't see
-// them, so the pattern can take all its values before it binds them, which JavaScript interleaves.
-const isPlainPattern = (pattern: ts.ArrayBindingPattern, context: Context) => {
-  const owner = ts.findAncestor(pattern, ts.isFunctionLike);
-  const names = pattern.elements.flatMap((element) =>
-    ts.isBindingElement(element) ? [element.name] : [],
+// The name that an element of an array pattern binds or assigns, without a default or a nested
+// pattern.
+const getPlainName = (element: ts.Node) => {
+  const target = ts.isBindingElement(element)
+    ? element.initializer === undefined
+      ? element.name
+      : undefined
+    : ts.isSpreadElement(element)
+      ? element.expression
+      : element;
+  return target !== undefined && ts.isIdentifier(target) ? target : undefined;
+};
+
+// A variable that an assignment can change, which a var, a let, or a parameter declares.
+const isWritable = (symbol: ts.Symbol) => {
+  const declaration = symbol.valueDeclaration;
+  return (
+    declaration !== undefined &&
+    (ts.isParameter(declaration) ||
+      (ts.isVariableDeclaration(declaration) &&
+        (ts.getCombinedNodeFlags(declaration) & (ts.NodeFlags.Const | ts.NodeFlags.Using)) === 0))
   );
+};
+
+// A pattern whose elements only bind or assign names, which nothing outside the function that holds
+// the pattern reads. Binding or assigning them can't throw or run code, and the functions of the
+// iterator can't see them, so the pattern can take all its values before it binds them, which
+// JavaScript interleaves.
+const isPlainPattern = (
+  pattern: ts.ArrayBindingPattern | ts.ArrayLiteralExpression,
+  context: Context,
+) => {
+  const owner = ts.findAncestor(pattern, ts.isFunctionLike);
+  const elements: readonly ts.Node[] = pattern.elements;
+  const names = elements.filter((element) => !ts.isOmittedExpression(element)).map(getPlainName);
   const symbols = names.flatMap((name) =>
-    ts.isIdentifier(name) ? (getSymbol(name, context.checker) ?? []) : [],
+    name === undefined ? [] : (getSymbol(name, context.checker) ?? []),
   );
   return (
-    pattern.elements.every(
-      (element) =>
-        ts.isOmittedExpression(element) ||
-        (ts.isIdentifier(element.name) && element.initializer === undefined),
-    ) &&
     symbols.length === names.length &&
+    (ts.isArrayBindingPattern(pattern) || symbols.every(isWritable)) &&
     findNodes(pattern.getSourceFile(), ts.isIdentifier).every((name) => {
       const symbol = getSymbol(name, context.checker);
       return (
@@ -135,7 +158,7 @@ const isPlainPattern = (pattern: ts.ArrayBindingPattern, context: Context) => {
 // Symbol.iterator method, then next for each element until the iterator is done, and closes the
 // iterator through its return where the pattern ends first.
 export const takeFromIterator = (
-  pattern: ts.ArrayBindingPattern,
+  pattern: ts.ArrayBindingPattern | ts.ArrayLiteralExpression,
   iterable: Expression,
   path: Path,
   context: Context,
@@ -289,7 +312,7 @@ export const closeIterator = (
   );
 
 const takeAll = (
-  pattern: ts.ArrayBindingPattern,
+  pattern: ts.ArrayBindingPattern | ts.ArrayLiteralExpression,
   iterable: Expression,
   path: Path,
   context: Context,
@@ -297,9 +320,11 @@ const takeAll = (
   throwWith: (path: Path) => Formula,
   continueWith: (path: Path, values: Expression) => Formula,
 ) => {
-  const elements = pattern.elements;
+  const elements: readonly ts.Node[] = pattern.elements;
   const restAt = elements.findIndex(
-    (element) => ts.isBindingElement(element) && element.dotDotDotToken !== undefined,
+    (element) =>
+      ts.isSpreadElement(element) ||
+      (ts.isBindingElement(element) && element.dotDotDotToken !== undefined),
   );
   const count = restAt === -1 ? elements.length : restAt;
   const finish = (current: Path, values: Expression[]) =>

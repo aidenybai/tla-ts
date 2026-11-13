@@ -13129,6 +13129,82 @@ describe("errors", () => {
     expect((await checkModel(getSource(11))).failure?.message).toContain("loop");
   });
 
+  it("assigns an array pattern through the iterator that an object's method makes", async () => {
+    const getSource = (closedAfter: number) => `
+      let steps = 0;
+      let closed = 0;
+      const read = (): number => closed;
+      const iterable = {
+        [Symbol.iterator]: function () {
+          return {
+            next: function () {
+              steps += 1;
+              return { value: steps * 10, done: steps > 3 };
+            },
+            return: function () {
+              closed += 1;
+              return { value: 0, done: true };
+            },
+          };
+        },
+      };
+      let first = 0;
+      [first] = iterable;
+      if (first !== 10 || read() !== ${closedAfter}) throw new Error("close");
+    `;
+    expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    expect((await checkModel(getSource(0))).failure?.message).toContain("close");
+  });
+
+  it("assigns a rest element the values that an object's iterator gives", async () => {
+    const getSource = (last: number) => `
+      let steps = 0;
+      const iterable = {
+        [Symbol.iterator]: function () {
+          return {
+            next: function () {
+              steps += 1;
+              return { value: steps * 10, done: steps > 3 };
+            },
+          };
+        },
+      };
+      let first = 0;
+      let rest: number[] = [];
+      [first, ...rest] = iterable;
+      if (first !== 10 || rest.length !== 2 || rest[1] !== ${last}) throw new Error("rest");
+    `;
+    expect((await checkModel(getSource(30))).failure).toBeUndefined();
+    expect((await checkModel(getSource(20))).failure?.message).toContain("rest");
+  });
+
+  it("assigns a for-of's array pattern through an object's iterator", async () => {
+    const getSource = (closedAfter: number) => `
+      let closed = 0;
+      const read = (): number => closed;
+      const iterable = {
+        [Symbol.iterator]: function () {
+          return {
+            next: function () {
+              return { value: 10, done: false };
+            },
+            return: function () {
+              closed += 1;
+              return { value: 0, done: true };
+            },
+          };
+        },
+      };
+      let first = 0;
+      for ([first] of [iterable]) {
+        first += 1;
+      }
+      if (first !== 11 || read() !== ${closedAfter}) throw new Error("loop");
+    `;
+    expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    expect((await checkModel(getSource(0))).failure?.message).toContain("loop");
+  });
+
   it("throws the TypeErrors of an iterator that breaks the protocol", async () => {
     const result = await checkModel(`
       let log = "";

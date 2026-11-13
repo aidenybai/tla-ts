@@ -1286,7 +1286,11 @@ const assignPatternWith = (
   context: Context,
   frame: Frame,
   continueWith: (path: Path) => Formula,
-) =>
+): Formula =>
+  (ts.isArrayLiteralExpression(target) &&
+    takeFromIterator(target, value, path, context, frame, (after, values) =>
+      assignPatternWith(site, target, source, values, after, context, frame, continueWith),
+    )) ||
   assignPattern(
     target,
     source,
@@ -7939,6 +7943,24 @@ const translateExpressionStatement = (
       ),
     );
   }
+  // An array pattern destructures an object that a script declares through its iterator.
+  if (
+    ts.isBinaryExpression(expression) &&
+    expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isArrayLiteralExpression(expression.left) &&
+    isIteratedPattern(expression.left, context)
+  ) {
+    return assignPatternWith(
+      expression,
+      expression.left,
+      expression.right,
+      translateExpression(expression.right, path.scope, context),
+      path,
+      context,
+      frame,
+      continueWith,
+    );
+  }
   // Deleting a property that can't change throws a TypeError, as scripts run in strict mode.
   if (ts.isDeleteExpression(expression)) {
     const deleted = getHeapWrite(expression.expression, path, context);
@@ -9267,6 +9289,9 @@ const getEffects = (
   // runs the functions of the object's iterator.
   const isIterated =
     (ts.isArrayBindingPattern(node) && isIteratedPattern(node, context)) ||
+    (written !== undefined &&
+      ts.isArrayLiteralExpression(written) &&
+      isIteratedPattern(written, context)) ||
     ((ts.isSpreadElement(node) ||
       (ts.isYieldExpression(node) && node.asteriskToken !== undefined)) &&
       node.expression !== undefined &&
