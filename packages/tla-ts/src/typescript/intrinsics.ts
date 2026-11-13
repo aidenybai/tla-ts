@@ -24,6 +24,7 @@ import { BUILT_INS } from "./built-ins";
 import {
   apply,
   boolean,
+  field,
   functionFrom,
   identifier,
   ifExpression,
@@ -198,6 +199,11 @@ const isRead = (node: ts.Expression): boolean => {
     ts.isSpreadAssignment(outer)
   );
 };
+
+interface RegExpTexts {
+  pattern: string;
+  flags: string;
+}
 
 interface NamedGenerator {
   name: ts.Identifier;
@@ -1638,15 +1644,15 @@ const translateRegExp = (
 const ELEMENT_METHODS = new Set(["map", "forEach", "flatMap", "filter", "some", "every", "find"]);
 
 // The values that an expression may take that tla-ts finds as it compiles: the strings that
-// literals, String.raw and templates write and that + joins, and the regexps that literals write,
-// through variables that a script never assigns, the elements that an array method passes its
-// callback or a for-of over an array literal takes, and the arguments that each call in its file
-// passes a function. A run checks what it makes against them.
+// literals, String.raw and templates write and that + joins, and the regexps that literals and
+// RegExp make, through variables that a script never assigns, the elements that an array method
+// passes its callback or a for-of over an array literal takes, and the arguments that each call in
+// its file passes a function. A run checks what it makes against them.
 const getConstantValues = (
   node: ts.Expression,
   context: Context,
   visited: ReadonlySet<ts.Node>,
-): (string | ts.RegularExpressionLiteral)[] | undefined => {
+): (string | RegExpTexts)[] | undefined => {
   const expression = skipCasts(node);
   const getStrings = (inner: ts.Expression) => {
     const values = getConstantValues(inner, context, visited);
@@ -1662,7 +1668,12 @@ const getConstantValues = (
       [""],
     );
   if (ts.isStringLiteralLike(expression)) return [expression.text];
-  if (ts.isRegularExpressionLiteral(expression)) return [expression];
+  if (ts.isRegularExpressionLiteral(expression)) {
+    const end = expression.text.lastIndexOf("/");
+    return [{ pattern: expression.text.slice(1, end), flags: expression.text.slice(end + 1) }];
+  }
+  const made = getRegExpTexts(expression, context, visited);
+  if (made !== undefined) return made;
   if (ts.isTemplateExpression(expression)) {
     return join([
       [expression.head.text],
@@ -1700,14 +1711,13 @@ const getConstantValues = (
     ["source", "flags"].includes(expression.name.text)
   ) {
     const values = getConstantValues(expression.expression, context, visited);
-    const regexps = values?.filter((value) => typeof value !== "string");
-    return regexps === undefined || regexps.length < (values?.length ?? 0)
-      ? undefined
-      : regexps.map((regexp) => {
-          const end = regexp.text.lastIndexOf("/");
-          const made = new RegExp(regexp.text.slice(1, end), regexp.text.slice(end + 1));
-          return expression.name.text === "source" ? made.source : made.flags;
-        });
+    const regexps = values?.flatMap((value) => {
+      const valid = typeof value === "string" ? undefined : getValidRegExp(value);
+      return valid === undefined
+        ? []
+        : [expression.name.text === "source" ? valid.source : valid.flags];
+    });
+    return regexps === undefined || regexps.length < (values?.length ?? 0) ? undefined : regexps;
   }
   const called = getCalledFunction(expression);
   if (called !== undefined) {
@@ -1817,9 +1827,13 @@ const getCalledFunction = (node: ts.Expression) => {
 };
 
 // The patterns and flags that new RegExp or RegExp may make, where its arguments are strings that
-// tla-ts finds as it compiles, or a regexp literal and the string literal of new flags, without
-// which new RegExp copies its flags and RegExp gives the literal itself.
-const getRegExpTexts = (node: ts.Node, context: Context) => {
+// tla-ts finds as it compiles, or the one regexp that a pattern may be and literal flags, without
+// which new RegExp copies the regexp's flags and RegExp gives the regexp itself.
+const getRegExpTexts = (
+  node: ts.Node,
+  context: Context,
+  visited: ReadonlySet<ts.Node> = new Set(),
+): RegExpTexts[] | undefined => {
   if (
     (!ts.isNewExpression(node) && !ts.isCallExpression(node)) ||
     getBuiltIn(node.expression, context) !== "RegExp"
@@ -1827,25 +1841,25 @@ const getRegExpTexts = (node: ts.Node, context: Context) => {
     return undefined;
   }
   const values = node.arguments ?? [];
-  const literal = values[0];
-  if (literal !== undefined && ts.isRegularExpressionLiteral(literal)) {
-    const end = literal.text.lastIndexOf("/");
+  const regexps = values[0] && getRegExpValues(values[0], context, visited);
+  if (regexps !== undefined) {
+    const [regexp] = regexps;
     const flags = values[1];
+    const isCopied = flags === undefined || isUndefinedValue(flags, context);
+    const given =
+      flags && (ts.isStringLiteralLike(flags) ? flags.text : getPrimitiveText(flags, context));
     return values.length > 2 ||
-      (flags === undefined && ts.isCallExpression(node)) ||
-      (flags !== undefined && !ts.isStringLiteralLike(flags))
+      regexp === undefined ||
+      regexps.some((other) => other.pattern !== regexp.pattern || other.flags !== regexp.flags) ||
+      (isCopied && ts.isCallExpression(node)) ||
+      (!isCopied && given === undefined)
       ? undefined
-      : [
-          {
-            pattern: literal.text.slice(1, end),
-            flags: flags?.text ?? literal.text.slice(end + 1),
-          },
-        ];
+      : [{ pattern: regexp.pattern, flags: isCopied ? regexp.flags : (given ?? "") }];
   }
   const texts = values.map((value) => {
     const primitive = getPrimitiveText(value, context);
     if (primitive !== undefined) return [primitive];
-    const constants = getConstantValues(value, context, new Set());
+    const constants = getConstantValues(value, context, visited);
     const strings = constants?.filter((constant) => typeof constant === "string");
     return getKind(value, context) === "string" && strings?.length === constants?.length
       ? strings
@@ -1858,27 +1872,39 @@ const getRegExpTexts = (node: ts.Node, context: Context) => {
     : patterns.flatMap((pattern) => flags.map((flag) => ({ pattern, flags: flag })));
 };
 
-// The text that RegExp takes from a primitive literal other than a string: none from undefined, and
-// what ToString gives from the others.
-const getPrimitiveText = (node: ts.Expression, context: Context) => {
+// The regexps that an expression may be, where tla-ts finds them all as it compiles.
+const getRegExpValues = (node: ts.Expression, context: Context, visited: ReadonlySet<ts.Node>) => {
+  const values = getConstantValues(node, context, visited);
+  const regexps = values?.filter((value) => typeof value !== "string");
+  return regexps?.length === values?.length ? regexps : undefined;
+};
+
+// Whether an expression is undefined without effects: undefined itself, void of a literal, or the
+// call of a function that runs in place with an empty body.
+const isUndefinedValue = (node: ts.Expression, context: Context) => {
   const inner = skipCasts(node);
   const body = getCalledFunction(inner)?.body;
-  if (
+  return (
     (ts.isIdentifier(inner) &&
       inner.text === "undefined" &&
       (context.checker.getTypeAtLocation(inner).flags & ts.TypeFlags.Undefined) !== 0) ||
     (ts.isVoidExpression(inner) && ts.isLiteralExpression(inner.expression)) ||
     (body !== undefined && ts.isBlock(body) && body.statements.length === 0)
-  ) {
-    return "";
-  }
+  );
+};
+
+// The text that RegExp takes from a primitive literal other than a string: none from undefined, and
+// what ToString gives from the others.
+const getPrimitiveText = (node: ts.Expression, context: Context) => {
+  const inner = skipCasts(node);
+  if (isUndefinedValue(inner, context)) return "";
   if (inner.kind === ts.SyntaxKind.TrueKeyword) return "true";
   if (inner.kind === ts.SyntaxKind.FalseKeyword) return "false";
   if (inner.kind === ts.SyntaxKind.NullKeyword) return "null";
   return ts.isNumericLiteral(inner) ? String(Number(inner.text)) : undefined;
 };
 
-const getValidRegExp = (texts: { pattern: string; flags: string }) => {
+const getValidRegExp = (texts: RegExpTexts) => {
   try {
     return new RegExp(texts.pattern, texts.flags);
   } catch {
@@ -1922,7 +1948,10 @@ export const translateRegExpValue = (node: ts.Node, scope: Scope, context: Conte
     made !== undefined &&
     (ts.isNewExpression(node) || ts.isCallExpression(node)) &&
     !(node.arguments ?? []).every(
-      (argument) => ts.isStringLiteralLike(argument) || ts.isRegularExpressionLiteral(argument),
+      (argument) =>
+        ts.isStringLiteralLike(argument) ||
+        getPrimitiveText(argument, context) !== undefined ||
+        getRegExpValues(argument, context, new Set()) !== undefined,
     )
   ) {
     const values = (node.arguments ?? []).map((argument) => {
@@ -1954,8 +1983,44 @@ export const translateRegExpValue = (node: ts.Node, scope: Scope, context: Conte
   const literal = ts.isRegularExpressionLiteral(node)
     ? undefined
     : (made?.[0] ?? getStringRegExp(node));
+  const copied = (ts.isNewExpression(node) || ts.isCallExpression(node)) && node.arguments?.[0];
   if (literal !== undefined) {
-    return translateRegExp(literal.pattern, literal.flags, literal.source, node, context);
+    const translated = translateRegExp(
+      literal.pattern,
+      literal.flags,
+      literal.source,
+      node,
+      context,
+    );
+    // With objects, new RegExp reads IsRegExp of the regexp that it copies, which tla-ts follows
+    // only while a script hasn't changed the regexp.
+    return copied &&
+      !ts.isRegularExpressionLiteral(skipCasts(copied)) &&
+      getRegExpValues(copied, context, new Set()) !== undefined &&
+      context.heap !== undefined
+      ? ifExpression(
+          apply("=", [
+            field(
+              useJavaScript(
+                "RegExpOf",
+                [
+                  getHeap(scope, node, context),
+                  translateExpression(copied, scope, context),
+                  set([string("RegExp.prototype")]),
+                ],
+                context,
+              ),
+              "source",
+            ),
+            string(literal.source),
+          ]),
+          translated,
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't make a regexp of a pattern that it didn't find as it compiled"),
+          ]),
+        )
+      : translated;
   }
   if (!ts.isRegularExpressionLiteral(node))
     throw new TlaTypeScriptError("Unsupported regexp", node);

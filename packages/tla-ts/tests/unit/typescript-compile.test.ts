@@ -20723,6 +20723,34 @@ describe("regular expressions", () => {
     await expect(checkModel(getSource("i"))).rejects.toThrow("copied");
   });
 
+  it("make a regexp of a regexp that a variable holds, with its flags or new ones", async () => {
+    const getSource = (expected: string) => `
+      const made = RegExp("a.", "im");
+      const literal = /b+/m;
+      const copies = [new RegExp(made), new RegExp(literal, void 0), new RegExp(literal, "y")];
+      const texts = copies.map((copy) => copy.source + "/" + copy.flags);
+      const result = [...texts, copies[0].test("AX")].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("a./im,b+/m,b+/y,true"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("a./,b+/m,b+/y,true"))).rejects.toThrow("a./im,b+/m");
+  });
+
+  it("make a regexp of a regexp on the heap, until a script changes it", async () => {
+    const getSource = (change: string) => `
+      const holder: { tag?: string } = {};
+      holder.tag = "made";
+      const literal = /b+/m;
+      ${change}
+      const copy = new RegExp(literal, "g");
+      if (copy.source !== "b+" || copy.flags !== "g" || !copy.test("abb")) throw new Error("copy");
+    `;
+    expect((await checkModel(getSource(""))).failure).toBeUndefined();
+    expect((await checkModel(getSource("literal.exec = () => null;"))).failure?.message).toContain(
+      "tla-ts can't call a regexp's method where a script changed what it reads",
+    );
+  });
+
   it("drop a regexp that a statement makes of literals", async () => {
     const getSource = (count: number) => `
       /(?i-s:)/;
