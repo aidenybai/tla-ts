@@ -2075,6 +2075,47 @@ describe("values", () => {
     ).toThrow("tla-ts can't tell whether this error's message is undefined");
   });
 
+  it("makes the objects of what an if or a switch tests", async () => {
+    const getSource = (expected: string) => `
+      let count: number = 0;
+      if (!new Boolean(false)) count += 1;
+      if (new Boolean(false) === new Boolean(false)) count += 10;
+      switch (typeof new Boolean(true)) {
+        case "object":
+          count += 100;
+      }
+      if (String(count) !== "${expected}") throw new Error("outcomes " + count);
+    `;
+    expect((await checkModel(getSource("100"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("110"))).failure?.message).toContain("outcomes 100");
+  });
+
+  it("stops where a skipped operand makes an object that runs code", async () => {
+    const getSource = (operand: string) => `
+      let count: number = 0;
+      const source = {
+        get value(): number {
+          count += 1;
+          return 1;
+        },
+      };
+      const bump = (): number => {
+        count += 10;
+        return 1;
+      };
+      if ((${operand}) === undefined) count += 100;
+      if (count !== 0) throw new Error("outcomes " + count);
+    `;
+    expect((await checkModel(getSource("false && { ...source }"))).failure?.message).toContain(
+      "tla-ts can't call getters",
+    );
+    for (const operand of ["true || { x: bump() }", "true ? 1 : new Boolean(bump())"]) {
+      expect(() => compile(getSource(operand))).toThrow(
+        "Make objects only where a statement always runs",
+      );
+    }
+  });
+
   it("assigns a catch's parameter as it does a let", async () => {
     const getSource = (expected: string) => `
       let seen = "";

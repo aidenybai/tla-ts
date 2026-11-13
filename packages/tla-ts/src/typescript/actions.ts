@@ -11720,14 +11720,17 @@ export const translateStatements = (
       continueWith,
     );
   }
+  // An if or a switch makes the objects of what it tests first, as it always evaluates that.
   if (ts.isIfStatement(statement)) {
-    return translateJoined(statement, path, context, continueWith, (next) =>
-      translateIf(
-        statement,
-        path.scope,
-        context,
-        (branch) => translateStatements([branch], path, context, { ...frame, next }),
-        () => next(path),
+    return allocate(statement.expression, path, context, (allocated) =>
+      translateJoined(statement, allocated, context, continueWith, (next) =>
+        translateIf(
+          statement,
+          allocated.scope,
+          context,
+          (branch) => translateStatements([branch], allocated, context, { ...frame, next }),
+          () => next(allocated),
+        ),
       ),
     );
   }
@@ -11800,13 +11803,16 @@ export const translateStatements = (
     );
   }
   if (ts.isSwitchStatement(statement)) {
-    return translateJoined(statement, path, context, continueWith, (next) =>
-      translateSwitch(
-        statement,
-        path.scope,
-        context,
-        (clause) => translateStatements(clause, path, context, { ...frame, next, breakTo: next }),
-        () => next(path),
+    return allocate(statement.expression, path, context, (allocated) =>
+      translateJoined(statement, allocated, context, continueWith, (next) =>
+        translateSwitch(
+          statement,
+          allocated.scope,
+          context,
+          (clause) =>
+            translateStatements(clause, allocated, context, { ...frame, next, breakTo: next }),
+          () => next(allocated),
+        ),
       ),
     );
   }
