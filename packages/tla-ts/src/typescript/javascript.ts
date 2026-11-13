@@ -37,7 +37,7 @@ export const JAVASCRIPT_MODULE = `------------------------------ MODULE JavaScri
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
 CONSTANTS Undefined, Null, Ref, Big, BuiltIns, ConstantFunctions, Symbols, Fractions,
-          Characters, NaN, Infinity, NegativeInfinity, NegativeZero
+          Characters, Cases, NaN, Infinity, NegativeInfinity, NegativeZero
 
 LOCAL Digits == {"-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
 
@@ -2117,26 +2117,6 @@ DecodeURI(text, reserved) ==
          IN  (IF character \\in reserved THEN SubSeq(text, 1, 3) ELSE character)
                \\o DecodeURI(SubSeq(text, 4, Len(text)), reserved)
 
-LOCAL Lowercase == "abcdefghijklmnopqrstuvwxyz"
-
-LOCAL Uppercase == "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-
-\\* A character in another case, where from and to list the letters of each case in order.
-LOCAL Recased(character, from, to) ==
-  CASE character \\in CharactersOf(from) ->
-         LET position == CHOOSE index \\in 1..26 : SubSeq(from, index, index) = character
-         IN  SubSeq(to, position, position)
-    [] character \\in DOMAIN AsciiCodes -> character
-    [] OTHER -> Assert(FALSE, "tla-ts can't change the case of a character outside ASCII")
-
-RECURSIVE RecasedText(_, _, _)
-RecasedText(text, from, to) ==
-  IF text = "" THEN "" ELSE Recased(SubSeq(text, 1, 1), from, to) \\o RecasedText(Tail(text), from, to)
-
-ToLowerCase(value) == RecasedText(Text(value), Uppercase, Lowercase)
-
-ToUpperCase(value) == RecasedText(Text(value), Lowercase, Uppercase)
-
 \\* JavaScript's < of two strings, which compares the codes of their first different characters.
 RECURSIVE StringLessThan(_, _)
 StringLessThan(left, right) ==
@@ -2165,6 +2145,40 @@ StringCharacters(value) ==
   IF IsAscii(value)
   THEN [position \\in 1..Len(value) |-> SubSeq(value, position, position)]
   ELSE CodePoints(value)
+
+LOCAL Lowercase == "abcdefghijklmnopqrstuvwxyz"
+
+LOCAL Uppercase == "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+\\* The cases of the code points outside ASCII whose case changes, by code point.
+LOCAL CaseChanges ==
+  LET changes == {Cases[position] : position \\in DOMAIN Cases}
+  IN  [point \\in {change.point : change \\in changes} |->
+         CHOOSE change \\in changes : change.point = point]
+
+\\* A code point in upper or lower case. The compiler lists each code point that the code units it
+\\* knows make and whose case changes, so any other such code point keeps its case. A capital sigma
+\\* lowers to a final sigma at the end of a word.
+LOCAL RecasedPoint(point, isUpper) ==
+  LET from == IF isUpper THEN Lowercase ELSE Uppercase
+      to == IF isUpper THEN Uppercase ELSE Lowercase
+  IN  CASE ~isUpper /\\ point = ${formatString("\u03a3")} ->
+             Assert(FALSE, "tla-ts can't lower the case of a capital sigma")
+        [] point \\in DOMAIN CaseChanges ->
+             IF isUpper THEN CaseChanges[point].upper ELSE CaseChanges[point].lower
+        [] point \\in CharactersOf(from) ->
+             LET position == CHOOSE index \\in 1..26 : SubSeq(from, index, index) = point
+             IN  SubSeq(to, position, position)
+        [] \\A character \\in CharactersOf(point) : character \\in DOMAIN CharacterCodes -> point
+        [] OTHER -> Assert(FALSE, "tla-ts can't change the case of a character outside ASCII")
+
+RECURSIVE RecasedPoints(_, _)
+RecasedPoints(points, isUpper) ==
+  IF points = <<>> THEN "" ELSE RecasedPoint(Head(points), isUpper) \\o RecasedPoints(Tail(points), isUpper)
+
+ToLowerCase(value) == RecasedPoints(StringCharacters(Text(value)), FALSE)
+
+ToUpperCase(value) == RecasedPoints(StringCharacters(Text(value)), TRUE)
 
 \\* A filler repeated and cut to a length.
 RECURSIVE FillTo(_, _)

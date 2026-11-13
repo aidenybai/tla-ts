@@ -474,13 +474,37 @@ export const compile = (
       ts.forEachChild(node, visit);
     };
     visit(sourceFile);
-    const codes = new Set(
-      texts.flatMap((text) =>
-        Array.from({ length: text.length }, (_, position) => text.charCodeAt(position)).filter(
-          (code) => code >= 128,
-        ),
-      ),
-    );
+    const getCodes = (text: string) =>
+      Array.from({ length: text.length }, (_, position) => text.charCodeAt(position)).filter(
+        (code) => code >= 128,
+      );
+    // The code points that the code units make, where a high surrogate before a low one makes one.
+    const getPoints = (units: Set<number>) => {
+      const all = [...units];
+      const isHigh = (code: number) => code >= 0xd800 && code <= 0xdbff;
+      const isLow = (code: number) => code >= 0xdc00 && code <= 0xdfff;
+      return [
+        ...all
+          .filter((code) => !isHigh(code) && !isLow(code))
+          .map((code) => String.fromCharCode(code)),
+        ...all
+          .filter(isHigh)
+          .flatMap((high) => all.filter(isLow).map((low) => String.fromCharCode(high, low))),
+      ];
+    };
+    // The code units that the script's text holds, with those of each case of the code points they
+    // make, as a script may change the case of what it reads.
+    const getClosed = (units: Set<number>): Set<number> => {
+      const closed = new Set([
+        ...units,
+        ...getPoints(units).flatMap((point) => [
+          ...getCodes(point.toUpperCase()),
+          ...getCodes(point.toLowerCase()),
+        ]),
+      ]);
+      return closed.size === units.size ? units : getClosed(closed);
+    };
+    const codes = getClosed(new Set(texts.flatMap(getCodes)));
     context.output.push(
       define(
         "UsedBuiltIns",
@@ -506,6 +530,22 @@ export const compile = (
                     ? identifier("NegativeZero")
                     : number(Math.round(fraction[0])),
                 },
+              ]),
+            ),
+        ),
+      ),
+      define(
+        "UsedCases",
+        [],
+        tuple(
+          getPoints(codes)
+            .filter((point) => point.toUpperCase() !== point || point.toLowerCase() !== point)
+            .sort()
+            .map((point) =>
+              record("Record", [
+                { name: "point", value: string(point) },
+                { name: "upper", value: string(point.toUpperCase()) },
+                { name: "lower", value: string(point.toLowerCase()) },
               ]),
             ),
         ),
