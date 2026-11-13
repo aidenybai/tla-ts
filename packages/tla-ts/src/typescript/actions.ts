@@ -2685,6 +2685,7 @@ export const translateCallStatement = (
         ? translateObjectValue(target.expression, path.scope, context)
         : getUndefined(context);
     if (dispatched.some(isAnyGenerator)) rejectGeneratorUse(expression, context);
+    context.prelude.add("Null");
     return dispatched.reduceRight(
       (otherwise, candidate) => {
         const candidateValue = getCandidateValue(candidate, context);
@@ -2758,11 +2759,16 @@ export const translateCallStatement = (
           otherwise,
         );
       },
-      leaf(
-        apply("Assert", [
-          boolean(false),
-          string("tla-ts can't tell which function this call runs"),
-        ]),
+      // Calling undefined or null throws a TypeError.
+      ifThenElse(
+        apply("\\in", [value, set([getUndefined(context), identifier("Null")])]),
+        throwTypeError(path, expression, context, frame),
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't tell which function this call runs"),
+          ]),
+        ),
       ),
     );
   }
@@ -3025,7 +3031,8 @@ export const bindCall = (
     [...argumentNodes, ...parameters.flatMap((parameter) => parameter.initializer ?? [])],
     path,
     context,
-    frame,
+    // A default that may call the function again runs a call that can't end.
+    { ...frame, inlining: new Set([...frame.inlining, callee]) },
     (after) => bindCall(node, callee, argumentNodes, receiver, after, context, frame, continueWith),
   );
   if (defaulted !== undefined) return defaulted;
