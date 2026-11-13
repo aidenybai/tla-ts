@@ -47,7 +47,6 @@ describe("parseSmtlib builtin operators", () => {
     ["(ite 1 2 3)", "ite"],
     ["(= (mod x) 1)", "mod"],
     ["(= (abs x x) 1)", "abs"],
-    ["(= (f x) 1)", "f"],
     ["(and 1 p)", "and"],
   ])("rejects %s as an ill-sorted application of %s", (formula, operator) => {
     expect(() => decideAssertion(formula)).toThrow(
@@ -58,9 +57,18 @@ describe("parseSmtlib builtin operators", () => {
     );
   });
 
-  it("rejects an undeclared function", () => {
+  it("rejects a declared function applied to the wrong sorts as Z3 does", () => {
+    expect(() => decideAssertion("(= (f x) 1)")).toThrow(
+      expect.objectContaining({
+        name: "SmtParseError",
+        message: "unknown constant f (Int) \ndeclared: (declare-fun f (Int Real) Int) ",
+      }),
+    );
+  });
+
+  it("rejects an undeclared function as Z3 does", () => {
     expect(() => decideAssertion("(nope x)")).toThrow(
-      expect.objectContaining({ name: "SmtParseError", message: "unknown function nope" }),
+      expect.objectContaining({ name: "SmtParseError", message: "unknown constant nope (Int) " }),
     );
   });
 });
