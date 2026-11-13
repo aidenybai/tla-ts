@@ -8223,7 +8223,8 @@ const usesHeap = (node: ts.Node, context: Context, visited: Set<ts.Node>): boole
   if (
     ts.isObjectLiteralExpression(node) ||
     ts.isRegularExpressionLiteral(node) ||
-    isAllocation(node, context)
+    isAllocation(node, context) ||
+    isClosure(node, context)
   ) {
     return true;
   }
@@ -8302,7 +8303,8 @@ const getDispatched = (
   const assigned = symbol && functions.get(symbol);
   if (
     context.heap === undefined ||
-    declarations.length === 0 ||
+    // The function that a call gives may be any of them.
+    (declarations.length === 0 && !ts.isCallExpression(callee)) ||
     declarations.some((declaration) => declaration.getSourceFile().isDeclarationFile) ||
     (assigned === undefined ? getCallee(callee, context) !== undefined : isPlain(assigned)) ||
     getCalledMethod(callee, context) !== undefined ||
@@ -11642,10 +11644,12 @@ const findLeadingCall = (
     ) {
       return { call: node, isBlocked: false };
     }
-    // A method of a call's result runs the call first.
+    // A method of a call's result, or the function that a call gives, runs the call first.
     const receiver = ts.isPropertyAccessExpression(node.expression)
       ? getCast(node.expression.expression)
-      : undefined;
+      : ts.isCallExpression(getCast(node.expression))
+        ? getCast(node.expression)
+        : undefined;
     // An array literal's method runs its elements first.
     const isListed =
       receiver !== undefined &&

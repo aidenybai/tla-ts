@@ -1366,8 +1366,8 @@ export type Closure = ts.FunctionExpression | ts.ArrowFunction;
 
 // A function that a function makes and that outlives the call that made it, which reads the locals
 // of that call from its environment: one that the function assigns to a name declared outside it,
-// an async one that it returns, or one that an object literal holds and that reads a local of the
-// function. An arrow reads the this of the function around it, which the environment doesn't
+// an async one that it returns, or one that an object literal holds, or an arrow that it returns,
+// that reads a local of the function. An arrow reads the this of the function around it, which the environment doesn't
 // hold, and an async closure that awaits would resume after its call returns.
 export const isClosure = (node: ts.Node, context: Context): node is Closure => {
   if (
@@ -1389,12 +1389,8 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure => {
   ) {
     return false;
   }
-  if (
-    ts.isPropertyAssignment(node.parent) &&
-    node.parent.initializer === node &&
-    ts.isObjectLiteralExpression(node.parent.parent)
-  ) {
-    return findNodes(node, ts.isIdentifier).some((name) => {
+  const isReadingLocals = () =>
+    findNodes(node, ts.isIdentifier).some((name) => {
       const declaration = getSymbol(name, context.checker)?.valueDeclaration;
       return (
         declaration !== undefined &&
@@ -1402,7 +1398,16 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure => {
         ts.findAncestor(declaration.parent, ts.isFunctionLike) === maker
       );
     });
+  if (
+    ts.isPropertyAssignment(node.parent) &&
+    node.parent.initializer === node &&
+    ts.isObjectLiteralExpression(node.parent.parent)
+  ) {
+    return isReadingLocals();
   }
+  const isReturned =
+    (ts.isReturnStatement(node.parent) && node.parent.expression === node) ||
+    (ts.isArrowFunction(node.parent) && node.parent.body === node);
   const assignment = node.parent;
   const declaration =
     ts.isBinaryExpression(assignment) &&
@@ -1414,6 +1419,7 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure => {
       : undefined;
   return (
     (isAsync && ts.isReturnStatement(node.parent) && node.parent.expression === node) ||
+    (ts.isArrowFunction(node) && isReturned && isReadingLocals()) ||
     (declaration !== undefined &&
       ts.findAncestor(declaration, (ancestor) => ancestor === maker) === undefined)
   );

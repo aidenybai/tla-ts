@@ -7962,21 +7962,6 @@ describe("errors", () => {
     ).toThrow("tla-ts can't pass this function to an array method from inside itself");
   });
 
-  it("stops where something besides its one call names a factory with variables", () => {
-    expect(() =>
-      compile(`
-        const createCount = (start: number) => {
-          let count = start;
-          return () => ++count;
-        };
-        const first = createCount(0);
-        const tools = { createCount };
-        const second = tools.createCount(10);
-        if (first() !== 1 || second() !== 11) throw new Error("count");
-      `),
-    ).toThrow("Unsupported expression");
-  });
-
   it("runs the calls in a template after a conditional that runs nothing", async () => {
     const getSource = (expected: string) => `
       interface Box { seen: number }
@@ -10912,6 +10897,51 @@ describe("errors", () => {
     expect((await checkModel(getSource("true,false,true,true"))).failure?.message).toContain(
       "true,false,true,false",
     );
+  });
+
+  it("calls the closures of a factory with variables that something besides its one call names", async () => {
+    const getSource = (expected: string) => `
+      const createCount = (start: number) => {
+        let count = start;
+        return () => ++count;
+      };
+      const first = createCount(0);
+      const tools = { createCount };
+      const second = tools.createCount(10);
+      const result = [first(), second(), first(), second()].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("1,11,2,12"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1,11,2,11"))).failure?.message).toContain("1,11,2,12");
+  });
+
+  it("calls the arrows that a function returns, each with its call's locals", async () => {
+    const getSource = (expected: string) => `
+      interface State {
+        count: number;
+      }
+      type Predicate = (state: State) => boolean;
+      interface Unit {
+        semantic: Predicate;
+      }
+      const isAbove = (limit: number) => (state: State) => state.count > limit;
+      const isBig = isAbove(2);
+      const getItem = (limit: number): Unit => ({ semantic: isAbove(limit) });
+      const low = getItem(0);
+      const high = getItem(5);
+      const check = (count: number) => isAbove(4)({ count }) || count === 0;
+      const result = [isBig({ count: 3 }), low.semantic({ count: 1 }), high.semantic({ count: 1 })];
+      const checked = [check(5), check(1), check(0)];
+      if ([...result, ...checked].join(",") !== "${expected}") {
+        throw new Error([...result, ...checked].join(","));
+      }
+    `;
+    expect(
+      (await checkModel(getSource("true,true,false,true,false,true"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("true,true,true,true,false,true"))).failure?.message,
+    ).toContain("true,true,false,true,false,true");
   });
 
   it("calls the closures that the objects a function makes hold, each with its call's locals", async () => {
