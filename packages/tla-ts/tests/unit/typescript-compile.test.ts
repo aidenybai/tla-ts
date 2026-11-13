@@ -18903,6 +18903,24 @@ describe("regular expressions", () => {
     await expect(checkModel(getSource("1a\\.b x\\x2c\\t\\xa0\\ud800"))).rejects.toThrow("x31a");
   });
 
+  it("add and remove the i flag for a modifier group's body", async () => {
+    const getSource = (text: string) => `
+      if (!/a(?i:b)c/.test("${text}") || /(?-i:a)b/i.test("Ab")) throw new Error("i");
+      if (!/(?i:(a)\\1)/.test("aA") || /(?i:(a))\\1/.test("aA")) throw new Error("backreference");
+    `;
+    expect((await checkModel(getSource("aBc"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("ABc"))).rejects.toThrow("i");
+  });
+
+  it("add and remove the m and s flags for a modifier group's body", async () => {
+    const getSource = (pattern: string) => `
+      if (!/(?m:es$)/.test("es\\ns") || /es$/.test("es\\ns")) throw new Error("m");
+      if (!${pattern}.test("\\n") || /(?-s:^.$)/s.test("\\n")) throw new Error("s");
+    `;
+    expect((await checkModel(getSource("/(?s:^.$)/"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("/^.$/"))).rejects.toThrow("s");
+  });
+
   it("run a String object's regexp methods on its string", async () => {
     const result = await checkModel(`
       const text = new String("hello");

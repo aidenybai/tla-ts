@@ -1041,9 +1041,11 @@ export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: C
 type CharacterSet = (code: number) => boolean;
 
 // A matcher of a pattern, as the spec's CompilePattern makes it, which matches code units.
+// The matchers of a pattern, where a set, an assertion, and a backreference keep the flags that a
+// modifier group gives them.
 type Matcher =
   // A set of characters, with the source of the atom that makes it where a term is one.
-  | { kind: "set"; set: CharacterSet; isInverted: boolean; source?: string }
+  | { kind: "set"; set: CharacterSet; isInverted: boolean; source?: string; flags?: string }
   | { kind: "sequence" | "alternation"; items: Matcher[] }
   | { kind: "group"; index: number; body: Matcher }
   | {
@@ -1055,10 +1057,10 @@ type Matcher =
       parenIndex: number;
       parenCount: number;
     }
-  | { kind: "start" | "end" }
-  | { kind: "boundary"; isInverted: boolean }
+  | { kind: "start" | "end"; flags: string }
+  | { kind: "boundary"; isInverted: boolean; flags: string }
   | { kind: "lookahead"; body: Matcher; isNegative: boolean }
-  | { kind: "backreference"; index: number };
+  | { kind: "backreference"; index: number; flags: string };
 
 const LINE_TERMINATORS = [0x0a, 0x0d, 0x2028, 0x2029];
 
@@ -1148,7 +1150,7 @@ const getGroups = (source: string) => {
 const parsePattern = (source: string, flags: string, node: ts.Node) => {
   const isUnicode = flags.includes("u");
   const groups = getGroups(source);
-  const cursor = { position: 0, captures: 0 };
+  const cursor = { position: 0, captures: 0, flags };
   const peek = (offset = 0) => source.charAt(cursor.position + offset);
   const isAt = (text: string) => source.startsWith(text, cursor.position);
   const getRest = () => source.slice(cursor.position);
@@ -1188,11 +1190,18 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
     const parenIndex = cursor.captures;
     if (peek() === "^" || peek() === "$") {
       cursor.position += 1;
-      return { kind: source.charAt(cursor.position - 1) === "^" ? "start" : "end" };
+      return {
+        kind: source.charAt(cursor.position - 1) === "^" ? "start" : "end",
+        flags: cursor.flags,
+      };
     }
     if (isAt("\\b") || isAt("\\B")) {
       cursor.position += 2;
-      return { kind: "boundary", isInverted: source.charAt(cursor.position - 1) === "B" };
+      return {
+        kind: "boundary",
+        isInverted: source.charAt(cursor.position - 1) === "B",
+        flags: cursor.flags,
+      };
     }
     if (isAt("(?<=") || isAt("(?<!")) {
       throw new TlaTypeScriptError("tla-ts can't match a lookbehind", node);
@@ -1200,7 +1209,9 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
     const start = cursor.position;
     const parsed = isAt("(?=") || isAt("(?!") ? parseLookahead() : parseAtom();
     const atom =
-      parsed.kind === "set" ? { ...parsed, source: source.slice(start, cursor.position) } : parsed;
+      parsed.kind === "set" && parsed.source === undefined
+        ? { ...parsed, source: source.slice(start, cursor.position), flags: cursor.flags }
+        : parsed;
     const bounds = parseBounds();
     if (bounds === undefined) return atom;
     const isGreedy = peek() !== "?";
@@ -1250,7 +1261,7 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
       cursor.position += 1;
       return {
         kind: "set",
-        set: flags.includes("s") ? () => true : (code) => !LINE_TERMINATORS.includes(code),
+        set: cursor.flags.includes("s") ? () => true : (code) => !LINE_TERMINATORS.includes(code),
         isInverted: false,
       };
     }
@@ -1261,9 +1272,16 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
     return getCharacter(readCode());
   };
   const parseGroup = (): Matcher => {
-    if (isAt("(?:")) {
-      cursor.position += 3;
+    // A group that adds or removes the i, m, or s flags for its body, which (?: does neither.
+    const modifiers = /^\(\?([ims]*)(?:-([ims]*))?:/.exec(getRest());
+    if (modifiers !== null) {
+      const outer = cursor.flags;
+      const removed = modifiers[2] ?? "";
+      cursor.position += modifiers[0].length;
+      cursor.flags =
+        [...outer].filter((flag) => !removed.includes(flag)).join("") + (modifiers[1] ?? "");
       const body = parseDisjunction();
+      cursor.flags = outer;
       close();
       return body;
     }
@@ -1297,16 +1315,16 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
     const decimal = /^[1-9]\d*/.exec(source.slice(cursor.position + 1))?.[0];
     if (decimal !== undefined && Number(decimal) <= groups.count) {
       cursor.position += 1 + decimal.length;
-      return { kind: "backreference", index: Number(decimal) };
+      return { kind: "backreference", index: Number(decimal), flags: cursor.flags };
     }
     if (escaped === "k" && (isUnicode || groups.names.size > 0)) {
       const name = /^\\k<([^>]*)>/.exec(getRest())?.[1];
       const index = name === undefined ? undefined : groups.names.get(name);
       if (name === undefined || index === undefined) throw invalid();
       cursor.position += name.length + 4;
-      return { kind: "backreference", index };
+      return { kind: "backreference", index, flags: cursor.flags };
     }
-    const classEscape = getClassEscape(escaped, isUnicode && flags.includes("i"));
+    const classEscape = getClassEscape(escaped, isUnicode && cursor.flags.includes("i"));
     if (classEscape !== undefined) {
       cursor.position += 2;
       return { kind: "set", set: classEscape, isInverted: false };
@@ -1358,7 +1376,7 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
     const character = peek();
     if (character === "") throw invalid();
     if (character !== "\\") return readCode();
-    const classEscape = getClassEscape(peek(1), isUnicode && flags.includes("i"));
+    const classEscape = getClassEscape(peek(1), isUnicode && cursor.flags.includes("i"));
     if (classEscape !== undefined) {
       cursor.position += 2;
       return classEscape;
@@ -1497,8 +1515,10 @@ const translateCharacters = (
 
 const translateMatcher = (matcher: Matcher, flags: string, characters: Set<number>): Expression => {
   const kind = { name: "kind", value: string(matcher.kind) };
-  if (matcher.kind === "set") return translateCharacters(matcher, flags, characters);
-  if (matcher.kind === "sequence" || matcher.kind === "alternation") {
+  if (matcher.kind === "set") {
+    return translateCharacters(matcher, matcher.flags ?? flags, characters);
+  }
+  if ("items" in matcher) {
     return record("Record", [
       kind,
       {
@@ -1526,7 +1546,11 @@ const translateMatcher = (matcher: Matcher, flags: string, characters: Set<numbe
     ]);
   }
   if (matcher.kind === "boundary") {
-    return record("Record", [kind, { name: "isInverted", value: boolean(matcher.isInverted) }]);
+    return record("Record", [
+      kind,
+      { name: "isInverted", value: boolean(matcher.isInverted) },
+      { name: "ignoreCase", value: boolean(matcher.flags.includes("i")) },
+    ]);
   }
   if (matcher.kind === "lookahead") {
     return record("Record", [
@@ -1536,9 +1560,16 @@ const translateMatcher = (matcher: Matcher, flags: string, characters: Set<numbe
     ]);
   }
   if (matcher.kind === "backreference") {
-    return record("Record", [kind, { name: "index", value: number(matcher.index) }]);
+    return record("Record", [
+      kind,
+      { name: "index", value: number(matcher.index) },
+      { name: "ignoreCase", value: boolean(matcher.flags.includes("i")) },
+    ]);
   }
-  return record("Record", [kind]);
+  return record("Record", [
+    kind,
+    { name: "multiline", value: boolean(matcher.flags.includes("m")) },
+  ]);
 };
 
 // The flags that a regular expression's flags getter gives, in its order, by the property that

@@ -2462,17 +2462,18 @@ RegExpStep(regexp, text, node, state, stack) ==
                     <<[kind |-> "close", index |-> node.index, start |-> state.end]>> \\o stack)
     [] node.kind = "repeat" -> RegExpRepeat(regexp, text, node, node.min, node.max, state, stack)
     [] node.kind = "start" ->
-         IF state.end = 0 \\/ (regexp.multiline /\\ CharacterAt(text, state.end - 1) \\in LineTerminators)
+         IF state.end = 0 \\/ (node.multiline /\\ CharacterAt(text, state.end - 1) \\in LineTerminators)
          THEN RegExpContinue(regexp, text, state, stack)
          ELSE RegExpFailure
     [] node.kind = "end" ->
-         IF state.end = Len(text) \\/ (regexp.multiline /\\ CharacterAt(text, state.end) \\in LineTerminators)
+         IF state.end = Len(text) \\/ (node.multiline /\\ CharacterAt(text, state.end) \\in LineTerminators)
          THEN RegExpContinue(regexp, text, state, stack)
          ELSE RegExpFailure
     [] node.kind = "boundary" ->
-         IF (IsWordAt(regexp, text, state.end - 1) # IsWordAt(regexp, text, state.end)) # node.isInverted
-         THEN RegExpContinue(regexp, text, state, stack)
-         ELSE RegExpFailure
+         LET flagged == [regexp EXCEPT !.ignoreCase = node.ignoreCase]
+         IN  IF (IsWordAt(flagged, text, state.end - 1) # IsWordAt(flagged, text, state.end)) # node.isInverted
+             THEN RegExpContinue(regexp, text, state, stack)
+             ELSE RegExpFailure
     [] node.kind = "lookahead" ->
          LET found == RegExpStep(regexp, text, node.body, state, <<>>)
          IN  CASE node.isNegative /\\ found.end # -1 -> RegExpFailure
@@ -2484,7 +2485,8 @@ RegExpStep(regexp, text, node, state, stack) ==
              length == IF captured = <<>> THEN 0 ELSE captured[2] - captured[1]
          IN  IF /\\ state.end + length <= Len(text)
                 /\\ \\A offset \\in 0..(length - 1) :
-                     IsSameCharacter(regexp, CharacterAt(text, captured[1] + offset),
+                     IsSameCharacter([regexp EXCEPT !.ignoreCase = node.ignoreCase],
+                                     CharacterAt(text, captured[1] + offset),
                                      CharacterAt(text, state.end + offset))
                 /\\ length = 0 \\/ CharacterWidth(regexp, text, state.end + length - 1) = 1
              THEN RegExpContinue(regexp, text, [state EXCEPT !.end = @ + length], stack)
