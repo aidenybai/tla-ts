@@ -4686,7 +4686,9 @@ export const runTypedSearch = (
       error === SPARSE ||
       error === DEOPT ||
       error instanceof TlaError ||
-      isStackOverflow(error)
+      isStackOverflow(error) ||
+      // Hosts such as Cloudflare Workers disallow code generation from strings.
+      error instanceof EvalError
     ) {
       return undefined;
     }
