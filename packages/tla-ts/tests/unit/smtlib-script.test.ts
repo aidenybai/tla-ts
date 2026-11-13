@@ -516,6 +516,71 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ).toEqual(["unsat", "unsat", "sat", "(((f a) U!val!1)\n ((= (f a) a) false))", "unsat"]);
   });
 
+  it("checks with sat.euf's incremental solver after push", () => {
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        "(set-option :produce-models true)",
+        "(set-option :produce-unsat-cores true)",
+        "(declare-sort U 0)",
+        "(declare-fun f (U) U)",
+        "(declare-fun p (U) Bool)",
+        "(declare-fun a () U)",
+        "(declare-fun b () U)",
+        "(assert (forall ((x U)) (= (f (f x)) x)))",
+        "(push)",
+        "(assert (= (f a) b))",
+        "(assert (not (= (f b) a)))",
+        "(check-sat)",
+        "(pop)",
+        "(assert (= (f a) b))",
+        "(assert (not (= a b)))",
+        "(check-sat)",
+        "(get-model)",
+        "(declare-fun q () Bool)",
+        "(assert (=> q (not (= a (f b)))))",
+        "(check-sat-assuming (q))",
+        "(check-sat-assuming ((not q)))",
+        "(push)",
+        "(assert (! (p a) :named n1))",
+        "(assert (! (not (p (f (f a)))) :named n2))",
+        "(check-sat)",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual([
+      "unsat",
+      "sat",
+      [
+        "(",
+        "  ;; universe for U:",
+        "  ;;   U!val!0 U!val!1 ",
+        "  ;; -----------",
+        "  ;; definitions for universe elements:",
+        "  (declare-fun U!val!0 () U)",
+        "  (declare-fun U!val!1 () U)",
+        "  ;; cardinality constraint:",
+        "  (forall ((x U)) (or (= x U!val!0) (= x U!val!1)))",
+        "  ;; -----------",
+        "  (define-fun a () U",
+        "    U!val!0)",
+        "  (define-fun b () U",
+        "    U!val!1)",
+        "  (define-fun x!1 () U",
+        "    U!val!1)",
+        "  (define-fun f ((x!0 U)) U",
+        "    (ite (= x!0 U!val!0) U!val!1",
+        "      U!val!0))",
+        "  (define-fun p ((x!0 U)) Bool",
+        "    false)",
+        ")",
+      ].join("\n"),
+      "unsat",
+      "sat",
+      "unsat",
+      "(n2 n1)",
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),

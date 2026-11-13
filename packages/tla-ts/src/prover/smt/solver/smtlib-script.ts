@@ -53,6 +53,8 @@ import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { getConsequences } from "./smt-consequences";
 import { getFdConsequences } from "./fd-solver";
 import { SmtKernel } from "./smt-kernel";
+import { IncSatSolver } from "./sat/inc-sat-solver";
+import { mkThSolver } from "./euf/th-solvers";
 import { isAstLess } from "./ast-lt";
 import { InvVarShifter } from "./rewriter-tpl";
 import { elimUnusedVars, getFreeVarSorts, VarSubst } from "./var-subst";
@@ -68,6 +70,7 @@ import {
   compileInternalTactic,
   compileTactic,
   getRewriterOptions,
+  getSatParams,
   type TacticParam,
 } from "./tactic";
 
@@ -296,6 +299,9 @@ interface ScriptState {
   // combined_solver's incremental smt kernel, which keeps one context across the checks, or
   // undefined while Z3 has made no such kernel.
   kernel: SmtKernel | undefined;
+  // The incremental solver of sat.euf, inc_sat_solver in euf mode, or undefined once it reached
+  // an unported theory and the smt kernel answers in its place.
+  eufSolver: IncSatSolver | undefined;
 }
 
 // Z3 fixes the proof mode at the first command that needs terms.
@@ -356,6 +362,7 @@ export const runSmtlibScript = (
       hasChecked: false,
       datalog: undefined,
       kernel: undefined,
+      eufSolver: undefined,
     };
   };
   const script = { state: createState() };
@@ -531,11 +538,10 @@ export const runSmtlibScript = (
         !settings.isProducingProofs &&
         !settings.parameters.has("tactic.default_tactic");
       const assumptions = isNamed ? [...names, ...extra] : extra;
-      const kernel = !(isAssuming || (state.isIncremental && !isOptimizing && !isFd))
-        ? undefined
-        : state.kernel === undefined
-          ? solveAssuming(manager, getNamedAssertions(), assumptions, getKernelParams())
-          : { result: state.kernel.check(assumptions), context: state.kernel.context };
+      const kernel =
+        isAssuming || (state.isIncremental && !isOptimizing && !isFd)
+          ? checkKernel(assumptions)
+          : undefined;
       // Z3 retries a quantifier-free problem with its tactic when the incremental kernel gives up.
       const solved =
         kernel === undefined ||
@@ -543,15 +549,15 @@ export const runSmtlibScript = (
           kernel.result === L_UNDEF &&
           !state.assertions.some((assertion) => manager.hasQuantifierFlags[assertion]) &&
           manager.limit.inc())
-          ? solveWithStrategy()
-          : { ...kernel, model: undefined };
+          ? { ...solveWithStrategy(), core: undefined }
+          : kernel;
       solved.model?.incRef();
       state.check = {
         status: solved.result,
         context: solved.context,
         isOptimizing,
         model: solved.model,
-        core: solved.context?.unsatCore ?? [],
+        core: solved.core ?? solved.context?.unsatCore ?? [],
       };
       print(getVerdict(solved.result));
     } catch (error) {
@@ -587,32 +593,78 @@ export const runSmtlibScript = (
     script.state.check = undefined;
   };
   // cmd_context::mk_solver: mk_solver_for_logic makes the incremental solver the smt kernel unless
-  // the logic, the default tactic or the sat parameters pick a sat solver, which only stores its
-  // assertions.
-  const mkKernel = () => {
+  // the logic, the default tactic or the sat parameters pick a sat solver. Under sat.euf that
+  // solver is inc_sat_solver in euf mode; the other sat solvers only store their assertions.
+  const resetKernel = () => {
     const state = script.state;
     const logic = state.logic;
     const parameters = settings.parameters;
     const isProofsEnabled = settings.isProducingProofs || state.isProofsEnabled === true;
+    const isFdSolver =
+      ((logic === "QF_FD" || logic === "SAT") && !isProofsEnabled) || logic === "SMTFD";
+    const isEuf = parameters.get("sat.euf") === "true";
     const isSatSolver =
-      ((logic === "QF_FD" || logic === "SAT") && !isProofsEnabled) ||
-      logic === "SMTFD" ||
+      isFdSolver ||
       (logic === "QF_BV" && settings.isHiDiv0) ||
       parameters.get("tactic.default_tactic") === "sat" ||
       parameters.get("sat.smt") === "true" ||
-      parameters.get("sat.euf") === "true";
-    return isSatSolver ? undefined : new SmtKernel(state.manager, getKernelParams());
+      isEuf;
+    state.eufSolver?.release();
+    state.kernel = isSatSolver ? undefined : new SmtKernel(state.manager, getKernelParams());
+    state.eufSolver =
+      isEuf && !isFdSolver && parameters.get("sat.smt") !== "true"
+        ? new IncSatSolver(state.manager, getSatParams(parameters), true, mkThSolver)
+        : undefined;
+  };
+  // The parts of sat.euf that are not ported leave its answers to the smt kernel.
+  const useEufSolver = <Result>(action: (solver: IncSatSolver) => Result) => {
+    const state = script.state;
+    const solver = state.eufSolver;
+    if (solver === undefined) return undefined;
+    try {
+      return action(solver);
+    } catch (error) {
+      if (!(error instanceof SmtUnsupportedError)) throw error;
+      solver.release();
+      state.eufSolver = undefined;
+      return undefined;
+    }
   };
   // solver_na2as asserts a named assertion as an implication from its name.
   const assertInKernel = (formula: number, name: number) => {
     const state = script.state;
-    const kernel = state.kernel;
-    if (kernel === undefined) return;
     const manager = state.manager;
     const asserted = name === -1 ? formula : manager.mkApp(OP_IMPLIES, [name, formula], SORT_BOOL);
     manager.incRef(asserted);
-    kernel.assertExpr(asserted);
+    state.kernel?.assertExpr(asserted);
+    useEufSolver((solver) => solver.assertExpr(asserted));
     manager.decRef(asserted);
+  };
+  const checkKernel = (assumptions: number[]) => {
+    const state = script.state;
+    const kernel = state.kernel;
+    const found = useEufSolver((solver) => {
+      const result = solver.check(assumptions);
+      return {
+        result,
+        context: undefined,
+        model: result === L_TRUE ? (solver.getModel() ?? undefined) : undefined,
+        core: result === L_FALSE ? [...solver.getUnsatCore()] : undefined,
+      };
+    });
+    if (found !== undefined) return found;
+    if (kernel !== undefined)
+      return {
+        result: kernel.check(assumptions),
+        context: kernel.context,
+        model: undefined,
+        core: undefined,
+      };
+    return {
+      ...solveAssuming(state.manager, getNamedAssertions(), assumptions, getKernelParams()),
+      model: undefined,
+      core: undefined,
+    };
   };
   let pendingText = "";
   const printDiagnostic = (line: string) => print(line, !settings.isDiagnosticOnStdout);
@@ -953,6 +1005,7 @@ export const runSmtlibScript = (
         state.reader.push();
         state.isIncremental = true;
         state.kernel?.push();
+        useEufSolver((solver) => solver.push());
       }
     },
     pop: (list) => {
@@ -968,6 +1021,7 @@ export const runSmtlibScript = (
       state.isIncremental = true;
       const scope = state.scopes[state.scopes.length - count];
       state.kernel?.pop(count);
+      useEufSolver((solver) => solver.pop(count));
       for (let index = 0; index < count; index++) state.reader.pop();
       restoreAssertions(scope.assertions);
       resetOptimizer();
@@ -987,8 +1041,11 @@ export const runSmtlibScript = (
       releaseObjectives(0, 0);
       state.scopes = state.scopes.map(() => ({ assertions: 0, objectives: 0, softTrail: 0 }));
       if (state.isProofsEnabled !== undefined) {
-        state.kernel = mkKernel();
-        for (let index = 0; index < state.scopes.length; index++) state.kernel?.push();
+        resetKernel();
+        for (let index = 0; index < state.scopes.length; index++) {
+          state.kernel?.push();
+          useEufSolver((solver) => solver.push());
+        }
       }
       state.isIncremental = state.scopes.length > 0;
       state.hasChecked = false;
@@ -1401,7 +1458,7 @@ export const runSmtlibScript = (
       }
       state.logic = logic.text;
       state.reader = createSmtlibReader(state.manager, logic.text, settings.parserOptions);
-      if (state.isProofsEnabled !== undefined) state.kernel = mkKernel();
+      if (state.isProofsEnabled !== undefined) resetKernel();
       if (settings.isPrintingSuccess) print("success");
     },
     "set-info": () => {},
@@ -1416,7 +1473,7 @@ export const runSmtlibScript = (
     if (command === undefined) throw new SmtUnsupportedError(`the command ${head.text}`);
     if (!MANAGERLESS_COMMANDS.has(head.text) && script.state.isProofsEnabled === undefined) {
       script.state.isProofsEnabled = settings.parameters.get("proof") === "true";
-      script.state.kernel = mkKernel();
+      resetKernel();
     }
     command(list);
     if (settings.isPrintingSuccess && SILENT_COMMANDS.has(head.text)) print("success");

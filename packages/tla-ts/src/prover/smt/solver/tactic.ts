@@ -313,9 +313,9 @@ const mkCoreDependency = (core: number[]) =>
   );
 
 // The sat.* parameters, as the sat_params of a sat solver read them.
-const getSatParams = (environment: TacticEnvironment) =>
+export const getSatParams = (parameters: ReadonlyMap<string, string>) =>
   new Map(
-    [...environment.parameters]
+    [...parameters]
       .filter((entry) => entry[0].startsWith("sat."))
       .map((entry) => {
         const value = entry[1];
@@ -337,7 +337,7 @@ const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: 
   const manager = environment.manager;
   // mk_smt_tactic: with sat.euf, the smt tactic is the sat tactic.
   if (environment.parameters.get("sat.euf") === "true")
-    return createSatTactic(manager, getSatParams(environment), mkThSolver)(goal);
+    return createSatTactic(manager, getSatParams(environment.parameters), mkThSolver)(goal);
   const kernelParams = getKernelParams(environment, params, goal);
   const extracted = extractClauses(manager, goal);
   const solved =
