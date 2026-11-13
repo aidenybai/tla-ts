@@ -5045,6 +5045,18 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain('"result"');
   });
 
+  it("escapes the controls and the lone surrogates of a string in JSON.stringify", async () => {
+    const source = `
+      const text = JSON.stringify('a\\u0001\\ud800😀"\\\\\\n\\u001f');
+      if (text !== '"a\\\\u0001\\\\ud800😀\\\\"\\\\\\\\\\\\n\\\\u001f"') throw new Error("quote");
+      const lone = JSON.stringify("\\udc00x\\ud83d");
+      if (lone !== '"\\\\udc00x\\\\ud83d"') throw new Error("lone");
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace(String.raw`"\udc00x\ud83d"`, String.raw`"\ud83d\udc00x"`);
+    expect((await checkModel(wrong)).failure?.message).toContain('"lone"');
+  });
+
   it("throws the TypeError of JSON.stringify of a BigInt", async () => {
     const source = `
       const holder = { seen: 0 };

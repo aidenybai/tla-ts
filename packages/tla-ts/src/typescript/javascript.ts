@@ -4622,25 +4622,36 @@ ProxyKeysOf(heap, target, keys, method) ==
        [] method = "getOwnPropertySymbols" -> SelectSeq(keys, IsSymbol)
        [] OTHER -> keys
 
-\\* Whether a code unit is a surrogate that JSON.stringify escapes, where escapes maps each code unit
-\\* that it escapes to its escape.
-LOCAL JSONSurrogate(escapes, unit) ==
-  IF unit \\in DOMAIN escapes /\\ Len(escapes[unit]) = 6 /\\ SubSeq(escapes[unit], 1, 3) = "\\\\ud"
-  THEN IF SubSeq(escapes[unit], 4, 4) \\in {"8", "9", "a", "b"} THEN "high" ELSE "low"
-  ELSE ""
+\\* The escapes of QuoteJSONString that aren't \\u and four hexadecimal digits.
+LOCAL JSONShortEscapes ==
+  ${[
+    ["\b", "\\b"],
+    ["\t", "\\t"],
+    ["\n", "\\n"],
+    ["\f", "\\f"],
+    ["\r", "\\r"],
+    ['"', '\\"'],
+    ["\\", "\\\\"],
+  ]
+    .map((entry) => `${formatString(entry[0])} :> ${formatString(entry[1])}`)
+    .join(" @@ ")}
 
-\\* QuoteJSONString, which escapes a code unit unless it's a surrogate that pairs with a neighbor.
-LOCAL QuoteJSON(text, escapes) ==
+\\* QuoteJSONString, which escapes a control and a surrogate that doesn't pair with a neighbor.
+LOCAL QuoteJSON(text) ==
   LET unit(position) == SubSeq(text, position, position)
-      kind(position) ==
-        IF position \\in 1..Len(text) THEN JSONSurrogate(escapes, unit(position)) ELSE ""
+      code(position) == IF position \\in 1..Len(text) THEN CharacterCode(unit(position)) ELSE 0
+      isSurrogate(position) == IsHighSurrogate(code(position)) \\/ IsLowSurrogate(code(position))
       isPaired(position) ==
-        \\/ kind(position) = "high" /\\ kind(position + 1) = "low"
-        \\/ kind(position) = "low" /\\ kind(position - 1) = "high"
-  IN "\\"" \\o Join([position \\in 1..Len(text) |->
-                     IF unit(position) \\in DOMAIN escapes /\\ ~isPaired(position)
-                     THEN escapes[unit(position)]
-                     ELSE unit(position)], "") \\o "\\""
+        \\/ IsHighSurrogate(code(position)) /\\ IsLowSurrogate(code(position + 1))
+        \\/ IsLowSurrogate(code(position)) /\\ IsHighSurrogate(code(position - 1))
+      digit(position, place) == ((code(position) \\div 16^(4 - place)) % 16) + 1
+      escape(position) ==
+        CASE unit(position) \\in DOMAIN JSONShortEscapes -> JSONShortEscapes[unit(position)]
+          [] code(position) < 32 \\/ (isSurrogate(position) /\\ ~isPaired(position)) ->
+               "\\\\u" \\o Join([place \\in 1..4 |->
+                                 SubSeq("0123456789abcdef", digit(position, place), digit(position, place))], "")
+          [] OTHER -> unit(position)
+  IN "\\"" \\o Join([position \\in 1..Len(text) |-> escape(position)], "") \\o "\\""
 
 \\* Which of Boolean, Number, and String an object wraps the primitive of, or "" where it wraps none.
 LOCAL JSONWrapperKind(heap, ref) ==
@@ -4729,14 +4740,14 @@ SerializeJSON(heap, value, state, stack, indent) ==
                                  LAMBDA position : texts[position] # Undefined)
         IN IF \\E position \\in DOMAIN texts : IsError(texts[position]) THEN JSONTypeError ELSE
            wrap("{", "}", [position \\in DOMAIN present |->
-                             QuoteJSON(keys[present[position]], state.escapes) \\o ":"
+                             QuoteJSON(keys[present[position]]) \\o ":"
                                \\o (IF state.gap = "" THEN "" ELSE " ") \\o texts[present[position]]])
       hasToJSON(ref) == TypeOfIn(heap, Get(heap, ref, "toJSON")) = "function"
       kind == IF IsRef(value) THEN JSONWrapperKind(heap, value) ELSE ""
   IN CASE value = Null -> "null"
        [] value = Undefined -> Undefined
        [] TypeOf(value) = "boolean" -> IF value THEN "true" ELSE "false"
-       [] TypeOf(value) = "string" -> QuoteJSON(value, state.escapes)
+       [] TypeOf(value) = "string" -> QuoteJSON(value)
        [] TypeOf(value) = "number" -> IF IsFinite(value) THEN StringOf(value) ELSE "null"
        [] TypeOf(value) = "symbol" -> Undefined
        [] IsBigInt(value) ->
@@ -4768,14 +4779,13 @@ SerializeJSON(heap, value, state, stack, indent) ==
             ELSE array(value, stack)
        [] OTHER -> Assert(FALSE, "tla-ts can't tell what JSON.stringify writes for " \\o ToString(value))
 
-\\* JSON.stringify, which can't call a replacer function, where escapes maps each code unit that
-\\* QuoteJSONString escapes to its escape.
-JSONStringify(heap, value, replacer, space, escapes, arrayPrototype, functionPrototype, isSequence) ==
+\\* JSON.stringify, which can't call a replacer function.
+JSONStringify(heap, value, replacer, space, arrayPrototype, functionPrototype, isSequence) ==
   LET isList == IsArray(heap, replacer)
                   \\/ (isSequence /\\ ~IsRef(replacer) /\\ SubSeq(ToString(replacer), 1, 2) = "<<")
       keys == IF isList THEN JSONKeys(heap, replacer) ELSE Undefined
       gap == JSONGap(heap, space)
-      state == [keys |-> keys, gap |-> gap, escapes |-> escapes, isSequence |-> isSequence,
+      state == [keys |-> keys, gap |-> gap, isSequence |-> isSequence,
                 arrayPrototype |-> arrayPrototype, functionPrototype |-> functionPrototype]
   IN CASE TypeOfIn(heap, replacer) = "function" -> Assert(FALSE, "tla-ts can't call a replacer")
        [] /\\ ~IsRef(replacer)
