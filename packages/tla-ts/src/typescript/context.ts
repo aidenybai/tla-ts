@@ -1373,9 +1373,10 @@ export type Closure = ts.FunctionExpression | ts.ArrowFunction;
 
 // A function that a function makes and that outlives the call that made it, which reads the locals
 // of that call from its environment: one that the function assigns to a name declared outside it,
-// an async one that it returns, or one that an object literal holds, or an arrow that it returns,
-// that reads a local of the function. An arrow reads the this of the function around it, which the environment doesn't
-// hold, and an async closure that awaits would resume after its call returns.
+// an async one that it returns, or one that an object literal or a property assignment holds, or an
+// arrow that it returns, that reads a local of the function. An arrow reads the this of the function
+// around it, which the environment doesn't hold, and an async closure that awaits would resume after
+// its call returns.
 export const isClosure = (node: ts.Node, context: Context): node is Closure => {
   if (
     context.heap === undefined ||
@@ -1405,23 +1406,25 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure => {
         ts.findAncestor(declaration.parent, ts.isFunctionLike) === maker
       );
     });
+  const assignment = node.parent;
+  const isAssignment =
+    ts.isBinaryExpression(assignment) &&
+    assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    assignment.right === node &&
+    ts.isExpressionStatement(assignment.parent);
   if (
-    ts.isPropertyAssignment(node.parent) &&
-    node.parent.initializer === node &&
-    ts.isObjectLiteralExpression(node.parent.parent)
+    (ts.isPropertyAssignment(assignment) &&
+      assignment.initializer === node &&
+      ts.isObjectLiteralExpression(assignment.parent)) ||
+    (isAssignment && ts.isPropertyAccessExpression(assignment.left))
   ) {
     return isReadingLocals();
   }
   const isReturned =
     (ts.isReturnStatement(node.parent) && node.parent.expression === node) ||
     (ts.isArrowFunction(node.parent) && node.parent.body === node);
-  const assignment = node.parent;
   const declaration =
-    ts.isBinaryExpression(assignment) &&
-    assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-    assignment.right === node &&
-    ts.isIdentifier(assignment.left) &&
-    ts.isExpressionStatement(assignment.parent)
+    isAssignment && ts.isIdentifier(assignment.left)
       ? getSymbol(assignment.left, context.checker)?.valueDeclaration
       : undefined;
   return (

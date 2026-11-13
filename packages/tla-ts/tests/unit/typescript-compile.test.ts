@@ -11678,6 +11678,28 @@ describe("errors", () => {
     expect((await checkModel(getIteratorSource(34))).failure?.message).toContain("iter");
   });
 
+  const getBoxSource = (expected: number) => `
+      const seen = { count: 0 };
+      function Box(this: { valueOf: () => number }, value: number) {
+        this.valueOf = function () {
+          return value;
+        };
+      }
+      // @ts-ignore
+      const first = new Box(2);
+      // @ts-ignore
+      const second = new Box(3);
+      if (first * 10 + second !== ${expected}) throw new Error("box");
+  `;
+
+  it("calls a closure that a constructor assigns to a property of this through valueOf", async () => {
+    expect((await checkModel(getBoxSource(23))).failure).toBeUndefined();
+  });
+
+  it("reads the locals of the constructor call that assigned the closure", async () => {
+    expect((await checkModel(getBoxSource(32))).failure?.message).toContain("box");
+  });
+
   it("stops where a call doesn't enter the closure that it runs", () => {
     expect(() =>
       compile(`
