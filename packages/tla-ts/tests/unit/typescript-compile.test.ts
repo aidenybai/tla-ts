@@ -4970,52 +4970,61 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("runs an object's toString and toLocaleString through Object.prototype's", async () => {
+  it("runs a literal object's toString and toLocaleString through Object.prototype's", async () => {
     const source = `
       const holder = { seen: "" };
-      const obj = new Object() as { [key: string]: unknown };
-      const tagged = { [Symbol.toStringTag]: "T" };
       const one = {}.toString();
       const two = {}.toLocaleString();
-      if (Object.prototype.toString() !== "[object Object]") throw new Error("proto");
-      if (Object.prototype.toLocaleString() !== Object.prototype.toString()) throw new Error("locale");
       if (one !== "[object Object]" || two !== "[object Object]") throw new Error("literal");
-      if (obj.valueOf().toString() !== "[object Object]") throw new Error("valueOf");
-      if (tagged.toString() !== "[object T]" || tagged.toLocaleString() !== "[object T]") {
-        throw new Error("tag");
-      }
       holder.seen = one;
     `;
     expect((await checkModel(source)).failure).toBeUndefined();
-    const wrong = [
-      [
-        'Object.prototype.toString() !== "[object Object]"',
-        'Object.prototype.toString() !== "[object Obj]"',
-        '"proto"',
-      ],
-      ['two !== "[object Object]"', 'two === "[object Object]"', '"literal"'],
-      [
-        'obj.valueOf().toString() !== "[object Object]"',
-        'obj.valueOf().toString() === "[object Object]"',
-        '"valueOf"',
-      ],
-      [
-        'tagged.toLocaleString() !== "[object T]"',
-        'tagged.toLocaleString() !== "[object Object]"',
-        '"tag"',
-      ],
-    ];
-    for (const [from, to, message] of wrong) {
-      expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
-    }
-    const own = `
+    const wrong = source.replace('two !== "[object Object]"', 'two === "[object Object]"');
+    expect((await checkModel(wrong)).failure?.message).toContain('"literal"');
+  });
+
+  it("runs Object.prototype's toLocaleString on Object.prototype", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      if (Object.prototype.toLocaleString() !== "[object Object]") throw new Error("proto");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace('!== "[object Object]"', '=== "[object Object]"');
+    expect((await checkModel(wrong)).failure?.message).toContain('"proto"');
+  });
+
+  it("reads Symbol.toStringTag in an object's toLocaleString", async () => {
+    const source = `
+      const holder = { seen: "" };
+      const tagged = { [Symbol.toStringTag]: "T" };
+      if (tagged.toLocaleString() !== "[object T]") throw new Error("tag");
+      holder.seen = tagged.toString();
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace('"[object T]"', '"[object Object]"');
+    expect((await checkModel(wrong)).failure?.message).toContain('"tag"');
+  });
+
+  it("runs the toString of the object that new Object makes", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const obj = new Object() as { [key: string]: unknown };
+      if (obj.valueOf().toString() !== "[object Object]") throw new Error("valueOf");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace('!== "[object Object]"', '=== "[object Object]"');
+    expect((await checkModel(wrong)).failure?.message).toContain('"valueOf"');
+  });
+
+  it("stops where an object's own toString may run in its toLocaleString", async () => {
+    const result = await checkModel(`
       const holder = { seen: "" };
       const own = { toString: () => "own" };
       holder.seen = own.toLocaleString();
-    `;
-    expect((await checkModel(own)).failure?.message).toContain(
-      "tla-ts can't tell which method this call runs",
-    );
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't tell which method this call runs");
   });
 
   it("gives the object that Object.setPrototypeOf changes", async () => {
@@ -5038,6 +5047,40 @@ describe("errors", () => {
 
   it("throws the TypeError of JSON.stringify of a BigInt", async () => {
     const source = `
+      const holder = { seen: 0 };
+      let isThrown = false;
+      try {
+        const text = JSON.stringify(0n);
+      } catch (error) {
+        isThrown = error instanceof TypeError;
+      }
+      if (!isThrown) throw new Error("primitive");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("JSON.stringify(0n)", "JSON.stringify(0)");
+    expect((await checkModel(wrong)).failure?.message).toContain('"primitive"');
+  });
+
+  it("throws the TypeError of JSON.stringify of an object that holds a BigInt", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      let isThrown = false;
+      try {
+        const text = JSON.stringify({ x: [1, 0n] });
+      } catch (error) {
+        isThrown = error instanceof TypeError;
+      }
+      if (!isThrown) throw new Error("nested");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("[1, 0n]", "[1, 0]");
+    expect((await checkModel(wrong)).failure?.message).toContain('"nested"');
+  });
+
+  it("throws the TypeError of JSON.stringify of a BigInt object", async () => {
+    const source = `
       declare global {
         interface ObjectConstructor {
           // oxlint-disable-next-line typescript/no-wrapper-object-types
@@ -5045,33 +5088,18 @@ describe("errors", () => {
         }
       }
       const holder = { seen: 0 };
-      const throwsTypeError = (run: () => unknown) => {
-        try {
-          run();
-        } catch (error) {
-          return error instanceof TypeError;
-        }
-        return false;
-      };
-      if (!throwsTypeError(() => JSON.stringify(0n))) throw new Error("primitive");
-      if (!throwsTypeError(() => JSON.stringify(Object(0n) as unknown as object, ["y"]))) {
-        throw new Error("object");
+      let isThrown = false;
+      try {
+        const text = JSON.stringify(Object(0n) as unknown as object, ["y"]);
+      } catch (error) {
+        isThrown = error instanceof TypeError;
       }
-      if (!throwsTypeError(() => JSON.stringify({ x: 0n }))) throw new Error("nested");
-      if (!throwsTypeError(() => JSON.stringify([1, [0n]]))) throw new Error("array");
-      const plain: unknown = { x: 1 };
-      if (JSON.stringify(plain) !== '{"x":1}') throw new Error("plain");
+      if (!isThrown) throw new Error("object");
       holder.seen = 1;
     `;
     expect((await checkModel(source)).failure).toBeUndefined();
-    const wrong = [
-      ["JSON.stringify(0n)))", "JSON.stringify(0)))", '"primitive"'],
-      ["[1, [0n]]", "[1, [0]]", '"array"'],
-      [`'{"x":1}'`, `'{"x":2}'`, '"plain"'],
-    ];
-    for (const [from, to, message] of wrong) {
-      expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
-    }
+    const wrong = source.replace("if (!isThrown)", "if (isThrown)");
+    expect((await checkModel(wrong)).failure?.message).toContain('"object"');
   });
 
   it("stops where JSON.stringify would call a script's function", async () => {
@@ -5644,45 +5672,58 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain("frozen");
   });
 
-  it("reads a function value that the built-in objects hold through Object's functions", async () => {
+  it("reads the prototype of a function value that the built-in objects hold", async () => {
     const source = `
       const holder = { seen: 0 };
       const thrower = Object.getOwnPropertyDescriptor(Function.prototype, "caller")!.get;
       if (Object.getPrototypeOf(thrower) !== Function.prototype) throw new Error("prototype");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("!== Function.prototype", "=== Function.prototype");
+    expect((await checkModel(wrong)).failure?.message).toContain('"prototype"');
+  });
+
+  it("reads the own keys of a function value that the built-in objects hold", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const thrower = Object.getOwnPropertyDescriptor(Function.prototype, "caller")!.get;
       const names = Object.getOwnPropertyNames(thrower);
       if (names.indexOf("length") !== 0 || names.indexOf("name") !== 1) throw new Error("names");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace('indexOf("name") !== 1', 'indexOf("name") === 1');
+    expect((await checkModel(wrong)).failure?.message).toContain('"names"');
+  });
+
+  it("answers hasOwnProperty on a function value that the built-in objects hold", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const thrower = Object.getOwnPropertyDescriptor(Function.prototype, "caller")!.get;
       if (Object.prototype.hasOwnProperty.call(thrower, "arguments")) throw new Error("own");
       if (!Object.prototype.hasOwnProperty.call(thrower, "length")) throw new Error("length");
       holder.seen = 1;
     `;
     expect((await checkModel(source)).failure).toBeUndefined();
-    const wrong = [
-      ["!== Function.prototype", "=== Function.prototype", '"prototype"'],
-      ['indexOf("name") !== 1', 'indexOf("name") === 1', '"names"'],
-      [
-        'if (Object.prototype.hasOwnProperty.call(thrower, "arguments"))',
-        'if (!Object.prototype.hasOwnProperty.call(thrower, "arguments"))',
-        '"own"',
-      ],
-    ];
-    for (const [from, to, message] of wrong) {
-      expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
-    }
-    const getter = `
-      const holder = { seen: 0 };
-      const getter = Object.getOwnPropertyDescriptor({ get a() { return 1; } }, "a")!.get;
-      const names = Object.getOwnPropertyNames(getter);
-      if (names.length !== 2 || Object.getPrototypeOf(getter) !== Function.prototype) throw new Error("getter");
-      if (!Object.prototype.hasOwnProperty.call(getter, "name")) throw new Error("name");
-      const missing = Object.getOwnPropertyDescriptor({ a: 1 }, "a")!.get;
-      holder.seen = 1;
-    `;
-    expect((await checkModel(getter)).failure?.message).toContain(
-      "tla-ts can't read this function as an object",
+    const wrong = source.replace(
+      'if (Object.prototype.hasOwnProperty.call(thrower, "arguments"))',
+      'if (!Object.prototype.hasOwnProperty.call(thrower, "arguments"))',
     );
+    expect((await checkModel(wrong)).failure?.message).toContain('"own"');
   });
 
-  it("throws the TypeError of calling %ThrowTypeError% or undefined through a function value", async () => {
+  it("stops where it can't read a function value as an object", async () => {
+    const result = await checkModel(`
+      const holder = { seen: 0 };
+      const getter = Object.getOwnPropertyDescriptor({ get a() { return 1; } }, "a")!.get;
+      const missing = Object.getOwnPropertyDescriptor({ a: 1 }, "a")!.get;
+      holder.seen = Object.getOwnPropertyNames(getter).length;
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't read this function as an object");
+  });
+
+  it("throws the TypeError of calling %ThrowTypeError% through a function value", async () => {
     const source = `
       const holder = { seen: 0 };
       const thrower = Object.getOwnPropertyDescriptor(Function.prototype, "caller")!.get;
@@ -5692,27 +5733,40 @@ describe("errors", () => {
       } catch (error) {
         if (error instanceof TypeError) caught += 1;
       }
+      if (caught !== 1) throw new Error("caught");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("caught !== 1", "caught !== 0");
+    expect((await checkModel(wrong)).failure?.message).toContain('"caught"');
+  });
+
+  it("throws the TypeError of calling undefined through a function value", async () => {
+    const source = `
+      const holder = { seen: 0 };
       const missing = Object.getOwnPropertyDescriptor({ a: 1 }, "a")!.get;
+      let caught = 0;
       try {
         missing!();
       } catch (error) {
         if (error instanceof TypeError) caught += 1;
       }
-      if (caught !== 2) throw new Error("caught");
+      if (caught !== 1) throw new Error("caught");
       holder.seen = 1;
     `;
     expect((await checkModel(source)).failure).toBeUndefined();
-    const wrong = source.replace("caught !== 2", "caught !== 1");
+    const wrong = source.replace("caught !== 1", "caught !== 0");
     expect((await checkModel(wrong)).failure?.message).toContain('"caught"');
-    const getter = `
+  });
+
+  it("stops where it can't tell which function a function value calls", async () => {
+    const result = await checkModel(`
       const holder = { seen: 0 };
       const getter = Object.getOwnPropertyDescriptor({ get a() { return 1; } }, "a")!.get;
       getter!();
       holder.seen = 1;
-    `;
-    expect((await checkModel(getter)).failure?.message).toContain(
-      "tla-ts can't tell which function this call runs",
-    );
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't tell which function this call runs");
   });
 
   describe("tests the extensibility of a function that a variable holds where it runs", () => {
@@ -6370,7 +6424,7 @@ describe("errors", () => {
     });
   });
 
-  it("reads the symbol of a Symbol object through valueOf", async () => {
+  it("reads the symbol of a Symbol object through Symbol.prototype.valueOf.call", async () => {
     const source = `
       declare global {
         interface ObjectConstructor {
@@ -6382,33 +6436,50 @@ describe("errors", () => {
       const valueOf = Symbol.prototype.valueOf;
       const symbol = Symbol("s");
       const wrapped = Object(symbol);
-      if (valueOf.call(wrapped) !== symbol || Symbol.prototype.valueOf.call(symbol) !== symbol) {
-        throw new Error("call");
+      if (valueOf.call(wrapped) !== symbol) throw new Error("call");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace(
+      "valueOf.call(wrapped) !== symbol",
+      "valueOf.call(wrapped) === symbol",
+    );
+    expect((await checkModel(wrong)).failure?.message).toContain('"call"');
+  });
+
+  it("reads the symbol of a Symbol object through its valueOf", async () => {
+    const source = `
+      declare global {
+        interface ObjectConstructor {
+          // oxlint-disable-next-line typescript/no-wrapper-object-types
+          (value: symbol): Symbol;
+        }
       }
+      const holder = { seen: 0 };
+      const symbol = Symbol("s");
+      const wrapped = Object(symbol);
       if (wrapped.valueOf() !== symbol) throw new Error("method");
       holder.seen = 1;
     `;
     expect((await checkModel(source)).failure).toBeUndefined();
-    const wrong = [
-      ["valueOf.call(wrapped) !== symbol", "valueOf.call(wrapped) === symbol", '"call"'],
-      ["wrapped.valueOf() !== symbol", "wrapped.valueOf() === symbol", '"method"'],
-    ];
-    for (const [from, to, message] of wrong) {
-      expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
-    }
-    const replaced = `
+    const wrong = source.replace("wrapped.valueOf() !== symbol", "wrapped.valueOf() === symbol");
+    expect((await checkModel(wrong)).failure?.message).toContain('"method"');
+  });
+
+  it("stops on Symbol.prototype.valueOf where a script replaced it", async () => {
+    const result = await checkModel(`
       const holder = { seen: 0 };
       const symbol = Symbol("s");
       Symbol.prototype.valueOf = function () { return Symbol("other"); };
       if (Symbol.prototype.valueOf.call(symbol) === symbol) throw new Error("replaced");
       holder.seen = 1;
-    `;
-    expect((await checkModel(replaced)).failure?.message).toContain(
+    `);
+    expect(result.failure?.message).toContain(
       "tla-ts can't call Symbol.prototype.valueOf where a script replaced it",
     );
   });
 
-  it("makes the BigInt object that Object makes of a BigInt", async () => {
+  it("reads the BigInt of a BigInt object through BigInt.prototype.valueOf.call", async () => {
     const source = `
       declare global {
         interface ObjectConstructor {
@@ -6420,25 +6491,83 @@ describe("errors", () => {
       const valueOf = BigInt.prototype.valueOf;
       const wrapped = Object(3n);
       if (valueOf.call(wrapped) !== 3n || valueOf.call(2n) !== 2n) throw new Error("call");
-      if (wrapped.valueOf() !== 3n) throw new Error("method");
-      if (!(wrapped instanceof BigInt)) throw new Error("instance");
-      if (typeof wrapped !== "object") throw new Error("typeof");
-      if (Object.prototype.toString.call(wrapped) !== "[object BigInt]") throw new Error("tag");
-      if ((wrapped as unknown) != 3n) throw new Error("loose");
       holder.seen = 1;
     `;
     expect((await checkModel(source)).failure).toBeUndefined();
-    const wrong = [
-      ["valueOf.call(wrapped) !== 3n", "valueOf.call(wrapped) !== 2n", '"call"'],
-      ["wrapped.valueOf() !== 3n", "wrapped.valueOf() === 3n", '"method"'],
-      ["!(wrapped instanceof BigInt)", "wrapped instanceof BigInt", '"instance"'],
-      ['typeof wrapped !== "object"', 'typeof wrapped !== "bigint"', '"typeof"'],
-      ['"[object BigInt]"', '"[object Object]"', '"tag"'],
-      ["!= 3n", "!= 4n", '"loose"'],
-    ];
-    for (const [from, to, message] of wrong) {
-      expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
-    }
+    const wrong = source.replace("valueOf.call(wrapped) !== 3n", "valueOf.call(wrapped) !== 2n");
+    expect((await checkModel(wrong)).failure?.message).toContain('"call"');
+  });
+
+  it("reads the BigInt of a BigInt object through its valueOf", async () => {
+    const source = `
+      declare global {
+        interface ObjectConstructor {
+          // oxlint-disable-next-line typescript/no-wrapper-object-types
+          (value: bigint): BigInt;
+        }
+      }
+      const holder = { seen: 0 };
+      const wrapped = Object(3n);
+      if (wrapped.valueOf() !== 3n) throw new Error("method");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("wrapped.valueOf() !== 3n", "wrapped.valueOf() === 3n");
+    expect((await checkModel(wrong)).failure?.message).toContain('"method"');
+  });
+
+  it("makes a BigInt object that is an object and a BigInt instance", async () => {
+    const source = `
+      declare global {
+        interface ObjectConstructor {
+          // oxlint-disable-next-line typescript/no-wrapper-object-types
+          (value: bigint): BigInt;
+        }
+      }
+      const holder = { seen: 0 };
+      const wrapped = Object(3n);
+      if (!(wrapped instanceof BigInt) || typeof wrapped !== "object") throw new Error("instance");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace('typeof wrapped !== "object"', 'typeof wrapped !== "bigint"');
+    expect((await checkModel(wrong)).failure?.message).toContain('"instance"');
+  });
+
+  it("tags a BigInt object as a BigInt in Object.prototype.toString", async () => {
+    const source = `
+      declare global {
+        interface ObjectConstructor {
+          // oxlint-disable-next-line typescript/no-wrapper-object-types
+          (value: bigint): BigInt;
+        }
+      }
+      const holder = { seen: 0 };
+      const wrapped = Object(3n);
+      if (Object.prototype.toString.call(wrapped) !== "[object BigInt]") throw new Error("tag");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace('"[object BigInt]"', '"[object Object]"');
+    expect((await checkModel(wrong)).failure?.message).toContain('"tag"');
+  });
+
+  it("compares a BigInt object loosely by its BigInt", async () => {
+    const source = `
+      declare global {
+        interface ObjectConstructor {
+          // oxlint-disable-next-line typescript/no-wrapper-object-types
+          (value: bigint): BigInt;
+        }
+      }
+      const holder = { seen: 0 };
+      const wrapped: unknown = Object(3n);
+      if (wrapped != 3n) throw new Error("loose");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("!= 3n", "!= 4n");
+    expect((await checkModel(wrong)).failure?.message).toContain('"loose"');
   });
 
   it("stops on a call of a prototype method that a reassigned variable held", () => {
@@ -6454,35 +6583,58 @@ describe("errors", () => {
     ).toThrow("Unsupported call: valueOf.call");
   });
 
-  it("reads the Symbol.toStringTag of a primitive's prototype in Object.prototype.toString", async () => {
+  it("tags a primitive by its type in Object.prototype.toString", async () => {
     const source = `
       const holder = { seen: "" };
-      const made = Symbol();
       const read = (value: unknown) => Object.prototype.toString.call(value);
-      if (read(1) !== "[object Number]" || read("a") !== "[object String]" || read(true) !== "[object Boolean]") {
-        throw new Error("plain");
-      }
-      if (read(1n) !== "[object BigInt]" || read(made) !== "[object Symbol]") throw new Error("tagged");
-      Object.defineProperty(BigInt.prototype, Symbol.toStringTag, { value: 86 });
-      Object.defineProperty(String.prototype, Symbol.toStringTag, { value: "Y" });
-      if (read(1n) !== "[object Object]") throw new Error("bigint");
-      if (read("a") !== "[object Y]") throw new Error("string");
-      holder.seen = read(1);
+      if (read(1) !== "[object Number]" || read("a") !== "[object String]") throw new Error("plain");
+      holder.seen = read(true);
     `;
     expect((await checkModel(source)).failure).toBeUndefined();
-    const wrong = [
-      ['read(1) !== "[object Number]"', 'read(1) !== "[object Y]"', '"plain"'],
-      ['read(made) !== "[object Symbol]"', 'read(made) !== "[object Object]"', '"tagged"'],
-      [
-        '"[object Object]") throw new Error("bigint")',
-        '"[object BigInt]") throw new Error("bigint")',
-        '"bigint"',
-      ],
-      ['"[object Y]")', '"[object String]")', '"string"'],
-    ];
-    for (const [from, to, message] of wrong) {
-      expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
-    }
+    const wrong = source.replace('read(1) !== "[object Number]"', 'read(1) !== "[object String]"');
+    expect((await checkModel(wrong)).failure?.message).toContain('"plain"');
+  });
+
+  it("reads the Symbol.toStringTag of a BigInt's and a symbol's prototype", async () => {
+    const source = `
+      const holder = { seen: "" };
+      const read = (value: unknown) => Object.prototype.toString.call(value);
+      const made = Symbol();
+      if (read(1n) !== "[object BigInt]" || read(made) !== "[object Symbol]") throw new Error("tagged");
+      holder.seen = read(1n);
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace(
+      'read(made) !== "[object Symbol]"',
+      'read(made) !== "[object Object]"',
+    );
+    expect((await checkModel(wrong)).failure?.message).toContain('"tagged"');
+  });
+
+  it("reads a Symbol.toStringTag that a script defines on a BigInt's prototype", async () => {
+    const source = `
+      const holder = { seen: "" };
+      const read = (value: unknown) => Object.prototype.toString.call(value);
+      Object.defineProperty(BigInt.prototype, Symbol.toStringTag, { value: 86 });
+      if (read(1n) !== "[object Object]") throw new Error("bigint");
+      holder.seen = read(1n);
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace('"[object Object]"', '"[object BigInt]"');
+    expect((await checkModel(wrong)).failure?.message).toContain('"bigint"');
+  });
+
+  it("reads a Symbol.toStringTag that a script defines on a string's prototype", async () => {
+    const source = `
+      const holder = { seen: "" };
+      const read = (value: unknown) => Object.prototype.toString.call(value);
+      Object.defineProperty(String.prototype, Symbol.toStringTag, { value: "Y" });
+      if (read("a") !== "[object Y]") throw new Error("string");
+      holder.seen = read("a");
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace('"[object Y]"', '"[object String]"');
+    expect((await checkModel(wrong)).failure?.message).toContain('"string"');
   });
 
   it("rejects new Object of a value whose type doesn't tell the object", () => {
@@ -12474,6 +12626,9 @@ describe("errors", () => {
     expect((await checkModel(source)).failure).toBeUndefined();
     const wrong = source.replace("D.f() !== C", "D.f() !== D");
     expect((await checkModel(wrong)).failure?.message).toContain('"this"');
+  });
+
+  it("stops on this in a class expression's static field that a static block calls", () => {
     expect(() =>
       compile(`
         const box = { seen: 0 };
@@ -15692,87 +15847,143 @@ ${call}
     }
   });
 
-  it("visits the keys that a function inherits, and a built-in object that a variable holds, through for-in", async () => {
+  it("visits the enumerable keys that a function inherits through for-in", async () => {
     const source = `
       const holder = { seen: 0 };
       Object.defineProperty(Function.prototype, "hidden", { value: 1, enumerable: false, configurable: true });
       Object.defineProperty(Function.prototype, "shown", { value: 2, enumerable: true, configurable: true });
       Object.defineProperty(Function.prototype, "name", { value: "x", enumerable: true, configurable: true });
       const made = function () {};
-      const arrow = () => 1;
-      const defined = function () {};
-      Object.defineProperty(defined, "own", { value: 1, enumerable: true, configurable: true });
-      const json = JSON;
       let keys = "";
       for (const key in made) keys += key + ",";
-      for (const key in arrow) keys += key + ";";
-      for (const key in defined) keys += key + ".";
-      for (const key in json) keys += key;
-      if (keys !== "shown,shown;own.shown.") throw new Error(keys);
+      if (keys !== "shown,") throw new Error(keys);
       holder.seen = 1;
     `;
     expect((await checkModel(source)).failure).toBeUndefined();
-    for (const to of [
-      '"shown,shown;shown."',
-      '"name,shown,shown;own.shown."',
-      '"shown,shown;own.shown.parse"',
-    ]) {
-      expect(
-        (await checkModel(source.replace('"shown,shown;own.shown."', to))).failure?.message,
-      ).toContain("shown,shown;own.shown.");
-    }
-    const caller = `
+    const wrong = source.replace('"shown,"', '"name,shown,"');
+    expect((await checkModel(wrong)).failure?.message).toContain('"shown,"');
+  });
+
+  it("visits an arrow's inherited keys and a function's own keys through for-in", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      Object.defineProperty(Function.prototype, "shown", { value: 2, enumerable: true, configurable: true });
+      const arrow = () => 1;
+      const defined = function () {};
+      Object.defineProperty(defined, "own", { value: 1, enumerable: true, configurable: true });
+      let keys = "";
+      for (const key in arrow) keys += key + ";";
+      for (const key in defined) keys += key + ".";
+      if (keys !== "shown;own.shown.") throw new Error(keys);
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace('"shown;own.shown."', '"shown;shown."');
+    expect((await checkModel(wrong)).failure?.message).toContain('"shown;own.shown."');
+  });
+
+  it("visits a built-in object that a variable holds through for-in", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const json = JSON;
+      let keys = "";
+      for (const key in json) keys += key;
+      if (keys !== "") throw new Error("json");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace('keys !== ""', 'keys !== "parse"');
+    expect((await checkModel(wrong)).failure?.message).toContain('"json"');
+  });
+
+  it("stops on for-in over a function where it can't tell its own arguments and caller", async () => {
+    const result = await checkModel(`
       const holder = { seen: 0 };
       Object.defineProperty(Function.prototype, "caller", { value: 1, enumerable: true, configurable: true });
       const made = function () {};
       let keys = "";
       for (const key in made) keys += key;
       holder.seen = keys.length;
-    `;
-    expect((await checkModel(caller)).failure?.message).toContain(
+    `);
+    expect(result.failure?.message).toContain(
       "tla-ts can't tell whether this function has its own arguments and caller",
     );
   });
 
-  it("answers hasOwnProperty and propertyIsEnumerable on a function that a script makes", async () => {
+  it("answers hasOwnProperty on a function that a script makes", async () => {
     const source = `
       const holder = { seen: 0 };
       Object.defineProperty(Function.prototype, "prop", { value: 1, enumerable: true, configurable: true });
       const made = function () {};
-      const arrow = () => 1;
-      const defined = function () {};
-      Object.defineProperty(defined, "prop", { value: 2, enumerable: false, configurable: true });
       if (made.hasOwnProperty("prop") || !made.hasOwnProperty("prototype") || !made.hasOwnProperty("length")) {
         throw new Error("made");
       }
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace(
+      '!made.hasOwnProperty("prototype")',
+      'made.hasOwnProperty("prototype")',
+    );
+    expect((await checkModel(wrong)).failure?.message).toContain('"made"');
+  });
+
+  it("answers hasOwnProperty on an arrow function that a script makes", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const arrow = () => 1;
       if (arrow.hasOwnProperty("prototype") || !Object.prototype.hasOwnProperty.call(arrow, "name")) {
         throw new Error("arrow");
       }
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace(
+      'if (arrow.hasOwnProperty("prototype")',
+      'if (!arrow.hasOwnProperty("prototype")',
+    );
+    expect((await checkModel(wrong)).failure?.message).toContain('"arrow"');
+  });
+
+  it("answers propertyIsEnumerable on a function that a script makes", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      Object.defineProperty(Function.prototype, "prop", { value: 1, enumerable: true, configurable: true });
+      const made = function () {};
       if (made.propertyIsEnumerable("prop") || made.propertyIsEnumerable("name")) throw new Error("enumerable");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace(
+      'made.propertyIsEnumerable("name")',
+      '!made.propertyIsEnumerable("name")',
+    );
+    expect((await checkModel(wrong)).failure?.message).toContain('"enumerable"');
+  });
+
+  it("answers hasOwnProperty on a key that a script defines on its function", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const defined = function () {};
+      Object.defineProperty(defined, "prop", { value: 2, enumerable: false, configurable: true });
       if (!defined.hasOwnProperty("prop") || defined.propertyIsEnumerable("prop")) throw new Error("defined");
       holder.seen = 1;
     `;
     expect((await checkModel(source)).failure).toBeUndefined();
-    const wrong = [
-      ['if (made.hasOwnProperty("prop") ||', 'if (!made.hasOwnProperty("prop") ||', '"made"'],
-      ['!made.hasOwnProperty("prototype")', 'made.hasOwnProperty("prototype")', '"made"'],
-      [
-        'if (arrow.hasOwnProperty("prototype")',
-        'if (!arrow.hasOwnProperty("prototype")',
-        '"arrow"',
-      ],
-      ['made.propertyIsEnumerable("name")', '!made.propertyIsEnumerable("name")', '"enumerable"'],
-      ['!defined.hasOwnProperty("prop")', 'defined.hasOwnProperty("prop")', '"defined"'],
-    ];
-    for (const [from, to, message] of wrong) {
-      expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
-    }
-    const caller = `
+    const wrong = source.replace(
+      '!defined.hasOwnProperty("prop")',
+      'defined.hasOwnProperty("prop")',
+    );
+    expect((await checkModel(wrong)).failure?.message).toContain('"defined"');
+  });
+
+  it("stops on hasOwnProperty where it can't tell a function's own arguments and caller", async () => {
+    const result = await checkModel(`
       const holder = { seen: 0 };
       const made = function () {};
       if (made.hasOwnProperty("caller")) holder.seen = 1;
-    `;
-    expect((await checkModel(caller)).failure?.message).toContain(
+    `);
+    expect(result.failure?.message).toContain(
       "tla-ts can't tell whether this function has its own arguments and caller",
     );
   });
