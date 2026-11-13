@@ -3765,7 +3765,12 @@ const translateSelfCall = (
         : getAnyFunction(parameter.initializer)
       : getCallback(argument, path, context);
   });
-  const defined = context.selfCalls.get(callee);
+  // Each set of functions that the parameters run has its own recursive operator.
+  const defined = context.selfCalls
+    .get(callee)
+    ?.find((selfCall) =>
+      selfCall.functions.every((called, position) => called === functions[position]),
+    );
   if (
     body === undefined ||
     isAnyGenerator(callee) ||
@@ -3781,8 +3786,7 @@ const translateSelfCall = (
         !ts.isIdentifier(parameter.name) ||
         parameter.dotDotDotToken !== undefined ||
         (context.checker.getTypeAtLocation(parameter.name).getCallSignatures().length > 0
-          ? functions[position]?.body === undefined ||
-            (defined !== undefined && defined.functions[position] !== functions[position])
+          ? functions[position]?.body === undefined
           : parameter.initializer !== undefined && !isLiteral(parameter.initializer)),
     )
   ) {
@@ -3922,7 +3926,8 @@ const translateSelfCall = (
     ...parameterNames.map((name) => identifier(name)),
     ...changedNames.map((name) => identifier(name)),
   ]);
-  context.selfCalls.set(callee, selfCall);
+  const enclosing = context.selfCalls.get(callee) ?? [];
+  context.selfCalls.set(callee, [...enclosing, selfCall]);
   const translated = translateStatements(getBody(callee, inner.scope, context), inner, context, {
     next: (current) => end(current, "return", getUndefined(context), string("")),
     exit: (current, returned) =>
@@ -3948,7 +3953,7 @@ const translateSelfCall = (
     awaitTo: undefined,
     inlining: new Set([...frame.inlining, callee]),
   });
-  context.selfCalls.delete(callee);
+  context.selfCalls.set(callee, enclosing);
   const operator: OperatorDefinition = {
     ...define(
       selfCall.name,

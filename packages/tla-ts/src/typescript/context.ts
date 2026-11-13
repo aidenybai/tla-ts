@@ -42,7 +42,7 @@ export interface Context {
   recursive: Set<ts.Declaration>;
   // The recursive operator of each function that changes state and calls itself, while its body
   // compiles, with what it changes.
-  selfCalls: Map<ts.Node, SelfCall>;
+  selfCalls: Map<ts.Node, SelfCall[]>;
   output: OperatorDefinition[];
   // The TypeScript that each emitted definition or expression compiles from.
   links: Link[];

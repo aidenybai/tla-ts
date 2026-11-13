@@ -8617,9 +8617,31 @@ describe("errors", () => {
     expect((await checkModel(getSource("weigh", "6"))).failure).toBeUndefined();
     expect((await checkModel(getSource("double", "12"))).failure).toBeUndefined();
     expect((await checkModel(getSource("double", "6"))).failure?.message).toContain('"sum"');
-    expect(() => compile(getSource("double) + sum(item, weigh", "12"))).toThrow(
-      "tla-ts can't run this call of a function from inside itself",
-    );
+  });
+
+  // Each set of functions that a function's calls of itself pass runs its own operator.
+  const getMixedSource = (summed: number) => `
+    interface Branch { kind: "branch"; items: Value[]; seen: number }
+    type Value = number | Branch;
+    const double = (leaf: number) => leaf * 2;
+    const sum = (value: Value, weigh: (leaf: number) => number = (leaf) => leaf): number => {
+      if (typeof value === "number") return weigh(value);
+      value.seen += 1;
+      let result = 0;
+      for (const item of value.items) result = result + sum(item, double) + sum(item, weigh);
+      return result;
+    };
+    const inner: Branch = { kind: "branch", items: [2, 3], seen: 0 };
+    const summed = sum({ kind: "branch", items: [1, inner], seen: 0 });
+    if (summed !== ${summed} || inner.seen !== 2) throw new Error(\`\${summed}\`);
+  `;
+
+  it("runs a function that calls itself and passes different functions", async () => {
+    expect((await checkModel(getMixedSource(38))).failure).toBeUndefined();
+  });
+
+  it("fails where a function that calls itself with different functions sums another value", async () => {
+    expect((await checkModel(getMixedSource(37))).failure?.message).toContain('"38"');
   });
 
   it("runs a function that passes itself to an array method", async () => {
