@@ -343,6 +343,7 @@ import {
   isSequenceType,
   rejectGeneratorUse,
   TYPED_ARRAYS,
+  isNullishArrayMethodCall,
 } from "./types";
 
 export interface Path {
@@ -1702,6 +1703,9 @@ export const translateCallStatement = (
   }
   const leading = getLeading();
   if (leading !== undefined) return runLeading(leading);
+  if (isNullishArrayMethodCall(expression, context)) {
+    return throwTypeError(path, expression, context, frame);
+  }
   // A receiver that may be undefined or null gives undefined to an optional chain, and throws a
   // TypeError otherwise.
   const guardReceiver = (receiver: ts.Expression, changed: Formula) => {
@@ -8592,6 +8596,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     isStoredStatement(node, context) ||
     getHeapSetOrMapChange(node, context) !== undefined ||
     getArrayIteratorCall(node, context) !== undefined ||
+    isNullishArrayMethodCall(node, context) ||
     getStringCall(node, context) !== undefined ||
     isBigIntStringify(node, context) ||
     getRevival(node, context) !== undefined ||

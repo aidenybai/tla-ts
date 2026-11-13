@@ -11330,6 +11330,24 @@ describe("errors", () => {
     ).toThrow("tla-ts can't step an iterator in this spread");
   });
 
+  it("throws the TypeError of an Array.prototype method on undefined or null", async () => {
+    const result = await checkModel(`
+      let caught = 0;
+      try {
+        Array.prototype.find.call(null, () => true);
+      } catch (error) {
+        if (error instanceof TypeError) caught += 1;
+      }
+      try {
+        [].values.call(undefined);
+      } catch (error) {
+        if (error instanceof TypeError) caught += 1;
+      }
+      if (caught === 2) throw new Error("thrown");
+    `);
+    expect(result.failure?.message).toContain("thrown");
+  });
+
   it("takes or drops up to Infinity or Number.MAX_SAFE_INTEGER", async () => {
     const result = await checkModel(`
       function* g(): Generator<number> {

@@ -571,6 +571,50 @@ export const isSetSource = (parameter: ts.ParameterDeclaration, context: Context
   );
 };
 
+// The name of Array.prototype's method that a call runs through call, as
+// Array.prototype.method.call(value, ...arguments) or [].method.call(value, ...arguments) does.
+export const getArrayMethodCall = (node: ts.CallExpression, context: Context) => {
+  const callee = node.expression;
+  const target = ts.isPropertyAccessExpression(callee) ? callee.expression : undefined;
+  return ts.isPropertyAccessExpression(callee) &&
+    callee.name.text === "call" &&
+    target !== undefined &&
+    ts.isPropertyAccessExpression(target) &&
+    (target.expression.getText() === "Array.prototype" ||
+      (ts.isArrayLiteralExpression(target.expression) &&
+        target.expression.elements.length === 0)) &&
+    getSymbol(target.name, context.checker)
+      ?.getDeclarations()
+      ?.some(
+        (declaration) =>
+          ts.isInterfaceDeclaration(declaration.parent) && declaration.parent.name.text === "Array",
+      ) === true
+    ? target.name.text
+    : undefined;
+};
+
+// A call of Array.prototype's method on undefined or null, which throws the TypeError of ToObject
+// after its arguments, which can't do anything, evaluate.
+export const isNullishArrayMethodCall = (node: ts.CallExpression, context: Context) => {
+  const thisArgument = node.arguments.at(0);
+  return (
+    getArrayMethodCall(node, context) !== undefined &&
+    (thisArgument === undefined ||
+      isEvery(
+        context.checker.getTypeAtLocation(thisArgument),
+        ts.TypeFlags.Undefined | ts.TypeFlags.Null | ts.TypeFlags.Void,
+      )) &&
+    node.arguments.every(
+      (argument) =>
+        ts.isLiteralExpression(argument) ||
+        argument.kind === ts.SyntaxKind.NullKeyword ||
+        (ts.isIdentifier(argument) && argument.text === "undefined") ||
+        ts.isFunctionExpression(argument) ||
+        ts.isArrowFunction(argument),
+    )
+  );
+};
+
 export const getKind = (node: ts.Expression, context: Context): Kind => {
   if (isHeapArray(node, context) || getBound(node, context) !== undefined) return "object";
   const checker = context.checker;
