@@ -21,7 +21,7 @@ import type { CheckerRuntime } from "./runtime";
 import { getReadVariables } from "./dependencies";
 import { contextualApplications, mapChildren, substitutedExpressions } from "./instances";
 import { prettyPrint } from "./pretty-print";
-import { getReadLocals, isEnabled } from "./successors";
+import { getReadLocals, isEnabled, type Runner } from "./successors";
 import {
   applyFunction,
   describeMissingArgument,
@@ -143,6 +143,18 @@ export interface Environment {
   // wraps the body of each in its substitutions.
   substitutedDefinitions: Set<Definition>;
   evaluators: WeakMap<Expression, Evaluator>;
+  // What the check works out once for each expression, operator or definition of its modules. The
+  // same modules checked with another config or other modules work it out again.
+  entryEvaluators: WeakMap<Expression, Evaluator>;
+  applyOperators: WeakMap<Expression, Operator | null>;
+  argumentBinders: WeakMap<Expression, ArgumentBinder>;
+  argumentLocals: WeakMap<Expression, string[] | false>;
+  closedConstants: WeakMap<Expression, boolean>;
+  callMemos: WeakMap<Closure, CallMemos>;
+  initRunners: WeakMap<Expression, Runner>;
+  nextRunners: WeakMap<Expression, Runner>;
+  definitionLevels: WeakMap<Definition, number>;
+  closureLevels: WeakMap<Closure, number>;
   // The expressions being evaluated, outermost first, when the environment replays an error to
   // find where it occurred, as TLC's CallStackTool does.
   callStack?: CallStack;
@@ -902,19 +914,17 @@ export const resolveGlobalOperator = (
   return environment.builtins.get(name);
 };
 
-const globalApplyOperators = new WeakMap<Expression, Operator | null>();
-
 export const resolveApplyOperator = (
   expression: Expression & { kind: "Apply" },
   context: Context,
 ): Operator | undefined => {
   if (isLocallyResolved(expression)) return resolveOperator(expression.operator, context);
-  const cached = globalApplyOperators.get(expression);
+  const cached = context.environment.applyOperators.get(expression);
   const global =
     cached === undefined
       ? (resolveGlobalOperator(expression.operator, context.environment) ?? null)
       : cached;
-  if (cached === undefined) globalApplyOperators.set(expression, global);
+  if (cached === undefined) context.environment.applyOperators.set(expression, global);
   return global ?? resolveOperator(expression.operator, context);
 };
 
@@ -1050,13 +1060,11 @@ const compileArgumentBinder = (argument: Expression, environment: Environment): 
   return (context) => createThunk(argument, context);
 };
 
-const argumentBinders = new WeakMap<Expression, ArgumentBinder>();
-
 const getArgumentBinder = (argument: Expression, environment: Environment) => {
-  const cached = argumentBinders.get(argument);
+  const cached = environment.argumentBinders.get(argument);
   if (cached) return cached;
   const binder = compileArgumentBinder(argument, environment);
-  argumentBinders.set(argument, binder);
+  environment.argumentBinders.set(argument, binder);
   return binder;
 };
 
@@ -1299,13 +1307,11 @@ export const hasRepeatedEffects = (environment: Environment) =>
     isImpureDefinition(definition, environment, REPEATED_EFFECT),
   );
 
-const closedConstants = new WeakMap<Expression, boolean>();
-
 export const isClosedConstant = (expression: Expression, environment: Environment): boolean => {
-  const cached = closedConstants.get(expression);
+  const cached = environment.closedConstants.get(expression);
   if (cached !== undefined) return cached;
   const isClosed = computeIsClosedConstant(expression, environment, NO_BOUND_NAMES);
-  closedConstants.set(expression, isClosed);
+  environment.closedConstants.set(expression, isClosed);
   return isClosed;
 };
 
@@ -1568,17 +1574,15 @@ export const getEvaluator = (expression: Expression, environment: Environment): 
   return evaluator;
 };
 
-const entryEvaluators = new WeakMap<Expression, Evaluator>();
-
 export const getEntryEvaluator = (expression: Expression, environment: Environment) => {
   if (environment.callStack) return getEvaluator(expression, environment);
-  const cached = entryEvaluators.get(expression);
+  const cached = environment.entryEvaluators.get(expression);
   if (cached) return cached;
   const evaluator =
     (isWorthCaching(expression) && isClosedConstant(expression, environment)
       ? undefined
       : generateEvaluator(expression, environment)) ?? getEvaluator(expression, environment);
-  entryEvaluators.set(expression, evaluator);
+  environment.entryEvaluators.set(expression, evaluator);
   return evaluator;
 };
 
@@ -1751,13 +1755,11 @@ interface CallMemos {
 
 const createCallMemo = (): CallMemo => ({ calls: new Map(), size: 0, state: undefined });
 
-const callMemos = new WeakMap<Closure, CallMemos>();
-
-const getCallMemos = (closure: Closure) => {
-  const cached = callMemos.get(closure);
+const getCallMemos = (closure: Closure, environment: Environment) => {
+  const cached = environment.callMemos.get(closure);
   if (cached) return cached;
   const memos = { constant: createCallMemo(), state: createCallMemo() };
-  callMemos.set(closure, memos);
+  environment.callMemos.set(closure, memos);
   return memos;
 };
 
@@ -1766,10 +1768,8 @@ const readsExceptAt = (expression: Expression): boolean =>
 
 // The locals an argument expression reads, when the state and their values decide its value. An @
 // reads the value its EXCEPT binds.
-const argumentLocals = new WeakMap<Expression, string[] | false>();
-
 const getArgumentLocals = (expression: Expression, environment: Environment) => {
-  const cached = argumentLocals.get(expression);
+  const cached = environment.argumentLocals.get(expression);
   if (cached !== undefined) return cached;
   const locals =
     getReadVariables(expression, environment) !== undefined &&
@@ -1777,7 +1777,7 @@ const getArgumentLocals = (expression: Expression, environment: Environment) => 
   const unique = locals && [
     ...new Set(readsExceptAt(expression) ? [...locals, EXCEPT_AT] : locals),
   ];
-  argumentLocals.set(expression, unique ?? false);
+  environment.argumentLocals.set(expression, unique ?? false);
   return unique ?? false;
 };
 
@@ -1917,7 +1917,7 @@ const compileClosureCall = (
   if (!memoizedLevel || args.length !== closure.params.length) {
     return (context) => evaluateBody(bindArguments(context), context);
   }
-  const memos = getCallMemos(closure);
+  const memos = getCallMemos(closure, environment);
   const keys = args.map((arg) => compileArgumentKey(arg, environment));
   const usage = { hits: 0, misses: 0 };
   return (context) => {

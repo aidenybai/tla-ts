@@ -20,7 +20,6 @@ import {
   resolveApplyOperator,
   resolveGlobalOperator,
   resolveOperator,
-  type Closure,
   type Context,
   type Environment,
   type Scope,
@@ -67,10 +66,6 @@ export const createTautologyError = () =>
 
 const TEMPORAL_OPERATORS = new Set(["~>", "-+->"]);
 
-const definitionLevels = new WeakMap<Definition, number>();
-
-const closureLevels = new WeakMap<Closure, number>();
-
 const thunkLevels = new WeakMap<Thunk, number>();
 
 const definitionThunks = new WeakSet<Thunk>();
@@ -108,11 +103,11 @@ export const getLevel = (
     }
     const operator = binding.operator;
     if (operator.kind !== "Closure") return CONSTANT_LEVEL;
-    const cached = closureLevels.get(operator);
+    const cached = environment.closureLevels.get(operator);
     if (cached !== undefined) return cached;
-    closureLevels.set(operator, CONSTANT_LEVEL);
+    environment.closureLevels.set(operator, CONSTANT_LEVEL);
     const level = getLevel(operator.body, operator.scope, environment);
-    closureLevels.set(operator, level);
+    environment.closureLevels.set(operator, level);
     return level;
   };
   const getGlobalLevel = (name: string) => {
@@ -176,15 +171,15 @@ export const getLevel = (
 };
 
 const getDefinitionLevel = (definition: Definition, environment: Environment) => {
-  const cached = definitionLevels.get(definition);
+  const cached = environment.definitionLevels.get(definition);
   if (cached !== undefined) return cached;
-  definitionLevels.set(definition, 0);
+  environment.definitionLevels.set(definition, 0);
   const bounds = definition.kind === "Function" ? definition.bounds : [];
   const level = Math.max(
     getLevel(definition.body, undefined, environment),
     ...bounds.map((bound) => getLevel(bound.set, undefined, environment)),
   );
-  definitionLevels.set(definition, level);
+  environment.definitionLevels.set(definition, level);
   return level;
 };
 

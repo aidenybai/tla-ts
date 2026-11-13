@@ -261,6 +261,30 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("checks one parsed module again with another config", async () => {
+    const module = parseModule(`---- MODULE M ----
+EXTENDS Naturals
+CONSTANT N
+Scaled(value) == value * N
+VARIABLE x
+Init == x = Scaled(1)
+Next == x < N + 1 /\\ x' = x + 1
+IsScaled == x \\in {N, N + 1}
+IsTwo == x \\in {2, 3}
+====`);
+    const checkWith = (value: number, invariant: string) =>
+      check({
+        source: module,
+        config: `CONSTANT N = ${value}\nINIT Init\nNEXT Next\nINVARIANT ${invariant}\nCHECK_DEADLOCK FALSE`,
+      });
+    expect((await checkWith(2, "IsScaled")).failure).toBeUndefined();
+    const result = await checkWith(3, "IsScaled");
+    expect(result.failure).toBeUndefined();
+    expect(result.distinctStates).toBe(2);
+    const wrong = await checkWith(3, "IsTwo");
+    expect(formatValue(wrong.violation?.trace[0].state.x ?? false)).toBe("3");
+  });
+
   it("generates no states for a specification without variables", async () => {
     const result = await check({
       source: "---- MODULE M ----\nSpec == [][TRUE]_<<>>\n====",
