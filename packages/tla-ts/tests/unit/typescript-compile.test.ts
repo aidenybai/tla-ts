@@ -23168,6 +23168,21 @@ describe("buffers", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("runs on past an object that a statement makes and drops", async () => {
+    const result = await checkModel(`
+      const buffer = new ArrayBuffer(4);
+      new ArrayBuffer(2);
+      new DataView(buffer, 1);
+      new Int8Array(buffer, 2);
+      new Date(0);
+      new Object();
+      const view = new Int8Array(buffer);
+      view[0] = 3;
+      if (view[0] !== 3) throw new Error("runs on");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops at a number a typed array's float can't hold exactly", async () => {
     const result = await checkModel(`
       const floats = new Float32Array(1);

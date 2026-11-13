@@ -8520,6 +8520,8 @@ const translateExpressionStatement = (
   ) {
     return continueWith(path);
   }
+  // An object that a statement makes, such as new ArrayBuffer, and drops is done once it's made.
+  if (path.scope.allocated.has(expression)) return continueWith(path);
   if (isForeignNew(expression, context)) {
     return translateForeignNew(expression, path, context, frame);
   }
