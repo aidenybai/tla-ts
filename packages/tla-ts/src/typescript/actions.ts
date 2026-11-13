@@ -10611,7 +10611,9 @@ const translateLoop = (
   }
   return ts.isVariableDeclarationList(initializer)
     ? translateDeclarations(initializer.declarations, path, context, frame, runLoop)
-    : translateExpressionStatement(initializer, path, context, frame, runLoop);
+    : allocate(initializer, path, context, (inner) =>
+        translateExpressionStatement(initializer, inner, context, frame, runLoop),
+      );
 };
 
 interface OpenedIterator {
@@ -10865,10 +10867,14 @@ const translateIterations = (
       );
     };
     const testAgain = (current: Path) => test(current, repeat, done);
+    // The incrementor makes its objects as a statement does.
+    const incrementor = ts.isForStatement(loop) ? loop.incrementor : undefined;
     const advance = (current: Path) =>
-      ts.isForStatement(loop) && loop.incrementor !== undefined
-        ? translateExpressionStatement(loop.incrementor, current, context, frame, repeat)
-        : repeat(current);
+      incrementor === undefined
+        ? repeat(current)
+        : allocate(incrementor, current, context, (inner) =>
+            translateExpressionStatement(incrementor, inner, context, frame, repeat),
+          );
     const bodyFrame: Frame = {
       ...frame,
       next: ts.isDoStatement(loop) ? testAgain : advance,
@@ -11371,19 +11377,29 @@ const runAssignment = (
     );
   }
   const target = ts.isIdentifier(node.left) ? getSymbol(node.left, context.checker) : undefined;
-  // An update to a property gives what it writes, which a typed array, say, may not hold.
-  const update = isMemberUpdate(node) ? getUpdate(node, path, context) : undefined;
-  const value =
-    update !== undefined
-      ? update(translateExpression(node.left, path.scope, context))
-      : target === undefined
-        ? translateExpression(node.right, path.scope, context)
-        : undefined;
-  return translateExpressionStatement(node, path, context, frame, (after) => {
-    const result = value ?? (target === undefined ? undefined : after.scope.bindings.get(target));
-    if (result === undefined) throw new TlaTypeScriptError("Unsupported assignment", node);
-    return continueWith(after, result);
-  });
+  // An assignment that runs before the rest of its statement makes its objects first, which the
+  // statement, reading its result, doesn't make, unless a call made its parameters' defaults.
+  return allocateAll(
+    getAllocated(node, context).filter((allocation) => !path.scope.allocated.has(allocation)),
+    path,
+    context,
+    (allocated) => {
+      // An update to a property gives what it writes, which a typed array, say, may not hold.
+      const update = isMemberUpdate(node) ? getUpdate(node, allocated, context) : undefined;
+      const value =
+        update !== undefined
+          ? update(translateExpression(node.left, allocated.scope, context))
+          : target === undefined
+            ? translateExpression(node.right, allocated.scope, context)
+            : undefined;
+      return translateExpressionStatement(node, allocated, context, frame, (after) => {
+        const result =
+          value ?? (target === undefined ? undefined : after.scope.bindings.get(target));
+        if (result === undefined) throw new TlaTypeScriptError("Unsupported assignment", node);
+        return continueWith(after, result);
+      });
+    },
+  );
 };
 
 const SHORT_CIRCUITS = new Set([

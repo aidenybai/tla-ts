@@ -10141,6 +10141,35 @@ describe("errors", () => {
 
   // V8 sorts fewer than 64 elements by the run that starts them, which it reverses where it
   // descends, and then inserts each element after the run by binary search.
+  // An assignment that runs before the rest of its statement, or a for loop's initializer or
+  // incrementor, makes the objects that it assigns.
+  describe("makes the objects of an assignment that runs apart from its statement", () => {
+    const getSource = (expected: number) => `
+      let made: { n: number } | undefined;
+      class Box {
+        constructor() {
+          return (made = { n: 1 });
+        }
+      }
+      const make = () => {
+        return (made = { n: 2 });
+      };
+      const box = new Box();
+      const other = make();
+      let count = 0;
+      for (made = { n: 3 }; count < 2; made = { n: made.n + 1 }, count++) count += 0;
+      if (box === other || other.n !== 2 || made.n !== ${expected}) throw new Error("made " + made.n);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(5))).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(getSource(4))).failure?.message).toContain("made 5");
+    });
+  });
+
   describe("calls a sort comparator on the pairs that V8 compares, in its order", () => {
     const getSource = (expected: string) => `
       const log: string[] = [];
