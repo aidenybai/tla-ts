@@ -464,9 +464,21 @@ const isRegExpGroups = (node: ts.Expression, context: Context): boolean => {
 
 export const ITERATOR_METHODS = ["keys", "values", "entries"];
 
+// The array that Iterator.from takes, whose Symbol.iterator method makes the iterator it gives, as
+// an array's iterator inherits from Iterator.prototype.
+export const getIteratedArray = (node: ts.Node, context: Context) =>
+  ts.isCallExpression(node) &&
+  node.expression.getText() === "Iterator.from" &&
+  node.arguments.length === 1 &&
+  !ts.isSpreadElement(node.arguments[0]) &&
+  isSequenceType(context.checker.getTypeAtLocation(node.arguments[0]), context.checker)
+    ? node.arguments[0]
+    : undefined;
+
 // The kind of iterator that a call of an array's keys(), values(), entries(), or [Symbol.iterator]()
 // makes, where no for-of or spread reads it at once, so that the iterator is an object.
 export const getKeptIterator = (node: ts.Node, context: Context) => {
+  if (getIteratedArray(node, context) !== undefined) return "values";
   if (
     !ts.isCallExpression(node) ||
     node.arguments.length > 0 ||
@@ -565,6 +577,12 @@ const getMembers = (node: ts.Node, context: Context) => {
 // generator does.
 const isGeneratorMember = (type: ts.Type) =>
   ["Generator", "AsyncGenerator", "IteratorObject"].includes(type.getSymbol()?.name ?? "");
+
+// An array's iterator, whose type tells, which the code that steps generators steps through its
+// heap object.
+export const isArrayIteratorType = (node: ts.Node, context: Context) =>
+  context.heap !== undefined &&
+  getMembers(node, context).every((type) => type.getSymbol()?.name === "ArrayIterator");
 
 export const isGeneratorType = (node: ts.Node, context: Context) =>
   getMembers(node, context).every(isGeneratorMember);

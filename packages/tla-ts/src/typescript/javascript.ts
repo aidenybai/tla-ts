@@ -1416,8 +1416,9 @@ ArrayIterator(heap, array, kind, prototype) ==
                                     @@ [iterated |-> array, index |-> 0, kind |-> kind])
   IN [heap |-> allocated, value |-> Allocated(allocated), isThrown |-> FALSE]
 
-\\* %ArrayIteratorPrototype%.next, which gives a new result object and forgets the array once done.
-ArrayIteratorNext(heap, ref) ==
+\\* A step of an array's iterator, which forgets the array once done: the heap after it, the value
+\\* it gives, and whether it's done.
+ArrayIteratorStep(heap, ref) ==
   LET iterator == heap.objects[ref[Ref]]
       array == iterator.iterated
       index == iterator.index
@@ -1429,10 +1430,15 @@ ArrayIteratorNext(heap, ref) ==
                  [] OTHER -> <<index, element>>
       stepped == [heap EXCEPT !.objects[ref[Ref]] =
                     IF isDone THEN [@ EXCEPT !.iterated = Undefined] ELSE [@ EXCEPT !.index = index + 1]]
-      allocated == Allocate(stepped, IteratorResult(value, isDone))
-  IN IF IsHeap(ref) /\\ "iterated" \\in DOMAIN iterator
-     THEN [heap |-> allocated, value |-> Allocated(allocated), isThrown |-> FALSE]
-     ELSE Assert(FALSE, "tla-ts can't step an iterator that isn't an array's with its next")
+  IN [heap |-> stepped, value |-> value, isDone |-> isDone]
+
+\\* %ArrayIteratorPrototype%.next, which gives a new result object.
+ArrayIteratorNext(heap, ref) ==
+  IF IsHeap(ref) /\\ "iterated" \\in DOMAIN heap.objects[ref[Ref]]
+  THEN LET step == ArrayIteratorStep(heap, ref)
+           allocated == Allocate(step.heap, IteratorResult(step.value, step.isDone))
+       IN [heap |-> allocated, value |-> Allocated(allocated), isThrown |-> FALSE]
+  ELSE Assert(FALSE, "tla-ts can't step an iterator that isn't an array's with its next")
 
 \\* The values of an array-like object at each index below its length, which Get reads, so that a
 \\* hole gives what a prototype holds there, or undefined.

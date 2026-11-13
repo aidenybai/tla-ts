@@ -62,6 +62,7 @@ import {
   getKind,
   isBooleanType,
   isEvery,
+  getIteratedArray,
   getKeptIterator,
   isHeapArray,
   ITERATOR_METHODS,
@@ -1254,6 +1255,21 @@ export const isArrayIteration = (node: ts.Node, context: Context) =>
 // next. The iterator reads an array that the heap holds as it steps, or a literal that nothing
 // else holds, which can't change.
 export const getArrayIteratorCall = (node: ts.Node, context: Context) => {
+  const iterated = getIteratedArray(node, context);
+  if (
+    context.heap !== undefined &&
+    iterated !== undefined &&
+    (isHeapArray(iterated, context) ||
+      (ts.isArrayLiteralExpression(iterated) && getKind(iterated, context) === "sequence"))
+  ) {
+    return {
+      kind: "values",
+      receiver: iterated,
+      key: "@@iterator",
+      path: "Array.prototype.values",
+      isFrom: true,
+    };
+  }
   if (
     context.heap === undefined ||
     !ts.isCallExpression(node) ||
@@ -2516,7 +2532,7 @@ export const holdsArrayIteration = (
     holdsArrayIteratorNext(heap, node, context),
   ]);
 
-const holdsArrayIteratorNext = (heap: Expression, node: ts.Node, context: Context) =>
+export const holdsArrayIteratorNext = (heap: Expression, node: ts.Node, context: Context) =>
   useJavaScript(
     "HoldsBuiltIn",
     [

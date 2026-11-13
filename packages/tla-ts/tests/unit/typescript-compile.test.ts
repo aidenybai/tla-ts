@@ -8756,6 +8756,75 @@ describe("errors", () => {
     );
   });
 
+  it("steps the array's iterator that Iterator.from gives back as the array changes", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      const elements = [1, 2];
+      const iterator = Iterator.from(elements);
+      elements.push(3);
+      if (Array.from(iterator).join() !== "1,2,3") throw new Error("from");
+      holder.count = 1;
+      if (iterator.next().done) throw new Error("done");
+    `);
+    expect(result.failure?.message).toContain("done");
+  });
+
+  it("runs a for-of over the array's iterator that Iterator.from gives back", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      let sum = 0;
+      for (const value of Iterator.from([1, 2])) sum += value;
+      holder.count = 1;
+      if (sum === 3) throw new Error("summed");
+    `);
+    expect(result.failure?.message).toContain("summed");
+  });
+
+  it("maps an array's iterator through an iterator helper", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      const doubled = [1, 2].keys().map((value) => value * 2).toArray();
+      holder.count = 1;
+      if (doubled.join() === "0,2") throw new Error("mapped");
+    `);
+    expect(result.failure?.message).toContain("mapped");
+  });
+
+  it("leaves an array's iterator open where some stops early", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      const iterator = [1, 2, 3].values();
+      if (!iterator.some((value) => value === 1)) throw new Error("some");
+      holder.count = 1;
+      if (iterator.next().value === 2) throw new Error("open");
+    `);
+    expect(result.failure?.message).toContain("open");
+  });
+
+  it("reduces a variable's array iterator", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      const iterator = [1, 2].values();
+      const sum = iterator.reduce((total, value) => total + value, 0);
+      holder.count = 1;
+      if (sum === 3) throw new Error("reduced");
+    `);
+    expect(result.failure?.message).toContain("reduced");
+  });
+
+  it("runs a for-of over a variable's array iterator from where next left it", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      const iterator = [1, 2].values();
+      iterator.next();
+      let sum = 0;
+      for (const value of iterator) sum += value;
+      holder.count = 1;
+      if (sum === 2) throw new Error("rest");
+    `);
+    expect(result.failure?.message).toContain("rest");
+  });
+
   it("takes or drops up to Infinity or Number.MAX_SAFE_INTEGER", async () => {
     const result = await checkModel(`
       function* g(): Generator<number> {
