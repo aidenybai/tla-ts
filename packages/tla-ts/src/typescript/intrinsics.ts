@@ -1709,6 +1709,17 @@ const getConstantValues = (
           return expression.name.text === "source" ? made.source : made.flags;
         });
   }
+  const called = getCalledFunction(expression);
+  if (called !== undefined) {
+    const body = called.body;
+    const [statement] = ts.isBlock(body) ? body.statements : [];
+    const returned = !ts.isBlock(body)
+      ? body
+      : body.statements.length === 1 && statement !== undefined && ts.isReturnStatement(statement)
+        ? statement.expression
+        : undefined;
+    return returned === undefined ? undefined : getConstantValues(returned, context, visited);
+  }
   const symbol = ts.isIdentifier(expression) ? getSymbol(expression, context.checker) : undefined;
   const declaration = symbol?.valueDeclaration;
   if (symbol === undefined || declaration === undefined || visited.has(declaration)) {
@@ -1789,6 +1800,22 @@ const getConstantValues = (
     : undefined;
 };
 
+// The function that a call without arguments makes and runs in place, where it takes no parameters
+// and is neither async nor a generator.
+const getCalledFunction = (node: ts.Expression) => {
+  const callee =
+    ts.isCallExpression(node) && node.arguments.length === 0
+      ? skipCasts(node.expression)
+      : undefined;
+  return callee !== undefined &&
+    (ts.isFunctionExpression(callee) || ts.isArrowFunction(callee)) &&
+    callee.parameters.length === 0 &&
+    callee.asteriskToken === undefined &&
+    !callee.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
+    ? callee
+    : undefined;
+};
+
 // The patterns and flags that new RegExp or RegExp may make, where its arguments are strings that
 // tla-ts finds as it compiles, or a regexp literal and the string literal of new flags, without
 // which new RegExp copies its flags and RegExp gives the literal itself.
@@ -1835,11 +1862,13 @@ const getRegExpTexts = (node: ts.Node, context: Context) => {
 // what ToString gives from the others.
 const getPrimitiveText = (node: ts.Expression, context: Context) => {
   const inner = skipCasts(node);
+  const body = getCalledFunction(inner)?.body;
   if (
     (ts.isIdentifier(inner) &&
       inner.text === "undefined" &&
       (context.checker.getTypeAtLocation(inner).flags & ts.TypeFlags.Undefined) !== 0) ||
-    (ts.isVoidExpression(inner) && ts.isLiteralExpression(inner.expression))
+    (ts.isVoidExpression(inner) && ts.isLiteralExpression(inner.expression)) ||
+    (body !== undefined && ts.isBlock(body) && body.statements.length === 0)
   ) {
     return "";
   }

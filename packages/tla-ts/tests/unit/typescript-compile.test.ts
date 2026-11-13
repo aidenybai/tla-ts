@@ -2982,6 +2982,18 @@ describe("values", () => {
     ).toContain("outcomes (?:),(?:),true,null,true,syntax");
   });
 
+  it("makes the regexps whose pattern and flags functions return as a call runs them", async () => {
+    const getSource = (expected: string) => `
+      const either = new RegExp(function () { return "a|b"; }(), (() => "g")());
+      // @ts-ignore
+      const plain = new RegExp("x", (function () {})());
+      const result = ["cab".replace(either, "-"), plain.flags, plain.test("x")].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("c--,,true"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("c-b,,true"))).rejects.toThrow("c--,,true");
+  });
+
   it("makes a set of what flatMap gives of a map's keys", async () => {
     const getSource = (expected: string) => `
       const LITERALS = new Map([
