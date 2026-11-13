@@ -2271,8 +2271,9 @@ LOCAL CharacterAt(text, index) ==
 LOCAL IsWordAt(text, index) == CharacterAt(text, index) \\in WordCharacters
 
 \\* Whether a class matches a character, where the compiler lists the characters in ASCII that it
-\\* matches and, of those outside ASCII, the ones it matches where it matches none of the rest, or
-\\* the ones it doesn't where it matches all of the rest.
+\\* matches, whether it matches each one outside ASCII that the script's strings may hold, and of the
+\\* rest, the ones it matches where it matches none of the others, or the ones it doesn't where it
+\\* matches all of the others.
 LOCAL IsInClass(node, character) ==
   CASE character \\in node.characters -> TRUE
     [] character \\in node.excluded \\/ character \\in DOMAIN AsciiCodes -> FALSE
@@ -2397,11 +2398,18 @@ RegExpSearch(regexp, text, index) ==
        IN  IF found.end # -1 \\/ regexp.sticky THEN found ELSE RegExpSearch(regexp, text, index + 1)
 
 \\* The text that a regexp matches. A regexp with the u flag matches code points, which are the code
-\\* units of text in ASCII, where tla-ts matches it only.
+\\* units of text without surrogates, where tla-ts matches it only. With the i flag it folds case by
+\\* Unicode, so tla-ts matches it only on text in ASCII.
 LOCAL RegExpText(regexp, value) ==
-  IF regexp.unicode /\\ ~IsAscii(Text(value))
-  THEN Assert(FALSE, "tla-ts can't match a regexp with the u flag on text outside ASCII")
-  ELSE Text(value)
+  LET text == Text(value)
+  IN  IF /\\ regexp.unicode
+         /\\ ~IsAscii(text)
+         /\\ \\/ regexp.ignoreCase
+            \\/ \\E character \\in CharactersOf(text) :
+                 LET code == CharacterCode(character)
+                 IN  IsHighSurrogate(code) \\/ IsLowSurrogate(code)
+      THEN Assert(FALSE, "tla-ts can't match a regexp with the u flag on text outside ASCII")
+      ELSE text
 
 \\* The text of a match's capture, where 0 is the whole match, or undefined where it took no part.
 LOCAL RegExpCapture(text, match, index) ==

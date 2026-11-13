@@ -75,6 +75,9 @@ export interface Context {
   // Whether a script gives Array.prototype or Object.prototype properties, which an array reads
   // past its end.
   hasInheritedElements: boolean;
+  // The code units outside ASCII that a script's strings may hold: those its text writes, and those
+  // of each case of the code points they make.
+  characters: Set<number>;
   // The argument that an inlined call passed, by the name that binds the parameter that took it.
   passed: Map<string, Passed>;
   // What each function that a statement runs changes, with the functions that it runs in turn, by
@@ -140,6 +143,7 @@ export const createContext = (checker: ts.TypeChecker): Context => ({
   heapCollections: new Set(),
   generatorPrototypes: new Map(),
   hasInheritedElements: false,
+  characters: new Set(),
   passed: new Map(),
   changeSummaries: new Map(),
 });
