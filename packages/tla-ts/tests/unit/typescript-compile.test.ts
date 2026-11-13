@@ -2139,6 +2139,17 @@ describe("values", () => {
     expect((await checkModel(getSource("3,8"))).failure?.message).toContain("outcomes 3,7");
   });
 
+  it("makes the objects of a function that a call defines and runs at once", async () => {
+    const getSource = (expected: string) => `
+      const first = 1 + (function (t: number) { return { a: t }; })(2 + 3).a;
+      const second = ((t: number) => ({ b: t * 2 }))(first).b;
+      const outcomes = [first, second].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("6,12"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("6,13"))).failure?.message).toContain("outcomes 6,12");
+  });
+
   it("makes a regexp that a function returns each time the function runs", async () => {
     const getSource = (expected: string) => `
       const makeRegExp = () => /(?:)/;
