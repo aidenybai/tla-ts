@@ -2505,6 +2505,7 @@ export const ARRAY_LIKE_METHODS = new Set([
   "findLastIndex",
   "reduce",
   "reduceRight",
+  "flatMap",
 ]);
 
 // The array methods that make an array through ArraySpeciesCreate, which reads the constructor of
@@ -2571,6 +2572,7 @@ export const HOLE_SKIPPING_METHODS = new Set([
   "lastIndexOf",
   "reduce",
   "reduceRight",
+  "flatMap",
 ]);
 
 // The array methods that read each index below the length through Get, so that a hole reads as

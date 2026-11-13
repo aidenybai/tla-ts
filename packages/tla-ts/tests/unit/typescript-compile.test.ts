@@ -11754,6 +11754,19 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("forEach");
   });
 
+  it("flattens what flatMap's callback gives for each element of an array-like object", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      const pair = (element: number) => [39, element * 2];
+      const object = { length: 3, 0: 1, 2: 21 };
+      const flat = Array.prototype.flatMap.call(object, pair as (...args: unknown[]) => unknown);
+      const empty = Array.prototype.flatMap.call(true, () => {});
+      holder.count = 1;
+      if (flat.join() === "39,2,39,42" && empty.length === 0) throw new Error("flatMap");
+    `);
+    expect(result.failure?.message).toContain("flatMap");
+  });
+
   it("takes or drops up to Infinity or Number.MAX_SAFE_INTEGER", async () => {
     const result = await checkModel(`
       function* g(): Generator<number> {
