@@ -264,14 +264,12 @@ export class NlaTranscendentals {
     return true;
   }
 
-  // Stops at the first lemma.
   check() {
     if (this.isEmpty || this.core.isUsingNraModel) return;
     for (const app of this.apps) if (this.checkApp(app)) return;
     for (const app of this.atan2Apps) if (this.checkAtan2(app)) return;
   }
 
-  // Checks nlsat's model of every application against round-off.
   isNraModelValid() {
     const core = this.core;
     if (!core.isUsingNraModel) return false;

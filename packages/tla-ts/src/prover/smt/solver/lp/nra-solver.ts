@@ -214,7 +214,6 @@ export class NraSolver {
     return variable;
   }
 
-  // nlsat refines the applications of transcendental functions in its own search.
   private registerTranscendentals() {
     const transcendentals = this.core.transcendentals;
     const solver = this.solver.transcendentals;

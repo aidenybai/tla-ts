@@ -86,7 +86,6 @@ export class Rational {
     return new Rational(BigInt(value), 1n);
   }
 
-  // The exact value of a finite double.
   static fromDouble(value: number) {
     let den = 1n;
     let scaled = value;
