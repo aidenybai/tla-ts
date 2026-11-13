@@ -43,12 +43,14 @@ describe("the CLI with TypeScript files", () => {
     expect(readdirSync(directory)).toEqual(files);
   });
 
-  it("reads names that a module re-exports, and checks the module that re-exports them", () => {
-    const directory = copyFixtures("project");
-    const relayed = runCli(directory, ["relay.ts"]);
-    expect(relayed.status).toBe(0);
-    expect(relayed.stdout).toContain("4 distinct states found");
-    expect(runCli(directory, ["barrel.ts"]).status).toBe(0);
+  it("reads names that a module re-exports", () => {
+    const result = runCli(copyFixtures("project"), ["relay.ts"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("4 distinct states found");
+  });
+
+  it("checks the module that re-exports names", () => {
+    expect(runCli(copyFixtures("project"), ["barrel.ts"]).status).toBe(0);
   });
 
   it("type checks a file of a project with the project's tsconfig.json", () => {

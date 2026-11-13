@@ -256,7 +256,7 @@ describe("top-level statements", () => {
     expect(result.status).toBe("deadlock");
   });
 
-  it("run a call that needs statements before the call it is the first argument of", async () => {
+  describe("run a call that needs statements before the call it is the first argument of", () => {
     const getSource = (expected: boolean) => `
       let checked = 0;
       function check(value: unknown, expected: unknown) {
@@ -272,8 +272,14 @@ describe("top-level statements", () => {
       }
       check(isThrown(), ${expected});
     `;
-    expect(getTrace(await checkModel(getSource(true)))).toEqual([{ checked: "1" }]);
-    expect((await checkModel(getSource(false))).failure?.message).toContain("unexpected");
+
+    it("agrees with Node", async () => {
+      expect(getTrace(await checkModel(getSource(true)))).toEqual([{ checked: "1" }]);
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(getSource(false))).failure?.message).toContain("unexpected");
+    });
   });
 
   it("pass a built-in function to a call as a value", async () => {
@@ -351,7 +357,7 @@ describe("top-level statements", () => {
     expect(getTrace(result)?.[0]).toMatchObject({ seen: '"0:11,1:6,5:10,"' });
   });
 
-  it("read each index of an array as a callback that changes objects leaves it", async () => {
+  describe("read each index of an array as a callback that changes objects leaves it", () => {
     const source = (expected: string) => `
       const items: (number | undefined)[] = [1, , 3, 4];
       let seen = "";
@@ -371,8 +377,14 @@ describe("top-level statements", () => {
         throw new Error("callback");
       }
     `;
-    expect((await checkModel(source("124"))).failure).toBeUndefined();
-    expect((await checkModel(source("1234"))).failure?.message).toContain("callback");
+
+    it("agrees with Node on 124", async () => {
+      expect((await checkModel(source("124"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 1234", async () => {
+      expect((await checkModel(source("1234"))).failure?.message).toContain("callback");
+    });
   });
 
   it("seed a reduce from the first element it finds as a callback that changes objects leaves it", async () => {
@@ -912,24 +924,32 @@ describe("values", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("raises to a negative power, and stops where a script of integers can't hold the power", async () => {
-    const result = await checkModel(`
+  describe("raises to a negative power, and stops where a script of integers can't hold the power", () => {
+    it("agrees with Node", async () => {
+      const result = await checkModel(`
       const exponent = -5;
       if ((-1) ** 3 !== -1 || 1 ** exponent !== 1 || (-1) ** exponent !== -1) {
         throw new Error("power");
       }
     `);
-    expect(result.failure).toBeUndefined();
-    await expect(
-      checkModel(
-        "const exponent = -1;\nconst value = 2 ** exponent;\nif (value > 5) throw new Error();",
-      ),
-    ).rejects.toThrow("tla-ts can't represent this value");
-    await expect(
-      checkModel(
-        "const exponent = -1;\nconst value = Math.pow(0, exponent);\nif (value > 5) throw new Error();",
-      ),
-    ).rejects.toThrow("tla-ts can't represent Infinity in this script");
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("stops where tla-ts can't follow it", async () => {
+      await expect(
+        checkModel(
+          "const exponent = -1;\nconst value = 2 ** exponent;\nif (value > 5) throw new Error();",
+        ),
+      ).rejects.toThrow("tla-ts can't represent this value");
+    });
+
+    it("stops where tla-ts can't follow it (2)", async () => {
+      await expect(
+        checkModel(
+          "const exponent = -1;\nconst value = Math.pow(0, exponent);\nif (value > 5) throw new Error();",
+        ),
+      ).rejects.toThrow("tla-ts can't represent Infinity in this script");
+    });
   });
 
   it("multiplies with Math.imul and reads a literal past 32 bits as ToInt32 does", async () => {
@@ -1012,7 +1032,7 @@ describe("values", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("passes a private setter what a compound or logical assignment makes of its getter's value", async () => {
+  describe("passes a private setter what a compound or logical assignment makes of its getter's value", () => {
     const getSource = (added: number, stored: number, either: number) => `
       class Counter {
         #seen = 4;
@@ -1037,13 +1057,25 @@ describe("values", () => {
       if (counter.add() !== expected[0] || counter.seen() !== expected[1]) throw new Error("add");
       if (counter.either() !== expected[2] || counter.seen() !== 70) throw new Error("or");
     `;
-    expect((await checkModel(getSource(7, 70, 71))).failure).toBeUndefined();
-    expect((await checkModel(getSource(70, 70, 71))).failure?.message).toContain("add");
-    expect((await checkModel(getSource(7, 7, 71))).failure?.message).toContain("add");
-    expect((await checkModel(getSource(7, 70, 9))).failure?.message).toContain("or");
+
+    it("agrees with Node on 7", async () => {
+      expect((await checkModel(getSource(7, 70, 71))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 70", async () => {
+      expect((await checkModel(getSource(70, 70, 71))).failure?.message).toContain("add");
+    });
+
+    it("rejects the expectation 7", async () => {
+      expect((await checkModel(getSource(7, 7, 71))).failure?.message).toContain("add");
+    });
+
+    it("rejects the expectation 7 (2)", async () => {
+      expect((await checkModel(getSource(7, 70, 9))).failure?.message).toContain("or");
+    });
   });
 
-  it("writes a property in a logical assignment only where its value doesn't decide", async () => {
+  describe("writes a property in a logical assignment only where its value doesn't decide", () => {
     const getSource = (either: number, nullish: number, fixed: number) => `
       class Counter {
         #field = 1;
@@ -1062,13 +1094,25 @@ describe("values", () => {
       Object.defineProperty(fixed, "count", { writable: false });
       if (echo((fixed.count ||= 0)) !== ${fixed}) throw new Error("fixed");
     `;
-    expect((await checkModel(getSource(1, 4, 2))).failure).toBeUndefined();
-    expect((await checkModel(getSource(9, 4, 2))).failure?.message).toContain("or");
-    expect((await checkModel(getSource(1, 5, 2))).failure?.message).toContain("nullish");
-    expect((await checkModel(getSource(1, 4, 0))).failure?.message).toContain("fixed");
+
+    it("agrees with Node on 1", async () => {
+      expect((await checkModel(getSource(1, 4, 2))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 9", async () => {
+      expect((await checkModel(getSource(9, 4, 2))).failure?.message).toContain("or");
+    });
+
+    it("rejects the expectation 1", async () => {
+      expect((await checkModel(getSource(1, 5, 2))).failure?.message).toContain("nullish");
+    });
+
+    it("rejects the expectation 1 (2)", async () => {
+      expect((await checkModel(getSource(1, 4, 0))).failure?.message).toContain("fixed");
+    });
   });
 
-  it("runs a function whose statements assign its parameters in its expressions", async () => {
+  describe("runs a function whose statements assign its parameters in its expressions", () => {
     const getSource = (compound: number, increment: number, declared: number) => `
       function increment(value: number) {
         return (value += 1);
@@ -1085,13 +1129,25 @@ describe("values", () => {
       if (after(1) !== expected[1]) throw new Error("increment");
       if (doubled(2) !== expected[2]) throw new Error("declared");
     `;
-    expect((await checkModel(getSource(2, 1, 8))).failure).toBeUndefined();
-    await expect(checkModel(getSource(1, 1, 8))).rejects.toThrow("compound");
-    await expect(checkModel(getSource(2, 2, 8))).rejects.toThrow("increment");
-    await expect(checkModel(getSource(2, 1, 4))).rejects.toThrow("declared");
+
+    it("agrees with Node on 2", async () => {
+      expect((await checkModel(getSource(2, 1, 8))).failure).toBeUndefined();
+    });
+
+    it("stops on 1", async () => {
+      await expect(checkModel(getSource(1, 1, 8))).rejects.toThrow("compound");
+    });
+
+    it("stops on 2", async () => {
+      await expect(checkModel(getSource(2, 2, 8))).rejects.toThrow("increment");
+    });
+
+    it("stops on 2 (2)", async () => {
+      await expect(checkModel(getSource(2, 1, 4))).rejects.toThrow("declared");
+    });
   });
 
-  it("runs an assignment inside another's value first where it writes another name", async () => {
+  describe("runs an assignment inside another's value first where it writes another name", () => {
     const getSource = (nested: number, stored: number, count: number) => `
       function sum(first: number, second: number, third: number) {
         return (first += second += third);
@@ -1103,22 +1159,37 @@ describe("values", () => {
       if (sum(10, 20, 30) !== expected[0]) throw new Error("nested");
       if (box.stored !== expected[1] || count !== expected[2]) throw new Error("stored");
     `;
-    expect((await checkModel(getSource(60, 2, 2))).failure).toBeUndefined();
-    expect((await checkModel(getSource(50, 2, 2))).failure?.message).toContain("nested");
-    expect((await checkModel(getSource(60, 0, 2))).failure?.message).toContain("stored");
-    expect((await checkModel(getSource(60, 2, 0))).failure?.message).toContain("stored");
-    expect(() =>
-      compile(`
+
+    it("agrees with Node on 60", async () => {
+      expect((await checkModel(getSource(60, 2, 2))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 50", async () => {
+      expect((await checkModel(getSource(50, 2, 2))).failure?.message).toContain("nested");
+    });
+
+    it("rejects the expectation 60", async () => {
+      expect((await checkModel(getSource(60, 0, 2))).failure?.message).toContain("stored");
+    });
+
+    it("rejects the expectation 60 (2)", async () => {
+      expect((await checkModel(getSource(60, 2, 0))).failure?.message).toContain("stored");
+    });
+
+    it("stops where tla-ts can't follow it", async () => {
+      expect(() =>
+        compile(`
         let value = 1;
         function grow() {
           return (value += value += 1);
         }
         if (grow() !== 3) throw new Error("self");
       `),
-    ).toThrow("Unsupported operator: +=");
+      ).toThrow("Unsupported operator: +=");
+    });
   });
 
-  it("runs an assignment in an operator's right operand after its left operand's names", async () => {
+  describe("runs an assignment in an operator's right operand after its left operand's names", () => {
     const getSource = (second: number, increment: number, comma: number, argument: number) => `
       let x = 0;
       const expected: number[] = [${second}, ${increment}, ${comma}, ${argument}];
@@ -1136,11 +1207,26 @@ describe("values", () => {
         (result) => result.failure?.message,
         (error: Error) => error.message,
       );
-    expect(await getMessage(getSource(1, 0, 3, 12))).toBeUndefined();
-    expect(await getMessage(getSource(2, 0, 3, 12))).toContain("second 2");
-    expect(await getMessage(getSource(1, 1, 3, 12))).toContain("increment");
-    expect(await getMessage(getSource(1, 0, 2, 12))).toContain("comma");
-    expect(await getMessage(getSource(1, 0, 3, 14))).toContain("argument");
+
+    it("agrees with Node", async () => {
+      expect(await getMessage(getSource(1, 0, 3, 12))).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect(await getMessage(getSource(2, 0, 3, 12))).toContain("second 2");
+    });
+
+    it("rejects wrong expectation 2", async () => {
+      expect(await getMessage(getSource(1, 1, 3, 12))).toContain("increment");
+    });
+
+    it("rejects wrong expectation 3", async () => {
+      expect(await getMessage(getSource(1, 0, 2, 12))).toContain("comma");
+    });
+
+    it("rejects wrong expectation 4", async () => {
+      expect(await getMessage(getSource(1, 0, 3, 14))).toContain("argument");
+    });
   });
 
   it("runs an assignment in a unary operator's operand first", async () => {
@@ -1161,7 +1247,7 @@ describe("values", () => {
     expect(await getMessage(getSource(-3, 3))).toContain("void");
   });
 
-  it("throws the TypeError of writing a property of null to a value off the heap", async () => {
+  describe("throws the TypeError of writing a property of null to a value off the heap", () => {
     const getSource = (caught: string, written: number) => `
       type Box = { prop?: number };
       const empty = null as Box | null;
@@ -1181,12 +1267,21 @@ describe("values", () => {
         (result) => result.failure?.message,
         (error: Error) => error.message,
       );
-    expect(await getMessage(getSource("type", 2))).toBeUndefined();
-    expect(await getMessage(getSource("", 2))).toContain("caught type");
-    expect(await getMessage(getSource("type", 0))).toContain("written");
+
+    it("agrees with Node", async () => {
+      expect(await getMessage(getSource("type", 2))).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect(await getMessage(getSource("", 2))).toContain("caught type");
+    });
+
+    it("rejects wrong expectation 2", async () => {
+      expect(await getMessage(getSource("type", 0))).toContain("written");
+    });
   });
 
-  it("runs an assignment in a property's value first where the object is a non-null name", async () => {
+  describe("runs an assignment in a property's value first where the object is a non-null name", () => {
     const getSource = (stored: number, count: number) => `
       type Box = { stored?: number };
       let count = 0;
@@ -1200,12 +1295,21 @@ describe("values", () => {
         (result) => result.failure?.message,
         (error: Error) => error.message,
       );
-    expect(await getMessage(getSource(2, 2))).toBeUndefined();
-    expect(await getMessage(getSource(0, 2))).toContain("stored");
-    expect(await getMessage(getSource(2, 0))).toContain("count");
+
+    it("agrees with Node", async () => {
+      expect(await getMessage(getSource(2, 2))).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect(await getMessage(getSource(0, 2))).toContain("stored");
+    });
+
+    it("rejects wrong expectation 2", async () => {
+      expect(await getMessage(getSource(2, 0))).toContain("count");
+    });
   });
 
-  it("runs a static field's assignment as a statement that gives the field its value", async () => {
+  describe("runs a static field's assignment as a statement that gives the field its value", () => {
     const getSource = (named: string, after: number, added: number) => `
       let className = "";
       let count = 0;
@@ -1217,13 +1321,25 @@ describe("values", () => {
       if (className !== "Named" || Named.f !== "${named}") throw new Error("name");
       if (Named.g !== ${after} || Named.h !== ${added} || count !== 6) throw new Error("count");
     `;
-    expect((await checkModel(getSource("Named", 0, 6))).failure).toBeUndefined();
-    expect((await checkModel(getSource("", 0, 6))).failure?.message).toContain("name");
-    expect((await checkModel(getSource("Named", 1, 6))).failure?.message).toContain("count");
-    expect((await checkModel(getSource("Named", 0, 5))).failure?.message).toContain("count");
+
+    it("agrees with Node on Named", async () => {
+      expect((await checkModel(getSource("Named", 0, 6))).failure).toBeUndefined();
+    });
+
+    it("rejects the empty expectation", async () => {
+      expect((await checkModel(getSource("", 0, 6))).failure?.message).toContain("name");
+    });
+
+    it("rejects the expectation Named", async () => {
+      expect((await checkModel(getSource("Named", 1, 6))).failure?.message).toContain("count");
+    });
+
+    it("rejects the expectation Named (2)", async () => {
+      expect((await checkModel(getSource("Named", 0, 5))).failure?.message).toContain("count");
+    });
   });
 
-  it("throws the TypeError of a pattern that destructures undefined, though nothing reads it", async () => {
+  describe("throws the TypeError of a pattern that destructures undefined, though nothing reads it", () => {
     const getSource = (expected: string) => `
       type Inner = { x: number };
       const empty: Inner[] = [];
@@ -1275,21 +1391,36 @@ describe("values", () => {
       const outcomes = [array, object, parameter, head, caught, present, String(calls)].join();
       if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
     `;
-    expect(
-      (await checkModel(getSource("type,type,type,type,type,none,0"))).failure,
-    ).toBeUndefined();
-    expect(
-      (await checkModel(getSource("none,type,type,type,type,none,0"))).failure?.message,
-    ).toContain("outcomes type");
-    expect(
-      (await checkModel(getSource("type,type,none,type,type,none,0"))).failure?.message,
-    ).toContain("outcomes type");
-    expect(
-      (await checkModel(getSource("type,type,type,type,none,none,0"))).failure?.message,
-    ).toContain("outcomes type");
-    expect(
-      (await checkModel(getSource("type,type,type,type,type,type,0"))).failure?.message,
-    ).toContain("outcomes type");
+
+    it("agrees with Node on type,type,type,type,type,none,0", async () => {
+      expect(
+        (await checkModel(getSource("type,type,type,type,type,none,0"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the expectation none,type,type,type,type,none,0", async () => {
+      expect(
+        (await checkModel(getSource("none,type,type,type,type,none,0"))).failure?.message,
+      ).toContain("outcomes type");
+    });
+
+    it("rejects the expectation type,type,none,type,type,none,0", async () => {
+      expect(
+        (await checkModel(getSource("type,type,none,type,type,none,0"))).failure?.message,
+      ).toContain("outcomes type");
+    });
+
+    it("rejects the expectation type,type,type,type,none,none,0", async () => {
+      expect(
+        (await checkModel(getSource("type,type,type,type,none,none,0"))).failure?.message,
+      ).toContain("outcomes type");
+    });
+
+    it("rejects the expectation type,type,type,type,type,type,0", async () => {
+      expect(
+        (await checkModel(getSource("type,type,type,type,type,type,0"))).failure?.message,
+      ).toContain("outcomes type");
+    });
   });
 
   it("joins the paths through each catch of a TypeError that no new makes", async () => {
@@ -1462,7 +1593,7 @@ describe("values", () => {
     ).toThrow("tla-ts can't run a default that writes a property");
   });
 
-  it("runs the getters of a parameter's pattern again at each call", async () => {
+  describe("runs the getters of a parameter's pattern again at each call", () => {
     const getSource = (expected: string) => `
       let count: number = 0;
       const source = {
@@ -1484,10 +1615,19 @@ describe("values", () => {
       const outcomes = [first, second, third, fourth, count].join(",");
       if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
     `;
-    expect((await checkModel(getSource("1,2,3,4,4"))).failure).toBeUndefined();
-    for (const wrong of ["1,1,3,4,4", "1,2,3,3,4", "1,2,3,4,3"]) {
-      expect((await checkModel(getSource(wrong))).failure?.message).toContain("outcomes 1,2,3,4,4");
-    }
+
+    it("agrees with Node on 1,2,3,4,4", async () => {
+      expect((await checkModel(getSource("1,2,3,4,4"))).failure).toBeUndefined();
+    });
+
+    it.each(["1,1,3,4,4", "1,2,3,3,4", "1,2,3,4,3"])(
+      "rejects the expectation %s",
+      async (wrong) => {
+        expect((await checkModel(getSource(wrong))).failure?.message).toContain(
+          "outcomes 1,2,3,4,4",
+        );
+      },
+    );
   });
 
   it("runs a default that assigns where a destructuring assignment takes undefined", async () => {
@@ -1863,7 +2003,7 @@ describe("values", () => {
     );
   });
 
-  it("gives what a compound assignment to a property writes, as its value", async () => {
+  describe("gives what a compound assignment to a property writes, as its value", () => {
     const getSource = (field: number, property: number, element: number, typed: number) => `
       class Counter {
         #field = 1;
@@ -1889,11 +2029,26 @@ describe("values", () => {
       const bytes = new Uint8Array(1);
       if (echo((bytes[0] += 300)) !== typed || bytes[0] !== 44) throw new Error("typed");
     `;
-    expect((await checkModel(getSource(3, 5, -2, 300))).failure).toBeUndefined();
-    expect((await checkModel(getSource(1, 5, -2, 300))).failure?.message).toContain("private");
-    expect((await checkModel(getSource(3, 1, -2, 300))).failure?.message).toContain("property");
-    expect((await checkModel(getSource(3, 5, 2, 300))).failure?.message).toContain("element");
-    expect((await checkModel(getSource(3, 5, -2, 44))).failure?.message).toContain("typed");
+
+    it("agrees with Node on 3", async () => {
+      expect((await checkModel(getSource(3, 5, -2, 300))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 1", async () => {
+      expect((await checkModel(getSource(1, 5, -2, 300))).failure?.message).toContain("private");
+    });
+
+    it("rejects the expectation 3", async () => {
+      expect((await checkModel(getSource(3, 1, -2, 300))).failure?.message).toContain("property");
+    });
+
+    it("rejects the expectation 3 (2)", async () => {
+      expect((await checkModel(getSource(3, 5, 2, 300))).failure?.message).toContain("element");
+    });
+
+    it("rejects the expectation 3 (3)", async () => {
+      expect((await checkModel(getSource(3, 5, -2, 44))).failure?.message).toContain("typed");
+    });
   });
 
   it("returns a value whose calls read state", async () => {
@@ -2598,12 +2753,18 @@ describe("definitions", () => {
     expect(wrong.failure?.message).toContain("linked");
   });
 
-  it("runs nothing of a file that a file imports only types from", async () => {
+  describe("runs nothing of a file that a file imports only types from", () => {
     const path = join(import.meta.dirname, "../fixtures/typescript/imports/leveling.ts");
     const source = readFileSync(path, "utf8");
-    expect((await check(compile(source, path))).failure).toBeUndefined();
-    const wrong = await check(compile(source.replace("!== 2", "!== 3"), path));
-    expect(wrong.failure?.message).toContain("leveled");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      const wrong = await check(compile(source.replace("!== 2", "!== 3"), path));
+      expect(wrong.failure?.message).toContain("leveled");
+    });
   });
 
   it("compiles constants and functions imported from other files", async () => {
@@ -3065,33 +3226,42 @@ describe("errors", () => {
     expect(() => compile(source)).toThrow(message);
   });
 
-  it("runs the function that a call's callee holds, by its value", async () => {
-    const result = await checkModel(`
-      let count = 0;
-      const counter = {
-        step: 2,
-        increment() {
-          count += this.step;
-        },
-      };
-      const add = (amount: number) => {
-        count += amount;
-      };
-      const double = (amount: number) => {
-        count += 2 * amount;
-      };
-      let operation: (amount: number) => void = add;
-      operation(3);
-      operation = double;
-      operation(1);
-      const other = { step: 5, increment: counter.increment };
-      other.increment();
-      const get = { read() { return 1; } }.read;
-      const read = get();
-      for (let index = 0; index < 2; index++) operation(1);
-      if (count !== 14 || read !== 1) throw new Error("count");
-    `);
-    expect(result.failure).toBeUndefined();
+  describe("runs the function that a call's callee holds, by its value", () => {
+    it("runs what a variable or another object's key holds", async () => {
+      const result = await checkModel(`
+        let count = 0;
+        const counter = {
+          step: 2,
+          increment() {
+            count += this.step;
+          },
+        };
+        const add = (amount: number) => {
+          count += amount;
+        };
+        const double = (amount: number) => {
+          count += 2 * amount;
+        };
+        let operation: (amount: number) => void = add;
+        operation(3);
+        operation = double;
+        operation(1);
+        const other = { step: 5, increment: counter.increment };
+        other.increment();
+        for (let index = 0; index < 2; index++) operation(1);
+        if (count !== 14) throw new Error("count");
+      `);
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("runs a method that a script reads off an object", async () => {
+      const result = await checkModel(`
+        const get = { read() { return 1; } }.read;
+        const read = get();
+        if (read !== 1) throw new Error("read");
+      `);
+      expect(result.failure).toBeUndefined();
+    });
   });
 
   it("makes the generator or runs the async function that a callee holds", async () => {
@@ -3191,7 +3361,7 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("throws a Date method's TypeError on another receiver and toISOString's RangeError", async () => {
+  describe("throws a Date method's TypeError on another receiver and toISOString's RangeError", () => {
     const getSource = (receiver: string) => `
       const throws = (run: () => void, isType: boolean) => {
         let caught = false;
@@ -3214,9 +3384,18 @@ describe("errors", () => {
       const text = valid.toISOString();
       if (text !== "1969-12-31T23:59:59.999Z") throw new Error("text");
     `;
-    expect((await checkModel(getSource("{}"))).failure).toBeUndefined();
-    expect((await checkModel(getSource("0"))).failure).toBeUndefined();
-    expect((await checkModel(getSource("valid"))).failure?.message).toContain("throws");
+
+    it("agrees with Node on {}", async () => {
+      expect((await checkModel(getSource("{}"))).failure).toBeUndefined();
+    });
+
+    it("agrees with Node on 0", async () => {
+      expect((await checkModel(getSource("0"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation valid", async () => {
+      expect((await checkModel(getSource("valid"))).failure?.message).toContain("throws");
+    });
   });
 
   it("makes a Date that reads the clock but stops where something reads its time", async () => {
@@ -3303,7 +3482,7 @@ describe("errors", () => {
     ).toThrow("Type a callback's array parameter as an array");
   });
 
-  it("searches an array-like object whose length and elements getters answer", async () => {
+  describe("searches an array-like object whose length and elements getters answer", () => {
     const getSource = (expected: number) => `
       const arr: number[] = [20];
       const like: Record<string, unknown> = {};
@@ -3343,11 +3522,17 @@ describe("errors", () => {
       if (Array.prototype.indexOf.call(holed, 1) !== -1) throw new Error("hole");
       if (Array.prototype.indexOf.call(holed, 2, -18) !== ${expected}) throw new Error("unexpected");
     `;
-    expect((await checkModel(getSource(2))).failure).toBeUndefined();
-    expect((await checkModel(getSource(-1))).failure?.message).toContain("unexpected");
+
+    it("agrees with Node on 2", async () => {
+      expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(getSource(-1))).failure?.message).toContain("unexpected");
+    });
   });
 
-  it("runs the getter of the constructor that map makes its array through", async () => {
+  describe("runs the getter of the constructor that map makes its array through", () => {
     const getSource = (expected: number) => `
       const a: number[] = [];
       let callCount = 0;
@@ -3368,8 +3553,14 @@ describe("errors", () => {
       if (!isThrown) throw new Error("thrown");
       if (callCount !== ${expected}) throw new Error("unexpected");
     `;
-    expect((await checkModel(getSource(0))).failure).toBeUndefined();
-    expect((await checkModel(getSource(1))).failure?.message).toContain("unexpected");
+
+    it("agrees with Node on 0", async () => {
+      expect((await checkModel(getSource(0))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 1", async () => {
+      expect((await checkModel(getSource(1))).failure?.message).toContain("unexpected");
+    });
   });
 
   it("reads an object's values and entries in turn, running getters that change its keys", async () => {
@@ -3400,7 +3591,7 @@ describe("errors", () => {
     expect((await checkModel(getSource(3))).failure?.message).toContain("unexpected");
   });
 
-  it("runs a source's getters in key order as Object.assign copies them", async () => {
+  describe("runs a source's getters in key order as Object.assign copies them", () => {
     const getSource = (expected: string) => `
       let log = "";
       const first = Symbol("x");
@@ -3432,24 +3623,17 @@ describe("errors", () => {
       if (!isThrown) throw new Error("thrown");
       if (log !== "${expected}") throw new Error("unexpected");
     `;
-    expect((await checkModel(getSource("a,x,"))).failure).toBeUndefined();
-    expect((await checkModel(getSource("x,a,"))).failure?.message).toContain("unexpected");
+
+    it("agrees with Node on a,x,", async () => {
+      expect((await checkModel(getSource("a,x,"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation x,a,", async () => {
+      expect((await checkModel(getSource("x,a,"))).failure?.message).toContain("unexpected");
+    });
   });
 
-  it("runs getters as toReversed and with copy an array, skipping the index with replaces", async () => {
-    const reversed = await checkModel(`
-      const arr: number[] = [0, 1, 2, 3, 4];
-      (Array.prototype as unknown as Record<string, number>)[1] = 5;
-      Object.defineProperty(arr, "3", {
-        get: function () {
-          arr.length = 1;
-          return 3;
-        },
-      });
-      const reversed = arr.toReversed();
-      if (reversed.join(",") !== "4,3,,5,0") throw new Error("reversed");
-    `);
-    expect(reversed.failure).toBeUndefined();
+  describe("runs getters as toReversed and with copy an array, skipping the index with replaces", () => {
     const getSource = (replaced: number) => `
       const arr: number[] = [0, 1, 2];
       let reads = 0;
@@ -3470,11 +3654,33 @@ describe("errors", () => {
       const back = arr.with(-1, 9);
       if (back.join(",") !== "0,1,9" || getReads() !== 1) throw new Error("negative");
     `;
-    expect((await checkModel(getSource(3))).failure).toBeUndefined();
-    expect((await checkModel(getSource(2))).failure?.message).toContain("unexpected");
+
+    it("agrees with Node", async () => {
+      const reversed = await checkModel(`
+      const arr: number[] = [0, 1, 2, 3, 4];
+      (Array.prototype as unknown as Record<string, number>)[1] = 5;
+      Object.defineProperty(arr, "3", {
+        get: function () {
+          arr.length = 1;
+          return 3;
+        },
+      });
+      const reversed = arr.toReversed();
+      if (reversed.join(",") !== "4,3,,5,0") throw new Error("reversed");
+    `);
+      expect(reversed.failure).toBeUndefined();
+    });
+
+    it("agrees with Node on 3", async () => {
+      expect((await checkModel(getSource(3))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 2", async () => {
+      expect((await checkModel(getSource(2))).failure?.message).toContain("unexpected");
+    });
   });
 
-  it("runs a getter that a descriptor writes as a method", async () => {
+  describe("runs a getter that a descriptor writes as a method", () => {
     const getSource = (expected: string) => `
       const source = {};
       let log = "";
@@ -3491,11 +3697,17 @@ describe("errors", () => {
       const direct = (source as { a: number }).a;
       if (direct !== 1 || getLog() !== "${expected}") throw new Error("unexpected");
     `;
-    expect((await checkModel(getSource("aa"))).failure).toBeUndefined();
-    expect((await checkModel(getSource("a"))).failure?.message).toContain("unexpected");
+
+    it("agrees with Node on aa", async () => {
+      expect((await checkModel(getSource("aa"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation a", async () => {
+      expect((await checkModel(getSource("a"))).failure?.message).toContain("unexpected");
+    });
   });
 
-  it("runs the setters that Object.assign writes through, and a setter's extra parameters", async () => {
+  describe("runs the setters that Object.assign writes through, and a setter's extra parameters", () => {
     const getSource = (expected: number) => `
       const target = {};
       let seen: unknown = 0;
@@ -3530,11 +3742,17 @@ describe("errors", () => {
       obj.prop = 100;
       if (firstArg !== 100 || secondArg !== undefined) throw new Error("parameters");
     `;
-    expect((await checkModel(getSource(1))).failure).toBeUndefined();
-    expect((await checkModel(getSource(2))).failure?.message).toContain("unexpected");
+
+    it("agrees with Node on 1", async () => {
+      expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 2", async () => {
+      expect((await checkModel(getSource(2))).failure?.message).toContain("unexpected");
+    });
   });
 
-  it("runs a getter whose type has an index signature where a computed key picks it", async () => {
+  describe("runs a getter whose type has an index signature where a computed key picks it", () => {
     const getSource = (expected: string) => `
       const readKey = (obj: object, name: string) => (obj as { [key: string]: unknown })[name];
       const holder = {};
@@ -3546,11 +3764,17 @@ describe("errors", () => {
       });
       if (readKey(holder, "property") !== "${expected}") throw new Error("unexpected");
     `;
-    expect((await checkModel(getSource("x"))).failure).toBeUndefined();
-    expect((await checkModel(getSource("y"))).failure?.message).toContain("unexpected");
+
+    it("agrees with Node on x", async () => {
+      expect((await checkModel(getSource("x"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation y", async () => {
+      expect((await checkModel(getSource("y"))).failure?.message).toContain("unexpected");
+    });
   });
 
-  it("runs the getters that Object.defineProperties defines where a statement reads them", async () => {
+  describe("runs the getters that Object.defineProperties defines where a statement reads them", () => {
     const getSource = (expected: number) => `
       let accessed = 0;
       const holder: Record<string, unknown> = {};
@@ -3576,11 +3800,17 @@ describe("errors", () => {
       const getAccessed = (): number => accessed;
       if (getAccessed() !== ${expected}) throw new Error("unexpected");
     `;
-    expect((await checkModel(getSource(11))).failure).toBeUndefined();
-    expect((await checkModel(getSource(1))).failure?.message).toContain("unexpected");
+
+    it("agrees with Node on 11", async () => {
+      expect((await checkModel(getSource(11))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 1", async () => {
+      expect((await checkModel(getSource(1))).failure?.message).toContain("unexpected");
+    });
   });
 
-  it("runs a setter that a descriptor's getter returns by name", async () => {
+  describe("runs a setter that a descriptor's getter returns by name", () => {
     const getSource = (expected: string) => `
       let data = "data";
       const setFun = function (value: string) {
@@ -3598,11 +3828,17 @@ describe("errors", () => {
       const getData = (): string => data;
       if (getData() !== "${expected}") throw new Error("unexpected");
     `;
-    expect((await checkModel(getSource("written"))).failure).toBeUndefined();
-    expect((await checkModel(getSource("data"))).failure?.message).toContain("unexpected");
+
+    it("agrees with Node on written", async () => {
+      expect((await checkModel(getSource("written"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation data", async () => {
+      expect((await checkModel(getSource("data"))).failure?.message).toContain("unexpected");
+    });
   });
 
-  it("runs the setters of the properties that a pattern or a for-of head writes", async () => {
+  describe("runs the setters of the properties that a pattern or a for-of head writes", () => {
     const getSource = (expected: string) => `
       let log = "";
       const x = {
@@ -3634,8 +3870,14 @@ describe("errors", () => {
         throw new Error("unexpected");
       }
     `;
-    expect((await checkModel(getSource("y1z7y2-"))).failure).toBeUndefined();
-    expect((await checkModel(getSource("z7y1y2-"))).failure?.message).toContain("unexpected");
+
+    it("agrees with Node on y1z7y2-", async () => {
+      expect((await checkModel(getSource("y1z7y2-"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation z7y1y2-", async () => {
+      expect((await checkModel(getSource("z7y1y2-"))).failure?.message).toContain("unexpected");
+    });
   });
 
   it("throws a TypeError where a write finds %ThrowTypeError% as the setter", async () => {
@@ -3660,7 +3902,7 @@ describe("errors", () => {
     expect((await checkModel(getSource(1))).failure?.message).toContain("unexpected");
   });
 
-  it("assigns a rest element to an object pattern, or to a property through its setter", async () => {
+  describe("assigns a rest element to an object pattern, or to a property through its setter", () => {
     const getSource = (expected: number) => `
       let x: unknown;
       let length: unknown;
@@ -3693,8 +3935,14 @@ describe("errors", () => {
         throw new Error("unexpected");
       }
     `;
-    expect((await checkModel(getSource(2))).failure).toBeUndefined();
-    expect((await checkModel(getSource(3))).failure?.message).toContain("unexpected");
+
+    it("agrees with Node on 2", async () => {
+      expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 3", async () => {
+      expect((await checkModel(getSource(3))).failure?.message).toContain("unexpected");
+    });
   });
 
   it("throws the TypeError of a buffer's or a view's getter that a statement reads on a prototype", async () => {
@@ -3727,7 +3975,7 @@ describe("errors", () => {
     expect((await checkModel(getSource(4))).failure?.message).toContain("unexpected");
   });
 
-  it("calls a buffer's or a view's getter that a script takes from its descriptor", async () => {
+  describe("calls a buffer's or a view's getter that a script takes from its descriptor", () => {
     const getSource = (expected: number) => `
       let thrown = 0;
       const attempt = (run: () => void) => {
@@ -3763,8 +4011,14 @@ describe("errors", () => {
       const getThrown = (): number => thrown;
       if (getThrown() !== 5 || offsetValue !== ${expected} || lengthValue !== 8) throw new Error("unexpected");
     `;
-    expect((await checkModel(getSource(2))).failure).toBeUndefined();
-    expect((await checkModel(getSource(3))).failure?.message).toContain("unexpected");
+
+    it("agrees with Node on 2", async () => {
+      expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 3", async () => {
+      expect((await checkModel(getSource(3))).failure?.message).toContain("unexpected");
+    });
   });
 
   it("gives the receiver of the @@species getter that a script takes from its descriptor", async () => {
@@ -3786,7 +4040,7 @@ describe("errors", () => {
     expect((await checkModel(getSource(2))).failure?.message).toContain("unexpected");
   });
 
-  it("calls the size getter that a script takes from a Map's or a Set's descriptor", async () => {
+  describe("calls the size getter that a script takes from a Map's or a Set's descriptor", () => {
     const getSource = (expected: number) => `
       let thrown = 0;
       const attempt = (run: () => void) => {
@@ -3831,8 +4085,14 @@ describe("errors", () => {
         throw new Error("unexpected");
       }
     `;
-    expect((await checkModel(getSource(2))).failure).toBeUndefined();
-    expect((await checkModel(getSource(3))).failure?.message).toContain("unexpected");
+
+    it("agrees with Node on 2", async () => {
+      expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 3", async () => {
+      expect((await checkModel(getSource(3))).failure?.message).toContain("unexpected");
+    });
   });
 
   it("runs the accessors that a script defines on Function.prototype for a bound function", async () => {
@@ -3976,7 +4236,7 @@ describe("errors", () => {
     ).toThrow("tla-ts can't read the holes of an array that a pattern takes after code runs");
   });
 
-  it("sorts an array whose elements run getters and setters, index by index", async () => {
+  describe("sorts an array whose elements run getters and setters, index by index", () => {
     const getSource = (expected: string) => `
       const array = [undefined, "c", , "b", undefined, , "a", "d"];
       Object.defineProperty(array, "2", {
@@ -4000,8 +4260,14 @@ describe("errors", () => {
       check("7" in array, false);
       check(array.length, 8);
     `;
-    expect((await checkModel(getSource('"d"'))).failure).toBeUndefined();
-    expect((await checkModel(getSource('"c"'))).failure?.message).toContain("unexpected");
+
+    it('agrees with Node on "d"', async () => {
+      expect((await checkModel(getSource('"d"'))).failure).toBeUndefined();
+    });
+
+    it('rejects the expectation "c"', async () => {
+      expect((await checkModel(getSource('"c"'))).failure?.message).toContain("unexpected");
+    });
   });
 
   it("sorts an array that inherits an element from Object.prototype", async () => {
@@ -4056,7 +4322,7 @@ describe("errors", () => {
     expect((await checkModel(getSource("b"))).failure?.message).toContain("unexpected");
   });
 
-  it("sets a prototype through the __proto__ setter, which throws where the object refuses", async () => {
+  describe("sets a prototype through the __proto__ setter, which throws where the object refuses", () => {
     const getSource = (isCycle: string) => `
       type Proto = { __proto__?: unknown };
       const proto = {};
@@ -4086,9 +4352,17 @@ describe("errors", () => {
       }
       if (!isFixed) throw new Error("fixed");
     `;
-    expect((await checkModel(getSource("!isCycle"))).failure).toBeUndefined();
-    expect((await checkModel(getSource("isCycle"))).failure?.message).toContain("unexpected");
-    const immutable = await checkModel(`
+
+    it("agrees with Node on !isCycle", async () => {
+      expect((await checkModel(getSource("!isCycle"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation isCycle", async () => {
+      expect((await checkModel(getSource("isCycle"))).failure?.message).toContain("unexpected");
+    });
+
+    it("agrees with Node", async () => {
+      const immutable = await checkModel(`
       (Object.prototype as { __proto__?: unknown }).__proto__ = null;
       let isImmutable = false;
       try {
@@ -4099,7 +4373,8 @@ describe("errors", () => {
       if (!isImmutable) throw new Error("immutable");
       if (Object.getPrototypeOf(Object.prototype) !== null) throw new Error("null");
     `);
-    expect(immutable.failure).toBeUndefined();
+      expect(immutable.failure).toBeUndefined();
+    });
   });
 
   it("reads each element of an array-like object as its method visits it, running getters", async () => {
@@ -4253,39 +4528,47 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("reads the descriptors that defineProperties and create take through their getters", async () => {
-    const result = await checkModel(`
-      const log = { text: "" };
-      const props: { [key: string]: PropertyDescriptor } = {};
-      Object.defineProperty(props, "a", {
-        get: function () {
-          log.text += "a";
-          return { value: 1 };
-        },
-        enumerable: true,
-      });
-      Object.defineProperty(props, "hidden", {
-        get: function () {
-          log.text += "h";
-          return { value: 2 };
-        },
-      });
-      const target: { [key: string]: unknown } = {};
-      Object.defineProperties(target, props);
-      if (log.text !== "a" || target.a !== 1 || "hidden" in target) throw new Error(log.text);
-      const described: { [key: string]: unknown } = {};
-      Object.defineProperty(described, "get", {
-        get: function () {
-          return function () {
-            return "got";
-          };
-        },
-      });
-      const made: { [key: string | symbol]: unknown } = Object.create({}, { prop: described });
-      const value = made.prop;
-      if (value !== "got") throw new Error("create");
-    `);
-    expect(result.failure).toBeUndefined();
+  describe("reads the descriptors that defineProperties and create take through their getters", () => {
+    it("reads each enumerable descriptor that defineProperties takes", async () => {
+      const result = await checkModel(`
+        const log = { text: "" };
+        const props: { [key: string]: PropertyDescriptor } = {};
+        Object.defineProperty(props, "a", {
+          get: function () {
+            log.text += "a";
+            return { value: 1 };
+          },
+          enumerable: true,
+        });
+        Object.defineProperty(props, "hidden", {
+          get: function () {
+            log.text += "h";
+            return { value: 2 };
+          },
+        });
+        const target: { [key: string]: unknown } = {};
+        Object.defineProperties(target, props);
+        if (log.text !== "a" || target.a !== 1 || "hidden" in target) throw new Error(log.text);
+      `);
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("reads the get of a descriptor that create takes through its getter", async () => {
+      const result = await checkModel(`
+        const described: { [key: string]: unknown } = {};
+        Object.defineProperty(described, "get", {
+          get: function () {
+            return function () {
+              return "got";
+            };
+          },
+        });
+        const made: { [key: string | symbol]: unknown } = Object.create({}, { prop: described });
+        const value = made.prop;
+        if (value !== "got") throw new Error("create");
+      `);
+      expect(result.failure).toBeUndefined();
+    });
   });
 
   it("sets an object's prototype, and throws a TypeError where the chain would loop", async () => {
@@ -4487,45 +4770,43 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("converts the primitives and wrappers that an operator on numbers takes", async () => {
-    const result = await checkModel(`
-      const box = { size: 0 };
-      const empty = null;
-      // @ts-ignore
-      const difference = "3" - true;
-      // @ts-ignore
-      const sum = true + empty;
-      // @ts-ignore
-      const product = new Number(2) * new String("3");
-      // @ts-ignore
-      const isLess = "10" < 9;
-      if (difference !== 2 || sum !== 1 || product !== 6 || isLess) throw new Error("converted");
-    `);
-    expect(result.failure).toBeUndefined();
-    const ordered = await checkModel(`
-      const first = { toString: () => "a" };
-      const second = { toString: () => "b" };
+  describe("converts the primitives and wrappers that an operator on numbers takes", () => {
+    const getOrdered = (first: string, second: string) => `
+      const first = { toString: () => "${first}" };
+      const second = { toString: () => "${second}" };
       // @ts-ignore
       const isOrdered = first <= second;
       if (!isOrdered) throw new Error("ordered");
-    `);
-    expect(ordered.failure).toBeUndefined();
-    const wide = await checkModel(`
-      const first = { toString: () => "e" };
-      const second = { toString: () => "\u00e9" };
-      // @ts-ignore
-      const isOrdered = first <= second;
-      if (!isOrdered) throw new Error("ordered");
-    `);
-    expect(wide.failure).toBeUndefined();
-    const reversed = await checkModel(`
-      const first = { toString: () => "\u00e9" };
-      const second = { toString: () => "e" };
-      // @ts-ignore
-      const isOrdered = first <= second;
-      if (!isOrdered) throw new Error("ordered");
-    `);
-    expect(reversed.failure?.message).toContain("ordered");
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(`
+        const box = { size: 0 };
+        const empty = null;
+        // @ts-ignore
+        const difference = "3" - true;
+        // @ts-ignore
+        const sum = true + empty;
+        // @ts-ignore
+        const product = new Number(2) * new String("3");
+        // @ts-ignore
+        const isLess = "10" < 9;
+        if (difference !== 2 || sum !== 1 || product !== 6 || isLess) throw new Error("converted");
+      `);
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("agrees with Node on objects that convert to strings", async () => {
+      expect((await checkModel(getOrdered("a", "b"))).failure).toBeUndefined();
+    });
+
+    it("agrees with Node on objects that convert to strings outside ASCII", async () => {
+      expect((await checkModel(getOrdered("e", "\\u00e9"))).failure).toBeUndefined();
+    });
+
+    it("rejects the order of strings outside ASCII reversed", async () => {
+      expect((await checkModel(getOrdered("\\u00e9", "e"))).failure?.message).toContain("ordered");
+    });
   });
 
   it("changes the case of ASCII letters", async () => {
@@ -4697,8 +4978,9 @@ describe("errors", () => {
     ).rejects.toThrow("tla-ts can't encode a character outside ASCII");
   });
 
-  it("converts the arguments of Math's functions, and stops where it can't", async () => {
-    const result = await checkModel(`
+  describe("converts the arguments of Math's functions, and stops where it can't", () => {
+    it("agrees with Node", async () => {
+      const result = await checkModel(`
       let order = "";
       const first = {
         valueOf() {
@@ -4716,17 +4998,26 @@ describe("errors", () => {
       const absolute = Math.abs(second as any);
       if (largest !== 7 || absolute !== 4 || order !== "abb") throw new Error("converted");
     `);
-    expect(result.failure).toBeUndefined();
-    const unconverted = await checkModel(`
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      const unconverted = await checkModel(`
       const larger = (value: any) => Math.max(value, 1);
       const result = larger({});
     `);
-    expect(unconverted.failure?.message).toContain("tla-ts can't convert this object to a number");
-    const indexed = await checkModel(`
+      expect(unconverted.failure?.message).toContain(
+        "tla-ts can't convert this object to a number",
+      );
+    });
+
+    it("rejects wrong expectation 2", async () => {
+      const indexed = await checkModel(`
       const list = [1, 2, 3];
       const value = list.at({} as any);
     `);
-    expect(indexed.failure?.message).toContain("tla-ts can't convert this object to a number");
+      expect(indexed.failure?.message).toContain("tla-ts can't convert this object to a number");
+    });
   });
 
   it("rejects a conversion whose method changes what the statement read before it", () => {
@@ -4784,7 +5075,7 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("converts a primitive that an Object function reads to an object", async () => {
+  describe("converts a primitive that an Object function reads to an object", () => {
     const source = `
       const holder = { seen: 0 };
       let count = 0;
@@ -4810,23 +5101,30 @@ describe("errors", () => {
       if (missing !== undefined) throw new Error("missing");
       holder.seen = 1;
     `;
-    expect((await checkModel(source)).failure).toBeUndefined();
     const wrong = [
       ["count !== 11", "count !== 111"],
       ['"a,b"', '"b,a"'],
       ["length?.value !== 3", "length?.value !== 2"],
     ];
-    for (const [from, to] of wrong) {
-      expect((await checkModel(source.replace(from, to))).failure).toBeDefined();
-    }
     const thrown = source.replace(
       'Object.getOwnPropertyNames("abc");',
       "Object.getOwnPropertyNames(undefined);",
     );
-    expect((await checkModel(thrown)).failure).toBeDefined();
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each(wrong)("rejects replacing %s with %s", async (from, to) => {
+      expect((await checkModel(source.replace(from, to))).failure).toBeDefined();
+    });
+
+    it("rejects wrong expectation 2", async () => {
+      expect((await checkModel(thrown)).failure).toBeDefined();
+    });
   });
 
-  it("seals what a new of a built-in makes where nothing else reaches it", async () => {
+  describe("seals what a new of a built-in makes where nothing else reaches it", () => {
     const source = `
       const holder = { seen: 0 };
       Object.seal(new TypeError());
@@ -4839,13 +5137,18 @@ describe("errors", () => {
       Object.seal(new AggregateError([]));
       holder.seen = 1;
     `;
-    expect((await checkModel(source)).failure).toBeUndefined();
-    // Freezing a typed array with elements throws a TypeError.
     const frozen = source.replace(
       "Object.seal(new Uint8Array());",
       "Object.freeze(new Uint8Array(1));",
     );
-    expect((await checkModel(frozen)).failure).toBeDefined();
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(frozen)).failure).toBeDefined();
+    });
   });
 
   it("tests the extensibility of a function that the heap holds", async () => {
@@ -4865,7 +5168,7 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain("frozen");
   });
 
-  it("tests the extensibility of a function that a variable holds where it runs", async () => {
+  describe("tests the extensibility of a function that a variable holds where it runs", () => {
     const source = `
       const holder = { seen: 0 };
       const made = () => 1;
@@ -4879,19 +5182,23 @@ describe("errors", () => {
       if (Object.isExtensible(missing) || !Object.isFrozen(missing)) throw new Error("missing");
       holder.seen = 1;
     `;
-    expect((await checkModel(source)).failure).toBeUndefined();
     const wrong = [
       ["!Object.isExtensible(made)", "Object.isExtensible(made)", '"made"'],
       ["!Object.isExtensible(revoke)", "Object.isExtensible(revoke)", '"revoke"'],
       ["!Object.isFrozen(thrower)", "Object.isFrozen(thrower)", '"thrower"'],
       ["!Object.isFrozen(missing)", "Object.isFrozen(missing)", '"missing"'],
     ];
-    for (const [from, to, message] of wrong) {
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each(wrong)("rejects replacing %s with %s", async (from, to, message) => {
       expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
-    }
+    });
   });
 
-  it("reads an object through Reflect as in and Object's functions do", async () => {
+  describe("reads an object through Reflect as in and Object's functions do", () => {
     const source = `
       const check = (actual: unknown, expected: unknown, message: string) => {
         if (actual !== expected) throw new Error(message);
@@ -4919,18 +5226,22 @@ describe("errors", () => {
       const bare: object = Object.create(null);
       check(Reflect.getPrototypeOf(bare), null, "null");
     `;
-    expect((await checkModel(source)).failure).toBeUndefined();
     const wrong = [
       ['"z"), false', '"z"), true'],
       ['keys[1], "2"', 'keys[1], "0"'],
       ['false, "inextensible"', 'true, "inextensible"'],
     ];
-    for (const [from, to] of wrong) {
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each(wrong)("rejects replacing %s with %s", async (from, to) => {
       expect((await checkModel(source.replace(from, to))).failure).toBeDefined();
-    }
+    });
   });
 
-  it("gives whether Reflect.defineProperty defined a key", async () => {
+  describe("gives whether Reflect.defineProperty defined a key", () => {
     const getSource = (isExpected: boolean) => `
       const object: Record<string, number> = {};
       const isDefined = Reflect.defineProperty(object, "attr", { value: 1, configurable: false });
@@ -4947,8 +5258,14 @@ describe("errors", () => {
       }
       if (!isTypeError) throw new Error("mixed");
     `;
-    expect((await checkModel(getSource(false))).failure).toBeUndefined();
-    expect((await checkModel(getSource(true))).failure?.message).toContain("unexpected");
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(false))).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(getSource(true))).failure?.message).toContain("unexpected");
+    });
   });
 
   it("runs a definition with a descriptor written in place before the rest of its statement", async () => {
@@ -4970,7 +5287,7 @@ describe("errors", () => {
     expect((await checkModel(getSource(1))).failure?.message).toContain("unexpected");
   });
 
-  it("describes each own property that Object.getOwnPropertyDescriptors reads", async () => {
+  describe("describes each own property that Object.getOwnPropertyDescriptors reads", () => {
     const source = `
       const check = (actual: unknown, expected: unknown, message: string) => {
         if (actual !== expected) throw new Error(message);
@@ -4997,7 +5314,6 @@ describe("errors", () => {
       const inferred = Object.getOwnPropertyDescriptors({ attr: 3 });
       check(inferred.attr.value, 3, "inferred");
     `;
-    expect((await checkModel(source)).failure).toBeUndefined();
     const wrong = [
       ['"key,c", "keys"', '"c,key", "keys"'],
       ["result.c.writable, false", "result.c.writable, true"],
@@ -5005,9 +5321,14 @@ describe("errors", () => {
       ['"0,1,length", "string"', '"0,1", "string"'],
       ["inferred.attr.value, 3", "inferred.attr.value, 4"],
     ];
-    for (const [from, to] of wrong) {
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each(wrong)("rejects replacing %s with %s", async (from, to) => {
       expect((await checkModel(source.replace(from, to))).failure).toBeDefined();
-    }
+    });
   });
 
   it("constructs an error that a call of a native error class makes", async () => {
@@ -5077,7 +5398,7 @@ describe("errors", () => {
     expect((await checkModel(array)).failure?.message).toContain("array 2");
   });
 
-  it("holds a function that Object's functions read on the heap, where calls still run it", async () => {
+  describe("holds a function that Object's functions read on the heap, where calls still run it", () => {
     const source = `
       const holder = { seen: 0 };
       const check = (actual: unknown, expected: unknown, message: string) => {
@@ -5106,16 +5427,28 @@ describe("errors", () => {
       check(Object.isExtensible(declared), false, "declared");
       holder.seen = 1;
     `;
-    expect((await checkModel(source)).failure).toBeUndefined();
     const frozen = source.replace("isFrozen(funObj), true", "isFrozen(funObj), false");
-    expect((await checkModel(frozen)).failure?.message).toContain('"frozen"');
     const call = source.replace("called.count, 1", "called.count, 2");
-    expect((await checkModel(call)).failure?.message).toContain('"call"');
     const declared = source.replace(
       "isExtensible(declared), false",
       "isExtensible(declared), true",
     );
-    expect((await checkModel(declared)).failure?.message).toContain("declared");
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(frozen)).failure?.message).toContain('"frozen"');
+    });
+
+    it("rejects wrong expectation 2", async () => {
+      expect((await checkModel(call)).failure?.message).toContain('"call"');
+    });
+
+    it("rejects wrong expectation 3", async () => {
+      expect((await checkModel(declared)).failure?.message).toContain("declared");
+    });
   });
 
   it("writes the name and message of an error that the heap holds in its toString", async () => {
@@ -5143,7 +5476,7 @@ describe("errors", () => {
     expect((await checkModel(unnamed)).failure?.message).toContain('"unnamed"');
   });
 
-  it("holds an error that a script reads as an object on the heap, with its message and slot", async () => {
+  describe("holds an error that a script reads as an object on the heap, with its message and slot", () => {
     const source = `
       const holder = { seen: 0 };
       const check = (actual: unknown, expected: unknown, message: string) => {
@@ -5172,21 +5505,36 @@ describe("errors", () => {
       check(bare === error, false, "identity");
       holder.seen = 1;
     `;
-    expect((await checkModel(source)).failure).toBeUndefined();
     const hidden = source.replace('enumerable, false, "hidden"', 'enumerable, true, "hidden"');
-    expect((await checkModel(hidden)).failure?.message).toContain('"hidden"');
     const instance = source.replace("RangeError, false", "RangeError, true");
-    expect((await checkModel(instance)).failure?.message).toContain("not RangeError");
     const tag = source.replace('"[object Error]", "tag"', '"[object Object]", "tag"');
-    expect((await checkModel(tag)).failure?.message).toContain('"tag"');
     const own = source.replace(
       'hasOwnProperty("message"), false',
       'hasOwnProperty("message"), true',
     );
-    expect((await checkModel(own)).failure?.message).toContain('"bare"');
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(hidden)).failure?.message).toContain('"hidden"');
+    });
+
+    it("rejects wrong expectation 2", async () => {
+      expect((await checkModel(instance)).failure?.message).toContain("not RangeError");
+    });
+
+    it("rejects wrong expectation 3", async () => {
+      expect((await checkModel(tag)).failure?.message).toContain('"tag"');
+    });
+
+    it("rejects wrong expectation 4", async () => {
+      expect((await checkModel(own)).failure?.message).toContain('"bare"');
+    });
   });
 
-  it("holds an error that only Object's functions read as an object with its prototype", async () => {
+  describe("holds an error that only Object's functions read as an object with its prototype", () => {
     const source = `
       const holder = { seen: 0 };
       const check = (actual: unknown, expected: unknown, message: string) => {
@@ -5209,16 +5557,28 @@ describe("errors", () => {
       check(Object.isExtensible(defined), false, "inextensible");
       holder.seen = 1;
     `;
-    expect((await checkModel(source)).failure).toBeUndefined();
     const frozen = source.replace("isFrozen(frozen), true", "isFrozen(frozen), false");
-    expect((await checkModel(frozen)).failure?.message).toContain('"frozen"');
     const prototype = source.replace("SyntaxError.prototype, ", "Error.prototype, ");
-    expect((await checkModel(prototype)).failure?.message).toContain("prototype");
     const sealed = source.replace("isSealed(defined), false", "isSealed(defined), true");
-    expect((await checkModel(sealed)).failure?.message).toContain("not sealed");
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(frozen)).failure?.message).toContain('"frozen"');
+    });
+
+    it("rejects wrong expectation 2", async () => {
+      expect((await checkModel(prototype)).failure?.message).toContain("prototype");
+    });
+
+    it("rejects wrong expectation 3", async () => {
+      expect((await checkModel(sealed)).failure?.message).toContain("not sealed");
+    });
   });
 
-  it("reads new.target as the newTarget of a construction and undefined in a call", async () => {
+  describe("reads new.target as the newTarget of a construction and undefined in a call", () => {
     const source = `
       const holder = { seen: 0 };
       const check = (actual: unknown, expected: unknown, message: string) => {
@@ -5251,19 +5611,31 @@ describe("errors", () => {
       check(state.target, Child, "super");
       holder.seen = 1;
     `;
-    expect((await checkModel(source)).failure).toBeUndefined();
     const call = source.replace('state.target, undefined, "call"', 'state.target, f, "call"');
-    expect((await checkModel(call)).failure?.message).toContain('"call"');
     const target = source.replace(
       'state.target, custom, "newTarget"',
       'state.target, f, "newTarget"',
     );
-    expect((await checkModel(target)).failure?.message).toContain('"newTarget"');
     const derived = source.replace('state.target, Child, "super"', 'state.target, Base, "super"');
-    expect((await checkModel(derived)).failure?.message).toContain('"super"');
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(call)).failure?.message).toContain('"call"');
+    });
+
+    it("rejects wrong expectation 2", async () => {
+      expect((await checkModel(target)).failure?.message).toContain('"newTarget"');
+    });
+
+    it("rejects wrong expectation 3", async () => {
+      expect((await checkModel(derived)).failure?.message).toContain('"super"');
+    });
   });
 
-  it("constructs through Reflect.construct as new does, with newTarget's prototype", async () => {
+  describe("constructs through Reflect.construct as new does, with newTarget's prototype", () => {
     const source = `
       const holder = { seen: 0 };
       const o = {};
@@ -5295,13 +5667,25 @@ describe("errors", () => {
       if (!(pointed instanceof Point)) throw new Error("Point newTarget");
       holder.seen = 1;
     `;
-    expect((await checkModel(source)).failure).toBeUndefined();
     const prototype = source.replace("(array) !== Array.prototype", "(array) !== Object.prototype");
-    expect((await checkModel(prototype)).failure?.message).toContain("newTarget");
     const inner = source.replace("if (!seen.isArray)", "if (seen.isArray)");
-    expect((await checkModel(inner)).failure?.message).toContain("inner");
     const passed = source.replace("point.x !== 3", "point.x !== 1");
-    expect((await checkModel(passed)).failure?.message).toContain('"x"');
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(prototype)).failure?.message).toContain("newTarget");
+    });
+
+    it("rejects wrong expectation 2", async () => {
+      expect((await checkModel(inner)).failure?.message).toContain("inner");
+    });
+
+    it("rejects wrong expectation 3", async () => {
+      expect((await checkModel(passed)).failure?.message).toContain('"x"');
+    });
   });
 
   it("compares globalThis as the global object and stops where it reads its properties", async () => {
@@ -5359,7 +5743,7 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("converts a value to an object where Object is called", async () => {
+  describe("converts a value to an object where Object is called", () => {
     const source = `
       declare global {
         interface ObjectConstructor {
@@ -5388,18 +5772,23 @@ describe("errors", () => {
       check(Object.getPrototypeOf(Object(null)), Object.prototype, "empty");
       check(Object(5) === count, false, "fresh");
     `;
-    expect((await checkModel(source)).failure).toBeUndefined();
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
     const wrong = [
       ['check(typeof count, "object"', 'check(typeof count, "number"'],
       ["check(count.valueOf(), 5,", "check(count.valueOf(), 6,"],
       ["check(Object(5) === count, false", "check(Object(5) === count, true"],
     ];
-    for (const [from, to] of wrong) {
+
+    it.each(wrong)("rejects replacing %s with %s", async (from, to) => {
       expect((await checkModel(source.replace(from, to))).failure).toBeDefined();
-    }
+    });
   });
 
-  it("makes a Symbol object where a script calls Object on a symbol", async () => {
+  describe("makes a Symbol object where a script calls Object on a symbol", () => {
     const source = `
       declare global {
         interface ObjectConstructor {
@@ -5418,16 +5807,20 @@ describe("errors", () => {
       if (JSON.stringify(wrapped) !== "{}") throw new Error("json");
       box.seen = 1;
     `;
-    expect((await checkModel(source)).failure).toBeUndefined();
     const wrong = [
       ['"test" ||', '"other" ||', '"description"'],
       ['"[object Symbol]"', '"[object Object]"', '"tag"'],
       ['!== "{}"', '=== "{}"', '"json"'],
       ["wrapped === symbol", "wrapped !== symbol", '"object"'],
     ];
-    for (const [from, to, message] of wrong) {
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each(wrong)("rejects replacing %s with %s", async (from, to, message) => {
       expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
-    }
+    });
   });
 
   it("rejects new Object of a value whose type doesn't tell the object", () => {
@@ -5496,7 +5889,7 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("replaced Function.prototype.bind");
   });
 
-  it("stops iterating an array where a script replaced the array iterator", async () => {
+  describe("stops iterating an array where a script replaced the array iterator", () => {
     const replaced = `
       let calls = 0;
       Array.prototype[Symbol.iterator] = function () {
@@ -5517,10 +5910,6 @@ describe("errors", () => {
       `${nextReplaced} const items = [1, 2]; items.push(3); const [first] = items;`,
       `${nextReplaced} const spread = [...[1, 2].values()];`,
     ];
-    const results = await Promise.all(sources.map((source) => checkModel(source)));
-    expect(results.map((result) => result.failure?.message)).toEqual(
-      sources.map(() => expect.stringContaining("tla-ts can't iterate")),
-    );
     const kept = `
       Object.defineProperty(Array.prototype, "extra", { value: 1, writable: true });
       const [first, second] = [1, 3, 2];
@@ -5533,9 +5922,19 @@ describe("errors", () => {
         throw new Error("wrong");
       }
     `;
-    expect((await checkModel(kept)).failure).toBeUndefined();
-    const wrong = await checkModel(kept.replace("sum !== 6", "sum !== 7"));
-    expect(wrong.failure?.message).toContain("wrong");
+
+    it.each(sources)("stops where the script replaces the iterator, case %#", async (source) => {
+      expect((await checkModel(source)).failure?.message).toContain("tla-ts can't iterate");
+    });
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(kept)).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation sum !== 6", async () => {
+      const wrong = await checkModel(kept.replace("sum !== 6", "sum !== 7"));
+      expect(wrong.failure?.message).toContain("wrong");
+    });
   });
 
   it("stops where a bound function would see a fresh receiver", () => {
@@ -6594,8 +6993,19 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("runs a function that changes state and calls itself", async () => {
-    const parsed = await checkModel(`
+  describe("runs a function that changes state and calls itself", () => {
+    const getDefaulted = (calls: string) => `
+      let calls = 0;
+      const count = (n: number, step = 1): number => {
+        calls += step;
+        return n === 0 ? 0 : count(n - 1);
+      };
+      count(2);
+      if (calls !== ${calls}) throw new Error("calls");
+    `;
+
+    it("agrees with Node", async () => {
+      const parsed = await checkModel(`
       const tokens = ["{", "1", ",", "{", "2", "}", ",", "3", "}"];
       const cursor = { index: 0 };
       const advance = () => tokens[cursor.index++];
@@ -6615,8 +7025,11 @@ describe("errors", () => {
       }
       if (cursor.index !== 9) throw new Error("cursor");
     `);
-    expect(parsed.failure).toBeUndefined();
-    const counted = await checkModel(`
+      expect(parsed.failure).toBeUndefined();
+    });
+
+    it("agrees with Node (2)", async () => {
+      const counted = await checkModel(`
       let calls = 0;
       const walk = (n: number): number => {
         calls += 1;
@@ -6650,8 +7063,11 @@ describe("errors", () => {
       if (fib(5) !== 5 || fibs !== 15) throw new Error("fib");
       if (!isEven(4) || seen !== "eoeoe") throw new Error("mutual");
     `);
-    expect(counted.failure).toBeUndefined();
-    const uncaught = await checkModel(`
+      expect(counted.failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      const uncaught = await checkModel(`
       let calls = 0;
       const fail = (n: number): number => {
         calls += 1;
@@ -6660,18 +7076,16 @@ describe("errors", () => {
       };
       fail(2);
     `);
-    expect(uncaught.failure?.message).toContain("bottom");
-    const getDefaulted = (calls: string) => `
-      let calls = 0;
-      const count = (n: number, step = 1): number => {
-        calls += step;
-        return n === 0 ? 0 : count(n - 1);
-      };
-      count(2);
-      if (calls !== ${calls}) throw new Error("calls");
-    `;
-    expect((await checkModel(getDefaulted("3"))).failure).toBeUndefined();
-    expect((await checkModel(getDefaulted("2"))).failure?.message).toContain('"calls"');
+      expect(uncaught.failure?.message).toContain("bottom");
+    });
+
+    it("agrees with Node on 3", async () => {
+      expect((await checkModel(getDefaulted("3"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 2", async () => {
+      expect((await checkModel(getDefaulted("2"))).failure?.message).toContain('"calls"');
+    });
   });
 
   it("runs the getters of the properties that a pattern reads", async () => {
@@ -9143,7 +9557,7 @@ describe("errors", () => {
     );
   });
 
-  it("follows an array through a method's parameters and the array it returns", async () => {
+  describe("follows an array through a method's parameters and the array it returns", () => {
     const getSource = (check: string) => `
       const shrink = (values: number[], size: number) => {
         while (values.length > size) values.pop();
@@ -9184,9 +9598,18 @@ describe("errors", () => {
       pool.hold(6);
       if (${check}) throw new Error("Pool");
     `;
-    expect((await checkModel(getSource("first !== 4 || second !== 9"))).failure).toBeUndefined();
-    expect((await checkModel(getSource("first === 4"))).failure?.message).toContain("Pool");
-    expect((await checkModel(getSource("second === 9"))).failure?.message).toContain("Pool");
+
+    it("agrees with Node on first !== 4 || second !== 9", async () => {
+      expect((await checkModel(getSource("first !== 4 || second !== 9"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation first === 4", async () => {
+      expect((await checkModel(getSource("first === 4"))).failure?.message).toContain("Pool");
+    });
+
+    it("rejects the expectation second === 9", async () => {
+      expect((await checkModel(getSource("second === 9"))).failure?.message).toContain("Pool");
+    });
   });
 
   it("holds on the heap an array that a built-in makes", async () => {
@@ -10579,8 +11002,9 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("converts the value that a String.prototype method reads through call", async () => {
-    const result = await checkModel(`
+  describe("converts the value that a String.prototype method reads through call", () => {
+    it("agrees with Node", async () => {
+      const result = await checkModel(`
       const box = { size: 0 };
       const trimEnd = String.prototype.trimEnd;
       let caught = 0;
@@ -10598,8 +11022,11 @@ describe("errors", () => {
       }
       if (caught !== 2) throw new Error("caught");
     `);
-    expect(result.failure).toBeUndefined();
-    const converted = await checkModel(`
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("agrees with Node (2)", async () => {
+      const converted = await checkModel(`
       const log = { text: "" };
       const trimEnd = String.prototype.trimEnd;
       const value = {
@@ -10617,11 +11044,15 @@ describe("errors", () => {
       if (trimmed !== " ab" || log.text !== "t") throw new Error("converted");
       if (described !== "[object Object]") throw new Error("object");
     `);
-    expect(converted.failure).toBeUndefined();
-    const nullish = await checkModel(
-      `const box = { size: 0 };\nconst value: number | undefined = undefined;\nconst trimmed = String.prototype.trim.call(value);`,
-    );
-    expect(nullish.failure?.message).toContain("TypeError");
+      expect(converted.failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      const nullish = await checkModel(
+        `const box = { size: 0 };\nconst value: number | undefined = undefined;\nconst trimmed = String.prototype.trim.call(value);`,
+      );
+      expect(nullish.failure?.message).toContain("TypeError");
+    });
   });
 
   it("throws the TypeError of a new of a built-in method that a declaration holds", async () => {
@@ -11190,8 +11621,9 @@ describe("errors", () => {
     expect(fraction.failure?.message).toContain("tla-ts can't represent the fraction 7 / 2");
   });
 
-  it("compares, writes, and truncates the fractions that literals give", async () => {
-    const result = await checkModel(`
+  describe("compares, writes, and truncates the fractions that literals give", () => {
+    it("agrees with Node", async () => {
+      const result = await checkModel(`
       const keyed: Record<string, number> = { "1.5": 3 };
       const values: number[] = [6.99, -0.5, 2.5];
       if (values[0] === 7 || values[0] !== 6.99 || !(values[1] < 0) || !(-0.5 > -1)) {
@@ -11232,21 +11664,28 @@ describe("errors", () => {
         throw new Error("arithmetic");
       }
     `);
-    expect(result.failure).toBeUndefined();
-    const converted = await checkModel(`
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("agrees with Node (2)", async () => {
+      const converted = await checkModel(`
       const object = {};
       if (parseFloat("2.5") !== 2.5 || JSON.parse("-0.5") !== -0.5 || +"1.5" !== 1.5) {
         throw new Error("fraction");
       }
       if (!Number.isNaN(Number("abc")) || Number("-Infinity") !== -Infinity) throw new Error("special");
     `);
-    expect(converted.failure).toBeUndefined();
-    const sum = await checkModel(`
+      expect(converted.failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      const sum = await checkModel(`
       const object = {};
       const sum = 0.1 + 0.2;
       if (sum === 0.3) throw new Error("missed");
     `);
-    expect(sum.failure?.message).toContain("tla-ts can't add fractions");
+      expect(sum.failure?.message).toContain("tla-ts can't add fractions");
+    });
   });
 
   it("runs a parenthesized call that makes an object as a statement", async () => {
@@ -11435,8 +11874,8 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("disposes a block's resources last first as it leaves the block", async () => {
-    const source = (expected: string) => `
+  describe("disposes a block's resources last first as it leaves the block", () => {
+    const getSource = (statements: string, expected: string) => `
       const order: string[] = [];
       const make = (name: string) => ({
         name,
@@ -11444,13 +11883,16 @@ describe("errors", () => {
           order.push(this.name);
         },
       });
-      {
+      ${statements}
+      if (order.join() !== "${expected}") throw new Error(order.join());
+    `;
+    const block = `{
         using first = make("a"), second = make("b");
         using third = make("c");
         using nothing = null;
         order.push("body");
-      }
-      const run = (): number => {
+      }`;
+    const exits = `const run = (): number => {
         using held = make("run");
         return 1;
       };
@@ -11460,13 +11902,27 @@ describe("errors", () => {
         if (step === 1) break;
       }
       let index = 0;
-      for (using held = make("for"); index < 2; index++) order.push("loop");
-      if (order.join() !== "${expected}") throw new Error(order.join());
-    `;
-    const result = await checkModel(source("body,c,b,a,run,0,1,loop,loop,for"));
-    expect(result.failure).toBeUndefined();
-    const wrong = await checkModel(source("body,a,b,c,run,0,1,loop,loop,for"));
-    expect(wrong.failure?.message).toContain("body,c,b,a,run,0,1,loop,loop,for");
+      for (using held = make("for"); index < 2; index++) order.push("loop");`;
+
+    it("agrees with Node on body,c,b,a", async () => {
+      const result = await checkModel(getSource(block, "body,c,b,a"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects the expectation body,a,b,c", async () => {
+      const wrong = await checkModel(getSource(block, "body,a,b,c"));
+      expect(wrong.failure?.message).toContain("body,c,b,a");
+    });
+
+    it("agrees with Node on run,0,1,loop,loop,for where a function returns and loops leave", async () => {
+      const result = await checkModel(getSource(exits, "run,0,1,loop,loop,for"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects the expectation run,0,1,for,loop,loop", async () => {
+      const wrong = await checkModel(getSource(exits, "run,0,1,for,loop,loop"));
+      expect(wrong.failure?.message).toContain("run,0,1,loop,loop,for");
+    });
   });
 
   it("disposes what a for-of's using declaration holds at the end of each iteration", async () => {
@@ -11561,7 +12017,7 @@ describe("errors", () => {
     expect(wrong.failure?.message).toContain("adopt");
   });
 
-  it("runs a DisposableStack's methods, disposing last first", async () => {
+  describe("runs a DisposableStack's methods, disposing last first", () => {
     const source = (expected: string) => `
       const order: string[] = [];
       const stack = new DisposableStack();
@@ -11579,10 +12035,16 @@ describe("errors", () => {
       moved.dispose();
       if (order.join() !== "${expected}") throw new Error(order.join());
     `;
-    const result = await checkModel(source("disposed,defer,adopt x,use"));
-    expect(result.failure).toBeUndefined();
-    const wrong = await checkModel(source("disposed,use,adopt x,defer"));
-    expect(wrong.failure?.message).toContain("disposed,defer,adopt x,use");
+
+    it("agrees with Node on disposed,defer,adopt x,use", async () => {
+      const result = await checkModel(source("disposed,defer,adopt x,use"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects the expectation disposed,use,adopt x,defer", async () => {
+      const wrong = await checkModel(source("disposed,use,adopt x,defer"));
+      expect(wrong.failure?.message).toContain("disposed,defer,adopt x,use");
+    });
   });
 
   it("suppresses the errors that disposing a DisposableStack throws, and ignores re-entry", async () => {
@@ -11741,7 +12203,7 @@ describe("errors", () => {
     expect(wrong.failure).toBeDefined();
   });
 
-  it("awaits what an await using declaration disposes, as Node does", async () => {
+  describe("awaits what an await using declaration disposes, as Node does", () => {
     const source = (expected: string) => `
       declare function setTimeout(callback: () => void): void;
       const order: string[] = [];
@@ -11768,10 +12230,16 @@ describe("errors", () => {
       });
     `;
     const expected = "body,after call,left,async,tick 1,sync,tick 2,tick 3,done";
-    const result = await checkModel(source(expected));
-    expect(result.failure).toBeUndefined();
-    const wrong = await checkModel(source(expected.replace("left,async", "async,left")));
-    expect(wrong.failure).toBeDefined();
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(source(expected));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      const wrong = await checkModel(source(expected.replace("left,async", "async,left")));
+      expect(wrong.failure).toBeDefined();
+    });
   });
 
   it("runs a dispose method that reads the locals of the async call that made it", async () => {
@@ -12636,23 +13104,11 @@ describe("errors", () => {
     ).toThrow("Pass Array.fromAsync");
   });
 
-  it("runs Array.fromAsync of an array-like object and of a string", async () => {
-    const result = await checkModel(`
+  describe("runs Array.fromAsync of an array-like object and of a string", () => {
+    const getSource = (call: string, expected: string) => `
       declare function setTimeout(callback: () => void): void;
       let log = "";
-      const items = { length: 2, 0: 1, 1: Promise.resolve(2) };
-      Array.fromAsync(items, (value: number, k: number) => {
-        log += "m";
-        return value * 10 + k;
-      }).then((values) => {
-        log += "[" + values.join(",") + "]";
-      });
-      Array.fromAsync("ab").then((values) => {
-        log += "(" + values.join(",") + ")";
-      });
-      Array.fromAsync({ length: 1, 0: Promise.reject("r") }).catch((error) => {
-        log += "<" + String(error) + ">";
-      });
+${call}
       Promise.resolve()
         .then(() => {
           log += "0";
@@ -12673,10 +13129,40 @@ describe("errors", () => {
           log += "5";
         });
       setTimeout(() => {
-        if (log !== "m0<r>1m23[10,21]45(a,b)") throw new Error(log);
+        if (log !== "${expected}") throw new Error(log);
       });
-    `);
-    expect(result.failure).toBeUndefined();
+    `;
+
+    it("maps an array-like object's values, awaiting each", async () => {
+      const call = `
+      const items = { length: 2, 0: 1, 1: Promise.resolve(2) };
+      Array.fromAsync(items, (value: number, k: number) => {
+        log += "m";
+        return value * 10 + k;
+      }).then((values) => {
+        log += "[" + values.join(",") + "]";
+      });
+      `;
+      expect((await checkModel(getSource(call, "m01m23[10,21]45"))).failure).toBeUndefined();
+    });
+
+    it("takes a string's characters", async () => {
+      const call = `
+      Array.fromAsync("ab").then((values) => {
+        log += "(" + values.join(",") + ")";
+      });
+      `;
+      expect((await checkModel(getSource(call, "012345(a,b)"))).failure).toBeUndefined();
+    });
+
+    it("rejects where an array-like object's value rejects", async () => {
+      const call = `
+      Array.fromAsync({ length: 1, 0: Promise.reject("r") }).catch((error) => {
+        log += "<" + String(error) + ">";
+      });
+      `;
+      expect((await checkModel(getSource(call, "0<r>12345"))).failure).toBeUndefined();
+    });
   });
 
   it("takes Array.fromAsync's elements and mapped values a job apart", async () => {
@@ -13676,7 +14162,7 @@ describe("errors", () => {
     expect((await checkModel(getSource("none"))).failure?.message).toContain("caught type");
   });
 
-  it("destructures an array that the heap holds and gives the array back", async () => {
+  describe("destructures an array that the heap holds and gives the array back", () => {
     const source = `
       const holder = { seen: 0 };
       let a: unknown;
@@ -13691,14 +14177,18 @@ describe("errors", () => {
       if (p !== 1 || q !== 5 || r !== 3) throw new Error("declared");
       holder.seen = 1;
     `;
-    expect((await checkModel(source)).failure).toBeUndefined();
-    for (const [from, to, message] of [
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each([
       ["b !== 9", "b !== 2", "values"],
       ["result !== vals", "result === vals", "identity"],
       ["q !== 5", "q !== 2", "declared"],
-    ]) {
+    ])("rejects replacing %s with %s", async (from, to, message) => {
       expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
-    }
+    });
   });
 
   it("reads each element of an array that the heap holds as the pattern reaches it", async () => {
@@ -14527,7 +15017,7 @@ describe("proxies", () => {
     expect((await checkModel(getSource("hidden"))).failure?.message).toContain("unexpected");
   });
 
-  it("runs a proxy's prototype and extensibility traps and checks what they give", async () => {
+  describe("runs a proxy's prototype and extensibility traps and checks what they give", () => {
     const getSource = (expected: number) => `
       const parent = {};
       const target = {};
@@ -14573,8 +15063,14 @@ describe("proxies", () => {
       if (Reflect.isExtensible(forwarding) !== false) throw new Error("forward isExtensible");
       if (Reflect.setPrototypeOf(forwarding, null) !== false) throw new Error("forward refuse");
     `;
-    expect((await checkModel(getSource(6))).failure).toBeUndefined();
-    expect((await checkModel(getSource(5))).failure?.message).toContain("unexpected");
+
+    it("agrees with Node on 6", async () => {
+      expect((await checkModel(getSource(6))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 5", async () => {
+      expect((await checkModel(getSource(5))).failure?.message).toContain("unexpected");
+    });
   });
 
   it("runs a proxy's defineProperty trap with a copy of the descriptor and checks it", async () => {
@@ -14828,7 +15324,7 @@ describe("proxies", () => {
     expect((await checkModel(getSource(3))).failure?.message).toContain("unexpected");
   });
 
-  it("runs a proxy's traps on each key that Object's functions read", async () => {
+  describe("runs a proxy's traps on each key that Object's functions read", () => {
     const getSource = (expected: number) => `
       const log: unknown[] = [];
       const getCount = (): number => log.length;
@@ -14858,8 +15354,14 @@ describe("proxies", () => {
       if (getCount() !== 10 || !Object.isFrozen(target)) throw new Error("freeze");
       if (!Object.isFrozen(proxy) || getCount() !== ${expected}) throw new Error("unexpected");
     `;
-    expect((await checkModel(getSource(13))).failure).toBeUndefined();
-    expect((await checkModel(getSource(10))).failure?.message).toContain("unexpected");
+
+    it("agrees with Node on 13", async () => {
+      expect((await checkModel(getSource(13))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 10", async () => {
+      expect((await checkModel(getSource(10))).failure?.message).toContain("unexpected");
+    });
   });
 
   it("throws what a trap on a key throws, and a TypeError where it disagrees", async () => {
@@ -15650,8 +16152,8 @@ describe("buffers", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("makes a typed array of the values of an iterator that a script gives", async () => {
-    const result = await checkModel(`
+  describe("makes a typed array of the values of an iterator that a script gives", () => {
+    const iterable = `
       interface ArrayValues {
         src: unknown[];
         index: number;
@@ -15675,6 +16177,10 @@ describe("buffers", () => {
       function make(elements: unknown[]): unknown {
         return { src: elements, [Symbol.iterator]: openValues };
       }
+    `;
+
+    it("takes each value that the iterator gives", async () => {
+      const result = await checkModel(`${iterable}
       const constructors = [Int8Array, Float64Array];
       let out = "";
       for (const TA of constructors) {
@@ -15682,8 +16188,29 @@ describe("buffers", () => {
         out += sample.length + ":" + sample[1] + ";";
       }
       if (out !== "3:-2;3:-2;") throw new Error(out);
+    `);
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("makes an empty typed array of an iterator that gives nothing", async () => {
+      const result = await checkModel(`${iterable}
       const plain = new Uint8Array(make([]) as never);
       if (plain.length !== 0) throw new Error("empty");
+    `);
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("throws what the iterator's next throws", async () => {
+      const result = await checkModel(`
+      interface ArrayValues {
+        src: unknown[];
+        index: number;
+        next: (this: ArrayValues) => IteratorResult<unknown>;
+      }
+      interface ArrayIterable {
+        src: unknown[];
+        [Symbol.iterator]: (this: ArrayIterable) => ArrayValues;
+      }
       function failing(this: ArrayValues): IteratorResult<unknown> {
         throw new RangeError("step");
       }
@@ -15699,7 +16226,8 @@ describe("buffers", () => {
       }
       if (caught !== "range") throw new Error("caught " + caught);
     `);
-    expect(result.failure).toBeUndefined();
+      expect(result.failure).toBeUndefined();
+    });
   });
 
   it("makes a typed array of an array-like object's elements", async () => {

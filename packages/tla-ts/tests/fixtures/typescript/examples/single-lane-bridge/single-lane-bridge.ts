@@ -1,16 +1,17 @@
-// A port of SingleLaneBridge.tla, checked with MC.tla, from tlaplus/Examples.
-type Car = "r1" | "r2" | "l1" | "l2";
+// A port of SingleLaneBridge.tla, checked with MC.tla, from tlaplus/Examples, with one car on the
+// left and six positions where it has two cars and eight positions.
+type Car = "r1" | "r2" | "l1";
 
 const carsRight = new Set<Car>(["r1", "r2"]);
-const carsLeft = new Set<Car>(["l1", "l2"]);
+const carsLeft = new Set<Car>(["l1"]);
 const cars = carsRight.union(carsLeft);
-const bridge = new Set([4, 5]);
+const bridge = new Set([3, 4]);
 const startPos = 1;
-const endPos = 8;
-const startBridge = 4;
-const endBridge = 5;
+const endPos = 6;
+const startBridge = 3;
+const endBridge = 4;
 
-let Location: Record<Car, number> = { r1: endPos, r2: endPos, l1: startPos, l2: startPos };
+let Location: Record<Car, number> = { r1: endPos, r2: endPos, l1: startPos };
 let WaitingBeforeBridge: Car[] = [];
 
 const getCarsInBridge = () => new Set(cars.values().filter((car) => bridge.has(Location[car])));

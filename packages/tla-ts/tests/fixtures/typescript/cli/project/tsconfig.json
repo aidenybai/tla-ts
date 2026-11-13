@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "lib": ["esnext"],
     "paths": { "@limits/*": ["./limits/*"] }
   },
   "include": ["**/*.ts"]
