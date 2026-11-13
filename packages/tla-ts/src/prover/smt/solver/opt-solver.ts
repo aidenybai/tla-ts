@@ -51,6 +51,8 @@ export class OptSolver {
   // Every model and bound the search makes lives until the solver is released.
   private models: ProtoModel[] = [];
   private pinned: RefVector;
+  private isFirst = true;
+  private numScopes = 0;
   wasUnknown = false;
 
   constructor(
@@ -83,10 +85,12 @@ export class OptSolver {
 
   push() {
     this.kernel.push();
+    this.numScopes++;
   }
 
   pop(numScopes: number) {
     this.kernel.pop(numScopes);
+    this.numScopes -= numScopes;
   }
 
   private adjustResult(result: number) {
@@ -97,7 +101,12 @@ export class OptSolver {
 
   check(assumptions: readonly number[] = []) {
     this.model = null;
-    const result = this.adjustResult(this.kernel.check(assumptions));
+    const result = this.adjustResult(
+      this.isFirst && assumptions.length === 0 && this.numScopes === 0
+        ? this.kernel.setupAndCheck()
+        : this.kernel.check(assumptions),
+    );
+    this.isFirst = false;
     if (result === L_TRUE) {
       this.model = this.getContextModel();
       if (this.objectiveModels.length === 1) this.objectiveModels[0] = this.model;

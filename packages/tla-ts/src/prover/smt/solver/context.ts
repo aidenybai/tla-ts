@@ -110,9 +110,6 @@ export interface SmtParams {
   isMbqi: boolean;
   mbqiMaxIterations: number;
   relevancyLevel: 0 | 2;
-  // Whether the setup reaches setup_unknown, the only one that makes the finite set and
-  // polymorphism theories.
-  isSetupUnknown: boolean;
 }
 
 export class Context extends Internalizer {
@@ -162,7 +159,8 @@ export class Context extends Internalizer {
     this.qmanager = new DefaultQuantifierManager(this, params.isMbqi);
   }
 
-  setupContext() {
+  // Only setup_unknown makes the finite set and polymorphism theories.
+  setupContext(isSetupUnknown: boolean) {
     this.arith = new TheoryLra(this);
     this.registerPlugin(this.arith);
     this.registerPlugin(new TheoryArray(this));
@@ -172,7 +170,7 @@ export class Context extends Internalizer {
     this.registerPlugin(new TheorySeq(this));
     this.registerPlugin(new TheoryChar(this));
     this.registerPlugin(new TheoryFpa(this));
-    if (this.params.isSetupUnknown) {
+    if (isSetupUnknown) {
       this.registerPlugin(new TheoryFiniteSet(this));
       if (this.manager.hasTypeVars) this.registerPolymorphism();
     }

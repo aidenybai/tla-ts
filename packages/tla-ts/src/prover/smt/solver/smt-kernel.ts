@@ -2,6 +2,7 @@
 // z3-license.txt.
 import { SmtCanceledError } from "../../../errors";
 import { type AstManager } from "./ast";
+import { isSetupUnknown, type SmtSetup } from "./smt-setup";
 import { AssertedFormulas } from "./asserted-formulas";
 import { Context } from "./context";
 import type { KernelParams } from "./solver";
@@ -10,6 +11,7 @@ export class SmtKernel {
   readonly context: Context;
   private asserted: AssertedFormulas;
   private isSetUp = false;
+  private setup: SmtSetup | undefined;
 
   constructor(manager: AstManager, params: KernelParams) {
     this.asserted = new AssertedFormulas(manager, params.isFindingMacros);
@@ -17,14 +19,22 @@ export class SmtKernel {
       isMbqi: params.isMbqi,
       mbqiMaxIterations: params.mbqiMaxIterations,
       relevancyLevel: params.relevancyLevel ?? 2,
-      isSetupUnknown: params.isSetupUnknown ?? true,
     });
+    this.setup = params.setup;
   }
 
-  private setupContext() {
+  private setupContext(isUsingStaticFeatures: boolean) {
     if (this.isSetUp) return;
     this.isSetUp = true;
-    this.context.setupContext();
+    const context = this.context;
+    context.setupContext(
+      isSetupUnknown(
+        context.manager,
+        this.setup,
+        isUsingStaticFeatures,
+        this.asserted.getFormulas(),
+      ),
+    );
   }
 
   assertExpr(expr: number) {
@@ -35,7 +45,7 @@ export class SmtKernel {
   push() {
     const context = this.context;
     context.popToBaseLevel();
-    this.setupContext();
+    this.setupContext(false);
     context.internalizeAssertions(this.asserted);
     const limit = context.manager.limit;
     if (!limit.inc()) throw new SmtCanceledError();
@@ -62,7 +72,12 @@ export class SmtKernel {
 
   check(assumptions: readonly number[] = []) {
     this.context.popToBaseLevel();
-    this.setupContext();
+    this.setupContext(false);
     return this.context.checkResearching(this.asserted, assumptions);
+  }
+
+  setupAndCheck() {
+    this.setupContext(true);
+    return this.check();
   }
 }

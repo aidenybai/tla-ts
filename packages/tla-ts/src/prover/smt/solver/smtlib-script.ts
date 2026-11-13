@@ -493,6 +493,7 @@ export const runSmtlibScript = (
           isMbqi: settings.isMbqi || isMbqiByFeatures(getSetup(), hasQuantifiers),
           mbqiMaxIterations: settings.mbqiMaxIterations,
           isFindingMacros: settings.isFindingMacros,
+          setup: getSetup(),
         }),
         model: undefined,
       };
@@ -525,6 +526,7 @@ export const runSmtlibScript = (
               isMbqi: settings.isMbqi || isMbqiByLogic(getSetup()),
               mbqiMaxIterations: settings.mbqiMaxIterations,
               isFindingMacros: settings.isFindingMacros,
+              setup: getSetup(),
             })
           : undefined;
       // Z3 retries a quantifier-free problem with its tactic when the incremental kernel gives up.
@@ -860,6 +862,7 @@ export const runSmtlibScript = (
           isMbqi: settings.isMbqi || isMbqiByLogic(getSetup()),
           mbqiMaxIterations: settings.mbqiMaxIterations,
           isFindingMacros: settings.isFindingMacros,
+          setup: getSetup(),
         });
         for (const assertion of getNamedAssertions()) kernel.assertExpr(assertion);
         const found = getConsequences(kernel, [...names, ...assumptions], vars);

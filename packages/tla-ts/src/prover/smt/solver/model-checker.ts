@@ -1,6 +1,6 @@
 // Ported from Z3 (src/smt/smt_model_checker.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
-import { FAMILY_POLY, KIND_APP, OP_NOT, OP_OR, SORT_BOOL } from "./ast";
+import { FAMILY_FINITE_SET, FAMILY_POLY, KIND_APP, OP_NOT, OP_OR, SORT_BOOL } from "./ast";
 import { AssertedFormulas } from "./asserted-formulas";
 import { Context } from "./context";
 import type { Enode } from "./enode";
@@ -31,7 +31,7 @@ class AuxContext {
   constructor(parent: Context) {
     this.asserted = new AssertedFormulas(parent.manager);
     this.context = new Context(parent.manager, { ...parent.params, relevancyLevel: 0 });
-    this.context.setupContext();
+    this.context.setupContext(parent.getTheory(FAMILY_FINITE_SET) !== undefined);
     if (parent.getTheory(FAMILY_POLY) !== undefined) this.context.registerPolymorphism();
   }
 
