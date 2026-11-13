@@ -12564,6 +12564,33 @@ describe("errors", () => {
     expect(wrong.failure).toBeDefined();
   });
 
+  it("keeps what an async function that a call declares and calls by name changes after it awaits", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      const order: string[] = [];
+      const run = async (name: string) => {
+        let count = 0;
+        async function bump() {
+          await 0;
+          count += 1;
+        }
+        const pending = bump();
+        count += 10;
+        await pending;
+        order.push(\`\${name} \${count}\`);
+      };
+      run("a");
+      run("b");
+      setTimeout(() => {
+        if (order.join() !== "${expected}") throw new Error(order.join());
+      });
+    `;
+    const result = await checkModel(source("a 11,b 11"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("a 11,b 12"));
+    expect(wrong.failure).toBeDefined();
+  });
+
   it("awaits an async dispose method, which a function's object literal may hold", async () => {
     const source = (expected: string) => `
       declare function setTimeout(callback: () => void): void;
