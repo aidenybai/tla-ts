@@ -29,6 +29,7 @@ import {
   getLocalCaptures,
   getFunctionOfKind,
   getKeptLocals,
+  getLiveMaker,
   getKeptMaker,
   getParameters,
   getSymbol,
@@ -467,10 +468,15 @@ const runThen = (
           { resolve: resolveRef, reject: rejectRef, isResolved: false },
         ],
       });
-      const code = useJavaScript("CodeOf", [getHeap(start.scope, node, context), then], context);
+      const startHeap = getHeap(start.scope, node, context);
+      const code = useJavaScript("CodeOf", [startHeap, then], context);
+      // A then that reads the locals of the async function that made it reads them from the
+      // environment of the call that made it, which holds them while the call waits.
+      const environment = useJavaScript("EnvironmentOf", [startHeap, then], context);
       return candidates.reduceRight(
         (otherwise, candidate) => {
           const parameters = candidate.parameters;
+          const maker = getLiveMaker(candidate, context);
           if (
             parameters.length > 2 ||
             parameters.some(
@@ -479,7 +485,7 @@ const runThen = (
                 parameter.initializer !== undefined ||
                 parameter.dotDotDotToken !== undefined,
             ) ||
-            getLocalCaptures(candidate, context).size > 0 ||
+            (maker === undefined && getLocalCaptures(candidate, context).size > 0) ||
             (ts.isArrowFunction(candidate) &&
               ts.findAncestor(candidate.parent, ts.isFunctionLike) !== undefined)
           ) {
@@ -487,6 +493,40 @@ const runThen = (
           }
           const candidateValue = getCandidateValue(candidate, context);
           if (candidateValue === undefined) return otherwise;
+          const locals = maker === undefined ? [] : getKeptLocals(maker, context);
+          const heapSymbol = context.heap;
+          // The then's changes to the locals go back to the environment, and the job's own
+          // bindings of those names stay as they were.
+          const store = (after: Path): Path => {
+            const values = locals.flatMap((local): [Expression, Expression][] => {
+              const value = after.scope.bindings.get(local.symbol);
+              return value === undefined ? [] : [[string(local.key), value]];
+            });
+            const restored = new Map(after.scope.bindings);
+            locals.forEach((local) => {
+              const value = start.scope.bindings.get(local.symbol);
+              if (value === undefined) restored.delete(local.symbol);
+              else restored.set(local.symbol, value);
+            });
+            return {
+              ...after,
+              mutable: start.mutable,
+              scope: {
+                ...after.scope,
+                bindings:
+                  heapSymbol === undefined || values.length === 0
+                    ? restored
+                    : restored.set(
+                        heapSymbol,
+                        useJavaScript(
+                          "SetEnvironment",
+                          [getHeap(after.scope, node, context), environment, functionFrom(values)],
+                          context,
+                        ),
+                      ),
+              },
+            };
+          };
           const back = (after: Path) =>
             next({
               ...after,
@@ -499,6 +539,14 @@ const runThen = (
             });
           const bindings = new Map([
             ...start.scope.bindings,
+            ...locals.map((local): [ts.Symbol, Expression] => [
+              local.symbol,
+              useJavaScript(
+                "EnvironmentValue",
+                [startHeap, environment, string(local.key)],
+                context,
+              ),
+            ]),
             ...parameters.flatMap((parameter, position): [ts.Symbol, Expression][] => {
               const symbol = getSymbol(parameter.name, context.checker);
               return symbol === undefined
@@ -512,6 +560,7 @@ const runThen = (
               getBody(candidate),
               {
                 ...start,
+                mutable: new Set([...start.mutable, ...locals.map((local) => local.symbol)]),
                 scope: {
                   ...start.scope,
                   bindings,
@@ -523,12 +572,20 @@ const runThen = (
               },
               context,
               {
-                next: back,
-                exit: back,
+                next: (after) => back(store(after)),
+                exit: (after) => back(store(after)),
                 breakTo: undefined,
                 continueTo: undefined,
                 throwTo: (after, thrown) =>
-                  callResolver(node, rejectRef, thrown.value, undefined, after, context, back),
+                  callResolver(
+                    node,
+                    rejectRef,
+                    thrown.value,
+                    undefined,
+                    store(after),
+                    context,
+                    back,
+                  ),
                 yieldTo: undefined,
                 awaitTo: undefined,
                 inlining: new Set([candidate]),

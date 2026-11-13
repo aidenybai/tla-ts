@@ -14637,6 +14637,60 @@ describe("errors", () => {
     expect(wrong.failure).toBeDefined();
   });
 
+  it("runs a thenable's then that changes the locals of the async call that made it", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      const log: string[] = [];
+      const run = async (tag: string) => {
+        let counter = 0;
+        const thenable = {
+          then(resolve: (value: string) => void) {
+            counter++;
+            resolve(tag);
+          },
+        };
+        const value = await thenable;
+        counter += 10;
+        log.push(\`\${value}:\${counter}\`);
+      };
+      run("a");
+      run("b");
+      setTimeout(() => {
+        if (log.join() !== "${expected}") throw new Error(log.join());
+      });
+    `;
+    expect((await checkModel(source("a:11,b:11"))).failure).toBeUndefined();
+    expect((await checkModel(source("a:10,b:10"))).failure).toBeDefined();
+  });
+
+  it("runs the then of a thenable that Array.fromAsync awaits, which reads the locals of its maker", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let result = "";
+      const check = async (body: () => Promise<void>) => {
+        await body();
+      };
+      check(async function () {
+        let counter = 0;
+        const expected = {};
+        const thenable = {
+          then(resolve: (value: object) => void) {
+            counter++;
+            resolve(expected);
+          },
+        };
+        const input = [thenable].values();
+        const output = await Array.fromAsync(input as Iterable<PromiseLike<object>>);
+        result = \`\${output[0] === expected}:\${counter}\`;
+      });
+      setTimeout(() => {
+        if (result !== "${expected}") throw new Error(result);
+      });
+    `;
+    expect((await checkModel(source("true:1"))).failure).toBeUndefined();
+    expect((await checkModel(source("true:0"))).failure).toBeDefined();
+  });
+
   it("keeps the locals of each async call apart, where AsyncDisposableStacks run their functions in turns", async () => {
     const source = (expected: string) => `
       declare function setTimeout(callback: () => void): void;
