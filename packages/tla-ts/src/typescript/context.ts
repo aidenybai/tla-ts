@@ -73,8 +73,9 @@ export interface Context {
   hasInheritedElements: boolean;
   // The argument that an inlined call passed, by the name that binds the parameter that took it.
   passed: Map<string, Passed>;
-  // What each function that a statement runs changes, with the functions that it runs in turn.
-  changeSummaries: Map<ts.Node, ChangeSummary>;
+  // What each function that a statement runs changes, with the functions that it runs in turn, by
+  // the functions that the paths bind to the parameters that they call.
+  changeSummaries: Map<string, Map<ts.Node, ChangeSummary>>;
 }
 
 export interface ChangeSummary {

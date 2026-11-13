@@ -8389,11 +8389,28 @@ const getEffects = (
   };
 };
 
-// What a function changes, with what the functions that it runs change, where no path binds its
-// parameters to functions. The functions that run one another, a strongly connected component of
-// the call graph, change the same things, so they share one summary, which Tarjan's algorithm
-// makes once the components that they run have theirs.
-const getSummary = (root: ts.Node, context: Context) => {
+// A node's place in its file, which tells it apart from every other node.
+const getNodeKey = (node: ts.Node) =>
+  `${node.getSourceFile().fileName}:${node.pos}:${node.end}:${node.kind}`;
+
+// What a function changes, with what the functions that it runs change, where the bindings give
+// the functions that its parameters hold. The functions that run one another, a strongly connected
+// component of the call graph, change the same things, so they share one summary, which Tarjan's
+// algorithm makes once the components that they run have theirs.
+const summarize = (
+  root: ts.Node,
+  bindings: ReadonlyMap<ts.Symbol, FunctionNode>,
+  context: Context,
+) => {
+  const key = [...bindings]
+    .map((entry) => {
+      const declaration = entry[0].valueDeclaration;
+      return `${declaration === undefined ? entry[0].name : getNodeKey(declaration)}=${getNodeKey(entry[1])}`;
+    })
+    .sort()
+    .join(",");
+  const summaries = context.changeSummaries.get(key) ?? new Map<ts.Node, ChangeSummary>();
+  context.changeSummaries.set(key, summaries);
   const indexes = new Map<ts.Node, number>();
   const lowLinks = new Map<ts.Node, number>();
   const stack: ts.Node[] = [];
@@ -8407,14 +8424,14 @@ const getSummary = (root: ts.Node, context: Context) => {
     onStack.add(node);
     const found: Effects[] = [];
     const visit = (inner: ts.Node) => {
-      found.push(getEffects(inner, NO_FUNCTIONS, context));
+      found.push(getEffects(inner, bindings, context));
       ts.forEachChild(inner, visit);
     };
     visit(node);
     effects.set(node, found);
     found.forEach((effect) =>
       effect.called.forEach((called) => {
-        if (context.changeSummaries.has(called)) return;
+        if (summaries.has(called)) return;
         if (!indexes.has(called)) connect(called);
         const reached = onStack.has(called) ? (lowLinks.get(called) ?? index) : index;
         lowLinks.set(node, Math.min(lowLinks.get(node) ?? index, reached));
@@ -8425,7 +8442,7 @@ const getSummary = (root: ts.Node, context: Context) => {
     component.forEach((member) => onStack.delete(member));
     const own = component.flatMap((member) => effects.get(member) ?? []);
     const reached = own.flatMap((effect) =>
-      effect.called.flatMap((called) => context.changeSummaries.get(called) ?? []),
+      effect.called.flatMap((called) => summaries.get(called) ?? []),
     );
     const summary: ChangeSummary = {
       changed: new Set([
@@ -8439,10 +8456,35 @@ const getSummary = (root: ts.Node, context: Context) => {
         ...reached.flatMap((inner) => [...inner.parameters]),
       ]),
     };
-    component.forEach((member) => context.changeSummaries.set(member, summary));
+    component.forEach((member) => summaries.set(member, summary));
     return summary;
   };
-  return context.changeSummaries.get(root) ?? connect(root);
+  return summaries.get(root) ?? connect(root);
+};
+
+// What a function changes where a path binds functions to parameters. Its summary takes the
+// bindings of the parameters that it, or a function bound to one of them, calls or passes, and no
+// others, so that paths that bind other parameters share it.
+const getSummary = (
+  root: ts.Node,
+  functions: ReadonlyMap<ts.Symbol, FunctionNode>,
+  context: Context,
+) => {
+  const bindings = new Map<ts.Symbol, FunctionNode>();
+  const pending = [root];
+  const seen = new Set<ts.Node>();
+  while (pending.length > 0) {
+    const current = pending.pop() ?? root;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    summarize(current, NO_FUNCTIONS, context)?.parameters.forEach((parameter) => {
+      const bound = functions.get(parameter);
+      if (bound === undefined) return;
+      bindings.set(parameter, bound);
+      pending.push(bound);
+    });
+  }
+  return summarize(root, bindings, context);
 };
 
 export const getChanged = (
@@ -8466,16 +8508,9 @@ export const getChanged = (
     effects.called.forEach((called) => {
       if (visited.has(called)) return;
       visited.add(called);
-      const summary = getSummary(called, context);
-      // A function that calls a parameter which the path binds runs the function bound to it.
-      if (
-        summary === undefined ||
-        [...functions.keys()].some((symbol) => summary.parameters.has(symbol))
-      ) {
-        visit(called);
-        return;
-      }
-      add(summary);
+      const summary = getSummary(called, functions, context);
+      if (summary === undefined) visit(called);
+      else add(summary);
     });
     ts.forEachChild(node, visit);
   };
