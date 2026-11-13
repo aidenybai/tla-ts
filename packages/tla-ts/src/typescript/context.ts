@@ -1294,9 +1294,14 @@ export const isNestedFunction = (
           findNodes(node, ts.isIdentifier).every((name) => name.text !== "arguments")))) ||
     (isDisposeCallback(node, context) && !isOnce(node.parent))) &&
   node.asteriskToken === undefined &&
-  // Of async functions, only methods and dispose callbacks, which await using calls.
+  // Of async functions, only methods, dispose callbacks, and what an asyncDispose getter returns,
+  // which await using calls.
   ((ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0 ||
     ts.isMethodDeclaration(node) ||
+    (ts.isReturnStatement(node.parent) &&
+      ts.isGetAccessorDeclaration(node.parent.parent.parent) &&
+      ts.isComputedPropertyName(node.parent.parent.parent.name) &&
+      node.parent.parent.parent.name.expression.getText() === "Symbol.asyncDispose") ||
     isDisposeCallback(node, context)) &&
   ts.findAncestor(node.parent, ts.isFunctionLike) !== undefined &&
   (getOuterLocals(node, context).length === 0 || getLiveMaker(node, context) !== undefined);
