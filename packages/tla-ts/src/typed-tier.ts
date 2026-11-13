@@ -172,7 +172,8 @@ interface TypedActionProperty {
 export interface TypedCheck {
   invariants: Expression[];
   constraints: Expression[];
-  initialPredicates: Expression[];
+  // The interpreter checks the initial predicates, in the scopes of the properties they come from.
+  holdsInitialPredicates: (state: Value[]) => boolean;
   actionProperties: TypedActionProperty[];
   init: Expression;
   next: Expression;
@@ -4565,7 +4566,6 @@ const getSignatureCode = (
 interface CompiledSpec {
   next: (state: Plain[], emit: (successor: Plain[]) => void) => void;
   invariants: ((state: Plain[]) => boolean)[];
-  initialPredicates: ((state: Plain[]) => boolean)[];
   actionProperties: ((state: Plain[], next: Plain[]) => boolean)[];
   constraints: ((state: Plain[]) => boolean)[];
   encode: (state: Plain[], arena: Arena) => void;
@@ -4597,7 +4597,6 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
     );
   const invariants = check.invariants.map(compilePredicate);
   const constraints = check.constraints.map(compilePredicate);
-  const initialPredicates = check.initialPredicates.map(compilePredicate);
   const successor = program.variableTypes.map(() => getName(program, "n"));
   // [A]_v holds when A does or v is unchanged.
   const actionProperties = check.actionProperties.map((property) => {
@@ -4714,7 +4713,6 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
   const nextCode = next();
   const invariantCodes = invariants.map(predicate);
   const constraintCodes = constraints.map(predicate);
-  const initialPredicateCodes = initialPredicates.map(predicate);
   const actionPropertyCodes = actionProperties.map(
     (property) =>
       `(state, next) => { ${unpack} const [${successor.join(", ")}] = next; return (${property.action.emit()}) || (${property.unchanged.emit()}); }`,
@@ -4737,7 +4735,6 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
   return {
     next: (state, emit) => { ${unpack} ${nextCode} },
     invariants: [${invariantCodes.join(", ")}],
-    initialPredicates: [${initialPredicateCodes.join(", ")}],
     actionProperties: [${actionPropertyCodes.join(", ")}],
     constraints: [${constraintCodes.join(", ")}],
     encode: (state, arena) => {
@@ -4912,6 +4909,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     check.init,
     environment,
     (state) => {
+      if (!check.holdsInitialPredicates(state)) deopt();
       pushWord(initialStarts, initialBytes.size);
       state.forEach((value, index) => {
         unifyValue(program.variableTypes[index], value, program.plains);
@@ -5011,7 +5009,6 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   const cursor: Cursor = { data: initialBytes.data, position: 0 };
   for (let index = 0; index < initialStarts.size; index++) {
     const state = program.variableTypes.map((type) => readPlain(cursor, type, program.plains));
-    if (!compiled.initialPredicates.every((predicate) => predicate(state))) deopt();
     if (visit(state)) statistics.depth = 1;
   }
   initialBytes.data = new Uint8Array(0);

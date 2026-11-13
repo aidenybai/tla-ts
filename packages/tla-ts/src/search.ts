@@ -692,7 +692,7 @@ export interface Search {
         scope: Scope | undefined;
         invariants: Expression[];
         constraints: Expression[];
-        initialPredicates: Expression[];
+        holdsInitialPredicates: (state: Value[]) => boolean;
         actionProperties: ActionProperty[];
         symmetry: Images[] | undefined;
         view: Expression | undefined;
@@ -1080,6 +1080,16 @@ export const createSearch = (
     getRepresentativeFingerprint(
       symmetryGroup === undefined ? state : getRepresentative(state, symmetryGroup, getTlcOrder()),
     );
+  const findFailedInitialPredicate = (state: Value[]) =>
+    isCoveredHeld(coveredInitialPredicates, state)
+      ? undefined
+      : properties.initialPredicates.find(
+          (predicate) =>
+            !holdsLikeTlc(
+              predicate.expression,
+              getContext(environment, state, undefined, predicate.scope),
+            ),
+        );
   const violatingStates = new WeakSet<Value[]>();
   const isViolated = (invariant: StateCheck, state: Value[], parent: Value[] | undefined) => {
     const checkedParent = parent && !violatingStates.has(parent) ? parent : undefined;
@@ -1177,8 +1187,7 @@ export const createSearch = (
         [...invariants, ...constraints].some((check) => check.scope !== undefined) ||
         actionConstraints.length > 0 ||
         properties.actionProperties.some((property) => property.scope !== undefined) ||
-        properties.liveness.length > 0 ||
-        properties.initialPredicates.some((predicate) => predicate.scope !== undefined);
+        properties.liveness.length > 0;
       if (isInterpreted || spec.init === undefined || spec.next === undefined) return undefined;
       const invariantExpressions = invariantPredicates.map((invariant) => invariant.predicate);
       const constraintExpressions = [
@@ -1224,7 +1233,8 @@ export const createSearch = (
             scope: spec.scope,
             invariants: invariantExpressions,
             constraints: constraintExpressions,
-            initialPredicates: initialExpressions,
+            holdsInitialPredicates: (state: Value[]) =>
+              findFailedInitialPredicate(state) === undefined,
             actionProperties: properties.actionProperties,
             symmetry: symmetryGroup,
             view: view?.expression,
@@ -1309,16 +1319,7 @@ export const createSearch = (
           isUnchangedFor(constraint, state, parent) ||
           holdsAsConjunct(constraint, getContext(environment, state, undefined)),
       ),
-    findFailedInitialPredicate: (state) =>
-      isCoveredHeld(coveredInitialPredicates, state)
-        ? undefined
-        : properties.initialPredicates.find(
-            (predicate) =>
-              !holdsLikeTlc(
-                predicate.expression,
-                getContext(environment, state, undefined, predicate.scope),
-              ),
-          ),
+    findFailedInitialPredicate,
     findViolatedActionProperty: (state, next) =>
       isCoveredHeld(coveredActionProperties, state, next)
         ? undefined
