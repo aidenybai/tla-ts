@@ -2003,6 +2003,19 @@ describe("values", () => {
     ).toThrow("tla-ts can't write a global outside strict mode");
   });
 
+  it("gives undefined as the type of a name that no binding has", async () => {
+    const getSource = (expected: string) => `
+      let type: string = "none";
+      // @ts-ignore
+      type = typeof missing;
+      if (type !== "${expected}") throw new Error("outcomes " + type);
+    `;
+    expect((await checkModel(getSource("undefined"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("object"))).failure?.message).toContain(
+      "outcomes undefined",
+    );
+  });
+
   it("assigns a catch's parameter as it does a let", async () => {
     const getSource = (expected: string) => `
       let seen = "";

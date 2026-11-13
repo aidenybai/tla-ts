@@ -4704,6 +4704,10 @@ export const translateTypeOf = (node: ts.TypeOfExpression, scope: Scope, context
   const read = ts.isParenthesizedExpression(node.expression)
     ? node.expression.expression
     : node.expression;
+  // A name that no binding has is undefined to typeof, which reads it without throwing.
+  if (ts.isIdentifier(read) && getSymbol(read, context.checker) === undefined) {
+    return string("undefined");
+  }
   // An element of an array or a string may also lie past the end.
   const kind =
     ts.isPropertyAccessExpression(read) || ts.isElementAccessExpression(read)
