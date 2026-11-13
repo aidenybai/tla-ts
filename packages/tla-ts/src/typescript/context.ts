@@ -1486,10 +1486,28 @@ export const getLiveMaker = (node: ts.Node, context: Context) =>
     : undefined;
 
 // The async function whose locals a function inside it reads from the one call that made it: the
-// call whose environment a live method holds, or the only call of a function that runs once.
+// call whose environment a live method holds, the only call of a function that runs once, or the
+// call that calls a function it declares by name.
 export const getKeptMaker = (node: ts.Node, context: Context) => {
   const owner = getAsyncOwner(node, context);
-  return getLiveMaker(node, context) ?? (owner !== undefined && isOnce(owner) ? owner : undefined);
+  const declared = ts.isFunctionDeclaration(node) ? node.name : undefined;
+  const symbol = declared === undefined ? undefined : getSymbol(declared, context.checker);
+  return (
+    getLiveMaker(node, context) ??
+    (owner !== undefined &&
+    (isOnce(owner) ||
+      (symbol !== undefined &&
+        findNodes(owner, ts.isIdentifier)
+          .filter((name) => name !== declared && getSymbol(name, context.checker) === symbol)
+          .every(
+            (name) =>
+              ts.isCallExpression(name.parent) &&
+              name.parent.expression === name &&
+              ts.findAncestor(name.parent, ts.isFunctionLike) === owner,
+          )))
+      ? owner
+      : undefined)
+  );
 };
 
 // The locals of an async function that functions inside it read, each with the key of its value in
