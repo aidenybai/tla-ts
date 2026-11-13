@@ -15414,6 +15414,105 @@ ${call}
     expect(result.failure).toBeUndefined();
   });
 
+  it("yields each element of an array that a variable holds, which yield* takes", async () => {
+    const source = (expected: string) => `
+      let values = [1, 2, 3];
+      values = [4, 5];
+      function* gen() {
+        yield* values;
+        return "done";
+      }
+      const iterator = gen();
+      const first = iterator.next();
+      const second = iterator.next();
+      const third = iterator.next();
+      const log = \`\${first.value},\${second.value},\${third.value},\${third.done}\`;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    expect((await checkModel(source("4,5,done,true"))).failure).toBeUndefined();
+    expect((await checkModel(source("4,5,undefined,true"))).failure).toBeDefined();
+  });
+
+  it("stops where yield* takes more elements of an array that a variable holds than it follows", async () => {
+    const result = await checkModel(`
+      let values = [1, 2, 3, 4, 5];
+      function* gen() {
+        yield* values;
+      }
+      const iterator = gen();
+      const first = iterator.next();
+      const second = iterator.next();
+      const third = iterator.next();
+      const fourth = iterator.next();
+      if (fourth.value !== 4) throw new Error("fourth");
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't follow more than 3 values of a yield*");
+  });
+
+  it("awaits the promises of an array that a variable holds, which an async yield* takes", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let values: (number | Promise<number>)[] = [];
+      values = [Promise.resolve(1), 2];
+      const order: string[] = [];
+      async function* gen() {
+        yield* values;
+        order.push("end");
+      }
+      const iterator = gen();
+      iterator.next().then((first) => {
+        order.push(\`a\${first.value}\`);
+        iterator.next().then((second) => {
+          order.push(\`b\${second.value}\`);
+          iterator.next().then((third) => order.push(\`c\${third.done}\`));
+        });
+      });
+      Promise.resolve()
+        .then(() => order.push("t1"))
+        .then(() => order.push("t2"))
+        .then(() => order.push("t3"))
+        .then(() => order.push("t4"))
+        .then(() => order.push("t5"))
+        .then(() => order.push("t6"))
+        .then(() => order.push("t7"))
+        .then(() => order.push("t8"));
+      setTimeout(() => {
+        if (order.join() !== "${expected}") throw new Error(order.join());
+      });
+    `;
+    expect(
+      (await checkModel(source("t1,t2,a1,t3,t4,t5,b2,t6,t7,end,t8,ctrue"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(source("t1,a1,t2,t3,t4,t5,b2,t6,t7,end,t8,ctrue"))).failure,
+    ).toBeDefined();
+  });
+
+  it("throws the rejection of a promise that an array a variable holds gives an async yield*", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      const error = new Error("boom");
+      let values = [Promise.reject(error), "unreachable"];
+      let log = "";
+      async function* gen() {
+        yield* values;
+      }
+      const iterator = gen();
+      iterator.next().then(
+        () => { log += "resolved;"; },
+        (reason) => {
+          log += reason === error ? "rejected;" : "other;";
+          iterator.next().then((result) => { log += \`\${result.done}:\${String(result.value)};\`; });
+        },
+      );
+      setTimeout(() => {
+        if (log !== "${expected}") throw new Error(log);
+      });
+    `;
+    expect((await checkModel(source("rejected;true:undefined;"))).failure).toBeUndefined();
+    expect((await checkModel(source("rejected;false:undefined;"))).failure).toBeDefined();
+  });
+
   it("iterates an async generator with for await, and returns it on break", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;

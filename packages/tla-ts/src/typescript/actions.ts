@@ -154,6 +154,7 @@ import {
 import { and, bindValue, DISABLED, type Formula, ifThenElse, letIn, leaf, render } from "./formula";
 import { getCalledError, getErrorClass, translateEngineError, translateThrown } from "./exceptions";
 import {
+  dispatchFollowed,
   drainTasks,
   EMPTY_TASKS,
   getIteration,
@@ -6994,9 +6995,10 @@ const translateElements = (
   )(path);
 };
 
-// A yield* of an array written in place, which yields each element. In an async generator, each
-// element takes two jobs, as the async-from-sync iterator awaits it and the yield* then awaits the
-// iterator's result, and the last next takes two more.
+// A yield* of an array, which yields each element. In an async generator, each element takes two
+// jobs, as the async-from-sync iterator awaits it and the yield* then awaits the iterator's result,
+// and the last next takes two more. An array that a variable holds yields up to
+// DELEGATION_LIMIT elements.
 const translateDelegatedYield = (
   node: ts.YieldExpression,
   path: Path,
@@ -7037,11 +7039,14 @@ const translateDelegatedYield = (
       continueWith,
     );
   }
+  const elements =
+    iterated !== undefined && ts.isArrayLiteralExpression(iterated) ? iterated.elements : undefined;
   if (
     yieldTo === undefined ||
     iterated === undefined ||
-    !ts.isArrayLiteralExpression(iterated) ||
-    iterated.elements.some((element) => ts.isSpreadElement(element))
+    (elements === undefined
+      ? getKind(iterated, context) !== "sequence" || hasCall(iterated, context)
+      : elements.some((element) => ts.isSpreadElement(element)))
   ) {
     throw new TlaTypeScriptError("Unsupported yield", node);
   }
@@ -7053,22 +7058,49 @@ const translateDelegatedYield = (
     awaitTo === undefined
       ? next(current)
       : awaitTo(current, getUndefined(context), undefined, next, next);
-  const delegate = (current: Path, position: number): Formula => {
-    if (position === iterated.elements.length) {
-      return tick(current, (resumed) => tick(resumed, continueWith));
-    }
-    const element = iterated.elements[position];
+  const finish = (current: Path) => tick(current, (resumed) => tick(resumed, continueWith));
+  const step = (current: Path, position: number): Formula => {
+    const element = elements?.[position];
     const value = index(identifier(sequence), [number(position + 1)]);
     const next = (after: Path) => delegate(after, position + 1);
     const mode = { isDelegated: true, isGuarded: true };
     if (awaitTo === undefined) return yieldTo(current, value, next, throwWith, mode);
-    return awaitTo(
-      current,
-      value,
-      ts.isOmittedExpression(element) ? undefined : element,
-      (fulfilled, settled) =>
-        tick(fulfilled, (resumed) => yieldTo(resumed, settled, next, throwWith, mode)),
-      (rejected, reason) => tick(rejected, (resumed) => throwWith(resumed, reason)),
+    const awaitWith = (awaited: Expression) =>
+      awaitTo(
+        current,
+        awaited,
+        element === undefined || ts.isOmittedExpression(element) ? undefined : element,
+        (fulfilled, settled) =>
+          tick(fulfilled, (resumed) => yieldTo(resumed, settled, next, throwWith, mode)),
+        (rejected, reason) => tick(rejected, (resumed) => throwWith(resumed, reason)),
+      );
+    // An element that no expression types may be any promise that the path follows.
+    return element === undefined
+      ? dispatchFollowed(
+          current,
+          node,
+          value,
+          context,
+          (_name, ref) => awaitWith(ref),
+          awaitWith(value),
+        )
+      : awaitWith(value);
+  };
+  const delegate = (current: Path, position: number): Formula => {
+    if (elements !== undefined) {
+      return position === elements.length ? finish(current) : step(current, position);
+    }
+    return ifThenElse(
+      apply("=", [apply("Len", [identifier(sequence)]), number(position)]),
+      finish(current),
+      position === DELEGATION_LIMIT
+        ? leaf(
+            apply("Assert", [
+              boolean(false),
+              string(`tla-ts can't follow more than ${DELEGATION_LIMIT} values of a yield*`),
+            ]),
+          )
+        : step(current, position),
     );
   };
   return allocate(iterated, path, context, (inner) =>

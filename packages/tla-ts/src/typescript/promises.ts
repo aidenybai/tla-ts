@@ -260,16 +260,27 @@ const dispatchPromise = (
   const found = findPromise(path, node, value);
   if (found !== undefined) return onPromise(found);
   if (valueNode === undefined || !isPossiblePromise(valueNode, value, context)) return otherwise();
-  return [...getTasks(path, node).promises].reduceRight(
+  return dispatchFollowed(path, node, value, context, onPromise, otherwise());
+};
+
+// The promise among those that the path follows that a value is, or none.
+export const dispatchFollowed = (
+  path: Path,
+  node: ts.Node,
+  value: Expression,
+  context: Context,
+  onPromise: (name: string, ref: Expression) => Formula,
+  otherwise: Formula,
+): Formula =>
+  [...getTasks(path, node).promises].reduceRight(
     (rest, entry) =>
       ifThenElse(
         useJavaScript("SameValue", [value, entry[1].ref], context),
-        onPromise(entry[0]),
+        onPromise(entry[0], entry[1].ref),
         rest,
       ),
-    otherwise(),
+    otherwise,
   );
-};
 
 // Resolves a promise with a value: a promise that tla-ts follows, which the promise then follows
 // a job later, or a value that it fulfills the promise with. tla-ts doesn't call the then of an
