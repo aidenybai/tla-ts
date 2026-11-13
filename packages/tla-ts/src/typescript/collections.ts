@@ -2974,11 +2974,24 @@ const translateNewCollection = (
     return translateUnknown(node, `Unsupported constructor: new ${constructor}`, context);
   }
   if (argument === undefined) return tuple([]);
+  const getMapOf = (entries: ts.Expression) =>
+    useJavaScript(
+      context.hasSpecialNumbers ? "KeyedMapOf" : "MapOf",
+      [translateExpression(entries, scope, context)],
+      context,
+    );
+  // Each entry, or map or array of entries that the array spreads, adds to those before it.
   if (ts.isArrayLiteralExpression(argument)) {
     if (argument.elements.length === 0) return tuple([]);
     return argument.elements
       .toReversed()
       .map((entry) => {
+        if (ts.isSpreadElement(entry) && getKind(entry.expression, context) === "map") {
+          return translateExpression(entry.expression, scope, context);
+        }
+        if (ts.isSpreadElement(entry) && getKind(entry.expression, context) === "sequence") {
+          return getMapOf(entry.expression);
+        }
         if (!ts.isArrayLiteralExpression(entry) || entry.elements.length !== 2) {
           throw new TlaTypeScriptError("Write each Map entry as [key, value]", entry);
         }
@@ -2995,6 +3008,5 @@ const translateNewCollection = (
   if (getKind(argument, context) !== "sequence") {
     throw new TlaTypeScriptError(`Unsupported constructor: new ${constructor}`, node);
   }
-  const entries = translateExpression(argument, scope, context);
-  return useJavaScript(context.hasSpecialNumbers ? "KeyedMapOf" : "MapOf", [entries], context);
+  return getMapOf(argument);
 };

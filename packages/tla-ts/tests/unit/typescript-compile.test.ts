@@ -2584,6 +2584,49 @@ describe("values", () => {
     await expect(checkModel(getSource("2,4"))).rejects.toThrow("4,2");
   });
 
+  it("makes a map from entries that calls give and spread, where a later entry of a key wins", async () => {
+    const getSource = (expected: string) => `
+      interface Operator {
+        name: string;
+        low: number;
+      }
+      const createOperators = (low: number, ...names: string[]) =>
+        names.map((name): [string, Operator] => [name, { name, low }]);
+      const OPERATORS = new Map([
+        ...createOperators(10, "+", "-"),
+        ["*", { name: "*", low: 20 }],
+        ...createOperators(30, "-", "/"),
+      ]);
+      const result = [OPERATORS.size, OPERATORS.get("-")?.low, OPERATORS.get("*")?.low].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("4,30,20"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("4,10,20"))).failure?.message).toContain("4,30,20");
+  });
+
+  it("makes a map from a map and entries that an array spreads, where a later entry of a key wins", async () => {
+    const getSource = (expected: string) => `
+      const BASE = new Map([
+        ["+", 10],
+        ["-", 20],
+      ]);
+      const SYNONYMS = [
+        ["+", "plus"],
+        ["-", "minus", "+"],
+      ];
+      const OPERATORS = new Map([
+        ...BASE,
+        ...SYNONYMS.flatMap((synonyms) =>
+          synonyms.slice(1).map((synonym) => [synonym, BASE.get(synonyms[0])] as const),
+        ),
+      ]);
+      const result = [OPERATORS.size, OPERATORS.get("plus"), OPERATORS.get("+")].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("4,10,20"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("4,10,10"))).rejects.toThrow("4,10,20");
+  });
+
   it("makes a map from an array of entries, where a later entry of a key wins", async () => {
     const getSource = (expected: string) => `
       const pairs: [string, number][] = [
