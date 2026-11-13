@@ -4324,6 +4324,25 @@ DefineProperties(heap, ref, properties) ==
      ELSE DefineConvertedAll(heap, ref, keys,
                              [position \\in DOMAIN keys |-> ToDescriptor(heap, values[position])])
 
+\\* The keys of an object that InternalizeJSONProperty visits: an array's indices below its length,
+\\* or another object's enumerable own string keys.
+RevivedKeys(heap, ref) ==
+  LET object == Lookup(heap, ref)
+  IN IF IsArrayObject(object)
+     THEN [position \\in 1..object.values["length"] |-> ToString(position - 1)]
+     ELSE EnumerableKeys(object)
+
+\\* What InternalizeJSONProperty does with the value a reviver gave for a key, which deletes the key
+\\* where the value is undefined and defines it otherwise, ignoring where either fails.
+Revived(heap, ref, key, value) ==
+  IF value = Undefined
+  THEN IF CanDelete(heap, ref, key) THEN Delete(heap, ref, key) ELSE heap
+  ELSE DefineConverted(heap, ref, key,
+                       [fields |-> {"value", "writable", "enumerable", "configurable"},
+                        isAccessor |-> FALSE, isData |-> TRUE, isValid |-> TRUE, value |-> value,
+                        get |-> Undefined, set |-> Undefined, writable |-> TRUE,
+                        enumerable |-> TRUE, configurable |-> TRUE]).heap
+
 \\* The own keys of an object, with its symbols last, that Object.defineProperties visits.
 PropertyKeysOf(heap, ref) ==
   LET object == Lookup(heap, ref) IN OwnKeys(object) \\o SelectSeq(object.keys, IsSymbol)

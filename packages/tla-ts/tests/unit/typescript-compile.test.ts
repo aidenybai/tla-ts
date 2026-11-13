@@ -5150,6 +5150,140 @@ describe("errors", () => {
     ).toThrow("Unsupported call");
   });
 
+  it("revives what JSON.parse parses from the innermost value", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const calls: string[] = [];
+      const text = '{"b":0,"a":{"c":[1]},"1":0}';
+      const result: unknown = JSON.parse(text, function (key: string, value: unknown) {
+        calls.push(key);
+        return value;
+      });
+      if (calls.join() !== "1,b,0,c,a,") throw new Error("order");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace('"1,b,0,c,a,"', '"1,b,a,0,c,"');
+    expect((await checkModel(wrong)).failure?.message).toContain('"order"');
+  });
+
+  it("deletes a key that a reviver gives undefined for", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const result: object = JSON.parse('{"b":0,"a":1}', function (key: string, value: unknown) {
+        return key === "b" ? undefined : value;
+      });
+      if (Object.keys(result).join() !== "a") throw new Error("deleted");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace('!== "a"', '!== "b,a"');
+    expect((await checkModel(wrong)).failure?.message).toContain('"deleted"');
+  });
+
+  it("reads a key that a reviver deleted through the prototype", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const proto = Object.prototype as { [key: string]: unknown };
+      proto.b = 3;
+      const read: { b?: number } = JSON.parse('{"a": 1, "b": 2}', function (
+        this: { b?: number },
+        key: string,
+        value: unknown,
+      ) {
+        if (key === "a") delete this.b;
+        return value;
+      });
+      delete proto.b;
+      if (!Object.hasOwn(read, "b") || read.b !== 3) throw new Error("prototype");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("read.b !== 3", "read.b !== 2");
+    expect((await checkModel(wrong)).failure?.message).toContain('"prototype"');
+  });
+
+  it("keeps a key that a reviver made unconfigurable", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const kept: { b?: number } = JSON.parse('{"a": 1, "b": 2}', function (
+        this: object,
+        key: string,
+        value: unknown,
+      ) {
+        if (key === "a") Object.defineProperty(this, "b", { configurable: false });
+        return key === "b" ? 22 : value;
+      });
+      if (kept.b !== 2) throw new Error("kept");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("kept.b !== 2", "kept.b !== 22");
+    expect((await checkModel(wrong)).failure?.message).toContain('"kept"');
+  });
+
+  it("throws what a reviver throws out of JSON.parse", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const throwsRange = () => {
+        try {
+          JSON.parse("0", function () {
+            throw new RangeError("x");
+          });
+        } catch (error) {
+          return error instanceof RangeError;
+        }
+        return false;
+      };
+      if (!throwsRange()) throw new Error("call");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace('new RangeError("x")', 'new TypeError("x")');
+    expect((await checkModel(wrong)).failure?.message).toContain('"call"');
+  });
+
+  it("throws what a getter throws as JSON.parse revives a value", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const thrower = function () {
+        throw new RangeError("y");
+      };
+      const throwsRange = () => {
+        try {
+          JSON.parse("[0,0]", function (this: object) {
+            Object.defineProperty(this, "1", { get: thrower });
+          });
+        } catch (error) {
+          return error instanceof RangeError;
+        }
+        return false;
+      };
+      if (!throwsRange()) throw new Error("getter");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace('new RangeError("y")', 'new TypeError("y")');
+    expect((await checkModel(wrong)).failure?.message).toContain('"getter"');
+  });
+
+  it("stops where a reviver changes an object before JSON.parse revives it", async () => {
+    const result = await checkModel(`
+      const replacement = { a: 1 };
+      const parsed: unknown = JSON.parse('[0, {"a": 1}]', function (
+        this: object,
+        key: string,
+        value: unknown,
+      ) {
+        if (key === "0") Object.defineProperty(this, "1", { value: replacement });
+        return value;
+      });
+    `);
+    expect(result.failure?.message).toContain(
+      "tla-ts can't revive an object that the reviver changed",
+    );
+  });
+
   it("stops where JSON.stringify would call a script's function", async () => {
     const result = await checkModel(`
       const value = { a: 1, toJSON: () => 2 };
