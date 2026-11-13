@@ -8605,7 +8605,8 @@ describe("errors", () => {
       "use strict";
       let count = 0;
       const make = async function make(x: number) {
-        return async () => [x, true];
+        const own = arguments;
+        return async () => [x, arguments === own];
       };
       const other = { async method(y: number) { return async function () { return y; }; } };
       make(1).then((first) => {
@@ -8625,6 +8626,30 @@ describe("errors", () => {
 
   it("rejects where an async closure gives another value", async () => {
     expect((await checkModel(getAsyncClosureSource(3))).failure?.message).toContain("rejected");
+  });
+
+  const getArrowArgumentsSource = (expected: number) => `
+      "use strict";
+      const seen = { count: 0 };
+      let read: (() => unknown) | undefined;
+      let kept: (() => unknown) | undefined;
+      function make(first: number) {
+        const own = arguments;
+        const second = (() => arguments[0] as number)();
+        read = () => (arguments === own ? (arguments[0] as number) + second : 0);
+      }
+      make(1);
+      kept = read;
+      make(2);
+      if (kept!() !== ${expected} || read!() !== 4) throw new Error("arguments");
+  `;
+
+  it("reads the arguments of the function around an arrow", async () => {
+    expect((await checkModel(getArrowArgumentsSource(2))).failure).toBeUndefined();
+  });
+
+  it("reads the arguments of the call that made an arrow, not of a later call", async () => {
+    expect((await checkModel(getArrowArgumentsSource(4))).failure?.message).toContain("arguments");
   });
 
   const getCounterSource = (expected: string) => `

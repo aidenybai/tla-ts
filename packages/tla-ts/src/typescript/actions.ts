@@ -52,6 +52,7 @@ import {
   getElement,
   getAnyFunction,
   getCaptures,
+  getCapturedArguments,
   getClosures,
   isClosure,
   type Closure,
@@ -3625,6 +3626,7 @@ const enterClosure = (
   run: (inner: Path, innerFrame: Frame, leave: (after: Path) => Path) => Formula,
 ) => {
   const captures = getCaptures(closure, context);
+  const argumentsBody = getCapturedArguments(closure, context)?.body;
   const written = captures.filter((symbol) => isAssigned(symbol, closure, context));
   const heapSymbol = context.heap;
   const leave = (after: Path): Path => ({
@@ -3634,6 +3636,10 @@ const enterClosure = (
     ),
     scope: {
       ...after.scope,
+      allocated: new Map([
+        ...[...after.scope.allocated].filter((entry) => entry[0] !== argumentsBody),
+        ...[...path.scope.allocated].filter((entry) => entry[0] === argumentsBody),
+      ]),
       bindings: new Map([
         ...[...after.scope.bindings].filter((entry) => !captures.includes(entry[0])),
         ...captures.flatMap((symbol): [ts.Symbol, Expression][] => {
@@ -3672,6 +3678,16 @@ const enterClosure = (
       mutable: new Set([...path.mutable, ...written]),
       scope: {
         ...path.scope,
+        allocated:
+          argumentsBody === undefined
+            ? path.scope.allocated
+            : new Map([
+                ...path.scope.allocated,
+                [
+                  argumentsBody,
+                  useJavaScript("Captured", [heap, value, string("arguments")], context),
+                ],
+              ]),
         bindings: new Map([
           ...path.scope.bindings,
           ...captures.map((symbol): [ts.Symbol, Expression] => [
