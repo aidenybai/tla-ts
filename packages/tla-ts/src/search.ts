@@ -1189,12 +1189,12 @@ export const createSearch = (
       const definitions = [...environment.facts.ids.keys()];
       // The interpreter evaluates again what the tier evaluated before it fell back. TLC evaluates
       // a constant definition once as it starts, and a LET in Init can reach any definition.
-      const hasRepeatedEffects =
+      const hasReplayedEffects =
         spec.scope === undefined
           ? definitions.some(
               (definition) =>
                 isConstantLevel(definition, environment) &&
-                isImpureDefinition(definition, environment, "repeated"),
+                isImpureDefinition(definition, environment, "replayed"),
             ) ||
             isExpressionImpure(
               [
@@ -1210,12 +1210,12 @@ export const createSearch = (
                 ...(view ? [view.expression] : []),
               ],
               environment,
-              "repeated",
+              "replayed",
             )
           : definitions.some((definition) =>
-              isImpureDefinition(definition, environment, "repeated"),
+              isImpureDefinition(definition, environment, "replayed"),
             );
-      return hasRepeatedEffects
+      return hasReplayedEffects
         ? undefined
         : {
             init: spec.init,

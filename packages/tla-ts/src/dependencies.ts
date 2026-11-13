@@ -28,6 +28,7 @@ const READS_IMPURE = 16;
 const VARIABLE_LEVEL_FLAGS = 32;
 const ACTION_LEVEL_FLAGS = VARIABLE_LEVEL_FLAGS | 64;
 const TEMPORAL_LEVEL_FLAGS = ACTION_LEVEL_FLAGS | 128;
+const RANDOM = 256;
 
 const ACTION_KINDS = new Set<Expression["kind"]>([
   "Prime",
@@ -64,6 +65,13 @@ const IMPURE_BUILTINS = new Set([
 ]);
 
 const STREAMED_BUILTINS = new Set(["UNION", "\\cup"]);
+
+const RANDOM_BUILTINS = new Set([
+  "RandomSubset",
+  "RandomSetOfSubsets",
+  "TestRandomSetOfSubsets",
+  "RandomSubsetSet",
+]);
 
 const isImpureBuiltin = (name: string, environment: DefinitionNames) =>
   IMPURE_BUILTINS.has(name) || environment.builtins.get(name)?.isStateLevel === true;
@@ -133,6 +141,7 @@ const collectLocalFacts = (
           row[0] |= IMPURE | (name === "Assert" ? 0 : REPEATED_EFFECT);
         }
         if (STREAMED_BUILTINS.has(name)) row[0] |= STREAMED;
+        if (RANDOM_BUILTINS.has(name)) row[0] |= RANDOM;
         if (!isOverridden && isImpureBuiltin(target, environment)) row[0] |= READS_IMPURE;
         const builtin = environment.builtins.get(target);
         if (
@@ -219,7 +228,7 @@ const closeRows = (local: Uint32Array, words: number, edges: Int32Array[], mask:
   return closed;
 };
 
-const PURITY_MASK = IMPURE | REPEATED_EFFECT | STREAMED;
+const PURITY_MASK = IMPURE | REPEATED_EFFECT | STREAMED | RANDOM;
 const READ_MASK = NONCONSTANT | READS_IMPURE;
 
 const isEvaluatedOnce = (definition: Definition, flags: number) =>
@@ -293,7 +302,13 @@ const getExpressionsRow = (expressions: Expression[], environment: Environment) 
 export const isConstantLevel = (definition: Definition, environment: Environment) =>
   (getRow(definition, environment)[0] & NONCONSTANT) === 0;
 
-const EFFECT_FLAGS = { any: IMPURE, repeated: REPEATED_EFFECT, streamed: STREAMED };
+const EFFECT_FLAGS = {
+  any: IMPURE,
+  repeated: REPEATED_EFFECT,
+  streamed: STREAMED,
+  // What a second evaluation shows: output again, or other random draws.
+  replayed: REPEATED_EFFECT | RANDOM,
+};
 
 export const isExpressionImpure = (
   expressions: Expression[],
