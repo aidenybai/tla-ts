@@ -236,6 +236,12 @@ export const getUnresolvedRead = (
   if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
     return getUnresolvedRead(node.operand, context);
   }
+  // delete and typeof of a name don't read it, but of a property they read the object first.
+  if (ts.isDeleteExpression(node) || ts.isTypeOfExpression(node)) {
+    return ts.isIdentifier(skipCasts(node.expression))
+      ? undefined
+      : getUnresolvedRead(node.expression, context);
+  }
   if (ts.isConditionalExpression(node)) {
     const truth = getLiteralTruth(node.condition);
     return truth === undefined
@@ -289,9 +295,14 @@ export const getUnresolvedRead = (
   }
   if (!ts.isBinaryExpression(node)) return undefined;
   const operator = node.operatorToken.kind;
-  // An assignment to a name reads its value only after it evaluates the value it assigns.
+  // An assignment to a name reads its value only after it evaluates the value it assigns, and one
+  // to a property reads the object first.
   if (operator === ts.SyntaxKind.EqualsToken) {
-    return ts.isIdentifier(node.left) ? getUnresolvedRead(node.right, context) : undefined;
+    return ts.isIdentifier(node.left)
+      ? getUnresolvedRead(node.right, context)
+      : ts.isPropertyAccessExpression(node.left) || ts.isElementAccessExpression(node.left)
+        ? getUnresolvedRead(node.left.expression, context)
+        : undefined;
   }
   const truth = getLiteralTruth(node.left);
   const isShortCircuit =
