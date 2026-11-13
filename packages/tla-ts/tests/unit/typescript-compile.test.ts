@@ -16632,6 +16632,34 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  describe("runs Array.fromAsync of the values() of an array of promises that Promise.resolve makes", () => {
+    const getSource = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      const input = [0, Promise.resolve(1)].values();
+      Array.fromAsync(input).then((values) => {
+        log += "[" + values.join(",") + "]";
+      });
+      Promise.resolve()
+        .then(() => { log += "0"; })
+        .then(() => { log += "1"; })
+        .then(() => { log += "2"; })
+        .then(() => { log += "3"; })
+        .then(() => { log += "4"; });
+      setTimeout(() => {
+        if (log !== "${expected}") throw new Error(log);
+      });
+    `;
+
+    it("settles after the jobs that Node runs first", async () => {
+      expect((await checkModel(getSource("01234[0,1]"))).failure).toBeUndefined();
+    });
+
+    it("doesn't settle a job sooner", async () => {
+      expect((await checkModel(getSource("0123[0,1]4"))).failure).toBeDefined();
+    });
+  });
+
   it("stops at Array.fromAsync of an array's values() that another call steps", () => {
     expect(() =>
       compile(`

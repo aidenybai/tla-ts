@@ -812,7 +812,8 @@ const getArrayLike = (node: ts.Expression, context: Context) => {
 
 // The array literal whose values() a const holds, which only the given use reads, so that nothing
 // steps the iterator before it, and whose elements are literals or consts, which read the same
-// wherever they're evaluated.
+// wherever they're evaluated, or promises that Promise.resolve makes of them, which settle at once
+// and queue no job.
 const getIteratedLiteral = (node: ts.Identifier, context: Context) => {
   const symbol = getSymbol(node, context.checker);
   const valueDeclaration = symbol?.valueDeclaration;
@@ -834,12 +835,18 @@ const getIteratedLiteral = (node: ts.Identifier, context: Context) => {
       ts.isElementAccessExpression(initializer.expression))
       ? getCast(initializer.expression.expression)
       : undefined;
-  const isConstant = (element: ts.Expression) => {
+  const isConstant = (element: ts.Expression): boolean => {
     const declared = ts.isIdentifier(element)
       ? getSymbol(element, context.checker)?.valueDeclaration
       : undefined;
     return (
       ts.isLiteralExpression(element) ||
+      (ts.isCallExpression(element) &&
+        ts.isPropertyAccessExpression(element.expression) &&
+        element.expression.name.text === "resolve" &&
+        getBuiltIn(element.expression.expression, context) === "Promise" &&
+        element.arguments.length === 1 &&
+        isConstant(element.arguments[0])) ||
       (declared !== undefined &&
         ts.isVariableDeclaration(declared) &&
         (ts.getCombinedNodeFlags(declared) & ts.NodeFlags.Const) !== 0)
