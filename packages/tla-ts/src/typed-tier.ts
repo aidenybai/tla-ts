@@ -182,6 +182,8 @@ export interface TypedCheck {
   view: Expression | undefined;
   // The variables in the order TLC compares states in.
   variableOrder: number[];
+  // Fingerprints a state that is the smallest of its images.
+  getFingerprint: (state: Value[]) => bigint;
 }
 
 export interface TypedResult {
@@ -192,7 +194,7 @@ export interface TypedResult {
   initialStates: { generated: number; distinct: number };
   outDegrees: number[];
   deadlock: TypedDeadlock | undefined;
-  getFingerprints: (getFingerprint: (state: Value[]) => bigint) => BigInt64Array;
+  getFingerprints: () => BigInt64Array;
 }
 
 // The path from an initial state to a state without successors, which the interpreter rebuilds
@@ -4511,6 +4513,8 @@ interface CompiledSpec {
   writeRest: (state: Plain[], arena: Arena) => void;
   // Applies to a state the inverse of an image.
   invert: (state: Plain[], image: number) => Plain[];
+  // The smallest image of a state, in the order TLC compares states in.
+  represent: (state: Plain[]) => Plain[];
 }
 
 const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
@@ -4615,14 +4619,14 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
       ? getWriter(codec, program.variableTypes[index], smallest[index])
       : writers[index],
   );
-  const viewKeyCode = `${smallest.map((name, index) => `${name} = v${index};`).join(" ")}
+  const smallestCode = `${smallest.map((name, index) => `${name} = v${index};`).join(" ")}
       images: for (let G = 0; G < A.length; G++) {
         const P = A[G];
         let c = 0;
         ${imageComparisons.map((comparison) => comparison.code).join(" ")}
         if (c < 0) { ${check.variableOrder.map((index, position) => `${smallest[index]} = ${imageComparisons[position].permuted};`).join(" ")} chosen = G; }
-      }
-      ${viewWriters.join(" ")}`;
+      }`;
+  const viewKeyCode = `${smallestCode} ${viewWriters.join(" ")}`;
   const symmetricKeyCode = `Z.fill(0);
       ${signatures.join(" ")}
       let F = 0;
@@ -4727,6 +4731,12 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
       const G = I[image];
       const P = A[G];
       return [${inversions.join(", ")}];
+    },
+    represent: (state) => {
+      ${unpack}
+      let chosen = -1;
+      ${smallestCode}
+      return [${smallest.join(", ")}];
     },
   };`;
   const atoms = images.map((table) =>
@@ -4956,12 +4966,14 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       statistics.depth = Math.max(statistics.depth, level.depth + 1);
     }
   };
-  const getState = (index: number) => {
+  const getKey = (index: number) => {
     const start = starts.data[index];
     const page = keys.pages[start >>> PAGE_BITS];
     const offset = start & (PAGE_SIZE - 1);
-    if (isEncoded) return compiled.decode(page, offset);
-    const key = compiled.decodeKey(page, offset);
+    return isEncoded ? compiled.decode(page, offset) : compiled.decodeKey(page, offset);
+  };
+  const getState = (index: number) => {
+    const key = getKey(index);
     const image = isImaged ? chosenImages.data[index] : -1;
     return image === -1 ? key : compiled.invert(key, image);
   };
@@ -4973,10 +4985,14 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     initialStates,
     outDegrees,
     deadlock,
-    getFingerprints: (getFingerprint) => {
+    getFingerprints: () => {
       const readers = program.variableTypes.map((type) => createValueReader(type, program.plains));
       return BigInt64Array.from({ length: statistics.distinct }, (_, index) =>
-        getFingerprint(getState(index).map((plain, variable) => readers[variable](plain))),
+        check.getFingerprint(
+          (isImaged ? compiled.represent(getKey(index)) : getKey(index)).map((plain, variable) =>
+            readers[variable](plain),
+          ),
+        ),
       );
     },
   });

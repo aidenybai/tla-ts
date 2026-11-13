@@ -134,16 +134,25 @@ describe("typed tier matches TLC", () => {
     expect(typed).toEqual(interpreted);
   });
 
-  it("finds the fingerprint distance TLC reports, as the interpreter does", async () => {
-    const [typed, interpreted] = await Promise.all([
-      checkFixture("Torus", false),
-      checkFixture("Torus", false, false),
-    ]);
-    expect([typed.generatedStates, typed.distinctStates]).toEqual([90153, 45076]);
-    expect(typed.fingerprintDistance).toBeDefined();
-    expect(typed.fingerprintDistance).toBe(interpreted.fingerprintDistance);
-    expect(getActualProbability(typed.fingerprintDistance ?? 0n)).toBe(2.8e-13);
-  });
+  it.each([
+    ["Torus", 90153, 45076, 2.8e-13],
+    ["SymmetricTorus", 191254, 63751, 1.1e-12],
+  ])(
+    "finds the fingerprint distance TLC reports in %s, as the interpreter does",
+    async (name, generatedStates, distinctStates, probability) => {
+      const [typed, interpreted] = await Promise.all([
+        checkFixture(name, false),
+        checkFixture(name, false, false),
+      ]);
+      expect([typed.generatedStates, typed.distinctStates]).toEqual([
+        generatedStates,
+        distinctStates,
+      ]);
+      expect(typed.fingerprintDistance).toBeDefined();
+      expect(typed.fingerprintDistance).toBe(interpreted.fingerprintDistance);
+      expect(getActualProbability(typed.fingerprintDistance ?? 0n)).toBe(probability);
+    },
+  );
 
   it("prints a constant definition once, as TLC does as it starts", async () => {
     const getLines = async (isTyped: boolean) => {

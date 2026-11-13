@@ -697,6 +697,7 @@ export interface Search {
         symmetry: Images[] | undefined;
         view: Expression | undefined;
         variableOrder: number[];
+        getFingerprint: (state: Value[]) => bigint;
       }
     | undefined;
   findViolatedInvariant: (state: Value[], parent?: Value[]) => StateCheck | undefined;
@@ -1069,16 +1070,16 @@ export const createSearch = (
   };
   const getViewValue = (expression: Expression, state: Value[]) =>
     evaluate(expression, getContext(environment, state, undefined));
-  const getTlcStateFingerprint = (state: Value[]) => {
-    const indices = getTlcOrder();
-    const representative =
-      symmetryGroup === undefined ? state : getRepresentative(state, symmetryGroup, indices);
-    return getTlcFingerprint(
+  const getRepresentativeFingerprint = (representative: Value[]) =>
+    getTlcFingerprint(
       view === undefined
-        ? indices.map((index) => representative[index])
+        ? getTlcOrder().map((index) => representative[index])
         : [getViewValue(view.expression, representative)],
     );
-  };
+  const getTlcStateFingerprint = (state: Value[]) =>
+    getRepresentativeFingerprint(
+      symmetryGroup === undefined ? state : getRepresentative(state, symmetryGroup, getTlcOrder()),
+    );
   const violatingStates = new WeakSet<Value[]>();
   const isViolated = (invariant: StateCheck, state: Value[], parent: Value[] | undefined) => {
     const checkedParent = parent && !violatingStates.has(parent) ? parent : undefined;
@@ -1228,6 +1229,7 @@ export const createSearch = (
             symmetry: symmetryGroup,
             view: view?.expression,
             variableOrder: getTlcOrder(),
+            getFingerprint: getRepresentativeFingerprint,
           };
     },
     getTlcOrder,

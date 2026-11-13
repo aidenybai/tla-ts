@@ -1122,7 +1122,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       fingerprintDistance: options.isFingerprintDistanceSkipped
         ? undefined
         : getFingerprintDistance(typed.distinctStates, typed.generatedStates, () =>
-            typed.getFingerprints(runtime.getFingerprint),
+            typed.getFingerprints(),
           ),
     };
   }
