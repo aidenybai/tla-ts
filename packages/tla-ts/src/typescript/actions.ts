@@ -3013,6 +3013,22 @@ export const bindCall = (
         frame,
         continueWith,
       );
+    // A parameter's default certainly runs where the call passes it nothing or undefined, and
+    // certainly doesn't where the call passes a literal, so only the branch that runs translates.
+    const position = parameters.findIndex((parameter) => parameter === assigning.binding);
+    const argument = argumentNodes.at(position);
+    const passedValue = argument === undefined ? undefined : skipCasts(argument);
+    const isKnown = position >= 0 && !argumentNodes.slice(0, position + 1).some(ts.isSpreadElement);
+    const isRun =
+      isKnown && (passedValue === undefined || isUndefinedLiteral(passedValue, context));
+    const isSkipped =
+      isKnown &&
+      passedValue !== undefined &&
+      (isLiteral(passedValue) ||
+        ts.isObjectLiteralExpression(passedValue) ||
+        ts.isArrayLiteralExpression(passedValue) ||
+        ts.isFunctionExpression(passedValue) ||
+        ts.isArrowFunction(passedValue));
     return evaluateArguments(
       letIn(
         [...made.definitions, ...skipped.definitions],
@@ -3021,19 +3037,25 @@ export const bindCall = (
           path,
           context,
           frame,
-          // What follows translates once, for whether the default ran.
-          translateJoined(
-            assignment,
-            path,
-            context,
-            (after, value) => withDefault(after, value ?? getUndefined(context)),
-            (next) =>
-              ifThenElse(
-                apply("=", [part, getUndefined(context)]),
-                runAssignment(assignment, path, context, frame, next),
-                next(path, getUndefined(context)),
-              ),
-          ),
+          isRun
+            ? runAssignment(assignment, path, context, frame, (after, value) =>
+                withDefault(after, value ?? getUndefined(context)),
+              )
+            : isSkipped
+              ? withDefault(path, getUndefined(context))
+              : // What follows translates once, for whether the default ran.
+                translateJoined(
+                  assignment,
+                  path,
+                  context,
+                  (after, value) => withDefault(after, value ?? getUndefined(context)),
+                  (next) =>
+                    ifThenElse(
+                      apply("=", [part, getUndefined(context)]),
+                      runAssignment(assignment, path, context, frame, next),
+                      next(path, getUndefined(context)),
+                    ),
+                ),
         ),
       ),
     );
