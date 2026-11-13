@@ -22,12 +22,12 @@ all:
   transcript: |
     @type: obligation
     @id: 1
-    @loc: 12:3:12:5
+    @loc: 16:3:16:5
     @status: to be proved
 
     @type: obligation
     @id: 1
-    @loc: 12:3:12:5
+    @loc: 16:3:16:5
     @status: failed
     @prover: smt
     @meth: time-limit: 5
@@ -41,12 +41,12 @@ all:
 
     @type: obligation
     @id: 2
-    @loc: 12:6:12:9
+    @loc: 16:6:16:9
     @status: to be proved
 
     @type: obligation
     @id: 2
-    @loc: 12:6:12:9
+    @loc: 16:6:16:9
     @status: trivial
     @prover: tlapm
     @already: false
@@ -54,13 +54,13 @@ all:
     @type: obligationsnumber
     @count: 2
 
-    File "./rewrite_subseteq.tla", line 12, characters 3-4:
+    File "./rewrite_subseteq.tla", line 16, characters 3-4:
     [ERROR]: Could not prove or check:
                ASSUME NEW CONSTANT S,
                       NEW CONSTANT T,
                       SMT 
                PROVE  S \subseteq S \cup T
-    File "./rewrite_subseteq.tla", line 9, character 1 to line 13, character 4:
+    File "./rewrite_subseteq.tla", line 13, character 1 to line 17, character 4:
     [ERROR]: 1/2 obligations failed.
     There were backend errors processing module `"rewrite_subseteq"`.
 
