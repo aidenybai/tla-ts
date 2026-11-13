@@ -121,4 +121,17 @@ describe("liveness matches TLC", () => {
     });
     expect([result.status, result.distinctStates]).toEqual(["success", 3]);
   });
+
+  it("checks a property that applies a recursive operator to a variable", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, Sequences\nVARIABLE s\nRECURSIVE Sum(_)\nSum(l) == IF l = <<>> THEN 0 ELSE Head(l) + Sum(Tail(l))\nInit == s = <<1, 2, 3>>\nNext == s /= <<>> /\\ s' = Tail(s)\nSpec == Init /\\ [][Next]_s /\\ WF_s(Next)\nDrains == <>(Sum(s) = 0)\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Drains\nCHECK_DEADLOCK FALSE",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      4,
+      4,
+    ]);
+  });
 });

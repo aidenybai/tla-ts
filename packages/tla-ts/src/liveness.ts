@@ -177,12 +177,14 @@ export const getLevel = (
       if (
         level === operatorLevel ||
         operator?.kind !== "Closure" ||
-        operator.params.length !== expression.args.length
+        operator.params.length !== expression.args.length ||
+        // Each resolution makes a new closure, so a recursive call is found by its body.
+        visiting.has(operator.body)
       ) {
         return level;
       }
       return getBodyLevel(
-        operator,
+        operator.body,
         operator.body,
         bindOperatorArguments(operator, expression.args, getConstantContext(environment, scope)),
       );
