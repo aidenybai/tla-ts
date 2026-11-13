@@ -830,7 +830,8 @@ const annotate = (text: string) => {
 // TypeScript's errors that leave each expression the type it has: a property or element that an
 // object's type lacks, which reads as any, an unused operand of a comma, and a name that no
 // declaration binds, whose read tla-ts throws a ReferenceError for.
-const UNTYPED_READ_ERRORS = new Set([2339, 2551, 7053]);
+const MISSING_PROPERTY_ERROR = 2339;
+const UNTYPED_READ_ERRORS = new Set([MISSING_PROPERTY_ERROR, 2551, 7053]);
 const UNUSED_OPERAND_ERROR = 2695;
 const UNRESOLVED_NAME_ERROR = 2304;
 const NOT_ITERABLE_ERROR = 2488;
@@ -1017,6 +1018,37 @@ const ignoreSoundErrors = () => {
       !(isCondition(comparison) && (isReference(comparison.left) || isReference(comparison.right)))
     );
   };
+  // A property that a pattern destructures, which JavaScript reads whatever the value's type, and
+  // whose value, where it's null or undefined, throws the TypeError that tla-ts throws too.
+  const isPatternRead = (node: ts.Node) => {
+    const parent = node.parent;
+    const literal = ts.findAncestor(parent, ts.isObjectLiteralExpression);
+    const target =
+      literal &&
+      ts.findAncestor(
+        literal.parent,
+        (ancestor) =>
+          !ts.isObjectLiteralExpression(ancestor) &&
+          !ts.isPropertyAssignment(ancestor) &&
+          !ts.isArrayLiteralExpression(ancestor),
+      );
+    return (
+      ts.isIdentifier(node) &&
+      ((ts.isBindingElement(parent) &&
+        ts.isObjectBindingPattern(parent.parent) &&
+        (parent.propertyName ?? parent.name) === node) ||
+        ((ts.isShorthandPropertyAssignment(parent) || ts.isPropertyAssignment(parent)) &&
+          parent.name === node &&
+          target !== undefined &&
+          ((ts.isBinaryExpression(target) &&
+            target.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+            target.left.getStart() <= literal.getStart() &&
+            literal.getEnd() <= target.left.getEnd()) ||
+            ((ts.isForOfStatement(target) || ts.isForInStatement(target)) &&
+              target.initializer.getStart() <= literal.getStart() &&
+              literal.getEnd() <= target.initializer.getEnd()))))
+    );
+  };
   // A call of a built-in that SHORT_CALLED_BUILT_INS lists, with fewer arguments than its type
   // takes, which passes undefined for the others as JavaScript does.
   const isShortBuiltInCall = (node: ts.Node) => {
@@ -1045,6 +1077,7 @@ const ignoreSoundErrors = () => {
     const node = getNode(diagnostic.start ?? 0);
     return (
       (diagnostic.code === ARGUMENT_COUNT_ERROR && isShortBuiltInCall(node)) ||
+      (diagnostic.code === MISSING_PROPERTY_ERROR && isPatternRead(node)) ||
       diagnostic.code === UNUSED_OPERAND_ERROR ||
       (diagnostic.code === UNINTENDED_COMPARISON_ERROR && isUnnarrowed(node, diagnostic)) ||
       (UNTYPED_READ_ERRORS.has(diagnostic.code) && isObjectRead(node)) ||
