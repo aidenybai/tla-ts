@@ -86,6 +86,11 @@ export const SearchCell = (props: SearchCellProps) => {
   const lastTrunkLine = Math.max(...rows.filter(isTrunkRow).map((row) => row.state.line ?? 0));
   const lastTrunkIndex = lineRows.findLastIndex(isTrunkRow);
   const isBelowRoot = props.line > firstLine;
+  // Until a state is hovered, the steps to the failing state stand out, numbered in order.
+  const path =
+    props.path.length > 0
+      ? props.path
+      : getPath(props.search.states, props.search.states.find((state) => state.isFailing)?.id);
   // A line with no states gives its width back to the code. The trunk keeps its place, half the
   // code block from the right, and is cut where the code reaches it.
   if (lineRows.length === 0)
@@ -116,7 +121,7 @@ export const SearchCell = (props: SearchCellProps) => {
           <span
             className={cn(
               "relative flex min-h-[22px] items-center py-px transition-opacity duration-150 ease",
-              props.path.length > 0 && !props.path.includes(row.state) && "opacity-40",
+              path.length > 0 && !path.includes(row.state) && "opacity-40",
             )}
           >
             {isBelowRoot && props.line === lastTrunkLine && index <= lastTrunkIndex && (
@@ -158,7 +163,13 @@ export const SearchCell = (props: SearchCellProps) => {
                   : "bg-background text-foreground ring-1 ring-border",
               )}
             >
-              {row.state.isFailing && <X weight="bold" className="shrink-0" />}
+              {row.state.isFailing ? (
+                <X weight="bold" className="shrink-0" />
+              ) : (
+                path.includes(row.state) && (
+                  <span className="text-faint">{path.length - path.indexOf(row.state)}</span>
+                )
+              )}
               <span className="min-w-0 wrap-anywhere">
                 <StateValues state={row.state} />
               </span>
