@@ -831,6 +831,8 @@ const annotate = (text: string) => {
 // object's type lacks, which reads as any, an unused operand of a comma, and a name that no
 // declaration binds, whose read tla-ts throws a ReferenceError for.
 const MISSING_PROPERTY_ERROR = 2339;
+// A value of another type than an assignment's target or a call's parameter.
+const UNASSIGNABLE_ERRORS = new Set([2322, 2345]);
 const UNTYPED_READ_ERRORS = new Set([MISSING_PROPERTY_ERROR, 2551, 7053]);
 const UNUSED_OPERAND_ERROR = 2695;
 const UNRESOLVED_NAME_ERROR = 2304;
@@ -1049,6 +1051,38 @@ const ignoreSoundErrors = () => {
               literal.getEnd() <= target.initializer.getEnd()))))
     );
   };
+  // An argument for a parameter that a pattern with no type annotation declares, in a function
+  // that the test declares, whose type TypeScript infers from the pattern's defaults alone. The
+  // call passes the value whatever its type, and tla-ts destructures it as JavaScript does. An
+  // array pattern takes only an array literal, since tla-ts reads another value's iterator only
+  // where its type says it has one.
+  const isPatternArgument = (node: ts.Node) => {
+    const call = ts.findAncestor(
+      node,
+      (ancestor): ancestor is ts.CallExpression | ts.NewExpression =>
+        ts.isCallExpression(ancestor) || ts.isNewExpression(ancestor),
+    );
+    const position =
+      call?.arguments?.findIndex(
+        (argument) => argument.getStart() <= node.getStart() && node.getEnd() <= argument.getEnd(),
+      ) ?? -1;
+    const declaration = call && checker.getResolvedSignature(call)?.getDeclaration();
+    const parameter =
+      declaration !== undefined && ts.isFunctionLike(declaration)
+        ? declaration.parameters.at(position)
+        : undefined;
+    return (
+      position !== -1 &&
+      parameter !== undefined &&
+      parameter.getSourceFile() === sourceFile &&
+      parameter.type === undefined &&
+      parameter.dotDotDotToken === undefined &&
+      (ts.isObjectBindingPattern(parameter.name) ||
+        (ts.isArrayBindingPattern(parameter.name) &&
+          call?.arguments !== undefined &&
+          ts.isArrayLiteralExpression(call.arguments[position])))
+    );
+  };
   // A call of a built-in that SHORT_CALLED_BUILT_INS lists, with fewer arguments than its type
   // takes, which passes undefined for the others as JavaScript does.
   const isShortBuiltInCall = (node: ts.Node) => {
@@ -1078,6 +1112,7 @@ const ignoreSoundErrors = () => {
     return (
       (diagnostic.code === ARGUMENT_COUNT_ERROR && isShortBuiltInCall(node)) ||
       (diagnostic.code === MISSING_PROPERTY_ERROR && isPatternRead(node)) ||
+      (UNASSIGNABLE_ERRORS.has(diagnostic.code) && isPatternArgument(node)) ||
       diagnostic.code === UNUSED_OPERAND_ERROR ||
       (diagnostic.code === UNINTENDED_COMPARISON_ERROR && isUnnarrowed(node, diagnostic)) ||
       (UNTYPED_READ_ERRORS.has(diagnostic.code) && isObjectRead(node)) ||
