@@ -61,6 +61,9 @@ export interface Context {
   constantFunctions: Map<string, Expression>;
   // Whether a script names NaN, Infinity, or -0, so that its numbers compute as JavaScript's.
   hasSpecialNumbers: boolean;
+  // The file of a script without exported actions that reports what it doesn't catch as Node does,
+  // and whether Node runs it as an ES module.
+  script: { sourceFile: ts.SourceFile; isEsModule: boolean } | undefined;
   // The model values that stand for the well-known symbols and for the symbols a script makes.
   symbols: string[];
   // The model values that stand for the numbers that a script's literals give and that aren't
@@ -138,6 +141,7 @@ export const createContext = (checker: ts.TypeChecker): Context => ({
   builtIns: new Set(),
   constantFunctions: new Map(),
   hasSpecialNumbers: false,
+  script: undefined,
   symbols: [],
   fractions: new Map(),
   heapCollections: new Set(),

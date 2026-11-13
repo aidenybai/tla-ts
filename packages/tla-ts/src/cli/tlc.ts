@@ -35,7 +35,7 @@ import {
   UNEXPECTED_EXCEPTION,
   TlaSanyFatalError,
 } from "../errors";
-import { EXIT_STATUS, setExitCode, UNSETTLED_AWAIT_EXIT_CODE } from "../exit-codes";
+import { EXIT_STATUS, setExitCode } from "../exit-codes";
 import { check } from "../parallel";
 import { parseModule } from "../parser";
 import { printModule } from "../printer";
@@ -76,7 +76,7 @@ import {
   toLibraryPath,
   type JavaProperties,
 } from "./shared";
-import { compileTypeScriptFile, getUnsettledAwaitWarning, type CompiledInput } from "./typescript";
+import { compileTypeScriptFile, getNodeExit, type CompiledInput } from "./typescript";
 
 const EXIT_CODES: Record<CheckStatus, number> = {
   success: EXIT_STATUS.success,
@@ -742,6 +742,14 @@ const checkSpec = async (
       MESSAGE_LEVEL.error,
       "Parsing or semantic analysis failed.",
     );
+  // A script that fails as Node would run it exits as Node does.
+  const getScriptExit = (message: string) => {
+    const nodeExit = compiled?.isScript ? getNodeExit(message, compiled.path) : undefined;
+    if (nodeExit === undefined) return undefined;
+    process.stderr.write(nodeExit.stderr);
+    printFinished();
+    return nodeExit.code;
+  };
   // TLC prints how long it ran even when it stops at an error.
   const printFailure = (error: TlaError) => {
     if (error instanceof TlaSyntaxError) {
@@ -865,19 +873,15 @@ const checkSpec = async (
         writeFileSync(path, content);
       },
     });
-    // Node exits with a warning where a script's top-level await never settles.
-    const unsettledWarning =
-      compiled && result.failure ? getUnsettledAwaitWarning(result.failure.message) : undefined;
-    if (unsettledWarning !== undefined) {
-      process.stderr.write(unsettledWarning);
-      printFinished();
-      return UNSETTLED_AWAIT_EXIT_CODE;
-    }
+    const nodeExit = result.failure && getScriptExit(result.failure.message);
+    if (nodeExit !== undefined) return nodeExit;
     printResult(result, printer, timing);
     printFinished();
     return result.failure?.exitCode ?? EXIT_CODES[result.status];
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
+    const nodeExit = getScriptExit(error.message);
+    if (nodeExit !== undefined) return nodeExit;
     if (error instanceof TlaSyntaxError) console.log(formatSanyErrors(error, fileName));
     if (!timing.isParsed) printCheckProgress(printer, { kind: "parsed" }, timing, directory);
     return printFailure(error);

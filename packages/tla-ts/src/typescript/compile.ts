@@ -43,7 +43,7 @@ import {
   tuple,
 } from "./tla";
 import { BUILT_INS } from "./built-ins";
-import { NATIVE_ERRORS } from "./exceptions";
+import { isEsModule, NATIVE_ERRORS } from "./exceptions";
 import { getDomain, getKeptIterator, TYPED_ARRAYS } from "./types";
 
 // A state variable starts at its initializer, or at every value of its type without one.
@@ -93,10 +93,13 @@ const translateExported = (
 // Compiles a TypeScript file into a TLA+ spec and the config that checks it. Imports resolve
 // relative to fileName, and the module takes its name, so die-hard.ts is the module DieHard.
 // Without a file system, as in a browser, libraries holds TypeScript's declaration files by name.
+// Where the CLI runs a script in Node's place, isNodeScript has the script report a throw that
+// nothing catches with the text Node prints.
 export const compile = (
   source: string,
   fileName = "spec.ts",
   libraries?: ReadonlyMap<string, string>,
+  isNodeScript = false,
 ): CompiledSpec => {
   const path = fileName.replaceAll("\\", "/");
   const program = createProgram(source, path, libraries);
@@ -458,6 +461,10 @@ export const compile = (
     );
   }
   const model = readModel(sourceFile, imported, context);
+  context.script =
+    isNodeScript && model.exported.length === 0
+      ? { sourceFile, isEsModule: isEsModule(sourceFile) }
+      : undefined;
   rejectSharing(roots, context);
   // A using declaration disposes nothing where it holds only null or undefined.
   const isNothing = (node: ts.Expression | undefined) =>

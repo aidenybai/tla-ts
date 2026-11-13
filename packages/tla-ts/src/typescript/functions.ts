@@ -33,6 +33,7 @@ import {
   translateLocalStatements,
 } from "./actions";
 import { TlaTypeScriptError } from "../errors";
+import { getUncaughtText } from "./exceptions";
 import { translateCondition, translateExpression, translateNegatedCondition } from "./expressions";
 import { type Formula, ifThenElse, letIn, render, leaf } from "./formula";
 import { getCandidateValue, getSuperLookup, translateObjectValue } from "./heap";
@@ -1083,10 +1084,12 @@ const translatePure = (
 
 export const translateThrow = (statement: ts.ThrowStatement, scope: Scope, context: Context) => {
   const thrown = statement.expression;
+  // A script reports what it doesn't catch as Node does.
   const message =
-    ts.isNewExpression(thrown) && thrown.arguments?.[0] !== undefined
+    getUncaughtText(statement, scope, context) ??
+    (ts.isNewExpression(thrown) && thrown.arguments?.[0] !== undefined
       ? translateExpression(thrown.arguments[0], scope, context)
-      : string(thrown.getText());
+      : string(thrown.getText()));
   return locate(apply("Assert", [boolean(false), message]), getLocation(statement));
 };
 

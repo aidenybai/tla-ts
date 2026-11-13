@@ -32,6 +32,18 @@ const copyFixtures = (directory: string) => {
 const runCli = (directory: string, args: string[]) =>
   spawnSync("bun", [CLI, ...args], { cwd: directory, encoding: "utf8" });
 
+// The code and stderr of a run, without the stack frames that Node prints and tla-ts doesn't, or
+// the version of Node, which Bun gives the CLI as its own.
+const getExit = (result: ReturnType<typeof runCli>) => [
+  result.status,
+  result.stderr
+    .replace(/(?:\n {4}at [^\n]*?)+( \{)?(?=\n)/g, "$1")
+    .replace(/\nNode\.js v[\d.]+\n$/, "\nNode.js\n"),
+];
+
+const runNode = (directory: string, file: string) =>
+  spawnSync(process.execPath, [file], { cwd: directory, encoding: "utf8" });
+
 describe("the CLI with TypeScript files", () => {
   it("checks a TypeScript file without writing the TLA+ spec and config it compiles to", () => {
     const directory = copyFixtures("passing");
@@ -55,10 +67,8 @@ describe("the CLI with TypeScript files", () => {
       readFileSync(join(directory, "script.ts"), "utf8").replace("!== 6", "!== 7"),
     );
     const wrong = runCli(directory, ["wrong.ts"]);
-    expect(wrong.status).toBe(75);
-    expect(wrong.stdout).toContain(
-      'Error: The first argument of Assert evaluated to FALSE; the second argument was:\n"total"',
-    );
+    expect(getExit(wrong)).toEqual(getExit(runNode(directory, "wrong.ts")));
+    expect(wrong.status).toBe(1);
   });
 
   // Node exits with 0 once the jobs run out, though a promise is still pending.
@@ -90,6 +100,60 @@ describe("the CLI with TypeScript files", () => {
     );
     const settled = runCli(directory, ["settled.ts"]);
     expect([settled.status, settled.stderr]).toEqual([0, ""]);
+  });
+
+  // Each script has a variant that catches what it throws, which exits as a script that finishes.
+  it.each([
+    [
+      "an error",
+      'const total = [1].length;\nif (total !== 2) throw new RangeError("total " + total);\n',
+      'const total = [1].length;\nif (total !== 1) throw new RangeError("total " + total);\n',
+    ],
+    [
+      "an error without a message",
+      "throw new Error();\n",
+      "try {\n  throw new Error();\n} catch {}\n",
+    ],
+    [
+      "an error of a subclass",
+      'class Oops extends Error {}\nthrow new Oops("oops");\n',
+      'class Oops extends Error {}\ntry {\n  throw new Oops("oops");\n} catch {}\n',
+    ],
+    [
+      "an error in a function",
+      'const fail = () => {\n  throw new TypeError("in");\n};\nfail();\n',
+      'const fail = () => {\n  throw new TypeError("in");\n};\ntry {\n  fail();\n} catch {}\n',
+    ],
+    ["a primitive", "throw 42;\n", "try {\n  throw 42;\n} catch {}\n"],
+    [
+      "an error in an ES module",
+      'await Promise.resolve();\nthrow new Error("after");\n',
+      'await Promise.resolve();\ntry {\n  throw new Error("after");\n} catch {}\n',
+    ],
+    [
+      "a primitive in an ES module",
+      'await Promise.resolve();\nthrow "after";\n',
+      'await Promise.resolve();\ntry {\n  throw "after";\n} catch {}\n',
+    ],
+  ])("exits with Node's code and stderr where a script leaves %s uncaught", (_, script, caught) => {
+    const directory = copyFixtures("passing");
+    writeFileSync(join(directory, "uncaught.ts"), script);
+    const result = runCli(directory, ["uncaught.ts"]);
+    expect(getExit(result)).toEqual(getExit(runNode(directory, "uncaught.ts")));
+    expect(result.status).toBe(1);
+    writeFileSync(join(directory, "caught.ts"), caught);
+    expect(getExit(runCli(directory, ["caught.ts"]))).toEqual([0, ""]);
+  });
+
+  it("exits with TLC's code where an action throws what nothing catches", () => {
+    const directory = copyFixtures("passing");
+    writeFileSync(
+      join(directory, "action.ts"),
+      'let count = 0;\n\nexport const step = () => {\n  if (count === 1) throw new Error("one");\n  count = 1;\n};\n',
+    );
+    const result = runCli(directory, ["action.ts"]);
+    expect([result.status, result.stderr]).toEqual([14, ""]);
+    expect(result.stdout).toContain('the second argument was:\n"one"');
   });
 
   it("reads names that a module re-exports", () => {

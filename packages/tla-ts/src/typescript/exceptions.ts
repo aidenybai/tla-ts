@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
 import {
@@ -7,8 +8,10 @@ import {
   getLiteralName,
   getSymbol,
   getUndefined,
+  isModuleFile,
   isOnce,
   share,
+  skipCasts,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
@@ -99,6 +102,110 @@ export const getErrorClass = (
   }
   const inherited = getErrorClass(base, checker);
   return inherited === undefined ? undefined : [symbol, ...inherited];
+};
+
+// Whether Node runs a TypeScript file as an ES module: by its extension or package.json, or as
+// its syntax needs one.
+export const isEsModule = (sourceFile: ts.SourceFile) =>
+  ts.getImpliedNodeFormatForFile(sourceFile.fileName, undefined, ts.sys, {
+    moduleResolution: ts.ModuleResolutionKind.NodeNext,
+  }) === ts.ModuleKind.ESNext || isModuleFile(sourceFile);
+
+// Where Node says a script failed: the file's real path, or its URL in an ES module, and the line,
+// then the line with a caret under the node.
+export const getNodeLocation = (node: ts.Node, isUrl: boolean) => {
+  const sourceFile = node.getSourceFile();
+  const start = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+  const lineStarts = sourceFile.getLineStarts();
+  const line = sourceFile.text
+    .slice(lineStarts[start.line], lineStarts[start.line + 1])
+    .replace(/\r?\n$/, "");
+  const path = ts.sys.realpath?.(ts.sys.resolvePath(sourceFile.fileName)) ?? sourceFile.fileName;
+  return `${isUrl ? pathToFileURL(path).href : path}:${start.line + 1}\n${line}\n${" ".repeat(start.character)}^`;
+};
+
+const PRIMITIVE_TYPES = new Set(["string", "number", "boolean", "bigint", "undefined", "null"]);
+
+const TRACE_UNCAUGHT = "\n(Use `node --trace-uncaught ...` to show where the exception was thrown)";
+
+// The name that Node gives an error of a class as it prints the error: the class's name, or that
+// and the native class's in brackets where the class's name doesn't hold it.
+const getErrorHeader = (classes: ts.Symbol[]) => {
+  const native = classes.find(isNative)?.name;
+  const declaration = classes[0].valueDeclaration;
+  const name =
+    declaration === undefined || !ts.isClassLike(declaration)
+      ? classes[0].name
+      : (declaration.name?.text ??
+        (ts.isVariableDeclaration(declaration.parent) && ts.isIdentifier(declaration.parent.name)
+          ? declaration.parent.name.text
+          : undefined));
+  if (native === undefined || name === undefined) return undefined;
+  return name === native || name.includes(native) ? name : `${name} [${native}]`;
+};
+
+// What Node prints, but for the stack frames, for a value that a script throws and doesn't
+// catch: an error that new makes, or a primitive. Node points at the throw, but at the new in an
+// ES module as it runs, and an ES module's thrown primitive at Node's own code. A function that an
+// ES module calls might run from a timer instead, so only its body's throws get Node's text.
+export const getUncaughtText = (statement: ts.ThrowStatement, scope: Scope, context: Context) => {
+  const thrown = skipCasts(statement.expression);
+  const script = context.script;
+  if (
+    script === undefined ||
+    statement.getSourceFile() !== script.sourceFile ||
+    (script.isEsModule && ts.findAncestor(statement, ts.isFunctionLike) !== undefined)
+  ) {
+    return undefined;
+  }
+  const isModule = script.isEsModule;
+  if (ts.isNewExpression(thrown)) {
+    const classes = getErrorClass(getSymbol(thrown.expression, context.checker), context.checker);
+    const header = classes === undefined ? undefined : getErrorHeader(classes);
+    const argumentNodes = thrown.arguments ?? [];
+    const message = argumentNodes.at(0);
+    if (
+      header === undefined ||
+      argumentNodes.length > 1 ||
+      header.includes("AggregateError") ||
+      header.includes("SuppressedError") ||
+      (message !== undefined &&
+        getTypeNames(context.checker.getTypeAtLocation(message), context.checker)?.every(
+          (name) => name === "string",
+        ) !== true)
+    ) {
+      return undefined;
+    }
+    const prefix = `${getNodeLocation(isModule ? thrown : statement, isModule)}\n\n${header}`;
+    return message === undefined
+      ? string(prefix)
+      : share(translateExpression(message, scope, context), "message", context, (shared) =>
+          ifExpression(
+            apply("=", [shared, string("")]),
+            string(prefix),
+            apply("\\o", [string(`${prefix}: `), shared]),
+          ),
+        );
+  }
+  const names = getTypeNames(context.checker.getTypeAtLocation(thrown), context.checker);
+  if (
+    names === undefined ||
+    names.length === 0 ||
+    !names.every((name) => PRIMITIVE_TYPES.has(name))
+  ) {
+    return undefined;
+  }
+  return apply("\\o", [
+    apply("\\o", [
+      string(
+        isModule
+          ? "\nnode:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n"
+          : `\n${getNodeLocation(statement, false)}\n`,
+      ),
+      useJavaScript("StringOf", [translateExpression(thrown, scope, context)], context),
+    ]),
+    string(TRACE_UNCAUGHT),
+  ]);
 };
 
 export const getConstructor = (

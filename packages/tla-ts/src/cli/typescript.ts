@@ -1,7 +1,12 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import type { Module } from "../ast";
-import { UNSETTLED_AWAIT_WARNING } from "../exit-codes";
+import {
+  UNCAUGHT_EXCEPTION_EXIT_CODE,
+  UNSETTLED_AWAIT_EXIT_CODE,
+  UNSETTLED_AWAIT_WARNING,
+} from "../exit-codes";
 
 // A spec tla-ts compiled from the TypeScript file at path. specPath is where its module would be
 // if it were a file, though tla-ts checks it without writing one.
@@ -20,13 +25,26 @@ const TLC_ESCAPES = new Map([
   ["t", "\t"],
 ]);
 
-// Node's warning for a script that a top-level await leaves unsettled, from the Assert that the
-// script fails there.
-export const getUnsettledAwaitWarning = (message: string) => {
-  const quoted = message.split(`\n"${UNSETTLED_AWAIT_WARNING}`).at(1);
-  return quoted === undefined
-    ? undefined
-    : `Warning: ${UNSETTLED_AWAIT_WARNING}${quoted.slice(0, -1).replace(/\\(.)/g, (_, character: string) => TLC_ESCAPES.get(character) ?? character)}\n\n\n\n`;
+// What Node writes to stderr and the code it exits with, for the script at path whose spec fails an
+// Assert with what Node reports: a top-level await that never settles, or a throw that nothing
+// catches.
+export const getNodeExit = (message: string, path: string) => {
+  const quoted = message
+    .split('The first argument of Assert evaluated to FALSE; the second argument was:\n"')
+    .at(1);
+  if (quoted === undefined) return undefined;
+  const text = quoted
+    .slice(0, -1)
+    .replace(/\\(.)/g, (_, character: string) => TLC_ESCAPES.get(character) ?? character);
+  if (text.startsWith(UNSETTLED_AWAIT_WARNING)) {
+    return { code: UNSETTLED_AWAIT_EXIT_CODE, stderr: `Warning: ${text}\n\n\n\n` };
+  }
+  const realPath = realpathSync(path);
+  return [`${realPath}:`, `${pathToFileURL(realPath).href}:`, "node:internal/"].some((prefix) =>
+    text.replace(/^\n/, "").startsWith(prefix),
+  )
+    ? { code: UNCAUGHT_EXCEPTION_EXIT_CODE, stderr: `${text}\n\nNode.js ${process.version}\n` }
+    : undefined;
 };
 
 export const compileTypeScriptFile = async (path: string): Promise<CompiledInput> => {
@@ -34,6 +52,8 @@ export const compileTypeScriptFile = async (path: string): Promise<CompiledInput
   const compiled = (await import("../typescript/compile")).compile(
     readFileSync(path, "utf8"),
     path,
+    undefined,
+    true,
   );
   return {
     path,

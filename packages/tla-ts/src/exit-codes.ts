@@ -20,6 +20,8 @@ export const EXIT_STATUS = {
 // it prints.
 export const UNSETTLED_AWAIT_EXIT_CODE = 13;
 export const UNSETTLED_AWAIT_WARNING = "Detected unsettled top-level await at ";
+// Node's exit status for a script that throws what nothing catches.
+export const UNCAUGHT_EXCEPTION_EXIT_CODE = 1;
 
 const exitCodes = new WeakMap<Error, number>();
 
