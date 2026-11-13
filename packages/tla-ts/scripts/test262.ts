@@ -380,7 +380,7 @@ const loosen = () => {
       receiver.kind !== ts.SyntaxKind.SuperKeyword &&
       !ts.isParenthesizedExpression(receiver) &&
       receiverType !== undefined &&
-      (receiverType.flags & ts.TypeFlags.Object) !== 0 &&
+      (receiverType.flags & (ts.TypeFlags.Object | ts.TypeFlags.NonPrimitive)) !== 0 &&
       !checker.isArrayType(receiverType) &&
       !checker.isTupleType(receiverType) &&
       !(
