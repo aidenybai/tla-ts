@@ -225,6 +225,10 @@ const applyEdits = (edits: Map<number, string>) =>
       ),
   );
 
+// An object that a test passes where a descriptor goes: one of another type, or one, such as Math,
+// that has none of a descriptor's properties.
+const DESCRIBED_ERRORS = new Set([2322, 2345, 2559]);
+
 const getDescriptorName = (type: ts.Type | undefined) =>
   type === undefined
     ? undefined
@@ -540,19 +544,22 @@ const loosen = () => {
       ts.isCallExpression(parent) && ts.isIdentifier(node)
         ? checker.getResolvedSignature(parent)?.getParameters()[parent.arguments.indexOf(node)]
         : undefined;
+    // TypeScript reports a property's value that has none of a descriptor's properties at its name.
+    const describedValue =
+      ts.isPropertyAssignment(parent) && parent.name === node ? parent.initializer : node;
     const described =
-      (diagnostic.code === 2322 || diagnostic.code === 2345) &&
+      DESCRIBED_ERRORS.has(diagnostic.code) &&
       ts.isIdentifier(node) &&
       (ts.isCallExpression(parent) || ts.isPropertyAssignment(parent))
         ? getDescriptorName(
             parameter === undefined
-              ? checker.getContextualType(node)
+              ? checker.getContextualType(describedValue)
               : checker.getTypeOfSymbolAtLocation(parameter, node),
           )
         : undefined;
     if (described !== undefined) {
-      edits.set(node.getStart(), "(");
-      edits.set(node.getEnd(), ` as unknown as ${described})`);
+      edits.set(describedValue.getStart(), "(");
+      edits.set(describedValue.getEnd(), ` as unknown as ${described})`);
     }
     const target = OPERAND_TYPE_ERRORS.has(diagnostic.code) ? getCompoundTarget(node) : undefined;
     if (target !== undefined) edits.set(target.name.getEnd(), ": any");
