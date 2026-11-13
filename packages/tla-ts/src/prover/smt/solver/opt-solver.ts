@@ -59,8 +59,11 @@ export class OptSolver {
     private readonly manager: AstManager,
     params: KernelParams,
   ) {
+    // opt_solver turns relevancy off under the default case split strategy, so a decided bound,
+    // such as one optsmt made for a lower bound, reaches the arithmetic solver.
     this.kernel = new SmtKernel(manager, {
       ...params,
+      relevancyLevel: 0,
       setup: params.setup && { ...params.setup, isArithAutoConfigSimplex: true },
     });
     this.kernel.context.registerFamily(FAMILY_PB);
