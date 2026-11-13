@@ -26,7 +26,10 @@ const getBox = (container: Element, name: string) => {
     : {
         left:
           elements[0].parentElement?.parentElement?.getBoundingClientRect().left ?? boxes[0].left,
-        right: Math.max(...boxes.filter((box) => box.top === boxes[0].top).map((box) => box.right)),
+        right: Math.min(
+          view.right,
+          Math.max(...boxes.filter((box) => box.top === boxes[0].top).map((box) => box.right)),
+        ),
         middle,
       };
 };
