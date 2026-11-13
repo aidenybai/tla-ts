@@ -5987,6 +5987,32 @@ describe("errors", () => {
     );
   });
 
+  it("wraps the primitive that Object.prototype.valueOf takes through call", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const wrapped = Object.prototype.valueOf.call(true);
+      if (typeof wrapped !== "object") throw new Error("type");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace('!== "object"', '=== "object"');
+    expect((await checkModel(wrong)).failure?.message).toContain('"type"');
+  });
+
+  it("stops wrapping through an Object.prototype.valueOf that a script replaced", async () => {
+    const result = await checkModel(`
+      const holder = { seen: 0 };
+      Object.prototype.valueOf = function () {
+        return holder;
+      };
+      const wrapped = Object.prototype.valueOf.call(true);
+      if (wrapped !== holder) throw new Error("replaced");
+    `);
+    expect(result.failure?.message).toContain(
+      "tla-ts can't call an Object.prototype.valueOf that a script replaced",
+    );
+  });
+
   it("stops calling an Object.prototype method that a script replaced", async () => {
     const result = await checkModel(`
       Object.prototype.valueOf = () => 0;
