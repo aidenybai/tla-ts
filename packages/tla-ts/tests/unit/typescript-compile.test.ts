@@ -2016,6 +2016,65 @@ describe("values", () => {
     );
   });
 
+  it("writes the prototype of a class that extends a native error", async () => {
+    const getSource = (expected: string) => `
+      class Err extends TypeError {}
+      Err.prototype.message = "custom";
+      const given = new Err("given");
+      const inherited = new Err();
+      const outcomes = [
+        given.message,
+        inherited.message,
+        inherited.name,
+        Object.prototype.hasOwnProperty.call(given, "message"),
+        Object.prototype.hasOwnProperty.call(inherited, "message"),
+      ].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect(
+      (await checkModel(getSource("given,custom,TypeError,true,false"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("given,custom,TypeError,true,true"))).failure?.message,
+    ).toContain("outcomes given,custom,TypeError,true,false");
+  });
+
+  it("makes objects of the errors of a class whose prototype a script reads", async () => {
+    const getSource = (expected: string) => `
+      class Err extends SyntaxError {}
+      class Sub extends Err {}
+      const prototype = Err.prototype;
+      const sub = new Sub("sub");
+      let caught = "none";
+      try {
+        const thrown = new Err("thrown");
+        throw thrown;
+      } catch (error) {
+        caught = (error as Err).message;
+      }
+      const outcomes = [
+        Object.getPrototypeOf(Sub.prototype) === prototype,
+        sub instanceof Err,
+        sub instanceof SyntaxError,
+        sub instanceof TypeError,
+        caught,
+      ].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("true,true,true,false,thrown"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("true,true,true,true,thrown"))).failure?.message).toContain(
+      "outcomes true,true,true,false,thrown",
+    );
+    expect(() =>
+      compile(`
+        class Err extends Error {}
+        Err.prototype.message = "custom";
+        const make = (message?: string) => new Err(message);
+        if (make().message !== "custom") throw new Error("message");
+      `),
+    ).toThrow("tla-ts can't tell whether this error's message is undefined");
+  });
+
   it("assigns a catch's parameter as it does a let", async () => {
     const getSource = (expected: string) => `
       let seen = "";

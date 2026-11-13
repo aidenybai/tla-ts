@@ -616,6 +616,8 @@ export const translateBuiltInValue = (
     | `${string}Array`
     | `${string}Buffer.prototype`
     | `${string}Array.prototype`
+    | `${string}Error`
+    | `${string}Error.prototype`
     | "DataView.prototype"
     | "Symbol.prototype"
     | "Iterator"

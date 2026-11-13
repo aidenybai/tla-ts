@@ -57,7 +57,7 @@ import {
   translateNew,
 } from "./collections";
 import { getJsonText, parseJson } from "./json";
-import { getCalledError, getConstructor, getErrorClass } from "./exceptions";
+import { getCalledError, getConstructor, getErrorClass, isNativeErrorName } from "./exceptions";
 import {
   translateElements,
   translateCondition,
@@ -800,6 +800,36 @@ const translateWrapperObject = (
   return useJavaScript("WrapperObject", [prototype, primitive], context);
 };
 
+// The object that a new of a class that extends a native error makes, whose message, from the new's
+// first argument, is an own property that isn't enumerable.
+const translateErrorObject = (node: ts.NewExpression, scope: Scope, context: Context) => {
+  const error = useJavaScript("ErrorObject", [identifier("Null")], context);
+  const message = node.arguments?.at(0);
+  if (message === undefined) return error;
+  if (
+    getTypeNames(context.checker.getTypeAtLocation(message), context.checker)?.includes(
+      "undefined",
+    ) !== false
+  ) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't tell whether this error's message is undefined",
+      message,
+    );
+  }
+  return useJavaScript(
+    "Define",
+    [
+      error,
+      string("message"),
+      translateToString(message, scope, context),
+      boolean(true),
+      boolean(false),
+      boolean(true),
+    ],
+    context,
+  );
+};
+
 // A heap class with the classes it derives from, the base first.
 const getChain = (current: HeapClass, context: Context): HeapClass[] => {
   const base = ts.isClassLike(current) ? getBaseClass(current, context) : undefined;
@@ -817,7 +847,12 @@ const translateInstance = (
   context: Context,
 ) => {
   const builtInBase = ts.isClassLike(created) ? getBuiltInBase(created, context) : undefined;
-  const isWrapped = builtInBase !== undefined && builtInBase !== "Object";
+  const wrapper =
+    builtInBase === "Boolean" || builtInBase === "Number" || builtInBase === "String"
+      ? builtInBase
+      : undefined;
+  const isError = builtInBase !== undefined && isNativeErrorName(builtInBase);
+  const isWrapped = wrapper !== undefined || isError;
   if (isWrapped && !ts.isNewExpression(node)) {
     throw new TlaTypeScriptError("Unsupported Reflect.construct of a wrapper's subclass", node);
   }
@@ -858,9 +893,11 @@ const translateInstance = (
             context,
           )
         : object,
-    isWrapped && ts.isNewExpression(node)
-      ? translateWrapperObject(node, builtInBase, identifier("Null"), scope, context)
-      : identifier("EmptyObject"),
+    wrapper !== undefined && ts.isNewExpression(node)
+      ? translateWrapperObject(node, wrapper, identifier("Null"), scope, context)
+      : isError && ts.isNewExpression(node)
+        ? translateErrorObject(node, scope, context)
+        : identifier("EmptyObject"),
   );
   // TypeScript defines a class's parameter properties before its other fields. The construction
   // defines the fields that run a constructor, and those after them.
