@@ -1079,7 +1079,17 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     }
     const bindings = [
       ...getCaptures(node, context).map((symbol): [Expression, Expression] => {
-        const value = scope.bindings.get(symbol);
+        // A parameter that the call binds to a function holds that function.
+        const bound = scope.functions.get(symbol);
+        const value =
+          scope.bindings.get(symbol) ??
+          (bound !== undefined &&
+          (ts.isFunctionExpression(bound) ||
+            ts.isArrowFunction(bound) ||
+            ts.isFunctionDeclaration(bound)) &&
+          !isClosure(bound, context)
+            ? translateFunctionValue(bound, context)
+            : undefined);
         if (value === undefined) {
           throw new TlaTypeScriptError(
             `tla-ts can't follow a function that outlives its call and reads ${symbol.name}`,

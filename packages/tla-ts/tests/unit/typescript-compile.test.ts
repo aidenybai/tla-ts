@@ -10753,6 +10753,39 @@ describe("errors", () => {
     expect((await checkModel(getSource("tttt"))).failure?.message).toContain("brand");
   });
 
+  it("calls the closures that the objects a function makes hold, each with its call's locals", async () => {
+    const getSource = (expected: string) => `
+      const named = (name: string) => ({ type: "named", read: () => name });
+      const first = named("a");
+      const second = named("b");
+      const result = [first.read(), second.read(), first.read()].join("");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("aba"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("abb"))).failure?.message).toContain("aba");
+  });
+
+  it("calls the function that a closure's parameter holds", async () => {
+    const getSource = (expected: number) => `
+      interface State {
+        count: number;
+      }
+      const action = (run: (state: State) => string | undefined | void) => ({
+        type: "action",
+        run: (state: State) => run(state) ?? undefined,
+      });
+      const bump = action((state) => {
+        state.count++;
+      });
+      const state: State = { count: 0 };
+      bump.run(state);
+      bump.run(state);
+      if (state.count !== ${expected}) throw new Error(String(state.count));
+    `;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(1))).failure?.message).toContain("2");
+  });
+
   const getConstSource = (write: string, caught: number) => `
       const seen = { count: 0 };
       const fixed = 1;

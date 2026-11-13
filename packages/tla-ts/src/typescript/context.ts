@@ -1356,7 +1356,8 @@ export type Closure = ts.FunctionExpression | ts.ArrowFunction;
 
 // A function that a function makes and that outlives the call that made it, which reads the locals
 // of that call from its environment: one that the function assigns to a name declared outside it,
-// or an async one that it returns. An arrow reads the this of the function around it, which the
+// an async one that it returns, or one that an object literal holds and that reads a local of the
+// function. An arrow reads the this of the function around it, which the
 // environment doesn't hold, and an async closure that awaits would resume after its call returns.
 export const isClosure = (node: ts.Node, context: Context): node is Closure => {
   if (
@@ -1381,6 +1382,20 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure => {
     (isAsync && findNodes(node, isAwaiting).length > 0)
   ) {
     return false;
+  }
+  if (
+    ts.isPropertyAssignment(node.parent) &&
+    node.parent.initializer === node &&
+    ts.isObjectLiteralExpression(node.parent.parent)
+  ) {
+    return findNodes(node, ts.isIdentifier).some((name) => {
+      const declaration = getSymbol(name, context.checker)?.valueDeclaration;
+      return (
+        declaration !== undefined &&
+        ts.findAncestor(declaration, (ancestor) => ancestor === node) === undefined &&
+        ts.findAncestor(declaration.parent, ts.isFunctionLike) === maker
+      );
+    });
   }
   const assignment = node.parent;
   const declaration =
