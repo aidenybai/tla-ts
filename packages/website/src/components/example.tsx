@@ -142,7 +142,7 @@ export const ExampleSource = () => {
     <CodeRoot
       source={state.isCompiled ? state.example.tla : state.example.typescript}
       activeLine={state.result?.activeLine}
-      notes={state.result?.notes}
+      notes={state.result?.notes ?? (state.isCompiled ? undefined : state.example.hints)}
       highlights={state.example.highlights}
       onMorphEnd={state.finishMorph}
     >

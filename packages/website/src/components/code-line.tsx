@@ -58,7 +58,8 @@ export const CodeLine = (props: CodeLineProps) => (
     {props.number !== undefined && <LineNumber number={props.number} />}
     <span
       className={cn(
-        "min-w-0 flex-1",
+        "min-w-0",
+        props.note?.tone !== "hint" && "flex-1",
         props.isWrapped === false ? "whitespace-pre" : "break-words whitespace-pre-wrap",
       )}
     >
@@ -89,7 +90,27 @@ export const CodeLine = (props: CodeLineProps) => (
         );
       })}
     </span>
-    {props.note && (
+    {props.note?.tone === "hint" && (
+      <span
+        aria-hidden
+        className="flex h-0 shrink-0 items-center gap-1.5 self-center font-hand text-xl/none whitespace-nowrap text-muted-foreground select-none max-sm:hidden"
+      >
+        <svg
+          viewBox="0 0 40 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.5}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="h-4 w-10"
+        >
+          <path d="M38 6 C 28 12, 14 12, 3 8" />
+          <path d="M9 3 L3 8 L10 12" />
+        </svg>
+        {props.note.text}
+      </span>
+    )}
+    {props.note && props.note.tone !== "hint" && (
       <span
         className={cn(
           "flex max-w-1/2 shrink-0 items-center gap-1 self-start transition-opacity duration-200 ease-out starting:opacity-0",
