@@ -598,6 +598,9 @@ Allocated(heap) == Ref :> Len(heap.objects)
 \\* The ref that the object an offset past the last one on the heap will have.
 NextRef(heap, offset) == Ref :> (Len(heap.objects) + offset)
 
+\\* Allocates objects in turn, which may hold the refs that NextRef gives each.
+AllocateEach(heap, objects) == [heap EXCEPT !.objects = @ \\o objects]
+
 LOCAL BuiltInKey(ref) == IF IsRef(ref) THEN ref[Ref] ELSE ref
 
 LOCAL IsBuiltIn(ref) ==

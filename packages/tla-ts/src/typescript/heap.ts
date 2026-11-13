@@ -61,7 +61,7 @@ import {
   translateSpliced,
   translateNew,
 } from "./collections";
-import { getJsonText, parseJson } from "./json";
+import { getJsonText, isParsedObject, parseJson, translateParsedObjects } from "./json";
 import { getCalledError, getConstructor, getErrorClass, isNativeErrorName } from "./exceptions";
 import {
   translateElements,
@@ -1343,6 +1343,9 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   if (ts.isObjectLiteralExpression(node)) {
     return useJavaScript("Allocate", [heap, translateObject(node, scope, context)], context);
   }
+  if (ts.isCallExpression(node) && isParsedObject(node, context)) {
+    return translateParsedObjects(node, heap, context);
+  }
   if (isHoleyNewArray(node)) {
     const length = Number(node.arguments?.[0]?.getText());
     const positions = Array.from({ length }, (_, offset) => number(offset + 1));
@@ -2452,6 +2455,7 @@ export const isMade = (node: ts.Node, context: Context, isSometimes = false): bo
     getNewBuffer(node, context) !== undefined ||
     getNewWrapper(node, context) !== undefined ||
     isHeldError(node, context) ||
+    isParsedObject(node, context) ||
     (!isSometimes && isAllocation(node, context)) ||
     (!isSometimes && isNewError(node, context)) ||
     isNewInstance

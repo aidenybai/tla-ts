@@ -1,13 +1,20 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
-import { type Context, getUndefined, share, translateString } from "./context";
+import {
+  type Context,
+  getSymbol,
+  getUndefined,
+  isAssigned,
+  share,
+  translateString,
+} from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { getNumberValue, translateExpression } from "./expressions";
 import { getHeap, translateObjectValue } from "./heap";
 import { getBuiltIn, isBuiltInObject, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
-import { apply, boolean, identifier, ifExpression, string } from "./tla";
+import { apply, boolean, identifier, ifExpression, number, string, tuple } from "./tla";
 import { getKind } from "./types";
 
 const toEscape = (code: number) => `\\u${code.toString(16).padStart(4, "0")}`;
@@ -49,30 +56,74 @@ const usesCollections = (node: ts.Node): boolean =>
   (ts.isIdentifier(node) && COLLECTIONS.has(node.text)) ||
   (ts.forEachChild(node, usesCollections) ?? false);
 
-// The text that JSON.parse reads where its argument is a literal, which tla-ts parses as it compiles.
-// A reviver would need calls, so a call that passes one has no text.
-export const getJsonText = (node: ts.Node, context: Context) => {
+// The text of a literal, or of a variable that only a literal sets, before the read in the same
+// function, which tla-ts parses as it compiles.
+const getLiteralText = (node: ts.Expression, context: Context): string | undefined => {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+  if (ts.isNumericLiteral(node)) return String(Number(node.text));
   if (
-    !ts.isCallExpression(node) ||
-    !ts.isPropertyAccessExpression(node.expression) ||
-    node.expression.name.text !== "parse" ||
-    getBuiltIn(node.expression.expression, context) !== "JSON" ||
-    context.heap === undefined ||
-    node.arguments.length !== 1
+    ts.isPrefixUnaryExpression(node) &&
+    node.operator === ts.SyntaxKind.MinusToken &&
+    ts.isNumericLiteral(node.operand)
   ) {
-    return undefined;
+    return String(-Number(node.operand.text));
   }
-  const argument = node.arguments[0];
-  if (ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument)) {
-    return argument.text;
-  }
-  if (ts.isNumericLiteral(argument)) return String(Number(argument.text));
-  return ts.isPrefixUnaryExpression(argument) &&
-    argument.operator === ts.SyntaxKind.MinusToken &&
-    ts.isNumericLiteral(argument.operand)
-    ? String(-Number(argument.operand.text))
+  const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
+  const declaration = symbol?.valueDeclaration;
+  return symbol !== undefined &&
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer !== undefined &&
+    (ts.isStringLiteral(declaration.initializer) ||
+      ts.isNoSubstitutionTemplateLiteral(declaration.initializer)) &&
+    declaration.getEnd() <= node.getStart() &&
+    ts.findAncestor(declaration, ts.isFunctionLike) === ts.findAncestor(node, ts.isFunctionLike) &&
+    !isAssigned(symbol, node.getSourceFile(), context)
+    ? declaration.initializer.text
     : undefined;
 };
+
+const isJsonParse = (node: ts.Node, context: Context): node is ts.CallExpression =>
+  ts.isCallExpression(node) &&
+  ts.isPropertyAccessExpression(node.expression) &&
+  node.expression.name.text === "parse" &&
+  getBuiltIn(node.expression.expression, context) === "JSON" &&
+  context.heap !== undefined;
+
+// The text that JSON.parse reads where its argument is a literal, which tla-ts parses as it compiles.
+// A reviver needs calls, which only a statement runs, so a call that passes one has no text.
+export const getJsonText = (node: ts.Node, context: Context) =>
+  isJsonParse(node, context) && node.arguments.length === 1
+    ? getLiteralText(node.arguments[0], context)
+    : undefined;
+
+// Whether JSON.parse of a literal makes objects, which the heap holds. A type that a script gives
+// what it makes keeps its arrays outside the heap, so it holds arrays only where nothing types them.
+export const isParsedObject = (node: ts.Node, context: Context) => {
+  const text = getJsonText(node, context);
+  const parsed = text === undefined ? undefined : parseJson(text);
+  return (
+    parsed !== undefined &&
+    "value" in parsed &&
+    isJsonObject(parsed.value) &&
+    (isOpenType(getContextualType(node, context)) || !hasJsonArray(parsed.value))
+  );
+};
+
+const getContextualType = (node: ts.Node, context: Context) =>
+  ts.isExpression(node) ? context.checker.getContextualType(node) : undefined;
+
+const isOpenType = (type: ts.Type | undefined) =>
+  type === undefined || (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+
+const hasJsonArray = (value: unknown) => getJsonObjects(value).some(Array.isArray);
+
+const isJsonObject = (value: unknown): value is object =>
+  typeof value === "object" && value !== null;
+
+// The objects that JSON.parse makes of a value, innermost first.
+const getJsonObjects = (value: unknown): object[] =>
+  isJsonObject(value) ? [...Object.values(value).flatMap(getJsonObjects), value] : [];
 
 // What JSON.parse gives for a text, or a SyntaxError where the text isn't JSON.
 export const parseJson = (text: string): { value: unknown } | { error: SyntaxError } => {
@@ -103,7 +154,7 @@ export const translateHoldsJson = (
   );
 
 // The primitive that JSON.parse gives for a literal's text.
-const translateParsed = (node: ts.CallExpression, text: string, context: Context) => {
+const translateParsed = (node: ts.CallExpression, text: string, scope: Scope, context: Context) => {
   const parsed = parseJson(text);
   if ("error" in parsed) {
     return apply("Assert", [
@@ -111,7 +162,22 @@ const translateParsed = (node: ts.CallExpression, text: string, context: Context
       string("tla-ts can't throw the SyntaxError of JSON.parse here"),
     ]);
   }
-  const value = parsed.value;
+  if (isJsonObject(parsed.value)) {
+    const made = scope.allocated.get(node);
+    if (made === undefined) {
+      throw new TlaTypeScriptError(
+        isParsedObject(node, context)
+          ? "Make objects only where a statement always runs"
+          : `Unsupported call: ${node.getText()}`,
+        node,
+      );
+    }
+    return made;
+  }
+  return translateJsonPrimitive(node, parsed.value, context);
+};
+
+const translateJsonPrimitive = (node: ts.Node, value: unknown, context: Context) => {
   if (typeof value === "string") return translateString(value, context);
   if (typeof value === "boolean") return boolean(value);
   if (value === null) {
@@ -121,6 +187,66 @@ const translateParsed = (node: ts.CallExpression, text: string, context: Context
   const converted = typeof value === "number" ? getNumberValue(value, context) : undefined;
   if (converted !== undefined) return converted;
   throw new TlaTypeScriptError(`Unsupported call: ${node.getText()}`, node);
+};
+
+// The heap once it holds the objects that JSON.parse makes of a value, the last of which is the
+// value's own.
+const translateJsonObjects = (
+  node: ts.Node,
+  value: unknown,
+  heap: Expression,
+  context: Context,
+) => {
+  const objects = getJsonObjects(value);
+  const translateValue = (inner: unknown) =>
+    isJsonObject(inner)
+      ? useJavaScript("NextRef", [heap, number(objects.indexOf(inner) + 1)], context)
+      : translateJsonPrimitive(node, inner, context);
+  return useJavaScript(
+    "AllocateEach",
+    [
+      heap,
+      tuple(
+        objects.map((object) =>
+          Array.isArray(object)
+            ? useJavaScript(
+                "ArrayObject",
+                [
+                  translateBuiltInValue("Array.prototype", node, context),
+                  tuple(object.map(translateValue)),
+                ],
+                context,
+              )
+            : useJavaScript(
+                "PairsObject",
+                [
+                  tuple(
+                    Object.entries(object).map((entry) =>
+                      tuple([translateString(entry[0], context), translateValue(entry[1])]),
+                    ),
+                  ),
+                ],
+                context,
+              ),
+        ),
+      ),
+    ],
+    context,
+  );
+};
+
+// The heap once it holds the objects that JSON.parse makes of a literal's text.
+export const translateParsedObjects = (
+  node: ts.CallExpression,
+  heap: Expression,
+  context: Context,
+) => {
+  const text = getJsonText(node, context);
+  const parsed = text === undefined ? undefined : parseJson(text);
+  if (parsed === undefined || !("value" in parsed)) {
+    throw new TlaTypeScriptError(`Unsupported call: ${node.getText()}`, node);
+  }
+  return translateJsonObjects(node, parsed.value, heap, context);
 };
 
 // JSON.stringify of a value, a replacer, and a space, where the heap still holds the built-in.
@@ -214,7 +340,7 @@ export const translateJsonCall = (node: ts.CallExpression, scope: Scope, context
   if (text !== undefined) {
     return ifExpression(
       translateHoldsJson(node, "parse", scope, context),
-      translateParsed(node, text, context),
+      translateParsed(node, text, scope, context),
       apply("Assert", [
         boolean(false),
         string("tla-ts can't call JSON.parse where a script replaced it"),
