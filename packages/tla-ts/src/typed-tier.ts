@@ -17,6 +17,7 @@ import { permuteValue, type Images } from "./symmetry";
 import { evaluate, findGlobalName, getDefinition, type Environment, type Scope } from "./evaluate";
 import { getContext } from "./search";
 import { forEachInitialState, hasBranches } from "./successors";
+import { extendFunction, extendSet, extendValue, getExtendedFingerprints } from "./tlc/fingerprint";
 import { OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import {
   compareValues,
@@ -759,20 +760,10 @@ const createValueReader = (type: Type, plains: Plains): ((plain: Plain) => Value
     };
   }
   if (resolved.kind !== "Rec") return unsupported();
-  // A shape lists its fields by name, but TLC orders a record's fields as it first saw the names.
-  const shapes = resolved.shapes.map((names) => {
-    const order = names
-      .map((_, index) => index)
-      .sort((left, right) => compareValues(names[left], names[right]));
-    return {
-      names: order.map((index) => names[index]),
-      order,
-      isNull: names.length === 1 && names[0] === NULL_FIELD,
-      readers: order.map((index) =>
-        createValueReader(getFieldType(resolved, names[index]), plains),
-      ),
-    };
-  });
+  const shapes = getRecordShapes(resolved).map((shape) => ({
+    ...shape,
+    readers: shape.types.map((field) => createValueReader(field, plains)),
+  }));
   const isTagged = shapes.length > 1;
   return (plain) => {
     const items = getItems(plain);
@@ -784,6 +775,78 @@ const createValueReader = (type: Type, plains: Plains): ((plain: Plain) => Value
       shape.order.map((field, index) => shape.readers[index](fields[field])),
     );
   };
+};
+
+// A shape lists its fields by name, but TLC orders a record's fields as it first saw the names.
+const getRecordShapes = (resolved: RecType) =>
+  resolved.shapes.map((names) => {
+    const order = names
+      .map((_, index) => index)
+      .sort((left, right) => compareValues(names[left], names[right]));
+    return {
+      names: order.map((index) => names[index]),
+      order,
+      isNull: names.length === 1 && names[0] === NULL_FIELD,
+      types: order.map((index) => getFieldType(resolved, names[index])),
+    };
+  });
+
+// Adds to the fingerprint the value a plain of the type stands for, as TLC fingerprints it.
+const createFingerprinter = (type: Type, plains: Plains): ((plain: Plain) => void) => {
+  const resolved = resolveType(type);
+  if (resolved.kind === "Set" && isMask(resolved, plains)) {
+    return (plain) => {
+      const elements = getMaskElements(Number(plain));
+      extendSet(elements.length);
+      for (const element of elements) extendValue(element);
+    };
+  }
+  if (resolved.kind === "Seq") {
+    const extendElement = createFingerprinter(resolved.element, plains);
+    return (plain) => {
+      const items = getItems(plain);
+      extendFunction(items.length);
+      items.forEach((item, index) => {
+        extendValue(index + 1);
+        extendElement(item);
+      });
+    };
+  }
+  if (resolved.kind === "Fn") {
+    const extendRange = createFingerprinter(resolved.range, plains);
+    return (plain) => {
+      const items = getItems(plain);
+      extendFunction(items.length);
+      items.forEach((item, index) => {
+        extendValue(resolved.domain[index]);
+        extendRange(item);
+      });
+    };
+  }
+  if (resolved.kind === "Rec") {
+    const shapes = getRecordShapes(resolved).map((shape) => ({
+      ...shape,
+      fingerprinters: shape.types.map((field) => createFingerprinter(field, plains)),
+    }));
+    const isTagged = shapes.length > 1;
+    return (plain) => {
+      const items = getItems(plain);
+      const shape = shapes[isTagged ? Number(items[0]) : 0];
+      const offset = isTagged ? 1 : 0;
+      if (shape.isNull) {
+        extendValue(plains.values[Number(items[offset])]);
+        return;
+      }
+      extendFunction(shape.names.length);
+      shape.order.forEach((field, index) => {
+        extendValue(shape.names[index]);
+        shape.fingerprinters[index](items[field + offset]);
+      });
+    };
+  }
+  // A set of other elements, or a function with keys, is sorted as its value is built.
+  const read = createValueReader(type, plains);
+  return (plain) => extendValue(read(plain));
 };
 
 interface Program {
@@ -4986,14 +5049,25 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     outDegrees,
     deadlock,
     getFingerprints: () => {
-      const readers = program.variableTypes.map((type) => createValueReader(type, program.plains));
-      return BigInt64Array.from({ length: statistics.distinct }, (_, index) =>
-        check.getFingerprint(
-          (isImaged ? compiled.represent(getKey(index)) : getKey(index)).map((plain, variable) =>
-            readers[variable](plain),
+      const getRepresentative = (index: number) =>
+        isImaged ? compiled.represent(getKey(index)) : getKey(index);
+      if (check.view !== undefined) {
+        const readers = program.variableTypes.map((type) =>
+          createValueReader(type, program.plains),
+        );
+        return BigInt64Array.from({ length: statistics.distinct }, (_, index) =>
+          check.getFingerprint(
+            getRepresentative(index).map((plain, variable) => readers[variable](plain)),
           ),
-        ),
+        );
+      }
+      const fingerprinters = program.variableTypes.map((type) =>
+        createFingerprinter(type, program.plains),
       );
+      return getExtendedFingerprints(statistics.distinct, (index) => {
+        const state = getRepresentative(index);
+        for (const variable of check.variableOrder) fingerprinters[variable](state[variable]);
+      });
     },
   });
   for (let index = 0; index < statistics.distinct; index++) {

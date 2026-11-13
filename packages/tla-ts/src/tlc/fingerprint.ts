@@ -249,21 +249,29 @@ const extendScalar = (value: boolean | number | string | ModelValue) => {
   return 5;
 };
 
-const extendValue = (value: Value) => {
+export const extendSet = (length: number) => {
+  extendByte(SET_ENUM_VALUE);
+  extendInt(length);
+};
+
+export const extendFunction = (length: number) => {
+  extendByte(FCN_RCD_VALUE);
+  extendInt(length);
+};
+
+export const extendValue = (value: Value) => {
   if (typeof value !== "object" || isModelValue(value)) {
     extendScalar(value);
   } else if (isFunctionValue(value)) {
     const functionValue = toFiniteFunction(value);
-    extendByte(FCN_RCD_VALUE);
-    extendInt(functionValue.domain.length);
+    extendFunction(functionValue.domain.length);
     for (let index = 0; index < functionValue.domain.length; index++) {
       extendValue(functionValue.domain[index]);
       extendValue(functionValue.range[index]);
     }
   } else {
     const elements = toFiniteSet(value).elements;
-    extendByte(SET_ENUM_VALUE);
-    extendInt(elements.length);
+    extendSet(elements.length);
     for (const element of elements) extendValue(element);
   }
 };
@@ -280,19 +288,25 @@ export const getTlcFingerprint = (state: Value[]) => {
   return fingerprint;
 };
 
-export const getTlcFingerprints = (states: Value[][], order: number[]) => {
-  const fingerprints = new BigInt64Array(states.length);
+// Fingerprints each of count states from the values extend adds for it.
+export const getExtendedFingerprints = (count: number, extend: (position: number) => void) => {
+  const fingerprints = new BigInt64Array(count);
   const words = new Int32Array(fingerprints.buffer);
   const outerHigh = high;
   const outerLow = low;
-  states.forEach((state, position) => {
+  for (let position = 0; position < count; position++) {
     high = initialHigh;
     low = initialLow;
-    for (const index of order) extendValue(state[index]);
+    extend(position);
     words[2 * position] = low;
     words[2 * position + 1] = high;
-  });
+  }
   high = outerHigh;
   low = outerLow;
   return fingerprints;
 };
+
+export const getTlcFingerprints = (states: Value[][], order: number[]) =>
+  getExtendedFingerprints(states.length, (position) => {
+    for (const index of order) extendValue(states[position][index]);
+  });
