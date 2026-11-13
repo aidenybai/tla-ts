@@ -76,7 +76,9 @@ const getKey = (name: ts.Node): string | undefined =>
         : name.name.text
       : ts.isIdentifier(name) || ts.isStringLiteral(name)
         ? name.text
-        : undefined;
+        : ts.isNumericLiteral(name)
+          ? String(Number(name.text))
+          : undefined;
 
 const isRunnable = (node: ts.Node): node is FunctionNode =>
   (ts.isFunctionDeclaration(node) ||
@@ -677,10 +679,14 @@ export const isRunnableGetter = (getter: FunctionNode, context: Context) =>
 // The getters that reading an array-like object's elements may run, where the script defines one
 // under an index and tla-ts can run each of them, or undefined.
 export const getElementGetters = (node: ts.Node, context: Context) => {
-  const getters = getAccessorFunctions(node, "get", context);
-  return [...getGetterKeys(node)].some((key) => /^(0|[1-9][0-9]*)$/.test(key)) &&
-    getters.length > 0 &&
-    getters.every((getter) => isRunnableGetter(getter, context))
+  const getters = [
+    ...new Set(
+      [...getGetterKeys(node)]
+        .filter((key) => /^(0|[1-9][0-9]*)$/.test(key))
+        .flatMap((key) => getKeyGetters(node, key, context)),
+    ),
+  ];
+  return getters.length > 0 && getters.every((getter) => isRunnableGetter(getter, context))
     ? getters
     : undefined;
 };

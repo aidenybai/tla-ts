@@ -5220,6 +5220,31 @@ describe("errors", () => {
     });
   });
 
+  it("runs the getters that an object literal writes under indices as an array method reads them", async () => {
+    const getSource = (expected: string) => `
+      const order: number[] = [];
+      const arrayLike = {
+        get 0() {
+          order.push(0);
+          return "a";
+        },
+        1: "b",
+        get 2() {
+          order.push(2);
+          return "x";
+        },
+        3: "c",
+        length: 4,
+      };
+      const found = Array.prototype.indexOf.call(arrayLike, "c");
+      const spliced = Array.prototype.toSpliced.call(arrayLike, 2, 1);
+      if (found !== 3 || spliced.join() !== "a,b,c") throw new Error("result");
+      if (order.join() !== "${expected}") throw new Error("order");
+    `;
+    expect((await checkModel(getSource("0,2,0"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("0,0"))).failure?.message).toContain("order");
+  });
+
   describe("runs a getter that a descriptor writes as a method", () => {
     const getSource = (expected: string) => `
       const source = {};
