@@ -5633,10 +5633,13 @@ const translateLoopCall = (
   const lengthGetters = loop.isArrayLike ? getDefinedGetters(receiver, "length", context) : [];
   const speciesGetters = loop.isArrayLike ? getSpeciesGetters(method, receiver, context) : [];
   const isLengthConverted = loop.isArrayLike && isObjectLength(receiver, context);
+  // The array that map makes, where the heap holds it, gathers its elements and its holes.
+  const isHeapMap = method === "map" && context.heapCollections.has(expression);
   const getters = loop.isArrayLike
     ? (getElementGetters(receiver, context) ??
       (lengthGetters.length + speciesGetters.length > 0 ||
       isLengthConverted ||
+      isHeapMap ||
       (callback !== undefined &&
         getChanged(callback, path, context).some((symbol) => symbol === context.heap))
         ? []
@@ -5724,8 +5727,6 @@ const translateLoopCall = (
   const done = (current: Path, result: Expression) =>
     leaf(tuple([result, ...getValues(current), ...seeded, ...caught]));
   const kept = identifier(accumulator);
-  // The array that map makes, where the heap holds it, gathers its elements and its holes.
-  const isHeapMap = method === "map" && context.heapCollections.has(expression);
   const getMapped = (value: Expression, isHole: boolean) =>
     isHeapMap
       ? tuple([
