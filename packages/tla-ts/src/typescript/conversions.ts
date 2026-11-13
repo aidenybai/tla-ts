@@ -172,7 +172,7 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
       : undefined;
   // A string's method converts an object that it takes with the hint of the parameter, and then
   // with ToString or ToNumber. split converts its limit before its separator, and padStart and
-  // padEnd convert their filler only where they pad.
+  // padEnd convert their filler only where they pad. A regexp runs its own methods.
   if (
     isMethodCall(node) &&
     isEvery(context.checker.getTypeAtLocation(node.expression.expression), ts.TypeFlags.StringLike)
@@ -191,7 +191,10 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
       values.some(ts.isSpreadElement) ||
       !kinds.includes("object") ||
       kinds.includes(undefined) ||
-      (name.startsWith("pad") && kinds[1] === "object")
+      (name.startsWith("pad") && kinds[1] === "object") ||
+      values.some(
+        (value) => context.checker.getTypeAtLocation(value).getSymbol()?.name === "RegExp",
+      )
     ) {
       return undefined;
     }
