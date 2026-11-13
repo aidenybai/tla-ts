@@ -7592,6 +7592,46 @@ describe("errors", () => {
     });
   });
 
+  describe("runs the getters of the descriptor that Reflect.defineProperty reads", () => {
+    const getSource = (expected: string) => `
+      let reads = "";
+      const descriptor = {};
+      Object.defineProperty(descriptor, "value", {
+        get() {
+          reads += "v";
+          return 7;
+        },
+      });
+      const target: Record<string, number> = {};
+      const isDefined = Reflect.defineProperty(target, "a", descriptor);
+      const frozen = Object.freeze({});
+      const isRefused = Reflect.defineProperty(frozen, "a", descriptor);
+      const poisoned = {};
+      Object.defineProperty(poisoned, "enumerable", {
+        get() {
+          throw new RangeError("poisoned");
+        },
+      });
+      let isThrown = false;
+      try {
+        Reflect.defineProperty({}, "a", poisoned);
+      } catch (error) {
+        isThrown = error instanceof RangeError;
+      }
+      if (!isDefined || isRefused || target.a !== 7 || reads !== "${expected}" || !isThrown) {
+        throw new Error("reflect");
+      }
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("vv"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation v", async () => {
+      expect((await checkModel(getSource("v"))).failure?.message).toContain("reflect");
+    });
+  });
+
   it("runs a definition with a descriptor written in place before the rest of its statement", async () => {
     const getSource = (expected: number) => `
       const object: Record<string, number> = {};

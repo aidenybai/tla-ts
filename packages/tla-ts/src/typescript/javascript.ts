@@ -4525,14 +4525,20 @@ DefineProperty(heap, ref, key, descriptor) ==
   THEN DefineConverted(heap, ref, key, ToDescriptor(heap, descriptor))
   ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE]
 
-\\* Reflect.defineProperty, which throws a TypeError only where its target or its descriptor isn't
-\\* an object or the descriptor isn't valid, and gives whether it defined the key otherwise.
-ReflectDefineProperty(heap, ref, key, descriptor) ==
-  IF IsObjectArgument(ref) /\\ IsObjectArgument(descriptor)
-     /\\ ToDescriptor(heap, descriptor).isValid
-  THEN LET defined == DefineConverted(heap, ref, key, ToDescriptor(heap, descriptor))
+\\* Reflect.defineProperty of the descriptor that ToPropertyDescriptor gave, which throws a TypeError
+\\* only where the descriptor isn't valid, and gives whether it defined the key otherwise.
+ReflectDefineConverted(heap, ref, key, converted) ==
+  IF converted.isValid
+  THEN LET defined == DefineConverted(heap, ref, key, converted)
        IN [heap |-> defined.heap, isDone |-> ~defined.isRangeError,
            isRangeError |-> defined.isRangeError, value |-> defined.isDone]
+  ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE, value |-> FALSE]
+
+\\* Reflect.defineProperty, which also throws a TypeError where its target or its descriptor isn't an
+\\* object.
+ReflectDefineProperty(heap, ref, key, descriptor) ==
+  IF IsObjectArgument(ref) /\\ IsObjectArgument(descriptor)
+  THEN ReflectDefineConverted(heap, ref, key, ToDescriptor(heap, descriptor))
   ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE, value |-> FALSE]
 
 DefineProperties(heap, ref, properties) ==

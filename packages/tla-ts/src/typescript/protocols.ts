@@ -648,13 +648,14 @@ export const getGetterKeys = (node: ts.Node) => {
   return keys;
 };
 
-// An Object.defineProperty whose descriptor may hold a getter that the script defines under one of
-// its fields, which the statement reads field by field, so that the getters run.
+// An Object.defineProperty or a Reflect.defineProperty whose descriptor may hold a getter that the
+// script defines under one of its fields, which the statement reads field by field, so that the
+// getters run.
 export const isDescriptorRead = (node: ts.Node, context: Context): node is ts.CallExpression =>
   context.heap !== undefined &&
   ts.isCallExpression(node) &&
   ts.isPropertyAccessExpression(node.expression) &&
-  node.expression.expression.getText() === "Object" &&
+  ["Object", "Reflect"].includes(node.expression.expression.getText()) &&
   node.expression.name.text === "defineProperty" &&
   node.arguments.length >= 3 &&
   DESCRIPTOR_FIELDS.some((key) => getGetterKeys(node).has(key)) &&
@@ -850,7 +851,8 @@ const defineAll = (
   );
 
 // Object.defineProperty, which checks that its target is an object, and then reads its
-// descriptor's fields.
+// descriptor's fields. Reflect.defineProperty gives whether it defined the key, rather than throwing
+// where it can't.
 export const readDescriptor = (
   site: ts.CallExpression,
   values: readonly Expression[],
@@ -862,16 +864,40 @@ export const readDescriptor = (
   ifThenElse(
     isObjectArgument(values[0], context),
     readFields(site, values[2], path, context, frame, (after, descriptor) =>
-      defineAll(
-        site,
-        values[0],
-        tuple([values[1]]),
-        tuple([descriptor]),
-        after,
-        context,
-        frame,
-        (defined) => continueWith(defined, values[0]),
-      ),
+      ts.isPropertyAccessExpression(site.expression) &&
+      site.expression.expression.getText() === "Reflect"
+        ? bind(
+            after,
+            "change",
+            useJavaScript(
+              "ReflectDefineConverted",
+              [getHeap(after.scope, site, context), values[0], values[1], descriptor],
+              context,
+            ),
+            context,
+            (bound, change) => {
+              const defined = withHeap(bound, field(change, "heap"), context);
+              return ifThenElse(
+                field(change, "isDone"),
+                continueWith(defined, field(change, "value")),
+                ifThenElse(
+                  field(change, "isRangeError"),
+                  throwError("RangeError", defined, site, context, frame),
+                  throwTypeError(defined, site, context, frame),
+                ),
+              );
+            },
+          )
+        : defineAll(
+            site,
+            values[0],
+            tuple([values[1]]),
+            tuple([descriptor]),
+            after,
+            context,
+            frame,
+            (defined) => continueWith(defined, values[0]),
+          ),
     ),
     throwTypeError(path, site, context, frame),
   );
