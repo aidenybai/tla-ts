@@ -23183,6 +23183,46 @@ describe("buffers", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("throws a TypeError where a buffer's or a DataView's method runs through call on another value", async () => {
+    const result = await checkModel(`
+      function throws(expected: Function, func: () => unknown, message: string) {
+        try {
+          func();
+        } catch (thrown) {
+          if (typeof thrown !== "object" || thrown === null) throw new Error(message);
+          if (thrown.constructor !== expected) throw new Error(message);
+          return;
+        }
+        throw new Error(message);
+      }
+      const sab = new SharedArrayBuffer(4, { maxByteLength: 8 });
+      const ab = new ArrayBuffer(4, { maxByteLength: 8 });
+      throws(TypeError, function () {
+        ArrayBuffer.prototype.transfer.call(sab);
+      }, "transfer of a shared buffer");
+      throws(TypeError, function () {
+        ArrayBuffer.prototype.slice.call(sab);
+      }, "slice of a shared buffer");
+      throws(TypeError, function () {
+        ArrayBuffer.prototype.resize.call(sab, 2);
+      }, "resize of a shared buffer");
+      throws(TypeError, function () {
+        SharedArrayBuffer.prototype.grow.call(ab, 6);
+      }, "grow of a buffer");
+      throws(TypeError, function () {
+        SharedArrayBuffer.prototype.slice.call(ab);
+      }, "slice of a buffer");
+      throws(TypeError, function () {
+        DataView.prototype.getInt8.call(ab, 0);
+      }, "getInt8 of a buffer");
+      ArrayBuffer.prototype.resize.call(ab, 6);
+      if (ab.byteLength !== 6) throw new Error("resize");
+      const moved = ArrayBuffer.prototype.transfer.call(ab, 2);
+      if (moved.byteLength !== 2 || !ab.detached) throw new Error("transfer");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops at a number a typed array's float can't hold exactly", async () => {
     const result = await checkModel(`
       const floats = new Float32Array(1);

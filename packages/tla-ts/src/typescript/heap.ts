@@ -2349,46 +2349,58 @@ const VIEW_ACCESSOR = /^[gs]et(?:Int8|Uint8|Int16|Uint16|Int32|Uint32|Float16|Fl
 // which a statement runs, as each may throw. A typed array's method may also run through call, on
 // any receiver, where the callee must hold the built-in method.
 export const getViewCall = (node: ts.Node, context: Context) => {
-  if (context.heap === undefined || !isMethodCall(node)) return undefined;
-  const receiver = node.expression.expression;
-  const method = node.expression.name.text;
+  if (
+    context.heap === undefined ||
+    !isMethodCall(node) ||
+    node.arguments.some(ts.isSpreadElement)
+  ) {
+    return undefined;
+  }
+  const target = node.expression.expression;
   const declaration = context.checker
-    .getTypeAtLocation(receiver)
+    .getTypeAtLocation(target)
     .getCallSignatures()
     .at(0)?.declaration;
-  if (
-    method === "call" &&
+  // A built-in method that runs through call, by the library interface that declares it.
+  const declared =
+    node.expression.name.text === "call" &&
+    node.arguments.length > 0 &&
     declaration !== undefined &&
     ts.isMethodSignature(declaration) &&
     ts.isInterfaceDeclaration(declaration.parent) &&
-    TYPED_ARRAYS.has(declaration.parent.name.text) &&
-    declaration.getSourceFile().isDeclarationFile &&
-    node.arguments.length > 0 &&
-    !node.arguments.some(ts.isSpreadElement)
-  ) {
-    return {
-      owner: "TypedArray",
-      method: declaration.name.getText(),
-      receiver: node.arguments[0],
-      values: node.arguments.slice(1),
-      callee: receiver,
-    };
-  }
-  const type = context.checker.getTypeAtLocation(receiver);
-  const isTypedArray = (type.isUnion() ? type.types : [type]).every((member) =>
-    TYPED_ARRAYS.has(member.getSymbol()?.name ?? ""),
-  );
-  const owner = isTypedArray ? "TypedArray" : type.getSymbol()?.name;
+    declaration.getSourceFile().isDeclarationFile
+      ? { owner: declaration.parent.name.text, method: declaration.name.getText() }
+      : undefined;
+  const type = context.checker.getTypeAtLocation(target);
+  const typeNames =
+    declared === undefined
+      ? (type.isUnion() ? type.types : [type]).map((member) => member.getSymbol()?.name ?? "")
+      : [declared.owner];
+  const owner = typeNames.every((name) => TYPED_ARRAYS.has(name))
+    ? "TypedArray"
+    : typeNames.every((name) => name === typeNames[0])
+      ? typeNames[0]
+      : undefined;
+  const call =
+    declared === undefined
+      ? { owner, method: node.expression.name.text, receiver: target, values: node.arguments }
+      : {
+          owner,
+          method: declared.method,
+          receiver: node.arguments[0],
+          values: node.arguments.slice(1),
+          callee: target,
+        };
+  const method = call.method;
+  // Through call, any typed array method throws a TypeError for a receiver that isn't one.
   const isKnown =
-    (owner === "TypedArray" && TYPED_ARRAY_METHODS.has(method)) ||
+    (owner === "TypedArray" && (declared !== undefined || TYPED_ARRAY_METHODS.has(method))) ||
     (owner === "DataView" && VIEW_ACCESSOR.test(method)) ||
     (owner === "ArrayBuffer" &&
       (method === "resize" || method === "transfer" || method === "transferToFixedLength")) ||
     (owner === "SharedArrayBuffer" && method === "grow") ||
     ((owner === "ArrayBuffer" || owner === "SharedArrayBuffer") && method === "slice");
-  return isKnown && !node.arguments.some(ts.isSpreadElement)
-    ? { owner, method, receiver, values: node.arguments }
-    : undefined;
+  return isKnown ? call : undefined;
 };
 
 // The built-in getters that GetterCall runs, by their owner's prototype.
