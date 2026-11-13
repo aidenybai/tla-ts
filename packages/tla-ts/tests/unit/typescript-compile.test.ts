@@ -2416,6 +2416,59 @@ describe("values", () => {
     ).toContain("true+false,true+true,false+false");
   });
 
+  it("throws a TypeError where super calls a prototype that a script set to a non-constructor", async () => {
+    const getSource = (expected: string) => `
+      class Base {
+        constructor() {}
+      }
+      class Inst extends Base {
+        constructor() {
+          super();
+        }
+      }
+      class Plain extends Base {
+        value = 2;
+        constructor() {
+          super();
+        }
+      }
+      Object.setPrototypeOf(Inst, Math.sin);
+      const make = () => new Inst();
+      let caught = "none";
+      try {
+        make();
+      } catch (error) {
+        caught = error instanceof TypeError ? "TypeError" : "other";
+      }
+      const plain = new Plain();
+      const result = \`\${caught}\${plain.value}\`;
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("TypeError2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("none2"))).failure?.message).toContain("TypeError2");
+  });
+
+  it("stops where super calls another constructor that a script set as the prototype", async () => {
+    const result = await checkModel(`
+      class Base {
+        constructor() {}
+      }
+      class Other {
+        constructor() {}
+      }
+      class Inst extends Base {
+        constructor() {
+          super();
+        }
+      }
+      Object.setPrototypeOf(Inst, Other);
+      new Inst();
+    `);
+    expect(result.failure?.message).toContain(
+      "tla-ts can't call the constructor that a class's prototype changed to",
+    );
+  });
+
   it("throws the error that an arrow makes with a class that extends an error with fields", async () => {
     const getSource = (expected: string) => `
       class Coded extends TypeError {

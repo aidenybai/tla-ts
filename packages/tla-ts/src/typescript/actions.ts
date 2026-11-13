@@ -7058,6 +7058,57 @@ const translateSuperCall = (
   ) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
   }
+  const run = () =>
+    runSuperCall(expression, constructor, receiver, path, context, frame, continueWith);
+  // super calls the constructor that the class's prototype is, which a script can change. One that
+  // can't construct throws a TypeError.
+  const base = constructor.parent.heritageClauses?.find(
+    (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
+  )?.types[0]?.expression;
+  const name = constructor.parent.name;
+  if (
+    base === undefined ||
+    !ts.isIdentifier(base) ||
+    name === undefined ||
+    !isHeapClass(constructor.parent, context)
+  ) {
+    return run();
+  }
+  const heap = getHeap(path.scope, expression, context);
+  const prototype = field(
+    useJavaScript("Lookup", [heap, translateExpression(name, path.scope, context)], context),
+    "prototype",
+  );
+  return ifThenElse(
+    useJavaScript(
+      "SameValue",
+      [prototype, translateExpression(base, path.scope, context)],
+      context,
+    ),
+    run(),
+    ifThenElse(
+      useJavaScript("IsConstructor", [heap, prototype], context),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't call the constructor that a class's prototype changed to"),
+        ]),
+      ),
+      throwTypeError(path, expression, context, frame),
+    ),
+  );
+};
+
+// A super call to the constructor that the class extends.
+const runSuperCall = (
+  expression: ts.CallExpression,
+  constructor: ts.ConstructorDeclaration,
+  receiver: Receiver,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
   const called = getSuperConstructor(constructor.parent, context);
   const isReturning =
     called?.body !== undefined &&
