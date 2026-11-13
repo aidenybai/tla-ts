@@ -2336,16 +2336,12 @@ LOCAL CharacterWidth(regexp, text, index) ==
   THEN 2
   ELSE 1
 
-\\* Whether a class matches a character, where the compiler lists the characters in ASCII that it
-\\* matches, whether it matches each one outside ASCII that the script's strings may hold, and of the
-\\* rest, the ones it matches where it matches none of the others, or the ones it doesn't where it
-\\* matches all of the others.
+\\* Whether a class matches a character, where the compiler lists the characters that it matches
+\\* among those in ASCII and those that the script's strings may hold.
 LOCAL IsInClass(node, character) ==
   CASE character \\in node.characters -> TRUE
-    [] character \\in node.excluded \\/ character \\in DOMAIN AsciiCodes -> FALSE
-    [] node.others = "unknown" ->
-         Assert(FALSE, "tla-ts can't tell whether a class matches a character outside ASCII")
-    [] OTHER -> node.others = "all"
+    [] \\A unit \\in CharactersOf(character) : unit \\in DOMAIN CharacterCodes -> FALSE
+    [] OTHER -> Assert(FALSE, "tla-ts can't tell whether a class matches a character outside ASCII")
 
 \\* Whether a backreference's characters are the same once canonicalized, which tla-ts tells for
 \\* characters that differ only where one is an ASCII letter, digit, or underscore.
