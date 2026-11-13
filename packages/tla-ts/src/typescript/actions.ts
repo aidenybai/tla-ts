@@ -10516,6 +10516,8 @@ const isPlainCallee = (
   ts.isIdentifier(node) ||
   node.kind === ts.SyntaxKind.ThisKeyword ||
   ts.isLiteralExpression(node) ||
+  ts.isFunctionExpression(getCast(node)) ||
+  ts.isArrowFunction(getCast(node)) ||
   (results?.has(node) ?? false) ||
   (ts.isNonNullExpression(node) && isPlainCallee(node.expression, context, results)) ||
   (ts.isPropertyAccessExpression(node) &&
