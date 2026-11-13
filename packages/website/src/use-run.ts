@@ -1,34 +1,31 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { getErrorResult } from "./run-error";
 import type { RunRequest, RunResult } from "./run-worker";
 
-// Runs tla-ts in a worker, so a long check or proof never blocks the page.
 export const useRun = () => {
   const [result, setResult] = useState<RunResult | undefined>(undefined);
   const [isRunning, setIsRunning] = useState(false);
-  const [runCount, setRunCount] = useState(0);
+  const workerRef = useRef<Worker | undefined>(undefined);
+
+  const stop = () => {
+    workerRef.current?.terminate();
+    workerRef.current = undefined;
+    setIsRunning(false);
+  };
 
   const run = (request: RunRequest) => {
+    stop();
     const worker = new Worker(new URL("./run-worker.ts", import.meta.url), { type: "module" });
     const finish = (nextResult: RunResult) => {
       setResult(nextResult);
-      setRunCount((count) => count + 1);
-      setIsRunning(false);
-      worker.terminate();
+      stop();
     };
     worker.onmessage = (event: MessageEvent<RunResult>) => finish(event.data);
-    worker.onerror = (event) =>
-      finish({
-        isPassed: false,
-        title: "Error",
-        name: undefined,
-        summary: "",
-        trace: [],
-        loopStart: undefined,
-        rows: [{ title: event.message, detail: "", isFailed: true }],
-      });
+    worker.onerror = (event) => finish(getErrorResult(event.message));
+    workerRef.current = worker;
     setIsRunning(true);
     worker.postMessage(request);
   };
 
-  return { result, isRunning, runCount, run };
+  return { result, isRunning, run, stop, reset: () => setResult(undefined) };
 };

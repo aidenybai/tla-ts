@@ -77,6 +77,7 @@
     "conformance:record-tlapm": "bun scripts/run.ts record-tlapm",
     "conformance:smt-encode": "bun scripts/run.ts smt-encode-conformance",
     "conformance:prove": "pnpm build && bun scripts/run.ts prove-conformance",
+    "conformance:test262": "bun scripts/run.ts test262",
     "conformance:tlapm": "bun scripts/run.ts tlapm-conformance",
     "conformance:zenon": "bun scripts/run.ts zenon-conformance",
     "publint": "publint",
@@ -91,6 +92,6 @@
     "@types/node": "^22",
     "publint": "^0.3.0",
     "typescript": "^7.0.2",
-    "vite-plus": "latest"
+    "vite-plus": "1.4.0"
   }
 }

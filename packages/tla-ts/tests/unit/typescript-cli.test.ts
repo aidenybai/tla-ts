@@ -43,6 +43,34 @@ describe("the CLI with TypeScript files", () => {
     expect(readdirSync(directory)).toEqual(files);
   });
 
+  it("reads names that a module re-exports, and checks the module that re-exports them", () => {
+    const directory = copyFixtures("project");
+    const relayed = runCli(directory, ["relay.ts"]);
+    expect(relayed.status).toBe(0);
+    expect(relayed.stdout).toContain("4 distinct states found");
+    expect(runCli(directory, ["barrel.ts"]).status).toBe(0);
+  });
+
+  it("type checks a file of a project with the project's tsconfig.json", () => {
+    const result = runCli(copyFixtures("project"), ["counter.ts"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("4 distinct states found");
+  });
+
+  it("stops where a model reads a name that only a declaration file gives", () => {
+    const directory = copyFixtures("project");
+    writeFileSync(join(directory, "host.d.ts"), "declare const hostLimit: number;\n");
+    writeFileSync(
+      join(directory, "host.ts"),
+      '/// <reference path="./host.d.ts" />\nlet count = 0;\n\nexport const tick = () => {\n  count = hostLimit;\n};\n',
+    );
+    const result = runCli(directory, ["host.ts"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      "host.ts:5:11 tla-ts can't run hostLimit, which only a declaration gives",
+    );
+  });
+
   it("prints a counterexample as TLC does and exits with TLC's code", () => {
     const result = runCli(copyFixtures("failing"), ["overdraft.ts"]);
     expect(result.status).toBe(12);

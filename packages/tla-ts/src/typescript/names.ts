@@ -87,6 +87,12 @@ const RESERVED = new Set([
   "Next",
   "Spec",
   "vars",
+  "Ref",
+  "Big",
+  "BuiltIns",
+  "UsedBuiltIns",
+  "ConstantFunctions",
+  "UsedConstantFunctions",
   "Null",
   "Undefined",
   "Perms",
@@ -98,17 +104,23 @@ export interface Names {
   getFresh: (base: string) => string;
 }
 
-export const createNames = (): Names => {
+export const createNames = (reserved: ReadonlySet<string>): Names => {
   const used = new Set<string>();
+  // The next index to try for each name, so that many names that sanitize alike stay quick.
+  const nextIndices = new Map<string, number>();
   return {
     getFresh: (base) => {
       const sanitized = base.replace(/[^A-Za-z0-9_]/g, "_");
       const name = /[A-Za-z]/.test(sanitized) ? sanitized : `v${sanitized}`;
-      const getCandidate = (index: number): string => {
+      const getIndex = (index: number): number => {
         const candidate = index === 0 ? name : `${name}_${index}`;
-        return used.has(candidate) || RESERVED.has(candidate) ? getCandidate(index + 1) : candidate;
+        return used.has(candidate) || RESERVED.has(candidate) || reserved.has(candidate)
+          ? getIndex(index + 1)
+          : index;
       };
-      const fresh = getCandidate(0);
+      const index = getIndex(nextIndices.get(name) ?? 0);
+      const fresh = index === 0 ? name : `${name}_${index}`;
+      nextIndices.set(name, index + 1);
       used.add(fresh);
       return fresh;
     },

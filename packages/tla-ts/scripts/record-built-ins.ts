@@ -1,0 +1,195 @@
+// Records the built-in objects of the Node that runs it into src/typescript/built-ins.ts, so that
+// compiled scripts can read their properties as test262's oracle does.
+// Usage: bun scripts/run.ts record-built-ins
+
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { WELL_KNOWN_SYMBOLS } from "../src/typescript/javascript";
+
+const GLOBALS = [
+  "Object",
+  "Function",
+  "Array",
+  "String",
+  "Boolean",
+  "Number",
+  "Symbol",
+  "BigInt",
+  "Math",
+  "JSON",
+  "Reflect",
+  "Date",
+  "RegExp",
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "ReferenceError",
+  "EvalError",
+  "URIError",
+  "AggregateError",
+  "SuppressedError",
+  "Map",
+  "Set",
+  "WeakMap",
+  "WeakSet",
+  "WeakRef",
+  "FinalizationRegistry",
+  "Promise",
+  "Proxy",
+  "ArrayBuffer",
+  "SharedArrayBuffer",
+  "DataView",
+  "Atomics",
+  "Iterator",
+  "DisposableStack",
+  "AsyncDisposableStack",
+  "Int8Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int16Array",
+  "Uint16Array",
+  "Int32Array",
+  "Uint32Array",
+  "Float16Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
+  "parseInt",
+  "parseFloat",
+  "isNaN",
+  "isFinite",
+  "encodeURI",
+  "encodeURIComponent",
+  "decodeURI",
+  "decodeURIComponent",
+  "escape",
+  "unescape",
+];
+
+// The keys that a built-in object holds: its names, then the well-known symbols, as "@@iterator".
+const getKeys = (object: object) => [
+  ...Object.getOwnPropertyNames(object).map((key) => ({ key, name: key })),
+  ...Object.getOwnPropertySymbols(object).flatMap((key) =>
+    WELL_KNOWN_SYMBOLS.some((name) => Symbol[name as keyof SymbolConstructor] === key)
+      ? [{ key, name: `@@${key.description?.slice("Symbol.".length)}` }]
+      : [],
+  ),
+];
+
+const names = new Map<unknown, string>();
+const queue: object[] = [];
+const visit = (value: unknown, name: string) => {
+  const isObject = (typeof value === "object" && value !== null) || typeof value === "function";
+  if (!isObject || names.has(value)) return;
+  names.set(value, name);
+  queue.push(value);
+};
+const globals = new Map(Object.entries(Object.getOwnPropertyDescriptors(globalThis)));
+GLOBALS.forEach((name) => visit(globals.get(name)?.value, name));
+// The prototypes that only the objects a built-in makes inherit, which no global reaches.
+visit(Object.getPrototypeOf([][Symbol.iterator]()), "%ArrayIteratorPrototype%");
+visit(Object.getPrototypeOf(Iterator.from([]).map((value) => value)), "%IteratorHelperPrototype%");
+visit(
+  Object.getPrototypeOf(Iterator.from({ next: () => ({ done: true, value: undefined }) })),
+  "%WrapForValidIteratorPrototype%",
+);
+visit(Object.getPrototypeOf(function* () {}).constructor, "%GeneratorFunction%");
+visit(Object.getPrototypeOf(async function* () {}).constructor, "%AsyncGeneratorFunction%");
+visit(Object.getPrototypeOf(async function () {}).constructor, "%AsyncFunction%");
+visit(
+  Object.getPrototypeOf(Object.getPrototypeOf(async function* () {}).prototype),
+  "%AsyncIteratorPrototype%",
+);
+visit(Object.getPrototypeOf(""[Symbol.iterator]()), "%StringIteratorPrototype%");
+visit(Object.getPrototypeOf(new Map().values()), "%MapIteratorPrototype%");
+visit(Object.getPrototypeOf(new Set().values()), "%SetIteratorPrototype%");
+visit(Object.getPrototypeOf(/./[Symbol.matchAll]("")), "%RegExpStringIteratorPrototype%");
+
+const getValue = (value: unknown) => {
+  if (value === undefined) return "u";
+  if (value === null) return "l";
+  if (typeof value === "string") return `s${value}`;
+  if (typeof value === "number") return `n${Object.is(value, -0) ? "-0" : String(value)}`;
+  if (typeof value === "boolean") return `b${value}`;
+  if (typeof value === "symbol" || typeof value === "bigint") return "x";
+  return `o${names.get(value)}`;
+};
+
+// Paths through properties name objects before paths through prototypes, so Object's prototype is
+// Function.prototype.
+const prototypes: object[] = [];
+for (let position = 0; position < queue.length; position += 1) {
+  const object = queue[position];
+  const name = names.get(object) ?? "";
+  prototypes.push(object);
+  getKeys(object).forEach((entry) => {
+    const descriptor = Object.getOwnPropertyDescriptor(object, entry.key);
+    const owner = `${name}.${entry.name}`;
+    visit(descriptor?.value, owner);
+    visit(descriptor?.get, `get ${owner}`);
+    visit(descriptor?.set, `set ${owner}`);
+  });
+  if (position === queue.length - 1) {
+    prototypes
+      .splice(0)
+      .forEach((owner) =>
+        visit(Object.getPrototypeOf(owner), `%${names.get(owner)}.[[Prototype]]%`),
+      );
+  }
+}
+
+// Reflect.construct throws a TypeError for a newTarget that isn't a constructor, as
+// harness/isConstructor.js checks, and only reads newTarget otherwise.
+const isConstructor = (value: object) => {
+  if (typeof value !== "function") return false;
+  try {
+    Reflect.construct(function () {}, [], value);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const objects: Record<string, [string | null, boolean, boolean, string[][], boolean]> = {};
+for (const object of queue) {
+  const name = names.get(object) ?? "";
+  const prototype = Object.getPrototypeOf(object);
+  const descriptors = getKeys(object).map((entry) => {
+    const descriptor = Object.getOwnPropertyDescriptor(object, entry.key);
+    if (descriptor === undefined) throw new Error(`No descriptor for ${name}.${entry.name}`);
+    return { key: entry.name, descriptor };
+  });
+  objects[name] = [
+    prototype === null ? null : (names.get(prototype) ?? null),
+    typeof object === "function",
+    Object.isExtensible(object),
+    descriptors.map((entry) => {
+      const descriptor = entry.descriptor;
+      const flags = [
+        descriptor.writable ? "w" : "",
+        descriptor.enumerable ? "e" : "",
+        descriptor.configurable ? "c" : "",
+      ].join("");
+      return "value" in descriptor
+        ? [entry.key, flags, getValue(descriptor.value)]
+        : [entry.key, flags, getValue(descriptor.get), getValue(descriptor.set)];
+    }),
+    isConstructor(object),
+  ];
+}
+
+const header = `// Generated by scripts/record-built-ins.ts from Node ${process.version}. Do not edit.
+// Each built-in object, by its path from a global: [prototype, isCallable, isExtensible,
+// properties, isConstructor], where a property is [key, attributes, value], or [key, attributes,
+// getter, setter] for an accessor. A well-known symbol's key is "@@" and its name, as "@@iterator".
+// A value starts with its kind: "o" an object's path, "s" a string, "n" a number, "b" a boolean,
+// "u" undefined, "l" null, and "x" a symbol or a bigint.
+
+export const BUILT_INS: Record<string, [string | null, boolean, boolean, string[][], boolean]> = `;
+writeFileSync(
+  join(import.meta.dirname, "..", "src", "typescript", "built-ins.ts"),
+  `${header}${JSON.stringify(objects, null, 1)};\n`,
+);
+console.log(`${queue.length} objects`);

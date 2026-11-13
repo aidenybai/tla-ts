@@ -38,6 +38,7 @@ import {
 import { EXIT_STATUS, setExitCode } from "../exit-codes";
 import { check } from "../parallel";
 import { parseModule } from "../parser";
+import { printModule } from "../printer";
 import type { StateDump } from "../state-graph";
 import {
   formatProbability,
@@ -770,7 +771,8 @@ const checkSpec = async (
   if (args.has("-deadlock")) config.checkDeadlock = false;
   const directory = dirname(specPath);
   const directories = [directory, ...java.libraries];
-  const loadModule = createModuleLoader(directories);
+  const loadFile = createModuleLoader(directories);
+  const loadModule = (name: string) => compiled?.loadModule(name) ?? loadFile(name);
   const isRecorded = isTraceRecorded(args, version);
   if (printer.isTool) {
     printer.print(MESSAGE_CODE.startingSany, MESSAGE_LEVEL.none, "Starting SANY...");
@@ -801,7 +803,7 @@ const checkSpec = async (
     reportMissingFile ? reportMissingModules174(loadModule, reportMissingFile) : loadModule,
     {
       fileName: specName,
-      rootSource: compiled?.source,
+      rootSource: compiled && printModule(compiled.source),
       describeFile: createFileDescriber(
         specPath,
         directories,
@@ -825,7 +827,7 @@ const checkSpec = async (
   }
   try {
     const source = compiled?.source ?? readFileSync(specPath, "utf8");
-    const moduleName = parseModule(source).name;
+    const moduleName = typeof source === "string" ? parseModule(source).name : source.name;
     if (moduleName !== fileName) {
       throw new TlaSanyFatalError(
         `File name '${fileName}' does not match the name '${moduleName}' of the top level module it contains.`,

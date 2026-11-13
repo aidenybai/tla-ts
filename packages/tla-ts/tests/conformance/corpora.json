@@ -116,5 +116,11 @@
     "repository": "https://github.com/josehu07/summerset.git",
     "commit": "ccb59a55c299cb3b813ea15708c3dfade33bf4fa",
     "paths": ["tla+"]
+  },
+  {
+    "name": "test262",
+    "repository": "https://github.com/tc39/test262.git",
+    "commit": "bd21f3a3dd39843435b8394c7dd36439bb22dcab",
+    "paths": ["test"]
   }
 ]

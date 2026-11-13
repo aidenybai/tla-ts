@@ -22,7 +22,7 @@ export interface Token {
   endColumn: number;
 }
 
-const KEYWORDS = new Set([
+export const KEYWORDS = new Set([
   "ACTION",
   "ACTIONS",
   "ASSUME",
