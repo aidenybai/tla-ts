@@ -3107,7 +3107,9 @@ ToNumber(value) ==
     [] IsRef(value) -> Assert(FALSE, "tla-ts can't convert this object to a number")
     [] IsBigInt(value) ->
          Assert(FALSE, "tla-ts can't throw the TypeError of converting a BigInt to a number")
-    [] OTHER -> Assert(FALSE, "tla-ts can't throw the TypeError of converting a symbol to a number")
+    [] IsSymbol(value) ->
+         Assert(FALSE, "tla-ts can't throw the TypeError of converting a symbol to a number")
+    [] OTHER -> Assert(FALSE, "tla-ts can't convert this " \\o TypeOf(value) \\o " to a number")
 
 \\* The longest start of a text made of a radix's digits.
 RECURSIVE DigitPrefix(_, _)
@@ -5188,7 +5190,9 @@ export const translateToNumber = (
   if (
     kind === "string" ||
     (context.heap !== undefined &&
-      (context.checker.getTypeAtLocation(argument).flags & ts.TypeFlags.Unknown) !== 0)
+      (context.checker.getTypeAtLocation(argument).flags &
+        (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
+        0)
   ) {
     const converted = useJavaScript("ToNumber", [value], context);
     return context.hasSpecialNumbers

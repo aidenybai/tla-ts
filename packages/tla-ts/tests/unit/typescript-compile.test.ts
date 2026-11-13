@@ -16707,6 +16707,40 @@ describe("errors", () => {
     });
   });
 
+  describe("convert a value that TypeScript types as any to a number", () => {
+    const getSource = (expected: string) => `
+      const made = new String("1");
+      let x: any = "x";
+      x *= 1;
+      let y: any = made;
+      y *= 2;
+      let z: any = null;
+      const result = [isNaN(x), isNaN(y), isNaN(z)].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("tests whether each is NaN", async () => {
+      expect((await checkModel(getSource("true,false,false"))).failure).toBeUndefined();
+    });
+
+    it("doesn't take null for NaN", async () => {
+      expect((await checkModel(getSource("true,false,true"))).failure).toBeDefined();
+    });
+
+    it("stops at an array or a function, which it can't convert", async () => {
+      const getStop = async (value: string) =>
+        (
+          await checkModel(`
+            const made = new String("1");
+            let x: any = ${value};
+            if (isNaN(x)) throw new Error("NaN");
+          `)
+        ).failure?.message;
+      expect(await getStop("[5]")).toContain("tla-ts can't convert this object to a number");
+      expect(await getStop("() => 1")).toContain("tla-ts can't convert this function to a number");
+    });
+  });
+
   it("stops at Array.fromAsync of an array's values() that another call steps", () => {
     expect(() =>
       compile(`
