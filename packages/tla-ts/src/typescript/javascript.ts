@@ -377,6 +377,42 @@ Imul(left, right) ==
           + lowProduct(highOf(a), lowOf(b)) + lowProduct(lowOf(a), highOf(b))) % 65536
   IN (IF high >= 32768 THEN high - 65536 ELSE high) * 65536 + (bottom % 65536)
 
+\\* Math.clz32: the count of leading zero bits in a number's low 32 bits.
+Clz32(value) ==
+  LET int32 == Int32(value)
+  IN CASE int32 < 0 -> 0
+       [] int32 = 0 -> 32
+       [] OTHER -> 31 - (CHOOSE bit \\in 0..30 : int32 \\div 2 ^ bit = 1)
+
+RECURSIVE RootBetween(_, _, _)
+RootBetween(square, low, high) ==
+  IF low = high
+  THEN low
+  ELSE LET middle == (low + high + 1) \\div 2
+       IN IF middle * middle <= square
+          THEN RootBetween(square, middle, high)
+          ELSE RootBetween(square, low, middle - 1)
+
+RECURSIVE SquareSum(_)
+SquareSum(values) ==
+  IF values = <<>>
+  THEN 0
+  ELSE LET value == IF Head(values) = NegativeZero THEN 0 ELSE Head(values)
+       IN value * value + SquareSum(Tail(values))
+
+\\* Math.hypot of numbers, whose root tla-ts holds only where it's an integer. An infinity gives
+\\* Infinity even beside NaN.
+Hypot(values) ==
+  LET has(numbers) == \\E position \\in DOMAIN values : values[position] \\in numbers
+      square == SquareSum(values)
+      root == RootBetween(square, 0, IF square < 46340 THEN square ELSE 46340)
+  IN CASE has({Infinity, NegativeInfinity}) -> Infinity
+       [] has({NaN}) -> NaN
+       [] \\E position \\in DOMAIN values : IsFraction(values[position]) ->
+            Assert(FALSE, "tla-ts can't represent a fraction")
+       [] root * root # square -> Assert(FALSE, "tla-ts can't represent a fraction")
+       [] OTHER -> root
+
 \\* JavaScript's <<. The bit below the shifted bits becomes the sign bit.
 LeftShift(left, right) ==
   LET a == Int32(left)

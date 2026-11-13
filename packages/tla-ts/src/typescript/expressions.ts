@@ -561,11 +561,17 @@ const translateObjectLiteral = (
 // for a literal that TLC can't hold, such as the 0x85ebca6b of a hash.
 const translateInt32Literal = (node: ts.Expression) => {
   const literal = ts.isParenthesizedExpression(node) ? node.expression : node;
-  if (!ts.isNumericLiteral(literal)) return undefined;
-  const value = Math.trunc(Number(literal.text));
+  const isNegated =
+    ts.isPrefixUnaryExpression(literal) && literal.operator === ts.SyntaxKind.MinusToken;
+  const numeric = isNegated ? literal.operand : literal;
+  if (!ts.isNumericLiteral(numeric)) return undefined;
+  const value = Math.trunc(Number(numeric.text)) * (isNegated ? -1 : 1);
   if (!Number.isFinite(value) || Math.abs(value) < 2 ** 31) return undefined;
   const unsigned = ((value % 2 ** 32) + 2 ** 32) % 2 ** 32;
-  return number(unsigned >= 2 ** 31 ? unsigned - 2 ** 32 : unsigned);
+  // TLC can't read 2^31, even negated.
+  return unsigned === 2 ** 31
+    ? apply("-", [number(-(2 ** 31 - 1)), number(1)])
+    : number(unsigned > 2 ** 31 ? unsigned - 2 ** 32 : unsigned);
 };
 
 const translateMath = (node: ts.CallExpression, method: string, scope: Scope, context: Context) => {
@@ -587,6 +593,16 @@ const translateMath = (node: ts.CallExpression, method: string, scope: Scope, co
       node.arguments.map((inner) => translateInt32Literal(inner) ?? translate(inner)),
       context,
     );
+  }
+  if (method === "clz32" && node.arguments.length === 1) {
+    return useJavaScript(
+      "Clz32",
+      [translateInt32Literal(argument) ?? translate(argument)],
+      context,
+    );
+  }
+  if (method === "hypot" && !node.arguments.some(ts.isSpreadElement)) {
+    return useJavaScript("Hypot", [tuple(node.arguments.map(translate))], context);
   }
   if (method === "pow" && node.arguments.length === 2) {
     const power = useJavaScript("Power", node.arguments.map(translate), context);

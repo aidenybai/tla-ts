@@ -1087,6 +1087,29 @@ describe("values", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("counts leading zero bits with Math.clz32 and roots with Math.hypot", async () => {
+    const source = (expected: string) => `
+      const counts = [
+        Math.clz32(0),
+        Math.clz32(1),
+        Math.clz32(-1),
+        Math.clz32(65536),
+        Math.clz32(4294967297),
+        Math.clz32(2147483648),
+      ].join();
+      const roots = [Math.hypot(), Math.hypot(3, 4), Math.hypot(2, 3, 6)].join();
+      if (counts + " " + roots !== "${expected}") throw new Error(counts + " " + roots);
+    `;
+    expect((await checkModel(source("32,31,0,15,31,0 0,5,7"))).failure).toBeUndefined();
+    await expect(checkModel(source("32,31,0,16,31,0 0,5,7"))).rejects.toThrow("0,5,7");
+  });
+
+  it("stops at a Math.hypot whose root is a fraction", async () => {
+    await expect(checkModel("const root = Math.hypot(1, 1);")).rejects.toThrow(
+      "tla-ts can't represent a fraction",
+    );
+  });
+
   it("converts the objects that a bitwise operator takes in order", async () => {
     const result = await checkModel(`
       const log = { text: "" };
