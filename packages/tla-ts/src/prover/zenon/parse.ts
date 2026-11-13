@@ -1,5 +1,4 @@
-// Ported from Zenon's lexzen.mll and parsezen.mly, as shipped in tlapm. Copyright 2005 INRIA, see
-// LICENSE.
+// Ported from Zenon's lexzen.mll and parsezen.mly, as shipped in tlapm. Copyright 2005 INRIA, see LICENSE.
 
 import { TlaZenonError } from "../../errors";
 import {
@@ -124,18 +123,14 @@ export const parseZenon = (exprs: Expressions, text: string): Phrase[] => {
   };
   const tokens = tokenize(text);
   let position = 0;
-  const peek = (offset = 0) => tokens[position + offset];
   const next = () => tokens[position++];
-  const expect = (kind: TokenKind, value?: string) => {
+  const expect = (kind: TokenKind) => {
     const token = next();
-    if (token.kind !== kind || (value !== undefined && token.text !== value))
-      throw new TlaZenonError(`Zenon: line ${token.line}: syntax error`);
+    if (token.kind !== kind) throw new TlaZenonError(`Zenon: line ${token.line}: syntax error`);
     return token;
   };
-  const isAt = (kind: TokenKind, value?: string) =>
-    peek().kind === kind && (value === undefined || peek().text === value);
+  const isAt = (kind: TokenKind) => tokens[position].kind === kind;
 
-  // A lambda after its first parenthesis: ((x y "type") body).
   const parseLambda = () => {
     expect("open");
     const names: string[] = [];

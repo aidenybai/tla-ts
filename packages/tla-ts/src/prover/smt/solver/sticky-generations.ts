@@ -1,5 +1,4 @@
 // Ported from Z3 (src/smt/smt_context.cpp), MIT license, see z3-license.txt.
-// A deleted update leaves a hole until holes are half of its group.
 import { shrink } from "./array";
 import type { Enode } from "./enode";
 
@@ -44,7 +43,6 @@ export class StickyGenerations {
     if (2 * group.numHoles > group.nodes.length) compact(group);
   }
 
-  // A deleted update is null.
   getGroup(decl: number): Readonly<Pick<Group, "nodes" | "generations">> | undefined {
     return this.groups.get(decl);
   }

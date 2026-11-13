@@ -1,5 +1,4 @@
-// Ported from Z3 (src/smt/smt_model_finder.cpp, src/ast/macros/quantifier_macro_info.cpp), MIT
-// license, see z3-license.txt.
+// Ported from Z3 (src/smt/smt_model_finder.cpp, src/ast/macros/quantifier_macro_info.cpp), MIT license, see z3-license.txt.
 import {
   KIND_APP,
   KIND_VAR,
@@ -24,8 +23,6 @@ import { Rational } from "./rational";
 import { Rewriter } from "./rewriter";
 import { AufSolver, type Evaluate, InstantiationSet, Node } from "./auf-solver";
 
-export const MBQI_FORCE_TEMPLATE = 10;
-
 type QInfo =
   | { kind: "f_var"; decl: number; argIndex: number; varIndex: number }
   | { kind: "f_var_plus_offset"; decl: number; argIndex: number; varIndex: number; offset: number }
@@ -39,28 +36,28 @@ const mkVarPair = (kind: "x_eq_y" | "x_neq_y" | "x_leq_y", first: number, second
   first > second ? { kind, first: second, second: first } : { kind, first, second };
 
 export class QuantifierInfo {
+  private manager: AstManager;
   readonly flatQ: number;
   qinfos: QInfo[] = [];
   isAuf = true;
-  hasXEqY = false;
   readonly ngDecls = new Set<number>();
   theOne: number | null = null;
   private uvarInstSets: (InstantiationSet | null)[] | null = null;
   readonly condMacros;
 
   constructor(
-    private manager: AstManager,
     private context: Context,
     readonly quantifier: number,
     macroRewriter: Rewriter,
   ) {
+    const manager = context.manager;
+    this.manager = manager;
     const isNested = manager.hasQuantifierFlags[manager.getQuantifier(quantifier).body];
     this.flatQ = isNested ? pullQuant(manager, quantifier) : quantifier;
     if (!isNested) manager.incRef(quantifier);
     this.condMacros = collectMacroCandidates(manager, macroRewriter, this.flatQ);
   }
 
-  // ~quantifier_info: the conditional macros go before the flat quantifier.
   release() {
     releaseCondMacros(this.manager, this.condMacros);
     this.manager.decRef(this.flatQ);
@@ -135,7 +132,6 @@ export class QuantifierInfo {
           const aFI = solver.getAFI(info.decl, info.argIndex).getRoot();
           const sJ = solver.getUvar(flatQ, info.varIndex).getRoot();
           if (aFI === sJ) {
-            // There is no finite fixpoint, so the arguments minus the offset join the set.
             for (const enode of context.enodesOf(info.decl))
               if (context.isRelevant(enode.owner)) {
                 const arg = enode.getArg(info.argIndex);
@@ -155,7 +151,6 @@ export class QuantifierInfo {
         case "x_eq_t": {
           const sort = sorts[sorts.length - info.varIndex - 1];
           if (manager.isUninterpretedSort(sort)) {
-            // Every term of the sort joins the set, see Section 4.1 of the paper.
             const node = solver.getUvar(flatQ, info.varIndex);
             for (const enode of context.enodes)
               if (context.isRelevant(enode.owner) && manager.sorts[enode.owner] === sort)
@@ -171,7 +166,6 @@ export class QuantifierInfo {
           break;
       }
     }
-    // The second pass for the offsets: A_f_i - k is in S_j and S_j + k is in A_f_i.
     for (const info of this.qinfos) {
       if (info.kind !== "f_var_plus_offset") continue;
       const aFI = solver.getAFI(info.decl, info.argIndex).getRoot();
@@ -232,17 +226,13 @@ export class QuantifierAnalyzer {
     private info: QuantifierInfo,
   ) {}
 
-  private isGround(expr: number) {
-    return this.manager.isGround(expr);
-  }
-
   private isVar(expr: number) {
     return this.manager.kinds[expr] === KIND_VAR;
   }
 
   private isVarPlusGround(expr: number) {
     const manager = this.manager;
-    if (manager.getOp(expr) !== OP_ADD || this.isGround(expr)) return undefined;
+    if (manager.getOp(expr) !== OP_ADD || manager.isGround(expr)) return undefined;
     const args: number[] = [];
     let variable: number | undefined;
     let isInverted = false;
@@ -257,7 +247,7 @@ export class QuantifierAnalyzer {
         isStopped = true;
       }
       const negated = this.manager.getTimesMinusOneArg(arg);
-      if (this.isGround(arg)) args.push(arg);
+      if (this.manager.isGround(arg)) args.push(arg);
       else if (this.isVar(arg)) {
         if (variable !== undefined) return undefined;
         variable = arg;
@@ -272,31 +262,31 @@ export class QuantifierAnalyzer {
     return { variable, term, isInverted };
   }
 
-  private mkSub(first: number, second: number) {
-    return this.rewriter.mkSub(first, second);
-  }
-
   private mkAdd(first: number, second: number) {
     return this.rewriter.mkAdd([first, second]);
   }
 
   private isVarAndGround(lhs: number, rhs: number) {
-    if (this.isVar(lhs) && this.isGround(rhs))
+    if (this.isVar(lhs) && this.manager.isGround(rhs))
       return { variable: lhs, term: rhs, isInverted: false };
-    if (this.isVar(rhs) && this.isGround(lhs))
+    if (this.isVar(rhs) && this.manager.isGround(lhs))
       return { variable: rhs, term: lhs, isInverted: false };
     const left = this.isVarPlusGround(lhs);
-    if (left !== undefined && this.isGround(rhs))
+    if (left !== undefined && this.manager.isGround(rhs))
       return {
         variable: left.variable,
-        term: left.isInverted ? this.mkSub(left.term, rhs) : this.mkSub(rhs, left.term),
+        term: left.isInverted
+          ? this.rewriter.mkSub(left.term, rhs)
+          : this.rewriter.mkSub(rhs, left.term),
         isInverted: left.isInverted,
       };
     const right = this.isVarPlusGround(rhs);
-    if (right !== undefined && this.isGround(lhs))
+    if (right !== undefined && this.manager.isGround(lhs))
       return {
         variable: right.variable,
-        term: right.isInverted ? this.mkSub(right.term, lhs) : this.mkSub(lhs, right.term),
+        term: right.isInverted
+          ? this.rewriter.mkSub(right.term, lhs)
+          : this.rewriter.mkSub(lhs, right.term),
         isInverted: right.isInverted,
       };
     return undefined;
@@ -342,12 +332,12 @@ export class QuantifierAnalyzer {
     const one = manager.mkNumeralOfSort(Rational.one, manager.sorts[found.term]);
     return {
       variable: found.variable,
-      term: isLe ? this.mkAdd(found.term, one) : this.mkSub(found.term, one),
+      term: isLe ? this.mkAdd(found.term, one) : this.rewriter.mkSub(found.term, one),
     };
   }
 
   private visitFormula(expr: number, polarity: Polarity) {
-    if (this.isGround(expr)) return;
+    if (this.manager.isGround(expr)) return;
     const cache = polarity === "pos" ? this.posCache : this.negCache;
     if (cache.has(expr)) return;
     this.ftodo.push([expr, polarity]);
@@ -355,7 +345,7 @@ export class QuantifierAnalyzer {
   }
 
   private visitTerm(expr: number) {
-    if (this.isGround(expr) || this.posCache.has(expr)) return;
+    if (this.manager.isGround(expr) || this.posCache.has(expr)) return;
     this.ttodo.push(expr);
     this.posCache.add(expr);
   }
@@ -436,12 +426,13 @@ export class QuantifierAnalyzer {
       ? this.isVarAndVar(manager.getArg(atom, 0), manager.getArg(atom, 1))
       : undefined;
     if (xEqY !== undefined) {
-      if (isNegated)
-        info.insertQInfo(mkVarPair("x_neq_y", manager.values[xEqY[0]], manager.values[xEqY[1]]));
-      else {
-        info.hasXEqY = true;
-        info.insertQInfo(mkVarPair("x_eq_y", manager.values[xEqY[0]], manager.values[xEqY[1]]));
-      }
+      info.insertQInfo(
+        mkVarPair(
+          isNegated ? "x_neq_y" : "x_eq_y",
+          manager.values[xEqY[0]],
+          manager.values[xEqY[1]],
+        ),
+      );
       return;
     }
     const xLeY =
@@ -540,7 +531,7 @@ export class QuantifierAnalyzer {
       for (const literal of literals) {
         const isNegated = manager.isNot(literal);
         const atom = isNegated ? manager.getArg(literal, 0) : literal;
-        if (!this.isGround(atom)) this.processLiteral(atom, isNegated);
+        if (!this.manager.isGround(atom)) this.processLiteral(atom, isNegated);
       }
     } else this.visitFormula(body, "pos");
     while (this.ftodo.length > 0 || this.ttodo.length > 0) {

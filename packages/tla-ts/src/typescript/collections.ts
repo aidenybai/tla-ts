@@ -16,11 +16,9 @@ import { getKind, type Kind } from "./types";
 
 interface Unordered {
   set: string;
-  // Whether map() built the set, so that it may have fewer elements than the array would.
   isMapped: boolean;
 }
 
-// Methods that read their array once, so that sharing it with a LET gains nothing.
 const SINGLE_USE_METHODS = new Set(["concat", "with", "filter"]);
 
 interface Element {
@@ -47,7 +45,6 @@ const rejectIndex = (callback: ts.Expression, message: string, context: Context)
   }
 };
 
-// Binds a callback's element parameter to a fresh variable, which a quantifier then binds.
 const bindElement = (callback: ts.Expression, scope: Scope, context: Context): Element => {
   const parameter = getCallback(callback, context).parameters[0];
   if (parameter === undefined) return { variable: context.names.getFresh("element"), scope };
@@ -60,8 +57,6 @@ const bindElement = (callback: ts.Expression, scope: Scope, context: Context): E
   return { variable, scope: bindNames(scope, [{ name: variable, symbol }]) };
 };
 
-// Binds a callback's (element, index) parameters for the TLA+ index of a sequence, which counts
-// from 1 where JavaScript counts from 0.
 const bindIndexed = (
   callback: ts.Expression,
   element: string | undefined,
@@ -101,7 +96,6 @@ const getElements = (value: string, context: Context) =>
     return `{${sequence}[${index}] : ${index} \\in DOMAIN ${sequence}}`;
   });
 
-// A set built from a Set, Map, or object, whose element order TLA+ doesn't keep.
 const translateUnordered = (
   node: ts.Expression,
   scope: Scope,
@@ -161,7 +155,6 @@ const translateUnordered = (
     : { set: `{${body} : ${element.variable} \\in ${wrap(source.set)}}`, isMapped: true };
 };
 
-// The elements of a set, an array, or an iterator over a collection, as a TLA+ set.
 export const translateSet = (node: ts.Expression, scope: Scope, context: Context) => {
   const unordered = translateUnordered(node, scope, context);
   if (unordered !== undefined) return unordered.set;
@@ -172,7 +165,6 @@ export const translateSet = (node: ts.Expression, scope: Scope, context: Context
   return getElements(value, context);
 };
 
-// The number of elements in a collection, or undefined if the receiver isn't one.
 export const translateSize = (node: ts.Expression, scope: Scope, context: Context) => {
   const unordered = translateUnordered(node, scope, context);
   if (unordered?.isMapped) {
@@ -190,7 +182,6 @@ export const translateSize = (node: ts.Expression, scope: Scope, context: Contex
   return undefined;
 };
 
-// [x \in S |-> e] from source.map((x) => [x, e]), as new Map() and Object.fromEntries() take it.
 export const translateFunctionConstructor = (
   node: ts.Expression,
   scope: Scope,
@@ -230,7 +221,6 @@ export const translateFunctionConstructor = (
   return `[${element.variable} \\in ${source} |-> ${value}]`;
 };
 
-// A sequence from Array.from({ length: n }, callback) or new Array(n).fill(value).
 export const translateArrayConstructor = (node: MethodCall, scope: Scope, context: Context) => {
   const receiver = node.expression.expression;
   const method = node.expression.name.text;
@@ -268,7 +258,6 @@ export const translateArrayConstructor = (node: MethodCall, scope: Scope, contex
   return `[${index} \\in 1..${translateLength(length)} |-> ${translateExpression(node.arguments[0], scope, context)}]`;
 };
 
-// The first index in a sequence whose element passes a test, or undefined if none does.
 const translateFirstIndex = (
   sequence: string,
   callback: ts.Expression,
@@ -289,6 +278,12 @@ const translateFirstIndex = (
   };
 };
 
+const orUndefined = (exists: string, value: string, isDefined: boolean, context: Context) => {
+  if (isDefined) return value;
+  context.prelude.add("Undefined");
+  return `IF ${exists} THEN ${value} ELSE Undefined`;
+};
+
 const translateSequenceOperation = (
   node: MethodCall,
   sequence: string,
@@ -302,14 +297,8 @@ const translateSequenceOperation = (
   const wrapped = wrap(sequence);
   const isNegative = (inner: ts.Expression): inner is ts.PrefixUnaryExpression =>
     ts.isPrefixUnaryExpression(inner) && inner.operator === ts.SyntaxKind.MinusToken;
-  // An index that may count back from the end, as slice() and at() take it.
   const getOffset = (inner: ts.Expression) =>
     isNegative(inner) ? `Len(${sequence}) - ${wrap(translate(inner.operand))}` : translate(inner);
-  const orUndefined = (exists: string, value: string) => {
-    if (isDefined) return value;
-    context.prelude.add("Undefined");
-    return `IF ${exists} THEN ${value} ELSE Undefined`;
-  };
   const translateEach = (format: (index: string, body: string) => string) => () => {
     const index = context.names.getFresh("index");
     const inner = bindIndexed(argument, `${wrapped}[${index}]`, index, scope, context);
@@ -322,7 +311,12 @@ const translateSequenceOperation = (
         const index = isNegative(argument)
           ? `${getOffset(argument)} + 1`
           : `${wrap(translate(argument))} + 1`;
-        return orUndefined(`${index} \\in DOMAIN ${wrapped}`, `${wrapped}[${index}]`);
+        return orUndefined(
+          `${index} \\in DOMAIN ${wrapped}`,
+          `${wrapped}[${index}]`,
+          isDefined,
+          context,
+        );
       },
     ],
     [
@@ -395,7 +389,7 @@ const translateSequenceOperation = (
       "find",
       () => {
         const result = translateFirstIndex(sequence, argument, scope, context);
-        return orUndefined(result.exists, `${wrapped}[${result.first}]`);
+        return orUndefined(result.exists, `${wrapped}[${result.first}]`, isDefined, context);
       },
     ],
     [
@@ -433,9 +427,7 @@ const translateUnorderedMethod = (
   const binding = `${element.variable} \\in ${wrap(source.set)} : ${body}`;
   if (method === "every") return `\\A ${binding}`;
   if (method === "some") return `\\E ${binding}`;
-  if (isDefined) return `CHOOSE ${binding}`;
-  context.prelude.add("Undefined");
-  return `IF \\E ${binding} THEN CHOOSE ${binding} ELSE Undefined`;
+  return orUndefined(`\\E ${binding}`, `CHOOSE ${binding}`, isDefined, context);
 };
 
 const translateSetMethod = (node: MethodCall, scope: Scope, context: Context) => {
@@ -458,6 +450,8 @@ const translateSetMethod = (node: MethodCall, scope: Scope, context: Context) =>
   const operation = operations.get(method);
   if (operation === undefined)
     throw new TlaTypeScriptError(`Unsupported Set method: ${method}`, node);
+  if (node.arguments[0] === undefined)
+    throw new TlaTypeScriptError(`Set method needs an argument: ${method}`, node);
   return operation;
 };
 
@@ -473,19 +467,27 @@ const translateMapMethod = (
     node.arguments[0] === undefined
       ? ""
       : wrap(translateExpression(node.arguments[0], scope, context));
+  if (method !== "has" && method !== "get")
+    throw new TlaTypeScriptError(`Unsupported Map method: ${method}`, node);
+  if (node.arguments[0] === undefined)
+    throw new TlaTypeScriptError(`Map method needs a key: ${method}`, node);
   if (method === "has") return `${key} \\in DOMAIN ${map}`;
-  if (method !== "get") throw new TlaTypeScriptError(`Unsupported Map method: ${method}`, node);
   if (isDefined) return `${map}[${key}]`;
-  context.prelude.add("Undefined");
   return share(map, "map", context, (sharedMap) =>
-    share(
-      key,
-      "key",
-      context,
-      (sharedKey) =>
-        `IF ${sharedKey} \\in DOMAIN ${sharedMap} THEN ${sharedMap}[${sharedKey}] ELSE Undefined`,
+    share(key, "key", context, (sharedKey) =>
+      orUndefined(
+        `${sharedKey} \\in DOMAIN ${sharedMap}`,
+        `${sharedMap}[${sharedKey}]`,
+        isDefined,
+        context,
+      ),
     ),
   );
+};
+
+export const REMOVALS = {
+  pop: (current: string) => `SubSeq(${current}, 1, Len(${current}) - 1)`,
+  shift: (current: string) => `Tail(${current})`,
 };
 
 const UPDATES = new Map<Kind, Map<string, Update>>([
@@ -500,8 +502,8 @@ const UPDATES = new Map<Kind, Map<string, Update>>([
             : `${wrap(current)} \\o <<${values.join(", ")}>>`,
       ],
       ["unshift", (current, values) => `<<${values.join(", ")}>> \\o ${wrap(current)}`],
-      ["pop", (current) => `SubSeq(${current}, 1, Len(${current}) - 1)`],
-      ["shift", (current) => `Tail(${current})`],
+      ["pop", REMOVALS.pop],
+      ["shift", REMOVALS.shift],
     ]),
   ],
   [
@@ -532,8 +534,6 @@ export const MUTATING_METHODS = new Set(
   [...UPDATES.values()].flatMap((updates) => [...updates.keys()]),
 );
 
-// The value of a collection after a mutating method call, or undefined if the method doesn't
-// mutate.
 export const getUpdatedValue = (
   current: string,
   kind: Kind,
@@ -556,7 +556,6 @@ export const translateMethod = (
   if (unordered !== undefined) {
     return translateUnorderedMethod(node, unordered, scope, context, isDefined);
   }
-  // A mutating method on a fresh copy, such as new Set(s).add(x), returns the updated copy.
   const isCopy =
     ts.isNewExpression(receiver) &&
     receiver.arguments?.length === 1 &&

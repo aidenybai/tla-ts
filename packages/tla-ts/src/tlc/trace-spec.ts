@@ -1,4 +1,6 @@
+import { getJavaHashCode } from "../java-hash";
 import { formatValue, type Value } from "../values";
+import { zeroPad } from "./messages";
 
 interface TraceSpecInput {
   module: string;
@@ -10,45 +12,33 @@ interface TraceSpecInput {
   isDefined: (name: string) => boolean;
 }
 
-interface TraceState {
-  values: [string, string][];
-  number: number;
-  isStuttering: boolean;
-  isBackToState: boolean;
-}
-
 const INDENT = "    ";
 const SEPARATOR = "\n----\n";
 const CLOSING_TAG = `${"=".repeat(77)}\n`;
 const LASSO_START = "_TTraceLassoStart";
 const LASSO_END = "_TTraceLassoEnd";
 
-const getJavaHash = (text: string) => {
-  const hash = text
-    .split("")
-    .reduce((current, unit) => (Math.imul(current, 31) + unit.charCodeAt(0)) | 0, 0);
+const getHashMapHash = (text: string) => {
+  const hash = getJavaHashCode(text);
   return hash ^ (hash >>> 16);
 };
 
-// TLC lists the modules and the variables in the order a Java HashSet or HashMap iterates them.
 const getHashOrder = (names: string[]) => {
   const unique = [...new Set(names)];
   const capacity = 2 ** Math.max(4, Math.ceil(Math.log2(unique.length / 0.75)));
   return unique
-    .map((name, index) => ({ name, index, bucket: getJavaHash(name) & (capacity - 1) }))
+    .map((name, index) => ({ name, index, bucket: getHashMapHash(name) & (capacity - 1) }))
     .sort((left, right) => left.bucket - right.bucket || left.index - right.index)
     .map((entry) => entry.name);
 };
 
 const formatJavaDate = (date: Date) => {
-  const pad = (value: number) => String(value).padStart(2, "0");
   const getPart = (options: Intl.DateTimeFormatOptions, type: Intl.DateTimeFormatPartTypes) =>
     new Intl.DateTimeFormat("en-US", options).formatToParts(date).find((part) => part.type === type)
       ?.value;
-  return `${getPart({ weekday: "short" }, "weekday")} ${getPart({ month: "short" }, "month")} ${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())} ${getPart({ timeZoneName: "short" }, "timeZoneName")} ${date.getFullYear()}`;
+  return `${getPart({ weekday: "short" }, "weekday")} ${getPart({ month: "short" }, "month")} ${zeroPad(date.getDate())} ${zeroPad(date.getHours())}:${zeroPad(date.getMinutes())}:${zeroPad(date.getSeconds())} ${getPart({ timeZoneName: "short" }, "timeZoneName")} ${date.getFullYear()}`;
 };
 
-// Java's String#split drops the empty strings at the end.
 const splitLines = (text: string) => {
   const lines = text.split("\n");
   while (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
@@ -63,11 +53,11 @@ const indent = (text: string, depth: number) => {
 const getPrimer = (module: string, extendedModules: string[]) =>
   `---- MODULE ${module} ----\nEXTENDS ${extendedModules.join(", ")}\n\n`;
 
-const getConjunction = (state: TraceState, prefix?: string) =>
+const getConjunction = (state: [string, string][], prefix?: string) =>
   indent(
     [
       ...(prefix === undefined ? [] : [prefix]),
-      ...state.values.map(([name, value]) => `${name} = (${value})`),
+      ...state.map(([name, value]) => `${name} = (${value})`),
     ].join("\n/\\\n"),
     2,
   );
@@ -111,26 +101,18 @@ ${examples}`;
 
 export const writeTraceSpec = (input: TraceSpecInput) => {
   const loopStart = input.loopStart;
-  const states = input.states.map((state, index): TraceState => ({
-    values: getHashOrder(Object.keys(state)).map((name) => [name, formatValue(state[name])]),
-    number: index + 1,
-    isStuttering: false,
-    isBackToState: false,
-  }));
-  const trace =
-    loopStart === undefined
-      ? states
-      : [
-          ...states,
-          loopStart === states.length - 1
-            ? { ...states[loopStart], isStuttering: true }
-            : { ...states[loopStart], isBackToState: true },
-        ];
-  if (trace.length <= 1) return undefined;
+  const states = input.states.map((state) =>
+    getHashOrder(Object.keys(state)).map((name): [string, string] => [
+      name,
+      formatValue(state[name]),
+    ]),
+  );
+  if (states.length + (loopStart === undefined ? 0 : 1) <= 1) return undefined;
   const variables = Object.keys(input.states[0]);
   const specName = input.specName;
-  const final = trace[trace.length - 1];
-  const isLasso = final.isBackToState;
+  const final = states[states.length - 1];
+  const isStuttering = loopStart === states.length - 1;
+  const isLasso = loopStart !== undefined && !isStuttering;
 
   const declaredNames = new Set(input.rawConstants.map((line) => line.split(" = ")[0]));
   const constantLines = [
@@ -138,7 +120,7 @@ export const writeTraceSpec = (input: TraceSpecInput) => {
     ...input.modelValues
       .filter((name) => !declaredNames.has(name))
       .map((name) => indent(`${name} = ${name}`, 1)),
-    ...(isLasso ? [`${LASSO_START} = ${final.number}`, `${LASSO_END} = ${trace.length - 1}`] : []),
+    ...(isLasso ? [`${LASSO_START} = ${loopStart + 1}`, `${LASSO_END} = ${states.length}`] : []),
   ];
   const teConstants = [
     ...input.modelValues.filter((name) => !input.isDefined(name)),
@@ -160,16 +142,16 @@ export const writeTraceSpec = (input: TraceSpecInput) => {
   const expressionModule = `${specName}_TEExpression`;
   const traceModule = `${specName}_TETrace`;
 
-  const property = final.isStuttering
+  const property = isStuttering
     ? {
         config: "\nPROPERTY\n    _prop\n",
-        definition: `\n_prop ==\n${INDENT}~<>[](\n${getConjunction(trace[trace.length - 2])}\n${INDENT})`,
+        definition: `\n_prop ==\n${INDENT}~<>[](\n${getConjunction(final)}\n${INDENT})`,
       }
     : isLasso
       ? {
           config: "\nPROPERTY\n    _prop\n",
           definition: `\n_prop ==\n${indent(
-            `~(([]<>(\n${getConjunction(trace[trace.length - 2])}\n))/\\([]<>(\n${getConjunction(trace[final.number - 1])}\n)))`,
+            `~(([]<>(\n${getConjunction(final)}\n))/\\([]<>(\n${getConjunction(states[loopStart])}\n)))`,
             1,
           )}`,
         }
@@ -198,13 +180,8 @@ ${lassoStep}${variables
     \\*         IN J!JsonSerialize("${input.module}.json", _TETrace)
 
 `;
-  const statesWithoutLasso = trace.filter((state) => !state.isBackToState && !state.isStuttering);
-  // TLC adds a view when a state appears twice before the lasso closes, so that TLCGet("level")
-  // tells the copies apart.
   const isViewed =
-    isLasso &&
-    new Set(statesWithoutLasso.map((state) => JSON.stringify(state.values))).size <
-      statesWithoutLasso.length;
+    isLasso && new Set(states.map((state) => JSON.stringify(state))).size < states.length;
   const view = isViewed
     ? {
         config: "\nVIEW\n    _view\n",
@@ -212,10 +189,9 @@ ${lassoStep}${variables
       }
     : { config: "", definition: "" };
   const deserializedTrace = `\n${getPrimer(traceModule, getHashOrder(["IOUtils", ...constantModules, specName]))}trace == IODeserialize("${input.module}.bin", TRUE)\n\n${CLOSING_TAG}`;
-  const traceFunction = `${INDENT}<<\n${statesWithoutLasso
+  const traceFunction = `${INDENT}<<\n${states
     .map(
-      (state) =>
-        `${INDENT}([${state.values.map(([name, value]) => `${name} |-> ${value}`).join(",")}])`,
+      (state) => `${INDENT}([${state.map(([name, value]) => `${name} |-> ${value}`).join(",")}])`,
     )
     .join(",\n")}\n${INDENT}>>${SEPARATOR}\n`;
 

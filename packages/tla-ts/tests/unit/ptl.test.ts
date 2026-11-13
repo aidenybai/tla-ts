@@ -6,7 +6,6 @@ import { encodeForBackend } from "../../src/prover/prove";
 
 const OPTIONS = { timeLimitMs: 10_000 };
 
-// The LS4 input for the obligation whose last hypothesis cites PTL.
 const getInput = (theorem: string[]) => {
   const source = [
     "---- MODULE M ----",
@@ -28,7 +27,6 @@ const getInput = (theorem: string[]) => {
   return encodeForBackend(cited, "ls4", { caseErrors: 0 });
 };
 
-// tlapm proves exactly the obligations expected to be unsat.
 const getVerdict = (theorem: string[]) => decidePtl(getInput(theorem), OPTIONS);
 
 const INDUCTION = [

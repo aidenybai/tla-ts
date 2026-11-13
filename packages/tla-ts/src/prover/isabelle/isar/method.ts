@@ -1,6 +1,4 @@
-// Ported from Isabelle2025's Pure/Isar/method.ML, Pure/goal.ML, Pure/Isar/local_defs.ML and the
-// methods the theories tlapm writes use. Copyright (c) 1986-2025 University of Cambridge,
-// Technische Universitaet Muenchen, and contributors, see LICENSE.
+// Ported from Isabelle2025's Pure/Isar/method.ML and Pure/goal.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import {
@@ -13,8 +11,8 @@ import {
   reflexiveThm,
   termI,
 } from "../pure/drule";
-import { isEquals, listImplies, stripImpPrems, stripAssumsConcl } from "../pure/logic";
-import { addSimps, congKey, emptySimpset, type Simpset } from "../pure/raw-simplifier";
+import { isEquals, isImplies, listImplies, stripImpPrems, stripAssumsConcl } from "../pure/logic";
+import { addSimps, congKey, makeSimpContext, type Simpset } from "../pure/raw-simplifier";
 import { updateTable } from "../pure/table";
 import { genericRewriteGoalTac, rewriteCterm, simpleProver } from "../pure/rewriter";
 import { appendSeq, emptySeq, mapSeq, mapsSeq, ofCell, singleSeq, type Seq } from "../pure/seq";
@@ -32,6 +30,7 @@ import {
 } from "../pure/tactic";
 import {
   allGoals,
+  allTac,
   appendGoal,
   changedProp,
   noTac,
@@ -97,7 +96,7 @@ import { getThms, parseFactReferences } from "./attrib";
 import type { IsarContext } from "./context";
 import { casesMethod, type InductData } from "./induct";
 import { insertTac } from "./proof";
-import type { MethodText, OuterToken } from "./theory";
+import { syntaxError, type MethodText, type OuterToken } from "./theory";
 
 export interface ProofContext {
   readonly limits: Limits;
@@ -136,12 +135,6 @@ interface Modifier {
   readonly kind: "intro" | "dest" | "simp";
   readonly facts: readonly Thm[];
 }
-
-const syntaxError = (token: OuterToken | undefined) =>
-  new TlaIsabelleError(
-    "ERROR",
-    `Outer syntax error at: ${token === undefined ? "end of input" : token.text}`,
-  );
 
 // Method.sections: each modifier, such as "simp add:", takes the facts up to the next one.
 const parseModifiers = (isar: IsarContext, args: readonly OuterToken[]): Modifier[] => {
@@ -217,13 +210,12 @@ const simpleMethodHead = (context: ProofContext, facts: readonly Thm[], tactic: 
   thenGoal((index) => insertTac(context.limits, facts, index), tactic)(1);
 
 export const normHhfTac = (limits: Limits): GoalTactic => {
-  const empty = { limits, simpset: emptySimpset, bounds: 0 };
-  const context = { ...empty, simpset: addSimps(empty, [normHhfEq]) };
+  const context = makeSimpContext(limits, [normHhfEq]);
   return thenGoal(
     resolveTac(limits, [asmRl]),
     subgoal((goal, index) =>
       isNormHhf(false, goal)
-        ? (state) => singleSeq(state)
+        ? allTac
         : genericRewriteGoalTac(
             { simprem: true, useprem: false, mutsimp: false },
             () => undefined,
@@ -366,16 +358,19 @@ const liftAll = (index: number, state: Thm, fact: Thm): Thm => {
 // Local_Defs.meta_rewrite_conv: object-level equations and implications become meta-level ones,
 // and Drule.equals_cong leaves meta-level equations alone.
 export const metaRewriteConv = (context: ProofContext, term: Term): Thm => {
-  const empty = { limits: context.limits, simpset: emptySimpset, bounds: 0 };
-  const simpset = addSimps(empty, context.defnRules);
+  const defnContext = makeSimpContext(context.limits, context.defnRules);
   return rewriteCterm(
     { simprem: false, useprem: false, mutsimp: false },
     () => undefined,
     {
-      ...empty,
+      ...defnContext,
       simpset: {
-        ...simpset,
-        congs: updateTable(simpset.congs, congKey({ isConst: true, name: "Pure.eq" }), equalsCong),
+        ...defnContext.simpset,
+        congs: updateTable(
+          defnContext.simpset.congs,
+          congKey({ isConst: true, name: "Pure.eq" }),
+          equalsCong,
+        ),
       },
     },
     term,
@@ -385,12 +380,6 @@ export const metaRewriteConv = (context: ProofContext, term: Term): Thm => {
 const metaRewriteRule = (context: ProofContext, thm: Thm): Thm =>
   fconvRule((term) => metaRewriteConv(context, term), thm);
 
-const initSimpset = (limits: Limits, rules: readonly Thm[]) => ({
-  limits,
-  simpset: addSimps({ limits, simpset: emptySimpset, bounds: 0 }, rules),
-  bounds: 0,
-});
-
 export const rewriteRule = (limits: Limits, rules: readonly Thm[], thm: Thm): Thm =>
   rules.length === 0
     ? thm
@@ -399,7 +388,7 @@ export const rewriteRule = (limits: Limits, rules: readonly Thm[], thm: Thm): Th
           rewriteCterm(
             { simprem: true, useprem: false, mutsimp: false },
             simpleProver,
-            initSimpset(limits, rules),
+            makeSimpContext(limits, rules),
             term,
           ),
         thm,
@@ -411,7 +400,7 @@ const rewriteGoalsRule = (limits: Limits, rules: readonly Thm[], state: Thm): Th
       rewriteCterm(
         { simprem: true, useprem: true, mutsimp: true },
         simpleProver,
-        initSimpset(limits, rules),
+        makeSimpContext(limits, rules),
         term,
       ),
     ),
@@ -447,11 +436,8 @@ const assumeRuleTac = (limits: Limits): GoalTactic =>
       );
       const rules = stripImpPrems(body).filter(
         (prem) =>
-          prem.kind === "App" &&
-          ((prem.fun.kind === "App" &&
-            prem.fun.fun.kind === "Const" &&
-            prem.fun.fun.name === "Pure.imp") ||
-            (prem.fun.kind === "Const" && prem.fun.name === "Pure.all")),
+          isImplies(prem) ||
+          (prem.kind === "App" && prem.fun.kind === "Const" && prem.fun.name === "Pure.all"),
       );
       return rules.reduceRight<GoalTactic>(
         (tactic, rule) =>

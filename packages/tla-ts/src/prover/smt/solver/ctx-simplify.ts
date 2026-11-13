@@ -1,5 +1,4 @@
-// Ported from Z3 (src/tactic/core/ctx_simplify_tactic.cpp, src/ast/num_occurs.cpp,
-// src/tactic/goal_num_occurs.cpp), MIT license, see z3-license.txt.
+// Ported from Z3 (src/tactic/core/ctx_simplify_tactic.cpp, src/ast/num_occurs.cpp, src/tactic/goal_num_occurs.cpp), MIT license, see z3-license.txt.
 import { KIND_APP, OP_AND, OP_EQ, OP_ITE, OP_OR, type AstManager } from "./ast";
 import type { Goal } from "./goal";
 import { RefVector } from "./ref-vector";
@@ -34,33 +33,30 @@ class CtxSimplifier {
   }
 
   apply(goal: Goal) {
-    const manager = this.manager;
     if (goal.isInconsistent) return;
     this.countOccurrences(goal);
     const size = goal.forms.size;
-    for (let index = 0; !goal.isInconsistent && index < size; index++) {
-      this.depth = 0;
-      const result = this.simplify(goal.forms.items[index]);
-      if (index < size - 1 && !manager.isTrue(result) && !manager.isFalse(result))
-        this.assertExpr(result, false);
-      goal.update(index, result);
-      manager.decRef(result);
-    }
+    for (let index = 0; !goal.isInconsistent && index < size; index++)
+      this.simplifyForm(goal, index, index < size - 1);
     this.pop(this.scopes.length);
     this.countOccurrences(goal);
     for (let index = goal.forms.size; !goal.isInconsistent && index > 0;) {
-      this.depth = 0;
       index--;
-      const result = this.simplify(goal.forms.items[index]);
-      if (index > 0 && !manager.isTrue(result) && !manager.isFalse(result))
-        this.assertExpr(result, false);
-      goal.update(index, result);
-      manager.decRef(result);
+      this.simplifyForm(goal, index, index > 0);
     }
     this.pop(this.scopes.length);
   }
 
-  // cleanup: ~imp releases the cache, and then goal_num_occurs its formulas.
+  private simplifyForm(goal: Goal, index: number, isAsserted: boolean) {
+    const manager = this.manager;
+    this.depth = 0;
+    const result = this.simplify(goal.forms.items[index]);
+    if (isAsserted && !manager.isTrue(result) && !manager.isFalse(result))
+      this.assertExpr(result, false);
+    goal.update(index, result);
+    manager.decRef(result);
+  }
+
   release() {
     this.restoreCache(0);
     this.pinned.reset();
@@ -123,7 +119,6 @@ class CtxSimplifier {
     this.trail.push(term);
   }
 
-  // pop: the assertions of the scopes, and then the results cached in them, the innermost first.
   private pop(numScopes: number) {
     if (numScopes === 0) return;
     let level = this.scopes.length;
@@ -172,7 +167,6 @@ class CtxSimplifier {
     return this.manager.withTemporaries(() => this.rewriter.mkApp(decl, args, sort));
   }
 
-  // The result comes with a reference, which the caller releases.
   private simplify(expr: number): number {
     const manager = this.manager;
     if (

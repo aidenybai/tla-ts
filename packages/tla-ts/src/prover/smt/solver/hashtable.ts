@@ -1,5 +1,4 @@
-// Ported from Z3 (src/util/hashtable.h, src/util/obj_hashtable.h), MIT license, see
-// z3-license.txt. The model finder depends on the slot order, so the AST maps Z3 iterates use this.
+// Ported from Z3 (src/util/hashtable.h, src/util/obj_hashtable.h), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 
 const INITIAL_CAPACITY = 8;
@@ -66,7 +65,6 @@ export class ObjMap<V> {
     return slot === -1 ? undefined : this.slotValues[slot];
   }
 
-  // Unlike insert, never grows the table.
   replace(key: number, value: V) {
     const slot = this.findSlot(key);
     if (slot !== -1) this.slotValues[slot] = value;
@@ -111,7 +109,6 @@ export class ObjMap<V> {
       this.moveTable(this.capacity);
   }
 
-  // reset: empties the table, halving it when most slots were in use.
   clear() {
     if (this.size === 0 && this.numDeleted === 0) return;
     let overhead = 0;

@@ -17,7 +17,6 @@ import { NULL_VAR, type Polynomial, PolynomialCache, PolynomialManager } from ".
 import { NlsatTranscendentals } from "./transcendentals";
 import { type Clause, type IneqAtom, type IneqKind, isIneqAtom, type RootKind } from "./types";
 
-// Past every Boolean variable.
 const NULL_BOOL_VAR = Infinity;
 
 const RESTART_THRESHOLD = 10000;
@@ -68,7 +67,6 @@ export class NlsatSolver {
   private watches: Clause[][] = [];
   private infeasible: (IntervalSet | null)[] = [];
   private var2eq: (IneqAtom | null)[] = [];
-  // perm: internal to external variables. invPerm: external to internal.
   private perm: number[] = [];
   private invPerm: number[] = [];
   readonly explain = new Explain(this.pm, this.am, this.cache, {
@@ -105,14 +103,12 @@ export class NlsatSolver {
     irrationalAssignments: 0,
   };
 
-  // Z3 sets the solver's own budget with a scoped_rlimit on a child limit.
   steps = 0;
 
   constructor(
     private limit: ResourceLimit | null = null,
     private budget = Infinity,
   ) {
-    // mk_true_bvar: the clause [true], whose literal the first Boolean stage assigns.
     this.mkClause([TRUE_LITERAL], false, null);
   }
 
@@ -202,7 +198,6 @@ export class NlsatSolver {
     this.mkClause(literals, false, assumption === null ? null : mkLeaf(assumption));
   }
 
-  // Zero when unassigned.
   getValue(variable: number) {
     return this.assignment[variable] ?? new Anum(Rational.zero);
   }
@@ -211,17 +206,8 @@ export class NlsatSolver {
     return linearize([this.lemmaAssumptions]);
   }
 
-  private getMaxVar(clause: Clause) {
-    let result = NULL_VAR;
-    for (const literal of clause.literals) {
-      const atom = this.atoms.getAtom(literal);
-      if (atom !== null && (result === NULL_VAR || atom.maxVar > result)) result = atom.maxVar;
-    }
-    return result;
-  }
-
   private getClauseDegree(clause: Clause) {
-    if (this.getMaxVar(clause) === NULL_VAR) return 0;
+    if (this.atoms.getMaxVarOfLiterals(clause.literals) === NULL_VAR) return 0;
     let max = 0;
     for (const literal of clause.literals) {
       const atom = this.atoms.getAtom(literal);
@@ -230,8 +216,6 @@ export class NlsatSolver {
     return max;
   }
 
-  // lit_lt: Boolean literals first, then by maximal variable, degree, inequalities before
-  // equations, and index.
   private compareLiterals(first: number, second: number) {
     const firstAtom = this.atoms.getAtom(first);
     const secondAtom = this.atoms.getAtom(second);
@@ -250,7 +234,7 @@ export class NlsatSolver {
   }
 
   private mkClause(literals: readonly number[], isLearned: boolean, assumptions: Dependency) {
-    const clause: Clause = {
+    const clause = {
       id: this.nextClauseId++,
       literals: literals.length === 0 ? [FALSE_LITERAL] : [...literals],
       isLearned,
@@ -265,13 +249,13 @@ export class NlsatSolver {
   }
 
   private addClauseToWatches(clause: Clause) {
-    const variable = this.getMaxVar(clause);
+    const variable = this.atoms.getMaxVarOfLiterals(clause.literals);
     if (variable !== NULL_VAR) this.watches[variable].push(clause);
     else this.bwatches[Math.max(...clause.literals.map((literal) => literal >> 1))].push(clause);
   }
 
   private delClause(clause: Clause) {
-    const variable = this.getMaxVar(clause);
+    const variable = this.atoms.getMaxVarOfLiterals(clause.literals);
     const watches =
       variable !== NULL_VAR
         ? this.watches[variable]
@@ -609,7 +593,6 @@ export class NlsatSolver {
     this.assignment.length = 0;
   }
 
-  // The variables are reordered for the search and restored after it.
   check() {
     this.initSearch();
     this.explain.isFullDimensional = this.clauses.every((clause) =>
@@ -854,7 +837,6 @@ export class NlsatSolver {
     } else this.resetMarks();
   }
 
-  // False when the lemma is empty.
   private resolve(conflict: Clause) {
     let conflictClause = conflict;
     while (true) {
@@ -873,8 +855,6 @@ export class NlsatSolver {
     }
   }
 
-  // The body of resolve for one conflict: null for the empty lemma, true when the conflict clause
-  // itself is the lemma and now propagates, else the learned clause.
   private learn(conflict: Clause): Clause | true | null {
     this.resolveClause(-1, conflict);
     let top = this.trail.length;
@@ -926,18 +906,13 @@ export class NlsatSolver {
     this.resetMarks();
     const literals = this.lemma.literals;
     if (!isDecision) {
-      let maxVar = NULL_VAR;
-      for (const literal of literals) {
-        const variable = this.atoms.getMaxVar(literal);
-        if (variable !== NULL_VAR && (maxVar === NULL_VAR || variable > maxVar)) maxVar = variable;
-      }
-      this.undoUntilStage(maxVar);
+      this.undoUntilStage(this.atoms.getMaxVarOfLiterals(literals));
       return this.mkClause(literals, true, this.lemmaAssumptions);
     }
     if (literals.every((literal) => this.atoms.getAtom(literal) === null)) {
       const boolVar = literals[literals.length - 1] >> 1;
       this.undoUntil(() => this.bvalues[boolVar] !== L_UNDEF);
-    } else this.undoUntilLevel(this.findNewLevel(literals));
+    } else this.undoUntilLevel(this.findNewLevelArithLemma(literals));
     if (
       literals.length === conflict.literals.length &&
       literals.every((literal, index) => literal === conflict.literals[index])
@@ -948,7 +923,7 @@ export class NlsatSolver {
     return this.mkClause(literals, true, this.lemmaAssumptions);
   }
 
-  private findNewLevel(literals: readonly number[]) {
+  private findNewLevelArithLemma(literals: readonly number[]) {
     let level = -1;
     for (const literal of literals.slice(0, -1))
       if (this.atoms.getMaxVar(literal) === this.xk)
@@ -956,14 +931,17 @@ export class NlsatSolver {
     return level === -1 ? this.scopeLevel - 1 : level;
   }
 
+  private isRootLiteral(literal: number) {
+    const atom = this.atoms.getAtom(literal);
+    return atom !== null && !isIneqAtom(atom);
+  }
+
   private canReorder() {
     return (
       this.isReordering &&
       this.maxVar === NULL_VAR &&
       [...this.learned, ...this.clauses].every((clause) =>
-        clause.literals.every(
-          (literal) => this.atoms.getAtom(literal)?.kind.startsWith("ROOT") !== true,
-        ),
+        clause.literals.every((literal) => !this.isRootLiteral(literal)),
       )
     );
   }
@@ -975,7 +953,6 @@ export class NlsatSolver {
     this.isReordered = true;
   }
 
-  // heuristic_reorder: higher maximal degree first, then more occurrences, then a random order.
   private reorderHeuristically() {
     const count = this.isInt.length;
     const maxDegrees = Array.from({ length: count }, () => 0);
@@ -1014,8 +991,7 @@ export class NlsatSolver {
   reorder(permutation: readonly number[]) {
     let kept = 0;
     for (const clause of this.learned) {
-      if (clause.literals.some((literal) => this.atoms.getAtom(literal)?.kind.startsWith("ROOT")))
-        this.delClause(clause);
+      if (clause.literals.some((literal) => this.isRootLiteral(literal))) this.delClause(clause);
       else this.learned[kept++] = clause;
     }
     this.learned.length = kept;
@@ -1029,11 +1005,12 @@ export class NlsatSolver {
     const invPerm = this.invPerm.map((variable) => permutation[variable]);
     for (const [external, internal] of invPerm.entries()) this.perm[internal] = external;
     const isInt = [...this.isInt];
-    for (const [variable, flag] of isInt.entries()) this.isInt[permutation[variable]] = flag;
+    for (const [variable, isIntVariable] of isInt.entries())
+      this.isInt[permutation[variable]] = isIntVariable;
     this.invPerm = invPerm;
     const polynomials = new Set<Polynomial>();
     for (const atom of this.atoms.atoms) {
-      if (atom === null || atom === undefined) continue;
+      if (atom === null) continue;
       if (isIneqAtom(atom)) for (const polynomial of atom.polynomials) polynomials.add(polynomial);
       else polynomials.add(atom.polynomial);
     }
@@ -1055,7 +1032,7 @@ export class NlsatSolver {
 
   private reattachArithClauses(clauses: readonly Clause[]) {
     for (const clause of clauses) {
-      const variable = this.getMaxVar(clause);
+      const variable = this.atoms.getMaxVarOfLiterals(clause.literals);
       if (variable !== NULL_VAR) this.watches[variable].push(clause);
     }
   }

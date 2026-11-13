@@ -4,6 +4,7 @@ import { TlapmBugError, TlaProofError } from "../errors";
 import { consSubstitution, normalizeApply, shift, shiftExpr, substituteExpr } from "./substitution";
 import { isEqualExpr } from "./equality";
 import {
+  AT_NOWHERE,
   adjoin,
   adjoinAll,
   applyBuiltin,
@@ -18,6 +19,7 @@ import {
   getLocalDefn,
   getLocusPrefix,
   getScopeAt,
+  getTrue,
   mapAccumulate,
   mapBoundDomains,
   mapScoped,
@@ -53,7 +55,7 @@ import {
 
 const DUMMY_FACT: Hyp = {
   kind: "Fact",
-  expression: { kind: "At", isExcept: false },
+  expression: AT_NOWHERE,
   visibility: "Visible",
   time: "Always",
 };
@@ -85,20 +87,19 @@ export const createAnonymizer = (
   ) => Defn[],
   onWarning: Warn,
 ) => {
-  // Elab.desugar's current_at: the value @ stands for inside an EXCEPT, and the context size there.
   let currentAt: { expression: Expr; size: number } | undefined;
 
   const getContext = (scope: Scope | undefined): AnonContext => ({ warnedSteps: [], scope });
 
   const getSize = (context: AnonContext) => context.scope?.size ?? 0;
 
-  const expr = (context: AnonContext, expression: Expr): Expr => {
+  const anonymizeExpr = (context: AnonContext, expression: Expr): Expr => {
     if (expression.kind === "At" && expression.isExcept) {
       if (!currentAt) return expression;
       return shiftExpr(getSize(context) - currentAt.size, currentAt.expression);
     }
-    if (expression.kind !== "Except") return anonCore(context, expression);
-    const base = expr(context, expression.function);
+    if (expression.kind !== "Except") return anonymizeCore(context, expression);
+    const base = anonymizeExpr(context, expression.function);
     return expression.specs.reduce((result, spec) => {
       const [path, trail] = mapAccumulate(
         result,
@@ -107,7 +108,7 @@ export const createAnonymizer = (
           if (point.kind === "Dot") {
             return [at({ kind: "Dot", expression: current, field: point.field }, current), point];
           }
-          const key = expr(context, point.expression);
+          const key = anonymizeExpr(context, point.expression);
           return [
             at({ kind: "FcnApp", function: current, args: [key] }, current),
             { kind: "Apply", expression: key },
@@ -116,25 +117,25 @@ export const createAnonymizer = (
       );
       const saved = currentAt;
       currentAt = { expression: path, size: getSize(context) };
-      const value = expr(context, spec.value);
+      const value = anonymizeExpr(context, spec.value);
       currentAt = saved;
       return at({ kind: "Except", function: result, specs: [{ trail, value }] }, expression);
     }, base);
   };
 
-  const anonApply = (index: number, args: Expr[], from: Expr): Expr => {
+  const createAnonApply = (index: number, args: Expr[], from: Expr): Expr => {
     const indexed = at({ kind: "Ix", index }, from);
     return args.length === 0 ? indexed : at({ kind: "Apply", operator: indexed, args }, from);
   };
 
-  const standardForm = (
+  const createStandardForm = (
     index: number,
     whereDefined: WhereDefined,
     body: Expr,
     args: Expr[],
     from: Expr,
   ): Expr => {
-    if (whereDefined !== "Builtin") return anonApply(index, args, from);
+    if (whereDefined !== "Builtin") return createAnonApply(index, args, from);
     const shifted = shiftExpr(index, body);
     return at(args.length === 0 ? shifted : normalizeApply(shifted, args), from);
   };
@@ -152,17 +153,17 @@ export const createAnonymizer = (
       case "Defn": {
         const definition = hyp.definition;
         if (definition.kind === "Operator") {
-          return standardForm(index, hyp.whereDefined, definition.body, args, from);
+          return createStandardForm(index, hyp.whereDefined, definition.body, args, from);
         }
         if (definition.kind === "Recursive") {
           const message = "Recursive operators not supported by TLAPS";
           onWarning(getErrorSetting(hyp.location, message));
           throw new TlaProofError(message, { failure: "Expr.Anon: Recursive" });
         }
-        return anonApply(index, args, from);
+        return createAnonApply(index, args, from);
       }
       case "Fresh":
-        return anonApply(index, args, from);
+        return createAnonApply(index, args, from);
       case "Flex":
         if (args.length > 0)
           throw new TlapmBugError(
@@ -176,7 +177,6 @@ export const createAnonymizer = (
     }
   };
 
-  // Expr.Anon's check: a prefix that names nothing joins the next label, as in an instance path.
   const resolveBang = (
     context: AnonContext,
     prefix: string,
@@ -189,7 +189,7 @@ export const createAnonymizer = (
     if (!found) {
       const [selector, ...rest] = selectors;
       if (selector?.kind === "Label") {
-        const labelArgs = selector.args.map((arg) => expr(context, arg));
+        const labelArgs = selector.args.map((arg) => anonymizeExpr(context, arg));
         return resolveBang(
           context,
           `${prefix}!${selector.label}`,
@@ -224,26 +224,26 @@ export const createAnonymizer = (
     if (selectors.length === 0 && isInstance) {
       return args.length === 0
         ? at({ kind: "Ix", index }, from)
-        : standardForm(index, hyp.whereDefined, hyp.definition.body, args, from);
+        : createStandardForm(index, hyp.whereDefined, hyp.definition.body, args, from);
     }
     const body = withLocus(shiftExpr(index, hyp.definition.body), from);
     const hyps = getScopeHyps(context.scope);
     return withLocus(resolveSubexpression(onWarning, hyps, body, args, selectors), from);
   };
 
-  const anonCore = (context: AnonContext, expression: Expr): Expr => {
+  const anonymizeCore = (context: AnonContext, expression: Expr): Expr => {
     switch (expression.kind) {
       case "Bang": {
         const inner = expression.expression;
         if (inner.kind === "Apply" && inner.operator.kind === "Opaque") {
           const selectors = expression.selectors.map((selector) =>
-            mapSelectorArgs(selector, (arg) => expr(context, arg)),
+            mapSelectorArgs(selector, (arg) => anonymizeExpr(context, arg)),
           );
-          const args = inner.args.map((arg) => expr(context, arg));
+          const args = inner.args.map((arg) => anonymizeExpr(context, arg));
           const bangContext = getContext(context.scope);
           return resolveBang(bangContext, inner.operator.name, args, selectors, false, expression);
         }
-        return expr(context, {
+        return anonymizeExpr(context, {
           ...expression,
           expression: at({ kind: "Apply", operator: inner, args: [] }, inner),
         });
@@ -256,26 +256,29 @@ export const createAnonymizer = (
             text: `${getLocusPrefix(expression.location)}Warning: ${name} does not introduce any assumptions. It does not make sense to use it here.\n`,
             channel: "toolbox",
           });
-          return at({ kind: "Internal", builtin: "TRUE" }, expression);
+          return getTrue(expression);
         }
-        const args = expression.args.map((arg) => expr(context, arg));
+        const args = expression.args.map((arg) => anonymizeExpr(context, arg));
         return resolveName(context, name, args, expression);
       }
       case "Opaque":
-        return expr(context, at({ kind: "Apply", operator: expression, args: [] }, expression));
+        return anonymizeExpr(
+          context,
+          at({ kind: "Apply", operator: expression, args: [] }, expression),
+        );
       case "Parens":
-        if (expression.form.kind === "Syntax") return expr(context, expression.expression);
+        if (expression.form.kind === "Syntax") return anonymizeExpr(context, expression.expression);
         return {
           ...expression,
-          expression: expr(context, expression.expression),
-          form: anonParenForm(context, expression.form),
+          expression: anonymizeExpr(context, expression.expression),
+          form: anonymizeParenForm(context, expression.form),
         };
       default:
         return visit(context, expression);
     }
   };
 
-  const anonParenForm = (context: AnonContext, form: ParenForm): ParenForm => {
+  const anonymizeParenForm = (context: AnonContext, form: ParenForm): ParenForm => {
     if (form.kind !== "Nlabel") return form;
     return {
       kind: "Xlabel",
@@ -303,28 +306,30 @@ export const createAnonymizer = (
   const adjoinBounds = (context: AnonContext, items: Bound[]) =>
     withScope(context, adjoinAll(context.scope, items.map(getBoundFresh)));
 
-  const bounds = (context: AnonContext, items: Bound[]): [AnonContext, Bound[]] => {
-    const mapped = mapBoundDomains(items, (domain) => expr(context, domain));
+  const anonymizeBounds = (context: AnonContext, items: Bound[]): [AnonContext, Bound[]] => {
+    const mapped = mapBoundDomains(items, (domain) => anonymizeExpr(context, domain));
     return [adjoinBounds(context, mapped), mapped];
   };
 
   const visit = (context: AnonContext, expression: Expr): Expr => {
     if (expression.kind === "Sequent") {
-      return { ...expression, sequent: sequent(context, expression.sequent)[1] };
+      return { ...expression, sequent: anonymizeSequent(context, expression.sequent)[1] };
     }
     if (expression.kind === "Let") {
-      const [inner, definitions] = defns(context, expression.definitions);
-      return { ...expression, definitions, body: expr(inner, expression.body) };
+      const [inner, definitions] = anonymizeDefns(context, expression.definitions);
+      return { ...expression, definitions, body: anonymizeExpr(inner, expression.body) };
     }
-    return mapScoped(context, expression, expr, adjoinContext);
+    return mapScoped(context, expression, anonymizeExpr, adjoinContext);
   };
 
-  // Expr.Anon's defn turns a recursive function definition into a CHOOSE over its own equation.
-  const defn = (context: AnonContext, definition: Defn): Defn => {
+  const anonymizeDefn = (context: AnonContext, definition: Defn): Defn => {
     if (definition.kind !== "Operator") return definition;
     const body = definition.body;
-    if (body.kind !== "Fcn") return { ...definition, body: expr(context, body) };
-    const inner = expr(adjoinContext(context, getFresh(definition.name, "Constant")), body);
+    if (body.kind !== "Fcn") return { ...definition, body: anonymizeExpr(context, body) };
+    const inner = anonymizeExpr(
+      adjoinContext(context, getFresh(definition.name, "Constant")),
+      body,
+    );
     const marker: Expr = { kind: "Opaque", name: "%%%" };
     const isRecursive = !isEqualExpr(
       substituteExpr(consSubstitution(marker, shift(1)), inner),
@@ -338,7 +343,7 @@ export const createAnonymizer = (
     };
   };
 
-  const defns = (context: AnonContext, definitions: Defn[]): [AnonContext, Defn[]] => {
+  const anonymizeDefns = (context: AnonContext, definitions: Defn[]): [AnonContext, Defn[]] => {
     let current = context;
     const queue = [...definitions];
     const mapped: Defn[] = [];
@@ -348,24 +353,24 @@ export const createAnonymizer = (
         queue.splice(index + 1, 0, ...expandInstance(current.scope, definition));
         continue;
       }
-      const result = defn(current, definition);
+      const result = anonymizeDefn(current, definition);
       current = adjoinContext(current, { ...getLocalDefn(result), isConstnessUnset: true });
       mapped.push(result);
     }
     return [current, mapped];
   };
 
-  const hyp = (context: AnonContext, item: Hyp): [AnonContext, Hyp] => {
+  const anonymizeHyp = (context: AnonContext, item: Hyp): [AnonContext, Hyp] => {
     const mapped = ((): Hyp => {
       switch (item.kind) {
         case "Fresh":
-          return item.domain ? { ...item, domain: expr(context, item.domain) } : item;
+          return item.domain ? { ...item, domain: anonymizeExpr(context, item.domain) } : item;
         case "Flex":
           return item;
         case "Defn":
-          return { ...item, definition: defn(context, item.definition) };
+          return { ...item, definition: anonymizeDefn(context, item.definition) };
         case "Fact": {
-          const expression = expr(context, item.expression);
+          const expression = anonymizeExpr(context, item.expression);
           return { ...item, expression, time: getTime(context.scope, expression) };
         }
       }
@@ -373,9 +378,9 @@ export const createAnonymizer = (
     return [adjoinContext(context, mapped), mapped];
   };
 
-  const sequent = (context: AnonContext, item: Sequent): [AnonContext, Sequent] => {
-    const [inner, hyps] = mapAccumulate(context, item.context, hyp);
-    return [inner, { context: hyps, active: expr(inner, item.active) }];
+  const anonymizeSequent = (context: AnonContext, item: Sequent): [AnonContext, Sequent] => {
+    const [inner, hyps] = mapAccumulate(context, item.context, anonymizeHyp);
+    return [inner, { context: hyps, active: anonymizeExpr(inner, item.active) }];
   };
 
   const pushWarnedStep = (context: AnonContext, step: StepNumber): AnonContext => ({
@@ -403,7 +408,7 @@ export const createAnonymizer = (
       ),
     );
 
-  const tupleForm = (item: Sequent): ExprCore => {
+  const getTupleForm = (item: Sequent): ExprCore => {
     const facts = item.context.map((entry, index) => {
       const amount = item.context.length - index + 1;
       if (entry.kind === "Fact") return shiftExpr(amount, entry.expression);
@@ -422,11 +427,11 @@ export const createAnonymizer = (
   const isCitable = (step: Step) =>
     step.kind !== "Use" && step.kind !== "Hide" && step.kind !== "Define";
 
-  const usable = (context: AnonContext, item: Usable): Usable => ({
-    facts: item.facts.map((fact) => expr(context, fact)),
+  const anonymizeUsable = (context: AnonContext, item: Usable): Usable => ({
+    facts: item.facts.map((fact) => anonymizeExpr(context, fact)),
     defs: item.defs.flatMap((def): UseDef[] => {
       if (def.kind === "Dx") return [def];
-      const resolved = expr(context, at({ kind: "Opaque", name: def.name }, def));
+      const resolved = anonymizeExpr(context, at({ kind: "Opaque", name: def.name }, def));
       if (resolved.kind !== "Ix") {
         onWarning({
           text: `${getLocusPrefix(def.location)}Ignored unexpandable identifier ${JSON.stringify(def.name)} in BY DEF.`,
@@ -445,24 +450,24 @@ export const createAnonymizer = (
     }),
   });
 
-  const proof = (context: AnonContext, item: Proof): Proof => {
+  const anonymizeProof = (context: AnonContext, item: Proof): Proof => {
     switch (item.kind) {
       case "Steps": {
-        const [inner, steps] = mapAccumulate(context, item.steps, step);
-        const qedProof = proof(
+        const [inner, steps] = mapAccumulate(context, item.steps, anonymizeStep);
+        const qedProof = anonymizeProof(
           item.step ? pushWarnedStep(inner, item.step) : inner,
           item.qed.proof,
         );
         return { ...item, steps, qed: { ...item.qed, proof: qedProof } };
       }
       case "By":
-        return { ...item, usable: usable(context, item.usable) };
+        return { ...item, usable: anonymizeUsable(context, item.usable) };
       default:
         return item;
     }
   };
 
-  const step = (context: AnonContext, original: Step): [AnonContext, Step] => {
+  const anonymizeStep = (context: AnonContext, original: Step): [AnonContext, Step] => {
     const number: StepNumber | undefined =
       original.step?.kind === "Unnamed" && isCitable(original)
         ? {
@@ -476,24 +481,24 @@ export const createAnonymizer = (
     const item: Step = { ...original, step: number };
     switch (item.kind) {
       case "Assert": {
-        const [, mapped] = sequent(context, item.sequent);
+        const [, mapped] = anonymizeSequent(context, item.sequent);
         const assumptions = mapped.context.reduce(adjoinContext, context);
         const withTuple = bumpContext(
-          adjoinStep(bumpContext(assumptions, 1), number, at(tupleForm(mapped), item), item),
+          adjoinStep(bumpContext(assumptions, 1), number, at(getTupleForm(mapped), item), item),
           1,
         );
         const inner = mapped.context.length === 0 ? pushWarnedStep(withTuple, number) : withTuple;
-        const result: Step = { ...item, sequent: mapped, proof: proof(inner, item.proof) };
+        const result: Step = { ...item, sequent: mapped, proof: anonymizeProof(inner, item.proof) };
         return [
           bumpContext(adjoinStep(context, number, at(exprifySequent(mapped), item), item), 1),
           result,
         ];
       }
       case "Pcase": {
-        const expression = expr(context, item.expression);
+        const expression = anonymizeExpr(context, item.expression);
         const tuple = at({ kind: "Tuple", elements: [shiftExpr(2, expression)] }, item);
         const inner = bumpContext(adjoinStep(bumpContext(context, 2), number, tuple, item), 1);
-        const result: Step = { ...item, expression, proof: proof(inner, item.proof) };
+        const result: Step = { ...item, expression, proof: anonymizeProof(inner, item.proof) };
         const after = adjoinStep(
           context,
           number,
@@ -503,19 +508,19 @@ export const createAnonymizer = (
         return [bumpContext(after, 1), result];
       }
       case "Suffices": {
-        const [, mapped] = sequent(context, item.sequent);
+        const [, mapped] = anonymizeSequent(context, item.sequent);
         const fact = at({ kind: "Tuple", elements: [at(exprifySequent(mapped), item)] }, item);
         const inner = bumpContext(adjoinStep(context, number, fact, item), 1);
-        const result: Step = { ...item, sequent: mapped, proof: proof(inner, item.proof) };
+        const result: Step = { ...item, sequent: mapped, proof: anonymizeProof(inner, item.proof) };
         const assumptions = mapped.context.reduce(adjoinContext, context);
-        const tuple = at({ kind: "Tuple", elements: [at(tupleForm(mapped), item)] }, item);
+        const tuple = at({ kind: "Tuple", elements: [at(getTupleForm(mapped), item)] }, item);
         return [
           bumpContext(adjoinStep(bumpContext(assumptions, 1), number, tuple, item), 1),
           result,
         ];
       }
       case "Have": {
-        const expression = expr(context, item.expression);
+        const expression = anonymizeExpr(context, item.expression);
         const tuple = at({ kind: "Tuple", elements: [shiftExpr(2, expression)] }, item);
         return [
           bumpContext(adjoinStep(bumpContext(context, 2), number, tuple, item), 1),
@@ -523,7 +528,7 @@ export const createAnonymizer = (
         ];
       }
       case "Take": {
-        const [inner, mapped] = bounds(context, item.bounds);
+        const [inner, mapped] = anonymizeBounds(context, item.bounds);
         const universal = at(
           { kind: "Quant", quantifier: "Forall", bounds: mapped, body: BAD_EXPRESSION },
           item,
@@ -534,7 +539,9 @@ export const createAnonymizer = (
         ];
       }
       case "Witness": {
-        const expressions = item.expressions.map((expression) => expr(context, expression));
+        const expressions = item.expressions.map((expression) =>
+          anonymizeExpr(context, expression),
+        );
         const tuple = at({ kind: "Tuple", elements: expressions }, item);
         return [
           bumpContext(adjoinStep(bumpContext(context, 1), number, tuple, item), 1),
@@ -542,8 +549,8 @@ export const createAnonymizer = (
         ];
       }
       case "Pick": {
-        const [boundContext, mapped] = bounds(context, item.bounds);
-        const expression = expr(boundContext, item.expression);
+        const [boundContext, mapped] = anonymizeBounds(context, item.bounds);
+        const expression = anonymizeExpr(boundContext, item.expression);
         const existential = at(
           { kind: "Quant", quantifier: "Exists", bounds: mapped, body: expression },
           item,
@@ -556,7 +563,7 @@ export const createAnonymizer = (
           ...item,
           bounds: mapped,
           expression,
-          proof: proof(inner, item.proof),
+          proof: anonymizeProof(inner, item.proof),
         };
         const declared = adjoinBounds(bumpContext(context, 2), mapped);
         const shifted = shiftExpr(4 + mapped.length, existential);
@@ -566,13 +573,13 @@ export const createAnonymizer = (
         ];
       }
       case "Use": {
-        const mapped = usable(context, item.usable);
+        const mapped = anonymizeUsable(context, item.usable);
         return [bumpContext(context, mapped.facts.length), { ...item, usable: mapped }];
       }
       case "Hide":
-        return [context, { ...item, usable: usable(context, item.usable) }];
+        return [context, { ...item, usable: anonymizeUsable(context, item.usable) }];
       case "Define": {
-        const [inner, definitions] = defns(context, item.definitions);
+        const [inner, definitions] = anonymizeDefns(context, item.definitions);
         return [inner, { ...item, definitions }];
       }
       case "Forget":
@@ -581,11 +588,14 @@ export const createAnonymizer = (
   };
 
   return {
-    expr: (scope: Scope | undefined, expression: Expr) => expr(getContext(scope), expression),
-    defn: (scope: Scope | undefined, definition: Defn) => defn(getContext(scope), definition),
-    sequent: (scope: Scope | undefined, item: Sequent) => sequent(getContext(scope), item)[1],
-    usable: (scope: Scope | undefined, item: Usable) => usable(getContext(scope), item),
-    proof: (scope: Scope | undefined, item: Proof) => proof(getContext(scope), item),
+    expr: (scope: Scope | undefined, expression: Expr) =>
+      anonymizeExpr(getContext(scope), expression),
+    defn: (scope: Scope | undefined, definition: Defn) =>
+      anonymizeDefn(getContext(scope), definition),
+    sequent: (scope: Scope | undefined, item: Sequent) =>
+      anonymizeSequent(getContext(scope), item)[1],
+    usable: (scope: Scope | undefined, item: Usable) => anonymizeUsable(getContext(scope), item),
+    proof: (scope: Scope | undefined, item: Proof) => anonymizeProof(getContext(scope), item),
   };
 };
 

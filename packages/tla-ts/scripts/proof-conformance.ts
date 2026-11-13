@@ -15,18 +15,24 @@ import {
   CORPORA_DIRECTORY,
   getLibraryModules,
   getOption,
-  writeResults,
+  reportModuleResults,
 } from "./corpora";
 import { digestParsed, type ModuleDigest } from "./proof-digest";
 import type { SanyResult } from "./record-sany";
 
 type Verdict = "match" | "accepted" | "rejected" | "unsupported" | "digest";
 
-interface ParseOutcome {
-  status: "ok" | "error" | "unsupported";
-  error: string | undefined;
-  module?: ModuleDigest;
+interface ParsedModule {
+  status: "ok";
+  module: ModuleDigest | undefined;
 }
+
+interface ParseFailure {
+  status: "error" | "unsupported";
+  error: string;
+}
+
+type ParseOutcome = ParsedModule | ParseFailure;
 
 const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".sany-results.json");
 
@@ -35,7 +41,6 @@ const readModule = (path: string | undefined) =>
 
 const libraryModules = getLibraryModules();
 
-// SANY's XML has no digest for a module without theorems, USE, HIDE, or nested modules.
 const getDigest = (module: Module) => {
   const digest = digestParsed(module);
   return digest.units.length === 0 && digest.modules.length === 0 ? undefined : digest;
@@ -44,7 +49,6 @@ const getDigest = (module: Module) => {
 const getRangeStart = (range: string | undefined) =>
   (range ?? "0:0").split("-")[0].split(":").map(Number);
 
-// SANY lists USE and HIDE apart from theorems, so units compare in source order.
 const sortUnits = (digest: ModuleDigest): ModuleDigest => ({
   name: digest.name,
   units: [...digest.units].sort((left, right) => {
@@ -69,7 +73,7 @@ const findDifference = (expected: unknown, actual: unknown, path: string): strin
     .find((difference) => difference !== undefined);
 };
 
-const getDigestDifference = (expected: SanyResult, actual: ParseOutcome) =>
+const getDigestDifference = (expected: SanyResult, actual: ParsedModule) =>
   findDifference(
     expected.module && JSON.parse(JSON.stringify(sortUnits(expected.module))),
     actual.module && JSON.parse(JSON.stringify(sortUnits(actual.module))),
@@ -91,20 +95,19 @@ const analyze = (path: string): ParseOutcome => {
       loadModule: (name) =>
         readModule(join(dirname(path), `${name}.tla`)) ?? readModule(libraryModules.get(name)),
       print: () => {},
-      files: { readFile: undefined, writeFile: undefined },
+      files: { readFile: undefined, writeFile: undefined, makeDirectory: undefined },
     });
   } catch (error) {
     if (error instanceof TlaUnsupportedError)
       return { status: "unsupported", error: error.message };
     if (error instanceof TlaSyntaxError) return { status: "error", error: error.message };
-    // TLC rejects a configuration or a value while it loads a module, which SANY never checks.
     if (!(error instanceof TlaConfigError) && !(error instanceof TlaEvaluationError))
       return {
         status: "error",
         error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
       };
   }
-  return { status: "ok", error: undefined, module: getDigest(parseModule(source)) };
+  return { status: "ok", module: getDigest(parseModule(source)) };
 };
 
 const getVerdict = (expected: SanyResult, actual: ParseOutcome): Verdict => {
@@ -125,20 +128,19 @@ const results = expected
   .map((result) => {
     const actual = analyze(join(CORPORA_DIRECTORY, result.id));
     const verdict = getVerdict(result, actual);
-    const difference = verdict === "digest" ? getDigestDifference(result, actual) : undefined;
+    const difference =
+      verdict === "digest" && actual.status === "ok"
+        ? getDigestDifference(result, actual)
+        : undefined;
+    const error = actual.status === "ok" ? undefined : actual.error;
     if (verdict !== "match") console.log(`${verdict.padEnd(11)} ${result.id}`);
     if (difference) console.log(`  ${difference}`);
     if (verdict !== "match" && !difference) {
       console.log(
         `  SANY:   ${(result.error ?? "ok").split("\n").find((line) => line.trim()) ?? ""}`,
       );
-      console.log(`  tla-ts: ${actual.error ?? "ok"}`);
+      console.log(`  tla-ts: ${error ?? "ok"}`);
     }
-    return { id: result.id, verdict, expected: result.error, actual: actual.error, difference };
+    return { id: result.id, verdict, expected: result.error, actual: error, difference };
   });
-writeResults(RESULTS_PATH, results);
-console.log("");
-Map.groupBy(results, (result) => result.verdict).forEach((group, verdict) =>
-  console.log(`${verdict}: ${group.length}`),
-);
-console.log(`modules: ${results.length} (${basename(RESULTS_PATH)} has the details)`);
+reportModuleResults(RESULTS_PATH, results);

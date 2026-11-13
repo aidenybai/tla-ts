@@ -35,11 +35,8 @@ export class InstantiationSet {
     for (const entry of this.elems) this.manager.decRef(entry[0]);
   }
 
-  getInv(value: number, model: ProtoModel) {
-    const term = this.inv.get(value);
-    if (term !== undefined) return term;
-    for (const entry of this.inv) if (model.areEqual(entry[0], value)) return entry[1];
-    return undefined;
+  getInv(value: number) {
+    return this.inv.get(value);
   }
 
   getGeneration(term: number) {
@@ -66,10 +63,7 @@ export class Node {
   private elseExpr: number | null = null;
   private proj: number | null = null;
 
-  constructor(
-    readonly id: number,
-    readonly sort: number,
-  ) {}
+  constructor(readonly sort: number) {}
 
   isRoot() {
     return this.find === null;
@@ -161,18 +155,15 @@ const appendNew = <T>(target: T[], source: T[]) => {
 
 interface AFINode {
   decl: number;
-  index: number;
   node: Node;
 }
 
-// The number that keys an argument position of a declaration in m_A_f_is.
 const ARITY_BOUND = 2 ** 20;
 const getAFIKey = (decl: number, index: number) => decl * ARITY_BOUND + index;
 
 export class AufSolver {
   private nodes: Node[] = [];
   private uvars = new Map<string, Node>();
-  // m_A_f_is, a table in Z3's slot order, hashed like pair_hash of the declaration and position.
   private aFIs: ObjMap<AFINode>;
   private sort2k = new Map<number, number>();
   private ks: RefVector;
@@ -181,8 +172,6 @@ export class AufSolver {
   private evalCacheRange: RefVector;
   private rootNodes: Node[] = [];
   private newConstraints: number[] = [];
-  // m_rand, seeded with the steps the resource limit counted before the solver was made, which
-  // then counts one more.
   private random: RandomGen;
   constructor(
     private manager: AstManager,
@@ -226,7 +215,7 @@ export class AufSolver {
   private mkNode(key: string, map: Map<string, Node>, sort: number) {
     const existing = map.get(key);
     if (existing !== undefined) return existing;
-    const node = new Node(this.nodes.length, sort);
+    const node = new Node(sort);
     map.set(key, node);
     this.nodes.push(node);
     return node;
@@ -241,9 +230,9 @@ export class AufSolver {
     const key = getAFIKey(decl, index);
     const existing = this.aFIs.get(key);
     if (existing !== undefined) return existing.node;
-    const node = new Node(this.nodes.length, this.manager.funcDecls[decl].domain[index]);
+    const node = new Node(this.manager.funcDecls[decl].domain[index]);
     this.nodes.push(node);
-    this.aFIs.set(key, { decl, index, node });
+    this.aFIs.set(key, { decl, node });
     return node;
   }
 
@@ -317,11 +306,6 @@ export class AufSolver {
     return result;
   }
 
-  // Uninterpreted sorts are not assumed infinite in benchmarks with quantifiers.
-  private isInfinite(sort: number) {
-    return isArithSort(sort);
-  }
-
   private getKFor(sort: number) {
     const existing = this.sort2k.get(sort);
     if (existing !== undefined) return existing;
@@ -348,8 +332,6 @@ export class AufSolver {
     if (kValue === null) return false;
     for (const exception of exceptions) {
       const value = this.eval(exception, true);
-      // The constraint cannot go into the context while the model is built, so it waits for the
-      // next restart.
       if (value !== null && !this.areDistinct(kValue, value))
         this.newConstraints.push(this.manager.mkNot(this.manager.mkEq(k, exception)));
     }
@@ -366,7 +348,7 @@ export class AufSolver {
         node.setElse(picked);
         return;
       }
-      if (this.isInfinite(node.sort)) {
+      if (isArithSort(node.sort)) {
         const k = this.getKFor(node.sort);
         if (this.assertKDiseqExceptions(k, exceptions)) {
           node.insert(this.manager, k, 0);
@@ -446,7 +428,6 @@ export class AufSolver {
     node.setProj(decl);
   }
 
-  // collect_partial_funcs: a func_decl_set, in Z3's slot order.
   private collectPartialFuncs() {
     const manager = this.manager;
     const model = this.getModel();

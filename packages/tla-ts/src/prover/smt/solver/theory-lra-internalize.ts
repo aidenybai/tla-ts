@@ -74,21 +74,17 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
   protected unassignedBounds: number[] = [];
   protected isNewDef = false;
 
-  // The terms of each depth hold references until the next one at that depth resets them.
   private internalizeStates: RefVector[] = [];
 
   protected internalizeHead = 0;
   protected scopes: Scope[] = [];
   protected value2var = new Map<string, number>();
 
-  // m_not_handled: terms that the theory treats as uninterpreted, so a model may not satisfy them.
-  // Their arguments have variables, as the factors of an nla monomial do.
   protected unsupportedTerms: number[] = [];
 
   protected underspecifiedTerms: number[] = [];
   protected nla: NlaCore | undefined;
 
-  // The constants 1 and 0, integer and then real, each in a scope of its own.
   init() {
     const manager = this.manager;
     this.oneVar = this.addConst(manager.mkNumeral(1n));
@@ -125,7 +121,6 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return column !== NULL_LPVAR ? column : this.solver.addVar(thVar, this.isIntVar(thVar));
   }
 
-  // The arguments, which become relevant, then the term.
   protected mkEnode(expr: number) {
     const context = this.context;
     for (let index = 0; index < this.manager.getNumArgs(expr); index++) {
@@ -153,8 +148,6 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     this.context.pushTrail(() => this.unsupportedTerms.pop());
   }
 
-  // found_underspecified: a division by a term or by zero equals the division by zero it stands
-  // for, which the model interprets freely.
   private foundUnderspecified(expr: number) {
     const manager = this.manager;
     const context = this.context;
@@ -251,8 +244,6 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return nla;
   }
 
-  // The columns of a quotient, its dividend and divisor, and the remainder, internalized in that
-  // order.
   private registerDivision(quotient: number, remainder: number): Division {
     const register = (expr: number) => {
       this.internalizeTermCore(expr);
@@ -283,7 +274,6 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     return node !== undefined && this.isAttachedToVar(node);
   }
 
-  // The caller decrements the head.
   protected pushInternalizeState() {
     const terms = (this.internalizeStates[this.internalizeHead] ??= new RefVector(this.manager));
     this.internalizeHead++;
@@ -311,10 +301,8 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
       toEnsureEnode.push(term);
       const op = manager.getOp(term);
       if (op === OP_ADD) {
-        for (let argIndex = 0; argIndex < manager.getNumArgs(term); argIndex++) {
-          const arg = manager.getArg(term, argIndex);
-          push(arg, coeffs[index]);
-        }
+        for (let argIndex = 0; argIndex < manager.getNumArgs(term); argIndex++)
+          push(manager.getArg(term, argIndex), coeffs[index]);
         if (terms.size !== index + 1) {
           terms.set(index, terms.items[terms.size - 1]);
           coeffs[index] = coeffs[coeffs.length - 1];
@@ -374,10 +362,7 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
           if (op === OP_DIV) {
             const divisor = context.rewriter.rewrite(manager.getArg(term, 1));
             if (!this.isNonzeroNumeral(divisor)) this.foundUnderspecified(term);
-            for (let argIndex = 0; argIndex < manager.getNumArgs(term); argIndex++) {
-              const arg = manager.getArg(term, argIndex);
-              toEnsureVar.push(arg);
-            }
+            manager.pushArgs(term, toEnsureVar);
           } else if (op === OP_IDIV) {
             if (!this.isNonzeroNumeral(manager.getArg(term, 1))) this.foundUnderspecified(term);
             const remainder = manager.mkApp(OP_MOD, manager.getArgs(term), SORT_INT);
@@ -395,7 +380,6 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
           } else if (op === OP_MOD) {
             const isNonzeroDivisor = this.isNonzeroNumeral(manager.getArg(term, 1));
             if (!isNonzeroDivisor) this.foundUnderspecified(term);
-            // Without relevancy, Z3 makes the axioms before it registers the division with nla.
             if (!context.relevancy.isEnabled)
               this.mkIdivModAxioms(manager.getArg(term, 0), manager.getArg(term, 1));
             if (this.nla !== undefined && isNonzeroDivisor) {
@@ -415,10 +399,7 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
           } else if (op === OP_REM) {
             if (!this.isNonzeroNumeral(manager.getArg(term, 1))) this.foundUnderspecified(term);
           } else if (op === OP_IDIV0 || op === OP_MOD0) {
-            for (let argIndex = 0; argIndex < manager.getNumArgs(term); argIndex++) {
-              const arg = manager.getArg(term, argIndex);
-              toEnsureVar.push(arg);
-            }
+            manager.pushArgs(term, toEnsureVar);
           } else if (TRANSCENDENTAL_OPS.has(op)) {
             const nla = this.ensureNla();
             const arg = manager.getArg(term, 0);
@@ -449,10 +430,7 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
           } else if (op !== OP_TO_INT && op !== OP_DIV0) {
             if (op === OP_POWER) this.ensureNla();
             this.foundUnsupported(term);
-            for (let argIndex = 0; argIndex < manager.getNumArgs(term); argIndex++) {
-              const arg = manager.getArg(term, argIndex);
-              toEnsureVar.push(arg);
-            }
+            manager.pushArgs(term, toEnsureVar);
           }
           if (!context.relevancy.isEnabled && op !== OP_MOD) this.relevantEh(term);
         }

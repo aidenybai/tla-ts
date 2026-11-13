@@ -24,14 +24,11 @@ const TAGS = {
   handle: 26,
 };
 
-// TLC fingerprints the value before it writes it, which normalizes every set and function.
-export const serializeValue = (value: Value) => {
+const serializeValue = (value: Value) => {
   const bytes: number[] = [];
-  const handles = {
-    objects: new Map<object, number>(),
-    names: new Map<string, number>(),
-    count: 0,
-  };
+  const objectHandles = new Map<object, number>();
+  const nameHandles = new Map<string, number>();
+  let handleCount = 0;
   const modelValues = getModelValues();
   const writeByte = (byte: number) => bytes.push(byte & 0xff);
   const writeShort = (short: number) => {
@@ -43,7 +40,6 @@ export const serializeValue = (value: Value) => {
     writeShort(int);
   };
   const writeNat = (nat: number) => (nat > 0x7fff ? writeInt(-nat) : writeShort(nat));
-  // A reader skips the token and the variable location that TLC writes before the characters.
   const writeString = (text: string) => {
     writeByte(TAGS.string);
     writeInt(0);
@@ -67,7 +63,7 @@ export const serializeValue = (value: Value) => {
       return;
     }
     if (typeof inner === "string") {
-      handles.count++;
+      handleCount++;
       writeString(inner);
       return;
     }
@@ -82,12 +78,12 @@ export const serializeValue = (value: Value) => {
       writeInt(inner.high);
       return;
     }
-    const handle = handles.objects.get(inner);
+    const handle = objectHandles.get(inner);
     if (handle !== undefined) {
       writeHandle(handle);
       return;
     }
-    handles.objects.set(inner, handles.count++);
+    objectHandles.set(inner, handleCount++);
     if (isSetValue(inner)) {
       const elements = toFiniteSet(inner).elements;
       writeByte(TAGS.set);
@@ -108,9 +104,9 @@ export const serializeValue = (value: Value) => {
       writeInt(functionValue.domain.length);
       functionValue.domain.forEach((name, index) => {
         const fieldName = String(name);
-        const nameHandle = handles.names.get(fieldName);
+        const nameHandle = nameHandles.get(fieldName);
         if (nameHandle === undefined) {
-          handles.names.set(fieldName, handles.count++);
+          nameHandles.set(fieldName, handleCount++);
           writeString(fieldName);
         } else {
           writeHandle(nameHandle);

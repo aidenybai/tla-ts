@@ -1,13 +1,19 @@
-// Ported from Isabelle2025's Provers/hypsubst.ML. Copyright (c) 1986-2025 University of Cambridge,
-// Technische Universitaet Muenchen, and contributors, see LICENSE.
+// Ported from Isabelle2025's Provers/hypsubst.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
-import { TlaIsabelleError } from "../../../errors";
+import { isIsabelleError, TlaIsabelleError } from "../../../errors";
 import { asmRl, compIncr, revcutRl, thinRl, zeroVarIndexes } from "../pure/drule";
 import { aeconv, etaContract } from "../pure/envir";
-import { occs, stripAssumsConcl, stripAssumsHyp, stripParams } from "../pure/logic";
+import {
+  isAllAbs,
+  isImplies,
+  occs,
+  stripAssumsConcl,
+  stripAssumsHyp,
+  stripParams,
+} from "../pure/logic";
 import { isBoundName } from "../pure/name";
 import { emptySimpset, type SimpContext } from "../pure/raw-simplifier";
-import { listOfSeq } from "../pure/seq";
+import { seqHead } from "../pure/seq";
 import { asmLrSimpTac } from "../pure/simplifier";
 import {
   determ,
@@ -78,12 +84,6 @@ interface HypsubstContext {
 class NoMatch {}
 class EqVar {}
 
-const isTermError = (error: unknown) =>
-  error instanceof TlaIsabelleError && error.exception === "TERM";
-const isThmError = (error: unknown) =>
-  error instanceof TlaIsabelleError && error.exception === "THM";
-
-// The simplifier turns bound variables into special free variables; any bound variable will do.
 const inspectContract = (term: Term) => {
   const contracted = etaContract(term);
   return contracted.kind === "Free" && isBoundName(contracted.name) ? mkBound(0) : contracted;
@@ -92,7 +92,6 @@ const inspectContract = (term: Term) => {
 const hasVars = (term: Term) => (flagsOf(term) & HAS_VAR) !== 0;
 const hasTVars = (term: Term) => existsType((type) => maxidxOfTyp(type) >= 0, term);
 
-// True to use the equality as it is, false to reorient it first.
 const inspectPair = (
   isBound: boolean,
   isNoVars: boolean,
@@ -144,19 +143,8 @@ const eqVar = (
     term: Term,
     hyps: readonly Term[],
   ): [number, [boolean, boolean]] => {
-    if (
-      term.kind === "App" &&
-      term.fun.kind === "Const" &&
-      term.fun.name === "Pure.all" &&
-      term.arg.kind === "Abs"
-    )
-      return visit(count, term.arg.body, hyps);
-    if (
-      term.kind === "App" &&
-      term.fun.kind === "App" &&
-      term.fun.fun.kind === "Const" &&
-      term.fun.fun.name === "Pure.imp"
-    ) {
+    if (isAllAbs(term)) return visit(count, term.arg.body, hyps);
+    if (isImplies(term)) {
       const premise = term.fun.arg;
       const conclusion = term.arg;
       try {
@@ -164,7 +152,7 @@ const eqVar = (
         const [orientation, variable] = inspectPair(isBound, isNoVars, left, right);
         return [count, checkFree([conclusion, ...hyps], orientation, variable)];
       } catch (error) {
-        if (!isTermError(error) && !(error instanceof NoMatch)) throw error;
+        if (!isIsabelleError(error, "TERM") && !(error instanceof NoMatch)) throw error;
         return visit(count + 1, conclusion, [premise, ...hyps]);
       }
     }
@@ -178,7 +166,7 @@ const withEqVar = (build: (goal: Term, index: number) => Tactic): GoalTactic =>
     try {
       return build(goal, index);
     } catch (error) {
-      if (error instanceof EqVar || isThmError(error)) return noTac;
+      if (error instanceof EqVar || isIsabelleError(error, "THM")) return noTac;
       throw error;
     }
   });
@@ -190,7 +178,7 @@ const mkEqs = (data: HypsubstData, isBound: boolean, thm: Thm): Thm[] => {
       ? [rs(thm, data.eqReflection)]
       : [symmetric(rs(thm, data.eqReflection))];
   } catch (error) {
-    if (isTermError(error) || error instanceof NoMatch) return [];
+    if (isIsabelleError(error, "TERM") || error instanceof NoMatch) return [];
     throw error;
   }
 };
@@ -231,7 +219,7 @@ const instSubstTac = (context: HypsubstContext, isLeft: boolean, rule: Thm): Goa
         const [left, right] = data.destEq(data.destTrueprop(hyp));
         return [etaContract(left), etaContract(right)] as const;
       } catch (error) {
-        if (isTermError(error)) return undefined;
+        if (isIsabelleError(error, "TERM")) return undefined;
         throw error;
       }
     })();
@@ -245,7 +233,9 @@ const instSubstTac = (context: HypsubstContext, isLeft: boolean, rule: Thm): Goa
     const conclusion = data.destTrueprop(stripAssumsConcl(goal));
     const lifted = liftRule(goal, state.maxidx, rule);
     const head = headOf(data.destTrueprop(stripAssumsConcl(lifted.prop)));
-    const [v1, v2] = data.destEq(data.destTrueprop(stripAssumsConcl(premsOf(lifted)[0])));
+    const [leftVar, rightVar] = data.destEq(
+      data.destTrueprop(stripAssumsConcl(premsOf(lifted)[0])),
+    );
     if (head.kind !== "Var") throw new TlaIsabelleError("TERM", "dest_Var");
     const binders = binderTypes(head.type);
     const paramTypes = binders.slice(0, -1);
@@ -269,9 +259,9 @@ const instSubstTac = (context: HypsubstContext, isLeft: boolean, rule: Thm): Goa
     const motive = absParams(mkAbs("x", paramType, body));
     const tyenv = matchTypes(lastType, paramType, emptyTyEnv);
     if (tyenv === undefined) throw new TlaIsabelleError("TYPE", "Thm.match");
-    const headV1 = headOf(v1);
-    const headV2 = headOf(v2);
-    if (headV1.kind !== "Var" || headV2.kind !== "Var")
+    const leftHead = headOf(leftVar);
+    const rightHead = headOf(rightVar);
+    if (leftHead.kind !== "Var" || rightHead.kind !== "Var")
       throw new TlaIsabelleError("TERM", "dest_Var");
     const instantiated = instantiate(
       [
@@ -288,8 +278,8 @@ const instSubstTac = (context: HypsubstContext, isLeft: boolean, rule: Thm): Goa
         },
         {
           variable: mkVar(
-            headV1.name,
-            headV1.index,
+            leftHead.name,
+            leftHead.index,
             funTs(
               paramTypes.map((type) => substType(tyenv, type)),
               paramType,
@@ -299,8 +289,8 @@ const instSubstTac = (context: HypsubstContext, isLeft: boolean, rule: Thm): Goa
         },
         {
           variable: mkVar(
-            headV2.name,
-            headV2.index,
+            rightHead.name,
+            rightHead.index,
             funTs(
               paramTypes.map((type) => substType(tyenv, type)),
               paramType,
@@ -341,12 +331,11 @@ const varsGenHypSubstTac = (context: HypsubstContext, isBound: boolean): GoalTac
   });
 
 const revDupElim = (thm: Thm) => {
-  const result = listOfSeq(assumption(undefined, 2, rsn(thm, 2, revcutRl)))[0];
+  const result = seqHead(assumption(undefined, 2, rsn(thm, 2, revcutRl)));
   if (result === undefined) throw new TlaIsabelleError("THM", "rev_dup_elim");
   return result;
 };
 
-// With hypsubst_thin off, its default: drops equalities on bound variables.
 export const hypSubstTac =
   (context: HypsubstContext): GoalTactic =>
   (index) =>
@@ -377,7 +366,6 @@ const reverseNTac = (context: HypsubstContext, count: number, index: number): Ta
           ),
         );
 
-// Leaves the changed hypotheses at the end.
 const allImpIntrTac = (context: HypsubstContext, hyps: readonly Term[], index: number): Tactic => {
   const imptac =
     (count: number, remaining: readonly Term[]): Tactic =>
@@ -398,7 +386,6 @@ const allImpIntrTac = (context: HypsubstContext, hyps: readonly Term[], index: n
   return imptac(0, [...hyps].reverse());
 };
 
-// The version for blast, which moves the hypotheses the substitution changes to the front.
 export const blastHypSubstTac = (context: HypsubstContext): GoalTactic =>
   withEqVar((goal, index) => {
     const [count, [orientation]] = eqVar(context.data, false, false, false, goal);

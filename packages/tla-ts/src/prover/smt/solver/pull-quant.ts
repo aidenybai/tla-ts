@@ -21,7 +21,6 @@ export class PullQuant extends RewriterTpl {
     this.varShifter = new VarShifter(manager);
   }
 
-  // The result comes with a reference.
   private pullFromApp(decl: number, args: number[], sort: number) {
     const manager = this.manager;
     if (manager.funcDecls[decl].op === OP_NOT) {
@@ -37,8 +36,6 @@ export class PullQuant extends RewriterTpl {
       return result;
     }
     let kind: number | undefined;
-    // The variables in reverse, the last variable of the first quantifier first. A name that repeats
-    // becomes a fresh one.
     const sorts: number[] = [];
     const names: SmtSymbol[] = [];
     let weight = Number.POSITIVE_INFINITY;
@@ -134,15 +131,12 @@ export class PullQuant extends RewriterTpl {
     return result;
   }
 
-  // ~rw: the configuration's shifter goes first, then the rewriter.
   release() {
     this.varShifter.release();
     super.release();
   }
 }
 
-// pull_quant's operator(), with a pull_quant of its own. The result comes with a reference, which
-// the caller releases.
 export const pullQuant = (manager: AstManager, expr: number) => {
   const pull = new PullQuant(manager);
   const result = pull.rewrite(expr);

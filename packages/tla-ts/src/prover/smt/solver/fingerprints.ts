@@ -8,8 +8,6 @@ export class FingerprintSet {
   private datas: number[] = [];
   private hashes: number[] = [];
   private roots: Enode[][] = [];
-  // Scopes remove the newest fingerprints first, and the table grows by inserting them in order,
-  // so emptying the slot of a removed fingerprint never cuts the probe of one that remains.
   private slots = new Int32Array(1024).fill(-1);
   private scopes: number[] = [];
   private bindingHashes: number[] = [];

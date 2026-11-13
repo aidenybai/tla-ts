@@ -2,7 +2,7 @@
 // src/cmd_context/cmd_context.cpp), MIT license, see z3-license.txt.
 import { SmtParseError, SmtUnsupportedError } from "../../../errors";
 import {
-  AstManager,
+  type AstManager,
   getSymbolHash,
   FAMILY_ARITH,
   FAMILY_BASIC,
@@ -2508,8 +2508,7 @@ export const createSmtlibReader = (
       list.items[name === "declare-fun" ? 3 : 2] ?? list.end,
       name === "declare-fun" ? "Invalid function declaration" : "Invalid constant declaration",
     );
-    // builtin_signature_collides and is_transcendental_shadow_decl each apply the builtin of that
-    // name to fresh variables, which they then release.
+    // Z3's builtin_signature_collides and is_transcendental_shadow_decl each make and release fresh variables of the domain.
     for (let round = 0; round < 2; round++) {
       const vars = domain.map((sort, index) => manager.mkVar(index, sort));
       for (const domainVar of vars) manager.incRef(domainVar);

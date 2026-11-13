@@ -1,18 +1,8 @@
 // Ported from Z3 (src/math/lp/nra_solver.cpp, src/math/lp/nla_coi.cpp), MIT license, see
 // z3-license.txt.
-// Deviations from Z3:
-// - nlsat input it does not implement (NlsatUnsupportedError) answers unknown. That is a linear
-//   cell around an irrational section, where Z3 exits the process (levelwise.cpp,
-//   add_linear_approximations).
-// - nlsat's check(rvalues) never answers satisfied, because its solver starts with the clause
-//   [true], whose literal is unassigned outside search. So the satisfied branch of
-//   check_assignment, which switches nla to nlsat's model, is left out.
-// - A lemma literal of check_assignment is always linear, because the cell bounds are, so
-//   add_mul_def, which defines a fresh monomial column, is left out. A nonlinear literal would
-//   answer unknown.
-// - nlsat counts against the budget of a check only its own steps, not those of the polynomial and
-//   algebraic number managers, so a long search stops at a different point than Z3's. Like Z3's,
-//   it then throws, which ends the whole check as unknown.
+// Deviations from Z3: unsupported nlsat input answers unknown where Z3 exits (levelwise.cpp,
+// add_linear_approximations), check_assignment has no satisfied branch and no add_mul_def, the
+// budget counts only nlsat's own steps, and transcendental functions are not supported.
 import { NlsatUnsupportedError, SmtInvariantError } from "../../../../errors";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { Rational, getLcm } from "../rational";
@@ -32,7 +22,7 @@ import {
 import { Explanation } from "./explanation";
 import { type LarSolver, NULL_LPVAR } from "./lar-solver";
 import { LarTerm } from "./lar-term";
-import { type NlaCore } from "./nla-core";
+import type { NlaCore } from "./nla-core";
 import { LemmaBuilder, mkIneq } from "./nla-types";
 
 interface Occurrences {
@@ -98,9 +88,6 @@ const hasLargeDyadicDenominator = (value: Rational) => {
   return den >= 1n << 24n && (den & (den - 1n)) === 0n;
 };
 
-// is_dyadic_artifact: a constraint of an nla lemma's atom with a constant whose denominator is a
-// large power of two, the value of a column at an LP vertex. nlsat leaves it out, since clearing
-// such denominators blows up its resultants.
 const isDyadicArtifact = (lra: LarSolver, constraint: LarConstraint) =>
   constraint.isAuxiliary &&
   (hasLargeDyadicDenominator(constraint.rhs.x) ||
@@ -121,7 +108,6 @@ export class NraSolver {
     return this.solver.steps;
   }
 
-  // Excluded columns have no definition.
   private mkDefinitions(isIncluded: (lpVar: number) => boolean) {
     const core = this.core;
     const lra = core.lra;
@@ -171,8 +157,6 @@ export class NraSolver {
     return { definitions, denominators };
   }
 
-  // add_constraint: the constraint sum(coeff * v) kind rhs as den * (sum(coeff / den[v] * def[v]) -
-  // rhs) kind 0, where den clears every denominator, in a unit clause that assumes the constraint.
   private addConstraint(
     constraintIndex: number,
     definitions: readonly (Polynomial | null)[],
@@ -254,7 +238,6 @@ export class NraSolver {
       this.solver.restoreOrder();
       core.setUseNraModel(true);
       lra.initModel();
-      // A violated constraint or monomial that nlsat saw would be a bug.
       for (const [constraintIndex, constraint] of lra.constraints.constraints.entries()) {
         if (!constraint.isActive || this.isConstraintSatisfied(constraint)) continue;
         if (cone.constraints.has(constraintIndex) && !skipped.has(constraintIndex))
@@ -277,8 +260,6 @@ export class NraSolver {
     return result;
   }
 
-  // A monomial or term gets the value of its definition, and a column outside the cone of
-  // influence its value in lar_solver.
   value(lpVar: number) {
     const core = this.core;
     const lra = core.lra;
@@ -377,7 +358,6 @@ export class NraSolver {
     return this.addLemma(clause.clause, clause.literalConstraints);
   }
 
-  // Unknown, without the lemma, when such an inequality already holds.
   private addLemma(clause: number[], literalConstraints: ReadonlyMap<number, number>) {
     const core = this.core;
     const solver = this.solver;
@@ -393,7 +373,6 @@ export class NraSolver {
       }
       const atom = solver.getAtom(literal);
       if (atom === null) throw new SmtInvariantError(`nlsat literal ${literal} has no atom`);
-      // A root atom or a product of factors is unknown, and so is a nonlinear polynomial.
       if (
         !isIneqAtom(atom) ||
         atom.polynomials.length !== 1 ||

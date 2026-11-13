@@ -36,7 +36,7 @@ export class DefaultQuantifierManager {
     this.mam = new Mam(context, onMatch);
     this.lazyMam = new Mam(context, onMatch);
     if (!isMbqi) return;
-    const finder = new ModelFinder(context.manager, context);
+    const finder = new ModelFinder(context);
     this.mbqi = { finder, checker: new ModelChecker(context, finder, this) };
   }
 

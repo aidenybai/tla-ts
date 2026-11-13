@@ -1,23 +1,15 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check, formatValue } from "../../src";
-
-const DIRECTORY = join(import.meta.dirname, "../fixtures/randomization");
+import { checkFixture } from "./check-harness";
 
 const checkWithSeed = (name: string, seed: bigint) =>
-  check({
-    source: readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
-    config: readFileSync(join(DIRECTORY, `${name}.cfg`), "utf8"),
-    seed,
-  });
+  checkFixture("randomization", name, name, { seed });
 
 const getSummary = async (name: string, seed: bigint) => {
   const result = await checkWithSeed(name, seed);
   return [result.status, result.generatedStates, result.distinctStates];
 };
 
-// TLC's tests run these specs with -fp 0 and -seed 1 unless they pass another seed.
 describe("random choices match TLC run with -fp 0 and the same -seed", () => {
   it("picks RandomElement in the next-state relation from the predecessor's fingerprint", async () => {
     const result = await checkWithSeed("RandomElementXandY", 8006642976694192746n);
@@ -63,7 +55,7 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
     [918347981374n, 604, 100000000, [15, 152, 5], [86, 170, 1612]],
   ])(
     "draws the RandomSubsetATest and RandomSubsetBTest values for seed %s",
-    async (seed, x, y, p, q) => {
+    async (seed, expectedX, expectedY, expectedP, expectedQ) => {
       const result = await checkWithSeed("RandomSubset", seed);
       expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
         "invariant-violation",
@@ -71,12 +63,12 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
         8009,
       ]);
       const initial = result.violation?.trace[0].state;
-      expect([initial?.x, initial?.y]).toEqual([x, y]);
+      expect([initial?.x, initial?.y]).toEqual([expectedX, expectedY]);
       expect(
         [initial?.p, initial?.q].map((tuple) =>
           typeof tuple === "object" && tuple.kind === "Function" ? tuple.range : undefined,
         ),
-      ).toEqual([p, q]);
+      ).toEqual([expectedP, expectedQ]);
     },
   );
 
@@ -138,12 +130,9 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
   });
 });
 
-// The expected values are what TLC 1.7.4 prints with -fp 0 and -seed 4.
 describe("random choices match TLC 1.7.4", () => {
   it("draws RandomSubset as TLC 1.7.4 does, and refuses to enumerate a large set of tuples", async () => {
-    const result = await check({
-      source: readFileSync(join(DIRECTORY, "RandomSubsetNext.tla"), "utf8"),
-      config: readFileSync(join(DIRECTORY, "RandomSubsetNext.cfg"), "utf8"),
+    const result = await checkFixture("randomization", "RandomSubsetNext", "RandomSubsetNext", {
       seed: 4n,
       version: "1.7.4",
     });

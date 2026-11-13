@@ -74,7 +74,6 @@ export const TraceTable = (props: TraceTableProps) => {
                   type="button"
                   onClick={() => props.onSelect(index)}
                   ref={(element) => {
-                    // Scrolls the drawer, not the page, so playback never moves the reader.
                     const pane = element?.closest("[data-drawer-scroll]");
                     if (!isActive || element === null || !(pane instanceof HTMLElement)) return;
                     const top =
@@ -91,32 +90,33 @@ export const TraceTable = (props: TraceTableProps) => {
                   {step.action ?? "Init"}
                 </button>
               </td>
-              {step.variables.map(([name, value]) => (
-                <td key={name} className={CELL_CLASS_NAME}>
-                  <div
-                    className={cn(
-                      "max-w-[48ch]",
-                      isActive ? "break-words" : "truncate",
-                      index > 0 && previous.get(name) !== value
-                        ? isFailing
-                          ? "text-red-700"
-                          : "text-gray-1200"
-                        : "text-gray-1000",
-                    )}
-                  >
-                    <span
+              {step.variables.map(([name, value]) => {
+                const isChanged = index > 0 && previous.get(name) !== value;
+                return (
+                  <td key={name} className={CELL_CLASS_NAME}>
+                    <div
                       className={cn(
-                        index > 0 &&
-                          previous.get(name) !== value &&
-                          (isFailing ? "bg-red-100" : "bg-amber-100"),
-                        "rounded-sm box-decoration-clone px-0.5",
+                        "max-w-[48ch]",
+                        isActive ? "break-words" : "truncate",
+                        isChanged
+                          ? isFailing
+                            ? "text-red-700"
+                            : "text-gray-1200"
+                          : "text-gray-1000",
                       )}
                     >
-                      {value}
-                    </span>
-                  </div>
-                </td>
-              ))}
+                      <span
+                        className={cn(
+                          isChanged && (isFailing ? "bg-red-100" : "bg-amber-100"),
+                          "rounded-sm box-decoration-clone px-0.5",
+                        )}
+                      >
+                        {value}
+                      </span>
+                    </div>
+                  </td>
+                );
+              })}
             </tr>
           );
         })}

@@ -42,7 +42,6 @@ export const mkIneq = (term: LarTerm | number, cmp: number, rs: Rational | numbe
   rs: typeof rs === "number" ? Rational.fromNumber(rs) : rs,
 });
 
-// A lemma: its explanation implies one of its inequalities, or false when it has none.
 export interface Lemma {
   readonly ineqs: Ineq[];
   readonly expl: Explanation;
@@ -57,11 +56,6 @@ export class LemmaBuilder {
     core.lemmas.push(this.lemma);
   }
 
-  get expl() {
-    return this.lemma.expl;
-  }
-
-  // Skips an inequality whose negation the bounds already explain away.
   addIneq(ineq: Ineq) {
     if (!this.core.explainIneq(this, ineq.term, ineq.cmp, ineq.rs)) this.lemma.ineqs.push(ineq);
     return this;

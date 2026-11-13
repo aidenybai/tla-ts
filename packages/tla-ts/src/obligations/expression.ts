@@ -1,4 +1,4 @@
-// tlapm's expression IR (E_t) with de Bruijn indices, and the visitors that map over it (Visit).
+// A port of tlapm's expression IR (E_t) and its visitors (Visit).
 
 import type { OldMethod, PragmaSetting } from "./pragma";
 
@@ -171,7 +171,6 @@ export interface Param {
   location?: Locus;
 }
 
-// isAtomic is Expr.Deref.atomic: a resolved subexpression reference, which has no subexpressions.
 interface ExprProps {
   location?: Locus;
   isAtomic?: boolean;
@@ -240,7 +239,6 @@ export type Visibility = "Visible" | "Hidden";
 
 export type Time = "Now" | "Always";
 
-// A step or a DEFINE in a proof keeps the time of the scope it is made in.
 export type WhereDefined = "Builtin" | "User" | { kind: "Proof"; time: Time };
 
 export type Hyp = HypCore & { location?: Locus };
@@ -261,8 +259,6 @@ type HypCore =
       whereDefined: WhereDefined;
       visibility: Visibility;
       isLocal: boolean;
-      // A definition that anonymization meets in a proof has no constness judgment, so tlapm never
-      // counts it constant.
       isConstnessUnset?: boolean;
     }
   | { kind: "Fact"; expression: Expr; visibility: Visibility; time: Time; useLocation?: Locus };
@@ -272,11 +268,14 @@ export interface Sequent {
   active: Expr;
 }
 
-// tlapm's core @@ from, which takes the properties of from.
 export const at = (core: ExprCore, from: ExprProps): Expr => {
   const located = from.location ? { ...core, location: from.location } : core;
   return from.isAtomic ? { ...located, isAtomic: true } : located;
 };
+
+export const AT_NOWHERE: Expr = { kind: "At", isExcept: false };
+
+export const getTrue = (from: ExprProps) => at({ kind: "Internal", builtin: "TRUE" }, from);
 
 export const getHypName = (hyp: Hyp) => {
   switch (hyp.kind) {
@@ -304,7 +303,6 @@ export const applyBuiltin = (builtin: Builtin, args: Expr[], from: ExprProps): E
 export const exprifySequent = (sequent: Sequent): ExprCore =>
   sequent.context.length === 0 ? sequent.active : { kind: "Sequent", sequent };
 
-// A persistent context, newest hypothesis first, so binders extend it without copying.
 export interface Scope {
   hyp: Hyp;
   rest: Scope | undefined;
@@ -362,8 +360,6 @@ interface MappedPrefix<State> {
   next: WeakMap<Hyp, MappedPrefix<State>>;
 }
 
-// Maps each prefix of keys once, as a module's obligations share most of their context. Each input
-// must depend only on the keys up to it.
 export const createContextMap = <State>(
   initial: State,
   step: (state: State, input: Hyp, key: Hyp) => [State, Hyp | undefined],
@@ -415,6 +411,14 @@ export const getFact = (
   time: Time,
   location: Locus | undefined,
 ) => ({ kind: "Fact", expression, visibility, time, location }) satisfies Hyp;
+
+export const getDefinitionHyp = (
+  definition: Defn,
+  whereDefined: WhereDefined,
+  visibility: Visibility,
+  isLocal: boolean,
+  location: Locus | undefined,
+) => ({ kind: "Defn", definition, whereDefined, visibility, isLocal, location }) satisfies Hyp;
 
 export const getBoundFresh = (bound: Bound) => getFresh(bound.name, bound.level);
 
@@ -468,8 +472,7 @@ export const mapHyp = (hyp: Hyp, map: (inner: Expr) => Expr, hyps: "visible" | "
   return { ...hyp, expression: map(hyp.expression) };
 };
 
-// Children map in OCaml evaluation order, last constructor argument first, which decides the error
-// tlapm reports.
+// Children map in OCaml's order, last argument first, which decides the error tlapm reports.
 export const mapScoped = <State>(
   state: State,
   expression: Expr,
@@ -605,14 +608,17 @@ export const mapScoped = <State>(
   }
 };
 
-// Visit.map without a state: every child, the hidden hypotheses of an ASSUME included.
-export const mapChildren = (expression: Expr, map: (inner: Expr) => Expr): Expr =>
+export const mapChildren = (
+  expression: Expr,
+  map: (inner: Expr) => Expr,
+  hyps: "visible" | "all" = "all",
+): Expr =>
   mapScoped(
     undefined,
     expression,
     (_state, inner) => map(inner),
     () => undefined,
-    "all",
+    hyps,
   );
 
 export const getChildren = (expression: Expr) => {

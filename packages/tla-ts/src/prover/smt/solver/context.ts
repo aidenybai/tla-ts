@@ -203,7 +203,7 @@ export class Context extends Internalizer {
     manager: AstManager,
     readonly params: SmtParams,
   ) {
-    super(manager, params.relevancyLevel > 0, params.relevancyLevel > 0);
+    super(manager, params.relevancyLevel > 0);
     this.qmanager = new DefaultQuantifierManager(this, params.isMbqi);
   }
 
@@ -294,7 +294,6 @@ export class Context extends Internalizer {
       }
       const list = this.watches[literal];
       if (list === undefined) continue;
-      // Nothing below makes a clause, so the clause data stays in place.
       const data = this.clauses.data;
       let kept = 0;
       let index = 0;
@@ -365,7 +364,7 @@ export class Context extends Internalizer {
           const lhs = this.exprToEnode[this.manager.getArg(eq, 0)];
           const rhs = this.exprToEnode[this.manager.getArg(eq, 1)];
           if (lhs !== undefined && rhs !== undefined) {
-            if (value === L_TRUE) this.addEq(lhs, rhs, { kind: "equation", literal: literal });
+            if (value === L_TRUE) this.addEq(lhs, rhs, { kind: "equation", literal });
             else if (!this.addDiseq(lhs, rhs) && !this.isInconsistent())
               this.setConflict(new EqPropagationJustification(lhs, rhs), mkLiteral(boolVar, true));
           }
@@ -602,7 +601,6 @@ export class Context extends Internalizer {
   attachThVar(node: Enode, theory: Theory, thVar: number) {
     const thId = theory.id;
     const oldVar = node.getThVar(thId);
-    // A variable that an equality moved to the node's list, which the node's own replaces.
     if (oldVar >= 0) {
       node.replaceThVar(thVar, thId);
       this.pushTrail(() => {
@@ -677,8 +675,6 @@ export class Context extends Internalizer {
     }
   }
 
-  // A congruence that makes a false equality true is the root of a conflict, which dynamic
-  // Ackermannization counts.
   private reinsertParentsIntoCgTable(
     r1: Enode,
     r2: Enode,
@@ -1171,7 +1167,6 @@ export class Context extends Internalizer {
           ? negate(this.getLiteral(atoms[index]))
           : this.getLiteral(atoms[index]);
       }
-    // restore_relevancy: marking propagates, so it only marks the literals that lost relevancy.
     for (let index = 0; index < literals.length; index++)
       if (wasRelevant[index] && !this.isRelevant(this.boolVar2Expr[getVar(literals[index])]))
         this.markLiteralAsRelevant(literals[index]);
@@ -1197,7 +1192,6 @@ export class Context extends Internalizer {
       const theory = this.theories[this.finalCheckIndex];
       const check = theory === undefined ? qmanager.finalCheckEh(true) : theory.finalCheckEh(level);
       if (theory !== undefined) maxLevel = Math.max(maxLevel, theory.numFinalCheckLevels());
-      // Z3 reads the cancel flag after each theory's final check, and a canceled check gives up.
       const isCanceled = theory === this.arith && this.checkCanceled();
       if (isCanceled) failure = FAILURE_CANCELED;
       else if (theory !== undefined && check === FC_GIVEUP) {
@@ -1209,7 +1203,6 @@ export class Context extends Internalizer {
       if (check === FC_GIVEUP || isCanceled) result = FC_GIVEUP;
       if (this.finalCheckIndex !== oldIndex) continue;
       if (level >= maxLevel || result === FC_DONE || this.canPropagate()) break;
-      // A higher level reruns every check with the give-up state of the lower one cleared.
       level++;
       result = FC_DONE;
       failure = FAILURE_OK;
@@ -1251,14 +1244,13 @@ export class Context extends Internalizer {
     }
   }
 
-  // While searching, a failure stops the search, and the cancel flag is read twice.
+  // Z3's resource_limits_exceeded reads the cancel flag twice while searching.
   private isResourceLimitExceeded() {
     if (this.isSearching && (this.lastSearchFailure !== FAILURE_OK || this.checkCanceled()))
       return true;
     return this.checkCanceled();
   }
 
-  // reset_model: the model generator still holds the proto model.
   private resetModel() {
     const state = this.modelState;
     if (state.kind === "none" || state.kind === "generated") return;
@@ -1267,7 +1259,6 @@ export class Context extends Internalizer {
     this.modelState = { kind: "generated", generated: state.generated };
   }
 
-  // The model generator releases the last model first.
   private mkProtoModel() {
     if (this.modelState.kind !== "none") this.modelState.generated.model.decRef();
     const generated = mkModel(this);
@@ -1327,7 +1318,6 @@ export class Context extends Internalizer {
     for (const literal of this.assignedLiterals) {
       const atom = this.boolVar2Expr[getVar(literal)];
       if (!this.isRelevant(atom)) continue;
-      // n and res of Z3's loop hold the literal and its value.
       const expr = isNegated(literal) ? manager.mkNot(atom) : atom;
       manager.incRef(expr);
       const value = manager.isGround(expr) ? model.eval(expr, false) : -1;
@@ -1347,7 +1337,7 @@ export class Context extends Internalizer {
         this.lastSearchFailure !== FAILURE_THEORY ||
         status === L_FALSE ||
         this.isInconsistent() ||
-        !qmanager.hasQuantifiers() ||
+        qmanager.quantifiers.length === 0 ||
         !qmanager.isModelBased()
       )
         return status;
@@ -1359,7 +1349,7 @@ export class Context extends Internalizer {
       isForcedRestart = true;
     }
     if (status === L_FALSE) return L_FALSE;
-    if (status === L_TRUE && !qmanager.hasQuantifiers()) return L_TRUE;
+    if (status === L_TRUE && qmanager.quantifiers.length === 0) return L_TRUE;
     if (status === L_TRUE) {
       const generated = this.mkProtoModel();
       const result = qmanager.isModelBased()
@@ -1429,7 +1419,6 @@ export class Context extends Internalizer {
     return false;
   }
 
-  // The newest sixteenth of the lemmas tolerates more unassigned literals.
   private delInactiveLemmas() {
     const lemmas = this.lemmas;
     const startAt = this.baseLevel === 0 ? 0 : this.baseScopeLemmaLimits[this.baseLevel - 1];

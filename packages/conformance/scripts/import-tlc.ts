@@ -5,27 +5,25 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
-import { availableParallelism } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
-import { getHost, runPool, runTest } from "./hosts";
+import { CRASH_EXIT, getHost, runPool, runTest, WORKERS } from "./hosts";
 import {
   findTests,
-  formatYaml,
   isDeclaredOutcome,
   keepCorrection,
+  listFiles,
   type Outcome,
   OUTCOME_EXITS,
   parseTest,
+  renderTest,
   SUITE_DIRECTORY,
   type TestMetadata,
 } from "./test-file";
 
 const TOOLS_PATH = "tlatools/org.lamport.tlatools";
 const LIMIT_MILLISECONDS = 30_000;
-const WORKERS = Number(process.env.CONFORMANCE_WORKERS ?? Math.min(4, availableParallelism()));
 
 const checkout = process.argv[2];
 const toolsDirectory = join(checkout, TOOLS_PATH);
@@ -71,8 +69,7 @@ interface PendingTest {
   isOutcomeObserved: boolean;
 }
 
-// These expect TLC to leak a Java exception or an internal name, or, with -continue, to report
-// that no error was found after a violation.
+// Deviation from TLC: these expect a leaked Java exception or name, or -continue to hide a violation.
 const TLC_BUG_TESTS = new Set([
   "PrintTraceExceptionTest",
   "ContinueTest",
@@ -87,45 +84,39 @@ const getFeatures = (feature: string, testName: string) =>
 
 const skipped: string[] = [];
 
-const listFiles = (directory: string): string[] =>
-  readdirSync(directory).flatMap((entry) => {
-    const path = join(directory, entry);
-    return statSync(path).isDirectory() ? listFiles(path) : [path];
-  });
-
 const getOutcomeForExit = (exit: number) =>
   (Object.keys(OUTCOME_EXITS) as Outcome[]).find((outcome) =>
     OUTCOME_EXITS[outcome].includes(exit),
   );
 
-const renderTest = (metadata: TestMetadata, moduleText: string) =>
-  `(*---\n${formatYaml(metadata)}\n---*)\n${moduleText}`;
-
 const getConstructorArguments = (java: string) => {
   const start = java.search(/\bsuper\s*\(/);
   if (start === -1) return undefined;
   const open = java.indexOf("(", start);
-  const scan = { depth: 0, isString: false, current: "", parts: [] as string[] };
+  const parts: string[] = [];
+  let depth = 0;
+  let isString = false;
+  let current = "";
   for (let index = open; index < java.length; index += 1) {
     const character = java[index];
-    if (scan.isString) {
-      scan.current += character;
-      if (character === '"' && java[index - 1] !== "\\") scan.isString = false;
+    if (isString) {
+      current += character;
+      if (character === '"' && java[index - 1] !== "\\") isString = false;
       continue;
     }
-    if (character === '"') scan.isString = true;
-    if ("({".includes(character)) scan.depth += 1;
-    if (")}".includes(character)) scan.depth -= 1;
-    if (scan.depth === 0) {
-      scan.parts.push(scan.current.trim());
-      return scan.parts;
+    if (character === '"') isString = true;
+    if ("({".includes(character)) depth += 1;
+    if (")}".includes(character)) depth -= 1;
+    if (depth === 0) {
+      parts.push(current.trim());
+      return parts;
     }
-    if (character === "," && scan.depth === 1) {
-      scan.parts.push(scan.current.trim());
-      scan.current = "";
+    if (character === "," && depth === 1) {
+      parts.push(current.trim());
+      current = "";
       continue;
     }
-    if (!(index === open)) scan.current += character;
+    if (index !== open) current += character;
   }
   return undefined;
 };
@@ -239,7 +230,7 @@ const portModelTest = (javaPath: string): PendingTest | undefined => {
 };
 
 const portSemanticCorpus = () =>
-  listFiles(join(toolsDirectory, "test/tla2sany/semantic/corpus"))
+  listFiles(join(toolsDirectory, "test/tla2sany/semantic/corpus"), false)
     .filter((path) => path.endsWith(".tla"))
     .map((path): PendingTest => ({
       directory: join(importDirectory, "sany/semantic"),
@@ -256,7 +247,7 @@ const portSemanticCorpus = () =>
     }));
 
 const portErrorCorpus = () =>
-  listFiles(join(toolsDirectory, "test/tla2sany/semantic/error_corpus"))
+  listFiles(join(toolsDirectory, "test/tla2sany/semantic/error_corpus"), false)
     .filter((path) => /[EW]\d+.*_Test\.tla$/.test(path))
     .map((path): PendingTest => {
       const moduleName = basename(path, ".tla");
@@ -283,7 +274,7 @@ const getSlug = (title: string) =>
     .replace(/^_|_$/g, "");
 
 const portParserCorpus = () =>
-  listFiles(join(toolsDirectory, "test/tla2sany/corpus"))
+  listFiles(join(toolsDirectory, "test/tla2sany/corpus"), false)
     .filter((path) => path.endsWith(".txt"))
     .flatMap((path) => {
       const area = basename(path, ".txt");
@@ -319,6 +310,15 @@ const portParserCorpus = () =>
       });
     });
 
+const writeModule = (path: string, pending: PendingTest, metadata: TestMetadata) =>
+  writeFileSync(
+    path,
+    renderTest(
+      keepCorrection(corrections.get(path), metadata, pending.moduleText),
+      pending.moduleText,
+    ),
+  );
+
 const writePending = (pending: PendingTest) => {
   mkdirSync(pending.directory, { recursive: true });
   pending.fixtures.forEach((fixture) => {
@@ -330,13 +330,7 @@ const writePending = (pending: PendingTest) => {
     cpSync(fixture.from, target);
   });
   const path = join(pending.directory, `${pending.moduleName}.tla`);
-  writeFileSync(
-    path,
-    renderTest(
-      keepCorrection(corrections.get(path), pending.metadata, pending.moduleText),
-      pending.moduleText,
-    ),
-  );
+  writeModule(path, pending, pending.metadata);
   return path;
 };
 
@@ -344,7 +338,7 @@ const pendingTests = [
   ...portSemanticCorpus(),
   ...portErrorCorpus(),
   ...portParserCorpus(),
-  ...listFiles(join(toolsDirectory, "test/tlc2"))
+  ...listFiles(join(toolsDirectory, "test/tlc2"), false)
     .filter((path) => /Test\d*\.java$|ETest\d+\.java$/.test(path))
     .flatMap((path) => portModelTest(path) ?? []),
 ];
@@ -352,20 +346,20 @@ const pendingTests = [
 const corrections = new Map(findTests([importDirectory]).map((test) => [test.path, test]));
 rmSync(importDirectory, { recursive: true, force: true });
 
-const command = getHost("tlc");
-const kept = { count: 0 };
+const host = getHost("tlc");
+let keptCount = 0;
 
 await runPool(pendingTests, WORKERS, async (pending) => {
   const path = writePending(pending);
   const test = parseTest(path, readFileSync(path, "utf8"));
   if (!test) return;
   const result = await runTest(
-    command,
+    host,
     test,
     { name: "model", source: test.source, config: test.metadata.config ?? "" },
     { milliseconds: LIMIT_MILLISECONDS },
   );
-  if (result.exit === -1) {
+  if (result.exit === CRASH_EXIT) {
     skipped.push(`${test.id}: takes longer than ${LIMIT_MILLISECONDS} ms`);
     rmSync(path, { force: true });
     return;
@@ -376,19 +370,11 @@ await runPool(pendingTests, WORKERS, async (pending) => {
     rmSync(path, { force: true });
     return;
   }
-  if (pending.isOutcomeObserved && observed) {
-    const metadata = { ...pending.metadata, outcome: observed };
-    writeFileSync(
-      path,
-      renderTest(
-        keepCorrection(corrections.get(path), metadata, pending.moduleText),
-        pending.moduleText,
-      ),
-    );
-  }
-  kept.count += 1;
-  if (kept.count % 100 === 0) console.log(`${kept.count}/${pendingTests.length}`);
+  if (pending.isOutcomeObserved && observed)
+    writeModule(path, pending, { ...pending.metadata, outcome: observed });
+  keptCount += 1;
+  if (keptCount % 100 === 0) console.log(`${keptCount}/${pendingTests.length}`);
 });
 
 skipped.sort().forEach((line) => console.log(`SKIPPED ${line}`));
-console.log(`Ported ${kept.count} tests and skipped ${skipped.length}`);
+console.log(`Ported ${keptCount} tests and skipped ${skipped.length}`);

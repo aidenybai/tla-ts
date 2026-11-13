@@ -1,15 +1,9 @@
-// Ported from Z3 (src/nlsat/nlsat_interval_set.cpp), MIT license, see z3-license.txt. A null
-// set is empty. The bounds are copies of the numbers they were built from, so refining a bound
-// while comparing it narrows only that copy, as in Z3. A union drops the clauses of the intervals
-// it copies, as Z3's push_back does. This is sound: only R_propagate's lazy justification reads
-// them, its literals come from the justifications alone, and so a dropped clause only shrinks an
-// over-approximated assumption set.
+// Ported from Z3 (src/nlsat/nlsat_interval_set.cpp), MIT license, see z3-license.txt.
 import { RandomGen } from "../random-gen";
 import { Rational } from "../rational";
 import { Anum, type AlgebraicManager } from "./algebraic";
 import type { Clause } from "./types";
 
-// A null bound is infinite, and an infinite end is always open.
 export interface Interval {
   isLowerOpen: boolean;
   lower: Anum | null;
@@ -96,13 +90,14 @@ export class IntervalSetManager {
   // push_back drops the clause, so a union only keeps the clauses of a set it returns unchanged.
   private copyInterval(
     interval: Interval,
-    upper = { isOpen: interval.isUpperOpen, value: interval.upper },
+    isUpperOpen = interval.isUpperOpen,
+    upper = interval.upper,
   ): Interval {
     return {
       isLowerOpen: interval.isLowerOpen,
       lower: interval.lower === null ? null : this.am.copy(interval.lower),
-      isUpperOpen: upper.isOpen,
-      upper: upper.value === null ? null : this.am.copy(upper.value),
+      isUpperOpen,
+      upper: upper === null ? null : this.am.copy(upper),
       justification: interval.justification,
       clause: null,
     };
@@ -132,15 +127,10 @@ export class IntervalSetManager {
           if (touchSign < 0) result.push(this.copyInterval(firstInterval));
           else if (touchSign === 0) {
             if (lowerSign !== 0)
-              result.push(
-                this.copyInterval(firstInterval, { isOpen: true, value: firstInterval.upper }),
-              );
+              result.push(this.copyInterval(firstInterval, true, firstInterval.upper));
           } else if (lowerSign !== 0)
             result.push(
-              this.copyInterval(firstInterval, {
-                isOpen: !secondInterval.isLowerOpen,
-                value: secondInterval.lower,
-              }),
+              this.copyInterval(firstInterval, !secondInterval.isLowerOpen, secondInterval.lower),
             );
           firstIndex++;
         }
@@ -153,15 +143,10 @@ export class IntervalSetManager {
         const touchSign = this.compareUpperLower(secondInterval, firstInterval);
         if (touchSign < 0) result.push(this.copyInterval(secondInterval));
         else if (touchSign === 0)
-          result.push(
-            this.copyInterval(secondInterval, { isOpen: true, value: secondInterval.upper }),
-          );
+          result.push(this.copyInterval(secondInterval, true, secondInterval.upper));
         else
           result.push(
-            this.copyInterval(secondInterval, {
-              isOpen: !firstInterval.isLowerOpen,
-              value: firstInterval.lower,
-            }),
+            this.copyInterval(secondInterval, !firstInterval.isLowerOpen, firstInterval.lower),
           );
         secondIndex++;
       }
@@ -233,7 +218,6 @@ export class IntervalSetManager {
     return { literals, clauses };
   }
 
-  // Z3 also takes is_int, and ignores it.
   pickInComplement(set: IntervalSet | null, isRandomized: boolean) {
     if (set === null) return new Anum(Rational.zero);
     const zero = new Anum(Rational.zero);

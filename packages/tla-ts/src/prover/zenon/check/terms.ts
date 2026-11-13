@@ -1,11 +1,10 @@
+import type { RelationProperty } from "../eqrel";
 import type { ExprKind } from "../expr";
 import type { Definition } from "../parse";
 import type { PlainRuleName, RuleArgs } from "../proof";
 
 type TermKind = ExprKind | "subst";
 
-// "subst" stands for its first argument with the variable named symbol replaced by its second
-// argument.
 export interface Term {
   kind: TermKind;
   symbol: string;
@@ -22,11 +21,6 @@ export interface RuleSpec {
   branches: Term[][];
 }
 
-export type RelationProperty = "reflexive" | "symmetric" | "transitive";
-
-// What a variable stands for while printing a key: the depth of its binder, or a term substituted
-// for it with the environment where the substitution was made. A substituted term prints where it
-// lands, so its own binders get depths below the binders around it.
 export type Binding = number | { formula: Term; env: Env; operators?: Operators };
 
 export type Env = Map<string, Binding>;
@@ -94,7 +88,6 @@ export const expectNot = (formula: Term) => expectKind(formula, "not")[0];
 export const isVariable = (formula: Term, name: string) =>
   formula.kind === "var" && formula.symbol === name;
 
-// Escapes could spell one string two ways, so they don't count.
 export const getStringText = (formula: Term) => {
   ensure(isApp(formula, "$string", 1) && formula.args[0].kind === "var");
   const text = formula.args[0].symbol;

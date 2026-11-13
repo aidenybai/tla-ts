@@ -1,5 +1,4 @@
-// Ported from Z3 (src/math/lp/nla_monotone_lemmas.h, src/math/lp/nla_monotone_lemmas.cpp), MIT
-// license, see z3-license.txt.
+// Ported from Z3 (src/math/lp/nla_monotone_lemmas.h, src/math/lp/nla_monotone_lemmas.cpp), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import { KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
 import { type NlaCore } from "./nla-core";
@@ -21,7 +20,7 @@ export class Monotone {
   private monotonicityLemmaOnMonic(monic: Monic) {
     const core = this.core;
     if (core.monHasZero(monic.vars) || core.hasBigNum(monic)) return;
-    const productValue = core.productValue(monic).abs();
+    const productValue = core.mulVal(monic).abs();
     const monicValue = core.varVal(monic).abs();
     const isLt = monicValue.compare(productValue) < 0;
     if (core.throttle.insertMonotone(THROTTLE_MONOTONE_LEMMA, monic.variable, isLt)) return;
@@ -29,7 +28,6 @@ export class Monotone {
     else if (monicValue.compare(productValue) > 0) this.monotonicityLemmaGt(monic);
   }
 
-  // /\_i |m[i]| <= |val(m[i])| => |m| <= |product_i val(m[i])|
   private monotonicityLemmaGt(monic: Monic) {
     const core = this.core;
     const lemma = new LemmaBuilder(core);
@@ -43,7 +41,6 @@ export class Monotone {
     lemma.addIneq(mkIneq(monic.variable, product.isNegative() ? KIND_GE : KIND_LE, product));
   }
 
-  // /\_i |m[i]| >= |val(m[i])| => |m| >= |product_i val(m[i])|
   private monotonicityLemmaLt(monic: Monic) {
     const core = this.core;
     const lemma = new LemmaBuilder(core);

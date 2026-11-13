@@ -1,5 +1,4 @@
-// Ported from Z3 (src/math/lp/nex.h), MIT license, see z3-license.txt. Products and sums are
-// mutable, since nex_creator simplifies them in place and cross_nested rewrites their children.
+// Ported from Z3 (src/math/lp/nex.h), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 
 interface NexScalar {

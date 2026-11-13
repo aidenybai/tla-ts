@@ -3,10 +3,10 @@
 // z3-license.txt.
 import { Rational } from "../rational";
 
-// rem of mpq: the remainder of the numerators, truncated toward zero.
-const getRem = (first: Rational, second: Rational) => Rational.of(first.num % second.num);
+export const getRemainder = (first: Rational, second: Rational) =>
+  Rational.of(first.num % second.num);
 
-const getExtendedGcd = (first: Rational, second: Rational) => {
+const getMpzExtendedGcd = (first: Rational, second: Rational) => {
   let left = first.num < 0n ? -first.num : first.num;
   let right = second.num < 0n ? -second.num : second.num;
   let a = 1n;
@@ -31,12 +31,10 @@ const getExtendedGcd = (first: Rational, second: Rational) => {
   };
 };
 
-// extended_gcd_minimal_uv: the gcd d of a and b with a * u + b * v = d, where v is the smallest
-// coefficient of its residue class with the sign of -b.
 const getExtendedGcdMinimalUv = (a: Rational, b: Rational) => {
   if (a.isZero()) return { d: b, u: Rational.zero, v: Rational.one };
   if (b.isZero()) return { d: a, u: Rational.one, v: Rational.zero };
-  const result = getExtendedGcd(a, b);
+  const result = getMpzExtendedGcd(a, b);
   let d = result.gcd;
   let u = result.u;
   let v = result.v;
@@ -68,7 +66,7 @@ class Permutation {
   ) {}
 
   static identity(length: number) {
-    const getIndex = (_: unknown, index: number) => index;
+    const getIndex = (_value: unknown, index: number) => index;
     return new Permutation(Array.from({ length }, getIndex), Array.from({ length }, getIndex));
   }
 
@@ -151,7 +149,7 @@ export class GeneralMatrix {
   }
 }
 
-const preparePivot = (matrix: GeneralMatrix, r: number) => {
+const preparePivotForLowerTriangle = (matrix: GeneralMatrix, r: number) => {
   for (let row = r; row < matrix.getRowCount(); row++)
     for (let column = r; column < matrix.getColumnCount(); column++) {
       if (matrix.get(row, column).isZero()) continue;
@@ -185,7 +183,7 @@ export const getDeterminantOfRectangularMatrix = (
   const triangle = matrix.copy();
   let rank = 0;
   for (; rank < triangle.getRowCount(); rank++) {
-    if (!preparePivot(triangle, rank)) break;
+    if (!preparePivotForLowerTriangle(triangle, rank)) break;
     if (!pivotColumnNonFractional(triangle, rank, bigNumber)) return bigNumber;
   }
   if (rank === 0) return Rational.one;
@@ -199,7 +197,7 @@ export const getDeterminantOfRectangularMatrix = (
   }
   for (; column < triangle.getColumnCount(); column++) {
     const value = triangle.get(last, column);
-    if (!value.isZero()) gcd = getExtendedGcd(gcd, value).gcd;
+    if (!value.isZero()) gcd = getMpzExtendedGcd(gcd, value).gcd;
   }
   return gcd;
 };
@@ -217,12 +215,12 @@ export const getHermiteNormalForm = (
   let r = d;
   let halfR = r.div(Rational.of(2n)).floor();
   const getModBalanced = (value: Rational) => {
-    const rem = getRem(value, r);
+    const rem = getRemainder(value, r);
     if (rem.compare(halfR) > 0) return rem.sub(r);
     return rem.compare(halfR.neg()) < 0 ? rem.add(r) : rem;
   };
   const getMod = (value: Rational) => {
-    const rem = getRem(value, r);
+    const rem = getRemainder(value, r);
     return rem.isNegative() ? rem.add(r) : rem;
   };
   for (let i = 0; i < rowCount; i++) {

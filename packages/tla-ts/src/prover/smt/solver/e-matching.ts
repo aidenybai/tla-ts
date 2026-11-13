@@ -1,5 +1,5 @@
 // Ported from Z3 (src/smt/mam.cpp), MIT license, see z3-license.txt.
-import { AstManager, KIND_VAR } from "./ast";
+import { type AstManager, KIND_VAR } from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
 import { hashU, mkMix } from "./hash";
@@ -16,8 +16,6 @@ interface Path {
   child: Path | null;
 }
 
-// The inverted path index shares the prefixes of paths. Siblings are alternatives for the same step,
-// the first child is the next step, and a code receives the terms where a path ends.
 interface PathTree {
   label: number;
   argIndex: number;
@@ -67,8 +65,6 @@ export class Mam implements LabelHasher {
   private visitedParents: Enode[] = [];
   private queuedRoots: Enode[] = [];
   private labelHashes: (number | undefined)[] = [];
-  // m_trail_stack: the matcher undoes its changes with a trail of its own, which the quantifier
-  // manager pops before the context pops its trail.
   private trail: (() => void)[] = [];
   private trailScopes: number[] = [];
   private compiler: Compiler;
@@ -78,7 +74,7 @@ export class Mam implements LabelHasher {
     private context: Context,
     onMatch: OnMatch,
   ) {
-    this.compiler = new Compiler(context.manager, context, this);
+    this.compiler = new Compiler(context, this);
     this.interpreter = new Interpreter(context, onMatch);
   }
 
@@ -94,8 +90,7 @@ export class Mam implements LabelHasher {
     return hash;
   }
 
-  // The context's trail undoes set_lbl_hash. Z3 pops it after the matcher's trail, so the labels
-  // of a root can keep a hash that a merge undone by the matcher's trail added.
+  // Z3 undoes this on the context's trail, popped after the matcher's, so a root can keep a hash that an undone merge added.
   private setLblHash(node: Enode) {
     const hash = hashU(this.manager.ids[node.owner]) & 63;
     node.lblHash = hash;
@@ -423,8 +418,6 @@ export class Mam implements LabelHasher {
     return this.sharedEnodes.has(node);
   }
 
-  // add_candidate, with compress_candidates, which keeps the first of each candidate once there are
-  // many, as match does.
   private addCandidateTo(tree: CodeTree, node: Enode) {
     if (tree.candidates.length === 0) this.toMatch.push(tree);
     tree.candidates.push(node);
@@ -453,8 +446,6 @@ export class Mam implements LabelHasher {
     );
   }
 
-  // The mark of a parent says it was visited at this level, and the second mark of a root says
-  // it is queued for the next.
   private collectParents(start: Enode, head: PathTree | null | undefined) {
     if (head === null || head === undefined) return;
     const context = this.context;
@@ -551,7 +542,6 @@ export class Mam implements LabelHasher {
     }
   }
 
-  // add_eq_eh: r2's labels take r1's after the paths are followed.
   addEqEh(r1: Enode, r2: Enode) {
     this.r1 = r1;
     this.r2 = r2;
@@ -585,8 +575,6 @@ export class Mam implements LabelHasher {
     if (this.newPatterns.length > 0) this.matchNewPatterns();
   }
 
-  // match_new_patterns: one temporary tree per label, in the order the labels first appear, run
-  // against the relevant terms with the label.
   private matchNewPatterns() {
     const context = this.context;
     const manager = this.manager;
@@ -609,7 +597,6 @@ export class Mam implements LabelHasher {
     this.newPatterns = [];
   }
 
-  // rematch: every code tree, in the order of their labels' small ids, against every relevant term.
   rematch() {
     const context = this.context;
     const funcDecls = this.manager.funcDecls;

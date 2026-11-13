@@ -1,5 +1,3 @@
-// A TLA+ expression with the structure tla-ts generates for function bodies. Keeping the
-// structure until rendering lets disabled paths simplify away and keeps bulleted lists aligned.
 export type Formula = TextFormula | DisabledFormula | AndFormula | IfFormula | LetFormula;
 
 interface TextFormula {
@@ -7,7 +5,6 @@ interface TextFormula {
   text: string;
 }
 
-// A path through an action that assigns nothing, which TLA+ writes as FALSE.
 interface DisabledFormula {
   kind: "disabled";
 }
@@ -32,13 +29,13 @@ interface LetFormula {
 
 export const DISABLED: Formula = { kind: "disabled" };
 
-export const text = (value: string): Formula => ({ kind: "text", text: value });
+export const createText = (value: string): Formula => ({ kind: "text", text: value });
 
 export const and = (items: Formula[]): Formula => {
   const flattened = items.flatMap((item) => (item.kind === "and" ? item.items : [item]));
   if (flattened.some((item) => item.kind === "disabled")) return DISABLED;
   const kept = flattened.filter((item) => item.kind !== "text" || item.text !== "TRUE");
-  if (kept.length === 0) return text("TRUE");
+  if (kept.length === 0) return createText("TRUE");
   return kept.length === 1 ? kept[0] : { kind: "and", items: kept };
 };
 
@@ -49,8 +46,8 @@ export const ifThenElse = (
   negated = `~${wrap(condition)}`,
 ): Formula => {
   if (whenTrue.kind === "disabled" && whenFalse.kind === "disabled") return DISABLED;
-  if (whenFalse.kind === "disabled") return and([text(condition), whenTrue]);
-  if (whenTrue.kind === "disabled") return and([text(negated), whenFalse]);
+  if (whenFalse.kind === "disabled") return and([createText(condition), whenTrue]);
+  if (whenTrue.kind === "disabled") return and([createText(negated), whenFalse]);
   return { kind: "if", condition, whenTrue, whenFalse };
 };
 
@@ -97,8 +94,6 @@ interface Scan {
   surface: string;
 }
 
-// The expression without anything inside brackets, tuples, or strings, which leaves the operators
-// that apply to the whole expression.
 const getSurface = (expression: string) =>
   [...expression].reduce<Scan>(
     (scan, character, index) => {
@@ -123,7 +118,6 @@ const getSurface = (expression: string) =>
     { depth: 0, isQuoted: false, isEscaped: false, isSkipped: false, surface: "" },
   ).surface;
 
-// Whether an expression is a single term, so that it can be an operand without parentheses.
 const isAtomic = (expression: string) =>
   expression !== "" &&
   !/^[~-]/.test(expression) &&
@@ -132,7 +126,6 @@ const isAtomic = (expression: string) =>
 
 export const wrap = (expression: string) => (isAtomic(expression) ? expression : `(${expression})`);
 
-// Operators that bind no tighter than =, so that x = a = b would be ambiguous.
 const LOOSE_OPERATORS = [
   " = ",
   " # ",
@@ -149,12 +142,13 @@ const LOOSE_OPERATORS = [
   " ~> ",
 ];
 
-// Parenthesizes the value on the right of = when it is itself a comparison or a logical formula.
-export const wrapEquated = (expression: string) =>
-  expression.startsWith("~") ||
-  LOOSE_OPERATORS.some((operator) => getSurface(expression).includes(operator))
+export const wrapEquated = (expression: string) => {
+  if (expression.startsWith("~")) return `(${expression})`;
+  const surface = getSurface(expression);
+  return LOOSE_OPERATORS.some((operator) => surface.includes(operator))
     ? `(${expression})`
     : expression;
+};
 
 export const indent = (expression: string, prefix: string) =>
   expression.split("\n").join(`\n${prefix}`);

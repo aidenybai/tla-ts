@@ -59,14 +59,15 @@ const BUTTON_CLASS_NAME =
   "group flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-lg outline-none hover:bg-gray-300 focus-visible:ring-2 focus-visible:ring-blue-500/40 enabled:active:scale-[0.94] disabled:cursor-default disabled:hover:bg-transparent";
 const ICON_CLASS_NAME = "size-4.5 text-gray-1000 group-hover:text-gray-1200";
 
-export const CodeBlock = ({ code, language, run }: CodeBlockProps) => {
+export const CodeBlock = (props: CodeBlockProps) => {
   const [isCopied, setIsCopied] = useState(false);
   const runner = useRun();
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const isMultiline = code.includes("\n");
+  const isMultiline = props.code.includes("\n");
+  const run = props.run;
 
   const copy = async () => {
-    await navigator.clipboard.writeText(code);
+    await navigator.clipboard.writeText(props.code);
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), COPIED_MS);
   };
@@ -84,7 +85,7 @@ export const CodeBlock = ({ code, language, run }: CodeBlockProps) => {
           isMultiline ? "overflow-x-auto whitespace-pre" : "truncate",
         )}
       >
-        {getTokens(code, language).map((token, index) => (
+        {getTokens(props.code, props.language).map((token, index) => (
           <span key={index} className={token.className}>
             {token.text}
           </span>

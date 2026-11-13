@@ -1,7 +1,4 @@
-// Ported from Isabelle2025's Pure/General/table.ML. Copyright (c) 1986-2025 University of
-// Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-// Isabelle's tables are 2-3 trees; any balanced search tree visits keys in the same order, which is
-// all that the ports rely on.
+// Ported from Isabelle2025's Pure/General/table.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 export type Compare<Key> = (left: Key, right: Key) => number;
 
@@ -119,27 +116,6 @@ export const updateTable = <Key, Value>(
   root: insertNode(table.compare, key, value, table.root),
 });
 
-const removeMin = <Key, Value>(
-  node: NonNullable<Node<Key, Value>>,
-): [NonNullable<Node<Key, Value>>, Node<Key, Value>] => {
-  if (!node.left) return [node, node.right];
-  const [minimum, left] = removeMin(node.left);
-  return [minimum, balance(node.key, node.value, left, node.right)];
-};
-
-export const deleteTable = <Key, Value>(table: Table<Key, Value>, key: Key): Table<Key, Value> => {
-  const remove = (node: Node<Key, Value>): Node<Key, Value> => {
-    if (!node) return undefined;
-    const order = table.compare(key, node.key);
-    if (order < 0) return balance(node.key, node.value, remove(node.left), node.right);
-    if (order > 0) return balance(node.key, node.value, node.left, remove(node.right));
-    if (!node.right) return node.left;
-    const [minimum, right] = removeMin(node.right);
-    return balance(minimum.key, minimum.value, node.left, right);
-  };
-  return { compare: table.compare, root: remove(table.root) };
-};
-
 export const minTable = <Key, Value>(table: Table<Key, Value>): [Key, Value] | undefined => {
   let node = table.root;
   if (!node) return undefined;
@@ -172,7 +148,6 @@ export const tableEntries = <Key, Value>(table: Table<Key, Value>) =>
     [],
   );
 
-// fast_string_ord: shorter strings first, then by code units.
 export const fastStringOrd = (left: string, right: string) =>
   left === right
     ? 0
@@ -182,7 +157,8 @@ export const fastStringOrd = (left: string, right: string) =>
         ? -1
         : 1;
 
-const stringOrd = (left: string, right: string) => (left === right ? 0 : left < right ? -1 : 1);
+export const stringOrd = (left: string, right: string) =>
+  left === right ? 0 : left < right ? -1 : 1;
 
 export interface IndexKey {
   readonly name: string;

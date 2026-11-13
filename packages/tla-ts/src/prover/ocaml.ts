@@ -1,12 +1,8 @@
-// The parts of OCaml's standard library whose exact order steers what tlapm prints.
-
 type OcamlValue = number | string | OcamlValue[];
 
-// Code units order like String.compare's UTF-8 bytes for the ASCII names tlapm compares.
 export const compareStrings = (left: string, right: string) =>
   left < right ? -1 : left > right ? 1 : 0;
 
-// A list is smaller than any longer list it starts, as in Stdlib.compare.
 export const compareValues = (left: OcamlValue, right: OcamlValue): number => {
   if (typeof left === "number" && typeof right === "number") return left - right;
   if (typeof left === "string" && typeof right === "string") return compareStrings(left, right);

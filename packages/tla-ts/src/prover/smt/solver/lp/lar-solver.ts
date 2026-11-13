@@ -1,5 +1,4 @@
-// Ported from Z3 (src/math/lp/lar_solver.h, src/math/lp/lar_solver.cpp, src/math/lp/column.h,
-// src/math/lp/var_register.h), MIT license, see z3-license.txt.
+// Ported from Z3 (src/math/lp/lar_solver.h, src/math/lp/lar_solver.cpp, src/math/lp/column.h, src/math/lp/var_register.h), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../../errors";
 import { Rational } from "../rational";
 import { IndexedUintSet, StackedVector } from "./containers";
@@ -26,7 +25,7 @@ import {
   LP_UNKNOWN,
   type ColumnType,
 } from "./core-solver";
-import { Dependency, linearize, mkJoin } from "./dependency";
+import { type Dependency, linearize, mkJoin } from "./dependency";
 import type { Explanation } from "./explanation";
 import { LarTerm } from "./lar-term";
 import { LpSettings } from "./lp-settings";
@@ -57,6 +56,23 @@ const getTermKey = (term: LarTerm) =>
     .sort()
     .join(",");
 
+const updateDelta = (delta: Rational, low: Impq, high: Impq) => {
+  if (low.x.compare(high.x) >= 0 || low.y.compare(high.y) <= 0) return delta;
+  const candidate = high.x.sub(low.x).div(low.y.sub(high.y));
+  return candidate.compare(delta) < 0 ? candidate : delta;
+};
+
+const getBoundsDelta = (core: CoreSolver, columnCount: number) => {
+  let delta = Rational.one;
+  for (let column = 0; column < columnCount; column++) {
+    if (core.hasLowerBound(column))
+      delta = updateDelta(delta, core.lowerBounds[column], core.x[column]);
+    if (core.hasUpperBound(column))
+      delta = updateDelta(delta, core.x[column], core.upperBounds[column]);
+  }
+  return delta;
+};
+
 export class LarSolver {
   readonly settings: LpSettings;
   readonly core: CoreSolver;
@@ -67,8 +83,8 @@ export class LarSolver {
   readonly columnsWithChangedBounds = new IndexedUintSet();
   rowBoundsToReplay: number[] = [];
   status = LP_UNKNOWN;
-  crossedBoundsColumn = NULL_LPVAR;
-  crossedBoundsDeps: Dependency = null;
+  private crossedBoundsColumn = NULL_LPVAR;
+  private crossedBoundsDeps: Dependency = null;
   private externalToLocal = new Map<number, number>();
   private localToExternal: number[] = [];
   private localIsInt: boolean[] = [];
@@ -178,7 +194,7 @@ export class LarSolver {
 
   private addNewVarToCoreFields(isBasic: boolean) {
     this.core.addColumn(isBasic);
-    if (isBasic) this.addTouchedRow(this.getRowCount() - 1);
+    if (isBasic) this.touchedRows.add(this.getRowCount() - 1);
   }
 
   private pushUndoAddColumn() {
@@ -455,14 +471,6 @@ export class LarSolver {
     this.onColumnBoundUpdate?.(column);
   }
 
-  addTouchedRow(rowIndex: number) {
-    this.touchedRows.add(rowIndex);
-  }
-
-  addColumnRowsToTouchedRows(column: number) {
-    for (const cell of this.core.matrix.columns[column]) this.addTouchedRow(cell.row);
-  }
-
   private changeBasicColumnsDependingOn(column: number, delta: Impq) {
     const core = this.core;
     for (const cell of core.matrix.columns[column])
@@ -490,10 +498,7 @@ export class LarSolver {
     core.solve();
     this.status = core.status;
     if (this.status === LP_INFEASIBLE || this.status === LP_CANCELLED) return this.status;
-    for (const column of this.columnsWithChangedBounds.elems) {
-      if (core.isBase(column)) this.addTouchedRow(core.heading[column]);
-      else this.addColumnRowsToTouchedRows(column);
-    }
+    this.collectMoreRowsForLpPropagation();
     this.onChangedBounds?.(this.columnsWithChangedBounds);
     this.columnsWithChangedBounds.clear();
     return this.status;
@@ -581,9 +586,9 @@ export class LarSolver {
   }
 
   moveNonBasicColumnsToBounds() {
-    const core = this.core;
     let isChanged = false;
-    for (const column of core.nbasis) if (this.moveNonBasicColumnToBounds(column)) isChanged = true;
+    for (const column of this.core.nbasis)
+      if (this.moveNonBasicColumnToBounds(column)) isChanged = true;
     if (isChanged) this.findFeasibleSolution();
   }
 
@@ -635,20 +640,10 @@ export class LarSolver {
   }
 
   initModel() {
-    if (this.status !== LP_OPTIMAL && this.status !== LP_FEASIBLE) return false;
+    if (!this.isFeasible()) return false;
     if (this.columnsWithChangedBounds.size > 0) return false;
     const core = this.core;
-    let delta = Rational.one;
-    const updateDelta = (low: Impq, high: Impq) => {
-      if (low.x.compare(high.x) < 0 && low.y.compare(high.y) > 0) {
-        const candidate = high.x.sub(low.x).div(low.y.sub(high.y));
-        if (candidate.compare(delta) < 0) delta = candidate;
-      }
-    };
-    for (let column = 0; column < this.getColumnCount(); column++) {
-      if (core.hasLowerBound(column)) updateDelta(core.lowerBounds[column], core.x[column]);
-      if (core.hasUpperBound(column)) updateDelta(core.x[column], core.upperBounds[column]);
-    }
+    let delta = getBoundsDelta(core, this.getColumnCount());
     const pairs = new Map<string, Impq>();
     for (const value of core.x) pairs.set(value.toString(), value);
     for (;;) {
@@ -698,17 +693,7 @@ export class LarSolver {
     const core = this.core;
     const columnCount = this.getColumnCount();
     if (core.x.slice(0, columnCount).every((value) => value.y.isZero())) return;
-    let delta = Rational.one;
-    const updateDelta = (low: Impq, high: Impq) => {
-      if (low.x.compare(high.x) < 0 && low.y.compare(high.y) > 0) {
-        const candidate = high.x.sub(low.x).div(low.y.sub(high.y));
-        if (candidate.compare(delta) < 0) delta = candidate;
-      }
-    };
-    for (let column = 0; column < columnCount; column++) {
-      if (core.hasLowerBound(column)) updateDelta(core.lowerBounds[column], core.x[column]);
-      if (core.hasUpperBound(column)) updateDelta(core.x[column], core.upperBounds[column]);
-    }
+    const delta = getBoundsDelta(core, columnCount);
     for (let column = 0; column < columnCount; column++) {
       const value = core.x[column];
       if (!value.y.isZero()) core.x[column] = new Impq(value.x.add(delta.mul(value.y)));
@@ -721,8 +706,8 @@ export class LarSolver {
 
   collectMoreRowsForLpPropagation() {
     for (const column of this.columnsWithChangedBounds.elems) {
-      if (this.core.isBase(column)) this.addTouchedRow(this.core.heading[column]);
-      else this.addColumnRowsToTouchedRows(column);
+      if (this.core.isBase(column)) this.touchedRows.add(this.core.heading[column]);
+      else for (const cell of this.core.matrix.columns[column]) this.touchedRows.add(cell.row);
     }
   }
 
@@ -764,7 +749,7 @@ export class LarSolver {
     for (const table of [this.fixedVarTableInt, this.fixedVarTableReal])
       for (const entry of table)
         if (entry[1] >= columnCount || !this.isFixed(entry[1])) table.delete(entry[0]);
-    for (const rowIndex of this.rowBoundsToReplay) this.addTouchedRow(rowIndex);
+    for (const rowIndex of this.rowBoundsToReplay) this.touchedRows.add(rowIndex);
     this.rowBoundsToReplay = [];
     const rowCount = this.getRowCount();
     for (const rowIndex of this.touchedRows.elems.filter((row) => row >= rowCount))

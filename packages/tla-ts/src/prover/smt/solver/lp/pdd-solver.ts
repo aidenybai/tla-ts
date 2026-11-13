@@ -1,8 +1,8 @@
-// Ported from Z3 (src/math/grobner/pdd_solver.h, src/math/grobner/pdd_solver.cpp), MIT license,
-// see z3-license.txt. Z3's solver::simplify runs the simplifier, which here its caller runs.
+// Ported from Z3 (src/math/grobner/pdd_solver.h, src/math/grobner/pdd_solver.cpp), MIT license, see
+// z3-license.txt.
 import { PddMemoryOutError } from "../../../../errors";
-import { Dependency, mkJoin } from "./dependency";
-import { Pdd, PddManager } from "./pdd";
+import { type Dependency, mkJoin } from "./dependency";
+import type { Pdd, PddManager } from "./pdd";
 import { shrink } from "../array";
 
 export const SOLVED = 0;
@@ -43,9 +43,6 @@ interface Subst {
 
 class PddSolverStats {
   simplified = 0;
-  maxExprSize = 0;
-  maxExprDegree = 0;
-  superposed = 0;
   computeSteps = 0;
 }
 
@@ -59,7 +56,6 @@ export class Equation {
   ) {}
 }
 
-// finish keeps the equations not walked and drops the rest, as Z3's destructor does.
 export class SetUpdate {
   i = 0;
   private j = 0;
@@ -135,7 +131,6 @@ export class PddSolver {
     if (this.var2level.length > 0) {
       this.levelp1 = Math.max(this.var2level[poly.var()] + 1, this.levelp1);
     }
-    this.updateStats(equation);
   }
 
   simplify(poly: Pdd, dep: Dependency) {
@@ -168,7 +163,6 @@ export class PddSolver {
       const isLeadingTermChanged = substituted.differentLeadingTerm(target.poly);
       target.poly = substituted;
       target.dep = mkJoin(target.dep, dep);
-      this.updateStats(target);
       return isLeadingTermChanged;
     };
     if (!this.isDone()) this.simplifySetUsing(this.processed, simplifier);
@@ -194,7 +188,6 @@ export class PddSolver {
     this.stats.computeSteps++;
     const equation = this.pickNext();
     if (equation === null) return false;
-    // scoped_process: the equation goes back to processed unless the step settles it.
     let pending: Equation | null = equation;
     try {
       this.simplifyUsingAll(equation, this.processed);
@@ -254,7 +247,6 @@ export class PddSolver {
       this.isTooComplexFound = true;
       return;
     }
-    this.stats.superposed++;
     this.add(poly, mkJoin(first.dep, second.dep));
   }
 
@@ -276,8 +268,6 @@ export class PddSolver {
     this.simplifySetUsing(set, (target) => this.trySimplifyUsing(target, source));
   }
 
-  // simplify_using(set, simplifier): the simplifier returns null when it leaves the target, and
-  // otherwise whether the leading term changed.
   private simplifySetUsing(set: Equation[], simplifier: (target: Equation) => boolean | null) {
     const update = new SetUpdate(set);
     for (; update.i < update.size; update.i++) {
@@ -298,8 +288,6 @@ export class PddSolver {
     update.finish();
   }
 
-  // try_simplify_using: null when the target stays, and otherwise whether its leading term changed
-  // while it was processed.
   private trySimplifyUsing(target: Equation, source: Equation) {
     if (source === target) return null;
     this.stats.simplified++;
@@ -313,12 +301,9 @@ export class PddSolver {
       target.state === PROCESSED && reduced.differentLeadingTerm(target.poly);
     target.poly = reduced;
     target.dep = mkJoin(target.dep, source.dep);
-    this.updateStats(target);
     return isLeadingTermChanged;
   }
 
-  // simplify_using(dst, src): reduces dst by src whatever the result, and returns whether its
-  // leading term changed while it was processed.
   simplifyUsing(target: Equation, source: Equation) {
     if (source === target) return false;
     this.stats.simplified++;
@@ -328,7 +313,6 @@ export class PddSolver {
     if (reduced.equals(target.poly)) return isLeadingTermChanged;
     target.poly = reduced;
     target.dep = mkJoin(target.dep, source.dep);
-    this.updateStats(target);
     return isLeadingTermChanged;
   }
 
@@ -391,10 +375,5 @@ export class PddSolver {
     const set = this.getQueue(state);
     equation.idx = set.length;
     set.push(equation);
-  }
-
-  private updateStats(equation: Equation) {
-    this.stats.maxExprSize = Math.max(this.stats.maxExprSize, equation.poly.treeSize());
-    this.stats.maxExprDegree = Math.max(this.stats.maxExprDegree, equation.poly.degree());
   }
 }

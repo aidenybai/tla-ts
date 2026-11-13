@@ -1,10 +1,8 @@
-// Ported from Z3 (src/math/lp/bound_analyzer_on_row.h, src/math/lp/lp_bound_propagator.h,
-// src/math/lp/implied_bound.h, and propagate_bounds_for_touched_rows in src/math/lp/lar_solver.h),
-// MIT license, see z3-license.txt.
+// Ported from Z3 (src/math/lp/bound_analyzer_on_row.h, src/math/lp/lp_bound_propagator.h, src/math/lp/implied_bound.h, and propagate_bounds_for_touched_rows in src/math/lp/lar_solver.h), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import { COLUMN_FIXED, COLUMN_FREE, COLUMN_LOWER, COLUMN_UPPER } from "./core-solver";
 import { type ConstraintKind, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
-import { Dependency, linearize } from "./dependency";
+import { type Dependency, linearize } from "./dependency";
 import { Explanation } from "./explanation";
 import type { LarSolver } from "./lar-solver";
 import type { RowCell } from "./static-matrix";
@@ -211,7 +209,7 @@ export class BoundPropagator {
     }
   }
 
-  private isFixed(column: number) {
+  private columnIsFixed(column: number) {
     const solver = this.solver;
     return (
       solver.core.getColumnType(column) === COLUMN_FIXED && solver.getLowerBound(column).y.isZero()
@@ -244,8 +242,7 @@ export class BoundPropagator {
     second: number,
     isFixed: boolean,
   ) {
-    const isAdded = this.host.addEq(first, second, explanation, isFixed);
-    if (!isAdded) return;
+    if (!this.host.addEq(first, second, explanation, isFixed)) return;
     const stats = this.solver.settings.stats;
     if (isFixed) stats.fixedEqs++;
     else stats.offsetEqs++;
@@ -254,7 +251,7 @@ export class BoundPropagator {
   private getOnlyOneNonFixed(rowIndex: number) {
     let result = -1;
     for (const cell of this.solver.getRow(rowIndex)) {
-      if (this.isFixed(cell.column)) continue;
+      if (this.columnIsFixed(cell.column)) continue;
       if (result !== -1) return -1;
       result = cell.column;
     }
@@ -289,7 +286,7 @@ export class BoundPropagator {
 
   private tryAddEquationWithLpFixedTables(rowIndex: number, column: number) {
     const solver = this.solver;
-    if (this.isFixed(column)) return;
+    if (this.columnIsFixed(column)) return;
     const value = solver.getValue(column);
     const other = value.y.isZero()
       ? solver.findInFixedTables(value.x, solver.isInt(column))
@@ -312,12 +309,12 @@ export class BoundPropagator {
   private extractNonFixed(rowIndex: number) {
     const solver = this.solver;
     const x = solver.core.basis[rowIndex];
-    if (this.isFixed(x)) return { count: 0, x, y: -1, ySign: 0 };
+    if (this.columnIsFixed(x)) return { count: 0, x, y: -1, ySign: 0 };
     let count = 1;
     let y = -1;
     let ySign = 0;
     for (const cell of solver.getRow(rowIndex)) {
-      if (cell.column === x || this.isFixed(cell.column)) continue;
+      if (cell.column === x || this.columnIsFixed(cell.column)) continue;
       if (++count > 2) return { count, x, y, ySign };
       y = cell.column;
       ySign = cell.coeff.equals(Rational.one) ? 1 : cell.coeff.equals(Rational.minusOne) ? -1 : 0;

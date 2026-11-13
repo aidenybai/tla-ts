@@ -1,5 +1,3 @@
-// tlapm's fingerprints file, ported from src/backend/fpfile.ml.
-
 import {
   cpSync,
   existsSync,
@@ -14,18 +12,37 @@ import {
 import { basename, join } from "node:path";
 import { version } from "../../../package.json";
 import { TlaProofError } from "../../errors";
-import { block, isBlock, readMarshaled, writeMarshaled, type OcamlValue } from "./ocaml-marshal";
-import type { ProofAttempt } from "../prove";
+import {
+  createBlock,
+  isBlock,
+  readMarshaled,
+  writeMarshaled,
+  type OcamlValue,
+} from "./ocaml-marshal";
+import { getBudget } from "../prep/methods";
+import { getFailureReason, isProvedAttempt, type ProofAttempt } from "../prove";
+import { BACKENDS } from "../verdict";
 
-// One optional result per prover, in V13.str's order.
 export type FingerprintTable = Map<string, OcamlValue[]>;
 
 const MAGIC_NUMBER = 20210223;
 
 const RECORD_SIZE = 23;
 
+const STORED_PROVERS = [
+  ...BACKENDS,
+  "cooper",
+  "expandenabled",
+  "expandcdot",
+  "lambdify",
+  "enabledaxioms",
+  "levelcomparison",
+] as const;
+
+type StoredProver = (typeof STORED_PROVERS)[number];
+
 // A constant constructor's tag is the value itself.
-const PROVERS: Record<string, { field: number; tag: number; isConstant?: boolean }> = {
+const PROVERS: Record<StoredProver, { field: number; tag: number; isConstant?: boolean }> = {
   zenon: { field: 1, tag: 1 },
   isabelle: { field: 2, tag: 0 },
   cooper: { field: 4, tag: 3, isConstant: true },
@@ -43,7 +60,6 @@ const FAIL_METHOD = 5;
 
 const REASONS = ["false", "timeout"];
 
-// Stored as the tlapm, Zenon and Isabelle versions, which --safefp compares.
 const VERSION = `tla-ts ${version}`;
 
 const CHECKED_VERSIONS = new Map([
@@ -59,13 +75,12 @@ const getField = (value: OcamlValue | undefined, index: number) =>
 const getFloat = (value: OcamlValue | undefined) =>
   value !== undefined && typeof value === "object" && "float" in value ? value.float : Infinity;
 
-// Hashtbl.hash on a string.
 const hashKey = (key: string) => {
   const bytes = new TextEncoder().encode(key);
   const rotate = (value: number, shift: number) => (value << shift) | (value >>> (32 - shift));
   const mixed = Array.from(
     { length: Math.ceil(bytes.length / 4) },
-    (_, index) =>
+    (_value, index) =>
       bytes[index * 4] |
       (bytes[index * 4 + 1] << 8) |
       (bytes[index * 4 + 2] << 16) |
@@ -84,7 +99,6 @@ const readBucket = (entry: OcamlValue | undefined): [OcamlValue, OcamlValue][] =
     ? [[entry.fields[0], entry.fields[1]], ...readBucket(entry.fields[2])]
     : [];
 
-// Each bucket lists the latest fingerprint first.
 export const loadFingerprints = (table: FingerprintTable, path: string, isSafe: boolean) => {
   const bytes = readFileSync(path);
   const magic = readMarshaled(bytes, 0);
@@ -109,7 +123,10 @@ export const loadFingerprints = (table: FingerprintTable, path: string, isSafe: 
     });
 };
 
-const decodeResult = (prover: string, result: OcamlValue | undefined): ProofAttempt | undefined => {
+const decodeResult = (
+  prover: StoredProver,
+  result: OcamlValue | undefined,
+): ProofAttempt | undefined => {
   const status = getField(result, 0);
   const outcome = getField(status, 0);
   const argument = getField(getField(status, 1), 0);
@@ -118,13 +135,13 @@ const decodeResult = (prover: string, result: OcamlValue | undefined): ProofAtte
   const tactic = prover === "isabelle" ? getField(argument, 1) : undefined;
   const reason = getField(getField(outcome, 0), 0);
   return {
+    kind: "stored",
     method: {
       prover,
       timeLimitMs: seconds * 1000,
       ...(typeof tactic === "string" && { tactic }),
     },
     isProved: outcome === 0,
-    isReused: false,
     ...(reason !== undefined && {
       reason: typeof reason === "number" ? REASONS[reason] : String(getField(reason, 0)),
     }),
@@ -132,33 +149,34 @@ const decodeResult = (prover: string, result: OcamlValue | undefined): ProofAtte
 };
 
 // Fpfile.fp_writes counts the date's months from 0.
-const encodeResult = (attempt: ProofAttempt) => {
+const encodeResult = (prover: StoredProver, attempt: ProofAttempt) => {
   const now = new Date();
   const method = attempt.method;
-  const timeout = { float: method.rlimit ?? method.timeLimitMs / 1000 };
+  const timeout = { float: getBudget(method) };
   const argument =
-    method.prover === "zenon"
-      ? block(0, timeout, FAIL_METHOD)
-      : method.prover === "isabelle"
-        ? block(0, block(0, timeout), method.tactic ?? "auto")
-        : block(0, timeout);
-  const reasonIndex = REASONS.indexOf(attempt.reason ?? "");
+    prover === "zenon"
+      ? createBlock(0, timeout, FAIL_METHOD)
+      : prover === "isabelle"
+        ? createBlock(0, createBlock(0, timeout), method.tactic ?? "auto")
+        : createBlock(0, timeout);
+  const failure = getFailureReason(attempt);
+  const reasonIndex = REASONS.indexOf(failure ?? "");
   const reason =
-    attempt.reason === undefined
+    failure === undefined
       ? 0
-      : block(0, reasonIndex === -1 ? block(0, attempt.reason) : reasonIndex);
-  return block(
+      : createBlock(0, reasonIndex === -1 ? createBlock(0, failure) : reasonIndex);
+  return createBlock(
     0,
-    block(
+    createBlock(
       0,
-      block(
+      createBlock(
         0,
-        attempt.isProved ? 0 : block(0, reason),
-        PROVERS[method.prover].isConstant
-          ? PROVERS[method.prover].tag
-          : block(PROVERS[method.prover].tag, argument),
+        isProvedAttempt(attempt) ? 0 : createBlock(0, reason),
+        PROVERS[prover].isConstant
+          ? PROVERS[prover].tag
+          : createBlock(PROVERS[prover].tag, argument),
       ),
-      block(
+      createBlock(
         0,
         now.getFullYear(),
         now.getMonth(),
@@ -179,9 +197,9 @@ const encodeTable = (table: FingerprintTable) => {
   const buckets: OcamlValue[] = Array.from({ length }, () => 0);
   table.forEach((record, fingerprint) => {
     const index = hashKey(fingerprint) & (length - 1);
-    buckets[index] = block(0, fingerprint, block(0, ...record), buckets[index]);
+    buckets[index] = createBlock(0, fingerprint, createBlock(0, ...record), buckets[index]);
   });
-  return block(0, block(0, table.size, block(0, ...buckets), 0, 512));
+  return createBlock(0, createBlock(0, table.size, createBlock(0, ...buckets), 0, 512));
 };
 
 const pad = (value: number) => String(value).padStart(2, "0");
@@ -204,18 +222,17 @@ export const saveHistory = (path: string, sources: string[]) => {
     .forEach((old) => rmSync(old, { recursive: true, force: true }));
 };
 
-// Saving keeps each loaded record and result unchanged, with its date, versions and other provers'
-// results.
 export const getKnownResults = (table: FingerprintTable) => {
   const storedResults = new Map<ProofAttempt, OcamlValue>();
   const storedRecords = new Map<Map<string, ProofAttempt>, OcamlValue[]>();
   const results = new Map(
     [...table].map(([fingerprint, record]) => {
       const attempts = new Map(
-        Object.entries(PROVERS).flatMap(([prover, known]) => {
-          const result = decodeResult(prover, getField(record[known.field], 0));
+        STORED_PROVERS.flatMap((prover) => {
+          const stored = record[PROVERS[prover].field];
+          const result = decodeResult(prover, getField(stored, 0));
           if (!result) return [];
-          storedResults.set(result, record[known.field]);
+          storedResults.set(result, stored);
           return [[prover, result]];
         }),
       );
@@ -227,8 +244,11 @@ export const getKnownResults = (table: FingerprintTable) => {
     table.clear();
     results.forEach((attempts, fingerprint) => {
       const record = [...(storedRecords.get(attempts) ?? Array<OcamlValue>(RECORD_SIZE).fill(0))];
-      attempts.forEach((attempt, prover) => {
-        record[PROVERS[prover].field] = storedResults.get(attempt) ?? encodeResult(attempt);
+      STORED_PROVERS.forEach((prover) => {
+        const attempt = attempts.get(prover);
+        if (attempt)
+          record[PROVERS[prover].field] =
+            storedResults.get(attempt) ?? encodeResult(prover, attempt);
       });
       table.set(fingerprint, record);
     });

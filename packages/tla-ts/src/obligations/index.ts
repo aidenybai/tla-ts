@@ -22,7 +22,7 @@ import { formatObligation, type PrinterOptions } from "./printer";
 import type { Counter, ObligationKind } from "./proof";
 import type { OldMethod } from "./pragma";
 import { createSimplifier } from "./simplify";
-import { createSource } from "./source";
+import { createModuleConverter } from "./source";
 import { tokenize } from "../lexer";
 import { parseTlapmModule } from "../parser";
 import type { Module } from "../ast";
@@ -121,7 +121,6 @@ const parseSource = (source: string): Module | SyntaxFailure[] => {
   return isSyntaxFailure(parsed) ? [parsed] : parsed;
 };
 
-// Module.Save.parse_file warns when a module's name differs from its file's, then renames it.
 const loadMule = (
   input: ObligationSource,
   counter: Counter,
@@ -165,7 +164,7 @@ const loadMule = (
     onWarning({ text: `${errorPrefix}Error: ${message}`, channel: "stderr" });
     throw new TlaProofError(message, { failure: "Module.Parser.parse_file" });
   }
-  const mule = createSource(input.file, input.source, counter, isMain).convertModule(parsed);
+  const mule = createModuleConverter(input.file, input.source, counter, isMain)(parsed);
   const fileName = input.file.slice(input.file.lastIndexOf("/") + 1);
   const name = fileName.replace(/\.tla$/, "");
   if (mule.name === name) return mule;
@@ -176,7 +175,6 @@ const loadMule = (
   return { ...mule, name };
 };
 
-// Module.Dep.schedule: dependencies first, visiting modules and their dependencies by name.
 const schedule = (modules: Map<string, Mule>) => {
   const dependencies = new Map(
     [...modules].map(([name, module]) => [name, getDependencies(module).dependencies]),
@@ -245,8 +243,6 @@ export const formatSummary = (result: ModuleObligations) => {
   ].join("\n");
 };
 
-// Each main module is one file given to tlapm. They load into one context and report in schedule
-// order, each numbering its obligations from 1.
 export const getObligations = (
   mains: ObligationSource[],
   loadModule: (name: string) => ObligationSource | undefined,
@@ -263,9 +259,7 @@ export const getObligations = (
     };
     modules.set(module.name, module);
   });
-  // Module.Save.complete_load: breadth first from every known module, by name.
   const queue = [...modules.values()].sort((left, right) => compareNames(left.name, right.name));
-  // A missing module is fine only if some loaded module declares it as a submodule.
   const requested = new Map<string, Locus | undefined>();
   const found = new Set<string>();
   for (let index = 0; index < queue.length; index++) {
@@ -274,7 +268,6 @@ export const getObligations = (
       found.add(name);
       if (!modules.has(name)) modules.set(name, submodule);
     });
-    // A file named like a standard module replaces it, and is read again for each module citing it.
     for (const name of result.dependencies) {
       if (modules.has(name) && !STANDARD_MODULES.has(name)) continue;
       const input = loadModule(name);
@@ -318,14 +311,12 @@ export const getObligations = (
     module.isStandard ? module : flatten(modules, module, new Set()),
   );
   const generateModule = createGenerator(new Set(mains.map((main) => main.file)), lines, onWarning);
-  // Instances see each module as flattened, and as normalized once its turn has come.
   const normalized = new Map(order.map((module) => [module.name, module]));
   return order.flatMap((module): ModuleObligations[] => {
     if (module.isStandard) return [];
     const result = normalize(pipeline, normalized, undefined, module);
     if (!module.isImportant) return [];
     const generated = generateModule([], result);
-    // tlapm numbers the obligations, then drops the omitted ones and those outside the lines.
     const obligations = generated.obligations.flatMap((obligation, index): PrintedObligation[] => {
       const location = obligation.location;
       if (

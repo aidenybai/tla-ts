@@ -1,4 +1,4 @@
-// A port of the parts of OCaml's Format module that tlapm reaches.
+// A port of OCaml's Format module, which tlapm uses to lay out obligations.
 
 type BoxKind = "h" | "v" | "hv" | "hov" | "b" | "fits";
 
@@ -244,8 +244,6 @@ const flushNewline = (formatter: Formatter) => {
   formatter.output = output;
 };
 
-// Printers build a document of layout commands first and render it once, so names resolve while
-// the printer still knows the context they were bound in.
 type Command =
   | { kind: "Open"; box: BoxKind; indent: number }
   | { kind: "Close" }
@@ -260,7 +258,6 @@ const BOX_KINDS: Record<string, BoxKind> = { h: "h", v: "v", hv: "hv", hov: "hov
 
 const getText = (value: string): Command => ({ kind: "Text", text: value, size: getLength(value) });
 
-// Prints a string as is, where format would read @ and % in it as directives.
 export const text = (value: string): Doc => (value === "" ? [] : [getText(value)]);
 
 const SPACE: Command = { kind: "Break", width: 1, offset: 0 };
@@ -276,8 +273,6 @@ const parseOpen = (directive: string): Command => {
   };
 };
 
-// The subset of OCaml format strings that tlapm's printers use, so ported printers read like the
-// OCaml.
 export const format = (pattern: string, ...args: (string | Doc)[]): Doc => {
   const doc: Doc = [];
   let argumentIndex = 0;
@@ -395,7 +390,6 @@ const renderInto = (formatter: Formatter, doc: Doc) => {
   }
 };
 
-// 68 is Format's default maximum indent; tlapm's stderr formatter allows 35.
 export const renderDoc = (doc: Doc, maxIndent = 68) => {
   const formatter = createFormatter(maxIndent);
   renderInto(formatter, doc);

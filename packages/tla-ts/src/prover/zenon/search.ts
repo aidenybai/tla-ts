@@ -1,7 +1,7 @@
 // Ported from Zenon's prove.ml, as shipped in tlapm. Copyright 2002 INRIA, see LICENSE.
 
 import { TlaZenonError } from "../../errors";
-import { difference, isApp, isDisjoint, isMeta, union, type Expr } from "./expr";
+import { difference, isApp, isDisjoint, isMeta, isRelation, union, type Expr } from "./expr";
 import { getLimitFailure, type Limits } from "./limits";
 import { EMPTY_QUEUE, getQueueHead, removeNode, type Node, type Queue } from "./node";
 import { stableSort } from "./ocaml";
@@ -13,12 +13,10 @@ import { addNodes, type SearchContext } from "./rules";
 const isTrivial = (context: SearchContext, formula: Expr) =>
   formula.kind === "true" ||
   (formula.kind === "not" && formula.args[0].kind === "false") ||
-  (formula.kind === "app" &&
-    formula.args.length === 2 &&
+  (isRelation(formula) &&
     formula.args[0] === formula.args[1] &&
     context.relations.isReflexive(formula.symbol));
 
-// Zenon's reduce_list: drops the formulas a branch already has, and reverses the rest.
 const reduceBranch = (context: SearchContext, branch: Expr[]) => {
   const exprs = context.exprs;
   const index = context.index;
@@ -27,8 +25,7 @@ const reduceBranch = (context: SearchContext, branch: Expr[]) => {
   const isKnown = (formula: Expr) => index.isMember(formula) || kept.includes(formula);
   for (const formula of branch) {
     if (
-      formula.kind === "true" ||
-      (formula.kind === "not" && formula.args[0].kind === "false") ||
+      isTrivial(context, formula) ||
       (formula.kind === "not" &&
         isApp(formula.args[0], "TLA.in", 2) &&
         formula.args[0].args[1].kind === "var" &&
@@ -36,15 +33,7 @@ const reduceBranch = (context: SearchContext, branch: Expr[]) => {
     )
       continue;
     const atom = formula.kind === "not" ? formula.args[0] : formula;
-    const isRelation = atom.kind === "app" && atom.args.length === 2;
-    if (
-      formula.kind === "app" &&
-      isRelation &&
-      formula.args[0] === formula.args[1] &&
-      relations.isReflexive(formula.symbol)
-    )
-      continue;
-    if (isRelation && relations.isSymmetric(atom.symbol)) {
+    if (isRelation(atom) && relations.isSymmetric(atom.symbol)) {
       const swapped = exprs.eapp(atom.symbol, [atom.args[1], atom.args[0]]);
       const reversed = formula.kind === "not" ? exprs.enot(swapped) : swapped;
       if (!isKnown(formula) && !isKnown(reversed)) kept.unshift(formula);
@@ -133,7 +122,6 @@ interface Frame {
 interface SearchStatistics {
   inferences: number;
   proofNodes: number;
-  // Zenon prints each of these proofs once, as a lemma.
   reusedProofs: Set<Proof>;
 }
 

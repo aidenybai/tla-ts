@@ -103,7 +103,6 @@ export abstract class TheoryLraBounds extends TheoryLraInternalize {
     this.internalizeHead--;
     const column = this.registerVar(thVar);
     const isInt = this.isIntVar(thVar);
-    const partial = { isLower, isInt };
     const kindTrue = isLower ? KIND_GE : KIND_LE;
     const kindFalse = isLower ? (isInt ? KIND_LE : KIND_LT) : isInt ? KIND_GE : KIND_GT;
     const constraintTrue = this.solver.mkVarBound(column, kindTrue, value, eps);
@@ -115,7 +114,7 @@ export abstract class TheoryLraBounds extends TheoryLraInternalize {
     const constraintFalse = this.solver.mkVarBound(column, kindFalse, falseValue);
     this.constraintSources[constraintTrue] = mkLiteral(boolVar);
     this.constraintSources[constraintFalse] = mkLiteral(boolVar, true);
-    return { boolVar, thVar, column, value, eps, constraintTrue, constraintFalse, ...partial };
+    return { boolVar, thVar, column, value, eps, constraintTrue, constraintFalse, isLower, isInt };
   }
 
   private mkBoundAxioms(bound: ApiBound) {

@@ -1,28 +1,26 @@
-// Ported from Isabelle2025's Pure/raw_simplifier.ML. Copyright (c) 1986-2025 University of
-// Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-// Isabelle/TLA+ declares no congruence procedures, so the simpset leaves them out.
+// Ported from Isabelle2025's Pure/raw_simplifier.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
-import { etaContract } from "./envir";
+import { emptyTEnv, etaContract } from "./envir";
 import { symmetricThm } from "./drule";
 import { destEquals, isEquals, occs, stripImpConcl, stripImpPrems } from "./logic";
 import { emptyNet, insertNet, keyOfTerm, type Net } from "./net";
 import { isFirstOrder, isPattern, matches } from "./pattern";
-import { emptyTable, type Table } from "./table";
-import { emptyTEnv } from "./envir";
+import { emptyTable, stringOrd, type Table } from "./table";
 import { emptyTyEnv } from "./type";
 import {
   aconv,
   existsSubterm,
   existsType,
   foldVars,
+  eqTerm,
   eqTyp,
   headOf,
   type Term,
   type Typ,
   type Var,
 } from "./term";
-import { rs, type Thm } from "./thm";
+import { catchThm, rs, type Thm } from "./thm";
 import { eqThmProp, noTac, type GoalTactic } from "./tactical";
 import type { Limits } from "./interrupt";
 
@@ -90,9 +88,10 @@ export const congName = (term: Term): CongName | undefined =>
       ? { isConst: false, name: term.name }
       : undefined;
 
-const varsOf = (term: Term) => foldVars((atom, result: Var[]) => [...result, atom], term, []);
+export const varsOf = (term: Term): Var[] =>
+  foldVars((atom, result: Var[]) => [...result, atom], term, []);
 
-const hasVar = (vars: readonly Var[], variable: Var) =>
+export const hasVar = (vars: readonly Var[], variable: Var) =>
   vars.some(
     (other) =>
       other.name === variable.name &&
@@ -145,36 +144,7 @@ const vperm = (left: Term, right: Term): boolean => {
   if (left.kind === "Abs" && right.kind === "Abs") return vperm(left.body, right.body);
   if (left.kind === "App" && right.kind === "App")
     return vperm(left.fun, right.fun) && vperm(left.arg, right.arg);
-  return aconvExact(left, right);
-};
-
-const aconvExact = (left: Term, right: Term): boolean => {
-  if (left.kind !== right.kind) return false;
-  switch (left.kind) {
-    case "Const":
-    case "Free":
-      return right.kind === left.kind && left.name === right.name && eqTyp(left.type, right.type);
-    case "Var":
-      return (
-        right.kind === "Var" &&
-        left.name === right.name &&
-        left.index === right.index &&
-        eqTyp(left.type, right.type)
-      );
-    case "Bound":
-      return right.kind === "Bound" && left.index === right.index;
-    case "Abs":
-      return (
-        right.kind === "Abs" &&
-        left.name === right.name &&
-        eqTyp(left.type, right.type) &&
-        aconvExact(left.body, right.body)
-      );
-    case "App":
-      return (
-        right.kind === "App" && aconvExact(left.fun, right.fun) && aconvExact(left.arg, right.arg)
-      );
-  }
+  return eqTerm(left, right);
 };
 
 const isVarPerm = (left: Term, right: Term) => {
@@ -206,7 +176,7 @@ const decompSimp = (thm: Thm): Decomposed => {
   return { prems, lhs, elhs, rhs, perm };
 };
 
-interface RawRrule {
+export interface RawRrule {
   readonly thm: Thm;
   readonly lhs: Term;
   readonly elhs: Term;
@@ -257,14 +227,7 @@ const orientRrule = (context: SimpContext, thm: Thm): RawRrule[] => {
     return rruleEqTrue(context, thm, decomposed.lhs, decomposed.elhs, decomposed.rhs, thm);
   if (defaultReorient(decomposed.prems, decomposed.rhs, decomposed.lhs))
     return mkEqTrue(context, thm);
-  const symmetric = (() => {
-    try {
-      return rs(thm, symmetricThm);
-    } catch (error) {
-      if (error instanceof TlaIsabelleError && error.exception === "THM") return undefined;
-      throw error;
-    }
-  })();
+  const symmetric = catchThm(() => rs(thm, symmetricThm));
   if (symmetric === undefined) return [];
   const flipped = decompSimp(symmetric);
   return rruleEqTrue(context, symmetric, flipped.lhs, flipped.elhs, flipped.rhs, thm);
@@ -305,9 +268,7 @@ export const rulesFromEntries = (thms: readonly Thm[]): Net<Rrule> =>
     return insertNet(() => false, keyOfTerm(rrule.elhs), rrule, net) ?? net;
   }, emptyNet);
 
-export const emptyCongs: Table<string, Thm> = emptyTable((left: string, right: string) =>
-  left === right ? 0 : left < right ? -1 : 1,
-);
+export const emptyCongs: Table<string, Thm> = emptyTable(stringOrd);
 
 export const emptySimpset: Simpset = {
   rules: emptyNet,
@@ -324,4 +285,9 @@ export const emptySimpset: Simpset = {
   loopTacs: [],
   unsafeSolvers: [],
   safeSolvers: [],
+};
+
+export const makeSimpContext = (limits: Limits, rules: readonly Thm[]): SimpContext => {
+  const empty = { limits, simpset: emptySimpset, bounds: 0 };
+  return { ...empty, simpset: addSimps(empty, rules) };
 };

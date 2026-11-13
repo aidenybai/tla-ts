@@ -1,6 +1,4 @@
-// Ported from Isabelle2025's Provers/blast.ML. Copyright (c) 1986-2025 University of Cambridge,
-// Technische Universitaet Muenchen, and contributors, see LICENSE.
-// Each recursion level that can be backtracked to owns a token, and a choice point raises it.
+// Ported from Isabelle2025's Provers/blast.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import type { Seq } from "../../pure/seq";
 import type { GoalTactic } from "../../pure/tactical";
@@ -42,13 +40,10 @@ import {
   type VarRef,
 } from "./term";
 
-// Latest first.
 type Tactics = List<GoalTactic> | undefined;
 
 export type Continuation = (tactics: Tactics, choices: Choices) => Seq<Thm>;
 
-// blast.ML continues the same branches by a tail call; prv loops on such steps, so a long search
-// can't exhaust the stack.
 type Step =
   | { readonly kind: "done"; readonly result: Seq<Thm> }
   | {
@@ -104,7 +99,6 @@ export const prove = (
         const rule = rules[position];
         if (!unify(state, addTermVars(rule.major, []), rule.major, formula)) continue;
         const isUpdated = ntrl < state.trail.length;
-        // Discourages branching updates.
         const lim = isUpdated ? branch.lim - (1 + log4(rules.length)) : branch.lim;
         const vars = addPremsVars(rule.prems, varsInVars(branch.vars));
         const nextChoices = cons({ ntrl, nbrs, token }, choices);
@@ -112,7 +106,6 @@ export const prove = (
         try {
           if (rule.prems.length === 0)
             return prv(nextTactics, prune(state, nbrs, nxtVars, nextChoices), rest);
-          // Faster to kill all the alternatives.
           if (lim < 0) {
             clearTo(state, ntrl);
             return undefined;
@@ -197,7 +190,6 @@ export const prove = (
     const formula = norm(queued[0].term);
     const ntrl = state.trail.length;
     const rules = netMkRules(state, formula, branch.vars, unsafeList);
-    // The new premises of unsafe rules may not be duplicated.
     const newPrem = (
       vars: readonly VarRef[],
       pattern: BlastTerm,
@@ -208,8 +200,6 @@ export const prove = (
       const safe = prem.map((term) => ({ term, md: false }));
       const unsafe = isDup ? [...others, { term: negOfGoal(state, formula), md }] : others;
       return {
-        // A premise recursive in the rule makes no new stack frame: its unsafe premises end up at
-        // the back of the queue, preventing the exclusion of others.
         pairs: prem.some((term) => match(state, pattern, term))
           ? [{ safe, unsafe }]
           : [
@@ -230,12 +220,8 @@ export const prove = (
         const newVars = addPremsVars(rule.prems, vars);
         const isDup = md;
         const lim = isUpdated ? branch.lim - (1 + log4(rules.length)) : branch.lim - 1;
-        // Allows backtracking from a rule application if other matching rules exist, if the rule
-        // updated variables, or if it introduced no new variables, so that it is not a standard
-        // gamma-rule. This emulates fast_tac, which allows all unsafe steps to be undone.
         const mayUndo = position + 1 < rules.length || isUpdated || sameVars(vars, newVars);
         const tactic = rule.tactic(isUpdated, isDup, true);
-        // Faster to kill all the alternatives.
         if (lim < 0 && rule.prems.length > 0) {
           clearTo(state, ntrl);
           return undefined;

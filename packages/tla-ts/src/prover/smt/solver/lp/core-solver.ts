@@ -5,7 +5,7 @@ import { Rational } from "../rational";
 import { IndexedUintSet, StackedVector, VarHeap } from "./containers";
 import type { LpSettings } from "./lp-settings";
 import { Impq } from "./numeric-pair";
-import { RowCell, StaticMatrix } from "./static-matrix";
+import { type RowCell, StaticMatrix } from "./static-matrix";
 
 export const COLUMN_FREE = 0;
 export const COLUMN_LOWER = 1;
@@ -44,7 +44,6 @@ export class CoreSolver {
   infRowIndex = -1;
   infeasibleSumSign = 0;
   infeasibleCombination: [Rational, number][] = [];
-  // m_d: the reduced costs while maximize_term runs the tableau_costs strategy, kept on pivots.
   reducedCosts: Rational[] | undefined;
   private backup: Impq[] = [];
   private isBlandMode = false;
@@ -92,18 +91,18 @@ export class CoreSolver {
     if (position >= 0) {
       const lastPosition = this.basis.length - 1;
       if (position !== lastPosition) {
-        const moved = this.basis[lastPosition];
-        this.basis[position] = moved;
-        this.heading[moved] = position;
+        const movedColumn = this.basis[lastPosition];
+        this.basis[position] = movedColumn;
+        this.heading[movedColumn] = position;
       }
       this.basis.pop();
     } else {
       const index = -1 - position;
       const lastPosition = this.nbasis.length - 1;
       if (index !== lastPosition) {
-        const moved = this.nbasis[lastPosition];
-        this.nbasis[index] = moved;
-        this.heading[moved] = -index - 1;
+        const movedColumn = this.nbasis[lastPosition];
+        this.nbasis[index] = movedColumn;
+        this.heading[movedColumn] = -index - 1;
       }
       this.nbasis.pop();
     }
@@ -294,7 +293,7 @@ export class CoreSolver {
     );
   }
 
-  infSignOfColumn(basic: number) {
+  private infSignOfColumn(basic: number) {
     switch (this.columnTypes.get(basic)) {
       case COLUMN_FREE:
         return 0;
@@ -496,8 +495,7 @@ export class CoreSolver {
 
   popScope(count: number) {
     this.columnTypes.popScope(count);
-    const columnCount = this.matrix.getColumnCount();
-    this.x.length = columnCount;
+    this.x.length = this.matrix.getColumnCount();
     this.infeasibleCombination = [];
   }
 }

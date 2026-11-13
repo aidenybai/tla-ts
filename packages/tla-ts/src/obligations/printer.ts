@@ -1,4 +1,4 @@
-// A port of tlapm's obligation printer: E_fmt with Fmtutil's minimal parenthesization.
+// A port of tlapm's obligation printer (E_fmt, Fmtutil and Ctx).
 
 import { TlaProofError } from "../errors";
 import {
@@ -15,7 +15,6 @@ import {
 import { format, formatDelimited, renderDoc, text, type Doc } from "./format";
 import { getStandardForm, lookupOperator } from "./operators";
 
-// A mutable stack, since printers bind and unbind names in strict nesting order.
 interface Ident {
   rep: string;
   salt: number;
@@ -36,7 +35,6 @@ export const createContext = (): Context => ({
   defined: new Map(),
 });
 
-// Counts from 1 for the innermost binder.
 export const getBoundName = (context: Context, index: number) => {
   const ident = context.stack[context.stack.length - index];
   return ident && getIdentName(ident);
@@ -137,9 +135,9 @@ const printMinimal = (expression: Minimal): Doc => {
   }
 };
 
-const atom = (doc: Doc): Minimal => ({ kind: "Atm", doc });
+const createAtom = (doc: Doc): Minimal => ({ kind: "Atm", doc });
 
-const big = (doc: Doc): Minimal => ({ kind: "Big", doc });
+const createBig = (doc: Doc): Minimal => ({ kind: "Big", doc });
 
 const isWith = (expression: Expr): boolean => {
   if (expression.kind === "Lambda") return isWith(expression.body);
@@ -188,7 +186,6 @@ const LEVEL_NAMES = {
   Unknown: "UNKNOWN",
 };
 
-// hyps names the indices beyond the printer's own context, as the hypothesis deque does in E_fmt.
 const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
   const context = createContext();
   const printExpr = (expression: Expr): Doc => printMinimal(formatExpr(expression));
@@ -205,8 +202,6 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
         ),
     );
 
-  // fmt_bounds: names bind left to right, domains print in the enclosing context, and dittos
-  // share the previous domain.
   const formatBounds = <Result>(bounds: Bound[], body: (boundsDoc: Doc) => Result): Result => {
     const domains = bounds.map((bound) =>
       bound.domain.kind === "Domain" ? printExpr(bound.domain.expression) : undefined,
@@ -282,15 +277,15 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
         skeleton: {
           kind: "Infix",
           assoc: "Left",
-          left: big(printLambda(operator.params, operator.body)),
-          right: atom(format("(%a)", formatDelimited(args, printExpr))),
+          left: createBig(printLambda(operator.params, operator.body)),
+          right: createAtom(format("(%a)", formatDelimited(args, printExpr))),
         },
       };
     }
     if (operator.kind === "Bang") {
       return args.length === 0
         ? formatExpr(operator)
-        : atom(
+        : createAtom(
             format("@[<b2>%a@[<b1>(%a)@]@]", printExpr(operator), formatDelimited(args, printExpr)),
           );
     }
@@ -299,7 +294,7 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
         return formatExpr(args[0]);
       }
       if (operator.builtin === "Irregular") {
-        return atom(format("@[<h>@<1>%s%a@<1>%s@]", "<[", printExpr(args[0]), "]>"));
+        return createAtom(format("@[<h>@<1>%s%a@<1>%s@]", "<[", printExpr(args[0]), "]>"));
       }
     }
     const form = (() => {
@@ -324,9 +319,11 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
       high: form.high,
       skeleton,
     });
-    if (args.length === 0) return atom(text(form.name));
+    if (args.length === 0) return createAtom(text(form.name));
     if (form.fixity === "Nonfix") {
-      return atom(format("@[<b2>%s@[<b1>(%a)@]@]", form.name, formatDelimited(args, printExpr)));
+      return createAtom(
+        format("@[<b2>%s@[<b1>(%a)@]@]", form.name, formatDelimited(args, printExpr)),
+      );
     }
     if (form.fixity === "Prefix" && args.length === 1) {
       return getOperation(
@@ -360,17 +357,17 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
       case "Internal":
         return formatApply(expression, []);
       case "Lambda":
-        return big(printLambda(expression.params, expression.body));
+        return createBig(printLambda(expression.params, expression.body));
       case "Bang":
-        return atom([printExpr(expression.expression), printSelectors(expression.selectors)]);
+        return createAtom([printExpr(expression.expression), printSelectors(expression.selectors)]);
       case "Apply":
         return formatApply(expression.operator, expression.args);
       case "Sequent":
-        return big(printSequent(expression.sequent));
+        return createBig(printSequent(expression.sequent));
       case "With":
         return formatExpr(expression.expression);
       case "If":
-        return big(
+        return createBig(
           format(
             "@[<hv2>@[<b2>IF@ %a@]@ @[<b2>THEN %a@]@ @[<b2>ELSE %a@]@]",
             printExpr(expression.condition),
@@ -380,13 +377,13 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
         );
       case "List": {
         if (expression.bullet === "Refs" && expression.items.length === 0) {
-          return atom(format("TRUE"));
+          return createAtom(format("TRUE"));
         }
         if (expression.bullet === "Refs" && expression.items.length === 1) {
           return formatExpr(expression.items[0]);
         }
         const bullet = expression.bullet === "Or" ? "\\/" : "/\\";
-        return big(
+        return createBig(
           format(
             "@[<v0>%a@]",
             formatDelimited(
@@ -405,11 +402,15 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
         );
         const bodyDoc = printExpr(expression.body);
         popNames(context, expression.definitions.length);
-        return big([format("@[<hv0>LET @[<v0>"), definitionsDoc, format("@]@\nIN  %a@]", bodyDoc)]);
+        return createBig([
+          format("@[<hv0>LET @[<v0>"),
+          definitionsDoc,
+          format("@]@\nIN  %a@]", bodyDoc),
+        ]);
       }
       case "Quant":
         return formatBounds(expression.bounds, (boundsDoc) =>
-          big(
+          createBig(
             format(
               "@[<b3>%s @[<b0>%a@] :@ %a@]",
               expression.quantifier === "Forall" ? "\\A" : "\\E",
@@ -420,7 +421,7 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
         );
       case "Tquant":
         return withNames(context, expression.names, (names) =>
-          big(
+          createBig(
             format(
               "@[<b4>%s @[<b0>%a@] : %a@]",
               expression.quantifier === "Forall" ? "\\AA" : "\\EE",
@@ -432,7 +433,7 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
       case "Choose": {
         const domainDoc = expression.domain && printExpr(expression.domain);
         return withNames(context, [expression.name], ([name]) =>
-          big(
+          createBig(
             domainDoc
               ? format(
                   "@[<b2>CHOOSE @[<b2>%s \\in@ %a@] :@ %a@]",
@@ -447,7 +448,7 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
       case "SetSt": {
         const domainDoc = printExpr(expression.domain);
         return withNames(context, [expression.name], ([name]) =>
-          atom(
+          createAtom(
             format(
               "@[<b3>{@[<b2>%s \\in@ %a@] :@ %a}@]",
               name,
@@ -459,22 +460,24 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
       }
       case "SetOf":
         return formatBounds(expression.bounds, (boundsDoc) =>
-          atom(format("@[<b3>{%a :@ %a}@]", printExpr(expression.element), boundsDoc)),
+          createAtom(format("@[<b3>{%a :@ %a}@]", printExpr(expression.element), boundsDoc)),
         );
       case "SetEnum":
-        return atom(format("@[<h>{@[<b0>%a@]}@]", formatDelimited(expression.elements, printExpr)));
+        return createAtom(
+          format("@[<h>{@[<b0>%a@]}@]", formatDelimited(expression.elements, printExpr)),
+        );
       case "Arrow":
-        return atom(
+        return createAtom(
           format("@[<b3>[%a ->@ %a]@]", printExpr(expression.domain), printExpr(expression.range)),
         );
       case "Fcn":
         return formatBounds(expression.bounds, (boundsDoc) =>
-          atom(format("@[<b3>[%a |->@ %a]@]", boundsDoc, printExpr(expression.body))),
+          createAtom(format("@[<b3>[%a |->@ %a]@]", boundsDoc, printExpr(expression.body))),
         );
       case "FcnApp": {
         const target = formatExpr(expression.function);
         const isAtom = target.kind === "Atm";
-        return atom(
+        return createAtom(
           format(
             "@[<h>%s%a%s@[<b1>[%a]@]@]",
             isAtom ? "" : "(",
@@ -503,11 +506,13 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
         };
       }
       case "Tuple":
-        return atom(format("@[<b2><<%a>>@]", formatDelimited(expression.elements, printExpr)));
+        return createAtom(
+          format("@[<b2><<%a>>@]", formatDelimited(expression.elements, printExpr)),
+        );
       case "Rect":
       case "Record": {
         const separator = expression.kind === "Rect" ? ":" : "|->";
-        return atom(
+        return createAtom(
           format(
             "@[<b1>[%a]@]",
             formatDelimited(expression.fields, (field) =>
@@ -517,7 +522,7 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
         );
       }
       case "Except":
-        return atom(
+        return createAtom(
           format(
             "@[<b3>[%a EXCEPT@ @[<v0>%a@]]@]",
             printExpr(expression.function),
@@ -545,14 +550,14 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
             kind: "Infix",
             assoc: "Left",
             left: formatExpr(expression.expression),
-            right: atom(text(expression.field)),
+            right: createAtom(text(expression.field)),
           },
         };
       case "Sub":
       case "Tsub": {
         const isBox = expression.modal === "Box";
         const open = expression.kind === "Sub" ? (isBox ? "[" : "<<") : isBox ? "[][" : "<><<";
-        return atom(
+        return createAtom(
           format(
             "@[<h>%s@[<b2>%a@]%s%a@]",
             open,
@@ -563,7 +568,7 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
         );
       }
       case "Fair":
-        return big(
+        return createBig(
           format(
             "@[<h>%s_%a (%a)@]",
             expression.fairness === "Weak" ? "WF" : "SF",
@@ -572,7 +577,7 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
           ),
         );
       case "Case":
-        return big(
+        return createBig(
           format(
             "@[<v2>CASE %a%a@]",
             formatDelimited(
@@ -586,9 +591,9 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
           ),
         );
       case "String":
-        return atom(format('"%s"', expression.value));
+        return createAtom(format('"%s"', expression.value));
       case "Num":
-        return atom(
+        return createAtom(
           text(
             expression.fraction === ""
               ? expression.integer
@@ -596,7 +601,7 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
           ),
         );
       case "At":
-        return atom(text("@"));
+        return createAtom(text("@"));
       case "Parens": {
         const form = expression.form;
         if (form.kind === "Syntax") return formatExpr(expression.expression);
@@ -611,7 +616,7 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
         const inner = formatExpr(expression.expression);
         if (names.length === 0) {
           const pattern = inner.kind === "Op" ? "%s::(%a)" : "%s::%a";
-          return atom(format(pattern, form.label, printMinimal(inner)));
+          return createAtom(format(pattern, form.label, printMinimal(inner)));
         }
         const namesDoc = formatDelimited(names, text);
         const pattern =
@@ -620,12 +625,11 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
             : inner.kind === "Big"
               ? "%s(%a)::(%a)"
               : "(%s(%a):: %a)";
-        return atom(format(pattern, form.label, namesDoc, printMinimal(inner)));
+        return createAtom(format(pattern, form.label, namesDoc, printMinimal(inner)));
       }
     }
   };
 
-  // Binds the definition's name for what follows.
   const printDefinition = (definition: Defn): Doc => {
     switch (definition.kind) {
       case "Operator":
@@ -679,7 +683,6 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
     }
   };
 
-  // Prints the hypothesis in the context before it, then binds it.
   const printHyp = (hyp: Hyp): Doc => {
     switch (hyp.kind) {
       case "Fresh": {

@@ -1,16 +1,21 @@
-// The classical reasoner and hypsubst as Isabelle/TLA+'s PredicateLogic.thy and SetTheory.thy
-// instantiate them (BSD licensed, see LICENSE).
+// Ported from Isabelle/TLA+'s PredicateLogic.thy and SetTheory.thy, BSD licensed, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import { emptyNet } from "../pure/net";
-import { thenGoal, type GoalTactic } from "../pure/tactical";
+import { thenGoal } from "../pure/tactical";
 import type { Limits } from "../pure/interrupt";
-import { assumeTac, dresolveTac, insertTaggedBrl, type NetPair } from "../pure/tactic";
+import {
+  assumeTac,
+  dresolveTac,
+  insertTaggedBrl,
+  type NetPair,
+  type TaggedRule,
+} from "../pure/tactic";
 import type { Term } from "../pure/term";
 import type { Thm } from "../pure/thm";
 import { addbefore, type Claset, type ClassicalData } from "../provers/classical";
 import { hypSubstTac, type HypsubstData } from "../provers/hypsubst";
-import type { LogicNetItem, LogicNetPair, TlaLogic } from "./logic";
+import type { LogicNetPair, TlaLogic } from "./logic";
 
 export const getFact = (logic: TlaLogic, name: string): Thm => {
   const thms = logic.facts.get(name);
@@ -53,20 +58,16 @@ export const getHypsubstData = (logic: TlaLogic): HypsubstData => ({
   thinRefl: getFact(logic, "PredicateLogic.thin_refl"),
 });
 
-export const getClassicalData = (logic: TlaLogic): ClassicalData => {
-  const hypsubst = getHypsubstData(logic);
-  return {
-    impElim: getFact(logic, "PredicateLogic.impCE'"),
-    notElim: getFact(logic, "PredicateLogic.notE"),
-    swap: getFact(logic, "PredicateLogic.swap"),
-    classical: getFact(logic, "PredicateLogic.classical"),
-    judgment: "PredicateLogic.Trueprop",
-    hypSubstTacs: [(limits: Limits) => hypSubstTac({ limits, data: hypsubst })],
-  };
-};
+export const getClassicalData = (logic: TlaLogic, hypsubst: HypsubstData): ClassicalData => ({
+  impElim: getFact(logic, "PredicateLogic.impCE'"),
+  notElim: getFact(logic, "PredicateLogic.notE"),
+  swap: getFact(logic, "PredicateLogic.swap"),
+  classical: getFact(logic, "PredicateLogic.classical"),
+  judgment: "PredicateLogic.Trueprop",
+  hypSubstTacs: [(limits: Limits) => hypSubstTac({ limits, data: hypsubst })],
+});
 
-// Net.content lists a leaf's items newest first, so inserting them in reverse rebuilds the leaf.
-export const toNetPair = <Item extends LogicNetItem>(pair: LogicNetPair<Item>): NetPair<Item> => {
+export const toNetPair = <Item extends TaggedRule>(pair: LogicNetPair<Item>): NetPair<Item> => {
   const insertAll = (items: readonly Item[], netpair: NetPair<Item>) =>
     items.reduceRight((result, item) => insertTaggedBrl(item, result), netpair);
   return insertAll(pair.elim, insertAll(pair.intro, { intro: emptyNet, elim: emptyNet }));
@@ -86,9 +87,9 @@ export const getClaset = (logic: TlaLogic, limits: Limits): Claset => {
     dup: toNetPair(logic.claset.dup),
     extra: toNetPair(logic.claset.extra),
   };
-  const bspec: GoalTactic = thenGoal(
-    dresolveTac(limits, [getFact(logic, "SetTheory.bspec")]),
-    assumeTac(limits),
+  return addbefore(
+    claset,
+    "bspec",
+    thenGoal(dresolveTac(limits, [getFact(logic, "SetTheory.bspec")]), assumeTac(limits)),
   );
-  return addbefore(claset, "bspec", bspec);
 };

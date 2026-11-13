@@ -216,9 +216,7 @@ export class Goal {
     manager.decRef(form);
   }
 
-  // update: the first conjunct replaces the formula and the others are added at the end. When the
-  // first conjunct is false, Z3 adds the whole formula (goal.cpp:312), and this adds false, so the
-  // goal becomes inconsistent.
+  // When the first conjunct is false, Z3 adds the whole formula (goal.cpp:312), where this adds false.
   update(index: number, form: number, dependency?: Dependency) {
     const manager = this.manager;
     if (this.isInconsistent) return;
@@ -234,7 +232,6 @@ export class Goal {
     manager.decRef(first);
   }
 
-  // shrink: drops the formulas from size on, the last one first.
   private shrink(size: number) {
     while (this.forms.size > size) this.forms.pop();
     this.dependencies.length = Math.min(this.dependencies.length, size);

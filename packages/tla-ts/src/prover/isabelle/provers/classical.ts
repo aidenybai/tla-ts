@@ -1,10 +1,9 @@
-// Ported from Isabelle2025's Provers/classical.ML. Copyright (c) 1986-2025 University of Cambridge,
-// Technische Universitaet Muenchen, and contributors, see LICENSE.
+// Ported from Isabelle2025's Provers/classical.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import { revcutRl, thinRl, zeroVarIndexes, makeElim } from "../pure/drule";
 import { selectGoal } from "../pure/goal";
-import { aconv, sizeOfTerm } from "../pure/term";
+import { aconv, sizeOfTerm, type Term } from "../pure/term";
 import { stripAssumsConcl, stripAssumsHyp } from "../pure/logic";
 import { listOfSeq, seqHead } from "../pure/seq";
 import { trade } from "../pure/variable";
@@ -45,7 +44,16 @@ import {
   type NetPair,
   type TaggedRule,
 } from "../pure/tactic";
-import { assumption, biresolution, nprems, premsOf, rs, rsn, type Thm } from "../pure/thm";
+import {
+  assumption,
+  biresolution,
+  nprems,
+  premsOf,
+  rs,
+  rsn,
+  type BiresRule,
+  type Thm,
+} from "../pure/thm";
 import type { ContextRule } from "../tools/intuitionistic";
 
 export interface ClassicalRule {
@@ -62,7 +70,6 @@ export interface Wrapper {
 }
 
 export interface Claset {
-  // Newest first, as Item_Net.content lists them.
   readonly safeIs: readonly ClassicalRule[];
   readonly safeEs: readonly ClassicalRule[];
   readonly unsafeIs: readonly ClassicalRule[];
@@ -77,13 +84,9 @@ export interface Claset {
 }
 
 export interface ClassicalData {
-  // P --> Q ==> (~ R ==> P) ==> (Q ==> R) ==> R
   readonly impElim: Thm;
-  // ~P ==> P ==> R
   readonly notElim: Thm;
-  // ~ P ==> (~ R ==> P) ==> R
   readonly swap: Thm;
-  // (~ P ==> P) ==> P
   readonly classical: Thm;
   readonly judgment: string;
   readonly hypSubstTacs: readonly ((limits: Limits) => GoalTactic)[];
@@ -111,7 +114,7 @@ const classicalRule = (data: ClassicalData, rule: Thm, limits: Limits): Thm => {
   if (!isElim) return rule;
   const strengthened = rs(rule, data.classical);
   const strengthenedConcl = stripAssumsConcl(strengthened.prop);
-  const isRedundant = (goal: ReturnType<typeof premsOf>[number]) => {
+  const isRedundant = (goal: Term) => {
     if (aconv(strengthenedConcl, stripAssumsConcl(goal))) return true;
     const hyps = stripAssumsHyp(goal);
     return hyps.length > 0 && hyps.slice(1).some((hyp) => aconv(hyp, hyps[0]));
@@ -153,8 +156,7 @@ const dupElim = (limits: Limits, rule: Thm) => {
   );
 };
 
-// tag_brls: rules with fewer subgoals first, then the rules added last.
-const tagRules = (start: number, rules: readonly { isElim: boolean; rule: Thm }[]): TaggedRule[] =>
+const tagRules = (start: number, rules: readonly BiresRule[]): TaggedRule[] =>
   rules.map((brule, index) => ({ tag: 1000000 * subgoalsOfBrl(brule) + start + index, ...brule }));
 
 const insertRules = (
@@ -244,7 +246,6 @@ export const addUnsafeDest = (
   return addUnsafeElim(context, makeElim(rule), atomizeRules);
 };
 
-// AList.update: replaces a wrapper of the same name in place, or adds it in front.
 const updateWrappers = (wrappers: readonly Wrapper[], wrapper: Wrapper) =>
   wrappers.some((other) => other.name === wrapper.name)
     ? wrappers.map((other) => (other.name === wrapper.name ? wrapper : other))

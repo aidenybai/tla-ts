@@ -37,7 +37,6 @@ const getDisjuncts = (formula: Term): Term[] => {
   return [formula];
 };
 
-// The witness of an existential: Hilbert's epsilon of its body.
 const getWitness = (exists: Term) => instantiate(exists, term("tau", exists.symbol, exists.args));
 
 export const PROPOSITIONAL_RULES = {

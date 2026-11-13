@@ -17,7 +17,6 @@ import {
 
 const relate = (symbol: string, left: Term, right: Term) => app(symbol, [left, right]);
 
-// The ends come from r(a, b) and ~r(c, d) in the order that Zenon's Trans or Trans_sym takes them.
 const getTransitivitySpec = (
   checker: Checker,
   args: [Term, Term],
@@ -44,7 +43,6 @@ const getTransitivitySpec = (
   };
 };
 
-// a = b against ~r(c, d), in the order of Zenon's TransEq, TransEq_sym or TransEq2.
 const getTransitiveEqualitySpec = (
   checker: Checker,
   args: [Term, Term, Term],

@@ -72,7 +72,6 @@ export const TLA_RULES = {
     );
     return { premises: [args[0]], branches: [[differ]] };
   },
-  // Zenon writes ~(P <=> Q) as $notequiv(P, Q).
   notequivdef: (_args, _checker, uses) => {
     ensure(uses.length === 1);
     const sides = expectApp(uses[0], "$notequiv", 2);

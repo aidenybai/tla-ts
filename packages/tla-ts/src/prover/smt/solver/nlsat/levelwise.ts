@@ -1,12 +1,10 @@
-// Ported from Z3 (src/nlsat/levelwise.cpp, src/nlsat/nlsat_common.cpp,
-// src/util/index_sort_with_mutations.h), MIT license, see z3-license.txt.
-// Deviation: Z3 breaks ties between root functions of equal value and degree, and orders the
-// arguments of a top-level resultant, by polynomial id, which it recycles. Here ids follow
-// creation order, so the bounding polynomial can be another with the same root, such as x0 for
-// -x0, though either bounds a valid cell.
+// Ported from Z3 (src/nlsat/levelwise.cpp, src/nlsat/nlsat_common.cpp), MIT license, see
+// z3-license.txt.
+// Deviation from Z3: ties between polynomials break by creation-order id, where Z3 recycles ids of
+// freed polynomials (id_gen in polynomial.cpp), so a cell bound can be another polynomial with the same root.
 import { NlsatUnsupportedError } from "../../../../errors";
 import { Rational } from "../rational";
-import type { AlgebraicManager, Anum } from "./algebraic";
+import { type AlgebraicManager, type Anum, mergeSortIndices } from "./algebraic";
 import {
   NULL_VAR,
   type Polynomial,
@@ -14,8 +12,6 @@ import {
   type PolynomialManager,
 } from "./polynomial";
 
-// A section is the index-th root of lower. A sector lies between the lowerIndex-th root of lower
-// and the upperIndex-th root of upper, and a null bound is infinite.
 interface CellInterval {
   isSection: boolean;
   lower: Polynomial | null;
@@ -23,18 +19,6 @@ interface CellInterval {
   upper: Polynomial | null;
   upperIndex: number;
 }
-
-interface LevelwiseParams {
-  spanningTreeThreshold: number;
-  isWitnessSubsLc: boolean;
-  isWitnessSubsDisc: boolean;
-}
-
-const DEFAULT_LEVELWISE_PARAMS: LevelwiseParams = {
-  spanningTreeThreshold: 4,
-  isWitnessSubsLc: true,
-  isWitnessSubsDisc: true,
-};
 
 interface RootFunction {
   value: Anum;
@@ -46,31 +30,9 @@ interface RootFunction {
 type ProjectionMode = "section" | "sector" | "spanningTree";
 
 const UNSET = -1;
-// m_side_mask: bit 0 for a root at or below the sample, bit 1 above, 3 for both.
 const BOTH_SIDES = 3;
+const SPANNING_TREE_THRESHOLD = 4;
 
-// stable_index_merge_sort: bottom-up, so each pair is compared once even though comparing refines
-// the numbers.
-const sortIndicesStably = (count: number, isLess: (first: number, second: number) => boolean) => {
-  let source = Array.from({ length: count }, (_, index) => index);
-  for (let width = 1; width < count; width *= 2) {
-    const target: number[] = [];
-    for (let low = 0; low < count; low += 2 * width) {
-      const middle = Math.min(low + width, count);
-      const high = Math.min(low + 2 * width, count);
-      let left = low;
-      let right = middle;
-      while (left < middle && right < high)
-        target.push(isLess(source[right], source[left]) ? source[right++] : source[left++]);
-      while (left < middle) target.push(source[left++]);
-      while (right < high) target.push(source[right++]);
-    }
-    source = target;
-  }
-  return source;
-};
-
-// A polynomial already in the cache goes in as it is.
 export class TodoSet {
   polynomials: Polynomial[] = [];
   private inSet = new Set<number>();
@@ -87,10 +49,6 @@ export class TodoSet {
   reset() {
     this.polynomials = [];
     this.inSet.clear();
-  }
-
-  contains(polynomial: Polynomial) {
-    return this.inSet.has(polynomial.id);
   }
 
   insert(polynomial: Polynomial) {
@@ -113,12 +71,7 @@ export class TodoSet {
   }
 
   getMaxVar() {
-    let result = NULL_VAR;
-    for (const polynomial of this.polynomials) {
-      const variable = this.pm.maxVar(polynomial);
-      if (result === NULL_VAR || variable > result) result = variable;
-    }
-    return result;
+    return this.pm.getMaxVarOfPolys(this.polynomials);
   }
 
   extractMaxPolys(out: Polynomial[]) {
@@ -150,7 +103,6 @@ class Levelwise {
   private witnesses: (Polynomial | null)[] = [];
   private hasRoots: boolean[] = [];
   private rootFunctions: RootFunction[] = [];
-  // m_rel.m_pairs: pairs of levelPolys indices, smaller first, iterated in order.
   private pairs = new Map<string, [number, number]>();
   private sideMask: number[] = [];
   private isLcOmitted: boolean[] = [];
@@ -164,7 +116,6 @@ class Levelwise {
     private sample: readonly (Anum | undefined)[],
     private maxVar: number,
     private isLinear: boolean,
-    private params: LevelwiseParams,
   ) {
     this.todo = new TodoSet(pm, cache);
     this.intervals = Array.from({ length: maxVar }, () => ({
@@ -203,8 +154,6 @@ class Levelwise {
     return this.getFirstPsc(polynomial, this.pm.derivative(polynomial, variable), variable);
   }
 
-  // Its coefficients, then its partial derivatives level by level, in non-decreasing variable
-  // order, until one does not vanish.
   private handleNullifiedPoly(polynomial: Polynomial) {
     const degree = this.pm.degree(polynomial, this.level);
     for (let power = 0; power <= degree; power++)
@@ -231,8 +180,6 @@ class Levelwise {
     }
   }
 
-  // choose_nonzero_coeff: a coefficient of p in x that is nonzero at the sample: a constant if
-  // there is one, else the least by total degree, size and maximal variable. Null when p vanishes.
   private chooseNonzeroCoeff(polynomial: Polynomial, variable: number) {
     const degree = this.pm.degree(polynomial, variable);
     for (let power = 0; power <= degree; power++) {
@@ -262,22 +209,17 @@ class Levelwise {
     variable: number,
     witness: Polynomial | null,
     isLcAdded: boolean,
-    isDiscAdded: boolean,
   ) {
     let isWitnessAdded = witness !== null && !this.pm.isConst(witness);
     if (isLcAdded) {
-      const lc = this.pm.lc(polynomial, variable);
-      this.requestFactorized(lc);
-      if (isWitnessAdded && this.params.isWitnessSubsDisc && this.getSign(lc) !== 0)
-        isWitnessAdded = false;
+      const leadingCoeff = this.pm.lc(polynomial, variable);
+      this.requestFactorized(leadingCoeff);
+      if (isWitnessAdded && this.getSign(leadingCoeff) !== 0) isWitnessAdded = false;
     }
-    if (isDiscAdded) {
-      const disc = this.getPscDiscriminant(polynomial, variable);
-      if (disc !== null) {
-        this.requestFactorized(disc);
-        if (isWitnessAdded && this.params.isWitnessSubsDisc && this.getSign(disc) !== 0)
-          isWitnessAdded = false;
-      }
+    const discriminant = this.getPscDiscriminant(polynomial, variable);
+    if (discriminant !== null) {
+      this.requestFactorized(discriminant);
+      if (isWitnessAdded && this.getSign(discriminant) !== 0) isWitnessAdded = false;
     }
     if (isWitnessAdded) this.requestFactorized(witness);
   }
@@ -307,13 +249,10 @@ class Levelwise {
     });
   }
 
-  private getBoundIndex(rf: number) {
-    return rf === UNSET ? UNSET : this.rootFunctions[rf].psIndex;
+  private getBoundIndex(rootFunctionIndex: number) {
+    return rootFunctionIndex === UNSET ? UNSET : this.rootFunctions[rootFunctionIndex].psIndex;
   }
 
-  // compute_omit_lc_both_sides: by projective delineability, the leading coefficient of a
-  // polynomial with roots on both sides that does not bound the cell may be left out. With
-  // isLeafRequired, only for the leaves of the resultant graph.
   private computeOmitLcBothSides(isLeafRequired: boolean) {
     this.isLcOmitted = this.levelPolys.map(() => false);
     if (this.rootFunctions.length === 0 || this.pairs.size === 0 || this.sideMask.length === 0)
@@ -348,8 +287,6 @@ class Levelwise {
       this.addPair(this.lowerRf, index);
   }
 
-  // build_both_side_spanning_tree: by the reaching orders lemma, in order of the lower root, each
-  // polynomial with roots on both sides is joined to the remaining one whose upper root is least.
   private buildBothSideSpanningTree() {
     const lowerRfs = this.levelPolys.map(() => UNSET);
     const upperRfs = this.levelPolys.map(() => UNSET);
@@ -358,7 +295,11 @@ class Levelwise {
     for (let index = this.upperRf; index < this.rootFunctions.length; index++)
       upperRfs[this.rootFunctions[index].psIndex] = index;
     const both = this.levelPolys
-      .map((_, psIndex) => ({ psIndex, lowerRf: lowerRfs[psIndex], upperRf: upperRfs[psIndex] }))
+      .map((_polynomial, psIndex) => ({
+        psIndex,
+        lowerRf: lowerRfs[psIndex],
+        upperRf: upperRfs[psIndex],
+      }))
       .filter((info) => this.sideMask[info.psIndex] === BOTH_SIDES)
       .sort((first, second) => first.lowerRf - second.lowerRf);
     for (let first = 0; first < both.length - 1; first++) {
@@ -371,7 +312,8 @@ class Levelwise {
 
   private fillRelationSpanningTree() {
     this.buildBothSideSpanningTree();
-    const isBoth = (rf: number) => this.sideMask[this.rootFunctions[rf].psIndex] === BOTH_SIDES;
+    const isBoth = (rootFunctionIndex: number) =>
+      this.sideMask[this.rootFunctions[rootFunctionIndex].psIndex] === BOTH_SIDES;
     for (let index = 0; index < this.lowerRf; index++)
       if (!isBoth(index)) this.addPair(index, this.lowerRf);
     for (let index = this.upperRf + 1; index < this.rootFunctions.length; index++)
@@ -397,7 +339,7 @@ class Levelwise {
   ) {
     const polynomial = this.levelPolys[psIndex];
     const values = this.getValuesWithout(this.level);
-    const mk = (root: Anum, index: number) => ({
+    const mkRootFunction = (root: Anum, index: number) => ({
       value: this.am.copy(root),
       polynomial,
       index,
@@ -406,7 +348,9 @@ class Levelwise {
     if (value.value instanceof Rational) {
       const closest = this.am.isolateRootsClosest(this.pm, polynomial, values, value.value);
       closest.roots.forEach((root, index) => {
-        (this.am.compare(root, value) <= 0 ? lower : upper).push(mk(root, closest.indices[index]));
+        (this.am.compare(root, value) <= 0 ? lower : upper).push(
+          mkRootFunction(root, closest.indices[index]),
+        );
       });
       return closest.roots.length > 0;
     }
@@ -427,15 +371,13 @@ class Levelwise {
       }
     }
     if (lowerIndex !== UNSET) {
-      lower.push(mk(roots[lowerIndex], lowerIndex + 1));
+      lower.push(mkRootFunction(roots[lowerIndex], lowerIndex + 1));
       if (isSection) return roots.length > 0;
     }
-    if (upperIndex !== UNSET) upper.push(mk(roots[upperIndex], upperIndex + 1));
+    if (upperIndex !== UNSET) upper.push(mkRootFunction(roots[upperIndex], upperIndex + 1));
     return roots.length > 0;
   }
 
-  // root_function_lt: by value, ties by degree, descending for the lower partition, whose last
-  // element bounds the cell, then by polynomial id.
   private isRootFunctionLess(first: RootFunction, second: RootFunction, isDegreeDesc: boolean) {
     if (first.polynomial === second.polynomial) return first.index < second.index;
     const sign = this.am.compare(first.value, second.value);
@@ -448,7 +390,7 @@ class Levelwise {
   }
 
   private sortRootFunctions(rootFunctions: RootFunction[], isDegreeDesc: boolean) {
-    return sortIndicesStably(rootFunctions.length, (first, second) =>
+    return mergeSortIndices(rootFunctions.length, (first, second) =>
       this.isRootFunctionLess(rootFunctions[first], rootFunctions[second], isDegreeDesc),
     ).map((index) => rootFunctions[index]);
   }
@@ -499,8 +441,6 @@ class Levelwise {
     return polynomial;
   }
 
-  // add_linear_approximations: bounds of degree 2 or more are replaced by linear polynomials
-  // whose roots lie between them and the sample, so the cell only shrinks.
   private addLinearApproximations(value: Anum) {
     const interval = this.intervals[this.level];
     const mkRootFunction = (polynomial: Polynomial, root: Anum) => ({
@@ -511,7 +451,6 @@ class Levelwise {
     });
     if (interval.isSection) {
       if (!this.am.isRational(value))
-        // Z3's NOT_IMPLEMENTED_YET exits the process here.
         throw new NlsatUnsupportedError("a linear cell around an irrational section");
       if (this.pm.totalDegree(interval.lower!) > 1) {
         const polynomial = this.addLinearPolyFromRoot(value, true);
@@ -548,7 +487,7 @@ class Levelwise {
     const value = this.sample[this.level]!;
     const lower: RootFunction[] = [];
     const upper: RootFunction[] = [];
-    this.hasRoots = this.levelPolys.map((_, psIndex) =>
+    this.hasRoots = this.levelPolys.map((_polynomial, psIndex) =>
       this.isolateRootsAroundSample(psIndex, value, lower, upper),
     );
     if (lower.length === 0 && upper.length === 0) return false;
@@ -578,7 +517,7 @@ class Levelwise {
       return roots.length > 0;
     });
     if (rootValues.length < 2) return;
-    const order = sortIndicesStably(
+    const order = mergeSortIndices(
       rootValues.length,
       (first, second) => this.am.compare(rootValues[first].root, rootValues[second].root) < 0,
     );
@@ -595,14 +534,12 @@ class Levelwise {
     }
   }
 
-  // Polynomials with roots keep their order by resultants with the section's polynomial. Those
-  // without need their leading coefficient and discriminant to stay without.
   private addSectionProjections() {
     const sectionPolynomial = this.intervals[this.level].lower;
     const withRoots = new Set(this.rootFunctions.map((rootFunction) => rootFunction.psIndex));
     this.levelPolys.forEach((polynomial, index) => {
       const isFull = polynomial === sectionPolynomial || !withRoots.has(index);
-      this.addProjectionForPoly(polynomial, this.level, this.witnesses[index], isFull, true);
+      this.addProjectionForPoly(polynomial, this.level, this.witnesses[index], isFull);
     });
   }
 
@@ -610,27 +547,24 @@ class Levelwise {
     this.levelPolys.forEach((polynomial, index) => {
       const isLcAdded = !(this.isLcOmitted[index] ?? false);
       let witness = this.witnesses[index];
-      // coeffNonNull: a leading coefficient nonzero at the sample is its own witness.
       if (
         isLcAdded &&
         witness !== null &&
         !this.pm.isConst(witness) &&
-        this.params.isWitnessSubsLc &&
         this.getSign(this.pm.lc(polynomial, this.level)) !== 0
       )
         witness = null;
-      this.addProjectionForPoly(polynomial, this.level, witness, isLcAdded, true);
+      this.addProjectionForPoly(polynomial, this.level, witness, isLcAdded);
     });
   }
 
   private shouldUseSpanningTree() {
-    if (this.params.spanningTreeThreshold < 2) return false;
     if (this.rootFunctions.length < 4 || this.sideMask.length === 0) return false;
     if (this.lowerRf === UNSET || this.upperRf === UNSET) return false;
     if (this.getBoundIndex(this.lowerRf) === this.getBoundIndex(this.upperRf)) return false;
     let bothCount = 0;
     for (let index = 0; index < this.levelPolys.length; index++)
-      if (this.sideMask[index] === BOTH_SIDES && ++bothCount >= this.params.spanningTreeThreshold)
+      if (this.sideMask[index] === BOTH_SIDES && ++bothCount >= SPANNING_TREE_THRESHOLD)
         return true;
     return false;
   }
@@ -668,28 +602,29 @@ class Levelwise {
     this.sideMask = [];
     this.collectNonNullWitnesses();
     const hasInterval = this.buildInterval();
-    const mode: ProjectionMode = this.intervals[this.level].isSection
-      ? "section"
-      : this.shouldUseSpanningTree()
-        ? "spanningTree"
-        : "sector";
-    this.processLevelWithMode(mode, hasInterval);
+    this.processLevelWithMode(
+      this.intervals[this.level].isSection
+        ? "section"
+        : this.shouldUseSpanningTree()
+          ? "spanningTree"
+          : "sector",
+      hasInterval,
+    );
   }
 
-  // By projective delineability, a polynomial without roots whose leading coefficient is nonzero
-  // needs only its discriminant.
   private processTopLevel() {
     this.collectNonNullWitnesses();
     this.addAdjacentRootResultants();
     this.levelPolys.forEach((polynomial, index) => {
-      const lc = this.pm.lc(polynomial, this.maxVar);
-      const isLcAdded = this.hasRoots[index] || this.pm.isZero(lc) || this.getSign(lc) === 0;
+      const leadingCoeff = this.pm.lc(polynomial, this.maxVar);
+      const isLcAdded =
+        this.hasRoots[index] || this.pm.isZero(leadingCoeff) || this.getSign(leadingCoeff) === 0;
       if (!isLcAdded) this.witnesses[index] = null;
-      this.addProjectionForPoly(polynomial, this.maxVar, this.witnesses[index], isLcAdded, true);
+      this.addProjectionForPoly(polynomial, this.maxVar, this.witnesses[index], isLcAdded);
     });
   }
 
-  singleCell(polynomials: readonly Polynomial[]) {
+  computeSingleCell(polynomials: readonly Polynomial[]) {
     if (this.maxVar === 0) return this.intervals;
     for (const polynomial of polynomials) this.requestFactorized(polynomial);
     if (this.todo.isEmpty) return this.intervals;
@@ -705,7 +640,6 @@ class Levelwise {
   }
 }
 
-// isLinear forces linear bounds, for check_assignment's explanations.
 export const getSingleCell = (
   pm: PolynomialManager,
   am: AlgebraicManager,
@@ -714,5 +648,4 @@ export const getSingleCell = (
   maxVar: number,
   sample: readonly (Anum | undefined)[],
   isLinear: boolean,
-  params = DEFAULT_LEVELWISE_PARAMS,
-) => new Levelwise(pm, am, cache, sample, maxVar, isLinear, params).singleCell(polynomials);
+) => new Levelwise(pm, am, cache, sample, maxVar, isLinear).computeSingleCell(polynomials);

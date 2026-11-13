@@ -120,19 +120,18 @@ const CASES = MACHINES.flatMap((machine) => [
 const TLC_BUG_CASES = ["live_reset__weak__negated_leads_to"];
 
 export const generateTemporalMatrix = () =>
-  CASES.forEach(({ machine, fairness, formula }) =>
+  CASES.forEach((testCase) => {
+    const moduleName = `live_${testCase.machine.name}__${testCase.fairness.name}__${testCase.formula.name}`;
     writeTest(
-      `liveness/${machine.name}/${fairness.name}`,
+      `liveness/${testCase.machine.name}/${testCase.fairness.name}`,
       {
-        description: `Checks ${formula.name} on the ${machine.name} machine under ${fairness.name} fairness.`,
+        description: `Checks ${testCase.formula.name} on the ${testCase.machine.name} machine under ${testCase.fairness.name} fairness.`,
         ref: CHECK_REF,
-        features: TLC_BUG_CASES.includes(`live_${machine.name}__${fairness.name}__${formula.name}`)
-          ? ["liveness", "tlc-bug"]
-          : ["liveness"],
+        features: TLC_BUG_CASES.includes(moduleName) ? ["liveness", "tlc-bug"] : ["liveness"],
         outcome: "any",
         config: "SPECIFICATION Spec\nPROPERTY Prop\nCHECK_DEADLOCK FALSE\n",
       },
-      `live_${machine.name}__${fairness.name}__${formula.name}`,
-      `EXTENDS Integers\nVARIABLE x\nNext == ${machine.next}\nSpec == ${machine.init} /\\ [][Next]_x${fairness.text}\nProp == ${formula.text}`,
-    ),
-  );
+      moduleName,
+      `EXTENDS Integers\nVARIABLE x\nNext == ${testCase.machine.next}\nSpec == ${testCase.machine.init} /\\ [][Next]_x${testCase.fairness.text}\nProp == ${testCase.formula.text}`,
+    );
+  });

@@ -16,7 +16,6 @@ export const mkFactor = (variable: number, isMon: boolean): Factor => ({
 
 export const getFactorSign = (factor: Factor) => signToRat(factor.isNegated);
 
-// A factorization: the factors of a monic, which is set for the factorization into its variables.
 export interface Factorization {
   readonly factors: Factor[];
   mon: Monic | null;

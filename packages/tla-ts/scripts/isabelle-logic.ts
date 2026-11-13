@@ -1,6 +1,3 @@
-// Regenerates src/prover/isabelle/tla/logic-data.ts from the Isabelle/TLA+ heap that tlapm ships.
-// Usage: bun scripts/run.ts isabelle-logic <tlapm>/lib/tlapm/backends/Isabelle-install
-
 import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -174,13 +171,13 @@ const toTerm = (term: RawTerm): Term =>
             ? mkAbs(term[1], toTyp(term[2]), toTerm(term[3]))
             : mkApp(toTerm(term[1]), toTerm(term[2]));
 
-const keyText = (term: Term) =>
+const getKeyText = (term: Term) =>
   keyOfTerm(term)
     .map((key) => (key.kind === "Comb" ? "$" : key.kind === "Var" ? "?" : key.name))
     .join(" ");
 
 const checkKey = (expected: string, term: Term, what: string) => {
-  const actual = keyText(term);
+  const actual = getKeyText(term);
   if (actual !== expected) throw new Error(`Net key of ${what} differs: ${actual} vs ${expected}`);
 };
 
@@ -191,23 +188,23 @@ for (const [name, thm, key] of raw.simps)
     `simp ${name[0]}`,
   );
 
-const brlKey = (isElim: boolean, thm: number) => {
+const getBrlKey = (isElim: boolean, thm: number) => {
   const prop = toTerm(raw.thms[thm]);
   return isElim ? stripAssumsConcl(stripImpPrems(prop)[0]) : stripImpConcl(prop);
 };
 
-const items = (pair: [RawItem[], RawItem[]]) =>
+const getItems = (pair: [RawItem[], RawItem[]]) =>
   pair.map((side) =>
     side.map((item) => {
-      checkKey(item[3], brlKey(item[1], item[2]), `claset rule ${item[2]}`);
+      checkKey(item[3], getBrlKey(item[1], item[2]), `claset rule ${item[2]}`);
       return [item[0], item[1] ? 1 : 0, item[2]];
     }),
   );
 
-const extraItems = (pair: [RawExtraItem[], RawExtraItem[]]) =>
+const getExtraItems = (pair: [RawExtraItem[], RawExtraItem[]]) =>
   pair.map((side) =>
     side.map((item) => {
-      checkKey(item[4], brlKey(item[2], item[3]), `context rule ${item[3]}`);
+      checkKey(item[4], getBrlKey(item[2], item[3]), `context rule ${item[3]}`);
       return [item[0], item[1], item[2] ? 1 : 0, item[3]];
     }),
   );
@@ -239,15 +236,15 @@ const data = {
     unsafeEs: raw.claset.unsafeEs,
     swrappers: raw.claset.swrappers,
     uwrappers: raw.claset.uwrappers,
-    safe0: items(raw.claset.safe0),
-    safep: items(raw.claset.safep),
-    unsafe: items(raw.claset.unsafe),
-    dup: items(raw.claset.dup),
-    extra: extraItems(raw.claset.extra),
+    safe0: getItems(raw.claset.safe0),
+    safep: getItems(raw.claset.safep),
+    unsafe: getItems(raw.claset.unsafe),
+    dup: getItems(raw.claset.dup),
+    extra: getExtraItems(raw.claset.extra),
   },
   contextRules: {
-    bang: extraItems(raw.contextRules.bang),
-    plain: extraItems(raw.contextRules.plain),
+    bang: getExtraItems(raw.contextRules.bang),
+    plain: getExtraItems(raw.contextRules.plain),
     query: raw.contextRules.query,
   },
   factTags: raw.factTags,

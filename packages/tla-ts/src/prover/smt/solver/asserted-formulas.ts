@@ -24,7 +24,6 @@ import { KERNEL_REWRITER_OPTIONS, Rewriter } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
 import type { SmtConfig } from "./smt-setup";
 
-// Its cache lives as long as the assertions, like Z3's.
 class PatternInferenceRw extends RewriterTpl {
   constructor(
     manager: AstManager,
@@ -50,8 +49,6 @@ class PatternInferenceRw extends RewriterTpl {
           });
     });
     if (manager.getQuantifier(quantifier).patterns.length > 0) return quantifier;
-    // The quantifier with the new patterns replaces new_q at once, and the pulled quantifier and
-    // pull_quant's cache go when reduce_quantifier returns.
     const pull = new PullQuant(manager);
     const pulled = pull.rewrite(quantifier);
     const pulledData = manager.getQuantifier(pulled);
@@ -72,8 +69,6 @@ class PatternInferenceRw extends RewriterTpl {
   }
 }
 
-// Z3's Knuth-Bendix style order for propagate_values: values are smallest, then deeper terms are
-// greater.
 const isGreater = (manager: AstManager, left: number, right: number): boolean => {
   if (left === right) return false;
   const isLeftValue = manager.isValue(left);
@@ -261,7 +256,6 @@ export class AssertedFormulas {
     return result;
   }
 
-  // Each step but the last stops the preprocessing when a formula is false.
   private reduceCore() {
     if (this.macros.hasMacros()) this.findMacros();
     this.setEliminateAnd(false);
@@ -318,7 +312,6 @@ export class AssertedFormulas {
     if (op === OP_NOT && manager.getOp(manager.getArg(expr, 0)) === OP_OR) {
       const disjunction = manager.getArg(expr, 0);
       for (let index = 0; index < manager.getNumArgs(disjunction); index++) {
-        // narg holds the negation while it is pushed.
         const negation = mkNot(manager, manager.getArg(disjunction, index));
         manager.incRef(negation);
         this.pushAssertion(negation, result);
@@ -365,7 +358,6 @@ export class AssertedFormulas {
     formulas.reset();
   }
 
-  // simplify returns its result with a reference.
   private simplifyFormulas(simplify: (formula: number) => number) {
     const manager = this.manager;
     const formulas = new RefVector(manager);
@@ -390,7 +382,6 @@ export class AssertedFormulas {
     this.isReducePending = false;
   }
 
-  // Z3 stops after one round, since the passes add no formula.
   private propagateValues() {
     const manager = this.manager;
     const substitution = this.substitution;

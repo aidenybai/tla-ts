@@ -19,6 +19,8 @@ import { parseDefaultMethods } from "../prover/prep/methods";
 import {
   encodeProofTheory,
   formatNormalized,
+  getFailureReason,
+  isProvedAttempt,
   proveObligations,
   TLAPM_VERSION,
   type BackendSettings,
@@ -39,13 +41,11 @@ import { getInputPaths } from "./shared";
 
 const TLAPM_INTEGER_OPTIONS = new Set(["--toolbox", "--line", "--threads", "--nofpl"]);
 
-// tlapm searches the current directory, then lib/tlapm/stdlib beside bin/tlapm, then each -I
-// directory, the last given first.
 const getLibraryDirectories = (parsed: ParsedArgs) => [
   ".",
   ...getTlapmPaths()
     .map((path) => join(dirname(dirname(realpathSync(path))), "lib/tlapm/stdlib"))
-    .filter((path) => existsSync(path))
+    .filter(existsSync)
     .slice(0, 1),
   ...parsed.options.flatMap((option) => (option.name === "-I" ? option.values : [])).toReversed(),
 ];
@@ -65,7 +65,6 @@ const printObligationMessage = (obligation: PrintedObligation, status: string, f
 const quoteShellArgument = (arg: string) =>
   /^[+,\-./0-9:=@A-Z_a-z]+$/.test(arg) ? arg : `'${arg.replaceAll("'", "'\\''")}'`;
 
-// The most severe first.
 const STRICT_EXIT_STATUS = { failed: 10, incomplete: 11, emptyTarget: 12 };
 
 const checkStrictly = (module: ModuleObligations, isTargeted: boolean, isSummary: boolean) => {
@@ -152,7 +151,7 @@ const printAttempt = (
 ) => {
   const timeLimitMs = attempt.method.timeLimitMs;
   const used =
-    attempt.timeUsedMs === undefined
+    attempt.kind !== "decided"
       ? ""
       : `; time-used: ${(attempt.timeUsedMs / 1000).toFixed(1)} (${Math.round((100 * attempt.timeUsedMs) / timeLimitMs)}%)`;
   const times =
@@ -160,15 +159,20 @@ const printAttempt = (
       ? ""
       : `time-limit: ${timeLimitMs === Infinity ? "inf" : Number((timeLimitMs / 1000).toPrecision(6))}${used}`;
   const method = [attempt.method.tactic, times].filter(Boolean).join("; ");
-  printObligationMessage(obligation, attempt.isProved ? "proved" : "failed", [
+  const reason = getFailureReason(attempt);
+  const isProved = isProvedAttempt(attempt);
+  const isReused = attempt.kind === "reused";
+  const note = attempt.kind === "decided" || attempt.kind === "failed" ? attempt.note : undefined;
+  const shipped = attempt.kind === "failed" || isReused ? attempt.shipped : undefined;
+  printObligationMessage(obligation, isProved ? "proved" : "failed", [
     `prover:${attempt.method.prover}`,
     ...(method === "" ? [] : [`meth:${method}`]),
-    ...(attempt.reason === undefined ? [] : [`reason:${attempt.reason}`]),
-    `already:${attempt.isReused}`,
-    ...(attempt.isProved
+    ...(reason === undefined ? [] : [`reason:${reason}`]),
+    `already:${isReused}`,
+    ...(isProved
       ? []
       : [
-          `obl:${attempt.isReused ? "" : (attempt.note ?? "\n")}${attempt.shipped ?? formatNormalized(obligation, attempt, { ...printing, isTemporal: attempt.method.prover === "ls4" })}`,
+          `obl:${isReused ? "" : (note ?? "\n")}${shipped ?? formatNormalized(obligation, attempt, { ...printing, isTemporal: attempt.method.prover === "ls4" })}`,
         ]),
   ]);
 };
@@ -256,9 +260,10 @@ const proveModule = async (
     }),
     onReport: (report, obligation) => {
       report.attempts.forEach((attempt) => {
-        if (attempt.isReused) return;
-        if (attempt.errorOutput !== undefined) process.stdout.write(attempt.errorOutput);
-        if (attempt.warning !== undefined) process.stderr.write(`${attempt.warning}\n`);
+        if (attempt.kind === "decided" && attempt.errorOutput !== undefined)
+          process.stdout.write(attempt.errorOutput);
+        if (attempt.kind === "failed" && attempt.warning !== undefined)
+          process.stderr.write(`${attempt.warning}\n`);
       });
       report.warnings.forEach((warning) => printWarning(warning, settings.isToolbox));
       if (!settings.isToolbox) return;
@@ -376,14 +381,12 @@ export const runTlapm = async (args: string[]) => {
       `\n\\* TLAPM version ${TLAPM_VERSION}\n\\* launched at ${formatTlcDate(new Date())} with command line:\n\\* ${["tla-ts", "tlapm", ...args].map(quoteShellArgument).join(" ")}\n`,
     );
   }
-  // Like tlapm, the last of --toolbox and --line wins, and a 0 means the whole module.
   const lines = parsed.options.reduce<LineRange>((range, option) => {
     const [start, end] = option.values.map(Number);
     if (option.name === "--toolbox") return { start, end: end === 0 ? Infinity : end };
     if (option.name === "--line") return start === 0 ? WHOLE_MODULE : { start, end: start };
     return range;
   }, WHOLE_MODULE);
-  // tlapm also searches each module's directory. Without tlapm, its library is tla-ts's copy.
   const directories = modulePaths.reduce(
     (found, path) => (found.includes(dirname(path)) ? found : [dirname(path), ...found]),
     getLibraryDirectories(parsed),
@@ -400,10 +403,7 @@ export const runTlapm = async (args: string[]) => {
       modulePaths.map((path) => ({ file: `./${path}`, source: readFileSync(path, "utf8") })),
       (name) => {
         moduleNames.add(name);
-        // tlapm names a file by joining its search directory and the name, as in ./Module.tla.
-        const file = directories
-          .map((directory) => `${directory}/${name}.tla`)
-          .find((path) => existsSync(path));
+        const file = directories.map((directory) => `${directory}/${name}.tla`).find(existsSync);
         if (file !== undefined) return { file, source: readFileSync(file, "utf8") };
         const source = TLAPM_LIBRARY.get(name);
         return source === undefined ? undefined : { file: `${name}.tla`, source };

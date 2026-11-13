@@ -11,7 +11,6 @@ import {
   type Term,
 } from "./terms";
 
-// Goes through applications and negations as Zenon does.
 const isUnfolding = (
   checker: Checker,
   definition: Definition,
@@ -80,14 +79,13 @@ const isDefinedBy = (checker: Checker, definition: Definition, origin: Term) => 
   ];
   if (params.length === 0) heads.push(variable(definition.symbol));
   const sides = matrix.args;
-  // The parameters are free in the head and the body, so compare them under the same names.
   const env: Env = new Map(bound.map((name, index) => [name, index]));
-  const keyOf = (formula: Term) => checker.getKey(formula, env, bound.length);
-  const headKeys = heads.map(keyOf);
-  const bodyKey = keyOf(definition.body);
+  const getBoundKey = (formula: Term) => checker.getKey(formula, env, bound.length);
+  const headKeys = heads.map(getBoundKey);
+  const bodyKey = getBoundKey(definition.body);
   return (
-    (headKeys.includes(keyOf(sides[0])) && keyOf(sides[1]) === bodyKey) ||
-    (headKeys.includes(keyOf(sides[1])) && keyOf(sides[0]) === bodyKey)
+    (headKeys.includes(getBoundKey(sides[0])) && getBoundKey(sides[1]) === bodyKey) ||
+    (headKeys.includes(getBoundKey(sides[1])) && getBoundKey(sides[0]) === bodyKey)
   );
 };
 
@@ -97,7 +95,6 @@ const getFreeSymbols = (formula: Term, symbols: Set<string>) => {
   return symbols;
 };
 
-// Real definitions are sound when each symbol has one and they don't refer to themselves.
 const isWellFounded = (definition: Definition, definitions: Definition[]) => {
   const reals = definitions.filter((candidate) => candidate.kind === "real");
   const bySymbol = new Map(reals.map((candidate) => [candidate.symbol, candidate]));
@@ -125,8 +122,6 @@ export const getDefinitionSpec = (
 ): RuleSpec => {
   const definitions = checker.context.definitions;
   ensure(definitions.includes(definition));
-  // An equivalence only says the two sides have the same truth value, so it unfolds where a
-  // formula is expected, not inside a term.
   const isEquivalence =
     definition.kind === "pseudo" && getBound(definition.origin).matrix.kind === "equiv";
   ensure(isUnfolding(checker, definition, args[0], args[1], isEquivalence));

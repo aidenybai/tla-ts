@@ -1,13 +1,19 @@
 // Ported from Z3 (src/nlsat/nlsat_solver.cpp, src/nlsat/nlsat_scoped_literal_vector.h,
-// src/util/id_gen.h), MIT license, see z3-license.txt. A deleted atom's Boolean variable is reused,
-// last freed first, so literals are numbered as in Z3. Boolean variable 0 is true and has no atom.
+// src/util/id_gen.h), MIT license, see z3-license.txt.
 import {
   NULL_VAR,
   type Polynomial,
   type PolynomialCache,
   type PolynomialManager,
 } from "./polynomial";
-import type { Atom, IneqAtom, IneqKind, RootAtom, RootKind } from "./types";
+import {
+  type Atom,
+  type IneqAtom,
+  type IneqKind,
+  type RootAtom,
+  type RootKind,
+  isIneqAtom,
+} from "./types";
 
 export const TRUE_BOOL_VAR = 0;
 export const TRUE_LITERAL = 0;
@@ -28,8 +34,7 @@ export class AtomTable {
   private nextBoolVar = 0;
   private freeBoolVars: number[] = [];
   private ineqAtoms = new Map<string, IneqAtom>();
-  // Keyed by the variable at creation: like Z3's root atom table, renaming the variables leaves the
-  // key alone.
+  // Keyed by the variable at creation: Z3's root atom table also ignores renamed variables.
   private rootAtoms = new Map<string, RootAtom>();
   private rootKeys = new Map<number, string>();
 
@@ -50,7 +55,7 @@ export class AtomTable {
   }
 
   getDegree(atom: Atom) {
-    if (!("polynomials" in atom)) return this.pm.degree(atom.polynomial, atom.maxVar);
+    if (!isIneqAtom(atom)) return this.pm.degree(atom.polynomial, atom.maxVar);
     let max = 0;
     for (const polynomial of atom.polynomials)
       max = Math.max(max, this.pm.degree(polynomial, atom.maxVar));
@@ -59,8 +64,8 @@ export class AtomTable {
 
   reinitCache() {
     for (const atom of this.atoms) {
-      if (atom === null || atom === undefined) continue;
-      if ("polynomials" in atom) {
+      if (atom === null) continue;
+      if (isIneqAtom(atom)) {
         let max = 0;
         for (const polynomial of atom.polynomials) {
           this.cache.mkUnique(polynomial);
@@ -82,6 +87,15 @@ export class AtomTable {
     return this.getAtom(literal)?.maxVar ?? NULL_VAR;
   }
 
+  getMaxVarOfLiterals(literals: readonly number[]) {
+    let result = NULL_VAR;
+    for (const literal of literals) {
+      const atom = this.getAtom(literal);
+      if (atom !== null && (result === NULL_VAR || atom.maxVar > result)) result = atom.maxVar;
+    }
+    return result;
+  }
+
   incRef(literal: number) {
     const boolVar = literal >> 1;
     if (this.atoms[boolVar] === null || this.atoms[boolVar] === undefined) return;
@@ -93,7 +107,7 @@ export class AtomTable {
     const atom = this.atoms[boolVar];
     if (atom === null || atom === undefined) return;
     if (--this.refCounts[boolVar] > 0) return;
-    if ("polynomials" in atom) this.ineqAtoms.delete(this.getIneqKey(atom));
+    if (isIneqAtom(atom)) this.ineqAtoms.delete(this.getIneqKey(atom));
     else {
       this.rootAtoms.delete(this.rootKeys.get(boolVar)!);
       this.rootKeys.delete(boolVar);
@@ -121,7 +135,7 @@ export class AtomTable {
       if (variable > maxVar || maxVar === NULL_VAR) maxVar = variable;
       return this.cache.mkUnique(normalized);
     });
-    const atom: IneqAtom = {
+    const atom = {
       kind: sign < 0 ? flipKind(kind) : kind,
       boolVar: 0,
       maxVar,
@@ -165,7 +179,7 @@ export class AtomTable {
   }
 
   mkRootAtom(kind: RootKind, variable: number, index: number, polynomial: Polynomial) {
-    const atom: RootAtom = {
+    const atom = {
       kind,
       boolVar: 0,
       maxVar: variable,

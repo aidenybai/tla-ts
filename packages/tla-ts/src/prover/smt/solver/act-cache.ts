@@ -1,6 +1,4 @@
 // Ported from Z3 (src/ast/act_cache.cpp, src/util/chashtable.h), MIT license, see z3-license.txt.
-// Z3 releases the entries in the order of its chained hash table, so the table is ported cell for
-// cell.
 import type { AstManager } from "./ast";
 import { shrink } from "./array";
 
@@ -35,8 +33,6 @@ export class ActCache {
   private qhead = 0;
   private numUnused = 0;
   private maxUnused: number;
-  // Z3 takes each table from its cheap small-object allocator, where V8 allocates typed arrays
-  // slowly, so a new table reuses the cells of a freed one of the same capacity.
   private spares = new Map<number, Cells>();
 
   constructor(
@@ -200,7 +196,6 @@ export class ActCache {
     if (this.nexts[slot] !== FREE_CELL) {
       for (let cell = slot; cell !== NO_CELL; cell = this.nexts[cell]) {
         if (this.keys[cell] !== key || this.offsets[cell] !== offset) continue;
-        // A new value replaces the old one and clears the tag, though it is not counted as unused.
         if (this.values[cell] !== value) {
           this.manager.incRef(value);
           this.manager.decRef(this.values[cell]);

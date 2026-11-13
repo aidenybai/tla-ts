@@ -1,10 +1,8 @@
-// Ported from Isabelle2025's Pure/simplifier.ML and the PREFER_GOAL of Pure/goal.ML. Copyright (c)
-// 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see
-// LICENSE.
+// Ported from Isabelle2025's Pure/simplifier.ML and Pure/goal.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { genAll, isNormHhf, normHhfEq, protectCong } from "./drule";
 import { preferGoal } from "./goal";
-import { addSimps, congKey, emptySimpset, type SimpContext, type Solver } from "./raw-simplifier";
+import { congKey, makeSimpContext, type SimpContext, type Solver } from "./raw-simplifier";
 import { updateTable } from "./table";
 import { fconvRule } from "./conv";
 import {
@@ -61,6 +59,7 @@ const genericSimpTac =
       );
     return preferGoal(simpLoopTac(1))(index);
   };
+
 export const asmSimpTac = genericSimpTac(false, { simprem: false, useprem: true, mutsimp: false });
 export const asmLrSimpTac = genericSimpTac(false, { simprem: true, useprem: true, mutsimp: false });
 export const asmFullSimpTac = genericSimpTac(false, {
@@ -86,21 +85,20 @@ export const simplify = (context: SimpContext, thm: Thm) =>
 // constraints.
 const genNormHhf = (isProtecting: boolean, limits: Limits, thm: Thm): Thm => {
   if (isNormHhf(isProtecting, thm.prop)) return genAll(thm);
-  const empty = { limits, simpset: emptySimpset, bounds: 0 };
-  const simpset = addSimps(empty, [normHhfEq]);
-  const context = {
-    ...empty,
-    simpset: isProtecting
-      ? {
-          ...simpset,
+  const hhfContext = makeSimpContext(limits, [normHhfEq]);
+  const context = isProtecting
+    ? {
+        ...hhfContext,
+        simpset: {
+          ...hhfContext.simpset,
           congs: updateTable(
-            simpset.congs,
+            hhfContext.simpset.congs,
             congKey({ isConst: true, name: "Pure.prop" }),
             protectCong,
           ),
-        }
-      : simpset,
-  };
+        },
+      }
+    : hhfContext;
   return genAll(
     fconvRule(
       (term) =>

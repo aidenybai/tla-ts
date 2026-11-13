@@ -1,5 +1,4 @@
-// Ported from Isabelle2025's Provers/blast.ML. Copyright (c) 1986-2025 University of Cambridge,
-// Technische Universitaet Muenchen, and contributors, see LICENSE.
+// Ported from Isabelle2025's Provers/blast.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { typargs, type TypargPosition } from "../../pure/consts";
 import {
@@ -17,8 +16,7 @@ export interface VarRef {
   value: BlastTerm | undefined;
 }
 
-// Every prototerm has all these fields, in this order, so all prototerms share one object layout
-// and V8 compiles the switches on kind to monomorphic loads.
+// Every prototerm lists every field in this order, unused ones undefined, so V8 sees one object layout.
 interface Fields {
   readonly name: string;
   readonly typargs: readonly BlastTerm[];
@@ -161,19 +159,14 @@ export const blastAconv = (left: BlastTerm, right: BlastTerm): boolean => {
 const blastAconvs = (lefts: readonly BlastTerm[], rights: readonly BlastTerm[]) =>
   lefts.length === rights.length && lefts.every((left, index) => blastAconv(left, rights[index]));
 
-const memTerm = (term: BlastTerm, terms: readonly BlastTerm[]) =>
-  terms.some((other) => blastAconv(term, other));
-
 export const insTerm = (term: BlastTerm, terms: readonly BlastTerm[]) =>
-  memTerm(term, terms) ? terms : [term, ...terms];
+  terms.some((other) => blastAconv(term, other)) ? terms : [term, ...terms];
 
 export const sameVars = (left: readonly VarRef[], right: readonly VarRef[]) =>
   left.length === right.length && left.every((ref, index) => ref === right[index]);
 
-const memVar = (ref: VarRef, refs: readonly VarRef[]) => refs.includes(ref);
-
 const insVar = (ref: VarRef, refs: readonly VarRef[]) =>
-  memVar(ref, refs) ? refs : [ref, ...refs];
+  refs.includes(ref) ? refs : [ref, ...refs];
 
 export const addTermVars = (term: BlastTerm, refs: readonly VarRef[]): readonly VarRef[] => {
   switch (term.kind) {
@@ -222,7 +215,6 @@ const incrBv = (increment: number, level: number, term: BlastTerm): BlastTerm =>
 export const incrBlastBoundvars = (increment: number, term: BlastTerm) =>
   increment === 0 ? term : incrBv(increment, 0, term);
 
-// Does not chase variables.
 export const hasLooseBound0 = (term: BlastTerm, level = 0): boolean => {
   switch (term.kind) {
     case "Bound":
@@ -252,8 +244,6 @@ const substBoundAt = (arg: BlastTerm, level: number, term: BlastTerm): BlastTerm
 
 export const blastSubstBound = (arg: BlastTerm, body: BlastTerm) => substBoundAt(arg, 0, body);
 
-// Leaves the bodies of abstractions, and returns the very same term where nothing changes, so
-// normalizing a normal formula allocates nothing.
 export const norm = (term: BlastTerm): BlastTerm => {
   switch (term.kind) {
     case "Skolem": {
@@ -316,7 +306,6 @@ export const wkNorm = (term: BlastTerm): BlastTerm => {
     : wkNormAux(term);
 };
 
-// Dangling bound variables count as occurrences too.
 const occurs = (ref: VarRef, level: number, term: BlastTerm): boolean => {
   switch (term.kind) {
     case "Var":
@@ -371,7 +360,6 @@ export const fromConst = (
   type: Typ,
 ) => {
   const declared = consts.get(name);
-  // Constants the map lacks are the ones a theory declares, which have no type arguments.
   return declared === undefined || declared.typargs.length === 0
     ? mkBlastConst(name)
     : mkBlastConst(
@@ -415,8 +403,6 @@ const fromTermAux = (
 export const fromTerm = (consts: ReadonlyMap<string, ConstType>, term: Term): BlastTerm =>
   fromTermAux(consts, [], [], term);
 
-// Instantiating a template with fresh variables and Skolem terms gives a copy that shares the parts
-// without them, which blast never updates.
 export type Template =
   | { readonly kind: "ground"; readonly term: BlastTerm }
   | { readonly kind: "var"; readonly index: number }
@@ -526,3 +512,8 @@ export const stripBlastImpConcl = (trueprop: string, term: BlastTerm): BlastTerm
   term.fun.fun.name === "Pure.imp"
     ? stripBlastImpConcl(trueprop, term.arg)
     : stripTrueprop(trueprop, term);
+
+export const splitGoalPrems = (trueprop: string, term: BlastTerm): BlastTerm[] => [
+  mkGoal(stripBlastImpConcl(trueprop, term)),
+  ...stripBlastImpPrems(trueprop, term),
+];

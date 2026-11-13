@@ -1,5 +1,4 @@
-// Ported from Z3 (src/smt/smt_enode.h, src/smt/smt_eq_justification.h,
-// src/smt/smt_justification.h), MIT license, see z3-license.txt.
+// Ported from Z3 (src/smt/smt_enode.h, src/smt/smt_eq_justification.h, src/smt/smt_justification.h), MIT license, see z3-license.txt.
 import type { Literal } from "./literal";
 
 export interface Antecedents {
@@ -28,9 +27,6 @@ export const CONGRUENCE_JUSTIFICATIONS: readonly EqJustification[] = [
   { kind: "congruence", isCommutative: true },
 ];
 
-// The parents of a node without any, and the arguments past the second of a node with at most two.
-// Nothing adds to it: addParent gives a node its own list, so that a node with one parent holds one
-// entry instead of V8's sixteen.
 export const NO_ENODES: Enode[] = [];
 
 const IS_EQ = 1;
@@ -62,16 +58,12 @@ export class Enode {
   thVar = -1;
   thId = -1;
   thNext: ThVarCell | null = null;
-  // The approximate label sets of the class, 64 bits in two words: the low 32 bits, then the high.
   lbls = 0;
   lblsHigh = 0;
   plbls = 0;
   plblsHigh = 0;
   lblHash = -1;
-  // The Boolean fields, one bit each, so a node takes 48 bytes less, and the number of arguments.
   private flags: number;
-  // The first two arguments are inline, like Z3's arguments after the node, and the rest in an
-  // array. A missing argument is the node itself.
   private readonly arg0: Enode;
   private readonly arg1: Enode;
   private readonly moreArgs: Enode[];

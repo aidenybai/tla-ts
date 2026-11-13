@@ -1,6 +1,4 @@
-// Ported from Z3 (src/smt/theory_lra.cpp, src/smt/arith_eq_adapter.cpp, src/math/lp/lp_api.h), MIT
-// license, see z3-license.txt. This class adds the scopes to the chain that theory-lra-state.ts
-// starts.
+// Ported from Z3 (src/smt/theory_lra.cpp, src/smt/arith_eq_adapter.cpp, src/math/lp/lp_api.h), MIT license, see z3-license.txt.
 import { shrink } from "./array";
 import { OP_GE, OP_GT, OP_LE, SORT_BOOL, SORT_INT, SORT_REAL } from "./ast";
 import type { Enode } from "./enode";

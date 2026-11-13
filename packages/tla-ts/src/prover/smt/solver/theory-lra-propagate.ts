@@ -250,7 +250,6 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     return true;
   }
 
-  // Term columns are expanded in the slot order of Z3's u_map.
   protected getTermCoeffs(term: LarTerm) {
     const coeffs = new ObjMap<Rational>(getIdentityHash);
     const visit = (current: LarTerm, coeff: Rational) => {

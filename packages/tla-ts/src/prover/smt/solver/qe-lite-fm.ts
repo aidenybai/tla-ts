@@ -20,8 +20,6 @@ const FM_CUTOFF1 = 8;
 const FM_CUTOFF2 = 256;
 const FM_EXTRA = 0;
 
-// A clause of Boolean literals and one linear inequality, a1*x1 + ... + an*xn <= c, or < c when
-// strict. A literal is the index of a Boolean constant, negative when negated.
 interface Constraint {
   lits: number[];
   xs: number[];
@@ -93,14 +91,13 @@ export class Fm {
     this.newFmls.push(this.manager.falseExpr);
   }
 
-  // Z3 keeps m_expr2bvar from the previous run, whose indices then point into the new, shorter
-  // m_bvar2expr. This port clears it.
   private init(fmls: number[]) {
     this.subTodo = [];
     this.resetConstraints();
     this.bvar2expr.reset();
     this.bvar2sign = [0];
     this.bvar2expr.push(-1);
+    // Z3 keeps m_expr2bvar from the previous run, whose indices then point into the new m_bvar2expr.
     this.expr2bvar.clear();
     this.expr2var.clear();
     this.isInt = [];
@@ -333,7 +330,6 @@ export class Fm {
     this.constraints = [];
   }
 
-  // A raw reference, like Z3's.
   private toExpr(constraint: Constraint) {
     const manager = this.manager;
     let ineq = -1;
@@ -543,7 +539,6 @@ export class Fm {
     }
   }
 
-  // The live constraints of the upper bounds, then of the lower bounds.
   private copyRemaining() {
     for (const lists of [this.uppers, this.lowers])
       for (const constraints of lists)

@@ -46,7 +46,6 @@ interface Shape {
   body: Expr;
 }
 
-// In the order Zenon tries them.
 const getShapes = (expression: Expr): Shape[] => {
   const sides =
     expression.kind === "equiv" || (expression.kind === "app" && expression.symbol === "=")
@@ -74,8 +73,7 @@ const stripForall = (expression: Expr, env: Expr[]): { env: Expr[]; body: Expr }
     ? stripForall(expression.args[1], [expression.args[0], ...env])
     : { env, body: expression };
 
-// Zenon's is_def and make_def try the shapes with different conditions, so the shape that defines
-// the symbol can differ from the one that qualifies the formula.
+// Zenon's is_def and make_def try the shapes with different conditions, so the defining shape can differ from the qualifying one.
 const getDefinition = (
   predefined: string[],
   hypothesis: Hypothesis,
@@ -140,7 +138,6 @@ const isLooping = (symbol: string, symbols: string[], dependencies: Dependency[]
   (symbols.includes(symbol) ||
     isLooping(symbol, followDependencies(symbols, dependencies), dependencies));
 
-// Where a symbol is defined twice, neither formula defines it.
 export const separate = (predefined: string[], phrases: Phrase[]) => {
   let dependencies: Dependency[] = [];
   const multiple: string[] = [];
@@ -159,7 +156,6 @@ export const separate = (predefined: string[], phrases: Phrase[]) => {
     }
     const symbol = definition.symbol;
     const dependency: Dependency = [symbol, getFreeSymbols(definition.params, [], definition.body)];
-    // The lists are reversed, as in Zenon, so a definition's index 0 is the latest.
     const previous = definitions.findIndex(
       (existing) => existing.kind === "pseudo" && existing.symbol === symbol,
     );

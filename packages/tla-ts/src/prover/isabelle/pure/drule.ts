@@ -1,8 +1,13 @@
-// Ported from Isabelle2025's Pure/drule.ML, Pure/term_subst.ML and Pure.thy. Copyright (c)
-// 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see
-// LICENSE.
+// Ported from Isabelle2025's Pure/drule.ML, Pure/term_subst.ML and Pure/Pure.thy. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
-import { cleanName, emptyNameContext, variantList, variantName, type NameContext } from "./name";
+import {
+  cleanName,
+  emptyNameContext,
+  isBoundName,
+  variantList,
+  variantName,
+  type NameContext,
+} from "./name";
 import {
   emptyTable,
   fastIndexnameOrd,
@@ -15,7 +20,7 @@ import { TlaIsabelleError } from "../../../errors";
 import { allConst, destEquals, isProtected, mkEquals, mkImplies, mkTerm, protect } from "./logic";
 import type { Limits } from "./interrupt";
 import { emptySeq, listOfSeq, mapsSeq, seqOfList, singleSeq, type Seq } from "./seq";
-import { eqThm } from "./tactical";
+import { distinctThms } from "./tactical";
 import {
   aconv,
   foldVars,
@@ -56,13 +61,6 @@ import {
 
 const propVar = (name: string) => mkVar(name, 0, propT);
 
-// The basic rules of Pure.thy, with the variable names Isabelle gives them.
-export const cutRl = axiomThm(
-  mkImplies(
-    mkImplies(propVar("psi"), propVar("theta")),
-    mkImplies(propVar("psi"), propVar("theta")),
-  ),
-);
 export const revcutRl = axiomThm(
   mkImplies(propVar("V"), mkImplies(mkImplies(propVar("V"), propVar("W")), propVar("W"))),
 );
@@ -166,7 +164,7 @@ export const genAll = (thm: Thm) => {
 };
 
 export const forallIntrVars = (thm: Thm) => {
-  const vars = fullProps(thm).reduce(
+  const vars = fullProps(thm).reduce<Var[]>(
     (result, term) =>
       foldVars(
         (atom, current: Var[]) =>
@@ -176,13 +174,13 @@ export const forallIntrVars = (thm: Thm) => {
         term,
         result,
       ),
-    [] as Var[],
+    [],
   );
   return vars.reduceRight((result, variable) => forallIntr(variable, result), thm);
 };
 
 const variantBound = (name: string, used: NameContext) =>
-  variantName(name.startsWith(":") ? "u" : name, used);
+  variantName(isBoundName(name) ? "u" : name, used);
 
 const fullProps = (thm: Thm) => [...thm.tpairs.flatMap((pair) => [pair[0], pair[1]]), thm.prop];
 
@@ -237,15 +235,17 @@ export const zeroVarIndexes = (thm: Thm): Thm => {
 export const makeElim = (rule: Thm) => zeroVarIndexes(rs(rule, revcutRl));
 
 const compose = (tha: Thm, index: number, thb: Thm): Thm => {
-  const results = listOfSeq(
-    bicompose(
-      undefined,
-      { flatten: true, match: false, incremented: true },
-      { isElim: false, rule: tha, subgoals: 0 },
-      index,
-      thb,
+  const results = distinctThms(
+    listOfSeq(
+      bicompose(
+        undefined,
+        { flatten: true, match: false, incremented: true },
+        { isElim: false, rule: tha, subgoals: 0 },
+        index,
+        thb,
+      ),
     ),
-  ).filter((result, position, all) => all.findIndex((other) => eqThm(other, result)) === position);
+  );
   if (results.length !== 1)
     throw new TlaIsabelleError("THM", `compose: unique result expected ${index}`);
   return results[0];
@@ -279,15 +279,17 @@ export const compIncr = (tha: Thm, thb: Thm) =>
   compose(tha, 1, incrIndexesThm(tha.maxidx + 1, thb));
 
 export const compNoFlatten = (thm: Thm, count: number, index: number, rule: Thm): Thm => {
-  const results = listOfSeq(
-    bicompose(
-      undefined,
-      { flatten: false, match: false, incremented: true },
-      { isElim: false, rule: thm, subgoals: count },
-      index,
-      incrIndexesThm(thm.maxidx + 1, rule),
+  const results = distinctThms(
+    listOfSeq(
+      bicompose(
+        undefined,
+        { flatten: false, match: false, incremented: true },
+        { isElim: false, rule: thm, subgoals: count },
+        index,
+        incrIndexesThm(thm.maxidx + 1, rule),
+      ),
     ),
-  ).filter((result, position, all) => all.findIndex((other) => eqThm(other, result)) === position);
+  );
   if (results.length !== 1) throw new TlaIsabelleError("THM", `comp_no_flatten ${index}`);
   return results[0];
 };

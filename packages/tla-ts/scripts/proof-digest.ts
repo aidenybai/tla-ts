@@ -9,7 +9,6 @@ import type {
 } from "../src/ast";
 import { getChild, getChildren, type XmlElement } from "./xml";
 
-// Only what both SANY and tla-ts can report.
 type ProofDigest =
   | { kind: "omitted" | "obvious"; range: string | undefined }
   | { kind: "by"; range: string | undefined; only: boolean; facts: string[]; defs: string[] }
@@ -150,7 +149,6 @@ export const digestSany = (document: XmlElement, moduleName: string): ModuleDige
     const location = getChild(node, "location");
     return location && getText(getChild(location, "filename"));
   };
-  // A module also lists the theorems of the modules it extends, which come from other files.
   const digestModule = (module: XmlElement): ModuleDigest => {
     const filename = getFilename(module);
     return {

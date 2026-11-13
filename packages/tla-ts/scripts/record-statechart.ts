@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { getToolPath } from "./corpora";
 import {
   getDumpPath,
   getStatechartSpecs,
@@ -10,22 +11,22 @@ import {
   writeExpected,
 } from "./statechart-calls";
 
-const jarPath = process.env.TLA2TOOLS_JAR;
-if (!jarPath || !existsSync(jarPath)) {
-  console.error("Set TLA2TOOLS_JAR to the path of tla2tools.jar");
-  process.exit(1);
-}
+const jarPath = getToolPath("TLA2TOOLS_JAR", "tla2tools.jar");
 
 for (const spec of getStatechartSpecs()) {
   const calls = readStatechartCalls(spec);
-  const { root, work, getArgs, normalize } = prepareStatechart(spec, jarPath);
+  const statechart = prepareStatechart(spec, jarPath);
   const recorded = calls.map((call, index) => {
-    const args = getArgs(call);
-    const result = spawnSync("java", args, { cwd: work, encoding: "utf8", maxBuffer: 1 << 30 });
-    writeExpected(spec, call, index, "out", normalize(result.stdout + result.stderr));
+    const args = statechart.getArgs(call);
+    const result = spawnSync("java", args, {
+      cwd: statechart.work,
+      encoding: "utf8",
+      maxBuffer: 1 << 30,
+    });
+    writeExpected(spec, call, index, "out", statechart.normalize(result.stdout + result.stderr));
     const dump = getDumpPath(args);
     if (dump && existsSync(dump)) {
-      writeExpected(spec, call, index, "dot", normalize(readFileSync(dump, "utf8")));
+      writeExpected(spec, call, index, "dot", statechart.normalize(readFileSync(dump, "utf8")));
     }
     return { ...call, status: result.status ?? 1 };
   });
@@ -33,6 +34,6 @@ for (const spec of getStatechartSpecs()) {
     join(STATECHART_DIRECTORY, spec, "calls.json"),
     `${JSON.stringify(recorded, undefined, 2)}\n`,
   );
-  rmSync(root, { recursive: true, force: true });
+  rmSync(statechart.root, { recursive: true, force: true });
   console.log(`Recorded ${calls.length} calls for ${spec}`);
 }

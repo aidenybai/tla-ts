@@ -17,11 +17,11 @@ import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { getVar, Literal, negate } from "./literal";
 import { getGcd, getLcm, Rational } from "./rational";
 import { KIND_EQ, KIND_GE, KIND_GT, KIND_LT, KIND_NE } from "./lp/constraints";
-import { Explanation } from "./lp/explanation";
+import type { Explanation } from "./lp/explanation";
 import { IntSolver } from "./lp/int-solver";
 import type { LarTerm } from "./lp/lar-term";
-import { NlaCore } from "./lp/nla-core";
-import { Ineq, Lemma } from "./lp/nla-types";
+import type { NlaCore } from "./lp/nla-core";
+import type { Ineq, Lemma } from "./lp/nla-types";
 import { TheoryLraModel } from "./theory-lra-model";
 
 export abstract class TheoryLraFinalCheck extends TheoryLraModel {
@@ -51,7 +51,6 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
     let result = FC_DONE;
     const nlaStatus = this.checkNla(level);
     if (nlaStatus === FC_CONTINUE) return FC_CONTINUE;
-    // Nonlinear bound optimization may invalidate integer feasibility.
     if (nlaStatus === FC_DONE && !this.nla?.isUsingNraModel && solver.hasInfInt())
       return FC_CONTINUE;
     if (nlaStatus === FC_GIVEUP) result = FC_GIVEUP;
@@ -154,7 +153,6 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
   }
 
   private mkNlaLiteral(ineq: Ineq) {
-    // scoped_auxiliary: the bounds of the atom are auxiliary constraints.
     const constraints = this.solver.constraints;
     constraints.isAuxiliaryMode = true;
     const literal = this.mkNlaLiteralCore(ineq);
@@ -188,7 +186,6 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
     return atom;
   }
 
-  // The lemma becomes a theory axiom unless one of its literals is already true.
   private falseCaseOfCheckNla(lemma: Lemma) {
     const context = this.context;
     const literals = lemma.ineqs.map((ineq) => negate(this.mkNlaLiteral(ineq)));

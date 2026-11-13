@@ -199,8 +199,7 @@ export class ArithRewriter extends PolyRewriter {
     }
     for (const arg of divisorArgs) {
       const value = manager.getNumeral(arg);
-      // A common factor of -1 stays, or the rewriting of (div (* -1 x) (* -1 y)) diverges. Z3's
-      // check stores the -1 as the dividend's value.
+      // Z3 stores a common factor of -1 as the dividend's value, or (div (* -1 x) (* -1 y)) diverges.
       if (marked.has(arg) && value !== -1n) return this.removeDivisor(arg, dividend, divisor);
       if (marked.has(arg)) dividendValue = -1n;
       if (value === undefined) continue;
@@ -906,7 +905,6 @@ export class ArithRewriter extends PolyRewriter {
       else if (manager.getOp(child) === OP_TO_REAL) intArgs.push(manager.getArg(child, 0));
       else realArgs.push(child);
     }
-    // Z3 makes a sum of one argument, which the manager leaves out.
     const mkSum = (args: number[], sort: number) =>
       args.length === 1 ? args[0] : manager.mkApp(op, args, sort);
     if (realArgs.length === 0) return this.reduce(mkSum(intArgs, SORT_INT), 1);
@@ -977,7 +975,6 @@ export class ArithRewriter extends PolyRewriter {
     else result.push(expr);
   }
 
-  // Counts each factor's occurrences by scanning the few factors rather than by sorting them.
   private isNonNegative(expr: number) {
     if (this.isNonNegativeFactor(expr)) return true;
     if (!this.isMul(expr)) return false;
@@ -1007,8 +1004,6 @@ export class ArithRewriter extends PolyRewriter {
       else return false;
     }
     if (numOdd === 0) return true;
-    // x * (x + 1) >= 0 holds for an integer x, as no integer lies strictly between -1 and 0, but
-    // not for a real one.
     if (numOdd !== 2 || !this.manager.isInt(expr)) return false;
     return this.isSuccessor(firstOdd, secondOdd) || this.isSuccessor(secondOdd, firstOdd);
   }
@@ -1072,7 +1067,6 @@ export class ArithRewriter extends PolyRewriter {
     );
   }
 
-  // Like Z3's narg, the last negated polynomial lives until is_separated returns.
   private getSeparated(left: number, right: number, kind: number) {
     const manager = this.manager;
     if (kind === KIND_EQ || !this.manager.isNumeral(right)) return undefined;
@@ -1132,7 +1126,6 @@ export class ArithRewriter extends PolyRewriter {
     return this.reduce(manager.mkAnd(atoms), 2);
   }
 
-  // is_bound.
   private getBound(inputLeft: number, inputRight: number, inputKind: number) {
     const manager = this.manager;
     if (
@@ -1177,7 +1170,6 @@ export class ArithRewriter extends PolyRewriter {
     return undefined;
   }
 
-  // Z3 releases new_args, an expr_ref_buffer, first to last as it returns.
   private dividePolynomial(expr: number, divisor: bigint, rounding: "floor" | "ceil" | "none") {
     const manager = this.manager;
     const newArgs: number[] = [];
@@ -1212,8 +1204,6 @@ export class ArithRewriter extends PolyRewriter {
     return quotient;
   }
 
-  // get_coeffs_gcd: the gcd of the coefficients, or 0 when there is no monomial, and the number of
-  // non-zero constants.
   private getCoeffsGcd(expr: number, state: GcdState) {
     for (let index = 0; index < this.getNumMonomials(expr); index++) {
       const arg = this.getMonomial(expr, index);
@@ -1238,7 +1228,6 @@ export class ArithRewriter extends PolyRewriter {
         : comparison === 0;
   }
 
-  // Z3 holds the rewritten sides, new_arg1 and new_arg2, until it returns.
   private mkLeGeEq(originalLeft: number, originalRight: number, kind: number) {
     const manager = this.manager;
     const sides: number[] = [];
@@ -1328,8 +1317,7 @@ export class ArithRewriter extends PolyRewriter {
       const condition = manager.getArg(left, 0);
       const rightValue = this.getValue(right);
       const holds = (value: Rational) => this.isHolding(value, rightValue, kind);
-      // Z3 makes the negated condition before it knows whether the result uses it, and its
-      // conjunctions build an equality with arith_util::mk_eq but its disjunctions with m.mk_eq.
+      // Z3 makes the negated condition even when unused, and only its conjunctions use arith_util::mk_eq.
       const mkConjunct = (other: number) =>
         kind === KIND_EQ ? this.mkArithEq(other, right) : this.mkAtom(other, right, kind);
       if (this.manager.isNumeral(manager.getArg(left, 1))) {
@@ -1449,7 +1437,6 @@ export class ArithRewriter extends PolyRewriter {
     );
   }
 
-  // arith_util::mk_eq: a numeral goes right, and otherwise the side with the smaller id goes left.
   private mkArithEq(left: number, right: number) {
     const manager = this.manager;
     const isSwapped =

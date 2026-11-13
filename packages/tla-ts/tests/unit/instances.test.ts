@@ -1,15 +1,13 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check, parseModule, TlaSyntaxError } from "../../src";
 import { createSanyError } from "../../src/errors";
+import { checkFixture, getModuleLoader } from "./check-harness";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/instances");
 
-const loadModule = (name: string) => {
-  const path = join(DIRECTORY, `${name}.tla`);
-  return existsSync(path) ? readFileSync(path, "utf8") : undefined;
-};
+const loadModule = getModuleLoader("instances");
 
 const checkInstances = (configName: string, moduleName = "Instances") =>
   check({
@@ -40,9 +38,7 @@ describe("INSTANCE matches TLC", () => {
 
   it("evaluates a substitution once each time an instantiated operator is evaluated", async () => {
     const prints: string[] = [];
-    const result = await check({
-      source: readFileSync(join(DIRECTORY, "SubstOnce.tla"), "utf8"),
-      config: readFileSync(join(DIRECTORY, "SubstOnce.cfg"), "utf8"),
+    const result = await checkFixture("instances", "SubstOnce", "SubstOnce", {
       loadModule,
       onPrint: (text) => prints.push(text),
     });

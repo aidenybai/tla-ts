@@ -3,7 +3,8 @@ import type { ProofContext } from "../isar/method";
 import { normHhfEq } from "../pure/drule";
 import type { Limits } from "../pure/interrupt";
 import { symmetric } from "../pure/thm";
-import { blastDepthTac, blastTac, type BlastContext } from "../provers/blast/blast";
+import { blastDepthTac, blastTac } from "../provers/blast/blast";
+import type { BlastContext } from "../provers/blast/state";
 import type { ClassicalContext } from "../provers/classical";
 import { blastHypSubstTac } from "../provers/hypsubst";
 import {
@@ -16,7 +17,6 @@ import {
 import type { TlaLogic } from "./logic";
 import { getSimpset } from "./simpdata";
 
-// The atomize rules, newest first as Object_Logic keeps them.
 const ATOMIZE_RULES = [
   "Zenon.atomize_object_bAll",
   "Zenon.atomize_meta_bAll",
@@ -42,8 +42,12 @@ const CASES_DEFAULT = "PredicateLogic.case_split";
 
 export const getProofContext = (logic: TlaLogic, limits: Limits): ProofContext => {
   const atomizeRules = ATOMIZE_RULES.map((name) => getFact(logic, name));
-  const classical = { limits, claset: getClaset(logic, limits), data: getClassicalData(logic) };
   const hypsubst = getHypsubstData(logic);
+  const classical = {
+    limits,
+    claset: getClaset(logic, limits),
+    data: getClassicalData(logic, hypsubst),
+  };
   const toBlastContext = (context: ClassicalContext): BlastContext => ({
     limits: context.limits,
     claset: context.claset,

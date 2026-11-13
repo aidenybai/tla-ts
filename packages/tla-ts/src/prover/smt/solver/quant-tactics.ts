@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/smtlogics/quant_tactics.cpp, src/tactic/core/simplify_tactic.cpp), MIT
 // license, see z3-license.txt. This strategy skips elim-uncnstr's elimination and the simplifier's
 // local_ctx option, as they change almost none of tlapm's obligations.
 import type { AstManager } from "./ast";
@@ -28,9 +27,7 @@ export const simplifyGoal = (manager: AstManager, goal: Goal, options: RewriterO
   rewriter.release();
 };
 
-// elim_uncnstr_tactic::run without the elimination. Its rewriter still runs over the formulas when
-// some constant is unconstrained, and counts its steps. The rewriter starts as if the formulas had
-// changed, so it makes a second round.
+// Z3's elim_uncnstr rewriter runs twice over the formulas and counts its steps, though the elimination is not ported.
 const elimUncnstr = (manager: AstManager, goal: Goal) => {
   const isRewriting = collectUnconstrained(manager, goal).size > 0;
   disableQuantified(manager, goal, new RefVector(manager));
@@ -47,8 +44,6 @@ export const applyUfniaTactic = (manager: AstManager, assertions: number[]) => {
   const goal = new Goal(manager);
   for (const assertion of assertions) goal.assert(assertion);
   simplifyGoal(manager, goal, TACTIC_REWRITER_OPTIONS);
-  // and_then runs the next tactic only on a goal that is not decided: one that is consistent and
-  // has formulas left.
   const steps = [
     () => propagateValues(manager, goal),
     () => ctxSimplify(manager, goal, 30, 5000000),

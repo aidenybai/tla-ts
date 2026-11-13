@@ -3,9 +3,6 @@ import { KIND_APP, KIND_QUANTIFIER, KIND_VAR, type AstManager, type SmtSymbol } 
 import { ExprSafeReplace } from "./expr-safe-replace";
 import { BetaReducer } from "./rewriter-tpl";
 
-// var_subst: substitutes args for the free variables, args[n - 1 - i] for (:var i) in standard
-// order and args[i] otherwise, where -1 keeps the variable. Each result comes with a reference,
-// which the caller releases.
 export class VarSubst {
   private reducer: BetaReducer;
 
@@ -72,9 +69,6 @@ interface ReplaceFrame {
   next: number;
 }
 
-// Rebuilds expr with each free variable replaced. replace gets the variable, its de Bruijn index
-// relative to expr, and the number of binders above it. Like Z3's rewriter_tpl, it keeps its own
-// stack, so deep terms do not exhaust the call stack.
 export const replaceFreeVars = (
   manager: AstManager,
   expr: number,
@@ -132,8 +126,6 @@ export const replaceFreeVars = (
   return results[0];
 };
 
-// Like Z3, it walks the term without rebuilding it, and visits a shared term once for each
-// number of binders above it.
 export const getFreeVarSorts = (manager: AstManager, expr: number, count: number) => {
   const sorts: (number | undefined)[] = Array.from({ length: count }, () => undefined);
   const exprs = [expr];
@@ -153,8 +145,7 @@ export const getFreeVarSorts = (manager: AstManager, expr: number, count: number
       if (index < count && sorts[index] === undefined) sorts[index] = manager.sorts[current];
     } else if (kind === KIND_APP)
       for (let index = 0; index < manager.getNumArgs(current); index++) {
-        const arg = manager.getArg(current, index);
-        exprs.push(arg);
+        exprs.push(manager.getArg(current, index));
         deltas.push(delta);
       }
     else {
@@ -171,7 +162,6 @@ export const getFreeVarSorts = (manager: AstManager, expr: number, count: number
 export const collectUsedVars = (manager: AstManager, expr: number, count: number) =>
   getFreeVarSorts(manager, expr, count).map((sort) => sort !== undefined);
 
-// Its var_subst keeps the cache of its last substitution until the next one.
 export class UnusedVarsEliminator {
   private subst: VarSubst;
 
@@ -179,7 +169,6 @@ export class UnusedVarsEliminator {
     this.subst = new VarSubst(manager, true);
   }
 
-  // The result comes with a reference, which the caller releases.
   apply(expr: number) {
     const manager = this.manager;
     return manager.withoutTemporaries(() => {
@@ -187,7 +176,6 @@ export class UnusedVarsEliminator {
         manager.kinds[expr] === KIND_QUANTIFIER && !manager.isLambda(expr)
           ? manager.getQuantifier(expr)
           : null;
-      // ignore_patterns_on_ground_qbody: a ground body drops the patterns with the variables.
       const kept = data === null ? expr : manager.isGround(data.body) ? data.body : -1;
       if (kept !== -1 || data === null) {
         manager.incRef(kept);
@@ -259,7 +247,6 @@ export class UnusedVarsEliminator {
   }
 }
 
-// The result is a temporary.
 export const elimUnusedVars = (manager: AstManager, expr: number) => {
   const eliminator = new UnusedVarsEliminator(manager);
   const result = eliminator.apply(expr);

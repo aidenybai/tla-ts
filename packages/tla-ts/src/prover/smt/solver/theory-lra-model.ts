@@ -1,6 +1,6 @@
 // Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt.
 import { OP_DIV, OP_DIV0, OP_IDIV, OP_IDIV0, OP_MOD, OP_MOD0, OP_POWER0, OP_REM } from "./ast";
-import { Enode } from "./enode";
+import type { Enode } from "./enode";
 import type { ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
 import { NULL_LPVAR } from "./lp/lar-solver";
@@ -17,9 +17,8 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
   protected initVariableValues() {
     this.isModelInitialized = false;
     if (this.context.checkCanceled() || this.getNumVars() === 0) return;
-    const saved = this.isModelInitialized;
     this.context.pushTrail(() => {
-      this.isModelInitialized = saved;
+      this.isModelInitialized = false;
     });
     this.isModelInitialized = this.solver.initModel();
   }
@@ -71,7 +70,6 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
       const thVar = (index + start) % numVars;
       if (!this.isRelevantAndShared(this.getEnode(thVar))) continue;
       const column = this.registerVar(thVar);
-      // m_model_eqs: with nlsat's model, the values are compared one by one.
       const key = `${this.isIntVar(thVar)}:${solver.getValue(column)}`;
       const other = this.nla?.isUsingNraModel
         ? representatives.find(
@@ -115,8 +113,6 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     return false;
   }
 
-  // init_model: the model knows the value of every theory variable without δ, so fresh numbers
-  // avoid them. Like get_value(enode*, expr_ref&), it skips an integer with a fractional value.
   initModel(model: ProtoModel) {
     this.initVariableValues();
     if (!this.isModelInitialized) return;
@@ -139,7 +135,6 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
       this.solver.externalToLocalColumn(thVar) === NULL_LPVAR
     )
       return this.getValueExpr(thVar);
-    // nlsat's value, zero for an integer whose value is not one.
     const value = this.getNlValue(nla, thVar);
     if (this.isIntVar(thVar))
       return this.manager.mkNumeral(
@@ -165,8 +160,7 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     if (!solver.hasTerm(column)) return nla.nra.value(column);
     let result = new Anum(Rational.zero);
     const todo: [number, Rational][] = [[column, Rational.one]];
-    while (todo.length > 0) {
-      const pending = todo.pop()!;
+    for (let pending = todo.pop(); pending !== undefined; pending = todo.pop()) {
       for (const entry of solver.getTerm(pending[0]).coeffs) {
         const coeff = entry[1].mul(pending[1]);
         if (solver.hasTerm(entry[0])) todo.push([entry[0], coeff]);

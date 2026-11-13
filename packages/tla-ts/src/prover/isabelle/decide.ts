@@ -10,8 +10,6 @@ export const decideIsabelle = (text: string, options: DecideOptions): Exclude<Ve
     runTheory(loadLogic(), parseTheory(text), limits);
     return "unsat";
   } catch (error) {
-    // Poly/ML grows its stack instead, until Isabelle runs out of memory, which tlapm counts as a
-    // failure.
     if (error instanceof TlaIsabelleError || isStackOverflow(error)) return "unknown";
     throw error;
   }

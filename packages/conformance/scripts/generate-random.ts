@@ -9,25 +9,24 @@ const MISTYPED_RATE = 12;
 type ExpressionType = "int" | "bool" | "set" | "seq" | "record" | "function";
 
 const createRandom = (seed: number) => {
-  const state = { value: seed };
-  const getNext = () => {
-    state.value = (state.value + 0x6d2b79f5) | 0;
-    const mixed = Math.imul(state.value ^ (state.value >>> 15), 1 | state.value);
+  let state = seed;
+  return () => {
+    state = (state + 0x6d2b79f5) | 0;
+    const mixed = Math.imul(state ^ (state >>> 15), 1 | state);
     const result = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
     return ((result ^ (result >>> 14)) >>> 0) / 4294967296;
   };
-  return getNext;
 };
 
 const TYPES: ExpressionType[] = ["int", "bool", "set", "seq", "record", "function"];
 
 const createGenerator = (getNext: () => number) => {
   const pick = <Item>(items: Item[]) => items[Math.floor(getNext() * items.length)];
-  const counter = { binder: 0 };
+  let binderCount = 0;
 
   const getBinder = () => {
-    counter.binder += 1;
-    return `b${counter.binder}`;
+    binderCount += 1;
+    return `b${binderCount}`;
   };
 
   const getSmallSet = () =>
@@ -46,95 +45,95 @@ const createGenerator = (getNext: () => number) => {
   const getExpression = (type: ExpressionType, depth: number, scope: string[]): string => {
     const actual = getNext() * MISTYPED_RATE < 1 ? pick(TYPES) : type;
     if (depth <= 0) return getLeaf(actual, scope);
-    const child = (childType: ExpressionType, extra: string[] = []) =>
+    const getChild = (childType: ExpressionType, extra: string[] = []) =>
       getExpression(childType, depth - 1, [...scope, ...extra]);
     const productions: Record<ExpressionType, (() => string)[]> = {
       int: [
-        () => `(${child("int")} + ${child("int")})`,
-        () => `(${child("int")} - ${child("int")})`,
-        () => `(${child("int")} * ${child("int")})`,
-        () => `(${child("int")} \\div ${child("int")})`,
-        () => `(${child("int")} % ${child("int")})`,
-        () => `(-${child("int")})`,
-        () => `Len(${child("seq")})`,
-        () => `Cardinality(${child("set")})`,
-        () => `Head(${child("seq")})`,
-        () => `(${child("record")}).a`,
-        () => `(${child("function")})[${child("int")}]`,
-        () => `IF ${child("bool")} THEN ${child("int")} ELSE ${child("int")}`,
-        () => `CASE ${child("bool")} -> ${child("int")} [] OTHER -> ${child("int")}`,
+        () => `(${getChild("int")} + ${getChild("int")})`,
+        () => `(${getChild("int")} - ${getChild("int")})`,
+        () => `(${getChild("int")} * ${getChild("int")})`,
+        () => `(${getChild("int")} \\div ${getChild("int")})`,
+        () => `(${getChild("int")} % ${getChild("int")})`,
+        () => `(-${getChild("int")})`,
+        () => `Len(${getChild("seq")})`,
+        () => `Cardinality(${getChild("set")})`,
+        () => `Head(${getChild("seq")})`,
+        () => `(${getChild("record")}).a`,
+        () => `(${getChild("function")})[${getChild("int")}]`,
+        () => `IF ${getChild("bool")} THEN ${getChild("int")} ELSE ${getChild("int")}`,
+        () => `CASE ${getChild("bool")} -> ${getChild("int")} [] OTHER -> ${getChild("int")}`,
         () => {
           const binder = getBinder();
-          return `LET ${binder} == ${child("int")} IN ${child("int", [binder])}`;
+          return `LET ${binder} == ${getChild("int")} IN ${getChild("int", [binder])}`;
         },
         () => {
           const binder = getBinder();
-          return `(CHOOSE ${binder} \\in ${child("set")} : ${child("bool", [binder])})`;
+          return `(CHOOSE ${binder} \\in ${getChild("set")} : ${getChild("bool", [binder])})`;
         },
       ],
       bool: [
-        () => `(${child("bool")} /\\ ${child("bool")})`,
-        () => `(${child("bool")} \\/ ${child("bool")})`,
-        () => `(~${child("bool")})`,
-        () => `(${child("bool")} => ${child("bool")})`,
-        () => `(${child("bool")} <=> ${child("bool")})`,
-        () => `(${child("int")} < ${child("int")})`,
-        () => `(${child("int")} = ${child("int")})`,
-        () => `(${child("set")} = ${child("set")})`,
-        () => `(${child("seq")} = ${child("function")})`,
-        () => `(${child("record")} = ${child("record")})`,
-        () => `(${child("int")} \\in ${child("set")})`,
-        () => `(${child("set")} \\subseteq ${child("set")})`,
+        () => `(${getChild("bool")} /\\ ${getChild("bool")})`,
+        () => `(${getChild("bool")} \\/ ${getChild("bool")})`,
+        () => `(~${getChild("bool")})`,
+        () => `(${getChild("bool")} => ${getChild("bool")})`,
+        () => `(${getChild("bool")} <=> ${getChild("bool")})`,
+        () => `(${getChild("int")} < ${getChild("int")})`,
+        () => `(${getChild("int")} = ${getChild("int")})`,
+        () => `(${getChild("set")} = ${getChild("set")})`,
+        () => `(${getChild("seq")} = ${getChild("function")})`,
+        () => `(${getChild("record")} = ${getChild("record")})`,
+        () => `(${getChild("int")} \\in ${getChild("set")})`,
+        () => `(${getChild("set")} \\subseteq ${getChild("set")})`,
         () => {
           const binder = getBinder();
-          return `(\\A ${binder} \\in ${child("set")} : ${child("bool", [binder])})`;
+          return `(\\A ${binder} \\in ${getChild("set")} : ${getChild("bool", [binder])})`;
         },
         () => {
           const binder = getBinder();
-          return `(\\E ${binder} \\in ${child("set")} : ${child("bool", [binder])})`;
+          return `(\\E ${binder} \\in ${getChild("set")} : ${getChild("bool", [binder])})`;
         },
       ],
       set: [
-        () => `(${child("set")} \\cup ${child("set")})`,
-        () => `(${child("set")} \\cap ${child("set")})`,
-        () => `(${child("set")} \\ ${child("set")})`,
-        () => `{${child("int")}, ${child("int")}}`,
-        () => `(${child("int")} .. ${child("int")})`,
-        () => `DOMAIN ${child("function")}`,
-        () => `UNION {${child("set")}, ${child("set")}}`,
+        () => `(${getChild("set")} \\cup ${getChild("set")})`,
+        () => `(${getChild("set")} \\cap ${getChild("set")})`,
+        () => `(${getChild("set")} \\ ${getChild("set")})`,
+        () => `{${getChild("int")}, ${getChild("int")}}`,
+        () => `(${getChild("int")} .. ${getChild("int")})`,
+        () => `DOMAIN ${getChild("function")}`,
+        () => `UNION {${getChild("set")}, ${getChild("set")}}`,
         () => {
           const binder = getBinder();
-          return `{${binder} \\in ${child("set")} : ${child("bool", [binder])}}`;
+          return `{${binder} \\in ${getChild("set")} : ${getChild("bool", [binder])}}`;
         },
         () => {
           const binder = getBinder();
-          return `{${child("int", [binder])} : ${binder} \\in ${child("set")}}`;
+          return `{${getChild("int", [binder])} : ${binder} \\in ${getChild("set")}}`;
         },
       ],
       seq: [
-        () => `<<${child("int")}, ${child("int")}>>`,
-        () => `Tail(${child("seq")})`,
-        () => `Append(${child("seq")}, ${child("int")})`,
-        () => `(${child("seq")} \\o ${child("seq")})`,
-        () => `SubSeq(${child("seq")}, ${child("int")}, ${child("int")})`,
-        () => `SelectSeq(${child("seq")}, LAMBDA e : e > 0)`,
-        () => `SortSeq(${child("seq")}, LAMBDA p, q : p < q)`,
-        () => `[${child("seq")} EXCEPT ![1] = ${child("int")}]`,
+        () => `<<${getChild("int")}, ${getChild("int")}>>`,
+        () => `Tail(${getChild("seq")})`,
+        () => `Append(${getChild("seq")}, ${getChild("int")})`,
+        () => `(${getChild("seq")} \\o ${getChild("seq")})`,
+        () => `SubSeq(${getChild("seq")}, ${getChild("int")}, ${getChild("int")})`,
+        () => `SelectSeq(${getChild("seq")}, LAMBDA e : e > 0)`,
+        () => `SortSeq(${getChild("seq")}, LAMBDA p, q : p < q)`,
+        () => `[${getChild("seq")} EXCEPT ![1] = ${getChild("int")}]`,
       ],
       record: [
-        () => `[a |-> ${child("int")}, b |-> ${child("bool")}]`,
-        () => `[${child("record")} EXCEPT !.a = ${child("int")}]`,
-        () => `[${child("record")} EXCEPT !.a = @ + ${child("int")}]`,
+        () => `[a |-> ${getChild("int")}, b |-> ${getChild("bool")}]`,
+        () => `[${getChild("record")} EXCEPT !.a = ${getChild("int")}]`,
+        () => `[${getChild("record")} EXCEPT !.a = @ + ${getChild("int")}]`,
         () => `(CHOOSE r \\in [a : ${getSmallSet()}] : TRUE)`,
       ],
       function: [
         () => {
           const binder = getBinder();
-          return `[${binder} \\in ${child("set")} |-> ${child("int", [binder])}]`;
+          return `[${binder} \\in ${getChild("set")} |-> ${getChild("int", [binder])}]`;
         },
-        () => `(${child("int")} :> ${child("int")})`,
-        () => `(${child("function")} @@ ${child("function")})`,
-        () => `[${child("function")} EXCEPT ![${child("int")}] = ${child("int")}]`,
+        () => `(${getChild("int")} :> ${getChild("int")})`,
+        () => `(${getChild("function")} @@ ${getChild("function")})`,
+        () => `[${getChild("function")} EXCEPT ![${getChild("int")}] = ${getChild("int")}]`,
         () => `(CHOOSE f \\in [${getSmallSet()} -> ${getSmallSet()}] : TRUE)`,
       ],
     };
@@ -167,14 +166,14 @@ const createGenerator = (getNext: () => number) => {
   return { getExpression, pick };
 };
 
-// TLC runs out of memory, or past the JVM's array limit, on these.
+// Deviation from TLC: TLC runs out of memory, or past the JVM's array limit, on these.
 const TLC_BUG_INDEXES = new Set([
   102, 1576, 2309, 2420, 3226, 3504, 3717, 4041, 5211, 5311, 6258, 6550, 7052, 8304,
 ]);
 
 export const generateRandomExpressions = () => {
   const generator = createGenerator(createRandom(SEED));
-  Array.from({ length: TEST_COUNT }).forEach((_, index) => {
+  Array.from({ length: TEST_COUNT }).forEach((_value, index) => {
     const type = generator.pick(TYPES);
     const shard = String(Math.floor(index / TESTS_PER_DIRECTORY)).padStart(3, "0");
     writeTest(

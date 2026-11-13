@@ -1,12 +1,10 @@
-// Ported from Z3 (src/math/lp/nla_basics_lemmas.h, src/math/lp/nla_basics_lemmas.cpp), MIT
-// license, see z3-license.txt. Only the model-based lemmas are ported: with derived = true,
-// basic_lemma returns after the sign lemma, so Z3 never reaches its derived zero and neutral
-// lemmas.
+// Ported from Z3 (src/math/lp/nla_basics_lemmas.h, src/math/lp/nla_basics_lemmas.cpp), MIT license,
+// see z3-license.txt.
 import { Rational } from "../rational";
 import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT, KIND_NE } from "./constraints";
 import { LarTerm } from "./lar-term";
-import { type NlaCore } from "./nla-core";
-import { type Factorization } from "./nla-factorization";
+import type { NlaCore } from "./nla-core";
+import type { Factorization } from "./nla-factorization";
 import { getRatSign, LemmaBuilder, mkIneq, signToRat } from "./nla-types";
 import type { Monic } from "./nla-emonics";
 
@@ -191,7 +189,6 @@ export class Basics {
     }
   }
 
-  // x != 0 or y = 0 => |xy| >= |y|
   private proportionLemmaModelBased(rooted: Monic, factorization: Factorization) {
     const core = this.core;
     if (core.hasRealFactorization(factorization)) return;
@@ -203,7 +200,6 @@ export class Basics {
     if (factorIndex !== -1) this.generatePl(rooted, factorization, factorIndex);
   }
 
-  // sign_m*m < 0 or \/_{i != k} f_i = 0 or sign_m*m >= sign_k*f_k
   private generatePlOnMon(monic: Monic, factorIndex: number) {
     const core = this.core;
     const lemma = new LemmaBuilder(core);
@@ -269,7 +265,6 @@ export class Basics {
     );
   }
 
-  // xy = 0 -> x = 0 or y = 0
   private basicLemmaForMonZeroModelBased(rooted: Monic, factorization: Factorization) {
     const lemma = new LemmaBuilder(this.core);
     lemma.addIneq(mkIneq(rooted.variable, KIND_NE, 0));
@@ -282,8 +277,6 @@ export class Basics {
     lemma.explainFactorization(factorization);
   }
 
-  // /\_{j != i} f_j = val(f_j) => m = sign * f_i, or /\_j f_j = val(f_j) => m = sign, over the
-  // variables of a monic.
   private basicLemmaForMonNeutralFromFactorsToMonicModelBasedFm(monic: Monic) {
     const core = this.core;
     const neutral = this.getNeutralNotOne(
@@ -314,9 +307,7 @@ export class Basics {
     );
   }
 
-  // basic_lemma_for_mon_neutral_monic_to_factor_model_based tests `j == null_lpvar` for the factor
-  // equal to the monic in absolute value, which no factor's variable is, so it never makes a
-  // lemma (nla_basics_lemmas.cpp, the loop over f).
+  // Deviation from Z3: the monic-to-factor neutral lemma is left out because it never fires (nla_basics_lemmas.cpp).
   private basicLemmaForMonNeutralModelBased(rooted: Monic, factorization: Factorization) {
     if (factorization.mon !== null)
       this.basicLemmaForMonNeutralFromFactorsToMonicModelBasedFm(factorization.mon);
@@ -368,7 +359,6 @@ export class Basics {
     lemma.explainFactorization(factorization);
   }
 
-  // x = 0 or y = 0 -> xy = 0
   private basicLemmaForMonNonZeroModelBased(factorization: Factorization) {
     const monic = factorization.mon;
     if (monic === null) return;

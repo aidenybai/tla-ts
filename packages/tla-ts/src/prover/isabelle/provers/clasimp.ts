@@ -1,6 +1,4 @@
-// Ported from Isabelle2025's Provers/clasimp.ML and the prune_params_tac of Pure/tactic.ML.
-// Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and
-// contributors, see LICENSE.
+// Ported from Isabelle2025's Provers/clasimp.ML and Pure/tactic.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { trivForallEquality } from "../pure/drule";
 import { selectGoal } from "../pure/goal";
@@ -69,7 +67,6 @@ const addSss = (context: ClasimpContext): ClassicalContext =>
 export const clarsimpTac = (context: ClasimpContext): GoalTactic =>
   thenAllNew(safeAsmFullSimpTac(context.simp), clarifyTac(addSss(context)));
 
-// A variant of Classical.depth_tac that keeps the simplifier from interfering with dup_step_tac.
 const nodupDepthTac =
   (context: ClassicalContext, limit: number): GoalTactic =>
   (index) =>
@@ -119,8 +116,6 @@ const mkAutoTac = (context: ClasimpContext, depth: number, nodupDepth: number): 
     changed(nodupDepthTac(addss(context), nodupDepth)(index)),
   );
   return every([
-    // PARALLEL_ALLGOALS simplifies each goal on its own only when no goal has schematic variables,
-    // which gives the same result as simplifying them in turn.
     determ(allGoals(asmFullSimpTac(context.simp))),
     tryTac(safeTac(context.classical)),
     repeatDeterm(firstGoalTac(mainTac)),

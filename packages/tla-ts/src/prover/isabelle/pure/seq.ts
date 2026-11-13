@@ -1,6 +1,4 @@
-// Ported from Isabelle2025's Pure/General/seq.ML. Copyright (c) 1986-2025 University of Cambridge,
-// Technische Universitaet Muenchen, and contributors, see LICENSE.
-// As in Isabelle, pulling a sequence twice computes its head twice.
+// Ported from Isabelle2025's Pure/General/seq.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 export type Cell<Item> = readonly [Item, Seq<Item>] | undefined;
 
@@ -13,8 +11,6 @@ export interface Seq<Item> {
 
 export const makeSeq = <Item>(pull: () => Cell<Item>): Seq<Item> => ({ pull });
 
-// Pulling follows the hand-overs in a loop, so a long run of empty alternatives, which Poly/ML's
-// growing stack absorbs, doesn't exhaust this one.
 class DeferredSeq<Item> implements Seq<Item> {
   readonly step: () => Step<Item>;
 

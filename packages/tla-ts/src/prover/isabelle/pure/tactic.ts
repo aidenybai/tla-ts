@@ -1,5 +1,4 @@
-// Ported from Isabelle2025's Pure/tactic.ML, the basic resolution tactics. Copyright (c) 1986-2025
-// University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
+// Ported from Isabelle2025's Pure/tactic.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { makeElim } from "./drule";
 import { checkInterrupt, type Limits } from "./interrupt";
@@ -44,45 +43,41 @@ export const composeTac =
     );
 
 const biresolveTac =
-  (limits: Limits, rules: readonly BiresRule[]): GoalTactic =>
+  (limits: Limits, match: boolean, rules: readonly BiresRule[]): GoalTactic =>
   (index) =>
     primSeq((state) => {
       checkInterrupt(limits);
-      return biresolution(limits, false, rules, index, state);
+      return biresolution(limits, match, rules, index, state);
     });
 
 export const resolveTac = (limits: Limits, rules: readonly Thm[]) =>
   biresolveTac(
     limits,
+    false,
     rules.map((rule) => ({ isElim: false, rule })),
   );
 
 export const eresolveTac = (limits: Limits, rules: readonly Thm[]) =>
   biresolveTac(
     limits,
+    false,
     rules.map((rule) => ({ isElim: true, rule })),
   );
 
 export const dresolveTac = (limits: Limits, rules: readonly Thm[]) =>
   eresolveTac(limits, rules.map(makeElim));
 
-const bimatchTac =
-  (limits: Limits, rules: readonly BiresRule[]): GoalTactic =>
-  (index) =>
-    primSeq((state) => {
-      checkInterrupt(limits);
-      return biresolution(limits, true, rules, index, state);
-    });
-
 export const matchTac = (limits: Limits, rules: readonly Thm[]) =>
-  bimatchTac(
+  biresolveTac(
     limits,
+    true,
     rules.map((rule) => ({ isElim: false, rule })),
   );
 
 export const ematchTac = (limits: Limits, rules: readonly Thm[]) =>
-  bimatchTac(
+  biresolveTac(
     limits,
+    true,
     rules.map((rule) => ({ isElim: true, rule })),
   );
 
@@ -100,7 +95,7 @@ export interface NetPair<Tagged> {
   readonly elim: Net<Tagged>;
 }
 
-export const insertTaggedBrl = <Tagged extends { isElim: boolean; rule: Thm }>(
+export const insertTaggedBrl = <Tagged extends BiresRule>(
   tagged: Tagged,
   netpair: NetPair<Tagged>,
 ): NetPair<Tagged> =>
@@ -108,8 +103,6 @@ export const insertTaggedBrl = <Tagged extends { isElim: boolean; rule: Thm }>(
     ? { intro: netpair.intro, elim: insertTermNet(majorPremOf(tagged.rule), tagged, netpair.elim) }
     : { intro: insertTermNet(conclOf(tagged.rule), tagged, netpair.intro), elim: netpair.elim };
 
-// The lists are short, so this sorts them by insertion, which keeps items with equal tags in order
-// as Isabelle's sort.
 export const orderList = <Item>(items: readonly { tag: number; item: Item }[]): Item[] => {
   const sorted = [...items];
   for (let index = 1; index < sorted.length; index += 1) {
@@ -126,7 +119,7 @@ export const orderList = <Item>(items: readonly { tag: number; item: Item }[]): 
   return result;
 };
 
-export const biresolutionFromNetsTac = <Tagged extends { isElim: boolean; rule: Thm }>(
+export const biresolutionFromNetsTac = <Tagged extends BiresRule>(
   limits: Limits,
   order: (rules: Tagged[]) => BiresRule[],
   match: boolean,
@@ -156,7 +149,7 @@ export const biresolveFromNetsTac = (limits: Limits, netpair: NetPair<TaggedRule
 export const bimatchFromNetsTac = (limits: Limits, netpair: NetPair<TaggedRule>) =>
   biresolutionFromNetsTac(limits, orderTagged, true, netpair);
 
-export const subgoalsOfBrl = (brule: { isElim: boolean; rule: Thm }) =>
+export const subgoalsOfBrl = (brule: BiresRule) =>
   brule.isElim ? nprems(brule.rule) - 1 : nprems(brule.rule);
 
 export const rotateTac =

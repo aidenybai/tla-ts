@@ -1,6 +1,6 @@
 // Ported from Z3 (src/math/lp/cross_nested.h), MIT license, see z3-license.txt.
-// The occurrence map is a Map in insertion order, where Z3 has an unordered_map. So when several
-// variables divide every summand, the extracted common factor may list them in another order.
+// Deviation from Z3: the occurrence map iterates in insertion order where Z3 has an unordered_map,
+// so an extracted common factor may list its variables in another order.
 import { Rational } from "../rational";
 import {
   type Nex,
@@ -40,7 +40,6 @@ const isDivisibleByVar = (expr: Nex, variable: number) =>
   (expr.kind === "mul" && containsVar(expr, variable)) ||
   (expr.kind === "var" && expr.variable === variable);
 
-// A sum that simplified to one term counts as a sum of that term.
 const hasCommonFactor = (expr: Nex) => {
   const children = expr.kind === "sum" ? expr.children : [expr];
   for (const variable of getVarsOfExpr(children[0]))
@@ -53,14 +52,13 @@ export class CrossNested {
   private isDone = false;
   private isLimitExceeded = false;
   private reported = 0;
-  private isRandomBit = false;
 
   constructor(
     private readonly callOnResult: (expr: Nex) => boolean,
     private readonly varIsFixed: (variable: number) => boolean,
     private readonly limit: Limit,
     private randomSeed: number,
-    readonly nexCreator: NexCreator,
+    private readonly nexCreator: NexCreator,
   ) {}
 
   run(expr: Nex) {
@@ -146,18 +144,16 @@ export class CrossNested {
     for (const entry of occurences) if (entry[1].occs <= 1) occurences.delete(entry[0]);
   }
 
-  // The variables to factor out, by occurrences, then by power, then by index in the direction
-  // of a random bit.
   private getVarsFromOccurencesMap() {
     const occurences = this.nexCreator.occurencesMap;
-    this.isRandomBit = this.nextRandom() % 2 === 1;
+    const isRandomBit = this.nextRandom() % 2 === 1;
     return [...occurences.keys()].sort((first, second) => {
       const firstOcc = occurences.get(first);
       const secondOcc = occurences.get(second);
       if (firstOcc === undefined || secondOcc === undefined) return 0;
       if (firstOcc.occs !== secondOcc.occs) return secondOcc.occs - firstOcc.occs;
       if (firstOcc.power !== secondOcc.power) return secondOcc.power - firstOcc.power;
-      return this.isRandomBit ? first - second : second - first;
+      return isRandomBit ? first - second : second - first;
     });
   }
 
@@ -168,10 +164,8 @@ export class CrossNested {
       return;
     }
     const expr = slot.get();
-    // A front element is a sum, unlike in Z3, which would misread anything else as one.
     if (expr.kind === "sum") {
       this.calcOccurences(expr);
-      // Z3 passes a copy of the front here.
       if (this.proceedWithCommonFactor(slot, expr, [...front])) return;
       const vars = this.getVarsFromOccurencesMap();
       if (vars.length > 0) return this.exploreExprOnFrontElemVars(slot, front, vars);
@@ -193,7 +187,6 @@ export class CrossNested {
     this.exploreExprOnFrontElem(next, front);
   }
 
-  // It is enough to split on the variables where a has no common factor.
   private splitWithVar(slot: NexSlot, variable: number, front: NexSlot[]) {
     const expr = slot.get();
     if (expr.kind !== "sum") return false;

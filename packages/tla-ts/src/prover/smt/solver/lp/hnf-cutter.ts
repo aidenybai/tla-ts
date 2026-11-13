@@ -1,5 +1,4 @@
-// Ported from Z3 (src/math/lp/hnf_cutter.cpp, and get_equality_and_right_side_for_term_on_current_x
-// in src/math/lp/lar_solver.cpp), MIT license, see z3-license.txt.
+// Ported from Z3 (src/math/lp/hnf_cutter.cpp, and get_equality_and_right_side_for_term_on_current_x in src/math/lp/lar_solver.cpp), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import type { Dependency } from "./dependency";
 import { GeneralMatrix, getDeterminantOfRectangularMatrix, getHermiteNormalForm } from "./hnf";
@@ -81,30 +80,32 @@ export const makeHnfCut = (lia: IntSolver): LiaMove => {
   });
   const basisRows: number[] = [];
   const bigNumber = absMax.mul(absMax).mul(absMax);
-  const d = getDeterminantOfRectangularMatrix(matrix, basisRows, bigNumber);
-  if (d.compare(bigNumber) >= 0 || settings.isCanceled()) return { kind: "undef" };
+  const determinant = getDeterminantOfRectangularMatrix(matrix, basisRows, bigNumber);
+  if (determinant.compare(bigNumber) >= 0 || settings.isCanceled()) return { kind: "undef" };
   const isFullRank = basisRows.length === tightTerms.length;
   matrix.shrinkToRank(basisRows);
   const deps = isFullRank
     ? tightTerms.map((tight) => tight.dep)
     : basisRows.map((row) => tightTerms[row].dep);
-  const h = getHermiteNormalForm(matrix, d, () => settings.isCanceled());
-  if (h === undefined) return { kind: "undef" };
-  const b = isFullRank
+  const hermite = getHermiteNormalForm(matrix, determinant, settings.isCanceled);
+  if (hermite === undefined) return { kind: "undef" };
+  const rightSides = isFullRank
     ? tightTerms.map((tight) => tight.rightSide)
     : basisRows.map((row) => tightTerms[row].rightSide);
-  for (let i = 0; i < h.length; i++) {
-    for (let j = 0; j < i; j++) b[i] = b[i].sub(h[i][j].mul(b[j]));
-    b[i] = b[i].div(h[i][i]);
+  for (let row = 0; row < hermite.length; row++) {
+    for (let column = 0; column < row; column++)
+      rightSides[row] = rightSides[row].sub(hermite[row][column].mul(rightSides[column]));
+    rightSides[row] = rightSides[row].div(hermite[row][row]);
   }
-  const cutRow = findCutRowIndex(lia, b);
+  const cutRow = findCutRowIndex(lia, rightSides);
   if (cutRow === -1) return { kind: "undef" };
   const inverseRow = Array.from({ length: matrix.getColumnCount() }, () => Rational.zero);
-  inverseRow[cutRow] = Rational.one.div(h[cutRow][cutRow]);
-  for (let k = cutRow - 1; k >= 0; k--) {
+  inverseRow[cutRow] = Rational.one.div(hermite[cutRow][cutRow]);
+  for (let column = cutRow - 1; column >= 0; column--) {
     let sum = Rational.zero;
-    for (let l = k + 1; l <= cutRow; l++) sum = sum.add(h[l][k].mul(inverseRow[l]));
-    inverseRow[k] = sum.neg().div(h[k][k]);
+    for (let row = column + 1; row <= cutRow; row++)
+      sum = sum.add(hermite[row][column].mul(inverseRow[row]));
+    inverseRow[column] = sum.neg().div(hermite[column][column]);
   }
   for (let column = 0; column < matrix.getColumnCount(); column++) {
     let coeff = Rational.zero;
@@ -114,5 +115,5 @@ export const makeHnfCut = (lia: IntSolver): LiaMove => {
   }
   lia.explanation.clear();
   for (const dep of deps) lia.explanation.pushDependency(dep);
-  return { kind: "cut", offset: b[cutRow].floor(), isUpper: true };
+  return { kind: "cut", offset: rightSides[cutRow].floor(), isUpper: true };
 };

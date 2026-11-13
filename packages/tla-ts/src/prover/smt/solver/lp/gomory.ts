@@ -14,7 +14,7 @@ const POLARITY_MIXED = 3;
 
 const HALF = Rational.of(1n, 2n);
 
-const getFractionalPart = (value: Rational) => value.sub(value.floor());
+export const getFractionalPart = (value: Rational) => value.sub(value.floor());
 
 interface Cut {
   coeffs: [number, Rational][];
@@ -59,7 +59,7 @@ class CutBuilder {
     if (Rational.of(newA.num).compare(this.bigNumber) > 0) this.isBigFound = true;
   }
 
-  private addIntCase(column: number, fj: Rational) {
+  private intCaseInGomoryCut(column: number, fj: Rational) {
     const solver = this.lia.solver;
     const oneMinusFj = Rational.one.sub(fj);
     if (this.lia.atLower(column)) {
@@ -76,7 +76,7 @@ class CutBuilder {
     this.addMonomial(newA, column);
   }
 
-  private addRealCase(a: Rational, column: number) {
+  private realCaseInGomoryCut(a: Rational, column: number) {
     const solver = this.lia.solver;
     const isLower = this.lia.atLower(column);
     const isGrowing = a.isPositive() === isLower;
@@ -109,9 +109,10 @@ class CutBuilder {
         this.lia.explanation.pushDependency(solver.getUpperWitness(column));
         continue;
       }
-      if (!solver.isInt(column)) this.addRealCase(cell.coeff.neg(), column);
+      if (!solver.isInt(column)) this.realCaseInGomoryCut(cell.coeff.neg(), column);
       else {
-        if (!cell.coeff.isInt()) this.addIntCase(column, getFractionalPart(cell.coeff.neg()));
+        if (!cell.coeff.isInt())
+          this.intCaseInGomoryCut(column, getFractionalPart(cell.coeff.neg()));
         if (this.polarity !== POLARITY_MIXED) this.setPolarityForInt(cell.coeff, column);
       }
       if (this.isBigFound) return "undef";
@@ -139,7 +140,7 @@ const isGomoryCutTarget = (lia: IntSolver, column: number) => {
   return true;
 };
 
-const selectColumns = (lia: IntSolver, cutCount: number) => {
+const gomorySelectIntInfeasibleVars = (lia: IntSolver, cutCount: number) => {
   const solver = lia.solver;
   const scores = new Map<number, Rational>();
   const sorted: number[] = [];
@@ -181,7 +182,6 @@ const addDeps = (lia: IntSolver, dep: Dependency, row: RowCell[], basic: number)
   return result;
 };
 
-// Cuts with big coefficients stay out unless the small ones alone leave the problem feasible.
 export const getGomoryCuts = (lia: IntSolver, cutCount: number): LiaMove => {
   const solver = lia.solver;
   const bigCuts: Cut[] = [];
@@ -196,7 +196,7 @@ export const getGomoryCuts = (lia: IntSolver, cutCount: number): LiaMove => {
     solver.getInfeasibilityExplanation(lia.explanation);
     return false;
   };
-  for (const column of selectColumns(lia, cutCount)) {
+  for (const column of gomorySelectIntInfeasibleVars(lia, cutCount)) {
     const row = solver.getRow(solver.core.heading[column]);
     const builder = new CutBuilder(lia, column, row);
     const result = builder.cut();

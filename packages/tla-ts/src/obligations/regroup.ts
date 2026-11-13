@@ -1,5 +1,4 @@
-// Pco.resolve: tlapm's parser lets an operator take in every later infix operator that is not
-// entirely below it, so SUBSET S \ T is SUBSET (S \ T) to tlapm though SANY reads (SUBSET S) \ T.
+// A port of tlapm's Pco.resolve.
 
 import type { Expression, SourceLocation } from "../ast";
 import { lookupOperator, type Operator } from "./operators";

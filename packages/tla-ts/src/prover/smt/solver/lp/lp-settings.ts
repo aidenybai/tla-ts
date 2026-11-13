@@ -1,5 +1,4 @@
-// Ported from Z3 (src/math/lp/lp_settings.h, src/math/lp/lp_settings.cpp), MIT license, see
-// z3-license.txt.
+// Ported from Z3 (src/math/lp/lp_settings.h, src/math/lp/lp_settings.cpp), MIT license, see z3-license.txt.
 import { RandomGen } from "../random-gen";
 
 export interface LpStats {
@@ -22,10 +21,8 @@ export interface LpStats {
   lcubeFlipSuccess: number;
   nlaCalls: number;
   nlaAddBounds: number;
-  nlaPropagateBounds: number;
   nlaPropagateEq: number;
   nlaLemmas: number;
-  nlaBoundsImprovements: number;
   nlaThrottledLemmas: number;
   nraCalls: number;
 }
@@ -52,15 +49,12 @@ export class LpSettings {
     lcubeFlipSuccess: 0,
     nlaCalls: 0,
     nlaAddBounds: 0,
-    nlaPropagateBounds: 0,
     nlaPropagateEq: 0,
     nlaLemmas: 0,
-    nlaBoundsImprovements: 0,
     nlaThrottledLemmas: 0,
     nraCalls: 0,
   };
   readonly maxRowLengthForBoundPropagation = 300;
-  readonly maxIterationsWithNoImprovements = 2000000;
   readonly isPropagatingEqs = true;
   readonly intFindCubePeriod = 4;
   readonly lcubeFlips = 16;

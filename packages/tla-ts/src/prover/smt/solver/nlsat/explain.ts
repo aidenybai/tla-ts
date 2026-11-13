@@ -1,7 +1,4 @@
-// Ported from Z3 (src/nlsat/nlsat_explain.cpp), MIT license, see z3-license.txt. Of Z3's nlsat
-// parameters only factor is ported, and lws keeps its default, so the cell always comes from the
-// levelwise construction, and Z3's fallback projection (add_lcs and the psc_* helpers) is not
-// ported.
+// Ported from Z3 (src/nlsat/nlsat_explain.cpp), MIT license, see z3-license.txt.
 import type { AlgebraicManager, Anum } from "./algebraic";
 import {
   type AtomTable,
@@ -24,7 +21,6 @@ import { type IneqAtom, type IneqKind, type RootKind, isIneqAtom } from "./types
 interface ExplainContext {
   atoms: AtomTable;
   sample: (Anum | undefined)[];
-  // value(l): l_true, l_false or l_undef, as 1, -1 and 0.
   getValue: (literal: number) => number;
   var2eq: (IneqAtom | null)[];
   getNumVars: () => number;
@@ -32,8 +28,6 @@ interface ExplainContext {
   restoreOrder: () => void;
 }
 
-// add_all_coeffs_restart: every coefficient of a polynomial vanished, so the explanation starts
-// over adding all coefficients.
 class AddAllCoeffsRestart {}
 
 interface EqInfo {
@@ -76,8 +70,6 @@ export class Explain {
   private core: ScopedLiterals;
   private isAddAllCoeffs = false;
 
-  // m_full_dimensional: the solver sets it when every clause is full dimensional, and the cell
-  // bounds are then closed.
   isFullDimensional = false;
   isFactoring = true;
 
@@ -115,24 +107,6 @@ export class Explain {
       const atom = this.getAtom(literal);
       return isIneqAtom(atom) ? atom.polynomials : [atom.polynomial];
     });
-  }
-
-  private getMaxVarOfPolys(polynomials: readonly Polynomial[]) {
-    let result = NULL_VAR;
-    for (const polynomial of polynomials) {
-      const variable = this.pm.maxVar(polynomial);
-      if (result === NULL_VAR || variable > result) result = variable;
-    }
-    return result;
-  }
-
-  private getMaxVarOfLiterals(literals: readonly number[]) {
-    let result = NULL_VAR;
-    for (const literal of literals) {
-      const atom = this.context.atoms.getAtom(literal);
-      if (atom !== null && (result === NULL_VAR || atom.maxVar > result)) result = atom.maxVar;
-    }
-    return result;
   }
 
   private addAssumption(kind: IneqKind, polynomial: Polynomial, isNeg = false) {
@@ -173,8 +147,7 @@ export class Explain {
         degree = this.pm.degree(p, variable);
       }
       if (this.pm.isNonzeroConstCoeff(p, variable, degree)) return p;
-      // Z3 passes lc to insert_fresh_factors_in_todo by reference, so from here on lc is without
-      // its own vanishing coefficients, which equals it given the assumptions that removed them.
+      // Z3's insert_fresh_factors_in_todo writes lc back without its vanishing coefficients.
       const lc = this.insertFreshFactorsInTodo(this.pm.coeff(p, variable, degree));
       const reduct = this.pm.reduct(p, variable, degree);
       if (!this.pm.isZero(lc) && this.getSign(lc) !== 0) return p;
@@ -198,7 +171,6 @@ export class Explain {
       .filter((polynomial) => !this.pm.isConst(polynomial));
   }
 
-  // Returns p without its vanishing coefficients, which Z3 writes back to its argument.
   private insertFreshFactorsInTodo(polynomial: Polynomial) {
     if (this.pm.isConst(polynomial)) return polynomial;
     const p = this.elimVanishing(polynomial);
@@ -327,13 +299,11 @@ export class Explain {
     newLiteral.set(TRUE_LITERAL);
   }
 
-  // Like Z3's scoped_literal, newLiteral keeps a reference until the next literal or the end,
-  // also when an elimination restarts.
   private simplifyWithEq(core: ScopedLiterals, eq: Polynomial, max: number) {
     const variable = this.pm.maxVar(eq);
     const degree = this.pm.degree(eq, variable);
     const lc = this.pm.coeff(eq, variable, degree);
-    const info: EqInfo = {
+    const info = {
       eq,
       variable,
       degree,
@@ -453,8 +423,6 @@ export class Explain {
     return true;
   }
 
-  // mk_quadratic_root: by Thom's lemma, the signs of the discriminant, the leading coefficient, the
-  // derivative and p characterize the sample's position among the roots of a quadratic.
   private mkQuadraticRoot(kind: RootKind, variable: number, index: number, polynomial: Polynomial) {
     if (this.pm.degree(polynomial, variable) !== 2 || (index !== 1 && index !== 2)) return false;
     const a = this.pm.coeff(polynomial, variable, 2);
@@ -530,17 +498,16 @@ export class Explain {
   private explainCore(literals: readonly number[]) {
     if (literals.length === 0) return;
     const polynomials = [...this.collectPolys(literals), ...this.lowerStagePolys];
-    const maxVar = this.getMaxVarOfPolys(polynomials);
+    const maxVar = this.pm.getMaxVarOfPolys(polynomials);
     this.project(this.elimVanishingAll(polynomials), maxVar);
   }
 
-  // As in Z3, a restart leaves the core holding its literals until the next attempt.
   private process(literals: readonly number[]) {
     this.lowerStagePolys = [];
     const core = this.core;
     core.reset();
     for (const literal of literals) core.push(literal);
-    const max = this.getMaxVarOfLiterals(literals);
+    const max = this.context.atoms.getMaxVarOfLiterals(literals);
     this.normalizeCore(core, max);
     this.simplifyCore(core, max);
     this.explainCore(core.literals);
@@ -548,7 +515,10 @@ export class Explain {
   }
 
   computeConflictExplanation(literals: readonly number[], result: ScopedLiterals) {
-    if (this.getMaxVarOfLiterals(literals) === 0 && this.context.sample[0] === undefined) {
+    if (
+      this.context.atoms.getMaxVarOfLiterals(literals) === 0 &&
+      this.context.sample[0] === undefined
+    ) {
       result.reset();
       return;
     }
@@ -591,7 +561,7 @@ export class Explain {
         }
         const polynomials = this.collectPolys(kept);
         if (polynomials.length > 0) {
-          const maxVar = this.getMaxVarOfPolys(polynomials);
+          const maxVar = this.pm.getMaxVarOfPolys(polynomials);
           if (maxVar !== variable) {
             const renaming = Array.from({ length: this.context.getNumVars() }, (_value, index) =>
               index === variable ? maxVar : index === maxVar ? variable : index,
@@ -621,7 +591,7 @@ export class Explain {
     const polynomials = this.collectPolys(literals);
     try {
       if (polynomials.length > 0)
-        this.addCellLiterals(polynomials, this.getMaxVarOfPolys(polynomials) + 1, true);
+        this.addCellLiterals(polynomials, this.pm.getMaxVarOfPolys(polynomials) + 1, true);
     } finally {
       this.resetResult();
     }

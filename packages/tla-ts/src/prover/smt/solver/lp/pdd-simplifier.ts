@@ -1,8 +1,6 @@
-// Ported from Z3 (src/math/grobner/pdd_simplifier.h, src/math/grobner/pdd_simplifier.cpp), MIT
-// license, see z3-license.txt. The extended linear pass works only modulo 2 and the dual
-// elimination is disabled in Z3, so neither is ported.
+// Ported from Z3 (src/math/grobner/pdd_simplifier.h, src/math/grobner/pdd_simplifier.cpp), MIT license, see z3-license.txt.
 import { mkJoin } from "./dependency";
-import { Equation, PddSolver, SetUpdate, SOLVED, TO_SIMPLIFY } from "./pdd-solver";
+import { type Equation, type PddSolver, SetUpdate, SOLVED, TO_SIMPLIFY } from "./pdd-solver";
 import { shrink } from "../array";
 
 export class PddSimplifier {
@@ -40,7 +38,6 @@ export class PddSimplifier {
       const variable = source.poly.var();
       const uses = useList[variable];
       let isAllReduced = true;
-      // Equations added to the uses of the variable during the walk are not walked.
       for (let index = 0, length = uses.length; index < length; index++) {
         const target = uses[index];
         if (source === target || solver.isTrivial(target)) continue;

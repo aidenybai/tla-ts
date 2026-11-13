@@ -1,13 +1,11 @@
 // Ported from Z3 (src/math/polynomial/upolynomial.{h,cpp}, src/util/mpzzp.h,
-// src/math/polynomial/polynomial_primes.h), MIT license, see z3-license.txt. Polynomials are
-// coefficient arrays from the constant term up, with no leading zeros.
+// src/math/polynomial/polynomial_primes.h), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../../errors";
 import { getGcd, Rational } from "../rational";
 import { getLog2, Mpbq, refineLower, refineUpper } from "./mpbq";
 
 export type Upolynomial = readonly bigint[];
 
-// g_big_primes: the primes mod_gcd tries, in order.
 const BIG_PRIMES = [
   39103, 39107, 39113, 39119, 39133, 39139, 39157, 39161, 39163, 39181, 39191, 39199, 39209, 39217,
   39227, 39229, 39233, 39239, 39241, 39251, 39293, 39301, 39313, 39317, 39323, 39341, 39343, 39359,
@@ -28,10 +26,9 @@ const BIG_PRIMES = [
   41507, 41513, 41519, 41521, 41539, 41543, 41549,
 ].map(BigInt);
 
-const sign = (value: bigint) => (value > 0n ? 1 : value < 0n ? -1 : 0);
+const getSign = (value: bigint) => (value > 0n ? 1 : value < 0n ? -1 : 0);
 
-// mpz div: rounds toward minus infinity.
-const floorDiv = (dividend: bigint, divisor: bigint) => {
+export const floorDiv = (dividend: bigint, divisor: bigint) => {
   const quotient = dividend / divisor;
   return dividend % divisor !== 0n && dividend < 0n !== divisor < 0n ? quotient - 1n : quotient;
 };
@@ -76,8 +73,6 @@ interface DrsFrame {
 }
 
 export class UpolynomialManager {
-  // Z_p when set, else Z. Coefficients over Z_p lie in the symmetric range around zero. Hensel
-  // lifting also sets a prime power.
   private isPrimeModulus = true;
 
   constructor(private modulus: bigint | null = null) {}
@@ -86,7 +81,6 @@ export class UpolynomialManager {
     return this.modulus;
   }
 
-  // Over a prime power, division falls back to pseudo-division.
   private get isField() {
     return this.modulus !== null && this.isPrimeModulus;
   }
@@ -127,7 +121,6 @@ export class UpolynomialManager {
     return this.normalizeNumeral(getExtendedGcd(this.normalizeNumeral(value), modulus).x);
   }
 
-  // mpzzp div: exact over Z (rounding toward minus infinity), multiplication by the inverse over Z_p.
   private divNumeral(dividend: bigint, divisor: bigint) {
     return this.modulus === null
       ? floorDiv(dividend, divisor)
@@ -195,7 +188,6 @@ export class UpolynomialManager {
     return trim(coeffs.map((coeff) => this.normalizeNumeral(coeff * factor)));
   }
 
-  // div(p, b): each coefficient divided by b, which divides it.
   divConst(coeffs: Upolynomial, divisor: bigint) {
     if (divisor === 1n) return [...coeffs];
     return trim(coeffs.map((coeff) => this.divNumeral(coeff, divisor)));
@@ -228,7 +220,6 @@ export class UpolynomialManager {
     );
   }
 
-  // div_rem: q and r with lc(p2)^d * p1 = q * p2 + r over Z, or p1 = q * p2 + r over a field.
   divRem(dividend: Upolynomial, divisor: Upolynomial) {
     const isField = this.isField;
     if (divisor.length === 1) {
@@ -311,8 +302,6 @@ export class UpolynomialManager {
     return this.remWithPower(dividend, divisor).remainder;
   }
 
-  // srem: the signed pseudo-remainder, negated unless an odd number of steps by a negative leading
-  // coefficient already flipped it.
   srem(dividend: Upolynomial, divisor: Upolynomial) {
     const result = this.remWithPower(dividend, divisor);
     return result.power % 2 === 0 || (divisor.length > 0 && divisor[divisor.length - 1] > 0n)
@@ -320,7 +309,6 @@ export class UpolynomialManager {
       : result.remainder;
   }
 
-  // divides: whether divisor divides dividend, checking only the leading coefficients.
   divides(dividend: Upolynomial, divisor: Upolynomial) {
     if (divisor.length === 0) return false;
     if (dividend.length === 0) return true;
@@ -421,8 +409,6 @@ export class UpolynomialManager {
       });
       if (image === null) continue;
       if (image.length <= 1) return [contentG];
-      // The first image, or one of lower degree, replaces the accumulated image. Before the first
-      // image the bound is zero, which is even.
       if (image.length < combined.length || bound % 2n === 0n) {
         combined = image;
         bound = prime;
@@ -498,7 +484,6 @@ export class UpolynomialManager {
     return coeffs.slice(index);
   }
 
-  // has_one_half_root: 2^n * p(1/2) = 0.
   private hasOneHalfRoot(coeffs: Upolynomial) {
     if (coeffs.length === 0) return true;
     if (coeffs.length === 1) return false;
@@ -508,7 +493,6 @@ export class UpolynomialManager {
     return result === 0n;
   }
 
-  // descartes_bound_0_1: the sign changes of (x+1)^n p(1/(x+1)), stopping above 1.
   private descartesBound01(coeffs: Upolynomial) {
     if (coeffs.length <= 1) return 0;
     const work = [...coeffs];
@@ -517,7 +501,7 @@ export class UpolynomialManager {
     for (let index = 0; index < work.length; index++) {
       let position = 1;
       for (; position < work.length - index; position++) work[position] += work[position - 1];
-      const current = sign(work[position - 1]);
+      const current = getSign(work[position - 1]);
       if (current === 0) continue;
       if (current !== previous && previous !== 0) {
         changes++;
@@ -528,7 +512,6 @@ export class UpolynomialManager {
     return changes;
   }
 
-  // translate: p(x + 1).
   translate(coeffs: Upolynomial) {
     const result = [...coeffs];
     const degree = result.length - 1;
@@ -538,7 +521,6 @@ export class UpolynomialManager {
     return result;
   }
 
-  // translate_q: den^n * p(x + q).
   translateQ(coeffs: Upolynomial, value: Rational) {
     if (coeffs.length <= 1) return [...coeffs];
     const result = this.composeAnPxDivA(coeffs, value.den);
@@ -576,7 +558,6 @@ export class UpolynomialManager {
     );
   }
 
-  // compose_p_q_x: c^n * p(b*x/c) for q = b/c.
   composePQX(coeffs: Upolynomial, value: Rational) {
     const degree = coeffs.length - 1;
     return coeffs.map((coeff, index) =>
@@ -584,12 +565,9 @@ export class UpolynomialManager {
     );
   }
 
-  // Signs.
-
-  // eval_sign_at for a binary rational: the sign of (2^k)^n * p(b).
   evalSignAtBq(coeffs: Upolynomial, value: Mpbq) {
     if (coeffs.length === 0) return 0;
-    if (coeffs.length === 1) return sign(coeffs[0]);
+    if (coeffs.length === 1) return getSign(coeffs[0]);
     let result = coeffs[coeffs.length - 1];
     let shift = value.k;
     for (let index = coeffs.length - 2; index >= 0; index--, shift += value.k)
@@ -597,12 +575,12 @@ export class UpolynomialManager {
         coeffs[index] === 0n
           ? result * value.num
           : (coeffs[index] << BigInt(shift)) + result * value.num;
-    return sign(result);
+    return getSign(result);
   }
 
   evalSignAtQ(coeffs: Upolynomial, value: Rational) {
     if (coeffs.length === 0) return 0;
-    if (coeffs.length === 1) return sign(coeffs[0]);
+    if (coeffs.length === 1) return getSign(coeffs[0]);
     let result = coeffs[coeffs.length - 1];
     let denominator = value.den;
     for (let index = coeffs.length - 2; index >= 0; index--, denominator *= value.den)
@@ -610,20 +588,20 @@ export class UpolynomialManager {
         coeffs[index] === 0n
           ? result * value.num
           : coeffs[index] * denominator + result * value.num;
-    return sign(result);
+    return getSign(result);
   }
 
   evalSignAtZero(coeffs: Upolynomial) {
-    return coeffs.length === 0 ? 0 : sign(coeffs[0]);
+    return coeffs.length === 0 ? 0 : getSign(coeffs[0]);
   }
 
   evalSignAtPlusInf(coeffs: Upolynomial) {
-    return coeffs.length === 0 ? 0 : sign(coeffs[coeffs.length - 1]);
+    return coeffs.length === 0 ? 0 : getSign(coeffs[coeffs.length - 1]);
   }
 
   evalSignAtMinusInf(coeffs: Upolynomial) {
     if (coeffs.length === 0) return 0;
-    const leading = sign(coeffs[coeffs.length - 1]);
+    const leading = getSign(coeffs[coeffs.length - 1]);
     return (coeffs.length - 1) % 2 === 0 ? leading : -leading;
   }
 
@@ -655,7 +633,6 @@ export class UpolynomialManager {
     return this.countSignVariations(sequence.map((coeffs) => this.evalSignAtBq(coeffs, value)));
   }
 
-  // knuth_positive_root_upper_bound: k with every positive root below 2^k.
   knuthPositiveRootUpperBound(coeffs: Upolynomial) {
     if (coeffs.length === 0) return 0;
     let max = 0;
@@ -678,7 +655,6 @@ export class UpolynomialManager {
     return this.knuthPositiveRootUpperBound(this.pMinusX(coeffs));
   }
 
-  // nonzero_root_lower_bound: k with every nonzero root of absolute value above 1/2^k.
   nonzeroRootLowerBound(coeffs: Upolynomial) {
     const reversed = this.removeZeroRoots(coeffs).reverse();
     return Math.max(
@@ -687,7 +663,6 @@ export class UpolynomialManager {
     );
   }
 
-  // push_child_frames: the halves (0, 1/2) and (1/2, 1), as 2^n p(x/2) and its translation.
   private pushChildFrames(coeffs: Upolynomial, frames: DrsFrame[]) {
     const parent = frames.length - 1;
     const left = this.normalize(this.compose2nPxDiv2(coeffs));
@@ -700,7 +675,6 @@ export class UpolynomialManager {
     });
   }
 
-  // The interval (0, 1), or the point 1/2, of the top frame mapped back through its ancestors.
   private mapToRoot(frames: DrsFrame[], value: Mpbq) {
     let result = value;
     for (let index = frames.length - 1; index !== -1; index = frames[index].parent)
@@ -748,8 +722,6 @@ export class UpolynomialManager {
     }
   }
 
-  // drs_isolate_roots: the positive roots in (0, 2^k) and the negative ones in (-2^k', 0), each
-  // found as the roots in (0, 1) of p(2^k x) or p(-2^k' x) and scaled back.
   private drsIsolateRoots(coeffs: Upolynomial, result: IsolatedRoots) {
     const normalized = this.normalize(coeffs);
     const negativeK = this.knuthNegativeRootUpperBound(coeffs);
@@ -778,8 +750,6 @@ export class UpolynomialManager {
     }
   }
 
-  // sqf_isolate_roots: the roots of a square-free polynomial, exact roots first when zero is one,
-  // then the isolating intervals of the others.
   sqfIsolateRoots(coeffs: Upolynomial): IsolatedRoots {
     const result: IsolatedRoots = { roots: [], lowers: [], uppers: [] };
     if (this.hasZeroRoots(coeffs)) {
@@ -866,10 +836,6 @@ export class UpolynomialManager {
       : { isInterval: true, lower, upper: middle };
   }
 
-  refine(coeffs: Upolynomial, lower: Mpbq, upper: Mpbq) {
-    return this.refineCore(coeffs, this.evalSignAtBq(coeffs, lower), lower, upper);
-  }
-
   refineToPrecision(coeffs: Upolynomial, lower: Mpbq, upper: Mpbq, precision: number): Refinement {
     const signLower = this.evalSignAtBq(coeffs, lower);
     let current: Refinement = { isInterval: true, lower, upper };
@@ -934,7 +900,6 @@ export class UpolynomialManager {
     }
   }
 
-  // Null when zero is the root.
   normalizeInterval(coeffs: Upolynomial, lower: Mpbq, upper: Mpbq, signLower: number) {
     if (!(lower.isNeg && upper.isPos)) return { lower, upper };
     if (this.hasZeroRoots(coeffs)) return null;

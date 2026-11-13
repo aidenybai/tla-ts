@@ -1,8 +1,7 @@
-// Ported from Z3 (src/ast/rewriter/poly_rewriter.h, poly_rewriter_def.h), MIT license, see
 // z3-license.txt.
 import { SmtUnsupportedError } from "../../../errors";
 import {
-  AstManager,
+  type AstManager,
   KIND_APP,
   OP_ABS,
   OP_ADD,
@@ -197,8 +196,6 @@ export class PolyRewriter {
       : isAstLess(this.manager, first, second);
   }
 
-  // Insertion sort is stable, as Array.prototype.sort is, and allocates nothing for the short
-  // sums that are the common case.
   protected sortMonomials(monomials: number[], start: number) {
     for (let index = start + 1; index < monomials.length; index++) {
       const monomial = monomials[index];
@@ -229,7 +226,6 @@ export class PolyRewriter {
     return this.mkMulApp([this.mkNumeral(coefficient), arg]);
   }
 
-  // The rewrites return undefined when they do not apply, like BR_FAILED.
   mkAdd(args: number[]) {
     const result = this.mkAddCore(args);
     return typeof result === "object" ? result.expr : result;
@@ -475,7 +471,6 @@ export class PolyRewriter {
     }
     const sums = args.map((arg) => (this.isAdd(arg) ? manager.getArgs(arg) : [arg]));
     const positions = sums.map(() => 0);
-    // Like som's expr_ref_buffer, the products are released in order when it returns.
     const products: number[] = [];
     const isBlownUp = manager.withTemporaries(
       () => {
@@ -514,7 +509,6 @@ export class PolyRewriter {
     return this.reduce(this.mkMulAppWith(Rational.minusOne, arg), 1);
   }
 
-  // The stamps stand for cancel_monomials' visited, multiple and copied marks.
   protected cancelMonomials(lhs: number, rhs: number, isMoving: boolean) {
     const manager = this.manager;
     this.currSort = manager.sorts[lhs];
@@ -604,7 +598,6 @@ export class PolyRewriter {
     const isRhsConstant = isConstantAtRhs && (newRhs.length === 0 || !value.isZero());
     if (isLhsConstant) sortedLhs.unshift(this.mkNumeral(value));
     if (isRhsConstant) newRhs.unshift(this.mkNumeral(value));
-    const lhsResult = this.mkAddApp(sortedLhs);
-    return { lhs: lhsResult, rhs: this.mkAddApp(newRhs) };
+    return { lhs: this.mkAddApp(sortedLhs), rhs: this.mkAddApp(newRhs) };
   }
 }

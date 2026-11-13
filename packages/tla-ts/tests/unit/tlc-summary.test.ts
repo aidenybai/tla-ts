@@ -7,7 +7,6 @@ import {
   OUT_DEGREE_BUCKETS,
 } from "../../src/tlc/summary";
 
-// Each pair is a value and what TLC's AbstractChecker.ProbabilityToString(value, 2) prints for it.
 const PROBABILITIES: [number, string][] = [
   [0, "0.0"],
   [3.1e-8, "3.1E-8"],
@@ -24,7 +23,6 @@ const PROBABILITIES: [number, string][] = [
   [0.0995, ".100"],
 ];
 
-// Each pair is a distance and 1 divided by it as TLC computes it with BigDecimal and MathContext(2).
 const DISTANCES: [bigint, number][] = [
   [1n, 1],
   [3n, 0.33],

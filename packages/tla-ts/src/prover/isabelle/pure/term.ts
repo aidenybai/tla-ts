@@ -1,8 +1,4 @@
-// Ported from Isabelle2025's Pure/term.ML. Copyright (c) 1986-2025 University of Cambridge,
-// Technische Universitaet Muenchen, and contributors, see LICENSE.
-// Functions that rebuild a term return the very same object when nothing changes, as Isabelle's
-// Same.SAME does. Unlike Isabelle, compound terms record what their subterms contain (maxidx,
-// loose, redexes and free-name bits), so traversals skip subterms they would return unchanged.
+// Ported from Isabelle2025's Pure/term.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 
@@ -18,8 +14,7 @@ export type Typ =
   | { readonly kind: "TFree"; readonly name: string; readonly sort: Sort }
   | { readonly kind: "TVar"; readonly name: string; readonly index: number; readonly sort: Sort };
 
-// Every term has all these fields, in this order, so all terms share one object layout and V8
-// compiles the switches on kind to monomorphic loads.
+// Every term lists every field in this order, unused ones undefined, so V8 sees one object layout.
 interface TermFields {
   readonly name: string;
   readonly type: Typ;
@@ -77,7 +72,6 @@ const looseOf = (term: Term) =>
       ? term.loose
       : 0;
 
-// One of the 28 bits above the others, picked by a cheap hash of the name.
 const freeBit = (name: string) =>
   8 <<
   ((name.length * 31 + (name.charCodeAt(0) | 0) * 7 + (name.charCodeAt(name.length - 1) | 0)) % 28);
@@ -91,7 +85,6 @@ export const flagsOf = (term: Term) =>
         ? term.flags
         : 0;
 
-// Whether a subterm aconv to pattern could occur in term.
 export const mayOccur = (pattern: Term, term: Term) => (flagsOf(pattern) & ~flagsOf(term)) === 0;
 
 export const mkType = (name: string, args: readonly Typ[] = []): Typ => ({
@@ -227,7 +220,6 @@ export const eqTyp = (left: Typ, right: Typ): boolean => {
   );
 };
 
-// Types holds the types of the loose bound variables, innermost first.
 export const fastypeOf1 = (types: readonly Typ[], term: Term): Typ => {
   switch (term.kind) {
     case "Const":
@@ -345,7 +337,6 @@ export const looseBvar1 = (term: Term, level: number): boolean => {
 export const isOpen = (term: Term) => looseBvar(term, 0);
 export const isDependent = (term: Term) => looseBvar1(term, 0);
 
-// In Isabelle's insertion order.
 export const looseBnos = (term: Term): number[] => {
   const numbers: number[] = [];
   const add = (current: Term, level: number) => {
@@ -422,7 +413,6 @@ export const aconv = (left: Term, right: Term): boolean => {
   }
 };
 
-// Structural equality including the names of abstractions, ML's (op =) on terms.
 export const eqTerm = (left: Term, right: Term): boolean => {
   if (left === right) return true;
   switch (left.kind) {
@@ -440,7 +430,6 @@ export const eqTerm = (left: Term, right: Term): boolean => {
   }
 };
 
-// A fast filter, false only if the normal terms can't unify.
 const matchRands = (left: Term, right: Term): boolean => {
   let currentLeft = left;
   let currentRight = right;
@@ -484,15 +473,6 @@ const abstractAt = (pattern: Term, level: number, term: Term): Term => {
 };
 
 export const abstractOver = (pattern: Term, body: Term) => abstractAt(pattern, 0, body);
-
-const baseName = (name: string) => name.slice(name.lastIndexOf(".") + 1);
-
-export const termName = (term: Term) =>
-  term.kind === "Const"
-    ? baseName(term.name)
-    : term.kind === "Free" || term.kind === "Var"
-      ? term.name
-      : "uu";
 
 export const mapTypes = (mapType: (type: Typ) => Typ, term: Term): Term => {
   const visit = (current: Term): Term => {
@@ -610,7 +590,6 @@ export const existsType = (predicate: (type: Typ) => boolean, term: Term): boole
 const sameVar = (left: Var, right: Var) =>
   left.name === right.name && left.index === right.index && eqTyp(left.type, right.type);
 
-// Latest first, as Isabelle's insert builds the list.
 export const addVars = (term: Term, vars: Var[]): Var[] =>
   foldVars(
     (current, result: Var[]) =>

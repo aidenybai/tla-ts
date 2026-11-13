@@ -1,20 +1,9 @@
-// Ported from Z3 (src/math/lp/nla_core.h, src/math/lp/nla_core.cpp, src/math/lp/nla_common.cpp,
-// src/math/lp/nla_explanations.cpp, src/math/lp/factorization.cpp,
-// src/math/lp/factorization_factory_imp.cpp, src/math/lp/nla_solver.cpp), MIT license, see
-// z3-license.txt.
+// Ported from Z3 (src/math/lp/nla_core.h, src/math/lp/nla_core.cpp, src/math/lp/nla_common.cpp, src/math/lp/nla_explanations.cpp, src/math/lp/factorization.cpp, src/math/lp/factorization_factory_imp.cpp, src/math/lp/nla_solver.cpp), MIT license, see z3-license.txt.
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import type { ResourceLimit } from "../rlimit";
 import { Rational } from "../rational";
 import { IndexedUintSet } from "./containers";
-import {
-  COLUMN_BOXED,
-  COLUMN_FIXED,
-  COLUMN_FREE,
-  COLUMN_LOWER,
-  COLUMN_UPPER,
-  LP_FEASIBLE,
-  LP_OPTIMAL,
-} from "./core-solver";
+import { COLUMN_BOXED, COLUMN_FIXED, COLUMN_FREE, COLUMN_LOWER, COLUMN_UPPER } from "./core-solver";
 import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT, KIND_NE } from "./constraints";
 import type { Dependency } from "./dependency";
 import { Explanation } from "./explanation";
@@ -24,7 +13,7 @@ import { Impq } from "./numeric-pair";
 import { Backoff, SqueezeSchedule } from "./nla-backoff";
 import { Basics } from "./nla-basics";
 import { Divisions } from "./nla-divisions";
-import { Emonics, Monic } from "./nla-emonics";
+import { Emonics, type Monic } from "./nla-emonics";
 import { type Factor, type Factorization, mkFactor, mkMonFactorization } from "./nla-factorization";
 import { Grobner } from "./nla-grobner";
 import { Horner } from "./nla-horner";
@@ -56,8 +45,6 @@ interface NlaParams {
   hornerFrequency: number;
   hornerRowLengthLimit: number;
   grobner: boolean;
-  grobnerRowLengthLimit: number;
-  grobnerFrequency: number;
   grobnerEqsGrowth: number;
   grobnerExprSizeGrowth: number;
   grobnerExprDegreeGrowth: number;
@@ -79,18 +66,11 @@ interface NlaParams {
   orderBinomialSign: boolean;
   tangents: boolean;
   tangentsBoxCorners: boolean;
-  expensivePatching: boolean;
-  expp: boolean;
-  monomialSandwich: boolean;
-  monomialSandwichMaxFanout: number;
-  monomialBinomialSign: boolean;
   reducePseudoLinear: boolean;
   delay: number;
-  propagateLinearMonomials: boolean;
   linearizeViolatedMonomials: boolean;
   optimizeBounds: boolean;
   optimizeBoundsLpMaxVars: number;
-  crossNested: boolean;
 }
 
 export const NLA_PARAMS: Readonly<NlaParams> = {
@@ -99,8 +79,6 @@ export const NLA_PARAMS: Readonly<NlaParams> = {
   hornerFrequency: 4,
   hornerRowLengthLimit: 10,
   grobner: true,
-  grobnerRowLengthLimit: 10,
-  grobnerFrequency: 4,
   grobnerEqsGrowth: 10,
   grobnerExprSizeGrowth: 2,
   grobnerExprDegreeGrowth: 2,
@@ -122,18 +100,11 @@ export const NLA_PARAMS: Readonly<NlaParams> = {
   orderBinomialSign: true,
   tangents: true,
   tangentsBoxCorners: false,
-  expensivePatching: false,
-  expp: false,
-  monomialSandwich: false,
-  monomialSandwichMaxFanout: 0,
-  monomialBinomialSign: false,
   reducePseudoLinear: true,
   delay: 10,
-  propagateLinearMonomials: true,
   linearizeViolatedMonomials: true,
   optimizeBounds: true,
   optimizeBoundsLpMaxVars: 120,
-  crossNested: true,
 };
 
 interface NlaEquality {
@@ -163,15 +134,15 @@ export class NlaCore {
   isCheckFeasible = false;
   isNlaSatisfied = false;
   readonly throttle: NlaThrottle;
-  readonly tangents: Tangents;
-  readonly basics: Basics;
-  readonly order: Order;
-  readonly monotone: Monotone;
+  private readonly tangents: Tangents;
+  private readonly basics: Basics;
+  private readonly order: Order;
+  private readonly monotone: Monotone;
   readonly divisions: Divisions;
   readonly intervals: Intervals;
-  readonly monomialBounds: MonomialBounds;
-  readonly patcher: Patcher;
-  readonly horner: Horner;
+  private readonly monomialBounds: MonomialBounds;
+  private readonly patcher: Patcher;
+  private readonly horner: Horner;
   readonly grobner: Grobner;
   readonly nra = new NraSolver(this);
   readonly transcendentals = new NlaTranscendentals(this);
@@ -206,10 +177,6 @@ export class NlaCore {
     };
   }
 
-  get settings() {
-    return this.lra.settings;
-  }
-
   get stats() {
     return this.lra.settings.stats;
   }
@@ -233,7 +200,7 @@ export class NlaCore {
     return factor.isNegated ? value.neg() : value;
   }
 
-  compareHolds(left: Rational, cmp: number, right: Rational) {
+  private compareHolds(left: Rational, cmp: number, right: Rational) {
     const comparison = left.compare(right);
     switch (cmp) {
       case KIND_LE:
@@ -251,7 +218,7 @@ export class NlaCore {
     }
   }
 
-  value(term: LarTerm) {
+  private value(term: LarTerm) {
     let result = Rational.zero;
     for (const entry of term.coeffs) result = result.add(entry[1].mul(this.val(entry[0])));
     return result;
@@ -298,10 +265,6 @@ export class NlaCore {
     return this.lra.isFixed(lpVar);
   }
 
-  varIsFree(lpVar: number) {
-    return this.lra.isFree(lpVar);
-  }
-
   varHasPositiveLowerBound(lpVar: number) {
     const lower = this.lra.getLowerBound(lpVar);
     return (
@@ -318,7 +281,7 @@ export class NlaCore {
     );
   }
 
-  varIsBig(lpVar: number) {
+  private varIsBig(lpVar: number) {
     return !this.varIsInt(lpVar) && this.val(lpVar).isBig();
   }
 
@@ -346,26 +309,22 @@ export class NlaCore {
     return this.emons.get(lpVar);
   }
 
-  mapToRoot(lpVar: number) {
-    return getSignedVarVar(this.varEqs.findVar(lpVar));
+  private sortedRvars(factor: Factor) {
+    return factor.isMon
+      ? this.emons.get(factor.variable).rvars
+      : [getSignedVarVar(this.varEqs.findVar(factor.variable))];
   }
 
-  sortedRvars(factor: Factor) {
-    return factor.isMon ? this.emons.get(factor.variable).rvars : [this.mapToRoot(factor.variable)];
-  }
-
-  canonizeSignVar(lpVar: number) {
-    return isSignedVarNegated(this.varEqs.findVar(lpVar));
-  }
-
-  canonizeSignFactor(factor: Factor) {
+  private canonizeSignFactor(factor: Factor) {
     return (
       factor.isNegated !==
-      (factor.isMon ? this.emons.get(factor.variable).rsign : this.canonizeSignVar(factor.variable))
+      (factor.isMon
+        ? this.emons.get(factor.variable).rsign
+        : isSignedVarNegated(this.varEqs.findVar(factor.variable)))
     );
   }
 
-  canonizeSignFactorization(factorization: Factorization) {
+  private canonizeSignFactorization(factorization: Factorization) {
     let sign = false;
     for (const factor of factorization.factors) sign = sign !== this.canonizeSignFactor(factor);
     return sign;
@@ -381,27 +340,15 @@ export class NlaCore {
     return sign;
   }
 
-  findCanonicalMonicOfVars(vars: number[]) {
-    return this.emons.findCanonical(vars)?.variable;
-  }
-
-  isCanonicalMonic(lpVar: number) {
-    return this.emons.isCanonicalMonic(lpVar);
-  }
-
   addMonic(lpVar: number, vars: number[]) {
     this.emons.add(lpVar, vars);
     this.monicsWithChangedBounds.add(lpVar);
   }
 
-  productValue(monic: Monic) {
-    return this.mulVal(monic);
-  }
-
   checkMonic(monic: Monic) {
     const value = this.lra.getValue(monic.variable);
     if (this.lra.isInt(monic.variable) && !value.x.isInt()) return true;
-    return this.productValue(monic).equals(value.x);
+    return this.mulVal(monic).equals(value.x);
   }
 
   hasRelevantMonomial() {
@@ -444,7 +391,6 @@ export class NlaCore {
     return quotient;
   }
 
-  // The factorizations of a monic: into its variables first, then into two canonical factors.
   *getFactorizations(rooted: Monic): Generator<Factorization> {
     const vars = rooted.rvars;
     const monic = this.emons.get(rooted.variable);
@@ -454,7 +400,7 @@ export class NlaCore {
     let numFailures = 0;
     const getFactor = (factorVars: number[]): Factor | undefined => {
       if (factorVars.length === 1) return mkFactor(factorVars[0], false);
-      const variable = this.findCanonicalMonicOfVars(factorVars);
+      const variable = this.emons.findCanonical(factorVars)?.variable;
       if (variable === undefined) {
         numFailures++;
         return undefined;
@@ -606,11 +552,11 @@ export class NlaCore {
   }
 
   random() {
-    return this.settings.getRandomNext();
+    return this.lra.settings.getRandomNext();
   }
 
   isCanceled() {
-    return this.settings.isCanceled();
+    return this.lra.settings.isCanceled();
   }
 
   checkPower(result: number, base: number, exponent: number) {
@@ -624,21 +570,12 @@ export class NlaCore {
     this.divisions.checkBoundedDivisions();
   }
 
-  clear() {
+  private clear() {
     this.lemmas = [];
     this.literals = [];
     this.fixedEqualities = [];
     this.equalities = [];
     this.isCheckFeasible = false;
-  }
-
-  private initSearch() {
-    this.clear();
-    this.collectEquivs();
-  }
-
-  insertToRefine(lpVar: number) {
-    this.toRefine.add(lpVar);
   }
 
   eraseFromToRefine(lpVar: number) {
@@ -652,11 +589,11 @@ export class NlaCore {
     const size = this.emons.numMonics;
     for (let index = 0; index < size; index++) {
       const monic = this.emons.monics[(index + offset) % size];
-      if (!this.checkMonic(monic)) this.insertToRefine(monic.variable);
+      if (!this.checkMonic(monic)) this.toRefine.add(monic.variable);
     }
   }
 
-  conflictFound() {
+  private conflictFound() {
     return this.lemmas.some(isConflictLemma);
   }
 
@@ -664,7 +601,7 @@ export class NlaCore {
     return this.lemmas.length >= 10 || this.conflictFound() || this.isCanceled();
   }
 
-  findBfcToRefineOnMonic(monic: Monic) {
+  private findBfcToRefineOnMonic(monic: Monic) {
     for (const factorization of this.getFactorizations(monic)) {
       if (factorization.factors.length !== 2) continue;
       const product = this.valFactor(factorization.factors[0]).mul(
@@ -719,7 +656,7 @@ export class NlaCore {
     for (let index = 0; index < size; index++) {
       const monic = this.emons.get(this.toRefine.elems[(index + offset) % size]);
       for (const lpVar of monic.vars) {
-        if (!this.varIsFree(lpVar) || monic.isBoundPropagated) continue;
+        if (!this.lra.isFree(lpVar) || monic.isBoundPropagated) continue;
         this.emons.setBoundPropagated(monic);
         this.literals.push(mkIneq(lpVar, KIND_EQ, 0));
         this.stats.nlaAddBounds++;
@@ -759,18 +696,18 @@ export class NlaCore {
     const stats = this.stats;
     stats.nlaCalls++;
     this.lra.getRidOfInfEps();
-    if (this.lra.status !== LP_OPTIMAL && this.lra.status !== LP_FEASIBLE) return L_UNDEF;
+    if (!this.lra.isFeasible()) return L_UNDEF;
     this.initToRefine();
     this.patcher.patchMonomials();
     this.setUseNraModel(false);
     if (this.toRefine.size === 0) return this.onToRefineEmpty();
-    this.initSearch();
+    this.clear();
+    this.collectEquivs();
     this.isNlaSatisfied = false;
     let result = L_UNDEF;
     const isRunningGrobner = NLA_PARAMS.grobner;
     const isRunningHorner = NLA_PARAMS.horner && stats.nlaCalls % NLA_PARAMS.hornerFrequency === 0;
     const isRunningBounds = NLA_PARAMS.branching;
-    // Model-based basic lemmas are effective on small systems, and branching on larger ones.
     const isDelayingBounds = isRunningBounds && this.emons.numMonics <= 8;
     const hasNoEffect = () =>
       result === L_UNDEF &&
@@ -853,8 +790,6 @@ export class NlaCore {
     return NLA_PARAMS.nra && this.nlsatBackoff.shouldRun();
   }
 
-  // bounded_nlsat: a run of nlsat capped at 100 conflicts and 100000 steps. A refutation, or a run
-  // that took less than a tenth of the steps, makes the backoff run it again sooner.
   private boundedNlsat() {
     const budget = 100000;
     const result = this.nra.check(100, budget);
@@ -890,8 +825,6 @@ export class NlaCore {
     if (isPropagated) this.isCheckFeasible = true;
     return isPropagated;
   }
-
-  // Pseudo-linear monomials: all but one factor are integers in a range of at most 4.
 
   private isPseudoLinear(monic: Monic) {
     let hasUnbounded = false;

@@ -1,5 +1,3 @@
-// A port of tlapm's Expr.LevelComparison, the LevelComparison frontend.
-
 import { TlapmBugError, TlaProverError } from "../../errors";
 import {
   adjoin,
@@ -28,6 +26,12 @@ interface Declaration {
   level: number;
 }
 
+interface Binder {
+  name: string;
+  domain: Expr | undefined;
+  body: Expr;
+}
+
 const RANKS: Partial<Record<Declaration["kind"], number>> = {
   Constant: 0,
   State: 1,
@@ -44,7 +48,6 @@ const isPairwise = <Item>(
   left.every((item, index) => index < right.length && isSameItem(item, right[index])) &&
   left.length === right.length;
 
-// As Util.Coll.Sm built from a list: the first entry of a name wins, in key order.
 const getSortedFields = (fields: { name: string; value: Expr }[]) =>
   [...new Map(fields.toReversed().map((field) => [field.name, field.value]))].toSorted(
     (first, second) => (first[0] < second[0] ? -1 : 1),
@@ -223,8 +226,8 @@ const compare = (
   const isSameBinder = (
     leftScope: Scope | undefined,
     rightScope: Scope | undefined,
-    left: { name: string; domain: Expr | undefined; body: Expr },
-    right: { name: string; domain: Expr | undefined; body: Expr },
+    left: Binder,
+    right: Binder,
   ) => {
     if (!left.domain || !right.domain) {
       return (
@@ -313,7 +316,6 @@ const compare = (
           }
           return selector.kind === other.kind;
         });
-        // List.for_all2 raises when the lists differ in length after a matching prefix.
         if (isPrefix && left.selectors.length !== rightSelectors.length) {
           throw new TlapmBugError("Invalid_argument");
         }
@@ -503,7 +505,6 @@ const compare = (
   return isMatch && isDeclared.every(Boolean);
 };
 
-// When no visible fact matches, tlapm records the obligation as not tried.
 export const checkLevelChange = (sequent: Sequent): Sequent => {
   const goalScope = adjoinAll(undefined, sequent.context);
   const isProved = sequent.context.some((hyp, index) => {

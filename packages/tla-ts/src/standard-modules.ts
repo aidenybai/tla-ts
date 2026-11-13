@@ -35,7 +35,6 @@ import {
   createSet,
   createSortedSet,
   compareValues,
-  describeKind,
   createTuple,
   getSortedDifference,
   formatValue,
@@ -76,18 +75,12 @@ import {
 import type { TlcVersion } from "./tlc/version";
 import { getSanyStandardModules } from "./sany/modules";
 
-interface StandardModule {
-  extends: string[];
-  operators: Builtin[];
-}
-
 const isSubsetOf = (left: Value[], right: Value) =>
   left.every((element) => isElementOf(element, right));
 
 const BOOLEAN_SET = createSet([false, true]);
 markNormalized(BOOLEAN_SET);
 
-// A balanced merge compares each element about log2 of the set count times.
 const getBalancedUnion = (sets: SetValue[], start: number, end: number): SetValue => {
   if (end - start === 1) return sets[start];
   const middle = (start + end) >> 1;
@@ -100,11 +93,9 @@ type ReducibleSet = SetValue | MixedSetValue | IntervalValue;
 
 const isMixedSet = (value: Value) => typeof value === "object" && value.kind === "MixedSet";
 
-// These keep the intersection and difference they compute normalized.
 const isNormalizedReducible = (set: ReducibleSet) =>
   set.kind === "Interval" || (set.kind === "Set" && set.isNormalized);
 
-// TLC combines a set enumeration or an interval with a set by testing each element's membership.
 const combineReducible = (
   operator: SetOperationValue["operator"],
   set: ReducibleSet,
@@ -165,7 +156,6 @@ export const CORE_OPERATORS: Builtin[] = [
     2,
     (args) => !isElementOf(getValue(args, 0, "\\notin"), getValue(args, 1, "\\notin")),
   ),
-  // TLC tests each element of the left set for membership in the right value.
   defineBinary("\\subseteq", (left, right) => {
     if (!isSetValue(left)) {
       throw new TlaEvaluationError(`\\subseteq expects a set but received ${formatValue(left)}`);
@@ -191,7 +181,6 @@ export const CORE_OPERATORS: Builtin[] = [
     }
     return !someStreamedElement(left, (element) => !isElementOf(element, right));
   }),
-  // TLC defers set operations on non-sets to enumerating or testing membership in the result.
   ...SET_OPERATORS.map((operator) =>
     defineOperator(operator, 2, (args) => {
       const left = getValue(args, 0, operator);
@@ -218,14 +207,12 @@ export const CORE_OPERATORS: Builtin[] = [
             : operator === "\\cap"
               ? getSortedIntersection
               : getSortedDifference;
-        // The merge compares the elements, which TLC tests for membership one by one instead.
         return computeLikeTlcOnFailure(
           (finiteLeft, finiteRight) => {
             const leftSet = toFiniteSet(finiteLeft);
             const rightSet = toFiniteSet(finiteRight);
             const merged = merge(leftSet, rightSet);
             if (operator === "\\cup") {
-              // TLC appends the right set's new elements to the left set's, unsorted.
               const written = getWrittenElements(leftSet);
               const added = getSortedDifference(rightSet, leftSet).elements;
               const isSorted =
@@ -268,7 +255,6 @@ export const CORE_OPERATORS: Builtin[] = [
     if (!isEnumeratedSet(outer) || sets.length !== written.length) {
       return markStreamedSet({ kind: "Union", base: outer });
     }
-    // TLC adds each set's elements in written order, and only those not yet in the union.
     const added = sets.flatMap(getWrittenElements);
     const getUnionLikeTlc = () => {
       const union: MixedSetValue = { kind: "MixedSet", elements: [] };
@@ -298,7 +284,6 @@ export const CORE_OPERATORS: Builtin[] = [
 
 const NEG_SIGNATURE = getJavaSignature("Integers", "Neg", "IntValue", 1);
 
-// TLC computes this arithmetic in tlc2.module.Naturals, or Integers if loaded, named in errors.
 const createArithmeticOperators = (module: string) => {
   const dotDotSignature = getJavaSignature(module, "DotDot", "IntervalValue", 2);
   return [
@@ -341,14 +326,12 @@ const NATURALS_ARITHMETIC = createArithmeticOperators("Naturals");
 
 const INTEGERS_ARITHMETIC = createArithmeticOperators("Integers");
 
-// TLC loads Integers for a trace exploration spec, whose methods then replace these.
 export const getTraceSpecArithmetic = (builtin: Builtin) => {
   const index = NATURALS_ARITHMETIC.indexOf(builtin);
   return index === -1 ? undefined : INTEGERS_ARITHMETIC[index];
 };
 
-// Naturals#GEQ names itself > in its errors, and Integers#GT returns a BoolValue. Only a
-// spec that extends Integers gets Integers' comparisons.
+// Naturals#GEQ names itself > in its errors, and Integers#GT returns a BoolValue.
 const createComparisonOperators = (module: string) => {
   const getSignature = (method: string, result = "tlc2.value.IBoolValue") =>
     `public static ${result} tlc2.module.${module}.${method}(tlc2.value.impl.Value,tlc2.value.impl.Value)`;
@@ -512,16 +495,7 @@ const createSequencesOperators = (version: TlcVersion) =>
 
 const createFiniteSetsOperators = (version: TlcVersion) =>
   withJavaMethods("FiniteSets", [
-    defineOperator("IsFiniteSet", 1, (args) => {
-      const value = getValue(args, 0, "IsFiniteSet");
-      if (isSetValue(value)) return isFiniteSet(value);
-      if (typeof value === "object" && value.kind === "Function") return true;
-      throw new TlaEvaluationError(
-        typeof value === "object" && value.kind === "LazyFunction"
-          ? `Attempted to check if the function:\n${formatValue(value)}\nis a finite set.`
-          : `Attempted to check if the ${describeKind(value)} ${formatValue(value)} is a finite set.`,
-      );
-    }),
+    defineOperator("IsFiniteSet", 1, (args) => isFiniteSet(getValue(args, 0, "IsFiniteSet"))),
     defineOperator("Cardinality", 1, (args) => {
       const set = getValue(args, 0, "Cardinality");
       if (
@@ -604,7 +578,7 @@ export const getJavaOverrides = (
   if (name === "IOUtils") return createIoUtilsOperators(files, evaluateReplaced);
   if (name === "_TLCTrace") return createTlcTraceOperators(files);
   if (!getSanyStandardModules(runtime.version).has(name)) return undefined;
-  const operators = getStandardModule(name, print, runtime, files, builtins)?.operators;
+  const operators = getStandardOperators(name, print, runtime, files, builtins);
   return name === "Randomization" && operators
     ? [...operators, createRandomSubsetSet(runtime)]
     : operators;
@@ -622,37 +596,36 @@ export const STANDARD_DEPENDENCIES = new Map([
   ["TLCExt", ["TLC", "Integers", "Naturals", "Sequences", "FiniteSets"]],
 ]);
 
-export const getStandardModule = (
+export const STANDARD_EXTENDS = new Map([["Integers", ["Naturals"]]]);
+
+export const getStandardOperators = (
   name: string,
   print: (text: string) => void,
   runtime: CheckerRuntime,
   files: FileSystem,
   builtins: ReadonlyMap<string, Builtin>,
-): StandardModule | undefined => {
+): Builtin[] | undefined => {
   switch (name) {
     case "Naturals":
-      return { extends: [], operators: NATURALS_OPERATORS };
+      return NATURALS_OPERATORS;
     case "Integers":
-      return { extends: ["Naturals"], operators: INTEGERS_OPERATORS };
+      return INTEGERS_OPERATORS;
     case "Sequences":
-      return { extends: [], operators: createSequencesOperators(runtime.version) };
+      return createSequencesOperators(runtime.version);
     case "FiniteSets":
-      return { extends: [], operators: createFiniteSetsOperators(runtime.version) };
+      return createFiniteSetsOperators(runtime.version);
     case "TLC":
-      return { extends: [], operators: withJavaMethods("TLC", createTlcOperators(print, runtime)) };
+      return withJavaMethods("TLC", createTlcOperators(print, runtime));
     case "Randomization":
-      return { extends: [], operators: createRandomizationOperators(runtime) };
+      return createRandomizationOperators(runtime);
     case "_Possible":
-      return { extends: [], operators: createPossibleOperators(print, runtime) };
+      return createPossibleOperators(print, runtime);
     case "Json":
-      return { extends: [], operators: createJsonOperators(files) };
+      return createJsonOperators(files);
     case "Bags":
-      return { extends: [], operators: withJavaMethods("Bags", createBagsOperators(builtins)) };
+      return withJavaMethods("Bags", createBagsOperators(builtins));
     case "TLCExt":
-      return {
-        extends: [],
-        operators: withJavaMethods("TLCExt", createTlcExtOperators(print, runtime)),
-      };
+      return withJavaMethods("TLCExt", createTlcExtOperators(print, runtime));
     default:
       return undefined;
   }

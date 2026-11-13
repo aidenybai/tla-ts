@@ -1,5 +1,3 @@
-// Decides the text tlapm sends LS4, as LS4 does.
-
 import { TlaSyntaxError } from "../../errors";
 import type { DecideOptions, Verdict } from "../verdict";
 import { getSatisfiability, type BinaryKind, type PtlFormula } from "./tableau";
@@ -43,13 +41,13 @@ const MAX_LS4_IDENTIFIER = 31;
 
 const parseLs4 = (text: string): PtlFormula => {
   const tokens = text.replace(/;.*/g, "").match(/<=>|<->|=>|->|[A-Za-z]\w*|\S/g) ?? [];
-  const state = { position: 0 };
+  let position = 0;
   const reject = (reason: string): never => {
     throw new TlaSyntaxError(`LS4 reaches no verdict: ${reason}`);
   };
-  const peek = () => tokens[state.position] ?? "";
+  const peek = () => tokens[position] ?? "";
   const take = (expected?: string) => {
-    const token = tokens[state.position++];
+    const token = tokens[position++];
     if (token === undefined || (expected !== undefined && token !== expected))
       return reject(`expected ${expected ?? "a formula"}, found ${token ?? "the end"}`);
     return token;
@@ -112,7 +110,7 @@ const parseLs4 = (text: string): PtlFormula => {
   const parseBinary = (level: number): PtlFormula =>
     level === BINARY_LEVELS.length ? parsePrefix() : parseOperators(level, parseBinary(level + 1));
   const formula = parseBinary(0);
-  if (state.position < tokens.length) reject(`expected the end, found ${peek()}`);
+  if (position < tokens.length) reject(`expected the end, found ${peek()}`);
   return formula;
 };
 

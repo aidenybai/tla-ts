@@ -26,8 +26,7 @@ import {
   type TlaContext,
 } from "./terms";
 
-// OCaml's int_of_string, for the numerals that tlapm writes as variables.
-const parseInteger = (text: string) =>
+const parseOcamlInteger = (text: string) =>
   /^[-+]?(0[xX][0-9a-fA-F_]+|0[oO][0-7_]+|0[bB][01_]+|0[uU][0-9_]+|[0-9][0-9_]*)$/.test(text)
     ? Number(text.replace(/_/g, "").replace(/^([-+]?)0[uU]/, "$1"))
     : undefined;
@@ -40,7 +39,7 @@ const getNaturalConstant = (expression: Expr): number | undefined => {
     current = current.args[1];
   }
   if (current.kind !== "var") return undefined;
-  const value = parseInteger(current.symbol);
+  const value = parseOcamlInteger(current.symbol);
   return value === undefined ? undefined : accumulator + value;
 };
 
@@ -97,16 +96,16 @@ const getRewrites = (
   const lambda = exprs.elam(hole, "", frame);
   const fill = (inner: Expr) => exprs.substitute([[hole, inner]], frame);
   const makeBoolCase = (getRule: (prefix: [Expr, Expr, Expr, Expr, Expr, Expr]) => Rule) => {
-    const isTrue = equal(exprs, term, TRUE);
+    const trueEquality = equal(exprs, term, TRUE);
     const whenTrue = fill(TRUE);
-    const isFalse = equal(exprs, term, FALSE);
+    const falseEquality = equal(exprs, term, FALSE);
     const whenFalse = fill(FALSE);
     return make(
-      getRule([fill(term), isTrue, whenTrue, isFalse, whenFalse, lambda]),
+      getRule([fill(term), trueEquality, whenTrue, falseEquality, whenFalse, lambda]),
       [],
       [
-        [isTrue, whenTrue],
-        [isFalse, whenFalse],
+        [trueEquality, whenTrue],
+        [falseEquality, whenFalse],
       ],
     );
   };
@@ -195,19 +194,19 @@ const getRewrites = (
       const point = fcn.args[1];
       const value = fcn.args[2];
       const inDomain = member(exprs, argument, domain(exprs, base));
-      const isPoint = equal(exprs, point, argument);
+      const pointEquality = equal(exprs, point, argument);
       const changed = fill(value);
-      const isOther = exprs.enot(equal(exprs, point, argument));
+      const pointInequality = exprs.enot(equal(exprs, point, argument));
       const unchanged = fill(fapply(exprs, base, argument));
       const outside = exprs.enot(inDomain);
       return make(
         makeRule("fapplyexcept", [
           fill(term),
           inDomain,
-          isPoint,
+          pointEquality,
           changed,
           inDomain,
-          isOther,
+          pointInequality,
           unchanged,
           outside,
           lambda,
@@ -217,7 +216,7 @@ const getRewrites = (
           argument,
         ]),
         [],
-        [[inDomain, isPoint, changed], [inDomain, isOther, unchanged], [outside]],
+        [[inDomain, pointEquality, changed], [inDomain, pointInequality, unchanged], [outside]],
       );
     }
     if (isApp(fcn, "TLA.tuple") && isInOneTo(argument, fcn.args.length)) {

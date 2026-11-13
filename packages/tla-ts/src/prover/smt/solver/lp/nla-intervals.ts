@@ -1,5 +1,4 @@
-// Ported from Z3 (src/math/lp/nla_intervals.h, src/math/lp/nla_intervals.cpp), MIT license, see
-// z3-license.txt.
+// Ported from Z3 (src/math/lp/nla_intervals.h, src/math/lp/nla_intervals.cpp), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import {
   type DepInterval,
@@ -169,11 +168,11 @@ export class Intervals {
     return true;
   }
 
-  // Like Z3, equal bounds conflict when either upper bound is open.
   private conflictUpperLower(first: DepInterval, second: DepInterval) {
     if (first.isUpperInf || second.isLowerInf) return false;
     const comparison = first.upper.compare(second.lower);
     if (comparison !== 0) return comparison < 0;
+    // Like Z3, equal bounds conflict when either upper bound is open.
     return first.isUpperOpen || second.isUpperOpen;
   }
 
@@ -234,7 +233,6 @@ export class Intervals {
     set(interval, result, mode);
   }
 
-  // False when a sum met a conflict, which report received.
   private intervalOfExpr(
     expr: Nex,
     exponent: number,

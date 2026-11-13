@@ -49,7 +49,6 @@ export interface ConstantExpr extends ExprData {
   args: [];
 }
 
-// `symbol` is the type of the bound variable.
 export interface BinderExpr extends ExprData {
   kind: "all" | "ex" | "tau" | "lam";
   symbol: string;
@@ -114,8 +113,6 @@ const isBinder = (expression: Expr): expression is BinderExpr =>
   expression.kind === "tau" ||
   expression.kind === "lam";
 
-// Zenon's str_union, whose order hashes depend on: the names of the first list missing from the
-// second, in reverse, then the second.
 const unionNames = (left: string[], right: string[]) => {
   if (left.length === 0) return right;
   if (right.length === 0) return left;
@@ -132,7 +129,6 @@ const removeName = (name: string, names: string[]) => {
 export const difference = (left: Expr[], right: Expr[]) =>
   left.filter((inner) => !right.includes(inner));
 
-// Zenon's union on small sets: the first list's new elements in reverse, then the second list.
 export const union = (left: Expr[], right: Expr[]) => {
   const added = difference(left, right);
   return added.length === 0 ? right : [...added.reverse(), ...right];
@@ -212,8 +208,6 @@ const isSameBinder = (left: BinderExpr, right: BinderExpr) =>
     ? left.args[1] === right.args[1]
     : isEqualBody(left.args[0], right.args[0], left.args[1], right.args[1]));
 
-// The symbol is part of the narrowed type, so a failed test for one symbol keeps the expression an
-// application for the next test.
 export const isApp = <Symbol extends string>(
   expression: Expr,
   symbol: Symbol,
@@ -223,6 +217,11 @@ export const isApp = <Symbol extends string>(
   expression.symbol === symbol &&
   (arity === undefined || expression.args.length === arity);
 
+export const getStringName = (expression: Expr) =>
+  isApp(expression, "$string", 1) && expression.args[0].kind === "var"
+    ? expression.args[0].symbol
+    : undefined;
+
 export const isMeta = (expression: Expr): expression is MetaExpr => expression.kind === "meta";
 
 export const isRelation = (expression: Expr): expression is RelationExpr =>
@@ -231,7 +230,6 @@ export const isRelation = (expression: Expr): expression is RelationExpr =>
 export const isNegatedRelation = (expression: Expr): expression is NegatedRelationExpr =>
   expression.kind === "not" && isRelation(expression.args[0]);
 
-// Zenon orders by hash, and only breaks ties structurally.
 export const compareExprs = (left: Expr, right: Expr): number => {
   if (left.hash !== right.hash) return left.hash < right.hash ? -1 : 1;
   if (left === right) return 0;
@@ -257,16 +255,12 @@ const hasConflict = (variable: Expr, map: Substitution) =>
 
 export const createExpressions = () => {
   const hasher = createHasher();
-  // Binders are hash-consed by hash, since they're equal up to the names of their variables. Other
-  // expressions are equal exactly when their kind, symbol and children are, so they're found by
-  // those before their hash is computed.
   const binders = new Map<number, BinderExpr[]>();
   const interned = new Map<number, Expr[]>();
   const symbolIds = new Map<string, number>();
   let nextId = FALSE.id + 1;
   let createdCount = 0;
-  // Zenon's Ext_focal takes the first five fresh names when the program starts, for its built-in
-  // definitions, so the first name Zenon gives out is zenon_Vf.
+  // Zenon's Ext_focal takes the first five fresh names at startup, so the first name Zenon gives out is zenon_Vf.
   let nameCounter = "e";
 
   const create = <Shape extends Pick<Expr, "kind" | "symbol" | "args">>(
@@ -474,8 +468,6 @@ export const createExpressions = () => {
     return results;
   };
 
-  // Also replaces applied symbols bound in the map, for definitions with operator parameters.
-  // Undefined stands for Zenon's Higher_order exception.
   const substituteSecondOrder = (map: Substitution, expression: Expr): Expr | undefined => {
     switch (expression.kind) {
       case "var":
@@ -517,6 +509,8 @@ export const createExpressions = () => {
     emeta,
     eapp,
     enot,
+    binary,
+    binder,
     eand: (left: Expr, right: Expr) => binary("and", left, right),
     eor: (left: Expr, right: Expr) => binary("or", left, right),
     eimply: (left: Expr, right: Expr) => binary("imply", left, right),

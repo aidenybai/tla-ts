@@ -1,5 +1,4 @@
-// Ported from Z3 (src/math/lp/int_cube.cpp, and tighten_term_bounds_by_delta and
-// round_to_integer_solution in src/math/lp/lar_solver.cpp), MIT license, see z3-license.txt.
+// Ported from Z3 (src/math/lp/int_cube.cpp, and tighten_term_bounds_by_delta and round_to_integer_solution in src/math/lp/lar_solver.cpp), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import { type ConstraintKind, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";
 import { LP_FEASIBLE, LP_OPTIMAL, LP_UNBOUNDED } from "./core-solver";
@@ -10,7 +9,7 @@ import { Impq } from "./numeric-pair";
 
 const HALF = Rational.of(1n, 2n);
 
-const getCubeDelta = (solver: LarSolver, term: LarTerm) => {
+const getCubeDeltaForTerm = (solver: LarSolver, term: LarTerm) => {
   const entries = [...term.coeffs];
   if (entries.length === 2) {
     let isPlusSeen = false;
@@ -33,7 +32,7 @@ const getCubeDelta = (solver: LarSolver, term: LarTerm) => {
 const addVarBound = (solver: LarSolver, column: number, kind: ConstraintKind, rhs: Rational) =>
   solver.activate(solver.mkVarBound(column, kind, rhs));
 
-const tightenTermBounds = (solver: LarSolver, column: number, delta: Impq) => {
+const tightenTermBoundsByDelta = (solver: LarSolver, column: number, delta: Impq) => {
   const core = solver.core;
   const hasUpper = core.hasUpperBound(column);
   const hasLower = core.hasLowerBound(column);
@@ -57,19 +56,21 @@ const tightenTermBounds = (solver: LarSolver, column: number, delta: Impq) => {
 };
 
 const roundToIntegerSolution = (solver: LarSolver) => {
-  const x = solver.core.x;
+  const values = solver.core.x;
   const rounded = new Set<number>();
   for (let column = 0; column < solver.getColumnCount(); column++) {
     if (!solver.isInt(column) || solver.hasTerm(column)) continue;
-    const value = x[column];
+    const value = values[column];
     if (value.isInt()) continue;
     const floor = new Impq(value.floor());
-    x[column] = floor.sub(value).compare(new Impq(HALF.neg())) < 0 ? new Impq(value.ceil()) : floor;
+    values[column] =
+      floor.sub(value).compare(new Impq(HALF.neg())) < 0 ? new Impq(value.ceil()) : floor;
     rounded.add(column);
   }
   if (rounded.size === 0) return;
   for (const term of solver.terms)
-    if ([...term.coeffs].some((entry) => rounded.has(entry[0]))) x[term.column] = term.apply(x);
+    if ([...term.coeffs].some((entry) => rounded.has(entry[0])))
+      values[term.column] = term.apply(values);
 };
 
 const hasBasicInfInt = (solver: LarSolver) =>
@@ -78,8 +79,8 @@ const hasBasicInfInt = (solver: LarSolver) =>
 export const findCube = (solver: LarSolver) => {
   solver.push();
   for (const term of solver.terms) {
-    const delta = getCubeDelta(solver, term);
-    if (delta.isZero() || tightenTermBounds(solver, term.column, delta)) continue;
+    const delta = getCubeDeltaForTerm(solver, term);
+    if (delta.isZero() || tightenTermBoundsByDelta(solver, term.column, delta)) continue;
     solver.pop(1);
     solver.status = LP_OPTIMAL;
     return false;
@@ -96,10 +97,10 @@ export const findCube = (solver: LarSolver) => {
   return true;
 };
 
-const addEdgeRows = (solver: LarSolver, column: number, edge: number) => {
-  const delta = getCubeDelta(solver, solver.getTerm(column));
+const addEdgeRowsForTerm = (solver: LarSolver, column: number, edge: number) => {
+  const delta = getCubeDeltaForTerm(solver, solver.getTerm(column));
   if (delta.isZero()) return true;
-  if (!delta.y.isZero()) return tightenTermBounds(solver, column, delta);
+  if (!delta.y.isZero()) return tightenTermBoundsByDelta(solver, column, delta);
   const core = solver.core;
   if (core.hasUpperBound(column)) {
     const upper = solver.getUpperBound(column);
@@ -240,7 +241,7 @@ export const findLargestCube = (solver: LarSolver) => {
   addVarBound(solver, edge, KIND_GE, Rational.zero);
   const isAdded = solver.terms
     .map((term) => term.column)
-    .every((column) => addEdgeRows(solver, column, edge));
+    .every((column) => addEdgeRowsForTerm(solver, column, edge));
   solver.onAddTerm = onAddTerm;
   if (!isAdded) {
     solver.pop(1);

@@ -14,6 +14,7 @@ import {
   getParamFresh,
   getScopeAt,
   isBuiltinApply,
+  mapChildren,
   mapScoped,
   stripProps,
   type Expr,
@@ -44,16 +45,7 @@ const NESTED_ENABLED =
 const NESTED_CDOT =
   "Nested occurrence of the operator `\\cdot` found in scope of `ENABLED` when expanding `ENABLED`. Using the proof directive `ExpandCdot` from the module `TLAPS` is expected to avoid this error.";
 
-// Unlike auto_expansion_of_defs, tlapm puts a space before "For example" here.
 const NESTED_CDOT_SPACED = `${NESTED_CDOT} For example, writing \`BY ExpandCdot\`.`;
-
-const mapVisibleChildren = (expression: Expr, map: (child: Expr) => Expr) =>
-  mapScoped(
-    undefined,
-    expression,
-    (_state, child) => map(child),
-    () => undefined,
-  );
 
 const getHyp = (scope: Scope | undefined, index: number) => {
   const hyp = getScopeAt(scope, index - 1)?.hyp;
@@ -83,8 +75,6 @@ const getInitialLevel = (level: number | undefined) =>
 const getDecrementedLevel = (level: number | undefined) =>
   level === undefined ? undefined : Math.max(1, level - 1);
 
-// auto_expansion_of_defs. ENABLED and the first argument of \cdot need every definition of action
-// level expanded, a prime lowers that bound to 1, and so does the second argument of \cdot.
 const expandDefinitions = (
   options: ActionOptions,
   onWarning: Warn,
@@ -219,8 +209,7 @@ const expandPropositional = (expression: Expr): Expr => {
   );
 };
 
-// OCaml's Hashtbl.hash of a string: caml_hash's MurmurHash3 over the bytes.
-const getHash = (text: string) => {
+const getOcamlHash = (text: string) => {
   const rotate = (value: number, amount: number) => (value << amount) | (value >>> (32 - amount));
   const mix = (hash: number, data: number) => {
     const word = Math.imul(rotate(Math.imul(data, 0xcc9e2d51), 15), 0x1b873593);
@@ -243,21 +232,18 @@ const getHash = (text: string) => {
   return (hash ^ (hash >>> 16)) & 0x3fffffff;
 };
 
-// The keys of an OCaml Hashtbl.create 16 in Hashtbl.to_seq_keys order. Hashtbl.add prepends to a
-// bucket and doubles the buckets once the table holds more than twice their count.
 const getHashtblKeys = (names: string[]) => {
   let buckets: string[][] = Array.from({ length: 16 }, () => []);
   names.forEach((name, index) => {
-    buckets[getHash(name) & (buckets.length - 1)].unshift(name);
+    buckets[getOcamlHash(name) & (buckets.length - 1)].unshift(name);
     if (index + 1 <= buckets.length * 2) return;
     const resized: string[][] = Array.from({ length: buckets.length * 2 }, () => []);
-    buckets.flat().forEach((key) => resized[getHash(key) & (resized.length - 1)].push(key));
+    buckets.flat().forEach((key) => resized[getOcamlHash(key) & (resized.length - 1)].push(key));
     buckets = resized;
   });
   return buckets.flat();
 };
 
-// Each variable binds as an opaque name such as x#enabled#prime1.
 const bindVariables = (
   options: ActionOptions,
   onWarning: Warn,
@@ -399,7 +385,7 @@ const renameParams = (isKeepingNames: boolean, expression: Expr): Expr => {
       ],
     };
   }
-  return mapVisibleChildren(expression, (child) => renameParams(isKeepingNames, child));
+  return mapChildren(expression, (child) => renameParams(isKeepingNames, child), "visible");
 };
 
 const checkArity = (expression: Expr): Expr => {
@@ -410,7 +396,7 @@ const checkArity = (expression: Expr): Expr => {
   ) {
     throw new TlapmBugError();
   }
-  return mapVisibleChildren(expression, checkArity);
+  return mapChildren(expression, checkArity, "visible");
 };
 
 const lambdifyOperators = (
@@ -529,7 +515,7 @@ const commuteExistsDisjunction = (expression: Expr): Expr => {
       });
     }
   }
-  return mapVisibleChildren(expression, commuteExistsDisjunction);
+  return mapChildren(expression, commuteExistsDisjunction, "visible");
 };
 
 export const expandActionOperators = (

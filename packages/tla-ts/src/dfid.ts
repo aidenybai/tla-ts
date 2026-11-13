@@ -14,7 +14,7 @@ import { createTracingEnvironment } from "./evaluate";
 import { EXIT_STATUS, getMessageExitStatus, withLivenessExitCode } from "./exit-codes";
 import { createLivenessChecker } from "./liveness-checker";
 import { getIncompleteSuccessorMessage, prepareSearch, reportAssumptionViolation } from "./search";
-import { getNextActions, type SpecAction } from "./spec-description";
+import type { SpecAction } from "./spec-description";
 import { forEachInitialState, forEachSuccessor } from "./successors";
 import {
   formatNestedMessage,
@@ -52,21 +52,9 @@ interface CheckerState {
   continuedCode: number;
   isKeepingCallStack: boolean;
   errorEntry: StateEntry | undefined;
-  stopCode: number;
+  /** DFIDWorker's stopCode: 0 while it searches, 1 once every initial state is done, 2 after an error. */
+  stopCode: "searching" | "done" | "error";
   isMoreLevel: boolean;
-}
-
-interface StateHolder {
-  state: Value[] | undefined;
-}
-
-interface Processing {
-  successor: (Value | undefined)[] | undefined;
-}
-
-interface LevelLoop {
-  isTerminated: boolean;
-  code: number;
 }
 
 const DONE = 1;
@@ -79,9 +67,6 @@ const LONG_MAX = (1n << 63n) - 1n;
 const INITIAL_BUCKETS = 1n << 16n;
 const MAX_LOAD = 20n;
 
-// MemFPIntSet.checkFPs reads a fingerprint back with the sign of its low word extended over its
-// high word, and compares two fingerprints in one bucket by Math.abs of their difference but two
-// in different buckets only when the difference doesn't overflow.
 const getFingerprintDistance = (fingerprints: bigint[], buckets: bigint) => {
   const values = fingerprints.map((fingerprint) => {
     const low = BigInt.asIntN(32, fingerprint);
@@ -120,8 +105,7 @@ const getUnexpectedMessage = (cause: string, error: TlaEvaluationError) => {
     : `TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nThe error occurred when TLC was ${cause}.\nThe exception was a ${exception}\n: `;
 };
 
-// DFIDWorker picks the next initial state and successor with an unseeded generator, so tla-ts picks
-// the first one.
+// Deviation from TLC: DFIDWorker picks the next initial state and successor with an unseeded generator, so tla-ts picks the first one.
 export const checkDepthFirst = (options: DepthFirstOptions): number => {
   const output = options.onOutput;
   const isTool = options.isTool ?? false;
@@ -180,7 +164,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   );
   if (assumptionStatus !== undefined) return assumptionStatus;
 
-  const nextActions = getNextActions(config, environment, prepared.specification.instanceActions);
+  const nextActions = prepared.getDescription().actions;
   const statuses = new Map<bigint, number>();
   const fingerprintSet = { level: 1, leveled: 0, buckets: INITIAL_BUCKETS };
   const setStatus = (fingerprint: bigint, status: number) => {
@@ -198,14 +182,14 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     (status & LEVELED) === fingerprintSet.leveled || (status & DONE) === DONE;
   const isLeafStatus = (status: number) => status === 0 || status >>> 2 === fingerprintSet.level;
 
-  const statistics = { generated: 0 };
+  let generatedCount = 0;
   const checker: CheckerState = {
     isDone: false,
     errorCode: NO_ERROR,
     continuedCode: NO_ERROR,
     isKeepingCallStack: false,
     errorEntry: undefined,
-    stopCode: 0,
+    stopCode: "searching",
     isMoreLevel: false,
   };
   const setErrorState = (entry: StateEntry, isKeepingCallStack: boolean, code: number) => {
@@ -214,13 +198,13 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     checker.errorCode = code;
     checker.isDone = true;
     checker.isKeepingCallStack = isKeepingCallStack;
-    checker.stopCode = 2;
+    checker.stopCode = "error";
     return true;
   };
   const toRecord = (state: (Value | undefined)[]) =>
     search.toRecord(state.map((value) => value ?? createModelValue("null")));
   const printSummary = () => {
-    const counts = `${statistics.generated} states generated, ${statuses.size} distinct states found`;
+    const counts = `${generatedCount} states generated, ${statuses.size} distinct states found`;
     if (isTool) {
       message(
         MESSAGE_CODE.depthFirstProgress,
@@ -234,21 +218,21 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   const reportSuccess = () =>
     output({
       kind: "success",
-      optimistic: getOptimisticProbability(statuses.size, statistics.generated),
+      optimistic: getOptimisticProbability(statuses.size, generatedCount),
       actual:
-        statuses.size === 0 && statistics.generated === 0
+        statuses.size === 0 && generatedCount === 0
           ? 0
           : getActualProbability(
               getFingerprintDistance([...statuses.keys()], fingerprintSet.buckets),
             ),
     });
   const levels = new WeakMap<(Value | undefined)[], number>();
-  const current: StateHolder = { state: undefined };
+  let currentState: Value[] | undefined;
   runtime.getLevel = (state) => levels.get(state) ?? 0;
-  runtime.getCurrentState = () => current.state;
+  runtime.getCurrentState = () => currentState;
 
   const initialEntries: StateEntry[] = [];
-  const errorState: StateHolder = { state: undefined };
+  let errorState: Value[] | undefined;
   const computeInitialStates = (): number => {
     const generated: (Value | undefined)[][] = [];
     const addGenerated = (state: (Value | undefined)[]) => {
@@ -257,7 +241,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     };
     const init = search.spec.init;
     if (init) forEachInitialState(init, environment, addGenerated, search.spec.scope, addGenerated);
-    statistics.generated = generated.length;
+    generatedCount = generated.length;
     for (const state of generated) {
       if (!state.every((value) => value !== undefined)) {
         message(
@@ -266,7 +250,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
         );
         return MESSAGE_CODE.initialStateIncomplete;
       }
-      errorState.state = state;
+      errorState = state;
       levels.set(state, 1);
       const isInModel = search.satisfiesConstraints(state);
       const fingerprint = isInModel ? runtime.getFingerprint(state) : 0n;
@@ -372,24 +356,26 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   const expandState = (depth: number, isLeaf: boolean, successors: StateEntry[]) => {
     const entry = stack[depth];
     const state = entry.state;
-    const result = { isDeadlocked: true, isAllDone: true, isNoLeaf: true };
-    const processing: Processing = { successor: undefined };
+    let isDeadlocked = true;
+    let isAllDone = true;
+    let isNoLeaf = true;
+    let processedSuccessor: (Value | undefined)[] | undefined;
     const report = (code: number, text: string, isKeepingCallStack: boolean) => {
       if (setErrorState(entry, isKeepingCallStack, code)) {
-        printTrace(code, text, text, depth, processing.successor);
+        printTrace(code, text, text, depth, processedSuccessor);
       }
-      return result.isNoLeaf;
+      return isNoLeaf;
     };
-    current.state = state;
+    currentState = state;
     try {
       for (const action of nextActions) {
         const next = getActionSuccessors(action, state);
         const incomplete = next.incomplete;
         const count = next.successors.length + (incomplete ? 1 : 0);
-        statistics.generated += count;
-        result.isDeadlocked &&= count === 0;
+        generatedCount += count;
+        isDeadlocked &&= count === 0;
         for (const successor of next.successors) {
-          processing.successor = successor;
+          processedSuccessor = successor;
           levels.set(successor, depth + 2);
           const isInModel =
             search.satisfiesConstraints(successor, state) &&
@@ -397,8 +383,8 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
           const fingerprint = isInModel ? runtime.getFingerprint(successor) : 0n;
           const status = isInModel ? setStatus(fingerprint, 0) : 0;
           if (isInModel) {
-            result.isAllDone &&= (status & DONE) === DONE;
-            result.isNoLeaf &&= !isLeafStatus(status);
+            isAllDone &&= (status & DONE) === DONE;
+            isNoLeaf &&= !isLeafStatus(status);
             if (!isCompleted(status)) {
               if (successors.length === getSetBound()) throw new TlaTooManyStatesError();
               successors.push({ state: successor, fingerprint });
@@ -413,7 +399,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
           if (failure) return report(failure.code, failure.text, !failure.isViolated);
         }
         if (incomplete) {
-          processing.successor = incomplete.state;
+          processedSuccessor = incomplete.state;
           return report(
             MESSAGE_CODE.incompleteSuccessor,
             getIncompleteSuccessorMessage(
@@ -425,13 +411,13 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
             false,
           );
         }
-        processing.successor = undefined;
+        processedSuccessor = undefined;
       }
-      if (result.isDeadlocked && config.checkDeadlock) {
+      if (isDeadlocked && config.checkDeadlock) {
         return report(MESSAGE_CODE.deadlockReached, "Deadlock reached.", false);
       }
-      if (result.isAllDone || (isLeaf && result.isNoLeaf)) setStatus(entry.fingerprint, DONE);
-      return result.isNoLeaf;
+      if (isAllDone || (isLeaf && isNoLeaf)) setStatus(entry.fingerprint, DONE);
+      return isNoLeaf;
     } catch (error) {
       const failure = isStackOverflow(error) ? new TlaStackOverflowError() : error;
       if (!(failure instanceof TlaEvaluationError)) throw error;
@@ -451,68 +437,67 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
             ? failure.message
             : `${unexpected}${formatNestedMessage(failure.message, true)}`,
           depth,
-          processing.successor,
+          processedSuccessor,
         );
       }
       throw failure;
     }
   };
-  const getNextIndex = (successors: StateEntry[], level: number) => {
+  const hasNext = (successors: StateEntry[], level: number) => {
     while (successors.length > 0) {
       const status = getStatus(successors[0].fingerprint);
-      if (!isCompleted(status) && level < status >>> 2) return 0;
+      if (!isCompleted(status) && level < status >>> 2) return true;
       successors[0] = successors[successors.length - 1];
       successors.pop();
     }
-    return -1;
+    return false;
   };
   const searchLevel = (toLevel: number) => {
     const initials = [...initialEntries];
-    checker.stopCode = 0;
+    checker.stopCode = "searching";
     checker.isMoreLevel = false;
-    const position = { level: 0 };
+    let stackLevel = 0;
     try {
-      while (checker.stopCode === 0) {
+      while (checker.stopCode === "searching") {
         while (initials.length > 0 && isCompleted(getStatus(initials[0].fingerprint))) {
           initials[0] = initials[initials.length - 1];
           initials.pop();
         }
         if (initials.length === 0) {
-          checker.stopCode = 1;
+          checker.stopCode = "done";
           return;
         }
         stack[0] = initials[0];
         successorStack[0] = [];
-        position.level = 0;
+        stackLevel = 0;
         const isInitialLeaf = toLevel < 2;
         const isInitialNoLeaf = expandState(0, isInitialLeaf, successorStack[0]);
         checker.isMoreLevel ||= !isInitialNoLeaf;
-        position.level = 1;
+        stackLevel = 1;
         while (!isInitialLeaf) {
-          const index = getNextIndex(successorStack[position.level - 1], position.level);
-          if (index === -1) {
-            const entry = stack[position.level - 1];
+          if (!hasNext(successorStack[stackLevel - 1], stackLevel)) {
+            const entry = stack[stackLevel - 1];
             statuses.set(
               entry.fingerprint,
               (getStatus(entry.fingerprint) & ~LEVELED) | fingerprintSet.leveled,
             );
-            if (position.level === 1) break;
-            position.level--;
+            if (stackLevel === 1) break;
+            stackLevel--;
             continue;
           }
-          stack[position.level] = successorStack[position.level - 1][index];
-          successorStack[position.level] = [];
-          const isLeaf = position.level >= toLevel - 1;
-          const isNoLeaf = expandState(position.level, isLeaf, successorStack[position.level]);
+          stack[stackLevel] = successorStack[stackLevel - 1][0];
+          successorStack[stackLevel] = [];
+          const isLeaf = stackLevel >= toLevel - 1;
+          const isNoLeaf = expandState(stackLevel, isLeaf, successorStack[stackLevel]);
           checker.isMoreLevel ||= !isNoLeaf;
-          position.level++;
+          stackLevel++;
           if (isLeaf) break;
         }
       }
     } catch (error) {
       if (!(error instanceof TlaEvaluationError)) throw error;
-      checker.stopCode = 2;
-      if (setErrorState(stack[position.level], true, MESSAGE_CODE.general)) {
+      checker.stopCode = "error";
+      if (setErrorState(stack[stackLevel], true, MESSAGE_CODE.general)) {
         const unexpected = getUnexpectedMessage("", error);
         message(
           MESSAGE_CODE.general,
@@ -528,7 +513,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
       const isPassed = nextActions.every((action) => {
         const successors: Value[][] = [];
         replaySuccessors([action], entry.state, tracing, (successor) => successors.push(successor));
-        statistics.generated += successors.length;
+        generatedCount += successors.length;
         return successors.every(
           (successor) =>
             successor.every((value) => value !== undefined) &&
@@ -570,7 +555,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
       isHeadedError(failure) && failure.cause instanceof TlaEvaluationError
         ? failure.cause
         : failure;
-    const initialState = errorState.state;
+    const initialState = errorState;
     const prefix = initialState ? "" : getUnexpectedMessage("computing initial states", inner);
     const suffix = initialState
       ? `\nWhile working on the initial state:\n${formatState(toRecord(initialState))}`
@@ -580,8 +565,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
       `${prefix}${inner.message}${suffix}`,
       `${prefix}${formatNestedMessage(inner.message, true)}${suffix}`,
     );
-    // TLC prints its Tool in place of the call stack, named by an identity hash.
-    statistics.generated = 0;
+    generatedCount = 0;
     initialEntries.length = 0;
     const isReplayFailed = tryInitialStates().error !== undefined;
     if (isReplayFailed) {
@@ -596,7 +580,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   if (initialFailure.code !== NO_ERROR) return getMessageExitStatus(initialFailure.code);
   message(
     MESSAGE_CODE.depthFirstInitGenerated,
-    `Finished computing initial states: ${statistics.generated} states generated, with ${initialEntries.length} of them distinct.`,
+    `Finished computing initial states: ${generatedCount} states generated, with ${initialEntries.length} of them distinct.`,
     undefined,
     false,
   );
@@ -604,15 +588,13 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     reportSuccess();
     return finish(NO_ERROR);
   }
-  const loop: LevelLoop = {
-    isTerminated: false,
-    code: MESSAGE_CODE.general,
-  };
+  let isTerminated = false;
+  let levelCode: number = MESSAGE_CODE.general;
   for (let level = 2; level <= options.maxDepth; level++) {
-    if (loop.isTerminated) {
+    if (isTerminated) {
       const errorEntry = checker.errorEntry;
       if (!errorEntry && checker.continuedCode === NO_ERROR) {
-        loop.code = NO_ERROR;
+        levelCode = NO_ERROR;
         reportSuccess();
       }
       if (errorEntry && checker.isKeepingCallStack) replayExpansion(errorEntry);
@@ -620,7 +602,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     }
     message(
       MESSAGE_CODE.depthFirstLevel,
-      `Starting level ${level}: ${statistics.generated} states generated, ${statuses.size} distinct states found.`,
+      `Starting level ${level}: ${generatedCount} states generated, ${statuses.size} distinct states found.`,
       undefined,
       false,
     );
@@ -628,9 +610,9 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     fingerprintSet.leveled = LEVELED - fingerprintSet.leveled;
     searchLevel(level);
     checker.isDone = false;
-    loop.code = checker.isKeepingCallStack ? NO_ERROR : checker.errorCode;
-    if (loop.code !== NO_ERROR) return finish(loop.code);
-    loop.isTerminated = checker.stopCode === 2 || !checker.isMoreLevel;
+    levelCode = checker.isKeepingCallStack ? NO_ERROR : checker.errorCode;
+    if (levelCode !== NO_ERROR) return finish(levelCode);
+    isTerminated = checker.stopCode === "error" || !checker.isMoreLevel;
   }
-  return finish(loop.code);
+  return finish(levelCode);
 };

@@ -1,5 +1,4 @@
 // Ported from Z3 (src/smt/smt_literal.h, src/smt/smt_types.h), MIT license, see z3-license.txt.
-// A literal is twice its variable, plus one when negated, so it indexes per-literal arrays.
 declare const boolVarBrand: unique symbol;
 declare const literalBrand: unique symbol;
 

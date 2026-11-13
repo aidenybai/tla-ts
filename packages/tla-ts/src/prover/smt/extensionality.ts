@@ -1,6 +1,3 @@
-// Standardize.set_extensionality_visitor: an equality of sets where it may need proving triggers
-// the set extensionality axiom, through TrigEq.
-
 import {
   CAP,
   CUP,
@@ -16,14 +13,10 @@ import {
 
 export type Polarity = "Positive" | "Negative" | "Neither";
 
-// The head of a set equality whose polarity keeps it from triggering set extensionality unless a
-// cast encloses it: (?trigger triggered kept).
 const UNRESOLVED_TRIGGER = "?trigger";
 
 const SET_HEADS = new Set([UNION, SUBSET, CUP, CAP, SET_MINUS, INT_RANGE, FUN_SET, SEQ]);
 
-// Standardize leaves BOOLEAN, STRING, Int, and Nat as bare symbols, which Standardize.is_set
-// doesn't match.
 const isSetTerm = (text: string) => {
   const head = /^\(?([^\s()]+)/.exec(text)?.[1] ?? "";
   return (
@@ -46,8 +39,6 @@ export const resolveTriggers = (text: string, isTriggered: boolean): string => {
   return text.slice(0, start) + chosen + resolveTriggers(text.slice(keptEnd + 1), isTriggered);
 };
 
-// Without set extensionality, Standardize leaves out set_extensionality_visitor, so no polarity
-// triggers anything. An equality of two sets of one type has that type's trigger.
 export const getEquality = (
   left: string,
   right: string,
@@ -60,7 +51,6 @@ export const getEquality = (
   if (polarity === undefined || (setTrigger === undefined && !isSetTerm(left) && !isSetTerm(right)))
     return kept;
   const text = isNegated ? `(not ${triggered})` : triggered;
-  // A cast around the equality may still trigger it, so both forms wait for resolveTriggers.
   return polarity === (isNegated ? "Positive" : "Negative")
     ? `(${UNRESOLVED_TRIGGER} ${text} ${kept})`
     : text;

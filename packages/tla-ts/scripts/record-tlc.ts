@@ -1,14 +1,19 @@
-import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import {
   CORPORA_DIRECTORY,
   EXPECTED_PATH,
   findModels,
+  getTlcArgs,
+  getToolPath,
   LIBRARY_PATH,
   linkLibraryModules,
+  runConcurrently,
+  runProcess,
+  sortById,
   TLC_SEED,
+  writeResults,
   type CorpusModel,
 } from "./corpora";
 
@@ -32,11 +37,7 @@ interface ManifestModel {
 const MAXIMUM_RECORDED_RUNTIME_SECONDS = 60;
 const CONCURRENCY = 2;
 
-const jarPath = process.env.TLA2TOOLS_JAR;
-if (!jarPath || !existsSync(jarPath)) {
-  console.error("Set TLA2TOOLS_JAR to the path of tla2tools.jar");
-  process.exit(1);
-}
+const jarPath = getToolPath("TLA2TOOLS_JAR", "tla2tools.jar");
 
 const getSeconds = (runtime: string) =>
   runtime.split(":").reduce((total, part) => total * 60 + Number(part), 0);
@@ -76,19 +77,16 @@ const getFirstTraceLength = (output: string) => {
   return restart === -1 ? numbers.length : restart;
 };
 
-const runTlc = (model: CorpusModel) =>
-  new Promise<ExpectedResult>((resolve) => {
-    const metadataDirectory = mkdtempSync(join(tmpdir(), "tla-ts-tlc-"));
-    const startedAt = performance.now();
-    const child = spawn(
-      "java",
-      [
-        "-XX:+UseParallelGC",
-        "-Xmx768m",
-        `-DTLA-Library=${LIBRARY_PATH}`,
-        "-cp",
-        jarPath,
-        "tlc2.TLC",
+const runTlc = async (model: CorpusModel): Promise<ExpectedResult> => {
+  const metadataDirectory = mkdtempSync(join(tmpdir(), "tla-ts-tlc-"));
+  const startedAt = performance.now();
+  const run = await runProcess(
+    "java",
+    getTlcArgs({
+      jarPath,
+      maximumHeap: "768m",
+      javaArgs: [`-DTLA-Library=${LIBRARY_PATH}`],
+      tlcArgs: [
         "-workers",
         "1",
         "-nowarning",
@@ -98,62 +96,45 @@ const runTlc = (model: CorpusModel) =>
         "0",
         "-lncheck",
         "final",
-        "-noGenerateSpecTE",
-        "-metadir",
-        metadataDirectory,
-        "-config",
-        model.configPath,
-        model.specPath,
       ],
-      { cwd: model.directory },
-    );
-    const chunks: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => chunks.push(chunk));
-    child.on("close", (exitCode) => {
-      rmSync(metadataDirectory, { recursive: true, force: true });
-      const output = Buffer.concat(chunks).toString("utf8");
-      const status = getStatus(exitCode, output);
-      const statistics = [
-        ...output.matchAll(/(\d+) states generated, (\d+) distinct states found/g),
-      ].at(-1);
-      const depth = /The depth of the complete state graph search is (\d+)/.exec(output);
-      const violation = /(?:Invariant|property) (\S+) is violated/.exec(output);
-      resolve({
-        id: model.id,
-        status,
-        ...(violation ? { violation: violation[1] } : {}),
-        ...(status === "success" && statistics
-          ? { generatedStates: Number(statistics[1]), distinctStates: Number(statistics[2]) }
-          : {}),
-        ...(status === "success" && depth ? { depth: Number(depth[1]) } : {}),
-        ...(status !== "success" && status !== "error"
-          ? {
-              traceLength: output.includes("is violated by the initial state")
-                ? 1
-                : getFirstTraceLength(output),
-            }
-          : {}),
-        tlcMilliseconds: Math.round(performance.now() - startedAt),
-      });
-    });
-  });
+      metadataDirectory,
+      specArgs: ["-config", model.configPath, model.specPath],
+    }),
+    model.directory,
+  );
+  rmSync(metadataDirectory, { recursive: true, force: true });
+  const status = getStatus(run.exitCode, run.output);
+  const statistics = [
+    ...run.output.matchAll(/(\d+) states generated, (\d+) distinct states found/g),
+  ].at(-1);
+  const depth = /The depth of the complete state graph search is (\d+)/.exec(run.output);
+  const violation = /(?:Invariant|property) (\S+) is violated/.exec(run.output);
+  return {
+    id: model.id,
+    status,
+    ...(violation ? { violation: violation[1] } : {}),
+    ...(status === "success" && statistics
+      ? { generatedStates: Number(statistics[1]), distinctStates: Number(statistics[2]) }
+      : {}),
+    ...(status === "success" && depth ? { depth: Number(depth[1]) } : {}),
+    ...(status !== "success" && status !== "error"
+      ? {
+          traceLength: run.output.includes("is violated by the initial state")
+            ? 1
+            : getFirstTraceLength(run.output),
+        }
+      : {}),
+    tlcMilliseconds: Math.round(performance.now() - startedAt),
+  };
+};
 
 linkLibraryModules();
 const models = findModels().filter(isRecordable);
 const results: ExpectedResult[] = [];
-const queue = { next: 0 };
-
-const work = async () => {
-  while (queue.next < models.length) {
-    const model = models[queue.next++];
-    const result = await runTlc(model);
-    results.push(result);
-    console.log(`[${results.length}/${models.length}] ${result.status.padEnd(20)} ${model.id}`);
-  }
-};
-
-await Promise.all(Array.from({ length: CONCURRENCY }, work));
-results.sort((left, right) => (left.id < right.id ? -1 : 1));
-writeFileSync(EXPECTED_PATH, `${JSON.stringify(results, null, 2)}\n`);
+await runConcurrently(models, CONCURRENCY, async (model) => {
+  const result = await runTlc(model);
+  results.push(result);
+  console.log(`[${results.length}/${models.length}] ${result.status.padEnd(20)} ${model.id}`);
+});
+writeResults(EXPECTED_PATH, sortById(results));
 console.log(`Wrote ${results.length} TLC results to ${EXPECTED_PATH}`);

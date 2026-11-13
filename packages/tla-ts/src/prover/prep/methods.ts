@@ -1,19 +1,36 @@
-// A malformed method throws a TlaMethodError, since Prep.ship catches compute_meth's failure and
-// fails only that obligation.
-
 import { TlaMethodError, TlapmBugError, TlaProverError } from "../../errors";
 import type { Expr, Locus, Sequent } from "../../obligations/expression";
 import type { OldMethod, PragmaSetting } from "../../obligations/pragma";
+import type { Backend } from "../verdict";
 
-// A Z3 resource budget turns the time limit off.
+type Prover =
+  | Backend
+  | "yices"
+  | "cvc4"
+  | "cooper"
+  | "fail"
+  | "verit"
+  | "zipper"
+  | "spass"
+  | "tptp"
+  | "trivial"
+  | "expandenabled"
+  | "expandcdot"
+  | "autouse"
+  | "lambdify"
+  | "enabledaxioms"
+  | "levelcomparison";
+
 export interface Method {
-  prover: string;
+  prover: Prover;
   timeLimitMs: number;
   rlimit?: number;
   tactic?: string;
 }
 
-export const FRONTENDS = new Set([
+export const getBudget = (method: Method) => method.rlimit ?? method.timeLimitMs / 1000;
+
+export const FRONTENDS = new Set<Prover>([
   "expandenabled",
   "expandcdot",
   "autouse",
@@ -36,7 +53,7 @@ const DEFAULT_METHODS: Method[] = [
   { prover: "isabelle", timeLimitMs: ISABELLE_SECONDS * 1000, tactic: "auto" },
 ];
 
-const PROVERS: Record<string, { prover: string; seconds: number; isBudgeted?: boolean }> = {
+const PROVERS: Record<string, { prover: Prover; seconds: number; isBudgeted?: boolean }> = {
   zenon: { prover: "zenon", seconds: ZENON_SECONDS },
   isabelle: { prover: "isabelle", seconds: ISABELLE_SECONDS },
   yices: { prover: "yices", seconds: 30 },
@@ -170,18 +187,14 @@ type Cited =
   | { kind: "Meth"; method: OldMethod }
   | undefined;
 
-// A pragma that a fact from another BY or USE cites drops the methods found so far: tlapm compares
-// the USE locations physically, as tla-ts compares the objects.
 const getCitedMethods = (sequent: Sequent) => {
   const cited: Cited[] = [];
-  const state: { methods: Method[]; useLocation: Locus | undefined | null } = {
-    methods: [],
-    useLocation: null,
-  };
+  let methods: Method[] = [];
+  let useLocation: Locus | undefined | null = null;
   sequent.context.forEach((hyp, index) => {
     const expression = hyp.kind === "Fact" && hyp.visibility === "Visible" && hyp.expression;
     if (expression && expression.kind === "With") {
-      state.methods.push(getOldMethod(expression.method));
+      methods.push(getOldMethod(expression.method));
       cited.push(undefined);
       return;
     }
@@ -200,22 +213,19 @@ const getCitedMethods = (sequent: Sequent) => {
     if (operator.kind !== "Ix") return;
     const entry = cited[index - operator.index];
     if (entry?.kind === "Premeth") {
-      if (hyp.useLocation !== state.useLocation) {
-        state.methods = [];
-        state.useLocation = hyp.useLocation;
+      if (hyp.useLocation !== useLocation) {
+        methods = [];
+        useLocation = hyp.useLocation;
       }
       const args = expression.kind === "Apply" ? expression.args : [];
-      state.methods.push(
-        ...entry.groups.map((group) => computeMethod(group, args, expression.location)),
-      );
+      methods.push(...entry.groups.map((group) => computeMethod(group, args, expression.location)));
       return;
     }
     if (entry?.kind !== "Meth") return;
-    // find_meth asserts that a theorem with a method is not applied to arguments.
     if (expression.kind === "Apply") throw new TlapmBugError();
-    state.methods.push(getOldMethod(entry.method));
+    methods.push(getOldMethod(entry.method));
   });
-  return state.methods;
+  return methods;
 };
 
 export const findMethods = (

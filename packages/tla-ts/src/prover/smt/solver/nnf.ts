@@ -1,9 +1,7 @@
-// Ported from Z3 (src/ast/normal_forms/nnf.cpp, name_exprs.cpp, defined_names.cpp), MIT license,
-// see z3-license.txt. Like Z3, the frames, the result stack and the caches hold their expressions,
-// so that expressions are created and deleted in Z3's order.
+// Ported from Z3 (src/ast/normal_forms/nnf.cpp, name_exprs.cpp, defined_names.cpp), MIT license, see z3-license.txt.
 import { ActCache } from "./act-cache";
 import {
-  AstManager,
+  type AstManager,
   FAMILY_BASIC,
   KIND_APP,
   KIND_QUANTIFIER,
@@ -80,7 +78,6 @@ export class DefinedNames {
     this.names.set(expr, name);
     this.exprs.push(expr);
     this.nameRefs.push(name);
-    // bound_vars: the variables are in reverse order in the quantifier.
     const definition = manager.withTemporaries(() => {
       const boundVars = (conjunct: number) =>
         varSorts.length === 0
@@ -147,7 +144,6 @@ class ExprNamer extends RewriterTpl {
     return named.name;
   }
 
-  // The result comes with a reference, which the caller releases.
   name(expr: number, definitions: RefVector) {
     this.definitions = definitions;
     this.root = expr;
@@ -155,7 +151,6 @@ class ExprNamer extends RewriterTpl {
   }
 }
 
-// The function of the last variable comes first, and takes the variable's name.
 class Skolemizer {
   private cache: ActCache;
   private subst: VarSubst;
@@ -165,7 +160,6 @@ class Skolemizer {
     this.subst = new VarSubst(manager, true);
   }
 
-  // The result comes with a reference, which the caller releases.
   skolemize(quantifier: number) {
     const manager = this.manager;
     const cached = this.cache.find(quantifier, 0);
@@ -209,7 +203,6 @@ class Skolemizer {
     return result;
   }
 
-  // ~skolemizer: the cache goes first, then the substitution.
   release() {
     this.cache.reset();
     this.subst.release();
@@ -232,7 +225,6 @@ export const NNF_FULL = 2;
 export class Nnf {
   private frames: Frame[] = [];
   private results: RefVector;
-  // One cache per polarity and nesting in a quantifier, in Z3's order of get_cache_idx.
   private caches: ActCache[];
   private todoDefs: RefVector;
   private skolemizer: Skolemizer;
@@ -253,16 +245,13 @@ export class Nnf {
     this.nestedNamer = new ExprNamer(manager, names, true);
   }
 
-  // operator(): pushes the normal forms of the definitions of the names it introduced, the last
-  // first, then returns the normal form of expr with a reference, which the caller releases.
   apply(expr: number, definitions: RefVector) {
     return this.manager.withoutTemporaries(() => {
       this.reset();
       const result = this.process(expr);
       const start = definitions.size;
       for (let index = 0; index < this.todoDefs.size; index++) {
-        const definition = this.process(this.todoDefs.items[index]);
-        definitions.pushOwned(definition);
+        definitions.pushOwned(this.process(this.todoDefs.items[index]));
       }
       const added = definitions.items.splice(start).reverse();
       definitions.items.push(...added);
@@ -270,7 +259,6 @@ export class Nnf {
     });
   }
 
-  // ~nnf: the namer, then the skolemizer, the definitions and the caches, the last first.
   release() {
     this.manager.withoutTemporaries(() => {
       this.nestedNamer.release();
@@ -518,7 +506,6 @@ export class Nnf {
         if (!isDone) return false;
       }
     }
-    // A skolemized quantifier's result is already on the stack.
     if (!isUniversal) return true;
     const body = this.results.items[this.results.size - 1];
     this.setResult(

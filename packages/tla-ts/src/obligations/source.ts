@@ -1,5 +1,3 @@
-// Converts the tla-ts AST into tlapm's parse trees.
-
 import type {
   AssumeProve,
   Definition,
@@ -51,36 +49,38 @@ import {
   type Usable,
 } from "./proof";
 
-const BUILTINS: Record<string, Builtin> = {
-  "=>": "Implies",
-  "<=>": "Equiv",
-  "/\\": "Conj",
-  "\\/": "Disj",
-  "~": "Neg",
-  "=": "Eq",
-  "#": "Neq",
-  SUBSET: "SUBSET",
-  UNION: "UNION",
-  DOMAIN: "DOMAIN",
-  "\\subseteq": "Subseteq",
-  "\\in": "Mem",
-  "\\notin": "Notmem",
-  "\\": "Setminus",
-  "\\cap": "Cap",
-  "\\cup": "Cup",
-  "'": "Prime",
-  "~>": "Leadsto",
-  ENABLED: "ENABLED",
-  UNCHANGED: "UNCHANGED",
-  "\\cdot": "Cdot",
-  "-+->": "Actplus",
-  "[]": "BoxTrue",
-  "<>": "Diamond",
-  TRUE: "TRUE",
-  FALSE: "FALSE",
-  BOOLEAN: "BOOLEAN",
-  STRING: "STRING",
-};
+const BUILTINS = new Map<string, Builtin>(
+  Object.entries({
+    "=>": "Implies",
+    "<=>": "Equiv",
+    "/\\": "Conj",
+    "\\/": "Disj",
+    "~": "Neg",
+    "=": "Eq",
+    "#": "Neq",
+    SUBSET: "SUBSET",
+    UNION: "UNION",
+    DOMAIN: "DOMAIN",
+    "\\subseteq": "Subseteq",
+    "\\in": "Mem",
+    "\\notin": "Notmem",
+    "\\": "Setminus",
+    "\\cap": "Cap",
+    "\\cup": "Cup",
+    "'": "Prime",
+    "~>": "Leadsto",
+    ENABLED: "ENABLED",
+    UNCHANGED: "UNCHANGED",
+    "\\cdot": "Cdot",
+    "-+->": "Actplus",
+    "[]": "BoxTrue",
+    "<>": "Diamond",
+    TRUE: "TRUE",
+    FALSE: "FALSE",
+    BOOLEAN: "BOOLEAN",
+    STRING: "STRING",
+  }),
+);
 
 const getCanonicalName = (name: string) => lookupOperator(name).name;
 
@@ -109,7 +109,7 @@ const STEP_TUPLY_FAILURE = "use instead the class `P_visit.map_concrete`";
 const isDitto = (bounds: QuantifierExpression["bounds"], index: number) =>
   index > 0 && bounds[index - 1].set === bounds[index].set;
 
-export const createSource = (
+export const createModuleConverter = (
   file: string,
   text: string,
   counter: Counter,
@@ -143,7 +143,6 @@ export const createSource = (
 
   const isSuppressed = (keyword: SourceRange) => getSuppressPragma(keyword) !== undefined;
 
-  // A method pragma belongs to the node it follows, whose locus then takes it in.
   const withMethod = (range: SourceRange) => {
     const method = getMethod(range);
     const location = getRangeLocus(range);
@@ -168,7 +167,7 @@ export const createSource = (
 
   const convertOperator = (name: string, location: Locus | undefined): Expr => {
     const canonical = getCanonicalName(name);
-    const builtin = BUILTINS[canonical];
+    const builtin = BUILTINS.get(canonical);
     return at(builtin ? { kind: "Internal", builtin } : { kind: "Opaque", name: canonical }, {
       location,
     });
@@ -184,7 +183,7 @@ export const createSource = (
       const operator = at({ kind: "Opaque", name }, { location });
       return at({ kind: "Bang", expression: operator, selectors: [] }, { location });
     }
-    const builtin = BUILTINS[name];
+    const builtin = BUILTINS.get(name);
     if (builtin && args.length === 0) return at({ kind: "Internal", builtin }, { location });
     const names = name.split("!");
     if (names.length === 1) {
@@ -264,8 +263,6 @@ export const createSource = (
   const convertExpression = (expression: Expression, isExcept: boolean): Expr => {
     const location = getLocus(expression.location);
     const recurse = (inner: Expression) => convertExpression(inner, isExcept);
-    // tlapm locates an operator application by its operator and operands, and a parenthesized
-    // operand by what is inside the parentheses.
     const getOperatorLocus = (args: Expr[], fixity: Fixity) => {
       if (args.length === 2) return mergeLoci(args[0].location, args[1].location);
       if (args.length !== 1 || !args[0].location) return location;
@@ -299,8 +296,6 @@ export const createSource = (
         return at({ kind: "Num", integer, fraction }, { location });
       }
       case "String": {
-        // tlapm's lexer keeps a string's escapes as written. The location ends at the closing
-        // quote.
         const written = /"((?:[^"\\]|\\.)*)"$/.exec(
           (lines[location.endLine - 1] ?? "").slice(0, location.endColumn - 1),
         );
@@ -496,8 +491,7 @@ export const createSource = (
           { location },
         );
       case "Tuple":
-        // tlapm's tuple parser binds as (<< >>> elements) >>= ">>", which keeps only the location
-        // of the closing >>.
+        // tlapm's tuple parser keeps only the location of the closing >>.
         return at(
           { kind: "Tuple", elements: expression.elements.map(recurse) },
           {
@@ -585,22 +579,14 @@ export const createSource = (
       case "Always":
       case "Eventually": {
         const inner = expression.expression;
-        if (expression.kind === "Always" && inner.kind === "BoxAction") {
+        if (
+          (expression.kind === "Always" && inner.kind === "BoxAction") ||
+          (expression.kind === "Eventually" && inner.kind === "AngleAction")
+        ) {
           return at(
             {
               kind: "Tsub",
-              modal: "Box",
-              action: recurse(inner.action),
-              subscript: recurse(inner.subscript),
-            },
-            { location },
-          );
-        }
-        if (expression.kind === "Eventually" && inner.kind === "AngleAction") {
-          return at(
-            {
-              kind: "Tsub",
-              modal: "Dia",
+              modal: expression.kind === "Always" ? "Box" : "Dia",
               action: recurse(inner.action),
               subscript: recurse(inner.subscript),
             },
@@ -719,26 +705,21 @@ export const createSource = (
         location,
       };
     }
-    // A prefix minus is the operator -.
     const name =
       definition.kind === "Operator" && definition.params.length === 1 && definition.name === "-"
         ? "-."
         : getCanonicalName(definition.name);
     const body = convertExpression(definition.body, isExcept);
-    if (definition.kind === "Function" && hasTuple(definition.bounds)) {
-      return {
-        kind: "Operator",
-        name,
-        body: expandTuples(expandFcn(getTuplyBounds(definition.bounds, isExcept), body), location),
-        location,
-      };
-    }
     if (definition.kind === "Function") {
-      const bounds = convertBounds(definition.bounds, isExcept);
       return {
         kind: "Operator",
         name,
-        body: at({ kind: "Fcn", bounds, body }, { location }),
+        body: hasTuple(definition.bounds)
+          ? expandTuples(expandFcn(getTuplyBounds(definition.bounds, isExcept), body), location)
+          : at(
+              { kind: "Fcn", bounds: convertBounds(definition.bounds, isExcept), body },
+              { location },
+            ),
         location,
       };
     }
@@ -780,7 +761,6 @@ export const createSource = (
     };
   };
 
-  // Anonymization judges the time of each assumption once it resolves the names in it.
   const convertSequent = (statement: Expression | AssumeProve): Sequent => {
     if (statement.kind !== "AssumeProve")
       return { context: [], active: convertExpression(statement, false) };
@@ -800,7 +780,6 @@ export const createSource = (
     };
   };
 
-  // A labeled hypothesis is an Xlabel without parameters, not an Nlabel like a labeled expression.
   const convertFactLabel = (expression: Expression): Expr => {
     if (expression.kind !== "Label" || expression.params.length > 0)
       return convertExpression(expression, false);
@@ -845,7 +824,6 @@ export const createSource = (
       ? { kind: "Named", level, label: token[2], isAnonymous: false }
       : { kind: "Unnamed", level, id: getUnique(counter) };
 
-  // to_proof: a missing proof is implicitly omitted where the enclosing step is.
   const convertProof = (
     proof: ProofStep["proof"],
     level: number,
@@ -876,12 +854,9 @@ export const createSource = (
           isSuppressed: isSuppressed(proof.keyword),
         };
       case "Steps": {
-        // A <*> first step takes the enclosing level only after PROOF, and the top level
-        // always counts as PROOF.
         const tokens = proof.steps.map((step) => STEP_PATTERN.exec(step.token));
         const first = tokens[0];
         const stepLevel = first && first[1] !== "*" && first[1] !== "+" ? Number(first[1]) : level;
-        // The parser ends the steps at the first QED.
         const steps = proof.steps
           .slice(0, -1)
           .map((step, index) =>
@@ -901,8 +876,6 @@ export const createSource = (
     }
   };
 
-  // tlapm locates a USE or HIDE by its keywords and DEF clause, since its parser drops the
-  // facts' location.
   const getUseLocus = (use: UseOrHide) =>
     mergeLoci(
       getRangeLocus(use.keyword),
@@ -1089,5 +1062,5 @@ export const createSource = (
     }),
   });
 
-  return { convertModule };
+  return convertModule;
 };

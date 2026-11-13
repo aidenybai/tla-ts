@@ -1,5 +1,3 @@
-// encode/n_axioms.ml: the formulas of the axioms that depend on a count or on fields.
-
 import {
   call,
   CAST_INT,

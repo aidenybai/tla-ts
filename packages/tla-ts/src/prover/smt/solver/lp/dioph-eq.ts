@@ -7,6 +7,7 @@ import { KIND_GE, KIND_LE } from "./constraints";
 import { LP_CANCELLED, LP_FEASIBLE, LP_OPTIMAL } from "./core-solver";
 import { type Dependency, mkJoin } from "./dependency";
 import { Explanation } from "./explanation";
+import { getRemainder } from "./hnf";
 import type { IntSolver } from "./int-solver";
 import type { LarSolver } from "./lar-solver";
 import { LarTerm } from "./lar-term";
@@ -27,7 +28,6 @@ interface FreshDefinition {
 }
 
 const NO_VAR = -1;
-// m_tighten_size_max: a longer term likely has gcd one.
 const TIGHTEN_SIZE_MAX = 10;
 
 const joinMoves = (first: DioMove, second: DioMove): DioMove => {
@@ -46,12 +46,9 @@ const getExtendedMonomials = (term: LarTerm) => [
 
 const isUnit = (value: Rational) => value.equals(Rational.one) || value.equals(Rational.minusOne);
 
-// rem and machine_div_rem of integers: truncating, so the remainder has the sign of the dividend.
-const getRemainder = (left: Rational, right: Rational) => Rational.of(left.num % right.num);
-
 const getTruncatedQuotient = (left: Rational, right: Rational) => Rational.of(left.num / right.num);
 
-const getBitsize = (value: Rational) => {
+const getRationalBitsize = (value: Rational) => {
   const getIntBitsize = (part: bigint) =>
     part === 0n ? 1 : (part < 0n ? -part : part).toString(2).length;
   return value.isInt()
@@ -187,7 +184,6 @@ class VarRegister {
   }
 }
 
-// The map from k to xt is an unordered_map whose order Z3 iterates.
 class FreshDefinitions {
   readonly keyToFresh = new UnorderedUintMap<number>();
   private freshToKey = new Map<number, number>();
@@ -265,8 +261,7 @@ export class DiophantineSolver {
   }
 
   check() {
-    const settings = this.solver.settings;
-    settings.stats.dioCalls++;
+    this.solver.settings.stats.dioCalls++;
     const fVector: number[] = [];
     let move: DioMove;
     do {
@@ -282,11 +277,9 @@ export class DiophantineSolver {
       for (const constraint of this.infeasExplanation) explanation.push(constraint);
       return;
     }
-    const dep = this.explainFixedInMetaTerm(
-      this.getRowMonomials(this.lMatrix, this.conflictRow),
-      this.conflictGcd,
+    explanation.pushDependency(
+      this.explainFixedInMetaTerm(this.lMatrix.rows[this.conflictRow], this.conflictGcd),
     );
-    explanation.pushDependency(dep);
   }
 
   private addTermCallback(term: LarTerm) {
@@ -344,7 +337,7 @@ export class DiophantineSolver {
     if (columnSize <= 1) return 0;
     let words = 0;
     for (const cell of lMatrix.rows[lMatrix.getRowCount() - 1])
-      words += 1 + Math.floor(getBitsize(cell.coeff) / 32);
+      words += 1 + Math.floor(getRationalBitsize(cell.coeff) / 32);
     return (columnSize - 1) * words;
   }
 
@@ -644,8 +637,7 @@ export class DiophantineSolver {
       const quotient = getTruncatedQuotient(cell.coeff, ahk);
       if (!quotient.isZero()) freshTerm.addMonomial(quotient, cell.column);
     }
-    // std::make_pair copies the term with lar_term's copy constructor, and the bij_map assigns
-    // it, so the stored term is reinserted twice in iteration order.
+    // Z3 copies the term twice (std::make_pair, then bij_map), reinserting it in iteration order.
     const stored = new LarTerm(new LarTerm(freshTerm.coeffs).coeffs);
     this.freshDefinitions.add(key, fresh, { term: stored, row });
     const defs = this.rowToFreshDefs.get(row);
@@ -798,20 +790,12 @@ export class DiophantineSolver {
     return this.keyToRow.has(column) || this.freshDefinitions.hasKey(column);
   }
 
-  private isFresh(column: number) {
-    return this.freshDefinitions.hasFresh(column);
-  }
-
   private getCoeffInERow(row: number, column: number) {
     return this.eMatrix.rows[row].find((cell) => cell.column === column)?.coeff ?? Rational.zero;
   }
 
   private getSignInERow(row: number, column: number) {
     return this.getCoeffInERow(row, column).isPositive() ? 1 : -1;
-  }
-
-  private getRowMonomials(matrix: StaticMatrix, row: number): Monomial[] {
-    return matrix.rows[row].map((cell) => ({ coeff: cell.coeff, column: cell.column }));
   }
 
   private tightenTermsWithS(): DioMove {
@@ -975,7 +959,7 @@ export class DiophantineSolver {
     const fixed: number[] = [];
     for (const monomial of this.espace.data)
       if (
-        !this.isFresh(monomial.column) &&
+        !this.freshDefinitions.hasFresh(monomial.column) &&
         solver.isFixed(this.varRegister.getExternal(monomial.column))
       )
         fixed.push(monomial.column);
@@ -1031,7 +1015,6 @@ export class DiophantineSolver {
     );
   }
 
-  // The fixed columns whose coefficients g divides do not explain the new bound.
   private tightenBoundKind(
     gcd: Rational,
     column: number,
@@ -1092,7 +1075,6 @@ const popEmptyColumns = (matrix: StaticMatrix) => {
     matrix.popColumn();
 };
 
-// Swaps the cell of the pivot row to the head of the column, as the pivots of Z3 do.
 const moveCellToFront = (
   matrix: StaticMatrix,
   column: { row: number; offset: number }[],

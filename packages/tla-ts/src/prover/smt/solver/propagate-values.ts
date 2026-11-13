@@ -1,5 +1,4 @@
-// Ported from Z3 (src/tactic/core/propagate_values_tactic.cpp, src/ast/shared_occs.cpp), MIT license,
-// see z3-license.txt.
+// Ported from Z3 (src/tactic/core/propagate_values_tactic.cpp, src/ast/shared_occs.cpp), MIT license, see z3-license.txt.
 import { KIND_APP, KIND_QUANTIFIER, OP_EQ, type AstManager } from "./ast";
 import { type Dependency, type Goal, joinDependencies } from "./goal";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
@@ -65,8 +64,6 @@ export const propagateValues = (manager: AstManager, goal: Goal, maxRounds = 4) 
     )
       insert(manager.getArg(rewritten, 0), manager.getArg(rewritten, 1), dependency);
   };
-  // Each pass is a round: a forward pass, which stops when it found nothing, then a backward pass,
-  // which stops when it changed nothing.
   for (let round = 0; round < maxRounds; round += 2) {
     const size = goal.forms.size;
     for (let index = 0; index < size; index++) {

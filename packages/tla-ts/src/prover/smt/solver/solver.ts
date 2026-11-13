@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/smt_solver.cpp, src/smt/smt_kernel.cpp, src/smt/smt_setup.cpp), MIT
 // license, see z3-license.txt. It decides like `z3 -smt2 AUTO_CONFIG=false smt.MBQI=true`.
 import {
   isStackOverflow,
@@ -106,13 +105,7 @@ export const checkSmt = (
   const manager = new AstManager(
     new ResourceLimit(Date.now() + options.timeLimitMs, options.signal),
   );
-  // The limit stops watching the collector however the check ends, as an unsupported input or a
-  // problem without check-sat ends it early.
   try {
-    // combined_solver gives each assertion to the incremental smt kernel as well, which rewrites it
-    // when it is asserted and keeps it, though check-sat then runs the tactic on the assertions. The
-    // kernel's model finder counts a step of the resource limit when it is made, and
-    // solver::assert_expr counts one for each assertion.
     const incremental = new AssertedFormulas(manager);
     manager.limit.inc();
     const problem = parseSmtlib(

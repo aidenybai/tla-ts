@@ -98,12 +98,9 @@ const toJson = (value: Value): string => {
   if (typeof value === "string") return toJsonString(value);
   if (typeof value !== "object") return String(value);
   if (value.kind === "ModelValue") return toJsonString(value.name);
-  const className = getJavaClassName(value);
-  if (className === "RecordValue") return toObjectJson(toFiniteFunction(value));
-  if (className === "TupleValue") return toArrayJson(toFiniteFunction(value).range);
-  if (isFunctionClass(className)) return toFunctionJson(value);
-  if (isTlcEnumerable(value)) return toArrayJson(toFiniteSet(value).elements);
-  throw createUnsupportedError(value);
+  return getJavaClassName(value) === "RecordValue"
+    ? toObjectJson(toFiniteFunction(value))
+    : toJsonArray(value);
 };
 
 const toJsonArray = (value: Value) => {
@@ -113,6 +110,8 @@ const toJsonArray = (value: Value) => {
   if (isTlcEnumerable(value)) return toArrayJson(toFiniteSet(value).elements);
   throw createUnsupportedError(value);
 };
+
+const toNdJson = (elements: Value[]) => elements.map((element) => `${toJson(element)}\n`).join("");
 
 const toJsonObject = (value: Value) => {
   const className = getJavaClassName(value);
@@ -174,8 +173,7 @@ const checkCharset = (charset: string) => {
   );
 };
 
-// Files.newBufferedWriter with the given StandardOpenOption names, which writes the text over the
-// start of a file that it neither truncates nor appends to.
+// Files.newBufferedWriter writes the text over the start of a file that it neither truncates nor appends to.
 const writeWithOptions = (files: FileSystem, path: string, names: string[], text: string) => {
   const unknown = names.find((name) => !OPEN_OPTIONS.has(name));
   if (unknown !== undefined) {
@@ -212,7 +210,6 @@ const writeWithOptions = (files: FileSystem, path: string, names: string[], text
   );
 };
 
-// Java's File#getParentFile has no parent for a file name without a directory.
 const makeParentDirectory = (files: FileSystem, path: string) => {
   const separator = path.lastIndexOf("/");
   if (separator !== -1) files.makeDirectory?.(path.slice(0, Math.max(separator, 1)));
@@ -263,7 +260,7 @@ export const createJsonOperators = (files: FileSystem): Builtin[] => [
         throw createModuleArgumentError("second", "ndJsonSerialize", "sequence", value);
       }
       makeParentDirectory(files, path);
-      files.writeFile?.(path, elements.map((element) => `${toJson(element)}\n`).join(""));
+      files.writeFile?.(path, toNdJson(elements));
       return true;
     }),
     "public static synchronized tlc2.value.impl.BoolValue tlc2.module.Json.ndSerialize(tlc2.value.impl.StringValue,tlc2.value.impl.Value) throws java.io.IOException",
@@ -289,8 +286,6 @@ export const createJsonOperators = (files: FileSystem): Builtin[] => [
   ),
 ];
 
-// TLC's Json overrides IOUtils!Serialize, as the CommunityModules define it, for the NDJSON format
-// and falls back to its definition for any other.
 export const createIoUtilsOperators = (
   files: FileSystem,
   evaluateReplaced: (name: string, args: BuiltinArgument[], context: Context | undefined) => Value,
@@ -320,12 +315,7 @@ export const createIoUtilsOperators = (
         return option;
       });
       checkCharset(charset);
-      writeWithOptions(
-        files,
-        path,
-        names,
-        elements.map((element) => `${toJson(element)}\n`).join(""),
-      );
+      writeWithOptions(files, path, names, toNdJson(elements));
       return true;
     }),
     "public static synchronized tlc2.value.impl.Value tlc2.module.Json.textSerialize(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",

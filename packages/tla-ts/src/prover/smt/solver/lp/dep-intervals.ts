@@ -95,8 +95,6 @@ const extLt = (first: ExtNumeral, second: ExtNumeral) => {
   return second.kind === "plus-inf";
 };
 
-// The bounds of a result go in only after every bound of the arguments is read, since the result
-// may be one of the arguments.
 const setBounds = (
   result: DepInterval,
   lower: ExtNumeral,
@@ -126,7 +124,6 @@ const isN0 = (interval: DepInterval) => upperIsZero(interval) && !interval.isUpp
 const isN1 = (interval: DepInterval) =>
   upperIsNeg(interval) || (upperIsZero(interval) && interval.isUpperOpen);
 const isM = (interval: DepInterval) => lowerIsNeg(interval) && upperIsPos(interval);
-// interval_manager::is_zero, which unlike dep_intervals::is_zero ignores openness.
 const areBoundsZero = (interval: DepInterval) => lowerIsZero(interval) && upperIsZero(interval);
 
 const imSet = (target: DepInterval, source: DepInterval) => {
@@ -231,7 +228,7 @@ const imMul = (first: DepInterval, second: DepInterval, result: DepInterval) => 
   );
 };
 
-// The divisor must not contain zero. Like Z3, a zero test of c or d reads the stored value.
+// Z3 tests the stored value of c and d for zero even when the bound is infinite.
 const imDiv = (first: DepInterval, second: DepInterval, result: DepInterval) => {
   if (areBoundsZero(first))
     return setBounds(result, mkNumeral(Rational.zero), false, mkNumeral(Rational.zero), false);
@@ -454,7 +451,7 @@ const mkDependency = (first: DepInterval, second: DepInterval | null, mask: numb
   return second !== null && mask & DEP_IN_UPPER2 ? mkJoin(withUpper1, second.upperDep) : withUpper1;
 };
 
-const combineDeps = (
+const addDeps = (
   first: DepInterval,
   second: DepInterval | null,
   rule: CombineRule,
@@ -482,7 +479,7 @@ export const power = (
   if (exponent === 1 && interval === result) return;
   const rule = getPowerRule(interval, exponent);
   imPower(interval, exponent, result);
-  if (mode === "with-deps") combineDeps(interval, null, rule, result);
+  if (mode === "with-deps") addDeps(interval, null, rule, result);
 };
 
 export const mulScalar = (
@@ -507,7 +504,7 @@ export const mul = (
 ) => {
   const rule = getMulRule(first, second);
   imMul(first, second, result);
-  if (mode === "with-deps") combineDeps(first, second, rule, result);
+  if (mode === "with-deps") addDeps(first, second, rule, result);
 };
 
 export const div = (
@@ -518,7 +515,7 @@ export const div = (
 ) => {
   const rule = getDivRule(first, second);
   imDiv(first, second, result);
-  if (mode === "with-deps") combineDeps(first, second, rule, result);
+  if (mode === "with-deps") addDeps(first, second, rule, result);
 };
 
 export const add = (
@@ -528,7 +525,7 @@ export const add = (
   mode: DepsMode,
 ) => {
   imAdd(first, second, result);
-  if (mode === "with-deps") combineDeps(first, second, getAddRule(), result);
+  if (mode === "with-deps") addDeps(first, second, getAddRule(), result);
 };
 
 export const addScalar = (scalar: Rational, interval: DepInterval) => {
@@ -550,7 +547,6 @@ const copyUpperBound = (source: DepInterval, target: DepInterval, mode: DepsMode
   if (mode === "with-deps") target.upperDep = source.upperDep;
 };
 
-// On equal bounds the bound of first wins if it is open, else the bound of second.
 export const intersect = (
   first: DepInterval,
   second: DepInterval,

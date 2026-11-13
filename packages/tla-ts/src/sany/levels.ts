@@ -272,14 +272,14 @@ const checkDefinitionBody = (node: AnyDefNode, params: FormalParamNode[], body: 
   node.minMaxLevel = params.map((param) =>
     Array.from(
       { length: param.arity },
-      (_, position) =>
+      (_value, position) =>
         body.argLevelConstraints.get(getArgLevelConstraintKey(param, position))?.level ??
         CONSTANT_LEVEL,
     ),
   );
   node.opLevelCond = params.map((param) =>
     params.map((other) =>
-      Array.from({ length: param.arity }, (_, index) =>
+      Array.from({ length: param.arity }, (_value, index) =>
         body.argLevelParams.has(getArgLevelKey(param, index, other)),
       ),
     ),
@@ -391,7 +391,7 @@ const constrainArguments = (
 ) => {
   const params = operator.params ?? [];
   const getArgument = (symbol: SymbolNode) =>
-    node.operands.find((_, index) => params[index] === symbol);
+    node.operands.find((_operand, index) => params[index] === symbol);
   putLevelConstraints(node.levelConstraints, operator.levelConstraints);
   node.operands.forEach((operand) => {
     if (operand === undefined) return;
@@ -527,7 +527,6 @@ const LOGICAL_OPERATOR_NAMES = new Map([
   ["$DisjList", "Disjunction list"],
 ]);
 
-// TLC 1.7.4's SANY reports these errors but leaves the node level-correct.
 const checkTemporalApplication = (node: OpApplNode, check: LevelCheck) => {
   const addTemporalError = (location: SanyLocation, text: string) => {
     addError(check, location, text);
@@ -680,7 +679,7 @@ const checkTheoremDefinition = (node: ThmOrAssumpDefNode, iteration: number, che
   node.levelChecked = iteration;
   node.maxLevels = node.params.map(() => TEMPORAL_LEVEL);
   // SANY allocates isLeibnizArg anew for each parameter, so only the last one starts out Leibniz.
-  node.isLeibnizArg = node.params.map((_, index) => index === node.params.length - 1);
+  node.isLeibnizArg = node.params.map((_param, index) => index === node.params.length - 1);
   if (node.params.length > 0) node.isLeibniz = true;
   node.levelCorrect = checkLevel(node.body, iteration, check);
   node.level = node.body.level;
@@ -692,8 +691,6 @@ const checkTheoremDefinition = (node: ThmOrAssumpDefNode, iteration: number, che
   return node.levelCorrect;
 };
 
-// SANY checks the definitions of each recursive section twice, the second time with the highest
-// level and the parameters of the section's recursive operators.
 export const checkModuleLevels = (module: ModuleNode, check: LevelCheck) => {
   if (module.isLevelChecked) return module.levelCorrect;
   module.isLevelChecked = true;
@@ -1111,8 +1108,7 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
       return isBodyCorrect && isDefinitionCorrect;
     }
     case "Theorem": {
-      // TheoremNode declares its own levelChecked, so levelCheckSubnodes still runs on its definition,
-      // or its statement when it has none, and its proof.
+      // SANY's TheoremNode declares its own levelChecked, so levelCheckSubnodes still runs on it.
       if (node.levelChecked >= iteration) return true;
       const isCorrect = checkSubnodes(
         node,

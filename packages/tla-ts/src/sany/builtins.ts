@@ -1,7 +1,5 @@
 import type { FormalParamNode, LevelFields, OpDefNode, SanyLocation } from "./nodes";
 
-// Name, arity, level, maximum argument levels and argument weights. SANY leaves the levels of
-// "." and \neg unset.
 const BUILTIN_OPERATORS: [string, number, number, number[] | undefined, number[] | undefined][] = [
   ["STRING", 0, 0, [], []],
   ["FALSE", 0, 0, [], []],
@@ -105,7 +103,7 @@ export const createBuiltins = (getId: () => number) =>
     const params =
       arity < 0
         ? undefined
-        : Array.from({ length: arity }, (_, index): FormalParamNode => ({
+        : Array.from({ length: arity }, (_value, index): FormalParamNode => ({
             ...createLevelFields(getId()),
             kind: "FormalParam",
             name: `Formal_${index}`,

@@ -1,6 +1,3 @@
-// An independent check of the Zenon port's proofs that shares no code with the search: each rule's
-// branches come from the lemma that justifies it in tlapm's Zenon.thy.
-
 import { getLimitFailure, type Limits } from "../limits";
 import type { PlainRuleName, Proof, RuleArgs } from "../proof";
 import { getDefinitionSpec } from "./definitions";
@@ -74,7 +71,6 @@ export const checkProof = (root: Proof<Term>, context: CheckContext, limits: Lim
     return result;
   };
   try {
-    // Subproofs before their parents, without recursion: proofs can be deep.
     const stack: [Proof<Term>, boolean][] = [[root, false]];
     while (stack.length > 0) {
       if (getLimitFailure(limits) !== undefined) return false;
@@ -91,8 +87,7 @@ export const checkProof = (root: Proof<Term>, context: CheckContext, limits: Lim
         if (!needed.has(subproof)) stack.push([subproof, false]);
     }
     const hypotheses = new Set(context.hypotheses.map(keys.getTopKey));
-    const missing = [...(needed.get(root) ?? [])].filter((key) => !hypotheses.has(key));
-    return missing.length === 0;
+    return [...(needed.get(root) ?? [])].every((key) => hypotheses.has(key));
   } catch (error) {
     if (error instanceof UncheckedError) return false;
     throw error;

@@ -1,5 +1,4 @@
 // Ported from Z3 (src/math/lp/lar_term.h), MIT license, see z3-license.txt.
-// It is kept in a u_map so that its iteration order is Z3's.
 import { getIdentityHash, ObjMap } from "../hashtable";
 import { Rational } from "../rational";
 import { Impq } from "./numeric-pair";

@@ -4,7 +4,7 @@ import { getGcd, getLcm, Rational } from "../rational";
 import { COLUMN_BOXED, COLUMN_FIXED, COLUMN_FREE, COLUMN_LOWER, COLUMN_UPPER } from "./core-solver";
 import { DiophantineSolver } from "./dioph-eq";
 import { Explanation } from "./explanation";
-import { getGomoryCuts } from "./gomory";
+import { getFractionalPart, getGomoryCuts } from "./gomory";
 import { makeHnfCut } from "./hnf-cutter";
 import { findCube, findLargestCube } from "./int-cube";
 import type { LarSolver } from "./lar-solver";
@@ -20,9 +20,7 @@ export type LiaMove =
   | { kind: "cut"; offset: Rational; isUpper: boolean }
   | { kind: "branch"; isUpper: boolean; offset: Rational };
 
-const getFractionalPart = (value: Rational) => value.sub(value.floor());
-
-const getExtendedGcd = (first: bigint, second: bigint) => {
+const getExtendedGcdTriple = (first: bigint, second: bigint) => {
   let previous = [first, 1n, 0n];
   let current = [second, 0n, 1n];
   while (current[0] !== 0n) {
@@ -41,7 +39,7 @@ const getExtendedGcd = (first: bigint, second: bigint) => {
 const getPatchingDeltas = (x: Rational, alpha: Rational) => {
   if (alpha.den % x.den !== 0n) return undefined;
   const scale = alpha.den / x.den;
-  const coeff = getExtendedGcd(alpha.num, x.den)[1];
+  const coeff = getExtendedGcdTriple(alpha.num, x.den)[1];
   const product = coeff * scale * x.num;
   const remainder = ((product % alpha.den) + alpha.den) % alpha.den;
   const plus = Rational.of(remainder);
@@ -55,12 +53,10 @@ interface Parity {
 }
 
 export class IntSolver {
-  private numberOfCalls = 0;
   private parities = new Map<number, Parity[]>();
   private parityColumns: number[] = [];
   private lcubePeriod: number;
   readonly explanation = new Explanation();
-  // Kept across calls, as Z3 keeps its table.
   readonly term = new LarTerm();
 
   private dio: DiophantineSolver;
@@ -116,7 +112,6 @@ export class IntSolver {
     if (!solver.hasInfInt()) return { kind: "sat" };
     this.term.clear();
     this.explanation.clear();
-    // lp.dio_run_gcd is off, so the GCD test runs only when the Diophantine solver ignores terms.
     const move: LiaMove = this.dio.hasIgnoredTerms ? this.gcdTest() : { kind: "undef" };
     return solver.core.withoutTouchedRows(() => this.checkAfterGcd(move));
   }
@@ -124,7 +119,6 @@ export class IntSolver {
   private checkAfterGcd(gcdMove: LiaMove): LiaMove {
     const settings = this.solver.settings;
     if (settings.isCanceled()) return { kind: "undef" };
-    this.numberOfCalls++;
     const move = gcdMove.kind === "undef" ? this.getMoveAfterGcd() : gcdMove;
     return settings.isCanceled() ? { kind: "undef" } : move;
   }
@@ -172,7 +166,6 @@ export class IntSolver {
     return isHit;
   }
 
-  // Z3 also sets the GCD test's flag, which it does not read while the Diophantine solver is on.
   private solveDiophantineEquations(): LiaMove {
     const settings = this.solver.settings;
     if (this.dio.check() === "conflict") {

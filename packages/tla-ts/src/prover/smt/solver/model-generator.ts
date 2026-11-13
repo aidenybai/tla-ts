@@ -35,9 +35,6 @@ export const mkModel = (context: Context): GeneratedModel => {
         context.findAssignment(expr) > 0 ? manager.trueExpr : manager.falseExpr,
       );
   }
-  // mk_values: the values of the classes of a theory's sort that the theory does not know are
-  // fresh, so they come after all the other values. A class whose root is a value keeps it, but
-  // like Z3 still takes the fresh value, as the class of a coefficient numeral does.
   const root2value = new Map<Enode, number>();
   const freshRoots: Enode[] = [];
   const dependentValues = new Map<Enode, DependentValue>();

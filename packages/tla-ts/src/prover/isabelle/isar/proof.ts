@@ -1,7 +1,4 @@
-// Ported from Isabelle2025's Pure/Isar/proof.ML, with the parts of Pure/goal.ML and
-// Pure/Isar/method.ML it uses. Copyright (c) 1986-2025 University of Cambridge, Technische
-// Universitaet Muenchen, and contributors, see LICENSE.
-// Goal.conjunction_tac, which METHOD runs first, is left out: a goal here is one proposition.
+// Ported from Isabelle2025's Pure/Isar/proof.ML, Pure/goal.ML and Pure/Isar/method.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import { compIncr, forallIntrVars, protectD, protectI, revcutRl } from "../pure/drule";

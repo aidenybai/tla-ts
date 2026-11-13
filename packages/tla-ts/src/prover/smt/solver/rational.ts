@@ -32,8 +32,6 @@ export const getLcm = (first: bigint, second: bigint) => {
   return (product < 0n ? -product : product) / getGcd(first, second);
 };
 
-// mpz_manager's div and mod: SMT-LIB's, whose remainder is never negative. By a positive divisor,
-// div is the floor of the quotient.
 export const getEuclideanDiv = (dividend: bigint, divisor: bigint) => {
   const quotient = dividend / divisor;
   if (dividend >= 0n || quotient * divisor === dividend) return quotient;
@@ -112,7 +110,6 @@ export class Rational {
     return this.num < 0n;
   }
 
-  // A sum with zero is the other operand, so a sum that starts at zero allocates nothing.
   add(other: Rational) {
     if (this.num === 0n) return other;
     if (other.num === 0n) return this;
@@ -153,7 +150,6 @@ export class Rational {
     return Rational.of(this.num ** BigInt(exponent), this.den ** BigInt(exponent));
   }
 
-  // is_big: mpz keeps a numerator or denominator outside a 32-bit int as a bignum.
   isBig() {
     return isBigInt(this.num) || isBigInt(this.den);
   }

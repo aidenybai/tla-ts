@@ -328,7 +328,7 @@ describe("definitions", () => {
 });
 
 describe("tags", () => {
-  const ticker = (tag: string) => `
+  const getTicker = (tag: string) => `
     /** @noDeadlock */
     let count = 0;
     ${tag}
@@ -341,8 +341,8 @@ describe("tags", () => {
   `;
 
   it("checks eventually with weak fairness", async () => {
-    expect((await checkModel(ticker("/** @fair */"))).status).toBe("success");
-    expect((await checkModel(ticker(""))).status).toBe("liveness-violation");
+    expect((await checkModel(getTicker("/** @fair */"))).status).toBe("success");
+    expect((await checkModel(getTicker(""))).status).toBe("liveness-violation");
   });
 
   it("checks a step property against the state before the step", async () => {

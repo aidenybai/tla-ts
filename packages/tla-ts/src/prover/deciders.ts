@@ -2,10 +2,9 @@ import { SmtParseError, TlaProverError } from "../errors";
 import { decideIsabelle } from "./isabelle/decide";
 import { decidePtl } from "./ptl/decide";
 import { decideSmt } from "./smt/solver/solver";
-import type { DecideOptions, Decision } from "./verdict";
+import type { Backend, DecideOptions, Decision } from "./verdict";
 import { decideZenon } from "./zenon/decide";
 
-// Z3 rejects malformed input with an error, and tlapm counts that as a failure.
 const decideZ3 = (text: string, options: DecideOptions) => {
   try {
     const verdict = decideSmt(text, options);
@@ -16,8 +15,8 @@ const decideZ3 = (text: string, options: DecideOptions) => {
   }
 };
 
-export const DECIDERS: Record<
-  string,
+const DECIDERS: Record<
+  Backend,
   (text: string, options: DecideOptions) => Omit<Decision, "timeUsedMs">
 > = {
   smt: decideZ3,
@@ -34,7 +33,7 @@ export const DECIDERS: Record<
   ls4: (text, options) => ({ verdict: decidePtl(text, options) }),
 };
 
-export const decide = (prover: string, text: string, options: DecideOptions): Decision => {
+export const decide = (prover: Backend, text: string, options: DecideOptions): Decision => {
   const start = performance.now();
   return { ...DECIDERS[prover](text, options), timeUsedMs: performance.now() - start };
 };

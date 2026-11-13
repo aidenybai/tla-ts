@@ -1,7 +1,6 @@
-// Ported from Isabelle2025's Pure/tactical.ML and Pure/search.ML. Copyright (c) 1986-2025
-// University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
+// Ported from Isabelle2025's Pure/tactical.ML and Pure/search.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
-import { TlaIsabelleError } from "../../../errors";
+import { isIsabelleError } from "../../../errors";
 import {
   appendSeq,
   emptySeq,
@@ -15,7 +14,7 @@ import {
   type Seq,
 } from "./seq";
 import { cons, type List } from "./list";
-import { aconv } from "./term";
+import { aconv, type Term } from "./term";
 import { nprems, premOf, type Thm } from "./thm";
 
 export type Tactic = (state: Thm) => Seq<Thm>;
@@ -87,44 +86,57 @@ export const eqThm = (left: Thm, right: Thm) =>
         aconv(pair[0], right.tpairs[index][0]) && aconv(pair[1], right.tpairs[index][1]),
     ));
 
+export const distinctThms = (thms: readonly Thm[]) =>
+  thms.filter((thm, position) => thms.findIndex((other) => eqThm(other, thm)) === position);
+
 export const eqThmProp = (left: Thm, right: Thm) => aconv(left.prop, right.prop);
 
 interface Trail {
   readonly state: Thm;
   readonly rest: Seq<Thm>;
-  readonly tactics: readonly Tactic[];
+  readonly position: number;
+  readonly next: Trail | undefined;
 }
 
-export const every = (tactics: readonly Tactic[]): Tactic => {
-  const evy = (trail: readonly Trail[], remaining: readonly Tactic[], state: Thm): Seq<Thm> => {
-    if (remaining.length === 0) return makeSeq(() => [state, makeSeq(() => evyBack(trail).pull())]);
-    const cell = remaining[0](state).pull();
-    if (cell === undefined) return evyBack(trail);
-    return evy(
-      [{ state: cell[0], rest: cell[1], tactics: remaining.slice(1) }, ...trail],
-      remaining.slice(1),
-      cell[0],
-    );
+// EVY and evyBack as one loop: blast replays thousands of tactics, too deep for mutual recursion.
+export const every =
+  (tactics: readonly Tactic[]): Tactic =>
+  (start) => {
+    const evy = (
+      initialTrail: Trail | undefined,
+      initialPosition: number,
+      initialState: Thm | undefined,
+    ): Cell<Thm> => {
+      let trail = initialTrail;
+      let position = initialPosition;
+      let state = initialState;
+      for (;;) {
+        if (state === undefined) {
+          if (trail === undefined) return undefined;
+          const cell = trail.rest.pull();
+          if (cell === undefined) trail = trail.next;
+          else if (eqThm(trail.state, cell[0])) trail = { ...trail, rest: cell[1] };
+          else {
+            trail = { state: cell[0], rest: cell[1], position: trail.position, next: trail.next };
+            position = trail.position;
+            state = cell[0];
+          }
+        } else if (position === tactics.length) {
+          const saved = trail;
+          return [state, makeSeq(() => evy(saved, 0, undefined))];
+        } else {
+          const cell = tactics[position](state).pull();
+          if (cell === undefined) state = undefined;
+          else {
+            trail = { state: cell[0], rest: cell[1], position: position + 1, next: trail };
+            position += 1;
+            state = cell[0];
+          }
+        }
+      }
+    };
+    return ofCell(evy(undefined, 0, start));
   };
-  const evyBack = (trail: readonly Trail[]): Seq<Thm> => {
-    let current = trail;
-    while (current.length > 0) {
-      const top = current[0];
-      const cell = top.rest.pull();
-      if (cell === undefined) current = current.slice(1);
-      else if (eqThm(top.state, cell[0]))
-        current = [{ ...top, rest: cell[1] }, ...current.slice(1)];
-      else
-        return evy(
-          [{ state: cell[0], rest: cell[1], tactics: top.tactics }, ...current.slice(1)],
-          top.tactics,
-          cell[0],
-        );
-    }
-    return emptySeq;
-  };
-  return (state) => evy([], tactics, state);
-};
 
 export const first = (tactics: readonly Tactic[]): Tactic =>
   tactics.reduceRight((rest, tactic) => orElse(tactic, rest), noTac);
@@ -180,18 +192,14 @@ export const firstGoalTac =
     return find(1)(state);
   };
 
-const isThmError = (error: unknown) =>
-  error instanceof TlaIsabelleError && error.exception === "THM";
-
 export const subgoal =
-  (build: (goal: ReturnType<typeof premOf>, index: number) => Tactic): GoalTactic =>
+  (build: (goal: Term, index: number) => Tactic): GoalTactic =>
   (index) =>
   (state) => {
     if (index < 1 || index > nprems(state)) return emptySeq;
     return build(premOf(state, index), index)(state);
   };
 
-// Applies the tactic to the goals from last down to first.
 const interval = (tactic: GoalTactic, firstIndex: number, lastIndex: number): Tactic =>
   lastIndex < firstIndex
     ? allTac
@@ -214,7 +222,7 @@ export const primSeq =
     try {
       return apply(state);
     } catch (error) {
-      if (isThmError(error)) return emptySeq;
+      if (isIsabelleError(error, "THM")) return emptySeq;
       throw error;
     }
   };
@@ -227,8 +235,6 @@ export const condTac =
   (state) =>
     test(state) ? onTrue(state) : onFalse(state);
 
-// The stack of alternatives and the states already returned are lists, as in Isabelle, since the
-// stack can grow as deep as the search goes.
 const depthFirst = (test: (state: Thm) => boolean, tactic: Tactic): Tactic => {
   const isUsed = (used: List<Thm> | undefined, state: Thm) => {
     for (let current = used; current !== undefined; current = current.tail)

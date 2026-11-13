@@ -1,5 +1,6 @@
 import {
   getChildren,
+  getReferencedName,
   isLocallyResolved,
   type Bound,
   type BoundPattern,
@@ -228,12 +229,21 @@ export const mapChildren = (
   }
 };
 
+export const forEachChild = (
+  expression: Expression,
+  visit: (child: Expression, bound: string[]) => void,
+): void => {
+  mapChildren(expression, (child, bound) => {
+    visit(child, bound);
+    return child;
+  });
+};
+
 interface Instantiation {
   params: OperatorParam[];
   substitutions: Map<string, Expression>;
   variables: Set<string>;
   getDefinition: (key: string) => Definition | undefined;
-  // A definition of the instantiating module that a substitution names.
   getOuterDefinition: (name: string) => Definition | undefined;
   isParameterized: (key: string) => boolean;
   addDefinition: (source: string, name: string, create: (key: string) => Definition) => string;
@@ -241,7 +251,6 @@ interface Instantiation {
   frame?: Expression;
 }
 
-// LAMBDA is a keyword, so no name bound inside the instance can capture it.
 const LAMBDA_NAME = "LAMBDA";
 
 type RewriteMode = "Normal" | "Enabled" | "Primed";
@@ -252,8 +261,6 @@ interface Rewrite {
   copies: Map<string, string>;
   mode: RewriteMode;
   modes: Map<RewriteMode, Rewrite>;
-  // The substitutions an operator's copy reads, which it binds once, as TLC binds each to a lazy
-  // value when it evaluates the operator's body.
   bindings?: Map<string, Expression>;
 }
 
@@ -263,9 +270,6 @@ const isVariableAlias = (expression: Expression): boolean =>
   expression.kind === "Identifier" ||
   (expression.kind === "Tuple" && expression.elements.every(isVariableAlias));
 
-// A name, or a tuple of names, stays in place, so a step can assign it or leave it unchanged as
-// TLC does through its lazy value. An operator or a literal costs nothing to evaluate again. A name
-// of a definition that isn't such an alias is bound once.
 const isBoundOnce = (replacement: Expression, instantiation: Instantiation) => {
   if (replacement.kind !== "Identifier") {
     return (
@@ -287,19 +291,13 @@ const isBoundOnce = (replacement: Expression, instantiation: Instantiation) => {
 };
 
 const getFreeNames = (expression: Expression, bound = new Set<string>()): string[] => {
-  const name =
-    expression.kind === "Identifier"
-      ? expression.name
-      : expression.kind === "Apply" || expression.kind === "OperatorReference"
-        ? expression.operator
-        : undefined;
+  const name = getReferencedName(expression);
   const names = name === undefined || bound.has(name) ? [] : [name];
-  mapChildren(expression, (child, childBound) => {
+  forEachChild(expression, (child, childBound) =>
     names.push(
       ...getFreeNames(child, childBound.length === 0 ? bound : new Set([...bound, ...childBound])),
-    );
-    return child;
-  });
+    ),
+  );
   return names;
 };
 
@@ -494,6 +492,30 @@ export const createLocalIdentifier = (name: string, location: SourceLocation): E
 export const createLocalArguments = (params: OperatorParam[], location: SourceLocation) =>
   params.map((param) => createLocalIdentifier(param.name, location));
 
+export const createLocalAlias = (
+  name: string,
+  key: string,
+  params: OperatorParam[],
+  forwarded: OperatorParam[],
+  location: SourceLocation,
+): Definition => ({
+  kind: "Operator",
+  name,
+  params,
+  body:
+    forwarded.length === 0
+      ? { kind: "Identifier", name: key, location }
+      : {
+          kind: "Apply",
+          operator: key,
+          args: createLocalArguments(forwarded, location),
+          location,
+        },
+  isLocal: true,
+  isRecursive: false,
+  location,
+});
+
 const getInstanceOperator = (
   key: string,
   params: OperatorParam[],
@@ -647,6 +669,14 @@ const substitute = (
     };
   }
   if (expression.kind === "OperatorReference" && isFree(expression.operator)) {
+    const replacement = instantiation.substitutions.get(expression.operator);
+    if (
+      replacement?.kind === "Identifier" ||
+      replacement?.kind === "OperatorReference" ||
+      replacement?.kind === "Lambda"
+    ) {
+      return withSubstitutionFrames(replacement, [expression]);
+    }
     const copy = getCopy(rewrite, expression.operator);
     if (copy === undefined) return expression;
     const definition = instantiation.getDefinition(expression.operator);
@@ -796,7 +826,6 @@ const expandLetInstances = (
   return { ...mapped, definitions };
 };
 
-// A named theorem's statement is linked as its definition.
 const getUnnamedStatement = (theorem: Theorem) =>
   theorem.name === undefined && theorem.statement.kind !== "AssumeProve"
     ? theorem.statement

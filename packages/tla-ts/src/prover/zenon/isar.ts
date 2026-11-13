@@ -1,5 +1,4 @@
-// Ported from Zenon's lltoisar.ml and the -oisar path of main.ml, as shipped in tlapm. Copyright
-// 2008 INRIA, see LICENSE.
+// Ported from Zenon's lltoisar.ml and the -oisar path of main.ml, as shipped in tlapm. Copyright 2008 INRIA, see LICENSE.
 
 import { TlaZenonError } from "../../errors";
 import { FALSE, GOAL_NAME, TRUE, type BinderExpr, type Expr, type Expressions } from "./expr";
@@ -11,42 +10,41 @@ import { isMetaName, translateProof, type MlProof } from "./mltoll";
 import type { Phrase } from "./parse";
 import { postprocessTla } from "./tla/llproof";
 
-const INFIXES: Record<string, string> = {
-  "=": "=",
-  "TLA.cup": " \\\\cup ",
-  "TLA.cap": " \\\\cap ",
-  "TLA.setminus": " \\\\ ",
-  "TLA.in": " \\\\in ",
-  "TLA.subseteq": " \\\\subseteq ",
-  "arith.natrange": "..",
-  "arith.add": " + ",
-  "arith.sub": " - ",
-  "arith.mul": " * ",
-  "arith.le": " <= ",
-  "arith.lt": " < ",
-  "TLA.concat": " \\\\circ ",
-  "TLA.oneArg": " :> ",
-  "TLA.extend": " @@ ",
-};
+const INFIXES = new Map([
+  ["=", "="],
+  ["TLA.cup", " \\\\cup "],
+  ["TLA.cap", " \\\\cap "],
+  ["TLA.setminus", " \\\\ "],
+  ["TLA.in", " \\\\in "],
+  ["TLA.subseteq", " \\\\subseteq "],
+  ["arith.natrange", ".."],
+  ["arith.add", " + "],
+  ["arith.sub", " - "],
+  ["arith.mul", " * "],
+  ["arith.le", " <= "],
+  ["arith.lt", " < "],
+  ["TLA.concat", " \\\\circ "],
+  ["TLA.oneArg", " :> "],
+  ["TLA.extend", " @@ "],
+]);
 
-const CONSTANTS: Record<string, string> = {
-  "TLA.emptyset": "{}",
-  "arith.N": "Nat",
-  "arith.Z": "Int",
-  "arith.R": "isReal",
-  "arith.Infinity": "isInfinity",
-};
+const CONSTANTS = new Map([
+  ["TLA.emptyset", "{}"],
+  ["arith.N", "Nat"],
+  ["arith.Z", "Int"],
+  ["arith.R", "isReal"],
+  ["arith.Infinity", "isInfinity"],
+]);
 
-const PREFIXES: Record<string, string> = {
-  "arith.div": "isa'slash",
-  "arith.euclidiv": "isa'div",
-  "arith.mod": "isa'pc",
-  "arith.minus": " -.",
-  "arith.intrange": "isa'dotdot",
-  "TLA.box": "isa'box",
-};
+const PREFIXES = new Map([
+  ["arith.div", "isa'slash"],
+  ["arith.euclidiv", "isa'div"],
+  ["arith.mod", "isa'pc"],
+  ["arith.minus", " -."],
+  ["arith.intrange", "isa'dotdot"],
+  ["TLA.box", "isa'box"],
+]);
 
-// Zenon drops the namespace of the symbols it doesn't rename.
 const stripNamespace = (symbol: string) =>
   symbol.length > 4 && symbol.startsWith("TLA.")
     ? symbol.slice(4)
@@ -136,8 +134,6 @@ export const printIsar = (proof: MlProof, context: IsarContext): string | undefi
     return exprs.elam(binder.args[0], binder.symbol, binder.args[1]);
   };
 
-  // The formulas that (is "...") patterns bound, as a persistent set: a version is the length of
-  // the log, and a version only reads the log's prefix, which later additions from it don't change.
   const dictLog: number[] = [];
   const dictPositions = new Map<number, number>();
   const isBound = (dict: number, number: number) => {
@@ -151,7 +147,6 @@ export const printIsar = (proof: MlProof, context: IsarContext): string | undefi
     return dict + 1;
   };
 
-  // Zenon's p_expr: the bound variables are those that a pattern can't abbreviate.
   const printExpr = (env: string[], dict: number, expression: Expr): string => {
     const number = getNumber(expression);
     if (isBound(dict, number) && !expression.freeVars.some((name) => env.includes(name)))
@@ -164,7 +159,7 @@ export const printIsar = (proof: MlProof, context: IsarContext): string | undefi
       case "var":
         return isMetaName(expression.symbol)
           ? "(CHOOSE x : TRUE)"
-          : (CONSTANTS[expression.symbol] ?? stripNamespace(expression.symbol));
+          : (CONSTANTS.get(expression.symbol) ?? stripNamespace(expression.symbol));
       case "app": {
         const args = expression.args;
         switch (expression.symbol) {
@@ -197,11 +192,11 @@ export const printIsar = (proof: MlProof, context: IsarContext): string | undefi
           if (numeral !== undefined) return String(numeral + 1);
           return `(${print(args[0])}[${print(args[1])}])`;
         }
-        const infix = INFIXES[expression.symbol];
+        const infix = INFIXES.get(expression.symbol);
         if (infix !== undefined && args.length === 2)
           return `(${print(args[0])}${infix}${print(args[1])})`;
         if (args.length === 0) return expression.symbol;
-        return `${PREFIXES[expression.symbol] ?? stripNamespace(expression.symbol)}(${printList(args)})`;
+        return `${PREFIXES.get(expression.symbol) ?? stripNamespace(expression.symbol)}(${printList(args)})`;
       }
       case "not": {
         const operand = expression.args[0];

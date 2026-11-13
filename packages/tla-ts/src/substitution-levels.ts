@@ -1,5 +1,5 @@
 import type { Declaration, Definition, Expression, SourceLocation, Theorem } from "./ast";
-import { createSanyError, formatRange } from "./errors";
+import { createSanyError, formatRange, type SanyError } from "./errors";
 import {
   ACTION_LEVEL,
   analyzeAssumeProve,
@@ -122,8 +122,7 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
   };
 
   return (check: InstanceCheck) => {
-    const errors = new Map<string, { location: string; message: string }>();
-    // SANY reports each error at the whole instance.
+    const errors = new Map<string, SanyError>();
     const location = formatRange(
       check.location.range ?? {
         module: check.instancer,
@@ -152,12 +151,13 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
         return [{ ...declaration, level: data.level, operator: undefined, isLeibniz: true }];
       }
       const operand = analyzer.toOperand(expression, scope);
+      const operator = operand.kind === "Operator" ? operand.data : undefined;
       return [
         {
           ...declaration,
           level: operand.data.level,
-          operator: operand.operator,
-          isLeibniz: operand.operator === undefined || operand.operator.nonLeibniz.size === 0,
+          operator,
+          isLeibniz: operator === undefined || operator.nonLeibniz.size === 0,
         },
       ];
     });
@@ -179,14 +179,14 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
         addMessage(getLevelMessage(item.name, maximum));
       const operator = item.operator;
       if (!operator) return;
-      Array.from({ length: item.arity }, (_, index) => {
+      for (let index = 0; index < item.arity; index++) {
         const minimum = levels.argConstraints.get(getArgumentKey(item.name, index));
         if (minimum !== undefined && getMaxLevel(operator, index) < minimum) {
           addMessage(
             `Level error in instantiating module '${check.module}':\nThe level of the argument ${index + 1} of the operator ${operator.name} \nmust be at least ${minimum}.`,
           );
         }
-      });
+      }
     });
     levels.argParams.forEach((key) => {
       const parameter = parseArgumentParamKey(key);

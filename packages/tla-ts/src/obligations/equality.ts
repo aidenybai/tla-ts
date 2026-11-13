@@ -1,4 +1,4 @@
-// tlapm's E_eq: alpha-equivalence of expressions.
+// A port of tlapm's E_eq.
 
 import type { Bound, Defn, Expr, Field, Hyp, Selector, Sequent } from "./expression";
 

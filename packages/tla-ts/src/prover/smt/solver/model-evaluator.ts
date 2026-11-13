@@ -80,7 +80,6 @@ export class ModelEvaluator extends RewriterTpl {
     return result;
   }
 
-  // -1 is BR_FAILED.
   private reduceAppCore(decl: number, args: number[], sort: number): number | Rewrite {
     const manager = this.manager;
     const model = this.model;
@@ -156,9 +155,6 @@ export class ModelEvaluator extends RewriterTpl {
     return interp.getEntry(args)?.result;
   }
 
-  // evaluate_partial_theory_func: div0, idiv0 and mod0 take their interpretations, or 0 without
-  // one, and so does a division by zero. A division by a term is its interpretation when the term
-  // is zero.
   private evaluatePartialTheoryFunc(decl: number, args: number[], sort: number): number | Rewrite {
     const manager = this.manager;
     const model = this.model;
@@ -313,7 +309,6 @@ export class ModelEvaluator extends RewriterTpl {
     return { expr: manager.mkAnd(conjuncts), depth: Infinity };
   }
 
-  // var_subst without the standard order, whose result the temporaries hold.
   private substitute(expr: number, args: number[]) {
     const subst = new VarSubst(this.manager, false);
     const result = subst.apply(expr, args);
@@ -328,8 +323,7 @@ export class ModelEvaluator extends RewriterTpl {
     if (manager.kinds[expr] !== KIND_APP || manager.getNumArgs(expr) === 0) return false;
     const visited = new Set<number>();
     const todo = [expr];
-    while (todo.length > 0) {
-      const current = todo.pop() as number;
+    for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
       if (visited.has(current)) continue;
       visited.add(current);
       const op = manager.getOp(current);
@@ -343,10 +337,7 @@ export class ModelEvaluator extends RewriterTpl {
     return false;
   }
 
-  // arith_rewriter::mk_and_core: of lower bounds (<= a y) and (<= b y) on the same term, the
-  // conjunction keeps the greatest. Z3 compares each bound with the first rather than with the
-  // greatest so far, which drops the greatest when a smaller one follows it. This port keeps the
-  // greatest.
+  // Z3 compares each bound with the first rather than the greatest so far, where this keeps the greatest.
   private mkArithAndCore(args: number[]): Rewrite | undefined {
     const manager = this.manager;
     if (args.length <= 1 || manager.getOp(args[0]) !== OP_LE) return undefined;
@@ -373,8 +364,6 @@ export class ModelEvaluator extends RewriterTpl {
     return { expr: manager.mkApp(OP_AND, rest, SORT_BOOL), depth: 1 };
   }
 
-  // With model completion, a partial interpretation gets an else value, and a function without
-  // one gets a constant interpretation.
   getMacro(decl: number) {
     const manager = this.manager;
     const model = this.model;
@@ -406,7 +395,6 @@ export class ModelEvaluator extends RewriterTpl {
     return result;
   }
 
-  // ~imp: evaluator_cfg goes before the caches of rewriter_tpl.
   release() {
     this.rewriter.release();
     super.release();

@@ -1,7 +1,5 @@
-// Ported from Isabelle2025's Pure/name.ML and Pure/General/symbol.ML. Copyright (c) 1986-2025
-// University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
+// Ported from Isabelle2025's Pure/name.ML and Pure/General/symbol.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
-// Symbol.explode: \<name> symbols count as one symbol.
 const explodeSymbols = (text: string): string[] => text.match(/\\<\^?[A-Za-z0-9_']*>|[^]/gu) ?? [];
 
 const isRawSymbolic = (symbol: string) => symbol.startsWith("\\<") && !symbol.startsWith("\\<^");
@@ -76,7 +74,7 @@ export const variantName = (name: string, context: NameContext): [string, NameCo
   return [current + "_".repeat(count), declareName(current, renamed)];
 };
 
-export const variantNames = (names: readonly string[], context: NameContext) => {
+const variantNames = (names: readonly string[], context: NameContext) => {
   let current = context;
   return names.map((name) => {
     const [variant, next] = variantName(name, current);
@@ -88,7 +86,6 @@ export const variantNames = (names: readonly string[], context: NameContext) => 
 export const variantList = (used: readonly string[], names: readonly string[]) =>
   variantNames(names, makeNameContext(used));
 
-// The names the simplifier gives the free variables standing for bound ones.
 export const isBoundName = (name: string) => name.startsWith(":");
 
 export const boundName = (index: number) => `:${String(index).padStart(3, "0")}`;

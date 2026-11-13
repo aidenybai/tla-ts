@@ -4,28 +4,21 @@ import { TlaProverError, TlaUnsupportedError } from "../src/errors";
 import { encodeForBackend } from "../src/prover/prove";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, writeResults } from "./corpora";
 import {
+  describeEncodeResult,
   getIsabelleDigest,
-  getModuleObligations,
+  getObligationsById,
   normalizeTheory,
   printResults,
   PROOF_INPUTS_DIRECTORY,
   readProofRecords,
+  type EncodeResult,
 } from "./proof-records";
 
-type Verdict = "match" | "mismatch" | "unsupported" | "failed";
+type Result = EncodeResult<"match" | "mismatch" | "unsupported" | "failed">;
 
 const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".isabelle-encode-results.json");
 
 const CONTEXT_LENGTH = 150;
-
-interface Result {
-  module: string;
-  id: number;
-  verdict: Verdict;
-  reason?: string;
-  expected?: string;
-  actual?: string;
-}
 
 const getEncoding = (encode: () => string) => {
   try {
@@ -56,12 +49,7 @@ const results = readProofRecords()
     ),
   )
   .flatMap((record): Result[] => {
-    const obligations = new Map(
-      getModuleObligations(join(CORPORA_DIRECTORY, record.id)).map((obligation) => [
-        obligation.id,
-        obligation,
-      ]),
-    );
+    const obligations = getObligationsById(join(CORPORA_DIRECTORY, record.id));
     return record.obligations.flatMap((expected): Result[] => {
       if (expected.status === "trivial" || !("isabelle" in expected) || !expected.isabelle)
         return [];
@@ -73,7 +61,6 @@ const results = readProofRecords()
         encodeForBackend(obligation, "isabelle", { caseErrors: 0 }),
       );
       const inputPath = join(PROOF_INPUTS_DIRECTORY, record.id, `${expected.id}.thy`);
-      // tlapm writes a theory as it prints it, so one whose printing fails stops before its end.
       if (
         encoded.kind === "failed" &&
         existsSync(inputPath) &&
@@ -100,10 +87,5 @@ printResults(
   results,
   ["match", "mismatch", "unsupported", "failed"],
   ["mismatch", "unsupported", "failed"],
-  (result) =>
-    [
-      `${result.verdict} ${result.module} #${result.id}${result.reason ? `: ${result.reason}` : ""}`,
-      ...(result.expected === undefined ? [] : [`  tlapm:  ${result.expected}`]),
-      ...(result.actual === undefined ? [] : [`  tla-ts: ${result.actual}`]),
-    ].join("\n"),
+  describeEncodeResult,
 );

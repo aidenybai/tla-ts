@@ -1,5 +1,4 @@
-// Ported from Isabelle2025's Pure/logic.ML. Copyright (c) 1986-2025 University of Cambridge,
-// Technische Universitaet Muenchen, and contributors, see LICENSE.
+// Ported from Isabelle2025's Pure/logic.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import { variantList } from "./name";
@@ -98,7 +97,6 @@ export const stripImpConcl = (term: Term): Term => {
   return current;
 };
 
-// Returns the premises reversed onto premises.
 export const stripPrems = (
   count: number,
   premises: readonly Term[],
@@ -121,11 +119,9 @@ export const isProtected = (term: Term) =>
 export const mkTerm = (term: Term) =>
   mkApp(mkConst("Pure.term", funT(fastypeOf(term), propT)), term);
 
-// Logic.combound: term(Bound (start+count-1), ..., Bound start).
 export const combound = (term: Term, start: number, count: number): Term =>
   count > 0 ? mkApp(combound(term, start + 1, count - 1), mkBound(start)) : term;
 
-// Logic.rlist_abs: ([xn, ..., x1], body) to %x1 ... xn. body.
 export const rlistAbs = (binders: readonly Binder[], body: Term) =>
   binders.reduce((result, binder) => mkAbs(binder.name, binder.type, result), body);
 
@@ -187,7 +183,7 @@ const incrIndexesFixed = (
 export const incrIndexes = (types: readonly Typ[], increment: number, term: Term) =>
   incrIndexesFixed([], types, increment, 0, term);
 
-const isAllAbs = (
+export const isAllAbs = (
   term: Term,
 ): term is Extract<Term, { kind: "App" }> & {
   arg: Extract<Term, { kind: "Abs" }>;

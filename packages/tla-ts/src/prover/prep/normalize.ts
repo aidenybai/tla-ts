@@ -1,5 +1,3 @@
-// What Backend.Prep does to an obligation before a backend's frontend.
-
 import { TlapmBugError, TlaProofError, TlaProverError } from "../../errors";
 import { expandActionOperators, lambdify } from "../../obligations/action";
 import { createAnonymizer } from "../../obligations/anonymize";
@@ -50,7 +48,6 @@ const expandDefinitionsAndPragmas = createDefinitionExpander(true);
 
 const expandDefinitions = createDefinitionExpander(false);
 
-// Each pragma substitutes whatever its visibility, and Toolbox.expand_defs leaves the pragmas.
 export const expandDefs = (sequent: Sequent, isPragmaExpanded = true): Sequent => {
   const expanded = (isPragmaExpanded ? expandDefinitionsAndPragmas : expandDefinitions)(
     sequent.context,
@@ -78,7 +75,6 @@ const getVisitedExprs = (hyp: Hyp): Expr[] => {
   }
 };
 
-// Elab.non_temporal: no temporal operator, but in hidden hypotheses.
 const isNonTemporal = (expression: Expr): boolean => {
   if (expression.kind === "Tsub" || expression.kind === "Fair") return false;
   if (
@@ -96,7 +92,7 @@ const isNonTemporal = (expression: Expr): boolean => {
 
 const normalizeLet = (expression: Expr): Expr => {
   if (expression.kind !== "Let") return mapChildren(expression, normalizeLet);
-  const [definition, ...definitions] = expression.definitions;
+  const definition = expression.definitions[0];
   if (!definition) return normalizeLet(expression.body);
   if (definition.kind !== "Operator" && definition.kind !== "Bpragma") {
     throw new TlaProofError(
@@ -106,7 +102,7 @@ const normalizeLet = (expression: Expr): Expr => {
     );
   }
   const operator = normalizeLet(definition.body);
-  const rest: Expr = { ...expression, definitions };
+  const rest: Expr = { ...expression, definitions: expression.definitions.slice(1) };
   return normalizeLet(substituteExpr(consSubstitution(operator, shift(0)), rest));
 };
 
@@ -132,8 +128,6 @@ const getRecordField = (record: Expr, point: ExceptPoint) => {
     : undefined;
 };
 
-// Folds left to right, sharing each prefix of adjacent updates and updating a record constructor in
-// place on a field it has.
 const normalizeExcept = (expression: Expr): Expr => {
   if (expression.kind !== "Except") return mapChildren(expression, normalizeExcept);
   const except = expression;
@@ -149,9 +143,9 @@ const normalizeExcept = (expression: Expr): Expr => {
     return at({ kind: "Record", fields }, base);
   };
   const apply = (base: Expr, specs: ExceptSpec[]): Expr => {
-    const [first, ...others] = specs;
+    const first = specs[0];
     if (!first) return base;
-    if (first.trail.length === 0) return apply(first.value, others);
+    if (first.trail.length === 0) return apply(first.value, specs.slice(1));
     const head = first.trail[0];
     const end = specs.findIndex(
       (spec) => spec.trail.length === 0 || !isSameHead(spec.trail[0], head),
@@ -207,7 +201,6 @@ const expandEnabledCdot = (
       throw new TlaProverError("ENABLEDaxioms depends on assumptions of level > 1 \n\n");
     return implicationToEnabled(sequent, locus, onWarning);
   }
-  // Expr.Anon's anon, which only meets the names that lambdification binds.
   const anonymizer = createAnonymizer(
     { value: 0 },
     () => {
@@ -250,8 +243,6 @@ export const normalizeExpand = (
     onWarning,
   );
 
-// The goal is TRUE or a hypothesis, visible or not: an alpha-equivalent fact, or the x \in S of NEW
-// x \in S.
 export const isTrivial = (sequent: Sequent) =>
   (sequent.active.kind === "Internal" && sequent.active.builtin === "TRUE") ||
   sequent.context.some((hyp, index) => {
@@ -302,7 +293,6 @@ const extractEqualities = (expression: Expr): [Expr[], Expr | undefined] => {
   return [[], expression];
 };
 
-// Each visible fact becomes the rest of it, then its equalities.
 export const flatten = (sequent: Sequent): Sequent => {
   const context: Hyp[] = [];
   const substitution = sequent.context.reduce<Substitution>((current, hyp) => {

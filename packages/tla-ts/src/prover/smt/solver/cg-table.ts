@@ -1,5 +1,4 @@
-// Ported from Z3 (src/smt/smt_cg_table.h, src/smt/smt_cg_table.cpp), MIT license, see
-// z3-license.txt.
+// Ported from Z3 (src/smt/smt_cg_table.h, src/smt/smt_cg_table.cpp), MIT license, see z3-license.txt.
 import { CONGRUENCE_JUSTIFICATIONS, type Enode } from "./enode";
 
 const getEqHash = (decl: number, first: number, second: number) =>
@@ -155,9 +154,5 @@ export class CgTable {
     this.states[slot] = DELETED;
     this.numFull--;
     this.numDeleted++;
-  }
-
-  contains(node: Enode) {
-    return this.getSlot(node) !== -1;
   }
 }

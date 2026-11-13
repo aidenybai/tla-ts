@@ -1,5 +1,3 @@
-// A bound variable prints as the number of binders between it and its own.
-
 import { term, UncheckedError, variable, type Env, type Operators, type Term } from "./terms";
 
 export const createKeys = () => {
@@ -103,7 +101,6 @@ export const createKeys = () => {
   const getTopKey = (formula: Term) => {
     const cached = topKeys.get(formula);
     if (cached !== undefined) return cached;
-    // Keys count binders from the variable, so a formula's key doesn't depend on where it sits.
     const key = getEnvKey(formula, new Map(), 0);
     topKeys.set(formula, key);
     return key;

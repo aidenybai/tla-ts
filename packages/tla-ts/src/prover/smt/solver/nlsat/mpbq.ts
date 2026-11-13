@@ -1,6 +1,4 @@
-// Ported from Z3 (src/util/mpbq.{h,cpp}), MIT license, see z3-license.txt. Like Z3, mul, div2
-// and power skip normalizing when a normalized input cannot need it, so an unnormalized input stays
-// unnormalized, which magnitudes and is_int read.
+// Ported from Z3 (src/util/mpbq.{h,cpp}), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 
 const getPowerOfTwoMultiple = (value: bigint) => {
@@ -49,8 +47,6 @@ export class Mpbq {
     return new Mpbq(num >> BigInt(shift), k - shift);
   }
 
-  // to_mpbq: q when its denominator is a power of two, else the binary rational with q's numerator
-  // over 2^(log2(den) + 1), which is not equal to q.
   static fromRational(value: Rational) {
     if (value.den === 1n) return { value: Mpbq.of(value.num), isExact: true };
     const log2 = getLog2(value.den);
@@ -93,14 +89,13 @@ export class Mpbq {
     return Mpbq.of(aligned[0] - aligned[1], aligned[2]);
   }
 
-  // mul: normalized only when a factor is an integer.
+  // Like Z3, mul, div2 and power leave some results unnormalized, and magnitudes and isInt read k.
   mul(other: Mpbq) {
     const product = new Mpbq(this.num * other.num, this.k + other.k);
     return this.k === 0 || other.k === 0 ? Mpbq.of(product.num, product.k) : product;
   }
 
-  // mul(a, b, b): Z3 reads b's k after writing the product's, so it normalizes only when a is an
-  // integer.
+  // Z3's mul(a, b, b) reads b's k after writing the product's k, so only an integer a normalizes.
   mulIntoOther(other: Mpbq) {
     const product = new Mpbq(this.num * other.num, this.k + other.k);
     return this.k === 0 ? Mpbq.of(product.num, product.k) : product;

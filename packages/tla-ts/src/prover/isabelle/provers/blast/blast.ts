@@ -1,14 +1,11 @@
-// Ported from Isabelle2025's Provers/blast.ML. Copyright (c) 1986-2025 University of Cambridge,
-// Technische Universitaet Muenchen, and contributors, see LICENSE.
-// Blast ignores the claset's wrappers and the elimination rules whose conclusion is not a formula
-// variable.
+// Ported from Isabelle2025's Provers/blast.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
-import { TlaIsabelleError } from "../../../../errors";
+import { isIsabelleError, TlaIsabelleError } from "../../../../errors";
 import { selectGoal } from "../../pure/goal";
-import { destImplies, stripParams } from "../../pure/logic";
+import { destImplies, isAllAbs, stripParams } from "../../pure/logic";
 import { makeNameContext } from "../../pure/name";
-import { emptySeq, makeSeq, ofCell, type Cell, type Seq } from "../../pure/seq";
-import { eqThm, orElse, thenTac, type GoalTactic, type Tactic } from "../../pure/tactical";
+import { emptySeq, ofCell, type Seq } from "../../pure/seq";
+import { every, orElse, thenTac, type GoalTactic, type Tactic } from "../../pure/tactical";
 import { addFreeNames, stripComb, type Term } from "../../pure/term";
 import { nprems, type Thm } from "../../pure/thm";
 import { atomizePremsTac } from "../../pure/object-logic";
@@ -33,23 +30,15 @@ import {
   mkBlastFree,
   mkBlastSkolem,
   mkBlastVar,
-  mkGoal,
-  stripBlastImpConcl,
-  stripBlastImpPrems,
+  splitGoalPrems,
   type BlastTerm,
   type VarEntry,
   type VarRef,
 } from "./term";
 
-export type { BlastContext } from "./state";
-
 const DEPTH_LIMIT = 20;
 
-// TRANS: the subgoal has no translation, such as one applying an unknown to a non-parameter.
 class Trans extends Error {}
-
-const isTermError = (error: unknown) =>
-  error instanceof TlaIsabelleError && error.exception === "TERM";
 
 const initialize = (context: BlastContext, state: Thm): BlastState => {
   for (const name of [GOAL_NAME, FALSE_NAME])
@@ -59,12 +48,7 @@ const initialize = (context: BlastContext, state: Thm): BlastState => {
 };
 
 const discardForalls = (term: Term): Term =>
-  term.kind === "App" &&
-  term.fun.kind === "Const" &&
-  term.fun.name === "Pure.all" &&
-  term.arg.kind === "Abs"
-    ? discardForalls(term.arg.body)
-    : term;
+  isAllAbs(term) ? discardForalls(term.arg.body) : term;
 
 interface SubgoalVar {
   readonly key: string;
@@ -75,14 +59,14 @@ interface SubgoalVar {
 const fromSubgoal = (state: BlastState, term: Term): BlastTerm => {
   const vars: SubgoalVar[] = [];
   const tvars: VarEntry[] = [];
-  const from = (level: number, current: Term): BlastTerm => {
+  const convert = (level: number, current: Term): BlastTerm => {
     const [head, args] = stripComb(current);
     const apply = (blastHead: BlastTerm) =>
       listBlastComb(
         blastHead,
-        args.map((arg) => from(level, arg)),
+        args.map((arg) => convert(level, arg)),
       );
-    const bounds = () =>
+    const getBounds = () =>
       args.map((arg) => {
         if (arg.kind !== "Bound")
           throw new Trans("Function unknown's argument not a bound variable");
@@ -100,11 +84,11 @@ const fromSubgoal = (state: BlastState, term: Term): BlastTerm => {
         const key = `${head.name}.${head.index}`;
         const known = vars.find((entry) => entry.key === key);
         if (known === undefined) {
-          const entry = { key, ref: { value: undefined }, bounds: bounds() };
+          const entry = { key, ref: { value: undefined }, bounds: getBounds() };
           vars.unshift(entry);
           return mkBlastVar(entry.ref);
         }
-        const argBounds = bounds();
+        const argBounds = getBounds();
         if (
           known.bounds.length === argBounds.length &&
           known.bounds.every((bound, index) => bound === argBounds[index])
@@ -114,67 +98,19 @@ const fromSubgoal = (state: BlastState, term: Term): BlastTerm => {
       }
       case "Abs":
         if (args.length > 0) throw new Trans("argument not in normal form");
-        return mkBlastAbs(head.name, from(level + 1, head.body));
+        return mkBlastAbs(head.name, convert(level + 1, head.body));
       case "App":
         throw new Trans("strip_comb");
     }
   };
   const npars = stripParams(term).length;
-  let result = from(0, discardForalls(term));
+  let result = convert(0, discardForalls(term));
   for (let index = 0; index < npars; index += 1) {
     const args = vars.filter((entry) => !entry.bounds.includes(index)).map((entry) => entry.ref);
     result = blastSubstBound(mkBlastSkolem(gensym(state, "T"), args), result);
   }
   return result;
 };
-
-interface EveryTrail {
-  readonly state: Thm;
-  readonly rest: Seq<Thm>;
-  readonly position: number;
-  readonly next: EveryTrail | undefined;
-}
-
-// Isabelle's EVY and evyBack call each other in tail position, so this loops to keep backtracking
-// over a long reconstruction from growing the stack.
-const everyTac =
-  (tactics: readonly Tactic[]): Tactic =>
-  (start) => {
-    const advance = (
-      initialTrail: EveryTrail | undefined,
-      initialPosition: number,
-      initialState: Thm | undefined,
-    ): Cell<Thm> => {
-      let trail = initialTrail;
-      let position = initialPosition;
-      let state = initialState;
-      for (;;) {
-        if (state === undefined) {
-          if (trail === undefined) return undefined;
-          const cell = trail.rest.pull();
-          if (cell === undefined) trail = trail.next;
-          else if (eqThm(trail.state, cell[0])) trail = { ...trail, rest: cell[1] };
-          else {
-            trail = { state: cell[0], rest: cell[1], position: trail.position, next: trail.next };
-            position = trail.position;
-            state = cell[0];
-          }
-        } else if (position === tactics.length) {
-          const saved = trail;
-          return [state, makeSeq(() => advance(saved, 0, undefined))];
-        } else {
-          const cell = tactics[position](state).pull();
-          if (cell === undefined) state = undefined;
-          else {
-            trail = { state: cell[0], rest: cell[1], position: position + 1, next: trail };
-            position += 1;
-            state = cell[0];
-          }
-        }
-      }
-    };
-    return makeSeq(() => advance(undefined, 0, start));
-  };
 
 const initBranch = (terms: readonly BlastTerm[], lim: number): Branch => ({
   pairs: [{ safe: terms.map((term) => ({ term, md: true })), unsafe: [] }],
@@ -193,9 +129,9 @@ const rawBlast =
           const replay: Tactic[] = [];
           for (let current = tactics; current !== undefined; current = current.tail)
             replay.push(current.head(1));
-          return everyTac(replay.reverse())(goalState).pull();
+          return every(replay.reverse())(goalState).pull();
         } catch (error) {
-          if (isTermError(error)) return backtrack(choices);
+          if (isIsabelleError(error, "TERM")) return backtrack(choices);
           throw error;
         }
       })();
@@ -203,20 +139,7 @@ const rawBlast =
     };
     try {
       const skoprem = fromSubgoal(state, destImplies(goalState.prop)[0]);
-      const trueprop = context.data.trueprop;
-      return prove(
-        state,
-        [
-          initBranch(
-            [
-              mkGoal(stripBlastImpConcl(trueprop, skoprem)),
-              ...stripBlastImpPrems(trueprop, skoprem),
-            ],
-            lim,
-          ),
-        ],
-        cont,
-      );
+      return prove(state, [initBranch(splitGoalPrems(context.data.trueprop, skoprem), lim)], cont);
     } catch (error) {
       if (isBacktrackTo(error, undefined) || error instanceof Trans) return emptySeq;
       throw error;

@@ -17,14 +17,13 @@ export const DEFAULT_FACTOR_PARAMS: FactorParams = {
   maxSearchSize: UINT_MAX,
 };
 
-// constant * factors[0]^degrees[0] * ... * factors[n]^degrees[n].
 export interface UpolynomialFactors {
   constant: bigint;
   factors: bigint[][];
   degrees: number[];
 }
 
-const mkFactors = (): UpolynomialFactors => ({ constant: 1n, factors: [], degrees: [] });
+export const mkFactors = (): UpolynomialFactors => ({ constant: 1n, factors: [], degrees: [] });
 
 const getTotalFactors = (fs: UpolynomialFactors) =>
   fs.degrees.reduce((total, degree) => total + degree, 0);
@@ -68,7 +67,6 @@ const mkPrimeIterator = () => {
   };
 };
 
-// Returns the upper end when the square root is not an integer.
 const getSquareRoot = (value: bigint) => {
   if (value === 0n) return value;
   const log2 = value.toString(2).length - 1;
@@ -108,7 +106,6 @@ const isTrivialDegreeSet = (set: readonly boolean[]) => {
   return true;
 };
 
-// berlekamp_matrix: Q - I, where row i of Q holds x^(p*i) modulo f.
 class BerlekampMatrix {
   private matrix: bigint[];
   private size: number;
@@ -148,7 +145,6 @@ class BerlekampMatrix {
     this.matrix[row * this.size + column] = this.zp.normalizeNumeral(value);
   }
 
-  // Returns the rank of the null space.
   diagonalize() {
     let nullRank = 0;
     for (let row = 0; row < this.size; row++) {
@@ -177,7 +173,6 @@ class BerlekampMatrix {
     return nullRank;
   }
 
-  // Skips [1, 0, ..., 0].
   nextNullSpaceVector() {
     for (; this.nullRow < this.size; this.nullRow++) {
       if (this.rowPivot[this.nullRow] >= 0) continue;
@@ -195,7 +190,6 @@ class BerlekampMatrix {
   }
 }
 
-// Returns false when f is irreducible.
 const factorSquareFreeInZp = (zp: UpolynomialManager, f: Upolynomial, fs: UpolynomialFactors) => {
   const prime = Number(zp.zp);
   const matrix = new BerlekampMatrix(zp, f);
@@ -224,8 +218,6 @@ const factorSquareFreeInZp = (zp: UpolynomialManager, f: Upolynomial, fs: Upolyn
   return true;
 };
 
-// hensel_lift: from C = A*B (mod b) and U*A + V*B = 1 (mod r) with r | b, the A1 = A (mod b) and
-// B1 = B (mod b) with C = A1*B1 (mod b*r), deg(A1) = deg(A) and lc(A1) = lc(A).
 const henselLiftOnce = (
   z: UpolynomialManager,
   b: bigint,
@@ -281,7 +273,6 @@ const henselLiftQuadratic = (
   return { a: currentA, b: currentB };
 };
 
-// The last factor carries lc(f) until it is divided out.
 const henselLiftFactors = (
   z: UpolynomialManager,
   f: Upolynomial,
@@ -314,8 +305,6 @@ const henselLiftFactors = (
   return zpeFs;
 };
 
-// mignotte_bound: the e, a power of two, with p^e above 2^n * (|f| + |lc(f)|) for n = deg(f)/2,
-// which bounds twice the coefficients of the factors of degree at most n.
 const getMignotteBound = (f: Upolynomial, prime: bigint) => {
   let squareNorm = 0n;
   for (const coeff of f) if (coeff !== 0n) squareNorm += coeff * coeff;
@@ -328,9 +317,6 @@ const getMignotteBound = (f: Upolynomial, prime: bigint) => {
   return e;
 };
 
-// ufactorization_combination_iterator: the subsets of the enabled factors, smallest first and at
-// most half of them, whose degree is in the degree set. Selected factors that turn out to be true
-// factors are removed from later subsets.
 class CombinationIterator {
   private totalSize: number;
   private maxSize: number;
@@ -456,8 +442,6 @@ class CombinationIterator {
 const divides = (divisor: bigint, dividend: bigint) =>
   divisor === 0n ? dividend === 0n : dividend % divisor === 0n;
 
-// Returns false when a limit in params stopped the search, leaving a factor that may be
-// reducible.
 export const factorSquareFree = (
   z: UpolynomialManager,
   f: Upolynomial,
@@ -534,8 +518,6 @@ export const factorSquareFree = (
       isRemoving = false;
       continue;
     }
-    // The factor is the side of degree at most half, which the bound makes recoverable. The
-    // search continues with the other side.
     pushFactor(z, fs, z.getPrimitive(isUsingLeft ? trial : quotient), k);
     fPp = z.getPrimitive(isUsingLeft ? quotient : trial);
     leading = fPp[fPp.length - 1];
@@ -585,7 +567,6 @@ const flipFactorSignIfLmNeg = (p: Upolynomial, fs: UpolynomialFactors, k: number
   return p.map((coeff) => -coeff);
 };
 
-// Returns false when a limit in params left a factor that may be reducible.
 export const factorUpolynomial = (
   z: UpolynomialManager,
   p: Upolynomial,

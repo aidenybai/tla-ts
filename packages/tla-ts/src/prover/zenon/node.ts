@@ -1,5 +1,4 @@
-// Ported from Zenon's node.ml and heap.ml, as shipped in tlapm. Copyright 2001-2004 INRIA, see
-// LICENSE.
+// Ported from Zenon's node.ml and heap.ml, as shipped in tlapm. Copyright 2001-2004 INRIA, see LICENSE.
 
 import type { Expr } from "./expr";
 import type { Rule } from "./proof";
@@ -221,8 +220,6 @@ const removeAt = (
   return [removed[0], cons([list.head[0], removed[1]], list.tail)];
 };
 
-// On even states, the smallest instance of the most goal-directed formulas; on odd states, the
-// smallest instance overall.
 const removeByGoalness = (state: number, list: List<[number, Heap]>) => {
   if (state % 2 === 0) return removeAt(0, list);
   let best = 0;

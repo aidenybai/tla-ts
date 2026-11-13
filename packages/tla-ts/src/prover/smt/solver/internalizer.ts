@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/smt_context.h, src/smt/smt_internalizer.cpp), MIT license, see
 // z3-license.txt.
 import { SmtInvariantError, SmtUnsupportedError } from "../../../errors";
 import {
@@ -64,8 +63,6 @@ const WHITE = 0;
 const GREY = 1;
 const BLACK = 2;
 
-// An undo entry is its kind on trailKinds, with its operands on trailNodes and trailInts, so
-// recording one allocates nothing.
 const UNDO_CLOSURE = 0;
 const UNDO_MK_BOOL_VAR = 1;
 const UNDO_MK_ENODE = 2;
@@ -75,9 +72,6 @@ const UNDO_CGC_GENERATIONS = 5;
 const UNDO_MERGE_TF = 6;
 const UNDO_ENODE_FLAG = 7;
 
-// The first word of bool_var_data: the level of the assignment in the low 24 bits, then m_mark,
-// m_phase_available, m_phase, m_eq, m_true_first, m_enode, m_quantifier and whether a theory is
-// notified.
 const LEVEL_MASK = 0xffffff;
 const BV_MARK = 1 << 24;
 export const BV_PHASE_AVAILABLE = 1 << 25;
@@ -112,9 +106,6 @@ export abstract class Internalizer {
   abstract getTheory(family: number): Theory | undefined;
   abstract readonly qmanager: DefaultQuantifierManager;
 
-  // Per Boolean variable. Like Z3's vectors, the arrays keep their size when a variable is deleted,
-  // since V8 shrinks an array's storage when it pops and copies it again when it grows. Only the
-  // first numBoolVars entries are live.
   numBoolVars = 0;
   boolVar2Expr: number[] = [];
   private boolVarData = new Int32Array(2048);
@@ -124,21 +115,12 @@ export abstract class Internalizer {
   protected assignment: number[] = [];
   readonly clauses = new ClauseStore();
   protected watches: (Clause[] | undefined)[] = [];
-  // del_clauses' uint_set of the watch lists to filter, by literal, all 0 between calls.
   private watchMarks = new Uint8Array(1024);
   private removedLiterals: Literal[] = [];
-  // mkClause neither keeps the gate buffers nor makes a gate, so the gates reuse them.
   private gateBuffer: Literal[] = [];
   private gateLiterals: Literal[] = [];
-  // The binary clauses of the binary clause optimization: the literals each literal propagates when it
-  // becomes true, which Z3 visits newest first and before the clauses.
   protected binaryWatches: (Literal[] | undefined)[] = [];
-  // A binary justification holds only its literal, so undoMkBoolVar keeps it for the next variable
-  // with that literal. Clearing it would write past the end of this sparse array, which V8 then
-  // turns into a dictionary.
   private binJustifications: (BinJustification | undefined)[] = [];
-  // A typed array keeps the element loads of every context monomorphic, where the holes of a
-  // growing array give each its own elements kind.
   private exprToBoolVar = new Int32Array(1024).fill(-1);
   protected exprToEnode: (Enode | undefined)[] = [];
 
@@ -169,7 +151,6 @@ export abstract class Internalizer {
   constructor(
     readonly manager: AstManager,
     isRelevancyEnabled: boolean,
-    isDelayingNewCaseSplits: boolean,
   ) {
     this.rewriter = new Rewriter(manager, KERNEL_REWRITER_OPTIONS);
     this.relevancy = new RelevancyPropagator(
@@ -189,7 +170,7 @@ export abstract class Internalizer {
         getNumBoolVars: () => this.numBoolVars,
         isUnassigned: (boolVar) => this.assignment[mkLiteral(boolVar)] === L_UNDEF,
       },
-      isDelayingNewCaseSplits,
+      isRelevancyEnabled,
     );
     this.mkBoolVar(manager.trueExpr);
     this.assignment[0] = L_TRUE;
@@ -328,8 +309,6 @@ export abstract class Internalizer {
     return this.cgTable.findFor(decl, args, decl === OP_EQ);
   }
 
-  // The congruence table is searched with m_is_diseq_tmp, an equality of the sort, which holds a
-  // reference until an equality of another sort replaces it.
   isDiseq(first: Enode, second: Enode, isCheckingValues = true) {
     const manager = this.manager;
     if (isCheckingValues && manager.areDistinct(first.root.owner, second.root.owner)) return true;
@@ -400,12 +379,10 @@ export abstract class Internalizer {
     return this.conflict !== null;
   }
 
-  // Equalities have generation 0, since patterns have no equalities.
   getGeneration(node: Enode) {
     return node.isEq ? 0 : this.getCgRoot(node).generation;
   }
 
-  // get_cg_root: a node's cg can be stale, so a node that is not a congruence root looks the root up.
   private getCgRoot(node: Enode) {
     if (!node.usesCgTable() || node.isCgr()) return node;
     return this.cgTable.findCongruent(node) ?? node;
@@ -423,9 +400,6 @@ export abstract class Internalizer {
   ) {
     this.setGeneration(first, firstGeneration);
     this.setGeneration(second, secondGeneration);
-    // apply_sticky_updates: a lowered generation outlives the merge that it was made under. Only the
-    // updates of the two nodes' declarations can be congruent to them, and a node with an update
-    // uses the congruence table, so it has arguments and is no equality.
     this.applyStickyUpdates(first, firstGeneration, second, secondGeneration);
     if (second.decl !== first.decl) this.applyStickyUpdates(second, secondGeneration, null, 0);
   }
@@ -457,8 +431,6 @@ export abstract class Internalizer {
     }
   }
 
-  // mk_bool_var: m_b_internalized_stack holds a reference to the expression until the variable is
-  // deleted.
   mkBoolVar(expr: number) {
     const boolVar = toBoolVar(this.numBoolVars++);
     const literal = mkLiteral(boolVar);
@@ -488,8 +460,6 @@ export abstract class Internalizer {
     return boolVar;
   }
 
-  // The arrays keep the deleted variable's entries, which mkBoolVar overwrites. Those that hold
-  // objects are cleared, so the objects can be collected.
   private undoMkBoolVar() {
     const boolVar = toBoolVar(--this.numBoolVars);
     const expr = this.boolVar2Expr[boolVar];
@@ -532,10 +502,9 @@ export abstract class Internalizer {
     this.setBoolVarFlag(boolVar, BV_MARK, value);
   }
 
-  // watch_list::reset: a new variable's lists keep the room of a deleted one's. Assigning undefined to
-  // a literal past the end keeps the arrays without holes.
   private resetWatches(literal: number) {
     const list = this.watches[literal];
+    // HACK: assigning undefined to a literal past the end keeps V8's arrays without holes.
     if (list === undefined) this.watches[literal] = undefined;
     else shrink(list, 0);
     const binary = this.binaryWatches[literal];
@@ -600,7 +569,6 @@ export abstract class Internalizer {
     for (let index = 0; index < numArgs; index++) node.getArg(index).root.addParent(node);
     if (manager.isUniqueValue(expr)) node.isInterpreted = true;
     setAt(this.exprToEnode, expr, node);
-    // m_e_internalized_stack holds a reference to the expression until the enode is deleted.
     manager.incRef(expr);
     this.trailKinds.push(UNDO_MK_ENODE);
     this.enodes.push(node);
@@ -675,8 +643,6 @@ export abstract class Internalizer {
     this.setBoolVarFlag(boolVar, BV_ENODE, true);
   }
 
-  // update_generation: a node of a congruence class records its lower generation as sticky, so
-  // undoing a merge of the class keeps it.
   private updateGeneration(node: Enode) {
     if (node.isEq) return;
     if (this.generation > 0 && this.generation < this.getGeneration(node)) {
@@ -716,7 +682,6 @@ export abstract class Internalizer {
     const visitChild = (child: number, isGate: boolean) => {
       if (getColor(child, isGate) === WHITE) todo.push([child, isGate]);
     };
-    // ts_visit_children, which Z3 calls again on grey expressions only in its assertions.
     const visitChildren = (current: number) => {
       if (manager.kinds[current] === KIND_QUANTIFIER || !this.shouldInternalizeRec(current)) return;
       const node = this.exprToEnode[current];
@@ -1002,8 +967,6 @@ export abstract class Internalizer {
     const existing = this.exprToEnode[expr];
     if (existing !== undefined) {
       this.updateGeneration(existing);
-      // The theory may have made a nested term, such as the 2 of (* 2 x), without a variable, which
-      // it needs once the term occurs elsewhere.
       const theory = this.getTheory(manager.getFamily(expr));
       if (theory !== undefined && !theory.isAttachedToVar(existing)) theory.internalizeTerm(expr);
       return;
@@ -1045,7 +1008,6 @@ export abstract class Internalizer {
     const condition = this.getLiteral(this.manager.getArg(expr, 0));
     this.mkClause([negate(condition), this.getLiteral(thenEq)], null, CLS_AUX);
     this.mkClause([condition, this.getLiteral(elseEq)], null, CLS_AUX);
-    // ite_term_relevancy_eh: it marks the terms for the propagator, which propagates them later.
     const handler = () => {
       if (!this.isRelevant(expr)) return;
       this.relevancy.markAsRelevant(this.manager.getArg(expr, 0));
@@ -1121,8 +1083,6 @@ export abstract class Internalizer {
     return true;
   }
 
-  // simplify_aux_lemma_literals: unlike an aux clause, a theory lemma keeps its false literals, so it
-  // needs no unit resolution justification.
   private simplifyAuxLemmaLiterals(literals: Literal[]) {
     sortNumbers(literals);
     let previous: Literal | null = null;
@@ -1187,8 +1147,6 @@ export abstract class Internalizer {
     this.addWatch(negate(this.clauses.getLiteral(clause, index)), clause);
   }
 
-  // A literal's first watch gets a list of its own size, since growing an empty list allocates room
-  // for many.
   protected addWatch(literal: Literal, clause: Clause) {
     const list = this.watches[literal];
     if (list === undefined) this.watches[literal] = [clause];
@@ -1198,7 +1156,6 @@ export abstract class Internalizer {
   protected removeWatchLiteral(clause: Clause, index: number) {
     const list = this.watches[negate(this.clauses.getLiteral(clause, index))];
     if (list === undefined) return;
-    // A clause is deleted when its scope is popped, so it is most often near the end.
     const position = list.lastIndexOf(clause);
     if (position === -1) return;
     list.copyWithin(position, position + 1);
@@ -1213,9 +1170,6 @@ export abstract class Internalizer {
     return created;
   }
 
-  // use_binary_clause_opt: a clause of two literals at the base level of the first scope, over
-  // variables created there, becomes a pair of binary watches. With relevancy, lemmas stay clauses so
-  // their propagations can mark literals as relevant.
   private isUsingBinaryClauseOpt(first: Literal, second: Literal, isLemma: boolean) {
     if (isLemma && this.relevancy.isEnabled) return false;
     if (this.baseLevel > 0) return false;
@@ -1236,14 +1190,12 @@ export abstract class Internalizer {
     this.clausesToReinit[level].push(clause);
   }
 
-  // mk_clause: like Z3's, it simplifies the literals in the array it is given.
   mkClause(
-    input: Literal[],
+    literals: Literal[],
     inputJustification: Justification | null,
     kind: number,
     delEh: (() => void) | null = null,
   ) {
-    const literals = input;
     let justification = inputJustification;
     if (kind === CLS_TH_LEMMA) {
       if (!this.simplifyAuxLemmaLiterals(literals)) return null;
@@ -1294,8 +1246,6 @@ export abstract class Internalizer {
       this.addWatchLiteral(clause, 1);
       const first = clauses.getLiteral(clause, 0);
       const second = clauses.getLiteral(clause, 1);
-      // A theory lemma that conflicts or propagates above the base level is checked again when the
-      // level is backtracked.
       const isPropagating =
         this.assignment[first] === L_FALSE || this.assignment[second] === L_FALSE;
       if (this.assignment[first] === L_FALSE) this.setConflict(clause, null);
@@ -1313,7 +1263,6 @@ export abstract class Internalizer {
     return clause;
   }
 
-  // A clause in the reinit stack is only marked deleted, and reinitClauses frees it.
   protected deleteClause(clause: Clause) {
     const clauses = this.clauses;
     if (clauses.isDeleted(clause)) return;
@@ -1330,8 +1279,6 @@ export abstract class Internalizer {
     this.clauses.clearAtoms(clause);
   }
 
-  // del_clauses: past 1,000 clauses, mark each deleted, filter each of their watch lists once, then
-  // release their atoms, instead of searching a watch list per clause.
   protected deleteClauses(clauses: Clause[], oldSize: number) {
     if (clauses.length - oldSize <= 1000) {
       for (let index = clauses.length - 1; index >= oldSize; index--)

@@ -1,5 +1,4 @@
 // Ported from Z3 (src/util/hash.h, src/util/hash.cpp), MIT license, see z3-license.txt.
-// Z3's hash tables iterate in hash order, so matching the hashes matches Z3's iteration order.
 const GOLDEN_RATIO = 0x9e3779b9;
 
 const mix = (state: Uint32Array) => {
@@ -29,7 +28,6 @@ const mix = (state: Uint32Array) => {
   state[2] = c;
 };
 
-// No hash function calls another while it uses the state, so they share one.
 const sharedState = new Uint32Array(3);
 
 const mkState = (a: number, b: number, c: number) => {

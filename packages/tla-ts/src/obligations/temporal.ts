@@ -1,5 +1,4 @@
-// tlapm's Expr.Tla_norm, Expr.Constness and Expr.Temporal_props, where a fact holds always when it
-// is closed under [].
+// A port of tlapm's Expr.Tla_norm, Expr.Constness and Expr.Temporal_props.
 
 import {
   adjoin,
@@ -9,6 +8,8 @@ import {
   getFresh,
   getLocalDefn,
   getScopeAt,
+  getTrue,
+  isBuiltinApply,
   mapChildren,
   type Builtin,
   type Expr,
@@ -31,12 +32,11 @@ export const rewriteUnchanged = (expression: Expr): Expr => {
   const flatten = (inner: Expr): Expr[] =>
     inner.kind === "Tuple" ? inner.elements.flatMap(flatten) : [inner];
   const items = flatten(expression);
-  if (items.length === 0) return at({ kind: "Internal", builtin: "TRUE" }, expression);
+  if (items.length === 0) return getTrue(expression);
   if (items.length === 1) return getEquality(items[0]);
   return at({ kind: "List", bullet: "And", items: items.map(getEquality) }, expression);
 };
 
-// Each visitor rewrites the outermost match and leaves the rest of the tree as it is.
 const rewrite =
   (match: (expression: Expr, recurse: (inner: Expr) => Expr) => Expr | undefined) =>
   (expression: Expr): Expr => {
@@ -45,7 +45,7 @@ const rewrite =
   };
 
 export const expandLeadsto = rewrite((expression, recurse) =>
-  expression.kind === "Apply" && isApplied(expression, ["Leadsto"])
+  isBuiltinApply(expression, "Leadsto")
     ? applyBuiltin(
         "BoxTrue",
         [
@@ -104,11 +104,8 @@ export const expandAction = rewrite((expression, recurse) => {
   return applyBuiltin(expression.modal === "Box" ? "BoxTrue" : "Diamond", [step], expression);
 });
 
-// Only getTime uses this, so the locations rewriteUnchanged gives do not matter.
 const expandUnchanged = rewrite((expression) =>
-  expression.kind === "Apply" && isApplied(expression, ["UNCHANGED"])
-    ? rewriteUnchanged(expression.args[0])
-    : undefined,
+  isBuiltinApply(expression, "UNCHANGED") ? rewriteUnchanged(expression.args[0]) : undefined,
 );
 
 const TEMPORAL_BUILTINS: Builtin[] = [
@@ -125,6 +122,11 @@ const TEMPORAL_BUILTINS: Builtin[] = [
 ];
 
 const constantBodies = new WeakMap<Expr, boolean>();
+
+interface ConstnessState {
+  scope: Scope | undefined;
+  isGood: boolean;
+}
 
 const isConstantHyp = (scope: Scope | undefined, hyp: Hyp) => {
   switch (hyp.kind) {
@@ -182,10 +184,7 @@ export const isConstant = (scope: Scope | undefined, expression: Expr): boolean 
         expression.body,
       );
     case "Sequent": {
-      const inner = expression.sequent.context.reduce<{
-        scope: Scope | undefined;
-        isGood: boolean;
-      }>(
+      const inner = expression.sequent.context.reduce<ConstnessState>(
         (state, hyp) => ({
           scope: adjoin(state.scope, hyp),
           isGood: state.isGood && isConstantHyp(state.scope, hyp),
@@ -202,7 +201,7 @@ export const isConstant = (scope: Scope | undefined, expression: Expr): boolean 
     case "Apply":
       return recurse(expression.operator) && expression.args.every(recurse);
     case "Let": {
-      const inner = expression.definitions.reduce<{ scope: Scope | undefined; isGood: boolean }>(
+      const inner = expression.definitions.reduce<ConstnessState>(
         (state, definition) => ({
           scope: adjoin(state.scope, getLocalDefn(definition)),
           isGood:
@@ -274,7 +273,6 @@ export const isConstant = (scope: Scope | undefined, expression: Expr): boolean 
   }
 };
 
-// Under a negation or on the left of =>, <> takes the place of [].
 const isClosed = (scope: Scope | undefined, expression: Expr, isBox: boolean): boolean => {
   if (isConstant(scope, expression)) return true;
   if (expression.kind === "Internal")

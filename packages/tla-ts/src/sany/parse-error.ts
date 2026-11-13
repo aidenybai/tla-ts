@@ -1,9 +1,6 @@
 import { createSanyLexer, escapeLexeme, getKind, type SanyToken } from "./lexer";
 import { SANY_OPERATOR_SYNONYMS } from "../tlc/jar-data";
 
-// Interprets the grammar of javacc/tla+.jj as JavaCC's generated parser runs it, so that it fails
-// at the same token, in the same productions, after the same lookahead as SANY's parser.
-
 type Predicate = (state: ParserState) => boolean;
 
 interface TokensUnit {
@@ -36,7 +33,6 @@ interface ActionUnit {
   run: (state: ParserState) => string | undefined;
 }
 
-// Elsewhere than first in an alternative or a loop's body, JavaCC checks only its semantic part.
 interface LookaheadUnit {
   type: "lookahead";
   amount: number;
@@ -73,7 +69,6 @@ interface Production {
   exit: ((frame: Frame, state: ParserState) => string | void) | undefined;
 }
 
-// An Operator of Operators.CanonicalOperators. None of them is right-associative.
 interface Operator {
   name: string;
   low: number;
@@ -145,7 +140,6 @@ interface ParserState {
 
 type ScanResult = "matched" | "failed" | "done";
 
-// JavaCC's amount for a LOOKAHEAD that gives an expansion but no amount.
 const UNBOUNDED_AMOUNT = 2147483647;
 const EOF = getKind("EOF");
 const IDENTIFIER = getKind("IDENTIFIER");
@@ -154,7 +148,7 @@ const DEFBREAK = getKind("DEFBREAK");
 const getKindRange = (first: string, last: string) =>
   Array.from(
     { length: getKind(last) - getKind(first) + 1 },
-    (_, offset) => getKind(first) + offset,
+    (_element, offset) => getKind(first) + offset,
   );
 
 const OPERATOR_KINDS = new Set(getKindRange("op_57", "op_119"));
@@ -178,7 +172,6 @@ const createOperators = (
   ...names: string[]
 ) => names.map((name): [string, Operator] => [name, { name, low, high, isLeftAssociative, fix }]);
 
-// Operators.CanonicalOperators, but for ".", which only OperatorStack.reduceRecord handles.
 const CANONICAL_OPERATORS = new Map([
   ...createOperators("postfix", 160, 160, true, "["),
   ...createOperators("postfix", 150, 150, false, "'", "^+", "^*", "^#"),
@@ -279,7 +272,12 @@ const CANONICAL_OPERATORS = new Map([
 const OPERATORS = new Map([
   ...CANONICAL_OPERATORS,
   ...SANY_OPERATOR_SYNONYMS.flatMap((synonyms) =>
-    synonyms.slice(1).map((synonym) => [synonym, CANONICAL_OPERATORS.get(synonyms[0])] as const),
+    synonyms
+      .slice(1)
+      .map((synonym): [string, Operator | undefined] => [
+        synonym,
+        CANONICAL_OPERATORS.get(synonyms[0]),
+      ]),
   ),
 ]);
 const FCN_OPERATOR = OPERATORS.get("[");
@@ -334,7 +332,6 @@ const getNext = (state: ParserState, token: SanyToken) => {
   return token.next;
 };
 
-// Counts from the scan position while a semantic lookahead runs during a scan.
 const getToken = (state: ParserState, index: number) => {
   let token = state.isLookingAhead ? state.scanPosition : state.token;
   for (let count = 0; count < index; count++) token = getNext(state, token);
@@ -422,8 +419,6 @@ const reduceOperator = (stack: StackElement[], operator: Operator) => {
   });
 };
 
-// The grammar pushes an infix or postfix operator only after an operand, except a "-" that
-// Expression takes for a prefix one, so the checks that reject other orders are left out.
 const reduceStack = (state: ParserState): string | undefined => {
   const stack = getOperatorStack(state);
   const top = stack.length - 1;
@@ -523,7 +518,6 @@ const getMisindentedNode = (state: ParserState, node: SyntaxNode): SyntaxNode | 
   return undefined;
 };
 
-// TLAplusParser.belchDEF reverses the links of the tokens it walks over and restores them after.
 const belchDef = (state: ParserState) => {
   const stops = ["EOF", "THEOREM", "PROPOSITION", "ASSUMPTION", "END_MODULE"].map(getKind);
   const isKind = (token: SanyToken, ...names: string[]) =>
@@ -632,7 +626,6 @@ const beginsProof = (state: ParserState) => {
   return isNextKind("BY", "PROOF", "OBVIOUS", "OMITTED")(state);
 };
 
-// Also sets the level of a proof from its first step.
 const isCorrectLevel = (state: ParserState, token: SanyToken) => {
   const level = getStepLevel(token);
   const depth = state.proofLevels.length - 1;
@@ -998,7 +991,6 @@ const PRODUCTIONS: Record<string, Production> = {
     }),
     "Expression",
   ]),
-  // A label returns from AssumeProve after the labeled AssumeProve, which a choice expresses.
   AssumeProve: production("Assume-Prove", [
     choice(
       sequence("Identifier", "<COLONCOLON>", "AssumeProve"),
@@ -1480,7 +1472,6 @@ const PRODUCTIONS: Record<string, Production> = {
     optional("Expression", zeroOrMore("<COMMA>", "Expression")),
     choice("<RAB>", sequence("<ARAB>", "ReducedExpression")),
   ]),
-  // The innermost NoOpExtension sets FairnessHook to its arguments, which end with ")".
   NoOpExtension: production(undefined, [
     "Identifier",
     optional(lookahead({ amount: 2 }), "OpArgs"),
@@ -1590,8 +1581,6 @@ const PRODUCTIONS: Record<string, Production> = {
       getPrefixOperators(),
       getOperand(),
     ],
-    // OperatorStack.finalReduce pushes an operator that binds looser than any other, whose node,
-    // null in Java, is never printed.
     (frame, state) => {
       const stack = getOperatorStack(state);
       stack.push({ node: frame.heirs[0], operator: VOID_OPERATOR });
@@ -1632,7 +1621,6 @@ const PRODUCTIONS: Record<string, Production> = {
           action(setFieldName),
           lookahead({ semantic: isAboveCurrent }),
           "Identifier",
-          // OperatorStack.reduceRecord, which first applies a postfix operator on top.
           action((state) => {
             const stack = getOperatorStack(state);
             if (stack[stack.length - 1].operator !== undefined) reducePostfix(stack, stack.length);
@@ -1840,7 +1828,6 @@ const evaluateSemantic = (state: ParserState, semantic: Predicate) => {
   return isPassed;
 };
 
-// Also records how far past the current token jj_rescan_token scans.
 const scanToken = (state: ParserState, kinds: Set<number>): ScanResult => {
   if (state.scanPosition === state.lastPosition) {
     state.remaining--;
@@ -1861,8 +1848,6 @@ const scanToken = (state: ParserState, kinds: Set<number>): ScanResult => {
   return state.remaining === 0 && state.scanPosition === state.lastPosition ? "done" : "matched";
 };
 
-// A loop or option skips its body's lookahead, but a choice checks the semantic part of each
-// alternative's.
 const scan = (state: ParserState, unit: Unit): ScanResult => {
   if (unit.type === "tokens") return scanToken(state, unit.kinds);
   if (unit.type === "call") return scan(state, PRODUCTIONS[unit.name].body);
@@ -1911,8 +1896,6 @@ const scan = (state: ParserState, unit: Unit): ScanResult => {
   }
 };
 
-// Saves the call for jj_rescan_token as jj_save does, over a call of the same site that can't be
-// rescanned.
 const scanAhead = (state: ParserState, amount: number, expansion: SequenceUnit) => {
   state.remaining = amount;
   state.scanPosition = state.token;
@@ -1931,8 +1914,6 @@ const scanAhead = (state: ParserState, amount: number, expansion: SequenceUnit) 
   return isMatched;
 };
 
-// A check is the semantic lookahead alone where no tokens are needed, a jj_ntk switch where one
-// token decides, and a jj_2 call otherwise.
 const decide = (state: ParserState, alternatives: SequenceUnit[]) =>
   alternatives.findIndex((alternative) => {
     const head = alternative.units[0];
@@ -1950,8 +1931,6 @@ const decide = (state: ParserState, alternatives: SequenceUnit[]) =>
     return scanAhead(state, amount, expansion) && (semantic === undefined || semantic(state));
   });
 
-// Shows as many tokens as the longest token sequence the ParseException expects. A rescan that
-// finishes its lookahead ends the rescans of its site.
 const getEncountered = (state: ParserState) => {
   state.isRescanning = true;
   for (const [expansion, chain] of state.calls) {
@@ -1976,13 +1955,12 @@ const getEncountered = (state: ParserState) => {
       break;
     }
     images.push(token.image);
-    // SANY's message follows the tokens the parser has read, without reading another.
     if (index < length - 1) token = getNext(state, token);
   }
   return `Encountered "${images.join(" ")}" at line ${next.beginLine}, column ${next.beginColumn} and token "${escapeLexeme(state.token.image)}" `;
 };
 
-const fail = (state: ParserState, message?: string) => {
+const recordParseException = (state: ParserState, message?: string) => {
   const expecting = state.expecting === "" ? "" : `Was expecting "${state.expecting}"\n`;
   const stack = state.messages
     .slice(-5)
@@ -2000,7 +1978,7 @@ const consume = (state: ParserState, kinds: Set<number>) => {
   const next = getNext(state, state.token);
   if (!kinds.has(next.kind)) {
     state.failedSwitchGeneration = state.generation;
-    return fail(state);
+    return recordParseException(state);
   }
   state.token = next;
   state.generation++;
@@ -2028,7 +2006,7 @@ const parseProduction = (state: ParserState, name: string) => {
     state.expecting = "";
   }
   const message = production.exit?.(frame, state);
-  if (typeof message === "string") return fail(state, message);
+  if (typeof message === "string") return recordParseException(state, message);
   const node = frame.node ?? (frame.heirs.length === 0 ? undefined : createNode(name, frame.heirs));
   if (node !== undefined) state.frames.at(-1)?.heirs.push(node);
   return true;
@@ -2039,10 +2017,10 @@ const parse = (state: ParserState, unit: Unit): boolean => {
   if (unit.type === "call") return parseProduction(state, unit.name);
   if (unit.type === "action") {
     const message = unit.run(state);
-    return message === undefined || fail(state, message);
+    return message === undefined || recordParseException(state, message);
   }
   if (unit.type === "lookahead")
-    return unit.semantic === undefined || unit.semantic(state) || fail(state);
+    return unit.semantic === undefined || unit.semantic(state) || recordParseException(state);
   if (unit.type === "sequence") {
     return unit.units.every(
       (inner, index) => (index === 0 && inner.type === "lookahead") || parse(state, inner),
@@ -2050,7 +2028,7 @@ const parse = (state: ParserState, unit: Unit): boolean => {
   }
   if (unit.type === "choice") {
     const index = decide(state, unit.alternatives);
-    return index === -1 ? fail(state) : parse(state, unit.alternatives[index]);
+    return index === -1 ? recordParseException(state) : parse(state, unit.alternatives[index]);
   }
   if (unit.type === "oneOrMore" && !parse(state, unit.body)) return false;
   if (unit.type === "optional") return decide(state, [unit.body]) === -1 || parse(state, unit.body);

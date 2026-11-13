@@ -1,9 +1,8 @@
-// Ported from Z3 (src/smt/proto_model/proto_model.cpp, src/model/func_interp.cpp,
 // src/model/value_factory.cpp, src/model/model_core.cpp, src/model/datatype_factory.cpp), MIT
 // license, see z3-license.txt.
 import { TermEnumeration } from "./term-enumeration";
 import {
-  AstManager,
+  type AstManager,
   FAMILY_ARRAY,
   FAMILY_BV,
   FAMILY_SEQ,
@@ -98,7 +97,6 @@ export class FuncInterp {
   insertNewEntry(args: number[], result: number) {
     const manager = this.manager;
     this.resetInterpCache();
-    // func_entry: the result is held first, then the arguments.
     manager.incRef(result);
     for (const arg of args) manager.incRef(arg);
     const entry = { args: [...args], result };
@@ -134,7 +132,6 @@ export class FuncInterp {
     this.resetInterpCache();
   }
 
-  // is_fi_entry_expr: (ite (and (= (:var 0) a0) ...) t e) with a ground t.
   private getEntryArgs(expr: number) {
     const manager = this.manager;
     if (manager.getOp(expr) !== OP_ITE) return undefined;
@@ -229,7 +226,6 @@ export class FuncInterp {
     }
   }
 
-  // is_identity: only Bool has a finite number of elements among tlapm's sorts.
   private isIdentity() {
     const manager = this.manager;
     const elseExpr = this.elseExpr;
@@ -315,12 +311,9 @@ export class FuncInterp {
 export class ProtoModel {
   readonly constInterps: ObjMap<number>;
   private constDecls: number[] = [];
-  // m_finterp, in Z3's slot order, and m_func_decls, in the order they were registered.
   readonly funcInterps: ObjMap<FuncInterp>;
   private funcDecls: number[] = [];
   private auxDecls: ObjHashtable;
-  // user_sort_factory and the arith_factory: the values of each sort, in Z3's hash order, and the
-  // values each factory holds, in the order it made or registered them.
   private values = new Map<number, ObjHashtable>();
   private userSortValues: RefVector;
   private arithValues: RefVector;
@@ -335,7 +328,6 @@ export class ProtoModel {
   private boolRandom: RandomGen;
   private evaluator: ModelEvaluator;
   private rewriter: Rewriter;
-  // The holders of a proto_model and a model are counted, and the last one releases it.
   private refCount = 0;
   // A model, rather than the proto_model it was made from, takes its values from the manager.
   private isFinal = false;
@@ -419,11 +411,9 @@ export class ProtoModel {
     this.funcInterps.set(decl, interp);
   }
 
-  // eval: the result comes with a reference, which the caller releases.
   eval(expr: number, isModelCompletion: boolean) {
     this.evaluator.setModelCompletion(isModelCompletion);
-    const result = this.evaluator.rewrite(expr);
-    return result;
+    return this.evaluator.rewrite(expr);
   }
 
   private getValueSet(sort: number) {
@@ -443,7 +433,6 @@ export class ProtoModel {
         : manager.mkModelValue(index, sort);
   }
 
-  // Inserting grows the table even for a value it has, so a value is inserted only when it is new.
   private addValue(sort: number, value: number) {
     const set = this.getValueSet(sort);
     if (set.has(value)) return;
@@ -885,14 +874,10 @@ export class ProtoModel {
   }
 
   completePartialFuncs(isUsingFresh: boolean) {
-    // get_some_value may register more declarations, which the loop then completes too.
     for (let index = 0; index < this.funcDecls.length; index++)
       this.completePartialFunc(this.funcDecls[index], isUsingFresh);
   }
 
-  // cleanup_expr: replaces the uninterpreted constants in an else expression with their values. Like
-  // Z3, it walks a todo stack, so it rewrites the last argument of a term first. The trail holds the
-  // terms it rewrote until the next call.
   private cleanupExpr(trail: RefVector, expr: number, foundAuxDecls: ObjHashtable) {
     const manager = this.manager;
     trail.reset();
@@ -941,7 +926,6 @@ export class ProtoModel {
     const manager = this.manager;
     const foundAuxDecls = new ObjHashtable((decl) => manager.getDeclHash(decl));
     const trail = new RefVector(manager);
-    // Like Z3, it collects the interpretations before it cleans them up.
     const interps = Array.from(this.funcInterps, (entry) => entry[1]);
     for (const interp of interps)
       if (interp.elseExpr !== null)
@@ -992,8 +976,6 @@ export class ProtoModel {
     if (this.refCount === 0) this.release();
   }
 
-  // ~proto_model: the rewriter, the evaluator and the factories go before the interpretations, and
-  // the user sort factory before the arith_factory.
   private release() {
     this.rewriter.release();
     this.evaluator.release();
@@ -1041,10 +1023,6 @@ export class ProtoModel {
 
   getSomeConstInterp(decl: number) {
     return this.constInterps.get(decl) ?? this.getSomeValue(this.manager.funcDecls[decl].range);
-  }
-
-  areEqual(first: number, second: number) {
-    return first === second;
   }
 }
 

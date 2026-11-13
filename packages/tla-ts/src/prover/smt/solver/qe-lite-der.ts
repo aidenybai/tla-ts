@@ -1,5 +1,4 @@
-// Ported from Z3 (src/qe/lite/qe_lite_tactic.cpp, src/qe/mbp/mbp_solve_plugin.cpp), MIT license,
-// see z3-license.txt.
+// Ported from Z3 (src/qe/lite/qe_lite_tactic.cpp, src/qe/mbp/mbp_solve_plugin.cpp), MIT license, see z3-license.txt.
 import {
   KIND_VAR,
   OP_ADD,
@@ -29,7 +28,6 @@ interface SignedExpr {
 
 interface SolvedVar {
   variable: number;
-  // Held by a reference that the receiver releases.
   term: number;
 }
 
@@ -97,7 +95,6 @@ export class EqDer {
     return this.removeUnconstrained(conjs) || isReduced;
   }
 
-  // One definition per variable, preferring values, then ground terms, then constants.
   private findDefinitions(args: number[]) {
     const manager = this.manager;
     let numDefs = 0;
@@ -164,7 +161,6 @@ export class EqDer {
     }
     const sort = isEq ? manager.sorts[manager.getArg(expr, 0)] : manager.sorts[expr];
     if (sort !== SORT_BOOL && sort !== SORT_INT) return false;
-    // solve_plugin::operator(): the arithmetic plugin only sees positive equalities.
     const isNegated = manager.isNot(expr);
     const solved =
       sort === SORT_INT

@@ -16,6 +16,7 @@ import {
   getLocationText,
   getLocusPrefix,
   getScopeHyps,
+  getTrue,
   mapAccumulate,
   type Defn,
   type Expr,
@@ -48,8 +49,6 @@ import {
 } from "./substitution";
 import { getScopeTime } from "./temporal";
 
-// latestModules is the module context of the latest anonymization of an axiom, theorem or USE,
-// which tlapm's anonymizer keeps using for the instances inside later definitions.
 export interface Pipeline {
   anonymizer: Anonymizer;
   simplify: ReturnType<typeof createSimplifier>;
@@ -77,7 +76,7 @@ const lambdifyTheorem = (
     const message = `${error.failure}\nCould not instantiate the theorem ${name === undefined ? "" : `named: ${name}, `}at: ${getLocationText(location)}`;
     pipeline.onWarning({ text: `${getAtPrefix(location)}[ERROR]${message}`, channel: "stdout" });
     pipeline.onWarning({ text: message, channel: "toolboxOnly" });
-    return { context: [], active: at({ kind: "Internal", builtin: "TRUE" }, sequent.active) };
+    return { context: [], active: getTrue(sequent.active) };
   }
 };
 
@@ -92,8 +91,6 @@ const lambdifyUnit = (pipeline: Pipeline, scope: Scope | undefined, unit: Module
   return { ...unit, definition: { ...definition, body } };
 };
 
-// Variables bind before instantiation substitutes for them, and a theorem that cannot be lambdified
-// states TRUE.
 const lambdifyUnits = (
   pipeline: Pipeline,
   scope: Scope | undefined,
@@ -189,7 +186,7 @@ const localize = (
   while (rest.length > 0) {
     const [unit, ...tail] = rest;
     rest = tail;
-    const localized = (expression: Expr) =>
+    const localizeExpr = (expression: Expr) =>
       addParameters(
         substituteExpr(getLocalSubstitution(size, argumentCount, location), expression),
         instance.args,
@@ -208,7 +205,7 @@ const localize = (
           definition: {
             ...definition,
             name: getLocalizedName(name),
-            body: localized(definition.body),
+            body: localizeExpr(definition.body),
           },
           whereDefined: unit.isLocal ? "Builtin" : unit.whereDefined,
           isLocal: unit.isLocal || isLocal,
@@ -223,7 +220,7 @@ const localize = (
         const axiom: ModuleUnit = {
           ...unit,
           name: unit.name === undefined ? undefined : getLocalizedName(unit.name),
-          expression: localized(unit.expression),
+          expression: localizeExpr(unit.expression),
         };
         body.push(axiom);
         size += getHypSize(axiom);
@@ -233,7 +230,7 @@ const localize = (
         complain(
           `${getAtPrefix(location)}Warning: Instancing produces parametric theorems.\nSuch theorems will be forcibly hidden and cannot be cited.\n(This warning appears at-most once per INSTANCE declaration.)`,
         );
-        const expression = localized(at(exprifySequent(unit.sequent), unit));
+        const expression = localizeExpr(at(exprifySequent(unit.sequent), unit));
         body.push({
           ...unit,
           name: unit.name === undefined ? undefined : getLocalizedName(unit.name),
@@ -437,7 +434,6 @@ export const normalize = (
   };
   const isRedundant = (name: string | undefined) =>
     name !== undefined && findNamed(current, name) !== undefined;
-  // Instantiated units arrive anonymized.
   const queue = module.body.map((unit) => ({ unit, isAnonymized: false }));
   for (let index = 0; index < queue.length; index++) {
     const unit = queue[index].unit;

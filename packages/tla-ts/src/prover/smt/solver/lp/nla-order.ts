@@ -1,5 +1,5 @@
-// Ported from Z3 (src/math/lp/nla_order_lemmas.h, src/math/lp/nla_order_lemmas.cpp), MIT
-// license, see z3-license.txt.
+// Ported from Z3 (src/math/lp/nla_order_lemmas.h, src/math/lp/nla_order_lemmas.cpp), MIT license,
+// see z3-license.txt.
 import { Rational } from "../rational";
 import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT, KIND_NE } from "./constraints";
 import { LarTerm } from "./lar-term";
@@ -33,7 +33,6 @@ export class Order {
     }
   }
 
-  // Either variable of the binomial plays the role of c.
   private orderLemmaOnBinomial(ac: Monic) {
     const core = this.core;
     const isGt = core.varVal(ac).compare(core.mulVal(ac)) > 0;
@@ -43,7 +42,6 @@ export class Order {
     }
   }
 
-  // y <= 0 or x < a or xy >= ay, and the like for the sign of val(xy) - val(x) * val(y).
   private orderLemmaOnBinomialSign(xy: Monic, x: number, y: number, sign: number) {
     if (!NLA_PARAMS.orderBinomialSign) return;
     const core = this.core;
@@ -68,7 +66,6 @@ export class Order {
     );
   }
 
-  // The monics bd with d equivalent to ac[k].
   private orderLemmaOnFactorBinomialExplore(ac: Monic, k: number) {
     const core = this.core;
     for (const bd of core.emons.getProductsOf(ac.vars[k])) {
@@ -84,7 +81,6 @@ export class Order {
     if (b !== undefined) this.orderLemmaOnBinomialAcBd(ac, k, bd, b, d.variable);
   }
 
-  // ac >= bd && |c| = |d| => ac/|c| >= bd/|d|
   private orderLemmaOnBinomialAcBd(ac: Monic, k: number, bd: Monic, b: Factor, d: number) {
     const core = this.core;
     const a = ac.vars[1 - k];
@@ -101,7 +97,6 @@ export class Order {
       this.generateMonOl(ac, a, cSign, c, bd, b, dSign, d, KIND_GT);
   }
 
-  // ac > bd => ac/|c| > bd/|d| => a*c_sign > b*d_sign, whose last inequality does not hold.
   private generateMonOl(
     ac: Monic,
     a: number,
@@ -157,7 +152,6 @@ export class Order {
     lemma.explainVar(d);
   }
 
-  // ac_f[k] plays the role of c.
   private orderLemmaOnAcAndBc(ac: Monic, acFactorization: Factorization, k: number, bd: Monic) {
     const factors = acFactorization.factors;
     const b = this.core.divide(bd, factors[k]);
@@ -166,7 +160,6 @@ export class Order {
     );
   }
 
-  // m = ab: a monic n = cd with |b| = |d| gives m R n & |b| = |d| => ab/|b| R cd/|d|.
   private orderLemmaOnFactorization(monic: Monic, ab: Factorization) {
     const core = this.core;
     let isNegated = false;
@@ -226,7 +219,6 @@ export class Order {
     this.explainOl(lemma, ac, a, bc, b, c);
   }
 
-  // c > 0 and ac >= bc => a >= b, and the like for the other signs and relations.
   private generateOl(ac: Monic, a: Factor, c: Factor, bc: Monic, b: Factor) {
     const core = this.core;
     const lemma = new LemmaBuilder(core);
@@ -262,7 +254,6 @@ export class Order {
     lemma.explainFactor(c);
   }
 
-  // ac = a*c and bc = b*c: ac >= bc implies ac/|c| >= bc/|c|.
   private orderLemmaOnAcAndBcAndFactors(ac: Monic, a: Factor, c: Factor, bc: Monic, b: Factor) {
     const core = this.core;
     const cSign = Rational.fromNumber(getRatSign(core.valFactor(c)));
@@ -281,7 +272,6 @@ export class Order {
     return false;
   }
 
-  // sign * m = ab: b != val(b) or sign*m <= a*val(b), or >= when not gt.
   private orderLemmaOnAb(
     lemma: LemmaBuilder,
     monic: Monic,

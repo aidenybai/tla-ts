@@ -39,7 +39,6 @@ interface DeclKey {
   range: number;
 }
 
-// Z3's parameter kinds order the parameters of builtin declarations.
 const PARAM_INT = 0;
 const PARAM_AST = 1;
 const PARAM_SYMBOL = 2;
@@ -62,7 +61,6 @@ const compareParameters = (
         ? compareNames(first, second)
         : 0;
 
-// lt on symbols: numerical symbols come first, by number, and other names compare by their bytes.
 const compareNames = (first: SmtSymbol, second: SmtSymbol) => {
   if (first === second) return 0;
   if (typeof first === "number")
@@ -101,7 +99,6 @@ const getDeclKey = (manager: AstManager, expr: number): DeclKey => {
   const range = manager.sorts[expr];
   if (decl.family === FAMILY_USER)
     return { name: decl.name, parameters: [], domain: decl.domain, range };
-  // A numeral's declaration has the parameters (value, is_int), and a model value's (index, sort).
   if (decl.op === OP_NUM) {
     const isInt = range === SORT_INT;
     return {
@@ -205,9 +202,6 @@ const compareSorts = (manager: AstManager, first: number, second: number): numbe
   return 0;
 };
 
-// Whether two applications of the same declaration have the same key: a user declaration's is its
-// own, and a builtin's other than a numeral, model value or pattern follows from the sort of the
-// argument that getBuiltinSignature reads and the range.
 const isSameDeclKey = (manager: AstManager, first: number, second: number) => {
   const decl = manager.funcDecls[manager.decls[first]];
   if (decl.family === FAMILY_USER) return true;

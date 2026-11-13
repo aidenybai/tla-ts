@@ -1,12 +1,15 @@
-// A port of tlapm's Proof.Simplify, which rewrites each proof into the steps Proof.Gen handles.
+// A port of tlapm's Proof.Simplify.
 
 import { TlaProofError } from "../errors";
 import { isEqualExpr } from "./equality";
 import {
+  AT_NOWHERE,
   adjoinAll,
   applyBuiltin,
   at,
+  getDefinitionHyp,
   getFact,
+  getTrue,
   isBuiltinApply,
   mapAccumulate,
   mapBoundDomains,
@@ -21,7 +24,7 @@ import {
   type Time,
 } from "./expression";
 import { format, renderDoc, type Doc } from "./format";
-import { AT_NOWHERE, getTrue, proveAssertion, useAssertion } from "./generate";
+import { proveAssertion, useAssertion } from "./generate";
 import { printExpression } from "./printer";
 import { getUnique, type Counter, type Proof, type Step, type StepNumber } from "./proof";
 import {
@@ -34,7 +37,6 @@ import {
 } from "./substitution";
 import { getTime } from "./temporal";
 
-// tlapm builds nodes with x @@ step, which copies all of the step's properties.
 const getProps = (from: Step) => ({
   location: from.location,
   step: from.step,
@@ -79,7 +81,6 @@ const expandDittoes = (bounds: Bound[]): Bound[] => {
   });
 };
 
-// The bounds after a witnessed one, where a ditto takes the witnessed domain.
 const getRemainingBounds = (first: Bound, rest: Bound[]): Bound[] => {
   const shifted = substituteBounds(shift(1), rest)[1];
   return shifted[0].domain.kind === "Ditto" && first.domain.kind === "Domain"
@@ -116,7 +117,6 @@ const getWitnessProof = (step: Step, sideFacts: Expr[]): Proof => {
       at({ kind: "Ix", index: 2 * (sideFacts.length - index) }, step),
     ),
   ];
-  // tlapm removes the method from the QED.
   const qedProof: Proof = {
     kind: "By",
     usable: { facts, defs: [] },
@@ -136,6 +136,13 @@ const replaceAt = (expression: Expr, replacement: Expr): Expr =>
   expression.kind === "At" && !expression.isExcept
     ? at(stripProps(replacement), expression)
     : mapChildren(expression, (inner) => replaceAt(inner, replacement));
+
+interface SimplifiedSteps {
+  context: Hyp[];
+  goal: Expr;
+  steps: Step[];
+  time: Time;
+}
 
 export const createSimplifier = (counter: Counter) => {
   const getAnonymous = (level: number): StepNumber => ({
@@ -213,7 +220,6 @@ export const createSimplifier = (counter: Counter) => {
     return active.kind === "Apply" && active.args.length === 2 ? active.args[1] : undefined;
   };
 
-  // at_expand: @ in a step stands for the right side of the previous step's assertion.
   const expandAt = (proof: Proof): Proof => {
     if (proof.kind !== "Steps") return proof;
     const steps: Step[] = [];
@@ -286,13 +292,8 @@ export const createSimplifier = (counter: Counter) => {
           { context, goal, time },
           proof.steps,
           (state, step) => {
-            const [nextContext, nextGoal, simplified, nextTime] = simplifyStep(
-              state.context,
-              state.goal,
-              step,
-              state.time,
-            );
-            return [{ context: nextContext, goal: nextGoal, time: nextTime }, simplified];
+            const next = simplifyStep(state.context, state.goal, step, state.time);
+            return [next, next.steps];
           },
         );
         const qedProof = simplify(inner.context, inner.goal, proof.qed.proof, inner.time);
@@ -301,16 +302,11 @@ export const createSimplifier = (counter: Counter) => {
     }
   };
 
-  const simplifyStep = (
-    context: Hyp[],
-    goal: Expr,
-    step: Step,
-    time: Time,
-  ): [Hyp[], Expr, Step[], Time] => {
+  const simplifyStep = (context: Hyp[], goal: Expr, step: Step, time: Time): SimplifiedSteps => {
     const level = getLevel(step.step);
     switch (step.kind) {
       case "Forget":
-        return [context, goal, [step], time];
+        return { context, goal, steps: [step], time };
       case "Assert": {
         const inner = proveAssertion(context, step.sequent, step, time);
         const simplified: Step = {
@@ -318,7 +314,7 @@ export const createSimplifier = (counter: Counter) => {
           proof: simplify(inner.context, inner.active, step.proof, inner.time),
         };
         const next = useAssertion(false, context, goal, step.sequent, simplified, time);
-        return [next.context, next.active, [simplified], time];
+        return { context: next.context, goal: next.active, steps: [simplified], time };
       }
       case "Suffices": {
         const inner = useAssertion(true, context, goal, step.sequent, step, time);
@@ -327,7 +323,7 @@ export const createSimplifier = (counter: Counter) => {
           proof: simplify(inner.context, inner.active, step.proof, time),
         };
         const next = proveAssertion(context, step.sequent, simplified, time);
-        return [next.context, next.active, [simplified], next.time];
+        return { context: next.context, goal: next.active, steps: [simplified], time: next.time };
       }
       case "Use": {
         const byProof: Proof = {
@@ -345,12 +341,12 @@ export const createSimplifier = (counter: Counter) => {
         const assumed = step.usable.facts.map(() =>
           getFact(AT_NOWHERE, "Visible", time, step.location),
         );
-        return [
-          [...context, ...assumed],
-          shiftExpr(step.usable.facts.length, goal),
-          simplified.steps,
+        return {
+          context: [...context, ...assumed],
+          goal: shiftExpr(step.usable.facts.length, goal),
+          steps: simplified.steps,
           time,
-        ];
+        };
       }
       case "Hide": {
         const hidden = step.usable.defs.reduce((current, def) => {
@@ -363,31 +359,24 @@ export const createSimplifier = (counter: Counter) => {
               `USE DEF ${name} invalid because ${name} is not a defined operator`,
             );
           }
-          return current.map((entry, position) =>
-            position === index
-              ? { ...hyp, visibility: "Hidden" as const, location: step.location }
-              : entry,
+          return current.map((entry, position): Hyp =>
+            position === index ? { ...hyp, visibility: "Hidden", location: step.location } : entry,
           );
         }, context);
-        return [hidden, goal, [step], time];
+        return { context: hidden, goal, steps: [step], time };
       }
       case "Define":
-        return [
-          [
+        return {
+          context: [
             ...context,
-            ...step.definitions.map((definition): Hyp => ({
-              kind: "Defn",
-              definition,
-              whereDefined: { kind: "Proof", time },
-              visibility: "Visible",
-              isLocal: true,
-              location: step.location,
-            })),
+            ...step.definitions.map((definition) =>
+              getDefinitionHyp(definition, { kind: "Proof", time }, "Visible", true, step.location),
+            ),
           ],
-          shiftExpr(step.definitions.length, goal),
-          [step],
+          goal: shiftExpr(step.definitions.length, goal),
+          steps: [step],
           time,
-        ];
+        };
       case "Have": {
         const connective = exposeConnective(context, goal);
         const isImplication = isBinary(connective, "Implies");
@@ -453,7 +442,7 @@ export const createSimplifier = (counter: Counter) => {
           step,
         );
         const salted = getSalted(step.step, "ex");
-        const [assertContext, assertGoal, asserted, assertTime] = simplifyStep(
+        const asserted = simplifyStep(
           context,
           goal,
           {
@@ -470,20 +459,20 @@ export const createSimplifier = (counter: Counter) => {
         const boundHyps = getBoundHyps(shifted.bounds);
         const hyps = [
           ...boundHyps,
-          getVisibleFact([...assertContext, ...boundHyps], shifted.body, shifted.body.location),
+          getVisibleFact([...asserted.context, ...boundHyps], shifted.body, shifted.body.location),
         ];
-        const [nextContext, nextGoal, sufficed, nextTime] = simplifyStep(
-          assertContext,
-          assertGoal,
+        const sufficed = simplifyStep(
+          asserted.context,
+          asserted.goal,
           {
             kind: "Suffices",
-            sequent: { context: hyps, active: shiftExpr(hyps.length, assertGoal) },
+            sequent: { context: hyps, active: shiftExpr(hyps.length, asserted.goal) },
             proof: { kind: "Omitted", omission: "Elsewhere", ...getProps(step) },
             ...getProps(step),
           },
-          assertTime,
+          asserted.time,
         );
-        return [nextContext, nextGoal, [...asserted, ...sufficed], nextTime];
+        return { ...sufficed, steps: [...asserted.steps, ...sufficed.steps] };
       }
     }
   };

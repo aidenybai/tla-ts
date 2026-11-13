@@ -97,8 +97,7 @@ const getEliminationOrder = (manager: AstManager, definitions: (number | undefin
       return;
     }
     for (let index = 0; index < manager.getNumArgs(expr); index++) {
-      const arg = manager.getArg(expr, index);
-      visit(arg);
+      visit(manager.getArg(expr, index));
     }
     done.add(expr);
   };
@@ -108,8 +107,6 @@ const getEliminationOrder = (manager: AstManager, definitions: (number | undefin
   return order;
 };
 
-// Its var_subst keeps the cache of its last substitution, and m_map, m_subst_map and m_new_args
-// keep their expressions, until der next fills them.
 export class Der {
   private subst: VarSubst;
   private map: RefVector;
@@ -152,7 +149,6 @@ export class Der {
       !isOccurring(manager, single.index, single.definition)
     )
       return data.kind === QUANTIFIER_FORALL ? manager.falseExpr : manager.trueExpr;
-    // The literals vector holds its expressions until reduce1 returns, and releases them in order.
     const vector = new RefVector(manager);
     manager.withoutTemporaries(() => {
       vector.push(data.body);
@@ -190,8 +186,6 @@ export class Der {
     substMap.resize(size);
     for (const index of order)
       substMap.setOwned(size - index - 1, this.subst.apply(map.items[index], substMap.items));
-    // apply_substitution: m_new_args holds the kept literals, and the junction of them is held
-    // until it returns.
     this.newArgs.reset();
     literals.forEach((literal, position) => {
       const index = positions[position];

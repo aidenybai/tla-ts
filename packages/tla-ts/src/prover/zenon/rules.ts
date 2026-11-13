@@ -9,7 +9,7 @@ import {
   addSymmetricMatches,
   addTransitivity,
 } from "./equality-rules";
-import { type Expr, type Expressions } from "./expr";
+import type { Expr, Expressions } from "./expr";
 import type { Index } from "./index-table";
 import { insertNode, type Node, type Priority, type Queue } from "./node";
 import type { Rule } from "./proof";
@@ -59,8 +59,7 @@ const addExtensions: SearchRule = (context, queue, formula, goalness) => {
   return [insertAll(queue, result.nodes), result.isStopped];
 };
 
-// Zenon's newnodes_preunif comes after addReflexivity, but it never adds a node: it preunifies a
-// formula with its negation, whose heads always differ.
+// Deviation from Zenon: newnodes_preunif is left out because it never adds a node.
 const RULES: SearchRule[] = [
   addAbsurd,
   addClosure,

@@ -13,9 +13,9 @@ import {
   reportMissingModules174,
   toLibraryPath,
 } from "./shared";
+import { getBold } from "./tlc-usage";
 
 const XML_EXPORT_USAGE = (() => {
-  const bold = (text: string) => `\x1b[1m${text}\x1b[0m`;
   const options = [
     ["-I", "Include; use given directory path to resolve module dependencies."],
     ["-help", "Print this usage information."],
@@ -37,24 +37,24 @@ const XML_EXPORT_USAGE = (() => {
   ];
   return [
     "",
-    bold("NAME"),
+    getBold("NAME"),
     "",
     "\ttla2sany.xml.XMLExporter - Emit SANY's parse tree as XML - Version 2.2 created 08 July 2020",
     "",
     "",
-    bold("SYNOPSIS"),
+    getBold("SYNOPSIS"),
     "",
-    `\t${bold("tla2sany.xml.XMLExporter")} [${bold("-Iortu")}] [${bold("-help")}] FILE`,
+    `\t${getBold("tla2sany.xml.XMLExporter")} [${getBold("-Iortu")}] [${getBold("-help")}] FILE`,
     "",
-    bold("DESCRIPTION"),
+    getBold("DESCRIPTION"),
     "",
     "\tGiven a TLA+ file, parse that file with SANY then translate the module's semantic parse tree to XML, including all the modules depended on. The XML is printed to stdout and its output format is given by an XML Schema file (.xsd) found at https://proofs.tlapl.us/doc/web/sany.xsd.",
     "",
-    bold("OPTIONS"),
+    getBold("OPTIONS"),
     "",
-    ...options.map(([flag, description]) => `\t${bold(flag)}\n\t\t${description}`),
+    ...options.map(([flag, description]) => `\t${getBold(flag)}\n\t\t${description}`),
     "",
-    bold("TIPS"),
+    getBold("TIPS"),
     "",
     ...tips.flatMap((tip) => [`\t${tip}`, ""]),
     "",
@@ -83,50 +83,49 @@ const writeXml = (specification: SanySpecification, options: XmlExportOptions) =
   }
 };
 
+const ARGUMENT_ERRORS = {
+  "no-file": { message: "at least one .tla file must be given", line174: 59 },
+  "missing-include": {
+    message: "the -I flag must be followed by a directory and at least one .tla file",
+    line174: 71,
+  },
+  "several-files": { message: "Only one TLA file to check allowed!", line174: 83 },
+};
+
 interface XmlExportArgs {
   flags: Set<string>;
   includes: string[];
-  error: "missing-include" | "several-files" | undefined;
+  error: keyof typeof ARGUMENT_ERRORS | undefined;
 }
 
-// XMLExporter reads the flags before the last argument, which names the module, and skips an
-// argument it does not know, which then counts as another module.
 const parseXmlExportArgs = (args: string[], flagNames: Set<string>): XmlExportArgs => {
   const parsed: XmlExportArgs = { flags: new Set(), includes: [], error: undefined };
-  const lastFlag = { index: -1 };
+  if (args.length === 0) return { ...parsed, error: "no-file" };
+  let lastFlagIndex = -1;
   for (let index = 0; index < args.length - 1; index++) {
     if (flagNames.has(args[index])) {
       parsed.flags.add(args[index]);
-      lastFlag.index = index;
+      lastFlagIndex = index;
       continue;
     }
     if (args[index] !== "-I") continue;
     index++;
     if (index > args.length - 2) return { ...parsed, error: "missing-include" };
     parsed.includes.push(args[index]);
-    lastFlag.index = index;
+    lastFlagIndex = index;
   }
-  return lastFlag.index === args.length - 2 ? parsed : { ...parsed, error: "several-files" };
+  return lastFlagIndex === args.length - 2 ? parsed : { ...parsed, error: "several-files" };
 };
 
 export const exportXml = (args: string[]) => {
-  if (args.length === 0) return printXmlExportUsageError("at least one .tla file must be given");
   const parsed = parseXmlExportArgs(args, new Set(["-o", "-t", "-r", "-u"]));
-  if (parsed.error === "missing-include") {
-    return printXmlExportUsageError(
-      "the -I flag must be followed by a directory and at least one .tla file",
-    );
-  }
-  if (parsed.error === "several-files") {
-    return printXmlExportUsageError("Only one TLA file to check allowed!");
-  }
+  if (parsed.error) return printXmlExportUsageError(ARGUMENT_ERRORS[parsed.error].message);
   const name = args[args.length - 1];
   if (name === "-help") {
     process.stdout.write(XML_EXPORT_USAGE);
     return EXIT_STATUS.success;
   }
   const fileName = name.endsWith(".tla") ? name : `${name}.tla`;
-  // XMLExporter passes the -I directories in place of TLA-Library.
   const directories = [".", ...parsed.includes];
   const path = directories.map((directory) => resolve(directory, fileName)).find(existsSync);
   if (path === undefined && !SANY_STANDARD_MODULES.has(fileName.slice(0, -".tla".length))) {
@@ -156,31 +155,16 @@ const printXmlExporterException = (exception: string, line: number) => {
   return XML_EXPORT_EXIT_CODE.uncaughtException;
 };
 
-// TLC 1.7.4's XMLExporter takes only -o, as it can't validate the XML without fetching its
-// schema, and -I, and exports a specification that SANY finds errors in.
 export const exportXml174 = (args: string[], jar: string | undefined) => {
-  if (args.length === 0) {
-    return printXmlExporterException(
-      "java.lang.IllegalArgumentException: at least one .tla file must be given",
-      59,
-    );
-  }
   const parsed = parseXmlExportArgs(args, new Set(["-o"]));
-  if (parsed.error === "missing-include") {
+  if (parsed.error) {
     return printXmlExporterException(
-      "java.lang.IllegalArgumentException: the -I flag must be followed by a directory and at least one .tla file",
-      71,
-    );
-  }
-  if (parsed.error === "several-files") {
-    return printXmlExporterException(
-      "java.lang.IllegalArgumentException: Only one TLA file to check allowed!",
-      83,
+      `java.lang.IllegalArgumentException: ${ARGUMENT_ERRORS[parsed.error].message}`,
+      ARGUMENT_ERRORS[parsed.error].line174,
     );
   }
   const name = args[args.length - 1];
   const fileName = `${name.replace(/\.tla$/i, "")}.tla`;
-  // With no -I directories, SimpleFilenameToStream looks in the root directory.
   const libraries = (parsed.includes.length === 0 ? ["/"] : parsed.includes).map(toLibraryPath);
   const directories = [".", ...libraries];
   const printMissingFile = (moduleFileName: string) =>

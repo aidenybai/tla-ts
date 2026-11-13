@@ -19,13 +19,10 @@ interface Instance {
   generation: number;
 }
 
-// Z3 keeps one auxiliary context for every check and pushes a scope per check, so the restricted
-// checks continue from the complete check, with its phases and activities.
 class AuxContext {
   private context: Context;
   private asserted: AssertedFormulas;
 
-  // The context makes its asserted formulas first. Its theories hold only constants that exist by
   // now, so setup_context can run at once. init_aux_context copies the kernel's smt_params and
   // theories, so the context has a model finder too, though it never sees a quantifier.
   constructor(parent: Context) {
@@ -147,8 +144,8 @@ export class ModelChecker {
       const sk = manager.mkFreshConst(null, sort);
       sks.set(numDecls - index - 1, sk);
       if (model.isFinite(sort)) {
-        // restrict_to_universe: ast_manager::mk_or, which keeps a single disjunct in an or.
         const universe = model.getKnownUniverse(sort).map((value) => manager.mkEq(sk, value));
+        // ast_manager::mk_or keeps a single disjunct in an or.
         const constraint = manager.mkApp(OP_OR, universe, SORT_BOOL);
         manager.incRef(constraint);
         aux.assert(constraint);
@@ -177,7 +174,7 @@ export class ModelChecker {
       const sk = sks[numDecls - index - 1];
       let skValue = cex.getSomeConstInterp(manager.decls[sk]);
       if (isUsingInv) {
-        const inv = this.modelFinder.getInv(quantifier, index, skValue, cex);
+        const inv = this.modelFinder.getInv(quantifier, index, skValue);
         if (inv === null) return false;
         maxGeneration = Math.max(maxGeneration, inv.generation);
         skValue = inv.term;
@@ -201,7 +198,6 @@ export class ModelChecker {
     const aux = this.aux ?? new AuxContext(this.context);
     this.aux = aux;
     aux.push();
-    // The fresh constants are released before the scope is popped.
     const sks = new RefVector(manager);
     const isSatisfied = this.checkInScope(aux, quantifier, model, sks);
     sks.reset();
@@ -216,7 +212,6 @@ export class ModelChecker {
     const completeCex = aux.check();
     if (completeCex === "unsat") return true;
     if (completeCex === "unknown") return false;
-    // complete_cex and cex hold their models.
     completeCex.incRef();
     this.modelFinder.restrictSksToInstSet(quantifier, sks, (expr) => aux.assert(expr));
     let numNewInstances = 0;
@@ -235,7 +230,6 @@ export class ModelChecker {
     return false;
   }
 
-  // diseqs and blocking_clause hold their terms until it is asserted.
   private addBlockingClause(aux: AuxContext, cex: ProtoModel, sks: number[]) {
     const manager = this.manager;
     const diseqs = new RefVector(manager);
@@ -253,7 +247,6 @@ export class ModelChecker {
     let isFoundRelevant = false;
     let numFailures = 0;
     for (const quantifier of this.qmanager.quantifiers) {
-      // Z3's resource limit cancels the checks, and the search gives up.
       if (context.checkCanceled()) return { isFoundRelevant, numFailures: numFailures + 1 };
       if (
         !context.isRelevant(quantifier) ||

@@ -19,8 +19,6 @@ export class ConflictResolution {
   lemmaIscopeLevel = 0;
   private unmark: BoolVar[] = [];
   unsatCore: Literal[] = [];
-  // m_lvl_set: a level_approx_set, whose bit level mod 32 stands for each level of the lemma, so
-  // other levels can pass for them.
   private levelSet = 0;
   private minimizationStack: BoolVar[] = [];
 
@@ -32,8 +30,6 @@ export class ConflictResolution {
     this.antecedents.push(literal);
   }
 
-  // mark_eq: the pair starts with the node whose owner has the smaller id, which fixes the order in
-  // which eq2literals walks the two branches.
   markEq(first: Enode, second: Enode) {
     if (first === second) return;
     const ids = this.context.manager.ids;

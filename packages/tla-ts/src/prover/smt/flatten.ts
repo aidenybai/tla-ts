@@ -1,6 +1,3 @@
-// encode/n_flatten.ml: each application of a second-order construct becomes a fresh first-order
-// symbol, declared with its axioms before the fact that uses it.
-
 import { formatName, getClosing } from "./format";
 import type { Axiom } from "./table";
 
@@ -11,7 +8,6 @@ export interface Flattened {
   getLines: (axioms: Set<string>) => string[];
 }
 
-// A fact that tlapm encodes, so its symbols bring their axioms, but leaves out of the text.
 interface OmittedFact {
   omitted: string;
 }
@@ -20,8 +16,6 @@ export type Entry = string | Flattened | OmittedFact;
 
 export const getDepth = (variable: string) => Number(variable.slice(variable.lastIndexOf("#") + 1));
 
-// Marks the Unprimable WITNESS, which Prep never removes; Flatten.compare_expr tells it apart and
-// printing drops it.
 export const UNPRIMABLE = "?unprimable";
 
 export const removeUnprimable = (text: string): string => {
@@ -35,8 +29,6 @@ export const removeUnprimable = (text: string): string => {
   );
 };
 
-// Flatten.compare_expr ignores outer bound variables and can't compare quantifiers, conditionals or
-// LETs, so those match nothing.
 const getFlatKey = (text: string, depth: number) =>
   /\((forall|exists|ite|let) /.test(text)
     ? undefined
@@ -52,7 +44,7 @@ interface Site {
 export const createFlattener = () => {
   const flattened = new Map<string, Flattened>();
   const flatKeys = new Map<string, Flattened>();
-  const counter = { blueprints: 0 };
+  let blueprintCount = 0;
   const introduced: Flattened[] = [];
 
   const flatten = (
@@ -63,8 +55,6 @@ export const createFlattener = () => {
     sorts: string[],
     name = `TLA__${kind}`,
   ) => {
-    // Flatten.find_hoapp skips a second-order ASSUME, so the application stays and only
-    // N_axiomatize.collect, which runs before Flatten, visits it.
     if (site.isOmitted) {
       const symbol = formatName(`${name}_omitted_${flattened.size}`);
       flattened.set(symbol, { symbol, kind, visit: removeUnprimable(visit), getLines: () => [] });
@@ -72,10 +62,10 @@ export const createFlattener = () => {
     }
     const key = getFlatKey(`${name} ${visit}`, site.depth);
     // Flatten.new_bp_id counts every application, even one that reuses an earlier symbol.
-    counter.blueprints++;
+    blueprintCount++;
     const known = key === undefined ? undefined : flatKeys.get(key);
     if (known) return known.symbol;
-    const raw = `${name}_flatnd_${counter.blueprints}`;
+    const raw = `${name}_flatnd_${blueprintCount}`;
     const symbol = formatName(raw);
     const flat: Flattened = {
       symbol,

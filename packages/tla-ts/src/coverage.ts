@@ -8,6 +8,7 @@ import {
 } from "./ast";
 import { formatRange } from "./errors";
 import type { Environment, Scope } from "./evaluate";
+import { getJavaHashCode } from "./java-hash";
 import { getTlcFingerprint } from "./tlc/fingerprint";
 import type { Value } from "./values";
 
@@ -148,7 +149,11 @@ const addNode = (
   return node;
 };
 
-// A next-state action that another shares its predicate with shares its counts, as in TLC.
+const findCoverageRelation = (coverage: Coverage, kind: CoverageKind, expression: Expression) =>
+  coverage.relations.find(
+    (relation) => relation.kind === kind && relation.expression === expression,
+  )?.node;
+
 export const addCoverageRelation = (
   coverage: Coverage,
   kind: CoverageKind,
@@ -156,26 +161,12 @@ export const addCoverageRelation = (
   expression: Expression,
   scope?: Scope,
 ) => {
-  const shared =
-    kind === "next"
-      ? coverage.relations.find(
-          (relation) => relation.kind === "next" && relation.expression === expression,
-        )
-      : undefined;
-  if (shared) return shared.node;
+  const shared = kind === "next" ? findCoverageRelation(coverage, kind, expression) : undefined;
+  if (shared !== undefined) return shared;
   const node = addNode(coverage, undefined, expression.location.range, -1, false);
   coverage.relations.push({ kind, label, expression, scope, node });
   return node;
 };
-
-export const findCoverageRelation = (
-  coverage: Coverage,
-  kind: CoverageKind,
-  expression: Expression,
-) =>
-  coverage.relations.find(
-    (relation) => relation.kind === kind && relation.expression === expression,
-  )?.node;
 
 const isSameRange = (left: SourceRange | undefined, right: SourceRange | undefined) =>
   left !== undefined &&
@@ -186,8 +177,6 @@ const isSameRange = (left: SourceRange | undefined, right: SourceRange | undefin
   left.end.line === right.end.line &&
   left.end.column === right.end.column;
 
-// TLC names an action after the left-hand side of its definition, and adds the location of the
-// predicate when the action is only part of the definition's body.
 export const getCoverageLabel = (
   name: string | undefined,
   expression: Expression,
@@ -216,29 +205,21 @@ const getStartRange = (location: SourceLocation, last: SourceRange | undefined) 
     end: last.end,
   };
 
-const getJavaHashCode = (text: string) =>
-  Array.from({ length: text.length }, (_, index) => text.charCodeAt(index)).reduce(
-    (hash, code) => (Math.imul(hash, 31) + code) | 0,
-    0,
-  ) & 0x7fffffff;
-
-// SANY walks a LET's definitions in the order of the java.util.Hashtable that holds them.
 const getHashtableOrder = (definitions: Definition[]) => {
-  const table = { buckets: Array.from({ length: 11 }, (): Definition[] => []), count: 0 };
-  definitions.forEach((definition) => {
-    if (table.count >= Math.floor(table.buckets.length * 0.75)) {
-      const buckets = Array.from({ length: table.buckets.length * 2 + 1 }, (): Definition[] => []);
-      for (let index = table.buckets.length - 1; index >= 0; index--) {
-        table.buckets[index].forEach((entry) =>
-          buckets[getJavaHashCode(entry.name) % buckets.length].unshift(entry),
+  let buckets = Array.from({ length: 11 }, (): Definition[] => []);
+  definitions.forEach((definition, count) => {
+    if (count >= Math.floor(buckets.length * 0.75)) {
+      const grown = Array.from({ length: buckets.length * 2 + 1 }, (): Definition[] => []);
+      for (let index = buckets.length - 1; index >= 0; index--) {
+        buckets[index].forEach((entry) =>
+          grown[(getJavaHashCode(entry.name) & 0x7fffffff) % grown.length].unshift(entry),
         );
       }
-      table.buckets = buckets;
+      buckets = grown;
     }
-    table.buckets[getJavaHashCode(definition.name) % table.buckets.length].unshift(definition);
-    table.count++;
+    buckets[(getJavaHashCode(definition.name) & 0x7fffffff) % buckets.length].unshift(definition);
   });
-  return table.buckets.toReversed().flat();
+  return buckets.toReversed().flat();
 };
 
 const getBoundSets = (bounds: Bound[]) =>
@@ -396,8 +377,6 @@ export const buildCoverage = (
       case "OperatorReference":
         return;
       case "Label":
-        walk(expression.body, bindNames(expression.params, locals));
-        return;
       case "Lambda":
         walk(expression.body, bindNames(expression.params, locals));
         return;
@@ -406,7 +385,6 @@ export const buildCoverage = (
           (parent, definition) => ({ name: definition.name, definition, scope: undefined, parent }),
           locals,
         );
-        // A LET definition sees the others, as RECURSIVE ones may refer to those after them.
         for (let local = inner; local !== locals && local; local = local.parent) {
           local.scope = inner;
         }
@@ -591,7 +569,6 @@ const findChild = (coverage: Coverage, node: number, expression: Expression): nu
   return -1;
 };
 
-// OpApplNodeWrapper.get: a lookup that fails counts under the node it started from.
 export const getCoverageNode = (coverage: Coverage, node: number, expression: Expression) => {
   if (coverage.expressions[node] === expression) return node;
   const child = findChild(coverage, node, expression);
@@ -663,11 +640,10 @@ const getPairHash = (pair: Pair) => {
   return hash ^ (hash >>> 16);
 };
 
-// java.util.HashSet iterates its pairs by bucket, and in the order it added those of a bucket.
 const getFirstPair = (pairs: Pair[]) => {
-  const capacity = { value: 16 };
-  while (pairs.length > capacity.value * 0.75) capacity.value *= 2;
-  const getBucket = (pair: Pair) => getPairHash(pair) & (capacity.value - 1);
+  let capacity = 16;
+  while (pairs.length > capacity * 0.75) capacity *= 2;
+  const getBucket = (pair: Pair) => getPairHash(pair) & (capacity - 1);
   return pairs.reduce((first, pair) => (getBucket(pair) < getBucket(first) ? pair : first));
 };
 
@@ -789,7 +765,6 @@ const compareRanges = (left: SourceRange | undefined, right: SourceRange | undef
   );
 };
 
-// TLC reports the next-state actions in the order of their locations, once for each location.
 const getReportedRelations = (coverage: Coverage) =>
   KIND_ORDER.flatMap((kind) => {
     const relations = coverage.relations.filter((relation) => relation.kind === kind);

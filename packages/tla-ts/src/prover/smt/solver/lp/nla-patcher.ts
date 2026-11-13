@@ -1,5 +1,4 @@
-// Ported from Z3 (src/math/lp/nla_patcher.{h,cpp}, src/util/mpz.cpp is_perfect_square), MIT
-// license, see z3-license.txt.
+// Ported from Z3 (src/math/lp/nla_patcher.{h,cpp}, src/util/mpz.cpp is_perfect_square), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import type { Impq } from "./numeric-pair";
 import type { NlaCore } from "./nla-core";
@@ -40,7 +39,7 @@ export class Patcher {
     const core = this.core;
     const update = (monic: Monic) => {
       if (core.varVal(monic).equals(core.mulVal(monic))) core.eraseFromToRefine(monic.variable);
-      else core.insertToRefine(monic.variable);
+      else core.toRefine.add(monic.variable);
     };
     for (const monic of core.emons.getUseList(lpVar)) update(monic);
     if (core.isMonicVar(lpVar)) update(core.emon(lpVar));
@@ -80,8 +79,8 @@ export class Patcher {
       const root = product.root(2);
       if (root === undefined) return;
       this.patchedVar = monic.vars[0];
-      if (!this.varBreaksCorrectMonic(this.patchedVar))
-        if (this.tryToPatch(root) || this.tryToPatch(root.neg())) return;
+      if (!this.varBreaksCorrectMonic(this.patchedVar) && !this.tryToPatch(root))
+        this.tryToPatch(root.neg());
       return;
     }
     if (product.isZero()) return;

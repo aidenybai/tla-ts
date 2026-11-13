@@ -1,5 +1,4 @@
-// Ported from Z3 (src/smt/qi_queue.cpp, src/smt/smt_checker.cpp), MIT license, see
-// z3-license.txt.
+// Ported from Z3 (src/smt/qi_queue.cpp, src/smt/smt_checker.cpp), MIT license, see z3-license.txt.
 import { KIND_APP, KIND_VAR, OP_AND, OP_EQ, OP_FALSE, OP_ITE, OP_NOT, OP_OR, OP_TRUE } from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
@@ -26,8 +25,6 @@ const grow = (array: Int32Array, index: number) => {
 
 class Checker {
   private bindings: Enode[] = [];
-  // The caches of a run, by expression, which hold an entry for the run whose stamp it has. So a run
-  // starts with them empty without clearing them.
   private stamp = 0;
   private checkStamps = new Int32Array(1024);
   private checkResults = new Int32Array(1024);
@@ -199,10 +196,6 @@ export class QiQueue {
   private instantiatedTrail: number[] = [];
   private scopes: number[] = [];
   private checker: Checker;
-  // cached_var_subst: each instance by its quantifier and bindings, which the queue holds with them
-  // until the next search. instanceRefs lists the quantifier, the bindings and the instance of each.
-  // instanceStarts holds where each instance starts there, and instanceNext the earlier instance of
-  // the same hash, or -1. instances maps a hash of the key to its last instance.
   private subst: VarSubst;
   private instances = new Map<number, number>();
   private instanceRefs: number[] = [];
@@ -288,7 +281,6 @@ export class QiQueue {
     const manager = context.manager;
     const data = manager.getQuantifier(entry.quantifier);
     if (this.checker.isSat(data.body, entry.bindings)) return;
-    // The bindings' expressions, which Z3 writes into the buffer that m_subst returns.
     const owners = this.bindingOwners;
     shrink(owners, 0);
     for (const binding of entry.bindings) owners.push(binding.owner);

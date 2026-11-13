@@ -1,6 +1,3 @@
-// OCaml's Marshal format, ported from runtime/intern.c and runtime/extern.c, without sharing, which
-// OCaml reads the same.
-
 import { TlaProofError } from "../../errors";
 
 interface OcamlBlock {
@@ -33,7 +30,7 @@ const PREFIX = { smallInt: 0x40, smallString: 0x20, smallBlock: 0x80 };
 
 const HEADER_SIZE = 20;
 
-export const block = (tag: number, ...fields: OcamlValue[]): OcamlBlock => ({ tag, fields });
+export const createBlock = (tag: number, ...fields: OcamlValue[]): OcamlBlock => ({ tag, fields });
 
 export const isBlock = (value: OcamlValue): value is OcamlBlock =>
   typeof value === "object" && "tag" in value;
@@ -44,11 +41,11 @@ export const readMarshaled = (bytes: Uint8Array, offset: number) => {
     throw new TlaProofError("corrupted fingerprint file");
   const end = offset + HEADER_SIZE + view.getUint32(offset + 4);
   const objects: OcamlValue[] = [];
-  const state = { position: offset + HEADER_SIZE };
+  let position = offset + HEADER_SIZE;
   const take = (length: number) => {
-    const start = state.position;
-    state.position += length;
-    if (state.position > end) throw new TlaProofError("corrupted fingerprint file");
+    const start = position;
+    position += length;
+    if (position > end) throw new TlaProofError("corrupted fingerprint file");
     return start;
   };
   const decoder = new TextDecoder();
@@ -59,7 +56,7 @@ export const readMarshaled = (bytes: Uint8Array, offset: number) => {
     return value;
   };
   const readBlock = (tag: number, size: number): OcamlBlock => {
-    const value = block(tag);
+    const value = createBlock(tag);
     if (size > 0) objects.push(value);
     for (let index = 0; index < size; index++) value.fields.push(read());
     return value;
@@ -104,7 +101,9 @@ export const readMarshaled = (bytes: Uint8Array, offset: number) => {
 
 export const writeMarshaled = (value: OcamlValue) => {
   const bytes: number[] = [];
-  const sizes = { objects: 0, words32: 0, words64: 0 };
+  let objectCount = 0;
+  let words32 = 0;
+  let words64 = 0;
   const pushInteger = (integer: number, length: number) => {
     for (let shift = (length - 1) * 8; shift >= 0; shift -= 8)
       bytes.push((integer >>> shift) & 0xff);
@@ -121,7 +120,7 @@ export const writeMarshaled = (value: OcamlValue) => {
       bytes.push(CODE.int32);
       return pushInteger(inner, 4);
     }
-    sizes.objects++;
+    objectCount++;
     if (typeof inner === "string") {
       const encoded = encoder.encode(inner);
       if (encoded.length < 0x20) bytes.push(PREFIX.smallString + encoded.length);
@@ -131,23 +130,23 @@ export const writeMarshaled = (value: OcamlValue) => {
         pushInteger(encoded.length, 4);
       }
       bytes.push(...encoded);
-      sizes.words32 += 1 + Math.floor((encoded.length + 4) / 4);
-      sizes.words64 += 1 + Math.floor((encoded.length + 8) / 8);
+      words32 += 1 + Math.floor((encoded.length + 4) / 4);
+      words64 += 1 + Math.floor((encoded.length + 8) / 8);
       return;
     }
     if (!isBlock(inner)) {
       const float = new DataView(new ArrayBuffer(8));
       float.setFloat64(0, inner.float, true);
       bytes.push(CODE.doubleLittle, ...new Uint8Array(float.buffer));
-      sizes.words32 += 3;
-      sizes.words64 += 2;
+      words32 += 3;
+      words64 += 2;
       return;
     }
     const size = inner.fields.length;
-    if (size === 0) sizes.objects--;
+    if (size === 0) objectCount--;
     else {
-      sizes.words32 += 1 + size;
-      sizes.words64 += 1 + size;
+      words32 += 1 + size;
+      words64 += 1 + size;
     }
     if (inner.tag < 16 && size < 8) bytes.push(PREFIX.smallBlock + inner.tag + (size << 4));
     else {
@@ -158,8 +157,8 @@ export const writeMarshaled = (value: OcamlValue) => {
   };
   write(value);
   const header = new DataView(new ArrayBuffer(HEADER_SIZE));
-  [MAGIC_NUMBER_SMALL, bytes.length, sizes.objects, sizes.words32, sizes.words64].forEach(
-    (field, index) => header.setUint32(index * 4, field),
+  [MAGIC_NUMBER_SMALL, bytes.length, objectCount, words32, words64].forEach((field, index) =>
+    header.setUint32(index * 4, field),
   );
   return new Uint8Array([...new Uint8Array(header.buffer), ...bytes]);
 };

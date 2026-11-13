@@ -1,5 +1,7 @@
 import { axiomThm, type Thm } from "../pure/thm";
 import type { ClassicalRule } from "../provers/classical";
+import type { TaggedRule } from "../pure/tactic";
+import type { ContextRule } from "../tools/intuitionistic";
 import {
   mkAbs,
   mkApp,
@@ -10,9 +12,10 @@ import {
   mkTVar,
   mkType,
   mkVar,
+  type Term,
+  type Typ,
 } from "../pure/term";
 import { typargsOf, type TypargPosition } from "../pure/consts";
-import type { Term, Typ } from "../pure/term";
 import type { NamedCasesRule } from "../isar/induct";
 import type { Tags } from "../isar/rule-cases";
 import { LOGIC_DATA } from "./logic-data";
@@ -25,7 +28,6 @@ type TermNode =
   | [3, number]
   | [4, number, number, number]
   | [5, number, number];
-// A rule of a claset or of the context rules, by theorem id, with its insertion tag.
 type NetItem = [number, 0 | 1, number];
 type ExtraNetItem = [number, number, 0 | 1, number];
 type RawRule = [number, number, number[], number, number[]];
@@ -70,16 +72,6 @@ export interface ConstInfo {
   readonly abbreviation: Term | undefined;
 }
 
-export interface LogicNetItem {
-  readonly tag: number;
-  readonly isElim: boolean;
-  readonly rule: Thm;
-}
-
-export interface LogicExtraNetItem extends LogicNetItem {
-  readonly weight: number;
-}
-
 export interface LogicNetPair<Item> {
   readonly intro: readonly Item[];
   readonly elim: readonly Item[];
@@ -90,7 +82,6 @@ export interface TlaLogic {
   readonly constNames: ReadonlyMap<string, string>;
   readonly facts: ReadonlyMap<string, readonly Thm[]>;
   readonly factNames: ReadonlyMap<string, string>;
-  // The simpset's rewrite rules, in the order of Net.entries.
   readonly simps: readonly Thm[];
   readonly congs: readonly {
     readonly isConst: boolean;
@@ -104,16 +95,16 @@ export interface TlaLogic {
     readonly safeEs: readonly ClassicalRule[];
     readonly unsafeIs: readonly ClassicalRule[];
     readonly unsafeEs: readonly ClassicalRule[];
-    readonly safe0: LogicNetPair<LogicNetItem>;
-    readonly safep: LogicNetPair<LogicNetItem>;
-    readonly unsafe: LogicNetPair<LogicNetItem>;
-    readonly dup: LogicNetPair<LogicNetItem>;
-    readonly extra: LogicNetPair<LogicExtraNetItem>;
+    readonly safe0: LogicNetPair<TaggedRule>;
+    readonly safep: LogicNetPair<TaggedRule>;
+    readonly unsafe: LogicNetPair<TaggedRule>;
+    readonly dup: LogicNetPair<TaggedRule>;
+    readonly extra: LogicNetPair<ContextRule>;
   };
   readonly contextRules: {
-    readonly bang: LogicNetPair<LogicExtraNetItem>;
-    readonly plain: LogicNetPair<LogicExtraNetItem>;
-    readonly query: LogicNetPair<LogicExtraNetItem>;
+    readonly bang: LogicNetPair<ContextRule>;
+    readonly plain: LogicNetPair<ContextRule>;
+    readonly query: LogicNetPair<ContextRule>;
   };
   // The Rule_Cases tags of the facts that have them, by name and position.
   readonly factTags: ReadonlyMap<string, ReadonlyMap<number, Tags>>;
@@ -168,15 +159,13 @@ const parseLogic = (): TlaLogic => {
     dup: thms[raw[3]],
     dupSwapped: raw[4].map((id) => thms[id]),
   });
-  const toItems = (pair: [NetItem[], NetItem[]]): LogicNetPair<LogicNetItem> => {
+  const toItems = (pair: [NetItem[], NetItem[]]): LogicNetPair<TaggedRule> => {
     const [intro, elim] = pair.map((side) =>
       side.map((item) => ({ tag: item[0], isElim: item[1] === 1, rule: thms[item[2]] })),
     );
     return { intro, elim };
   };
-  const toExtraItems = (
-    pair: [ExtraNetItem[], ExtraNetItem[]],
-  ): LogicNetPair<LogicExtraNetItem> => {
+  const toExtraItems = (pair: [ExtraNetItem[], ExtraNetItem[]]): LogicNetPair<ContextRule> => {
     const [intro, elim] = pair.map((side) =>
       side.map((item) => ({
         weight: item[0],
@@ -189,7 +178,7 @@ const parseLogic = (): TlaLogic => {
   };
   // Isabelle hides the weights of the rules declared with "?", so their order stands in for their
   // tags, which is all their unweighted retrieval reads.
-  const toOrderedItems = (pair: [number[], number[]]): LogicNetPair<LogicExtraNetItem> => {
+  const toOrderedItems = (pair: [number[], number[]]): LogicNetPair<ContextRule> => {
     const [intro, elim] = pair.map((side, isElim) =>
       side.map((id, tag) => ({ weight: 0, tag, isElim: isElim === 1, rule: thms[id] })),
     );
@@ -242,7 +231,6 @@ const parseLogic = (): TlaLogic => {
   };
 };
 
-const loaded: { logic?: TlaLogic } = {};
+let loadedLogic: TlaLogic | undefined;
 
-// Nothing changes the logic, so it parses once.
-export const loadLogic = (): TlaLogic => (loaded.logic ??= parseLogic());
+export const loadLogic = (): TlaLogic => (loadedLogic ??= parseLogic());

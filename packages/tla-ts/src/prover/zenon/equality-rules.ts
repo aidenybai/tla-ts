@@ -47,7 +47,6 @@ const makeInstance = (
       ]),
     );
   }
-  // Zenon hands applications to the extension named by the symbol's prefix, and tla has none.
   if (quantified.kind === "app") return queue;
   throw new TlaZenonError("Zenon: make_inst on a formula that isn't quantified");
 };

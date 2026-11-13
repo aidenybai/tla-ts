@@ -1,5 +1,11 @@
-// tlapm frames an obligation as unsatisfiable when the backend proves it.
 export type Verdict = "unsat" | "sat" | "unknown";
+
+export const BACKENDS = ["zenon", "isabelle", "smt", "z3", "ls4"] as const;
+
+export type Backend = (typeof BACKENDS)[number];
+
+export const isBackend = (prover: string): prover is Backend =>
+  BACKENDS.some((backend) => backend === prover);
 
 export interface Decision {
   verdict: Verdict;

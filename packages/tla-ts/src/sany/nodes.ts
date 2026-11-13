@@ -1,4 +1,4 @@
-// The semantic nodes of SANY's tla2sany.semantic package that its XMLExporter writes out.
+import { getJavaHashCode } from "../java-hash";
 
 export interface SanyLocation {
   file: string;
@@ -8,7 +8,6 @@ export interface SanyLocation {
   endColumn: number;
 }
 
-// A location of undefined is SANY's unknown location, and a bare module name the whole module.
 export interface SanyMessage {
   location: SanyLocation | string | undefined;
   text: string;
@@ -16,7 +15,6 @@ export interface SanyMessage {
   code?: string;
 }
 
-// SANY keeps one copy of each message, and after TLC 1.7.4 one for each code.
 export const addSanyMessage = (messages: SanyMessage[], message: SanyMessage) => {
   const key = JSON.stringify(message);
   if (!messages.some((candidate) => JSON.stringify(candidate) === key)) messages.push(message);
@@ -155,12 +153,11 @@ export interface OpApplNode extends LevelFields {
   tupleOrs: boolean[] | undefined;
   ranges: ExprNode[];
   location: SanyLocation;
-  isNull?: boolean;
-  isAbsent?: boolean;
+  nullKind?: "null" | "absent";
 }
 
 export const isAbsent = (node: LevelNode | undefined) =>
-  node?.kind === "OpAppl" && node.isAbsent === true;
+  node?.kind === "OpAppl" && node.nullKind === "absent";
 
 export interface NumeralNode extends LevelFields {
   kind: "Numeral";
@@ -330,7 +327,6 @@ type TopLevelNode = InstanceNode | AssumeNode | TheoremNode | UseOrHideNode;
 
 export type SemanticNode = SymbolNode | LevelNode | TopLevelNode | ProofPartNode;
 
-// SANY's lists of constants, variables and instantiated definitions follow the Hashtable's order.
 export interface Context {
   table: JavaHashtable;
   symbols: SymbolNode[];
@@ -347,14 +343,6 @@ interface JavaHashtable {
   count: number;
   threshold: number;
 }
-
-const getJavaHash = (text: string) => {
-  let hash = 0;
-  for (let index = 0; index < text.length; index++) {
-    hash = (Math.imul(hash, 31) + text.charCodeAt(index)) | 0;
-  }
-  return hash;
-};
 
 const createJavaHashtable = (): JavaHashtable => ({
   buckets: Array.from({ length: 11 }, () => []),
@@ -377,12 +365,12 @@ const rehash = (table: JavaHashtable) => {
 };
 
 const getHashtableValue = (table: JavaHashtable, key: string, hashKey = key) =>
-  table.buckets[getBucketIndex(getJavaHash(hashKey), table.buckets.length)].find(
+  table.buckets[getBucketIndex(getJavaHashCode(hashKey), table.buckets.length)].find(
     (entry) => entry.key === key,
   )?.value;
 
 const putHashtableValue = (table: JavaHashtable, key: string, value: SymbolNode, hashKey = key) => {
-  const hash = getJavaHash(hashKey);
+  const hash = getJavaHashCode(hashKey);
   const existing = table.buckets[getBucketIndex(hash, table.buckets.length)].find(
     (entry) => entry.key === key,
   );
@@ -395,7 +383,6 @@ const putHashtableValue = (table: JavaHashtable, key: string, value: SymbolNode,
   table.count++;
 };
 
-// The values in the order of Hashtable.elements(), from the last bucket to the first.
 export const getHashtableValues = (table: JavaHashtable) =>
   table.buckets.toReversed().flatMap((bucket) => bucket.map((entry) => entry.value));
 
@@ -425,7 +412,6 @@ export const getOpDefs = (module: ModuleNode) =>
     (symbol): symbol is OpDefNode => symbol.kind === "OpDef" && symbol.defKind === "UserDefined",
   );
 
-// ModuleNode.getConstantDecls and getVariableDecls reverse the Hashtable's order.
 export const getDeclarations = (module: ModuleNode, declKind: number) =>
   getHashtableValues(module.context.table)
     .filter(

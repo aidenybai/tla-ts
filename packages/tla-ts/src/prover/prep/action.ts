@@ -1,6 +1,3 @@
-// A port of tlapm's action frontend (Action.process_obligation), which makes an obligation first
-// order for the backends.
-
 import { TlapmBugError } from "../../errors";
 import { rewriteUnchanged } from "../../obligations/temporal";
 import {
@@ -43,12 +40,14 @@ const getHyp = (scope: Scope | undefined, index: number) => {
 const getLevel = (scope: Scope | undefined, expression: Expr) =>
   getLevelInfo(scope, expression).level;
 
-const isBuiltin = (expression: Expr, builtins: Builtin[]) =>
+const isBuiltin = (
+  expression: Expr,
+  builtins: Builtin[],
+): expression is Extract<Expr, { kind: "Apply" }> =>
   expression.kind === "Apply" &&
   expression.operator.kind === "Internal" &&
   builtins.includes(expression.operator.builtin);
 
-// The context maps by the obligation's own hypotheses, from which it derives.
 const createSequentMap = (map: Rewrite, hyps: "visible" | "all") => {
   const mapContext = createContextMap<Scope | undefined>(undefined, (scope, hyp) => {
     const mapped = mapHyp(hyp, (inner) => map(scope, inner), hyps);
@@ -76,9 +75,7 @@ const expandAction: Rewrite = (scope, expression) => {
 };
 
 const expandUnchanged: Rewrite = (scope, expression) =>
-  expression.kind === "Apply" &&
-  isBuiltin(expression, ["UNCHANGED"]) &&
-  expression.args.length === 1
+  isBuiltin(expression, ["UNCHANGED"]) && expression.args.length === 1
     ? rewriteUnchanged(expression.args[0])
     : mapScoped(scope, expression, expandUnchanged, adjoin, "all");
 
@@ -173,7 +170,6 @@ interface RenameState {
   original: Scope | undefined;
 }
 
-// A definition's level is the one its body had before the commuters ran, unless given.
 const renameDefn = (scope: Scope | undefined, definition: Defn, level?: number): Defn => {
   if (definition.kind !== "Operator") {
     return definition.kind === "Bpragma"
@@ -203,25 +199,18 @@ const renameHyp = (scope: Scope | undefined, hyp: Hyp, level?: number): Hyp => {
   }
 };
 
-// tlapm reads levels computed before the frontend rewrites anything, and each node it builds takes
-// the properties of the node it replaces.
 const getOriginalLevel = (scope: Scope | undefined, hyp: Hyp) => {
   if (hyp.kind !== "Defn" || hyp.definition.kind !== "Operator") return undefined;
   const getNodeLevel = (expression: Expr) => {
-    if (!isBuiltin(expression, ["UNCHANGED"]) || expression.kind !== "Apply") {
-      return getLevel(scope, expression);
-    }
+    if (!isBuiltin(expression, ["UNCHANGED"])) return getLevel(scope, expression);
     const flatten = (inner: Expr): Expr[] =>
       inner.kind === "Tuple" ? inner.elements.flatMap(flatten) : [inner];
     const items = flatten(expression.args[0]);
     return getLevel(scope, items.length === 1 ? items[0] : expression.args[0]);
   };
   const body = hyp.definition.body;
-  const isCommuted =
-    isBuiltin(body, ["Prime", "BoxTrue", "Diamond"]) &&
-    body.kind === "Apply" &&
-    body.args.length === 1;
-  return getNodeLevel(isCommuted && body.kind === "Apply" ? body.args[0] : body);
+  const isCommuted = isBuiltin(body, ["Prime", "BoxTrue", "Diamond"]) && body.args.length === 1;
+  return getNodeLevel(isCommuted ? body.args[0] : body);
 };
 
 const renameContext = createContextMap<RenameState>(
@@ -312,8 +301,6 @@ const rename: Rewrite = (scope, expression) => {
   }
 };
 
-// For each parameter, counting from the last, whether the body uses it only outside primes and the
-// other modal operators.
 const substitutiveArgs = new WeakMap<Defn, boolean[]>();
 
 const getSubstitutiveArgs = (scope: Scope | undefined, definition: Defn): boolean[] => {
@@ -374,18 +361,18 @@ const isSubstitutive = (
       });
     }
   }
-  const found = { isSubstitutive: true };
+  let isEverySubstitutive = true;
   mapScoped(
     { scope, index },
     expression,
     (state, inner) => {
-      found.isSubstitutive &&= isSubstitutive(state.scope, inner, state.index, isInScope);
+      isEverySubstitutive &&= isSubstitutive(state.scope, inner, state.index, isInScope);
       return inner;
     },
     (state, hyp) => ({ scope: adjoin(state.scope, hyp), index: state.index + 1 }),
     "all",
   );
-  return found.isSubstitutive;
+  return isEverySubstitutive;
 };
 
 export const getHashName = (hyps: Hyp[], expression: Expr) =>
@@ -423,17 +410,12 @@ const MODAL_BUILTINS: Builtin[] = [
   "UNCHANGED",
 ];
 
-// tlapm means to apply the opaque name to the expression's free variables, but compute_vars returns
-// its own empty set, so the name always stands alone.
 const coalesceModal: Rewrite = (scope, expression) => {
   if (expression.kind !== "Apply") return mapScoped(scope, expression, coalesceModal, adjoin);
   const operator = expression.operator;
-  const [arg] = expression.args;
-  if (
-    isBuiltin(expression, ["Prime", "StrongPrime"]) &&
-    expression.args.length === 1 &&
-    arg.kind === "Ix"
-  ) {
+  const args = expression.args;
+  const arg = args[0];
+  if (isBuiltin(expression, ["Prime", "StrongPrime"]) && args.length === 1 && arg.kind === "Ix") {
     const hyp = getHyp(scope, arg.index);
     if (hyp.kind === "Fresh" || hyp.kind === "Flex") {
       return at({ kind: "Opaque", name: `${hyp.name}#prime` }, expression);
@@ -444,7 +426,6 @@ const coalesceModal: Rewrite = (scope, expression) => {
   const hypScope = getScopeAt(scope, operator.index - 1);
   const hyp = hypScope?.hyp;
   if (!hyp) throw new TlapmBugError();
-  const args = expression.args;
   const applyCoalesced = (applied: Expr) =>
     at(
       { kind: "Apply", operator: applied, args: args.map((inner) => coalesceModal(scope, inner)) },

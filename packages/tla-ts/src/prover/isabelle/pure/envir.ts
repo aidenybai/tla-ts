@@ -1,5 +1,4 @@
-// Ported from Isabelle2025's Pure/envir.ML. Copyright (c) 1986-2025 University of Cambridge,
-// Technische Universitaet Muenchen, and contributors, see LICENSE.
+// Ported from Isabelle2025's Pure/envir.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import {
@@ -34,7 +33,7 @@ import {
   type Typ,
   type Var,
 } from "./term";
-import { devar, emptyTyEnv, normType, substType, unifiedTypes, type TyEnv } from "./type";
+import { devar, emptyTyEnv, normType, unifiedTypes, type TyEnv } from "./type";
 
 export interface Binding {
   readonly type: Typ;
@@ -87,12 +86,10 @@ export const genvar = (name: string, envir: Envir, type: Typ): [Envir, Var] => {
 export const lookup1 = (tenv: TEnv, variable: Var): Term | undefined => {
   const binding = lookupTable(tenv, variable);
   if (binding === undefined) return undefined;
-  if (!eqTypExact(variable.type, binding.type))
+  if (!unifiedTypes(emptyTyEnv, variable.type, binding.type))
     throw new TlaIsabelleError("TYPE", "Variable has two distinct types");
   return binding.term;
 };
-
-const eqTypExact = (left: Typ, right: Typ) => unifiedTypes(emptyTyEnv, left, right);
 
 export const lookup = (envir: Envir, variable: Var): Term | undefined => {
   const binding = lookupTable(envir.tenv, variable);
@@ -283,37 +280,3 @@ export const fastype = (envir: Envir, types: readonly Typ[], term: Term): Typ =>
       return term.type;
   }
 };
-
-const substTermAux = (tyenv: TyEnv, tenv: TEnv, term: Term): Term => {
-  if (maxidxOfTerm(term) < 0) return term;
-  switch (term.kind) {
-    case "Const":
-    case "Free": {
-      const type = isEmptyTable(tyenv) ? term.type : substType(tyenv, term.type);
-      return type === term.type ? term : { ...term, type };
-    }
-    case "Var": {
-      const assigned = lookup1(tenv, term);
-      if (assigned !== undefined) return assigned;
-      const type = isEmptyTable(tyenv) ? term.type : substType(tyenv, term.type);
-      return type === term.type ? term : { ...term, type };
-    }
-    case "Bound":
-      return term;
-    case "Abs":
-      return updateAbs(
-        term,
-        substTermAux(tyenv, tenv, term.body),
-        isEmptyTable(tyenv) ? term.type : substType(tyenv, term.type),
-      );
-    case "App":
-      return updateApp(
-        term,
-        substTermAux(tyenv, tenv, term.fun),
-        substTermAux(tyenv, tenv, term.arg),
-      );
-  }
-};
-
-export const substTerm = (tyenv: TyEnv, tenv: TEnv, term: Term) =>
-  isEmptyTable(tenv) && isEmptyTable(tyenv) ? term : substTermAux(tyenv, tenv, term);

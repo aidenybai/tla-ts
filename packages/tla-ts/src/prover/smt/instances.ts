@@ -1,6 +1,3 @@
-// Flatten.instantiate: encode/n_axioms.ml's second-order axioms, instantiated for one flattened
-// symbol.
-
 import {
   APPEND,
   call,

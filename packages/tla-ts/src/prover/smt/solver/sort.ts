@@ -1,6 +1,4 @@
-// Array.prototype.sort copies its array before sorting, which makes most of the garbage of short
-// clauses and disjunctions. Insertion sort is stable like it and sorts a short array in place, so
-// both give the same order.
+// Array.prototype.sort copies its array before sorting, so a short array is insertion sorted in place, which is stable too.
 const MAX_INSERTION_SORT_LENGTH = 16;
 
 export const sortByKey = (values: number[], getKey: (value: number) => number) => {

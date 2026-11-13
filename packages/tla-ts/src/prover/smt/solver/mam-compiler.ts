@@ -23,8 +23,6 @@ export const JOINT_GROUND = 1;
 export const JOINT_VAR = 2;
 export const JOINT_NESTED = 3;
 
-// A joint of a CONTINUE argument: a ground term, the register of a bound variable, or a depth-2
-// joint (f ... (g ... X ...) ...), with g, the position of X in it, and X's register.
 export interface Joint {
   kind: number;
   enode: Enode | null;
@@ -33,9 +31,6 @@ export interface Joint {
   argPos: number;
 }
 
-// instruction and its subclasses in one shape. The fields an opcode does not use keep their
-// defaults. reg is the register of CHECK, COMPARE (m_reg1), the filters, and the input register of
-// BIND and IS_CGR. regs holds the input registers of GET_CGR and IS_CGR and the bindings of YIELD.
 export interface Instruction {
   op: number;
   next: Instruction | null;
@@ -54,7 +49,6 @@ export interface Instruction {
 }
 
 export interface CodeTree {
-  rootLabel: number;
   numArgs: number;
   isFilteringCandidates: boolean;
   numRegs: number;
@@ -92,6 +86,14 @@ const mkInstruction = (op: number): Instruction => ({
   quantifier: -1,
   regs: [],
   joints: [],
+});
+
+const mkNullJoint = (): Joint => ({
+  kind: JOINT_NULL,
+  enode: null,
+  reg: 0,
+  decl: -1,
+  argPos: 0,
 });
 
 export const hasHash = (low: number, high: number, hash: number) =>
@@ -149,6 +151,7 @@ const mkInit = (numArgs: number) => {
 };
 
 export class Compiler {
+  private manager: AstManager;
   private registers: number[] = [];
   private todo: number[] = [];
   private aux: number[] = [];
@@ -156,7 +159,6 @@ export class Compiler {
   private quantifier = -1;
   private patterns: number[] = [];
   private tree: CodeTree = {
-    rootLabel: -1,
     numArgs: 0,
     isFilteringCandidates: false,
     numRegs: 0,
@@ -176,10 +178,11 @@ export class Compiler {
   private seq: Instruction[] = [];
 
   constructor(
-    private manager: AstManager,
     private context: Context,
     private hasher: LabelHasher,
-  ) {}
+  ) {
+    this.manager = context.manager;
+  }
 
   private getRegister(reg: number) {
     return this.registers[reg] ?? -1;
@@ -416,35 +419,28 @@ export class Compiler {
         )
           hasDepth1Joint = true;
       }
-      const nullJoint = (): Joint => ({
-        kind: JOINT_NULL,
-        enode: null,
-        reg: 0,
-        decl: -1,
-        argPos: 0,
-      });
       const joints = manager.mapArgs(best, (arg): Joint => {
         if (hasDepth1Joint) {
           if (manager.kinds[arg] === KIND_VAR) {
             const reg = this.vars[manager.values[arg]];
-            return reg >= 0 ? { ...nullJoint(), kind: JOINT_VAR, reg } : nullJoint();
+            return reg >= 0 ? { ...mkNullJoint(), kind: JOINT_VAR, reg } : mkNullJoint();
           }
           if (manager.isGround(arg))
             return {
-              ...nullJoint(),
+              ...mkNullJoint(),
               kind: JOINT_GROUND,
               enode: this.hasher.getGroundEnode(arg, this.quantifier),
             };
-          return nullJoint();
+          return mkNullJoint();
         }
-        if (manager.kinds[arg] === KIND_VAR) return nullJoint();
+        if (manager.kinds[arg] === KIND_VAR) return mkNullJoint();
         let argPos = -1;
         for (let index = 0; index < manager.getNumArgs(arg) && argPos === -1; index++) {
           const innerArg = manager.getArg(arg, index);
           if (manager.kinds[innerArg] === KIND_VAR && this.vars[manager.values[innerArg]] >= 0)
             argPos = index;
         }
-        if (argPos === -1) return nullJoint();
+        if (argPos === -1) return mkNullJoint();
         return {
           kind: JOINT_NESTED,
           enode: null,
@@ -727,7 +723,6 @@ export class Compiler {
         if (curr === null) return;
         const bestChild = this.findBestChild(curr);
         if (bestChild === null) {
-          // head -> ... -> last -> new_child: CHOOSE(first_child) -> linearise.
           const newChild = mkChoose(curr);
           this.numChoices++;
           this.setNext(last, newChild);
@@ -737,8 +732,6 @@ export class Compiler {
         head = bestChild;
         continue;
       }
-      // head -> compatible -> new_child_head1: CHOOSE(new_child_head2) -> incompatible -> curr, and
-      // new_child_head2: NOOP -> linearise.
       const firstChildHead = curr;
       const newChildHead2 = mkInstruction(OP_NOOP);
       const newChildHead1 = mkChoose(newChildHead2);
@@ -770,7 +763,6 @@ export class Compiler {
     const pattern = patterns[firstIndex];
     const numArgs = this.manager.getNumArgs(pattern);
     const tree: CodeTree = {
-      rootLabel: this.manager.decls[pattern],
       numArgs,
       isFilteringCandidates,
       numRegs: numArgs + 1,
@@ -785,7 +777,6 @@ export class Compiler {
     return tree;
   }
 
-  // A temporary tree records no trail.
   insert(
     tree: CodeTree,
     quantifier: number,

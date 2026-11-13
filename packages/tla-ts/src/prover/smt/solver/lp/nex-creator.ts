@@ -1,5 +1,4 @@
-// Ported from Z3 (src/math/lp/nex_creator.h, src/math/lp/nex_creator.cpp), MIT license, see
-// z3-license.txt.
+// Ported from Z3 (src/math/lp/nex_creator.h, src/math/lp/nex_creator.cpp), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import {
   type Nex,
@@ -30,7 +29,6 @@ export class NexCreator {
   readonly powers = new Map<number, number>();
   private activeVarsWeights: number[] = [];
 
-  // Assumes every variable is below k. Growing keeps the weights already set.
   setNumberOfVars(count: number) {
     const previousCount = this.activeVarsWeights.length;
     this.activeVarsWeights.length = count;
@@ -74,14 +72,12 @@ export class NexCreator {
     return this.mkMulWithPowers(coeff, children);
   }
 
-  gtVar(first: number, second: number) {
+  private gtVar(first: number, second: number) {
     const firstWeight = this.activeVarsWeights[first];
     const secondWeight = this.activeVarsWeights[second];
     return firstWeight !== secondWeight ? firstWeight > secondWeight : first > second;
   }
 
-  // Scalars are the smallest, and the coefficient of a product does not count. Z3's
-  // gt_for_sort_join_sum is the same order.
   gt(first: Nex, second: Nex): boolean {
     if (first === second) return false;
     if (first.kind === "var") return this.gtOnVarNex(first, second);
@@ -144,7 +140,6 @@ export class NexCreator {
     return first.children.length > size;
   }
 
-  // A std::map ordered by gt, greatest first: the index of the key, inserting it when absent.
   private findOrInsert<Value>(entries: MapEntry<Value>[], key: Nex, value: Value) {
     let low = 0;
     let high = entries.length;
@@ -176,7 +171,7 @@ export class NexCreator {
       : coeff.mul(child.expr.value.pow(child.power * power));
   }
 
-  simplifyMul(mul: NexMul): Nex {
+  private simplifyMul(mul: NexMul): Nex {
     const children: NexPow[] = [];
     const toPromote: NexPow[] = [];
     for (const child of mul.children) {
@@ -205,7 +200,6 @@ export class NexCreator {
     return mul;
   }
 
-  // The map already orders the factors by gt, so Z3's sort that follows changes nothing.
   private mulToPowers(children: NexPow[]): NexPow[] {
     const entries: MapEntry<number>[] = [];
     for (const child of children) {
@@ -239,7 +233,6 @@ export class NexCreator {
     this.sortJoinSum(sum);
   }
 
-  // Like Z3, a merged product takes the new coefficient in place.
   private sortJoinSum(sum: NexSum) {
     const entries: MapEntry<Rational>[] = [];
     let commonScalar = Rational.zero;
@@ -256,6 +249,7 @@ export class NexCreator {
     for (const entry of entries) {
       if (entry.value.isZero()) continue;
       if (entry.key.kind === "mul") {
+        // Like Z3, a merged product takes the new coefficient in place.
         entry.key.coeff = entry.value;
         sum.children.push(this.simplify(entry.key));
       } else if (entry.value.equals(Rational.one)) sum.children.push(entry.key);
@@ -319,8 +313,7 @@ export class NexCreator {
     return this.mkReducedMul(expr.coeff.div(divisor.coeff), children);
   }
 
-  // Z3's canonize_mul drops the coefficient of the product; here the summands keep it.
-  canonize(expr: Nex): Nex {
+  private canonize(expr: Nex): Nex {
     if (isElementary(expr)) return this.clone(expr);
     const simplified = this.simplify(this.clone(expr));
     if (simplified.kind === "sum") {

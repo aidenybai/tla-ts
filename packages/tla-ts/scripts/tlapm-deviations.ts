@@ -1,5 +1,3 @@
-// The obligations where tla-ts deliberately differs from tlapm, because tlapm is wrong there.
-
 interface Deviation {
   module: string;
   id: number;

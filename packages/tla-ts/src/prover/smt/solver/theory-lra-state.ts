@@ -1,6 +1,4 @@
-// Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt. The theory is a
-// chain of classes, one file each, from this state to TheoryLra, so each part reaches those before
-// it.
+// Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt.
 import { FAMILY_ARITH } from "./ast";
 import type { Context } from "./context";
 import { LarSolver } from "./lp/lar-solver";

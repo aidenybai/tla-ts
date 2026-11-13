@@ -16,7 +16,6 @@ import { getBuiltInDefinitions, PREDEFINED_SYMBOLS } from "./tla/tla";
 
 interface ZenonRun {
   proof: Proof | undefined;
-  // "zenon error" stands for the exceptions that stop Zenon mid-search.
   failure: SearchFailure | "zenon error" | undefined;
   isar: string | undefined;
   nodesSearched: number;

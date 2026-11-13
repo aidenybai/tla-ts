@@ -1,23 +1,18 @@
-// A difference where tlapm is wrong counts as a deviation, and one where tlapm's backend proved the
-// obligation after tlapm's time limit counts as late. As a loaded machine stretches wall-clock
-// time, an obligation tla-ts misses goes to tlapm's prover again until it has used the limit in
-// both wall-clock and CPU time.
-
 import { readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { type ProofObligation, TlaError } from "../src";
 import type { PrintedObligation } from "../src/obligations";
-import { DECIDERS } from "../src/prover/deciders";
 import { findMethods, type Method } from "../src/prover/prep/methods";
 import { encodeForBackend } from "../src/prover/prove";
+import { isBackend } from "../src/prover/verdict";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, writeResults } from "./corpora";
 import { runWithCpuLimit } from "./cpu-limit";
 import { tlaTs } from "./dist";
 import { runModuleWorkers } from "./module-workers";
 import {
   getModuleLoader,
-  getModuleObligations,
+  getObligationsById,
   printResults,
   readProofRecords,
   type ModuleProofRecord,
@@ -25,9 +20,6 @@ import {
 } from "./proof-records";
 import { getDeviation } from "./tlapm-deviations";
 
-// "extra" is a proof of what tlapm failed to prove, and "unsound" one of what tlapm's backend
-// refuted. "late" is a proof by a backend whose input tlapm's backend proved too, after tlapm had
-// stopped waiting for it at its time limit.
 const VERDICTS = [
   "agree",
   "deviation",
@@ -106,12 +98,11 @@ const getVerdict = (expected: ObligationRecord, actual: ProofObligation | undefi
   return "agree";
 };
 
-// The SMT encoder's CASE numbering only names a symbol, so the input starts it from zero.
 const getCpuProof = async (
   obligation: PrintedObligation,
   method: Method,
 ): Promise<CpuProof | undefined> => {
-  if (!(method.prover in DECIDERS)) return undefined;
+  if (!isBackend(method.prover)) return undefined;
   try {
     const text = encodeForBackend(obligation, method.prover, { caseErrors: 0 });
     const run = await runWithCpuLimit(method.timeLimitMs, method.prover, text);
@@ -128,8 +119,6 @@ const getCpuProof = async (
   }
 };
 
-// The first prover the obligation's methods try of those tlapm and tla-ts proved it with. A
-// difference without one is in Prep.
 const getBackend = (
   provers: Method[],
   expected: ObligationRecord,
@@ -149,7 +138,6 @@ const getBackend = (
 
 const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
   const path = join(CORPORA_DIRECTORY, record.id);
-  // A module tla-ts can't load leaves each of its obligations absent, with the error as reason.
   const proved = await tlaTs
     .prove({ source: readFileSync(path, "utf8"), loadModule: getModuleLoader(path) })
     .then(
@@ -183,10 +171,7 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
     };
   });
   if (!results.some((result) => isDifference(result.verdict))) return results;
-  const printed = new Map(
-    getModuleObligations(path).map((obligation) => [obligation.id, obligation]),
-  );
-  // The second runs go one at a time, so they don't share the core they are timed on.
+  const printed = getObligationsById(path);
   const withBackends: Result[] = [];
   for (const [index, result] of results.entries()) {
     const obligation = printed.get(result.id);
@@ -198,7 +183,6 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
     const actual = byId.get(result.id);
     const provers = findMethods(obligation).provers;
     const backend = getBackend(provers, expected, actual);
-    // tla-ts not proving what tlapm's prover did may be a time-out.
     const method = provers.find((innerMethod) => innerMethod.prover === backend);
     const cpuProof =
       (result.verdict === "missed" || result.verdict === "prover") &&
@@ -214,7 +198,6 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
 
 const records = readProofRecords();
 const byModule = await runModuleWorkers(records, proveModule, availableParallelism());
-// A worker that exits mid-module leaves that module's obligations absent.
 const results = records.flatMap(
   (record, index) =>
     byModule.get(index) ??

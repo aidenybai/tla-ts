@@ -11,9 +11,6 @@ const FIXTURES = join(import.meta.dirname, "../fixtures/zenon");
 
 const readFixture = (path: string) => readFileSync(join(FIXTURES, path), "utf8");
 
-// Real .znn files that tlapm wrote, and in rules/ small true goals that need the rule in their name,
-// which no corpus proof uses. Each comes with what tlapm's Zenon reports for it under -stats, except
-// rules/subseteq_cap, where tlapm's Zenon builds a \subseteq c in place of a \subseteq b.
 const statistics: Record<string, { nodesSearched: number; proofNodes: number }> = JSON.parse(
   readFixture("statistics.json"),
 );
@@ -23,8 +20,6 @@ const fixtures = Object.entries(statistics).map((entry) => ({
   text: readFixture(entry[0]),
 }));
 
-// tlapm runs Zenon with -oisar and writes the Isar proof it prints into the module's .thy file. An
-// .isar file holds what tlapm's Zenon printed for the proved fixture beside it.
 const isarFixtures = fixtures
   .filter((fixture) => !fixture.path.startsWith("unknown/"))
   .map((fixture) => ({
@@ -32,9 +27,6 @@ const isarFixtures = fixtures
     isar: readFixture(fixture.path.replace(/\.znn$/, ".isar")),
   }));
 
-// Zenon shares alpha-equivalent formulas through a weak hash table, so a formula takes the names of
-// an older equal formula until OCaml's garbage collector frees that one. On these fixtures the
-// binary's names depend on when it collected garbage, so only the names differ.
 const COLLECTOR_NAMED = new Set([
   "proved/AtomicBakeryWithoutSMT-116.znn",
   "proved/AtomicBakeryWithoutSMT-414.znn",
@@ -52,24 +44,19 @@ interface Scope {
   depth: number;
 }
 
-// Whether two Isar proofs agree up to alpha-equivalence and a renaming of names. A bound variable
-// pairs with the one at the same binder in the other proof, until the parenthesis around the binder
-// or the quote that ends its pattern. Fresh zenon_V variables outside any binder, and the z_H and
-// ?z_h labels that number formulas, pair through one bijection each, in order of first appearance.
-// Every other token matches byte for byte.
 const isEqualUpToRenaming = (left: string, right: string) => {
   const leftTokens = left.match(TOKEN) ?? [];
   const rightTokens = right.match(TOKEN) ?? [];
   if (leftTokens.length !== rightTokens.length) return false;
   const bijections = new Map<string, [Map<string, string>, Map<string, string>]>();
-  const isPaired = (kind: string, from: string, to: string) => {
+  const isPaired = (kind: string, source: string, target: string) => {
     const maps = bijections.get(kind) ?? [new Map<string, string>(), new Map<string, string>()];
     bijections.set(kind, maps);
-    if (!maps[0].has(from) && !maps[1].has(to)) {
-      maps[0].set(from, to);
-      maps[1].set(to, from);
+    if (!maps[0].has(source) && !maps[1].has(target)) {
+      maps[0].set(source, target);
+      maps[1].set(target, source);
     }
-    return maps[0].get(from) === to && maps[1].get(to) === from;
+    return maps[0].get(source) === target && maps[1].get(target) === source;
   };
   const isBinder = (tokens: string[], position: number) =>
     BINDERS.some((binder) =>
@@ -110,8 +97,6 @@ const isEqualUpToRenaming = (left: string, right: string) => {
   });
 };
 
-// tlapm gives Zenon 10 s. The fixtures take a fraction of that, so a slow machine doesn't change
-// their verdicts.
 const TIME_LIMIT_MS = 60_000;
 
 describe("Zenon agrees with tlapm's Zenon", () => {
@@ -152,25 +137,21 @@ describe("Zenon agrees with tlapm's Zenon", () => {
     expect(isEqualUpToRenaming(isar, isar.replace("FALSE", "TRUE"))).toBe(false);
   });
 
-  // The search takes seconds, so the test may run as long as the search's own time limit.
   it(
     "runs out of memory where tlapm's Zenon does",
     () => {
-      // Zenon gives up on this file once its heap passes 1 GB, after 12559 nodes.
       const text = readFixture("memory/PaxosCommit_proof-253.znn");
       expect(runZenon(text, { timeLimitMs: TIME_LIMIT_MS }).failure).toBe("memory limit");
     },
     2 * TIME_LIMIT_MS,
   );
 
-  // The search runs for seconds before it runs out of memory, so it gives up at the deadline first.
   it("stops at the deadline, where tlapm kills Zenon", () => {
     const text = readFixture("memory/PaxosCommit_proof-253.znn");
     expect(runZenon(text, { timeLimitMs: 200 }).failure).toBe("time limit");
   });
 });
 
-// Each goal is false, next to a true one, so no sound search proves it.
 const FALSE_GOALS = {
   "a disjunction implies its first disjunct": "$goal (=> (\\/ p q) p)",
   "an existential gives a universal": '$hyp "h" (E. ((x) (P x)))\n$goal (A. ((x) (P x)))',
@@ -248,8 +229,6 @@ describe("the proof checker", () => {
     expect(checkProof(getClosure(first), context, UNLIMITED)).toBe(true);
   });
 
-  // tlapm kills Zenon at its deadline, so a proof that the checker hasn't accepted by then doesn't
-  // count.
   it("stops at the deadline or once the signal aborts", () => {
     const context = getContext([first, exprs.enot(first)]);
     const passed = { deadline: Date.now() - 1, signal: undefined };
@@ -288,15 +267,15 @@ describe("the proof checker", () => {
     };
     const relates = [exprs.eapp("R", [left, right]), exprs.enot(exprs.eapp("R", [right, left]))];
     const getSymmetry = (symbol: string) => {
-      const from = exprs.evar("x");
-      const to = exprs.evar("y");
+      const source = exprs.evar("x");
+      const target = exprs.evar("y");
       return exprs.eall(
-        from,
+        source,
         UNIVERSE,
         exprs.eall(
-          to,
+          target,
           UNIVERSE,
-          exprs.eimply(exprs.eapp(symbol, [from, to]), exprs.eapp(symbol, [to, from])),
+          exprs.eimply(exprs.eapp(symbol, [source, target]), exprs.eapp(symbol, [target, source])),
         ),
       );
     };

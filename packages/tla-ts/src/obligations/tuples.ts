@@ -1,4 +1,4 @@
-// tlapm's E_tuply_declarations: declarations such as <<x, y>> \in S become declarations of names.
+// A port of tlapm's E_tuply_declarations.
 
 import type { Bound, BoundDomain, Defn, Expr } from "./expression";
 
@@ -49,7 +49,6 @@ const getNamedBound = (bound: Extract<TuplyBound, { kind: "Name" }>): Bound => (
   domain: bound.domain,
 });
 
-// Each domain quantifies separately, the last one innermost.
 export const expandQuant = (
   quantifier: "Forall" | "Exists",
   bounds: TuplyBound[],
@@ -113,7 +112,6 @@ export const expandChoose = (
   };
 };
 
-// A set constructor over a matching product binds the names to its factors.
 const expandConstructorBounds = (bounds: TuplyBound[], value: Expr, isSetOf: boolean) => {
   const expanded = bounds.map((bound): { bounds: Bound[]; definitions: Defn[] } => {
     if (bound.kind === "Name") return { bounds: [getNamedBound(bound)], definitions: [] };
@@ -148,7 +146,8 @@ const expandConstructorBounds = (bounds: TuplyBound[], value: Expr, isSetOf: boo
   const definitions = expanded.flatMap((item) => item.definitions);
   return {
     bounds: expanded.flatMap((item) => item.bounds),
-    value: definitions.length === 0 ? value : { kind: "Let" as const, definitions, body: value },
+    value:
+      definitions.length === 0 ? value : ({ kind: "Let", definitions, body: value } satisfies Expr),
   };
 };
 

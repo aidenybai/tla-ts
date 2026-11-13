@@ -4,7 +4,6 @@ import { CLS_TH_LEMMA } from "./clause";
 import type { Context } from "./context";
 import { Literal, negate } from "./literal";
 
-// dyn_ack_params defaults: dack.threshold, dack.factor, dack.gc and dack.gc_inv_decay.
 const DACK_THRESHOLD = 10;
 const DACK_FACTOR = 0.1;
 const DACK_GC = 2000;
@@ -18,7 +17,6 @@ interface AppPair {
 
 export class DynAckManager {
   private appPair2NumOccs = new Map<string, number>();
-  // A pair can appear more than once.
   private appPairs: AppPair[] = [];
   private toInstantiate: AppPair[] = [];
   private qhead = 0;
@@ -125,7 +123,6 @@ export class DynAckManager {
           negate(this.mkEq(manager.getArg(pair.first, index), manager.getArg(pair.second, index))),
         );
     this.appPair2NumOccs.delete(pair.key);
-    // The pair stays in appPairs, which still holds its references.
     this.instantiated.add(pair.key);
     literals.push(this.mkEq(pair.first, pair.second));
     for (const literal of literals) context.markLiteralAsRelevant(literal);

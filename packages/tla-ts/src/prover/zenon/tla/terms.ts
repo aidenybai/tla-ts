@@ -6,7 +6,6 @@ import type { Index } from "../index-table";
 import type { Node, Priority } from "../node";
 import { makeRule, type Rule } from "../proof";
 
-// Zenon's Stop: the rules after it don't apply to the formula.
 export type Item = Node | "stop";
 
 export const SET_CONSTRUCTORS = [

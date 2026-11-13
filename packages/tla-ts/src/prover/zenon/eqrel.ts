@@ -4,7 +4,8 @@ import { TRUE, type Expr, type Expressions } from "./expr";
 
 export type Direction = "left" | "right";
 
-// The quantifiers at variables count from the outermost.
+export type RelationProperty = "reflexive" | "symmetric" | "transitive";
+
 export interface Origin {
   formula: Expr;
   directions: Direction[];
@@ -117,7 +118,6 @@ const getPair = (leaf: Expr) => {
   return [args[0].symbol, args[1].symbol];
 };
 
-// The leaves as Zenon's partition returns them: positive and negative, each reversed.
 const partition = (leaves: Expr[]) => ({
   positive: leaves
     .filter((leaf) => leaf.kind !== "not")

@@ -1,7 +1,16 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { availableParallelism } from "node:os";
 import { dirname, join } from "node:path";
-import { getHost, getSuiteCommand, HOSTS, runPool, runTest, type HostResult } from "./hosts";
+import {
+  CRASH_EXIT,
+  createProgress,
+  getHost,
+  getSuiteCommand,
+  HOSTS,
+  runPool,
+  runTest,
+  WORKERS,
+  type HostResult,
+} from "./hosts";
 import {
   findTests,
   getContexts,
@@ -30,9 +39,6 @@ interface ResultEntry {
   expected: Recording | undefined;
   actual: HostResult;
 }
-
-const WORKERS = Number(process.env.CONFORMANCE_WORKERS ?? Math.min(4, availableParallelism()));
-const CRASH_EXIT = -1;
 
 const args = process.argv.slice(2);
 const getOption = (name: string) => {
@@ -87,6 +93,7 @@ const tests = getShard(
   shard,
 );
 const results: ResultEntry[] = [];
+const isProgressDue = createProgress(500);
 
 await runPool(tests, WORKERS, async (test) => {
   for (const context of getContexts(test)) {
@@ -101,7 +108,7 @@ await runPool(tests, WORKERS, async (test) => {
       actual,
     });
   }
-  if (results.length % 500 < 5) console.log(`${results.length} runs`);
+  if (isProgressDue(results.length)) console.log(`${results.length} runs`);
 });
 results.sort((left, right) => (left.id < right.id ? -1 : 1));
 

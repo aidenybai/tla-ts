@@ -16,7 +16,7 @@ import {
   TlaSyntaxError,
   type SanyError,
 } from "./errors";
-import { mapChildren } from "./instances";
+import { forEachChild } from "./instances";
 import { collectSemanticErrors, getBoundNames, getPatternNames } from "./resolve";
 import { STANDARD_LEVELS } from "./standard-definitions";
 
@@ -55,11 +55,10 @@ type Resolved =
   | { kind: "Declared"; name: string; level: number; arity: number }
   | { kind: "Defined"; levels: OperatorLevels };
 
-interface Operand {
-  data: LevelData;
-  operator?: OperatorLevels;
-  declared?: OperatorParam;
-}
+type Operand =
+  | { kind: "Value"; data: LevelData }
+  | { kind: "Operator"; data: OperatorLevels }
+  | { kind: "Declared"; data: LevelData; declared: OperatorParam };
 
 export const CONSTANT_LEVEL = 0;
 export const VARIABLE_LEVEL = 1;
@@ -95,6 +94,12 @@ export const putConstraint = (constraints: Map<string, number>, name: string, le
 
 export const putArgConstraint = (constraints: Map<string, number>, key: string, level: number) =>
   constraints.set(key, Math.max(level, constraints.get(key) ?? 0));
+
+const mergeConstraints = (data: LevelData, part: LevelData) => {
+  part.constraints.forEach((value, key) => putConstraint(data.constraints, key, value));
+  part.argConstraints.forEach((value, key) => putArgConstraint(data.argConstraints, key, value));
+  part.argParams.forEach((key) => data.argParams.add(key));
+};
 
 const createSignature = (
   name: string,
@@ -193,8 +198,6 @@ const createLevelError = (message: string, expression: Expression) =>
 
 const LOGICAL_OPERATORS = new Set(["/\\", "\\/", "=>", "<=>"]);
 
-// SANY's OpApplNode.levelCheck rejects raw actions inside temporal formulas, but not inside a LET
-// or a label.
 const isOperatorApplication = (expression: Expression) =>
   expression.kind !== "Let" && expression.kind !== "Label";
 
@@ -214,7 +217,6 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const definition = context.getDefinition(name);
     if (definition) {
       const levels = analyzeDefinition(definition, new Map());
-      // SANY names a definition of an instance by its qualified name, as in I!Foo.
       const qualifiedName = context.getQualifiedName?.(name);
       return {
         kind: "Defined",
@@ -234,12 +236,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         data.params.add(param);
         data.argParams.add(getArgumentParamKey(name, index, param));
       });
-      operand.data.constraints.forEach((value, key) => putConstraint(data.constraints, key, value));
       putArgConstraint(data.argConstraints, getArgumentKey(name, index), operand.data.level);
-      operand.data.argConstraints.forEach((value, key) =>
-        putArgConstraint(data.argConstraints, key, value),
-      );
-      operand.data.argParams.forEach((key) => data.argParams.add(key));
+      mergeConstraints(data, operand.data);
     });
     return data;
   };
@@ -252,7 +250,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   ) => {
     const isBound = (name: string) => bound.includes(name);
     operands.forEach((operand, index) => {
-      if (operand.operator || operand.declared) return;
+      if (operand.kind !== "Value") return;
       if (operand.data.level > getMaxLevel(operator, index)) {
         throw new TlaSyntaxError(
           `Level error in applying operator ${operator.name}:\nThe level of argument ${index + 1} exceeds the maximum level allowed by the operator`,
@@ -274,7 +272,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       Math.max(
         operator.level,
         ...operands
-          .filter((_, index) => getWeight(operator, index) === 1)
+          .filter((_operand, index) => getWeight(operator, index) === 1)
           .map((operand) => operand.data.level),
         ...ranges.map((range) => range.level),
       ),
@@ -303,10 +301,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       }),
     );
     operands.forEach((operand, operandIndex) => {
-      const argument = operand.operator;
-      if (!argument) return;
+      if (operand.kind !== "Operator") return;
+      const argument = operand.data;
       operands.forEach((other, otherIndex) =>
-        argument.formals.forEach((_, argumentIndex) => {
+        argument.formals.forEach((_formal, argumentIndex) => {
           if (!hasCondition(operandIndex, otherIndex, argumentIndex)) return;
           other.data.params.forEach((param) =>
             putConstraint(data.constraints, param, getMaxLevel(argument, argumentIndex)),
@@ -316,9 +314,13 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     });
     operator.argParams.forEach((key) => {
       const parameter = parseArgumentParamKey(key);
-      const argument = getOperand(parameter.operator)?.operator;
-      if (argument) {
-        putConstraint(data.constraints, parameter.param, getMaxLevel(argument, parameter.index));
+      const argument = getOperand(parameter.operator);
+      if (argument?.kind === "Operator") {
+        putConstraint(
+          data.constraints,
+          parameter.param,
+          getMaxLevel(argument.data, parameter.index),
+        );
       }
     });
 
@@ -331,9 +333,9 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       constraints.forEach((value, key) => putArgConstraint(data.argConstraints, key, value)),
     );
     operands.forEach((operand, operandIndex) => {
+      if (operand.kind !== "Declared") return;
       const declared = operand.declared;
-      if (!declared) return;
-      Array.from({ length: declared.arity }, (_, argumentIndex) =>
+      Array.from({ length: declared.arity }, (_value, argumentIndex) =>
         putArgConstraint(
           data.argConstraints,
           getArgumentKey(declared.name, argumentIndex),
@@ -341,7 +343,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         ),
       );
       operands.forEach((other, otherIndex) =>
-        Array.from({ length: declared.arity }, (_, argumentIndex) => {
+        Array.from({ length: declared.arity }, (_value, argumentIndex) => {
           if (hasCondition(operandIndex, otherIndex, argumentIndex)) {
             putArgConstraint(
               data.argConstraints,
@@ -384,17 +386,17 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         );
         return;
       }
-      if (argument.declared) {
+      if (argument.kind === "Declared") {
         data.argParams.add(
           getArgumentParamKey(argument.declared.name, parameter.index, parameter.param),
         );
       }
     });
     operands.forEach((operand, operandIndex) => {
+      if (operand.kind !== "Declared") return;
       const declared = operand.declared;
-      if (!declared) return;
       operands.forEach((other, otherIndex) =>
-        Array.from({ length: declared.arity }, (_, argumentIndex) => {
+        Array.from({ length: declared.arity }, (_value, argumentIndex) => {
           if (!hasCondition(operandIndex, otherIndex, argumentIndex)) return;
           other.data.params.forEach((param) =>
             data.argParams.add(getArgumentParamKey(declared.name, argumentIndex, param)),
@@ -413,7 +415,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         expression.body,
         scope,
       );
-      return { data: operator, operator };
+      return { kind: "Operator", data: operator };
     }
     const name =
       expression.kind === "OperatorReference"
@@ -427,16 +429,16 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         resolved.kind === "Defined" &&
         (resolved.levels.formals.length > 0 || expression.kind === "OperatorReference")
       ) {
-        return { data: resolved.levels, operator: resolved.levels };
+        return { kind: "Operator", data: resolved.levels };
       }
       if (resolved.kind === "Declared" && resolved.arity > 0) {
         const data = createData();
         data.params.add(name);
-        return { data, declared: { name, arity: resolved.arity } };
+        return { kind: "Declared", data, declared: { name, arity: resolved.arity } };
       }
-      if (expression.kind === "OperatorReference") return { data: createData() };
+      if (expression.kind === "OperatorReference") return { kind: "Value", data: createData() };
     }
-    return { data: analyze(expression, scope) };
+    return { kind: "Value", data: analyze(expression, scope) };
   };
 
   const toOperands = (expressions: Expression[], scope: Scope) =>
@@ -512,18 +514,12 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       argConstraints: new Map(body.argConstraints),
       argParams: new Set(body.argParams),
     };
-    expression.definitions.forEach((definition) => {
-      const levels = analyzeDefinition(definition, inner);
-      levels.constraints.forEach((value, key) => putConstraint(data.constraints, key, value));
-      levels.argConstraints.forEach((value, key) =>
-        putArgConstraint(data.argConstraints, key, value),
-      );
-      levels.argParams.forEach((key) => data.argParams.add(key));
-    });
+    expression.definitions.forEach((definition) =>
+      mergeConstraints(data, analyzeDefinition(definition, inner)),
+    );
     return data;
   };
 
-  // SANY reports a level error of an operator's arguments at the application.
   const analyze = (expression: Expression, scope: Scope): LevelData => {
     try {
       return analyzeNode(expression, scope);
@@ -687,15 +683,14 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           toOperand(expression.function, scope),
           expression.args.length === 1
             ? toOperand(expression.args[0], scope)
-            : { data: applyBuiltin(SET_LEVELS, expression.args, scope) },
+            : { kind: "Value", data: applyBuiltin(SET_LEVELS, expression.args, scope) },
         ]);
-      // SANY's semantic checker rejects the expression without computing its level.
       case "Bracket":
         return createData();
       case "FieldAccess":
         return applyDefined(SELECT_LEVELS, [
           toOperand(expression.record, scope),
-          { data: createData() },
+          { kind: "Value", data: createData() },
         ]);
       case "BoxAction":
       case "AngleAction":
@@ -736,7 +731,6 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       case "Apply":
         visitOperator(expression.operator, expression.args);
         return names;
-      // SANY's LetInNode and OpArgNode don't carry the non-Leibniz parameters of their bodies.
       case "Lambda":
       case "Let":
         return names;
@@ -759,10 +753,9 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         );
         return names;
       default:
-        mapChildren(expression, (child, bound) => {
-          visit(child, isNonLeibniz, bindFormals(scope, toFormals(bound)));
-          return child;
-        });
+        forEachChild(expression, (child, bound) =>
+          visit(child, isNonLeibniz, bindFormals(scope, toFormals(bound))),
+        );
         return names;
     }
   };
@@ -791,13 +784,13 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       minMaxLevels: formals.map((formal) =>
         Array.from(
           { length: formal.arity },
-          (_, index) => data.argConstraints.get(getArgumentKey(formal.name, index)) ?? 0,
+          (_value, index) => data.argConstraints.get(getArgumentKey(formal.name, index)) ?? 0,
         ),
       ),
       conditions: new Set(
         formals.flatMap((operator, operatorIndex) =>
           formals.flatMap((param, paramIndex) =>
-            Array.from({ length: operator.arity }, (_, argumentIndex) => argumentIndex)
+            Array.from({ length: operator.arity }, (_value, argumentIndex) => argumentIndex)
               .filter((argumentIndex) =>
                 data.argParams.has(getArgumentParamKey(operator.name, argumentIndex, param.name)),
               )
@@ -875,9 +868,7 @@ export const analyzeAssumeProve = (
   const data = createData(Math.max(...parts.map((part) => part.level)));
   parts.forEach((part) => {
     part.params.forEach((param) => data.params.add(param));
-    part.constraints.forEach((value, key) => putConstraint(data.constraints, key, value));
-    part.argConstraints.forEach((value, key) => putArgConstraint(data.argConstraints, key, value));
-    part.argParams.forEach((key) => data.argParams.add(key));
+    mergeConstraints(data, part);
   });
   return data;
 };
@@ -904,7 +895,6 @@ export const checkModuleLevels = (
       ? analyzeAssumeProve(body.statement, new Map(), analyzer).level
       : getLevel([body.statement]);
   };
-  // The proof of a temporal goal may only assume constants.
   const checkTemporalGoal = (proof: Proof | undefined): SanyError[] =>
     proof?.kind !== "Steps"
       ? []
@@ -930,7 +920,6 @@ export const checkModuleLevels = (
           }
           return step.body.kind === "Qed" ? checkTemporalGoal(step.proof) : [];
         });
-  // SANY checks each step as a theorem of its own after the steps of its proof.
   const checkProof = (proof: Proof | undefined): SanyError[] =>
     proof?.kind !== "Steps"
       ? []

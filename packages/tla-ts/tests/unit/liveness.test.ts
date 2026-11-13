@@ -4,10 +4,14 @@ import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
 import { getUnexpectedException } from "../../src/errors";
 import type { TlcVersion } from "../../src/tlc/version";
+import { checkFixture } from "./check-harness";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/liveness");
 
 const SOURCE = readFileSync(join(DIRECTORY, "Liveness.tla"), "utf8");
+
+const checkGithub710 = (configName: string, version?: TlcVersion) =>
+  checkFixture("github710", "Github710d", configName, { version });
 
 const TLC_VERDICTS: [string, string][] = [
   ["Unfair-ReachesLimit", "liveness-violation"],
@@ -37,8 +41,6 @@ describe("liveness matches TLC", () => {
     expect([result.generatedStates, result.distinctStates]).toEqual([92, 36]);
   });
 
-  // The search takes longer than the three seconds before TLC's first periodic check, and every
-  // state the check sees can stutter forever.
   it("finds a lasso in the part of the graph that TLC's periodic check sees", async () => {
     const result = await check({
       source:
@@ -60,11 +62,7 @@ describe("liveness matches TLC", () => {
 
   it("reports the deadlock before the temporal property that fails in the same state", async () => {
     const checkConfig = async (name: string) => {
-      const directory = join(import.meta.dirname, "../fixtures/github710");
-      const result = await check({
-        source: readFileSync(join(directory, "Github710d.tla"), "utf8"),
-        config: readFileSync(join(directory, `${name}.cfg`), "utf8"),
-      });
+      const result = await checkGithub710(name);
       return [
         result.status,
         result.violation?.name,
@@ -80,17 +78,10 @@ describe("liveness matches TLC", () => {
   });
 
   it("finds a violation of a safety-like property early unless TLC is 1.7.4", async () => {
-    const directory = join(import.meta.dirname, "../fixtures/github710");
-    const getAdditionalViolation = async (version: TlcVersion) => {
-      const result = await check({
-        source: readFileSync(join(directory, "Github710d.tla"), "utf8"),
-        config: readFileSync(join(directory, "Github710d.cfg"), "utf8"),
-        version,
-      });
-      return result.additionalViolation?.name;
-    };
-    expect(await getAdditionalViolation("master")).toBe("NeverThree");
-    expect(await getAdditionalViolation("1.7.4")).toBeUndefined();
+    const master = await checkGithub710("Github710d", "master");
+    expect(master.additionalViolation?.name).toBe("NeverThree");
+    const release = await checkGithub710("Github710d", "1.7.4");
+    expect(release.additionalViolation?.name).toBeUndefined();
   });
 
   it.each(["master", "1.7.4"] satisfies TlcVersion[])(

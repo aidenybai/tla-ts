@@ -1,7 +1,8 @@
 // Ported from Zenon's index.ml, as shipped in tlapm. Copyright 2004 INRIA, see LICENSE.
-// Lists keep Zenon's order, latest first.
 
 import {
+  getStringName,
+  isApp,
   isNegatedRelation,
   isRelation,
   type Expr,
@@ -40,7 +41,6 @@ const popValue = <Key, Value>(table: Map<Key, Value[]>, key: Key) => {
 const getLatestFirst = <Key, Value>(table: Map<Key, Value[]>, key: Key) =>
   [...(table.get(key) ?? [])].reverse();
 
-// Taus and metavariables are heads by identity.
 type Head = string | Expr;
 
 export const getHead = (expression: Expr): Head | undefined => {
@@ -64,18 +64,10 @@ export const getHead = (expression: Expr): Head | undefined => {
   }
 };
 
-// Zenon indexes formulas by head under a string; every tau shares "t." and every metavariable "".
 const getHeadKey = (head: Head) =>
   typeof head === "string" ? head : head.kind === "tau" ? "t." : "";
 
 // Removing from a one-element list drops the key whatever the element, as Zenon does.
-const addElement = <Key, Value>(table: Map<Key, Value[]>, key: Key, value: Value) => {
-  const values = table.get(key);
-  if (values === undefined) table.set(key, [value]);
-  else values.push(value);
-};
-
-// False stands for Zenon's Not_found.
 const removeElement = <Key, Value>(table: Map<Key, Value[]>, key: Key, value: Value) => {
   const values = table.get(key);
   if (values === undefined) return false;
@@ -83,8 +75,6 @@ const removeElement = <Key, Value>(table: Map<Key, Value[]>, key: Key, value: Va
   else if (values[values.length - 1] === value) values.pop();
   return true;
 };
-
-const getValues = <Key, Value>(table: Map<Key, Value[]>, key: Key) => getLatestFirst(table, key);
 
 const getHeadId = (head: Head) => (typeof head === "string" ? `s${head}` : `e${head.id}`);
 
@@ -140,35 +130,23 @@ export const createIndex = (exprs: Expressions) => {
     if (head !== undefined) action(positive, getHeadKey(head), formula);
   };
 
-  const getStringLiteral = (expression: Expr) =>
-    expression.kind === "app" &&
-    expression.symbol === "$string" &&
-    expression.args.length === 1 &&
-    expression.args[0].kind === "var"
-      ? expression.args[0].symbol
-      : undefined;
-
   const getStringEquality = (formula: Expr) => {
-    if (formula.kind !== "app" || formula.symbol !== "=" || formula.args.length !== 2)
-      return undefined;
-    const rightString = getStringLiteral(formula.args[1]);
+    if (!isApp(formula, "=", 2)) return undefined;
+    const rightString = getStringName(formula.args[1]);
     if (rightString !== undefined)
       return { isReversed: false, term: formula.args[0], value: rightString };
-    const leftString = getStringLiteral(formula.args[0]);
+    const leftString = getStringName(formula.args[0]);
     return leftString === undefined
       ? undefined
       : { isReversed: true, term: formula.args[1], value: leftString };
   };
 
-  const isEquality = (formula: Expr) =>
-    formula.kind === "app" && formula.symbol === "=" && formula.args.length === 2;
-
   const add = (formula: Expr, goalness: number) => {
     pushValue(formulas, formula, goalness);
-    if (isEquality(formula)) {
+    if (isApp(formula, "=", 2)) {
       pushValue(equalLeftRight, formula.args[0], formula.args[1]);
       pushValue(equalRightLeft, formula.args[1], formula.args[0]);
-    } else if (formula.kind === "not" && isEquality(formula.args[0])) {
+    } else if (formula.kind === "not" && isApp(formula.args[0], "=", 2)) {
       pushValue(unequalLeftRight, formula.args[0].args[0], formula.args[0].args[1]);
       pushValue(unequalRightLeft, formula.args[0].args[1], formula.args[0].args[0]);
     }
@@ -180,7 +158,7 @@ export const createIndex = (exprs: Expressions) => {
       ]);
     formulaCount++;
     topFormulaCount = Math.max(topFormulaCount, formulaCount);
-    actOnHead(formula, addElement);
+    actOnHead(formula, pushValue);
     const lemma = lemmas.get(formula);
     if (lemma !== undefined) lemma.isPresent = true;
     newFormulas.unshift(formula);
@@ -221,10 +199,10 @@ export const createIndex = (exprs: Expressions) => {
     const stringEquality = getStringEquality(formula);
     if (stringEquality !== undefined)
       (stringEquality.isReversed ? reversedStringEqualities : stringEqualities).shift();
-    if (isEquality(formula)) {
+    if (isApp(formula, "=", 2)) {
       popValue(equalLeftRight, formula.args[0]);
       popValue(equalRightLeft, formula.args[1]);
-    } else if (formula.kind === "not" && isEquality(formula.args[0])) {
+    } else if (formula.kind === "not" && isApp(formula.args[0], "=", 2)) {
       popValue(unequalLeftRight, formula.args[0].args[0]);
       popValue(unequalRightLeft, formula.args[0].args[1]);
     }
@@ -233,14 +211,13 @@ export const createIndex = (exprs: Expressions) => {
     if (lemma !== undefined) lemma.isPresent = false;
   };
 
-  // Stops at the first side without a head, as Zenon's add_trans. False means No_head.
   const addTrans = (formula: RelationExpr) => {
     const leftHead = getHead(formula.args[0]);
     if (leftHead === undefined) return false;
-    addElement(transLeft, getRelationKey(formula.symbol, leftHead), formula);
+    pushValue(transLeft, getRelationKey(formula.symbol, leftHead), formula);
     const rightHead = getHead(formula.args[1]);
     if (rightHead === undefined) return false;
-    addElement(transRight, getRelationKey(formula.symbol, rightHead), formula);
+    pushValue(transRight, getRelationKey(formula.symbol, rightHead), formula);
     return true;
   };
 
@@ -248,13 +225,13 @@ export const createIndex = (exprs: Expressions) => {
     const relation = formula.args[0];
     const leftHead = getHead(relation.args[0]);
     if (leftHead !== undefined) {
-      addElement(negTransLeft, getRelationKey(relation.symbol, leftHead), formula);
-      addElement(allNegTransLeft, getHeadId(leftHead), formula);
+      pushValue(negTransLeft, getRelationKey(relation.symbol, leftHead), formula);
+      pushValue(allNegTransLeft, getHeadId(leftHead), formula);
     }
     const rightHead = getHead(relation.args[1]);
     if (rightHead !== undefined) {
-      addElement(negTransRight, getRelationKey(relation.symbol, rightHead), formula);
-      addElement(allNegTransRight, getHeadId(rightHead), formula);
+      pushValue(negTransRight, getRelationKey(relation.symbol, rightHead), formula);
+      pushValue(allNegTransRight, getHeadId(rightHead), formula);
     }
   };
 
@@ -269,8 +246,6 @@ export const createIndex = (exprs: Expressions) => {
     suspects.unshift([{ proof, cursor: 0, records }]);
   };
 
-  // A lemma waits on the first conclusion that is missing, and is checked again when that formula
-  // comes back.
   const searchLemma = (): Proof | undefined => {
     for (const formula of newFormulas) {
       const record = lemmas.get(formula);
@@ -305,8 +280,8 @@ export const createIndex = (exprs: Expressions) => {
     remove,
     isMember,
     getGoalness,
-    findPositive: (symbol: string) => withGoalness(getValues(positive, symbol)),
-    findNegative: (symbol: string) => withGoalness(getValues(negative, symbol)),
+    findPositive: (symbol: string) => withGoalness(getLatestFirst(positive, symbol)),
+    findNegative: (symbol: string) => withGoalness(getLatestFirst(negative, symbol)),
     findEqualRight: (term: Expr) => getLatestFirst(equalLeftRight, term),
     findEqualLeft: (term: Expr) => getLatestFirst(equalRightLeft, term),
     findDisequalities: (term: Expr) => [
@@ -322,16 +297,17 @@ export const createIndex = (exprs: Expressions) => {
     addTrans,
     addNegTrans,
     findTransLeft: (relation: string, head: Head) =>
-      withGoalness(getValues(transLeft, getRelationKey(relation, head))),
+      withGoalness(getLatestFirst(transLeft, getRelationKey(relation, head))),
     findTransRight: (relation: string, head: Head) =>
-      withGoalness(getValues(transRight, getRelationKey(relation, head))),
+      withGoalness(getLatestFirst(transRight, getRelationKey(relation, head))),
     findNegTransLeft: (relation: string, head: Head) =>
-      withGoalness(getValues(negTransLeft, getRelationKey(relation, head))),
+      withGoalness(getLatestFirst(negTransLeft, getRelationKey(relation, head))),
     findNegTransRight: (relation: string, head: Head) =>
-      withGoalness(getValues(negTransRight, getRelationKey(relation, head))),
-    findAllNegTransLeft: (head: Head) => withGoalness(getValues(allNegTransLeft, getHeadId(head))),
+      withGoalness(getLatestFirst(negTransRight, getRelationKey(relation, head))),
+    findAllNegTransLeft: (head: Head) =>
+      withGoalness(getLatestFirst(allNegTransLeft, getHeadId(head))),
     findAllNegTransRight: (head: Head) =>
-      withGoalness(getValues(allNegTransRight, getHeadId(head))),
+      withGoalness(getLatestFirst(allNegTransRight, getHeadId(head))),
     addLemma,
     searchLemma,
     addDefinition: (definition: Definition) => definitions.set(definition.symbol, definition),

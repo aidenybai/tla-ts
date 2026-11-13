@@ -1,6 +1,4 @@
-// Ported from Isabelle2025's Pure/type_infer_context.ML, Pure/type_infer.ML and Pure/consts.ML.
-// Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and
-// contributors, see LICENSE.
+// Ported from Isabelle2025's Pure/type_infer_context.ML, Pure/type_infer.ML and Pure/consts.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import { bumpString } from "../pure/name";
@@ -58,7 +56,7 @@ interface Inference {
   nextDummy: number;
 }
 
-const freshParam = (inference: Inference) => {
+const createParam = (inference: Inference) => {
   const param = mkTVar(PARAM_NAME, inference.nextParam);
   inference.nextParam += 1;
   return param;
@@ -126,14 +124,17 @@ const unify = (inference: Inference, left: Typ, right: Typ) => {
   throw new TlaIsabelleError("ERROR", "Type unification failed");
 };
 
+const getSchemeKey = (atom: Exclude<Typ, { kind: "Type" }>) =>
+  atom.kind === "TFree" ? atom.name : `${atom.name}.${atom.index}`;
+
 const instantiateScheme = (inference: Inference, type: Typ) => {
   const params = new Map<string, Typ>();
   const instantiate = (current: Typ): Typ => {
     if (current.kind === "Type") return mkType(current.name, current.args.map(instantiate));
-    const key = current.kind === "TFree" ? current.name : `${current.name}.${current.index}`;
+    const key = getSchemeKey(current);
     const known = params.get(key);
     if (known !== undefined) return known;
-    const param = freshParam(inference);
+    const param = createParam(inference);
     params.set(key, param);
     return param;
   };
@@ -146,14 +147,14 @@ const instantiateTVars = (inference: Inference, type: Typ, params = new Map<stri
     if (current.kind === "Type") return mkType(current.name, current.args.map(instantiate));
     if (current.kind === "TFree") return current;
     const key = `${current.name}.${current.index}`;
-    const param = params.get(key) ?? freshParam(inference);
+    const param = params.get(key) ?? createParam(inference);
     params.set(key, param);
     return param;
   };
   return instantiate(type);
 };
 
-const constType = (scope: NameScope, name: string) => {
+const getConstType = (scope: NameScope, name: string) => {
   const info = scope.consts.get(name);
   if (info === undefined) throw new TlaIsabelleError("ERROR", `Undeclared constant: ${name}`);
   return info.type;
@@ -172,16 +173,16 @@ const elaborate = (
       if (index >= 0) return [mkBound(index), bound[index].type];
       const constant = fixed.has(ast.name) ? undefined : scope.constNames.get(ast.name);
       if (constant !== undefined) {
-        const type = instantiateScheme(inference, constType(scope, constant));
+        const type = instantiateScheme(inference, getConstType(scope, constant));
         return [mkConst(constant, type), type];
       }
       const known = inference.freeTypes.get(ast.name);
-      const type = known ?? freshParam(inference);
+      const type = known ?? createParam(inference);
       if (known === undefined) inference.freeTypes.set(ast.name, type);
       return [mkFree(ast.name, type), type];
     }
     case "const": {
-      const type = instantiateScheme(inference, constType(scope, ast.name));
+      const type = instantiateScheme(inference, getConstType(scope, ast.name));
       return [mkConst(ast.name, type), type];
     }
     case "var": {
@@ -189,24 +190,25 @@ const elaborate = (
       const known = inference.varTypes.get(key);
       const bound = known === undefined ? inference.getVarType(ast.name, ast.index) : undefined;
       const type =
-        known ?? (bound === undefined ? freshParam(inference) : instantiateTVars(inference, bound));
+        known ??
+        (bound === undefined ? createParam(inference) : instantiateTVars(inference, bound));
       inference.varTypes.set(key, type);
       return [mkVar(ast.name, ast.index, type), type];
     }
     case "dummy": {
-      const type = freshParam(inference);
+      const type = createParam(inference);
       inference.nextDummy += 1;
       return [mkVar("_dummy_", inference.nextDummy, type), type];
     }
     case "app": {
       const [fun, funType] = elaborate(scope, inference, fixed, bound, ast.fun);
       const [arg, argType] = elaborate(scope, inference, fixed, bound, ast.arg);
-      const result = freshParam(inference);
+      const result = createParam(inference);
       unify(inference, funType, funT(argType, result));
       return [mkApp(fun, arg), result];
     }
     case "abs": {
-      const type = ast.type ?? freshParam(inference);
+      const type = ast.type ?? createParam(inference);
       const [body, bodyType] = elaborate(
         scope,
         inference,
@@ -230,10 +232,7 @@ const matchScheme = (pattern: Typ, object: Typ, instantiation: Map<string, Typ>)
       pattern.args.forEach((arg, index) => matchScheme(arg, object.args[index], instantiation));
     return;
   }
-  instantiation.set(
-    pattern.kind === "TFree" ? pattern.name : `${pattern.name}.${pattern.index}`,
-    object,
-  );
+  instantiation.set(getSchemeKey(pattern), object);
 };
 
 const instantiateMatched = (type: Typ, instantiation: ReadonlyMap<string, Typ>): Typ =>
@@ -242,7 +241,7 @@ const instantiateMatched = (type: Typ, instantiation: ReadonlyMap<string, Typ>):
         type.name,
         type.args.map((arg) => instantiateMatched(arg, instantiation)),
       )
-    : (instantiation.get(type.kind === "TFree" ? type.name : `${type.name}.${type.index}`) ?? type);
+    : (instantiation.get(getSchemeKey(type)) ?? type);
 
 const expandAbbreviations = (scope: NameScope, term: Term): Term => {
   const [head, args] = stripComb(term);
@@ -300,8 +299,7 @@ export const checkProps = (
       mapTypes((type) => normalize(inference, type), term),
     ),
   );
-  // The parameters left open become type variables named in order of their first appearance.
-  const params = expanded.reduce(
+  const params = expanded.reduce<number[]>(
     (result, term) =>
       foldTypes(
         (type, state: number[]) =>
@@ -316,7 +314,7 @@ export const checkProps = (
         term,
         result,
       ),
-    [] as number[],
+    [],
   );
   const used = new Set<string>();
   for (const type of options.fixedTypes.values())

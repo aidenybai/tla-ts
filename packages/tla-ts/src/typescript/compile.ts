@@ -13,7 +13,6 @@ import { createStateScope } from "./scope";
 import { translateStep } from "./steps";
 import { getDomain } from "./types";
 
-// A state variable starts at its initializer, or at every value of its type without one.
 const translateInitial = (variable: Variable, context: Context) => {
   const initializer = variable.declaration.initializer;
   if (initializer === undefined) {
@@ -24,8 +23,6 @@ const translateInitial = (variable: Variable, context: Context) => {
   return `${variable.name} = ${indent(wrapEquated(value), "     ")}`;
 };
 
-// An exported function is a property if a tag says so, an action if it changes state, and an
-// invariant if it returns a boolean.
 const translateExported = (
   definition: Exported,
   model: Model,
@@ -34,11 +31,9 @@ const translateExported = (
 ) => {
   const tag = [...definition.tags.keys()].find((candidate) => VALUE_TAGS.has(candidate));
   if (tag !== undefined) return translateProperty(definition, tag, model, sections, context);
-  if (writesState(definition.body, context)) {
-    return translateStep(definition, sections, context);
-  }
   const returnType = context.checker.getSignatureFromDeclaration(definition.node)?.getReturnType();
   if (
+    writesState(definition.body, context) ||
     returnType === undefined ||
     (returnType.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) !== 0
   ) {
@@ -53,8 +48,6 @@ const translateExported = (
   return translateInvariant(definition, sections, context);
 };
 
-// Compiles a TypeScript file into a TLA+ spec and the config that checks it. Imports resolve
-// relative to fileName, and the module takes its name, so die-hard.ts is the module DieHard.
 export const compile = (source: string, fileName = "spec.ts"): CompiledSpec => {
   const program = createProgram(source, fileName.replaceAll("\\", "/"));
   const context = createContext(program.checker);

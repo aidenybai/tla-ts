@@ -4,31 +4,19 @@ import { join } from "node:path";
 import { encodeForBackend } from "../src/prover/prove";
 import type { PrintedObligation } from "../src/obligations";
 import { runZenon } from "../src/prover/zenon/decide";
-import { CORPORA_DIRECTORY, getOption } from "./corpora";
+import { CORPORA_DIRECTORY, formatSeconds, getMedian, getOption } from "./corpora";
 import {
   getInputDigest,
-  getModuleObligations,
+  getObligationsById,
   getZenonVerdict,
   PROOF_INPUTS_DIRECTORY,
   readProofRecords,
 } from "./proof-records";
 
-// tlapm gives Zenon 10 s per obligation unless a proof says otherwise.
 const TIME_LIMIT_MS = 10_000;
 
-// --shard 2/4 checks every fourth obligation, starting with the second, to split a run across
-// processes.
 const shard = (getOption("--shard") ?? "1/1").split("/").map(Number);
-// With ZENON set to tlapm's Zenon binary, it runs on the same files, to compare verdicts, node
-// counts and times.
 const zenonPath = process.env.ZENON;
-
-const getMedian = (values: number[]) => {
-  const sorted = values.toSorted((left, right) => left - right);
-  return sorted.length === 0 ? 0 : sorted[Math.floor((sorted.length - 1) / 2)];
-};
-
-const formatSeconds = (milliseconds: number) => `${(milliseconds / 1000).toFixed(3)} s`;
 
 const runs = readProofRecords()
   .flatMap((module) =>
@@ -41,29 +29,25 @@ const runs = readProofRecords()
   )
   .filter((_, index) => index % shard[1] === shard[0] - 1);
 
-// The runs come module by module, so only the current module's obligations stay parsed.
-const current: { moduleId: string; obligations: Map<number, PrintedObligation> | string } = {
-  moduleId: "",
-  obligations: "",
-};
+let currentModuleId = "";
+let currentObligations: Map<number, PrintedObligation> | undefined;
 const getModule = (moduleId: string) => {
-  if (current.moduleId === moduleId) return current.obligations;
-  current.moduleId = moduleId;
-  current.obligations = (() => {
+  if (currentModuleId === moduleId) return currentObligations;
+  currentModuleId = moduleId;
+  currentObligations = (() => {
     try {
-      const printed = getModuleObligations(join(CORPORA_DIRECTORY, moduleId));
-      return new Map(printed.map((obligation) => [obligation.id, obligation]));
+      return getObligationsById(join(CORPORA_DIRECTORY, moduleId));
     } catch (error) {
-      if (error instanceof Error) return `${error.name}: ${error.message}`;
+      if (error instanceof Error) return undefined;
       throw error;
     }
   })();
-  return current.obligations;
+  return currentObligations;
 };
 
 const getEncoderOutcome = (moduleId: string, id: number, input: string) => {
   const obligations = getModule(moduleId);
-  if (typeof obligations === "string") return "module error";
+  if (obligations === undefined) return "module error";
   const obligation = obligations.get(id);
   if (obligation === undefined) return "missing";
   try {
@@ -76,7 +60,6 @@ const getEncoderOutcome = (moduleId: string, id: number, input: string) => {
   }
 };
 
-// tlapm runs Zenon with -max-time 1d and kills it once its timeout passes.
 const runReference = (path: string) => {
   if (zenonPath === undefined) return undefined;
   const start = performance.now();
@@ -88,7 +71,6 @@ const runReference = (path: string) => {
   const nodesSearched = /^nodes searched: (\d+)$/m.exec(result.stderr)?.[1];
   return {
     isProved: result.signal === null && getZenonVerdict(result.stdout) === "unsat",
-    // Zenon prints its statistics only when it stops by itself.
     nodesSearched: nodesSearched === undefined ? undefined : Number(nodesSearched),
     elapsed: performance.now() - start,
   };
@@ -98,7 +80,6 @@ const results = runs.map((run) => {
   const name = `${run.moduleId} #${run.id}`;
   const encoderOutcome = getEncoderOutcome(run.moduleId, run.id, run.record.input);
   if (encoderOutcome !== "match") console.log(`encoder ${encoderOutcome.padEnd(12)} ${name}`);
-  // The prover runs on the file tlapm wrote, so a gap in the encoder doesn't hide one in the prover.
   const path = join(PROOF_INPUTS_DIRECTORY, run.moduleId, `${run.id}.znn`);
   if (!existsSync(path)) return { encoderOutcome };
   const isFound = run.record.verdict === "unsat";
@@ -110,8 +91,6 @@ const results = runs.map((run) => {
   const reference = runReference(path);
   if (reference !== undefined && reference.isProved !== isProved)
     console.log(`binary  ${reference.isProved ? "miss" : "surplus"}      ${name}`);
-  // The node counts match only where both searches stop by themselves: tla-ts models Zenon's heap
-  // rather than measuring it.
   const isCounted =
     reference?.nodesSearched !== undefined &&
     zenon.failure !== "time limit" &&
@@ -145,7 +124,7 @@ const referenceTimes = proverResults.flatMap((result) =>
   result.reference?.isProved === true ? [result.reference.elapsed] : [],
 );
 const formatTimes = (times: number[]) =>
-  `median ${formatSeconds(getMedian(times))}, worst ${formatSeconds(Math.max(0, ...times))}`;
+  `median ${formatSeconds(getMedian(times), 3)}, worst ${formatSeconds(Math.max(0, ...times), 3)}`;
 
 console.log("");
 console.log(`obligations: ${results.length}`);

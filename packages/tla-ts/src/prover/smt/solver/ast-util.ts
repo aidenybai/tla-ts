@@ -42,7 +42,6 @@ export const mkNot = (manager: AstManager, expr: number) =>
         ? manager.trueExpr
         : manager.mkNot(expr);
 
-// The vector holds its expressions, and pin holds each visited one until the end, as in Z3.
 const flattenVector = (manager: AstManager, result: RefVector, isAnd: boolean) => {
   const pin = new RefVector(manager);
   const seen = new Set<number>();

@@ -1,9 +1,9 @@
-import { TlaUnsupportedError } from "../../errors";
+import { TlaProverError, TlaUnsupportedError } from "../../errors";
 
 // Loaded at runtime so browser bundles leave them out. prove loads this module only in Node and Bun.
 const childProcess = process.getBuiltinModule("node:child_process");
-const fs = process.getBuiltinModule("node:fs");
-const os = process.getBuiltinModule("node:os");
+const fileSystem = process.getBuiltinModule("node:fs");
+const operatingSystem = process.getBuiltinModule("node:os");
 const path = process.getBuiltinModule("node:path");
 
 export type TlapmResult =
@@ -20,15 +20,16 @@ export const getTlapmPaths = () =>
   (process.env.PATH ?? "")
     .split(path.delimiter)
     .map((directory) => path.join(directory, "tlapm"))
-    .filter((tlapm) => fs.existsSync(tlapm));
+    .filter((tlapm) => fileSystem.existsSync(tlapm));
 
-// tlapm's Toolbox protocol: each message is @!!BEGIN, then @!!name:value lines, then @!!END.
+const MESSAGE_END = "@!!END";
+
 const parseToolboxMessages = (text: string) =>
   text
     .split("@!!BEGIN\n")
     .slice(1)
     .flatMap((block) => {
-      const end = block.indexOf("@!!END");
+      const end = block.indexOf(MESSAGE_END);
       if (end === -1) return [];
       const fields = new Map<string, string>();
       block
@@ -58,9 +59,9 @@ export const proveWithTlapm = async (
   const tlapm = getTlapmPaths()[0];
   if (tlapm === undefined)
     throw new TlaUnsupportedError("The tlapm backend needs tlapm on your PATH.");
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tla-ts-"));
+  const directory = fileSystem.mkdtempSync(path.join(operatingSystem.tmpdir(), "tla-ts-"));
   modules.forEach((source, moduleName) =>
-    fs.writeFileSync(path.join(directory, `${moduleName}.tla`), source),
+    fileSystem.writeFileSync(path.join(directory, `${moduleName}.tla`), source),
   );
   const results = new Map<number, TlapmResult>();
   const child = childProcess.spawn(
@@ -70,22 +71,27 @@ export const proveWithTlapm = async (
   );
   const kill = () => child.kill();
   options.signal?.addEventListener("abort", kill);
-  const output = { text: "", parsed: 0 };
+  let unparsed = "";
   child.stderr.on("data", (chunk: Buffer) => {
-    output.text += chunk.toString("utf8");
-    const messages = parseToolboxMessages(output.text);
-    messages.slice(output.parsed).forEach((fields) => {
+    const text = unparsed + chunk.toString("utf8");
+    const end = text.lastIndexOf(MESSAGE_END);
+    const parsedLength = end === -1 ? 0 : end + MESSAGE_END.length;
+    unparsed = text.slice(parsedLength);
+    parseToolboxMessages(text.slice(0, parsedLength)).forEach((fields) => {
       const result = getResult(fields);
       const id = Number(fields.get("id"));
       if (fields.get("type") !== "obligation" || !result) return;
       results.set(id, result);
       options.onResult?.(id, result);
     });
-    output.parsed = messages.length;
   });
-  await new Promise((resolve) => child.on("close", resolve));
+  const failure = await new Promise<Error | undefined>((resolve) => {
+    child.on("error", resolve);
+    child.on("close", () => resolve(undefined));
+  });
   options.signal?.removeEventListener("abort", kill);
-  fs.rmSync(directory, { recursive: true, force: true });
+  fileSystem.rmSync(directory, { recursive: true, force: true });
   options.signal?.throwIfAborted();
+  if (failure) throw new TlaProverError(failure.message, failure);
   return results;
 };

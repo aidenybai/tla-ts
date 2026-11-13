@@ -3,10 +3,14 @@
 import { TlapmBugError, TlaProofError } from "../errors";
 import { isEqualExpr } from "./equality";
 import {
+  AT_NOWHERE,
   at,
   exprifySequent,
+  getDefinitionHyp,
   getErrorNote,
   getFact,
+  getLocalDefn,
+  getTrue,
   isBuiltinApply,
   mapAccumulate,
   type Defn,
@@ -33,12 +37,7 @@ import {
 import { shiftExpr } from "./substitution";
 import { getScopeTime } from "./temporal";
 
-export const AT_NOWHERE: Expr = { kind: "At", isExcept: false };
-
 const isAnonymous = (step: StepNumber | undefined) => step?.kind === "Named" && step.isAnonymous;
-
-export const getTrue = (from: { location?: Locus }) =>
-  at({ kind: "Internal", builtin: "TRUE" }, from);
 
 const getAssumedFacts = (offset: number, sequent: Sequent) =>
   sequent.context.flatMap((hyp, index) =>
@@ -49,27 +48,20 @@ const getAssumedFacts = (offset: number, sequent: Sequent) =>
 
 export const getStepDefinition = (step: Step, body: Expr, time: Time): Hyp => {
   if (!step.step) throw new TlapmBugError();
-  return {
-    kind: "Defn",
-    definition: { kind: "Operator", name: getStepName(step.step), body, location: step.location },
-    whereDefined: { kind: "Proof", time },
-    visibility: "Visible",
-    isLocal: true,
-    location: step.location,
-  };
+  return getDefinitionHyp(
+    { kind: "Operator", name: getStepName(step.step), body, location: step.location },
+    { kind: "Proof", time },
+    "Visible",
+    true,
+    step.location,
+  );
 };
 
 export const getDefineHyp = (definition: Defn): Hyp => ({
-  kind: "Defn",
-  definition,
-  whereDefined: "User",
-  visibility: "Visible",
-  isLocal: true,
+  ...getLocalDefn(definition),
   location: definition.location,
 });
 
-// The proof of an assertion leaves the always scope when the assertion assumes a fact that holds
-// only now.
 export const proveAssertion = (context: Hyp[], sequent: Sequent, step: Step, time: Time) => {
   const visibility: Visibility = isAnonymous(step.step) ? "Visible" : "Hidden";
   const hyps = sequent.context.map((hyp): Hyp =>
@@ -109,8 +101,6 @@ export const useAssertion = (
   };
 };
 
-// A cited step or definition keeps the scope it was proved in, and any other fact takes the
-// current one.
 const getFactTime = (context: Hyp[], fact: Expr, time: Time): Time => {
   if (fact.kind !== "Ix") return time;
   const hyp = context[context.length - fact.index];
@@ -165,7 +155,6 @@ export const setExpression = (
   return result;
 };
 
-// The lines of tlapm's --toolbox and --line options, which select the proofs to generate.
 export interface LineRange {
   start: number;
   end: number;
@@ -225,6 +214,12 @@ export interface ModuleSummary extends ProofSummary {
   theorems: TheoremSummary[];
 }
 
+interface GeneratedStep {
+  sequent: Sequent;
+  step: Step;
+  time: Time;
+}
+
 export const createGenerator = (inputFiles: Set<string>, lines: LineRange, onWarning: Warn) => {
   const generate = (sequent: Sequent, proof: Proof, time: Time): Proof => {
     const location = proof.location;
@@ -252,8 +247,8 @@ export const createGenerator = (inputFiles: Set<string>, lines: LineRange, onWar
         throw new TlaProofError("Proof.Gen.generate");
       case "Steps": {
         const [inner, steps] = mapAccumulate({ sequent, time }, proof.steps, (state, step) => {
-          const [next, generated, nextTime] = generateStep(state.sequent, step, state.time);
-          return [{ sequent: next, time: nextTime }, generated];
+          const next = generateStep(state.sequent, step, state.time);
+          return [next, next.step];
         });
         const qedProof = generate(inner.sequent, proof.qed.proof, inner.time);
         return { ...proof, steps, qed: { ...proof.qed, proof: qedProof } };
@@ -261,7 +256,7 @@ export const createGenerator = (inputFiles: Set<string>, lines: LineRange, onWar
     }
   };
 
-  const generateStep = (sequent: Sequent, step: Step, time: Time): [Sequent, Step, Time] => {
+  const generateStep = (sequent: Sequent, step: Step, time: Time): GeneratedStep => {
     switch (step.kind) {
       case "Forget": {
         const count = sequent.context.length;
@@ -270,15 +265,15 @@ export const createGenerator = (inputFiles: Set<string>, lines: LineRange, onWar
             ? { ...hyp, visibility: "Hidden" }
             : hyp,
         );
-        return [{ ...sequent, context }, step, time];
+        return { sequent: { ...sequent, context }, step, time };
       }
       case "Use": {
         const usable = step.usable;
         if (usable.defs.length === 0 && usable.facts.length === 1) {
           const fact = usable.facts[0];
           const obligation = obligate({ ...sequent, active: fact }, step, { kind: "Support" });
-          return [
-            {
+          return {
+            sequent: {
               context: [
                 ...sequent.context,
                 {
@@ -293,9 +288,9 @@ export const createGenerator = (inputFiles: Set<string>, lines: LineRange, onWar
               ],
               active: shiftExpr(1, sequent.active),
             },
-            { ...step, obligations: [obligation] },
+            step: { ...step, obligations: [obligation] },
             time,
-          ];
+          };
         }
         if (usable.facts.length > 0)
           throw new TlaProofError("Proof.Gen.gen_step: USE with facts and definitions");
@@ -303,7 +298,7 @@ export const createGenerator = (inputFiles: Set<string>, lines: LineRange, onWar
           (current, def) => setDefinition("Visible", current, def),
           sequent.context,
         );
-        return [{ ...sequent, context }, step, time];
+        return { sequent: { ...sequent, context }, step, time };
       }
       case "Hide": {
         const hidden = step.usable.defs.reduce(
@@ -314,26 +309,33 @@ export const createGenerator = (inputFiles: Set<string>, lines: LineRange, onWar
           (current, fact) => setExpression(onWarning, "Hidden", fact, current),
           hidden,
         );
-        return [{ ...sequent, context }, step, time];
+        return { sequent: { ...sequent, context }, step, time };
       }
       case "Define":
-        return [
-          {
+        return {
+          sequent: {
             context: [...sequent.context, ...step.definitions.map(getDefineHyp)],
             active: shiftExpr(step.definitions.length, sequent.active),
           },
           step,
           time,
-        ];
+        };
       case "Assert": {
         const inner = proveAssertion(sequent.context, step.sequent, step, time);
         const proof = generate(inner, step.proof, inner.time);
         const generated: Step = { ...step, proof };
-        return [
-          useAssertion(false, sequent.context, sequent.active, step.sequent, generated, time),
-          generated,
+        return {
+          sequent: useAssertion(
+            false,
+            sequent.context,
+            sequent.active,
+            step.sequent,
+            generated,
+            time,
+          ),
+          step: generated,
           time,
-        ];
+        };
       }
       case "Suffices": {
         const proof = generate(
@@ -343,7 +345,7 @@ export const createGenerator = (inputFiles: Set<string>, lines: LineRange, onWar
         );
         const generated: Step = { ...step, proof };
         const next = proveAssertion(sequent.context, step.sequent, generated, time);
-        return [next, generated, next.time];
+        return { sequent: next, step: generated, time: next.time };
       }
       default:
         throw new TlaProofError("Proof.Gen.gen_step");
@@ -357,17 +359,16 @@ export const createGenerator = (inputFiles: Set<string>, lines: LineRange, onWar
     location: Locus | undefined,
   ): [Hyp[], Obligation[]] => {
     const step: StepNumber = { kind: "Unnamed", level: 0, id: 0 };
-    const [sequent, generated] = generateStep(
+    const generated = generateStep(
       { context, active: { ...AT_NOWHERE, location } },
       mode === "Use"
         ? { kind: "Use", usable, isOnly: false, location, step, useLocation: location }
         : { kind: "Hide", usable, location, step },
       "Always",
     );
-    return [sequent.context, generated.obligations ?? []];
+    return [generated.sequent.context, generated.step.obligations ?? []];
   };
 
-  // The definitions go first, then each fact on its own, shifting the facts after it.
   const mutate = (
     context: Hyp[],
     mode: "Use" | "Hide",
@@ -388,7 +389,6 @@ export const createGenerator = (inputFiles: Set<string>, lines: LineRange, onWar
     return [last, [...first, ...others]];
   };
 
-  // collect: a QED's obligations come before its sibling steps', and a step's own before its proof's.
   const collect = (proof: Proof): Obligation[] => {
     const obligations: Obligation[] = [];
     const visitProof = (item: Proof) => {

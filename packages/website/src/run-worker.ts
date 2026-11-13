@@ -10,15 +10,23 @@ export interface TraceStepSummary {
   variables: [string, string][];
 }
 
-export interface RunResult {
+interface RunOutcome {
   isPassed: boolean;
   title: string;
   name: string | undefined;
   summary: string;
+}
+
+interface TraceResult extends RunOutcome {
   trace: TraceStepSummary[];
   loopStart: number | undefined;
+}
+
+interface RowsResult extends RunOutcome {
   rows: RunRow[];
 }
+
+export type RunResult = TraceResult | RowsResult;
 
 export interface RunRow {
   title: string;
@@ -40,27 +48,32 @@ const STATUS_TITLES: Record<CheckStatus, string> = {
 const getElapsed = (startedAt: number) =>
   `${Math.round(performance.now() - startedAt).toLocaleString()} ms`;
 
+const getErrorResult = (title: string, message: string, summary = ""): RunResult => ({
+  isPassed: false,
+  title,
+  name: undefined,
+  summary,
+  rows: [{ title: message, detail: "", isFailed: true }],
+});
+
 const getCheckResult = async (source: string, config: string): Promise<RunResult> => {
   const startedAt = performance.now();
   const result = await check({ source, config });
-  if (result.failure)
-    return {
-      isPassed: false,
-      title: "Error",
-      name: undefined,
-      summary: getElapsed(startedAt),
-      trace: [],
-      loopStart: undefined,
-      rows: [{ title: result.failure.message, detail: "", isFailed: true }],
-    };
-  return {
+  if (result.failure) {
+    return getErrorResult("Error", result.failure.message, getElapsed(startedAt));
+  }
+  const outcome = {
     isPassed: result.status === "success",
     title: STATUS_TITLES[result.status],
     name: result.status === "deadlock" ? undefined : result.violation?.name,
     summary: `${result.distinctStates.toLocaleString()} states, depth ${result.depth}, ${getElapsed(startedAt)}`,
-    trace: (result.violation?.trace ?? []).map((step, index) => ({
+  };
+  const violation = result.violation;
+  if (violation === undefined || violation.trace.length === 0) return { ...outcome, rows: [] };
+  return {
+    ...outcome,
+    trace: violation.trace.map((step, index) => ({
       number: index + 1,
-      // TLC labels a step "Announce(1) line 138, col 5 to …", and only the call is shown.
       action:
         step.action === undefined ? undefined : (step.label ?? step.action).split(" line ")[0],
       variables: Object.entries(step.state).map(([name, value]): [string, string] => [
@@ -68,8 +81,7 @@ const getCheckResult = async (source: string, config: string): Promise<RunResult
         formatValue(value),
       ]),
     })),
-    loopStart: result.violation?.loopStart,
-    rows: [],
+    loopStart: violation.loopStart,
   };
 };
 
@@ -88,8 +100,6 @@ const getProveResult = async (source: string): Promise<RunResult> => {
         : `${provedCount} of ${count} obligations proved`,
     name: undefined,
     summary: getElapsed(startedAt),
-    trace: [],
-    loopStart: undefined,
     rows: result.obligations.map((obligation) => ({
       title: `Line ${obligation.location.split(":")[0]}, ${
         obligation.status === "proved"
@@ -113,14 +123,6 @@ self.onmessage = async (event: MessageEvent<RunRequest>) => {
     );
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
-    self.postMessage({
-      isPassed: false,
-      title: error.name,
-      name: undefined,
-      summary: "",
-      trace: [],
-      loopStart: undefined,
-      rows: [{ title: error.message, detail: "", isFailed: true }],
-    } satisfies RunResult);
+    self.postMessage(getErrorResult(error.name, error.message));
   }
 };

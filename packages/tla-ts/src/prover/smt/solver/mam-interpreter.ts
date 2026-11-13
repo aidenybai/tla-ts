@@ -37,7 +37,6 @@ interface BacktrackPoint {
   end: number;
 }
 
-// GET_CGR1 to GET_CGR6 filter their arguments by the parent labels, GET_CGRN does not.
 const MAX_FILTERED_GET_CGR_ARGS = 6;
 
 export class Interpreter {
@@ -116,7 +115,6 @@ export class Interpreter {
     );
   }
 
-  // init_continue drops a vector of limit terms or more, so this stops at limit and returns null.
   private getDepth1Vector(node: Enode, decl: number, argIndex: number, limit: number) {
     const root = node.root;
     const result: Enode[] = [];
@@ -246,7 +244,6 @@ export class Interpreter {
     return null;
   }
 
-  // It returns false when the search is canceled.
   executeCore(tree: CodeTree, node: Enode) {
     const context = this.context;
     const registers = this.registers;
@@ -370,7 +367,6 @@ export class Interpreter {
     }
   }
 
-  // A tree that filters its candidates runs each term once.
   execute(tree: CodeTree) {
     const context = this.context;
     const seen = tree.isFilteringCandidates ? new Set<Enode>() : null;

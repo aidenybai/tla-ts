@@ -1,22 +1,14 @@
-// A property holds when no way for the relation to hold among three elements satisfies the ground
-// instances of the hypotheses and breaks the property.
-
-import type { CheckContext, RelationProperty, Term } from "./terms";
+import type { RelationProperty } from "../eqrel";
+import type { CheckContext, Term } from "./terms";
 
 type Polarity = "positive" | "negative" | "both";
 
-// A hypothesis as a test on how a relation holds among three elements: `values` gives the bound
-// variables their elements and bit 3 * i + j of `holds` says whether the relation holds from
-// element i to element j.
 type GroundTest = (values: number[], holds: number) => boolean;
 
 const ELEMENTS = [0, 1, 2];
 
-// The type Zenon gives a variable that its binder leaves untyped, which ranges over everything.
 const UNTYPED = "zenon_U";
 
-// Undefined when the hypothesis says anything but how the relation holds between bound variables,
-// so that it's left out.
 const getGroundTest = (
   formula: Term,
   symbol: string,

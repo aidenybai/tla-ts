@@ -1,5 +1,3 @@
-// A port of tlapm's Expr.Action.implication_to_enabled, the ENABLEDaxioms frontend.
-
 import { TlapmBugError, TlaProverError } from "../../errors";
 import { shiftExpr } from "../../obligations/substitution";
 import { isEqualExpr } from "../../obligations/equality";
@@ -142,7 +140,9 @@ export const implicationToEnabled = (
 ): Sequent => {
   const goalScope = adjoinAll(undefined, sequent.context);
   const rule = getRule(goalScope, sequent.active);
-  const found = { isPremise: false, isLeftBoolean: false, isRightBoolean: false };
+  let isPremise = false;
+  let isLeftBoolean = false;
+  let isRightBoolean = false;
   sequent.context.forEach((hyp, index) => {
     if (!rule || hyp.kind !== "Fact" || hyp.visibility !== "Visible") return;
     const amount = sequent.context.length - index;
@@ -168,22 +168,22 @@ export const implicationToEnabled = (
       isPair(getEnabledOperands(fact, "Conj"), ["abconj_inverse", "pconj_inverse"]) ||
       isPair(conjunction && action && [conjunction[0], action], ["pconj_inverse"])
     ) {
-      found.isPremise = true;
+      isPremise = true;
     } else if (isPair(getOperands(fact, "Equiv"), ["equiv"])) {
-      found.isPremise = true;
-      found.isLeftBoolean = true;
-      found.isRightBoolean = true;
+      isPremise = true;
+      isLeftBoolean = true;
+      isRightBoolean = true;
     } else if (isPair(getOperands(fact, "Eq"), ["equiv"])) {
-      found.isPremise = true;
+      isPremise = true;
     } else if (membership && isBoolean && isLeft(membership[0])) {
-      found.isLeftBoolean = true;
+      isLeftBoolean = true;
     } else if (membership && isBoolean && isRight(membership[0])) {
-      found.isRightBoolean = true;
+      isRightBoolean = true;
     } else if (isPair(getOperands(fact, "Implies"), ["implies"])) {
-      found.isPremise = true;
+      isPremise = true;
     }
   });
-  if (!rule || !found.isPremise || !found.isLeftBoolean || !found.isRightBoolean) {
+  if (!rule || !isPremise || !isLeftBoolean || !isRightBoolean) {
     throw new TlaProverError("ENABLEDaxioms proof directive did not succeed.\n");
   }
   onWarning({ text: `${getAtPrefix(locus)}[INFO]\nProved ${rule.name}\n`, channel: "stdout" });

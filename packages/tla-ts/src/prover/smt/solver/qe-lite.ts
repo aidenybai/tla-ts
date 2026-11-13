@@ -1,5 +1,4 @@
-// Ported from Z3 (src/qe/lite/qe_lite_tactic.cpp, src/qe/mbp/mbp_solve_plugin.cpp), MIT license, see
-// z3-license.txt.
+// Ported from Z3 (src/qe/lite/qe_lite_tactic.cpp, src/qe/mbp/mbp_solve_plugin.cpp), MIT license, see z3-license.txt.
 import {
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -60,7 +59,6 @@ class QeLite {
     this.rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
   }
 
-  // The result comes with a reference, which the caller releases.
   apply(formula: number) {
     return this.elimStar.rewrite(formula);
   }
@@ -72,7 +70,6 @@ class QeLite {
     this.der.release();
   }
 
-  // With a reference to the result.
   private mkAnd(args: number[]) {
     return this.manager.withTemporaries(() => this.rewriter.mkAnd(args));
   }
@@ -146,7 +143,7 @@ class QeLite {
     this.fm.isVariableIndex = isVariableIndex;
     this.der.apply(fmls);
     this.fm.apply(fmls);
-    // ar_der checks the limit for each formula. tlapm's formulas have no arrays for it to solve.
+    // Z3's ar_der checks the limit for each formula, though tlapm's formulas have no arrays for it to solve.
     for (let index = 0; index < fmls.size; index++) manager.limit.checkpoint();
   }
 
@@ -191,7 +188,6 @@ class QeLite {
     return !isOccurring(manager, index, expr);
   }
 
-  // The body comes with a reference, and so does the result.
   private eliminateDiseqVars(sorts: number[], body: number) {
     const manager = this.manager;
     const replace = new ExprSafeReplace(manager);
@@ -245,7 +241,6 @@ class QeLite {
     return { isLower: isVarOnLeft, value: isVarOnLeft ? value + 1n : value - 1n };
   }
 
-  // The result comes with a reference, or is -1.
   private tryExpandBoundedQuantifier(sorts: number[], body: number) {
     const manager = this.manager;
     const numDecls = sorts.length;
@@ -253,8 +248,7 @@ class QeLite {
     const used = collectUsedVars(manager, body, numDecls);
     const remaining = used.flatMap((isUsed, index) => (isUsed ? [index] : []));
     if (remaining.length === 0) return -1;
-    // Z3 checks the declaration at position i for the variable with de Bruijn index i, which is
-    // another variable's sort. This port checks the variable's own sort.
+    // Z3 checks the declaration at position i for the variable with de Bruijn index i, where this checks the variable's own sort.
     if (remaining.some((index) => sorts[numDecls - 1 - index] !== SORT_INT)) return -1;
     const conjs = new RefVector(manager);
     conjs.push(body);
@@ -321,7 +315,6 @@ class QeLite {
       disjuncts.push(instBody);
       manager.decRef(instBody);
       instConjs.reset();
-      // The rightmost variable moves first.
       let position = remaining.length - 1;
       for (; position >= 0; position--) {
         values[position]++;
@@ -353,7 +346,6 @@ export const applyQeLiteToConjuncts = (
   qe.release();
 };
 
-// The tactic's m_dep holds the formula it read last, until the tactic is done.
 export const applyQeLite = (manager: AstManager, goal: Goal) => {
   const qe = new QeLite(manager);
   let dep = -1;
@@ -369,7 +361,6 @@ export const applyQeLite = (manager: AstManager, goal: Goal) => {
         formula = assignOwned(manager, formula, qe.apply(formula));
         if (formula !== form) goal.update(index, formula);
       }
-      // The iterator of the simplifier's indices counts a step after each formula.
       manager.limit.checkpoint();
     }
     release(manager, formula);

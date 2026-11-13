@@ -1,16 +1,9 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
-
-const DIRECTORY = join(import.meta.dirname, "../fixtures/bags");
+import { checkFixture } from "./check-harness";
 
 const checkBagsFixture = (name: string, onPrint?: (text: string) => void) =>
-  check({
-    source: readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
-    config: readFileSync(join(DIRECTORY, `${name}.cfg`), "utf8"),
-    onPrint,
-  });
+  checkFixture("bags", name, name, { onPrint });
 
 const checkBags = (body: string) =>
   check({

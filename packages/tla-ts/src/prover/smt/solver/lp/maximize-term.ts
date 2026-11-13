@@ -1,5 +1,5 @@
-// Ported from Z3 (maximize_term and its helpers in src/math/lp/lar_solver.cpp, and the tableau
-// part of src/math/lp/lp_primal_core_solver.h, src/math/lp/lp_primal_core_solver_def.h,
+// Ported from Z3 (maximize_term and its helpers in src/math/lp/lar_solver.cpp, and the tableau part
+// of src/math/lp/lp_primal_core_solver.h, src/math/lp/lp_primal_core_solver_def.h,
 // src/math/lp/lp_primal_core_solver_tableau_def.h), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import {
@@ -21,7 +21,6 @@ import { LarTerm } from "./lar-term";
 import { Impq } from "./numeric-pair";
 
 const NBASIS_SORT_PERIOD = 20;
-// For more than 300 non-basic columns.
 const PERCENT_OF_ENTERING_TO_CHECK = 5;
 
 interface ThetaLimit {
@@ -64,7 +63,7 @@ class CostsSimplex {
         core.status = LP_CANCELLED;
         return;
       }
-      this.oneIteration();
+      this.oneIterationTableau();
       if (settings.isCanceled()) {
         core.status = LP_CANCELLED;
         return;
@@ -76,20 +75,20 @@ class CostsSimplex {
     );
   }
 
-  private oneIteration() {
+  private oneIterationTableau() {
     const core = this.core;
-    const entering = this.chooseEntering();
+    const entering = this.chooseEnteringColumnTableau();
     if (entering === -1) {
       core.status = core.isFeasible() ? LP_OPTIMAL : LP_INFEASIBLE;
       return;
     }
     const limit: ThetaLimit = { theta: Impq.zero, isUnlimited: true };
-    const leaving = this.findLeaving(entering, limit);
+    const leaving = this.findLeavingAndTTableau(entering, limit);
     if (leaving === -1) {
       core.status = LP_UNBOUNDED;
       return;
     }
-    this.advance(entering, leaving, limit.theta);
+    this.advanceOnEnteringAndLeavingTableau(entering, leaving, limit.theta);
   }
 
   private sortNonBasis() {
@@ -107,21 +106,20 @@ class CostsSimplex {
       core.heading[core.nbasis[index]] = -index - 1;
   }
 
-  private getNumberToTry() {
+  private getNumberOfNonBasicColumnToTryForEnter() {
     const count = this.core.nbasis.length;
     const scaled = count > 300 ? Math.floor((count * PERCENT_OF_ENTERING_TO_CHECK) / 100) : count;
     if (scaled === 0) return 0;
     return Math.max(this.core.settings.getRandomNext() % scaled, 1);
   }
 
-  // The chosen column moves to the end of the list.
-  private chooseEntering() {
+  private chooseEnteringColumnTableau() {
     const core = this.core;
     if (this.sortCounter === 0) {
       this.sortNonBasis();
       this.sortCounter = NBASIS_SORT_PERIOD;
     } else this.sortCounter--;
-    let numToGoOver = this.getNumberToTry();
+    let numToGoOver = this.getNumberOfNonBasicColumnToTryForEnter();
     if (numToGoOver === 0) return -1;
     let minCells = core.matrix.getRowCount() + 1;
     let enteringIndex = -1;
@@ -129,7 +127,7 @@ class CostsSimplex {
     const list = this.nonBasisList;
     for (let index = 0; numToGoOver > 0 && index < list.length; index++) {
       const column = list[index];
-      if (!this.isBeneficial(column)) continue;
+      if (!this.isColumnBeneficialForEnteringBasis(column)) continue;
       const cells = core.matrix.columns[column].length;
       if (cells < minCells) {
         minCells = cells;
@@ -147,7 +145,7 @@ class CostsSimplex {
     return entering;
   }
 
-  private isBeneficial(column: number) {
+  private isColumnBeneficialForEnteringBasis(column: number) {
     const core = this.core;
     const reducedCost = this.reducedCosts[column];
     if (reducedCost.isZero()) return false;
@@ -167,7 +165,7 @@ class CostsSimplex {
     }
   }
 
-  private findLeaving(entering: number, limit: ThetaLimit) {
+  private findLeavingAndTTableau(entering: number, limit: ThetaLimit) {
     const core = this.core;
     const matrix = core.matrix;
     const column = matrix.columns[entering];
@@ -264,19 +262,19 @@ class CostsSimplex {
     if (!limit.isUnlimited) clampTheta(limit);
   }
 
-  private advance(entering: number, leaving: number, theta: Impq) {
+  private advanceOnEnteringAndLeavingTableau(entering: number, leaving: number, theta: Impq) {
     const core = this.core;
     const sign = Rational.fromNumber(this.signOfEnteringDelta);
     if (entering === leaving) {
-      this.updateX(entering, theta.mul(sign));
+      this.updateXTableau(entering, theta.mul(sign));
       return;
     }
-    if (!theta.isZero()) this.updateX(entering, core.isFeasible() ? theta.mul(sign) : theta);
+    if (!theta.isZero()) this.updateXTableau(entering, core.isFeasible() ? theta.mul(sign) : theta);
     core.pivot(entering, leaving);
     this.nonBasisList[this.nonBasisList.length - 1] = leaving;
   }
 
-  private updateX(entering: number, delta: Impq) {
+  private updateXTableau(entering: number, delta: Impq) {
     const core = this.core;
     core.x[entering] = core.x[entering].add(delta);
     for (const cell of core.matrix.columns[entering])
@@ -287,7 +285,7 @@ class CostsSimplex {
   }
 }
 
-const maximizeOnFeasibleSolver = (solver: LarSolver, term: LarTerm) => {
+const maximizeTermOnFeasibleRSolver = (solver: LarSolver, term: LarTerm) => {
   const core = solver.core;
   solver.moveNonBasicColumnsToBounds();
   const reducedCosts = core.x.map(() => Rational.zero);
@@ -360,7 +358,7 @@ export const maximizeTerm = (
     : new LarTerm([[column, Rational.one]]);
   solver.core.backupX();
   const previous = term.apply(solver.core.x);
-  const maximum = maximizeOnFeasibleSolver(solver, term);
+  const maximum = maximizeTermOnFeasibleRSolver(solver, term);
   if (maximum === undefined) {
     solver.core.restoreX();
     return { status: LP_UNBOUNDED, value: Impq.zero, dependency: null };

@@ -69,7 +69,6 @@ const getFieldName = (pair: OpApplNode) => {
   return name?.kind === "String" ? name : undefined;
 };
 
-// Records.sameDomain, given that SANY rejects a record with two fields of the same name.
 const getDomain = (record: OpApplNode) =>
   JSON.stringify([
     record.operands.length,

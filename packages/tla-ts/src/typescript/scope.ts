@@ -4,9 +4,7 @@ import { TlaTypeScriptError } from "../errors";
 import { indent, wrap } from "./formula";
 
 export interface Scope {
-  // The TLA+ expression for each variable, parameter, and local in scope.
   bindings: Map<ts.Symbol, string>;
-  // The parameter that names the state before a step, in action properties and constraints.
   previous: ts.Symbol | undefined;
 }
 
@@ -65,7 +63,6 @@ export const declareParameters = (
   context: Context,
 ) => parameters.map((parameter) => declareParameter(parameter, context));
 
-// Binds the names in a destructuring pattern to parts of a value, without LET definitions.
 export const bindPatternInline = (
   pattern: ts.BindingName,
   value: string,
@@ -87,7 +84,6 @@ export const bindPatternInline = (
   }, scope);
 };
 
-// Binds the names in a declaration to LET definitions.
 export const bindPattern = (
   pattern: ts.BindingName,
   value: string,
@@ -101,7 +97,6 @@ export const bindPattern = (
   };
 };
 
-// Binds parameters to argument values with LET definitions, as when inlining a call.
 export const bindValues = (
   patterns: ts.BindingName[],
   values: string[],

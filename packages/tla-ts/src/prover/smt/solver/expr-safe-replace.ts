@@ -1,5 +1,4 @@
 // Ported from Z3 (src/ast/rewriter/expr_safe_replace.cpp), MIT license, see z3-license.txt.
-// Like Z3, it visits the arguments of an application from the last one.
 import { SmtInvariantError } from "../../../errors";
 import { KIND_APP, KIND_VAR, type AstManager } from "./ast";
 import { RefVector } from "./ref-vector";
@@ -166,8 +165,8 @@ export class ExprSafeReplace {
     const result = manager.mkQuantifier({
       ...data,
       body,
-      patterns: [...patterns.items],
-      noPatterns: [...noPatterns.items],
+      patterns: patterns.items,
+      noPatterns: noPatterns.items,
     });
     this.refs.push(result);
     this.cache.set(quantifier, result);

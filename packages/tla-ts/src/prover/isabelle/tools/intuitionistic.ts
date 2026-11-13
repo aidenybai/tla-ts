@@ -1,7 +1,4 @@
-// Ported from Isabelle2025's Tools/intuitionistic.ML and Pure/Isar/context_rules.ML. Copyright (c)
-// 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see
-// LICENSE.
-// Isabelle/TLA+ declares no context rule wrappers, so Swrap and wrap leave tactics as they are.
+// Ported from Isabelle2025's Tools/intuitionistic.ML and Pure/Isar/context_rules.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { remdupsRl } from "../pure/drule";
 import { selectGoal } from "../pure/goal";
@@ -49,7 +46,6 @@ interface Visited {
   readonly concl: Term;
 }
 
-// Context_Rules.orderlist: by weight, then by tag, dropping all but the last of equal keys.
 // orderlist_no_weight sorts by tag alone.
 const orderContextRules = (rules: readonly ContextRule[], isWeighted: boolean) => {
   const sorted = [...rules].sort(

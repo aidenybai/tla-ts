@@ -1,5 +1,4 @@
-// Ported from Z3 (src/smt/smt_clause.h, src/smt/smt_b_justification.h,
-// src/util/small_object_allocator.cpp), MIT license, see z3-license.txt.
+// Ported from Z3 (src/smt/smt_clause.h, src/smt/smt_b_justification.h, src/util/small_object_allocator.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import type { Justification } from "./enode";
 import type { Literal } from "./literal";
@@ -16,8 +15,6 @@ export class BinJustification {
 
 export type BJustification = number | BinJustification | Justification | "axiom" | null;
 
-// The second header word packs Z3's bit fields: m_capacity:24, m_kind:2, m_reinit,
-// m_reinternalize_atoms, m_has_atoms, m_has_del_eh, m_has_justification and m_deleted.
 const CAPACITY_MASK = 0xffffff;
 const KIND_SHIFT = 24;
 const IS_REINIT = 1 << 26;
@@ -29,14 +26,7 @@ const IS_DELETED = 1 << 31;
 export const HEADER_SIZE = 2;
 const NO_ATOM = -1;
 
-// A clause is the offset of its block in one Int32Array, as it is an address in Z3. A block holds
-// the header, the literals, then a lemma's activity, the deletion handler and justification slots,
-// and the atoms with their signs, each present only when used. A freed block goes on the free list
-// of its size, keeping the next free block in its first word and 0 in its second, which no clause
-// has.
 export class ClauseStore {
-  // Literal i of clause c is data[c + 2 + i]. Making a clause can replace the array, so a loop that
-  // makes clauses reads it again.
   data = new Int32Array(1 << 16);
   private top = 0;
   private freeLists: (number | undefined)[] = [];
@@ -110,7 +100,6 @@ export class ClauseStore {
     return slot;
   }
 
-  // The atoms must be released first.
   free(clause: Clause) {
     const data = this.data;
     const flags = data[clause + 1];

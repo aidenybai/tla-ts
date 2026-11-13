@@ -1,7 +1,6 @@
 import { parentPort } from "node:worker_threads";
 import { decideIsabelle } from "../src/prover/isabelle/decide";
 
-// The main thread enforces the time limit: it terminates this worker once the limit has passed.
 parentPort?.on("message", (text: string) => {
   const started = performance.now();
   const startedCpu = process.threadCpuUsage();

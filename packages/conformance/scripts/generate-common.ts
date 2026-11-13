@@ -1,18 +1,11 @@
 import { isDeepStrictEqual } from "node:util";
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
-  formatYaml,
   keepCorrection,
+  listFiles,
   parseTest,
+  renderTest,
   SUITE_DIRECTORY,
   type TestMetadata,
 } from "./test-file";
@@ -102,14 +95,8 @@ export const writeTest = (
     isDeepStrictEqual(existing.metadata, JSON.parse(JSON.stringify(kept)));
   if (isUnchanged) return;
   mkdirSync(dirname(target), { recursive: true });
-  writeFileSync(target, `(*---\n${formatYaml(kept)}\n---*)\n${module}`);
+  writeFileSync(target, renderTest(kept, module));
 };
-
-const listFiles = (directory: string): string[] =>
-  readdirSync(directory).flatMap((entry) => {
-    const path = join(directory, entry);
-    return statSync(path).isDirectory() ? listFiles(path) : [path];
-  });
 
 export const removeStaleTests = () =>
   listFiles(GENERATED_DIRECTORY)

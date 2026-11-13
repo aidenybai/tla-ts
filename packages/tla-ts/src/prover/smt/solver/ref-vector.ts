@@ -1,5 +1,4 @@
 // Ported from Z3 (src/util/ref_vector.h), MIT license, see z3-license.txt.
-// -1 stands for Z3's null pointer.
 import type { AstManager } from "./ast";
 
 export class RefVector {
@@ -43,7 +42,6 @@ export class RefVector {
     this.decRef(this.items.pop() as number);
   }
 
-  // shrink: releases the removed expressions in order.
   shrink(size: number) {
     for (const expr of this.items.splice(size)) this.decRef(expr);
   }

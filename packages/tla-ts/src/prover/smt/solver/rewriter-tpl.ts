@@ -1,19 +1,13 @@
-// Ported from Z3 (src/ast/rewriter/rewriter.h, rewriter.cpp, rewriter_def.h), MIT license, see
-// z3-license.txt. The result stack, the caches and m_r hold their expressions, so that expressions
-// are created and deleted in Z3's order.
+// Ported from Z3 (src/ast/rewriter/rewriter.h, rewriter.cpp, rewriter_def.h), MIT license, see z3-license.txt.
 import { ActCache } from "./act-cache";
 import { KIND_APP, KIND_QUANTIFIER, KIND_VAR, OP_ITE, type AstManager } from "./ast";
 import { grow, shrink } from "./array";
 
-// A result that the main loop rewrites again to depth levels, like Z3's BR_REWRITE1 (depth 1) to
-// BR_REWRITE_FULL (depth Infinity).
 export interface Rewrite {
   expr: number;
   depth: number;
 }
 
-// The depth to rewrite a Rewrite's result to. A frame keeps its depth in two bits, where 3 is
-// RW_UNBOUNDED_DEPTH, so BR_REWRITE3 rewrites the result without a bound.
 export const getRewriteDepth = (rewrite: Rewrite) =>
   rewrite.depth >= 3 ? Infinity : rewrite.depth;
 
@@ -37,7 +31,6 @@ interface Scope {
 }
 
 class RewriterCore {
-  // Like the svector, the stack keeps the frames past numFrames, which pushFrame writes over.
   protected frames: Frame[] = [];
   protected numFrames = 0;
   protected resultStack: number[] = [];
@@ -129,7 +122,6 @@ class RewriterCore {
     this.scopes = [];
   }
 
-  // del_cache_stack: releases every cache, the outermost first.
   protected releaseCaches() {
     for (const cache of this.caches) cache.reset();
   }
@@ -222,7 +214,6 @@ abstract class VarShifterCore extends RewriterCore {
     this.setNewChildFlag(expr, result);
   }
 
-  // main_loop: the result comes with a reference, which the caller releases.
   protected mainLoop(expr: number) {
     this.root = expr;
     if (!this.visit(expr))
@@ -259,13 +250,11 @@ abstract class VarShifterCore extends RewriterCore {
   }
 }
 
-// var_shifter: a free variable with index at least bound moves up by shift1, any other by shift2.
 export class VarShifter extends VarShifterCore {
   private bound = 0;
   private shift1 = 0;
   private shift2 = 0;
 
-  // Returns the result with a reference, which the caller releases.
   shift(expr: number, bound: number, shift1: number, shift2: number) {
     if (this.manager.isGroundApp(expr)) {
       this.manager.incRef(expr);
@@ -294,7 +283,6 @@ export class VarShifter extends VarShifterCore {
 export class InvVarShifter extends VarShifterCore {
   private amount = 0;
 
-  // Returns the result with a reference, which the caller releases.
   shift(expr: number, amount: number) {
     if (this.manager.isGroundApp(expr) || amount === 0) {
       this.manager.incRef(expr);
@@ -321,7 +309,6 @@ class SubstCore extends RewriterCore {
   protected bindings: number[] = [];
   protected shifts: number[] = [];
 
-  // set_inv_bindings: (:var i) becomes bindings[n - 1 - i], and -1 keeps it.
   setInvBindings(bindings: number[]) {
     shrink(this.bindings, 0);
     shrink(this.shifts, 0);
@@ -345,25 +332,19 @@ class SubstCore extends RewriterCore {
   }
 }
 
-// rewriter_tpl's main loop, which calls the hooks of its configuration. It is a class of its own,
-// rather than the base of the configurations, so that V8 sees one shape of it and keeps its property
-// accesses and calls monomorphic.
+// HACK: a class apart from the configurations' base, so that V8 sees one shape of it.
 class RewriterEngine extends SubstCore {
-  // m_r: the last result, which Z3 holds until it assigns the next one.
   private lastResult = -1;
   private newArgs: number[] = [];
   private shifter: VarShifter;
   private invShifter: InvVarShifter;
   blocked = new Set<number>();
-  // Whether the config overrides getSubst and getMacro. Otherwise nothing is substituted or expanded
-  // and the call is skipped.
   private isSubstituting: boolean;
   private isExpandingMacros: boolean;
   private isCheckingSteps: boolean;
   private isPreVisiting: boolean;
   private isReducingVars: boolean;
-  // The config's hooks, read once. Many configs share the engine, so a call through config at each
-  // site sees all of their classes and goes megamorphic.
+  // HACK: the hooks are read once, since a call through config at each site goes megamorphic in V8.
   private reduceAppHook: RewriterTpl["reduceApp"];
   private isFlatAssocHook: RewriterTpl["isFlatAssoc"];
   private getMacroHook: RewriterTpl["getMacro"];
@@ -403,15 +384,12 @@ class RewriterEngine extends SubstCore {
     this.shifts = [];
   }
 
-  // ~rewriter_tpl: the shifters' caches go first, the inverse shifter's before the other's, then
-  // the rewriter's.
   release() {
     this.invShifter.release();
     this.shifter.release();
     this.releaseCaches();
   }
 
-  // operator(): the result comes with a reference, which the caller releases.
   rewrite(expr: number): number {
     const manager = this.manager;
     return manager.withoutTemporaries(() => {
@@ -423,7 +401,6 @@ class RewriterEngine extends SubstCore {
       }
       this.root = expr;
       this.numQvars = 0;
-      // main_loop and each step of resume_core count a step of the resource limit.
       manager.limit.checkpoint();
       if (!this.visit(expr, Infinity))
         while (this.numFrames > 0) {
@@ -444,7 +421,6 @@ class RewriterEngine extends SubstCore {
           if (kind === KIND_APP) this.processApp(curr, frame);
           else if (kind === KIND_QUANTIFIER) this.processQuantifier(curr, frame);
           else {
-            // A definition that is a variable gets a frame of its own.
             this.numFrames--;
             this.processVar(curr);
           }
@@ -453,13 +429,6 @@ class RewriterEngine extends SubstCore {
       this.resultStack.pop();
       return result;
     });
-  }
-
-  // operator() with bindings: resets the rewriter and substitutes bindings[n - 1 - i] for (:var i).
-  rewriteWithBindings(expr: number, bindings: number[]) {
-    this.reset();
-    this.setInvBindings(bindings);
-    return this.rewrite(expr);
   }
 
   setLastResult(expr: number) {
@@ -510,8 +479,6 @@ class RewriterEngine extends SubstCore {
     return false;
   }
 
-  // It returns false when the constant rewrites to a term with arguments, which m_r holds. The
-  // constant being reduced is held, like Z3's t.
   private processConst(expr: number) {
     const manager = this.manager;
     let current = expr;
@@ -552,9 +519,6 @@ class RewriterEngine extends SubstCore {
     }
   }
 
-  // A constant that rewrites to a term with arguments: a rewriter with the same configuration
-  // rewrites the term, with the constant blocked so that it is not expanded again. m_r keeps the
-  // result.
   private rewriteConstResult(expr: number) {
     const manager = this.manager;
     if (!this.blocked.has(expr)) {
@@ -612,7 +576,6 @@ class RewriterEngine extends SubstCore {
       return;
     }
     const numArgs = manager.getNumArgs(expr);
-    // visit pushes a child at depth 0 as it is when the config substitutes nothing.
     if (frame.maxDepth === 0 && !this.isSubstituting && manager.getOp(expr) !== OP_ITE)
       for (; frame.childIndex < numArgs; frame.childIndex++)
         this.pushResult(manager.getArg(expr, frame.childIndex));
@@ -639,8 +602,6 @@ class RewriterEngine extends SubstCore {
         return;
       }
     }
-    // new_args: Z3 passes the results on the stack itself. Nothing rewrites with this engine before
-    // the arguments are used, so one buffer holds them.
     const newArgs = this.newArgs;
     const resultStack = this.resultStack;
     shrink(newArgs, 0);
@@ -703,7 +664,6 @@ class RewriterEngine extends SubstCore {
     this.setNewChildFlag(expr, -1);
   }
 
-  // m_r keeps the rewritten definition until the next result.
   private finishExpandDef(expr: number, frame: Frame) {
     const manager = this.manager;
     const numArgs = manager.getNumArgs(expr);
@@ -768,7 +728,6 @@ class RewriterEngine extends SubstCore {
       if (!this.visit(child, frame.maxDepth)) return;
     }
     const body = this.resultStack[frame.spos];
-    // new_pats: the patterns, which Z3 holds until the quantifier is done.
     const patterns = isRewritingPatterns
       ? this.resultStack.slice(frame.spos + 1, frame.spos + 1 + data.patterns.length)
       : data.patterns;
@@ -797,9 +756,6 @@ class RewriterEngine extends SubstCore {
   }
 }
 
-// rewriter_tpl with default_rewriter_cfg. A configuration overrides the hooks. The results of
-// reduceApp, reduceQuantifier and reduceVar come with a reference, and -1 is Z3's BR_FAILED or
-// false. A Rewrite from reduceApp is rewritten again.
 export class RewriterTpl {
   readonly engine: RewriterEngine;
 
@@ -850,18 +806,6 @@ export class RewriterTpl {
     return new RewriterTpl(this.manager);
   }
 
-  setInvBindings(bindings: number[]) {
-    this.engine.setInvBindings(bindings);
-  }
-
-  setBindings(bindings: number[]) {
-    this.engine.setBindings(bindings);
-  }
-
-  updateInvBindingAt(index: number, binding: number) {
-    this.engine.updateInvBindingAt(index, binding);
-  }
-
   reset() {
     this.engine.reset();
   }
@@ -878,27 +822,16 @@ export class RewriterTpl {
     return this.engine.rewrite(expr);
   }
 
-  rewriteWithBindings(expr: number, bindings: number[]) {
-    return this.engine.rewriteWithBindings(expr, bindings);
-  }
-
   protected setLastResult(expr: number) {
     this.engine.setLastResult(expr);
   }
 }
 
-// The flags of a BetaReducer frame: whether to cache its result, whether a child changed, and
-// whether it waits for the branch that an ite folded to, REWRITE_BUILTIN.
 const FRAME_CACHING = 1;
 const FRAME_NEW_CHILD = 2;
 const FRAME_FOLDED = 4;
 
-// beta_reducer: rewriter_tpl with beta_reducer_cfg, which substitutes bindings for variables and
-// rewrites nothing else. Its main loop is RewriterEngine's with the config's hooks folded in:
-// pre_visit skips a ground term, and nothing reduces, expands or rewrites to a depth. So a frame
-// needs no depth and only the ite folding's state, and its fields are typed arrays.
 export class BetaReducer extends SubstCore {
-  // m_r: the last result, which Z3 holds until it assigns the next one.
   private lastResult = -1;
   private shifter: VarShifter;
   private isShifted = false;
@@ -912,8 +845,6 @@ export class BetaReducer extends SubstCore {
     this.shifter = new VarShifter(manager);
   }
 
-  // The inverse shifter of rewriter_tpl only shifts an expanded definition, so it is always empty
-  // and left out.
   reset() {
     this.resetCore();
     shrink(this.bindings, 0);
@@ -923,13 +854,11 @@ export class BetaReducer extends SubstCore {
     this.isShifted = false;
   }
 
-  // ~rewriter_tpl: the shifter's cache goes first, then the rewriter's.
   release() {
     this.shifter.release();
     this.releaseCaches();
   }
 
-  // operator(): the result comes with a reference, which the caller releases.
   rewrite(expr: number): number {
     const manager = this.manager;
     return manager.withoutTemporaries(() => {
@@ -941,7 +870,6 @@ export class BetaReducer extends SubstCore {
       }
       this.root = expr;
       this.numQvars = 0;
-      // main_loop and each step of resume_core count a step of the resource limit.
       manager.limit.checkpoint();
       if (!this.visit(expr))
         while (this.numFrames > 0) {
@@ -969,7 +897,6 @@ export class BetaReducer extends SubstCore {
     });
   }
 
-  // operator() with bindings: resets the rewriter and substitutes bindings[n - 1 - i] for (:var i).
   rewriteWithBindings(expr: number, bindings: number[]) {
     this.reset();
     this.setInvBindings(bindings);
@@ -1002,7 +929,6 @@ export class BetaReducer extends SubstCore {
     this.numFrames++;
   }
 
-  // pre_visit's test for a ground term comes before the cache's, which holds no ground term.
   private visit(expr: number) {
     const manager = this.manager;
     if (manager.isGroundApp(expr)) {
@@ -1131,7 +1057,6 @@ export class BetaReducer extends SubstCore {
     }
     const spos = this.frameStarts[top];
     const body = this.resultStack[spos];
-    // new_pats: the patterns, which Z3 holds until the quantifier is done.
     const patterns = this.resultStack.slice(spos + 1, spos + 1 + data.patterns.length);
     for (const pattern of patterns) manager.incRef(pattern);
     this.setLastResult(

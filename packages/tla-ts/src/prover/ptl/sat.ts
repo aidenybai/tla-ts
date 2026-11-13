@@ -1,5 +1,3 @@
-// Decides each open variable false first, so a model sets few variables.
-
 const getIndex = (literal: number) => (literal > 0 ? 2 * literal : -2 * literal + 1);
 
 export const createSolver = (variableCount: number, isExpired: () => boolean) => {
@@ -11,7 +9,9 @@ export const createSolver = (variableCount: number, isExpired: () => boolean) =>
   const watches: number[][][] = Array.from({ length: 2 * variableCount + 2 }, () => []);
   const trail: number[] = [];
   const levelStarts: number[] = [];
-  const state = { head: 0, bump: 1, isUnsatisfiable: false };
+  let head = 0;
+  let bump = 1;
+  let isUnsatisfiable = false;
   const getValue = (literal: number) => (literal > 0 ? values[literal] : -values[-literal]);
   const assign = (literal: number, reason: number[] | undefined) => {
     const variable = Math.abs(literal);
@@ -24,10 +24,9 @@ export const createSolver = (variableCount: number, isExpired: () => boolean) =>
     watches[getIndex(clause[0])].push(clause);
     watches[getIndex(clause[1])].push(clause);
   };
-  // The literal a clause implies sits first in it.
   const propagate = () => {
-    for (; state.head < trail.length; state.head++) {
-      const falsified = -trail[state.head];
+    for (; head < trail.length; head++) {
+      const falsified = -trail[head];
       const watching = watches[getIndex(falsified)];
       for (let position = 0; position < watching.length; position++) {
         const clause = watching[position];
@@ -54,37 +53,38 @@ export const createSolver = (variableCount: number, isExpired: () => boolean) =>
     const size = levelStarts[level];
     while (trail.length > size) values[Math.abs(trail.pop() ?? 0)] = 0;
     levelStarts.length = level;
-    state.head = trail.length;
+    head = trail.length;
   };
   const analyze = (conflict: number[]) => {
     const learned = [0];
     const current = levelStarts.length;
-    const walk = { pending: 0, literal: 0, index: trail.length - 1 };
+    let pendingCount = 0;
+    let resolved = 0;
+    let trailIndex = trail.length - 1;
     for (let clause: number[] | undefined = conflict; ;) {
-      for (const literal of clause?.slice(walk.literal === 0 ? 0 : 1) ?? []) {
+      for (const literal of clause?.slice(resolved === 0 ? 0 : 1) ?? []) {
         const variable = Math.abs(literal);
         if (seen[variable] || levels[variable] === 0) continue;
         seen[variable] = 1;
-        activities[variable] += state.bump;
-        if (levels[variable] === current) walk.pending++;
+        activities[variable] += bump;
+        if (levels[variable] === current) pendingCount++;
         else learned.push(literal);
       }
-      while (!seen[Math.abs(trail[walk.index])]) walk.index--;
-      walk.literal = trail[walk.index--];
-      seen[Math.abs(walk.literal)] = 0;
-      clause = reasons[Math.abs(walk.literal)];
-      if (--walk.pending === 0) break;
+      while (!seen[Math.abs(trail[trailIndex])]) trailIndex--;
+      resolved = trail[trailIndex--];
+      seen[Math.abs(resolved)] = 0;
+      clause = reasons[Math.abs(resolved)];
+      if (--pendingCount === 0) break;
     }
-    learned[0] = -walk.literal;
+    learned[0] = -resolved;
     learned.forEach((literal) => (seen[Math.abs(literal)] = 0));
-    state.bump *= 1.05;
+    bump *= 1.05;
     return learned;
   };
-  // Literals false for good are dropped, since the solver adds clauses only at level 0.
   const addClause = (clause: number[]) => {
     backtrack(0);
     const literals = [...new Set(clause)];
-    if (state.isUnsatisfiable || literals.some((literal) => getValue(literal) > 0)) return;
+    if (isUnsatisfiable || literals.some((literal) => getValue(literal) > 0)) return;
     if (literals.some((literal) => literals.includes(-literal))) return;
     const open = literals.filter((literal) => getValue(literal) === 0);
     if (open.length > 1) {
@@ -92,20 +92,20 @@ export const createSolver = (variableCount: number, isExpired: () => boolean) =>
       return;
     }
     if (open.length === 0) {
-      state.isUnsatisfiable = true;
+      isUnsatisfiable = true;
       return;
     }
     assign(open[0], undefined);
-    if (propagate()) state.isUnsatisfiable = true;
+    if (propagate()) isUnsatisfiable = true;
   };
   const solve = (assumptions: number[]): Int8Array | "unsat" | "unknown" => {
     backtrack(0);
-    if (state.isUnsatisfiable) return "unsat";
+    if (isUnsatisfiable) return "unsat";
     for (;;) {
       const conflict = propagate();
       if (conflict) {
         if (levelStarts.length === 0) {
-          state.isUnsatisfiable = true;
+          isUnsatisfiable = true;
           return "unsat";
         }
         if (isExpired()) return "unknown";

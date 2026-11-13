@@ -1,15 +1,13 @@
 // Ported from Z3 (src/math/lp/lar_constraints.h), MIT license, see z3-license.txt.
-import { Dependency, mkLeaf } from "./dependency";
+import { type Dependency, mkLeaf } from "./dependency";
 import { Impq } from "./numeric-pair";
 import { shrink } from "../array";
 
-// lconstraint_kind: flipping negates the kind, and halving a non-strict kind gives the strict one.
 export const KIND_LE = -2;
 export const KIND_LT = -1;
 export const KIND_EQ = 0;
 export const KIND_GT = 1;
 export const KIND_GE = 2;
-// NE: a kind of nla's inequalities, never of a bound the theory asserts.
 export const KIND_NE = 3;
 
 export type ConstraintKind =

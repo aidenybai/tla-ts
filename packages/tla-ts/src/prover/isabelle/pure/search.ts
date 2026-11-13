@@ -1,5 +1,4 @@
-// Ported from Isabelle2025's Pure/search.ML. Copyright (c) 1986-2025 University of Cambridge,
-// Technische Universitaet Muenchen, and contributors, see LICENSE.
+// Ported from Isabelle2025's Pure/search.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { listOfSeq, makeSeq, seqOfList } from "./seq";
 import { eqThm, hasFewerPrems, noTac, orElse, type GoalTactic, type Tactic } from "./tactical";
@@ -30,12 +29,11 @@ interface Sized {
 const compareSized = (left: Sized, right: Sized) =>
   left.size - right.size || termOrd(left.thm.prop, right.thm.prop);
 
-// A sorted list stands in for Thm_Heap: both yield the least state under the same total order.
 export const bestFirst =
-  (isSatisfied: (state: Thm) => boolean, size: (state: Thm) => number, tactic: Tactic): Tactic =>
+  (isSatisfied: (state: Thm) => boolean, getSize: (state: Thm) => number, tactic: Tactic): Tactic =>
   (state) => {
     const insert = (heap: readonly Sized[], thm: Thm): Sized[] => {
-      const entry = { size: size(thm), thm };
+      const entry = { size: getSize(thm), thm };
       const position = heap.findIndex((other) => compareSized(entry, other) < 0);
       return position === -1
         ? [...heap, entry]

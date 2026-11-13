@@ -1,10 +1,8 @@
-// Ported from Isabelle2025's Pure/pattern.ML and Pure/more_pattern.ML. Copyright (c) 1986-2025
-// University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-// Isabelle's Unif, Pattern and MATCH exceptions stay inside this module, and the exported functions
-// return undefined instead.
+// Ported from Isabelle2025's Pure/pattern.ML and Pure/more_pattern.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import { aeconv, genvar, headNorm, lookup, lookup1, update, type Envir, type TEnv } from "./envir";
+import type { Binder } from "./logic";
 import { hasKey, indexnameOrd, updateTable } from "./table";
 import {
   eqTyp,
@@ -29,11 +27,6 @@ import { matchTypes, normType, substType, unifyTypes, type TyEnv } from "./type"
 class Unif {}
 class NotPattern {}
 class Match {}
-
-interface Binder {
-  name: string;
-  type: Typ;
-}
 
 const occurs = (variable: Var, term: Term, envir: Envir): boolean => {
   const visit = (current: Term): boolean => {

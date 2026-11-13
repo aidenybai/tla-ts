@@ -1,5 +1,4 @@
-// Ported from Isabelle2025's Pure/unify.ML. Copyright (c) 1986-2025 University of Cambridge,
-// Technische Universitaet Muenchen, and contributors, see LICENSE.
+// Ported from Isabelle2025's Pure/unify.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { checkInterrupt, type Limits } from "./interrupt";
 import { TlaIsabelleError } from "../../../errors";
@@ -28,8 +27,7 @@ import {
   singleSeq,
   type Seq,
 } from "./seq";
-import { indexnameOrd } from "./table";
-import { lookupTyEnv } from "./type";
+import { indexnameOrd, lookupTable, type IndexKey } from "./table";
 import {
   aconv,
   eqTyp,
@@ -77,7 +75,7 @@ const etaNorm = (envir: Envir, binders: readonly Binder[], term: Term): Term => 
         etif(type.args[1], mkApp(incrBoundvars(1, current), mkBound(0))),
       );
     if (type.kind === "TVar") {
-      const assigned = lookupTyEnv(envir.tyenv, type);
+      const assigned = lookupTable(envir.tyenv, type);
       return assigned === undefined ? current : etif(assigned, current);
     }
     return current;
@@ -93,10 +91,8 @@ const etaNorm = (envir: Envir, binders: readonly Binder[], term: Term): Term => 
   return etaNm(binders, term);
 };
 
-const sameIndexname = (
-  left: { name: string; index: number },
-  right: { name: string; index: number },
-) => left.name === right.name && left.index === right.index;
+const sameIndexname = (left: IndexKey, right: IndexKey) =>
+  left.name === right.name && left.index === right.index;
 
 const occursTerms = (seen: Var[], envir: Envir, variable: Var, terms: readonly Term[]): boolean => {
   const occur = (term: Term): boolean => {
@@ -337,6 +333,12 @@ interface Copy {
   readonly dpairs: readonly Dpair[];
 }
 
+interface CopiedArgs {
+  args: Term[];
+  envir: Envir;
+  dpairs: readonly Dpair[];
+}
+
 const matchcopy = (name: string) => {
   const copy = (
     binders: readonly Binder[],
@@ -345,12 +347,9 @@ const matchcopy = (name: string) => {
     envir: Envir,
     dpairs: readonly Dpair[],
   ): Seq<Copy> => {
-    const copycons = (
-      uarg: Term,
-      prefix: { args: Term[]; envir: Envir; dpairs: readonly Dpair[] },
-    ) =>
+    const copycons = (uarg: Term, prefix: CopiedArgs) =>
       mapSeq(
-        (result: Copy) => ({
+        (result: Copy): CopiedArgs => ({
           args: [result.term, ...prefix.args],
           envir: result.envir,
           dpairs: result.dpairs,
@@ -363,9 +362,7 @@ const matchcopy = (name: string) => {
           prefix.dpairs,
         ),
       );
-    const copyargs = (
-      uargs: readonly Term[],
-    ): Seq<{ args: Term[]; envir: Envir; dpairs: readonly Dpair[] }> =>
+    const copyargs = (uargs: readonly Term[]): Seq<CopiedArgs> =>
       uargs.length === 0
         ? consSeq({ args: [], envir, dpairs }, emptySeq)
         : mapsSeq((prefix) => copycons(uargs[0], prefix), copyargs(uargs.slice(1)));
@@ -401,7 +398,7 @@ const matchcopy = (name: string) => {
         }
       });
     };
-    const joinargs = (result: { args: Term[]; envir: Envir; dpairs: readonly Dpair[] }): Copy => ({
+    const joinargs = (result: CopiedArgs): Copy => ({
       term: listComb(uhead, result.args),
       envir: result.envir,
       dpairs: result.dpairs,
@@ -649,7 +646,7 @@ const addFfpair = (dpair: Dpair, envir: Envir, tpairs: readonly Tpair[]): [Envir
     : cleanFfpair({ binders: dpair.binders, left, right }, envir, tpairs);
 };
 
-interface Unifier {
+export interface Unifier {
   readonly envir: Envir;
   readonly tpairs: readonly Tpair[];
 }
@@ -666,8 +663,6 @@ const hounifiers = (
     dpairs: readonly Dpair[],
     rest: Seq<Unifier>,
   ): Seq<Unifier> =>
-    // Isabelle pulls the alternatives inside its handler for CANTUNIFY, but each alternative
-    // handles its own, so handing them over to the caller's loop changes nothing.
     deferSeq(() => {
       if (limits !== undefined) checkInterrupt(limits);
       try {
@@ -680,11 +675,13 @@ const hounifiers = (
           return [{ envir: result[0], tpairs: result[1] }, rest];
         }
         if (depth > SEARCH_BOUND) return rest;
-        const [first, ...others] = simplified.flexrigid;
         return itRightSeq(
           (item: [Envir, readonly Dpair[]], tail: Seq<Unifier>) =>
             addUnify(depth + 1, item[0], item[1], tail),
-          match(simplified.envir, first, [...others, ...simplified.flexflex]),
+          match(simplified.envir, simplified.flexrigid[0], [
+            ...simplified.flexrigid.slice(1),
+            ...simplified.flexflex,
+          ]),
           rest,
         );
       } catch (error) {
@@ -734,7 +731,6 @@ const smashFlexflex1 = (pair: Tpair, envir: Envir): Envir => {
     : vupdate(left, typeAbs(withVar, left.type, fresh), updated);
 };
 
-// A pair whose side is not flexible stops the sequence, as CANTUNIFY escapes Seq.map in Isabelle.
 export const smashUnifiers = (
   limits: Limits | undefined,
   pairs: readonly Tpair[],

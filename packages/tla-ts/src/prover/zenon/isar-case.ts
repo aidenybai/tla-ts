@@ -1,7 +1,4 @@
-// Ported from Zenon's isar_case.ml and enum.ml, as shipped in tlapm. Copyright 2009 INRIA, see
-// LICENSE.
-// In a template, the text between @@@ and ... repeats counting up, and the text between ... and @@@
-// repeats counting down.
+// Ported from Zenon's isar_case.ml and enum.ml, as shipped in tlapm. Copyright 2009 INRIA, see LICENSE.
 
 import { TlaZenonError } from "../../errors";
 
@@ -10,7 +7,12 @@ interface Lexeme {
   text: string;
 }
 
-type Piece = string | { base: number; step: number };
+interface Progression {
+  base: number;
+  step: number;
+}
+
+type Piece = string | Progression;
 
 interface Pattern {
   pieces: Piece[];
@@ -123,8 +125,8 @@ const parsePattern = (text: string): Pattern | undefined => {
   return pieces === undefined ? undefined : { pieces, separator: split[1] };
 };
 
-const getInstance = (pieces: Piece[], value: (piece: { base: number; step: number }) => number) =>
-  pieces.map((piece) => (typeof piece === "string" ? piece : String(value(piece)))).join("");
+const getInstance = (pieces: Piece[], getValue: (piece: Progression) => number) =>
+  pieces.map((piece) => (typeof piece === "string" ? piece : String(getValue(piece)))).join("");
 
 const expandPattern = (count: number, text: string, isReversed: boolean) => {
   const pattern = parsePattern(text);

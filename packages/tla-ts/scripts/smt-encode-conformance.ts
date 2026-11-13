@@ -1,21 +1,20 @@
-// An encoding that differs only in the names of bound variables and fresh symbols counts as
-// "names". A difference where tlapm is wrong counts as a deviation.
-
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { TlaUnsupportedError } from "../src";
 import { encodeForBackend } from "../src/prover/prove";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, writeResults } from "./corpora";
 import {
+  describeEncodeResult,
   getInputDigest,
-  getModuleObligations,
+  getObligationsById,
   printResults,
   PROOF_INPUTS_DIRECTORY,
   readProofRecords,
+  type EncodeResult,
 } from "./proof-records";
 import { getDeviation } from "./tlapm-deviations";
 
-type Verdict = "match" | "names" | "deviation" | "mismatch" | "unsupported";
+type Result = EncodeResult<"match" | "names" | "deviation" | "mismatch" | "unsupported">;
 
 type Sexp = string | Sexp[];
 
@@ -79,16 +78,14 @@ const parse = (text: string): Sexp[] => {
 const print = (sexp: Sexp): string =>
   typeof sexp === "string" ? sexp : `(${sexp.map(print).join(" ")})`;
 
-// Renames bound variables by their depth and the other fresh names by first use, and orders the
-// declarations, which tlapm and tla-ts may interleave differently.
 const canonicalize = (commands: Sexp[]) => {
   const names = new Map<string, string>();
-  const state = { isNaming: true };
+  let isNaming = true;
   const rename = (sexp: Sexp, bound: Map<string, string>): Sexp => {
     if (typeof sexp === "string") {
       if (bound.has(sexp)) return bound.get(sexp) ?? sexp;
       if (!isFresh(sexp)) return sexp;
-      if (!names.has(sexp) && state.isNaming) names.set(sexp, `$${names.size + 1}`);
+      if (!names.has(sexp) && isNaming) names.set(sexp, `$${names.size + 1}`);
       return names.get(sexp) ?? "$_";
     }
     if ((sexp[0] === "forall" || sexp[0] === "exists") && Array.isArray(sexp[1])) {
@@ -107,22 +104,13 @@ const canonicalize = (commands: Sexp[]) => {
   const assertions = commands
     .filter((command) => isCommand(command, "assert"))
     .map((command) => print(rename(command, new Map())));
-  state.isNaming = false;
+  isNaming = false;
   const declarations = commands
     .filter((command) => isCommand(command, "declare-fun"))
     .map((command) => print(rename(command, new Map())))
     .toSorted();
   return [...declarations, ...assertions];
 };
-
-interface Result {
-  module: string;
-  id: number;
-  verdict: Verdict;
-  reason?: string;
-  expected?: string;
-  actual?: string;
-}
 
 const getEncoding = (encode: () => string) => {
   try {
@@ -147,13 +135,7 @@ const results = readProofRecords()
     record.obligations.some((obligation) => obligation.status !== "trivial" && "smt" in obligation),
   )
   .flatMap((record): Result[] => {
-    const obligations = new Map(
-      getModuleObligations(join(CORPORA_DIRECTORY, record.id)).map((obligation) => [
-        obligation.id,
-        obligation,
-      ]),
-    );
-    // tlapm counts some names across the obligations it encodes, in order.
+    const obligations = getObligationsById(join(CORPORA_DIRECTORY, record.id));
     const session = { caseErrors: 0 };
     return record.obligations.flatMap((expected): Result[] => {
       if (expected.status === "trivial" || !("smt" in expected) || !expected.smt) return [];
@@ -184,10 +166,5 @@ printResults(
   results,
   ["match", "names", "deviation", "mismatch", "unsupported"],
   ["deviation", "mismatch", "unsupported"],
-  (result) =>
-    [
-      `${result.verdict} ${result.module} #${result.id}${result.reason ? `: ${result.reason}` : ""}`,
-      ...(result.expected === undefined ? [] : [`  tlapm:  ${result.expected.slice(0, 300)}`]),
-      ...(result.actual === undefined ? [] : [`  tla-ts: ${result.actual.slice(0, 300)}`]),
-    ].join("\n"),
+  describeEncodeResult,
 );

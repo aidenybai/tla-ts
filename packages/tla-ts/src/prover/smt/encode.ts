@@ -1,6 +1,3 @@
-// Encodes a prepared proof obligation in SMT-LIB as tlapm's SMT backend does (encode/ and
-// backend/smtlib.ml).
-
 import {
   applyBuiltin,
   at,
@@ -19,7 +16,14 @@ import { declare, getTlaName, NATIVE_OPERATORS, replaceTokens } from "./format";
 import { getSort } from "./types";
 import {
   createEncoder,
+  declareConstant,
+  encodeBool,
+  getEntries,
+  getUniqueName,
+  push,
+  searchDeclarationType,
   type Binding,
+  type Encoder,
   type EncodingSession,
   type Env,
   type Mode,
@@ -67,8 +71,7 @@ const simplifyRecordEqualities = (expression: Expr): Expr => {
   return at(decompose(inner.args[0], inner.args[1], inner), inner);
 };
 
-// Like tlapm's N_rewrite.sort_recfields, it doesn't visit field values, so a nested record keeps
-// its written order.
+// tlapm doesn't visit the field values, so a record inside a record keeps its written order.
 const sortRecordFields = (expression: Expr): Expr =>
   expression.kind === "Record" || expression.kind === "Rect"
     ? {
@@ -77,12 +80,10 @@ const sortRecordFields = (expression: Expr): Expr =>
       }
     : mapChildren(expression, sortRecordFields);
 
-// Each symbol brings its dependencies in the order tlapm's N_axiomatize.collect visits them,
-// smallest name first.
-const collectSymbols = (entries: Entry[], encoder: Encoder, encoding: SmtEncoding) => {
+const collectSymbols = (entries: Entry[], encoder: Encoder) => {
   const state: CollectState = {
-    isArithmetic: encoding.isArithmetic,
-    isSetExtensional: encoding.isSetExtensional,
+    isArithmetic: encoder.encoding.isArithmetic,
+    isSetExtensional: encoder.encoding.isSetExtensional,
     recordFields: encoder.recordFields,
     setTypes: encoder.setTypes,
     strings: [],
@@ -108,8 +109,6 @@ const collectSymbols = (entries: Entry[], encoder: Encoder, encoding: SmtEncodin
       spec.axioms.forEach((entry) => axioms.set(getAxiomKey(entry), entry));
     }
   };
-  // A flattened symbol stands for a builtin applied to its first-order arguments and then its
-  // higher-order ones, so its higher-order text is visited after its arguments.
   const visit = (text: string) => {
     const tokens = text.match(/[()]|[^\s()]+/g) ?? [];
     const pending: { depth: number; text: string }[] = [];
@@ -119,7 +118,7 @@ const collectSymbols = (entries: Entry[], encoder: Encoder, encoding: SmtEncodin
         if (pending.at(-1)?.depth === depth) visit(pending.pop()?.text ?? "");
         return depth - 1;
       }
-      const flat = encoder.flattened.get(token);
+      const flat = encoder.flattener.flattened.get(token);
       if (!flat) {
         const builtin = getTlaName(token);
         if (builtin !== undefined) add(builtin);
@@ -138,16 +137,12 @@ const collectSymbols = (entries: Entry[], encoder: Encoder, encoding: SmtEncodin
   return { symbols, axioms };
 };
 
-type Encoder = ReturnType<typeof createEncoder>;
-
 const HYPOTHESIS: Mode = { isOmitted: false, polarity: "Negative", at: undefined, depth: 0 };
 
-// Prep.expand_defs substitutes visible definitions and pragmas, so they declare nothing.
 const isExpanded = (hyp: Extract<Hyp, { kind: "Defn" }>) =>
   hyp.definition.kind === "Bpragma" ||
   (hyp.definition.kind === "Operator" && hyp.visibility === "Visible");
 
-// Smtlib.is_sndord_fact: an ASSUME that declares an operator, which tlapm leaves out.
 const isSecondOrder = (expression: Expr) =>
   expression.kind === "Sequent" &&
   expression.sequent.context.some((hyp) => hyp.kind === "Fresh" && hyp.shape > 0);
@@ -160,8 +155,8 @@ interface EncodedContext {
 const encodeContext = (sequent: Sequent, encoder: Encoder) =>
   sequent.context.reduce<EncodedContext>(
     (state, hyp, index) => {
-      const next = (binding: Binding, entries: Entry[] = []) => ({
-        env: encoder.push(state.env, binding),
+      const extend = (binding: Binding, entries: Entry[] = []) => ({
+        env: push(state.env, binding),
         entries: [...state.entries, ...entries],
       });
       const rest: Expr = {
@@ -170,12 +165,13 @@ const encodeContext = (sequent: Sequent, encoder: Encoder) =>
       };
       switch (hyp.kind) {
         case "Fresh": {
-          const symbol = encoder.getUniqueName(hyp.name);
+          const symbol = getUniqueName(encoder, hyp.name);
           if (hyp.shape > 0)
-            return next({ kind: "operator", symbol, arity: hyp.shape }, [
+            return extend({ kind: "operator", symbol, arity: hyp.shape }, [
               declare(symbol, hyp.shape),
             ]);
-          const declared = encoder.declareConstant(
+          const declared = declareConstant(
+            encoder,
             hyp,
             hyp.domainVisibility === "Visible" ? hyp.domain : undefined,
             rest.sequent,
@@ -185,24 +181,25 @@ const encodeContext = (sequent: Sequent, encoder: Encoder) =>
           const binding: Binding = { kind: "constant", symbol, type: declared.type };
           const declaration = declare(symbol, 0, getSort(declared.type));
           const guard = declared.getGuard(symbol);
-          if (guard === undefined) return next(binding, [declaration]);
-          return next(binding, [declaration, ...encoder.getEntries(`(assert ${guard})`)]);
+          if (guard === undefined) return extend(binding, [declaration]);
+          return extend(binding, [declaration, ...getEntries(encoder, `(assert ${guard})`)]);
         }
         // Rewrite.elim_flex declares a variable and then its primed copy, so the hypotheses after
         // it type both.
         case "Flex": {
-          const symbol = encoder.getUniqueName(hyp.name);
-          const primed = encoder.getUniqueName(`${hyp.name}_prime`);
-          const type = encoder.searchDeclarationType(rest, true, state.env, HYPOTHESIS);
+          const symbol = getUniqueName(encoder, hyp.name);
+          const primed = getUniqueName(encoder, `${hyp.name}_prime`);
+          const type = searchDeclarationType(encoder, rest, true, state.env, HYPOTHESIS);
           const variable: Binding = { kind: "variable", name: hyp.name, symbol, primed, type };
-          const primedType = encoder.searchDeclarationType(
+          const primedType = searchDeclarationType(
+            encoder,
             rest,
             true,
-            encoder.push(state.env, variable),
+            push(state.env, variable),
             HYPOTHESIS,
             `${hyp.name}#prime`,
           );
-          return next({ ...variable, primedType }, [
+          return extend({ ...variable, primedType }, [
             declare(symbol, 0, getSort(type)),
             declare(primed, 0, getSort(primedType)),
           ]);
@@ -210,23 +207,23 @@ const encodeContext = (sequent: Sequent, encoder: Encoder) =>
         case "Defn": {
           const definition = hyp.definition;
           if (isExpanded(hyp))
-            return next({ kind: "unsupported", reason: "an expanded definition" });
+            return extend({ kind: "unsupported", reason: "an expanded definition" });
           if (definition.kind === "Instance")
-            return next({ kind: "unsupported", reason: "an instance" }, [
+            return extend({ kind: "unsupported", reason: "an instance" }, [
               `; omitted declaration of '${definition.name}' (missing type)`,
             ]);
           if (definition.kind === "Recursive") {
-            const symbol = encoder.getUniqueName(`CONSTANT_${definition.name}_`);
-            return next({ kind: "operator", symbol, arity: definition.shape }, [
+            const symbol = getUniqueName(encoder, `CONSTANT_${definition.name}_`);
+            return extend({ kind: "operator", symbol, arity: definition.shape }, [
               declare(symbol, definition.shape),
             ]);
           }
           if (definition.kind !== "Operator")
-            return next({ kind: "unsupported", reason: "a definition" });
+            return extend({ kind: "unsupported", reason: "a definition" });
           const body = definition.body;
           const params = body.kind === "Lambda" ? body.params : [];
           if (params.some((param) => param.shape > 0))
-            return next(
+            return extend(
               {
                 kind: "secondOrder",
                 name: definition.name,
@@ -234,26 +231,27 @@ const encodeContext = (sequent: Sequent, encoder: Encoder) =>
               },
               [`; omitted declaration of '${definition.name}' (second-order)`],
             );
-          const symbol = encoder.getUniqueName(definition.name);
+          const symbol = getUniqueName(encoder, definition.name);
           // Type.Synthesize types a hidden constant definition as it types a NEW constant.
           const type =
             hyp.visibility === "Hidden" && body.kind !== "Lambda"
-              ? encoder.searchDeclarationType(rest, true, state.env, HYPOTHESIS)
+              ? searchDeclarationType(encoder, rest, true, state.env, HYPOTHESIS)
               : undefined;
           if (type !== undefined)
-            return next({ kind: "constant", symbol, type }, [declare(symbol, 0, getSort(type))]);
-          return next({ kind: "operator", symbol, arity: params.length }, [
+            return extend({ kind: "constant", symbol, type }, [declare(symbol, 0, getSort(type))]);
+          return extend({ kind: "operator", symbol, arity: params.length }, [
             declare(symbol, params.length),
           ]);
         }
         case "Fact": {
           const binding: Binding = { kind: "unsupported", reason: "a reference to a fact" };
-          if (hyp.visibility === "Hidden") return next(binding, ["; hidden fact"]);
+          if (hyp.visibility === "Hidden") return extend(binding, ["; hidden fact"]);
           const isOmitted = isSecondOrder(hyp.expression);
-          const entries = encoder.getEntries(
-            `(assert ${encoder.encodeBool(hyp.expression, state.env, { ...HYPOTHESIS, isOmitted })})`,
+          const entries = getEntries(
+            encoder,
+            `(assert ${encodeBool(encoder, hyp.expression, state.env, { ...HYPOTHESIS, isOmitted })})`,
           );
-          return next(
+          return extend(
             binding,
             isOmitted
               ? [
@@ -294,11 +292,12 @@ export const encodeSmt = (
   const context = encodeContext(sequent, encoder);
   const goal = isSecondOrder(sequent.active)
     ? []
-    : encoder.getEntries(
-        `(assert (! (not ${encoder.encodeBool(sequent.active, context.env, { ...HYPOTHESIS, polarity: "Positive" })}) :named |Goal|))`,
+    : getEntries(
+        encoder,
+        `(assert (! (not ${encodeBool(encoder, sequent.active, context.env, { ...HYPOTHESIS, polarity: "Positive" })}) :named |Goal|))`,
       );
-  const printer = createPrinter(encoder.declared);
-  const collected = collectSymbols([...context.entries, ...goal], encoder, encoding);
+  const resolve = createPrinter(encoder.declared);
+  const collected = collectSymbols([...context.entries, ...goal], encoder);
   const declarations = [...collected.symbols]
     .toSorted((left, right) => compareStrings(left[0], right[0]))
     .flatMap((symbol) => (symbol[1].declaration === undefined ? [] : [symbol[1].declaration]));
@@ -317,8 +316,6 @@ export const encodeSmt = (
     });
   const hypotheses = [...declarations, ...axioms, ...getLines(context.entries)];
   const lines = [...hypotheses, ...getLines(goal)];
-  // Smtlib.collect_sorts declares Idv only when a symbol or a bound variable has that sort.
-  // Type.Synthesize gives that sort to each definition left in the context, though none is printed.
   const isIdvUsed =
     lines.some((line) => /\bIdv\b/.test(line)) ||
     sequent.context.some(
@@ -329,7 +326,7 @@ export const encodeSmt = (
     );
   const printCommand = (line: string) => {
     if (line.startsWith(";")) return line;
-    const command = layOutCommand(replaceTokens(printer.resolve(line), NATIVE_OPERATORS));
+    const command = layOutCommand(replaceTokens(resolve(line), NATIVE_OPERATORS));
     const name = /:named \|([^|]*)\|\)\)$/.exec(line)?.[1];
     if (name === undefined) return command;
     return `;; ${name === "Goal" ? name : `Axiom: ${name}`}\n${command}`;

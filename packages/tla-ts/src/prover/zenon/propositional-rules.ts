@@ -347,8 +347,6 @@ export const addUnfold: SearchRule = (context, queue, formula, goalness) => {
           wrap,
         );
   };
-  // Zenon tries applications before variables, each first as the formula itself, then as either
-  // side of a relation that is reflexive, symmetric or transitive.
   for (const kind of ["app", "var"]) {
     if (atom.kind === kind) {
       const result = tryUnfold(atom, negate);

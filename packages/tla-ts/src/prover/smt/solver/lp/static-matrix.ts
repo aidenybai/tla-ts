@@ -1,6 +1,4 @@
-// Ported from Z3 (src/math/lp/static_matrix.h, src/math/lp/static_matrix_def.h), MIT license, see
-// z3-license.txt. Cells are removed by moving the strip's last cell into their place, so the cell
-// order is Z3's.
+// Ported from Z3 (src/math/lp/static_matrix.h, src/math/lp/static_matrix_def.h), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import type { LarTerm } from "./lar-term";
 
@@ -10,6 +8,11 @@ const getTermCells = (term: LarTerm) =>
 export interface RowCell {
   column: number;
   offset: number;
+  coeff: Rational;
+}
+
+interface CoeffCell {
+  column: number;
   coeff: Rational;
 }
 
@@ -59,7 +62,7 @@ export class StaticMatrix {
     this.rowOffsets = [];
   }
 
-  set(row: number, column: number, coeff: Rational) {
+  private set(row: number, column: number, coeff: Rational) {
     if (coeff.isZero()) return;
     this.addNewElement(row, column, coeff);
   }
@@ -154,7 +157,7 @@ export class StaticMatrix {
   }
 
   private pivotCellsToRow(
-    cells: readonly { column: number; coeff: Rational }[],
+    cells: readonly CoeffCell[],
     cell: ColumnCell,
     pivotColumn: number,
     sign: number,
@@ -168,7 +171,7 @@ export class StaticMatrix {
 
   private addCellsToRow(
     row: number,
-    cells: readonly { column: number; coeff: Rational }[],
+    cells: readonly CoeffCell[],
     alpha: Rational,
     skippedColumn: number,
   ) {

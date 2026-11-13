@@ -21,9 +21,7 @@ export class TrailStack {
   }
 }
 
-// r2 becomes the root of r1's class.
 export interface UnionFindHandler {
-  mergeEh?: (r2: number, r1: number, v2: number, v1: number) => void;
   afterMergeEh?: (r2: number, r1: number, v2: number, v1: number) => void;
   unmergeEh?: (r2: number, r1: number) => void;
 }
@@ -73,7 +71,6 @@ export class UnionFind {
     const r2 = isSwapped ? root1 : root2;
     const v1 = isSwapped ? inputV2 : inputV1;
     const v2 = isSwapped ? inputV1 : inputV2;
-    this.handler.mergeEh?.(r2, r1, v2, v1);
     this.finds[r1] = r2;
     this.sizes[r2] += this.sizes[r1];
     this.swapNexts(r1, r2);

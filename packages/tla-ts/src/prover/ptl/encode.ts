@@ -1,6 +1,3 @@
-// tlapm's PTL backend up to the text it sends LS4 (Pltl.process_obligation, Prep.flatten, and Ls4's
-// printer).
-
 import {
   bumpBy,
   shift,
@@ -25,8 +22,6 @@ import { getLevelInfo } from "../../obligations/levels";
 import { expandAction, expandFairness, expandLeadsto, getTime } from "../../obligations/temporal";
 import { getHashName, LEVEL_NUMBER_PREFIXES, LEVEL_PREFIXES } from "../prep/action";
 
-// Coalesce.rename_with_loc: each name gets its kind or level in front, as in VARIABLE_x_, so atoms
-// hash as in tlapm.
 const renameSequent = (scope: Scope | undefined, sequent: Sequent): Sequent => {
   const [inner, context] = mapAccumulate(
     scope,
@@ -90,36 +85,30 @@ const renameDeclarations = (scope: Scope | undefined, expression: Expr): Expr =>
   }
 };
 
-interface PreparedHyps {
-  scope: Scope | undefined;
-  substitution: Substitution;
-  context: Hyp[];
-}
-
 const prepareHyps = (scope: Scope | undefined, expression: Expr): Expr => {
   if (expression.kind !== "Sequent")
     return mapScoped(scope, expression, prepareHyps, adjoin, "all");
-  const state: PreparedHyps = { scope, substitution: shift(0), context: [] };
+  let innerScope = scope;
+  let substitution: Substitution = shift(0);
+  const context: Hyp[] = [];
   const push = (hyp: Hyp) => {
     const prepared =
       hyp.kind === "Fact" && hyp.visibility === "Visible" && hyp.time === "Always"
         ? { ...hyp, expression: applyBuiltin("BoxTrue", [hyp.expression], hyp.expression) }
         : hyp;
-    state.context.push(prepared);
-    state.scope = adjoin(state.scope, prepared);
+    context.push(prepared);
+    innerScope = adjoin(innerScope, prepared);
   };
   for (const original of expression.sequent.context) {
-    const hyp = substituteHyp(state.substitution, original);
+    const hyp = substituteHyp(substitution, original);
     if (hyp.kind !== "Fresh" || !hyp.domain) {
       push(
-        hyp.kind === "Fact"
-          ? { ...hyp, expression: prepareHyps(state.scope, hyp.expression) }
-          : hyp,
+        hyp.kind === "Fact" ? { ...hyp, expression: prepareHyps(innerScope, hyp.expression) } : hyp,
       );
-      state.substitution = bumpBy(1, state.substitution);
+      substitution = bumpBy(1, substitution);
       continue;
     }
-    const domain = prepareHyps(state.scope, hyp.domain);
+    const domain = prepareHyps(innerScope, hyp.domain);
     push({ ...hyp, domain: undefined });
     push({
       kind: "Fact",
@@ -129,19 +118,19 @@ const prepareHyps = (scope: Scope | undefined, expression: Expr): Expr => {
         domain,
       ),
       visibility: hyp.domainVisibility,
-      time: hyp.level === "Constant" ? getTime(state.scope, shiftExpr(1, domain)) : "Now",
+      time: hyp.level === "Constant" ? getTime(innerScope, shiftExpr(1, domain)) : "Now",
       location: hyp.location,
     });
-    state.substitution = {
+    substitution = {
       kind: "Compose",
       outer: shift(1),
-      inner: bumpBy(1, state.substitution),
+      inner: bumpBy(1, substitution),
     };
   }
-  const active = substituteExpr(state.substitution, expression.sequent.active);
+  const active = substituteExpr(substitution, expression.sequent.active);
   return {
     ...expression,
-    sequent: { context: state.context, active: prepareHyps(state.scope, active) },
+    sequent: { context, active: prepareHyps(innerScope, active) },
   };
 };
 
@@ -160,7 +149,6 @@ const UNARY: Partial<Record<Builtin, string>> = {
   Prime: "next",
 };
 
-// Prep.flatten, which tlapm applies after Pltl.process_obligation has made every equality an atom.
 const removeTrue = (expression: Expr): Expr | undefined => {
   if (expression.kind === "Internal" && expression.builtin === "TRUE") return undefined;
   if (expression.kind === "List" && expression.bullet !== "Or") {
@@ -183,7 +171,6 @@ const removeTrue = (expression: Expr): Expr | undefined => {
 const TRUE_TEXT = "(cc | ~ cc)";
 
 export const encodePtl = (sequent: Sequent): string => {
-  // Prep.flatten applies only to the facts of the outermost sequent.
   const print = (hyps: Hyp[], expression: Expr, isOutermost = false): string => {
     const recurse = (inner: Expr) => print(hyps, inner);
     switch (expression.kind) {

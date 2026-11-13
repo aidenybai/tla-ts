@@ -1,18 +1,11 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check } from "../../src";
-
-const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-ext");
+import { checkFixture } from "./check-harness";
 
 const checkCounterExample = async (configName: string) => {
   const printed: string[] = [];
-  const result = await check({
-    source: readFileSync(join(DIRECTORY, "CounterExample.tla"), "utf8"),
-    config: readFileSync(join(DIRECTORY, `${configName}.cfg`), "utf8"),
+  const result = await checkFixture("tlc-ext", "CounterExample", configName, {
     onPrint: (text) => printed.push(text),
   });
-  // TLC prints what the postcondition prints after the trace.
   return [result.status, ...printed, ...(result.violation?.postconditionOutput ?? [])];
 };
 

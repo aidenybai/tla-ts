@@ -1,5 +1,3 @@
-// What backend/zenon.ml and backend/isabelle.ml share in printing an obligation.
-
 import { TlapmBugError, TlaProverError, TlaUnsupportedError } from "../errors";
 import { popNames, type Context } from "../obligations/printer";
 import { shiftExpr } from "../obligations/substitution";
@@ -123,7 +121,6 @@ interface SplitQuantifier {
   inner: Expr;
 }
 
-// A ditto after the first bound copies its domain.
 export const splitFirstBound = (
   quantifier: "Forall" | "Exists",
   bounds: Bound[],
@@ -155,7 +152,6 @@ export const splitFirstBound = (
   };
 };
 
-// tlapm prints a fact to a formatter that drops its output first, to omit an unsupported one.
 export const printFact = <Printed>(context: Context, print: () => Printed) => {
   const depth = context.stack.length;
   try {

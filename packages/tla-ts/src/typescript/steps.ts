@@ -16,7 +16,6 @@ interface Guard {
 
 interface Chosen {
   domain: string;
-  // Whether the set uses parameters that earlier guards chose.
   isDependent: boolean;
 }
 
@@ -32,8 +31,6 @@ const isBareReturn = (statement: ts.Statement): boolean =>
       statement.statements.length === 1 &&
       isBareReturn(statement.statements[0]);
 
-// A leading `if (!set.has(parameter)) return;` chooses the parameter from that set, as
-// `\E parameter \in set` does, so TLC doesn't enumerate the parameter's whole type.
 const getGuard = (
   statement: ts.Statement,
   parameters: Parameter[],
@@ -71,7 +68,6 @@ const getGuard = (
     (candidate) => candidate.symbol === getSymbol(argument, context.checker),
   );
   const set = call.expression.expression;
-  // The set may use parameters that earlier guards chose, as in \E a \in A : \E b \in B(a).
   const used = getParameters(set);
   if (
     parameter === undefined ||
@@ -84,7 +80,6 @@ const getGuard = (
   return { parameter, set, isDependent: used.length > 0 };
 };
 
-// The parameters that leading guards choose, and the statements after the guards.
 const readGuards = (
   statements: readonly ts.Statement[],
   parameters: Parameter[],
@@ -104,8 +99,6 @@ const readGuards = (
   );
 };
 
-// An exported function that changes state, as an action and its disjunct of Next. Each parameter
-// ranges over its type, or over the set that a guard chooses it from.
 export const translateStep = (definition: Exported, sections: Sections, context: Context) => {
   const name = definition.name;
   const body = definition.body;
@@ -137,37 +130,36 @@ export const translateStep = (definition: Exported, sections: Sections, context:
     return;
   }
   const getType = (parameter: Parameter) => context.checker.getTypeAtLocation(parameter.node.name);
-  const domains = parameters.map(
-    (parameter) =>
-      guards.chosen.get(parameter)?.domain ??
-      getDomain(getType(parameter), parameter.node, context),
+  const choices = parameters.map((parameter) => {
+    const chosen = guards.chosen.get(parameter);
+    return {
+      parameter,
+      chosen,
+      domain: chosen?.domain ?? getDomain(getType(parameter), parameter.node, context),
+    };
+  });
+  const independent = choices.flatMap((choice) =>
+    choice.chosen?.isDependent === true ? [] : [`${choice.parameter.name} \\in ${choice.domain}`],
   );
-  const independent = parameters.flatMap((parameter, index) =>
-    guards.chosen.get(parameter)?.isDependent === true
-      ? []
-      : [`${parameter.name} \\in ${domains[index]}`],
-  );
-  // Guards run in order, so each dependent parameter is chosen after the ones its set uses.
   const dependent = [...guards.chosen]
     .filter((entry) => entry[1].isDependent)
     .map((entry) => `\\E ${entry[0].name} \\in ${entry[1].domain} : `);
   const step = `\\E ${independent.join(", ")} : ${dependent.join("")}${head}`;
   sections.next.push(step);
   if (fairness === undefined) return;
-  // Fairness holds for each parameter value when every parameter has a finite type, with the
-  // guards that chose parameters kept inside the action.
-  const typeDomains = parameters.map((parameter, index) =>
-    guards.chosen.has(parameter) ? findDomain(getType(parameter), context) : domains[index],
-  );
-  const conditions = parameters.flatMap((parameter, index) =>
-    guards.chosen.has(parameter) ? [`${parameter.name} \\in ${wrap(domains[index])}`] : [],
-  );
-  if (!typeDomains.every((domain): domain is string => typeof domain === "string")) {
+  const forAll = choices.map((choice) => {
+    const typeDomain =
+      choice.chosen === undefined ? choice.domain : findDomain(getType(choice.parameter), context);
+    return typeof typeDomain === "string"
+      ? `${choice.parameter.name} \\in ${typeDomain}`
+      : undefined;
+  });
+  if (!forAll.every((bound) => bound !== undefined)) {
     sections.fairness.push(`${fairness}(${step})`);
     return;
   }
-  const forAll = parameters.map(
-    (parameter, index) => `${parameter.name} \\in ${typeDomains[index]}`,
+  const conditions = choices.flatMap((choice) =>
+    choice.chosen === undefined ? [] : [`${choice.parameter.name} \\in ${wrap(choice.domain)}`],
   );
   sections.fairness.push(
     `\\A ${forAll.join(", ")} : ${fairness}(${[...conditions, head].join(" /\\ ")})`,

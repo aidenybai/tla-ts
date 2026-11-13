@@ -1,12 +1,9 @@
-// Ported from Z3 (src/smt/smt_case_split_queue.cpp, src/util/heap.h), MIT license, see
-// z3-license.txt.
+// Ported from Z3 (src/smt/smt_case_split_queue.cpp, src/util/heap.h), MIT license, see z3-license.txt.
 
 import { BoolVar, toBoolVar } from "./literal";
 
-// A binary min-heap over negated activities, so the most active is first.
 class ActivityHeap {
   private values: BoolVar[] = [toBoolVar(-1)];
-  // A typed array keeps the loads of variables that were never inserted in bounds.
   private indices = new Int32Array(1024);
 
   constructor(private activity: number[]) {}

@@ -1,20 +1,16 @@
-// A port of tlapm's Backend.Fingerprints.fp_sequent, which names hypotheses and bound variables by
-// the order of their first use.
-
 import { TlapmBugError } from "../../errors";
 import {
   adjoin,
   type Bound,
   type Builtin,
   type Expr,
-  type Hyp,
   type Scope,
   type Sequent,
 } from "../../obligations/expression";
 import { isConstant } from "../../obligations/temporal";
+import { LEVEL_PREFIXES } from "./action";
 import { getMd5 } from "./md5";
 
-// builtin_to_int, whose numbers skip [], which fp_bin prints by name.
 const BUILTIN_NUMBERS: Builtin[] = [
   "TRUE",
   "FALSE",
@@ -123,7 +119,6 @@ const OCAML_ESCAPES: Record<number, string> = {
   0x08: "\\b",
 };
 
-// OCaml's %S: a string literal, with each byte outside printable ASCII as a decimal escape.
 const quoteString = (value: string) =>
   `"${[...new TextEncoder().encode(value)]
     .map(
@@ -141,9 +136,6 @@ const getBuiltin = (builtin: Builtin) => {
   return `$${BUILTIN_NUMBERS.indexOf(builtin)}`;
 };
 
-const getFreshLabel = (hyp: Extract<Hyp, { kind: "Fresh" }>) =>
-  hyp.level === "Unknown" ? "Unknown" : hyp.level.toUpperCase();
-
 const getFingerprintText = (sequent: Sequent) => {
   const stack: Entry[] = [];
   const getEntry = (index: number) => {
@@ -159,7 +151,6 @@ const getFingerprintText = (sequent: Sequent) => {
   };
   const pushVariables = (count: number) =>
     Array.from({ length: count }).forEach(() => push({ kind: "Var" }));
-  // Stack.popn: the entries from the top down.
   const popVariables = (count: number) => Array.from({ length: count }, pop);
   const getVariableNumber = (entry: Entry) => {
     if (entry.ident.kind === "VarIndex") return entry.ident.index;
@@ -182,7 +173,6 @@ const getFingerprintText = (sequent: Sequent) => {
             : "",
         )
         .join("");
-    // A binder's body comes first, then what pops off the stack after it.
     const printBound = (count: number, body: Expr) => {
       pushVariables(count);
       const text = print(body);
@@ -215,7 +205,6 @@ const getFingerprintText = (sequent: Sequent) => {
           case "Pragma":
             return "";
         }
-        throw new TlapmBugError();
       }
       case "Opaque":
         return expression.name;
@@ -328,8 +317,6 @@ const getFingerprintText = (sequent: Sequent) => {
     }
   };
 
-  // A hypothesis prints after the goal and the hypotheses after it, once their uses have numbered
-  // it.
   const printSequent = (inner: Sequent): string => {
     const counters = { hyp: 1, variable: 1 };
     const spin = (index: number, scope: Scope | undefined): string => {
@@ -343,7 +330,7 @@ const getFingerprintText = (sequent: Sequent) => {
       switch (hyp.kind) {
         case "Fresh": {
           if (!hyp.domain) {
-            const label = getFreshLabel(hyp);
+            const label = LEVEL_PREFIXES[hyp.level];
             const after = getRest({ kind: "Hyp", label });
             return after.entry.isUsed ? `${after.rest}${label}${hyp.name}` : after.rest;
           }

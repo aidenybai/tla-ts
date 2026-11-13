@@ -1,5 +1,4 @@
-// Ported from Isabelle2025's Provers/blast.ML. Copyright (c) 1986-2025 University of Cambridge,
-// Technische Universitaet Muenchen, and contributors, see LICENSE.
+// Ported from Isabelle2025's Provers/blast.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { bumpInit, bumpString } from "../../pure/name";
 import type { GoalTactic } from "../../pure/tactical";
@@ -14,14 +13,10 @@ export interface BlastData {
   readonly trueprop: string;
   readonly equalityName: string;
   readonly notName: string;
-  // ~P ==> P ==> R
   readonly notE: Thm;
-  // (~P ==> False) ==> P
   readonly ccontr: Thm;
   readonly hypSubstTac: (limits: Limits) => GoalTactic;
-  // The classical reasoner's (~P ==> P) ==> P, which Classical.dup_intr resolves with.
   readonly classical: Thm;
-  // The atomize rules of Object_Logic, newest first, for atomize_prems_tac.
   readonly atomize: readonly Thm[];
 }
 
@@ -51,7 +46,6 @@ export interface Branch {
   readonly lim: number;
 }
 
-// The token is undefined for PROVE, the end of the search.
 export interface Choice {
   readonly ntrl: number;
   readonly nbrs: number;
@@ -61,11 +55,10 @@ export interface Choice {
 export interface BlastState {
   readonly context: BlastContext;
   readonly names: Map<string, string | undefined>;
-  // Latest last, so that the trail's length is ntrail.
   readonly trail: VarRef[];
 }
 
-// Not an Error, since backtracking is frequent and needs no stack trace.
+// Not an Error: backtracking is frequent and needs no stack trace.
 class Backtrack {
   readonly token: object | undefined;
   constructor(token: object | undefined) {
@@ -73,7 +66,6 @@ class Backtrack {
   }
 }
 
-// Latest first. The last is PROVE's.
 export type Choices = List<Choice> | undefined;
 
 export const isBacktrackTo = (error: unknown, token: object | undefined) =>
@@ -83,7 +75,6 @@ export const backtrack = (choices: Choices): never => {
   throw new Backtrack(choices?.head.token);
 };
 
-// For names without trailing underscores.
 export const gensym = (state: BlastState, name: string) => {
   const names = state.names;
   if (!names.has(name)) {
@@ -105,7 +96,6 @@ export const clearTo = (state: BlastState, count: number) => {
   }
 };
 
-// The variables of vars are local to a rule: their assignments are not trailed.
 const updateVar = (
   state: BlastState,
   vars: readonly VarRef[],

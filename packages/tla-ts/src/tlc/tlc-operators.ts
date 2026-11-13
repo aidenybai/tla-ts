@@ -37,20 +37,16 @@ import {
   setFunctionClass,
 } from "../values";
 import { getFingerprintPolynomial } from "./fingerprint";
-
-const padTime = (value: number) => String(value).padStart(2, "0");
+import { zeroPad } from "./messages";
 
 const formatCalendarVersion = (date: Date) =>
-  `${date.getUTCFullYear()}.${padTime(date.getUTCMonth() + 1)}.${padTime(date.getUTCDate())}.${padTime(date.getUTCHours())}${padTime(date.getUTCMinutes())}${padTime(date.getUTCSeconds())}`;
+  `${date.getUTCFullYear()}.${zeroPad(date.getUTCMonth() + 1)}.${zeroPad(date.getUTCDate())}.${zeroPad(date.getUTCHours())}${zeroPad(date.getUTCMinutes())}${zeroPad(date.getUTCSeconds())}`;
 
 const getRegisterFunction = <Key extends Value>(registers: Map<Key, Value>) =>
   createFunction([...registers].map(([key, value]): [Value, Value] => [key, createTuple([value])]));
 
-// TLC doesn't normalize the records it builds, so they keep their written order.
 const createTlcRecord = (fields: [string, Value][]) =>
   setFunctionClass(createWrittenFunction(fields), "record");
-
-// TLC creates its model checker after it processes the spec, so these are undefined before then.
 
 const CHECKER_KEYS = new Set(["diameter", "generated", "distinct", "queue", "stats", "config"]);
 const TLC_174_KEYS = new Set(["diameter", "distinct", "queue", "duration", "level"]);
@@ -153,7 +149,6 @@ const getPermutations = (elements: Value[]): Value[][] =>
         ]),
       );
 
-// TLC sorts the value of a TLCEval argument that it caches, with every value inside it.
 const normalizeDeeply = (value: Value): void => {
   if (typeof value !== "object") return;
   if (value.kind === "Set" || value.kind === "MixedSet") {
@@ -207,7 +202,6 @@ export const createTlcOperators = (
   defineOperator(":>", 2, (args) =>
     createFunction([[getValue(args, 0, ":>"), getValue(args, 1, ":>")]]),
   ),
-  // CombineFcn converts both arguments before it checks either.
   defineOperator("@@", 2, (args) => {
     const leftValue = getValue(args, 0, "@@");
     const rightValue = getValue(args, 1, "@@");
@@ -224,7 +218,6 @@ export const createTlcOperators = (
   defineOperator("ToString", 1, (args) =>
     rankString(formatValue(getValue(args, 0, "ToString"), true)),
   ),
-  // The checker passes no context where TLC caches the value, which it then sorts.
   {
     ...defineLazyOperator("TLCEval", 1, (args, context) => {
       const value = convertLikeTlcEval(getThunk(args, 0, "TLCEval")());
@@ -253,23 +246,20 @@ export const createTlcOperators = (
       if (typeof result === "boolean") return result;
       throw createModuleArgumentError("second", "SortSeq", "boolean function", result);
     };
-    // TLC's insertion sort moves each element back past the ones it precedes.
     const sorted = elements.slice(0, 1);
     elements.slice(1).forEach((element) => {
-      const position = { index: sorted.length };
-      while (position.index > 0 && precedes(element, sorted[position.index - 1])) position.index--;
-      sorted.splice(position.index, 0, element);
+      let position = sorted.length;
+      while (position > 0 && precedes(element, sorted[position - 1])) position--;
+      sorted.splice(position, 0, element);
     });
     return createTuple(sorted);
   }),
-  // TLC reports a failure of TLCGet, its argument's too, as one of TLCGetSet.TLCGetEval.
   runtime.version === "1.7.4"
     ? overrideWithJava(
         {
           ...defineStateOperator("TLCGet", 1, (args, context) =>
             getTlcValue(runtime, getValue(args, 0, "TLCGet"), context),
           ),
-          // Unlike TLCGetSet.TLCGetEval, TLC.TLCGet declares no minimum level.
           isLevelConstant: true,
         },
         "public static tlc2.value.impl.Value tlc2.module.TLC.TLCGet(tlc2.value.impl.Value)",
@@ -281,8 +271,7 @@ export const createTlcOperators = (
         "public static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
       ),
   defineStateOperator("TLCSet", 2, (args) => {
-    const key = getValue(args, 0, "TLCSet");
-    setTlcValue(runtime, print, key, getValue(args, 1, "TLCSet"));
+    setTlcValue(runtime, print, getValue(args, 0, "TLCSet"), getValue(args, 1, "TLCSet"));
     return true;
   }),
   defineConstant("Any", ANY_SET),

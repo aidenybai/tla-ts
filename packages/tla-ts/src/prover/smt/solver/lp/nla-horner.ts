@@ -56,7 +56,7 @@ export class Horner {
     const core = this.core;
     core.activeVarSet.clear();
     this.fixedDep = null;
-    const summands = row.map((cell) => this.nexvar(cell.coeff, cell.column));
+    const summands = row.map((cell) => this.mkNexVar(cell.coeff, cell.column));
     const fixedDep = this.fixedDep;
     this.setActiveVarsWeights();
     const expr = this.nexCreator.simplify(this.nexCreator.mkSum(summands));
@@ -72,7 +72,6 @@ export class Horner {
     return crossNested.done();
   }
 
-  // set_active_vars_weights: without the weights the comparisons of nex_creator are wrong.
   private setActiveVarsWeights() {
     this.nexCreator.setNumberOfVars(this.core.lra.getColumnCount());
     for (const lpVar of this.core.activeVarSet.elems)
@@ -83,8 +82,7 @@ export class Horner {
     this.fixedDep = mkJoin(this.fixedDep, this.core.lra.getBoundWitnesses(lpVar));
   }
 
-  // hornerSubsFixed replaces fixed variables by their values (1) or only those fixed to zero (2).
-  private nexvar(coeff: Rational, lpVar: number): Nex {
+  private mkNexVar(coeff: Rational, lpVar: number): Nex {
     const core = this.core;
     const creator = this.nexCreator;
     const subsFixed: number = NLA_PARAMS.hornerSubsFixed;

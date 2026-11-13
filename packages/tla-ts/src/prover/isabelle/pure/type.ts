@@ -1,7 +1,4 @@
-// Ported from Isabelle2025's Pure/type.ML. Copyright (c) 1986-2025 University of Cambridge,
-// Technische Universitaet Muenchen, and contributors, see LICENSE.
-// Every type variable of Isabelle/TLA+ has the empty sort, so Type.unify never meets a sort
-// constraint and coincides with Type.raw_unify.
+// Ported from Isabelle2025's Pure/type.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
 import {
@@ -19,8 +16,6 @@ import { eqTyp, mkType, type Typ } from "./term";
 export type TyEnv = Table<IndexKey, Typ>;
 
 export const emptyTyEnv: TyEnv = emptyTable(fastIndexnameOrd);
-
-export const lookupTyEnv = (tyenv: TyEnv, name: IndexKey) => lookupTable(tyenv, name);
 
 export const devar = (tyenv: TyEnv, type: Typ): Typ => {
   let current = type;
@@ -102,7 +97,7 @@ export const substType = (tyenv: TyEnv, type: Typ): Typ => {
   return args.every((arg, index) => arg === type.args[index]) ? type : mkType(type.name, args);
 };
 
-// Isabelle2025 compares each argument with itself, so arguments never differ.
+// Isabelle2025's Type.unified compares each argument with itself, so arguments never differ.
 export const unifiedTypes = (tyenv: TyEnv, left: Typ, right: Typ): boolean => {
   if (isEmptyTable(tyenv)) return eqTyp(left, right);
   const leftType = devar(tyenv, left);

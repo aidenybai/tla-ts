@@ -1,5 +1,4 @@
-// Ported from Z3 (src/smt/theory_lra.cpp, src/smt/arith_eq_adapter.cpp), MIT license, see
-// z3-license.txt.
+// Ported from Z3 (src/smt/theory_lra.cpp, src/smt/arith_eq_adapter.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import {
   OP_ADD,
@@ -22,7 +21,7 @@ import {
   SORT_REAL,
 } from "./ast";
 import { getExtendedNumeral } from "./ast-util";
-import { Enode } from "./enode";
+import type { Enode } from "./enode";
 import { FALSE_LITERAL, getVar, isNegated, Literal, negate, TRUE_LITERAL } from "./literal";
 import { Rational } from "./rational";
 import { TheoryLraState } from "./theory-lra-state";
@@ -30,7 +29,6 @@ import { TheoryLraState } from "./theory-lra-state";
 export abstract class TheoryLraAxioms extends TheoryLraState {
   private processedEqs = new Set<string>();
 
-  // m_restart_pairs: equalities whose axioms a backjump to the base level drops, remade on restart.
   protected restartPairs: Enode[][] = [];
 
   protected getInternalizedEnode(expr: number) {
@@ -182,13 +180,9 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
     return node;
   }
 
-  // Of two literals, the second becomes relevant only once the first is false. A unit axiom is
-  // the clause of false and the literal, so mk_clause drops false and the literal is justified by
-  // unit
-  // resolution with true, which lemma minimization can see through, rather than by an axiom.
+  // A unit axiom is the clause of false and the literal, so Z3 justifies the literal by unit resolution, not by an axiom.
   protected mkAxiom(literals: Literal[]) {
     const context = this.context;
-    // mkThAxiom simplifies the literals it is given, which this reads after.
     context.mkThAxiom(
       literals.length === 1 ? [context.falseLiteral, literals[0]] : literals.slice(),
     );
@@ -202,7 +196,6 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
     context.relevancy.addWatch(
       context.boolVar2Expr[getVar(literals[0])],
       isNegated(literals[0]),
-      // simple_relevancy_eh marks the consequent without propagating.
       () => context.relevancy.markAsRelevant(consequent),
     );
   }
@@ -280,7 +273,6 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
   protected mkIdivModAxioms(dividend: number, divisor: number) {
     const manager = this.manager;
     if (manager.getNumeral(divisor) === 0n) return;
-    // The expr_refs of mk_idiv_mod_axioms, released in reverse when it returns.
     const refs: number[] = [];
     const hold = (expr: number) => {
       manager.incRef(expr);
@@ -298,7 +290,6 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
     const remainder = hold(manager.mkApp(OP_MOD, [dividend, divisor], SORT_INT));
     const zero = hold(manager.mkNumeral(0n));
     if (manager.getNumeral(dividend) === 0n) {
-      // q != 0 implies div 0 q = 0 and mod 0 q = 0.
       const isDivisorNonnegative = this.mkLiteral(manager.mkApp(OP_GE, [divisor, zero], SORT_BOOL));
       const isDivisorNonpositive = this.mkLiteral(manager.mkApp(OP_LE, [divisor, zero], SORT_BOOL));
       const consequents = [
@@ -332,7 +323,6 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
       this.mkAxiom([this.mkLiteral(manager.mkApp(OP_LE, [remainder, upper], SORT_BOOL))]);
       return;
     }
-    // q = 0 or (mod p q) >= 0, q >= 0 or (mod p q) + q <= -1, and q <= 0 or (mod p q) - q <= -1.
     const minusOne = hold(manager.mkNumeral(-1n));
     const minusDivisor = hold(manager.mkApp(OP_MUL, [minusOne, divisor], SORT_INT));
     const isZero = this.mkLiteral(manager.mkEq(divisor, zero));
@@ -360,8 +350,6 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
     );
     this.mkAxiom([isDivisorNonnegative, isBelowNegatedDivisor]);
     this.mkEqAxioms(this.ensureEnode(combination), this.ensureEnode(dividend));
-    // q = 0 or q * (div p q) <= p. The rewritten atom replaces the unrewritten one, which Z3
-    // releases at once, and its own expr_ref goes at the end of the block.
     const unrewritten = manager.mkApp(
       OP_GE,
       [

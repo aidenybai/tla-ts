@@ -1,6 +1,4 @@
 // Ported from Z3 (src/ast/rewriter/bool_rewriter.cpp), MIT license, see z3-license.txt.
-// Its manager owns the one instance its rewriters share: a list is filled and read before any
-// other starts, so like Z3's ptr_buffer it reuses one array.
 import { shrink } from "./array";
 import type { AstManager } from "./ast";
 
@@ -17,7 +15,6 @@ export class FlatLiterals {
     this.stamp++;
   }
 
-  // An expression's arguments are older than it, so their ids are smaller.
   add(literal: number) {
     const manager = this.manager;
     if (literal >= this.literalStamps.length) {

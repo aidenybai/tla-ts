@@ -23,7 +23,6 @@ export const mkJoin = (first: Dependency, second: Dependency): Dependency => {
   return { isLeaf: false, first, second, isMarked: false };
 };
 
-// linearize: the leaves in breadth-first order, each once, from the given roots.
 export const linearize = (roots: Dependency[]) => {
   const todo: (DependencyLeaf | DependencyJoin)[] = [];
   for (const root of roots) {

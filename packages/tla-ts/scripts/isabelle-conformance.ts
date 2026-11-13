@@ -1,13 +1,10 @@
-// tlapm's limit is 30 s of wall-clock time, which a loaded machine stretches. So each theory runs
-// until it has used 30 s of CPU time, and its result counts by both wall-clock and CPU time.
-
 import { once } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { scheduler } from "node:timers/promises";
 import { Worker } from "node:worker_threads";
 import type { Verdict } from "../src/prover/verdict";
-import { getOption } from "./corpora";
+import { getOption, MAIN_THREAD_STACK_MB } from "./corpora";
 import { getIsabelleDigest, PROOF_INPUTS_DIRECTORY, readProofRecords } from "./proof-records";
 
 type Outcome = "match" | "unsound" | "missed" | "missing" | "stale";
@@ -39,11 +36,9 @@ const POLL_MS = 100;
 
 const jobCount = Number(getOption("--jobs") ?? 1);
 
-// Node keeps 192 KB of a worker's stack in reserve, so this gives decideIsabelle the stack it has
-// on the main thread.
 const spawnWorker = async () => {
   const worker = new Worker(new URL("./isabelle-conformance-worker.js", import.meta.url), {
-    resourceLimits: { stackSizeMb: 1.15 },
+    resourceLimits: { stackSizeMb: MAIN_THREAD_STACK_MB },
   });
   await once(worker, "online");
   return worker;

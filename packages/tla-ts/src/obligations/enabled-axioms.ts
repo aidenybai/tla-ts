@@ -4,6 +4,7 @@ import { TlapmBugError } from "../errors";
 import {
   adjoin,
   adjoinAll,
+  AT_NOWHERE,
   getErrorNote,
   getFact,
   mapAccumulate,
@@ -12,13 +13,7 @@ import {
   type Scope,
   type Warn,
 } from "./expression";
-import {
-  AT_NOWHERE,
-  getDefineHyp,
-  getStepDefinition,
-  setDefinition,
-  setExpression,
-} from "./generate";
+import { getDefineHyp, getStepDefinition, setDefinition, setExpression } from "./generate";
 import { getContextLevel, getLevelInfo } from "./levels";
 import { getStepName, type Proof, type Step } from "./proof";
 

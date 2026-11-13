@@ -40,6 +40,40 @@ const getSetEqualSpec = (formula: Term, isNegated: boolean, checker: Checker): R
   return { premises: [formula], branches: [[isNegated ? not(extensional) : extensional]] };
 };
 
+const getUnionSpec = (formula: Term, isNegated: boolean, checker: Checker): RuleSpec => {
+  const spec = getMembershipSpec(formula, isNegated, "TLA.UNION", 1);
+  const exists = checker.bind("ex", "", (bound) =>
+    and(member(bound, spec.operands[0]), member(spec.element, bound)),
+  );
+  return { premises: [formula], branches: [[isNegated ? not(exists) : exists]] };
+};
+
+const getSetOfAllSpec = (formula: Term, isNegated: boolean, checker: Checker): RuleSpec => {
+  const spec = getMembershipSpec(formula, isNegated, "TLA.setOfAll", 2);
+  const mapping = spec.operands[1];
+  ensure(mapping.kind === "lam");
+  const exists = checker.bind("ex", "", (bound) =>
+    and(member(bound, spec.operands[0]), equal(spec.element, instantiate(mapping, bound))),
+  );
+  return { premises: [formula], branches: [[isNegated ? not(exists) : exists]] };
+};
+
+const getFuncSetSpec = (formula: Term, isNegated: boolean, checker: Checker): RuleSpec => {
+  const spec = getMembershipSpec(formula, isNegated, "TLA.FuncSet", 2);
+  const fcn = spec.element;
+  const conjuncts = [
+    app("TLA.isAFcn", [fcn]),
+    equal(domain(fcn), spec.operands[0]),
+    checker.bind("all", "", (bound) =>
+      imply(member(bound, spec.operands[0]), member(fapply(fcn, bound), spec.operands[1])),
+    ),
+  ];
+  return {
+    premises: [formula],
+    branches: isNegated ? conjuncts.map((inner) => [not(inner)]) : [conjuncts],
+  };
+};
+
 export const SET_RULES = {
   in_emptyset: (args) => {
     ensure(isVariable(expectApp(args[0], "TLA.in", 2)[1], "TLA.emptyset"));
@@ -112,20 +146,8 @@ export const SET_RULES = {
       branches: [[not(app("TLA.subseteq", [spec.element, spec.operands[0]]))]],
     };
   },
-  in_UNION: (args, checker) => {
-    const spec = getMembershipSpec(args[0], false, "TLA.UNION", 1);
-    const exists = checker.bind("ex", "", (bound) =>
-      and(member(bound, spec.operands[0]), member(spec.element, bound)),
-    );
-    return { premises: [args[0]], branches: [[exists]] };
-  },
-  notin_UNION: (args, checker) => {
-    const spec = getMembershipSpec(args[0], true, "TLA.UNION", 1);
-    const exists = checker.bind("ex", "", (bound) =>
-      and(member(bound, spec.operands[0]), member(spec.element, bound)),
-    );
-    return { premises: [args[0]], branches: [[not(exists)]] };
-  },
+  in_UNION: (args, checker) => getUnionSpec(args[0], false, checker),
+  notin_UNION: (args, checker) => getUnionSpec(args[0], true, checker),
   in_cup: (args) => {
     const spec = getMembershipSpec(args[0], false, "TLA.cup", 2);
     return {
@@ -194,50 +216,10 @@ export const SET_RULES = {
       ],
     };
   },
-  in_setofall: (args, checker) => {
-    const spec = getMembershipSpec(args[0], false, "TLA.setOfAll", 2);
-    const mapping = spec.operands[1];
-    ensure(mapping.kind === "lam");
-    const exists = checker.bind("ex", "", (bound) =>
-      and(member(bound, spec.operands[0]), equal(spec.element, instantiate(mapping, bound))),
-    );
-    return { premises: [args[0]], branches: [[exists]] };
-  },
-  notin_setofall: (args, checker) => {
-    const spec = getMembershipSpec(args[0], true, "TLA.setOfAll", 2);
-    const mapping = spec.operands[1];
-    ensure(mapping.kind === "lam");
-    const exists = checker.bind("ex", "", (bound) =>
-      and(member(bound, spec.operands[0]), equal(spec.element, instantiate(mapping, bound))),
-    );
-    return { premises: [args[0]], branches: [[not(exists)]] };
-  },
-  in_funcset: (args, checker) => {
-    const spec = getMembershipSpec(args[0], false, "TLA.FuncSet", 2);
-    const fcn = spec.element;
-    const maps = checker.bind("all", "", (bound) =>
-      imply(member(bound, spec.operands[0]), member(fapply(fcn, bound), spec.operands[1])),
-    );
-    return {
-      premises: [args[0]],
-      branches: [[app("TLA.isAFcn", [fcn]), equal(domain(fcn), spec.operands[0]), maps]],
-    };
-  },
-  notin_funcset: (args, checker) => {
-    const spec = getMembershipSpec(args[0], true, "TLA.FuncSet", 2);
-    const fcn = spec.element;
-    const maps = checker.bind("all", "", (bound) =>
-      imply(member(bound, spec.operands[0]), member(fapply(fcn, bound), spec.operands[1])),
-    );
-    return {
-      premises: [args[0]],
-      branches: [
-        [not(app("TLA.isAFcn", [fcn]))],
-        [not(equal(domain(fcn), spec.operands[0]))],
-        [not(maps)],
-      ],
-    };
-  },
+  in_setofall: (args, checker) => getSetOfAllSpec(args[0], false, checker),
+  notin_setofall: (args, checker) => getSetOfAllSpec(args[0], true, checker),
+  in_funcset: (args, checker) => getFuncSetSpec(args[0], false, checker),
+  notin_funcset: (args, checker) => getFuncSetSpec(args[0], true, checker),
   except_notin_funcset: (args) => {
     const spec = getMembershipSpec(args[0], true, "TLA.FuncSet", 2);
     const except = expectApp(spec.element, "TLA.except", 3);
