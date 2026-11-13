@@ -2016,6 +2016,32 @@ describe("values", () => {
     );
   });
 
+  it("throws where a statement reads a property of a name that no binding has", async () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const run = (body: () => void) => {
+        try {
+          body();
+          seen.push("none");
+        } catch (error) {
+          seen.push(error instanceof ReferenceError ? "reference" : "other");
+        }
+      };
+      // @ts-ignore
+      run(() => { delete missingOne.x; });
+      // @ts-ignore
+      run(() => { typeof missingTwo.x; });
+      // @ts-ignore
+      run(() => { missingThree[0] = 42; });
+      const outcomes = seen.join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("reference,reference,reference"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("reference,reference,none"))).failure?.message).toContain(
+      "outcomes reference,reference,reference",
+    );
+  });
+
   it("writes the prototype of a class that extends a native error", async () => {
     const getSource = (expected: string) => `
       class Err extends TypeError {}
