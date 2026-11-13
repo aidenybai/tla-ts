@@ -16683,6 +16683,30 @@ describe("errors", () => {
     });
   });
 
+  describe("call an executor's resolve that a variable holds through a non-null assertion", () => {
+    const getSource = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      let resolve: ((value: number) => void) | undefined;
+      const promise = new Promise<number>((innerResolve) => {
+        resolve = innerResolve;
+      });
+      promise.then((value) => { log += value; });
+      resolve!(45);
+      setTimeout(() => {
+        if (log !== "${expected}") throw new Error(log);
+      });
+    `;
+
+    it("fulfills the promise with the value", async () => {
+      expect((await checkModel(getSource("45"))).failure).toBeUndefined();
+    });
+
+    it("doesn't fulfill it with another value", async () => {
+      expect((await checkModel(getSource("44"))).failure).toBeDefined();
+    });
+  });
+
   it("stops at Array.fromAsync of an array's values() that another call steps", () => {
     expect(() =>
       compile(`

@@ -37,6 +37,7 @@ import {
   isAnyGenerator,
   isAsyncFunction,
   isAsyncGenerator,
+  skipCasts,
   translateString,
 } from "./context";
 import { getCallbackReceiver, translateArrayIteratorPrototype } from "./collections";
@@ -1654,7 +1655,7 @@ const getResolverHolders = (sourceFile: ts.SourceFile, context: Context) => {
 // Whether a function that a node names may be a promise's resolve or reject: a parameter of an
 // executor, or a variable that the script assigns one.
 const isResolver = (node: ts.Expression, context: Context) => {
-  const cast = getCast(node);
+  const cast = skipCasts(node);
   const symbol = ts.isIdentifier(cast) ? getSymbol(cast, context.checker) : undefined;
   const declaration = symbol?.valueDeclaration;
   return (
