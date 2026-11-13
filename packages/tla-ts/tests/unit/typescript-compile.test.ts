@@ -2248,6 +2248,17 @@ describe("values", () => {
     await expect(checkModel(getSource("false,false"))).rejects.toThrow("true,false");
   });
 
+  it("makes the empty regexp that new RegExp gives without arguments", async () => {
+    const getSource = (expected: string) => `
+      // @ts-ignore
+      const pattern = new RegExp();
+      const result = [pattern.source, pattern.flags, pattern.test("x")].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("(?:),,true"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("(?:),,false"))).rejects.toThrow("(?:),,true");
+  });
+
   it("makes a set of what flatMap gives of a map's keys", async () => {
     const getSource = (expected: string) => `
       const LITERALS = new Map([
