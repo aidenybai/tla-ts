@@ -265,7 +265,7 @@ export const translateFunctionValue = (
     : ts.isVariableDeclaration(declared) && ts.isIdentifier(declared.name)
       ? declared.name.text
       : "anonymous";
-  return getModelValue(node, symbol, `${name}Function`, context);
+  return holdObject(node, getModelValue(node, symbol, `${name}Function`, context), context);
 };
 
 // A model value that names a method of an object literal.
@@ -279,20 +279,21 @@ export const getMethodValue = (
     : getSymbol(method.name, context.checker);
   if (symbol === undefined) throw new TlaTypeScriptError("Name this method", method);
   const name = ts.isComputedPropertyName(method.name) ? "computed" : method.name.getText();
-  const value = getModelValue(method, symbol, `${name}Method`, context);
-  const methodName =
-    ts.isMethodDeclaration(method) && isMethodObject(method, context)
-      ? getMethodName(method, context)
-      : undefined;
-  if (methodName !== undefined && value.kind === "Identifier") {
-    context.methodObjects.set(
+  return holdObject(method, getModelValue(method, symbol, `${name}Method`, context), context);
+};
+
+// The heap holds the object of a function that a model value stands for, where it knows its name.
+const holdObject = (node: FunctionNode, value: Expression, context: Context) => {
+  const name = getHeldName(node, context);
+  if (name !== undefined && value.kind === "Identifier") {
+    context.functionObjects.set(
       value.name,
       useJavaScript(
         "ArrowObject",
         [
-          translateBuiltInValue("Function.prototype", method, context),
-          string(methodName),
-          number(getFunctionLength(getParameters(method))),
+          translateBuiltInValue("Function.prototype", node, context),
+          string(name),
+          number(getFunctionLength(getParameters(node))),
         ],
         context,
       ),
@@ -301,10 +302,9 @@ export const getMethodValue = (
   return value;
 };
 
-// A method's name, as its key gives it, where a symbol that a variable holds gives its description
+// The name that a key gives a function, where a symbol that a variable holds gives its description
 // in brackets, or no name where it has none.
-const getMethodName = (method: ts.MethodDeclaration, context: Context) => {
-  const key = method.name;
+const getKeyName = (key: ts.PropertyName, context: Context) => {
   if (ts.isIdentifier(key) || ts.isStringLiteral(key)) return key.text;
   if (!ts.isComputedPropertyName(key) || !ts.isIdentifier(key.expression)) return undefined;
   const symbol = getSymbol(key.expression, context.checker);
@@ -318,7 +318,7 @@ const getMethodName = (method: ts.MethodDeclaration, context: Context) => {
     made === undefined ||
     !ts.isCallExpression(made) ||
     getBuiltIn(made.expression, context) !== "Symbol" ||
-    isAssigned(symbol, method.getSourceFile(), context)
+    isAssigned(symbol, key.getSourceFile(), context)
   ) {
     return undefined;
   }
@@ -329,15 +329,43 @@ const getMethodName = (method: ts.MethodDeclaration, context: Context) => {
     : undefined;
 };
 
-// A plain method that a class or an object literal makes once, so that its model value stands for
-// one function object, whose properties the heap holds.
-export const isMethodObject = (node: ts.MethodDeclaration, context: Context) =>
-  context.heap !== undefined &&
-  node.body !== undefined &&
-  isPlain(node) &&
-  getMethodName(node, context) !== undefined &&
-  (ts.isObjectLiteralExpression(node.parent) || ts.isClassLike(node.parent)) &&
-  isOnce(node.parent);
+// The name of an arrow, which the binding, the assignment or the property that it initializes
+// gives, and which is empty where it's an argument, an element or an operand of in.
+const getArrowName = (node: ts.ArrowFunction, context: Context) => {
+  const named = ts.findAncestor(node.parent, (parent) => !ts.isParenthesizedExpression(parent));
+  if (named === undefined) return undefined;
+  if (ts.isVariableDeclaration(named)) {
+    return ts.isIdentifier(named.name) ? named.name.text : undefined;
+  }
+  if (ts.isPropertyAssignment(named) && ts.isObjectLiteralExpression(named.parent)) {
+    return getKeyName(named.name, context);
+  }
+  if (ts.isBinaryExpression(named) && NAMING_ASSIGNMENTS.has(named.operatorToken.kind)) {
+    return ts.isIdentifier(named.left) ? named.left.text : undefined;
+  }
+  return ts.isCallExpression(named) ||
+    ts.isArrayLiteralExpression(named) ||
+    (ts.isBinaryExpression(named) && named.operatorToken.kind === ts.SyntaxKind.InKeyword)
+    ? ""
+    : undefined;
+};
+
+// The name of a plain method, or of an arrow, that the script makes once and holds as a model value,
+// which stands for one function object whose properties the heap holds.
+export const getHeldName = (node: FunctionNode, context: Context) =>
+  context.heap === undefined || node.body === undefined || !isOnce(node.parent)
+    ? undefined
+    : ts.isMethodDeclaration(node) &&
+        isPlain(node) &&
+        (ts.isObjectLiteralExpression(node.parent) || ts.isClassLike(node.parent))
+      ? getKeyName(node.name, context)
+      : ts.isArrowFunction(node) &&
+          !isAsyncFunction(node) &&
+          !isFunctionObject(node, context) &&
+          !isNestedFunction(node, context) &&
+          !isClosure(node, context)
+        ? getArrowName(node, context)
+        : undefined;
 
 // The model value of a function that a value may hold.
 export const getCandidateValue = (node: FunctionNode, context: Context) =>

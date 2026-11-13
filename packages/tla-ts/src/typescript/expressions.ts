@@ -97,7 +97,7 @@ import {
   areDateFields,
   translateDateFields,
   getMethodValue,
-  isMethodObject,
+  getHeldName,
   translateHasPrivate,
   translateHoldsMethod,
   translateFunctionValue,
@@ -2318,16 +2318,18 @@ const translatePropertyAccess = (
     return getPreviousVariable(name, node, context);
   }
   // A function that isn't an object keeps the length and the name it starts with. tla-ts tells the
-  // name only where the function's own syntax gives it. The heap holds those of a method's object.
+  // name only where the function's own syntax gives it. The heap holds those of a held function's
+  // object.
   if (
     (name === "length" || name === "name") &&
     context.checker.getTypeAtLocation(receiver).getCallSignatures().length > 0
   ) {
     const getProperty = (candidate: FunctionNode) => {
-      if (ts.isMethodDeclaration(candidate) && isMethodObject(candidate, context)) {
+      const candidateValue = getCandidateValue(candidate, context);
+      if (getHeldName(candidate, context) !== undefined && candidateValue !== undefined) {
         return useJavaScript(
           "Get",
-          [getHeap(scope, node, context), getMethodValue(candidate, context), string(name)],
+          [getHeap(scope, node, context), candidateValue, string(name)],
           context,
         );
       }

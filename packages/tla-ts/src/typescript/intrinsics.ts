@@ -796,7 +796,7 @@ const translateBuiltInProperty = (value: string, node: ts.Node, context: Context
 };
 
 // The built-in objects that a script's heap holds: those the script names, their prototypes, and
-// the objects of the methods that it makes once.
+// the objects of the functions that model values stand for.
 export const translateBuiltIns = (node: ts.Node, context: Context) => {
   const included = new Set<string>();
   const include = (name: string | null) => {
@@ -831,7 +831,7 @@ export const translateBuiltIns = (node: ts.Node, context: Context) => {
   ]);
   return functionFrom([
     ...stubs,
-    ...[...context.methodObjects].map((entry): [Expression, Expression] => [
+    ...[...context.functionObjects].map((entry): [Expression, Expression] => [
       identifier(entry[0]),
       entry[1],
     ]),

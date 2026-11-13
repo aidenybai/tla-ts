@@ -7698,6 +7698,50 @@ describe("errors", () => {
     });
   });
 
+  describe("reads the properties of an arrow that a script makes once from the heap", () => {
+    const getArrowSource = (made: string, read: string, expected: string) => `
+      const seen = { count: 0 };
+      const getName = (target: object) => {
+        const descriptor = Object.getOwnPropertyDescriptor(target, "name");
+        return descriptor === undefined ? "missing" : String(descriptor.value);
+      };
+      ${made}
+      const result = ${read};
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("names an arrow by the assignment that holds it", async () => {
+      const made = "let assigned: () => number; assigned = () => 1;";
+      const read = "`${getName(assigned)} ${assigned()}`";
+      expect((await checkModel(getArrowSource(made, read, "assigned 1"))).failure).toBeUndefined();
+      expect((await checkModel(getArrowSource(made, read, " 1"))).failure?.message).toContain(
+        "assigned 1",
+      );
+    });
+
+    it("names an arrow by the key of the property that holds it", async () => {
+      const made =
+        'const named = Symbol("test262"); const holder = { id: () => 2, [named]: () => 3 };';
+      const read = "`${getName(holder[named])} ${holder.id.name} ${holder.id() + holder[named]()}`";
+      expect(
+        (await checkModel(getArrowSource(made, read, "[test262] id 5"))).failure,
+      ).toBeUndefined();
+      expect((await checkModel(getArrowSource(made, read, " id 5"))).failure?.message).toContain(
+        "[test262] id 5",
+      );
+    });
+
+    it("reads no prototype of an arrow that in tests", async () => {
+      const source = (expected: string) => `
+        const seen = { count: 0 };
+        const result = String("prototype" in (() => 4));
+        if (result !== "${expected}") throw new Error(result);
+      `;
+      expect((await checkModel(source("false"))).failure).toBeUndefined();
+      expect((await checkModel(source("true"))).failure?.message).toContain("false");
+    });
+  });
+
   it("writes the name and message of an error that the heap holds in its toString", async () => {
     const source = `
       const holder = { seen: 0 };
