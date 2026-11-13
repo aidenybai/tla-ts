@@ -773,7 +773,8 @@ const checkSpec = async (
     return EXIT_STATUS.error;
   }
   if (config instanceof TlaConfigError) return printFailure(config);
-  if (args.has("-deadlock")) config.checkDeadlock = false;
+  // A script ends where Node's process would exit, rather than where it deadlocks.
+  if (args.has("-deadlock") || compiled?.isScript) config.checkDeadlock = false;
   const directory = dirname(specPath);
   const directories = [directory, ...java.libraries];
   const loadFile = createModuleLoader(directories);

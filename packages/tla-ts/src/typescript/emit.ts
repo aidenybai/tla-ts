@@ -60,6 +60,9 @@ export interface CompiledSpec {
   loadModule: (name: string) => string | undefined;
   regions: Region[];
   variables: StateVariable[];
+  // A script without exported actions ends where Node's process would exit, so its last states
+  // are no deadlock.
+  isScript: boolean;
 }
 
 const getMagnitude = (value: Expression) =>
@@ -312,6 +315,7 @@ export const emit = (
         ? getJavaScriptModule(`${printModule(source)}\n${config}`)
         : undefined,
     regions: getRegions(source, sourceFile, model, context),
+    isScript: model.exported.length === 0,
     variables: model.variables.map((variable) => {
       const declaration = variable.declaration;
       const type = context.checker.getTypeAtLocation(declaration.name ?? declaration);

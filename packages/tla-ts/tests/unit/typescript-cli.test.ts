@@ -61,6 +61,19 @@ describe("the CLI with TypeScript files", () => {
     );
   });
 
+  // Node exits with 0 once the jobs run out, though a promise is still pending.
+  it("succeeds where a script runs to its end with a promise pending, as Node does", () => {
+    const directory = copyFixtures("passing");
+    const script =
+      "const box = { count: 0 };\nconst pending = new Promise<void>(() => {});\npending.then(() => {\n  box.count = 1;\n});\nbox.count = 2;\n";
+    writeFileSync(join(directory, "pending.ts"), script);
+    const result = runCli(directory, ["pending.ts"]);
+    expect([result.status, result.stderr]).toEqual([0, ""]);
+    expect(result.stdout).toContain("Model checking completed. No error has been found.");
+    writeFileSync(join(directory, "awaited.ts"), `${script}await pending;\n`);
+    expect(runCli(directory, ["awaited.ts"]).status).toBe(13);
+  });
+
   it("exits with Node's warning where a script's top-level await never settles", () => {
     const directory = copyFixtures("passing");
     const script =
@@ -76,7 +89,7 @@ describe("the CLI with TypeScript files", () => {
       script.replace("new Promise(() => {})", "Promise.resolve()"),
     );
     const settled = runCli(directory, ["settled.ts"]);
-    expect([settled.status === 13, settled.stderr]).toEqual([false, ""]);
+    expect([settled.status, settled.stderr]).toEqual([0, ""]);
   });
 
   it("reads names that a module re-exports", () => {

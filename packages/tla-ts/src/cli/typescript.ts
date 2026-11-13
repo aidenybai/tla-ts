@@ -11,6 +11,7 @@ export interface CompiledInput {
   source: Module;
   config: string;
   loadModule: (name: string) => string | undefined;
+  isScript: boolean;
 }
 
 // The escapes of a string that TLC prints.
@@ -40,5 +41,6 @@ export const compileTypeScriptFile = async (path: string): Promise<CompiledInput
     source: compiled.source,
     config: compiled.config,
     loadModule: compiled.loadModule,
+    isScript: compiled.isScript,
   };
 };
