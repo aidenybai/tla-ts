@@ -3090,11 +3090,69 @@ const getFreshLength = (node: ts.Expression | undefined) => {
   return isNewArrayOfElements(array) ? (array.arguments ?? []).length : undefined;
 };
 
+// Whether a key is below the length of the array that a name holds, or at it: its length, less a
+// number, the counter of a for loop that stays below its length, or the index that a callback of
+// one of its methods takes.
+const isWithinLength = (key: ts.Expression, array: ts.Identifier, checker: ts.TypeChecker) => {
+  const symbol = getSymbol(array, checker);
+  const isLength = (node: ts.Expression) => {
+    const length = skipCasts(node);
+    return (
+      ts.isPropertyAccessExpression(length) &&
+      length.name.text === "length" &&
+      ts.isIdentifier(length.expression) &&
+      getSymbol(length.expression, checker) === symbol
+    );
+  };
+  const index = skipCasts(key);
+  if (isLength(index)) return true;
+  if (
+    ts.isBinaryExpression(index) &&
+    index.operatorToken.kind === ts.SyntaxKind.MinusToken &&
+    isLength(index.left) &&
+    ts.isNumericLiteral(index.right)
+  ) {
+    return true;
+  }
+  const declaration = ts.isIdentifier(index)
+    ? getSymbol(index, checker)?.valueDeclaration
+    : undefined;
+  if (declaration === undefined) return false;
+  const loop = declaration.parent.parent;
+  const condition = ts.isForStatement(loop) ? loop.condition : undefined;
+  if (
+    ts.isVariableDeclaration(declaration) &&
+    ts.isForStatement(loop) &&
+    loop.initializer === declaration.parent &&
+    condition !== undefined &&
+    ts.isBinaryExpression(condition) &&
+    condition.operatorToken.kind === ts.SyntaxKind.LessThanToken &&
+    ts.isIdentifier(condition.left) &&
+    getSymbol(condition.left, checker) === getSymbol(index, checker) &&
+    isLength(condition.right)
+  ) {
+    return ts.findAncestor(key, (ancestor) => ancestor === loop.statement) !== undefined;
+  }
+  // The index that forEach, map, or another method that calls back gives its callback.
+  const callback = declaration.parent;
+  const call = callback.parent;
+  return (
+    ts.isParameter(declaration) &&
+    (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback)) &&
+    callback.parameters.indexOf(declaration) === 1 &&
+    ts.isCallExpression(call) &&
+    call.arguments[0] === callback &&
+    ts.isPropertyAccessExpression(call.expression) &&
+    ts.isIdentifier(call.expression.expression) &&
+    getSymbol(call.expression.expression, checker) === symbol
+  );
+};
+
 // Whether a variable's uses, in the order the script gives them, write an element past the end of
 // the array that it holds, or a key that isn't an index, as x = []; x[1] = 1 does, which leaves a
 // hole that only the heap holds. A use that may change the length some other way ends what it
 // knows.
-const writesHole = (uses: readonly ts.Identifier[]) =>
+const writesHole = (uses: readonly ts.Identifier[], checker: ts.TypeChecker) =>
   uses.reduce<{ length: number | undefined; isHole: boolean }>(
     (state, use) => {
       const parent = use.parent;
@@ -3116,6 +3174,13 @@ const writesHole = (uses: readonly ts.Identifier[]) =>
         parent.parent.left === parent &&
         parent.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken;
       const key = isElementWrite ? getConstantKey(parent.argumentExpression) : undefined;
+      if (
+        isElementWrite &&
+        key === undefined &&
+        !isWithinLength(parent.argumentExpression, use, checker)
+      ) {
+        return { ...state, isHole: true };
+      }
       if (isElementWrite && key !== undefined && state.length !== undefined) {
         const isIndex = Number.isInteger(key) && key >= 0 && key < 2 ** 32 - 1;
         return !isIndex || key > state.length
@@ -3226,7 +3291,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       return declaration !== undefined &&
         ts.isVariableDeclaration(declaration) &&
         ts.findAncestor(declaration, (ancestor) => isReached.has(ancestor)) !== undefined &&
-        writesHole(entry[1])
+        writesHole(entry[1], checker)
         ? [entry[0]]
         : [];
     }),
@@ -3488,7 +3553,8 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         const kind = parent.operatorToken.kind;
         return (
           kind === ts.SyntaxKind.EqualsEqualsEqualsToken ||
-          kind === ts.SyntaxKind.ExclamationEqualsEqualsToken
+          kind === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+          (kind === ts.SyntaxKind.InKeyword && parent.right === use)
         );
       }
       // An element of the array that an outer holder starts with.

@@ -4818,6 +4818,34 @@ describe("errors", () => {
     });
   });
 
+  describe("holds an array that a script writes at a key it computes on the heap", () => {
+    const getSource = (expected: string) => `
+      const cache: number[][] = [];
+      const getRange = (length: number) => {
+        const cached = cache[length];
+        if (cached) return cached;
+        const range = Array.from({ length }, (_, index) => index + 1);
+        cache[length] = range;
+        return range;
+      };
+      const counts = [1, 2];
+      for (let index = 0; index < counts.length; index++) counts[index] += 1;
+      counts[counts.length] = 9;
+      const seen = [getRange(3).join(), getRange(1).join(), cache.length, 2 in cache, counts.join()];
+      if (seen.join(";") !== "${expected}") throw new Error(seen.join(";"));
+    `;
+
+    it("leaves a hole below the key", async () => {
+      const result = await checkModel(getSource("1,2,3;1;4;false;2,3,9"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkModel(getSource("1,2,3;1;4;true;2,3,9"));
+      expect(result.failure?.message).toContain("1,2,3;1;4;false;2,3,9");
+    });
+  });
+
   it("fails the check where with() would throw a RangeError", async () => {
     const result = await check(
       compile(
