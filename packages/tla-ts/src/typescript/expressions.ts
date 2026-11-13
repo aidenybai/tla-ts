@@ -1115,6 +1115,45 @@ export const translateCall = (
   ) {
     return getUndefined(context);
   }
+  // Object.setPrototypeOf gives back a primitive other than null and undefined, where the prototype
+  // is null or an object.
+  const prototype = node.arguments.at(1);
+  const targetNames =
+    target === undefined
+      ? undefined
+      : getTypeNames(context.checker.getTypeAtLocation(target), context.checker);
+  const prototypeNames =
+    prototype === undefined
+      ? undefined
+      : getTypeNames(context.checker.getTypeAtLocation(prototype), context.checker);
+  if (
+    global === "Object" &&
+    method === "setPrototypeOf" &&
+    target !== undefined &&
+    prototype !== undefined &&
+    node.arguments.length === 2 &&
+    node.arguments.every(isInertValue) &&
+    (targetNames?.every((name) => ["number", "boolean", "string", "symbol"].includes(name)) ||
+      isEvery(context.checker.getTypeAtLocation(target), ts.TypeFlags.BigIntLike)) &&
+    (prototype.kind === ts.SyntaxKind.NullKeyword ||
+      prototypeNames?.every((name) => name === "object" || name === "function"))
+  ) {
+    // TypeScript can't see a callback assign a variable without a type an object, or any hold null.
+    context.prelude.add("Null");
+    return share(translateExpression(target, scope, context), "target", context, (value) =>
+      ifExpression(
+        apply("\\/", [
+          apply("\\in", [value, set([getUndefined(context), identifier("Null")])]),
+          ...(context.heap === undefined ? [] : [useJavaScript("IsRef", [value], context)]),
+        ]),
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't tell what Object.setPrototypeOf changes"),
+        ]),
+        value,
+      ),
+    );
+  }
   if (isDescriptionOfAll(node, context)) {
     const described = scope.allocated.get(node);
     if (described === undefined) {
