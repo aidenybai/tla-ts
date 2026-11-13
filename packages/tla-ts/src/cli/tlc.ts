@@ -607,7 +607,12 @@ const createFileDescriber = (
   return (name: string, origin: SanyModuleOrigin) => {
     const fileName = `${name}.tla`;
     if (origin === "file" && rootFile && name === basename(specPath, ".tla")) return rootFile;
-    if (origin === "file") return realpathSync(findModuleFile(directories, name) ?? specPath);
+    const file = origin === "file" ? findModuleFile(directories, name) : undefined;
+    if (file !== undefined) return realpathSync(file);
+    // A module that the compiler gives a TypeScript file, such as JavaScript, has no file, so
+    // SANY parses it as it would a standard module.
+    if (origin === "file" && rootFile) return join(libraryDirectory, fileName);
+    if (origin === "file") return realpathSync(specPath);
     // TLC 1.7.4 copies a standard module into the temporary directory itself.
     if (version === "1.7.4") return join(temporaryDirectory, fileName);
     // FileUtil.createTempFile copies a module from the root module's file into the -metadir.

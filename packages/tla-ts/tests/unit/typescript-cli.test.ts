@@ -43,6 +43,23 @@ describe("the CLI with TypeScript files", () => {
     expect(readdirSync(directory)).toEqual(files);
   });
 
+  it("checks a script with the JavaScript module that the compiler gives it", () => {
+    const directory = copyFixtures("passing");
+    const result = runCli(directory, ["script.ts"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/Parsing file \S+JavaScript\.tla\n/);
+    expect(result.stdout).toContain("Model checking completed. No error has been found.");
+    writeFileSync(
+      join(directory, "wrong.ts"),
+      readFileSync(join(directory, "script.ts"), "utf8").replace("!== 6", "!== 7"),
+    );
+    const wrong = runCli(directory, ["wrong.ts"]);
+    expect(wrong.status).toBe(75);
+    expect(wrong.stdout).toContain(
+      'Error: The first argument of Assert evaluated to FALSE; the second argument was:\n"total"',
+    );
+  });
+
   it("reads names that a module re-exports", () => {
     const result = runCli(copyFixtures("project"), ["relay.ts"]);
     expect(result.status).toBe(0);
