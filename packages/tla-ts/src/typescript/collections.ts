@@ -1478,7 +1478,7 @@ export const translateHoldsIteratorMethod = (
 };
 
 // An index argument as ClampedIndex counts it, or a fallback where it's missing or undefined.
-const translateClampedIndex = (
+export const translateClampedIndex = (
   argument: ts.Expression | undefined,
   fallback: Expression,
   length: Expression,
@@ -1503,6 +1503,29 @@ const translateClampedIndex = (
   );
 };
 
+// How many elements toSpliced() or splice() skips from where it starts, of those that remain there.
+export const translateSkipped = (
+  first: ts.Expression | undefined,
+  count: ts.Expression | undefined,
+  remaining: Expression,
+  scope: Scope,
+  context: Context,
+) =>
+  first === undefined
+    ? number(0)
+    : count === undefined
+      ? remaining
+      : useJavaScript(
+          "ClampedCount",
+          [
+            isNumberLike(count, context)
+              ? translateExpression(count, scope, context)
+              : useJavaScript("ToNumber", [translateExpression(count, scope, context)], context),
+            remaining,
+          ],
+          context,
+        );
+
 // What toSpliced() or splice() keeps of a sequence with the items it inserts, or what splice()
 // removes.
 export const translateSpliced = (
@@ -1520,27 +1543,10 @@ export const translateSpliced = (
     const length = apply("Len", [shared]);
     const start = translateClampedIndex(first, number(0), length, scope, context);
     return share(start, "start", context, (at) => {
-      const remaining = apply("-", [length, at]);
-      const skipped =
-        first === undefined
-          ? number(0)
-          : count === undefined
-            ? remaining
-            : useJavaScript(
-                "ClampedCount",
-                [
-                  isNumberLike(count, context)
-                    ? translateExpression(count, scope, context)
-                    : useJavaScript(
-                        "ToNumber",
-                        [translateExpression(count, scope, context)],
-                        context,
-                      ),
-                  remaining,
-                ],
-                context,
-              );
-      const end = apply("+", [at, skipped]);
+      const end = apply("+", [
+        at,
+        translateSkipped(first, count, apply("-", [length, at]), scope, context),
+      ]);
       return isRemoved
         ? apply("SubSeq", [shared, apply("+", [at, number(1)]), end])
         : apply("\\o", [

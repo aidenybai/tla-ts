@@ -5189,6 +5189,37 @@ describe("errors", () => {
     });
   });
 
+  describe("runs getters as toSpliced copies an array, skipping the elements it removes", () => {
+    const getSource = (expected: string) => `
+      const arr: number[] = [0, 1, 2, 3, 4];
+      const reads: number[] = [];
+      Object.defineProperty(arr, "1", {
+        get: function () {
+          reads.push(1);
+          return 1;
+        },
+      });
+      Object.defineProperty(arr, "3", {
+        get: function () {
+          reads.push(3);
+          arr[4] = 40;
+          return 3;
+        },
+      });
+      const spliced = arr.toSpliced(1, 1, 7, 8);
+      if (spliced.join(",") !== "${expected}") throw new Error("spliced");
+      if (reads.join(",") !== "3") throw new Error("reads");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0,7,8,2,3,40"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 0,7,8,2,3,4", async () => {
+      expect((await checkModel(getSource("0,7,8,2,3,4"))).failure?.message).toContain("spliced");
+    });
+  });
+
   describe("runs a getter that a descriptor writes as a method", () => {
     const getSource = (expected: string) => `
       const source = {};

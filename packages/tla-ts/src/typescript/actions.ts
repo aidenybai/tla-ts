@@ -35,6 +35,8 @@ import {
   MUTATING_METHODS,
   SEQUENCE_UPDATES,
   translateSpliced,
+  translateClampedIndex,
+  translateSkipped,
   checkArrayMethod,
   translatePrimitiveMethod,
   translateSizeGetter,
@@ -6039,10 +6041,17 @@ const SORT_METHODS = new Set(["sort", "toSorted"]);
 // The array methods that read an array-like object's elements without a callback: those that search
 // for a value and those that copy the elements. Each runs as a loop where a getter may answer the
 // object's length or an element.
-const UNCALLED_METHODS = new Set(["indexOf", "lastIndexOf", "includes", "toReversed", "with"]);
+const UNCALLED_METHODS = new Set([
+  "indexOf",
+  "lastIndexOf",
+  "includes",
+  "toReversed",
+  "toSpliced",
+  "with",
+]);
 
 // The array methods that gather what they read into the array that they give.
-const GATHERING_METHODS = new Set(["filter", "map", "flatMap", "toReversed", "with"]);
+const GATHERING_METHODS = new Set(["filter", "map", "flatMap", "toReversed", "toSpliced", "with"]);
 
 // The callback of an array method that changes what a statement can see, such as a count of its
 // calls, or a search that may run getters, which the method runs as a loop of statements.
@@ -6333,6 +6342,9 @@ const translateLoopCall = (
     method === "toReversed";
   const isReduce = method.startsWith("reduce");
   const isSort = SORT_METHODS.has(method);
+  // toSpliced copies the elements before where it starts and after those it skips, which it doesn't
+  // read, and inserts its items between them.
+  const isSpliced = method === "toSpliced";
   // Where a getter may answer an array-like object's length or element, or the callback may change
   // objects, the method reads its length and then each element as it visits it, as JavaScript
   // does. reduce without an initial value takes the first element that it finds as its
@@ -6407,6 +6419,9 @@ const translateLoopCall = (
     getters === undefined && loop.isArrayLike && HOLE_SKIPPING_METHODS.has(method);
   const position = context.names.getFresh("position");
   const accumulator = context.names.getFresh("accumulator");
+  const startName = context.names.getFresh("start");
+  const skippedName = context.names.getFresh("skipped");
+  const itemsName = context.names.getFresh("items");
   const parameters = changed.map((symbol) => {
     const binding = path.scope.bindings.get(symbol);
     return context.names.getFresh(binding?.kind === "Identifier" ? binding.name : "value");
@@ -6505,9 +6520,21 @@ const translateLoopCall = (
       ? useJavaScript("SortResult", [kept], context)
       : method === "flatMap"
         ? flattenReturned(kept, callback, expression, context)
-        : GATHERING_METHODS.has(method) || isReduce
-          ? kept
-          : getUndefined(context));
+        : isSpliced
+          ? apply("\\o", [
+              apply("\\o", [
+                apply("SubSeq", [kept, number(1), identifier(startName)]),
+                identifier(itemsName),
+              ]),
+              apply("SubSeq", [
+                kept,
+                apply("+", [identifier(startName), number(1)]),
+                apply("Len", [kept]),
+              ]),
+            ])
+          : GATHERING_METHODS.has(method) || isReduce
+            ? kept
+            : getUndefined(context));
   const inner = {
     ...withValues(
       path,
@@ -6617,7 +6644,7 @@ const translateLoopCall = (
   // Reads the element at a position, running a getter that answers it, where the object or a
   // prototype has the index. The find methods read each index, and map keeps a hole, which the
   // array it makes can't hold.
-  const isCopy = method === "toReversed" || method === "with";
+  const isCopy = method === "toReversed" || method === "with" || isSpliced;
   const visit =
     callback !== undefined
       ? runCallback
@@ -6656,19 +6683,31 @@ const translateLoopCall = (
         : visit,
     );
     // with gives its value at the index that it replaces, which it doesn't read.
-    return method === "with"
+    return isSpliced
       ? ifThenElse(
-          apply("=", [identifier(position), apply("+", [identifier(replacedName), number(1)])]),
-          repeat(inner, apply("Append", [kept, identifier(searchName)])),
+          junction("And", [
+            apply(">", [identifier(position), identifier(startName)]),
+            apply("<=", [
+              identifier(position),
+              apply("+", [identifier(startName), identifier(skippedName)]),
+            ]),
+          ]),
+          repeat(inner, kept),
           read,
         )
-      : EVERY_INDEX_METHODS.has(method)
-        ? read
-        : ifThenElse(
-            useJavaScript("Has", [getHeap(inner.scope, receiver, context), owner, key], context),
+      : method === "with"
+        ? ifThenElse(
+            apply("=", [identifier(position), apply("+", [identifier(replacedName), number(1)])]),
+            repeat(inner, apply("Append", [kept, identifier(searchName)])),
             read,
-            method === "map" ? keepHole() : repeat(inner, kept),
-          );
+          )
+        : EVERY_INDEX_METHODS.has(method)
+          ? read
+          : ifThenElse(
+              useJavaScript("Has", [getHeap(inner.scope, receiver, context), owner, key], context),
+              read,
+              method === "map" ? keepHole() : repeat(inner, kept),
+            );
   };
   // Reads the element at a position of the array as the callback left it, where the array still
   // reaches the position, as for a hole.
@@ -6722,7 +6761,8 @@ const translateLoopCall = (
     throw new TlaTypeScriptError("Pass a number as the index to search from", from);
   }
   // The value that a search looks for, or that with gives at the index that it replaces.
-  const searched = callback !== undefined ? undefined : isCopy ? loop.initial : loop.argument;
+  const searched =
+    callback !== undefined || isSpliced ? undefined : isCopy ? loop.initial : loop.argument;
   const replaced = method === "with" ? loop.argument : undefined;
   if (method === "with" && (replaced === undefined || !isNumberLike(replaced, context))) {
     throw new TlaTypeScriptError("Pass a number as the index that with replaces", expression);
@@ -6874,6 +6914,19 @@ const translateLoopCall = (
             ? getUndefined(context)
             : translateExpression(searched, path.scope, context),
         ),
+        ...(isSpliced
+          ? [
+              define(
+                itemsName,
+                [],
+                tuple(
+                  (getLoopTarget(expression, context)?.callbackArguments.slice(2) ?? []).map(
+                    (item) => translateExpression(item, path.scope, context),
+                  ),
+                ),
+              ),
+            ]
+          : []),
       ],
       readWith(
         expression,
@@ -6890,6 +6943,32 @@ const translateLoopCall = (
               letIn(
                 [
                   define(lengthName, [], useJavaScript("ToLength", [value], context)),
+                  ...(isSpliced
+                    ? [
+                        define(
+                          startName,
+                          [],
+                          translateClampedIndex(
+                            loop.argument,
+                            number(0),
+                            length,
+                            path.scope,
+                            context,
+                          ),
+                        ),
+                        define(
+                          skippedName,
+                          [],
+                          translateSkipped(
+                            loop.argument,
+                            loop.initial,
+                            apply("-", [length, identifier(startName)]),
+                            path.scope,
+                            context,
+                          ),
+                        ),
+                      ]
+                    : []),
                   ...(replaced === undefined
                     ? []
                     : [
