@@ -2382,7 +2382,8 @@ export const getViewCall = (node: ts.Node, context: Context) => {
   const isKnown =
     (owner === "TypedArray" && TYPED_ARRAY_METHODS.has(method)) ||
     (owner === "DataView" && VIEW_ACCESSOR.test(method)) ||
-    (owner === "ArrayBuffer" && method === "resize") ||
+    (owner === "ArrayBuffer" &&
+      (method === "resize" || method === "transfer" || method === "transferToFixedLength")) ||
     (owner === "SharedArrayBuffer" && method === "grow") ||
     ((owner === "ArrayBuffer" || owner === "SharedArrayBuffer") && method === "slice");
   return isKnown && !node.arguments.some(ts.isSpreadElement)

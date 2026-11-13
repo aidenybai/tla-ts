@@ -23122,6 +23122,52 @@ describe("buffers", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("moves a buffer's bytes into a new one and detaches it", async () => {
+    const result = await checkModel(`
+      const check = (actual: unknown, expected: unknown, label: string) => {
+        if (!Object.is(actual, expected)) throw new Error(label);
+      };
+      const source = new ArrayBuffer(4, { maxByteLength: 8 });
+      const bytes = new Uint8Array(source);
+      bytes[1] = 7;
+      const moved = source.transfer();
+      check(source.detached, true, "detached");
+      check(source.byteLength, 0, "detached length");
+      check(source.maxByteLength, 0, "detached max");
+      check(bytes.length, 0, "view length");
+      check(moved.byteLength, 4, "length");
+      check(moved.resizable, true, "resizable");
+      check(moved.maxByteLength, 8, "max");
+      const view = new Uint8Array(moved);
+      check(view[1], 7, "copied");
+      const longer = moved.transferToFixedLength(6);
+      check(longer.resizable, false, "fixed");
+      check(longer.byteLength, 6, "longer");
+      const longerView = new Uint8Array(longer);
+      check(longerView[1], 7, "kept");
+      check(longerView[5], 0, "zeroed");
+      let thrown = "";
+      try {
+        moved.transfer();
+      } catch (error) {
+        thrown = error instanceof TypeError ? "TypeError" : "other";
+      }
+      check(thrown, "TypeError", "detached throws");
+      const fixed = new ArrayBuffer(2, { maxByteLength: 4 });
+      thrown = "";
+      try {
+        fixed.transfer(5);
+      } catch (error) {
+        thrown = error instanceof RangeError ? "RangeError" : "other";
+      }
+      check(thrown, "RangeError", "past max");
+      const shorter = fixed.transfer(1);
+      check(shorter.byteLength, 1, "shorter");
+      check(Object.getPrototypeOf(shorter), ArrayBuffer.prototype, "prototype");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops at a number a typed array's float can't hold exactly", async () => {
     const result = await checkModel(`
       const floats = new Float32Array(1);

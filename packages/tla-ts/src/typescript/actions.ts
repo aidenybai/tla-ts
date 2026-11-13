@@ -2508,7 +2508,19 @@ export const translateCallStatement = (
                 ],
                 context,
               )
-            : useJavaScript("Resize", [heap, ref, values[0], isShared], context);
+            : method === "resize" || method === "grow"
+              ? useJavaScript("Resize", [heap, ref, values[0], isShared], context)
+              : useJavaScript(
+                  "Transfer",
+                  [
+                    heap,
+                    ref,
+                    values[0],
+                    boolean(method === "transfer"),
+                    translateBuiltInValue("ArrayBuffer.prototype", expression, context),
+                  ],
+                  context,
+                );
     const run = bindOnce(
       path,
       changeName,

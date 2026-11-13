@@ -1209,7 +1209,9 @@ LOCAL ViewGet(heap, path, receiver) ==
                          ELSE name("get ArrayBuffer.prototype.")
             IN CASE field = "byteLength" -> Len(object.bytes)
                  [] field = "maxByteLength" ->
-                      IF object.maxLength = Undefined THEN Len(object.bytes) ELSE object.maxLength
+                      IF object.maxLength = Undefined \\/ object.isDetached
+                      THEN Len(object.bytes)
+                      ELSE object.maxLength
                  [] field \\in {"resizable", "growable"} -> object.maxLength # Undefined
                  [] OTHER -> object.isDetached
 
@@ -4025,6 +4027,27 @@ Resize(heap, ref, request, isShared) ==
             Returned([heap EXCEPT !.objects[ref[Ref]].bytes =
                         IF length <= Len(@) THEN SubSeq(@, 1, length)
                         ELSE @ \\o [position \\in 1..(length - Len(@)) |-> 0]], Undefined)
+
+\\* ArrayBuffer's transfer and transferToFixedLength, which move the bytes into a new ArrayBuffer of a
+\\* length, resizable where isPreserved and the receiver is, and detach the receiver.
+Transfer(heap, ref, request, isPreserved, prototype) ==
+  LET object == heap.objects[ref[Ref]]
+      length == IF request = Undefined THEN Len(object.bytes) ELSE IndexOfArgument(request)
+      maxLength == IF isPreserved THEN object.maxLength ELSE Undefined
+      bytes ==
+        IF length <= Len(object.bytes)
+        THEN SubSeq(object.bytes, 1, length)
+        ELSE object.bytes \\o [position \\in 1..(length - Len(object.bytes)) |-> 0]
+      detached ==
+        [heap EXCEPT !.objects[ref[Ref]].bytes = <<>>, !.objects[ref[Ref]].isDetached = TRUE]
+  IN CASE ~IsBuffer(heap, ref) \\/ object.isShared -> Thrown(heap, "TypeError")
+       [] length = -1 -> Thrown(heap, "RangeError")
+       [] object.isDetached -> Thrown(heap, "TypeError")
+       [] maxLength # Undefined /\\ length > maxLength -> Thrown(heap, "RangeError")
+       [] length > MaxBytes -> Assert(FALSE, "tla-ts can't make a buffer this big")
+       [] OTHER ->
+            LET made == Allocate(detached, BufferObject(prototype, bytes, maxLength, FALSE))
+            IN Returned(made, Allocated(made))
 
 \\* ArrayBuffer's and SharedArrayBuffer's slice, which copies bytes into a new buffer that the
 \\* receiver's constructor makes, where tla-ts follows only the built-in one.
