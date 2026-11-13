@@ -10430,9 +10430,14 @@ const getArrayHead = (loop: ts.ForOfStatement) => {
 // assigns again, some of which hold generators that an array pattern takes from, so that each
 // iteration reads its element where the array would have held it. An element may also call such a
 // name with literals, which makes a generator object and runs none of its code, so that making it
-// where the iteration reads it does the same.
+// where the iteration reads it does the same, or be a literal or an array of them, where a default
+// of the pattern may give a generator or the body resumes one instead.
 const isTakingFromGenerators = (loop: ts.ForOfStatement, context: Context) => {
   const iterated = getCast(loop.expression);
+  const pattern = getArrayHead(loop);
+  const isLiteral = (node: ts.Expression): boolean =>
+    ts.isLiteralExpression(node) ||
+    (ts.isArrayLiteralExpression(node) && node.elements.every(isLiteral));
   const isFixed = (node: ts.Expression) => {
     const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
     return (
@@ -10443,17 +10448,29 @@ const isTakingFromGenerators = (loop: ts.ForOfStatement, context: Context) => {
   };
   return (
     loop.awaitModifier === undefined &&
-    getArrayHead(loop) !== undefined &&
     ts.isArrayLiteralExpression(iterated) &&
     iterated.elements.every(
       (element) =>
         isFixed(element) ||
+        isLiteral(element) ||
         (ts.isCallExpression(element) &&
           isGeneratorType(element, context) &&
           isFixed(element.expression) &&
           element.arguments.every(ts.isLiteralExpression)),
     ) &&
-    iterated.elements.some((element) => isGeneratorType(element, context))
+    ((pattern !== undefined &&
+      (iterated.elements.some((element) => isGeneratorType(element, context)) ||
+        findNodes(pattern, ts.isBindingElement).some(
+          (element) =>
+            element.initializer !== undefined && mayBeGeneratorType(element.initializer, context),
+        ))) ||
+      findNodes(
+        loop.statement,
+        (node): node is ts.CallExpression =>
+          ts.isCallExpression(node) &&
+          ts.isPropertyAccessExpression(node.expression) &&
+          isGeneratorType(node.expression.expression, context),
+      ).length > 0)
   );
 };
 
@@ -10468,7 +10485,7 @@ const translateForOfTaken = (
 ): Formula => {
   const pattern = getArrayHead(loop);
   const iterated = getCast(loop.expression);
-  if (pattern === undefined || !ts.isArrayLiteralExpression(iterated)) {
+  if (!ts.isArrayLiteralExpression(iterated)) {
     throw new TlaTypeScriptError("Unsupported for-of", loop);
   }
   const iterate = (current: Path, position: number): Formula => {
@@ -10486,6 +10503,9 @@ const translateForOfTaken = (
       );
     if (!isGeneratorType(element, context)) {
       return runBody(current, translateExpression(element, current.scope, context), element);
+    }
+    if (pattern === undefined) {
+      throw new TlaTypeScriptError("tla-ts can't follow a generator here", element);
     }
     const taken = takeFromGenerator(
       pattern,

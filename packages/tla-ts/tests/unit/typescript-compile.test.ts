@@ -17923,6 +17923,57 @@ describe("errors", () => {
     });
   });
 
+  describe("take a for-of's pattern from a generator that a default gives", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      let initCount = 0;
+      let iterCount = 0;
+      const iter = (function* () {
+        iterCount += 1;
+        yield 7;
+      })();
+      for (const [[first] = (function () {
+        initCount += 1;
+        return iter;
+      })()] of [[], [[5]]]) {
+        log += first + ":" + initCount + ":" + iterCount + ",";
+      }
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("runs the default only for the element that lacks a value", async () => {
+      expect((await checkModel(getSource("7:1:1,5:1:1,"))).failure).toBeUndefined();
+    });
+
+    it("doesn't run it for the other", async () => {
+      expect((await checkModel(getSource("7:1:1,5:2:1,"))).failure).toBeDefined();
+    });
+  });
+
+  describe("resume a generator in the body of a for-of over literals", () => {
+    const getSource = (expected: string) => `
+      function* count() {
+        yield 0;
+        yield 2;
+      }
+      const iter = count();
+      let log = "";
+      for (const expected of [0, 2]) {
+        const result = iter.next();
+        log += result.value === expected;
+      }
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("steps the generator once for each element", async () => {
+      expect((await checkModel(getSource("truetrue"))).failure).toBeUndefined();
+    });
+
+    it("doesn't step it otherwise", async () => {
+      expect((await checkModel(getSource("truefalse"))).failure).toBeDefined();
+    });
+  });
+
   describe("take a pattern from each generator that a for-of's array makes", () => {
     const getSource = (expected: string) => `
       let log = "";
