@@ -396,9 +396,13 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
 };
 
 // The functions that converting an object may run: its valueOf, toString, and Symbol.toPrimitive
-// methods, and the getters it reads them through.
+// methods, the Symbol.split and Symbol.replace methods that a string's method calls in its place,
+// and the getters it reads them through.
 export const getConversionFunctions = (node: ts.Node, context: Context) => [
-  ...CONVERSION_KEYS.flatMap((key) => getWrittenFunctions(node, key, context)),
+  ...[
+    ...CONVERSION_KEYS,
+    ...(getConversion(node, context)?.lookups ?? []).map((lookup) => lookup.key),
+  ].flatMap((key) => getWrittenFunctions(node, key, context)),
   ...getAccessorFunctions(node, "get", context),
 ];
 
@@ -529,6 +533,25 @@ export const runToPrimitive = (
       ),
   );
 
+// Whether an operation's value may be what its Symbol.split or Symbol.replace method returns, which
+// its type doesn't describe: each method returns that type, or what takes the value reads it as
+// unknown.
+const isCalledInPlace = (node: ts.Expression, key: string, context: Context) => {
+  const contextual = context.checker.getContextualType(node);
+  const type = context.checker.getTypeAtLocation(node);
+  return (
+    (contextual !== undefined &&
+      (contextual.flags & (ts.TypeFlags.Unknown | ts.TypeFlags.Any)) !== 0) ||
+    getMethods(node, key, context).every((method) => {
+      const signature = context.checker.getSignatureFromDeclaration(method);
+      return (
+        signature !== undefined &&
+        context.checker.isTypeAssignableTo(signature.getReturnType(), type)
+      );
+    })
+  );
+};
+
 // Runs a conversion as a statement: it makes each operand's objects and evaluates it, converts each
 // in turn, and gives the value that the operation computes from the primitives.
 export const runConversion = (
@@ -556,9 +579,10 @@ export const runConversion = (
       ),
     );
   };
-  // Reads an object's method under a well-known symbol, and stops where it has one that tla-ts
-  // would call: Symbol.match marks a regexp, which includes, startsWith, and endsWith reject with a
-  // TypeError, and a method that isn't a function is a TypeError.
+  // Reads an object's method under a well-known symbol: Symbol.match marks a regexp, which includes,
+  // startsWith, and endsWith reject with a TypeError, and the operation calls a Symbol.split or
+  // Symbol.replace method with the string and its other argument in its place, where a method that
+  // isn't a function is a TypeError.
   const look = (
     current: Path,
     values: readonly Expression[],
@@ -600,7 +624,20 @@ export const runConversion = (
                       ),
                       string("function"),
                     ]),
-                    stop(`tla-ts can't call this Symbol.${lookup.key.slice(2)} method`),
+                    isCalledInPlace(node, lookup.key, context)
+                      ? callValue(
+                          node,
+                          getMethods(node, lookup.key, context),
+                          method,
+                          value,
+                          [values[0], values[2] ?? getUndefined(context)],
+                          found,
+                          context,
+                          frame,
+                          () => stop(`tla-ts can't call this Symbol.${lookup.key.slice(2)} method`),
+                          continueWith,
+                        )
+                      : stop(`tla-ts can't call this Symbol.${lookup.key.slice(2)} method`),
                     throwTypeError(found, node, context, frame),
                   ),
                 ),

@@ -13641,6 +13641,35 @@ describe("errors", () => {
     );
   });
 
+  it("calls an object's Symbol.split method in place of split", async () => {
+    const getSource = (expected: string) => `
+      const separator = {
+        [Symbol.split](text: string, limit: unknown): string[] {
+          return [String(this === separator), text, String(limit)];
+        },
+      };
+      // @ts-ignore
+      const outcomes = ["a-a".split(separator, 3).join("+"), "a".split(separator).join("+")].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("true+a-a+3,true+a+undefined"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("a,a"))).failure?.message).toContain(
+      "outcomes true+a-a+3,true+a+undefined",
+    );
+  });
+
+  it("calls a Symbol.replace method whose value what takes it reads as unknown", async () => {
+    const getSource = (isSame: boolean) => `
+      const returned = {};
+      const other = {};
+      const searchValue = { [Symbol.replace]: () => returned };
+      // @ts-ignore
+      if (!Object.is("".replace(searchValue, "x"), ${isSame ? "returned" : "other"})) throw new Error("replaced");
+    `;
+    expect((await checkModel(getSource(true))).failure).toBeUndefined();
+    expect((await checkModel(getSource(false))).failure?.message).toContain("replaced");
+  });
+
   it("repeats, concatenates, normalizes, and compares strings of ASCII", async () => {
     const result = await checkModel(`
       const box = { size: 0 };
