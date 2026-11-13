@@ -127,6 +127,82 @@ export const compile = (
       files.push(imported);
     });
   visitImports(sourceFile);
+  // The code units outside ASCII that the script's text holds, or that the escapes of its literals
+  // and names write, whose codes the module tells. A lone surrogate is half of a pair, as a
+  // module's text holds only whole characters.
+  const texts = [sourceFile, ...files].map((file) => file.text);
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isLiteralExpression(node) ||
+      ts.isTemplateLiteralToken(node) ||
+      ts.isIdentifier(node) ||
+      ts.isPrivateIdentifier(node)
+    ) {
+      texts.push(node.text);
+    }
+    // String.fromCharCode and String.fromCodePoint of numbers that the text writes make the code
+    // units of those numbers, where fromCodePoint throws no RangeError.
+    const method =
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.expression.getText() === "String"
+        ? node.expression.name.text
+        : undefined;
+    const numbers =
+      ts.isCallExpression(node) && node.arguments.length > 0
+        ? node.arguments.map((argument) =>
+            ts.isNumericLiteral(argument)
+              ? Number(argument.text)
+              : ts.isPrefixUnaryExpression(argument) &&
+                  argument.operator === ts.SyntaxKind.MinusToken &&
+                  ts.isNumericLiteral(argument.operand)
+                ? -Number(argument.operand.text)
+                : Number.NaN,
+          )
+        : [Number.NaN];
+    if (method === "fromCharCode" && numbers.every(Number.isFinite)) {
+      texts.push(String.fromCharCode(...numbers));
+    }
+    if (
+      method === "fromCodePoint" &&
+      numbers.every((value) => Number.isInteger(value) && value >= 0 && value <= 0x10ffff)
+    ) {
+      texts.push(String.fromCodePoint(...numbers));
+    }
+    ts.forEachChild(node, visit);
+  };
+  [sourceFile, ...files].forEach(visit);
+  const getCodes = (text: string) =>
+    Array.from({ length: text.length }, (_, position) => text.charCodeAt(position)).filter(
+      (code) => code >= 128,
+    );
+  // The code points that the code units make, where a high surrogate before a low one makes one.
+  const getPoints = (units: Set<number>) => {
+    const all = [...units];
+    const isHigh = (code: number) => code >= 0xd800 && code <= 0xdbff;
+    const isLow = (code: number) => code >= 0xdc00 && code <= 0xdfff;
+    return [
+      ...all
+        .filter((code) => !isHigh(code) && !isLow(code))
+        .map((code) => String.fromCharCode(code)),
+      ...all
+        .filter(isHigh)
+        .flatMap((high) => all.filter(isLow).map((low) => String.fromCharCode(high, low))),
+    ];
+  };
+  // The code units that the script's text holds, with those of each case of the code points they
+  // make, as a script may change the case of what it reads.
+  const getClosed = (units: Set<number>): Set<number> => {
+    const closed = new Set([
+      ...units,
+      ...getPoints(units).flatMap((point) => [
+        ...getCodes(point.toUpperCase()),
+        ...getCodes(point.toLowerCase()),
+      ]),
+    ]);
+    return closed.size === units.size ? units : getClosed(closed);
+  };
+  context.characters = getClosed(new Set(texts.flatMap(getCodes)));
   // An imported file's top-level statements that change what the model reads run before the
   // model's own, with the variables of imported files that the model reaches and that change.
   const hasEffect = (node: ts.Node): boolean =>
@@ -429,82 +505,6 @@ export const compile = (
   );
   for (const definition of model.exported) translateExported(definition, model, sections, context);
   if (context.prelude.has("JavaScript")) {
-    // The code units outside ASCII that the script's text holds, or that the escapes of its literals
-    // and names write, whose codes the module tells. A lone surrogate is half of a pair, as a
-    // module's text holds only whole characters.
-    const texts = [sourceFile.text];
-    const visit = (node: ts.Node) => {
-      if (
-        ts.isLiteralExpression(node) ||
-        ts.isTemplateLiteralToken(node) ||
-        ts.isIdentifier(node) ||
-        ts.isPrivateIdentifier(node)
-      ) {
-        texts.push(node.text);
-      }
-      // String.fromCharCode and String.fromCodePoint of numbers that the text writes make the code
-      // units of those numbers, where fromCodePoint throws no RangeError.
-      const method =
-        ts.isCallExpression(node) &&
-        ts.isPropertyAccessExpression(node.expression) &&
-        node.expression.expression.getText() === "String"
-          ? node.expression.name.text
-          : undefined;
-      const numbers =
-        ts.isCallExpression(node) && node.arguments.length > 0
-          ? node.arguments.map((argument) =>
-              ts.isNumericLiteral(argument)
-                ? Number(argument.text)
-                : ts.isPrefixUnaryExpression(argument) &&
-                    argument.operator === ts.SyntaxKind.MinusToken &&
-                    ts.isNumericLiteral(argument.operand)
-                  ? -Number(argument.operand.text)
-                  : Number.NaN,
-            )
-          : [Number.NaN];
-      if (method === "fromCharCode" && numbers.every(Number.isFinite)) {
-        texts.push(String.fromCharCode(...numbers));
-      }
-      if (
-        method === "fromCodePoint" &&
-        numbers.every((value) => Number.isInteger(value) && value >= 0 && value <= 0x10ffff)
-      ) {
-        texts.push(String.fromCodePoint(...numbers));
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(sourceFile);
-    const getCodes = (text: string) =>
-      Array.from({ length: text.length }, (_, position) => text.charCodeAt(position)).filter(
-        (code) => code >= 128,
-      );
-    // The code points that the code units make, where a high surrogate before a low one makes one.
-    const getPoints = (units: Set<number>) => {
-      const all = [...units];
-      const isHigh = (code: number) => code >= 0xd800 && code <= 0xdbff;
-      const isLow = (code: number) => code >= 0xdc00 && code <= 0xdfff;
-      return [
-        ...all
-          .filter((code) => !isHigh(code) && !isLow(code))
-          .map((code) => String.fromCharCode(code)),
-        ...all
-          .filter(isHigh)
-          .flatMap((high) => all.filter(isLow).map((low) => String.fromCharCode(high, low))),
-      ];
-    };
-    // The code units that the script's text holds, with those of each case of the code points they
-    // make, as a script may change the case of what it reads.
-    const getClosed = (units: Set<number>): Set<number> => {
-      const closed = new Set([
-        ...units,
-        ...getPoints(units).flatMap((point) => [
-          ...getCodes(point.toUpperCase()),
-          ...getCodes(point.toLowerCase()),
-        ]),
-      ]);
-      return closed.size === units.size ? units : getClosed(closed);
-    };
-    const codes = getClosed(new Set(texts.flatMap(getCodes)));
     context.output.push(
       define(
         "UsedBuiltIns",
@@ -538,7 +538,7 @@ export const compile = (
         "UsedCases",
         [],
         tuple(
-          getPoints(codes)
+          getPoints(context.characters)
             .filter((point) => point.toUpperCase() !== point || point.toLowerCase() !== point)
             .sort()
             .map((point) =>
@@ -554,7 +554,7 @@ export const compile = (
         "UsedCharacters",
         [],
         tuple(
-          [...codes]
+          [...context.characters]
             .sort((left, right) => left - right)
             .map((code) =>
               record("Record", [

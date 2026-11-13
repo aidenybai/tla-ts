@@ -1413,11 +1413,13 @@ const CODE_UNITS = Array.from({ length: 0x10000 }, (_, code) => code);
 const LISTED_LIMIT = 256;
 
 // A class as the characters in ASCII that it matches once Canonicalize maps them, with those
-// outside ASCII listed where it matches few of them or all but a few, or else unknown. A pattern
-// with the u flag matches only text in ASCII.
+// outside ASCII listed where it matches few of them or all but a few, or else unknown. It lists too
+// whether it matches each code unit outside ASCII that the script's strings may hold, unless it
+// folds case by Unicode, which tla-ts matches only on text in ASCII.
 const translateCharacters = (
   matcher: { set: CharacterSet; isInverted: boolean },
   flags: string,
+  characters: Set<number>,
 ) => {
   const isUnicode = flags.includes("u");
   const fold = flags.includes("i") ? (isUnicode ? foldCase : canonicalize) : undefined;
@@ -1448,6 +1450,10 @@ const translateCharacters = (
           : "unknown";
   const toStrings = (codes: number[]) =>
     set(codes.map((code) => string(String.fromCharCode(code))));
+  const known =
+    isUnicode && fold !== undefined
+      ? []
+      : [...characters].filter((code) => code < 0xd800 || code > 0xdfff);
   return record("Record", [
     { name: "kind", value: string("set") },
     {
@@ -1455,33 +1461,43 @@ const translateCharacters = (
       value: toStrings([
         ...CODE_UNITS.slice(0, 128).filter(isMatched),
         ...(others === "none" ? held : []),
+        ...known.filter(isMatched),
       ]),
     },
-    { name: "excluded", value: toStrings(others === "all" ? missed : []) },
+    {
+      name: "excluded",
+      value: toStrings([
+        ...(others === "all" ? missed : []),
+        ...known.filter((code) => !isMatched(code)),
+      ]),
+    },
     { name: "others", value: string(others) },
   ]);
 };
 
-const translateMatcher = (matcher: Matcher, flags: string): Expression => {
+const translateMatcher = (matcher: Matcher, flags: string, characters: Set<number>): Expression => {
   const kind = { name: "kind", value: string(matcher.kind) };
-  if (matcher.kind === "set") return translateCharacters(matcher, flags);
+  if (matcher.kind === "set") return translateCharacters(matcher, flags, characters);
   if (matcher.kind === "sequence" || matcher.kind === "alternation") {
     return record("Record", [
       kind,
-      { name: "items", value: tuple(matcher.items.map((item) => translateMatcher(item, flags))) },
+      {
+        name: "items",
+        value: tuple(matcher.items.map((item) => translateMatcher(item, flags, characters))),
+      },
     ]);
   }
   if (matcher.kind === "group") {
     return record("Record", [
       kind,
       { name: "index", value: number(matcher.index) },
-      { name: "body", value: translateMatcher(matcher.body, flags) },
+      { name: "body", value: translateMatcher(matcher.body, flags, characters) },
     ]);
   }
   if (matcher.kind === "repeat") {
     return record("Record", [
       kind,
-      { name: "body", value: translateMatcher(matcher.body, flags) },
+      { name: "body", value: translateMatcher(matcher.body, flags, characters) },
       { name: "min", value: number(matcher.min) },
       { name: "max", value: number(matcher.max) },
       { name: "isGreedy", value: boolean(matcher.isGreedy) },
@@ -1495,7 +1511,7 @@ const translateMatcher = (matcher: Matcher, flags: string): Expression => {
   if (matcher.kind === "lookahead") {
     return record("Record", [
       kind,
-      { name: "body", value: translateMatcher(matcher.body, flags) },
+      { name: "body", value: translateMatcher(matcher.body, flags, characters) },
       { name: "isNegative", value: boolean(matcher.isNegative) },
     ]);
   }
@@ -1536,7 +1552,7 @@ const translateRegExp = (
   const parsed = parsePattern(pattern, flags, node);
   context.prelude.add("JavaScript");
   return record("Record", [
-    { name: "pattern", value: translateMatcher(parsed.pattern, flags) },
+    { name: "pattern", value: translateMatcher(parsed.pattern, flags, context.characters) },
     { name: "captures", value: number(parsed.count) },
     {
       name: "names",

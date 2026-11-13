@@ -15641,9 +15641,16 @@ describe("regular expressions", () => {
 
   it("stop where a class can't tell a character outside ASCII", async () => {
     const result = await checkModel(`
-      let found = /[^\\u00e0-\\u05ff]/.test("é");
+      let found = /[^\\u00e0-\\u05ff]/.test("\\ud800");
     `);
     expect(result.failure?.message).toContain("tla-ts can't tell whether a class matches");
+  });
+
+  it("tell whether a class matches a character outside ASCII that a script holds", async () => {
+    const getSource = (operator: string) =>
+      `if (${operator}/[^\\u00e0-\\u05ff]/.test("é")) throw new Error("class");`;
+    expect((await checkModel(getSource(""))).failure).toBeUndefined();
+    await expect(checkModel(getSource("!"))).rejects.toThrow("class");
   });
 
   it("keep a regexp's lastIndex on the heap as exec and string methods set it", async () => {
@@ -15834,6 +15841,29 @@ describe("regular expressions", () => {
       let found = /./u.test("😀");
     `);
     expect(result.failure?.message).toContain("tla-ts can't match a regexp with the u flag");
+  });
+
+  it("stop where a regexp with the u and i flags folds text outside ASCII", async () => {
+    const result = await checkModel(`
+      let found = /É/iu.test("é");
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't match a regexp with the u flag");
+  });
+
+  it("match a class with the u flag against letters outside ASCII that a script holds", async () => {
+    const getSource = (text: string) =>
+      `if (!/^\\p{L}+$/u.test("${text}")) throw new Error("letters");`;
+    expect((await checkModel(getSource("éà"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("é1"))).rejects.toThrow("letters");
+  });
+
+  it("replace and search with the u flag in text outside ASCII", async () => {
+    const getSource = (expected: number) => `
+      if ("ñandú".replace(/[^\\w]/gu, "-") !== "-and-") throw new Error("word");
+      if ("naïve".search(/[ï]/u) !== ${expected}) throw new Error("search");
+    `;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    await expect(checkModel(getSource(3))).rejects.toThrow("search");
   });
 
   it("run a String object's regexp methods on its string", async () => {
