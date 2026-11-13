@@ -1290,11 +1290,17 @@ const isDisposeCallback = (
       ? node.parent.arguments.at(0)
       : undefined) === node;
 
-// A function expression or a method that another function makes as the value of an object's
-// property, a function expression that it returns, or a function that it passes to adopt or defer,
-// each time it runs, which is an object of its own each time. It reads no name that the functions
-// around it bind, so it runs the same wherever tla-ts inlines it, or it's a closure, which runs only
-// in the call that made it.
+// A this, a super, or a new.target, which an arrow reads from the function around it.
+const isLexical = (inner: ts.Node): inner is ts.Node =>
+  inner.kind === ts.SyntaxKind.ThisKeyword ||
+  inner.kind === ts.SyntaxKind.SuperKeyword ||
+  ts.isMetaProperty(inner);
+
+// A function expression, an arrow, or a method that another function makes as the value of an
+// object's property, a function expression that it returns, or a function that it passes to adopt
+// or defer, each time it runs, which is an object of its own each time. It reads no name that the
+// functions around it bind, nor an arrow their this or arguments, so it runs the same wherever
+// tla-ts inlines it, or it's a closure, which runs only in the call that made it.
 export const isNestedFunction = (
   node: ts.Node,
   context: Context,
@@ -1308,14 +1314,18 @@ export const isNestedFunction = (
   (((isPlainAccessor(node) || (ts.isMethodDeclaration(node) && node.body !== undefined)) &&
     ts.isObjectLiteralExpression(node.parent) &&
     !isOnce(node.parent)) ||
+    ((ts.isFunctionExpression(node) ||
+      (ts.isArrowFunction(node) &&
+        findNodes(node, isLexical).length === 0 &&
+        findNodes(node, ts.isIdentifier).every((name) => name.text !== "arguments"))) &&
+      ts.isPropertyAssignment(node.parent) &&
+      node.parent.initializer === node &&
+      !isFunctionObject(node, context) &&
+      getFunctionValue(node, context) === undefined) ||
     (ts.isFunctionExpression(node) &&
-      ((ts.isPropertyAssignment(node.parent) &&
-        node.parent.initializer === node &&
-        !isFunctionObject(node, context) &&
-        getFunctionValue(node, context) === undefined) ||
-        (ts.isReturnStatement(node.parent) &&
-          node.parent.expression === node &&
-          findNodes(node, ts.isIdentifier).every((name) => name.text !== "arguments")))) ||
+      ts.isReturnStatement(node.parent) &&
+      node.parent.expression === node &&
+      findNodes(node, ts.isIdentifier).every((name) => name.text !== "arguments")) ||
     (isDisposeCallback(node, context) && !isOnce(node.parent))) &&
   node.asteriskToken === undefined &&
   // Of async functions, only methods, dispose callbacks, and what an asyncDispose getter returns,
@@ -1357,8 +1367,8 @@ export type Closure = ts.FunctionExpression | ts.ArrowFunction;
 // A function that a function makes and that outlives the call that made it, which reads the locals
 // of that call from its environment: one that the function assigns to a name declared outside it,
 // an async one that it returns, or one that an object literal holds and that reads a local of the
-// function. An arrow reads the this of the function around it, which the
-// environment doesn't hold, and an async closure that awaits would resume after its call returns.
+// function. An arrow reads the this of the function around it, which the environment doesn't
+// hold, and an async closure that awaits would resume after its call returns.
 export const isClosure = (node: ts.Node, context: Context): node is Closure => {
   if (
     context.heap === undefined ||
@@ -1368,10 +1378,6 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure => {
     return false;
   }
   const isAsync = (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) !== 0;
-  const isLexical = (inner: ts.Node): inner is ts.Node =>
-    inner.kind === ts.SyntaxKind.ThisKeyword ||
-    inner.kind === ts.SyntaxKind.SuperKeyword ||
-    ts.isMetaProperty(inner);
   const isAwaiting = (inner: ts.Node): inner is ts.Node =>
     ts.isAwaitExpression(inner) ||
     (ts.isForOfStatement(inner) && inner.awaitModifier !== undefined);
@@ -2605,7 +2611,8 @@ export const findNodes = <T extends ts.Node>(root: ts.Node, test: (node: ts.Node
 const candidates = new WeakMap<ts.SourceFile, FunctionNode[]>();
 
 // The functions that a value whose type has calls may hold, where tla-ts can't tell which: those
-// that no other function encloses, whose type TypeScript lets the value hold.
+// that no other function encloses, or that a function makes each time it runs and that read none of
+// its locals, whose type TypeScript lets the value hold.
 export const getFunctionCandidates = (callee: ts.Expression, context: Context) => {
   if (isHeldBuiltInObject(callee, context)) return [];
   const sourceFile = callee.getSourceFile();
@@ -2620,7 +2627,8 @@ export const getFunctionCandidates = (callee: ts.Expression, context: Context) =
           : getObjectMethod(inner, context);
       return (
         candidate?.body !== undefined &&
-        ts.findAncestor(candidate.parent, ts.isFunctionLike) === undefined
+        (ts.findAncestor(candidate.parent, ts.isFunctionLike) === undefined ||
+          (isNestedFunction(candidate, context) && getOuterLocals(candidate, context).length === 0))
       );
     });
   candidates.set(sourceFile, found);

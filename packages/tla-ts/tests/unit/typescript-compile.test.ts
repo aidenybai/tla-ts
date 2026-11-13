@@ -10885,6 +10885,35 @@ describe("errors", () => {
     expect((await checkModel(getSource("tttt"))).failure?.message).toContain("brand");
   });
 
+  it("calls the arrows that the objects a function makes hold, each an object of its own", async () => {
+    const getSource = (expected: string) => `
+      interface State {
+        count: number;
+      }
+      type Predicate = (state: State) => boolean;
+      interface Unit {
+        type: string;
+        semantic: Predicate | undefined;
+      }
+      const isBig = (state: State) => state.count > 2;
+      const lookahead = (options: { semantic?: Predicate }): Unit => ({
+        type: "lookahead",
+        semantic: options.semantic,
+      });
+      const getItem = () => lookahead({ semantic: (state) => isBig(state) || state.count === 0 });
+      const first = getItem();
+      const second = getItem();
+      const run = (unit: Unit, count: number) =>
+        unit.semantic === undefined || unit.semantic({ count });
+      const result = [run(first, 3), run(second, 1), run(first, 0), first.semantic === second.semantic];
+      if (result.join(",") !== "${expected}") throw new Error(result.join(","));
+    `;
+    expect((await checkModel(getSource("true,false,true,false"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("true,false,true,true"))).failure?.message).toContain(
+      "true,false,true,false",
+    );
+  });
+
   it("calls the closures that the objects a function makes hold, each with its call's locals", async () => {
     const getSource = (expected: string) => `
       const named = (name: string) => ({ type: "named", read: () => name });
