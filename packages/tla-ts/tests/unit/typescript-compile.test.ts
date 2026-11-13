@@ -7449,6 +7449,42 @@ describe("errors", () => {
     ).toThrow("Yield outside loops");
   });
 
+  it("runs a generator's loop that runs until it leaves as far as its caller steps it", async () => {
+    await expect(
+      checkModel(`
+        function* naturals(): Generator<number> {
+          let i = 0;
+          while (true) {
+            yield i;
+            ++i;
+          }
+        }
+        const three = naturals().take(3).toArray();
+        const iter = naturals();
+        iter.next();
+        const second = iter.next();
+        if (three.join() !== "0,1,2" || second.value !== 1) throw new Error("forever");
+        if (second.value === 1) throw new Error("stepped");
+      `),
+    ).rejects.toThrow("stepped");
+  });
+
+  it("stops a generator's loop that runs until it leaves past 64 iterations", () => {
+    expect(() =>
+      compile(`
+        function* naturals(): Generator<number> {
+          let i = 0;
+          for (;;) {
+            if (i > 2) return;
+            yield i;
+            i += 1;
+          }
+        }
+        Array.from(naturals());
+      `),
+    ).toThrow("tla-ts can't run more than 64 iterations of a generator's loop");
+  });
+
   it("steps an array's iterator with next as the array changes", async () => {
     const result = await checkModel(`
       const arr = ["a", "b"];

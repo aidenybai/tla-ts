@@ -9313,29 +9313,46 @@ const hasYield = (node: ts.Node): boolean =>
   ts.isYieldExpression(node) ||
   (!ts.isFunctionLike(node) && (ts.forEachChild(node, hasYield) ?? false));
 
-// Runs a generator's counted loop that yields as its iterations, one after another, with the
-// counter each one reads.
+// Whether a loop runs until something in it leaves, as while (true) or for (;;).
+const isForever = (loop: ts.IterationStatement) =>
+  (ts.isWhileStatement(loop) && loop.expression.kind === ts.SyntaxKind.TrueKeyword) ||
+  (ts.isForStatement(loop) &&
+    loop.initializer === undefined &&
+    loop.condition === undefined &&
+    loop.incrementor === undefined);
+
+// Runs a generator's loop that yields as its iterations, one after another: a counted loop's with
+// the counter each one reads, or a loop that runs until something leaves it, which tla-ts follows
+// as far as the generator's caller steps it.
 const translateUnrolled = (
-  loop: ts.ForStatement,
-  unrolled: NonNullable<ReturnType<typeof getCounts>>,
+  loop: ts.IterationStatement,
+  unrolled: ReturnType<typeof getCounts>,
   path: Path,
   context: Context,
   frame: Frame,
   continueWith: (path: Path) => Formula,
 ): Formula => {
   const iterate = (current: Path, position: number): Formula => {
-    const count = unrolled.counts.at(position);
-    if (count === undefined) return continueWith(current);
+    if (unrolled === undefined && position >= UNROLL_LIMIT) {
+      throw new TlaTypeScriptError(
+        `tla-ts can't run more than ${UNROLL_LIMIT} iterations of a generator's loop`,
+        loop,
+      );
+    }
+    const count = unrolled?.counts.at(position);
+    if (unrolled !== undefined && count === undefined) return continueWith(current);
     const next = (after: Path) => iterate(after, position + 1);
     return translateStatements(
       [loop.statement],
-      {
-        ...current,
-        scope: {
-          ...current.scope,
-          bindings: new Map([...current.scope.bindings, [unrolled.symbol, number(count)]]),
-        },
-      },
+      unrolled === undefined || count === undefined
+        ? current
+        : {
+            ...current,
+            scope: {
+              ...current.scope,
+              bindings: new Map([...current.scope.bindings, [unrolled.symbol, number(count)]]),
+            },
+          },
       context,
       { ...frame, next, continueTo: next, breakTo: continueWith },
     );
@@ -9350,11 +9367,9 @@ const translateLoop = (
   frame: Frame,
   continueWith: (path: Path) => Formula,
 ): Formula => {
-  const unrolled =
-    frame.yieldTo !== undefined && ts.isForStatement(loop) && hasYield(loop.statement)
-      ? getCounts(loop, context)
-      : undefined;
-  if (unrolled !== undefined && ts.isForStatement(loop)) {
+  const isYielding = frame.yieldTo !== undefined && hasYield(loop.statement);
+  const unrolled = isYielding && ts.isForStatement(loop) ? getCounts(loop, context) : undefined;
+  if (unrolled !== undefined || (isYielding && isForever(loop))) {
     return translateUnrolled(loop, unrolled, path, context, frame, continueWith);
   }
   const runLoop = (inner: Path) => translateIterations(loop, inner, context, frame, continueWith);
