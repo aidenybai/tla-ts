@@ -17581,6 +17581,65 @@ describe("errors", () => {
     });
   });
 
+  describe("take a pattern from each generator that a for-of's array makes", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      let steps = 0;
+      function* count(start: number) {
+        steps += 1;
+        yield start;
+        steps += 1;
+        yield start + 1;
+        steps += 1;
+      }
+      for (const [first] of [count(1)]) {
+        log += first + ":" + steps;
+      }
+      for (const [, ...rest] of [count(2), count(10)]) {
+        log += "," + rest.join("") + ":" + steps;
+      }
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("steps each generator where the iteration reads it", async () => {
+      expect((await checkModel(getSource("1:1,3:4,11:7"))).failure).toBeUndefined();
+    });
+
+    it("doesn't step them all first", async () => {
+      expect((await checkModel(getSource("1:1,3:7,11:7"))).failure).toBeDefined();
+    });
+  });
+
+  describe("take a pattern from each generator that an async generator's yield* makes", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      let steps = 0;
+      function* count(start: number) {
+        steps += 1;
+        yield start;
+        steps += 1;
+        yield start + 1;
+      }
+      const pairs = (async function* () {
+        yield* [count(2), count(10)];
+      })();
+      (async () => {
+        for await (const [, second] of pairs) {
+          log += second + ":" + steps + ",";
+        }
+        if (log !== "${expected}") throw new Error(log);
+      })();
+    `;
+
+    it("steps each generator where the for await reads it", async () => {
+      expect((await checkModel(getSource("3:2,11:4,"))).failure).toBeUndefined();
+    });
+
+    it("doesn't step them all first", async () => {
+      expect((await checkModel(getSource("3:4,11:4,"))).failure).toBeDefined();
+    });
+  });
+
   describe("read what a symbol keys on a Map or a Set", () => {
     const getSource = (expected: string) => `
       const o = { a: 1 };

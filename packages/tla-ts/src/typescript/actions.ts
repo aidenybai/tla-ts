@@ -7557,12 +7557,38 @@ const translateDelegatedYield = (
         : step(current, position),
     );
   };
-  return allocate(iterated, path, context, (inner) =>
-    letIn(
-      [define(sequence, [], translateExpression(iterated, inner.scope, context))],
-      delegate(inner, 0),
-    ),
-  );
+  // The array makes the generator objects that its elements call for, in order, before yield*
+  // iterates it.
+  const makeGenerators = (current: Path, position: number): Formula => {
+    if (elements === undefined || position === elements.length) {
+      return allocate(iterated, current, context, (inner) =>
+        letIn(
+          [define(sequence, [], translateExpression(iterated, inner.scope, context))],
+          delegate(inner, 0),
+        ),
+      );
+    }
+    const call = getCast(elements[position]);
+    const created =
+      ts.isCallExpression(call) && !current.scope.results.has(call)
+        ? getCreatedGenerator(call, current, context)
+        : undefined;
+    return created === undefined || !ts.isCallExpression(call)
+      ? makeGenerators(current, position + 1)
+      : translateGeneratorCall(call, created, current, context, frame, (after, ref) =>
+          makeGenerators(
+            {
+              ...after,
+              scope: {
+                ...after.scope,
+                results: new Map([...after.scope.results, [call, ref ?? getUndefined(context)]]),
+              },
+            },
+            position + 1,
+          ),
+        );
+  };
+  return makeGenerators(path, 0);
 };
 
 const DELEGATION_LIMIT = 3;
@@ -10398,21 +10424,31 @@ const getArrayHead = (loop: ts.ForOfStatement) => {
 
 // Whether a for-of iterates an array that the code writes in place of names that the script never
 // assigns again, some of which hold generators that an array pattern takes from, so that each
-// iteration reads its element where the array would have held it.
+// iteration reads its element where the array would have held it. An element may also call such a
+// name with literals, which makes a generator object and runs none of its code, so that making it
+// where the iteration reads it does the same.
 const isTakingFromGenerators = (loop: ts.ForOfStatement, context: Context) => {
   const iterated = getCast(loop.expression);
+  const isFixed = (node: ts.Expression) => {
+    const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
+    return (
+      symbol !== undefined &&
+      symbol.valueDeclaration !== undefined &&
+      !isAssigned(symbol, node.getSourceFile(), context)
+    );
+  };
   return (
     loop.awaitModifier === undefined &&
     getArrayHead(loop) !== undefined &&
     ts.isArrayLiteralExpression(iterated) &&
-    iterated.elements.every((element) => {
-      const symbol = ts.isIdentifier(element) ? getSymbol(element, context.checker) : undefined;
-      return (
-        symbol !== undefined &&
-        symbol.valueDeclaration !== undefined &&
-        !isAssigned(symbol, element.getSourceFile(), context)
-      );
-    }) &&
+    iterated.elements.every(
+      (element) =>
+        isFixed(element) ||
+        (ts.isCallExpression(element) &&
+          isGeneratorType(element, context) &&
+          isFixed(element.expression) &&
+          element.arguments.every(ts.isLiteralExpression)),
+    ) &&
     iterated.elements.some((element) => isGeneratorType(element, context))
   );
 };
