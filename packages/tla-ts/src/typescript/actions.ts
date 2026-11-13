@@ -7,6 +7,7 @@ import {
   getHeapArrayChange,
   getStoredCall,
   getArrayLikeChange,
+  translateCopyWithinArguments,
   isArrayIteration,
   isStoredChange,
   isStoredStatement,
@@ -2052,18 +2053,30 @@ export const translateCallStatement = (
       changeName,
       arrayLikeChange.method === "reverse"
         ? useJavaScript("ArrayLikeReverse", [heap, ref], context)
-        : useJavaScript(
-            "ArrayChange",
-            [
-              heap,
-              ref,
-              string(arrayLikeChange.method),
-              tuple(
-                arrayLikeChange.items.map((item) => translateExpression(item, path.scope, context)),
-              ),
-            ],
-            context,
-          ),
+        : arrayLikeChange.method === "copyWithin"
+          ? useJavaScript(
+              "ArrayLikeCopyWithin",
+              [
+                heap,
+                ref,
+                ...translateCopyWithinArguments(arrayLikeChange.items, path.scope, context),
+              ],
+              context,
+            )
+          : useJavaScript(
+              "ArrayChange",
+              [
+                heap,
+                ref,
+                string(arrayLikeChange.method),
+                tuple(
+                  arrayLikeChange.items.map((item) =>
+                    translateExpression(item, path.scope, context),
+                  ),
+                ),
+              ],
+              context,
+            ),
       ifThenElse(
         field(change, "isThrown"),
         throwTypeError(withHeap(field(change, "heap")), expression, context, frame),

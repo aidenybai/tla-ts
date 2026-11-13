@@ -2630,6 +2630,28 @@ export const IN_PLACE_METHODS = new Set([
   "copyWithin",
 ]);
 
+// The target, start, and end that copyWithin takes as numbers, where end is undefined to take the
+// length.
+export const translateCopyWithinArguments = (
+  items: readonly ts.Expression[],
+  scope: Scope,
+  context: Context,
+) => {
+  const translateNumber = (argument: ts.Expression) =>
+    isNumberLike(argument, context)
+      ? translateExpression(argument, scope, context)
+      : useJavaScript("ToNumber", [translateExpression(argument, scope, context)], context);
+  const [first, second, third] = items;
+  return [
+    first === undefined ? number(0) : translateNumber(first),
+    second === undefined ? number(0) : translateNumber(second),
+    third === undefined ||
+    (context.checker.getTypeAtLocation(third).flags & ts.TypeFlags.Undefined) !== 0
+      ? getUndefined(context)
+      : translateNumber(third),
+  ];
+};
+
 // What a method that changes an array that the heap holds does: the heap after, the value that it
 // gives, and whether it throws a TypeError.
 export const translateArrayChange = (
@@ -2640,11 +2662,7 @@ export const translateArrayChange = (
   scope: Scope,
   context: Context,
 ) => {
-  const translateNumber = (argument: ts.Expression) =>
-    isNumberLike(argument, context)
-      ? translateExpression(argument, scope, context)
-      : useJavaScript("ToNumber", [translateExpression(argument, scope, context)], context);
-  const [first, second, third] = items;
+  const [first] = items;
   const reordered =
     method === "reverse"
       ? useJavaScript("ArrayReverse", [heap, ref], context)
@@ -2657,16 +2675,7 @@ export const translateArrayChange = (
         : method === "copyWithin"
           ? useJavaScript(
               "ArrayCopyWithin",
-              [
-                heap,
-                ref,
-                first === undefined ? number(0) : translateNumber(first),
-                second === undefined ? number(0) : translateNumber(second),
-                third === undefined ||
-                (context.checker.getTypeAtLocation(third).flags & ts.TypeFlags.Undefined) !== 0
-                  ? getUndefined(context)
-                  : translateNumber(third),
-              ],
+              [heap, ref, ...translateCopyWithinArguments(items, scope, context)],
               context,
             )
           : undefined;
@@ -2941,10 +2950,11 @@ const STORED_ARRAY_CHANGES = new Set(["push", "pop", "shift", "unshift", "revers
 export const getArrayLikeChange = (node: ts.CallExpression, context: Context) => {
   const method = getArrayMethodCall(node, context);
   const object = node.arguments.at(0);
-  // reverse gives the object, whose type the call's says is an array, so only a statement drops it.
+  // reverse and copyWithin give the object, whose type the call's says is an array, so only a
+  // statement drops it.
   return method !== undefined &&
-    STORED_ARRAY_CHANGES.has(method) &&
-    (method !== "reverse" || ts.isExpressionStatement(node.parent)) &&
+    (STORED_ARRAY_CHANGES.has(method) || method === "copyWithin") &&
+    (!["reverse", "copyWithin"].includes(method) || ts.isExpressionStatement(node.parent)) &&
     object !== undefined &&
     getKind(object, context) === "object" &&
     !node.arguments.some(ts.isSpreadElement)

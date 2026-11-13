@@ -4279,20 +4279,22 @@ LOCAL ArrayDelete(heap, ref, key) ==
 \\* A step that runs where no earlier one threw.
 LOCAL AndThen(state, Step(_)) == IF state.isThrown THEN state ELSE Step(state.heap)
 
-\\* Moves elements of an array that the heap holds by an offset, from the lowest index where the
-\\* offset is negative and from the highest otherwise, where a hole deletes the index it moves to.
-RECURSIVE ArrayMoves(_, _, _, _)
-ArrayMoves(state, ref, froms, offset) ==
+\\* Moves elements of an array that the heap holds by an offset, from the lowest index or from the
+\\* highest, where a hole deletes the index it moves to.
+RECURSIVE ArrayMoves(_, _, _, _, _)
+ArrayMoves(state, ref, froms, offset, isAscending) ==
   IF state.isThrown \\/ froms = {}
   THEN state
   ELSE LET from == CHOOSE index \\in froms :
-                     \\A other \\in froms : IF offset < 0 THEN index <= other ELSE index >= other
+                     \\A other \\in froms : IF isAscending THEN index <= other ELSE index >= other
            key == ToString(from + offset)
+           value == Get(state.heap, ref, ToString(from))
        IN ArrayMoves(
-            IF Has(state.heap, ref, ToString(from))
-            THEN ArraySet(state.heap, ref, key, Get(state.heap, ref, ToString(from)))
-            ELSE ArrayDelete(state.heap, ref, key),
-            ref, froms \\ {from}, offset)
+            CASE ~Has(state.heap, ref, ToString(from)) -> ArrayDelete(state.heap, ref, key)
+              \\* HACK: TLC reads a value only where it needs it, and Get runs before a write that
+              \\* fails, so comparing the value reads it first.
+              [] value = value -> ArraySet(state.heap, ref, key, value),
+            ref, froms \\ {from}, offset, isAscending)
 
 \\* Writes items to an array that the heap holds from an index on.
 RECURSIVE ArraySets(_, _, _, _)
@@ -4321,7 +4323,7 @@ ArrayChange(heap, ref, method, items) ==
                    IF method = "shift"
                    THEN ArrayMoves(start, ref,
                           {index \\in indices \\cup {index + 1 : index \\in own} :
-                             index >= 1 /\\ index < length}, -1)
+                             index >= 1 /\\ index < length}, -1, TRUE)
                    ELSE start,
                    LAMBDA after : ArrayDelete(after, ref, ToString(length - 1)))
       added == CASE method = "push" -> ArraySets(start, ref, length, items)
@@ -4329,7 +4331,7 @@ ArrayChange(heap, ref, method, items) ==
                  [] OTHER -> ArraySets(
                                ArrayMoves(start, ref,
                                  {index \\in indices \\cup {index - count : index \\in own} :
-                                    index >= 0 /\\ index < length}, count),
+                                    index >= 0 /\\ index < length}, count, FALSE),
                                ref, 0, items)
       elements == [position \\in 1..length |-> object.values[ToString(position - 1)]]
       changed == CASE method = "push" -> elements \\o items
@@ -4357,6 +4359,25 @@ ArrayChange(heap, ref, method, items) ==
                        [] length = 0 -> Undefined
                        [] OTHER -> first,
            isThrown |-> state.isThrown]
+
+\\* copyWithin() on an array-like object that the heap holds, as the spec runs it index by index,
+\\* backward where the indices it copies to overlap the end of those it copies from, where only the
+\\* indices that the object or its prototypes hold, and those that copy over them, change. The
+\\* indices are the numbers that its arguments give, and end is Undefined where it takes the length.
+ArrayLikeCopyWithin(heap, ref, target, start, end) ==
+  LET length == ToLength(Get(heap, ref, "length"))
+      to == ClampedIndex(target, length)
+      from == ClampedIndex(start, length)
+      final == IF end = Undefined THEN length ELSE ClampedIndex(end, length)
+      count == IF final - from < length - to THEN final - from ELSE length - to
+      indices == {ToIndex(key) : key \\in IndexKeys(heap, ref)}
+      froms == {index \\in indices \\cup {index - to + from : index \\in indices} :
+                  index >= from /\\ index < from + count}
+      state == ArrayMoves([heap |-> heap, isThrown |-> FALSE], ref, froms, to - from,
+                 ~(from < to /\\ to < from + count))
+  IN IF count <= 0
+     THEN [heap |-> heap, value |-> ref, isThrown |-> FALSE]
+     ELSE [heap |-> state.heap, value |-> ref, isThrown |-> state.isThrown]
 
 \\* Swaps the elements of an array-like object at each index below the middle of its length and the
 \\* index as far from its end, from the lowest, where a hole deletes the index it swaps with.

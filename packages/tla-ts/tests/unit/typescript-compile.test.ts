@@ -11767,6 +11767,56 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("flatMap");
   });
 
+  describe("copies within an array-like object through call, index by index", () => {
+    const getSource = (expected: string) => `
+      const show = (object: { [key: string]: unknown }) =>
+        Object.keys(object).map((key) => key + "=" + object[key]).join();
+      const holes: { [key: string]: unknown } = { length: 5, 0: "a", 2: "c", 3: "d" };
+      Array.prototype.copyWithin.call(holes, 3, 0, 2);
+      const fixed: { [key: string]: unknown } = { length: 4, 0: 1, 1: 2 };
+      Object.defineProperty(fixed, "3", { value: 9, writable: false, configurable: true });
+      let isThrown = false;
+      try {
+        Array.prototype.copyWithin.call(fixed, 2, 0);
+      } catch (error) {
+        isThrown = error instanceof TypeError;
+      }
+      if (show(holes) + ";" + show(fixed) + isThrown !== "${expected}") throw new Error("copyWithin");
+    `;
+
+    it("deletes where it copies a hole, and stops at a write that fails", async () => {
+      const result = await checkModel(getSource("0=a,2=c,3=a,length=5;0=1,1=2,2=1,length=4true"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkModel(getSource("0=a,2=c,3=a,4=c,length=5;0=1,1=2,length=4true"));
+      expect(result.failure?.message).toContain("copyWithin");
+    });
+
+    it("reads an element before a write that fails", async () => {
+      const result = await checkModel(`
+        const object: { [key: string]: unknown } = { length: 1 };
+        Object.defineProperty(object, "0", {
+          get: () => {
+            throw new RangeError("getter");
+          },
+        });
+        Array.prototype.copyWithin.call(object, 0, 0);
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't call getters");
+    });
+
+    it("reads the length where it copies nothing", async () => {
+      const result = await checkModel(`
+        const object: { [key: string | symbol]: unknown } = {};
+        object.length = Symbol("length");
+        Array.prototype.copyWithin.call(object, 0, 0);
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't convert Symbol to a length");
+    });
+  });
+
   it("takes or drops up to Infinity or Number.MAX_SAFE_INTEGER", async () => {
     const result = await checkModel(`
       function* g(): Generator<number> {
