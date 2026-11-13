@@ -6,15 +6,28 @@ import {
   type FunctionNode,
   getElement,
   getSymbol,
+  findNodes,
   getUndefined,
   share,
+  skipCasts,
 } from "./context";
+import { getWritten } from "./actions";
 import { TlaTypeScriptError } from "../errors";
 import { isIteratedPattern, isSteppedPattern, isTaken, isUntypedPattern } from "./iterators";
 import type { Expression, OperatorDefinition } from "../ast";
 import { translateArrayIteration, translatePatternIteration } from "./collections";
 import { translateElements, translateExpression } from "./expressions";
-import { apply, define, identifier, ifExpression, number, set, string, tuple } from "./tla";
+import {
+  apply,
+  boolean,
+  define,
+  identifier,
+  ifExpression,
+  number,
+  set,
+  string,
+  tuple,
+} from "./tla";
 import { getHeap } from "./heap";
 import { translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
@@ -198,6 +211,31 @@ export const initialize = (
       };
 };
 
+// A nested pattern's default that calls a function where it's written, which assigns a variable
+// outside it, which only a statement can do. The pattern checks that its value isn't null or
+// undefined, which evaluates the default where it runs.
+const isAssigningCall = (initializer: ts.Expression, context: Context) => {
+  const call = skipCasts(initializer);
+  const callee = ts.isCallExpression(call) ? skipCasts(call.expression) : undefined;
+  return (
+    ts.isBindingElement(initializer.parent) &&
+    !ts.isIdentifier(initializer.parent.name) &&
+    callee !== undefined &&
+    (ts.isFunctionExpression(callee) || ts.isArrowFunction(callee)) &&
+    findNodes(callee.body, (inner): inner is ts.Expression => {
+      const written = ts.isCallExpression(inner) ? undefined : getWritten(inner);
+      const target = written === undefined ? undefined : skipCasts(written);
+      const declaration =
+        target !== undefined && ts.isIdentifier(target)
+          ? getSymbol(target, context.checker)?.valueDeclaration
+          : undefined;
+      return (
+        declaration !== undefined && (declaration.pos < callee.pos || declaration.end > callee.end)
+      );
+    }).length > 0
+  );
+};
+
 export const getDefaulted = (
   part: Expression,
   initializer: ts.Expression | undefined,
@@ -209,7 +247,12 @@ export const getDefaulted = (
     : share(part, "element", context, (shared) =>
         ifExpression(
           apply("=", [shared, getUndefined(context)]),
-          translateExpression(initializer, scope, context),
+          !scope.results.has(skipCasts(initializer)) && isAssigningCall(initializer, context)
+            ? apply("Assert", [
+                boolean(false),
+                string("tla-ts can't run a default that assigns where a nested pattern takes it"),
+              ])
+            : translateExpression(initializer, scope, context),
           shared,
         ),
       );

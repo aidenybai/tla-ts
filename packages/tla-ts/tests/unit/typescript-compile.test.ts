@@ -715,6 +715,27 @@ describe("top-level statements", () => {
     expect((await checkModel(getSource(24))).failure?.message).toContain("caught");
   });
 
+  it("skip a nested pattern's default that assigns where the value has the element", async () => {
+    const getSource = (expected: number) => `
+      let count = 0;
+      const values = [2, 1];
+      const take = ([[...rest] = (() => { count += 1; return [9]; })()]: number[][]) => rest;
+      const taken = take([values]);
+      if (taken[1] !== 1 || count !== ${expected}) throw new Error("ran");
+    `;
+    expect((await checkModel(getSource(0))).failure).toBeUndefined();
+    expect((await checkModel(getSource(1))).failure?.message).toContain("ran");
+  });
+
+  it("stop the check at a nested pattern's default that assigns", async () => {
+    const result = await checkModel(`
+      let count = 0;
+      const rows: number[][][] = [[]];
+      for (const [[...rest] = (() => { count += 1; return [9]; })()] of rows) {}
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't run a default that assigns");
+  });
+
   it("stop the check at a setter it can't call, before what follows", async () => {
     const result = await checkModel(`
       let count = 0;
