@@ -1425,9 +1425,6 @@ const foldCase = (code: number) =>
 
 const CODE_UNITS = Array.from({ length: 0x10000 }, (_, code) => code);
 
-// The characters outside ASCII that a class lists, where it holds most of them or few.
-const LISTED_LIMIT = 256;
-
 const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;
 
 const isLowSurrogate = (code: number) => code >= 0xdc00 && code <= 0xdfff;
@@ -1441,11 +1438,9 @@ export const getCodePoint = (code: number) =>
       ? apply("SubSeq", [string(String.fromCharCode(0xd800, code)), number(2), number(2)])
       : string(String.fromCodePoint(code));
 
-// A class as the characters in ASCII that it matches once Canonicalize maps them, with those
-// outside ASCII listed where it matches few of them or all but a few, or else unknown. It lists too
-// whether it matches each character outside ASCII that the script's strings may hold, which with
-// the u flag are code points, unless it folds case by Unicode, which tla-ts matches only on text in
-// ASCII.
+// A class as the characters that it matches once Canonicalize maps them, among those in ASCII and
+// those that the script's strings may hold, which with the u flag are code points. With the u and i
+// flags it folds case by Unicode, which tla-ts matches only on text in ASCII.
 const translateCharacters = (
   matcher: { set: CharacterSet; isInverted: boolean },
   flags: string,
@@ -1464,22 +1459,6 @@ const translateCharacters = (
   const isMatched = (code: number) =>
     (folded === undefined || fold === undefined ? matcher.set(code) : folded.has(fold(code))) !==
     matcher.isInverted;
-  const outside = isUnicode ? [] : CODE_UNITS.slice(128);
-  const held = outside.filter(isMatched);
-  const missed = outside.filter((code) => !isMatched(code));
-  const isListable = (codes: number[]) =>
-    codes.length <= LISTED_LIMIT &&
-    !codes.some((code) => isHighSurrogate(code) || isLowSurrogate(code));
-  const others = isUnicode
-    ? "unknown"
-    : missed.length === 0
-      ? "all"
-      : isListable(held)
-        ? "none"
-        : isListable(missed)
-          ? "all"
-          : "unknown";
-  const toStrings = (codes: number[]) => set(codes.map(getCodePoint));
   const units = [...characters];
   const known =
     isUnicode && fold !== undefined
@@ -1500,20 +1479,8 @@ const translateCharacters = (
     { name: "kind", value: string("set") },
     {
       name: "characters",
-      value: toStrings([
-        ...CODE_UNITS.slice(0, 128).filter(isMatched),
-        ...(others === "none" ? held : []),
-        ...known.filter(isMatched),
-      ]),
+      value: set([...CODE_UNITS.slice(0, 128), ...known].filter(isMatched).map(getCodePoint)),
     },
-    {
-      name: "excluded",
-      value: toStrings([
-        ...(others === "all" ? missed : []),
-        ...known.filter((code) => !isMatched(code)),
-      ]),
-    },
-    { name: "others", value: string(others) },
   ]);
 };
 

@@ -16474,11 +16474,11 @@ describe("regular expressions", () => {
     expect(result.failure?.message).toContain("tla-ts can't keep the lastIndex");
   });
 
-  it("stop where a class can't tell a character outside ASCII", async () => {
-    const result = await checkModel(`
-      let found = /[^\\u00e0-\\u05ff]/.test("\\ud800");
-    `);
-    expect(result.failure?.message).toContain("tla-ts can't tell whether a class matches");
+  it("tell whether a class matches a lone surrogate that a script holds", async () => {
+    const getSource = (operator: string) =>
+      `if (${operator}/[^\\u00e0-\\u05ff]/.test("\\ud800")) throw new Error("class");`;
+    expect((await checkModel(getSource("!"))).failure).toBeUndefined();
+    await expect(checkModel(getSource(""))).rejects.toThrow("class");
   });
 
   it("tell whether a class matches a character outside ASCII that a script holds", async () => {
