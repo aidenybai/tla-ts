@@ -46,6 +46,12 @@ export interface Scope {
   // The statement that runs where the object it first uses has the private name it uses, which
   // translating it again doesn't check again.
   brandChecked?: ts.Statement;
+  // The environment of the call of each async function whose body runs, which tells the closures
+  // that read its locals which call made them.
+  activations?: ReadonlyMap<ts.Node, Expression>;
+  // Whether a built-in's async body, such as an AsyncDisposableStack's disposeAsync, runs, which
+  // can't hand the locals of the function that calls it back to that function once it awaits.
+  isBuiltInBody?: boolean;
 }
 
 export interface Destructured {

@@ -253,8 +253,9 @@ const runStackMethod = (
       );
     if (method === "dispose" || method === "disposeAsync") {
       if (stack.isDisposed) return finish(current);
+      // The methods that read the locals of the function around them run where the stack disposes.
       return disposeAll(
-        stack.resources,
+        stack.resources.map((resource) => ({ ...resource, site: node })),
         { completion: undefined, needsAwait: false, hasAwaited: false },
         dispose(),
         context,

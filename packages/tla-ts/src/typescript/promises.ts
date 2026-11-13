@@ -28,6 +28,7 @@ import {
   findNodes,
   getLocalCaptures,
   getFunctionOfKind,
+  getLiveMaker,
   getParameters,
   getSymbol,
   getUndefined,
@@ -2513,15 +2514,56 @@ const runAsyncBody = (
         },
         inlining: callee === undefined ? frame.inlining : new Set([...frame.inlining, callee]),
       };
+      // A call of a function that makes methods which read its live locals has an environment of its
+      // own, which those methods hold, so that only that call runs them.
+      const environment =
+        callee !== undefined &&
+        findNodes(callee, (node): node is ts.Node => getLiveMaker(node, context) === callee)
+          .length > 0
+          ? context.names.getFresh("environment")
+          : undefined;
+      const scope =
+        callee === undefined
+          ? { ...bound.scope, isBuiltInBody: true }
+          : environment === undefined
+            ? { ...bound.scope, isBuiltInBody: false }
+            : {
+                ...bound.scope,
+                bindings:
+                  context.heap === undefined
+                    ? bound.scope.bindings
+                    : new Map([...bound.scope.bindings, [context.heap, identifier(environment)]]),
+                activations: new Map([
+                  ...(bound.scope.activations ?? []),
+                  [callee, useJavaScript("Allocated", [identifier(environment)], context)],
+                ]),
+                isBuiltInBody: false,
+              };
       const start = setCaller(
-        { ...inner, scope: bound.scope },
+        { ...inner, scope },
         { path: made, resume: (after) => continueWith(after, ref) },
       );
-      return letIn(
-        bound.definitions,
+      const run =
         typeof body === "function"
           ? body(start, bodyFrame)
-          : translateStatements(getBody(body), start, context, bodyFrame),
+          : translateStatements(getBody(body), start, context, bodyFrame);
+      return letIn(
+        bound.definitions,
+        environment === undefined
+          ? run
+          : bindOnce(
+              inner,
+              environment,
+              useJavaScript(
+                "Allocate",
+                [
+                  getHeap(bound.scope, node, context),
+                  useJavaScript("EnvironmentObject", [tuple([])], context),
+                ],
+                context,
+              ),
+              run,
+            ),
       );
     });
   });
