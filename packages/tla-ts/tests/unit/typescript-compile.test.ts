@@ -2705,6 +2705,21 @@ describe("values", () => {
     expect((await checkModel(getSource("wrap:a!"))).failure?.message).toContain("wrap:a!b!");
   });
 
+  it("makes the objects of a call's arguments where the call runs first inside an expression", async () => {
+    const getSource = (expected: string) => `
+      interface Box {
+        value: number;
+      }
+      const wrap = (box: Box) => ({ inner: box });
+      const boxes = [wrap({ value: 1 }), wrap({ value: 2 })];
+      boxes[0].inner.value = 3;
+      const result = [boxes[0].inner.value, boxes[1].inner.value].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("3,2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("3,3"))).failure?.message).toContain("3,2");
+  });
+
   it("makes the object of a conditional's branch beside a branch that calls a function", async () => {
     const getSource = (expected: string) => `
       interface Unit {

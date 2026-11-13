@@ -11752,20 +11752,7 @@ const getLeadingCall = (
 ) => {
   const before: ts.Node[] = [];
   const call = findLeadingCall(node, before, path, context).call;
-  // The statement makes the objects that the call's arguments make, but for regexps, which the call
-  // makes as it runs first, and the object literals of a change such as a definition's descriptor,
-  // which it makes as it runs first too.
-  if (
-    call === undefined ||
-    !isHoisted(call) ||
-    getAllocated(call, context).some(
-      (made) =>
-        !ts.isRegularExpressionLiteral(made) &&
-        !(isObjectChange(call, context) && ts.isObjectLiteralExpression(made)),
-    )
-  ) {
-    return undefined;
-  }
+  if (call === undefined || !isHoisted(call)) return undefined;
   // A name or a property that the statement reads before the call keeps the value that it had then.
   const reads = getEarlyReads(
     [call],
