@@ -299,6 +299,8 @@ const createRecord = (names: string[], fields: Type[]): RecType => ({
   target: undefined,
 });
 
+const isSequenceDomain = (type: FnType) => type.domain.every((key, index) => key === index + 1);
+
 const createMap = (): MapType => ({
   kind: "Map",
   keys: { kind: "Set", element: createVar() },
@@ -340,9 +342,11 @@ const unify = (left: Type, right: Type): void => {
   if (leftType.kind === "Empty" && rightType.kind !== "Empty") return unify(rightType, leftType);
   if (rightType.kind === "Empty") {
     if (leftType.kind === "Fn") {
-      const sequence: SeqType = { kind: "Seq", element: createVar() };
-      rightType.target = sequence;
-      return unify(sequence, leftType);
+      const target: Type = isSequenceDomain(leftType)
+        ? { kind: "Seq", element: createVar() }
+        : createMap();
+      rightType.target = target;
+      return unify(target, leftType);
     }
     // TLC's empty function is also the record without fields.
     if (leftType.kind === "Rec") {
@@ -412,7 +416,13 @@ const unify = (left: Type, right: Type): void => {
   }
   if (leftType.kind === "Fn" && rightType.kind === "Seq") return unify(rightType, leftType);
   if (leftType.kind === "Seq" && rightType.kind === "Fn") {
-    if (!rightType.domain.every((key, index) => key === index + 1)) return unsupported();
+    // A function on another domain is a sparse function, as a sequence that meets it is.
+    if (!isSequenceDomain(rightType)) {
+      if (!typing.isSparse) throw SPARSE;
+      const map = createMap();
+      unify(map, rightType);
+      return unify(leftType, map);
+    }
     rightType.target = leftType;
     return unify(leftType.element, rightType.range);
   }
