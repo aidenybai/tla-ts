@@ -823,6 +823,12 @@ export class Simplifier {
     this.elimTodo.push(boolVar);
   }
 
+  resetTodos() {
+    this.resetElimTodo();
+    this.subTodo.reset();
+    this.subBinTodo = [];
+  }
+
   private resetElimTodo() {
     for (const boolVar of this.elimTodo) this.isInElimTodo[boolVar] = 0;
     this.elimTodo.length = 0;

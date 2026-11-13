@@ -59,6 +59,8 @@ export interface SatExtension {
   resolveConflict(): number;
   push(): void;
   pop(numScopes: number): void;
+  userPush?(): void;
+  userPop?(numScopes: number): void;
   popReinit(): void;
   simplify(): void;
   gc(): void;
@@ -217,13 +219,14 @@ export class Solver {
   private incremental = false;
   private assumptions: number[] = [];
   private assumptionSet = new Set<number>();
+  readonly userScopeLiterals: number[] = [];
   private diffLevels: boolean[] = [];
   private unmark: number[] = [];
   private lvlSet = 0;
   private lemmaMinStack: number[] = [];
 
   constructor(
-    params: SatParams,
+    readonly params: SatParams,
     readonly limit: ResourceLimit,
     isIncremental = false,
   ) {
@@ -301,7 +304,7 @@ export class Solver {
   }
 
   trackingAssumptions() {
-    return this.assumptions.length > 0;
+    return this.assumptions.length > 0 || this.userScopeLiterals.length > 0;
   }
 
   setExternal(boolVar: number) {
@@ -381,7 +384,10 @@ export class Solver {
 
   mkClause(lits: number[], isLearned = false) {
     this.isModelCurrent = false;
-    return this.mkClauseCore(lits, isLearned);
+    return this.mkClauseCore(
+      this.userScopeLiterals.length === 0 ? lits : [...lits, ...this.userScopeLiterals],
+      isLearned,
+    );
   }
 
   delClause(clause: number) {
@@ -927,11 +933,13 @@ export class Solver {
   }
 
   initAssumptions(lits: readonly number[]) {
-    if (lits.length === 0) return;
+    if (lits.length === 0 && this.userScopeLiterals.length === 0) return;
     this.resetAssumptions();
     this.push();
     this.propagate(false);
     if (this.isInconsistent) return;
+    for (let index = 0; !this.isInconsistent && index < this.userScopeLiterals.length; index++)
+      this.assignScoped(this.userScopeLiterals[index] ^ 1);
     for (let index = 0; !this.isInconsistent && index < lits.length; index++) {
       const lit = lits[index];
       this.setExternal(lit >> 1);
@@ -956,6 +964,10 @@ export class Solver {
     if (!this.trackingAssumptions() || !this.atBaseLvl() || this.isInconsistent) return;
     if (!this.propagate(false)) return;
     this.push();
+    for (const lit of this.userScopeLiterals) {
+      if (this.isInconsistent) break;
+      this.assignScoped(lit ^ 1);
+    }
     for (const lit of this.assumptions) {
       if (this.isInconsistent) break;
       this.assignScoped(lit);
@@ -1291,7 +1303,10 @@ export class Solver {
     this.conflicts++;
     const conflict = this.getMaxLvl(this.notL, this.conflictKind, this.conflictVal);
     this.conflictLevel = conflict.level;
-    if (this.conflictLevel <= 1 && this.assumptions.length > 0) {
+    if (
+      this.conflictLevel <= 1 &&
+      (this.assumptions.length > 0 || this.userScopeLiterals.length > 0)
+    ) {
       this.resolveConflictForUnsatCore();
       return L_FALSE;
     }
@@ -1805,6 +1820,101 @@ export class Solver {
     this.resetAssumptions();
     this.pop(this.scopeLvl);
     this.isModelCurrent = false;
+  }
+
+  // user_push: every clause added in the scope is guarded by the scope's literal. Without free
+  // variables, the scope variable is the last one.
+  userPush() {
+    this.popToBaseLevel();
+    this.userScopeLiterals.push(2 * this.mkVar(true, false));
+    this.ext?.userPush?.();
+  }
+
+  userPop(numScopes: number) {
+    if (this.userScopeLiterals.length === 0) return;
+    const oldSize = this.userScopeLiterals.length - numScopes;
+    const maxVar = this.userScopeLiterals[oldSize] >> 1;
+    this.userScopeLiterals.length = oldSize;
+    this.popToBaseLevel();
+    this.ext?.userPop?.(numScopes);
+    this.gcVars(maxVar);
+    this.qhead = 0;
+    this.propagate(false);
+  }
+
+  // gc_vars: drop the variables from maxVar on, with their watches and clauses.
+  private gcVars(maxVar: number) {
+    this.initVisited();
+    const others: number[] = [];
+    for (let lit = 2 * maxVar; lit < 2 * this.varCount; lit++) {
+      const wlist = this.watches[lit];
+      for (let index = 0; index < wlist.size; index++) {
+        const other = wlist.getLiteral(index);
+        if (wlist.isBinary(index) && other >> 1 < maxVar && !this.isVisited(other)) {
+          others.push(other);
+          this.markVisited(other);
+        }
+      }
+      wlist.size = 0;
+    }
+    for (const lit of others) {
+      const wlist = this.watches[lit ^ 1];
+      let next = 0;
+      for (let index = 0; index < wlist.size; index++)
+        if (!wlist.isBinary(index) || wlist.getLiteral(index) >> 1 < maxVar) {
+          wlist.data[2 * next] = wlist.data[2 * index];
+          wlist.data[2 * next + 1] = wlist.data[2 * index + 1];
+          next++;
+        }
+      wlist.size = next;
+    }
+    const gcClauses = (clauses: number[]) => {
+      let next = 0;
+      for (const clause of clauses) {
+        if (this.arena.getLits(clause).some((lit) => lit >> 1 >= maxVar)) {
+          this.detachClause(clause);
+          this.delClause(clause);
+        } else clauses[next++] = clause;
+      }
+      clauses.length = next;
+    };
+    gcClauses(this.learned);
+    gcClauses(this.clauses);
+    let next = 0;
+    for (const lit of this.trail) if (lit >> 1 < maxVar) this.trail[next++] = lit;
+    this.trail.length = next;
+    this.shrinkVars(maxVar);
+  }
+
+  private shrinkVars(boolVar: number) {
+    for (let index = this.varCount; index-- > boolVar;) {
+      this.caseSplitQueue.delVar(index);
+      this.probing.resetCache(2 * index + 1);
+      this.probing.resetCache(2 * index);
+    }
+    this.varCount = boolVar;
+    this.watches.length = 2 * boolVar;
+    this.assignment.fill(L_UNDEF, 2 * boolVar);
+    for (const values of [
+      this.justVal,
+      this.justKind,
+      this.decision,
+      this.eliminated,
+      this.external,
+      this.varScope,
+      this.touched,
+      this.activity,
+      this.mark,
+      this.phase,
+      this.bestPhase,
+      this.prevPhase,
+      this.phaseBirthdate,
+      this.bestPhaseBirthdate,
+      this.assignedSinceGc,
+    ])
+      values.length = boolVar;
+    this.litMark.length = 2 * boolVar;
+    this.simplifier.resetTodos();
   }
 
   incActivity(boolVar: number) {

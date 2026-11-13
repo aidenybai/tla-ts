@@ -38,7 +38,7 @@ export class Probing {
     return this.isCaching ? this.cachedBins[lit] : undefined;
   }
 
-  private resetCache(lit: number) {
+  resetCache(lit: number) {
     if (lit < this.cachedBins.length) this.cachedBins[lit] = undefined;
   }
 
