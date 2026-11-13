@@ -969,32 +969,60 @@ export const isNullBased = (node: ts.ClassLikeDeclaration) =>
 
 // Whether a script may set a class's prototype, which a derived class's constructor calls. A call of
 // Object.setPrototypeOf or Reflect.setPrototypeOf, or a write of __proto__, sets it where the
-// target's type, or a type that a cast or a constant's initializer gives it, may hold the class. Any
-// other use of those names may set any class's.
+// target's type, or a type that a cast, a variable's initializer or a write of the variable gives
+// it, may hold the class. Any other use of those names may set any class's.
 const isPrototypeSettable = (node: ts.ClassLikeDeclaration, context: Context) => {
   const symbol = node.name === undefined ? undefined : getSymbol(node.name, context.checker);
   if (symbol === undefined) return false;
   const constructorType = context.checker.getTypeOfSymbol(symbol);
+  const traced = new Set<ts.Symbol>();
   const mayHold = (target: ts.Expression): boolean => {
     const held = skipCasts(target);
-    const declaration = ts.isIdentifier(held)
-      ? getSymbol(held, context.checker)?.valueDeclaration
-      : undefined;
-    const initializer =
-      declaration !== undefined &&
-      ts.isVariableDeclaration(declaration) &&
-      (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0
-        ? declaration.initializer
-        : undefined;
+    const isTyped = [target, held].some((expression) => {
+      const type = context.checker.getTypeAtLocation(expression);
+      return (
+        (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Instantiable)) !==
+          0 || context.checker.isTypeAssignableTo(constructorType, type)
+      );
+    });
+    const heldSymbol = ts.isIdentifier(held) ? getSymbol(held, context.checker) : undefined;
+    if (isTyped || heldSymbol === undefined || traced.has(heldSymbol)) return isTyped;
+    traced.add(heldSymbol);
+    const declarations = heldSymbol.declarations ?? [];
+    // A name that a pattern or a for-of binds may hold any part of its value.
+    if (
+      declarations.some(
+        (declaration) =>
+          ts.isBindingElement(declaration) ||
+          (ts.isVariableDeclaration(declaration) && ts.isForOfStatement(declaration.parent.parent)),
+      )
+    ) {
+      return true;
+    }
+    const writes = declarations.some(ts.isVariableDeclaration)
+      ? findNodes(held.getSourceFile(), (inner): inner is ts.Node => {
+          const written = getAssignedTarget(inner);
+          return (
+            written !== undefined &&
+            (isWrittenBy(written, heldSymbol, context) ||
+              (ts.isIdentifier(skipCasts(written)) &&
+                getSymbol(skipCasts(written), context.checker) === heldSymbol))
+          );
+        })
+      : [];
     return (
-      [target, held].some((expression) => {
-        const type = context.checker.getTypeAtLocation(expression);
-        return (
-          (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Instantiable)) !==
-            0 || context.checker.isTypeAssignableTo(constructorType, type)
-        );
-      }) ||
-      (initializer !== undefined && mayHold(initializer))
+      declarations.some(
+        (declaration) =>
+          ts.isVariableDeclaration(declaration) &&
+          declaration.initializer !== undefined &&
+          mayHold(declaration.initializer),
+      ) ||
+      writes.some(
+        (write) =>
+          !ts.isBinaryExpression(write) ||
+          !ts.isIdentifier(skipCasts(write.left)) ||
+          mayHold(write.right),
+      )
     );
   };
   const isSetting = (name: ts.Identifier | ts.StringLiteralLike) => {

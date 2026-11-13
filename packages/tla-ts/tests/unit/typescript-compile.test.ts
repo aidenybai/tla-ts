@@ -2650,6 +2650,54 @@ describe("values", () => {
     );
   });
 
+  it("throws a TypeError where a script sets the prototype of a class through a variable that a write gives it", async () => {
+    const getSource = (expected: string) => `
+      class Base {
+        seen = 1;
+      }
+      class Declared extends Base {
+        value = 2;
+      }
+      class Written extends Base {
+        value = 3;
+      }
+      class Looped extends Base {
+        value = 4;
+      }
+      let declared = Declared as unknown as { a: number };
+      Object.setPrototypeOf(declared, Math.sin);
+      var written: { a: number } = { a: 1 };
+      written = Written as unknown as { a: number };
+      Object.setPrototypeOf(written, Math.sin);
+      for (const each of [Looped as unknown as { a: number }]) Object.setPrototypeOf(each, Math.sin);
+      const results: string[] = [];
+      try {
+        const made = new Declared();
+        results.push(\`\${made.value}\`);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      try {
+        const made = new Written();
+        results.push(\`\${made.value}\`);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      try {
+        const made = new Looped();
+        results.push(\`\${made.value}\`);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      const result = results.join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("TypeError,TypeError,TypeError"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("2,3,4"))).failure?.message).toContain(
+      "TypeError,TypeError,TypeError",
+    );
+  });
+
   it("stops where super calls another constructor that a script set as the prototype", async () => {
     const result = await checkModel(`
       class Base {
