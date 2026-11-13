@@ -2036,6 +2036,20 @@ describe("values", () => {
     await expect(checkModel(getSource("false,false"))).rejects.toThrow("true,false");
   });
 
+  it("makes a set of what flatMap gives of a map's keys", async () => {
+    const getSource = (expected: string) => `
+      const LITERALS = new Map([
+        ["==", 1],
+        ["<=", 2],
+      ]);
+      const PREFIXES = new Set([...LITERALS.keys()].flatMap((image) => [image.slice(0, 1), image]));
+      const result = [PREFIXES.size, PREFIXES.has("<"), PREFIXES.has("=<")].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("4,true,false"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("3,true,false"))).rejects.toThrow("4,true,false");
+  });
+
   it("changes a field's array through a local that names it", async () => {
     const getSource = (expected: string) => `
       const shrink = (values: number[], size: number) => {
