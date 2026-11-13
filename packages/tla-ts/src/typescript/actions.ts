@@ -11775,13 +11775,33 @@ export const translateStatements = (
     }
     return frame.continueTo(path);
   }
+  // A throw makes the objects of what it throws first, but an error outside the heap, which
+  // makes none. A new whose constructor runs code runs it as a statement, and throws what it makes.
   if (ts.isThrowStatement(statement)) {
-    const uncaught = translateThrow(statement, path.scope, context);
-    if (frame.throwTo === undefined) return leaf(uncaught);
-    return frame.throwTo(path, {
-      value: translateThrown(statement.expression, path.scope, context),
-      uncaught,
-    });
+    const thrown = skipCasts(statement.expression);
+    const run = getConstructorRun(thrown, context);
+    return allocateAll(
+      getAllocated(thrown, context).filter(
+        (allocation) =>
+          !path.scope.allocated.has(allocation) &&
+          !(allocation === thrown && isNewError(thrown, context)),
+      ),
+      path,
+      context,
+      (allocated) => {
+        const throwValue = (after: Path, value: Expression) => {
+          const uncaught = translateThrow(statement, after.scope, context);
+          return frame.throwTo === undefined
+            ? leaf(uncaught)
+            : frame.throwTo(after, { value, uncaught });
+        };
+        return run === undefined
+          ? throwValue(allocated, translateThrown(statement.expression, allocated.scope, context))
+          : translateConstruction(thrown, run, allocated, context, frame, (after, value) =>
+              throwValue(after, value ?? getUndefined(context)),
+            );
+      },
+    );
   }
   if (ts.isTryStatement(statement)) {
     // A TypeError that the try throws without a new, such as of a pattern that destructures
