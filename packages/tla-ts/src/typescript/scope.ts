@@ -12,7 +12,7 @@ import { TlaTypeScriptError } from "../errors";
 import { isIteratedPattern, isSteppedPattern, isTaken, isUntypedPattern } from "./iterators";
 import type { Expression, OperatorDefinition } from "../ast";
 import { translateArrayIteration, translatePatternIteration } from "./collections";
-import { translateExpression } from "./expressions";
+import { translateElements, translateExpression } from "./expressions";
 import { apply, define, identifier, ifExpression, number, set, string, tuple } from "./tla";
 import { getHeap } from "./heap";
 import { translateBuiltInValue } from "./intrinsics";
@@ -450,19 +450,50 @@ export const bindPattern = (
 };
 
 // Binds parameters to argument values with LET definitions, as when inlining a call.
+// The values of the arguments that a call passes, at the positions that pass values. Where the call
+// spreads arguments from a rest parameter's position on, the last value is the sequence that the
+// rest parameter takes.
+export const translateArgumentValues = (
+  parameters: readonly ts.ParameterDeclaration[],
+  argumentNodes: readonly ts.Expression[],
+  isPassed: (position: number) => boolean,
+  scope: Scope,
+  context: Context,
+) => {
+  const rest = parameters.findIndex((parameter) => parameter.dotDotDotToken !== undefined);
+  const spread = argumentNodes.findIndex(ts.isSpreadElement);
+  if (spread !== -1 && (rest === -1 || spread < rest)) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't spread arguments into the parameters before a rest parameter",
+      argumentNodes[spread],
+    );
+  }
+  const passed = (spread === -1 ? argumentNodes : argumentNodes.slice(0, rest))
+    .filter((_, position) => isPassed(position))
+    .map((argument) => translateExpression(argument, scope, context));
+  return spread === -1
+    ? { values: passed, isSpread: false }
+    : {
+        values: [...passed, translateElements(argumentNodes.slice(rest), scope, context)],
+        isSpread: true,
+      };
+};
+
 export const bindValues = (
   parameters: readonly ts.ParameterDeclaration[],
   values: Expression[],
   scope: Scope,
   context: Context,
+  restValue?: Expression,
 ) =>
   parameters.reduce<Bound>(
     (current, parameter, position) => {
-      // A rest parameter takes the values that the parameters before it don't.
+      // A rest parameter takes the values that the parameters before it don't, or the sequence
+      // that a call spreads into it.
       const value =
         parameter.dotDotDotToken === undefined
           ? values.at(position)
-          : tuple(values.slice(position));
+          : (restValue ?? tuple(values.slice(position)));
       const initializer = parameter.initializer;
       const getDefault = () =>
         initializer === undefined

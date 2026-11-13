@@ -2675,6 +2675,36 @@ describe("values", () => {
     ).toThrow("Sets have no order");
   });
 
+  it("passes a rest parameter the arguments and the arrays that a call spreads into it", async () => {
+    const getSource = (expected: string) => `
+      const join = (first: string, ...rest: string[]) => [first, rest.length, rest.join("+")].join(":");
+      const more = ["b", "c"];
+      const result = join("a", "x", ...more, "d");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("a:4:x+b+c+d"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("a:3:x+b+c"))).rejects.toThrow("a:4:x+b+c+d");
+    expect(() =>
+      compile(`
+        const join = (first: string, ...rest: string[]) => first + rest.length;
+        const more = ["b", "c"];
+        const result = join(...(more as [string, ...string[]]));
+      `),
+    ).toThrow("tla-ts can't spread arguments into the parameters before a rest parameter");
+  });
+
+  it("forwards a rest parameter that a function spreads into another's call", async () => {
+    const getSource = (expected: string) => `
+      const sequence = (...parts: string[]) => ({ type: "sequence", units: parts.map((part) => part + "!") });
+      const forward = (...parts: string[]) => ({ type: "wrap", body: sequence(...parts) });
+      const unit = forward("a", "b");
+      const result = [unit.type, unit.body.units.join("")].join(":");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("wrap:a!b!"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("wrap:a!"))).failure?.message).toContain("wrap:a!b!");
+  });
+
   it("makes a map from an array of entries, where a later entry of a key wins", async () => {
     const getSource = (expected: string) => `
       const pairs: [string, number][] = [

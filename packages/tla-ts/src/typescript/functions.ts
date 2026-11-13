@@ -41,6 +41,7 @@ import {
   bindNames,
   bindPattern,
   bindValues,
+  translateArgumentValues,
   createStateScope,
   declareParameters,
   getArrowReceivers,
@@ -304,12 +305,14 @@ const inlineCall = (
     !callbacks.some(
       (entry) => entry[0] === getSymbol(callee.parameters[position].name, context.checker),
     );
-  const values = shareArguments(
-    argumentNodes
-      .filter((_, position) => position >= callee.parameters.length || isValue(position))
-      .map((argument) => translateExpression(argument, scope, context)),
+  const passed = translateArgumentValues(
+    callee.parameters,
+    argumentNodes,
+    (position) => position >= callee.parameters.length || isValue(position),
+    scope,
     context,
   );
+  const values = shareArguments(passed.values, context);
   const reads = getArgumentsReads(callee, context);
   // A call inside an expression holds its arguments object on a heap that only the call reads, so
   // the body may read only its length and elements.
@@ -331,9 +334,10 @@ const inlineCall = (
   );
   const bound = bindValues(
     callee.parameters.filter((_, position) => isValue(position)),
-    values.shared,
+    passed.isSpread ? values.shared.slice(0, -1) : values.shared,
     made.scope,
     context,
+    passed.isSpread ? values.shared.at(-1) : undefined,
   );
   context.inProgress.add(callee);
   const value = translateBody(

@@ -266,6 +266,7 @@ import {
   bindPatternInline,
   type Bound,
   bindValues,
+  translateArgumentValues,
   createStateScope,
   getArrowReceivers,
   getDefaulted,
@@ -3290,8 +3291,17 @@ export const bindCall = (
       : !callbacks.some((entry) => entry[0] === getSymbol(parameter.name, context.checker));
   };
   const passed = argumentNodes.filter((_, position) => isValue(position));
-  const translated = passed.map((argument) => translateExpression(argument, path.scope, context));
+  const argumentValues = translateArgumentValues(
+    parameters,
+    argumentNodes,
+    isValue,
+    path.scope,
+    context,
+  );
+  const translated = argumentValues.values;
   const values = shareArguments(translated, context);
+  const plainValues = argumentValues.isSpread ? values.shared.slice(0, -1) : values.shared;
+  const restValue = argumentValues.isSpread ? values.shared.at(-1) : undefined;
   const evaluateArguments = (rest: Formula) => values.evaluate(rest, leaf(boolean(false)));
   if (
     isArgumentsNamed(callee, context) &&
@@ -3335,7 +3345,7 @@ export const bindCall = (
     const symbol = getSymbol(assigning.binding.name, context.checker);
     const skipped = bindValues(
       valueParameters,
-      values.shared,
+      plainValues,
       {
         ...parameterScope,
         results: new Map([
@@ -3347,6 +3357,7 @@ export const bindCall = (
         ]),
       },
       context,
+      restValue,
     );
     const part = symbol && skipped.scope.bindings.get(symbol);
     if (part === undefined) throw new TlaTypeScriptError("Unsupported default", assignment);
@@ -3414,7 +3425,7 @@ export const bindCall = (
       ),
     );
   }
-  const bound = bindValues(valueParameters, values.shared, parameterScope, context);
+  const bound = bindValues(valueParameters, plainValues, parameterScope, context, restValue);
   if (!passed.some(ts.isSpreadElement)) {
     valueParameters.forEach((parameter, position) => {
       const argument = passed.at(position);
