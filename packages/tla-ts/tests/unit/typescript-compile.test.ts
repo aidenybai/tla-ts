@@ -8480,6 +8480,34 @@ describe("errors", () => {
     expect((await checkModel(getSource("2"))).failure?.message).toContain('"show"');
   });
 
+  it("runs the call whose result's property has the method that a statement calls first", async () => {
+    const getSource = (expected: string) => `
+      const boxes = new Map<number, { items: number[] }>();
+      const keys = new Map<number, string>();
+      const toBox = (size: number) => {
+        const cached = boxes.get(size);
+        if (cached) return cached;
+        const box = { items: Array.from({ length: size }, (_, index) => index * 2) };
+        boxes.set(size, box);
+        return box;
+      };
+      const getKey = (value: number) => {
+        const cached = keys.get(value);
+        if (cached !== undefined) return cached;
+        const key = \`#\${value}\`;
+        keys.set(value, key);
+        return key;
+      };
+      const describe = (size: number) => \`{\${toBox(size).items.map(getKey).join(",")}}\`;
+      const result = [describe(3), describe(2), boxes.size, keys.size].join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("{#0,#2,#4};{#0,#2};2;3"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("{#0,#2,#4};{#0,#2};2;2"))).failure?.message).toContain(
+      "{#0,#2,#4};{#0,#2};2;3",
+    );
+  });
+
   it("runs a function that calls itself with defaults where a statement changed what it reads", async () => {
     const getSource = (expected: string) => `
       interface Box { size: number }

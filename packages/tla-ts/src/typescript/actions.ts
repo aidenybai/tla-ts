@@ -11897,7 +11897,8 @@ const findLeadingCall = (
     ) {
       return { call: node, isBlocked: false };
     }
-    // A method of a call's result, or the function that a call gives, runs the call first.
+    // A method of a call's result or of its property, or the function that a call gives, runs the
+    // call first.
     const receiver = ts.isPropertyAccessExpression(node.expression)
       ? getCast(node.expression.expression)
       : ts.isCallExpression(getCast(node.expression))
@@ -11906,7 +11907,11 @@ const findLeadingCall = (
     // An array literal's method runs its elements first.
     const isListed = receiver !== undefined && ts.isArrayLiteralExpression(receiver);
     const fromReceiver =
-      receiver !== undefined && (ts.isCallExpression(receiver) || isListed)
+      receiver !== undefined &&
+      (ts.isCallExpression(receiver) ||
+        ts.isPropertyAccessExpression(receiver) ||
+        ts.isElementAccessExpression(receiver) ||
+        isListed)
         ? findLeadingCall(receiver, before, path, context)
         : none;
     if (fromReceiver.call !== undefined || fromReceiver.isBlocked) return fromReceiver;
