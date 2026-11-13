@@ -2538,6 +2538,41 @@ describe("values", () => {
     );
   });
 
+  it.each([
+    ["without a heap", "", ""],
+    [
+      "with a heap",
+      "const box = { held: [1, 2] as unknown };",
+      ", isOverflow(box), isOverflow(box.held)",
+    ],
+  ])("tells an error of a class from a value of type unknown %s", async (_, setup, heapCalls) => {
+    const getSource = (expected: string) => `
+      ${setup}
+      const isOverflow = (error: unknown) =>
+        error instanceof RangeError && error.message === "Maximum call stack size exceeded";
+      const isError = (value: any) => value instanceof Error;
+      const result = [
+        isOverflow(new RangeError("Maximum call stack size exceeded")),
+        isOverflow(new RangeError("other")),
+        isOverflow(new TypeError("Maximum call stack size exceeded")),
+        isOverflow(1),
+        isOverflow("Maximum call stack size exceeded"),
+        isError(new TypeError("t")),
+        isError(undefined)${heapCalls},
+      ].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = `true,false,false,false,false,true,false${heapCalls === "" ? "" : ",false,false"}`;
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    const wrong = expected.replace("true,false,false", "true,false,true");
+    // Without a heap, the check throws where the script's first state fails.
+    const failure = await checkModel(getSource(wrong)).then(
+      (result) => result.failure?.message,
+      (error: Error) => error.message,
+    );
+    expect(failure).toContain(expected);
+  });
+
   it("holds in the heap a field's array that fill made", async () => {
     const getSource = (expected: string) => `
       class Table {
