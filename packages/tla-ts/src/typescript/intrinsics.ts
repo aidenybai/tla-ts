@@ -265,8 +265,7 @@ export const translateBuiltInInstanceOf = (
       0;
   const isObject = getKind(left, context) === "object";
   const isGenerator = !isPrimitive && !isObject && isGeneratorType(left, context);
-  const parent =
-    isPrimitive || isObject || isGenerator ? undefined : getPrototype(left, context);
+  const parent = isPrimitive || isObject || isGenerator ? undefined : getPrototype(left, context);
   // A value of type unknown or any may be anything, which only the run can tell.
   const isUnknown =
     !isPrimitive && !isObject && (type.flags & (ts.TypeFlags.Unknown | ts.TypeFlags.Any)) !== 0;
@@ -498,6 +497,7 @@ export const translateBuiltInValue = (
     | `${string}Array.prototype`
     | "DataView.prototype"
     | "Symbol.prototype"
+    | "Iterator"
     | "Iterator.prototype"
     | "%ArrayIteratorPrototype%"
     | "%GeneratorFunction%.prototype"

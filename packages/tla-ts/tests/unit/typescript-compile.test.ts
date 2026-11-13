@@ -7485,6 +7485,51 @@ describe("errors", () => {
     ).toThrow("tla-ts can't run more than 64 iterations of a generator's loop");
   });
 
+  it("gives a generator object back from Iterator.from", async () => {
+    await expect(
+      checkModel(`
+        function* g(): Generator<number> {
+          yield 1;
+          yield 2;
+        }
+        Iterator.from(g());
+        Iterator.from.call(null, g());
+        const generator = g();
+        generator.next();
+        const resumed = Iterator.from(generator).next();
+        if (resumed.value !== 2) throw new Error("from");
+        if (resumed.value === 2) throw new Error("resumed");
+      `),
+    ).rejects.toThrow("resumed");
+  });
+
+  it("takes from the generator object that Iterator.from gives back", async () => {
+    await expect(
+      checkModel(`
+        function* g(): Generator<number> {
+          yield 1;
+          yield 2;
+        }
+        const firstOne = Iterator.from(g()).take(1).toArray();
+        if (firstOne.join() !== "1") throw new Error("from");
+        if (firstOne.join() === "1") throw new Error("taken");
+      `),
+    ).rejects.toThrow("taken");
+  });
+
+  it("stops Iterator.from where a script replaced Iterator.prototype's @@iterator", async () => {
+    const result = await checkModel(`
+      function* g(): Generator<number> {
+        yield 1;
+      }
+      Object.defineProperty(Iterator.prototype, Symbol.iterator, { value: () => 7 });
+      Iterator.from(g());
+    `);
+    expect(result.failure?.message).toContain(
+      "tla-ts can't call Iterator.prototype.@@iterator where a script replaced it",
+    );
+  });
+
   it("steps an array's iterator with next as the array changes", async () => {
     const result = await checkModel(`
       const arr = ["a", "b"];

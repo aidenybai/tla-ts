@@ -680,9 +680,32 @@ export const ITERATOR_CONSUMERS = new Set([
 // The methods of Iterator.prototype that make an iterator helper, which tla-ts follows.
 export const ITERATOR_HELPERS = new Set(["map", "filter", "flatMap", "take", "drop"]);
 
+// The generator object that a call of Iterator.from, or of its call with a this that evaluating
+// can't change, gives back: the generator's @@iterator gives itself, which inherits from
+// Iterator.prototype.
+export const getIteratorFrom = (node: ts.CallExpression, context: Context) => {
+  const callee = node.expression;
+  const isCall =
+    ts.isPropertyAccessExpression(callee) &&
+    callee.name.text === "call" &&
+    callee.expression.getText() === "Iterator.from";
+  const thisArgument = isCall ? node.arguments.at(0) : undefined;
+  const value = node.arguments.at(isCall ? 1 : 0);
+  return (isCall || callee.getText() === "Iterator.from") &&
+    !node.arguments.some(ts.isSpreadElement) &&
+    (thisArgument === undefined ||
+      ts.isLiteralExpression(thisArgument) ||
+      ts.isIdentifier(thisArgument) ||
+      thisArgument.kind === ts.SyntaxKind.NullKeyword) &&
+    value !== undefined &&
+    isGeneratorType(value, context)
+    ? value
+    : undefined;
+};
+
 // A generator object goes only where tla-ts follows it: into a variable that holds generators, to a
-// call of its methods or Iterator.prototype's, into a comparison or an instanceof, or into a for-of
-// or a for await.
+// call of its methods or Iterator.prototype's, into Iterator.from, into a comparison or an
+// instanceof, or into a for-of or a for await.
 // Elsewhere, such as an array pattern, a spread, or a function's parameter, code would iterate it
 // in ways that tla-ts doesn't follow.
 export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
@@ -734,7 +757,8 @@ export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
           ITERATOR_HELPERS.has(outer.expression.expression.name.text))) ||
       (ts.isCallExpression(outer) &&
         outer.arguments.at(0) === node &&
-        outer.expression.getText() === "Array.from"));
+        outer.expression.getText() === "Array.from") ||
+      (ts.isCallExpression(outer) && getIteratorFrom(outer, context) === node));
   if (!isHeld) throw new TlaTypeScriptError("tla-ts can't follow a generator here", node);
 };
 
