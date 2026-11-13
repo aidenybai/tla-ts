@@ -2163,6 +2163,23 @@ describe("values", () => {
     );
   });
 
+  it("makes the objects of the defaults of an assignment's pattern", async () => {
+    const getSource = (expected: string) => `
+      let prop: unknown;
+      let other: unknown;
+      const seen: string[] = [];
+      for ({ prop = "x" in {} } of [{}, { prop: 1 }] as { prop?: unknown }[]) seen.push(String(prop));
+      ({ other = "y" in { y: 2 } } = {} as { other?: unknown });
+      seen.push(String(other));
+      const outcomes = seen.join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("false,1,true"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("false,1,false"))).failure?.message).toContain(
+      "outcomes false,1,true",
+    );
+  });
+
   it("assigns a catch's parameter as it does a let", async () => {
     const getSource = (expected: string) => `
       let seen = "";

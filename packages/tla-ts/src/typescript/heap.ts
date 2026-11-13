@@ -2264,6 +2264,32 @@ export const isNewObject = (node: ts.Node, context: Context) => {
 // Functions make none. An operand that only sometimes runs makes its object literals anyway, as
 // making an object that nothing reads can't be seen, but not its descriptions and creations,
 // which may stop the run.
+// The objects that the defaults of an assignment's pattern make, which run only where their part
+// is undefined.
+export const getPatternAllocated = (node: ts.Expression, context: Context): ts.Node[] => {
+  if (ts.isObjectLiteralExpression(node)) {
+    return node.properties.flatMap((property) =>
+      ts.isShorthandPropertyAssignment(property)
+        ? property.objectAssignmentInitializer === undefined
+          ? []
+          : getAllocated(property.objectAssignmentInitializer, context, true)
+        : ts.isPropertyAssignment(property)
+          ? getPatternAllocated(property.initializer, context)
+          : ts.isSpreadAssignment(property)
+            ? getPatternAllocated(property.expression, context)
+            : [],
+    );
+  }
+  if (ts.isArrayLiteralExpression(node)) {
+    return node.elements.flatMap((element) =>
+      getPatternAllocated(ts.isSpreadElement(element) ? element.expression : element, context),
+    );
+  }
+  return ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ? [...getPatternAllocated(node.left, context), ...getAllocated(node.right, context, true)]
+    : [];
+};
+
 export const getAllocated = (node: ts.Node, context: Context, isSometimes = false): ts.Node[] => {
   if (context.heap === undefined || ts.isFunctionLike(node) || ts.isClassLike(node)) {
     return isMade(node, context, isSometimes) ? [node] : [];
@@ -2287,10 +2313,15 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
     const isPattern =
       kind === ts.SyntaxKind.EqualsToken &&
       (ts.isObjectLiteralExpression(node.left) || ts.isArrayLiteralExpression(node.left));
-    return [
-      ...(isPattern ? [] : getAllocated(node.left, context, isSometimes)),
-      ...getAllocated(node.right, context, isSometimes),
-    ];
+    return isPattern
+      ? [
+          ...getAllocated(node.right, context, isSometimes),
+          ...getPatternAllocated(node.left, context),
+        ]
+      : [
+          ...getAllocated(node.left, context, isSometimes),
+          ...getAllocated(node.right, context, isSometimes),
+        ];
   }
   const nested: ts.Node[] = [];
   ts.forEachChild(node, (child) => {

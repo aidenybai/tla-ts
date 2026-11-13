@@ -162,6 +162,7 @@ import {
 import {
   getAccessorValue,
   getAllocated,
+  getPatternAllocated,
   isMade,
   isNewError,
   getCandidateValue,
@@ -9141,19 +9142,21 @@ const bindElement = (
   // The heap after an assignment holds what its pattern read, which the body must not run before,
   // so that a getter that tla-ts can't call stops the check first.
   if (!ts.isVariableDeclarationList(declared)) {
-    return assignPatternWith(
-      declared.parent,
-      declared,
-      undefined,
-      element,
-      path,
-      context,
-      frame,
-      (after) => {
-        if (context.heap === undefined) return continueWith(after);
-        const heap = getHeap(after.scope, declared, context);
-        return ifThenElse(apply("=", [heap, heap]), continueWith(after), leaf(boolean(false)));
-      },
+    return allocateAll(getPatternAllocated(declared, context), path, context, (allocated) =>
+      assignPatternWith(
+        declared.parent,
+        declared,
+        undefined,
+        element,
+        allocated,
+        context,
+        frame,
+        (after) => {
+          if (context.heap === undefined) return continueWith(after);
+          const heap = getHeap(after.scope, declared, context);
+          return ifThenElse(apply("=", [heap, heap]), continueWith(after), leaf(boolean(false)));
+        },
+      ),
     );
   }
   if (declared.declarations.length !== 1) {
