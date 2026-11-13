@@ -297,6 +297,7 @@ import {
   isGeneratorType,
   mayBeGeneratorType,
   ITERATOR_CONSUMERS,
+  getIteratorFrom,
   ITERATOR_HELPERS,
   isSequenceType,
   rejectGeneratorUse,
@@ -1525,6 +1526,19 @@ export const translateCallStatement = (
   }
   if (isPromiseCall(expression, context)) {
     return translatePromiseCall(expression, path, context, frame, continueWith);
+  }
+  const from = getIteratorFrom(expression, context);
+  if (from !== undefined) {
+    const value = getCast(from);
+    const give = (current: Path, generator: Expression) =>
+      translateHoldsIteratorFrom(expression, current, context, continueWith(current, generator));
+    return ts.isCallExpression(value) &&
+      !path.scope.results.has(value) &&
+      isStatementCall(value, path, context)
+      ? translateCallStatement(value, path, context, frame, (after, generator) =>
+          give(after, generator ?? getUndefined(context)),
+        )
+      : give(path, translateExpression(value, path.scope, context));
   }
   const consumer = getGeneratorMethod(expression, context);
   const stepped = isGeneratorStep(expression, context) ? expression : undefined;
@@ -4020,6 +4034,31 @@ const translateHoldsIteratorPrototype = (
         ),
       );
 };
+
+// Runs the rest where Iterator still holds the built-in from, and Iterator.prototype the built-in
+// @@iterator that gives a generator object itself.
+const translateHoldsIteratorFrom = (node: ts.Node, path: Path, context: Context, rest: Formula) =>
+  context.heap === undefined
+    ? rest
+    : ifThenElse(
+        useJavaScript(
+          "HoldsBuiltIn",
+          [
+            getHeap(path.scope, node, context),
+            translateBuiltInValue("Iterator", node, context),
+            string("from"),
+            string("Iterator.from"),
+          ],
+          context,
+        ),
+        translateHoldsIteratorPrototype("from", node, path, context, rest),
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't call Iterator.from where a script replaced it"),
+          ]),
+        ),
+      );
 
 // The most steps of an iterator helper that tla-ts translates. Where flatMap's mapper returns arrays
 // of different lengths, how many values a step gives depends on the path through the mapper, so
@@ -7431,6 +7470,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
         isHeapType(context.checker.getTypeAtLocation(node), context))) ||
     isGeneratorStep(node, context) ||
     getGeneratorMethod(node, context) !== undefined ||
+    getIteratorFrom(node, context) !== undefined ||
     isPromiseCall(node, context) ||
     getCreatedGenerator(node, path, context) !== undefined ||
     getAsyncCallee(node.expression, path, context) !== undefined ||
