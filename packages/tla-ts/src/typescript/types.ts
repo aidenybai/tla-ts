@@ -213,6 +213,42 @@ const isPlainObject = (type: ts.Type, context: Context): boolean => {
   );
 };
 
+// Whether a key that a script reads or writes is one that the value tla-ts makes of a built-in
+// object, such as a RegExp or a Map, doesn't hold: a key that neither the library nor an index
+// signature declares, or one that a type that joins the object with its own properties adds.
+export const isAddedToBuiltIn = (
+  node: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  context: Context,
+) => {
+  const checker = context.checker;
+  const type = checker.getNonNullableType(checker.getTypeAtLocation(node.expression));
+  const argument = ts.isElementAccessExpression(node) ? node.argumentExpression : undefined;
+  const key = ts.isPropertyAccessExpression(node)
+    ? node.name.text
+    : argument !== undefined && (ts.isStringLiteralLike(argument) || ts.isNumericLiteral(argument))
+      ? argument.text
+      : undefined;
+  const isBuiltIn = (type.isUnion() ? type.types : [type])
+    .flatMap((member) => (member.isIntersection() ? member.types : [member]))
+    .some(
+      (member) =>
+        (member.flags & ts.TypeFlags.Object) !== 0 &&
+        !isPlainObject(member, context) &&
+        (member.getSymbol()?.declarations ?? []).some(
+          (declaration) => declaration.getSourceFile().isDeclarationFile,
+        ),
+    );
+  const property = key === undefined ? undefined : checker.getPropertyOfType(type, key);
+  return (
+    isBuiltIn &&
+    (property === undefined
+      ? checker.getIndexInfosOfType(type).length === 0
+      : (property.declarations ?? []).every(
+          (declaration) => !declaration.getSourceFile().isDeclarationFile,
+        ))
+  );
+};
+
 // Whether a value of a type may be an object in the heap.
 export const hasHeapType = (type: ts.Type, context: Context) =>
   context.heap !== undefined &&

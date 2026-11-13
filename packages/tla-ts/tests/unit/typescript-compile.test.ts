@@ -21799,6 +21799,35 @@ describe("regular expressions", () => {
     );
   });
 
+  it("stops at a key that a type adds to a regexp on the heap", () => {
+    const source = `
+      const holder: { tag?: string } = {};
+      holder.tag = "made";
+      const pattern: RegExp & { tag?: string } = /b+/m;
+      pattern.tag = "x";
+      if (pattern.tag !== "x") throw new Error("tag");
+    `;
+    expect(() => compile(source)).toThrow("tla-ts can't write a key that a built-in object lacks");
+  });
+
+  it("stops at a key that a type adds to an error without objects", () => {
+    const source = `
+      const error: Error & { code?: string } = new Error("m");
+      if (String(error.code) !== "undefined") throw new Error("code");
+    `;
+    expect(() => compile(source)).toThrow("tla-ts can't read a key that a built-in object lacks");
+  });
+
+  it("stops at a key that a map lacks, which an element access writes", () => {
+    const source = `
+      const map = new Map<string, number>();
+      // @ts-ignore
+      map["tag"] = 1;
+      if (map.size !== 0) throw new Error("size");
+    `;
+    expect(() => compile(source)).toThrow("tla-ts can't write a key that a built-in object lacks");
+  });
+
   it("drop a regexp that a statement makes of literals", async () => {
     const getSource = (count: number) => `
       /(?i-s:)/;

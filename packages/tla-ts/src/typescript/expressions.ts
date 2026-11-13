@@ -155,6 +155,7 @@ import {
   getCollection,
   rejectAnyReceiver,
   getField,
+  isAddedToBuiltIn,
   getKind,
   isSetSource,
   getPathStep,
@@ -2417,6 +2418,9 @@ const translatePropertyAccess = (
       context,
     );
   }
+  if (isAddedToBuiltIn(node, context)) {
+    throw new TlaTypeScriptError("tla-ts can't read a key that a built-in object lacks", node);
+  }
   return getField(translateExpression(receiver, scope, context), name);
 };
 
@@ -2778,6 +2782,9 @@ const translateElementRead = (
       getHeap(scope, node, context),
       context,
     );
+  }
+  if (kind === "other" && isAddedToBuiltIn(node, context)) {
+    throw new TlaTypeScriptError("tla-ts can't read a key that a built-in object lacks", node);
   }
   if (kind !== "string") return index(value, [key]);
   if (context.hasInheritedElements && !isDefined) {

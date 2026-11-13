@@ -351,6 +351,7 @@ import {
   getPathStep,
   isHeapPattern,
   isHeapType,
+  isAddedToBuiltIn,
   isBigIntLike,
   isNumberLike,
   isBuiltInIteratorType,
@@ -829,12 +830,18 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
     if (getKind(node.expression, context) !== "other") {
       throw new TlaTypeScriptError(`Can't assign to ${node.getText()}`, node);
     }
+    if (isAddedToBuiltIn(node, context)) {
+      throw new TlaTypeScriptError("tla-ts can't write a key that a built-in object lacks", node);
+    }
     return getPart(getTarget(node.expression, path, context), getPathStep(node.name.text));
   }
   if (ts.isElementAccessExpression(node)) {
     const target = getTarget(node.expression, path, context);
     const key = translateKey(node, path.scope, context);
     if (getKind(node.expression, context) !== "sequence") {
+      if (isAddedToBuiltIn(node, context)) {
+        throw new TlaTypeScriptError("tla-ts can't write a key that a built-in object lacks", node);
+      }
       return getPart(target, { kind: "Index", args: [key] });
     }
     return {
