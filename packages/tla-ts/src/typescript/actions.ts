@@ -13003,7 +13003,10 @@ export const getWritten = (node: ts.Node) => {
   ) {
     return node.operand;
   }
-  return isMethodCall(node) && MUTATING_METHODS.has(node.expression.name.text)
+  // A method that changes an array literal changes only the array that the literal makes.
+  return isMethodCall(node) &&
+    MUTATING_METHODS.has(node.expression.name.text) &&
+    !ts.isArrayLiteralExpression(skipCasts(node.expression.expression))
     ? node.expression.expression
     : undefined;
 };

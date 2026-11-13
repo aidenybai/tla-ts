@@ -12769,6 +12769,30 @@ describe("errors", () => {
     expect((await checkModel(getSource(8))).failure?.message).toContain("9");
   });
 
+  it("sorts a spread copy of a parameter whose callback calls the function again", async () => {
+    const getSource = (expected: string) => `
+      let calls = 0;
+      const compare = (left: number[], right: number[]): number => {
+        calls += 1;
+        return sortAll([left]).length - sortAll([right]).length + left[0] - right[0];
+      };
+      const sortAll = (lists: number[][]): number[][] =>
+        [...lists].sort((left, right) => compare(left, right));
+      const lists = [[3], [1], [2]];
+      const sorted = sortAll(lists);
+      const result = [
+        sorted.map((inner) => inner[0]).join(),
+        lists.map((inner) => inner[0]).join(),
+        calls > 0,
+      ].join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("1,2,3;3,1,2;true"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1,2,3;1,2,3;true"))).failure?.message).toContain(
+      "1,2,3;3,1,2;true",
+    );
+  });
+
   it("makes the objects of a callback that an array literal's method calls", async () => {
     const getSource = (expected: number) => `
       const size = [1].map((value) => ({ value })).length;
