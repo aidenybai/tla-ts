@@ -2494,6 +2494,18 @@ describe("values", () => {
     await expect(checkModel(getSource("false,false"))).rejects.toThrow("true,false");
   });
 
+  it("makes the regexps whose patterns a let and a for-of over an array literal give", async () => {
+    const getSource = (expected: string) => `
+      let source = "(?<first>.)(?<second>.)";
+      for (const flags of ["g", "gu"]) {
+        const pattern = new RegExp(source, flags);
+        if ("abcd".replace(pattern, "$<second>$<first>") !== "${expected}") throw new Error(flags);
+      }
+    `;
+    expect((await checkModel(getSource("badc"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("bacd"))).failure?.message).toContain("g");
+  });
+
   it("makes the empty regexp that new RegExp gives without arguments", async () => {
     const getSource = (expected: string) => `
       // @ts-ignore

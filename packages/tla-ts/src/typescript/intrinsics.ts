@@ -1600,8 +1600,9 @@ const ELEMENT_METHODS = new Set(["map", "forEach", "flatMap", "filter", "some", 
 
 // The values that an expression may take that tla-ts finds as it compiles: the strings that
 // literals, String.raw and templates write and that + joins, and the regexps that literals write,
-// through constants, the elements that an array method passes its callback, and the arguments that
-// each call in its file passes a function. A run checks what it makes against them.
+// through variables that a script never assigns, the elements that an array method passes its
+// callback or a for-of over an array literal takes, and the arguments that each call in its file
+// passes a function. A run checks what it makes against them.
 const getConstantValues = (
   node: ts.Expression,
   context: Context,
@@ -1682,8 +1683,29 @@ const getConstantValues = (
       : [...new Set(values.flatMap((value) => value ?? []))];
   };
   if (ts.isVariableDeclaration(declaration)) {
-    return (declaration.parent.flags & ts.NodeFlags.Const) !== 0 &&
-      declaration.initializer !== undefined
+    const loop = declaration.parent.parent;
+    // The variable of a for-of over an array literal takes each element.
+    if (ts.isForOfStatement(loop)) {
+      const iterated = skipCasts(loop.expression);
+      return ts.isArrayLiteralExpression(iterated) &&
+        !iterated.elements.some(ts.isSpreadElement) &&
+        !isAssigned(symbol, loop.statement, context)
+        ? getUnion(iterated.elements)
+        : undefined;
+    }
+    // A let or a var holds its initializer where a script never assigns it and reads it only after
+    // the declaration, in the same function.
+    const owner = ts.findAncestor(declaration.parent, ts.isFunctionLike);
+    const isReadAfter = findNodes(declaration.getSourceFile(), ts.isIdentifier).every(
+      (reference) =>
+        reference === declaration.name ||
+        getSymbol(reference, context.checker) !== symbol ||
+        (reference.pos > declaration.end &&
+          ts.findAncestor(reference.parent, ts.isFunctionLike) === owner),
+    );
+    return declaration.initializer !== undefined &&
+      ((declaration.parent.flags & ts.NodeFlags.Const) !== 0 ||
+        (isReadAfter && !isAssigned(symbol, declaration.getSourceFile(), context)))
       ? getConstantValues(declaration.initializer, context, inner)
       : undefined;
   }
