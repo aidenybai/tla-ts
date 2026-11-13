@@ -2533,6 +2533,28 @@ export const translateArrayIteration = (
     apply("Assert", [boolean(false), string(ARRAY_ITERATOR_REPLACED)]),
   );
 
+// The array that a pattern destructures through its iterator. A pattern whose type isn't an array's
+// may destructure an object, such as an iterator, whose indices don't hold its elements.
+export const translatePatternIteration = (
+  value: Expression,
+  heap: Expression,
+  pattern: ts.Node,
+  type: ts.Type,
+  context: Context,
+) => {
+  const iterated = translateArrayIteration(value, heap, pattern, context);
+  return context.checker.isArrayLikeType(type)
+    ? iterated
+    : ifExpression(
+        useJavaScript("IsRef", [value], context),
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't destructure an object through its iterator"),
+        ]),
+        iterated,
+      );
+};
+
 export const ARRAY_ITERATOR_REPLACED =
   "tla-ts can't iterate an array whose iterator a script replaced";
 

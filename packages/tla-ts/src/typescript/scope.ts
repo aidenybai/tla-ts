@@ -9,9 +9,9 @@ import {
   share,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
-import { isIteratedPattern, isTaken, isUntypedPattern } from "./iterators";
+import { isIteratedPattern, isSteppedPattern, isTaken, isUntypedPattern } from "./iterators";
 import type { Expression, OperatorDefinition } from "../ast";
-import { translateArrayIteration } from "./collections";
+import { translateArrayIteration, translatePatternIteration } from "./collections";
 import { translateExpression } from "./expressions";
 import { apply, define, identifier, ifExpression, number, set, string, tuple } from "./tla";
 import { getHeap } from "./heap";
@@ -233,7 +233,11 @@ export const bindPatternInline = (
   if (ts.isIdentifier(pattern)) {
     return bindNames(scope, [{ name: value, symbol: getSymbol(pattern, context.checker) }]);
   }
-  if (ts.isArrayBindingPattern(pattern) && isIteratedPattern(pattern, context) && !isTaken(value)) {
+  if (
+    ts.isArrayBindingPattern(pattern) &&
+    (isIteratedPattern(pattern, context) || isSteppedPattern(pattern, context)) &&
+    !isTaken(value)
+  ) {
     throw new TlaTypeScriptError(
       "tla-ts can't destructure this object through its iterator",
       pattern,
@@ -264,7 +268,7 @@ export const bindPatternInline = (
   const heap = heapSymbol === undefined ? undefined : getHeap(destructuring, pattern, context);
   const iterated =
     isIterated && heap !== undefined
-      ? translateArrayIteration(value, heap, pattern, context)
+      ? translatePatternIteration(value, heap, pattern, type, context)
       : value;
   const iterating =
     isIterated && heapSymbol !== undefined && heap !== undefined

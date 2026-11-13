@@ -8825,6 +8825,49 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("rest");
   });
 
+  it("destructures a variable's array iterator by stepping it", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      const iterator = [1, 2, 3].values();
+      const [first, ...rest] = iterator;
+      holder.count = 1;
+      if (first === 1 && rest.length === 2) throw new Error("stepped");
+    `);
+    expect(result.failure?.message).toContain("stepped");
+  });
+
+  it("stops destructuring an iterator through a parameter that an Iterable types", async () => {
+    const result = await checkModel(`
+      const take = ([first]: Iterable<number>) => first;
+      if (take([5].values()) === 5) throw new Error("taken");
+    `);
+    expect(result.failure?.message).toContain(
+      "tla-ts can't destructure an object through its iterator",
+    );
+  });
+
+  it("stops assigning from an iterator through a pattern that an Iterable types", async () => {
+    const result = await checkModel(`
+      let first = 0;
+      const assign = (values: Iterable<number>) => {
+        [first] = values;
+      };
+      assign([5].values());
+    `);
+    expect(result.failure?.message).toContain(
+      "tla-ts can't destructure an object through its iterator",
+    );
+  });
+
+  it("stops destructuring an iterator that a nested pattern reads", () => {
+    expect(() =>
+      checkModel(`
+        const holder = { values: [7].values() };
+        const { values: [first] } = holder;
+      `),
+    ).toThrow("tla-ts can't destructure this object through its iterator");
+  });
+
   it("steps a string's iterator with next", async () => {
     const result = await checkModel(`
       const holder = { count: 0 };
@@ -8893,6 +8936,18 @@ describe("errors", () => {
       if (joined === "b") throw new Error("rest");
     `);
     expect(result.failure?.message).toContain("rest");
+  });
+
+  it("destructures a string's iterator in an assignment", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      let first = "";
+      let rest: string[] = [];
+      [first, ...rest] = "abc"[Symbol.iterator]();
+      holder.count = 1;
+      if (first === "a" && rest.join("") === "bc") throw new Error("assigned");
+    `);
+    expect(result.failure?.message).toContain("assigned");
   });
 
   it("takes or drops up to Infinity or Number.MAX_SAFE_INTEGER", async () => {
