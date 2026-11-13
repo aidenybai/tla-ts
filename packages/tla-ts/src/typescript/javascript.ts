@@ -4343,6 +4343,34 @@ Revived(heap, ref, key, value) ==
                         get |-> Undefined, set |-> Undefined, writable |-> TRUE,
                         enumerable |-> TRUE, configurable |-> TRUE]).heap
 
+\\* The descriptor of a definition of an array's length whose value is an object, which
+\\* ArraySetLength converts to a number twice, or Null where the definition converts nothing.
+LengthDescriptor(heap, ref, key, descriptor) ==
+  IF key = "length" /\\ IsRef(ref) /\\ ~IsProxy(heap, ref) /\\ IsArrayObject(Lookup(heap, ref))
+     /\\ IsRef(descriptor) /\\ ~IsProxy(heap, descriptor)
+  THEN LET converted == ToDescriptor(heap, descriptor)
+       IN IF converted.isValid /\\ IsObject(converted.value) THEN converted ELSE Null
+  ELSE Null
+
+\\* The descriptor of the length that Object.defineProperties defines where it defines only that.
+PropertiesLengthDescriptor(heap, ref, properties) ==
+  IF IsRef(properties) /\\ ~IsProxy(heap, properties)
+     /\\ EnumerableOwnKeys(Lookup(heap, properties)) = <<"length">>
+  THEN LengthDescriptor(heap, ref, "length", Value(Lookup(heap, properties), "length"))
+  ELSE Null
+
+\\* Defines an array's length with the primitives that its two conversions gave.
+DefineLength(heap, ref, descriptor, first, second) ==
+  DefineConverted(heap, ref, "length",
+                  [descriptor EXCEPT !.value =
+                     IF SameValue(first, second) THEN second
+                     ELSE Assert(FALSE, "tla-ts can't define a length that converts to two values")])
+
+ReflectDefineLength(heap, ref, descriptor, first, second) ==
+  LET defined == DefineLength(heap, ref, descriptor, first, second)
+  IN [heap |-> defined.heap, isDone |-> ~defined.isRangeError,
+      isRangeError |-> defined.isRangeError, value |-> defined.isDone]
+
 \\* The own keys of an object, with its symbols last, that Object.defineProperties visits.
 PropertyKeysOf(heap, ref) ==
   LET object == Lookup(heap, ref) IN OwnKeys(object) \\o SelectSeq(object.keys, IsSymbol)
