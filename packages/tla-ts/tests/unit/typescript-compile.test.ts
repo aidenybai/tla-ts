@@ -5924,6 +5924,16 @@ describe("errors", () => {
     });
   });
 
+  it("reads a negative number as a constant argument", async () => {
+    const source = `
+      Object.getOwnPropertyDescriptor(-2, "foo");
+      if (Object.getOwnPropertyDescriptor(-2, "foo") !== undefined) throw new Error("negative");
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("!== undefined", "=== undefined");
+    expect((await checkModel(wrong)).failure?.message).toContain('"negative"');
+  });
+
   it("throws the TypeError of an Object.prototype method that call gives null or undefined", async () => {
     const source = `
       let count = 0;
