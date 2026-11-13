@@ -1364,6 +1364,26 @@ describe("values", () => {
     }
   });
 
+  it("translates what follows a default that assigns once, whichever value it takes", async () => {
+    const getSource = (calls: number, expected: string) => `
+      const box = { total: 0 };
+      let count: number = 0;
+      let value: number | undefined;
+      const values: { value?: number }[] = [{}];
+      const bump = (a = ++count) => a;
+      ${Array.from(
+        { length: calls },
+        (_, index) => `const value${index} = bump();\n[{ value = count += 10 }] = values;`,
+      ).join("\n")}
+      box.total = count + value!;
+      if (String(box.total) !== "${expected}") throw new Error("outcomes " + box.total);
+    `;
+    const getSize = (calls: number) => printModule(compile(getSource(calls, "0")).source).length;
+    expect(getSize(8)).toBeLessThan(getSize(4) * 2);
+    expect((await checkModel(getSource(2, "44"))).failure).toBeUndefined();
+    expect((await checkModel(getSource(2, "43"))).failure?.message).toContain("outcomes 44");
+  });
+
   it("stops where a parameter's default that assigns runs out of order", () => {
     expect(() =>
       compile(`

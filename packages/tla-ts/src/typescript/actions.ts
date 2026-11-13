@@ -1195,11 +1195,19 @@ const assignPatternWith = (
     },
     continueWith,
     {
+      // What follows translates once, for whether the default ran.
       runDefault: (assignment, part, current, assignWith) =>
-        ifThenElse(
-          apply("=", [part, getUndefined(context)]),
-          runAssignment(assignment, current, context, frame, assignWith),
-          assignWith(current, part),
+        translateJoined(
+          assignment,
+          current,
+          context,
+          (after, value) => assignWith(after, value ?? part),
+          (next) =>
+            ifThenElse(
+              apply("=", [part, getUndefined(context)]),
+              runAssignment(assignment, current, context, frame, next),
+              next(current, part),
+            ),
         ),
       throwOnNullish: (innerValue, current, rest) => {
         context.prelude.add("Null");
@@ -3005,10 +3013,18 @@ export const bindCall = (
           path,
           context,
           frame,
-          ifThenElse(
-            apply("=", [part, getUndefined(context)]),
-            runAssignment(assignment, path, context, frame, withDefault),
-            withDefault(path, getUndefined(context)),
+          // What follows translates once, for whether the default ran.
+          translateJoined(
+            assignment,
+            path,
+            context,
+            (after, value) => withDefault(after, value ?? getUndefined(context)),
+            (next) =>
+              ifThenElse(
+                apply("=", [part, getUndefined(context)]),
+                runAssignment(assignment, path, context, frame, next),
+                next(path, getUndefined(context)),
+              ),
           ),
         ),
       ),
