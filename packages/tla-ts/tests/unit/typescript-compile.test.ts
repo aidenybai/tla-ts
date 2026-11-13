@@ -12398,20 +12398,170 @@ describe("errors", () => {
     expect(wrong.failure).toBeDefined();
   });
 
-  it("stops where an AsyncDisposableStack runs a function that reads the locals around it", async () => {
-    const result = await checkModel(`
+  it("runs an async function that an AsyncDisposableStack defers, which changes the locals of the async call that made it", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let result = "";
       const run = async (isUsed: boolean) => {
         if (!isUsed) return;
-        const log: string[] = [];
-        {
-          await using stack = new AsyncDisposableStack();
-          stack.defer(() => { log.push("x"); });
-        }
+        const stack = new AsyncDisposableStack();
+        let isDisposed = false;
+        stack.defer(async () => {
+          isDisposed = true;
+        });
+        await stack.disposeAsync();
+        result = String(isDisposed);
       };
       run(true);
       run(false);
-    `);
-    expect(result.failure?.message).toContain("tla-ts can't call a method here");
+      setTimeout(() => {
+        if (result !== "${expected}") throw new Error(result);
+      });
+    `;
+    const result = await checkModel(source("true"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("false"));
+    expect(wrong.failure).toBeDefined();
+  });
+
+  it("resumes a function that an AsyncDisposableStack defers with the locals that its async call changed meanwhile", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      const order: string[] = [];
+      const run = async (isUsed: boolean) => {
+        if (!isUsed) return;
+        const stack = new AsyncDisposableStack();
+        let count = 0;
+        stack.defer(async () => {
+          await 0;
+          count += 1;
+        });
+        const disposing = stack.disposeAsync();
+        count = 10;
+        order.push(\`before \${count}\`);
+        await disposing;
+        order.push(\`after \${count}\`);
+      };
+      run(true);
+      run(false);
+      setTimeout(() => {
+        if (order.join() !== "${expected}") throw new Error(order.join());
+      });
+    `;
+    const result = await checkModel(source("before 10,after 11"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("before 10,after 10"));
+    expect(wrong.failure).toBeDefined();
+  });
+
+  it("keeps the locals of each async call apart, where AsyncDisposableStacks run their functions in turns", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      const order: string[] = [];
+      const run = async (name: string) => {
+        const stack = new AsyncDisposableStack();
+        let count = 0;
+        stack.defer(async () => {
+          await 0;
+          count += 1;
+          order.push(\`\${name}\${count}\`);
+        });
+        await stack.disposeAsync();
+        order.push(\`\${name} after \${count}\`);
+      };
+      run("a");
+      run("b");
+      setTimeout(() => {
+        if (order.join() !== "${expected}") throw new Error(order.join());
+      });
+    `;
+    const result = await checkModel(source("a1,b1,a after 1,b after 1"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("a1,b1,a after 1,b after 2"));
+    expect(wrong.failure).toBeDefined();
+  });
+
+  it("keeps what a function that disposeAsync runs after it awaits pushes to an array of the async call around it", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let result = "";
+      const run = async () => {
+        const log: string[] = [];
+        const stack = new AsyncDisposableStack();
+        stack.defer(() => {
+          log.push("sync");
+        });
+        stack.defer(async () => {
+          log.push("async");
+        });
+        await stack.disposeAsync();
+        result = log.join();
+      };
+      run();
+      setTimeout(() => {
+        if (result !== "${expected}") throw new Error(result);
+      });
+    `;
+    const result = await checkModel(source("async,sync"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("async"));
+    expect(wrong.failure).toBeDefined();
+  });
+
+  it("keeps what a function pushes to an array of the async call that made it, where another async function disposes its stack", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let result = "";
+      const dispose = async (stack: AsyncDisposableStack) => {
+        await stack.disposeAsync();
+      };
+      const run = async () => {
+        const log: string[] = [];
+        const stack = new AsyncDisposableStack();
+        stack.defer(() => {
+          log.push("sync");
+        });
+        stack.defer(async () => {
+          log.push("async");
+        });
+        await dispose(stack);
+        result = log.join();
+      };
+      run();
+      setTimeout(() => {
+        if (result !== "${expected}") throw new Error(result);
+      });
+    `;
+    const result = await checkModel(source("async,sync"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("async"));
+    expect(wrong.failure).toBeDefined();
+  });
+
+  it("keeps what an async function pushes after it awaits to an array of the async call that made it", async () => {
+    const source = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let result = "";
+      const run = async () => {
+        const log: string[] = [];
+        const helper = async () => {
+          await 0;
+          log.push("helper");
+        };
+        const pending = helper();
+        log.push("run");
+        await pending;
+        result = log.join();
+      };
+      run();
+      setTimeout(() => {
+        if (result !== "${expected}") throw new Error(result);
+      });
+    `;
+    const result = await checkModel(source("run,helper"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("run"));
+    expect(wrong.failure).toBeDefined();
   });
 
   it("awaits an async dispose method, which a function's object literal may hold", async () => {

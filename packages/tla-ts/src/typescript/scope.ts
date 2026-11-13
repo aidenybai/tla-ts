@@ -49,9 +49,6 @@ export interface Scope {
   // The environment of the call of each async function whose body runs, which tells the closures
   // that read its locals which call made them.
   activations?: ReadonlyMap<ts.Node, Expression>;
-  // Whether a built-in's async body, such as an AsyncDisposableStack's disposeAsync, runs, which
-  // can't hand the locals of the function that calls it back to that function once it awaits.
-  isBuiltInBody?: boolean;
 }
 
 export interface Destructured {

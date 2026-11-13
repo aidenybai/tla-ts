@@ -1301,15 +1301,17 @@ export const isNestedFunction = (
   ts.findAncestor(node.parent, ts.isFunctionLike) !== undefined &&
   (getOuterLocals(node, context).length === 0 || getLiveMaker(node, context) !== undefined);
 
-// The functions around a function that bind the locals it reads.
+// The locals that a function reads from the functions around it, with the function that binds each.
 const getOuterLocals = (node: ts.Node, context: Context) =>
   findNodes(node, ts.isIdentifier).flatMap((name) => {
-    const declaration = getSymbol(name, context.checker)?.valueDeclaration;
+    const symbol = getSymbol(name, context.checker);
+    const declaration = symbol?.valueDeclaration;
     const owner =
       declaration === undefined
         ? undefined
         : ts.findAncestor(declaration.parent, ts.isFunctionLike);
-    return declaration !== undefined &&
+    return symbol !== undefined &&
+      declaration !== undefined &&
       owner !== undefined &&
       (ts.isVariableDeclaration(declaration) ||
         ts.isParameter(declaration) ||
@@ -1317,7 +1319,7 @@ const getOuterLocals = (node: ts.Node, context: Context) =>
         ts.isFunctionDeclaration(declaration) ||
         ts.isClassDeclaration(declaration)) &&
       ts.findAncestor(declaration, (ancestor) => ancestor === node) === undefined
-      ? [owner]
+      ? [{ symbol, owner }]
       : [];
   });
 
@@ -1455,28 +1457,61 @@ export const getCaptures = (node: Closure, context: Context) => {
   return [...new Set(captures.map((capture) => capture.symbol))];
 };
 
-// The async function whose locals a method of an object literal that it makes, or a function that
-// it passes to adopt or defer, reads. Each call of the function makes the method anew, a closure
-// that holds the call's environment, which runs only where that call runs, and reads the locals
-// that the call binds there, unlike a closure that outlives its call.
-export const getLiveMaker = (node: ts.Node, context: Context) => {
+// The async function around a function that binds each local the function reads from outside it.
+const getAsyncOwner = (node: ts.Node, context: Context) => {
   const enclosing = ts.findAncestor(node.parent, ts.isFunctionLike);
-  const owners = getOuterLocals(node, context);
-  return ((ts.isMethodDeclaration(node) && ts.isObjectLiteralExpression(node.parent)) ||
-    isDisposeCallback(node, context)) &&
-    !isOnce(node.parent) &&
-    node.asteriskToken === undefined &&
-    enclosing !== undefined &&
+  const locals = getOuterLocals(node, context);
+  return enclosing !== undefined &&
     (ts.isFunctionDeclaration(enclosing) ||
       ts.isFunctionExpression(enclosing) ||
       ts.isArrowFunction(enclosing) ||
       ts.isMethodDeclaration(enclosing)) &&
     isAsyncFunction(enclosing) &&
-    owners.length > 0 &&
-    owners.every((owner) => owner === enclosing)
+    locals.length > 0 &&
+    locals.every((local) => local.owner === enclosing)
     ? enclosing
     : undefined;
 };
+
+// The async function whose locals a method of an object literal that it makes, or a function that
+// it passes to adopt or defer, reads. Each call of the function makes the method anew, a closure
+// that holds the call's environment, which runs only where that call runs, and reads the locals
+// that the call binds there, unlike a closure that outlives its call.
+export const getLiveMaker = (node: ts.Node, context: Context) =>
+  ((ts.isMethodDeclaration(node) && ts.isObjectLiteralExpression(node.parent)) ||
+    isDisposeCallback(node, context)) &&
+  !isOnce(node.parent) &&
+  node.asteriskToken === undefined
+    ? getAsyncOwner(node, context)
+    : undefined;
+
+// The async function whose locals a function inside it reads from the one call that made it: the
+// call whose environment a live method holds, or the only call of a function that runs once.
+export const getKeptMaker = (node: ts.Node, context: Context) => {
+  const owner = getAsyncOwner(node, context);
+  return getLiveMaker(node, context) ?? (owner !== undefined && isOnce(owner) ? owner : undefined);
+};
+
+// The locals of an async function that functions inside it read, each with the key of its value in
+// the environment of a call, which holds them while a body that runs later may read or change them.
+export const getKeptLocals = (maker: ts.Node, context: Context) =>
+  [
+    ...new Set(
+      findNodes(
+        maker,
+        (node): node is ts.SignatureDeclaration => node !== maker && ts.isFunctionLike(node),
+      ).flatMap((inner) =>
+        getOuterLocals(inner, context).flatMap((local) =>
+          local.owner === maker ? [local.symbol] : [],
+        ),
+      ),
+    ),
+  ].map((symbol, position, locals) => ({
+    symbol,
+    key: locals.slice(0, position).some((other) => other.name === symbol.name)
+      ? `${symbol.name}#${position}`
+      : symbol.name,
+  }));
 
 // Whether a node gives a named binding's default, through parentheses and the commas that end in it.
 const isDefault = (node: ts.Node): boolean =>

@@ -197,12 +197,10 @@ export const callValue = (
               ? inlineBody(site, candidate, [], received, path, context, frame, next)
               : inlineValues(candidate, values, received, path, context, frame, next);
         // A method that reads the live locals of the function around it runs only in the call of
-        // that function whose environment it holds, outside a built-in's body.
+        // that function whose environment it holds.
         const maker = getLiveMaker(candidate, context);
         const environment =
-          maker !== undefined &&
-          ts.findAncestor(site, ts.isFunctionLike) === maker &&
-          path.scope.isBuiltInBody !== true
+          maker !== undefined && ts.findAncestor(site, ts.isFunctionLike) === maker
             ? path.scope.activations?.get(maker)
             : undefined;
         const stop = leaf(
