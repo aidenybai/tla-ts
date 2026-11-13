@@ -4434,7 +4434,7 @@ export const makeGenerator = (
 // A call of a method of Iterator.prototype that steps a generator to its end, or until its
 // callback decides, then closes the generator as the method's IteratorClose does.
 const translateGeneratorConsumer = (
-  node: ts.CallExpression,
+  node: ts.Node,
   consumer: NonNullable<ReturnType<typeof getGeneratorMethod>>,
   path: Path,
   context: Context,
@@ -5786,6 +5786,11 @@ export const isSameExpression = (left: Expression, right: Expression) => {
     key === "location" ? undefined : value;
   return JSON.stringify(left, withoutLocations) === JSON.stringify(right, withoutLocations);
 };
+
+// A value that the code that steps generators steps: a generator object or an iterator helper, or
+// an array's or a string's iterator.
+const isSteppedValue = (node: ts.Expression, context: Context) =>
+  isGeneratorType(node, context) || isBuiltInIteratorType(node, context);
 
 // A call to the next, return, or throw of a generator object.
 const isGeneratorStep = (node: ts.CallExpression, context: Context): node is MethodCall =>
@@ -11661,6 +11666,8 @@ interface LeadingCall {
   // is a call that only statements can run, so the statement branches on which operand gives the
   // value.
   branch?: ts.BinaryExpression | ts.ConditionalExpression;
+  // A spread of a generator object or an iterator, which the statement steps to its end first.
+  spread?: ts.SpreadElement;
 }
 
 // The first call in a node's evaluation order that only statements can run, with the nodes that
@@ -11691,10 +11698,28 @@ const findLeadingCall = (
       : ts.isExpression(node) && getConversion(node, context) !== undefined
         ? { call: undefined, isBlocked: true, conversion: node }
         : none;
-  if (ts.isExpression(node) && path.scope.results.has(node)) return none;
+  if ((ts.isExpression(node) || ts.isSpreadElement(node)) && path.scope.results.has(node)) {
+    return none;
+  }
   // An object that spreads a proxy runs its traps.
   if (ts.isObjectLiteralExpression(node) && isProxyOperation(node, context)) {
     return { call: undefined, isBlocked: true, read: node };
+  }
+  if (
+    ts.isSpreadElement(node) &&
+    ts.isArrayLiteralExpression(node.parent) &&
+    isSteppedValue(node.expression, context) &&
+    !isArrayIteration(getCast(node.expression), context)
+  ) {
+    // The spread runs a call that makes what it steps as it steps it.
+    const made = getCast(node.expression);
+    const found =
+      ts.isCallExpression(made) && !path.scope.results.has(made)
+        ? inOrder([made.expression, ...made.arguments])
+        : findLeadingCall(node.expression, before, path, context);
+    return found.call !== undefined || found.isBlocked
+      ? found
+      : { call: undefined, isBlocked: true, spread: node };
   }
   if (
     ts.isParenthesizedExpression(node) ||
@@ -12138,6 +12163,27 @@ const getHoistedRead = (statement: ts.Statement, path: Path, context: Context) =
   return node;
 };
 
+// The spread that a statement's expression evaluates first of a generator object or an iterator,
+// which the statement steps to its end as its own statement. Nothing that the statement evaluates
+// before it may read what stepping it changes.
+const getHoistedSpread = (statement: ts.Statement, path: Path, context: Context) => {
+  const evaluated = getEvaluated(statement);
+  if (evaluated === undefined) return undefined;
+  const before: ts.Node[] = [];
+  const spread = findLeadingCall(evaluated, before, path, context).spread;
+  if (spread === undefined) return undefined;
+  rejectEarlyRun(
+    spread,
+    [spread, ...[...path.generators.values()].flatMap((suspension) => suspension.generator ?? [])],
+    before.filter(
+      (inner) => ts.findAncestor(inner, (ancestor) => ancestor === spread) === undefined,
+    ),
+    path,
+    context,
+  );
+  return spread;
+};
+
 // Runs the first call that a node evaluates that only statements can run, and then the rest with
 // its value, or gives undefined where there's none.
 export const runLeadingCall = (
@@ -12485,6 +12531,53 @@ export const translateStatements = (
     return isGetterRead(hoistedRead, context) && !isProxyOperation(hoistedRead, context)
       ? runGetterRead(hoistedRead, path, context, frame, withRead)
       : runProxyOperation(hoistedRead, path, context, frame, withRead);
+  }
+  // A spread gathers what the iterator gives, as Array.from does.
+  const spread = getHoistedSpread(statement, path, context);
+  if (spread !== undefined) {
+    const made = getCast(spread.expression);
+    const gather = (current: Path) =>
+      translateGeneratorConsumer(
+        spread,
+        { method: "from", receiver: spread.expression, values: [], invalid: undefined },
+        isBuiltInIteratorType(spread.expression, context)
+          ? withBuiltInIterator(
+              spread,
+              current,
+              translateExpression(spread.expression, current.scope, context),
+              context,
+            )
+          : current,
+        context,
+        frame,
+        (after, values) =>
+          translateStatements(
+            statements,
+            {
+              ...after,
+              scope: {
+                ...after.scope,
+                results: new Map([
+                  ...after.scope.results,
+                  [spread, values ?? getUndefined(context)],
+                ]),
+              },
+            },
+            context,
+            frame,
+          ),
+      );
+    return ts.isCallExpression(made) && !path.scope.results.has(made)
+      ? translateCallStatement(made, path, context, frame, (after, value) =>
+          gather({
+            ...after,
+            scope: {
+              ...after.scope,
+              results: new Map([...after.scope.results, [made, value ?? getUndefined(context)]]),
+            },
+          }),
+        )
+      : gather(path);
   }
   const converted = getHoistedConversion(statement, path, context);
   if (converted !== undefined) {

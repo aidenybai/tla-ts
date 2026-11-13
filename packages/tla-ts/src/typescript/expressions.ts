@@ -166,6 +166,8 @@ import {
   isBigIntLike,
   isNumberLike,
   mayBeGeneratorType,
+  isBuiltInIteratorType,
+  isGeneratorType,
   rejectGeneratorUse,
   isNumericKey,
   isObject,
@@ -421,6 +423,16 @@ export const translateElements = (
           context,
         ),
       ];
+    }
+    // A spread of an iterator that the statement stepped first takes the values it gathered.
+    const gathered = scope.results.get(element);
+    if (gathered !== undefined) return [...result, gathered];
+    if (
+      (isGeneratorType(element.expression, context) ||
+        isBuiltInIteratorType(element.expression, context)) &&
+      !isArrayIteration(element.expression, context)
+    ) {
+      throw new TlaTypeScriptError("tla-ts can't step an iterator in this spread", element);
     }
     if (
       getKind(element.expression, context) !== "sequence" &&

@@ -11279,6 +11279,57 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("assigned");
   });
 
+  it("spreads a generator where it's made and where a variable holds it", async () => {
+    await expect(
+      checkModel(`
+      function* g() {
+        yield 1;
+        yield 2;
+      }
+      const source = g();
+      source.next();
+      const all = [0, ...g(), ...source, 3];
+      if (all.join() === "0,1,2,2,3") throw new Error("spread");
+    `),
+    ).rejects.toThrow("spread");
+  });
+
+  it("spreads the iterators of an array and a string", async () => {
+    const result = await checkModel(`
+      const holder = { count: 0 };
+      const iterator = "ab"[Symbol.iterator]();
+      const all = [...iterator, ...Iterator.from([1]), ...iterator];
+      holder.count = 1;
+      if (all.join() === "a,b,1") throw new Error("spread");
+    `);
+    expect(result.failure?.message).toContain("spread");
+  });
+
+  it("stops a generator's spread after what reads what the generator changes", () => {
+    expect(() =>
+      checkModel(`
+        let count = 0;
+        function* g() {
+          count += 1;
+          yield count;
+        }
+        const all = [count, ...g()];
+      `),
+    ).toThrow("tla-ts can't run this before what reads what it changes");
+  });
+
+  it("stops a generator's spread that a statement can't step first", () => {
+    expect(() =>
+      checkModel(`
+        function* g() {
+          yield 1;
+        }
+        const pick = (isPicked: boolean) => (isPicked ? [...g()] : []);
+        if (pick(true).length !== 1) throw new Error("picked");
+      `),
+    ).toThrow("tla-ts can't step an iterator in this spread");
+  });
+
   it("takes or drops up to Infinity or Number.MAX_SAFE_INTEGER", async () => {
     const result = await checkModel(`
       function* g(): Generator<number> {

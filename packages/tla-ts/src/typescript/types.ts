@@ -865,7 +865,8 @@ export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
       (ts.isCallExpression(outer) &&
         outer.arguments.at(0) === node &&
         outer.expression.getText() === "Array.from") ||
-      (ts.isCallExpression(outer) && getIteratorFrom(outer, context) === node));
+      (ts.isCallExpression(outer) && getIteratorFrom(outer, context) === node) ||
+      (ts.isSpreadElement(outer) && isGeneratorType(node, context)));
   if (!isHeld) throw new TlaTypeScriptError("tla-ts can't follow a generator here", node);
 };
 
