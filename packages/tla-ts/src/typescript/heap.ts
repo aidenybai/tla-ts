@@ -81,12 +81,7 @@ import {
   translateToNumber,
   useJavaScript,
 } from "./javascript";
-import {
-  getDefinedGetters,
-  getElementGetters,
-  isDescriptorsRead,
-  isProxyOperation,
-} from "./protocols";
+import { isDescriptorsRead, isProxyOperation } from "./protocols";
 import { getReached } from "./aliasing";
 import { createStateScope, type Scope } from "./scope";
 import { getStackCall } from "./stacks";
@@ -3452,8 +3447,8 @@ export const findHeapArrays = (
   });
   changed.forEach((node) => arrays.add(node));
   // The array that map makes, which lacks an element where the array that it visits does: an
-  // array-like object whose getters may run, or an array or an array-like object that the callback,
-  // or what it calls, changes in place. The script must read it only as an object.
+  // array-like object, which may lack any index below its length, or an array that the callback, or
+  // what it calls, changes in place. The script must read it only as an object.
   references.forEach((uses, symbol) => {
     const declaration = symbol.valueDeclaration;
     if (declaration === undefined || !ts.isVariableDeclaration(declaration)) return;
@@ -3467,14 +3462,12 @@ export const findHeapArrays = (
     const heldDeclaration = held?.valueDeclaration;
     const isArrayLike =
       map.isCall ||
+      arrays.has(receiver) ||
       (heldDeclaration !== undefined &&
         (arrays.has(heldDeclaration) ||
           (ts.isVariableDeclaration(heldDeclaration) &&
             heldDeclaration.initializer !== undefined &&
             arrays.has(heldDeclaration.initializer))));
-    const hasGetters =
-      getElementGetters(receiver, context) !== undefined ||
-      ["length", "constructor"].some((key) => getDefinedGetters(receiver, key, context).length > 0);
     const reached = new Set(getReached([map.callback], context));
     const isChangedByCallback =
       held !== undefined &&
@@ -3490,7 +3483,7 @@ export const findHeapArrays = (
               ts.isDeleteExpression(use.parent.parent))),
       );
     if (
-      ((isArrayLike && hasGetters) || isChangedByCallback) &&
+      (isArrayLike || isChangedByCallback) &&
       reads.every((use) => isArrayObjectUse(use, context))
     ) {
       arrays.add(call);

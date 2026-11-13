@@ -533,6 +533,16 @@ describe("top-level statements", () => {
     expect((await checkModel(source(false))).failure?.message).toContain("length");
   });
 
+  it("keep a hole in the array that map makes over an array-like object that lacks an index", async () => {
+    const source = (expected: string) => `
+      const like = { 0: 5, length: 3 };
+      const mapped = Array.prototype.map.call(like, (value: unknown) => typeof value);
+      if (mapped.length !== 3 || 1 in mapped || mapped[0] !== "${expected}") throw new Error("map");
+    `;
+    expect((await checkModel(source("number"))).failure).toBeUndefined();
+    expect((await checkModel(source("string"))).failure?.message).toContain("map");
+  });
+
   it("keep a hole in the array that map makes where a callback shortens the array", async () => {
     const source = (expected: number) => `
       const items: (number | undefined)[] = [1, , 3, 4];
