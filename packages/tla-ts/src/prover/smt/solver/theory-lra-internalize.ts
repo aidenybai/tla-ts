@@ -3,6 +3,7 @@ import {
   FAMILY_ARITH,
   KIND_APP,
   OP_ADD,
+  OP_ATAN2,
   OP_DIV,
   OP_DIV0,
   OP_IDIV,
@@ -11,6 +12,7 @@ import {
   OP_MOD0,
   OP_MUL,
   OP_NUM,
+  OP_PI,
   OP_POWER,
   OP_REM,
   OP_SUB,
@@ -28,6 +30,7 @@ import { type ConstraintKind, KIND_GE, KIND_LE } from "./lp/constraints";
 import { NULL_LPVAR } from "./lp/lar-solver";
 import { NlaCore } from "./lp/nla-core";
 import type { Division } from "./lp/nla-divisions";
+import { TRANSCENDENTAL_OPS } from "./nlsat/transcendental-eval";
 import { TheoryLraAxioms } from "./theory-lra-axioms";
 
 export interface ApiBound {
@@ -362,7 +365,8 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
         const isFirst = !context.isEInternalized(term);
         this.internalizeArgs(term);
         this.mkEnode(term);
-        addVar(index, this.mkVar(term));
+        const thVar = this.mkVar(term);
+        addVar(index, thVar);
         index++;
         if (isFirst) {
           if (op === OP_DIV) {
@@ -413,6 +417,33 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
               const arg = manager.getArg(term, argIndex);
               toEnsureVar.push(arg);
             }
+          } else if (TRANSCENDENTAL_OPS.has(op)) {
+            const nla = this.ensureNla();
+            const arg = manager.getArg(term, 0);
+            this.internalizeTermCore(arg);
+            const argVar = this.mkVar(arg);
+            nla.transcendentals.add(
+              TRANSCENDENTAL_OPS.get(op)!,
+              this.registerVar(argVar),
+              this.registerVar(thVar),
+            );
+            toEnsureVar.push(arg);
+          } else if (op === OP_ATAN2) {
+            const nla = this.ensureNla();
+            const y = manager.getArg(term, 0);
+            const x = manager.getArg(term, 1);
+            this.internalizeTermCore(y);
+            this.internalizeTermCore(x);
+            const yVar = this.mkVar(y);
+            const xVar = this.mkVar(x);
+            nla.transcendentals.addAtan2(
+              this.registerVar(yVar),
+              this.registerVar(xVar),
+              this.registerVar(thVar),
+            );
+            toEnsureVar.push(y, x);
+          } else if (op === OP_PI) {
+            this.ensureNla().transcendentals.addPi(this.registerVar(thVar));
           } else if (op !== OP_TO_INT && op !== OP_DIV0) {
             if (op === OP_POWER) this.ensureNla();
             this.foundUnsupported(term);
