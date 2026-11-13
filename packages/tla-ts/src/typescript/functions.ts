@@ -290,7 +290,7 @@ const inlineCall = (
   called?: CalledMethod,
 ) => {
   if (callee.body === undefined) throw new TlaTypeScriptError("Give this a body", callee);
-  const callbacks = callee.parameters.flatMap(
+  const passedCallbacks = callee.parameters.flatMap(
     (parameter, position): [ts.Symbol, FunctionNode][] => {
       const argument = argumentNodes.at(position);
       const symbol = getSymbol(parameter.name, context.checker);
@@ -302,6 +302,35 @@ const inlineCall = (
         : [[symbol, callback]];
     },
   );
+  // A parameter that the call doesn't pass, whose default is an arrow function that the body only
+  // calls, calls that function as it would one that the call passes, as an expression can't make
+  // the function object that the heap would hold.
+  const body = callee.body;
+  const defaultCallbacks =
+    context.heap === undefined || argumentNodes.some(ts.isSpreadElement)
+      ? []
+      : callee.parameters
+          .slice(argumentNodes.length)
+          .flatMap((parameter): [ts.Symbol, FunctionNode][] => {
+            const initializer = parameter.initializer;
+            const symbol = getSymbol(parameter.name, context.checker);
+            const isOnlyCalled = findNodes(body, ts.isIdentifier).every(
+              (name) =>
+                getSymbol(name, context.checker) !== symbol ||
+                (ts.isCallExpression(name.parent) && name.parent.expression === name),
+            );
+            return initializer !== undefined &&
+              ts.isArrowFunction(initializer) &&
+              symbol !== undefined &&
+              isOnlyCalled &&
+              findNodes(
+                initializer,
+                (inner): inner is ts.ThisExpression => inner.kind === ts.SyntaxKind.ThisKeyword,
+              ).length === 0
+              ? [[symbol, initializer]]
+              : [];
+          });
+  const callbacks = [...passedCallbacks, ...defaultCallbacks];
   const isValue = (position: number) =>
     !callbacks.some(
       (entry) => entry[0] === getSymbol(callee.parameters[position].name, context.checker),
@@ -319,7 +348,7 @@ const inlineCall = (
   // the body may read only its length and elements.
   if (
     reads.length > 0 &&
-    (callbacks.length > 0 ||
+    (passedCallbacks.length > 0 ||
       argumentNodes.some(ts.isSpreadElement) ||
       !reads.every((read) => isArgumentsRead(read, context)) ||
       context.heap === undefined)
@@ -346,7 +375,7 @@ const inlineCall = (
   const isOutside = (entry: [ts.Node, Expression]) =>
     ts.findAncestor(entry[0], (ancestor) => ancestor === callee) === undefined;
   const value = translateBody(
-    callee.body,
+    body,
     {
       ...bound.scope,
       allocated: new Map([...bound.scope.allocated].filter(isOutside)),

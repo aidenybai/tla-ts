@@ -3479,6 +3479,30 @@ describe("calls", () => {
     expect((await checkModel(getNestedSource("100,200"))).failure).toBeUndefined();
   });
 
+  const getDefaultSource = (expected: number) => `
+    const holder = { value: 1 };
+    holder.value += 1;
+    const getChildren = (
+      list: number[],
+      getElements = (inner: number[]) => inner.map((value) => value + list.length),
+    ) => getElements(list);
+    const count = (lists: number[][]) => {
+      let total = 0;
+      for (const list of lists) total += getChildren(list).reduce((sum, value) => sum + value, 0);
+      return total;
+    };
+    const total = [[[1], [2, 3]]].map((lists) => count(lists))[0];
+    if (total !== ${expected}) throw new Error(\`\${total}\`);
+  `;
+
+  it("calls the function that a parameter's default gives where an expression calls the function", async () => {
+    expect((await checkModel(getDefaultSource(11))).failure).toBeUndefined();
+  });
+
+  it("fails where the function that an expression's call defaults to gives another value", async () => {
+    expect((await checkModel(getDefaultSource(6))).failure?.message).toContain('"11"');
+  });
+
   it("fails where a function that an expression calls from inside itself gives another array", async () => {
     expect((await checkModel(getNestedSource("10,20,10,20"))).failure?.message).toContain(
       '"100,200"',
