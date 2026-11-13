@@ -1394,7 +1394,8 @@ describe("values", () => {
       const bump = (a = ++count) => a;
       ${Array.from(
         { length: calls },
-        (_, index) => `const value${index} = bump();\n[{ value = count += 10 }] = values;`,
+        (_, index) =>
+          `const value${index} = bump(values[0].value);\n[{ value = count += 10 }] = values;`,
       ).join("\n")}
       box.total = count + value!;
       if (String(box.total) !== "${expected}") throw new Error("outcomes " + box.total);
@@ -1403,6 +1404,25 @@ describe("values", () => {
     expect(getSize(8)).toBeLessThan(getSize(4) * 2);
     expect((await checkModel(getSource(2, "44"))).failure).toBeUndefined();
     expect((await checkModel(getSource(2, "43"))).failure?.message).toContain("outcomes 44");
+  });
+
+  it("runs a default that assigns a function where the call certainly passes undefined", async () => {
+    const getSource = (expected: string) => `
+      var x = "outside";
+      var probeParams, probeBody;
+      let count: number = 0;
+      ((_ = (probeParams = function () { return x; })) => {
+        var x = "inside";
+        probeBody = function () { return x; };
+      })();
+      const pick = (a = (count += 1)) => a;
+      const outcomes = [probeParams!(), probeBody(), pick(5), pick(undefined), count].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("outside,inside,5,1,1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("outside,inside,5,1,2"))).failure?.message).toContain(
+      "outcomes outside,inside,5,1,1",
+    );
   });
 
   it("stops where a parameter's default that assigns runs out of order", () => {
