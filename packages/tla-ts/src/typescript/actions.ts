@@ -638,6 +638,25 @@ const getNameError = (node: ts.Expression, context: Context) => {
   return error;
 };
 
+// How a binding that a write to a name can't change treats the write: a const's or a using
+// declaration's binding throws a TypeError, and so does a function expression's own name in strict
+// code, which outside it ignores the write.
+const getImmutable = (name: ts.Identifier, context: Context) => {
+  const declaration = getSymbol(name, context.checker)?.valueDeclaration;
+  if (declaration === undefined) return undefined;
+  if (
+    (ts.isVariableDeclaration(declaration) || ts.isBindingElement(declaration)) &&
+    (ts.getCombinedNodeFlags(declaration) & (ts.NodeFlags.Const | ts.NodeFlags.Using)) !== 0
+  ) {
+    return "throws";
+  }
+  return ts.isFunctionExpression(declaration) && declaration.name !== undefined
+    ? isStrictCode(name)
+      ? "throws"
+      : "ignores"
+    : undefined;
+};
+
 // The current value of an assignment target, and how to replace it.
 const getTarget = (node: ts.Expression, path: Path, context: Context): Target => {
   if (ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node)) {
@@ -655,12 +674,17 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
         !ts.isAsExpression(ancestor.parent),
     );
     // A parameter's object may be the caller's too, which a change in place would miss.
-    const isChangedInPlace =
-      symbol?.valueDeclaration !== undefined &&
-      ts.isParameter(symbol.valueDeclaration) &&
+    const isReceiver =
       whole !== undefined &&
       (ts.isPropertyAccessExpression(whole.parent) || ts.isElementAccessExpression(whole.parent)) &&
       whole.parent.expression === whole;
+    if (!isReceiver && getImmutable(node, context) !== undefined) {
+      throw new TlaTypeScriptError(`tla-ts can't follow this write to ${node.text}`, node);
+    }
+    const isChangedInPlace =
+      symbol?.valueDeclaration !== undefined &&
+      ts.isParameter(symbol.valueDeclaration) &&
+      isReceiver;
     if (
       symbol === undefined ||
       current === undefined ||
@@ -7125,6 +7149,10 @@ const translateExpressionStatement = (
   if (isUnresolved(expression, context)) {
     return throwError("ReferenceError", path, expression, context, frame);
   }
+  const immutable = getImmutableWrite(expression, context);
+  if (immutable !== undefined) {
+    return translateImmutableWrite(immutable, path, context, frame, continueWith);
+  }
   // A logical assignment reads its value, here a name that no declaration binds, only where its
   // target's value doesn't decide it.
   if (
@@ -7620,6 +7648,87 @@ const translateExpressionStatement = (
     );
   }
   return translateWriteStatement(expression, path, context, frame, continueWith);
+};
+
+interface ImmutableWrite {
+  expression: ts.BinaryExpression | Increment;
+  // The declaration of the name, whose type is what the name holds, which the checker doesn't give
+  // where the script writes the name.
+  declaration: ts.Declaration;
+  isIgnored: boolean;
+}
+
+// An assignment or an increment that writes a name whose binding can't change.
+export const getImmutableWrite = (
+  expression: ts.Node,
+  context: Context,
+): ImmutableWrite | undefined => {
+  const target =
+    ts.isBinaryExpression(expression) &&
+    expression.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    expression.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+      ? expression.left
+      : isIncrement(expression) && INCREMENT_OPERATORS.has(expression.operator)
+        ? expression.operand
+        : undefined;
+  const name = target === undefined ? undefined : skipCasts(target);
+  if (name === undefined || !ts.isIdentifier(name)) return undefined;
+  const immutable = getImmutable(name, context);
+  const declaration = getSymbol(name, context.checker)?.valueDeclaration;
+  return immutable === undefined ||
+    declaration === undefined ||
+    !(ts.isBinaryExpression(expression) || isIncrement(expression))
+    ? undefined
+    : { expression, declaration, isIgnored: immutable === "ignores" };
+};
+
+// Runs a write to a name whose binding can't change, which reads and computes what it writes, then
+// throws a TypeError, as SetMutableBinding does, or leaves the binding as it is. tla-ts follows
+// only primitive operands, whose conversions run no code and throw nothing but a TypeError, and a
+// written value that can't throw.
+const translateImmutableWrite = (
+  write: ImmutableWrite,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const expression = write.expression;
+  const getFlags = (node: ts.Node) => context.checker.getTypeAtLocation(node).flags;
+  const flags = getFlags(write.declaration);
+  // BigInt division and exponentiation throw a RangeError, which comes first.
+  const isPrimitive = (flags & PRIMITIVE_TYPES) !== 0 && (flags & ts.TypeFlags.BigIntLike) === 0;
+  const written = write.isIgnored
+    ? continueWith(path)
+    : throwTypeError(path, expression, context, frame);
+  if (!ts.isBinaryExpression(expression)) {
+    if (write.isIgnored || !isPrimitive) {
+      throw new TlaTypeScriptError(`tla-ts can't follow ${expression.getText()}`, expression);
+    }
+    return written;
+  }
+  const kind = expression.operatorToken.kind;
+  const isLogical = LOGICAL_OPERATORS.has(kind);
+  if (
+    !isInertValue(skipCasts(expression.right)) ||
+    (kind !== ts.SyntaxKind.EqualsToken &&
+      !isLogical &&
+      (write.isIgnored || !isPrimitive || (getFlags(expression.right) & PRIMITIVE_TYPES) === 0))
+  ) {
+    throw new TlaTypeScriptError(`tla-ts can't follow ${expression.getText()}`, expression);
+  }
+  translateExpression(expression.right, path.scope, context);
+  return isLogical
+    ? ifThenElse(
+        isLogicallyWritten(
+          expression,
+          translateExpression(expression.left, path.scope, context),
+          context,
+        ),
+        written,
+        continueWith(path),
+      )
+    : written;
 };
 
 // Runs an assignment or an increment, which writes a variable or a property.
@@ -11340,7 +11449,13 @@ const getHoistedConversion = (statement: ts.Statement, path: Path, context: Cont
   const before: ts.Node[] = [];
   const node = findLeadingCall(evaluated, before, path, context).conversion;
   const conversion = node === undefined ? undefined : getConversion(node, context);
-  if (node === undefined || conversion === undefined) return undefined;
+  if (
+    node === undefined ||
+    conversion === undefined ||
+    getImmutableWrite(node, context) !== undefined
+  ) {
+    return undefined;
+  }
   // A compound assignment assigns where it's all that the statement evaluates.
   if (
     isCompoundAssignment(node) &&

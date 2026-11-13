@@ -28,6 +28,7 @@ import {
   getWritten,
   isArgumentsRead,
   getWrittenRoots,
+  getImmutableWrite,
   translateLocalStatements,
 } from "./actions";
 import { TlaTypeScriptError } from "../errors";
@@ -105,11 +106,12 @@ export const mayThrow = (
   visited = new Set<ts.Node>(),
 ): boolean => {
   // A using declaration throws a TypeError for a value that isn't disposable, and it and a
-  // DisposableStack's methods run dispose methods.
+  // DisposableStack's methods run dispose methods. A write to a const throws a TypeError.
   if (
     ts.isThrowStatement(node) ||
     (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) ||
-    getStackCall(node, context) !== undefined
+    getStackCall(node, context) !== undefined ||
+    getImmutableWrite(node, context)?.isIgnored === false
   ) {
     return true;
   }
