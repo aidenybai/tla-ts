@@ -21,7 +21,7 @@ import {
   isPrototypeArray,
   translateConstantFunctions,
 } from "./heap";
-import { findGeneratorPrototypes, translateBuiltIns } from "./intrinsics";
+import { findGeneratorPrototypes, getCodePoint, translateBuiltIns } from "./intrinsics";
 import { WELL_KNOWN_SYMBOLS } from "./javascript";
 import { type Exported, isDeclaration, type Model, readModel, type Variable } from "./model";
 import { createProgram } from "./program";
@@ -565,23 +565,7 @@ export const compile = (
             .map((code) =>
               record("Record", [
                 { name: "code", value: number(code) },
-                {
-                  name: "character",
-                  value:
-                    code >= 0xd800 && code <= 0xdbff
-                      ? apply("SubSeq", [
-                          string(String.fromCharCode(code, 0xdc00)),
-                          number(1),
-                          number(1),
-                        ])
-                      : code >= 0xdc00 && code <= 0xdfff
-                        ? apply("SubSeq", [
-                            string(String.fromCharCode(0xd800, code)),
-                            number(2),
-                            number(2),
-                          ])
-                        : string(String.fromCharCode(code)),
-                },
+                { name: "character", value: getCodePoint(code) },
               ]),
             ),
         ),
