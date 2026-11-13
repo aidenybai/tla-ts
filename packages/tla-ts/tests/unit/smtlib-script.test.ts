@@ -663,6 +663,64 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("answers arrays with sat.euf's array solver", () => {
+    const header = [
+      "(set-option :sat.euf true)",
+      "(set-option :tactic.default_tactic smt)",
+      "(declare-const a (Array Int Int))",
+    ];
+    expect(
+      run([
+        ...header,
+        "(declare-const b (Array Int Int))",
+        "(declare-const i Int)",
+        "(declare-const j Int)",
+        "(assert (= (store a i 1) (store b j 2)))",
+        "(assert (not (= i j)))",
+        "(check-sat)",
+        "(get-value (i j (select a j) (select b i)))",
+        "(reset)",
+        ...header,
+        "(declare-const b (Array Int Int))",
+        "(assert (= (default a) 1))",
+        "(assert (= b (store a 2 3)))",
+        "(assert (= (select b 5) 4))",
+        "(check-sat)",
+        "(get-model)",
+        "(reset)",
+        "(set-option :sat.euf true)",
+        "(set-option :tactic.default_tactic smt)",
+        "(declare-const a (Array (_ BitVec 8) (_ BitVec 8)))",
+        "(declare-const i (_ BitVec 8))",
+        "(assert (= (bvadd (select a i) (select a (bvadd i #x01))) #x10))",
+        "(assert (bvugt (select a i) #x0a))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "((i (- 23921))\n (j 8365)\n ((select a j) 2)\n ((select b i) 1))",
+      "sat",
+      [
+        "(",
+        "  (define-fun a () (Array Int Int)",
+        "    (store ((as const (Array Int Int)) 1) 5 4))",
+        "  (define-fun b () (Array Int Int)",
+        "    (store (store ((as const (Array Int Int)) 1) 5 4) 2 3))",
+        ")",
+      ].join("\n"),
+      "sat",
+      [
+        "(",
+        "  (define-fun i () (_ BitVec 8)",
+        "    #x7f)",
+        "  (define-fun a () (Array (_ BitVec 8) (_ BitVec 8))",
+        "    (store ((as const (Array (_ BitVec 8) (_ BitVec 8))) #x80) #x80 #x90))",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),

@@ -451,7 +451,7 @@ export class EufSolver implements SatExtension {
     return setShared(false);
   }
 
-  private isBetaRedex(parent: Enode, node: Enode) {
+  isBetaRedex(parent: Enode, node: Enode) {
     for (const thVar of parent.thVars)
       if (this.id2solver.get(thVar.id)?.isBetaRedex(parent, node) === true) return true;
     return false;
