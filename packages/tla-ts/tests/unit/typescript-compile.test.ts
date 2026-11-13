@@ -2657,6 +2657,47 @@ describe("values", () => {
     expect((await checkModel(getSource("4,true,3"))).failure?.message).toContain("3,false,2");
   });
 
+  it("makes a set of an array literal that spreads a set", async () => {
+    const getSource = (expected: string) => `
+      const postfix = new Set(["'", "^+"]);
+      const made = new Set(["SUBSET", "'", ...postfix]);
+      const result = [made.size, made.has("^+"), made.has("^#")].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("3,true,false"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("4,true,false"))).rejects.toThrow("3,true,false");
+  });
+
+  it("makes a set of an array literal that spreads a map's keys", async () => {
+    const getSource = (expected: string) => `
+      const levels = new Map([
+        ["CONSTANT", "Constant"],
+        ["VARIABLE", "Variable"],
+      ]);
+      const starts = new Set(["NEW", ...levels.keys()]);
+      const result = [starts.size, starts.has("VARIABLE"), starts.has("Variable")].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("3,true,false"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("3,true,true"))).rejects.toThrow("3,true,false");
+  });
+
+  it("makes a set that the heap holds of an array literal that spreads a set", async () => {
+    const getSource = (expected: string) => `
+      const postfix = new Set(["'", "^+"]);
+      const made = new Set(["SUBSET", "'", ...postfix]);
+      const box = { made };
+      box.made.add("x");
+      postfix.add("y");
+      const result = [made.size, made.has("^+"), made.has("y"), postfix.has("x")].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("4,true,false,false"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("4,true,true,false"))).failure?.message).toContain(
+      "4,true,false,false",
+    );
+  });
+
   it("makes a set of an array literal that spreads a set into an iterable parameter", async () => {
     const getSource = (expected: string) => `
       const tokens = (kinds: Iterable<number>) => ({ type: "tokens", kinds: new Set(kinds) });

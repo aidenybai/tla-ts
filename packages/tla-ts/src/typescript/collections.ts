@@ -358,6 +358,21 @@ const getEntries = (value: Expression, context: Context): Unordered => ({
 const getElements = (value: Expression, context: Context) =>
   mapKeys(value, "sequence", context, (shared, key) => index(shared, [key]));
 
+// The set of the elements of an array literal and of the collections it spreads, where nothing
+// reads its order.
+const translateElementSet = (
+  node: ts.ArrayLiteralExpression,
+  scope: Scope,
+  context: Context,
+): Expression =>
+  node.elements
+    .map((element) =>
+      ts.isSpreadElement(element)
+        ? translateSet(element.expression, scope, context)
+        : set([translateSetKey(element, scope, context)]),
+    )
+    .reduce((left, right) => apply("\\cup", [left, right]), set([]));
+
 // The set of the elements of an argument that a parameter which only makes a Set takes, where an
 // array literal gives those of its elements and of the collections it spreads, as nothing reads
 // its order.
@@ -367,15 +382,7 @@ export const translateSetArgument = (
   scope: Scope,
   context: Context,
 ): Expression => {
-  if (ts.isArrayLiteralExpression(node)) {
-    return node.elements
-      .map((element) =>
-        ts.isSpreadElement(element)
-          ? translateSet(element.expression, scope, context)
-          : set([translateSetKey(element, scope, context)]),
-      )
-      .reduce((left, right) => apply("\\cup", [left, right]), set([]));
-  }
+  if (ts.isArrayLiteralExpression(node)) return translateElementSet(node, scope, context);
   const value = getValue();
   if (isHeapArray(node, context)) {
     return getElements(
@@ -538,7 +545,21 @@ const translateUnordered = (
 };
 
 // The elements of a set, an array, or an iterator over a collection, as a TLA+ set.
-export const translateSet = (node: ts.Expression, scope: Scope, context: Context) => {
+export const translateSet = (node: ts.Expression, scope: Scope, context: Context): Expression => {
+  // An array literal that spreads a set or an iterator over a map, which has no order, gives only
+  // its elements.
+  if (
+    ts.isArrayLiteralExpression(node) &&
+    node.elements.some(
+      (element) =>
+        ts.isSpreadElement(element) &&
+        getKind(element.expression, context) !== "sequence" &&
+        !isArrayIteration(element.expression, context) &&
+        !isEvery(context.checker.getTypeAtLocation(element.expression), ts.TypeFlags.StringLike),
+    )
+  ) {
+    return translateElementSet(node, scope, context);
+  }
   const unordered = translateUnordered(node, scope, context);
   if (unordered !== undefined) return unordered.set;
   if (isHeapArray(node, context)) {
