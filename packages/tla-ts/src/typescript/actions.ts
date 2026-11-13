@@ -112,7 +112,13 @@ import {
   runConversion,
   runToPrimitive,
 } from "./conversions";
-import { getJsonText, parseJson, translateHoldsJson } from "./json";
+import {
+  getJsonText,
+  isBigIntStringify,
+  parseJson,
+  translateHoldsJson,
+  translateStringify,
+} from "./json";
 import {
   closeIterator,
   getIteratedSpreads,
@@ -2423,6 +2429,27 @@ export const translateCallStatement = (
           string("tla-ts can't call a getter that a script replaced"),
         ]),
       ),
+    );
+  }
+  // JSON.stringify of a value that may hold a BigInt throws a TypeError where it does.
+  if (isBigIntStringify(expression, context)) {
+    return allocateAll(
+      getAllocated(expression, context).filter((inner) => !path.scope.allocated.has(inner)),
+      path,
+      context,
+      (allocated) =>
+        bind(
+          allocated,
+          "stringified",
+          translateStringify(expression, allocated.scope, context),
+          context,
+          (after, value) =>
+            ifThenElse(
+              useJavaScript("IsError", [value], context),
+              throwTypeError(after, expression, context, frame),
+              continueWith(after, value),
+            ),
+        ),
     );
   }
   const stringCall = getStringCall(expression, context);
@@ -8109,6 +8136,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getHeapSetOrMapChange(node, context) !== undefined ||
     getArrayIteratorCall(node, context) !== undefined ||
     getStringCall(node, context) !== undefined ||
+    isBigIntStringify(node, context) ||
     isDescriptorsRead(node, context) ||
     isOwnValuesRead(node, context) ||
     isRevoke(node, context) ||

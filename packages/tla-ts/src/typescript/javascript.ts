@@ -4643,6 +4643,9 @@ LOCAL JSONKeys(heap, replacer) ==
                           /\\ \\A earlier \\in 1..(position - 1) : items[earlier] # items[position])
   IN [position \\in DOMAIN kept |-> items[kept[position]]]
 
+\\* What SerializeJSON gives where JSON.stringify throws a TypeError, as it does for a BigInt.
+JSONTypeError == [constructor |-> Null, message |-> "", name |-> "TypeError"]
+
 \\* SerializeJSONProperty, which gives Undefined where JSON.stringify leaves a value out. A value
 \\* that isn't on the heap and prints as a sequence is an array where state.isSequence holds, as
 \\* where the script makes no Map.
@@ -4654,16 +4657,20 @@ SerializeJSON(heap, value, state, stack, indent) ==
           [] state.gap = "" -> open \\o Join(parts, ",") \\o close
           [] OTHER -> open \\o "\\n" \\o inner \\o Join(parts, ",\\n" \\o inner) \\o "\\n" \\o indent \\o close
       array(elements, seen) ==
-        wrap("[", "]", [position \\in DOMAIN elements |->
-                          LET text == SerializeJSON(heap, elements[position], state, seen, inner)
-                          IN IF text = Undefined THEN "null" ELSE text])
+        LET texts == [position \\in DOMAIN elements |->
+                        SerializeJSON(heap, elements[position], state, seen, inner)]
+        IN IF \\E position \\in DOMAIN texts : IsError(texts[position])
+           THEN JSONTypeError
+           ELSE wrap("[", "]", [position \\in DOMAIN texts |->
+                                 IF texts[position] = Undefined THEN "null" ELSE texts[position]])
       object(keys) ==
         LET texts == [position \\in DOMAIN keys |->
                         SerializeJSON(heap, Get(heap, value, keys[position]), state,
                                       stack \\cup {value}, inner)]
             present == SelectSeq([position \\in DOMAIN keys |-> position],
                                  LAMBDA position : texts[position] # Undefined)
-        IN wrap("{", "}", [position \\in DOMAIN present |->
+        IN IF \\E position \\in DOMAIN texts : IsError(texts[position]) THEN JSONTypeError ELSE
+           wrap("{", "}", [position \\in DOMAIN present |->
                              QuoteJSON(keys[present[position]], state.escapes) \\o ":"
                                \\o (IF state.gap = "" THEN "" ELSE " ") \\o texts[present[position]]])
       hasToJSON(ref) == TypeOfIn(heap, Get(heap, ref, "toJSON")) = "function"
@@ -4674,10 +4681,15 @@ SerializeJSON(heap, value, state, stack, indent) ==
        [] TypeOf(value) = "string" -> QuoteJSON(value, state.escapes)
        [] TypeOf(value) = "number" -> IF IsFinite(value) THEN StringOf(value) ELSE "null"
        [] TypeOf(value) = "symbol" -> Undefined
+       [] IsBigInt(value) ->
+            IF hasToJSON(Ref :> "BigInt.prototype")
+            THEN Assert(FALSE, "tla-ts can't call toJSON")
+            ELSE JSONTypeError
        [] IsProxy(heap, value) ->
             SerializeJSON(heap, ForwardTarget(heap, value, {"get", "ownKeys", "getOwnPropertyDescriptor"}),
                           state, stack, indent)
        [] IsRef(value) /\\ hasToJSON(value) -> Assert(FALSE, "tla-ts can't call toJSON")
+       [] IsHeap(value) /\\ "bigint" \\in DOMAIN Lookup(heap, value) -> JSONTypeError
        [] kind = "Number" ->
             SerializeJSON(heap, JSONPrimitive(heap, value, kind, "valueOf"), state, stack, indent)
        [] kind # "" ->

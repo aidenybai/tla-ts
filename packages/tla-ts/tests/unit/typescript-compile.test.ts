@@ -4970,6 +4970,44 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("throws the TypeError of JSON.stringify of a BigInt", async () => {
+    const source = `
+      declare global {
+        interface ObjectConstructor {
+          // oxlint-disable-next-line typescript/no-wrapper-object-types
+          (value: bigint): BigInt;
+        }
+      }
+      const holder = { seen: 0 };
+      const throwsTypeError = (run: () => unknown) => {
+        try {
+          run();
+        } catch (error) {
+          return error instanceof TypeError;
+        }
+        return false;
+      };
+      if (!throwsTypeError(() => JSON.stringify(0n))) throw new Error("primitive");
+      if (!throwsTypeError(() => JSON.stringify(Object(0n) as unknown as object, ["y"]))) {
+        throw new Error("object");
+      }
+      if (!throwsTypeError(() => JSON.stringify({ x: 0n }))) throw new Error("nested");
+      if (!throwsTypeError(() => JSON.stringify([1, [0n]]))) throw new Error("array");
+      const plain: unknown = { x: 1 };
+      if (JSON.stringify(plain) !== '{"x":1}') throw new Error("plain");
+      holder.seen = 1;
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = [
+      ["JSON.stringify(0n)))", "JSON.stringify(0)))", '"primitive"'],
+      ["[1, [0n]]", "[1, [0]]", '"array"'],
+      [`'{"x":1}'`, `'{"x":2}'`, '"plain"'],
+    ];
+    for (const [from, to, message] of wrong) {
+      expect((await checkModel(source.replace(from, to))).failure?.message).toContain(message);
+    }
+  });
+
   it("stops where JSON.stringify would call a script's function", async () => {
     const result = await checkModel(`
       const value = { a: 1, toJSON: () => 2 };

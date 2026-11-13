@@ -1,6 +1,6 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
-import { type Context, getUndefined, translateString } from "./context";
+import { type Context, getUndefined, share, translateString } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { getNumberValue, translateExpression } from "./expressions";
 import { getHeap, translateObjectValue } from "./heap";
@@ -123,32 +123,60 @@ const translateParsed = (node: ts.CallExpression, text: string, context: Context
   throw new TlaTypeScriptError(`Unsupported call: ${node.getText()}`, node);
 };
 
-// JSON.stringify of a value, a replacer, and a space, or JSON.parse of a literal, where the heap
-// still holds the built-in.
-export const translateJsonCall = (node: ts.CallExpression, scope: Scope, context: Context) => {
-  const callee = node.expression;
-  const text = getJsonText(node, context);
-  if (text !== undefined) {
-    return ifExpression(
-      translateHoldsJson(node, "parse", scope, context),
-      translateParsed(node, text, context),
-      apply("Assert", [
-        boolean(false),
-        string("tla-ts can't call JSON.parse where a script replaced it"),
-      ]),
-    );
-  }
+// JSON.stringify of a value, a replacer, and a space, where the heap still holds the built-in.
+const isStringify = (node: ts.CallExpression, context: Context) =>
+  ts.isPropertyAccessExpression(node.expression) &&
+  node.expression.name.text === "stringify" &&
+  getBuiltIn(node.expression.expression, context) === "JSON" &&
+  context.heap !== undefined;
+
+// Whether a type may hold a BigInt, or an object or array that holds one, which JSON.stringify
+// throws a TypeError for.
+const mayHoldBigInt = (type: ts.Type, checker: ts.TypeChecker, seen: Set<ts.Type>): boolean => {
+  if (seen.has(type)) return false;
+  seen.add(type);
   if (
-    !ts.isPropertyAccessExpression(callee) ||
-    callee.name.text !== "stringify" ||
-    getBuiltIn(callee.expression, context) !== "JSON" ||
-    context.heap === undefined
+    (type.flags &
+      (ts.TypeFlags.BigIntLike |
+        ts.TypeFlags.Any |
+        ts.TypeFlags.Unknown |
+        ts.TypeFlags.NonPrimitive |
+        ts.TypeFlags.Instantiable)) !==
+    0
   ) {
-    return undefined;
+    return true;
   }
+  if (type.isUnionOrIntersection()) {
+    return type.types.some((inner) => mayHoldBigInt(inner, checker, seen));
+  }
+  // JSON.stringify leaves out a function.
+  if ((type.flags & ts.TypeFlags.Object) === 0 || type.getCallSignatures().length > 0) return false;
+  return (
+    type.getSymbol()?.name === "BigInt" ||
+    type
+      .getProperties()
+      .some((property) => mayHoldBigInt(checker.getTypeOfSymbol(property), checker, seen)) ||
+    checker.getIndexInfosOfType(type).some((info) => mayHoldBigInt(info.type, checker, seen))
+  );
+};
+
+// JSON.stringify of a value that may hold a BigInt, which only statements can run, as it may throw.
+export const isBigIntStringify = (node: ts.CallExpression, context: Context) => {
+  const value = node.arguments.at(0);
+  return (
+    isStringify(node, context) &&
+    value !== undefined &&
+    mayHoldBigInt(context.checker.getTypeAtLocation(value), context.checker, new Set())
+  );
+};
+
+// JSON.stringify of a value, a replacer, and a space, which gives JSONTypeError where it throws a
+// TypeError.
+export const translateStringify = (node: ts.CallExpression, scope: Scope, context: Context) => {
   if (node.arguments.length > 3 || node.arguments.some(ts.isSpreadElement)) {
     throw new TlaTypeScriptError(`Unsupported call: ${node.getText()}`, node);
   }
+  context.builtIns.add("BigInt.prototype");
   const values = [0, 1, 2].map((position) => {
     const argument = node.arguments.at(position);
     if (argument === undefined) return getUndefined(context);
@@ -177,5 +205,31 @@ export const translateJsonCall = (node: ts.CallExpression, scope: Scope, context
       boolean(false),
       string("tla-ts can't call JSON.stringify where a script replaced it"),
     ]),
+  );
+};
+
+// JSON.stringify, or JSON.parse of a literal, where the heap still holds the built-in.
+export const translateJsonCall = (node: ts.CallExpression, scope: Scope, context: Context) => {
+  const text = getJsonText(node, context);
+  if (text !== undefined) {
+    return ifExpression(
+      translateHoldsJson(node, "parse", scope, context),
+      translateParsed(node, text, context),
+      apply("Assert", [
+        boolean(false),
+        string("tla-ts can't call JSON.parse where a script replaced it"),
+      ]),
+    );
+  }
+  if (!isStringify(node, context)) return undefined;
+  return share(translateStringify(node, scope, context), "stringified", context, (value) =>
+    ifExpression(
+      useJavaScript("IsError", [value], context),
+      apply("Assert", [
+        boolean(false),
+        string("tla-ts can't throw the TypeError of JSON.stringify here"),
+      ]),
+      value,
+    ),
   );
 };
