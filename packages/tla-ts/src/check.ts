@@ -1103,6 +1103,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     !options.isContinued &&
     options.isFingerprintDistanceSkipped === true &&
     options.dump === undefined &&
+    // A set of small integers on the tier is a 31-bit mask, which a lower bound could overflow.
+    options.maxSetSize === undefined &&
     !hasPostconditions &&
     // The interpreter evaluates again what the tier evaluated before it fell back.
     !hasRepeatedEffects(environment)

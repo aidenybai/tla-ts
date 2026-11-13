@@ -5,7 +5,12 @@ import { check } from "../../src";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures/typed-tier");
 
-const checkFixture = (name: string, isWarningEnabled: boolean, isTyped = true) =>
+const checkFixture = (
+  name: string,
+  isWarningEnabled: boolean,
+  isTyped = true,
+  maxSetSize?: number,
+) =>
   check({
     source: readFileSync(join(FIXTURES, `${name}.tla`), "utf8"),
     config: readFileSync(join(FIXTURES, `${name}.cfg`), "utf8"),
@@ -15,6 +20,7 @@ const checkFixture = (name: string, isWarningEnabled: boolean, isTyped = true) =
     },
     isFingerprintDistanceSkipped: isTyped,
     isWarningEnabled,
+    maxSetSize,
   });
 
 describe("typed tier matches TLC", () => {
@@ -115,6 +121,15 @@ describe("typed tier matches TLC", () => {
       expect(typed).toEqual(interpreted);
     },
   );
+
+  it("reports TLC's error where a set outgrows maxSetSize, as the interpreter does", async () => {
+    const [typed, interpreted] = await Promise.all([
+      checkFixture("GrowingSet", false, true, 20),
+      checkFixture("GrowingSet", false, false, 20),
+    ]);
+    expect(typed.failure?.message).toContain("too many elements (>20)");
+    expect(typed).toEqual(interpreted);
+  });
 
   it("branches on the right side of => only with warnings off, like TLC", async () => {
     const results = await Promise.all([

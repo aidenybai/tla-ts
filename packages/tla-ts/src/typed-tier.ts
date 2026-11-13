@@ -21,6 +21,7 @@ import { OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import {
   compareValues,
   createSet,
+  getMaximumSetSize,
   isEnumerable,
   isSameValue,
   toFiniteSet,
@@ -3680,7 +3681,7 @@ const DIFFERENCE: Kept = { isCommonKept: false, isLeftKept: true, isRightKept: f
 // TLC enumerates SUBSET S by size, and subsets of one size in the order of S. With the first
 // element of S as the highest bit, that is each size's selections from the largest down.
 const getSelections = (count: number) => {
-  if (count > MAXIMUM_SUBSET_BASE) deopt();
+  if (count > MAXIMUM_SUBSET_BASE || 2 ** count > getMaximumSetSize()) deopt();
   const all = (1 << count) - 1;
   const selections = [0];
   for (let size = 1; size <= count; size++) {
@@ -3802,7 +3803,7 @@ const HELPERS = {
   sequences: (elements: Plain[], low: number, high: number) => {
     const length = Math.max(0, high - low + 1);
     if (length > 0 && low !== 1) deopt();
-    if (elements.length ** length > MAXIMUM_SEQUENCES) deopt();
+    if (elements.length ** length > Math.min(MAXIMUM_SEQUENCES, getMaximumSetSize())) deopt();
     const positions = Array.from({ length }, () => 0);
     const sequences: Plain[][] = [];
     if (length > 0 && elements.length === 0) return sequences;
@@ -3845,7 +3846,9 @@ const HELPERS = {
         ? ((2 ** (high - low + 1) - 1) << low) | 0
         : widen(),
   interval: (low: number, high: number) =>
-    Array.from({ length: Math.max(0, high - low + 1) }, (_, index) => low + index),
+    high - low + 1 > getMaximumSetSize()
+      ? deopt()
+      : Array.from({ length: Math.max(0, high - low + 1) }, (_, index) => low + index),
   index: (index: Int32Array, offset: number) =>
     offset >= 0 && offset < index.length ? index[offset] : -1,
   has: (mask: number, element: number) =>
@@ -3886,6 +3889,7 @@ const HELPERS = {
   divide: (left: number, right: number) =>
     right !== 0 ? checkInteger(Math.floor(left / right)) : deopt(),
   normalize: (compare: Comparer, items: Plain[]) => {
+    if (items.length > getMaximumSetSize()) deopt();
     if (items.length > MAXIMUM_INSERTION_SORT) {
       items.sort(compare);
       return items.filter((item, index) => index === 0 || compare(items[index - 1], item) !== 0);
@@ -3985,6 +3989,7 @@ const HELPERS = {
     return true;
   },
   union: (compare: Comparer, left: Plain[], right: Plain[]) => {
+    if (left.length + right.length > getMaximumSetSize()) deopt();
     if (right.length === 1) return addElement(compare, left, right[0]);
     return left.length === 1
       ? addElement(compare, right, left[0])
