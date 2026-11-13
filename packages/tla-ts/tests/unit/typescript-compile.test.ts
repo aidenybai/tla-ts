@@ -3461,6 +3461,30 @@ describe("calls", () => {
     expect((await checkModel(getTotalSource(6))).failure?.message).toContain('"7"');
   });
 
+  const getNestedSource = (expected: string) => `
+    const pass = (list: number[], getElements = (inner: number[]) => inner) => getElements(list);
+    const enumerate = (list: number[], depth: number): number[] => {
+      const elements = pass(list, (inner) => inner).flatMap((child) =>
+        depth > 0 ? enumerate([child * 10], depth - 1) : [child],
+      );
+      return elements;
+    };
+    const holder = { value: 1 };
+    holder.value += 1;
+    const result = enumerate([1, 2], 2);
+    if (result.join() !== "${expected}") throw new Error(result.join());
+  `;
+
+  it("runs the calls of a function that an expression calls from inside itself on its own arguments", async () => {
+    expect((await checkModel(getNestedSource("100,200"))).failure).toBeUndefined();
+  });
+
+  it("fails where a function that an expression calls from inside itself gives another array", async () => {
+    expect((await checkModel(getNestedSource("10,20,10,20"))).failure?.message).toContain(
+      '"100,200"',
+    );
+  });
+
   it("rejects catching a throw from a local function that calls itself", () => {
     expect(() =>
       compile(`

@@ -341,10 +341,16 @@ const inlineCall = (
     passed.isSpread ? values.shared.at(-1) : undefined,
   );
   context.inProgress.add(callee);
+  // A statement makes the objects and runs the calls only of its own expressions, so what the scope
+  // holds for the body's nodes belongs to a call that this one runs inside.
+  const isOutside = (entry: [ts.Node, Expression]) =>
+    ts.findAncestor(entry[0], (ancestor) => ancestor === callee) === undefined;
   const value = translateBody(
     callee.body,
     {
       ...bound.scope,
+      allocated: new Map([...bound.scope.allocated].filter(isOutside)),
+      results: new Map([...bound.scope.results].filter(isOutside)),
       functions: new Map([...bound.scope.functions, ...callbacks]),
       receiver: getReceiver(scope, context, called),
       arrowReceivers: getArrowReceivers(callbacks, scope),
