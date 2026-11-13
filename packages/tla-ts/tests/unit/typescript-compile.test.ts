@@ -16882,6 +16882,44 @@ describe("errors", () => {
     });
   });
 
+  describe("construct a capability with a function that has properties or that a variable holds", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      function C(executor: (resolve: undefined, reject: () => void) => void) {
+        log += "a";
+        executor(undefined, function () {});
+        log += "b";
+      }
+      Object.defineProperty(C, "resolve", {
+        get() {
+          throw new Error("read");
+        },
+      });
+      try {
+        Promise.all.call(C, []);
+      } catch (error) {
+        log += error instanceof TypeError ? "T" : "?";
+      }
+      const D = function () {
+        throw new RangeError();
+      };
+      try {
+        Promise.try.call(D, () => {});
+      } catch (error) {
+        log += error instanceof RangeError ? "R" : "?";
+      }
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("throws before it reads a property", async () => {
+      expect((await checkModel(getSource("abTR"))).failure).toBeUndefined();
+    });
+
+    it("throws what the function throws", async () => {
+      expect((await checkModel(getSource("abT?"))).failure).toBeDefined();
+    });
+  });
+
   describe("resolve with a thenable whose then is a function expression of one parameter", () => {
     const getSource = (expected: string) => `
       declare function setTimeout(callback: () => void): void;

@@ -1849,6 +1849,8 @@ const isInert = (node: ts.Expression): boolean =>
   [ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword, ts.SyntaxKind.NullKeyword].includes(
     node.kind,
   ) ||
+  ts.isFunctionExpression(node) ||
+  ts.isArrowFunction(node) ||
   (ts.isArrayLiteralExpression(node) && node.elements.every(isInert)) ||
   (ts.isObjectLiteralExpression(node) && node.properties.length === 0);
 
@@ -1912,12 +1914,10 @@ const getCapabilityConstructor = (node: ts.Expression, context: Context) => {
   ) {
     return undefined;
   }
-  const name = ts.isFunctionExpression(constructor)
-    ? constructor.name
-    : (constructor.name ??
-      (callee !== undefined && ts.isVariableDeclaration(callee) && ts.isIdentifier(callee.name)
-        ? callee.name
-        : undefined));
+  const name =
+    callee !== undefined && ts.isVariableDeclaration(callee) && ts.isIdentifier(callee.name)
+      ? callee.name
+      : constructor.name;
   const symbol = name && getSymbol(name, context.checker);
   const outer = ts.findAncestor(
     constructor.parent,
@@ -1940,10 +1940,20 @@ const getCapabilityConstructor = (node: ts.Expression, context: Context) => {
             getSymbol(inner, context.checker) === symbol,
         ).every((reference) => {
           const call = reference.parent;
+          // NewPromiseCapability reads none of C's properties but its prototype, which C's body
+          // never sees.
           return (
-            ts.isCallExpression(call) &&
-            call.arguments[0] === reference &&
-            getCalledPromiseFunction(call, context) !== undefined
+            (ts.isPropertyAccessExpression(call) &&
+              call.expression === reference &&
+              ts.isBinaryExpression(call.parent) &&
+              call.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+              call.parent.left === call) ||
+            (ts.isCallExpression(call) &&
+              call.arguments[0] === reference &&
+              (getCalledPromiseFunction(call, context) !== undefined ||
+                (ts.isPropertyAccessExpression(call.expression) &&
+                  getBuiltIn(call.expression.expression, context) === "Object" &&
+                  call.expression.name.text === "defineProperty")))
           );
         });
   return isPassedOnly ? constructor : undefined;
