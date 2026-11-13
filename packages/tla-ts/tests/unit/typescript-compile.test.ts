@@ -8746,6 +8746,16 @@ describe("errors", () => {
     expect(wrong.failure?.message).toContain("wrong");
   });
 
+  it("makes an array with Array.from of a length that a shorthand property gives", async () => {
+    const getSource = (expected: string) => `
+      const getDomain = (length: number): number[] => Array.from({ length }, (_, index) => index + 1);
+      const domain = getDomain(3);
+      if (domain.join(",") !== "${expected}") throw new Error(domain.join(","));
+    `;
+    expect((await checkModel(getSource("1,2,3"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("0,1,2"))).failure?.message).toContain('"1,2,3"');
+  });
+
   it("gathers a generator into an array with Array.from", async () => {
     const result = await checkModel(`
       function* g(): Generator<number> {
