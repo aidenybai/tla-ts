@@ -947,10 +947,62 @@ export const getBound = (node: ts.Expression, context: Context) => {
 const hasExtends = (node: ts.ClassLikeDeclaration) =>
   (node.heritageClauses ?? []).some((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword);
 
+// What a class extends.
+export const getExtended = (node: ts.ClassLikeDeclaration) =>
+  node.heritageClauses?.find((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword)?.types[0]
+    ?.expression;
+
 // A class that extends null, whose constructor has no this to give and can't call super.
 export const isNullBased = (node: ts.ClassLikeDeclaration) =>
-  node.heritageClauses?.find((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword)?.types[0]
-    ?.expression.kind === ts.SyntaxKind.NullKeyword;
+  getExtended(node)?.kind === ts.SyntaxKind.NullKeyword;
+
+// Whether a script may set a class's prototype, which a derived class's constructor calls: through
+// Object.setPrototypeOf, Reflect.setPrototypeOf, or __proto__ of the class or of a value whose type
+// doesn't tell.
+const isPrototypeSettable = (node: ts.ClassLikeDeclaration, context: Context) => {
+  const symbol = node.name === undefined ? undefined : getSymbol(node.name, context.checker);
+  if (symbol === undefined) return false;
+  const isClassOrUntyped = (target: ts.Expression | undefined) => {
+    const type = target === undefined ? undefined : context.checker.getTypeAtLocation(target);
+    return (
+      type !== undefined &&
+      ((type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+        type.getSymbol() === symbol)
+    );
+  };
+  const source = node.getSourceFile();
+  return (
+    findNodes(source, ts.isCallExpression).some(
+      (call) =>
+        ts.isPropertyAccessExpression(call.expression) &&
+        call.expression.name.text === "setPrototypeOf" &&
+        ["Object", "Reflect"].includes(call.expression.expression.getText()) &&
+        isClassOrUntyped(call.arguments.at(0)),
+    ) ||
+    findNodes(source, ts.isPropertyAccessExpression).some(
+      (access) =>
+        access.name.text === "__proto__" &&
+        getAssignedTarget(access.parent) === access &&
+        isClassOrUntyped(access.expression),
+    )
+  );
+};
+
+// The derived classes without a constructor, from a class through the ones that it extends, whose
+// implicit super calls a prototype that a script may set.
+export const getSettableSupers = (
+  node: HeapClass | undefined,
+  context: Context,
+): ts.ClassLikeDeclaration[] =>
+  node !== undefined &&
+  ts.isClassLike(node) &&
+  hasExtends(node) &&
+  !node.members.some(ts.isConstructorDeclaration)
+    ? [
+        ...(isPrototypeSettable(node, context) ? [node] : []),
+        ...getSettableSupers(getBaseClass(node, context), context),
+      ]
+    : [];
 
 // A class that extends null, whose constructor never reads this or super, or that nothing
 // constructs, as its constructor without a body throws. Its instance fields never initialize.

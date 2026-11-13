@@ -16,6 +16,7 @@ import {
   getParameters,
   getObjectMethod,
   getRunConstructor,
+  getSettableSupers,
   getRunFields,
   getFieldsAfterSuper,
   getSymbol,
@@ -2491,7 +2492,9 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
     !isSometimes &&
     created !== undefined &&
     ts.isExpression(node) &&
-    (getRunConstructor(created, context) === undefined || isStatementNew(node));
+    ((getRunConstructor(created, context) === undefined &&
+      getSettableSupers(created, context).length === 0) ||
+      isStatementNew(node));
   // The objects that the fields of a new's instance make, before the instance that holds them.
   const fields =
     created !== undefined && isNewInstance
@@ -2534,7 +2537,9 @@ export const isMade = (node: ts.Node, context: Context, isSometimes = false): bo
     !isSometimes &&
     created !== undefined &&
     ts.isExpression(node) &&
-    (getRunConstructor(created, context) === undefined || isStatementNew(node));
+    ((getRunConstructor(created, context) === undefined &&
+      getSettableSupers(created, context).length === 0) ||
+      isStatementNew(node));
   return (
     (ts.isObjectLiteralExpression(node) &&
       isObjectValue(node, context) &&

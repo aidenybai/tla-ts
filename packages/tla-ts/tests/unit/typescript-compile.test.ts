@@ -2448,6 +2448,40 @@ describe("values", () => {
     expect((await checkModel(getSource("none2"))).failure?.message).toContain("TypeError2");
   });
 
+  it("throws a TypeError where a class without a constructor extends one whose prototype a script set", async () => {
+    const getSource = (expected: string) => `
+      class Base {
+        seen = 1;
+      }
+      class Middle extends Base {
+        middle = 2;
+      }
+      class Leaf extends Middle {
+        leaf = 3;
+      }
+      class Sibling extends Base {
+        sibling = 4;
+      }
+      const before = new Leaf();
+      Object.setPrototypeOf(Middle, Math.sin);
+      const results: string[] = [\`\${before.seen}\${before.middle}\${before.leaf}\`];
+      try {
+        const made = new Leaf();
+        results.push(\`made\${made.leaf}\`);
+      } catch (error) {
+        results.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      const sibling = new Sibling();
+      results.push(\`\${sibling.seen}\${sibling.sibling}\`);
+      const result = results.join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("123,TypeError,14"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("123,made3,14"))).failure?.message).toContain(
+      "123,TypeError,14",
+    );
+  });
+
   it("stops where super calls another constructor that a script set as the prototype", async () => {
     const result = await checkModel(`
       class Base {

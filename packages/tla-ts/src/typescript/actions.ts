@@ -106,6 +106,8 @@ import {
   isUnresolved,
   getBound,
   getBaseClass,
+  getExtended,
+  getSettableSupers,
   getSuperCall,
   isNullBased,
 } from "./context";
@@ -6951,9 +6953,11 @@ const translateLoopCall = (
 // The constructor that a new of a heap class runs, where a statement runs it.
 const getConstructorRun = (node: ts.Expression, context: Context) => {
   const created = getNewClass(node, context);
-  return created !== undefined && isStatementNew(node)
-    ? getRunConstructor(created, context)
-    : undefined;
+  if (created === undefined || !isStatementNew(node)) return undefined;
+  return (
+    getRunConstructor(created, context) ??
+    (getSettableSupers(created, context).length > 0 ? created : undefined)
+  );
 };
 
 // A new of a heap class whose constructor runs statements, which runs them with the instance
@@ -6981,53 +6985,57 @@ const translateConstruction = (
       : continueWith(after, instance);
   const created = getNewClass(expression, context);
   const fields = created === undefined ? [] : getRunFields(created, context);
-  return translateElements(fields, instance, path, context, frame, (defined) =>
-    ts.isClassLike(constructor)
-      ? giveInstance(defined)
-      : inlineBody(
-          expression,
-          constructor,
-          getConstruction(expression, context)?.arguments ?? [],
-          {
-            value: instance,
-            method: constructor,
-            newTarget:
-              newTarget === undefined
-                ? undefined
-                : translateExpression(newTarget, defined.scope, context),
-          },
-          defined,
-          context,
-          frame,
-          (after, value) => {
-            if (value === undefined) return giveInstance(after);
-            const name = context.names.getFresh("returned");
-            const returned = identifier(name);
-            context.prelude.add("Null");
-            const type = useJavaScript("TypeOf", [returned], context);
-            return letIn(
-              [define(name, [], value)],
-              ifThenElse(
-                apply("=", [returned, getUndefined(context)]),
-                giveInstance(after),
+  const run = () =>
+    translateElements(fields, instance, path, context, frame, (defined) =>
+      ts.isClassLike(constructor)
+        ? giveInstance(defined)
+        : inlineBody(
+            expression,
+            constructor,
+            getConstruction(expression, context)?.arguments ?? [],
+            {
+              value: instance,
+              method: constructor,
+              newTarget:
+                newTarget === undefined
+                  ? undefined
+                  : translateExpression(newTarget, defined.scope, context),
+            },
+            defined,
+            context,
+            frame,
+            (after, value) => {
+              if (value === undefined) return giveInstance(after);
+              const name = context.names.getFresh("returned");
+              const returned = identifier(name);
+              context.prelude.add("Null");
+              const type = useJavaScript("TypeOf", [returned], context);
+              return letIn(
+                [define(name, [], value)],
                 ifThenElse(
-                  apply("\\/", [
-                    apply("/\\", [
-                      apply("=", [type, string("object")]),
-                      apply("#", [returned, identifier("Null")]),
+                  apply("=", [returned, getUndefined(context)]),
+                  giveInstance(after),
+                  ifThenElse(
+                    apply("\\/", [
+                      apply("/\\", [
+                        apply("=", [type, string("object")]),
+                        apply("#", [returned, identifier("Null")]),
+                      ]),
+                      apply("=", [type, string("function")]),
                     ]),
-                    apply("=", [type, string("function")]),
-                  ]),
-                  continueWith(after, returned),
-                  isDerived
-                    ? throwTypeError(after, expression, context, frame)
-                    : continueWith(after, instance),
+                    continueWith(after, returned),
+                    isDerived
+                      ? throwTypeError(after, expression, context, frame)
+                      : continueWith(after, instance),
+                  ),
                 ),
-              ),
-            );
-          },
-        ),
-  );
+              );
+            },
+          ),
+    );
+  // A derived class without a constructor calls super with its arguments, as each such class that
+  // it extends does.
+  return guardSupers(getSettableSupers(created, context), expression, path, context, frame, run);
 };
 
 // The constructor that a class's super(...) runs: the nearest base that declares one.
@@ -7059,25 +7067,56 @@ const translateSuperCall = (
   ) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
   }
+  // The base's constructor runs past the bases without one, each of which calls super too.
   const run = () =>
-    runSuperCall(expression, constructor, receiver, path, context, frame, continueWith);
-  // super calls the constructor that the class's prototype is, which a script can change. One that
-  // can't construct throws a TypeError.
-  const base = constructor.parent.heritageClauses?.find(
-    (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
-  )?.types[0]?.expression;
-  const name = constructor.parent.name;
+    guardSupers(
+      getSettableSupers(getBaseClass(constructor.parent, context), context),
+      expression,
+      path,
+      context,
+      frame,
+      () => runSuperCall(expression, constructor, receiver, path, context, frame, continueWith),
+    );
+  return guardBase(constructor.parent, expression, path, context, frame, run);
+};
+
+// Checks the prototypes of classes in order before what runs after them.
+const guardSupers = (
+  classes: ts.ClassLikeDeclaration[],
+  expression: ts.Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  run: () => Formula,
+) =>
+  classes.reduceRight<() => Formula>(
+    (rest, node) => () => guardBase(node, expression, path, context, frame, rest),
+    run,
+  )();
+
+// A class's constructor calls the one that the class's prototype is, which a script can change.
+// tla-ts runs the base's where the prototype is the base, and one that can't construct throws a
+// TypeError.
+const guardBase = (
+  node: ts.ClassLikeDeclaration,
+  expression: ts.Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  run: () => Formula,
+): Formula => {
+  const base = getExtended(node);
   if (
     base === undefined ||
     !ts.isIdentifier(base) ||
-    name === undefined ||
-    !isHeapClass(constructor.parent, context)
+    node.name === undefined ||
+    !isHeapClass(node, context)
   ) {
     return run();
   }
   const heap = getHeap(path.scope, expression, context);
   const prototype = field(
-    useJavaScript("Lookup", [heap, translateExpression(name, path.scope, context)], context),
+    useJavaScript("Lookup", [heap, translateExpression(node.name, path.scope, context)], context),
     "prototype",
   );
   return ifThenElse(
