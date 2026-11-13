@@ -2339,10 +2339,17 @@ LOCAL UppercaseOf ==
                        SubSeq("abcdefghijklmnopqrstuvwxyz", position, position) = character
      IN  SubSeq("ABCDEFGHIJKLMNOPQRSTUVWXYZ", position, position)]
 
+\\* The characters outside ASCII that simple case folding maps into it, which the u and i flags
+\\* match as the uppercase of their folding.
+LOCAL UnicodeFolds == (${formatString("\u017f")} :> "S") @@ (${formatString("\u212a")} :> "K")
+
 \\* Canonicalize of a character that a backreference compares, which is in ASCII where the other
-\\* character is, as Canonicalize maps no character outside ASCII into it.
+\\* character is, as Canonicalize maps no other character outside ASCII into it.
 LOCAL Canonical(regexp, character) ==
-  IF regexp.ignoreCase /\\ character \\in DOMAIN UppercaseOf THEN UppercaseOf[character] ELSE character
+  CASE ~regexp.ignoreCase -> character
+    [] character \\in DOMAIN UppercaseOf -> UppercaseOf[character]
+    [] regexp.unicode /\\ character \\in DOMAIN UnicodeFolds -> UnicodeFolds[character]
+    [] OTHER -> character
 
 LOCAL LineTerminators == {"\\n", "\\r", ${formatString(" ")}, ${formatString(" ")}}
 
@@ -2352,7 +2359,11 @@ LOCAL WordCharacters == CharactersOf("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOP
 LOCAL CharacterAt(text, index) ==
   IF index >= 0 /\\ index < Len(text) THEN SubSeq(text, index + 1, index + 1) ELSE ""
 
-LOCAL IsWordAt(text, index) == CharacterAt(text, index) \\in WordCharacters
+\\* Whether the character at an index is a word character, which with the u and i flags those whose
+\\* folding is are too.
+LOCAL IsWordAt(regexp, text, index) ==
+  \\/ CharacterAt(text, index) \\in WordCharacters
+  \\/ regexp.unicode /\\ regexp.ignoreCase /\\ CharacterAt(text, index) \\in DOMAIN UnicodeFolds
 
 \\* The code units of the character at an index that a regexp reads, where with the u flag a
 \\* surrogate pair is one character.
@@ -2377,7 +2388,8 @@ LOCAL IsInClass(node, character) ==
 LOCAL IsSameCharacter(regexp, left, right) ==
   CASE left = right -> TRUE
     [] ~regexp.ignoreCase -> FALSE
-    [] left \\in WordCharacters \\/ right \\in WordCharacters ->
+    [] \\E character \\in {left, right} :
+         character \\in WordCharacters \\/ (regexp.unicode /\\ character \\in DOMAIN UnicodeFolds) ->
          Canonical(regexp, left) = Canonical(regexp, right)
     [] OTHER -> Assert(FALSE, "tla-ts can't compare the case of characters that aren't ASCII letters")
 
@@ -2419,7 +2431,7 @@ RegExpStep(regexp, text, node, state, stack) ==
          THEN RegExpContinue(regexp, text, state, stack)
          ELSE RegExpFailure
     [] node.kind = "boundary" ->
-         IF (IsWordAt(text, state.end - 1) # IsWordAt(text, state.end)) # node.isInverted
+         IF (IsWordAt(regexp, text, state.end - 1) # IsWordAt(regexp, text, state.end)) # node.isInverted
          THEN RegExpContinue(regexp, text, state, stack)
          ELSE RegExpFailure
     [] node.kind = "lookahead" ->
@@ -2492,13 +2504,6 @@ RegExpSearch(regexp, text, index) ==
        IN  IF found.end # -1 \\/ regexp.sticky
            THEN found
            ELSE RegExpSearch(regexp, text, index + CharacterWidth(regexp, text, index))
-
-\\* The text that a regexp matches. A regexp with the u and i flags folds case by Unicode, so tla-ts
-\\* matches it only on text in ASCII.
-LOCAL RegExpText(regexp, value) ==
-  IF regexp.unicode /\\ regexp.ignoreCase /\\ ~IsAscii(Text(value))
-  THEN Assert(FALSE, "tla-ts can't match a regexp with the u and i flags on text outside ASCII")
-  ELSE Text(value)
 
 \\* The text of a match's capture, where 0 is the whole match, or undefined where it took no part.
 LOCAL RegExpCapture(text, match, index) ==
@@ -2619,11 +2624,11 @@ RegExpElement(array, key) == IF key \\in DOMAIN array THEN array[key] ELSE Undef
 
 \\* RegExp.prototype.exec: the array of the first match, or null.
 RegExpExec(regexp, value) ==
-  LET text == RegExpText(regexp, value)
+  LET text == Text(value)
       found == RegExpFirst(regexp, text)
   IN  IF found.end = -1 THEN Null ELSE RegExpArray(regexp, text, found)
 
-RegExpTest(regexp, value) == RegExpFirst(regexp, RegExpText(regexp, value)).end # -1
+RegExpTest(regexp, value) == RegExpFirst(regexp, Text(value)).end # -1
 
 \\* The matches that RegExp.prototype[@@replace] and [@@match] read: each for a global regexp, which
 \\* leaves lastIndex at 0, or else the first.
@@ -2634,7 +2639,7 @@ LOCAL RegExpMatched(regexp, text) ==
 
 \\* String.prototype.replace through RegExp.prototype[@@replace], with a replacement template.
 RegExpReplace(regexp, value, template) ==
-  LET text == RegExpText(regexp, value)
+  LET text == Text(value)
   IN  RegExpReplaced(regexp, text, RegExpMatched(regexp, text), Text(template))
 
 \\* String.prototype.replaceAll, which throws a TypeError for a regexp that isn't global.
@@ -2647,7 +2652,7 @@ RegExpReplaceAll(regexp, value, template) ==
 RegExpMatchesOf(regexp, value, isAll) ==
   IF isAll /\\ ~regexp.global
   THEN Assert(FALSE, "tla-ts can't throw the TypeError of replaceAll with a regexp that isn't global here")
-  ELSE RegExpMatched(regexp, RegExpText(regexp, value))
+  ELSE RegExpMatched(regexp, Text(value))
 
 \\* The argument at a position that replace calls a function with for a match: the matched text,
 \\* each capture, the match's position, the text, and the named groups where the regexp has them.
@@ -2665,7 +2670,7 @@ RegExpReplaceWith(value, matches, replacements) == RegExpAssemble(Text(value), m
 \\* String.prototype.match through RegExp.prototype[@@match]: the array of the first match, or for a
 \\* global regexp an array of each match's text, or null where nothing matches.
 RegExpMatch(regexp, value) ==
-  LET text == RegExpText(regexp, value)
+  LET text == Text(value)
       matches == RegExpMatched(regexp, text)
   IN  CASE matches = <<>> -> Null
         [] regexp.global ->
@@ -2675,11 +2680,11 @@ RegExpMatch(regexp, value) ==
 
 \\* String.prototype.search through RegExp.prototype[@@search], which restores lastIndex.
 RegExpSearchIndex(regexp, value) ==
-  LET found == RegExpSearch(regexp, RegExpText(regexp, value), 0)
+  LET found == RegExpSearch(regexp, Text(value), 0)
   IN  IF found.end = -1 THEN -1 ELSE found.start
 
 \\* String.prototype.split through RegExp.prototype[@@split].
-RegExpSplit(regexp, value, limit) == RegExpPieces(regexp, RegExpText(regexp, value), limit)
+RegExpSplit(regexp, value, limit) == RegExpPieces(regexp, Text(value), limit)
 
 ToBoolean(value) ==
   CASE value \\in {Undefined, Null} -> FALSE
@@ -3424,7 +3429,7 @@ LOCAL RegExpResult(heap, prototype, regexp, text, match) ==
 \\* RegExp.prototype.exec, as the heap after it and the array of the match it finds, or null.
 RegExpExecIn(heap, ref, value, prototype) ==
   LET regexp == RegExpOf(heap, ref, {"RegExp.prototype"})
-      text == RegExpText(regexp, value)
+      text == Text(value)
       run == RegExpRun(heap, ref, regexp, text)
       made == RegExpResult(run.heap, prototype, regexp, text, run.match)
   IN  IF run.match.end = -1
@@ -3434,14 +3439,14 @@ RegExpExecIn(heap, ref, value, prototype) ==
 \\* RegExp.prototype.test, as the heap after it and whether exec finds a match.
 RegExpTestIn(heap, ref, value) ==
   LET regexp == RegExpOf(heap, ref, {"RegExp.prototype"})
-      run == RegExpRun(heap, ref, regexp, RegExpText(regexp, value))
+      run == RegExpRun(heap, ref, regexp, Text(value))
   IN  [heap |-> run.heap, value |-> run.match.end # -1]
 
 \\* String.prototype.match through RegExp.prototype[@@match]: what exec gives for a regexp that isn't
 \\* global, and else the array of each match's text, or null, which leaves lastIndex at 0.
 RegExpMatchIn(heap, ref, value, prototype) ==
   LET regexp == RegExpOf(heap, ref, {"RegExp.prototype", "String.prototype"})
-      text == RegExpText(regexp, value)
+      text == Text(value)
       reset == SetLastIndex(heap, ref, 0)
       matches == RegExpMatches(regexp, text, 0)
       made == Allocate(reset, ArrayObject(prototype, [position \\in DOMAIN matches |->
@@ -3455,7 +3460,7 @@ RegExpMatchIn(heap, ref, value, prototype) ==
 \\* another the match that exec finds.
 RegExpMatchesIn(heap, ref, value) ==
   LET regexp == RegExpOf(heap, ref, {"RegExp.prototype", "String.prototype"})
-      text == RegExpText(regexp, value)
+      text == Text(value)
       run == RegExpRun(heap, ref, regexp, text)
   IN  IF regexp.global
       THEN [heap |-> SetLastIndex(heap, ref, 0), value |-> RegExpMatches(regexp, text, 0)]
@@ -3467,7 +3472,7 @@ RegExpReplaceIn(heap, ref, value, template) ==
   LET regexp == RegExpOf(heap, ref, {"RegExp.prototype", "String.prototype"})
       found == RegExpMatchesIn(heap, ref, value)
   IN  [heap |-> found.heap,
-       value |-> RegExpReplaced(regexp, RegExpText(regexp, value), found.value, Text(template))]
+       value |-> RegExpReplaced(regexp, Text(value), found.value, Text(template))]
 
 \\* The argument at a position that replace calls a function with where a script has objects, which
 \\* would pass the named groups as an object.
@@ -3482,7 +3487,7 @@ RegExpSearchIn(heap, ref, value) ==
   LET regexp == RegExpOf(heap, ref, {"RegExp.prototype", "String.prototype"})
       previous == LastIndexValue(heap, ref)
       reset == IF SameValue(previous, 0) THEN heap ELSE SetLastIndex(heap, ref, 0)
-      run == RegExpRun(reset, ref, regexp, RegExpText(regexp, value))
+      run == RegExpRun(reset, ref, regexp, Text(value))
       restored == IF SameValue(LastIndexValue(run.heap, ref), previous)
                   THEN run.heap
                   ELSE SetLastIndex(run.heap, ref, previous)
@@ -3492,7 +3497,7 @@ RegExpSearchIn(heap, ref, value) ==
 \\* RegExp constructor makes, so the regexp's lastIndex stays as it is.
 RegExpSplitIn(heap, ref, value, limit) ==
   LET regexp == RegExpOf(heap, ref, {"RegExp.prototype", "String.prototype", "RegExp"})
-  IN  [heap |-> heap, value |-> RegExpPieces(regexp, RegExpText(regexp, value), limit)]
+  IN  [heap |-> heap, value |-> RegExpPieces(regexp, Text(value), limit)]
 
 \\* The length that a value gives an array, or -1 where ArraySetLength throws a RangeError.
 LOCAL ArrayLengthOf(value) ==
