@@ -31,7 +31,7 @@ export class SmtKernel {
 
   // context::copy sets up and internalizes a copy as soon as it makes it.
   internalize() {
-    this.setupContext();
+    this.setupContext(this.setup?.isAutoConfig ?? false);
     this.context.internalizeAssertions(this.asserted);
   }
 
