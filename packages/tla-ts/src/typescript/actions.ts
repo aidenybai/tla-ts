@@ -11777,18 +11777,16 @@ const getLeadingCall = (
   // and one that may throw runs first, as it changes nothing.
   const throwing = reads.filter(ts.isCallExpression).find((inner) => mayThrow(inner, context));
   if (throwing !== undefined) return { call: throwing, reads: [] };
-  const kept = reads.filter(
-    (inner): inner is ts.Expression =>
-      ts.isIdentifier(inner) ||
-      ts.isPropertyAccessExpression(inner) ||
-      ts.isElementAccessExpression(inner) ||
-      ts.isCallExpression(inner),
-  );
+  const kept = reads.filter(isKeptRead);
   if (kept.length < reads.length) {
     throw new TlaTypeScriptError("tla-ts can't run this before what reads what it changes", call);
   }
   return { call, reads: kept };
 };
+
+// A read that a statement evaluates before what runs first, which keeps the value it had then, as
+// what the statement evaluates first runs no code that a later read could.
+const isKeptRead = (inner: ts.Node): inner is ts.Expression => ts.isExpression(inner);
 
 // The path after a call that runs first, whose results hold the call's value and what the statement
 // read before it.
@@ -11814,8 +11812,9 @@ const withLeadingResults = (
 });
 
 // The short-circuit or the conditional that a statement's expression evaluates first whose operand
-// that runs only sometimes is a call that only statements can run. Nothing that the statement
-// evaluates before it may read what the call changes.
+// that runs only sometimes is a call that only statements can run, and the names, properties, and
+// calls that can't throw that the statement evaluates before it and that read what the call
+// changes, which keep the values that they had then.
 const getHoistedBranch = (statement: ts.Statement, path: Path, context: Context) => {
   const evaluated = getEvaluated(statement);
   if (evaluated === undefined) return undefined;
@@ -11825,14 +11824,17 @@ const getHoistedBranch = (statement: ts.Statement, path: Path, context: Context)
   const operands = ts.isConditionalExpression(node)
     ? [node.whenTrue, node.whenFalse]
     : [node.right];
-  rejectEarlyRun(
-    node,
+  const reads = getEarlyReads(
     operands.map(skipCasts),
     before.filter((inner) => ts.findAncestor(inner, (ancestor) => ancestor === node) === undefined),
     path,
     context,
   );
-  return node;
+  const kept = reads.filter(isKeptRead);
+  if (kept.length < reads.length || kept.some((inner) => mayThrow(inner, context))) {
+    throw new TlaTypeScriptError("tla-ts can't run this before what reads what it changes", node);
+  }
+  return { node, reads: kept };
 };
 
 // The operation that a statement's expression evaluates first that converts an object to a
@@ -12126,8 +12128,12 @@ export const translateStatements = (
       return ifThenElse(isRight, evaluate(node.right, current), evaluate(node.left, current));
     };
     // What follows translates once, for each operand that gives the value.
+    const kept = branch.reads.map((read): [ts.Expression, Expression] => [
+      read,
+      translateExpression(read, path.scope, context),
+    ]);
     return translateJoined(
-      branch,
+      branch.node,
       path,
       context,
       (after, value) =>
@@ -12137,13 +12143,17 @@ export const translateStatements = (
             ...after,
             scope: {
               ...after.scope,
-              results: new Map([...after.scope.results, [branch, value ?? getUndefined(context)]]),
+              results: new Map([
+                ...after.scope.results,
+                ...kept,
+                [branch.node, value ?? getUndefined(context)],
+              ]),
             },
           },
           context,
           frame,
         ),
-      (next) => runBranch(branch, path, next),
+      (next) => runBranch(branch.node, path, next),
     );
   }
   const hoisted = getHoistedAssignment(statement, path, context);

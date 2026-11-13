@@ -2726,6 +2726,24 @@ describe("values", () => {
     );
   });
 
+  it("reads a property before a branch whose call changes it", async () => {
+    const getSource = (expected: string) => `
+      class Box {
+        value = 1;
+      }
+      const box = new Box();
+      const grow = () => {
+        box.value++;
+        return box.value * 10;
+      };
+      const pair = [box.value, box.value > 0 ? grow() : 0, box.value];
+      const result = pair.join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("1,20,2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("2,20,2"))).failure?.message).toContain("1,20,2");
+  });
+
   it("makes a map from an array of entries, where a later entry of a key wins", async () => {
     const getSource = (expected: string) => `
       const pairs: [string, number][] = [
