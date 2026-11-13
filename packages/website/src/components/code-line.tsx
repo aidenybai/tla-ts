@@ -51,7 +51,7 @@ interface CodeLineProps {
 export const CodeLine = (props: CodeLineProps) => (
   <span
     className={cn(
-      "flex min-h-[1.7em] gap-4 transition-[background-color,box-shadow] duration-200 ease-out",
+      "flex min-h-[1.7em] gap-x-4 max-sm:flex-wrap transition-[background-color,box-shadow] duration-200 ease-out",
       props.isActive && "bg-muted shadow-[inset_2px_0_0_var(--foreground)]",
       props.note?.tone === "danger" &&
         "bg-destructive/10 shadow-[inset_2px_0_0_var(--destructive)]",

@@ -28,6 +28,8 @@
   --faint: #82827c;
   --raised: #fff;
   --success: #22863a;
+  --syntax-number: #005cc5;
+  --syntax-keyword: #6f42c1;
   --shadow-edge: #0000000f;
   --shadow-soft: #0000000a;
   --scrollbar: rgb(0 0 0 / 0.15);
@@ -56,6 +58,8 @@
   --faint: #7c7b74;
   --raised: #3b3a37;
   --success: #85e89d;
+  --syntax-number: #79b8ff;
+  --syntax-keyword: #b392f0;
   --shadow-edge: #ffffff17;
   --shadow-soft: #00000066;
   --scrollbar: rgb(255 255 255 / 0.2);
@@ -87,6 +91,8 @@
   --color-faint: var(--faint);
   --color-raised: var(--raised);
   --color-success: var(--success);
+  --color-syntax-number: var(--syntax-number);
+  --color-syntax-keyword: var(--syntax-keyword);
   --radius-sm: calc(var(--radius) * 0.5);
   --radius-md: calc(var(--radius) * 0.75);
   --radius-lg: var(--radius);

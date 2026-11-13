@@ -4,6 +4,7 @@ export interface SearchState {
   call: string | undefined;
   line: number | undefined;
   text: string;
+  change: string;
   isFailing: boolean;
 }
 
@@ -40,8 +41,17 @@ export const getSearch = (
       call: steps.get(node[1])?.call,
       line: getLine(steps.get(node[1])?.call),
       text,
+      change: text,
       isFailing: text === failingState,
     });
+  }
+  for (const state of states.values()) {
+    const parent = state.parentId === undefined ? undefined : states.get(state.parentId);
+    if (!parent) continue;
+    const variables = state.text
+      .split(", ")
+      .filter((variable) => !parent.text.split(", ").includes(variable));
+    if (variables.length > 0) state.change = variables.join(", ");
   }
   const shown = new Set([...states.keys()].slice(0, SHOWN_STATES));
   let failing = [...states.values()].find((state) => state.isFailing);

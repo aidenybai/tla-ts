@@ -49,7 +49,6 @@ export const App = () => (
         <Example.Root>
           <Example.Description />
           <Example.Source />
-          <Example.Search />
           <Example.Hint />
         </Example.Root>
       </Section.Root>

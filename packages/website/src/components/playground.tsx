@@ -1,5 +1,5 @@
 import { CaretDown } from "@phosphor-icons/react";
-import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import type { Compilation } from "../compile-worker";
@@ -207,6 +207,13 @@ export const PlaygroundPanes = () => {
   );
   const search = state.result?.search;
   const path = useSearchPath(search);
+  const outputRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const output = outputRef.current;
+    (
+      output?.querySelector('[data-state="failing"]') ?? output?.querySelector("[data-state]")
+    )?.scrollIntoView({ block: "center" });
+  }, [search]);
   const source = (
     <Pane name="source">
       <CodeEditor
@@ -223,6 +230,7 @@ export const PlaygroundPanes = () => {
   const output = (
     <Pane name="output">
       <code
+        ref={outputRef}
         onPointerOver={(event) =>
           state.setHoveredName(
             event.target instanceof HTMLElement ? event.target.dataset.region : undefined,
