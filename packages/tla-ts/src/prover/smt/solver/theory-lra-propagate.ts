@@ -39,6 +39,7 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
   private lowerTerms: (TermBound | undefined)[] = [];
   private upperTerms: (TermBound | undefined)[] = [];
   protected isModelInitialized = false;
+  private activeInfEpsConstraints: number[] = [];
 
   canPropagate() {
     return (
@@ -121,6 +122,10 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     const constraint = isTrue ? bound.constraintTrue : bound.constraintFalse;
     if (solver.constraintIsRedundant(constraint)) return solver.status !== LP_INFEASIBLE;
     solver.activate(constraint);
+    if (isTrue && !bound.eps.isZero()) {
+      this.context.pushTrail(() => this.activeInfEpsConstraints.pop());
+      this.activeInfEpsConstraints.push(constraint);
+    }
     if (solver.status === LP_INFEASIBLE) return false;
     const kind = this.getBoundKind(bound, isTrue);
     const value = isTrue
@@ -128,7 +133,8 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
       : bound.isLower
         ? bound.value.sub(Rational.one)
         : bound.value.add(Rational.one);
-    if (bound.isInt || isTrue) this.propagateEqs(bound.column, constraint, kind, bound, value);
+    if (isTrue ? bound.eps.isZero() : bound.isInt)
+      this.propagateEqs(bound.column, constraint, kind, bound, value);
     return true;
   }
 
@@ -327,7 +333,19 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     }
   }
 
+  // An implied bound keeps only a rational and a strict bit, so one explained by a bound with an
+  // infinitesimal could strengthen x >= r - eps into x > r.
   private propagateLpSolverBound(implied: ImpliedBound) {
+    const epsConstraints = this.activeInfEpsConstraints;
+    if (
+      epsConstraints.length > 0 &&
+      implied
+        .explain()
+        .some((entry) =>
+          linearize([entry[1]]).some((constraint) => epsConstraints.includes(constraint)),
+        )
+    )
+      return;
     const thVar = this.solver.getExternal(implied.column);
     if (thVar === NULL_THEORY_VAR || this.unassignedBounds[thVar] === 0) return;
     const context = this.context;

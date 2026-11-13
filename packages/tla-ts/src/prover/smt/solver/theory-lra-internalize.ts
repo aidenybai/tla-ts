@@ -39,6 +39,8 @@ export interface ApiBound {
   readonly column: number;
   readonly isInt: boolean;
   readonly value: Rational;
+  // The infinitesimal of the true literal's bound, value + eps*delta.
+  readonly eps: Rational;
   readonly isLower: boolean;
   readonly constraintTrue: number;
   readonly constraintFalse: number;
