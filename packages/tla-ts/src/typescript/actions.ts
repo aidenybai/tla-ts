@@ -12172,13 +12172,43 @@ const getLeadingAssignment = (
   }
   const isPattern =
     ts.isArrayLiteralExpression(node.left) || ts.isObjectLiteralExpression(node.left);
+  // A value that assigns a property, as in a = b.x = v, runs first, since the setter it may run
+  // can't change which binding a name or a pattern writes.
   if (ts.isIdentifier(node.left) || isPattern) {
-    return getLeadingAssignment(node.right, results, context) ?? node;
+    return (
+      getLeadingAssignment(node.right, results, context) ??
+      getPropertySet(node.right, results) ??
+      node
+    );
   }
   // A property's assignment evaluates its object and key, then its value.
   const inner = getLeadingAssignment(node.right, results, context);
   const written = inner === undefined ? undefined : getWrittenOperand(inner);
-  return written !== undefined && isUnwritten(node.left, written, context) ? inner : undefined;
+  if (written !== undefined) return isUnwritten(node.left, written, context) ? inner : undefined;
+  // A property of this or of a name that no write changes, as in a.x = b.y = v, evaluates to the
+  // same object after what its value assigns, which can run first.
+  const target = node.left;
+  return ts.isPropertyAccessExpression(target) &&
+    target.questionDotToken === undefined &&
+    (target.expression.kind === ts.SyntaxKind.ThisKeyword ||
+      (ts.isIdentifier(target.expression) &&
+        getImmutable(target.expression, context) !== undefined))
+    ? (inner ?? getPropertySet(node.right, results))
+    : undefined;
+};
+
+// An assignment of a property with =, which gives the value it assigns.
+const getPropertySet = (
+  node: ts.Expression,
+  results: ReadonlyMap<ts.Expression, Expression>,
+): ts.BinaryExpression | undefined => {
+  const inner = skipCasts(node);
+  return !results.has(inner) &&
+    ts.isBinaryExpression(inner) &&
+    inner.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    (ts.isPropertyAccessExpression(inner.left) || ts.isElementAccessExpression(inner.left))
+    ? inner
+    : undefined;
 };
 
 // The await that a node evaluates before anything else.

@@ -2178,6 +2178,58 @@ describe("values", () => {
     ).rejects.toThrow("units variable count;pair x;after pair;after other");
   });
 
+  it("assigns a chain of properties the value that the last one takes, past its setter", async () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      class Target {
+        stored = 0;
+        get value() {
+          return 99;
+        }
+        set value(next: number) {
+          log.push(\`set \${next}\`);
+          this.stored = next * 2;
+        }
+      }
+      const target = new Target();
+      const box = { first: 0, second: 0 };
+      const third = { value: 0 };
+      box.first = box.second = third.value = 4;
+      let named = 0;
+      named = target.value = 5;
+      box.second = target.value = box.first + 1;
+      const result = [box.first, box.second, third.value, named, target.stored, target.value, ...log];
+      if (result.join(",") !== "${expected}") throw new Error("result " + result.join(","));
+    `;
+    expect((await checkModel(getSource("4,5,4,5,10,99,set 5,set 5"))).failure).toBeUndefined();
+    const wrong = await checkModel(getSource("4,5,4,99,10,99,set 5,set 5"));
+    expect(wrong.failure?.message).toContain("result 4,5,4,5,10,99,set 5,set 5");
+  });
+
+  it("assigns a chain of properties in a loop, which reads them on the next pass", async () => {
+    const getSource = (expected: string) => `
+      interface Precedence {
+        low: number;
+        high: number;
+      }
+      const parse = (lows: number[]) => {
+        const operators: { last?: Precedence; preceding?: Precedence } = {};
+        const seen: number[] = [];
+        for (const low of lows) {
+          const infix: Precedence = { low, high: low + 1 };
+          if (operators.last !== undefined) seen.push(operators.last.high);
+          operators.last = operators.preceding = infix;
+        }
+        return [...seen, operators.preceding?.low].join(",");
+      };
+      const result = parse([1, 4, 6]);
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+    expect((await checkModel(getSource("2,5,6"))).failure).toBeUndefined();
+    const wrong = await checkModel(getSource("2,5,4"));
+    expect(wrong.failure?.message).toContain("result 2,5,6");
+  });
+
   it("runs a switch's expression in order where a call in it changes what it reads", async () => {
     const getSource = (expected: string) => `
       const box = { v: 1 };
