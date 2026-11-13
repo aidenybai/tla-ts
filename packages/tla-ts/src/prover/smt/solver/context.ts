@@ -2,8 +2,18 @@
 import type { AssertedFormulas } from "./asserted-formulas";
 import {
   AstManager,
+  FAMILY_ARITH,
+  FAMILY_ARRAY,
   FAMILY_BASIC,
+  FAMILY_BV,
+  FAMILY_CHAR,
+  FAMILY_DATATYPE,
+  FAMILY_FINITE_SET,
+  FAMILY_FPA,
+  FAMILY_PB,
   FAMILY_POLY,
+  FAMILY_RECFUN,
+  FAMILY_SEQ,
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -58,12 +68,21 @@ import { TheoryPb } from "./theory-pb";
 import { TheoryPolymorphism } from "./theory-polymorphism";
 import { TheoryLra } from "./theory-lra";
 import { shrink } from "./array";
+import {
+  getSmtConfig,
+  PS_ALWAYS_FALSE,
+  PS_CACHING_CONSERVATIVE,
+  PS_CACHING_CONSERVATIVE2,
+  PS_THEORY,
+  RS_GEOMETRIC,
+  RS_LUBY,
+  type SmtSetup,
+} from "./smt-setup";
 
 const ACTIVITY_LIMIT = 1e100;
 const INV_ACTIVITY_LIMIT = 1e-100;
 const INV_DECAY = 1.052;
 const RESTART_INITIAL = 100;
-const RESTART_FACTOR = 1.1;
 const PHASE_CACHING_ON = 400;
 const PHASE_CACHING_OFF = 100;
 const AGILITY_FACTOR = 0.9999;
@@ -99,6 +118,28 @@ type ModelState =
   | { kind: "proto"; generated: GeneratedModel }
   | { kind: "final"; generated: GeneratedModel; model: ProtoModel };
 
+const THEORY_MAKERS = new Map<number, (context: Context) => Theory>([
+  [FAMILY_ARITH, (context) => new TheoryLra(context)],
+  [FAMILY_ARRAY, (context) => new TheoryArray(context)],
+  [FAMILY_BV, (context) => new TheoryBv(context)],
+  [FAMILY_DATATYPE, (context) => new TheoryDatatype(context)],
+  [FAMILY_RECFUN, (context) => new TheoryRecfun(context)],
+  [FAMILY_SEQ, (context) => new TheorySeq(context)],
+  [FAMILY_CHAR, (context) => new TheoryChar(context)],
+  [FAMILY_FPA, (context) => new TheoryFpa(context)],
+  [FAMILY_FINITE_SET, (context) => new TheoryFiniteSet(context)],
+  [FAMILY_POLY, (context) => new TheoryPolymorphism(context)],
+  [FAMILY_PB, (context) => new TheoryPb(context)],
+]);
+
+// get_luby
+const getLuby = (index: number): number => {
+  if (index === 1) return 1;
+  const exponent = Math.log(index + 1) / Math.log(2);
+  if (exponent === Math.floor(exponent + 0.5)) return 2 ** (exponent - 1);
+  return getLuby(index - 2 ** Math.floor(exponent) + 1);
+};
+
 const isValidAssumption = (manager: AstManager, expr: number) => {
   if (manager.sorts[expr] !== SORT_BOOL) return false;
   if (manager.isUninterpretedConst(expr)) return true;
@@ -112,14 +153,13 @@ export interface SmtParams {
   isMbqi: boolean;
   mbqiMaxIterations: number;
   relevancyLevel: 0 | 2;
-  // Whether the setup reaches setup_unknown, the only one that makes the finite set and
-  // polymorphism theories.
-  isSetupUnknown: boolean;
+  // The model checker's auxiliary context pretends every array operation is supported.
+  isArrayFakeSupport?: boolean;
 }
 
 export class Context extends Internalizer {
-  // setupContext makes the theories after the first assertions, so arith starts unassigned.
-  arith!: TheoryLra;
+  arith: TheoryLra | undefined;
+  setup: SmtSetup | undefined;
   readonly theories: Theory[] = [];
   private theoryByFamily: (Theory | undefined)[] = [];
   readonly qmanager: DefaultQuantifierManager;
@@ -144,6 +184,8 @@ export class Context extends Internalizer {
   private restartOuterThreshold = RESTART_INITIAL;
   private isPhaseCacheOn = true;
   private phaseCounter = 0;
+  private phaseDefault = false;
+  private lubyIndex = 1;
   private finalCheckIndex = 0;
   private assumptionVars = new Map<BoolVar, number>();
   unsatCore: number[] = [];
@@ -165,33 +207,37 @@ export class Context extends Internalizer {
     this.qmanager = new DefaultQuantifierManager(this, params.isMbqi);
   }
 
-  setupContext() {
-    this.arith = new TheoryLra(this);
-    this.registerPlugin(this.arith);
-    this.registerPlugin(new TheoryArray(this));
-    this.registerPlugin(new TheoryBv(this));
-    this.registerPlugin(new TheoryDatatype(this));
-    this.registerPlugin(new TheoryRecfun(this));
-    this.registerPlugin(new TheorySeq(this));
-    this.registerPlugin(new TheoryChar(this));
-    this.registerPlugin(new TheoryFpa(this));
-    if (this.params.isSetupUnknown) {
-      this.registerPlugin(new TheoryFiniteSet(this));
-      if (this.manager.hasTypeVars) this.registerPolymorphism();
-    }
-    this.registerPlugin(new TheoryPb(this));
+  // setup_context and setup_components. The setup's theories come in its order, then setup_card's.
+  setupContext(
+    setup: SmtSetup | undefined,
+    isUsingStaticFeatures: boolean,
+    asserted: AssertedFormulas,
+  ) {
+    const config = getSmtConfig(
+      this.manager,
+      setup,
+      isUsingStaticFeatures,
+      asserted.getFormulas(),
+      this.config,
+    );
+    this.setup = setup;
+    this.config = config;
+    if (config.relevancyLevel !== undefined) this.relevancy.isEnabled = config.relevancyLevel > 0;
+    for (const family of config.theories)
+      if (family !== FAMILY_POLY || this.manager.hasTypeVars) this.registerFamily(family);
+    this.registerFamily(FAMILY_PB);
+    asserted.setup(config);
   }
 
-  private registerPlugin(theory: Theory) {
+  // register_plugin keeps the theory a family already has.
+  registerFamily(family: number) {
+    if (this.getTheory(family) !== undefined) return;
+    const theory = THEORY_MAKERS.get(family)!(this);
+    if (theory instanceof TheoryLra) this.arith = theory;
     this.theories.push(theory);
     this.theoryByFamily[theory.id] = theory;
     theory.init();
     for (let level = 0; level < this.scopeLevel; level++) theory.pushScopeEh();
-  }
-
-  registerPolymorphism() {
-    if (this.getTheory(FAMILY_POLY) === undefined)
-      this.registerPlugin(new TheoryPolymorphism(this));
   }
 
   getTheory(family: number) {
@@ -216,7 +262,7 @@ export class Context extends Internalizer {
     this.justifications[boolVar] = justification;
     this.setLevel(boolVar, this.scopeLevel);
     const isNegative = isNegated(literal);
-    if (this.hasBoolVarFlag(boolVar, BV_PHASE_AVAILABLE)) {
+    if (this.config.isRestartAdaptive && this.hasBoolVarFlag(boolVar, BV_PHASE_AVAILABLE)) {
       this.agility *= AGILITY_FACTOR;
       if (!isDecision && this.hasBoolVarFlag(boolVar, BV_PHASE) === isNegative)
         this.agility += 1 - AGILITY_FACTOR;
@@ -1045,11 +1091,17 @@ export class Context extends Internalizer {
   private guess(boolVar: BoolVar) {
     if (this.manager.kinds[this.boolVar2Expr[boolVar]] === KIND_QUANTIFIER) return false;
     if (this.hasBoolVarFlag(boolVar, BV_TRUE_FIRST)) return true;
-    return (
-      this.isPhaseCacheOn &&
-      this.hasBoolVarFlag(boolVar, BV_PHASE_AVAILABLE) &&
-      this.hasBoolVarFlag(boolVar, BV_PHASE)
-    );
+    const phaseSelection = this.config.phaseSelection;
+    if (phaseSelection === PS_ALWAYS_FALSE) return false;
+    const isPhaseAvailable = this.hasBoolVarFlag(boolVar, BV_PHASE_AVAILABLE);
+    if (phaseSelection === PS_THEORY) {
+      const phase = this.getTheory(this.getBoolVarTheory(boolVar))?.getPhase(boolVar) ?? L_UNDEF;
+      if (phase !== L_UNDEF) return phase === L_TRUE;
+      return isPhaseAvailable ? this.hasBoolVarFlag(boolVar, BV_PHASE) : this.phaseDefault;
+    }
+    return this.isPhaseCacheOn && isPhaseAvailable
+      ? this.hasBoolVarFlag(boolVar, BV_PHASE)
+      : this.phaseDefault;
   }
 
   private updatePhaseCacheCounter() {
@@ -1057,6 +1109,8 @@ export class Context extends Internalizer {
     if (this.phaseCounter < (this.isPhaseCacheOn ? PHASE_CACHING_ON : PHASE_CACHING_OFF)) return;
     this.phaseCounter = 0;
     this.isPhaseCacheOn = !this.isPhaseCacheOn;
+    if (this.config.phaseSelection === PS_CACHING_CONSERVATIVE2)
+      this.phaseDefault = !this.phaseDefault;
   }
 
   private decide() {
@@ -1083,9 +1137,15 @@ export class Context extends Internalizer {
     this.eqPropagationQueue = [];
     this.thEqQueue = [];
     this.thDiseqQueue = [];
+    const phaseSelection = this.config.phaseSelection;
     const head = this.scopeLevel === 0 ? 0 : this.scopeAssignedLimits[this.scopeLevel - 1];
-    for (let index = head; index < this.assignedLiterals.length; index++)
-      this.setBoolVarFlag(getVar(this.assignedLiterals[index]), BV_PHASE_AVAILABLE, false);
+    if (
+      phaseSelection === PS_THEORY ||
+      phaseSelection === PS_CACHING_CONSERVATIVE ||
+      phaseSelection === PS_CACHING_CONSERVATIVE2
+    )
+      for (let index = head; index < this.assignedLiterals.length; index++)
+        this.setBoolVarFlag(getVar(this.assignedLiterals[index]), BV_PHASE_AVAILABLE, false);
     const resolution = this.conflictResolution;
     if (
       this.conflict === null ||
@@ -1312,7 +1372,12 @@ export class Context extends Internalizer {
       }
     }
     this.incLimits();
-    if (isForcedRestart || status === L_TRUE || this.agility < RESTART_AGILITY_THRESHOLD) {
+    if (
+      isForcedRestart ||
+      status === L_TRUE ||
+      !this.config.isRestartAdaptive ||
+      this.agility < RESTART_AGILITY_THRESHOLD
+    ) {
       if (this.scopeLevel > currentLevel) this.popScope(this.scopeLevel - currentLevel);
       for (const theory of this.theories) if (!this.isInconsistent()) theory.restartEh();
       if (!this.isInconsistent()) qmanager.restartEh();
@@ -1325,11 +1390,22 @@ export class Context extends Internalizer {
   }
 
   incLimits() {
+    const config = this.config;
     if (this.numConflictsSinceRestart >= this.restartThreshold) {
-      this.restartThreshold = Math.trunc(this.restartThreshold * RESTART_FACTOR);
-      if (this.restartThreshold > this.restartOuterThreshold) {
-        this.restartThreshold = RESTART_INITIAL;
-        this.restartOuterThreshold = Math.trunc(this.restartOuterThreshold * RESTART_FACTOR);
+      if (config.restartStrategy === RS_LUBY) {
+        this.lubyIndex++;
+        this.restartThreshold = getLuby(this.lubyIndex) * RESTART_INITIAL;
+      } else {
+        this.restartThreshold = Math.trunc(this.restartThreshold * config.restartFactor);
+        if (
+          config.restartStrategy !== RS_GEOMETRIC &&
+          this.restartThreshold > this.restartOuterThreshold
+        ) {
+          this.restartThreshold = RESTART_INITIAL;
+          this.restartOuterThreshold = Math.trunc(
+            this.restartOuterThreshold * config.restartFactor,
+          );
+        }
       }
     }
     this.numConflictsSinceRestart = 0;
@@ -1539,9 +1615,11 @@ export class Context extends Internalizer {
     this.restartThreshold = RESTART_INITIAL;
     this.restartOuterThreshold = RESTART_INITIAL;
     this.agility = 0;
+    this.lubyIndex = 1;
     this.finalCheckIndex = 0;
     this.lastSearchFailure = FAILURE_OK;
-    if (this.manager.hasTypeVars) this.registerPolymorphism();
+    this.phaseDefault = false;
+    if (this.manager.hasTypeVars) this.registerFamily(FAMILY_POLY);
     this.isSearching = true;
     const currentLevel = this.scopeLevel;
     let result: number | undefined;

@@ -194,6 +194,10 @@ export class Rewriter extends RewriterTpl {
     this.options = { ...this.options, isEliminatingAnd };
   }
 
+  setEq2Ineq(isEq2Ineq: boolean) {
+    this.arith.isEq2Ineq = isEq2Ineq;
+  }
+
   // The caller may extend the substitution between rewrites without a reset.
   setSubstitution(
     substitution: Map<number, number>,

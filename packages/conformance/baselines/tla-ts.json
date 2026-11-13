@@ -1,12 +1,7 @@
 {
   "tlapm/backends/z3/z3test/regressions/issues/5420.smt2": "message-mismatch",
-  "tlapm/backends/z3/z3test/regressions/issues/5429.smt2": "text-mismatch",
-  "tlapm/backends/z3/z3test/regressions/issues/5482.smt2": "message-mismatch",
-  "tlapm/backends/z3/z3test/regressions/longrunning/6117-3.smt2": "time-limit",
-  "tlapm/backends/z3/z3test/regressions/smt2/opt_nlsat_uf_fallback.smt2": "text-mismatch",
-  "tlapm/backends/z3/z3test/regressions/smt2/sine9.smt2": "message-mismatch",
+  "tlapm/backends/z3/z3test/regressions/issues/5482.smt2": "time-limit",
   "tlapm/backends/z3/z3test/regressions/smt2/string-ops.smt2": "text-mismatch",
-  "tlapm/backends/z3/z3test/regressions/smt2/t114.smt2": "text-mismatch",
   "tlapm/imported/fast/basic/cvc3_false_test": "text-mismatch",
   "tlapm/imported/zenon/test/test13.znn": "text-mismatch",
   "tlapm/imported/zenon/test/test14.znn": "text-mismatch",

@@ -91,6 +91,7 @@ const getInverse = (kind: number) =>
 
 export class ArithRewriter extends PolyRewriter {
   private factors: number[] = [];
+  isEq2Ineq = false;
 
   mkLe(left: number, right: number) {
     return this.mkLeGeEq(left, right, KIND_LE);
@@ -109,6 +110,15 @@ export class ArithRewriter extends PolyRewriter {
   }
 
   mkEq(left: number, right: number) {
+    const manager = this.manager;
+    if (this.isEq2Ineq)
+      return this.reduce(
+        manager.mkAnd([
+          manager.mkApp(OP_LE, [left, right], SORT_BOOL),
+          manager.mkApp(OP_GE, [left, right], SORT_BOOL),
+        ]),
+        2,
+      );
     if (!this.isArithTerm(left) && !this.isArithTerm(right)) return undefined;
     return this.mkLeGeEq(left, right, KIND_EQ);
   }

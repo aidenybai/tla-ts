@@ -15,6 +15,7 @@ import {
   OP_DIV,
   OP_DIV0,
   OP_EQ,
+  OP_FPA_FP,
   OP_IDIV,
   OP_IDIV0,
   OP_ITE,
@@ -323,6 +324,7 @@ export class ModelEvaluator extends RewriterTpl {
 
   private containsRedex(expr: number) {
     const manager = this.manager;
+    if (manager.getOp(expr) === OP_AS_ARRAY) return true;
     if (manager.kinds[expr] !== KIND_APP || manager.getNumArgs(expr) === 0) return false;
     const visited = new Set<number>();
     const todo = [expr];
@@ -330,7 +332,8 @@ export class ModelEvaluator extends RewriterTpl {
       const current = todo.pop() as number;
       if (visited.has(current)) continue;
       visited.add(current);
-      if (manager.getOp(current) === OP_EQ) return true;
+      const op = manager.getOp(current);
+      if (op === OP_AS_ARRAY || op === OP_EQ || op === OP_FPA_FP) return true;
       if (manager.kinds[current] === KIND_APP) manager.pushArgs(current, todo);
       else if (manager.kinds[current] === KIND_QUANTIFIER) {
         const data = manager.getQuantifier(current);

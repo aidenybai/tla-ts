@@ -14,14 +14,15 @@ import { L_FALSE, L_TRUE } from "./lbool";
 import { applyUfniaTactic } from "./quant-tactics";
 import { ResourceLimit } from "./rlimit";
 import { parseSmtlib } from "./smtlib-parser";
+import type { SmtSetup } from "./smt-setup";
 
 export interface KernelParams {
   isMbqi: boolean;
   mbqiMaxIterations: number;
   isFindingMacros: boolean;
   relevancyLevel?: 0 | 2;
-  // A kernel without a logic sets up its context with setup_unknown.
-  isSetupUnknown?: boolean;
+  // A kernel without a setup runs as with auto_config false.
+  setup?: SmtSetup;
 }
 
 const DEFAULT_KERNEL_PARAMS: KernelParams = {
@@ -43,10 +44,9 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
     isMbqi: params.isMbqi,
     mbqiMaxIterations: params.mbqiMaxIterations,
     relevancyLevel: 2,
-    isSetupUnknown: params.isSetupUnknown ?? true,
   });
   for (const form of forms) asserted.assertExpr(form);
-  context.setupContext();
+  context.setupContext(params.setup, true, asserted);
   context.internalizeAssertions(asserted);
   const theoryAssumptions: number[] = [];
   context.addTheoryAssumptions(theoryAssumptions);
@@ -82,10 +82,9 @@ export const solveAssuming = (
     isMbqi: params.isMbqi,
     mbqiMaxIterations: params.mbqiMaxIterations,
     relevancyLevel: 2,
-    isSetupUnknown: params.isSetupUnknown ?? true,
   });
   for (const assertion of assertions) asserted.assertExpr(assertion);
-  context.setupContext();
+  context.setupContext(params.setup, false, asserted);
   context.internalizeAssertions(asserted);
   const result = context.checkResearching(asserted, assumptions);
   manager.limit.release();

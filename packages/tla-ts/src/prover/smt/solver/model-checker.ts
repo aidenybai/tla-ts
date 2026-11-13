@@ -1,6 +1,6 @@
 // Ported from Z3 (src/smt/smt_model_checker.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
-import { FAMILY_POLY, KIND_APP, OP_NOT, OP_OR, SORT_BOOL } from "./ast";
+import { KIND_APP, OP_NOT, OP_OR, SORT_BOOL } from "./ast";
 import { AssertedFormulas } from "./asserted-formulas";
 import { Context } from "./context";
 import type { Enode } from "./enode";
@@ -30,9 +30,14 @@ class AuxContext {
   // theories, so the context has a model finder too, though it never sees a quantifier.
   constructor(parent: Context) {
     this.asserted = new AssertedFormulas(parent.manager);
-    this.context = new Context(parent.manager, { ...parent.params, relevancyLevel: 0 });
-    this.context.setupContext();
-    if (parent.getTheory(FAMILY_POLY) !== undefined) this.context.registerPolymorphism();
+    this.context = new Context(parent.manager, {
+      ...parent.params,
+      relevancyLevel: 0,
+      isArrayFakeSupport: true,
+    });
+    this.context.config = { ...parent.config, relevancyLevel: 0 };
+    for (const theory of parent.theories) this.context.registerFamily(theory.id);
+    this.context.setupContext(parent.setup, false, this.asserted);
   }
 
   push() {
@@ -85,7 +90,7 @@ export class ModelChecker {
     const value2expr = new Map<number, number>();
     for (const entry of this.root2value) {
       const node = this.getEqEnodeWithMinGen(entry[0]);
-      if (!this.manager.isUniqueValue(node.owner)) value2expr.set(entry[1], node.owner);
+      if (!this.manager.isValue(node.owner)) value2expr.set(entry[1], node.owner);
     }
     this.value2expr = value2expr;
     return value2expr;

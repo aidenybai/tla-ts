@@ -1,6 +1,6 @@
 // Ported from Z3 (src/opt/opt_solver.cpp, src/opt/opt_search.h), MIT license, see z3-license.txt.
 import { SmtCanceledError } from "../../../errors";
-import type { AstManager } from "./ast";
+import { type AstManager, FAMILY_ARITH, FAMILY_PB } from "./ast";
 import { InfEps } from "./inf-eps";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { AlgebraicManager } from "./nlsat/algebraic";
@@ -51,13 +51,22 @@ export class OptSolver {
   // Every model and bound the search makes lives until the solver is released.
   private models: ProtoModel[] = [];
   private pinned: RefVector;
+  private isFirst = true;
+  private numScopes = 0;
   wasUnknown = false;
 
   constructor(
     private readonly manager: AstManager,
     params: KernelParams,
   ) {
-    this.kernel = new SmtKernel(manager, params);
+    // opt_solver turns relevancy off under the default case split strategy, so a decided bound,
+    // such as one optsmt made for a lower bound, reaches the arithmetic solver.
+    this.kernel = new SmtKernel(manager, {
+      ...params,
+      relevancyLevel: 0,
+      setup: params.setup && { ...params.setup, isArithAutoConfigSimplex: true },
+    });
+    this.kernel.context.registerFamily(FAMILY_PB);
     this.pinned = new RefVector(manager);
   }
 
@@ -71,8 +80,11 @@ export class OptSolver {
     return this.hold(this.kernel.context.getModel());
   }
 
+  // get_optimizer makes an arithmetic theory when the setup made none.
   private get arith() {
-    return this.kernel.context.arith;
+    const context = this.kernel.context;
+    context.registerFamily(FAMILY_ARITH);
+    return context.arith!;
   }
 
   assertExpr(expr: number) {
@@ -83,10 +95,12 @@ export class OptSolver {
 
   push() {
     this.kernel.push();
+    this.numScopes++;
   }
 
   pop(numScopes: number) {
     this.kernel.pop(numScopes);
+    this.numScopes -= numScopes;
   }
 
   private adjustResult(result: number) {
@@ -97,7 +111,12 @@ export class OptSolver {
 
   check(assumptions: readonly number[] = []) {
     this.model = null;
-    const result = this.adjustResult(this.kernel.check(assumptions));
+    const result = this.adjustResult(
+      this.isFirst && assumptions.length === 0 && this.numScopes === 0
+        ? this.kernel.setupAndCheck()
+        : this.kernel.check(assumptions),
+    );
+    this.isFirst = false;
     if (result === L_TRUE) {
       this.model = this.getContextModel();
       if (this.objectiveModels.length === 1) this.objectiveModels[0] = this.model;

@@ -64,7 +64,7 @@ import { propagateValues } from "./propagate-values";
 import { purifyArith } from "./purify-arith";
 import { ModelEvaluator } from "./model-evaluator";
 import { FuncInterp, ProtoModel } from "./proto-model";
-import { isMbqiByFeatures, isSetupUnknownByFeatures, type SmtSetup } from "./smt-setup";
+import { isMbqiByFeatures, type SmtSetup } from "./smt-setup";
 import { compileProbe, formatProbeValue, isQfufbv, type Probe } from "./probes";
 import { runHorn } from "./muz/horn-tactic";
 import { runQe } from "./qe";
@@ -286,7 +286,7 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
       isMbqiByFeatures(environment.setup, hasQuantifiers),
     mbqiMaxIterations: getUint(params, "mbqi.max_iterations", environment.mbqiMaxIterations),
     isFindingMacros: environment.isFindingMacros,
-    isSetupUnknown: isSetupUnknownByFeatures(environment.setup),
+    setup: environment.setup,
   };
 };
 
@@ -399,13 +399,13 @@ const runUnitSubsume = (environment: TacticEnvironment) => (goal: Goal) => {
       isMbqi: environment.isMbqi,
       mbqiMaxIterations: environment.mbqiMaxIterations,
       relevancyLevel: 2,
-      isSetupUnknown: true,
     });
     for (const definition of definitions) asserted.assertExpr(definition);
     for (const [other, otherClause] of clauses.entries())
       if (other === index) asserted.assertExpr(manager.mkNot(clause));
       else if (!deleted.includes(other)) asserted.assertExpr(otherClause);
-    context.setupContext();
+    // The context has no logic, so setup_default picks setup_unknown.
+    context.setupContext(undefined, false, asserted);
     context.internalizeAssertions(asserted);
     if (!context.isInconsistent()) context.propagate();
     if (context.isInconsistent()) deleted.push(index);

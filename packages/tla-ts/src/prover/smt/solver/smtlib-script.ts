@@ -53,6 +53,7 @@ import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { getConsequences } from "./smt-consequences";
 import { getFdConsequences } from "./fd-solver";
 import { SmtKernel } from "./smt-kernel";
+import { AssertedFormulas } from "./asserted-formulas";
 import { isAstLess } from "./ast-lt";
 import { InvVarShifter } from "./rewriter-tpl";
 import { elimUnusedVars, getFreeVarSorts, VarSubst } from "./var-subst";
@@ -293,6 +294,9 @@ interface ScriptState {
   hasChecked: boolean;
   // The datalog context of the declare-rel, declare-var, rule and query commands.
   datalog: DatalogContext | undefined;
+  // The formulas of combined_solver's incremental smt kernel, which rewrites each assertion when it
+  // is asserted and keeps it, or undefined while Z3 has made no such kernel.
+  kernelFormulas: AssertedFormulas | undefined;
 }
 
 // Z3 fixes the proof mode at the first command that needs terms.
@@ -352,6 +356,7 @@ export const runSmtlibScript = (
       isIncremental: false,
       hasChecked: false,
       datalog: undefined,
+      kernelFormulas: undefined,
     };
   };
   const script = { state: createState() };
@@ -493,6 +498,7 @@ export const runSmtlibScript = (
           isMbqi: settings.isMbqi || isMbqiByFeatures(getSetup(), hasQuantifiers),
           mbqiMaxIterations: settings.mbqiMaxIterations,
           isFindingMacros: settings.isFindingMacros,
+          setup: getSetup(),
         }),
         model: undefined,
       };
@@ -525,6 +531,7 @@ export const runSmtlibScript = (
               isMbqi: settings.isMbqi || isMbqiByLogic(getSetup()),
               mbqiMaxIterations: settings.mbqiMaxIterations,
               isFindingMacros: settings.isFindingMacros,
+              setup: getSetup(),
             })
           : undefined;
       // Z3 retries a quantifier-free problem with its tactic when the incremental kernel gives up.
@@ -575,6 +582,34 @@ export const runSmtlibScript = (
   const clearCheck = () => {
     script.state.check?.model?.decRef();
     script.state.check = undefined;
+  };
+  // cmd_context::mk_solver: mk_solver_for_logic makes the incremental solver the smt kernel unless
+  // the logic, the default tactic or the sat parameters pick a sat solver, which only stores its
+  // assertions.
+  const mkKernelFormulas = () => {
+    const state = script.state;
+    const logic = state.logic;
+    const parameters = settings.parameters;
+    const isProofsEnabled = settings.isProducingProofs || state.isProofsEnabled === true;
+    const isSatSolver =
+      ((logic === "QF_FD" || logic === "SAT") && !isProofsEnabled) ||
+      logic === "SMTFD" ||
+      (logic === "QF_BV" && settings.isHiDiv0) ||
+      parameters.get("tactic.default_tactic") === "sat" ||
+      parameters.get("sat.smt") === "true" ||
+      parameters.get("sat.euf") === "true";
+    return isSatSolver ? undefined : new AssertedFormulas(state.manager, settings.isFindingMacros);
+  };
+  // solver_na2as asserts a named assertion as an implication from its name.
+  const assertInKernel = (formula: number, name: number) => {
+    const state = script.state;
+    const formulas = state.kernelFormulas;
+    if (formulas === undefined) return;
+    const manager = state.manager;
+    const asserted = name === -1 ? formula : manager.mkApp(OP_IMPLIES, [name, formula], SORT_BOOL);
+    manager.incRef(asserted);
+    formulas.assertExpr(asserted);
+    manager.decRef(asserted);
   };
   let pendingText = "";
   const printDiagnostic = (line: string) => print(line, !settings.isDiagnosticOnStdout);
@@ -718,6 +753,7 @@ export const runSmtlibScript = (
         manager.incRef(answer);
         state.names.push(answer);
       }
+      assertInKernel(assertion.formula, state.names[state.names.length - 1]);
       clearCheck();
     },
     "check-sat": (list) => checkSat(parseFormulas(list.items.slice(1))),
@@ -860,6 +896,7 @@ export const runSmtlibScript = (
           isMbqi: settings.isMbqi || isMbqiByLogic(getSetup()),
           mbqiMaxIterations: settings.mbqiMaxIterations,
           isFindingMacros: settings.isFindingMacros,
+          setup: getSetup(),
         });
         for (const assertion of getNamedAssertions()) kernel.assertExpr(assertion);
         const found = getConsequences(kernel, [...names, ...assumptions], vars);
@@ -916,6 +953,7 @@ export const runSmtlibScript = (
         });
         state.reader.push();
         state.isIncremental = true;
+        state.kernelFormulas?.push();
       }
     },
     pop: (list) => {
@@ -930,6 +968,7 @@ export const runSmtlibScript = (
       if (count === 0) return;
       state.isIncremental = true;
       const scope = state.scopes[state.scopes.length - count];
+      for (let index = 0; index < count; index++) state.kernelFormulas?.pop();
       for (let index = 0; index < count; index++) state.reader.pop();
       restoreAssertions(scope.assertions);
       resetOptimizer();
@@ -948,6 +987,10 @@ export const runSmtlibScript = (
       resetOptimizer();
       releaseObjectives(0, 0);
       state.scopes = state.scopes.map(() => ({ assertions: 0, objectives: 0, softTrail: 0 }));
+      if (state.isProofsEnabled !== undefined) {
+        state.kernelFormulas = mkKernelFormulas();
+        for (let index = 0; index < state.scopes.length; index++) state.kernelFormulas?.push();
+      }
       state.isIncremental = state.scopes.length > 0;
       state.hasChecked = false;
     },
@@ -1014,87 +1057,98 @@ export const runSmtlibScript = (
           return undefined;
         }
       })();
-      if (goals === undefined) return;
-      const manager = state.manager;
-      const environment = getPrintEnvironment();
-      if (params.get("print") !== false)
-        print(
-          [
-            "(goals",
-            ...goals.map((goal) =>
-              [
-                "(goal",
-                ...goal.forms.items.flatMap((form, index) => [
-                  ...(isPrintingDependencies
-                    ? [
-                        [
-                          "  |-",
-                          ...getDependencyValues(goal.getDependency(index)).map(format),
-                        ].join(" "),
-                      ]
-                    : []),
-                  `  ${printExpr(state.manager, environment, form, 2)}`,
-                ]),
-                `  :precision ${PRECISION_NAMES[goal.precision]} :depth ${goal.depth})`,
-              ].join("\n"),
-            ),
-            ")",
-          ].join("\n"),
-        );
-      if (
-        params.get("print_model_converter") === true &&
-        input.converters.some((entry) => !("definitions" in entry) || entry.definitions.length > 0)
-      )
-        throw new SmtUnsupportedError("printing a model converter");
-      if (params.get("print_benchmark") !== true) return;
-      const assertions =
-        goals.length === 1
-          ? goals[0].forms.items
-          : [
-              manager.mkOr(
-                goals.map((goal) =>
-                  goal.forms.size === 1 ? goal.forms.items[0] : manager.mkAnd(goal.forms.items),
-                ),
+      // apply_tactic_cmd releases the result goals and then the input goal.
+      if (goals === undefined) {
+        input.reset();
+        return;
+      }
+      try {
+        const manager = state.manager;
+        const environment = getPrintEnvironment();
+        if (params.get("print") !== false)
+          print(
+            [
+              "(goals",
+              ...goals.map((goal) =>
+                [
+                  "(goal",
+                  ...goal.forms.items.flatMap((form, index) => [
+                    ...(isPrintingDependencies
+                      ? [
+                          [
+                            "  |-",
+                            ...getDependencyValues(goal.getDependency(index)).map(format),
+                          ].join(" "),
+                        ]
+                      : []),
+                    `  ${printExpr(state.manager, environment, form, 2)}`,
+                  ]),
+                  `  :precision ${PRECISION_NAMES[goal.precision]} :depth ${goal.depth})`,
+                ].join("\n"),
               ),
-            ];
-      for (const assertion of assertions) manager.incRef(assertion);
-      const visited = new Set<number>();
-      const decls = new Set<number>();
-      for (const assertion of assertions) {
-        const todo = [assertion];
-        while (todo.length > 0) {
-          const expr = todo.pop() as number;
-          if (visited.has(expr)) continue;
-          visited.add(expr);
-          if (manager.kinds[expr] === KIND_QUANTIFIER) {
-            const data = manager.getQuantifier(expr);
-            todo.push(data.body, ...data.patterns, ...data.noPatterns);
-          } else if (manager.kinds[expr] === KIND_APP) {
-            manager.pushArgs(expr, todo);
-            const decl = manager.decls[expr];
-            const family = manager.funcDecls[decl].family;
-            if (family === FAMILY_USER || family === FAMILY_MODEL_VALUE) decls.add(decl);
+              ")",
+            ].join("\n"),
+          );
+        if (
+          params.get("print_model_converter") === true &&
+          input.converters.some(
+            (entry) => !("definitions" in entry) || entry.definitions.length > 0,
+          )
+        )
+          throw new SmtUnsupportedError("printing a model converter");
+        if (params.get("print_benchmark") !== true) return;
+        const assertions =
+          goals.length === 1
+            ? goals[0].forms.items
+            : [
+                manager.mkOr(
+                  goals.map((goal) =>
+                    goal.forms.size === 1 ? goal.forms.items[0] : manager.mkAnd(goal.forms.items),
+                  ),
+                ),
+              ];
+        for (const assertion of assertions) manager.incRef(assertion);
+        const visited = new Set<number>();
+        const decls = new Set<number>();
+        for (const assertion of assertions) {
+          const todo = [assertion];
+          while (todo.length > 0) {
+            const expr = todo.pop() as number;
+            if (visited.has(expr)) continue;
+            visited.add(expr);
+            if (manager.kinds[expr] === KIND_QUANTIFIER) {
+              const data = manager.getQuantifier(expr);
+              todo.push(data.body, ...data.patterns, ...data.noPatterns);
+            } else if (manager.kinds[expr] === KIND_APP) {
+              manager.pushArgs(expr, todo);
+              const decl = manager.decls[expr];
+              const family = manager.funcDecls[decl].family;
+              if (family === FAMILY_USER || family === FAMILY_MODEL_VALUE) decls.add(decl);
+            }
           }
         }
+        const lines = [...decls].map((decl) => {
+          const funcDecl = manager.funcDecls[decl];
+          return renderFormat(
+            mkSeq1(
+              [
+                mkText(getQuotedName(funcDecl.name)),
+                mkSeq5(funcDecl.domain.map((sort) => formatSort(manager, sort))),
+                formatSort(manager, funcDecl.range),
+              ],
+              "declare-fun",
+            ),
+            environment.options,
+          );
+        });
+        for (const assertion of assertions)
+          lines.push(`(assert ${printExpr(manager, environment, assertion, 8)})`);
+        print([...lines, "(check-sat)"].join("\n"));
+        for (const assertion of assertions) manager.decRef(assertion);
+      } finally {
+        for (const goal of goals) if (goal !== input) goal.reset();
+        input.reset();
       }
-      const lines = [...decls].map((decl) => {
-        const funcDecl = manager.funcDecls[decl];
-        return renderFormat(
-          mkSeq1(
-            [
-              mkText(getQuotedName(funcDecl.name)),
-              mkSeq5(funcDecl.domain.map((sort) => formatSort(manager, sort))),
-              formatSort(manager, funcDecl.range),
-            ],
-            "declare-fun",
-          ),
-          environment.options,
-        );
-      });
-      for (const assertion of assertions)
-        lines.push(`(assert ${printExpr(manager, environment, assertion, 8)})`);
-      print([...lines, "(check-sat)"].join("\n"));
-      for (const assertion of assertions) manager.decRef(assertion);
     },
     "get-assertions": (list) => {
       if (!settings.isInteractive)
@@ -1348,6 +1402,7 @@ export const runSmtlibScript = (
       }
       state.logic = logic.text;
       state.reader = createSmtlibReader(state.manager, logic.text, settings.parserOptions);
+      if (state.isProofsEnabled !== undefined) state.kernelFormulas = mkKernelFormulas();
       if (settings.isPrintingSuccess) print("success");
     },
     "set-info": () => {},
@@ -1360,8 +1415,10 @@ export const runSmtlibScript = (
       ? (declaration: SmtList) => script.state.reader.declareCommand(declaration)
       : runCommand[head.text];
     if (command === undefined) throw new SmtUnsupportedError(`the command ${head.text}`);
-    if (!MANAGERLESS_COMMANDS.has(head.text))
-      script.state.isProofsEnabled ??= settings.parameters.get("proof") === "true";
+    if (!MANAGERLESS_COMMANDS.has(head.text) && script.state.isProofsEnabled === undefined) {
+      script.state.isProofsEnabled = settings.parameters.get("proof") === "true";
+      script.state.kernelFormulas = mkKernelFormulas();
+    }
     command(list);
     if (settings.isPrintingSuccess && SILENT_COMMANDS.has(head.text)) print("success");
   };

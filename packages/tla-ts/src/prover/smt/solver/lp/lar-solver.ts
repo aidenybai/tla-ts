@@ -348,9 +348,10 @@ export class LarSolver {
     return { kind, bound };
   }
 
-  mkVarBound(column: number, kind: ConstraintKind, rhs: Rational) {
+  // A non-zero eps makes the bound rhs + eps*delta.
+  mkVarBound(column: number, kind: ConstraintKind, rhs: Rational, eps = Rational.zero) {
     const adjusted = this.adjustBoundForInt(column, kind, rhs);
-    return this.constraints.add(column, adjusted.kind, new Impq(adjusted.bound));
+    return this.constraints.add(column, adjusted.kind, new Impq(adjusted.bound, eps));
   }
 
   constraintIsRedundant(index: number) {

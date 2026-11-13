@@ -565,7 +565,7 @@ export abstract class TheorySeqState extends Theory {
     if (node === undefined) return undefined;
     let next = node;
     do {
-      const value = this.context.arith.getValueOf(next);
+      const value = this.context.arith?.getValueOf(next);
       if (value !== undefined) return value.isInt() ? value : undefined;
       next = next.next;
     } while (next !== node);
@@ -574,13 +574,13 @@ export abstract class TheorySeqState extends Theory {
 
   protected lowerBound(expr: number) {
     const node = this.getEnodeOf(expr);
-    const bound = node === undefined ? undefined : this.context.arith.getLower(node);
+    const bound = node === undefined ? undefined : this.context.arith?.getLower(node);
     return bound !== undefined && !bound.isStrict && bound.value.isInt() ? bound.value : undefined;
   }
 
   protected upperBound(expr: number) {
     const node = this.getEnodeOf(expr);
-    const bound = node === undefined ? undefined : this.context.arith.getUpper(node);
+    const bound = node === undefined ? undefined : this.context.arith?.getUpper(node);
     return bound !== undefined && !bound.isStrict && bound.value.isInt() ? bound.value : undefined;
   }
 
@@ -591,7 +591,7 @@ export abstract class TheorySeqState extends Theory {
     let isStrict = false;
     let next = node;
     do {
-      const bound = this.context.arith.getLower(next);
+      const bound = this.context.arith?.getLower(next);
       if (
         bound !== undefined &&
         (lower === undefined ||
@@ -627,7 +627,7 @@ export abstract class TheorySeqState extends Theory {
           return undefined;
         }
         const node = this.getEnodeOf(length);
-        const lengthValue = node === undefined ? undefined : this.context.arith.getValueOf(node);
+        const lengthValue = node === undefined ? undefined : this.context.arith?.getValueOf(node);
         if (lengthValue === undefined || lengthValue.isNegative()) return undefined;
         value = value.add(lengthValue);
       }

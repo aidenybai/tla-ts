@@ -353,6 +353,56 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  // z3test's regressions/smt2/sine9.smt2, then the bounds Z3 puts on other transcendental
+  // functions, and a Taylor bound of nlsat.
+  it("bounds the values of transcendental functions", () => {
+    expect(
+      run([
+        "(declare-fun x () Real)",
+        "(declare-fun y () Real)",
+        "(push)",
+        "(assert (< (sin x) -1.0))",
+        "(check-sat)",
+        "(pop)",
+        "(push)",
+        "(assert (> (atan x) 2.0))",
+        "(check-sat)",
+        "(pop)",
+        "(push)",
+        "(assert (> (atan2 y x) 4.0))",
+        "(check-sat)",
+        "(pop)",
+        "(push)",
+        "(assert (> pi 4.0))",
+        "(check-sat)",
+        "(pop)",
+        "(push)",
+        "(assert (> (exp x) 2.0))",
+        "(assert (< x 0.5))",
+        "(check-sat)",
+        "(pop)",
+        "(assert (>= (cos x) 1.0))",
+        "(check-sat)",
+      ]),
+    ).toEqual(["unsat", "unsat", "unsat", "unsat", "unsat", "sat"]);
+  });
+
+  it("refines transcendental functions in the nlsat tactic", () => {
+    expect(
+      run([
+        "(declare-fun x () Real)",
+        "(push)",
+        "(assert (> (exp (exp x)) 100.0))",
+        "(assert (< x 0.0))",
+        "(check-sat-using qfnra-nlsat)",
+        "(pop)",
+        "(assert (> (exp x) 2.0))",
+        "(check-sat-using qfnra-nlsat)",
+        "(get-value (x))",
+      ]),
+    ).toEqual(["unsat", "sat", "((x 2.0))"]);
+  });
+
   it("throws at the dependencies of a tactic that drops them", () => {
     expect(() =>
       run([

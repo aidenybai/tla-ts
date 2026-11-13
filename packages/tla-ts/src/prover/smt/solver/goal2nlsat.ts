@@ -1,37 +1,23 @@
 // Ported from Z3 (src/nlsat/tactic/goal2nlsat.cpp, src/ast/expr2polynomial.cpp), MIT license, see
 // z3-license.txt.
-import { SmtTacticError, SmtUnsupportedError } from "../../../errors";
+import { SmtTacticError } from "../../../errors";
 import {
   type AstManager,
   FAMILY_ARITH,
   FAMILY_BASIC,
   KIND_APP,
-  OP_ACOS,
-  OP_ACOSH,
   OP_AND,
-  OP_ASIN,
-  OP_ASINH,
-  OP_ATAN,
   OP_ATAN2,
-  OP_ATANH,
-  OP_COS,
-  OP_COSH,
   OP_DISTINCT,
   OP_EQ,
-  OP_EXP,
   OP_FALSE,
   OP_GE,
   OP_IMPLIES,
   OP_ITE,
   OP_LE,
-  OP_LOG,
   OP_NOT,
   OP_OR,
   OP_PI,
-  OP_SIN,
-  OP_SINH,
-  OP_TAN,
-  OP_TANH,
   OP_TRUE,
   OP_XOR,
   SORT_BOOL,
@@ -42,26 +28,8 @@ import { toPolynomial } from "./expr2polynomial";
 import { getLcm } from "./rational";
 import { flipKind } from "./nlsat/atoms";
 import type { NlsatSolver } from "./nlsat/solver";
+import { TRANSCENDENTAL_OPS } from "./nlsat/transcendental-eval";
 import type { IneqKind } from "./nlsat/types";
-
-const TRANSCENDENTAL_OPS = new Set([
-  OP_SIN,
-  OP_COS,
-  OP_TAN,
-  OP_ASIN,
-  OP_ACOS,
-  OP_ATAN,
-  OP_SINH,
-  OP_COSH,
-  OP_TANH,
-  OP_ASINH,
-  OP_ACOSH,
-  OP_ATANH,
-  OP_EXP,
-  OP_ATAN2,
-  OP_LOG,
-  OP_PI,
-]);
 
 export const goal2nlsat = (
   manager: AstManager,
@@ -75,8 +43,6 @@ export const goal2nlsat = (
   const pm = solver.pm;
 
   const mkVar = (term: number) => {
-    if (TRANSCENDENTAL_OPS.has(manager.getOp(term)) && manager.getFamily(term) === FAMILY_ARITH)
-      throw new SmtUnsupportedError("transcendental functions in nlsat");
     let variable = t2x.get(term);
     if (variable === undefined) {
       variable = solver.mkVar(manager.sorts[term] === SORT_INT);
@@ -161,6 +127,55 @@ export const goal2nlsat = (
     const literals = manager.getOp(form) === OP_OR ? manager.getArgs(form) : [form];
     solver.mkExternalClause(literals.map(processLiteral), assumption);
   }
+
+  // The polynomial conversion treats a transcendental application, argument included, as one
+  // variable, so its argument gets a variable here, through an equation unless it is one already.
+  const mkArgVar = (term: number) => {
+    const result = toPolynomial(manager, pm, term, mkVar);
+    const polynomial = result.polynomial;
+    const monomial = polynomial.ms[0];
+    if (
+      result.denominator === 1n &&
+      polynomial.ms.length === 1 &&
+      polynomial.as[0] === 1n &&
+      monomial.size === 1 &&
+      monomial.degrees[0] === 1
+    )
+      return monomial.vars[0];
+    const variable = solver.mkVar(false);
+    const equation = pm.addmul(result.denominator, pm.mkVar(variable), -1n, polynomial);
+    solver.mkExternalClause([solver.mkIneqLiteral("EQ", [equation], [false])], null);
+    return variable;
+  };
+
+  // An argument can bring in applications nested inside it, so this repeats to a fixed point.
+  const seen = new Set<number>();
+  let piVar: number | undefined;
+  for (let isChanged = true; isChanged;) {
+    const found = [...t2x].filter(
+      (entry) =>
+        !seen.has(entry[0]) &&
+        manager.kinds[entry[0]] === KIND_APP &&
+        manager.getFamily(entry[0]) === FAMILY_ARITH,
+    );
+    const atan2Found = found.filter((entry) => manager.getOp(entry[0]) === OP_ATAN2);
+    piVar = found.find((entry) => manager.getOp(entry[0]) === OP_PI)?.[1] ?? piVar;
+    isChanged = false;
+    for (const [term, variable] of found) {
+      const op = TRANSCENDENTAL_OPS.get(manager.getOp(term));
+      if (op === undefined) continue;
+      seen.add(term);
+      solver.transcendentals.add(op, mkArgVar(manager.getArg(term, 0)), variable);
+      isChanged = true;
+    }
+    for (const [term, variable] of atan2Found) {
+      seen.add(term);
+      const y = mkArgVar(manager.getArg(term, 0));
+      solver.transcendentals.addAtan2(y, mkArgVar(manager.getArg(term, 1)), variable);
+      isChanged = true;
+    }
+  }
+  if (piVar !== undefined) solver.transcendentals.addPi(piVar);
 };
 
 const hasTermIte = (manager: AstManager, form: number) => {

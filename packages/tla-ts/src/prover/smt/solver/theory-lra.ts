@@ -1,12 +1,12 @@
 // Ported from Z3 (src/smt/theory_lra.cpp, src/smt/arith_eq_adapter.cpp, src/math/lp/lp_api.h), MIT
 // license, see z3-license.txt. This class adds the scopes to the chain that theory-lra-state.ts
 // starts.
-import { SmtUnsupportedError } from "../../../errors";
 import { shrink } from "./array";
 import { OP_GE, OP_GT, OP_LE, SORT_BOOL, SORT_INT, SORT_REAL } from "./ast";
 import type { Enode } from "./enode";
 import { InfEps } from "./inf-eps";
-import { L_TRUE } from "./lbool";
+import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
+import type { BoolVar } from "./literal";
 import { LP_FEASIBLE, LP_OPTIMAL, LP_UNBOUNDED } from "./lp/core-solver";
 import { type Dependency, linearize } from "./lp/dependency";
 import { NULL_LPVAR } from "./lp/lar-solver";
@@ -44,6 +44,16 @@ export class TheoryLra extends TheoryLraFinalCheck {
     const value = column === NULL_LPVAR ? undefined : this.solver.getExactValue(column);
     if (value === undefined) return undefined;
     return this.isIntVar(node.getThVar(this.id)) && !value.isInt() ? undefined : value;
+  }
+
+  // The phase that holds in the current assignment, so that the decision takes no pivot.
+  getPhase(boolVar: BoolVar) {
+    const bound = this.boolVarToBound[boolVar];
+    if (bound === undefined) return L_UNDEF;
+    const comparison = this.solver
+      .getValue(this.registerVar(bound.thVar))
+      .compare(new Impq(bound.value, Rational.zero));
+    return (bound.isLower ? comparison >= 0 : comparison <= 0) ? L_TRUE : L_FALSE;
   }
 
   addObjective(term: number) {
@@ -148,19 +158,40 @@ export class TheoryLra extends TheoryLraFinalCheck {
     );
   }
 
+  // A negative infinitesimal is the lower bound r - delta that validates a strict supremum r. No
+  // atom states it, and the atom v >= r may already hold the problem's own bound, so the bound gets
+  // a predicate of its own.
   mkGe(thVar: number, bound: InfEps) {
     const manager = this.manager;
-    if (bound.epsilon.isNegative())
-      throw new SmtUnsupportedError("a lower bound below an objective's strict supremum");
     const isStrict = bound.epsilon.isPositive();
-    const isInt = manager.isInt(this.getExpr(thVar));
-    const numeral = manager.mkNumeralOfSort(bound.value, isInt ? SORT_INT : SORT_REAL);
-    const atom = manager.mkApp(
-      isStrict ? OP_LE : OP_GE,
-      [this.mkObjective(thVar), numeral],
-      SORT_BOOL,
+    const isLowerEps = bound.epsilon.isNegative();
+    const expr = this.getExpr(thVar);
+    const isInt = manager.isInt(expr);
+    const atom = isLowerEps
+      ? manager.mkApp(
+          manager.mkFuncDecl(
+            `${bound.value.toString()} + ${bound.epsilon.toString()}*eps <= ${manager.toString(expr)} (opt)`,
+            [],
+            SORT_BOOL,
+          ),
+          [],
+          SORT_BOOL,
+        )
+      : manager.mkApp(
+          isStrict ? OP_LE : OP_GE,
+          [
+            this.mkObjective(thVar),
+            manager.mkNumeralOfSort(bound.value, isInt ? SORT_INT : SORT_REAL),
+          ],
+          SORT_BOOL,
+        );
+    this.mkObjectiveBound(
+      atom,
+      thVar,
+      !isStrict,
+      bound.value,
+      isLowerEps ? bound.epsilon : Rational.zero,
     );
-    this.mkObjectiveBound(atom, thVar, !isStrict, bound.value);
     return isStrict ? manager.mkNot(atom) : atom;
   }
 

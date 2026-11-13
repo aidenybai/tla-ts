@@ -608,6 +608,9 @@ const createScanner = (text: string) => {
             );
           const current = text[state.index];
           advance();
+          // Z3's scanner starts the line before it reads past a newline in a quoted symbol or a
+          // string, so the columns of the rest of the line count one more.
+          if (current === "\n") state.lineStart--;
           if (current !== character) continue;
           if (character !== '"' || text[state.index] !== '"') break;
           advance();
