@@ -10,6 +10,7 @@ import { PLAYGROUND_EXAMPLES } from "../playground-examples";
 import type { RunResult } from "../run-worker";
 import type { Mark, Source } from "../site-data";
 import { useCompile } from "../use-compile";
+import { useIsHydrated } from "../use-is-hydrated";
 import { useMediaQuery } from "../use-media-query";
 import { useRun } from "../use-run";
 import { CodeEditor } from "./code-editor";
@@ -200,11 +201,7 @@ const Pane = (props: PaneProps) => (
 export const PlaygroundPanes = () => {
   const state = playgroundContext.useParts();
   const isWide = useMediaQuery("(min-width: 48rem)");
-  const isHydrated = useSyncExternalStore(
-    subscribeToNothing,
-    () => true,
-    () => false,
-  );
+  const isHydrated = useIsHydrated();
   const search = state.result?.search;
   const path = useSearchPath(search);
   const outputRef = useRef<HTMLElement>(null);
@@ -266,6 +263,7 @@ export const PlaygroundPanes = () => {
                     line={line.number}
                     path={path.states}
                     onHover={path.hover}
+                    className="max-sm:pl-10"
                   />
                 )
               }

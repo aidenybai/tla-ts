@@ -13,6 +13,7 @@ interface SearchCellProps {
   line: number;
   path: SearchState[];
   onHover: (stateId: string | undefined) => void;
+  className?: string;
 }
 
 export const useSearchPath = (search: Search | undefined) => {
@@ -66,7 +67,13 @@ export const SearchCell = (props: SearchCellProps) => {
   const lastTrunkIndex = lineRows.findLastIndex(isTrunkRow);
   const isBelowRoot = props.line > firstLine;
   return (
-    <span className="relative flex w-1/2 shrink-0 flex-col self-stretch text-xs max-sm:w-full">
+    <span
+      className={cn(
+        "relative flex w-1/2 shrink-0 flex-col self-stretch text-xs max-sm:w-full",
+        lineRows.length === 0 && "pointer-events-none -ml-[calc(50%+1rem)] max-sm:hidden",
+        props.className,
+      )}
+    >
       {isBelowRoot && props.line < lastTrunkLine && (
         <span className="absolute top-0 left-3 h-full w-px bg-input max-sm:hidden" />
       )}
@@ -100,8 +107,14 @@ export const SearchCell = (props: SearchCellProps) => {
             <span
               title={row.state.text}
               data-state={row.state.isFailing ? "failing" : "reached"}
-              onPointerEnter={() => props.onHover(row.state.id)}
-              onPointerLeave={() => props.onHover(undefined)}
+              onPointerEnter={(event) =>
+                props.onHover(
+                  event.pointerType === "touch" && props.path.at(0) === row.state
+                    ? undefined
+                    : row.state.id,
+                )
+              }
+              onPointerLeave={(event) => event.pointerType !== "touch" && props.onHover(undefined)}
               style={{
                 transitionDelay: `${props.search.states.indexOf(row.state) * STEP_DELAY_MS}ms`,
               }}

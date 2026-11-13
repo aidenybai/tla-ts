@@ -4,6 +4,7 @@ import { createPartsContext } from "@/lib/utils";
 import type { LineNote } from "../run-worker";
 import type { Search } from "../search";
 import type { Source } from "../site-data";
+import { useIsHydrated } from "../use-is-hydrated";
 import { useTokenMorph } from "../use-token-morph";
 import { CodeLine } from "./code-line";
 import { CopyIcon } from "./copy-icon";
@@ -151,17 +152,20 @@ interface RunProps {
   onRun: () => void;
 }
 
-export const CodeRun = (props: RunProps) => (
-  <Button
-    variant={props.isDone || props.isRunning ? "outline" : "success"}
-    size="icon"
-    aria-label={props.isRunning ? "Running" : props.isDone ? "Run again" : "Run"}
-    disabled={props.isRunning}
-    onClick={props.onRun}
-  >
-    <RunIcon isRunning={props.isRunning} isDone={props.isDone} />
-  </Button>
-);
+export const CodeRun = (props: RunProps) => {
+  const isHydrated = useIsHydrated();
+  return (
+    <Button
+      variant={props.isDone || props.isRunning ? "outline" : "success"}
+      size="icon"
+      aria-label={props.isRunning ? "Running" : props.isDone ? "Run again" : "Run"}
+      disabled={props.isRunning || !isHydrated}
+      onClick={props.onRun}
+    >
+      <RunIcon isRunning={props.isRunning} isDone={props.isDone} />
+    </Button>
+  );
+};
 
 export const CodeCopy = () => {
   const code = codeContext.useParts();
