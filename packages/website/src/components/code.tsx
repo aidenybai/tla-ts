@@ -8,7 +8,7 @@ import { useTokenMorph } from "../use-token-morph";
 import { CodeLine } from "./code-line";
 import { CopyIcon } from "./copy-icon";
 import { RunIcon } from "./run-icon";
-import { SearchCell } from "./search-cell";
+import { SearchCell, useSearchPath } from "./search-cell";
 import { Button } from "./ui/button";
 
 const COPIED_MS = 1500;
@@ -68,9 +68,8 @@ export const CodeRoot = (props: RootProps) => {
 export const CodeContent = () => {
   const code = codeContext.useParts();
   const contentRef = useRef<HTMLElement>(null);
-  const [hoveredStateId, setHoveredStateId] = useState<string>();
-  const activeLine =
-    code.search?.states.find((state) => state.id === hoveredStateId)?.line ?? code.activeLine;
+  const path = useSearchPath(code.search);
+  const activeLine = path.states.at(0)?.line ?? code.activeLine;
   useTokenMorph(contentRef, code.source.code, code.highlights, code.onMorphEnd);
   if (!code.isMultiline)
     return (
@@ -94,14 +93,17 @@ export const CodeContent = () => {
             tokens={line.tokens}
             note={code.notes.find((note) => note.line === line.number)}
             isActive={activeLine === line.number}
+            isDimmed={
+              path.states.length > 0 && path.states.every((state) => state.line !== line.number)
+            }
             isWrapped={code.isWrapped}
             aside={
               code.search && (
                 <SearchCell
                   search={code.search}
                   line={line.number}
-                  hoveredStateId={hoveredStateId}
-                  onHover={setHoveredStateId}
+                  path={path.states}
+                  onHover={path.hover}
                 />
               )
             }

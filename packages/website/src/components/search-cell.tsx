@@ -1,19 +1,20 @@
 import { CaretRight, X } from "@phosphor-icons/react";
+import { useState } from "react";
 import { cn } from "cn";
-import type { Search, SearchState } from "../search";
+import { getPath, type Search, type SearchState } from "../search";
 
 const STEP_DELAY_MS = 150;
 
 interface SearchCellProps {
   search: Search;
   line: number;
-  hoveredStateId: string | undefined;
+  path: SearchState[];
   onHover: (stateId: string | undefined) => void;
 }
 
-const getPath = (search: Search, stateId: string | undefined): string[] => {
-  const state = search.states.find((innerState) => innerState.id === stateId);
-  return state ? [state.id, ...getPath(search, state.parentId)] : [];
+export const useSearchPath = (search: Search | undefined) => {
+  const [hoveredStateId, setHoveredStateId] = useState<string>();
+  return { states: search ? getPath(search, hoveredStateId) : [], hover: setHoveredStateId };
 };
 
 const getBranch = (search: Search, state: SearchState, depth: number): SearchRow[] => [
@@ -38,7 +39,6 @@ export const SearchCell = (props: SearchCellProps) => {
   const lastLine = Math.max(...rows.map((row) => row.state.line ?? 0));
   if (props.line < firstLine || props.line > lastLine) return null;
   const lineRows = rows.filter((row) => row.state.line === props.line);
-  const path = getPath(props.search, props.hoveredStateId);
   return (
     <span className="relative flex w-[45%] shrink-0 flex-col self-stretch text-xs max-sm:hidden">
       {lineRows.length === 0 && props.line < (rows.at(lastTrunkIndex)?.state.line ?? 0) && (
@@ -48,8 +48,8 @@ export const SearchCell = (props: SearchCellProps) => {
         <span
           key={row.state.id}
           className={cn(
-            "relative flex h-[22px] items-center transition-opacity duration-150 ease-out",
-            path.length > 0 && !path.includes(row.state.id) && "opacity-40",
+            "relative flex h-[22px] items-center transition-opacity duration-150 ease",
+            props.path.length > 0 && !props.path.includes(row.state) && "opacity-40",
           )}
         >
           {row.depth > 0 && rows.indexOf(row) <= lastTrunkIndex && (

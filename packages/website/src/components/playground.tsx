@@ -18,6 +18,7 @@ import { Connector } from "./connector";
 import { GitHubIcon } from "./github-icon";
 import { Logo } from "./logo";
 import { RunIcon } from "./run-icon";
+import { SearchCell, useSearchPath } from "./search-cell";
 import { ThemeMenu } from "./theme-menu";
 import { Verdict } from "./verdict";
 import { Button } from "./ui/button";
@@ -97,6 +98,7 @@ export const PlaygroundRoot = (props: PartProps) => {
       source: compilation.tla,
       config: compilation.config,
       modules: compilation.modules,
+      isSearchShown: true,
     });
   };
   useEffect(() => {
@@ -203,6 +205,8 @@ export const PlaygroundPanes = () => {
     () => true,
     () => false,
   );
+  const search = state.result?.search;
+  const path = useSearchPath(search);
   const source = (
     <Pane name="source">
       <CodeEditor
@@ -242,7 +246,21 @@ export const PlaygroundPanes = () => {
               hoveredName={state.hoveredName}
               colors={state.colors}
               note={state.result?.notes.find((note) => note.line === line.number)}
-              isActive={state.result?.activeLine === line.number}
+              isActive={(path.states.at(0)?.line ?? state.result?.activeLine) === line.number}
+              isDimmed={
+                path.states.length > 0 &&
+                path.states.every((innerState) => innerState.line !== line.number)
+              }
+              aside={
+                search && (
+                  <SearchCell
+                    search={search}
+                    line={line.number}
+                    path={path.states}
+                    onHover={path.hover}
+                  />
+                )
+              }
               className="-mr-4 -ml-4 pr-4 pl-4"
             />
           ))}

@@ -54,3 +54,8 @@ export const getSearch = (
     stateCount: states.size,
   };
 };
+
+export const getPath = (search: Search, stateId: string | undefined): SearchState[] => {
+  const state = search.states.find((innerState) => innerState.id === stateId);
+  return state ? [state, ...getPath(search, state.parentId)] : [];
+};

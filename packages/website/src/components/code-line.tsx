@@ -39,6 +39,7 @@ interface CodeLineProps {
   note?: LineNote;
   aside?: ReactNode;
   isActive?: boolean;
+  isDimmed?: boolean;
   isWrapped?: boolean;
   offset?: number;
   marks?: Mark[];
@@ -60,7 +61,8 @@ export const CodeLine = (props: CodeLineProps) => (
     {props.number !== undefined && <LineNumber number={props.number} />}
     <span
       className={cn(
-        "min-w-0 flex-1",
+        "min-w-0 flex-1 transition-opacity duration-150 ease",
+        props.isDimmed && "opacity-40",
         props.isWrapped === false ? "whitespace-pre" : "break-words whitespace-pre-wrap",
       )}
     >
