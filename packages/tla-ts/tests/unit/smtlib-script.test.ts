@@ -721,6 +721,60 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("answers datatypes with sat.euf's datatype solver", () => {
+    const header = ["(set-option :sat.euf true)", "(set-option :tactic.default_tactic smt)"];
+    expect(
+      run([
+        ...header,
+        "(declare-datatypes ((P 0)) (((mk (fst Int) (snd Bool)))))",
+        "(declare-const p P)",
+        "(declare-const q P)",
+        "(assert (= (fst p) 3))",
+        "(assert (not (= p q)))",
+        "(assert (= (fst q) 3))",
+        "(check-sat)",
+        "(get-model)",
+        "(reset)",
+        ...header,
+        "(declare-datatypes ((T 0)) (((leaf (v Int)) (node (kids (Array Int T))))))",
+        "(declare-const x T)",
+        "(declare-const y T)",
+        "(assert (= x (node (store (kids y) 0 (leaf 3)))))",
+        "(assert ((_ is node) y))",
+        "(check-sat)",
+        "(get-model)",
+        "(reset)",
+        ...header,
+        "(declare-datatypes ((L 0)) (((nil) (cons (hd Int) (tl L)))))",
+        "(declare-const x L)",
+        "(declare-const y L)",
+        "(assert (= x (cons 1 y)))",
+        "(assert (= y (cons 2 x)))",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun q () P",
+        "    (mk 3 true))",
+        "  (define-fun p () P",
+        "    (mk 3 false))",
+        ")",
+      ].join("\n"),
+      "sat",
+      [
+        "(",
+        "  (define-fun y () T",
+        "    (node (store ((as const (Array Int T)) (leaf 0)) 0 (leaf 3))))",
+        "  (define-fun x () T",
+        "    (node (store ((as const (Array Int T)) (leaf 0)) 0 (leaf 3))))",
+        ")",
+      ].join("\n"),
+      "unsat",
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),
