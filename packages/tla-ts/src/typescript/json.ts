@@ -2,15 +2,38 @@ import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
 import {
   type Context,
+  findNodes,
+  type FunctionNode,
+  getAccessorFunctions,
+  getParameters,
   getSymbol,
   getUndefined,
   isAssigned,
   share,
+  skipCasts,
   translateString,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { getNumberValue, translateExpression } from "./expressions";
-import { getHeap, translateObjectValue } from "./heap";
+import {
+  allocateAll,
+  type Frame,
+  getChanged,
+  inlineValues,
+  type Path,
+  throwError,
+  translateJoined,
+} from "./actions";
+import { type Formula, ifThenElse, leaf } from "./formula";
+import { getAllocated, getHeap, translateObjectValue } from "./heap";
+import {
+  bind,
+  callValue,
+  getFunctionCandidates,
+  isRunnableGetter,
+  readWith,
+  withHeap,
+} from "./protocols";
 import { getBuiltIn, isBuiltInObject, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
@@ -357,5 +380,274 @@ export const translateJsonCall = (node: ts.CallExpression, scope: Scope, context
       ]),
       value,
     ),
+  );
+};
+
+interface Revival {
+  text: string;
+  reviver: ts.Expression;
+  candidates: FunctionNode[];
+}
+
+// JSON.parse of a literal's text with a function that revives what it parses, which only a
+// statement runs, as it calls the function.
+export const getRevival = (node: ts.Node, context: Context): Revival | undefined => {
+  if (!isJsonParse(node, context) || node.arguments.length !== 2) return undefined;
+  const text = getLiteralText(node.arguments[0], context);
+  const reviver = node.arguments[1];
+  const candidates = getFunctionCandidates(reviver, context);
+  const parsed = text === undefined ? undefined : parseJson(text);
+  // The values that the reviver and the call give keep their arrays outside the heap where a
+  // script types them.
+  const isTyped =
+    parsed !== undefined &&
+    "value" in parsed &&
+    hasJsonArray(parsed.value) &&
+    (!isOpenType(getContextualType(node, context)) ||
+      candidates.some((candidate) => {
+        const parameter = getParameters(candidate).at(1);
+        return parameter !== undefined && !isOpenType(context.checker.getTypeAtLocation(parameter));
+      }));
+  return text !== undefined && candidates.length > 0 && !isTyped
+    ? { text, reviver, candidates }
+    : undefined;
+};
+
+// The most values of a text that tla-ts revives, as it translates the reviver's call for each.
+const REVIVED_LIMIT = 64;
+
+const countJsonValues = (value: unknown): number =>
+  isJsonObject(value)
+    ? 1 + Object.values(value).reduce((total: number, inner) => total + countJsonValues(inner), 0)
+    : 1;
+
+// JSON.parse with a reviver, which makes the objects of its text and then visits each value from
+// the innermost, as InternalizeJSONProperty does: it reads the value from its holder, revives its
+// keys in turn, deleting each that the reviver gave undefined for, and calls the reviver with the
+// holder as this. Where the reviver changes an object before the walk reaches it, which the text
+// doesn't tell, the run stops.
+export const reviveJson = (
+  node: ts.CallExpression,
+  revival: Revival,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  revival.candidates.forEach((candidate) => {
+    if (
+      getParameters(candidate).length > 2 ||
+      findNodes(candidate, ts.isIdentifier).some((name) => name.text === "arguments")
+    ) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't pass a reviver the context of what it parses",
+        candidate,
+      );
+    }
+  });
+  const parsed = parseJson(revival.text);
+  const replaced = leaf(
+    apply("Assert", [
+      boolean(false),
+      string("tla-ts can't call JSON.parse where a script replaced it"),
+    ]),
+  );
+  if ("error" in parsed) {
+    return ifThenElse(
+      translateHoldsJson(node, "parse", path.scope, context),
+      throwError("SyntaxError", path, node, context, frame),
+      replaced,
+    );
+  }
+  const value = parsed.value;
+  if (countJsonValues(value) > REVIVED_LIMIT) {
+    throw new TlaTypeScriptError("tla-ts can't revive this many values", node);
+  }
+  const objects = getJsonObjects(value);
+  const getters = getAccessorFunctions(node, "get", context).filter((getter) =>
+    isRunnableGetter(getter, context),
+  );
+  return allocateAll(
+    getAllocated(node, context).filter((inner) => !path.scope.allocated.has(inner)),
+    path,
+    context,
+    (allocated) => {
+      const reviver = skipCasts(revival.reviver);
+      const literal =
+        ts.isFunctionExpression(reviver) || ts.isArrowFunction(reviver) ? reviver : undefined;
+      const heap = getHeap(allocated.scope, node, context);
+      const getRef = (object: object) =>
+        useJavaScript("NextRef", [heap, number(objects.indexOf(object) + 1)], context);
+      const isChanged = leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't revive an object that the reviver changed"),
+        ]),
+      );
+      const changed = [
+        ...new Set([
+          ...getChanged(node, allocated, context),
+          ...(context.heap === undefined ? [] : [context.heap]),
+        ]),
+      ];
+      const walk = (
+        current: Path,
+        holder: Expression,
+        key: string,
+        inner: unknown,
+        next: (path: Path, result: Expression) => Formula,
+      ): Formula =>
+        // The walk joins where the reviver revives the value, so the rest of it translates once.
+        translateJoined(
+          node,
+          current,
+          context,
+          (after, result) => next(after, result ?? getUndefined(context)),
+          (joined) =>
+            readWith(
+              node,
+              holder,
+              translateString(key, context),
+              getters,
+              current,
+              context,
+              frame,
+              (found, read) => {
+                const passed = [translateString(key, context), read];
+                // A function that the call itself writes is the one it calls.
+                const revive = (at: Path) =>
+                  literal === undefined
+                    ? callValue(
+                        node,
+                        revival.candidates,
+                        translateExpression(revival.reviver, allocated.scope, context),
+                        holder,
+                        passed,
+                        at,
+                        context,
+                        frame,
+                        () =>
+                          leaf(
+                            apply("Assert", [
+                              boolean(false),
+                              string("tla-ts can't tell which function revives this"),
+                            ]),
+                          ),
+                        joined,
+                      )
+                    : translateJoined(
+                        node,
+                        at,
+                        context,
+                        (after, result) => joined(after, result ?? getUndefined(context)),
+                        (inlined) =>
+                          inlineValues(
+                            literal,
+                            passed,
+                            ts.isArrowFunction(literal)
+                              ? undefined
+                              : { value: holder, method: literal },
+                            at,
+                            context,
+                            frame,
+                            inlined,
+                          ),
+                      );
+                const isObject = useJavaScript(
+                  "IsObjectIn",
+                  [getHeap(found.scope, node, context), read],
+                  context,
+                );
+                const otherwise = ifThenElse(isObject, isChanged, revive(found));
+                if (!isJsonObject(inner)) return otherwise;
+                const ref = getRef(inner);
+                const entries = Object.entries(inner);
+                const visit = entries.reduceRight<(at: Path) => Formula>(
+                  (rest, entry) => (at) =>
+                    walk(at, ref, entry[0], entry[1], (after, result) =>
+                      bind(
+                        after,
+                        "heap",
+                        useJavaScript(
+                          "Revived",
+                          [
+                            getHeap(after.scope, node, context),
+                            ref,
+                            translateString(entry[0], context),
+                            result,
+                          ],
+                          context,
+                        ),
+                        context,
+                        (stored, storedHeap) => rest(withHeap(stored, storedHeap, context)),
+                      ),
+                    ),
+                  revive,
+                );
+                return ifThenElse(
+                  apply("/\\", [
+                    useJavaScript("SameValue", [read, ref], context),
+                    apply("=", [
+                      useJavaScript(
+                        "RevivedKeys",
+                        [getHeap(found.scope, node, context), read],
+                        context,
+                      ),
+                      tuple(entries.map((entry) => translateString(entry[0], context))),
+                    ]),
+                  ]),
+                  visit(found),
+                  otherwise,
+                );
+              },
+            ),
+          changed,
+        );
+      return ifThenElse(
+        translateHoldsJson(node, "parse", allocated.scope, context),
+        bind(
+          allocated,
+          "heap",
+          translateJsonObjects(node, value, heap, context),
+          context,
+          (made, madeHeap) =>
+            bind(
+              withHeap(made, madeHeap, context),
+              "heap",
+              useJavaScript(
+                "Allocate",
+                [
+                  madeHeap,
+                  useJavaScript(
+                    "PairsObject",
+                    [
+                      tuple([
+                        tuple([
+                          string(""),
+                          isJsonObject(value)
+                            ? getRef(value)
+                            : translateJsonPrimitive(node, value, context),
+                        ]),
+                      ]),
+                    ],
+                    context,
+                  ),
+                ],
+                context,
+              ),
+              context,
+              (wrapped, wrapperHeap) =>
+                walk(
+                  withHeap(wrapped, wrapperHeap, context),
+                  useJavaScript("Allocated", [wrapperHeap], context),
+                  "",
+                  value,
+                  continueWith,
+                ),
+            ),
+        ),
+        replaced,
+      );
+    },
   );
 };

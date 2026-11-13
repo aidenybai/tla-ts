@@ -612,7 +612,7 @@ const getFieldGetters = (node: ts.Node, context: Context) => [
 // Whether tla-ts can run a getter's body, which makes each function expression it returns as an
 // object. A statement that might run one it can't keeps reading properties as an expression,
 // which stops only where the getter runs.
-const isRunnableGetter = (getter: FunctionNode, context: Context) =>
+export const isRunnableGetter = (getter: FunctionNode, context: Context) =>
   findNodes(getter, ts.isReturnStatement).every(
     (statement) =>
       statement.expression === undefined ||

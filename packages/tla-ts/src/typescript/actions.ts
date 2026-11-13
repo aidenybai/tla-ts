@@ -114,8 +114,10 @@ import {
 } from "./conversions";
 import {
   getJsonText,
+  getRevival,
   isBigIntStringify,
   parseJson,
+  reviveJson,
   translateHoldsJson,
   translateStringify,
 } from "./json";
@@ -2432,6 +2434,10 @@ export const translateCallStatement = (
     );
   }
   // JSON.stringify of a value that may hold a BigInt throws a TypeError where it does.
+  const revival = getRevival(expression, context);
+  if (revival !== undefined) {
+    return reviveJson(expression, revival, path, context, frame, continueWith);
+  }
   if (isBigIntStringify(expression, context)) {
     return allocateAll(
       getAllocated(expression, context).filter((inner) => !path.scope.allocated.has(inner)),
@@ -8137,6 +8143,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getArrayIteratorCall(node, context) !== undefined ||
     getStringCall(node, context) !== undefined ||
     isBigIntStringify(node, context) ||
+    getRevival(node, context) !== undefined ||
     isDescriptorsRead(node, context) ||
     isOwnValuesRead(node, context) ||
     isRevoke(node, context) ||
@@ -8318,7 +8325,7 @@ export const allocate = (
     continueWith,
   );
 
-const allocateAll = (
+export const allocateAll = (
   allocations: ts.Node[],
   path: Path,
   context: Context,
