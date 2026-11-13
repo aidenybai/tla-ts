@@ -5954,6 +5954,29 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain('"count"');
   });
 
+  it("gives back the primitive that Object.setPrototypeOf takes", async () => {
+    const source = `
+      const symbol = Symbol("s");
+      if (Object.setPrototypeOf(true, null) !== true) throw new Error("boolean");
+      if (Object.setPrototypeOf(3, {}) !== 3) throw new Error("number");
+      if (Object.setPrototypeOf(symbol, null) !== symbol) throw new Error("symbol");
+      if (Object.setPrototypeOf(0n, null) !== 0n) throw new Error("bigint");
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("!== 3", "!== 4");
+    expect((await checkModel(wrong)).failure?.message).toContain('"number"');
+  });
+
+  it("stops Object.setPrototypeOf of a primitive that may be null", async () => {
+    const result = await checkModel(`
+      const target: number = JSON.parse("null");
+      if (Object.setPrototypeOf(target, null) !== target) throw new Error("same");
+    `);
+    expect(result.failure?.message).toContain(
+      "tla-ts can't tell what Object.setPrototypeOf changes",
+    );
+  });
+
   it("stops calling an Object.prototype method that a script replaced", async () => {
     const result = await checkModel(`
       Object.prototype.valueOf = () => 0;
