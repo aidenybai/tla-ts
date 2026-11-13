@@ -11764,16 +11764,21 @@ const getLeadingCall = (
     path,
     context,
   );
-  const properties = reads.filter(
-    (inner): inner is ts.Identifier | ts.PropertyAccessExpression | ts.ElementAccessExpression =>
+  // A call that the statement evaluates before, rather than runs, reads where JavaScript reads it,
+  // and one that may throw runs first, as it changes nothing.
+  const throwing = reads.filter(ts.isCallExpression).find((inner) => mayThrow(inner, context));
+  if (throwing !== undefined) return { call: throwing, reads: [] };
+  const kept = reads.filter(
+    (inner): inner is ts.Expression =>
       ts.isIdentifier(inner) ||
       ts.isPropertyAccessExpression(inner) ||
-      ts.isElementAccessExpression(inner),
+      ts.isElementAccessExpression(inner) ||
+      ts.isCallExpression(inner),
   );
-  if (properties.length < reads.length) {
+  if (kept.length < reads.length) {
     throw new TlaTypeScriptError("tla-ts can't run this before what reads what it changes", call);
   }
-  return { call, reads: properties };
+  return { call, reads: kept };
 };
 
 // The path after a call that runs first, whose results hold the call's value and what the statement

@@ -15975,18 +15975,52 @@ ${call}
     expect(result.status).toBe("deadlock");
   });
 
-  it("rejects running a call before a call whose function reads what it changes", () => {
-    expect(() =>
-      compile(`
-        let count = 0;
-        const getCount = (offset: number) => count + offset;
-        function counter() {
-          count += 1;
-          return count;
-        }
-        const total = getCount(0) + counter();
-      `),
-    ).toThrow("tla-ts can't run this before what reads what it changes");
+  it("reads a call before a call whose function changes what it reads", async () => {
+    const getSource = (expected: string) => `
+      let count = 0;
+      const getCount = (offset: number) => count + offset;
+      function counter() {
+        count += 1;
+        return count;
+      }
+      const result = [getCount(0), counter()].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("0,1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1,1"))).failure?.message).toContain("0,1");
+  });
+
+  it("reads a map through a call before a call that makes an array", async () => {
+    const getSource = (expected: string) => `
+      const KINDS = new Map([
+        ["A", 1],
+        ["B", 2],
+      ]);
+      const getKind = (name: string) => KINDS.get(name) ?? 0;
+      const getRange = (last: string) => Array.from({ length: getKind(last) }, (_, offset) => offset);
+      const result = [getKind("B"), ...getRange("A"), ...getRange("B")].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("2,0,0,1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("2,0,1"))).failure?.message).toContain("2,0,0,1");
+  });
+
+  it("runs a call that may throw before a later call that makes an array", async () => {
+    const getSource = (first: string) => `
+      const KINDS = new Map([
+        ["A", 1],
+        ["B", 2],
+      ]);
+      const getKind = (name: string) => {
+        const kind = KINDS.get(name);
+        if (kind === undefined) throw new Error(\`Unknown kind \${name}\`);
+        return kind;
+      };
+      const getRange = (last: string) => Array.from({ length: getKind(last) }, (_, offset) => offset);
+      const values = [getKind("${first}"), ...getRange("A"), ...getRange("Y")];
+    `;
+    expect((await checkModel(getSource("Z"))).failure?.message).toContain("Unknown kind Z");
+    expect((await checkModel(getSource("A"))).failure?.message).toContain("Unknown kind Y");
   });
 
   it("describes a property with Reflect.getOwnPropertyDescriptor", async () => {
