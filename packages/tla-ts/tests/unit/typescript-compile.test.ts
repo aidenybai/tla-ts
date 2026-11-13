@@ -16882,6 +16882,30 @@ describe("errors", () => {
     });
   });
 
+  describe("resolve with a thenable whose then is a function expression of one parameter", () => {
+    const getSource = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      const thenable = {
+        then: function (resolve: (value: number) => void) {
+          resolve(23);
+        },
+      };
+      Promise.race([thenable]).then((value) => { log += value; });
+      setTimeout(() => {
+        if (log !== "${expected}") throw new Error(log);
+      });
+    `;
+
+    it("fulfills with what then passes", async () => {
+      expect((await checkModel(getSource("23"))).failure).toBeUndefined();
+    });
+
+    it("doesn't fulfill with another value", async () => {
+      expect((await checkModel(getSource("24"))).failure).toBeDefined();
+    });
+  });
+
   describe("call an executor's resolve that a variable holds through a non-null assertion", () => {
     const getSource = (expected: string) => `
       declare function setTimeout(callback: () => void): void;

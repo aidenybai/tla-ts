@@ -1919,9 +1919,18 @@ const getCapabilityConstructor = (node: ts.Expression, context: Context) => {
         ? callee.name
         : undefined));
   const symbol = name && getSymbol(name, context.checker);
+  const outer = ts.findAncestor(
+    constructor.parent,
+    (ancestor) => !ts.isParenthesizedExpression(ancestor) && !ts.isAsExpression(ancestor),
+  );
   const isPassedOnly =
     ts.isFunctionExpression(constructor) && constructor === getCast(node)
-      ? constructor.name === undefined
+      ? constructor.name === undefined &&
+        outer !== undefined &&
+        ts.isCallExpression(outer) &&
+        outer.arguments[0] !== undefined &&
+        getCast(outer.arguments[0]) === constructor &&
+        getCalledPromiseFunction(outer, context) !== undefined
       : symbol !== undefined &&
         findNodes(
           constructor.getSourceFile(),
