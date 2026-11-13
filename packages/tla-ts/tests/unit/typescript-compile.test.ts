@@ -9499,15 +9499,19 @@ describe("errors", () => {
     expect((await checkModel(getSource(0))).failure?.message).toContain("after");
   });
 
-  it("stops at a getter that a for-of's assignment runs before the body runs", async () => {
-    const result = await checkModel(`
+  it("keeps what the getters that a for-of's object rest copies change", async () => {
+    const getSource = (expected: number) => `
       let count = 0;
-      let rest: object = {};
-      for ({ ...rest } of [{ get v() { count++; return 2; } }]) {
-        if (count !== 1) throw new Error("count");
+      let seen = 0;
+      let rest: { v?: number } = {};
+      const source = { get v() { count++; return count * 10; } };
+      for ({ ...rest } of [source, source]) {
+        seen = seen + (rest.v ?? 0);
       }
-    `);
-    expect(result.failure?.message).toContain("tla-ts can't call getters");
+      if (count !== 2 || seen !== ${expected}) throw new Error("count");
+    `;
+    expect((await checkModel(getSource(30))).failure).toBeUndefined();
+    expect((await checkModel(getSource(20))).failure?.message).toContain("count");
   });
 
   it("runs a class's static private accessors", async () => {

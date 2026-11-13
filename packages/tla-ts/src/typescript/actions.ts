@@ -256,6 +256,9 @@ import {
   readProxyPattern,
   isGetterRead,
   getGetterKeys,
+  getRestCopyGetters,
+  getRestExcluded,
+  getRestGetterKeys,
   getTrapFunctions,
   isProxyOperation,
   readDescriptor,
@@ -911,19 +914,6 @@ const getDefaultedTarget = (node: ts.Expression) =>
   ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken
     ? { target: node.left, initializer: node.right }
     : { target: node, initializer: undefined };
-
-// The keys that an object pattern's rest element leaves out: those its other properties name.
-const getRestExcluded = (target: ts.ObjectLiteralExpression) =>
-  target.properties.flatMap((property) =>
-    property.name !== undefined && ts.isIdentifier(property.name) ? [property.name.text] : [],
-  );
-
-// The keys that an object pattern's rest element may copy through getters that the script writes,
-// which it runs where a statement assigns it.
-const getRestGetterKeys = (target: ts.ObjectLiteralExpression) =>
-  target.properties.some(ts.isSpreadAssignment)
-    ? [...getGetterKeys(target)].filter((key) => !getRestExcluded(target).includes(key))
-    : [];
 
 const assignPattern = <Result>(
   target: ts.Expression,
@@ -9360,6 +9350,7 @@ const getEffects = (
     ...getOwnValuesGetters(node, context),
     ...getReadFunctions(node, context),
     ...getLoopGetters(node, context),
+    ...(written === undefined ? [] : getRestCopyGetters(written, context)),
   ];
   // A pattern that destructures an object, or a for-of, a spread, or a yield* that iterates one,
   // runs the functions of the object's iterator.

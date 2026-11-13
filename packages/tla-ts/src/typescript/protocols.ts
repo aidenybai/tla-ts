@@ -154,6 +154,25 @@ const getKeyGetters = (node: ts.Node, key: string, context: Context) => [
   ...getAccessorFunctions(node, "get", context),
 ];
 
+// The keys that an object pattern's rest element leaves out: those its other properties name.
+export const getRestExcluded = (target: ts.ObjectLiteralExpression) =>
+  target.properties.flatMap((property) =>
+    property.name !== undefined && ts.isIdentifier(property.name) ? [property.name.text] : [],
+  );
+
+// The keys that an object pattern's rest element may copy through getters that the script writes,
+// which it runs where a statement assigns it.
+export const getRestGetterKeys = (target: ts.ObjectLiteralExpression) =>
+  target.properties.some(ts.isSpreadAssignment)
+    ? [...getGetterKeys(target)].filter((key) => !getRestExcluded(target).includes(key))
+    : [];
+
+// The getters that the object rests of an assignment's target copy.
+export const getRestCopyGetters = (target: ts.Node, context: Context) =>
+  findNodes(target, ts.isObjectLiteralExpression).flatMap((pattern) =>
+    getRestGetterKeys(pattern).flatMap((key) => getKeyGetters(pattern, key, context)),
+  );
+
 export const isNullish = (value: Expression, context: Context) =>
   apply("\\/", [
     apply("=", [value, getUndefined(context)]),
