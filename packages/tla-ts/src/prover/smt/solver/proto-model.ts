@@ -103,6 +103,16 @@ export class FuncInterp {
     this.entryTable.set(args.join(","), entry);
   }
 
+  // del_entry: the last entry takes the place of the deleted one.
+  delEntry(index: number) {
+    this.resetInterpCache();
+    const entry = this.entries[index];
+    this.entries[index] = this.entries[this.entries.length - 1];
+    this.entries.pop();
+    this.entryTable.delete(entry.args.join(","));
+    this.releaseEntry(entry);
+  }
+
   insertEntry(args: number[], result: number) {
     this.resetInterpCache();
     const entry = this.getEntry(args);
@@ -324,6 +334,8 @@ export class ProtoModel {
   // array_factory::m_ranges: the ranges whose fresh value an array's fresh value is waiting for.
   private freshArrayRanges: number[] = [];
   private finiteSorts = new Set<number>();
+  // model::m_usort2universe, the universes registered in order.
+  private universes = new Map<number, RefVector>();
   private boolRandom: RandomGen;
   private evaluator: ModelEvaluator;
   private rewriter: Rewriter;
@@ -415,6 +427,29 @@ export class ProtoModel {
     return this.evaluator.rewrite(expr);
   }
 
+  resetEvalCache() {
+    this.evaluator.reset();
+  }
+
+  // model::unfold_as_array: the array an as-array denotes, from its function's interpretation.
+  unfoldAsArray(expr: number) {
+    const manager = this.manager;
+    if (!manager.isApp(expr) || !isAsArray(manager, manager.decls[expr])) return expr;
+    const decl = manager.funcDecls[manager.decls[expr]].parameters[0];
+    return this.funcInterps.get(decl)?.getArrayInterp(decl) ?? expr;
+  }
+
+  registerUsort(sort: number, universe: readonly number[]) {
+    const values = new RefVector(this.manager);
+    for (const value of universe) values.push(value);
+    this.universes.get(sort)?.reset();
+    this.universes.set(sort, values);
+  }
+
+  getUniverse(sort: number): readonly number[] | undefined {
+    return this.universes.get(sort)?.items;
+  }
+
   private getValueSet(sort: number) {
     const existing = this.values.get(sort);
     if (existing !== undefined) return existing;
@@ -489,7 +524,8 @@ export class ProtoModel {
       return getManagerSomeValue(manager, sort);
     if (this.isFinal) {
       const first = manager.isUninterpretedSort(sort)
-        ? this.values.get(sort)?.[Symbol.iterator]().next().value
+        ? (this.universes.get(sort)?.items[0] ??
+          this.values.get(sort)?.[Symbol.iterator]().next().value)
         : undefined;
       return first ?? getManagerSomeValue(manager, sort);
     }
@@ -671,8 +707,9 @@ export class ProtoModel {
     return [...this.values.keys()].filter((sort) => this.manager.isUninterpretedSort(sort));
   }
 
+  // A registered universe keeps its order, as model::get_universe does.
   getKnownUniverse(sort: number): number[] {
-    return [...(this.values.get(sort) ?? [])];
+    return [...(this.universes.get(sort)?.items ?? this.values.get(sort) ?? [])];
   }
 
   compress() {
@@ -978,6 +1015,7 @@ export class ProtoModel {
   private release() {
     this.rewriter.release();
     this.evaluator.release();
+    for (const universe of this.universes.values()) universe.reset();
     this.userSortValues.reset();
     this.arithValues.reset();
     this.bvValues.reset();
@@ -1002,6 +1040,7 @@ export class ProtoModel {
       model.registerFunc(decl, (this.funcInterps.get(decl) as FuncInterp).copy());
     for (const sort of this.getUninterpretedSorts())
       for (const value of this.getKnownUniverse(sort)) model.registerValue(value);
+    for (const entry of this.universes) model.registerUsort(entry[0], entry[1].items);
     return model;
   }
 
@@ -1017,6 +1056,7 @@ export class ProtoModel {
     this.funcDecls = [];
     for (const entry of this.values)
       if (!isArithSort(entry[0])) for (const value of entry[1]) model.registerValue(value);
+    for (const entry of this.universes) model.registerUsort(entry[0], entry[1].items);
     return model;
   }
 

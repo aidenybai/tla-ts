@@ -569,7 +569,7 @@ export const getGroundSubterms = (manager: AstManager, expr: number) => {
   for (let node = todo.pop(); node !== undefined; node = todo.pop()) {
     if (seen.has(node)) continue;
     seen.add(node);
-    if (manager.isGround(node)) ground.push(node);
+    if (manager.isGroundApp(node)) ground.push(node);
     else
       for (let index = 0; index < manager.getNumArgs(node); index++) {
         const arg = manager.getArg(node, index);

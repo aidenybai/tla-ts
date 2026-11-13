@@ -1790,6 +1790,13 @@ const compile = (
   }
 };
 
+// inc_sat_solver's init_preprocess, with sat.euf.
+export const mkIncSatEufPreprocess = (manager: AstManager) =>
+  runAndThen(
+    inPlace((goal) => simplifyGoal(manager, goal, getRewriterOptions(manager, new Map()))),
+    inPlace((goal) => propagateValues(manager, goal)),
+  );
+
 // inc_sat_solver's init_preprocess, without sat.euf.
 export const mkIncSatPreprocess = (manager: AstManager, bitBlaster: BitBlasterRewriter) =>
   [

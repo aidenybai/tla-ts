@@ -479,6 +479,43 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("instantiates sat.euf's quantifiers by e-matching and model-based instantiation", () => {
+    const header = [
+      "(set-option :sat.euf true)",
+      "(set-option :tactic.default_tactic smt)",
+      "(declare-sort U 0)",
+      "(declare-fun f (U) U)",
+      "(declare-fun a () U)",
+    ];
+    expect(
+      run([
+        ...header,
+        "(declare-fun b () U)",
+        "(assert (forall ((x U)) (= (f x) a)))",
+        "(assert (not (= (f b) a)))",
+        "(check-sat)",
+        "(reset)",
+        ...header,
+        "(declare-fun p (U) Bool)",
+        "(assert (forall ((x U)) (=> (p x) (p (f x)))))",
+        "(assert (p a))",
+        "(assert (not (p (f (f a)))))",
+        "(check-sat)",
+        "(reset)",
+        ...header,
+        "(assert (forall ((x U)) (not (= (f x) x))))",
+        "(check-sat)",
+        "(get-value ((f a) (= (f a) a)))",
+        "(reset)",
+        ...header,
+        "(declare-fun r (U U) Bool)",
+        "(assert (forall ((x U)) (exists ((y U)) (r x y))))",
+        "(assert (forall ((x U) (y U)) (not (r x y))))",
+        "(check-sat)",
+      ]),
+    ).toEqual(["unsat", "unsat", "sat", "(((f a) U!val!1)\n ((= (f a) a) false))", "unsat"]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),

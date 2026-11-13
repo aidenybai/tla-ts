@@ -11,6 +11,7 @@ import {
   OP_DISTINCT,
   OP_EQ,
   OP_ITE,
+  SORT_BOOL,
   SORT_SIZE_INFINITE,
   SORT_SIZE_VERY_BIG,
   QUANTIFIER_LAMBDA,
@@ -57,7 +58,7 @@ interface Constraint {
   readonly owner: ThSolver | null;
   readonly kind: number;
   readonly node: Enode | null;
-  readonly data: ThExplain | null;
+  readonly data: unknown;
 }
 
 // The external justification of an egraph merge: a literal, or the index of a theory constraint.
@@ -100,7 +101,7 @@ export class EufSolver implements SatExtension {
     readonly manager: AstManager,
     readonly si: EufInternalizer,
     readonly s: Solver,
-    private mkThSolver: ThSolverFactory,
+    readonly mkThSolver: ThSolverFactory,
   ) {
     this.egraph = new Egraph(manager);
     this.egraph.onPropagateLiteral = (node, ante) => this.propagateLiteral(node, ante);
@@ -500,8 +501,16 @@ export class EufSolver implements SatExtension {
 
   // euf_solver.cpp
 
-  mkConstraint(owner: ThSolver, data: ThExplain) {
+  mkConstraint(owner: ThSolver, data: unknown) {
     return this.pushConstraint({ owner, kind: K_LIT, node: null, data });
+  }
+
+  constraintData(index: number) {
+    return this.constraints[index].data;
+  }
+
+  addExplain(payload: number) {
+    this.explanation.push(payload);
   }
 
   private pushConstraint(constraint: Constraint) {
@@ -811,6 +820,20 @@ export class EufSolver implements SatExtension {
     this.scopes.length -= numScopes;
   }
 
+  // user_push: the scope literal of the sat solver gets a fresh constant, out of the egraph.
+  userPush() {
+    this.push();
+    const manager = this.manager;
+    const guard = manager.mkFreshConst("sat.scope", SORT_BOOL);
+    manager.incRef(guard);
+    this.trail.push(() => manager.decRef(guard));
+    this.setBoolVar2expr(this.s.userScopeLiterals[this.scopes.length - 1] >> 1, guard);
+  }
+
+  userPop(numScopes: number) {
+    this.pop(numScopes);
+  }
+
   private startReinit() {
     this.reinits = [];
     for (const boolVar of this.s.varsToReinit) {
@@ -903,12 +926,15 @@ export class EufSolver implements SatExtension {
 
   // euf_model.cpp
 
-  saveModel(model: ProtoModel) {
+  saveModel(model: ProtoModel | null) {
+    model?.incRef();
+    this.qmodel?.decRef();
     this.qmodel = model;
   }
 
   updateModel(model: ProtoModel) {
     if (this.qmodel !== null) return this.qmodel;
+    model.resetEvalCache();
     for (const solver of this.solvers) solver.initModel();
     this.values = [];
     this.values2rootMap = null;
@@ -917,9 +943,9 @@ export class EufSolver implements SatExtension {
     this.collectDependencies(userSorts, deps);
     deps.sort();
     this.dependencies2values(userSorts, deps, model);
-    userSorts.registerWith(model);
     this.values2model(deps, model);
     for (const solver of this.solvers) solver.finalizeModel(model);
+    userSorts.registerWith(model);
     return model;
   }
 
@@ -1039,7 +1065,7 @@ export class EufSolver implements SatExtension {
     const map = new Map<number, Enode>();
     for (const node of this.egraph.nodes) {
       const value = this.values[node.owner];
-      if (node.isRoot && value !== undefined && !map.has(value)) map.set(value, node);
+      if (node.isRoot && value !== undefined) map.set(value, node);
     }
     this.values2rootMap = map;
     return map;
@@ -1087,7 +1113,10 @@ class UserSortValues {
   }
 
   registerWith(model: ProtoModel) {
-    for (const entry of this.sort2values) for (const value of entry[1]) model.registerValue(value);
+    for (const entry of this.sort2values) {
+      for (const value of entry[1]) model.registerValue(value);
+      model.registerUsort(entry[0], entry[1]);
+    }
   }
 }
 

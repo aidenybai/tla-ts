@@ -6,7 +6,8 @@ import { Goal } from "../goal";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { ProtoModel } from "../proto-model";
 import { RefVector } from "../ref-vector";
-import { convertModel, mkIncSatPreprocess } from "../tactic";
+import type { ThSolverFactory } from "../euf/euf-solver";
+import { convertModel, mkIncSatEufPreprocess, mkIncSatPreprocess } from "../tactic";
 import type { SatParams } from "./config";
 import { Goal2Sat } from "./goal2sat";
 import { getConsequences } from "./consequences";
@@ -19,6 +20,12 @@ const BIT_BLAST_PARAMS = {
   isBlastingQuant: false,
   isBlastingFull: false,
 };
+
+interface Scope {
+  readonly converters: Goal["converters"];
+  readonly fmlsSize: number;
+  readonly fmlsHead: number;
+}
 
 export class IncSatSolver {
   private readonly solver: Solver;
@@ -36,16 +43,25 @@ export class IncSatSolver {
   private readonly internalized: RefVector;
   private hasUninterpreted = false;
   private models: ProtoModel[] = [];
+  private scopes: Scope[] = [];
   reasonUnknown = "no reason given";
   wasUnknown = false;
 
+  // A theory factory runs the solver in sat.euf mode, with the euf solver as its extension.
   constructor(
     private readonly manager: AstManager,
     params: SatParams,
     isIncremental = true,
+    mkThSolver: ThSolverFactory | null = null,
   ) {
     this.solver = new Solver(params, manager.limit, isIncremental);
-    this.goal2sat = new Goal2Sat(manager, this.solver, params.get("ite_extra") !== false);
+    this.goal2sat = new Goal2Sat(
+      manager,
+      this.solver,
+      params.get("ite_extra") !== false,
+      mkThSolver,
+    );
+    if (mkThSolver !== null) this.goal2sat.ensureEuf();
     this.fmls = new RefVector(manager);
     this.core = new RefVector(manager);
     this.converters = new Goal(manager);
@@ -80,12 +96,29 @@ export class IncSatSolver {
     this.fmls.push(expr);
   }
 
-  push(): never {
-    throw new SmtUnsupportedError("push on the SAT solver");
+  // Outside sat.euf, a scope would also need the scopes of the bit-blaster.
+  push() {
+    if (this.goal2sat.euf === null) throw new SmtUnsupportedError("push on the SAT solver");
+    this.internalizeFormulas();
+    this.goal2sat.push();
+    this.solver.userPush();
+    this.scopes.push({
+      converters: this.converters.converters,
+      fmlsSize: this.fmls.size,
+      fmlsHead: this.fmlsHead,
+    });
   }
 
-  pop(): never {
-    throw new SmtUnsupportedError("pop on the SAT solver");
+  pop(numScopes: number) {
+    const count = Math.min(numScopes, this.scopes.length);
+    this.goal2sat.pop(count);
+    this.solver.userPop(count);
+    for (let index = 0; index < count; index++) {
+      const scope = this.scopes.pop() as Scope;
+      this.converters.converters = scope.converters;
+      this.fmlsHead = scope.fmlsHead;
+      this.fmls.shrink(scope.fmlsSize);
+    }
   }
 
   private checkUninterpreted() {
@@ -107,11 +140,15 @@ export class IncSatSolver {
   private internalizeGoal(goal: Goal) {
     this.solver.popToBaseLevel();
     if (this.solver.isInconsistent) return L_FALSE;
-    this.bitBlaster ??= new BitBlasterRewriter(this.manager, BIT_BLAST_PARAMS);
+    const bitBlaster = (this.bitBlaster ??= new BitBlasterRewriter(this.manager, BIT_BLAST_PARAMS));
     const subgoals = (() => {
       if (this.isCnf) return [goal];
       try {
-        const goals = mkIncSatPreprocess(this.manager, this.bitBlaster)(goal);
+        const goals = (
+          this.goal2sat.euf === null
+            ? mkIncSatPreprocess(this.manager, bitBlaster)
+            : mkIncSatEufPreprocess(this.manager)
+        )(goal);
         this.isCnf = true;
         return goals;
       } catch (error) {
@@ -276,14 +313,19 @@ export class IncSatSolver {
   getModel() {
     const manager = this.manager;
     if (!this.solver.isModelCurrent || this.fmls.size > this.fmlsHead) return null;
-    const model = new ProtoModel(manager);
+    const euf = this.goal2sat.euf;
+    // The euf solver fills a model rather than a proto_model, so its declarations keep their order.
+    const model = euf === null ? new ProtoModel(manager) : new ProtoModel(manager).mkModel();
     for (const [expr, boolVar] of this.goal2sat.atoms) {
       if (!manager.isUninterpretedConst(expr)) continue;
       const value = this.solver.model[boolVar];
       if (value === L_TRUE) model.registerConst(manager.decls[expr], manager.trueExpr);
       else if (value === L_FALSE) model.registerConst(manager.decls[expr], manager.falseExpr);
     }
-    const converted = convertModel(this.converters, model.mkModel());
+    const converted = convertModel(
+      this.converters,
+      euf === null ? model.mkModel() : euf.updateModel(model),
+    );
     converted.incRef();
     this.models.push(converted);
     return converted;
