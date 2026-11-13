@@ -889,9 +889,26 @@ export const isPrototypeRead = (outer: ts.Node, node: ts.Expression) => {
   );
 };
 
+// A throw in a try's block, outside any function there, whose catch takes what it throws with an
+// array pattern, which takes a generator object's values through its next.
+export const isThrownToArrayPattern = (statement: ts.ThrowStatement) => {
+  const block = ts.findAncestor(
+    statement,
+    (ancestor) =>
+      ts.isFunctionLike(ancestor) ||
+      (ts.isTryStatement(ancestor.parent) && ancestor.parent.tryBlock === ancestor),
+  );
+  const name =
+    block !== undefined && ts.isTryStatement(block.parent)
+      ? block.parent.catchClause?.variableDeclaration?.name
+      : undefined;
+  return name !== undefined && ts.isArrayBindingPattern(name);
+};
+
 // A generator object goes only where tla-ts follows it: into a variable that holds generators, to a
 // call of its methods or Iterator.prototype's, into Iterator.from, into a comparison, an instanceof,
-// or a getPrototypeOf, into a for-of or a for await, or into a generator's yield*.
+// or a getPrototypeOf, into a for-of or a for await, into a generator's yield*, or to a catch's
+// array pattern.
 // Elsewhere, such as an array pattern, a spread, or a function's parameter, code would iterate it
 // in ways that tla-ts doesn't follow.
 export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
@@ -946,7 +963,8 @@ export const rejectGeneratorUse = (node: ts.Expression, context: Context) => {
         outer.arguments.at(0) === node &&
         outer.expression.getText() === "Array.from") ||
       (ts.isCallExpression(outer) && getIteratorFrom(outer, context) === node) ||
-      (ts.isSpreadElement(outer) && isGeneratorType(node, context)));
+      (ts.isSpreadElement(outer) && isGeneratorType(node, context)) ||
+      (ts.isThrowStatement(outer) && isThrownToArrayPattern(outer)));
   if (!isHeld) throw new TlaTypeScriptError("tla-ts can't follow a generator here", node);
 };
 

@@ -820,6 +820,92 @@ describe("top-level statements", () => {
     expect(result.failure?.message).toContain("tla-ts can't destructure an object");
   });
 
+  it("take a catch's array pattern from a generator object that the try throws", async () => {
+    const getSource = (expected: string) => `
+      let first = 0;
+      let second = 0;
+      function* g() {
+        first += 1;
+        yield 1;
+        second += 1;
+        yield 2;
+      }
+      const iter = g();
+      let taken = "";
+      try {
+        throw iter;
+        // @ts-ignore
+      } catch ([a, b]) {
+        taken = \`\${a},\${b}\`;
+      }
+      let rest = "";
+      try {
+        throw g();
+        // @ts-ignore
+      } catch ([, next]) {
+        rest = String(next);
+      }
+      if (taken !== "${expected}" || rest !== "2" || first + second !== 4) throw new Error("taken");
+    `;
+    expect((await checkModel(getSource("1,2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1,"))).failure?.message).toContain("taken");
+  });
+
+  it("throw what a thrown generator throws to a catch's pattern out of the try, after finally", async () => {
+    const getSource = (expected: string) => `
+      let order = "";
+      function* g() {
+        order += "step,";
+        throw new RangeError("step");
+      }
+      try {
+        try {
+          throw g();
+          // @ts-ignore
+        } catch ([x]) {
+          order += "catch,";
+        } finally {
+          order += "finally";
+        }
+      } catch (error) {
+        if (error instanceof RangeError) order += ",outer";
+      }
+      if (order !== "${expected}") throw new Error("order");
+    `;
+    expect((await checkModel(getSource("step,finally,outer"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("step,catch,finally"))).failure?.message).toContain("order");
+  });
+
+  it("keep what a generator that a loop's try throws changes as a catch's pattern takes from it", async () => {
+    const getSource = (expected: number) => `
+      let made = 0;
+      let sum = 0;
+      function* g(value: number) {
+        made += 1;
+        yield value;
+      }
+      for (let index = 1; index <= 3; index++) {
+        try {
+          throw g(index);
+          // @ts-ignore
+        } catch ([value]) {
+          sum += value as number;
+        }
+      }
+      if (sum !== 6 || made !== ${expected}) throw new Error("loop");
+    `;
+    expect((await checkModel(getSource(3))).failure).toBeUndefined();
+    expect((await checkModel(getSource(0))).failure?.message).toContain("loop");
+  });
+
+  it("reject a generator object thrown where no catch's array pattern takes it", () => {
+    expect(() =>
+      compile(
+        "function* g() {\n  yield 1;\n}\nconst iter = g();\ntry {\n  throw iter;\n} catch (error) {\n  const caught = error;\n}",
+      ),
+    ).toThrow("Throw an error or a primitive");
+  });
+
   it("stop the check at a setter it can't call, before what follows", async () => {
     const result = await checkModel(`
       let count = 0;

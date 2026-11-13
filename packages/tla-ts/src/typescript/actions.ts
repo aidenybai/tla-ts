@@ -352,6 +352,7 @@ import {
   isNumberLike,
   isBuiltInIteratorType,
   isGeneratorType,
+  isThrownToArrayPattern,
   isPrototypeRead,
   mayBeGeneratorType,
   ITERATOR_CONSUMERS,
@@ -497,6 +498,9 @@ interface Removed {
 export interface Thrown {
   value: Expression;
   uncaught: Expression;
+  // Whether the value is a generator object that tla-ts follows, from which a catch's array pattern
+  // takes its values through the generator's next.
+  isGenerator?: boolean;
 }
 
 interface YieldMode {
@@ -11564,20 +11568,18 @@ const translateTry = (
     throwTo: rethrow,
   };
   const catchClause = statement.catchClause;
-  const handle = (inner: Path, thrown: Thrown) => {
-    if (catchClause === undefined) return rethrow(inner, thrown);
-    const caught = { ...inner, scope: { ...inner.scope, isCatching } };
-    const declaration = catchClause.variableDeclaration;
+  const bodyFrame = statement.finallyBlock === undefined ? outer : guardYields(outer);
+  const runCatch = (clause: ts.CatchClause, caught: Path, value: Expression) => {
+    const declaration = clause.variableDeclaration;
     const bound =
       declaration === undefined
         ? { definitions: [], scope: caught.scope }
-        : bindPattern(declaration.name, thrown.value, caught.scope, context);
+        : bindPattern(declaration.name, value, caught.scope, context);
     // A catch's parameter is a local binding, which the block may assign as it does a let.
     const parameter =
       declaration !== undefined && ts.isIdentifier(declaration.name)
         ? getSymbol(declaration.name, context.checker)
         : undefined;
-    const bodyFrame = statement.finallyBlock === undefined ? outer : guardYields(outer);
     return letIn(
       bound.definitions,
       throwOnDestructured(
@@ -11589,7 +11591,7 @@ const translateTry = (
           caught.scope,
           bound.scope,
           translateStatements(
-            catchClause.block.statements,
+            clause.block.statements,
             {
               ...caught,
               scope: { ...bound.scope, destructured: undefined },
@@ -11604,6 +11606,32 @@ const translateTry = (
         ),
       ),
     );
+  };
+  const handle = (inner: Path, thrown: Thrown) => {
+    if (catchClause === undefined) return rethrow(inner, thrown);
+    const caught = { ...inner, scope: { ...inner.scope, isCatching } };
+    const pattern = catchClause.variableDeclaration?.name;
+    // A catch's array pattern takes its values from a generator object that the try threw, through
+    // its next, before the block runs, so that what the generator throws leaves the try.
+    if (thrown.isGenerator === true && pattern !== undefined && ts.isArrayBindingPattern(pattern)) {
+      const suspensions = [...caught.generators.values()];
+      const exact = suspensions.filter((suspension) =>
+        isSameExpression(suspension.ref, thrown.value),
+      );
+      return takeFromHeld(
+        pattern,
+        thrown.value,
+        (exact.length > 0 ? exact : suspensions).flatMap(
+          (suspension) => suspension.generator ?? [],
+        ),
+        [],
+        caught,
+        context,
+        bodyFrame,
+        (after, values) => runCatch(catchClause, after, values),
+      );
+    }
+    return runCatch(catchClause, caught, thrown.value);
   };
   return translateStatements(
     statement.tryBlock.statements,
@@ -13145,12 +13173,30 @@ export const translateStatements = (
       path,
       context,
       (allocated) => {
-        const throwValue = (after: Path, value: Expression) => {
+        const throwValue = (after: Path, value: Expression, isGenerator = false) => {
           const uncaught = translateThrow(statement, after.scope, context);
           return frame.throwTo === undefined
             ? leaf(uncaught)
-            : frame.throwTo(after, { value, uncaught });
+            : frame.throwTo(after, { value, uncaught, isGenerator });
         };
+        // A generator object that a call makes or a name holds, which tla-ts follows as it compiles,
+        // to a catch's array pattern.
+        const created =
+          ts.isCallExpression(thrown) && isThrownToArrayPattern(statement)
+            ? getCreatedGenerator(thrown, allocated, context)
+            : undefined;
+        if (created !== undefined && ts.isCallExpression(thrown)) {
+          return translateGeneratorCall(thrown, created, allocated, context, frame, (after, ref) =>
+            throwValue(after, ref ?? getUndefined(context), true),
+          );
+        }
+        if (
+          ts.isIdentifier(thrown) &&
+          isGeneratorType(thrown, context) &&
+          isThrownToArrayPattern(statement)
+        ) {
+          return throwValue(allocated, translateExpression(thrown, allocated.scope, context), true);
+        }
         return run === undefined
           ? throwValue(allocated, translateThrown(statement.expression, allocated.scope, context))
           : translateConstruction(thrown, run, allocated, context, frame, (after, value) =>
