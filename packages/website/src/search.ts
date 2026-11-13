@@ -8,12 +8,25 @@ export interface SearchState {
   isFailing: boolean;
 }
 
+export interface SearchEdge {
+  fromId: string;
+  toId: string;
+  call: string;
+}
+
+export interface SearchChart {
+  states: SearchState[];
+  edges: SearchEdge[];
+}
+
 export interface Search {
   states: SearchState[];
+  chart: SearchChart;
   stateCount: number;
 }
 
 const SHOWN_STATES = 8;
+const CHART_STATES = 24;
 const EDGE = /^(-?\d+) -> (-?\d+) \[label="((?:[^"\\]|\\.)*)"/;
 const NODE = /^(-?\d+) \[label="((?:[^"\\]|\\.)*)"/;
 
@@ -28,8 +41,16 @@ export const getSearch = (
   const steps = new Map<string, { parentId: string; call: string }>();
   const states = new Map<string, SearchState>();
   const changes = new Map<string, string[]>();
+  const edges = new Map<string, SearchEdge>();
   for (const line of graph.split("\n")) {
     const edge = EDGE.exec(line);
+    if (edge && edge[1] !== edge[2] && !edges.has(`${edge[1]} ${edge[2]}`)) {
+      edges.set(`${edge[1]} ${edge[2]}`, {
+        fromId: edge[1],
+        toId: edge[2],
+        call: getText(edge[3]),
+      });
+    }
     if (edge && !states.has(edge[2]) && !steps.has(edge[2])) {
       steps.set(edge[2], { parentId: edge[1], call: getText(edge[3]) });
     }
@@ -52,19 +73,28 @@ export const getSearch = (
       isFailing: text === failingState,
     });
   }
-  const shown = new Set([...states.keys()].slice(0, SHOWN_STATES));
-  let failing = [...states.values()].find((state) => state.isFailing);
-  while (failing) {
-    shown.add(failing.id);
-    failing = failing.parentId === undefined ? undefined : states.get(failing.parentId);
-  }
+  const failing = [...states.values()].find((state) => state.isFailing);
+  const failingIds = getPath([...states.values()], failing?.id).map((state) => state.id);
+  const getShown = (count: number) => {
+    const shown = new Set([...[...states.keys()].slice(0, count), ...failingIds]);
+    return [...states.values()].filter((state) => shown.has(state.id));
+  };
+  const chartStates = getShown(CHART_STATES);
   return {
-    states: [...states.values()].filter((state) => shown.has(state.id)),
+    states: getShown(SHOWN_STATES),
+    chart: {
+      states: chartStates,
+      edges: [...edges.values()].filter(
+        (edge) =>
+          chartStates.some((state) => state.id === edge.fromId) &&
+          chartStates.some((state) => state.id === edge.toId),
+      ),
+    },
     stateCount: states.size,
   };
 };
 
-export const getPath = (search: Search, stateId: string | undefined): SearchState[] => {
-  const state = search.states.find((innerState) => innerState.id === stateId);
-  return state ? [state, ...getPath(search, state.parentId)] : [];
+export const getPath = (states: SearchState[], stateId: string | undefined): SearchState[] => {
+  const state = states.find((innerState) => innerState.id === stateId);
+  return state ? [state, ...getPath(states, state.parentId)] : [];
 };
