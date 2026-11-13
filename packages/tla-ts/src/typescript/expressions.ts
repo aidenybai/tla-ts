@@ -1779,6 +1779,12 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
   }
   const functionValue = getFunctionValue(node, context);
   if (functionValue !== undefined) return translateFunctionValue(functionValue, context);
+  if (symbol?.valueDeclaration !== undefined && ts.isFunctionExpression(symbol.valueDeclaration)) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't read ${node.text}, the name that this function gives itself`,
+      node,
+    );
+  }
   const declared = translateDeclared(node, symbol, scope, context);
   if (declared !== undefined) return declared;
   if (symbol !== undefined && context.variables.has(symbol)) {

@@ -812,7 +812,8 @@ export const getLocalCaptures = (node: FunctionNode, context: Context) => {
 };
 
 // The function that a script evaluates once, which is a value with one identity, either as the
-// expression or through a name that its declaration gives it and nothing assigns.
+// expression or through a name that its declaration gives it and nothing assigns, such as the name
+// that a function expression gives itself.
 export const getFunctionValue = (
   node: ts.Node,
   context: Context,
@@ -827,7 +828,9 @@ export const getFunctionValue = (
   const found =
     isNamed && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
-      : isNamed && ts.isFunctionDeclaration(declaration)
+      : isNamed &&
+          (ts.isFunctionDeclaration(declaration) ||
+            (ts.isFunctionExpression(declaration) && !isNestedFunction(declaration, context)))
         ? declaration
         : node;
   return found !== undefined &&
