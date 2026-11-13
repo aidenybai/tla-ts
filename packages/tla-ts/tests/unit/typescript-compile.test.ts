@@ -4519,6 +4519,34 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("TLA+ sequences can't have holes");
   });
 
+  describe("holds an array that a script writes past its end on the heap, with its holes", () => {
+    const getSource = (expected: string) => `
+      var values: number[] = [];
+      values[0] = 1;
+      values[3] = 4;
+      const reversed = new Array();
+      reversed[1] = 2;
+      reversed[0] = 1;
+      var named: number[] = [];
+      named[NaN] = 5;
+      const seen = [values.length, values.join(), values.indexOf(4), reversed.join(), named.length];
+      values = [7];
+      values[2] = 9;
+      seen.push(values.pop() ?? 0, values.length, named["NaN"]);
+      if (seen.join(";") !== "${expected}") throw new Error(seen.join(";"));
+    `;
+
+    it("reads each hole as missing", async () => {
+      const result = await checkModel(getSource("4;1,,,4;3;1,2;0;9;2;5"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkModel(getSource("4;1,4;3;1,2;0;9;2;5"));
+      expect(result.failure?.message).toContain("4;1,,,4;3;1,2;0;9;2;5");
+    });
+  });
+
   it("fails the check where with() would throw a RangeError", async () => {
     const result = await check(
       compile(

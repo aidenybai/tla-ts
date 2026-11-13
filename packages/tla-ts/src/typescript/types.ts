@@ -269,11 +269,12 @@ export const isHoleyNewArray = (node: ts.Node): node is ts.NewExpression => {
   );
 };
 
-// new Array of two or more elements, which makes an array of them, as new Array(1, 2, 3) does.
+// new Array of no elements, or of two or more, which makes an array of them, as new Array(1, 2, 3)
+// does. One argument is a length instead.
 export const isNewArrayOfElements = (node: ts.Node): node is ts.NewExpression =>
   ts.isNewExpression(node) &&
   node.expression.getText() === "Array" &&
-  (node.arguments?.length ?? 0) >= 2 &&
+  (node.arguments?.length ?? 0) !== 1 &&
   node.arguments?.some(ts.isSpreadElement) === false;
 
 // The array literal, or the new Array of holes, that an expression or the variable it names holds.

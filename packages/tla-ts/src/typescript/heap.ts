@@ -2900,6 +2900,83 @@ const ELEMENT_CALLBACK_METHODS = new Set([
   "findLastIndex",
 ]);
 
+const CONSTANT_KEYS = new Map([
+  ["NaN", NaN],
+  ["Infinity", Infinity],
+  ["Number.NaN", NaN],
+  ["Number.POSITIVE_INFINITY", Infinity],
+  ["Number.NEGATIVE_INFINITY", -Infinity],
+]);
+
+// The number that an element access's key always is, such as 3, "3", -1, or NaN.
+const getConstantKey = (node: ts.Expression): number | undefined => {
+  const key = skipCasts(node);
+  if (ts.isNumericLiteral(key)) return Number(key.text);
+  if (
+    ts.isPrefixUnaryExpression(key) &&
+    key.operator === ts.SyntaxKind.MinusToken &&
+    ts.isNumericLiteral(key.operand)
+  ) {
+    return -Number(key.operand.text);
+  }
+  if (ts.isStringLiteral(key))
+    return String(Number(key.text)) === key.text ? Number(key.text) : undefined;
+  return CONSTANT_KEYS.get(key.getText());
+};
+
+// The length of the array that an expression makes, where it's new: a literal, or new Array of no
+// elements or several.
+const getFreshLength = (node: ts.Expression | undefined) => {
+  const array = node === undefined ? undefined : skipCasts(node);
+  if (array === undefined) return undefined;
+  if (ts.isArrayLiteralExpression(array) && !array.elements.some(ts.isSpreadElement)) {
+    return array.elements.length;
+  }
+  return isNewArrayOfElements(array) ? (array.arguments ?? []).length : undefined;
+};
+
+// Whether a variable's uses, in the order the script gives them, write an element past the end of
+// the array that it holds, or a key that isn't an index, as x = []; x[1] = 1 does, which leaves a
+// hole that only the heap holds. A use that may change the length some other way ends what it
+// knows.
+const writesHole = (uses: readonly ts.Identifier[]) =>
+  uses.reduce<{ length: number | undefined; isHole: boolean }>(
+    (state, use) => {
+      const parent = use.parent;
+      if (state.isHole) return state;
+      if (ts.isVariableDeclaration(parent) && parent.name === use) {
+        return { ...state, length: getFreshLength(parent.initializer) };
+      }
+      if (
+        ts.isBinaryExpression(parent) &&
+        parent.left === use &&
+        parent.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      ) {
+        return { ...state, length: getFreshLength(parent.right) };
+      }
+      const isElementWrite =
+        ts.isElementAccessExpression(parent) &&
+        parent.expression === use &&
+        ts.isBinaryExpression(parent.parent) &&
+        parent.parent.left === parent &&
+        parent.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken;
+      const key = isElementWrite ? getConstantKey(parent.argumentExpression) : undefined;
+      if (isElementWrite && key !== undefined && state.length !== undefined) {
+        const isIndex = Number.isInteger(key) && key >= 0 && key < 2 ** 32 - 1;
+        return !isIndex || key > state.length
+          ? { ...state, isHole: true }
+          : { ...state, length: key === state.length ? state.length + 1 : state.length };
+      }
+      const isRead =
+        ts.isElementAccessExpression(parent) ||
+        (ts.isPropertyAccessExpression(parent) && !IN_PLACE_METHODS.has(parent.name.text));
+      return isRead && !isElementWrite && !isAssignmentTarget(parent)
+        ? state
+        : { ...state, length: undefined };
+    },
+    { length: undefined, isHole: false },
+  ).isHole;
+
 // The arrays, sets, and maps that a script changes in place where another name may see them, which
 // JavaScript shares, live in the heap, with every variable, parameter, and field that may hold
 // one, across the files that the script reaches. Each must start new, each use must read the heap,
@@ -2987,6 +3064,18 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
           ))
     );
   };
+  // The variables whose arrays a write gives a hole, which may hold another new array later.
+  const holeHolders = new Set(
+    [...references.entries()].flatMap((entry) => {
+      const declaration = entry[0].valueDeclaration;
+      return declaration !== undefined &&
+        ts.isVariableDeclaration(declaration) &&
+        ts.findAncestor(declaration, (ancestor) => isReached.has(ancestor)) !== undefined &&
+        writesHole(entry[1])
+        ? [entry[0]]
+        : [];
+    }),
+  );
   const grow = (start: ts.Symbol[], startOuters: ts.Symbol[] = [], seeds: ts.Expression[] = []) => {
     const group = new Set<ts.Node>();
     const names = new Set<string>();
@@ -3097,7 +3186,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       );
     };
     const addSource = (node: ts.Expression): boolean => {
-      if (isFreshCollection(node, context)) {
+      if (isFreshCollection(node, context) || isNewArrayOfElements(node)) {
         nodes.push(node);
         return true;
       }
@@ -3202,8 +3291,12 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
               !call.arguments.some(ts.isSpreadElement)))
         );
       }
+      // A key that isn't a number reads or writes a property, as x["NaN"] does.
       if (ts.isElementAccessExpression(parent) && parent.expression === use) {
-        return isNumberLike(parent.argumentExpression, context);
+        return (
+          isNumberLike(parent.argumentExpression, context) ||
+          ts.isStringLiteral(parent.argumentExpression)
+        );
       }
       if (ts.isForOfStatement(parent)) return parent.expression === use;
       if (ts.isReturnStatement(parent) || (ts.isArrowFunction(parent) && parent.body === use)) {
@@ -3344,7 +3437,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         const initializer = declaration.initializer;
         nodes.push(declaration);
         return (
-          (declaration.parent.flags & ts.NodeFlags.Const) !== 0 &&
+          ((declaration.parent.flags & ts.NodeFlags.Const) !== 0 || holeHolders.has(symbol)) &&
           ts.isIdentifier(declaration.name) &&
           initializer !== undefined &&
           addSource(initializer)
@@ -3666,8 +3759,10 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
   };
   const isReachedNode = (node: ts.Node) =>
     ts.findAncestor(node, (ancestor) => isReached.has(ancestor)) !== undefined;
-  // A parameter or a field whose array a function changes in place starts a group.
+  // A parameter or a field whose array a function changes in place starts a group, as does a
+  // variable whose array a write gives a hole.
   const starts = [
+    ...[...holeHolders].map((symbol) => [symbol]),
     ...[...references.entries()].flatMap((entry) => {
       const declaration = entry[0].valueDeclaration;
       return declaration !== undefined &&
