@@ -9,6 +9,7 @@ import { runInNewContext, Script } from "node:vm";
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../src/errors";
 import { check } from "../src/parallel";
+import { STRING_METHODS } from "../src/typescript/collections";
 import { compile } from "../src/typescript/compile";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, listFiles } from "./corpora";
 
@@ -853,6 +854,12 @@ const UNUSED_OPERAND_ERROR = 2695;
 const UNRESOLVED_NAME_ERROR = 2304;
 const NOT_ITERABLE_ERROR = 2488;
 
+// An argument of a type that a call's signatures don't take, which tla-ts converts where a string's
+// method or RegExp takes a primitive or an object.
+const CONVERTED_ARGUMENT_ERRORS = new Set([2345, 2769]);
+// A call of a value of type unknown, which tla-ts runs where a key stores a String.prototype method.
+const UNKNOWN_CALLEE_ERROR = 2571;
+
 // An operator's operand of a type that the operator doesn't take, or that is null or undefined,
 // which tla-ts converts to a primitive where it's an object that the test declares, a wrapper, or a
 // primitive.
@@ -1156,6 +1163,142 @@ const ignoreSoundErrors = () => {
         ).length
     );
   };
+  const isEveryType = (node: ts.Node, flags: ts.TypeFlags) => {
+    const type = checker.getTypeAtLocation(node);
+    return (type.isUnion() ? type.types : [type]).every((member) => (member.flags & flags) !== 0);
+  };
+  // A primitive that a string's method converts for a parameter: any but a symbol or a BigInt for
+  // a string, and a number or undefined, or a string, a boolean, or null, for a number.
+  const isPrimitiveArgument = (node: ts.Node, parameter: "number" | "string" | undefined) =>
+    parameter === "string"
+      ? isEveryType(
+          node,
+          ts.TypeFlags.StringLike |
+            ts.TypeFlags.NumberLike |
+            ts.TypeFlags.BooleanLike |
+            ts.TypeFlags.Null |
+            ts.TypeFlags.Undefined,
+        )
+      : parameter === "number" &&
+        (isEveryType(node, ts.TypeFlags.NumberLike | ts.TypeFlags.Undefined) ||
+          isEveryType(
+            node,
+            ts.TypeFlags.StringLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.Null,
+          ));
+  const isGlobal = (node: ts.Identifier) =>
+    (checker.getSymbolAtLocation(node)?.declarations ?? []).every(
+      (declaration) => declaration.getSourceFile().isDeclarationFile,
+    );
+  // A literal that new RegExp and RegExp read as the text that ToString gives.
+  const isPrimitiveLiteral = (node: ts.Expression) =>
+    (ts.isIdentifier(node) && node.text === "undefined" && isGlobal(node)) ||
+    (ts.isVoidExpression(node) && ts.isLiteralExpression(node.expression)) ||
+    node.kind === ts.SyntaxKind.TrueKeyword ||
+    node.kind === ts.SyntaxKind.FalseKeyword ||
+    node.kind === ts.SyntaxKind.NullKeyword ||
+    ts.isNumericLiteral(node);
+  // A call of a string's method, or of new RegExp or RegExp, whose arguments tla-ts converts: a
+  // primitive for a string's method's parameter, an object that the test declares or a wrapper
+  // for any but padStart's and padEnd's filler, and a primitive literal for RegExp's pattern and
+  // flags. The error is the call's, at an argument or the method's name.
+  const isConvertedCall = (diagnostic: ts.Diagnostic) => {
+    const start = diagnostic.start ?? 0;
+    const end = start + (diagnostic.length ?? 0);
+    const isSpan = (inner: ts.Node) => inner.getStart() === start && inner.getEnd() === end;
+    const call = ts.findAncestor(
+      getNode(start),
+      (ancestor): ancestor is ts.CallExpression | ts.NewExpression =>
+        (ts.isCallExpression(ancestor) || ts.isNewExpression(ancestor)) &&
+        ((ancestor.arguments ?? []).some(isSpan) ||
+          (ts.isPropertyAccessExpression(ancestor.expression) && isSpan(ancestor.expression.name))),
+    );
+    const values = call?.arguments ?? [];
+    if (
+      call !== undefined &&
+      ts.isIdentifier(call.expression) &&
+      call.expression.text === "RegExp"
+    ) {
+      return (
+        isGlobal(call.expression) &&
+        values.length <= 2 &&
+        values.every(
+          (value) => isEveryType(value, ts.TypeFlags.StringLike) || isPrimitiveLiteral(value),
+        )
+      );
+    }
+    const callee = call?.expression;
+    const name =
+      callee !== undefined && ts.isPropertyAccessExpression(callee) ? callee.name : undefined;
+    const parameters =
+      name !== undefined &&
+      ts.isPropertyAccessExpression(name.parent) &&
+      isEveryType(name.parent.expression, ts.TypeFlags.StringLike)
+        ? STRING_METHODS.get(name.text)?.parameters
+        : undefined;
+    return (
+      call !== undefined &&
+      ts.isCallExpression(call) &&
+      name !== undefined &&
+      parameters !== undefined &&
+      values.length <= parameters.length &&
+      values.every(
+        (value, position) =>
+          isPrimitiveArgument(value, parameters[position]) ||
+          (checker.getTypeAtLocation(value).getSymbol()?.getName() !== "RegExp" &&
+            (isPlainObject(value) || isWrapper(value)) &&
+            !(name.text.startsWith("pad") && position === 1)),
+      )
+    );
+  };
+  // A call of a key of type unknown, as (object as unknown as { [key: string]: unknown }).slice(0)
+  // calls, where the test stores String.prototype's method of the key's name as a value, writes no
+  // function of its own under the key, and passes primitives that the method converts. tla-ts runs
+  // the method on the object.
+  const isStoredStringCall = (node: ts.Node) => {
+    const access = node.parent;
+    const call = access.parent;
+    if (
+      !ts.isPropertyAccessExpression(access) ||
+      access.expression !== node ||
+      !ts.isCallExpression(call) ||
+      call.expression !== access
+    ) {
+      return false;
+    }
+    const name = access.name.text;
+    const parameters = STRING_METHODS.get(name)?.parameters;
+    const nodes: ts.Node[] = [];
+    const collect = (inner: ts.Node) => {
+      nodes.push(inner);
+      ts.forEachChild(inner, collect);
+    };
+    collect(sourceFile);
+    const isStored = nodes.some(
+      (inner) =>
+        ts.isPropertyAccessExpression(inner) &&
+        inner.name.text === name &&
+        inner.expression.getText() === "String.prototype" &&
+        !(ts.isPropertyAccessExpression(inner.parent) && inner.parent.expression === inner) &&
+        !(ts.isCallExpression(inner.parent) && inner.parent.expression === inner),
+    );
+    const isWritten = nodes.some(
+      (inner) =>
+        ((ts.isMethodDeclaration(inner) || ts.isPropertyAssignment(inner)) &&
+          inner.name.getText() === name) ||
+        (ts.isBinaryExpression(inner) &&
+          inner.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          ts.isPropertyAccessExpression(inner.left) &&
+          inner.left.name.text === name &&
+          (ts.isFunctionExpression(inner.right) || ts.isArrowFunction(inner.right))),
+    );
+    return (
+      parameters !== undefined &&
+      isStored &&
+      !isWritten &&
+      call.arguments.length <= parameters.length &&
+      call.arguments.every((value, position) => isPrimitiveArgument(value, parameters[position]))
+    );
+  };
   const isSound = (diagnostic: ts.Diagnostic) => {
     const node = getNode(diagnostic.start ?? 0);
     return (
@@ -1165,6 +1308,8 @@ const ignoreSoundErrors = () => {
         isNullableArrayPattern(node)) ||
       (diagnostic.code === NOT_ITERABLE_ERROR && isCaughtArrayPattern(node)) ||
       (UNASSIGNABLE_ERRORS.has(diagnostic.code) && isPatternArgument(node)) ||
+      (CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) && isConvertedCall(diagnostic)) ||
+      (diagnostic.code === UNKNOWN_CALLEE_ERROR && isStoredStringCall(node)) ||
       diagnostic.code === UNUSED_OPERAND_ERROR ||
       (diagnostic.code === UNINTENDED_COMPARISON_ERROR && isUnnarrowed(node, diagnostic)) ||
       (UNTYPED_READ_ERRORS.has(diagnostic.code) && isObjectRead(node)) ||
