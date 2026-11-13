@@ -1253,6 +1253,16 @@ export const createEnvironment = (
     constantLevels: new Map(),
     substitutedDefinitions,
     evaluators: new WeakMap(),
+    entryEvaluators: new WeakMap(),
+    applyOperators: new WeakMap(),
+    argumentBinders: new WeakMap(),
+    argumentLocals: new WeakMap(),
+    closedConstants: new WeakMap(),
+    callMemos: new WeakMap(),
+    initRunners: new WeakMap(),
+    nextRunners: new WeakMap(),
+    definitionLevels: new WeakMap(),
+    closureLevels: new WeakMap(),
   };
   // TLC evaluates a substitute at startup and rejects it only when that fails and the level bound it
   // computes is above constant. The bound counts the operators that TLC's Java code overrides with
