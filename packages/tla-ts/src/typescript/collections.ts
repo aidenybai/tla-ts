@@ -1938,11 +1938,10 @@ export const translateMethod = (
     primitiveCall !== undefined &&
     primitiveMethod !== undefined &&
     primitiveCall.methodArguments.length <= primitiveMethod.parameters.length &&
-    primitiveCall.methodArguments.every((argument, position) =>
-      primitiveMethod.parameters[position] === "number"
-        ? isNumberLike(argument, context) ||
-          isEvery(context.checker.getTypeAtLocation(argument), ts.TypeFlags.Undefined)
-        : getStringArgument(primitiveCall.method, position, argument, context) !== undefined,
+    primitiveCall.methodArguments.every(
+      (argument, position) =>
+        getPrimitiveArgument(primitiveCall.method, primitiveMethod, position, argument, context) !==
+        undefined,
     );
   if (
     primitiveCall === undefined &&
@@ -1973,8 +1972,8 @@ export const translateMethod = (
         ? translateExpression(receiver, scope, context)
         : useJavaScript(primitiveCall.converter, [translateOptional(primitiveCall.owner)], context),
     primitiveCall.methodArguments.map((argument, position) =>
-      primitiveMethod.parameters[position] === "string" &&
-      getStringArgument(primitiveCall.method, position, argument, context) === "converted"
+      getPrimitiveArgument(primitiveCall.method, primitiveMethod, position, argument, context) ===
+      "converted"
         ? translateToString(argument, scope, context)
         : translateExpression(argument, scope, context),
     ),
@@ -1985,15 +1984,22 @@ export const translateMethod = (
 // The string parameters that read undefined as their own default, rather than as "undefined".
 const UNDEFINED_DEFAULTS = new Set(["split 0", "padStart 1", "padEnd 1", "normalize 0"]);
 
-// How a string method takes an argument for a string parameter: a string as it is, or a primitive
-// converted by ToString. A parameter that reads undefined as its default takes it as it is.
-const getStringArgument = (
+// How a primitive's method takes a primitive argument: a number for a number parameter as it is, and
+// for a string parameter a string as it is or another primitive converted by ToString. A parameter
+// that reads undefined as its default takes it as it is.
+export const getPrimitiveArgument = (
   method: string,
+  primitiveMethod: PrimitiveMethod,
   position: number,
   argument: ts.Expression,
   context: Context,
 ) => {
   const type = context.checker.getTypeAtLocation(argument);
+  if (primitiveMethod.parameters[position] === "number") {
+    return isNumberLike(argument, context) || isEvery(type, ts.TypeFlags.Undefined)
+      ? "kept"
+      : undefined;
+  }
   const isDefaulted = UNDEFINED_DEFAULTS.has(`${method} ${position}`);
   const kept = isDefaulted
     ? ts.TypeFlags.StringLike | ts.TypeFlags.Undefined
@@ -2345,7 +2351,7 @@ interface PrimitiveMethod {
   isNaNable?: boolean;
 }
 
-const STRING_METHODS = new Map<string, PrimitiveMethod>([
+export const STRING_METHODS = new Map<string, PrimitiveMethod>([
   ["at", { operator: "StringAt", parameters: ["number"] }],
   ["charAt", { operator: "CharAt", parameters: ["number"] }],
   ["charCodeAt", { operator: "CharCodeAt", parameters: ["number"], isNaNable: true }],

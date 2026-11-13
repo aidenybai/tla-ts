@@ -13592,6 +13592,55 @@ describe("errors", () => {
     );
   });
 
+  it("converts an object that a string method takes, with its parameter's hint", async () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const separator = { toString: () => (seen.push("separator"), "b") };
+      const limit = { valueOf: () => (seen.push("limit"), 2) };
+      // @ts-ignore
+      seen.push("abcbdbe".split(separator, limit).join("-"));
+      // @ts-ignore
+      seen.push(String("abc".indexOf(separator)), "abc".replace(separator, "B"), "abcd".slice(limit));
+      const outcomes = seen.join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    const expected = "limit,separator,a-c,separator,separator,limit,1,aBc,cd";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("separator,limit,a-c,separator,separator,limit,1,aBc,cd")))
+        .failure?.message,
+    ).toContain(`outcomes ${expected}`);
+  });
+
+  it("reads the method that a string method would call of an object it takes", async () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const create = (value: unknown) => ({ [Symbol.split]: value, toString: () => "-" });
+      // @ts-ignore
+      seen.push("a-a".split(create(null)).join("+"));
+      try {
+        // @ts-ignore
+        "a-a".split(create(1));
+        seen.push("none");
+      } catch (error) {
+        seen.push(error instanceof TypeError ? "type" : "other");
+      }
+      try {
+        // @ts-ignore
+        "ab".startsWith({ [Symbol.match]: true });
+        seen.push("none");
+      } catch (error) {
+        seen.push(error instanceof TypeError ? "type" : "other");
+      }
+      const outcomes = seen.join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("a+a,type,type"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("a+a,none,none"))).failure?.message).toContain(
+      "outcomes a+a,type,type",
+    );
+  });
+
   it("repeats, concatenates, normalizes, and compares strings of ASCII", async () => {
     const result = await checkModel(`
       const box = { size: 0 };

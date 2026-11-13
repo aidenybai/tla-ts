@@ -2521,7 +2521,7 @@ export const translateCallStatement = (
     );
     const conversion = {
       operands: [stringCall.owner, ...stringCall.values],
-      hint: "string" as const,
+      hints: [stringCall.owner, ...stringCall.values].map(() => "string" as const),
       combine: (primitives: readonly Expression[]) => tuple([...primitives]),
     };
     return ifThenElse(

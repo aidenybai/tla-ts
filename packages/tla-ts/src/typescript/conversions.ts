@@ -7,8 +7,11 @@ import {
   getAccessorFunctions,
   getParameters,
   getSymbol,
+  getUndefined,
+  isMethodCall,
   skipCasts,
 } from "./context";
+import { getPrimitiveArgument, STRING_METHODS, translatePrimitiveMethod } from "./collections";
 import { BITWISE_OPERATORS, concatenate, translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf } from "./formula";
 import { getHeap } from "./heap";
@@ -16,7 +19,7 @@ import { getBuiltIn } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { bind, callValue, getMethods, getWrittenFunctions, isNullish, read } from "./protocols";
 import { apply, boolean, not, string, tuple } from "./tla";
-import { getKind } from "./types";
+import { getKind, isEvery } from "./types";
 
 // The hint that ToPrimitive takes, which decides whether it calls valueOf or toString first.
 type Hint = "default" | "number" | "string";
@@ -25,9 +28,33 @@ type Hint = "default" | "number" | "string";
 // valueOf and toString methods, and then computes its value from the primitives.
 interface Conversion {
   operands: readonly ts.Expression[];
-  hint: Hint;
+  // The hint that each operand converts with.
+  hints: readonly Hint[];
+  // The positions of the operands in the order that they convert, where it isn't the order that
+  // they evaluate in.
+  order?: readonly number[];
+  // The methods that the operation reads from objects among its operands before it converts them.
+  lookups?: readonly Lookup[];
   combine: (primitives: readonly Expression[]) => Expression;
 }
+
+// A read of an object operand's method under a well-known symbol: a string's split, replace, and
+// replaceAll read the method that they'd call in their place, and includes, startsWith, endsWith,
+// and replaceAll read Symbol.match to tell a regexp.
+interface Lookup {
+  position: number;
+  key: "@@match" | "@@replace" | "@@split";
+}
+
+// The methods of a string that read a method of an object that they take for their first argument.
+const STRING_LOOKUPS = new Map<string, Lookup["key"][]>([
+  ["split", ["@@split"]],
+  ["replace", ["@@replace"]],
+  ["replaceAll", ["@@match", "@@replace"]],
+  ["includes", ["@@match"]],
+  ["startsWith", ["@@match"]],
+  ["endsWith", ["@@match"]],
+]);
 
 const CONVERSION_KEYS = ["@@toPrimitive", "valueOf", "toString"];
 
@@ -141,8 +168,56 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
         isPrimitiveOperand(operand, context) ||
         (isAnyConverted && isAnyOperand(operand, context)),
     )
-      ? { operands, hint, combine }
+      ? { operands, hints: operands.map(() => hint), combine }
       : undefined;
+  // A string's method converts an object that it takes with the hint of the parameter, and then
+  // with ToString or ToNumber. split converts its limit before its separator, and padStart and
+  // padEnd convert their filler only where they pad.
+  if (
+    isMethodCall(node) &&
+    isEvery(context.checker.getTypeAtLocation(node.expression.expression), ts.TypeFlags.StringLike)
+  ) {
+    const name = node.expression.name.text;
+    const method = STRING_METHODS.get(name);
+    const values = node.arguments;
+    const kinds = values.map((value, position) =>
+      isObjectOperand(value, context)
+        ? "object"
+        : method && getPrimitiveArgument(name, method, position, value, context),
+    );
+    if (
+      method === undefined ||
+      values.length > method.parameters.length ||
+      values.some(ts.isSpreadElement) ||
+      !kinds.includes("object") ||
+      kinds.includes(undefined) ||
+      (name.startsWith("pad") && kinds[1] === "object")
+    ) {
+      return undefined;
+    }
+    return {
+      operands: [node.expression.expression, ...values],
+      hints: ["string", ...method.parameters.slice(0, values.length)],
+      order: name === "split" && values.length === 2 ? [0, 2, 1] : undefined,
+      lookups:
+        kinds[0] === "object"
+          ? (STRING_LOOKUPS.get(name) ?? []).map((key) => ({ position: 1, key }))
+          : undefined,
+      combine: ([text, ...primitives]) =>
+        translatePrimitiveMethod(
+          method,
+          text,
+          primitives.map((primitive, position) =>
+            kinds[position] === "kept"
+              ? primitive
+              : method.parameters[position] === "number"
+                ? toNumber(primitive)
+                : useJavaScript("StringOf", [primitive], context),
+          ),
+          context,
+        ),
+    };
+  }
   if (
     ts.isCallExpression(node) &&
     ts.isPropertyAccessExpression(node.expression) &&
@@ -470,7 +545,7 @@ export const runConversion = (
     values: readonly Expression[],
   ): Formula => {
     const operand = remaining[0];
-    if (operand === undefined) return convert(current, values, []);
+    if (operand === undefined) return look(current, values, conversion.lookups ?? []);
     return allocate(operand, current, context, (allocated) =>
       bind(
         allocated,
@@ -481,23 +556,78 @@ export const runConversion = (
       ),
     );
   };
+  // Reads an object's method under a well-known symbol, and stops where it has one that tla-ts
+  // would call: Symbol.match marks a regexp, which includes, startsWith, and endsWith reject with a
+  // TypeError, and a method that isn't a function is a TypeError.
+  const look = (
+    current: Path,
+    values: readonly Expression[],
+    lookups: readonly Lookup[],
+  ): Formula => {
+    const lookup = lookups[0];
+    if (lookup === undefined) return convert(current, values, []);
+    const value = values[lookup.position];
+    const stop = (message: string) => leaf(apply("Assert", [boolean(false), string(message)]));
+    return translateJoined(
+      node,
+      current,
+      context,
+      (after) => look(after, values, lookups.slice(1)),
+      (next) =>
+        ifThenElse(
+          useJavaScript("IsObjectIn", [getHeap(current.scope, node, context), value], context),
+          read(node, value, lookup.key, current, context, frame, (found, method) =>
+            lookup.key === "@@match"
+              ? ifThenElse(
+                  apply("/\\", [
+                    not(apply("=", [method, getUndefined(context)])),
+                    useJavaScript("ToBoolean", [method], context),
+                  ]),
+                  lookups.some((other) => other.key === "@@replace")
+                    ? stop("tla-ts can't replace all of the matches of a regexp in a string")
+                    : throwTypeError(found, node, context, frame),
+                  next(found),
+                )
+              : ifThenElse(
+                  isNullish(method, context),
+                  next(found),
+                  ifThenElse(
+                    apply("=", [
+                      useJavaScript(
+                        "TypeOfIn",
+                        [getHeap(found.scope, node, context), method],
+                        context,
+                      ),
+                      string("function"),
+                    ]),
+                    stop(`tla-ts can't call this Symbol.${lookup.key.slice(2)} method`),
+                    throwTypeError(found, node, context, frame),
+                  ),
+                ),
+          ),
+          next(current),
+        ),
+    );
+  };
+  const order = conversion.order ?? conversion.operands.map((_, position) => position);
   const convert = (
     current: Path,
     values: readonly Expression[],
-    primitives: readonly Expression[],
+    converted: readonly Expression[],
   ): Formula => {
-    const value = values[primitives.length];
-    if (value === undefined) {
+    const position = order[converted.length];
+    if (position === undefined) {
+      const primitives = values.map((_, inner) => converted[order.indexOf(inner)]);
       return bind(current, "converted", conversion.combine(primitives), context, continueWith);
     }
     return runToPrimitive(
       node,
-      value,
-      conversion.hint,
+      values[position],
+      conversion.hints[position],
       current,
       context,
       frame,
-      (after, primitive) => convert(after, values, [...primitives, primitive]),
+      (after, primitive) => convert(after, values, [...converted, primitive]),
     );
   };
   return evaluate(path, conversion.operands, []);
