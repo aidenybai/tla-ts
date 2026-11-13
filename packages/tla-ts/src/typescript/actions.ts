@@ -7847,6 +7847,43 @@ const getMisreceivedCall = (node: ts.CallExpression, context: Context) => {
   return collection !== undefined && isOther ? { collection, method: method.name.text } : undefined;
 };
 
+// A read of an object's property throws a TypeError where it runs %ThrowTypeError%, or a buffer's or
+// a view's getter on another kind of object, and otherwise goes on as read.
+const throwReadError = (
+  expression: ts.Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  read: Formula,
+) => {
+  const accessed = skipCasts(expression);
+  return context.heap !== undefined &&
+    (ts.isElementAccessExpression(accessed) ||
+      (ts.isPropertyAccessExpression(accessed) && !ts.isPrivateIdentifier(accessed.name))) &&
+    accessed.expression.kind !== ts.SyntaxKind.SuperKeyword &&
+    (isBuiltInObject(accessed.expression, context) ||
+      getKind(accessed.expression, context) === "object")
+    ? ifThenElse(
+        apply("=", [
+          useJavaScript(
+            "ReadError",
+            [
+              getHeap(path.scope, accessed, context),
+              translateObjectValue(accessed.expression, path.scope, context),
+              ts.isPropertyAccessExpression(accessed)
+                ? string(accessed.name.text)
+                : translatePropertyKey(accessed.argumentExpression, path.scope, context),
+            ],
+            context,
+          ),
+          string("TypeError"),
+        ]),
+        throwTypeError(path, expression, context, frame),
+        read,
+      )
+    : read;
+};
+
 // Whether an expression only reads values, once the awaits in it settled: it calls, makes, and
 // changes nothing.
 const isRead = (node: ts.Node, results: ReadonlyMap<ts.Expression, Expression>): boolean => {
@@ -8312,37 +8349,13 @@ const translateExpressionStatement = (
   if (isRead(expression, path.scope.results)) {
     const value = translateExpression(expression, path.scope, context);
     if (context.heap === undefined) return continueWith(path);
-    const evaluated = ifThenElse(
-      apply("=", [value, value]),
-      continueWith(path),
-      leaf(boolean(false)),
+    return throwReadError(
+      expression,
+      path,
+      context,
+      frame,
+      ifThenElse(apply("=", [value, value]), continueWith(path), leaf(boolean(false))),
     );
-    // A read that runs a buffer's or a view's getter on another kind of object throws a TypeError.
-    const read = skipCasts(expression);
-    const isObjectRead =
-      (ts.isElementAccessExpression(read) ||
-        (ts.isPropertyAccessExpression(read) && !ts.isPrivateIdentifier(read.name))) &&
-      (isBuiltInObject(read.expression, context) || getKind(read.expression, context) === "object");
-    return isObjectRead
-      ? ifThenElse(
-          apply("=", [
-            useJavaScript(
-              "ReadError",
-              [
-                getHeap(path.scope, read, context),
-                translateObjectValue(read.expression, path.scope, context),
-                ts.isPropertyAccessExpression(read)
-                  ? string(read.name.text)
-                  : translatePropertyKey(read.argumentExpression, path.scope, context),
-              ],
-              context,
-            ),
-            string("TypeError"),
-          ]),
-          throwTypeError(path, expression, context, frame),
-          evaluated,
-        )
-      : evaluated;
   }
   // A pattern that writes a property runs the setter that the property holds, and one whose rest
   // copies a property runs its getter.
@@ -13164,7 +13177,13 @@ export const translateStatements = (
       ) {
         return translateCallStatement(returned, inner, context, frame, frame.exit);
       }
-      return frame.exit(inner, translateExpression(returned, inner.scope, context));
+      return throwReadError(
+        returned,
+        inner,
+        context,
+        frame,
+        frame.exit(inner, translateExpression(returned, inner.scope, context)),
+      );
     });
   }
   if (ts.isBreakStatement(statement)) {

@@ -5411,6 +5411,43 @@ describe("errors", () => {
     expect((await checkModel(getSource(1))).failure?.message).toContain("unexpected");
   });
 
+  it("throws a TypeError where a read or a return finds %ThrowTypeError% as the getter", async () => {
+    const getSource = (expected: number) => `
+      function foo() {}
+      const obj = foo.bind({}) as unknown as { arguments: unknown; caller: unknown };
+      let thrown = 0;
+      try {
+        obj.arguments;
+      } catch (error) {
+        if (error instanceof TypeError) thrown++;
+      }
+      function callee() {
+        return arguments.callee;
+      }
+      try {
+        callee();
+      } catch (error) {
+        if (error instanceof TypeError) thrown++;
+      }
+      const getThrown = (): number => thrown;
+      if (getThrown() !== ${expected}) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(1))).failure?.message).toContain("unexpected");
+  });
+
+  it("reads an object's prototype through the __proto__ getter of Object.prototype", async () => {
+    const getSource = (comparison: string) => `
+      type Proto = { __proto__: unknown };
+      const parent = { kind: 1 };
+      const child = Object.create(parent) as Proto;
+      if (child.__proto__ ${comparison} parent) throw new Error("child");
+      if ((Date.prototype as unknown as Proto).__proto__ !== Object.prototype) throw new Error("date");
+    `;
+    expect((await checkModel(getSource("!=="))).failure).toBeUndefined();
+    expect((await checkModel(getSource("==="))).failure?.message).toContain("child");
+  });
+
   describe("assigns a rest element to an object pattern, or to a property through its setter", () => {
     const getSource = (expected: number) => `
       let x: unknown;

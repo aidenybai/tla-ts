@@ -1289,6 +1289,10 @@ GetFrom(heap, ref, key, receiver) ==
                      [] IsHeap(receiver) /\\ "symbol" \\in DOMAIN Lookup(heap, receiver) ->
                           SymbolDescription(heap, Lookup(heap, receiver).symbol)
                      [] OTHER -> Assert(FALSE, "tla-ts can't throw the TypeError of this getter")
+              [] key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
+                   /\\ path = "get Object.prototype.__proto__" /\\ IsRef(receiver)
+                   /\\ ~IsProxy(heap, receiver) ->
+                   Prototype(heap, receiver)
               [] key \\in DOMAIN object.values -> Value(object, key)
               [] object.prototype = Null -> Undefined
               [] OTHER -> GetFrom(heap, object.prototype, key, receiver)
@@ -1582,11 +1586,14 @@ GetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "get")
 
 SetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "set")
 
-\\* The TypeError that a read throws where it runs a getter of a buffer or a view on another kind
-\\* of object, or "".
+\\* The TypeError that a read throws where it runs %ThrowTypeError% or a getter of a buffer or a view
+\\* on another kind of object, or "".
 ReadError(heap, ref, key) ==
   LET path == GetterPath(GetterOf(heap, ref, key))
-  IN IF path \\in ViewGetters /\\ ~ViewReceives(heap, path, ref) THEN "TypeError" ELSE ""
+  IN IF \\/ path = "get Function.prototype.arguments"
+        \\/ path \\in ViewGetters /\\ ~ViewReceives(heap, path, ref)
+     THEN "TypeError"
+     ELSE ""
 
 \\* Whether a write runs the __proto__ setter of Object.prototype.
 IsProtoWrite(heap, ref, key) == GetterPath(SetterOf(heap, ref, key)) = "set Object.prototype.__proto__"
