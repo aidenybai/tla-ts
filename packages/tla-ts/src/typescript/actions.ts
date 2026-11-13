@@ -6235,7 +6235,8 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
     (getChanged(callback, path, context).length > 0 ||
       (path.scope.isCatching && mayThrow(callback, context)) ||
       getLoopGetters(node, context).length > 0 ||
-      context.heapCollections.has(node))
+      context.heapCollections.has(node) ||
+      (target.isArrayLike && target.method === "forEach"))
     ? {
         method: target.method,
         receiver: target.receiver,

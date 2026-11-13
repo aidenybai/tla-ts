@@ -11744,6 +11744,16 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("built-in");
   });
 
+  it("runs forEach through call on an object or a boolean where the callback changes nothing", async () => {
+    const result = await checkModel(`
+      const object = { length: 2, 0: 1, 1: 2 };
+      const fromObject = Array.prototype.forEach.call(object, (value: number) => value + 1);
+      const fromBoolean = Array.prototype.forEach.call(true, () => {});
+      if (fromObject === undefined && fromBoolean === undefined) throw new Error("forEach");
+    `);
+    expect(result.failure?.message).toContain("forEach");
+  });
+
   it("takes or drops up to Infinity or Number.MAX_SAFE_INTEGER", async () => {
     const result = await checkModel(`
       function* g(): Generator<number> {
