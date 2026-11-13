@@ -3530,6 +3530,11 @@ RegExpOf(heap, ref, changeable) ==
   THEN heap.objects[ref[Ref]].regexp
   ELSE Assert(FALSE, "tla-ts can't call a regexp's method where a script changed what it reads")
 
+\\* Whether exec, or test through it, runs on RegExp.prototype itself, which has no [[RegExpMatcher]],
+\\* so that exec throws a TypeError, while a script hasn't changed RegExp.prototype.
+IsRegExpPrototypeExec(heap, ref) ==
+  IsRegExpPrototype(ref) /\\ "RegExp.prototype" \\notin DOMAIN heap.changed
+
 \\* The record of a regexp literal's pattern, where a call can't observe the object that the literal
 \\* makes, while a script hasn't changed the built-in objects in changeable.
 RegExpFresh(heap, regexp, changeable) ==

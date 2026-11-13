@@ -2036,7 +2036,8 @@ export const translateCallStatement = (
               ),
             ),
           );
-    // replaceAll throws a TypeError where the regexp isn't global, as its flags tell.
+    // replaceAll throws a TypeError where the regexp isn't global, as its flags tell, and exec
+    // where the receiver is RegExp.prototype, which has no pattern.
     return bindOnce(
       path,
       regexp,
@@ -2054,7 +2055,13 @@ export const translateCallStatement = (
               run,
               throwTypeError(path, expression, context, frame),
             )
-          : run,
+          : method === "exec" || method === "test"
+            ? ifThenElse(
+                useJavaScript("IsRegExpPrototypeExec", [heap, identifier(regexp)], context),
+                throwTypeError(path, expression, context, frame),
+                run,
+              )
+            : run,
       ),
     );
   }

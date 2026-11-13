@@ -21828,6 +21828,27 @@ describe("regular expressions", () => {
     expect(() => compile(source)).toThrow("tla-ts can't write a key that a built-in object lacks");
   });
 
+  it("throw the TypeError of exec and test on RegExp.prototype, which has no pattern", async () => {
+    const getSource = (expected: string) => `
+      const holder: { tag?: string } = {};
+      holder.tag = "made";
+      const seen: string[] = [];
+      try {
+        RegExp.prototype.exec("");
+      } catch (error) {
+        seen.push(error instanceof TypeError ? "exec" : "other");
+      }
+      try {
+        RegExp.prototype.test("");
+      } catch (error) {
+        seen.push(error instanceof TypeError ? "test" : "other");
+      }
+      if (seen.join(",") !== "${expected}") throw new Error(seen.join(","));
+    `;
+    expect((await checkModel(getSource("exec,test"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("exec"))).failure?.message).toContain("exec,test");
+  });
+
   it("drop a regexp that a statement makes of literals", async () => {
     const getSource = (count: number) => `
       /(?i-s:)/;
