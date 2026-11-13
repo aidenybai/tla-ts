@@ -5680,7 +5680,8 @@ const getEarlyReads = (
       visited.add(callee);
       return readsChanged(callee.body, visited);
     });
-  return evaluated.filter((inner) => readsChanged(inner, new Set()));
+  // A function that evaluates before makes a closure, which reads nothing until a call runs it.
+  return evaluated.filter((inner) => !ts.isFunctionLike(inner) && readsChanged(inner, new Set()));
 };
 
 const rejectEarlyRun = (

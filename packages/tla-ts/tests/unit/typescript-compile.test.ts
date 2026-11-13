@@ -3711,6 +3711,34 @@ describe("calls", () => {
     ).toContain('"digits;1,2,3,4;5,6;6"');
   });
 
+  it("spreads a map whose callback reads the heap before a call of itself that changes it", async () => {
+    const getSource = (expected: string) => `
+      interface Box {
+        value: number;
+      }
+      type Tree = { kind: "Leaf"; name: string } | { kind: "Let"; names: string[]; body: Tree };
+      const unbox = (box: Box) => box.value;
+      const print = (tree: Tree): string[] => {
+        if (tree.kind === "Leaf") return [\`\${tree.name}\${unbox({ value: 1 })}\`];
+        return [
+          ...tree.names.map((name, index) => \`\${index === 0 ? "LET" : ","} \${name}\${name.length}\`),
+          ...print(tree.body),
+        ];
+      };
+      const tree: Tree = {
+        kind: "Let",
+        names: ["a", "b"],
+        body: { kind: "Let", names: ["c"], body: { kind: "Leaf", name: "x" } },
+      };
+      const text = ["MODULE", ...print(tree)].join(";");
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect((await checkModel(getSource("MODULE;LET a1;, b1;LET c1;x1"))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("MODULE;LET a1;, b1;LET c1;x2"))).failure?.message,
+    ).toContain("MODULE;LET a1;, b1;LET c1;x1");
+  });
+
   it("returns the objects that a function calling itself from an expression makes", async () => {
     const getSource = (expected: string) => `
       interface Box {
