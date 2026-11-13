@@ -1042,7 +1042,8 @@ type CharacterSet = (code: number) => boolean;
 
 // A matcher of a pattern, as the spec's CompilePattern makes it, which matches code units.
 type Matcher =
-  | { kind: "set"; set: CharacterSet; isInverted: boolean }
+  // A set of characters, with the source of the atom that makes it where a term is one.
+  | { kind: "set"; set: CharacterSet; isInverted: boolean; source?: string }
   | { kind: "sequence" | "alternation"; items: Matcher[] }
   | { kind: "group"; index: number; body: Matcher }
   | {
@@ -1196,7 +1197,10 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
     if (isAt("(?<=") || isAt("(?<!")) {
       throw new TlaTypeScriptError("tla-ts can't match a lookbehind", node);
     }
-    const atom = isAt("(?=") || isAt("(?!") ? parseLookahead() : parseAtom();
+    const start = cursor.position;
+    const parsed = isAt("(?=") || isAt("(?!") ? parseLookahead() : parseAtom();
+    const atom =
+      parsed.kind === "set" ? { ...parsed, source: source.slice(start, cursor.position) } : parsed;
     const bounds = parseBounds();
     if (bounds === undefined) return atom;
     const isGreedy = peek() !== "?";
@@ -1437,9 +1441,10 @@ export const getCodePoint = (code: number) =>
 
 // A class as the characters that it matches once Canonicalize maps them, among those in ASCII and
 // those that the script's strings may hold, which with the u flag are code points. With the u and i
-// flags it folds case by Unicode, which tla-ts matches only on text in ASCII.
+// flags Canonicalize is simple case folding, which tla-ts reads from the engine it runs on, matching
+// the atom's source against each character outside ASCII.
 const translateCharacters = (
-  matcher: { set: CharacterSet; isInverted: boolean },
+  matcher: { set: CharacterSet; isInverted: boolean; source?: string },
   flags: string,
   characters: Set<number>,
 ) => {
@@ -1457,26 +1462,35 @@ const translateCharacters = (
     (folded === undefined || fold === undefined ? matcher.set(code) : folded.has(fold(code))) !==
     matcher.isInverted;
   const units = [...characters];
-  const known =
-    isUnicode && fold !== undefined
-      ? []
-      : [
-          ...units,
-          ...(isUnicode
-            ? units
-                .filter(isHighSurrogate)
-                .flatMap((high) =>
-                  units
-                    .filter(isLowSurrogate)
-                    .map((low) => (high - 0xd800) * 0x400 + low - 0xdc00 + 0x10000),
-                )
-            : []),
-        ];
+  const known = [
+    ...units,
+    ...(isUnicode
+      ? units
+          .filter(isHighSurrogate)
+          .flatMap((high) =>
+            units
+              .filter(isLowSurrogate)
+              .map((low) => (high - 0xd800) * 0x400 + low - 0xdc00 + 0x10000),
+          )
+      : []),
+  ];
+  const folding =
+    isUnicode && fold !== undefined && matcher.source !== undefined
+      ? new RegExp(`^(?:${matcher.source})$`, flags.replace(/[gmy]/g, ""))
+      : undefined;
+  const isKnownMatched = (code: number) =>
+    folding === undefined
+      ? !(isUnicode && fold !== undefined) && isMatched(code)
+      : folding.test(String.fromCodePoint(code));
   return record("Record", [
     { name: "kind", value: string("set") },
     {
       name: "characters",
-      value: set([...CODE_UNITS.slice(0, 128), ...known].filter(isMatched).map(getCodePoint)),
+      value: set(
+        [...CODE_UNITS.slice(0, 128).filter(isMatched), ...known.filter(isKnownMatched)].map(
+          getCodePoint,
+        ),
+      ),
     },
   ]);
 };

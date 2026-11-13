@@ -18051,11 +18051,22 @@ describe("regular expressions", () => {
     );
   });
 
-  it("stop where a regexp with the u and i flags folds text outside ASCII", async () => {
-    const result = await checkModel(`
-      let found = /É/iu.test("é");
-    `);
-    expect(result.failure?.message).toContain("tla-ts can't match a regexp with the u and i flags");
+  it("fold case by Unicode with the u and i flags", async () => {
+    const getSource = (flags: string) => `
+      if (!/[\\u0390]/${flags}.test("\\u1fd3") || !/(\\u039C)+/${flags}.test("\\xB5")) throw new Error("fold");
+      if (/^[^\\u00e9]$/ui.test("\\u00c9") || !/^[^a-z]$/ui.test("\\u0131")) throw new Error("class");
+    `;
+    expect((await checkModel(getSource("ui"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("i"))).rejects.toThrow("fold");
+  });
+
+  it("read the characters that fold into ASCII as word characters with the u and i flags", async () => {
+    const getSource = (flags: string) => `
+      if (!/\\b/${flags}.test("\\u017F") || !/^(s)\\1$/${flags}.test("s\\u017F")) throw new Error("word");
+      if (!/(i\\B\\u212A)/ui.test("ik") || /\\b/u.test("\\u212A")) throw new Error("boundary");
+    `;
+    expect((await checkModel(getSource("ui"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("i"))).rejects.toThrow("word");
   });
 
   it("match a class with the u flag against letters outside ASCII that a script holds", async () => {
