@@ -3034,6 +3034,58 @@ describe("values", () => {
     expect((await checkModel(getSource("ab,ab"))).failure?.message).toContain("ab,AB");
   });
 
+  it("makes the object of a call that a logical assignment runs only where its target is empty", async () => {
+    const getSource = (expected: string) => `
+      interface Location {
+        line: number;
+      }
+      const parse = (lines: number[]) => {
+        let made = 0;
+        const getLocation = (line: number): Location => {
+          made += 1;
+          return { line };
+        };
+        const starts: Location[] = [];
+        const getStart = (index: number) => {
+          starts[index] ??= getLocation(lines[index]);
+          return starts[index];
+        };
+        return [getStart(0).line, getStart(0).line, getStart(1).line, made].join(",");
+      };
+      const result = parse([4, 7]);
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("4,4,7,2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("4,4,7,3"))).failure?.message).toContain("4,4,7,2");
+  });
+
+  it("writes what a logical assignment's call gives over what the call writes", async () => {
+    const getSource = (expected: string) => `
+      interface Location {
+        line: number;
+      }
+      const box: { start?: Location } = {};
+      const make = (line: number): Location => {
+        box.start = { line: 9 };
+        return { line };
+      };
+      box.start ??= make(1);
+      const starts: Location[] = [];
+      let index = 0;
+      const bump = (): Location => {
+        index = 1;
+        return { line: 5 };
+      };
+      starts[index] ??= bump();
+      let empty: Location | undefined;
+      const kept = (empty ||= make(6));
+      const result = [box.start.line, starts[0]?.line, index, kept.line].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("9,5,1,6"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1,5,1,6"))).failure?.message).toContain("9,5,1,6");
+  });
+
   it("reads a property before a branch whose call changes it", async () => {
     const getSource = (expected: string) => `
       class Box {

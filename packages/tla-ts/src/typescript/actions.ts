@@ -1571,13 +1571,15 @@ const isLogicallyWritten = (
       : isTruthy;
 };
 
-// How a compound or logical assignment changes what its target holds.
+// How a compound or logical assignment changes what its target holds. A logical assignment decides
+// on what its target held before its value ran.
 const getUpdate = (expression: ts.BinaryExpression, path: Path, context: Context) => {
   const kind = expression.operatorToken.kind;
   if (LOGICAL_OPERATORS.has(kind)) {
     const assigned = translateExpression(expression.right, path.scope, context);
+    const read = path.scope.results.get(expression.left);
     return (current: Expression) =>
-      ifExpression(isLogicallyWritten(expression, current, context), assigned, current);
+      ifExpression(isLogicallyWritten(expression, read ?? current, context), assigned, current);
   }
   const arithmetic = ARITHMETIC_ASSIGNMENTS.get(kind);
   const bigIntOperator = arithmetic === undefined ? undefined : BIGINT_OPERATORS.get(arithmetic);
@@ -11357,6 +11359,16 @@ const SHORT_CIRCUITS = new Set([
   ts.SyntaxKind.QuestionQuestionToken,
 ]);
 
+// A name, or a property or a key of a name or this, whose key is a name or a literal.
+const isPlainTarget = (node: ts.Expression) =>
+  ts.isIdentifier(node) ||
+  ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+    node.questionDotToken === undefined &&
+    (ts.isIdentifier(node.expression) || node.expression.kind === ts.SyntaxKind.ThisKeyword) &&
+    (ts.isPropertyAccessExpression(node) ||
+      ts.isIdentifier(node.argumentExpression) ||
+      ts.isLiteralExpression(node.argumentExpression)));
+
 // A name or a literal, or what a statement already evaluated, which reads no code, as does a comma
 // of them.
 const isPlainOperand = (node: ts.Expression, results: Scope["results"]): boolean =>
@@ -11583,8 +11595,9 @@ interface LeadingCall {
   // The read that a getter which changes something may answer first, or an operation on a proxy,
   // whose trap may change something, which runs as a statement.
   read?: ts.Expression;
-  // A short-circuit or a conditional whose operand that runs only sometimes is a call that only
-  // statements can run, so the statement branches on which operand gives the value.
+  // A short-circuit, a logical assignment, or a conditional whose operand that runs only sometimes
+  // is a call that only statements can run, so the statement branches on which operand gives the
+  // value.
   branch?: ts.BinaryExpression | ts.ConditionalExpression;
 }
 
@@ -11741,6 +11754,16 @@ const findLeadingCall = (
     }
     if (kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(node.left)) {
       return findLeadingCall(node.right, before, path, context);
+    }
+    // A logical assignment to a name, or to a name's key, reads its target before its value, which
+    // runs only sometimes.
+    if (
+      LOGICAL_OPERATORS.has(kind) &&
+      isPlainTarget(node.left) &&
+      isPlainOperand(node.left) &&
+      isBranchRun(node.right)
+    ) {
+      return { ...blocked, branch: node };
     }
     // An assignment to a proxy's key evaluates the proxy and the value before its trap runs.
     if (
@@ -12240,17 +12263,17 @@ export const translateStatements = (
       withValue: (after: Path, value: Expression) => Formula,
     ): Formula => {
       // An operand runs the calls in it that only statements can run, in order, before the rest.
-      const evaluate = (operand: ts.Expression, next: Path): Formula => {
+      const evaluate = (operand: ts.Expression, next: Path, withOperand = withValue): Formula => {
         const run = skipCasts(operand);
         const inner = findLeadingCall(run, [], next, context).branch;
-        if (inner !== undefined && inner === run) return runBranch(inner, next, withValue);
+        if (inner !== undefined && inner === run) return runBranch(inner, next, withOperand);
         if (isAssignment(run) && (!isIncrement(run) || isPlainIncrement(run, context))) {
-          return runAssignment(run, next, context, frame, withValue);
+          return runAssignment(run, next, context, frame, withOperand);
         }
         if (ts.isCallExpression(run) && !next.scope.results.has(run)) {
           return allocate(run, next, context, (allocated) =>
             translateCallStatement(run, allocated, context, frame, (after, value) =>
-              withValue(after, value ?? getUndefined(context)),
+              withOperand(after, value ?? getUndefined(context)),
             ),
           );
         }
@@ -12258,11 +12281,15 @@ export const translateStatements = (
         // An operand makes the objects in it only where its branch runs.
         return leading === undefined
           ? allocate(operand, next, context, (allocated) =>
-              withValue(allocated, translateExpression(operand, allocated.scope, context)),
+              withOperand(allocated, translateExpression(operand, allocated.scope, context)),
             )
           : allocate(leading.call, next, context, (allocated) =>
               translateCallStatement(leading.call, allocated, context, frame, (after, value) =>
-                evaluate(operand, withLeadingResults(leading, allocated, after, value, context)),
+                evaluate(
+                  operand,
+                  withLeadingResults(leading, allocated, after, value, context),
+                  withOperand,
+                ),
               ),
             );
       };
@@ -12271,6 +12298,43 @@ export const translateStatements = (
           translateCondition(node.condition, current.scope, context),
           evaluate(node.whenTrue, current),
           evaluate(node.whenFalse, current),
+        );
+      }
+      // A logical assignment reads its target and its key before its value runs, and then writes
+      // the value.
+      if (LOGICAL_OPERATORS.has(node.operatorToken.kind)) {
+        const target = node.left;
+        const held = translateExpression(target, current.scope, context);
+        const key = ts.isElementAccessExpression(target) ? target.argumentExpression : undefined;
+        const reads: [ts.Expression, Expression][] = [
+          [target, held],
+          ...(key === undefined
+            ? []
+            : [
+                [key, translateExpression(key, current.scope, context)] as [
+                  ts.Expression,
+                  Expression,
+                ],
+              ]),
+        ];
+        return ifThenElse(
+          isLogicallyWritten(node, held, context),
+          evaluate(node.right, current, (after, assigned) =>
+            runAssignment(
+              node,
+              {
+                ...after,
+                scope: {
+                  ...after.scope,
+                  results: new Map([...after.scope.results, ...reads, [node.right, assigned]]),
+                },
+              },
+              context,
+              frame,
+              withValue,
+            ),
+          ),
+          withValue(current, held),
         );
       }
       const kind = node.operatorToken.kind;
