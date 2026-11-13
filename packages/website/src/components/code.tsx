@@ -68,6 +68,9 @@ export const CodeRoot = (props: RootProps) => {
 export const CodeContent = () => {
   const code = codeContext.useParts();
   const contentRef = useRef<HTMLElement>(null);
+  const [hoveredStateId, setHoveredStateId] = useState<string>();
+  const activeLine =
+    code.search?.states.find((state) => state.id === hoveredStateId)?.line ?? code.activeLine;
   useTokenMorph(contentRef, code.source.code, code.highlights, code.onMorphEnd);
   if (!code.isMultiline)
     return (
@@ -90,9 +93,18 @@ export const CodeContent = () => {
             key={line.number}
             tokens={line.tokens}
             note={code.notes.find((note) => note.line === line.number)}
-            isActive={code.activeLine === line.number}
+            isActive={activeLine === line.number}
             isWrapped={code.isWrapped}
-            aside={code.search && <SearchCell search={code.search} line={line.number} />}
+            aside={
+              code.search && (
+                <SearchCell
+                  search={code.search}
+                  line={line.number}
+                  hoveredStateId={hoveredStateId}
+                  onHover={setHoveredStateId}
+                />
+              )
+            }
             className={cn(
               code.isWrapped ? "-mr-4 -ml-4 pr-4 pl-4" : "w-max min-w-full",
               line.number === 1 && "pr-14",

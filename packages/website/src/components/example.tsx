@@ -233,22 +233,14 @@ export const ExampleSearch = () => {
   const search = state.result?.search;
   if (!search) return null;
   return (
-    <figure className="flex flex-col gap-3">
-      <div className="flex flex-col gap-1.5 overflow-x-auto font-mono text-[13px] sm:hidden">
+    <figure className="sm:hidden">
+      <div className="flex flex-col gap-1.5 overflow-x-auto font-mono text-[13px]">
         {search.states
           .filter((root) => root.parentId === undefined)
           .map((root) => (
             <SearchNode key={root.id} search={search} state={root} />
           ))}
       </div>
-      <figcaption
-        style={{ transitionDelay: `${search.states.length * STEP_DELAY_MS}ms` }}
-        className="text-sm text-faint transition-opacity duration-200 ease-out starting:opacity-0"
-      >
-        {search.stateCount} states checked
-        {search.stateCount > search.states.length &&
-          `, ${search.stateCount - search.states.length} not shown`}
-      </figcaption>
     </figure>
   );
 };
