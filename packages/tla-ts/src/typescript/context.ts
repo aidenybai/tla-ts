@@ -210,18 +210,20 @@ const getLiteralTruth = (node: ts.Expression) => {
   return Number.isNaN(value) ? undefined : value !== 0;
 };
 
-// The unresolved name that an expression reads before it evaluates anything that could change
-// state or throw, which throws a ReferenceError there.
+// The name that an expression reads before it evaluates anything that could change state or throw,
+// whose reading throws a ReferenceError there: one that no declaration binds, or that isThrowing
+// tells, such as a let before its declaration runs.
 export const getUnresolvedRead = (
   node: ts.Expression | ts.ClassDeclaration,
   context: Context,
+  isThrowing = (name: ts.Identifier) => isUnresolved(name, context),
 ): ts.Identifier | undefined => {
-  if (ts.isIdentifier(node)) return isUnresolved(node, context) ? node : undefined;
+  if (ts.isIdentifier(node)) return isThrowing(node) ? node : undefined;
   // Reads each operand in order while the ones before it are literals.
   const readInOrder = (operands: readonly ts.Expression[]): ts.Identifier | undefined => {
     const first = operands.at(0);
     if (first === undefined || ts.isSpreadElement(first)) return undefined;
-    const read = getUnresolvedRead(first, context);
+    const read = getUnresolvedRead(first, context, isThrowing);
     if (read !== undefined || getLiteralTruth(first) === undefined) return read;
     return readInOrder(operands.slice(1));
   };
@@ -235,22 +237,22 @@ export const getUnresolvedRead = (
     ts.isPropertyAccessExpression(node) ||
     ts.isElementAccessExpression(node)
   ) {
-    return getUnresolvedRead(node.expression, context);
+    return getUnresolvedRead(node.expression, context, isThrowing);
   }
   if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
-    return getUnresolvedRead(node.operand, context);
+    return getUnresolvedRead(node.operand, context, isThrowing);
   }
   // delete and typeof of a name don't read it, but of a property they read the object first.
   if (ts.isDeleteExpression(node) || ts.isTypeOfExpression(node)) {
     return ts.isIdentifier(skipCasts(node.expression))
       ? undefined
-      : getUnresolvedRead(node.expression, context);
+      : getUnresolvedRead(node.expression, context, isThrowing);
   }
   if (ts.isConditionalExpression(node)) {
     const truth = getLiteralTruth(node.condition);
     return truth === undefined
-      ? getUnresolvedRead(node.condition, context)
-      : getUnresolvedRead(truth ? node.whenTrue : node.whenFalse, context);
+      ? getUnresolvedRead(node.condition, context, isThrowing)
+      : getUnresolvedRead(truth ? node.whenTrue : node.whenFalse, context, isThrowing);
   }
   if (ts.isArrayLiteralExpression(node)) return readInOrder(node.elements);
   // An object literal evaluates its values and spreads in order, and a spread reads its
@@ -280,7 +282,7 @@ export const getUnresolvedRead = (
     );
   }
   if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
-    if (isUnresolved(node.expression, context)) return node.expression;
+    if (ts.isIdentifier(node.expression) && isThrowing(node.expression)) return node.expression;
     // A function declaration binds its name before any code runs, so reading it can't throw, and
     // a class declaration that comes before binds its name, or reading it throws a ReferenceError
     // too. A new evaluates its arguments before the class runs any code, and a function written
@@ -303,9 +305,9 @@ export const getUnresolvedRead = (
   // to a property reads the object first.
   if (operator === ts.SyntaxKind.EqualsToken) {
     return ts.isIdentifier(node.left)
-      ? getUnresolvedRead(node.right, context)
+      ? getUnresolvedRead(node.right, context, isThrowing)
       : ts.isPropertyAccessExpression(node.left) || ts.isElementAccessExpression(node.left)
-        ? getUnresolvedRead(node.left.expression, context)
+        ? getUnresolvedRead(node.left.expression, context, isThrowing)
         : undefined;
   }
   const truth = getLiteralTruth(node.left);

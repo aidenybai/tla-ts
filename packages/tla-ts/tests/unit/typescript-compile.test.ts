@@ -17215,6 +17215,59 @@ describe("errors", () => {
     });
   });
 
+  describe("throw the ReferenceError of using a let or a const before its declaration runs", () => {
+    const getSource = (expected: string) => `
+      let log = "";
+      const getMark = (error: unknown) => (error instanceof ReferenceError ? "R" : "?");
+      function readTop() {
+        return top;
+      }
+      try {
+        readTop();
+      } catch (error) {
+        log += getMark(error);
+      }
+      let top = 1;
+      log += readTop();
+      (function () {
+        function write() {
+          inner = 2;
+        }
+        try {
+          write();
+        } catch (error) {
+          log += getMark(error);
+        }
+        let inner = 0;
+        write();
+        log += inner;
+      })();
+      {
+        const read = () => constant;
+        try {
+          read();
+        } catch (error) {
+          log += getMark(error);
+        }
+        const constant = 3;
+        log += read();
+      }
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("throws before and reads after", async () => {
+      expect((await checkModel(getSource("R1R2R3"))).failure).toBeUndefined();
+    });
+
+    it("doesn't read before", async () => {
+      expect((await checkModel(getSource("1R2R3"))).failure).toBeDefined();
+    });
+
+    it("doesn't write before", async () => {
+      expect((await checkModel(getSource("R1R0R3"))).failure).toBeDefined();
+    });
+  });
+
   describe("read what a symbol keys on a Map or a Set", () => {
     const getSource = (expected: string) => `
       const o = { a: 1 };

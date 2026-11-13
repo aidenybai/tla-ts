@@ -12438,6 +12438,36 @@ export const translateStatements = (
   }
   if (statements.length === 0) return frame.next(path);
   const statement = statements[0];
+  // A block or a function body starts with its lets and consts uninitialized. A synthesized
+  // statement, such as an arrow's returned expression, has no parent.
+  const block = statement.parent;
+  const lexical =
+    block !== undefined && ts.isBlock(block) && block.statements === statements
+      ? statements.flatMap((inner) =>
+          ts.isVariableStatement(inner) &&
+          (inner.declarationList.flags & ts.NodeFlags.BlockScoped) !== 0
+            ? inner.declarationList.declarations.flatMap((declaration) =>
+                ts.isIdentifier(declaration.name)
+                  ? (getSymbol(declaration.name, context.checker) ?? [])
+                  : [],
+              )
+            : [],
+        )
+      : [];
+  if (lexical.some((symbol) => !path.scope.uninitialized.has(symbol))) {
+    return translateStatements(
+      statements,
+      {
+        ...path,
+        scope: {
+          ...path.scope,
+          uninitialized: new Set([...path.scope.uninitialized, ...lexical]),
+        },
+      },
+      context,
+      frame,
+    );
+  }
   const continueWith = (inner: Path) =>
     translateStatements(statements.slice(1), inner, context, frame);
   if (ts.isBlock(statement)) {
@@ -12452,13 +12482,36 @@ export const translateStatements = (
   if (invalidRegExp !== undefined) {
     return throwError("SyntaxError", path, invalidRegExp, context, frame);
   }
-  // A statement that reads a name that no declaration binds, before anything else it evaluates
-  // runs, throws a ReferenceError there.
+  // A statement that reads a name that no declaration binds, or a let before its declaration runs,
+  // before anything else it evaluates runs, throws a ReferenceError there, as does one that first
+  // writes such a let. A script's lets are state variables, which the scope binds before their
+  // declarations run.
+  const isThrowing = (name: ts.Identifier) => {
+    const symbol = getSymbol(name, context.checker);
+    const declaration = symbol?.valueDeclaration;
+    return (
+      isUnresolved(name, context) ||
+      (symbol !== undefined &&
+        path.scope.uninitialized.has(symbol) &&
+        ((declaration !== undefined && ts.isSourceFile(declaration.parent.parent.parent)) ||
+          !path.scope.bindings.has(symbol)))
+    );
+  };
+  const written =
+    evaluated !== undefined &&
+    ts.isBinaryExpression(evaluated) &&
+    evaluated.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isIdentifier(evaluated.left) &&
+    !isUnresolved(evaluated.left, context) &&
+    isThrowing(evaluated.left) &&
+    isInertValue(evaluated.right)
+      ? evaluated.left
+      : undefined;
   const unresolved = ts.isClassDeclaration(statement)
     ? getUnresolvedRead(statement, context)
     : evaluated === undefined
       ? undefined
-      : getUnresolvedRead(evaluated, context);
+      : (getUnresolvedRead(evaluated, context, isThrowing) ?? written);
   if (unresolved !== undefined)
     return throwError("ReferenceError", path, unresolved, context, frame);
   // A statement that first uses a private name of an object that lacks it throws a TypeError. A

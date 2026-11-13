@@ -4098,6 +4098,20 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
     return ["TypeError", "RangeError"];
   }
   if (isUnresolved(node, context)) return ["ReferenceError"];
+  // A let or a const that a function reads, or that a read comes before, may be read before its
+  // declaration runs.
+  const declaration = ts.isIdentifier(node)
+    ? getSymbol(node, context.checker)?.valueDeclaration
+    : undefined;
+  if (
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.BlockScoped) !== 0 &&
+    (node.getStart() < declaration.end ||
+      ts.findAncestor(node, ts.isFunctionLike) !== ts.findAncestor(declaration, ts.isFunctionLike))
+  ) {
+    return ["ReferenceError"];
+  }
   // A using declaration throws a TypeError for a value that isn't disposable, and a SuppressedError
   // where disposing throws after an error.
   if (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) {
