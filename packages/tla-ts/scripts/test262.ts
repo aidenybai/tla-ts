@@ -785,6 +785,49 @@ const typeCallbacks = () => {
       if (/\b(?:any|this)\b/.test(type)) return;
       edits.set(parameter.name.getEnd(), `: ${type}`);
     });
+    // An array method's callback that reads its arguments past its parameters, as arguments[2],
+    // reads what the method passes there: the index and the array, which take the callback
+    // parameter's type. The value, and reduce's accumulator, stay any.
+    if (
+      method !== undefined ||
+      calledMethod === undefined ||
+      !ARRAY_CALLBACK_METHODS.has(calledMethod)
+    ) {
+      return;
+    }
+    const valuePosition = calledMethod.startsWith("reduce") ? 1 : 0;
+    const findReads = (node: ts.Node): void => {
+      const argument = ts.isElementAccessExpression(node) ? node.argumentExpression : undefined;
+      const position =
+        argument !== undefined && ts.isNumericLiteral(argument) ? Number(argument.text) : undefined;
+      const given = position === undefined ? undefined : signatures[0].parameters.at(position);
+      const type =
+        given === undefined
+          ? undefined
+          : checker.typeToString(
+              checker.getTypeOfSymbol(given),
+              undefined,
+              ts.TypeFormatFlags.NoTruncation,
+            );
+      if (
+        ts.isElementAccessExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === "arguments" &&
+        checker.getSymbolAtLocation(node.expression)?.declarations === undefined &&
+        position !== undefined &&
+        position >= declaration.parameters.length &&
+        position > valuePosition &&
+        type !== undefined &&
+        !/\b(?:any|this)\b/.test(type) &&
+        !(ts.isBinaryExpression(node.parent) && node.parent.left === node)
+      ) {
+        edits.set(node.getStart(), "(");
+        edits.set(node.getEnd(), ` as ${type})`);
+      }
+      // A function other than an arrow has arguments of its own.
+      if (!ts.isFunctionLike(node) || ts.isArrowFunction(node)) ts.forEachChild(node, findReads);
+    };
+    if (declaration.body !== undefined) ts.forEachChild(declaration.body, findReads);
   });
   if (edits.size > 0) applyEdits(edits);
 };
