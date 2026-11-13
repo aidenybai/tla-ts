@@ -40,30 +40,19 @@ export const App = () => (
       <Section.Root>
         <Section.Title>How it works</Section.Title>
         <p className="text-pretty">
-          Your test likes a post, then unlikes it. It passes.
-          <br />
-          TLA-ts unlikes it first. The count is -1.
+          A test runs your code in one order. TLA-ts runs it in every order and shows you the one
+          that breaks.
         </p>
         <Example.Root>
           <Example.Description />
           <Example.Source />
+          <Example.Search />
           <Example.Hint />
         </Example.Root>
-        <ul className="mt-6 flex flex-col gap-1.5">
-          <li>
-            <InlineCode>likes</InlineCode> is the state. It's the value that changes.
-          </li>
-          <li>
-            <InlineCode>like</InlineCode> and <InlineCode>unlike</InlineCode> are the actions. A
-            user can call them in any order.
-          </li>
-          <li>
-            <InlineCode>neverNegative</InlineCode> is the rule. It must be true after every call.
-          </li>
-        </ul>
-        <p className="text-pretty">
-          TLA-ts calls the actions in every order and checks the rule after each call. This search
-          is called model checking.
+        <p className="mt-6 text-pretty">
+          You write the state, the functions that change it, and a rule that must stay true.{" "}
+          <span className="whitespace-nowrap">TLA-ts</span> calls the functions in every order and
+          checks the rule after each call. This is called model checking.
         </p>
       </Section.Root>
       <Section.Root>

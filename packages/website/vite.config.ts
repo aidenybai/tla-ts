@@ -33,6 +33,12 @@ const getExample = (
     fileName,
     name: compiled.name,
     config: compiled.config,
+    modules: Object.fromEntries(
+      compiled.source.extends.flatMap((name) => {
+        const text = compiled.loadModule(name);
+        return text === undefined ? [] : [[name, text]];
+      }),
+    ),
     typescript: highlight(typescript, "typescript"),
     tla: highlight(printModule(compiled.source).trim(), "tlaplus"),
     highlightNames: [...compiled.source.variables, ...compiled.source.definitions]

@@ -1,3 +1,4 @@
+import { Check, X } from "@phosphor-icons/react";
 import { Fragment, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
@@ -34,7 +35,12 @@ export const ExampleRoot = (props: RootProps) => {
   const [phase, setPhase] = useState<"idle" | "rewinding" | "compiling">("idle");
   const [hasRun, setHasRun] = useState(false);
   const isRunning = phase !== "idle" || runner.isRunning;
-  const request = { source: example.tla.code, config: example.config };
+  const request = {
+    source: example.tla.code,
+    config: example.config,
+    modules: example.modules,
+    isSearchShown: true,
+  };
   return (
     <exampleContext.PartsContext
       value={{
@@ -168,5 +174,49 @@ export const ExampleSource = () => {
         />
       </CodeFooter>
     </CodeRoot>
+  );
+};
+
+const STEP_DELAY_MS = 120;
+
+export const ExampleSearch = () => {
+  const state = exampleContext.useParts();
+  const search = state.result?.search;
+  if (!search) return null;
+  return (
+    <figure className="flex flex-col gap-1 font-mono text-[13px]/[1.7]">
+      {search.steps
+        .map((step, index) => ({ step, order: index }))
+        .map((item) => (
+          <div
+            key={item.order}
+            style={{ transitionDelay: `${item.order * STEP_DELAY_MS}ms` }}
+            className={cn(
+              "flex items-center gap-2 transition-[opacity,translate] duration-200 ease-out starting:translate-y-1 starting:opacity-0",
+              item.step.isFailing ? "text-destructive" : "text-muted-foreground",
+            )}
+          >
+            {item.step.isFailing ? (
+              <X weight="bold" className="shrink-0" />
+            ) : (
+              <Check weight="bold" className="shrink-0 text-faint" />
+            )}
+            <span className="min-w-0 truncate">
+              {item.step.calls.length > 0 ? item.step.calls.join(" → ") : "start"}
+            </span>
+            <span className={cn("ml-auto shrink-0", !item.step.isFailing && "text-faint")}>
+              {item.step.state}
+            </span>
+          </div>
+        ))}
+      <figcaption
+        style={{ transitionDelay: `${search.steps.length * STEP_DELAY_MS}ms` }}
+        className="mt-1 font-sans text-sm text-faint transition-opacity duration-200 ease-out starting:opacity-0"
+      >
+        {search.stateCount} states checked
+        {search.stateCount > search.steps.length &&
+          `, ${search.stateCount - search.steps.length} not shown`}
+      </figcaption>
+    </figure>
   );
 };

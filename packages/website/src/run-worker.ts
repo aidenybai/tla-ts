@@ -1,10 +1,12 @@
 import { check, formatValue, parseModule, TlaError, type CheckResult, type Value } from "tla-ts";
 import { getErrorResult } from "./run-error";
+import { getSearch, type Search } from "./search";
 
 export interface RunRequest {
   source: string;
   config: string;
   modules?: Record<string, string>;
+  isSearchShown?: boolean;
 }
 
 export interface LineNote {
@@ -18,6 +20,7 @@ export interface RunResult {
   title: string;
   activeLine: number | undefined;
   notes: LineNote[];
+  search?: Search;
 }
 
 const getTitle = (result: CheckResult) => {
@@ -48,10 +51,13 @@ const getStateText = (state: Record<string, Value>) =>
 const getCheckResult = async (request: RunRequest): Promise<RunResult> => {
   const source = request.source;
   const config = request.config;
+  const graphs: string[] = [];
   const result = await check({
     source,
     config,
     loadModule: (name) => request.modules?.[name],
+    dump: request.isSearchShown ? { path: "search.dot", dot: true, actionLabels: true } : undefined,
+    writeFile: (_path, content) => graphs.push(content),
   });
   const lastStep = result.violation?.trace.at(-1);
   const module = parseModule(source);
@@ -73,6 +79,10 @@ const getCheckResult = async (request: RunRequest): Promise<RunResult> => {
         : actionLine
           ? Number(actionLine)
           : undefined,
+    search:
+      graphs.length > 0
+        ? getSearch(graphs[0], lastStep && getStateText(lastStep.state))
+        : undefined,
     notes: [
       ...(lastStep === undefined || variableLine === undefined
         ? []

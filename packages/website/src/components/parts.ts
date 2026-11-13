@@ -1,5 +1,11 @@
 import { CodeActions, CodeContent, CodeCopy, CodeFooter, CodeRoot, CodeRun } from "./code";
-import { ExampleDescription, ExampleHint, ExampleRoot, ExampleSource } from "./example";
+import {
+  ExampleDescription,
+  ExampleHint,
+  ExampleRoot,
+  ExampleSearch,
+  ExampleSource,
+} from "./example";
 import { HeroBody, HeroRoot, HeroTitle } from "./hero";
 import { SectionRoot, SectionTitle } from "./section";
 
@@ -16,6 +22,7 @@ export const Example = {
   Root: ExampleRoot,
   Description: ExampleDescription,
   Source: ExampleSource,
+  Search: ExampleSearch,
   Hint: ExampleHint,
 };
 

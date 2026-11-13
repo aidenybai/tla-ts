@@ -12,6 +12,7 @@ export interface CompiledExample {
   fileName: string;
   name: string;
   config: string;
+  modules: Record<string, string>;
   typescript: Source;
   tla: Source;
   highlightNames: string[];
