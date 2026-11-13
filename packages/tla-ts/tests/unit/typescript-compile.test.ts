@@ -2116,6 +2116,29 @@ describe("values", () => {
     }
   });
 
+  it("makes the objects of what a throw statement throws", async () => {
+    const getSource = (expected: string) => `
+      class Thing {
+        constructor(public value: number) {}
+      }
+      const caught: string[] = [];
+      try {
+        throw new Thing(3);
+      } catch (error) {
+        caught.push(String((error as Thing).value));
+      }
+      try {
+        throw { code: 7 };
+      } catch (error) {
+        caught.push(String((error as { code: number }).code));
+      }
+      const outcomes = caught.join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("3,7"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("3,8"))).failure?.message).toContain("outcomes 3,7");
+  });
+
   it("assigns a catch's parameter as it does a let", async () => {
     const getSource = (expected: string) => `
       let seen = "";

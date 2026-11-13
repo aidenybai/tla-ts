@@ -2232,6 +2232,7 @@ export const isStatementNew = (node: ts.Expression) => {
   return (
     ts.isExpressionStatement(parent) ||
     ts.isReturnStatement(parent) ||
+    ts.isThrowStatement(parent) ||
     (ts.isPropertyDeclaration(parent) &&
       parent.initializer === node &&
       (isStatic(parent) || !hasExtends(parent.parent))) ||
