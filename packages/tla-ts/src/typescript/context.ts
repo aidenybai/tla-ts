@@ -67,6 +67,9 @@ export interface Context {
   // The file of a script without exported actions that reports what it doesn't catch as Node does,
   // and whether Node runs it as an ES module.
   script: { sourceFile: ts.SourceFile; isEsModule: boolean } | undefined;
+  // The files and declarations that a model's code reaches by name, under which only code runs,
+  // or undefined before tla-ts finds them.
+  reached: ReadonlySet<ts.Node> | undefined;
   // The model values that stand for the well-known symbols and for the symbols a script makes.
   symbols: string[];
   // The model values that stand for the numbers that a script's literals give and that aren't
@@ -146,6 +149,7 @@ export const createContext = (checker: ts.TypeChecker): Context => ({
   functionObjects: new Map(),
   hasSpecialNumbers: false,
   script: undefined,
+  reached: undefined,
   symbols: [],
   fractions: new Map(),
   heapCollections: new Set(),
@@ -2819,8 +2823,19 @@ export const getFunctionCandidates = (callee: ts.Expression, context: Context) =
     });
   candidates.set(sourceFile, found);
   const type = context.checker.getTypeAtLocation(callee);
-  return found.filter((candidate) =>
-    context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(candidate), type),
+  return found.filter(
+    (candidate) =>
+      isReached(candidate, context) &&
+      context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(candidate), type),
+  );
+};
+
+// Whether the model reaches a node's code, as no value holds a function that nothing names.
+const isReached = (node: ts.Node, context: Context) => {
+  const reached = context.reached;
+  return (
+    reached === undefined ||
+    ts.findAncestor(node, (ancestor) => reached.has(ancestor)) !== undefined
   );
 };
 
@@ -2830,7 +2845,9 @@ export const getClosures = (callee: ts.Expression, context: Context) => {
   const type = context.checker.getTypeAtLocation(callee);
   return findNodes(callee.getSourceFile(), (inner): inner is Closure =>
     isClosure(inner, context),
-  ).filter((closure) =>
-    context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(closure), type),
+  ).filter(
+    (closure) =>
+      isReached(closure, context) &&
+      context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(closure), type),
   );
 };

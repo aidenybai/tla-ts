@@ -379,13 +379,13 @@ export const compile = (
         .flatMap((type) => (type.isIntersection() ? type.types : [type]))
         .some((type) => context.checker.isArrayType(type) || context.checker.isTupleType(type))) ||
     (ts.forEachChild(node, usesObjects) ?? false);
-  const changedArrays = isScript(sourceFile)
-    ? findChangedArrays(getReached(roots, context), context)
-    : [];
+  const reached = getReached(roots, context);
+  context.reached = new Set(reached);
+  const changedArrays = isScript(sourceFile) ? findChangedArrays(reached, context) : [];
   if (
     heap !== undefined &&
     isScript(sourceFile) &&
-    (changedArrays.length > 0 || getReached(roots, context).some(usesObjects))
+    (changedArrays.length > 0 || reached.some(usesObjects))
   ) {
     context.heap = heap;
     context.variables.set(heap, identifier(context.names.getFresh("heap")));

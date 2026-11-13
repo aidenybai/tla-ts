@@ -9237,6 +9237,14 @@ describe("errors", () => {
     expect((await check(compile(wrong, path))).failure?.message).toContain('"marked"');
   });
 
+  it("calls through a value only the functions that an imported file's code names", async () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/applying.ts");
+    const source = readFileSync(path, "utf8");
+    expect((await check(compile(source, path))).failure).toBeUndefined();
+    const wrong = source.replace('"11,12"', '"11,13"');
+    expect((await check(compile(wrong, path))).failure?.message).toContain('"applied"');
+  });
+
   it("runs the function that a factory returns, which changes the factory's variables", async () => {
     const getSource = (bumped: string, total: string) => `
       interface Box { total: number }
