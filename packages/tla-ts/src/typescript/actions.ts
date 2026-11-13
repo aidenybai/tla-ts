@@ -12022,7 +12022,9 @@ const getLeadingCall = (
   );
   // A call that the statement evaluates before, rather than runs, reads where JavaScript reads it,
   // and one that may throw runs first, as it changes nothing.
-  const throwing = reads.filter(ts.isCallExpression).find((inner) => mayThrow(inner, context));
+  const throwing = reads
+    .filter(ts.isCallExpression)
+    .find((inner) => mayThrow(inner, context, new Set(path.scope.results.keys())));
   if (throwing !== undefined) return { call: throwing, reads: [] };
   const kept = reads.filter(isKeptRead);
   if (kept.length < reads.length) {

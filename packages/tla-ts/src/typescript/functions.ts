@@ -102,11 +102,14 @@ export const readsState = (
   );
 };
 
+// What is visited, such as a call that a statement already ran first, throws nothing more.
 export const mayThrow = (
   node: ts.Node,
   context: Context,
   visited = new Set<ts.Node>(),
 ): boolean => {
+  if (visited.has(node)) return false;
+  visited.add(node);
   // A using declaration throws a TypeError for a value that isn't disposable, and it and a
   // DisposableStack's methods run dispose methods. A write to a const throws a TypeError.
   if (
@@ -119,10 +122,7 @@ export const mayThrow = (
   }
   if (ts.isCallExpression(node)) {
     const callee = getCallee(node.expression, context);
-    if (callee !== undefined && !visited.has(callee)) {
-      visited.add(callee);
-      if (mayThrow(callee, context, visited)) return true;
-    }
+    if (callee !== undefined && mayThrow(callee, context, visited)) return true;
   }
   return ts.forEachChild(node, (child) => mayThrow(child, context, visited) || undefined) ?? false;
 };
