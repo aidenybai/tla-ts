@@ -347,6 +347,29 @@ export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, con
     throw new TlaTypeScriptError("instanceof needs an error or a value of any type", node);
   }
   if (context.heap === undefined) return useJavaScript("IsErrorOf", [value, subclasses], context);
+  // An object on the heap is a native error class's instance where its prototype is on the chain.
+  if (isNative(classes[0])) {
+    const heap = getHeap(scope, node, context);
+    return share(value, "caught", context, (caught) =>
+      ifExpression(
+        useJavaScript("IsRef", [caught], context),
+        useJavaScript(
+          "IsPrototypeOf",
+          [
+            heap,
+            useJavaScript(
+              "Get",
+              [heap, translateExpression(node.right, scope, context), string("prototype")],
+              context,
+            ),
+            caught,
+          ],
+          context,
+        ),
+        useJavaScript("IsErrorOf", [caught, subclasses], context),
+      ),
+    );
+  }
   // Every error class's prototype inherits from Error.prototype, so an object on the heap that
   // doesn't is no error's instance. tla-ts doesn't tell the class of one that does.
   return share(value, "caught", context, (caught) =>

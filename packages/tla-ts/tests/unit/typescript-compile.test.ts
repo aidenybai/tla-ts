@@ -2223,6 +2223,43 @@ describe("values", () => {
     ).toContain("negative+BaseError+7");
   });
 
+  it("tells an error that the heap holds from a native class's instance with instanceof", async () => {
+    const getSource = (expected: string) => `
+      class BaseError extends Error {
+        constructor(message: string) {
+          super(message);
+          this.name = "BaseError";
+        }
+      }
+      const describe = (error: unknown) =>
+        [error instanceof Error, error instanceof TypeError].join("+");
+      const results: string[] = [];
+      try {
+        throw new BaseError("a");
+      } catch (error) {
+        results.push(describe(error));
+      }
+      try {
+        throw new TypeError("b");
+      } catch (error) {
+        results.push(describe(error));
+      }
+      try {
+        throw { code: 1 };
+      } catch (error) {
+        results.push(describe(error));
+      }
+      const result = results.join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect(
+      (await checkModel(getSource("true+false,true+true,false+false"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("true+true,true+true,false+false"))).failure?.message,
+    ).toContain("true+false,true+true,false+false");
+  });
+
   it("throws the error that an arrow makes with a class that extends an error with fields", async () => {
     const getSource = (expected: string) => `
       class Coded extends TypeError {
@@ -16193,15 +16230,20 @@ ${call}
     expect(result.failure).toBeUndefined();
   });
 
-  it("stops where it can't tell whether a promise's reason is an instance of an error", async () => {
-    const result = await checkModel(`
+  it("tells whether a promise's reason is an instance of an error by its prototypes", async () => {
+    const getInheritedSource = (expected: string) => `
+      let seen = "";
       const reason: object = Object.create(TypeError.prototype);
-      Promise.reject(reason).catch((error) => {
-        if (error instanceof TypeError) throw new Error("no");
+      await Promise.reject(reason).catch((error) => {
+        seen = [error instanceof TypeError, error instanceof RangeError, error instanceof Error].join(
+          "+",
+        );
       });
-    `);
-    expect(result.failure?.message).toContain(
-      "tla-ts can't tell whether this object is an instance",
+      if (seen !== "${expected}") throw new Error(seen);
+    `;
+    expect((await checkModel(getInheritedSource("true+false+true"))).failure).toBeUndefined();
+    expect((await checkModel(getInheritedSource("false+false+true"))).failure?.message).toContain(
+      "true+false+true",
     );
     const getSource = (expected: string) => `
       let seen = "";
