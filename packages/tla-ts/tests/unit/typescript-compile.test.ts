@@ -15433,6 +15433,83 @@ ${call}
     expect((await checkModel(source("4,5,undefined,true"))).failure).toBeDefined();
   });
 
+  it("passes on what a generator that a call makes yields through yield*", async () => {
+    const source = (expected: string) => `
+      let log = "";
+      function* inner() {
+        log += "i";
+        yield 1;
+        yield 2;
+        return 9;
+      }
+      function* outer() {
+        yield* inner();
+        log += "o";
+        yield 3;
+      }
+      const iterator = outer();
+      const a = iterator.next();
+      const b = iterator.next();
+      const c = iterator.next();
+      const d = iterator.next();
+      log += \`\${a.value}\${b.value}\${c.value}\${d.done}\`;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    expect((await checkModel(source("io123true"))).failure).toBeUndefined();
+    expect((await checkModel(source("i123true"))).failure).toBeDefined();
+  });
+
+  it("passes on what nested yield*s give from a generator that a variable holds", async () => {
+    const source = (expected: string) => `
+      function* leaf() {
+        yield* [1, 2];
+      }
+      const held = leaf();
+      function* middle() {
+        yield* held;
+        yield* held;
+      }
+      function* top() {
+        yield* middle();
+        yield 3;
+      }
+      const iterator = top();
+      const a = iterator.next();
+      const b = iterator.next();
+      const c = iterator.next();
+      const d = iterator.next();
+      const log = \`\${a.value}\${b.value}\${c.value}\${d.done}\`;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    expect((await checkModel(source("123true"))).failure).toBeUndefined();
+    await expect(checkModel(source("123false"))).rejects.toThrow("123true");
+  });
+
+  it("throws what a generator that yield* runs throws to the try around the yield*", async () => {
+    const source = (expected: string) => `
+      let log = "";
+      function* inner() {
+        yield 1;
+        throw new Error("boom");
+      }
+      function* outer() {
+        try {
+          yield* inner();
+        } catch (error) {
+          log += "caught";
+        }
+        yield 2;
+      }
+      const iterator = outer();
+      const a = iterator.next();
+      const b = iterator.next();
+      log += \`\${a.value}\${b.value}\`;
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    expect((await checkModel(source("caught12"))).failure).toBeUndefined();
+    expect((await checkModel(source("12"))).failure).toBeDefined();
+  });
+
   it("stops where yield* takes more elements of an array that a variable holds than it follows", async () => {
     const result = await checkModel(`
       let values = [1, 2, 3, 4, 5];
