@@ -16671,18 +16671,63 @@ describe("regular expressions", () => {
     expect(result.failure?.message).toContain("tla-ts can't call a regexp's method");
   });
 
-  it("stop where a regexp with the u flag matches text outside ASCII", async () => {
+  it("match a surrogate pair as one character with the u flag", async () => {
+    const getSource = (pattern: string) => `
+      const found = /./u.exec("😀x");
+      if (found === null || found[0] !== "😀" || !${pattern}.test("😀x")) throw new Error("dot");
+    `;
+    expect((await checkModel(getSource("/^..$/u"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("/^...$/u"))).rejects.toThrow("dot");
+  });
+
+  it("match the code points that a pattern with the u flag writes, and not half a pair", async () => {
+    const getSource = (text: string) => `
+      if (/\\udf06/u.test("\\ud834\\udf06") || !/\\udf06/.test("\\ud834\\udf06")) throw new Error("half");
+      if (!/^[😀-😂]$/u.test("😁") || /^[^😀]$/u.test("${text}")) throw new Error("class");
+    `;
+    expect((await checkModel(getSource("😀"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("😁"))).rejects.toThrow("class");
+  });
+
+  it("advance past a surrogate pair after an empty match with the u flag", async () => {
+    const getSource = (pattern: string) => `
+      if ("😀😀".split(${pattern}).length !== 2) throw new Error("split");
+      if ("😀a".replace(/(?:)/gu, "-") !== "-😀-a-") throw new Error("replace");
+    `;
+    expect((await checkModel(getSource("/(?:)/u"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("/(?:)/"))).rejects.toThrow("split");
+  });
+
+  it("set a regexp's lastIndex past a surrogate pair with the u flag", async () => {
     const result = await checkModel(`
-      let found = /./u.test("😀");
+      const pattern = /./gu;
+      const first = pattern.exec("😀x");
+      const afterFirst = pattern.lastIndex;
+      const next = pattern.exec("😀x");
+      if (first === null || afterFirst !== 2) throw new Error("lastIndex");
+      if (next === null || next[0] !== "x" || pattern.lastIndex !== 3) throw new Error("next");
+      const record = { pattern };
     `);
-    expect(result.failure?.message).toContain("tla-ts can't match a regexp with the u flag");
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("stop where a regexp with the u flag matches from inside a surrogate pair", async () => {
+    const result = await checkModel(`
+      const pattern = /./gu;
+      pattern.lastIndex = 1;
+      const found = pattern.exec("😀x");
+      const record = { pattern };
+    `);
+    expect(result.failure?.message).toContain(
+      "tla-ts can't match from a lastIndex inside a surrogate pair",
+    );
   });
 
   it("stop where a regexp with the u and i flags folds text outside ASCII", async () => {
     const result = await checkModel(`
       let found = /É/iu.test("é");
     `);
-    expect(result.failure?.message).toContain("tla-ts can't match a regexp with the u flag");
+    expect(result.failure?.message).toContain("tla-ts can't match a regexp with the u and i flags");
   });
 
   it("match a class with the u flag against letters outside ASCII that a script holds", async () => {

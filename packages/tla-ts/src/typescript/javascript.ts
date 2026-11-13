@@ -2325,6 +2325,17 @@ LOCAL CharacterAt(text, index) ==
 
 LOCAL IsWordAt(text, index) == CharacterAt(text, index) \\in WordCharacters
 
+\\* The code units of the character at an index that a regexp reads, where with the u flag a
+\\* surrogate pair is one character.
+LOCAL CharacterWidth(regexp, text, index) ==
+  IF /\\ regexp.unicode
+     /\\ index >= 0
+     /\\ index + 1 < Len(text)
+     /\\ IsHighSurrogate(CharacterCode(CharacterAt(text, index)))
+     /\\ IsLowSurrogate(CharacterCode(CharacterAt(text, index + 1)))
+  THEN 2
+  ELSE 1
+
 \\* Whether a class matches a character, where the compiler lists the characters in ASCII that it
 \\* matches, whether it matches each one outside ASCII that the script's strings may hold, and of the
 \\* rest, the ones it matches where it matches none of the others, or the ones it doesn't where it
@@ -2353,9 +2364,11 @@ RECURSIVE RegExpRepeat(_, _, _, _, _, _, _)
 \\* holds, or RegExpFailure.
 RegExpStep(regexp, text, node, state, stack) ==
   CASE node.kind = "set" ->
-         IF state.end < Len(text) /\\ IsInClass(node, CharacterAt(text, state.end))
-         THEN RegExpContinue(regexp, text, [state EXCEPT !.end = @ + 1], stack)
-         ELSE RegExpFailure
+         LET width == CharacterWidth(regexp, text, state.end)
+         IN  IF /\\ state.end < Len(text)
+                /\\ IsInClass(node, SubSeq(text, state.end + 1, state.end + width))
+             THEN RegExpContinue(regexp, text, [state EXCEPT !.end = @ + width], stack)
+             ELSE RegExpFailure
     [] node.kind = "sequence" ->
          IF node.items = <<>>
          THEN RegExpContinue(regexp, text, state, stack)
@@ -2397,6 +2410,7 @@ RegExpStep(regexp, text, node, state, stack) ==
                 /\\ \\A offset \\in 0..(length - 1) :
                      IsSameCharacter(regexp, CharacterAt(text, captured[1] + offset),
                                      CharacterAt(text, state.end + offset))
+                /\\ length = 0 \\/ CharacterWidth(regexp, text, state.end + length - 1) = 1
              THEN RegExpContinue(regexp, text, [state EXCEPT !.end = @ + length], stack)
              ELSE RegExpFailure
 
@@ -2450,21 +2464,16 @@ RegExpSearch(regexp, text, index) ==
   IF index > Len(text)
   THEN RegExpFailure
   ELSE LET found == RegExpAt(regexp, text, index)
-       IN  IF found.end # -1 \\/ regexp.sticky THEN found ELSE RegExpSearch(regexp, text, index + 1)
+       IN  IF found.end # -1 \\/ regexp.sticky
+           THEN found
+           ELSE RegExpSearch(regexp, text, index + CharacterWidth(regexp, text, index))
 
-\\* The text that a regexp matches. A regexp with the u flag matches code points, which are the code
-\\* units of text without surrogates, where tla-ts matches it only. With the i flag it folds case by
-\\* Unicode, so tla-ts matches it only on text in ASCII.
+\\* The text that a regexp matches. A regexp with the u and i flags folds case by Unicode, so tla-ts
+\\* matches it only on text in ASCII.
 LOCAL RegExpText(regexp, value) ==
-  LET text == Text(value)
-  IN  IF /\\ regexp.unicode
-         /\\ ~IsAscii(text)
-         /\\ \\/ regexp.ignoreCase
-            \\/ \\E character \\in CharactersOf(text) :
-                 LET code == CharacterCode(character)
-                 IN  IsHighSurrogate(code) \\/ IsLowSurrogate(code)
-      THEN Assert(FALSE, "tla-ts can't match a regexp with the u flag on text outside ASCII")
-      ELSE text
+  IF regexp.unicode /\\ regexp.ignoreCase /\\ ~IsAscii(Text(value))
+  THEN Assert(FALSE, "tla-ts can't match a regexp with the u and i flags on text outside ASCII")
+  ELSE Text(value)
 
 \\* The text of a match's capture, where 0 is the whole match, or undefined where it took no part.
 LOCAL RegExpCapture(text, match, index) ==
@@ -2478,12 +2487,15 @@ LOCAL RegExpGroups(regexp, text, match) ==
 
 RECURSIVE RegExpMatches(_, _, _)
 \\* The matches that a global regexp finds from an index on, where an empty match moves the next
-\\* search one index past it, as AdvanceStringIndex does.
+\\* search one character past it, as AdvanceStringIndex does.
 RegExpMatches(regexp, text, index) ==
   LET found == RegExpSearch(regexp, text, index)
   IN  IF found.end = -1
       THEN <<>>
-      ELSE <<found>> \\o RegExpMatches(regexp, text, IF found.end = found.start THEN found.end + 1 ELSE found.end)
+      ELSE <<found>> \\o RegExpMatches(regexp, text,
+                                         IF found.end = found.start
+                                         THEN found.end + CharacterWidth(regexp, text, found.end)
+                                         ELSE found.end)
 
 RECURSIVE RegExpSubstitute(_, _, _, _)
 \\* GetSubstitution, which writes a replacement template with each $ pattern in it replaced by the
@@ -2543,7 +2555,7 @@ RegExpSplitFrom(regexp, text, p, q) ==
   THEN <<SubSeq(text, p + 1, Len(text))>>
   ELSE LET found == RegExpAt(regexp, text, q)
        IN  IF found.end = -1 \\/ found.end = p
-           THEN RegExpSplitFrom(regexp, text, p, q + 1)
+           THEN RegExpSplitFrom(regexp, text, p, q + CharacterWidth(regexp, text, q))
            ELSE <<SubSeq(text, p + 1, q)>>
                   \\o [position \\in 1..regexp.captures |-> RegExpCapture(text, found, position)]
                   \\o RegExpSplitFrom(regexp, text, found.end, found.end)
@@ -3335,6 +3347,8 @@ LOCAL RegExpRun(heap, ref, regexp, text) ==
       isUpdating == regexp.global \\/ regexp.sticky
       found == CASE ~isUpdating /\\ start = start -> RegExpSearch(regexp, text, 0)
                  [] start > Len(text) -> RegExpFailure
+                 [] start > 0 /\\ CharacterWidth(regexp, text, start - 1) = 2 ->
+                      Assert(FALSE, "tla-ts can't match from a lastIndex inside a surrogate pair")
                  [] OTHER -> RegExpSearch(regexp, text, start)
   IN  [heap |-> CASE ~isUpdating -> heap
                   [] found.end = -1 -> SetLastIndex(heap, ref, 0)

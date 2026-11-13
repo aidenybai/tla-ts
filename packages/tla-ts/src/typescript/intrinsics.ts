@@ -1159,20 +1159,16 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
     if (peek() !== ")") throw invalid();
     cursor.position += 1;
   };
-  // A character that the pattern writes, where tla-ts reads a pattern with the u flag by code units
-  // only while it writes no surrogate, as it matches one only on text in ASCII.
-  const getCode = (code: number) => {
-    if (isUnicode && code >= 0xd800 && code <= 0xdfff) {
-      throw new TlaTypeScriptError(
-        "tla-ts can't match a character outside the Basic Multilingual Plane with the u flag",
-        node,
-      );
-    }
+  // The character that the pattern writes next, which with the u flag is a code point, so a
+  // surrogate pair is one.
+  const readCode = () => {
+    const code = isUnicode ? (source.codePointAt(cursor.position) ?? 0) : peek().charCodeAt(0);
+    cursor.position += code > 0xffff ? 2 : 1;
     return code;
   };
   const getCharacter = (code: number): Matcher => ({
     kind: "set",
-    set: getCharacterSet(getCode(code)),
+    set: getCharacterSet(code),
     isInverted: false,
   });
   const parseDisjunction = (): Matcher => {
@@ -1261,8 +1257,7 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
     if (character === "[") return parseClass();
     if (character === "\\") return parseAtomEscape();
     if ("*+?)".includes(character) || /^\{\d+(,\d*)?\}/.test(getRest())) throw invalid();
-    cursor.position += 1;
-    return getCharacter(character.charCodeAt(0));
+    return getCharacter(readCode());
   };
   const parseGroup = (): Matcher => {
     if (isAt("(?:")) {
@@ -1294,7 +1289,7 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
     if (property === undefined) return undefined;
     cursor.position += property.length;
     const matcher = new RegExp(`^${property}$`, "u");
-    return (code) => matcher.test(String.fromCharCode(code));
+    return (code) => matcher.test(String.fromCodePoint(code));
   };
   const parseAtomEscape = (): Matcher => {
     const escaped = peek(1);
@@ -1334,32 +1329,34 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
     const octal = /^(?:[0-3][0-7]{0,2}|[4-7][0-7]?)/.exec(rest)?.[0];
     const hex = /^x([\da-fA-F]{2})|^u([\da-fA-F]{4})|^u\{([\da-fA-F]+)\}/.exec(rest);
     const point = hex?.[3] === undefined || !isUnicode ? undefined : Number.parseInt(hex[3], 16);
-    if (point !== undefined && point > 0xffff) {
-      throw new TlaTypeScriptError(
-        "tla-ts can't match a character outside the Basic Multilingual Plane with the u flag",
-        node,
-      );
-    }
+    // With the u flag, the escapes of a surrogate pair write one code point.
+    const pair = isUnicode ? /^u(d[89ab][\da-f]{2})\\u(d[c-f][\da-f]{2})/i.exec(rest) : null;
     const escape =
       control !== undefined
         ? { length: 1, code: control }
         : letter !== null
           ? { length: 2, code: letter[1].charCodeAt(0) % 32 }
-          : octal !== undefined && !(isUnicode && octal !== "0")
-            ? { length: octal.length, code: Number.parseInt(octal, 8) }
-            : hex !== null && (hex[3] === undefined || point !== undefined)
-              ? { length: hex[0].length, code: point ?? Number.parseInt(hex[1] ?? hex[2], 16) }
-              : { length: 1, code: rest.charCodeAt(0) };
+          : pair !== null
+            ? {
+                length: pair[0].length,
+                code:
+                  String.fromCharCode(
+                    Number.parseInt(pair[1], 16),
+                    Number.parseInt(pair[2], 16),
+                  ).codePointAt(0) ?? 0,
+              }
+            : octal !== undefined && !(isUnicode && octal !== "0")
+              ? { length: octal.length, code: Number.parseInt(octal, 8) }
+              : hex !== null && (hex[3] === undefined || point !== undefined)
+                ? { length: hex[0].length, code: point ?? Number.parseInt(hex[1] ?? hex[2], 16) }
+                : { length: 1, code: rest.charCodeAt(0) };
     cursor.position += 1 + escape.length;
-    return getCode(escape.code);
+    return escape.code;
   };
   const parseClassAtom = (): number | CharacterSet => {
     const character = peek();
     if (character === "") throw invalid();
-    if (character !== "\\") {
-      cursor.position += 1;
-      return getCode(character.charCodeAt(0));
-    }
+    if (character !== "\\") return readCode();
     const classEscape = getClassEscape(peek(1), isUnicode && flags.includes("i"));
     if (classEscape !== undefined) {
       cursor.position += 2;
@@ -1431,10 +1428,24 @@ const CODE_UNITS = Array.from({ length: 0x10000 }, (_, code) => code);
 // The characters outside ASCII that a class lists, where it holds most of them or few.
 const LISTED_LIMIT = 256;
 
+const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;
+
+const isLowSurrogate = (code: number) => code >= 0xdc00 && code <= 0xdfff;
+
+// The string of a code point, where TLA+ writes a lone surrogate as a part of a pair, since its
+// strings hold only text that UTF-8 can encode.
+export const getCodePoint = (code: number) =>
+  isHighSurrogate(code)
+    ? apply("SubSeq", [string(String.fromCharCode(code, 0xdc00)), number(1), number(1)])
+    : isLowSurrogate(code)
+      ? apply("SubSeq", [string(String.fromCharCode(0xd800, code)), number(2), number(2)])
+      : string(String.fromCodePoint(code));
+
 // A class as the characters in ASCII that it matches once Canonicalize maps them, with those
 // outside ASCII listed where it matches few of them or all but a few, or else unknown. It lists too
-// whether it matches each code unit outside ASCII that the script's strings may hold, unless it
-// folds case by Unicode, which tla-ts matches only on text in ASCII.
+// whether it matches each character outside ASCII that the script's strings may hold, which with
+// the u flag are code points, unless it folds case by Unicode, which tla-ts matches only on text in
+// ASCII.
 const translateCharacters = (
   matcher: { set: CharacterSet; isInverted: boolean },
   flags: string,
@@ -1457,7 +1468,8 @@ const translateCharacters = (
   const held = outside.filter(isMatched);
   const missed = outside.filter((code) => !isMatched(code));
   const isListable = (codes: number[]) =>
-    codes.length <= LISTED_LIMIT && !codes.some((code) => code >= 0xd800 && code <= 0xdfff);
+    codes.length <= LISTED_LIMIT &&
+    !codes.some((code) => isHighSurrogate(code) || isLowSurrogate(code));
   const others = isUnicode
     ? "unknown"
     : missed.length === 0
@@ -1467,12 +1479,23 @@ const translateCharacters = (
         : isListable(missed)
           ? "all"
           : "unknown";
-  const toStrings = (codes: number[]) =>
-    set(codes.map((code) => string(String.fromCharCode(code))));
+  const toStrings = (codes: number[]) => set(codes.map(getCodePoint));
+  const units = [...characters];
   const known =
     isUnicode && fold !== undefined
       ? []
-      : [...characters].filter((code) => code < 0xd800 || code > 0xdfff);
+      : [
+          ...units,
+          ...(isUnicode
+            ? units
+                .filter(isHighSurrogate)
+                .flatMap((high) =>
+                  units
+                    .filter(isLowSurrogate)
+                    .map((low) => (high - 0xd800) * 0x400 + low - 0xdc00 + 0x10000),
+                )
+            : []),
+        ];
   return record("Record", [
     { name: "kind", value: string("set") },
     {
