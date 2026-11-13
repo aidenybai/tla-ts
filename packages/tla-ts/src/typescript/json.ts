@@ -40,37 +40,6 @@ import type { Scope } from "./scope";
 import { apply, boolean, identifier, ifExpression, number, string, tuple } from "./tla";
 import { getKind } from "./types";
 
-const toEscape = (code: number) => `\\u${code.toString(16).padStart(4, "0")}`;
-
-// The code units that QuoteJSONString escapes, which are the controls, the surrogates, the quote, and
-// the backslash.
-const JSON_ESCAPES = new Map<string, string>([
-  ...Array.from({ length: 0x20 }, (_, code): [string, string] => [
-    String.fromCharCode(code),
-    toEscape(code),
-  ]),
-  ...Array.from({ length: 0x800 }, (_, offset): [string, string] => [
-    String.fromCharCode(0xd800 + offset),
-    toEscape(0xd800 + offset),
-  ]),
-  ["\b", "\\b"],
-  ["\t", "\\t"],
-  ["\n", "\\n"],
-  ["\f", "\\f"],
-  ["\r", "\\r"],
-  ['"', '\\"'],
-  ["\\", "\\\\"],
-]);
-
-// Merges functions in halves, so that the expression nests only as deep as the log of their count.
-const mergeFunctions = (functions: Expression[]): Expression =>
-  functions.length === 1
-    ? functions[0]
-    : apply("@@", [
-        mergeFunctions(functions.slice(0, functions.length / 2)),
-        mergeFunctions(functions.slice(functions.length / 2)),
-      ]);
-
 const COLLECTIONS = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
 
 // Whether a script may name a collection, which tla-ts can't tell from an array where it isn't on the
@@ -333,9 +302,6 @@ export const translateStringify = (node: ts.CallExpression, scope: Scope, contex
       ? translateObjectValue(argument, scope, context)
       : translateExpression(argument, scope, context);
   });
-  const escapes = mergeFunctions(
-    [...JSON_ESCAPES].map((entry) => apply(":>", [string(entry[0]), string(entry[1])])),
-  );
   return ifExpression(
     translateHoldsJson(node, "stringify", scope, context),
     useJavaScript(
@@ -343,7 +309,6 @@ export const translateStringify = (node: ts.CallExpression, scope: Scope, contex
       [
         getHeap(scope, node, context),
         ...values,
-        escapes,
         translateBuiltInValue("Array.prototype", node, context),
         translateBuiltInValue("Function.prototype", node, context),
         boolean(!usesCollections(node.getSourceFile())),
