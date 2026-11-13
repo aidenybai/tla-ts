@@ -5966,7 +5966,7 @@ const mayDefineObjectLength = (node: MethodCall, context: Context) => {
   const getMember = (type: ts.Type | undefined, key: string) => {
     if (type === undefined || isOpen(type)) return type;
     const property = type.getProperty(key);
-    return property === undefined ? undefined : checker.getTypeOfSymbol(property);
+    return property === undefined ? type.getStringIndexType() : checker.getTypeOfSymbol(property);
   };
   const mayBeObject = (type: ts.Type | undefined) =>
     type !== undefined &&
