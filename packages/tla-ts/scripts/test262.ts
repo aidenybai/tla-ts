@@ -184,6 +184,12 @@ const NULLABLE_ERRORS = new Set([2531, 2532, 2533, 2721, 2722, 18047, 18048, 180
 
 // TypeScript's error for a use of a value of type unknown.
 const UNKNOWN_VALUE_ERROR = 18046;
+const ARGUMENT_COUNT_ERROR = 2554;
+
+// The built-ins that tla-ts compiles from their values, not their declared signatures, where a test
+// calls them with fewer arguments than TypeScript's types take. Each needs a unit test of such a
+// call, since a translation that follows the signature may read the missing arguments wrongly.
+const SHORT_CALLED_BUILT_INS = new Set(["RegExp"]);
 
 const PROGRAM_PATH = "/test262.ts";
 
@@ -493,7 +499,7 @@ const loosen = () => {
     // extra arguments without changing the function's length.
     const count = /but got (\d+)/.exec(ts.flattenDiagnosticMessageText(diagnostic.messageText, ""));
     const called =
-      diagnostic.code === 2554 && count !== null
+      diagnostic.code === ARGUMENT_COUNT_ERROR && count !== null
         ? ts.findAncestor(
             node,
             (ancestor): ancestor is ts.CallExpression | ts.NewExpression =>
@@ -1011,9 +1017,34 @@ const ignoreSoundErrors = () => {
       !(isCondition(comparison) && (isReference(comparison.left) || isReference(comparison.right)))
     );
   };
+  // A call of a built-in that SHORT_CALLED_BUILT_INS lists, with fewer arguments than its type
+  // takes, which passes undefined for the others as JavaScript does.
+  const isShortBuiltInCall = (node: ts.Node) => {
+    const call = ts.findAncestor(
+      node,
+      (ancestor): ancestor is ts.CallExpression | ts.NewExpression =>
+        ts.isCallExpression(ancestor) || ts.isNewExpression(ancestor),
+    );
+    const declaration = call && checker.getResolvedSignature(call)?.getDeclaration();
+    return (
+      call !== undefined &&
+      ts.isIdentifier(call.expression) &&
+      SHORT_CALLED_BUILT_INS.has(call.expression.text) &&
+      declaration !== undefined &&
+      declaration.getSourceFile().isDeclarationFile &&
+      (call.arguments?.length ?? 0) <
+        declaration.parameters.filter(
+          (parameter) =>
+            parameter.questionToken === undefined &&
+            parameter.initializer === undefined &&
+            parameter.dotDotDotToken === undefined,
+        ).length
+    );
+  };
   const isSound = (diagnostic: ts.Diagnostic) => {
     const node = getNode(diagnostic.start ?? 0);
     return (
+      (diagnostic.code === ARGUMENT_COUNT_ERROR && isShortBuiltInCall(node)) ||
       diagnostic.code === UNUSED_OPERAND_ERROR ||
       (diagnostic.code === UNINTENDED_COMPARISON_ERROR && isUnnarrowed(node, diagnostic)) ||
       (UNTYPED_READ_ERRORS.has(diagnostic.code) && isObjectRead(node)) ||
