@@ -107,7 +107,9 @@ import {
   getSuperCall,
   isNullBased,
 } from "./context";
+import { pathToFileURL } from "node:url";
 import { TlaTypeScriptError } from "../errors";
+import { UNSETTLED_AWAIT_WARNING } from "../exit-codes";
 import {
   getConversion,
   getConversionFunctions,
@@ -12658,6 +12660,18 @@ export const translateLocalStatements = (
   );
 };
 
+// Node's warning for a module that is left awaiting a promise once the jobs run out: the file and
+// the line of the await, then the line with a caret under it.
+const getUnsettledAwait = (node: ts.Node) => {
+  const sourceFile = node.getSourceFile();
+  const start = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+  const lineStarts = sourceFile.getLineStarts();
+  const line = sourceFile.text
+    .slice(lineStarts[start.line], lineStarts[start.line + 1])
+    .replace(/\r?\n$/, "");
+  return `${UNSETTLED_AWAIT_WARNING}${pathToFileURL(sourceFile.fileName).href}:${start.line + 1}\n${line}\n${" ".repeat(start.character)}^`;
+};
+
 export const translateScript = (
   statements: readonly ts.Statement[],
   isLast: boolean,
@@ -12766,7 +12780,24 @@ export const translateScript = (
               ),
               settled,
             ),
-          (suspended) => drainTasks(suspended, finish),
+          // The jobs ran out before a job resumed the body, which Node reports for a script.
+          (suspended) =>
+            drainTasks(suspended, (unsettled) =>
+              isLast
+                ? leaf(
+                    apply("Assert", [
+                      boolean(false),
+                      string(
+                        getUnsettledAwait(
+                          ts.findAncestor(operand, ts.isAwaitExpression) ??
+                            operand ??
+                            statements[0],
+                        ),
+                      ),
+                    ]),
+                  )
+                : finish(unsettled),
+            ),
         ),
       inlining: new Set(),
     },

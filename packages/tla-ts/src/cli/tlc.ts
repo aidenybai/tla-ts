@@ -35,7 +35,7 @@ import {
   UNEXPECTED_EXCEPTION,
   TlaSanyFatalError,
 } from "../errors";
-import { EXIT_STATUS, setExitCode } from "../exit-codes";
+import { EXIT_STATUS, setExitCode, UNSETTLED_AWAIT_EXIT_CODE } from "../exit-codes";
 import { check } from "../parallel";
 import { parseModule } from "../parser";
 import { printModule } from "../printer";
@@ -76,7 +76,7 @@ import {
   toLibraryPath,
   type JavaProperties,
 } from "./shared";
-import { compileTypeScriptFile, type CompiledInput } from "./typescript";
+import { compileTypeScriptFile, getUnsettledAwaitWarning, type CompiledInput } from "./typescript";
 
 const EXIT_CODES: Record<CheckStatus, number> = {
   success: EXIT_STATUS.success,
@@ -864,6 +864,14 @@ const checkSpec = async (
         writeFileSync(path, content);
       },
     });
+    // Node exits with a warning where a script's top-level await never settles.
+    const unsettledWarning =
+      compiled && result.failure ? getUnsettledAwaitWarning(result.failure.message) : undefined;
+    if (unsettledWarning !== undefined) {
+      process.stderr.write(unsettledWarning);
+      printFinished();
+      return UNSETTLED_AWAIT_EXIT_CODE;
+    }
     printResult(result, printer, timing);
     printFinished();
     return result.failure?.exitCode ?? EXIT_CODES[result.status];

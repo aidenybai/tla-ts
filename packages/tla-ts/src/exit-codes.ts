@@ -16,6 +16,11 @@ export const EXIT_STATUS = {
   error: 255,
 } as const;
 
+// Node's exit status for a module whose top-level await never settles, and the start of the warning
+// it prints.
+export const UNSETTLED_AWAIT_EXIT_CODE = 13;
+export const UNSETTLED_AWAIT_WARNING = "Detected unsettled top-level await at ";
+
 const exitCodes = new WeakMap<Error, number>();
 
 // The innermost site that knows TLC's exit status for an error sets it first and wins.

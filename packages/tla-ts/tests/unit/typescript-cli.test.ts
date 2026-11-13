@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures/typescript/cli");
@@ -58,6 +59,24 @@ describe("the CLI with TypeScript files", () => {
     expect(wrong.stdout).toContain(
       'Error: The first argument of Assert evaluated to FALSE; the second argument was:\n"total"',
     );
+  });
+
+  it("exits with Node's warning where a script's top-level await never settles", () => {
+    const directory = copyFixtures("passing");
+    const script =
+      "let count = 0;\nif (count === 0) {\n  await new Promise(() => {});\n  count = 1;\n}\n";
+    writeFileSync(join(directory, "stuck.ts"), script);
+    const result = runCli(directory, ["stuck.ts"]);
+    expect([result.status, result.stderr]).toEqual([
+      13,
+      `Warning: Detected unsettled top-level await at ${pathToFileURL(join(realpathSync(directory), "stuck.ts")).href}:3\n  await new Promise(() => {});\n  ^\n\n\n\n`,
+    ]);
+    writeFileSync(
+      join(directory, "settled.ts"),
+      script.replace("new Promise(() => {})", "Promise.resolve()"),
+    );
+    const settled = runCli(directory, ["settled.ts"]);
+    expect([settled.status === 13, settled.stderr]).toEqual([false, ""]);
   });
 
   it("reads names that a module re-exports", () => {
