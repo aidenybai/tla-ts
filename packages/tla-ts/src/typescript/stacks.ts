@@ -8,7 +8,7 @@ import {
   throwError,
   throwTypeError,
 } from "./actions";
-import { type Context, findNodes, getUndefined, skipCasts } from "./context";
+import { type Context, findNodes, getStackKind, getUndefined, skipCasts } from "./context";
 import { disposeAll, readResource, type Resource } from "./disposal";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
@@ -31,11 +31,6 @@ export interface TrackedStack {
 }
 
 const STACK_METHODS = new Set(["use", "adopt", "defer", "move", "dispose", "disposeAsync"]);
-
-const getStackKind = (node: ts.Expression, context: Context) => {
-  const name = context.checker.getTypeAtLocation(node).getSymbol()?.name;
-  return name === "DisposableStack" || name === "AsyncDisposableStack" ? name : undefined;
-};
 
 // new DisposableStack or new AsyncDisposableStack, which take no arguments.
 export const isStackConstruction = (node: ts.Node, context: Context): node is ts.NewExpression =>

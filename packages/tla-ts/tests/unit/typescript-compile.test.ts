@@ -10849,6 +10849,64 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("tla-ts can't call a method here");
   });
 
+  it("runs an arrow that defer takes, which may change the locals of the async call that made it", async () => {
+    const source = (expected: string) => `
+      const order: string[] = [];
+      const run = async (name: string) => {
+        let count = 0;
+        {
+          using stack = new DisposableStack();
+          stack.defer(() => { count += 1; });
+        }
+        order.push(\`\${name} \${count}\`);
+      };
+      run("a");
+      run("b");
+      if (order.join() !== "${expected}") throw new Error(order.join());
+    `;
+    const result = await checkModel(source("a 1,b 1"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("a 1,b 2"));
+    expect(wrong.failure).toBeDefined();
+  });
+
+  it("runs a function that adopt takes, which may change the locals of the async call that made it", async () => {
+    const source = (expected: string) => `
+      const order: string[] = [];
+      const run = async (name: string) => {
+        let count = 0;
+        {
+          using stack = new DisposableStack();
+          stack.adopt(10, function (value) { count += value; });
+        }
+        order.push(\`\${name} \${count}\`);
+      };
+      run("a");
+      run("b");
+      if (order.join() !== "${expected}") throw new Error(order.join());
+    `;
+    const result = await checkModel(source("a 10,b 10"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("a 10,b 20"));
+    expect(wrong.failure).toBeDefined();
+  });
+
+  it("stops where an AsyncDisposableStack runs a function that reads the locals around it", async () => {
+    const result = await checkModel(`
+      const run = async (isUsed: boolean) => {
+        if (!isUsed) return;
+        const log: string[] = [];
+        {
+          await using stack = new AsyncDisposableStack();
+          stack.defer(() => { log.push("x"); });
+        }
+      };
+      run(true);
+      run(false);
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't call a method here");
+  });
+
   it("awaits an async dispose method, which a function's object literal may hold", async () => {
     const source = (expected: string) => `
       declare function setTimeout(callback: () => void): void;

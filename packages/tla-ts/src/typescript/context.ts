@@ -1238,15 +1238,37 @@ const LOGICAL_ASSIGNMENTS = new Set([
   ts.SyntaxKind.AmpersandAmpersandEqualsToken,
 ]);
 
+export const getStackKind = (node: ts.Expression, context: Context) => {
+  const name = context.checker.getTypeAtLocation(node).getSymbol()?.name;
+  return name === "DisposableStack" || name === "AsyncDisposableStack" ? name : undefined;
+};
+
+// A function that a DisposableStack's adopt or defer takes, which the stack calls as it disposes.
+const isDisposeCallback = (
+  node: ts.Node,
+  context: Context,
+): node is ts.ArrowFunction | ts.FunctionExpression =>
+  (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) &&
+  ts.isCallExpression(node.parent) &&
+  ts.isPropertyAccessExpression(node.parent.expression) &&
+  getStackKind(node.parent.expression.expression, context) !== undefined &&
+  (node.parent.expression.name.text === "adopt"
+    ? node.parent.arguments.at(1)
+    : node.parent.expression.name.text === "defer"
+      ? node.parent.arguments.at(0)
+      : undefined) === node;
+
 // A function expression or a method that another function makes as the value of an object's
-// property, or a function expression that it returns, each time it runs, which is an object of its
-// own each time. It reads no name that the functions around it bind, so it runs the same wherever
-// tla-ts inlines it, or it's a closure, which runs only in the call that made it.
+// property, a function expression that it returns, or a function that it passes to adopt or defer,
+// each time it runs, which is an object of its own each time. It reads no name that the functions
+// around it bind, so it runs the same wherever tla-ts inlines it, or it's a closure, which runs only
+// in the call that made it.
 export const isNestedFunction = (
   node: ts.Node,
   context: Context,
 ): node is
   | ts.FunctionExpression
+  | ts.ArrowFunction
   | ts.MethodDeclaration
   | ts.GetAccessorDeclaration
   | ts.SetAccessorDeclaration =>
@@ -1261,11 +1283,13 @@ export const isNestedFunction = (
         getFunctionValue(node, context) === undefined) ||
         (ts.isReturnStatement(node.parent) &&
           node.parent.expression === node &&
-          findNodes(node, ts.isIdentifier).every((name) => name.text !== "arguments"))))) &&
+          findNodes(node, ts.isIdentifier).every((name) => name.text !== "arguments")))) ||
+    (isDisposeCallback(node, context) && !isOnce(node.parent))) &&
   node.asteriskToken === undefined &&
-  // Of async functions, only methods, which a protocol such as await using calls.
+  // Of async functions, only methods and dispose callbacks, which await using calls.
   ((ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0 ||
-    ts.isMethodDeclaration(node)) &&
+    ts.isMethodDeclaration(node) ||
+    isDisposeCallback(node, context)) &&
   ts.findAncestor(node.parent, ts.isFunctionLike) !== undefined &&
   (getOuterLocals(node, context).length === 0 || getLiveMaker(node, context) !== undefined);
 
@@ -1385,15 +1409,15 @@ export const getCaptures = (node: ts.FunctionExpression, context: Context) => {
   return [...new Set(captures.map((capture) => capture.symbol))];
 };
 
-// The async function whose locals a method of an object literal that it makes reads. Each call of
-// the function makes the method anew, a closure that holds the call's environment, which runs only
-// where that call runs, and reads the locals that the call binds there, unlike a closure that
-// outlives its call.
+// The async function whose locals a method of an object literal that it makes, or a function that
+// it passes to adopt or defer, reads. Each call of the function makes the method anew, a closure
+// that holds the call's environment, which runs only where that call runs, and reads the locals
+// that the call binds there, unlike a closure that outlives its call.
 export const getLiveMaker = (node: ts.Node, context: Context) => {
   const enclosing = ts.findAncestor(node.parent, ts.isFunctionLike);
   const owners = getOuterLocals(node, context);
-  return ts.isMethodDeclaration(node) &&
-    ts.isObjectLiteralExpression(node.parent) &&
+  return ((ts.isMethodDeclaration(node) && ts.isObjectLiteralExpression(node.parent)) ||
+    isDisposeCallback(node, context)) &&
     !isOnce(node.parent) &&
     node.asteriskToken === undefined &&
     enclosing !== undefined &&

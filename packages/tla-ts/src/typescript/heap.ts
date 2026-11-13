@@ -1036,7 +1036,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
       isFunction ? "FunctionObject" : "MethodObject",
       [
         translateBuiltInValue("Function.prototype", node, context),
-        isFunction
+        isFunction || ts.isArrowFunction(node)
           ? translateFunctionValue(node, context)
           : ts.isMethodDeclaration(node)
             ? getMethodValue(node, context)
