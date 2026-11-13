@@ -5147,6 +5147,27 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain('"properties"');
   });
 
+  it("converts the length of a descriptor whose type has an index signature", async () => {
+    const source = `
+      const array: unknown[] = [];
+      let isConverted = false;
+      const descriptor: { [key: string]: unknown } = {};
+      Object.defineProperty(descriptor, "value", {
+        value: {
+          toString: () => {
+            isConverted = true;
+            return 3;
+          },
+        },
+      });
+      Object.defineProperties(array, { length: descriptor });
+      if (array.length !== 3 || !isConverted) throw new Error("length");
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("array.length !== 3", "array.length !== 2");
+    expect((await checkModel(wrong)).failure?.message).toContain('"length"');
+  });
+
   it("throws the TypeError of a length that converts to no primitive", async () => {
     const source = `
       const holder = { seen: 0 };
