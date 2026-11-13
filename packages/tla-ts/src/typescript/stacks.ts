@@ -13,7 +13,7 @@ import { disposeAll, readResource, type Resource } from "./disposal";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf } from "./formula";
-import { getHeap } from "./heap";
+import { getHeap, getPrototypeMethod } from "./heap";
 import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { translateAsyncBuiltIn } from "./promises";
@@ -40,13 +40,43 @@ export const isStackConstruction = (node: ts.Node, context: Context): node is ts
     getBuiltIn(node.expression, context) === "AsyncDisposableStack") &&
   (node.arguments ?? []).length === 0;
 
+// The prototype methods that Function.prototype.call may run on any value as this.
+const HELD_METHODS = [
+  { kind: "DisposableStack", method: "dispose", path: "DisposableStack.prototype.dispose" },
+  { kind: "DisposableStack", method: "move", path: "DisposableStack.prototype.move" },
+  {
+    kind: "AsyncDisposableStack",
+    method: "disposeAsync",
+    path: "AsyncDisposableStack.prototype.disposeAsync",
+  },
+  { kind: "AsyncDisposableStack", method: "move", path: "AsyncDisposableStack.prototype.move" },
+] as const;
+
 // A call of a DisposableStack's or an AsyncDisposableStack's method, as stack.use(value) or
-// stack[Symbol.dispose](), where disposeAsync names both of the latter's dispose methods.
+// stack[Symbol.dispose](), where disposeAsync names both of the latter's dispose methods, or as
+// Function.prototype.call runs a prototype's method that a name holds with any value as this.
 export const getStackCall = (node: ts.Node, context: Context) => {
   if (context.heap === undefined || !ts.isCallExpression(node)) return undefined;
   const callee = skipCasts(node.expression);
   if (!ts.isPropertyAccessExpression(callee) && !ts.isElementAccessExpression(callee)) {
     return undefined;
+  }
+  const held =
+    ts.isPropertyAccessExpression(callee) && callee.name.text === "call"
+      ? HELD_METHODS.find(
+          (entry) => getPrototypeMethod(callee.expression, entry.kind, context) === entry.method,
+        )
+      : undefined;
+  if (held !== undefined) {
+    return node.arguments.some(ts.isSpreadElement)
+      ? undefined
+      : {
+          method: held.method,
+          isAsync: held.kind === "AsyncDisposableStack",
+          receiver: node.arguments.at(0),
+          values: node.arguments.slice(1),
+          held: { value: callee.expression, path: held.path },
+        };
   }
   const kind = getStackKind(callee.expression, context);
   const key = ts.isPropertyAccessExpression(callee)
@@ -67,6 +97,7 @@ export const getStackCall = (node: ts.Node, context: Context) => {
     isAsync: kind === "AsyncDisposableStack",
     receiver: callee.expression,
     values: node.arguments,
+    held: undefined,
   };
 };
 
@@ -178,11 +209,13 @@ export const translateStackCall = (
 ): Formula => {
   const stackCall = getStackCall(node, context);
   if (stackCall === undefined) throw new TlaTypeScriptError("Unsupported call", node);
-  return runStackMethod(
+  const run = runStackMethod(
     node,
     stackCall.method,
     stackCall.isAsync,
-    translateExpression(stackCall.receiver, path.scope, context),
+    stackCall.receiver === undefined
+      ? getUndefined(context)
+      : translateExpression(stackCall.receiver, path.scope, context),
     stackCall.values.map((value) => {
       if (ts.isSpreadElement(value)) throw new TlaTypeScriptError("Unsupported spread", value);
       return { node: value, value: translateExpression(value, path.scope, context) };
@@ -191,6 +224,34 @@ export const translateStackCall = (
     context,
     frame,
     continueWith,
+  );
+  if (stackCall.held === undefined) return run;
+  const builtIn = translateBuiltInValue(stackCall.held.path, node, context);
+  return ifThenElse(
+    apply("/\\", [
+      useJavaScript(
+        "SameValue",
+        [translateExpression(stackCall.held.value, path.scope, context), builtIn],
+        context,
+      ),
+      useJavaScript(
+        "HoldsBuiltIn",
+        [
+          getHeap(path.scope, node, context),
+          builtIn,
+          string("call"),
+          string("Function.prototype.call"),
+        ],
+        context,
+      ),
+    ]),
+    run,
+    leaf(
+      apply("Assert", [
+        boolean(false),
+        string("tla-ts can't call a DisposableStack's method that a script replaced"),
+      ]),
+    ),
   );
 };
 
@@ -337,7 +398,11 @@ const runStackMethod = (
           rest,
         ),
       ifThenElse(
-        useJavaScript("IsStack", [getHeap(current.scope, node, context), receiver], context),
+        useJavaScript(
+          "IsStackOf",
+          [getHeap(current.scope, node, context), receiver, boolean(isAsync)],
+          context,
+        ),
         leaf(apply("Assert", [boolean(false), string("tla-ts can't follow this DisposableStack")])),
         throwTypeError(current, node, context, currentFrame),
       ),

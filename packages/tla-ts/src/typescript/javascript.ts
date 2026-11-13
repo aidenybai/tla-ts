@@ -1027,6 +1027,9 @@ StackObject(prototype, isAsync) ==
 
 IsStack(heap, value) == IsHeap(value) /\\ "isDisposed" \\in DOMAIN Lookup(heap, value)
 
+\\* A DisposableStack, or an AsyncDisposableStack where isAsync holds.
+IsStackOf(heap, value, isAsync) == IsStack(heap, value) /\\ Lookup(heap, value).isAsync = isAsync
+
 SetDisposed(heap, ref) == [heap EXCEPT !.objects[ref[Ref]].isDisposed = TRUE]
 
 \\* The paths of the getters that read a buffer's, a view's, or a DisposableStack's internal slots.
