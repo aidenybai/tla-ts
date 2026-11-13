@@ -144,6 +144,23 @@ export const compile = (
     ) {
       texts.push(node.text);
     }
+    // The characters that decodeURI, decodeURIComponent, and unescape may make of a string's
+    // escapes: each %uXXXX, each %XX, and the UTF-8 that a run of %XX encodes.
+    if (ts.isStringLiteralLike(node)) {
+      const runs = [...node.text.matchAll(/(?:%[0-9a-f]{2})+/gi)].map((match) =>
+        match[0]
+          .slice(1)
+          .split("%")
+          .map((byte) => Number.parseInt(byte, 16)),
+      );
+      texts.push(
+        ...[...node.text.matchAll(/%u([0-9a-f]{4})/gi)].map((match) =>
+          String.fromCharCode(Number.parseInt(match[1], 16)),
+        ),
+        ...runs.map((bytes) => String.fromCharCode(...bytes)),
+        ...runs.map((bytes) => new TextDecoder().decode(Uint8Array.from(bytes))),
+      );
+    }
     // String.fromCharCode and String.fromCodePoint of numbers that the text writes make the code
     // units of those numbers, where fromCodePoint throws no RangeError.
     const method =

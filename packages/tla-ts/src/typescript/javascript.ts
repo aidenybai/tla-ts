@@ -2251,7 +2251,16 @@ RECURSIVE DecodeURI(_, _)
 DecodeURI(text, reserved) ==
   CASE text = "" -> ""
     [] SubSeq(text, 1, 1) # "%" -> SubSeq(text, 1, 1) \\o DecodeURI(Tail(text), reserved)
-    [] ByteAt(text, 1) >= 128 -> Assert(FALSE, "tla-ts can't make a character outside ASCII")
+    [] ByteAt(text, 1) >= 128 ->
+         LET count == UTF8Length(ByteAt(text, 1))
+             rest(index) == ByteAt(text, 3 * index - 2) - 128
+             point == CASE count = 2 -> (ByteAt(text, 1) - 192) * 64 + rest(2)
+                        [] count = 3 -> (ByteAt(text, 1) - 224) * 4096 + rest(2) * 64 + rest(3)
+                        [] OTHER ->
+                             (ByteAt(text, 1) - 240) * 262144 + rest(2) * 4096 + rest(3) * 64
+                               + rest(4)
+         IN  FromCharCodes(<<point>>, TRUE)
+               \\o DecodeURI(SubSeq(text, 3 * count + 1, Len(text)), reserved)
     [] OTHER ->
          LET character == SubSeq(AsciiCharacters, ByteAt(text, 1) + 1, ByteAt(text, 1) + 1)
          IN  (IF character \\in reserved THEN SubSeq(text, 1, 3) ELSE character)
@@ -2267,9 +2276,10 @@ Unescape(text) ==
       length == CASE isLong -> 6 [] IsEscapeAt(text, 1) -> 3 [] OTHER -> 1
       code == IF isLong THEN ByteAt(text, 2) * 256 + ByteAt(text, 4) ELSE ByteAt(text, 1)
   IN  CASE text = "" -> ""
-        [] length > 1 /\\ code >= 128 -> Assert(FALSE, "tla-ts can't make a character outside ASCII")
         [] OTHER ->
-             (IF length = 1 THEN SubSeq(text, 1, 1) ELSE SubSeq(AsciiCharacters, code + 1, code + 1))
+             (CASE length = 1 -> SubSeq(text, 1, 1)
+                [] code < 128 -> SubSeq(AsciiCharacters, code + 1, code + 1)
+                [] OTHER -> CodeUnit(code))
                \\o Unescape(SubSeq(text, length + 1, Len(text)))
 
 \\* JavaScript's < of two strings, which compares the codes of their first different characters.

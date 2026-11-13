@@ -14475,7 +14475,7 @@ describe("errors", () => {
       checkModel(`if (decodeURIComponent("%41%42") !== "AC") throw new Error("wrong");`),
     ).rejects.toThrow("wrong");
     await expect(
-      checkModel(`if (decodeURI("%C3%A9") === "") throw new Error("never");`),
+      checkModel(`if (decodeURI("%C3" + "%A9") === "") throw new Error("never");`),
     ).rejects.toThrow("tla-ts can't make a character outside ASCII");
   });
 
@@ -14495,7 +14495,7 @@ describe("errors", () => {
       checkModel(getSource("a%20b*@+-./_%2C%7E|%0A0A%\\x0000%u004zz|%U0000%zz")),
     ).rejects.toThrow("outcomes");
     await expect(
-      checkModel(`if (unescape("%u00E9") === "") throw new Error("never");`),
+      checkModel(`if (unescape("%u00" + "E9") === "") throw new Error("never");`),
     ).rejects.toThrow("tla-ts can't make a character outside ASCII");
   });
 
@@ -17187,6 +17187,31 @@ describe("errors", () => {
 
     it("doesn't settle a job sooner", async () => {
       expect((await checkModel(getSource("0123[0,1]4"))).failure).toBeDefined();
+    });
+  });
+
+  describe("decode escapes into characters outside ASCII", () => {
+    const getSource = (expected: string) => `
+      const cyrillic = decodeURI("%D0%AE");
+      const emoji = decodeURIComponent("%F0%9F%98%80");
+      const result = [
+        cyrillic.charCodeAt(0),
+        unescape("%E4").charCodeAt(0),
+        unescape("%uFFFE").charCodeAt(0),
+        emoji.charCodeAt(0),
+        emoji.charCodeAt(1),
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("makes the code units that the escapes write", async () => {
+      expect((await checkModel(getSource("1070,228,65534,55357,56832"))).failure).toBeUndefined();
+    });
+
+    it("doesn't make another code unit", async () => {
+      await expect(checkModel(getSource("1070,229,65534,55357,56832"))).rejects.toThrow(
+        "1070,228,65534,55357,56832",
+      );
     });
   });
 
