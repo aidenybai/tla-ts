@@ -155,6 +155,25 @@ describe("typed tier matches TLC", () => {
     },
   );
 
+  it("reports the initial states computed so far, as the interpreter does", async () => {
+    const getCounts = async (isTyped: boolean) => {
+      const counts: number[] = [];
+      await check({
+        source: readFileSync(join(FIXTURES, "GameOfLife.tla"), "utf8"),
+        config: readFileSync(join(FIXTURES, "GameOfLife.cfg"), "utf8"),
+        isWarningEnabled: false,
+        maxSetSize: isTyped ? undefined : INTERPRETED_SET_SIZE,
+        onProgress: (progress) => {
+          if (progress.kind === "initial-states-progress") counts.push(progress.count);
+        },
+      });
+      return counts;
+    };
+    const expected = [2, 4, 8, 16, 32, 64, 128, 256];
+    expect(await getCounts(true)).toEqual(expected);
+    expect(await getCounts(false)).toEqual(expected);
+  });
+
   it("prints a constant definition once, as TLC does as it starts", async () => {
     const getLines = async (isTyped: boolean) => {
       const lines: string[] = [];

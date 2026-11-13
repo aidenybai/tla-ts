@@ -1110,6 +1110,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     typedChecks &&
     runTypedSearch(environment, { ...typedChecks, isDeadlockChecked: config.checkDeadlock });
   if (typed && !typed.deadlock) {
+    for (let count = 2; count < typed.initialStates.generated; count *= 2) {
+      reportInitialStatesProgress(count, options.onProgress);
+    }
     options.onProgress?.({ kind: "initial-states-computed", initialStates: typed.initialStates });
     return {
       ...createResult("success"),
