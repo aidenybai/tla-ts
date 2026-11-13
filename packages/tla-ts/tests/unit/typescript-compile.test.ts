@@ -3172,6 +3172,26 @@ describe("values", () => {
     await expect(checkModel(getSource("3,true,false"))).rejects.toThrow("4,true,false");
   });
 
+  it("makes a set of the prefixes that Array.from gives for each of a map's keys", async () => {
+    const getSource = (expected: string) => `
+      const LITERALS = new Map([
+        ["==", 1],
+        ["<=", 2],
+        ["===", 3],
+      ]);
+      const PREFIXES = new Set(
+        [...LITERALS.keys()].flatMap((image) =>
+          Array.from({ length: image.length - 1 }, (_, index) => image.slice(0, index + 1)),
+        ),
+      );
+      const result = [PREFIXES.size, PREFIXES.has("<"), PREFIXES.has("==="), PREFIXES.has("==")].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("3,true,false,true"))).failure).toBeUndefined();
+    const wrong = await checkModel(getSource("4,true,false,true"));
+    expect(wrong.failure?.message).toContain("3,true,false,true");
+  });
+
   it("changes a field's array through a local that names it", async () => {
     const getSource = (expected: string) => `
       const shrink = (values: number[], size: number) => {

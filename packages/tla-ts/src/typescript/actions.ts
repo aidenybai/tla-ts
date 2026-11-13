@@ -198,6 +198,7 @@ import {
   hasPrototypeArray,
   getNewWrapper,
   isAllocation,
+  isArrayFromLength,
   isNewProxy,
   getNewBuffer,
   getViewCall,
@@ -8880,7 +8881,7 @@ const rejectCatchRedeclaration = (declaration: ts.VariableDeclaration) => {
 const usesHeap = (node: ts.Node, context: Context, visited: Set<ts.Node>): boolean => {
   if (ts.isTypeNode(node)) return false;
   if (
-    ts.isObjectLiteralExpression(node) ||
+    (ts.isObjectLiteralExpression(node) && !isArrayFromLength(node, context)) ||
     ts.isRegularExpressionLiteral(node) ||
     isAllocation(node, context) ||
     isClosure(node, context)
@@ -9800,7 +9801,7 @@ const getEffects = (
     (ts.isBindingElement(node) &&
       (context.heapCollections.has(node) ||
         (node.dotDotDotToken !== undefined && ts.isObjectBindingPattern(node.parent)))) ||
-    ts.isObjectLiteralExpression(node) ||
+    (ts.isObjectLiteralExpression(node) && !isArrayFromLength(node, context)) ||
     ts.isDeleteExpression(node) ||
     isObjectChange(node, context) ||
     isRevoke(node, context) ||

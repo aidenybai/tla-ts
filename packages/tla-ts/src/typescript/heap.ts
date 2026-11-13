@@ -1737,6 +1737,22 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   );
 };
 
+// The { length: n } options of Array.from(options, callback), which Array.from reads only the length
+// of and no code can reach, so the heap doesn't hold it.
+export const isArrayFromLength = (node: ts.Node, context: Context) =>
+  ts.isObjectLiteralExpression(node) &&
+  node.properties.length === 1 &&
+  (ts.isPropertyAssignment(node.properties[0]) ||
+    ts.isShorthandPropertyAssignment(node.properties[0])) &&
+  ts.isIdentifier(node.properties[0].name) &&
+  node.properties[0].name.text === "length" &&
+  ts.isCallExpression(node.parent) &&
+  node.parent.arguments.length === 2 &&
+  node.parent.arguments[0] === node &&
+  ts.isPropertyAccessExpression(node.parent.expression) &&
+  node.parent.expression.name.text === "from" &&
+  getBuiltIn(node.parent.expression.expression, context) === "Array";
+
 // Whether an object literal becomes a heap object. One that a built-in function takes, such as
 // Array.from({ length: 2 }), does too, whatever type the function asks for.
 const isObjectValue = (node: ts.ObjectLiteralExpression, context: Context) => {
@@ -2628,7 +2644,8 @@ export const isMade = (node: ts.Node, context: Context, isSometimes = false): bo
   return (
     (ts.isObjectLiteralExpression(node) &&
       isObjectValue(node, context) &&
-      !isProxyOperation(node, context)) ||
+      !isProxyOperation(node, context) &&
+      !isArrayFromLength(node, context)) ||
     // map makes its array as it runs, after it visits each element.
     ((ts.isArrayLiteralExpression(node) ||
       isHoleyNewArray(node) ||
