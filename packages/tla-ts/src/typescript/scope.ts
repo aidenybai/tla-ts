@@ -405,11 +405,20 @@ export const bindPatternInline = (
       );
     }
     // A record may lack the field that a default or a nested pattern reads, which then reads
-    // undefined.
-    const part =
+    // undefined. Where objects are in the heap, a value whose type isn't an object's, such as a
+    // caught one, may still be an object, which the pattern reads as a member read does.
+    const field =
       initializer === undefined && ts.isIdentifier(element.name)
         ? getField(value, key)
         : getOptionalField(value, key, context);
+    const part =
+      heapSymbol === undefined
+        ? field
+        : ifExpression(
+            useJavaScript("IsRef", [value], context),
+            useJavaScript("Get", [getHeap(current, element, context), value, string(key)], context),
+            field,
+          );
     return bindPatternInline(element.name, withDefault(part), current, context);
   }, iterating);
   if (heapSymbol === undefined) return bound;

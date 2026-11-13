@@ -690,6 +690,31 @@ describe("top-level statements", () => {
     ).toThrow("Give this value a type to use its properties");
   });
 
+  it("destructure an object that a value of type any holds in a script with objects", async () => {
+    const getSource = (expected: number) => `
+      const value: any = { x: 23 };
+      const { x } = value;
+      if (x !== ${expected}) throw new Error("x");
+    `;
+    expect((await checkModel(getSource(23))).failure).toBeUndefined();
+    expect((await checkModel(getSource(24))).failure?.message).toContain("x");
+  });
+
+  it("destructure a thrown object in a catch's pattern", async () => {
+    const getSource = (expected: number) => `
+      let found = 0;
+      try {
+        throw { x: 23 };
+        // @ts-ignore
+      } catch ({ x }) {
+        found = x;
+      }
+      if (found !== ${expected}) throw new Error("caught");
+    `;
+    expect((await checkModel(getSource(23))).failure).toBeUndefined();
+    expect((await checkModel(getSource(24))).failure?.message).toContain("caught");
+  });
+
   it("stop the check at a setter it can't call, before what follows", async () => {
     const result = await checkModel(`
       let count = 0;
