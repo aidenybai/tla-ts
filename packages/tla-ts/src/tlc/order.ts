@@ -1,6 +1,7 @@
 import type { Module, SourceLocation } from "../ast";
 import type { ConfigValue, ModelConfig } from "../config";
 import { createMissingModuleError } from "../errors";
+import { getJavaHashCode } from "../java-hash";
 import { tokenize, type Token } from "../lexer";
 import { extractModule, parseModule, parseModuleTokens } from "../parser";
 import { isBefore } from "../resolve";
@@ -55,14 +56,6 @@ const CANONICAL_OPERATORS = new Map(
 
 const getCanonicalName = (name: string) => CANONICAL_OPERATORS.get(name) ?? name;
 
-const getJavaHash = (text: string) => {
-  let hash = 0;
-  for (let index = 0; index < text.length; index++) {
-    hash = (Math.imul(hash, 31) + text.charCodeAt(index)) | 0;
-  }
-  return hash;
-};
-
 const createSymbolTable = (): SymbolTable => {
   let buckets: SymbolEntry[][] = Array.from({ length: 11 }, () => []);
   let threshold = 8;
@@ -102,7 +95,7 @@ const createSymbolTable = (): SymbolTable => {
 const createEntry = (name: string, kind: SymbolKind, isLocal: boolean): SymbolEntry => ({
   key: kind === "module" ? `module ${name}` : name,
   name,
-  hash: getJavaHash(name) & 0x7fffffff,
+  hash: getJavaHashCode(name) & 0x7fffffff,
   kind,
   isLocal,
 });
