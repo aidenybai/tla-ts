@@ -2572,11 +2572,13 @@ export const translateCallStatement = (
           [translateExpression(stringCall.callee, path.scope, context), builtIn],
           context,
         ),
-        useJavaScript(
-          "HoldsBuiltIn",
-          [heap, builtIn, string("call"), string("Function.prototype.call")],
-          context,
-        ),
+        stringCall.isCall
+          ? useJavaScript(
+              "HoldsBuiltIn",
+              [heap, builtIn, string("call"), string("Function.prototype.call")],
+              context,
+            )
+          : boolean(true),
       ]),
       runConversion(expression, conversion, path, context, frame, (after, converted) => {
         const primitives = [...stringCall.values, undefined].map((_, position) =>
@@ -2594,7 +2596,21 @@ export const translateCallStatement = (
             translatePrimitiveMethod(
               stringCall.primitive,
               useJavaScript("StringOf", [text], context),
-              primitives.slice(1),
+              primitives
+                .slice(1)
+                .map((primitive, position) =>
+                  stringCall.kinds[position] === "kept"
+                    ? primitive
+                    : stringCall.primitive.parameters[position] === "string"
+                      ? useJavaScript("StringOf", [primitive], context)
+                      : context.hasSpecialNumbers
+                        ? useJavaScript("ToNumber", [primitive], context)
+                        : useJavaScript(
+                            "PlainNumber",
+                            [useJavaScript("ToNumber", [primitive], context)],
+                            context,
+                          ),
+                ),
               context,
             ),
           ),
@@ -2604,7 +2620,9 @@ export const translateCallStatement = (
         apply("Assert", [
           boolean(false),
           string(
-            `tla-ts can't call String.prototype.${stringCall.method} where a script replaced it`,
+            stringCall.isCall
+              ? `tla-ts can't call String.prototype.${stringCall.method} where a script replaced it`
+              : "tla-ts can't tell which function this call runs",
           ),
         ]),
       ),

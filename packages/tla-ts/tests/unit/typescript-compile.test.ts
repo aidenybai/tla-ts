@@ -14086,6 +14086,21 @@ describe("errors", () => {
     );
   });
 
+  it("runs a String.prototype method that an object stores under a key on the object", async () => {
+    const getSource = (expected: string) => `
+      const instance = new Boolean(true) as unknown as { [key: string]: unknown };
+      instance.slice = String.prototype.slice;
+      instance.toUpperCase = String.prototype.toUpperCase;
+      // @ts-ignore
+      const outcomes = [instance.slice(false, 3), instance.toUpperCase()].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("tru,TRUE"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("true,true"))).failure?.message).toContain(
+      "outcomes tru,TRUE",
+    );
+  });
+
   it("converts a primitive that a string method takes as a number", async () => {
     const getSource = (expected: string) => `
       const outcomes = [

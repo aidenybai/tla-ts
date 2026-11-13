@@ -43,6 +43,7 @@ import {
   translateSymbolProperty,
 } from "./intrinsics";
 import { getTypeNames, isComparableType, useJavaScript } from "./javascript";
+import { getWrittenFunctions } from "./protocols";
 import { bindNames, bindPatternInline, type Receiver, type Scope } from "./scope";
 import {
   apply,
@@ -2321,31 +2322,31 @@ const getPrimitiveCall = (node: MethodCall, kind: Kind, context: Context) => {
 };
 
 // A call of a String.prototype method through call, directly or through a variable that its
-// declaration gives the method, on a value that a statement converts to a string: undefined,
-// null, and symbols throw a TypeError, and objects convert through ToPrimitive.
+// declaration gives the method, or of a key that stores it, on a value that a statement converts to
+// a string: undefined, null, and symbols throw a TypeError, and objects convert through ToPrimitive.
 export const getStringCall = (node: ts.Node, context: Context) => {
-  if (context.heap === undefined || !isMethodCall(node) || node.expression.name.text !== "call") {
-    return undefined;
-  }
-  const callee = node.expression.expression;
-  const method = getPrototypeMethod(callee, "String", context);
+  if (context.heap === undefined || !isMethodCall(node)) return undefined;
+  const isCall = node.expression.name.text === "call";
+  const callee = isCall ? node.expression.expression : node.expression;
+  const method = isCall
+    ? getPrototypeMethod(callee, "String", context)
+    : getStoredStringMethod(node.expression, context);
   const primitive = method === undefined ? undefined : STRING_METHODS.get(method);
-  const owner = node.arguments.at(0);
-  const values = node.arguments.slice(1);
+  const owner = isCall ? node.arguments.at(0) : node.expression.expression;
+  const values = isCall ? node.arguments.slice(1) : node.arguments;
   if (
     method === undefined ||
     primitive === undefined ||
     owner === undefined ||
     ts.isSpreadElement(owner) ||
-    values.length > primitive.parameters.length ||
-    !values.every((value, position) =>
-      primitive.parameters[position] === "number"
-        ? isNumberLike(value, context)
-        : isEvery(context.checker.getTypeAtLocation(value), ts.TypeFlags.StringLike),
-    )
+    values.length > primitive.parameters.length
   ) {
     return undefined;
   }
+  const kinds = values.map((value, position) =>
+    getPrimitiveArgument(method, primitive, position, value, context),
+  );
+  if (kinds.includes(undefined)) return undefined;
   // String.prototype.method.call of a primitive reads it as a string in an expression, and tla-ts
   // can't convert a function, whose source text it doesn't keep.
   const type = context.checker.getTypeAtLocation(owner);
@@ -2354,10 +2355,26 @@ export const getStringCall = (node: ts.Node, context: Context) => {
     type,
     ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike,
   );
-  return (isDirect && isPrimitive) ||
+  return (isCall && isDirect && isPrimitive) ||
     getTypeNames(type, context.checker)?.includes("function") === true
     ? undefined
-    : { method, primitive, callee, owner, values };
+    : { method, primitive, callee, owner, values, kinds, isCall };
+};
+
+// The String.prototype method that a key whose type doesn't tell which function it holds may hold,
+// where the script stores the method as a value, as obj.charAt = String.prototype.charAt does, and
+// writes no function of its own under the key.
+const getStoredStringMethod = (callee: ts.PropertyAccessExpression, context: Context) => {
+  const name = callee.name.text;
+  return (context.checker.getTypeAtLocation(callee).flags &
+    (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
+    0 &&
+    getWrittenFunctions(callee, name, context).length === 0 &&
+    findNodes(callee.getSourceFile(), ts.isPropertyAccessExpression).some(
+      (inner) => getStoredBuiltIn(inner, context) === `String.prototype.${name}`,
+    )
+    ? name
+    : undefined;
 };
 
 // The value of a primitive's method, given the primitive that it reads and its arguments.
