@@ -13422,6 +13422,21 @@ describe("errors", () => {
     expect((await check(compile(made(4)))).failure?.message).toContain("list");
   });
 
+  it("spreads into concat an array that the heap holds or an object that says to", async () => {
+    const getSource = (expected: string) => `
+      const held: number[] = [1, 2];
+      Object.defineProperty(held, "extra", { value: 1 });
+      const item: { [key: symbol]: unknown } = {};
+      const plain: unknown[] = ([0] as unknown[]).concat(item);
+      item[Symbol.isConcatSpreadable] = true;
+      const spread: unknown[] = ([0] as unknown[]).concat(item);
+      const outcomes = [[0].concat(held).length, plain.length, spread.length].join(",");
+      if (outcomes !== "${expected}") throw new Error("outcomes " + outcomes);
+    `;
+    expect((await checkModel(getSource("3,2,1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("2,2,2"))).failure?.message).toContain("outcomes 3,2,1");
+  });
+
   it("tests numbers through the global isNaN and isFinite", async () => {
     const result = await check(
       compile(

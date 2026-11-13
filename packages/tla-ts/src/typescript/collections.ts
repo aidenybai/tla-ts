@@ -981,8 +981,18 @@ const translateSequenceOperation = (
       () =>
         [
           sequence,
+          // An object, such as an array that the heap holds, spreads as its
+          // @@isConcatSpreadable property or IsArray tells.
           ...call.arguments.map((inner) =>
-            getKind(inner, context) === "sequence" ? translate(inner) : tuple([translate(inner)]),
+            getKind(inner, context) === "sequence"
+              ? translate(inner)
+              : context.heap === undefined
+                ? tuple([translate(inner)])
+                : useJavaScript(
+                    "ConcatSpread",
+                    [getHeap(scope, inner, context), translate(inner)],
+                    context,
+                  ),
           ),
         ].reduce((left, right) => apply("\\o", [left, right])),
     ],

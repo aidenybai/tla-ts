@@ -2831,6 +2831,17 @@ IsArray(heap, value) ==
                  \\/ IsArray(heap, target)
     [] OTHER -> IsRef(value) /\\ IsArrayObject(Lookup(heap, value))
 
+\\* The values that concat appends for an argument: the elements of an object whose
+\\* @@isConcatSpreadable property is truthy, or of an array where that property is undefined, and
+\\* otherwise the value itself.
+ConcatSpread(heap, value) ==
+  LET spreadable == IF IsRef(value)
+                    THEN Get(heap, value, WellKnownSymbol("isConcatSpreadable"))
+                    ELSE Undefined
+  IN  IF IF spreadable = Undefined THEN IsArray(heap, value) ELSE ToBoolean(spreadable)
+      THEN ArrayLike(heap, value)
+      ELSE <<value>>
+
 \\* Whether a proxy or a proxy that it reads through is revoked, so that IsArray throws a TypeError.
 RECURSIVE IsRevokedProxy(_, _)
 IsRevokedProxy(heap, value) ==
