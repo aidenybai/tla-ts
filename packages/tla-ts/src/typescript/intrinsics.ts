@@ -1782,7 +1782,8 @@ const getConstantValues = (
 };
 
 // The patterns and flags that new RegExp or RegExp may make, where its arguments are strings that
-// tla-ts finds as it compiles.
+// tla-ts finds as it compiles, or a regexp literal and the string literal of new flags, without
+// which new RegExp copies its flags and RegExp gives the literal itself.
 const getRegExpTexts = (node: ts.Node, context: Context) => {
   if (
     (!ts.isNewExpression(node) && !ts.isCallExpression(node)) ||
@@ -1791,6 +1792,21 @@ const getRegExpTexts = (node: ts.Node, context: Context) => {
     return undefined;
   }
   const values = node.arguments ?? [];
+  const literal = values[0];
+  if (literal !== undefined && ts.isRegularExpressionLiteral(literal)) {
+    const end = literal.text.lastIndexOf("/");
+    const flags = values[1];
+    return values.length > 2 ||
+      (flags === undefined && ts.isCallExpression(node)) ||
+      (flags !== undefined && !ts.isStringLiteralLike(flags))
+      ? undefined
+      : [
+          {
+            pattern: literal.text.slice(1, end),
+            flags: flags?.text ?? literal.text.slice(end + 1),
+          },
+        ];
+  }
   const texts = values.map((value) => {
     const constants = getConstantValues(value, context, new Set());
     const strings = constants?.filter((constant) => typeof constant === "string");
@@ -1848,7 +1864,9 @@ export const translateRegExpValue = (node: ts.Node, scope: Scope, context: Conte
   if (
     made !== undefined &&
     (ts.isNewExpression(node) || ts.isCallExpression(node)) &&
-    !(node.arguments ?? []).every(ts.isStringLiteralLike)
+    !(node.arguments ?? []).every(
+      (argument) => ts.isStringLiteralLike(argument) || ts.isRegularExpressionLiteral(argument),
+    )
   ) {
     const values = (node.arguments ?? []).map((argument) =>
       translateExpression(argument, scope, context),

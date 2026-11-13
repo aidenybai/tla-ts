@@ -18921,6 +18921,17 @@ describe("regular expressions", () => {
     await expect(checkModel(getSource("/^.$/"))).rejects.toThrow("s");
   });
 
+  it("make a regexp of a regexp literal with its flags or new ones", async () => {
+    const getSource = (flags: string) => `
+      const copied = new RegExp(/a/im);
+      if (copied.flags !== "${flags}" || !copied.test("A")) throw new Error("copied");
+      const flagged = RegExp(/(?s:^.$)/m, "");
+      if (flagged.flags !== "" || !flagged.test("\\n")) throw new Error("flagged");
+    `;
+    expect((await checkModel(getSource("im"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("i"))).rejects.toThrow("copied");
+  });
+
   it("run a String object's regexp methods on its string", async () => {
     const result = await checkModel(`
       const text = new String("hello");
