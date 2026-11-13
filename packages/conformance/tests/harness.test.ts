@@ -130,16 +130,22 @@ describe("getMessageCodes", () => {
 });
 
 describe("getHost", () => {
-  it("splits a custom host command into its arguments", () => {
+  it("splits a custom host command into its arguments for every suite", () => {
+    const command = ["node", "--stack-size=8000", "cli.js"];
     expect(getHost("node --stack-size=8000 cli.js")).toEqual({
-      tlc: ["node", "--stack-size=8000", "cli.js"],
+      tlc: command,
+      tlapm: command,
+      backend: command,
     });
   });
 
   it("keeps a quoted path with a space as one argument", () => {
-    expect(getHost(`node "/my tools/cli.js" --library='/a b'  -deadlock`)).toEqual({
-      tlc: ["node", "/my tools/cli.js", "--library=/a b", "-deadlock"],
-    });
+    expect(getHost(`node "/my tools/cli.js" --library='/a b'  -deadlock`).tlc).toEqual([
+      "node",
+      "/my tools/cli.js",
+      "--library=/a b",
+      "-deadlock",
+    ]);
   });
 });
 
