@@ -77,6 +77,21 @@ For a TLA+ spec, TLA-ts reads `Counter.cfg` from the same folder and takes TLC's
 
 ## API
 
+### `compile`
+
+```ts
+const spec = await compile({ source, fileName: "counter.ts" });
+const result = await check(spec);
+```
+
+| Option      | Description                                                                   |
+| ----------- | ----------------------------------------------------------------------------- |
+| `source`    | The text of the TypeScript file                                               |
+| `fileName`  | The path of the file. Imports resolve from it, and the module takes its name  |
+| `libraries` | TypeScript's built-in `lib.*.d.ts` files by name. Pass them only in a browser |
+
+TypeScript's built-in files declare types such as `Array` and `Map`. In Node, `compile` reads them from disk. A browser has no disk, so pass them as a `Map` from file name to text.
+
 ### `check`
 
 ```ts
@@ -96,7 +111,7 @@ result.violation?.trace;
 
 ```ts
 const result = await prove({ source });
-result.obligations; // each with a status: "proved", "trivial", "failed", or "unsupported"
+result.obligations[0].status; // "proved", "trivial", "failed", or "unsupported"
 ```
 
 | Option         | Description                                      |

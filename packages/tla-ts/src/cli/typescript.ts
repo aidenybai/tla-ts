@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Module } from "../ast";
+import { compile } from "../compile";
 
 // A spec tla-ts compiled from the TypeScript file at path. specPath is where its module would be
 // if it were a file, though tla-ts checks it without writing one.
@@ -13,11 +14,7 @@ export interface CompiledInput {
 }
 
 export const compileTypeScriptFile = async (path: string): Promise<CompiledInput> => {
-  // The TypeScript compiler takes a while to load, so only a TypeScript input loads it.
-  const compiled = (await import("../typescript/compile")).compile(
-    readFileSync(path, "utf8"),
-    path,
-  );
+  const compiled = await compile({ source: readFileSync(path, "utf8"), fileName: path });
   return {
     path,
     specPath: join(dirname(path), `${compiled.name}.tla`),
