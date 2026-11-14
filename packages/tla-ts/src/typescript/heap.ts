@@ -388,6 +388,7 @@ const holdObject = (node: FunctionNode, value: Expression, context: Context) => 
 const getKeyName = (key: ts.PropertyName, context: Context) => {
   if (ts.isIdentifier(key) || ts.isPrivateIdentifier(key) || ts.isStringLiteral(key))
     return key.text;
+  if (ts.isNumericLiteral(key)) return String(Number(key.text));
   if (!ts.isComputedPropertyName(key) || !ts.isIdentifier(key.expression)) return undefined;
   const symbol = getSymbol(key.expression, context.checker);
   const declaration = symbol?.valueDeclaration;
@@ -415,10 +416,7 @@ const getKeyName = (key: ts.PropertyName, context: Context) => {
 // shorthand property that an assignment destructures, or the property or static field that it
 // initializes gives, and which is empty where it's an argument, an element, an operand of in or of
 // a comma, or what an assignment to anything else assigns.
-export const getAnonymousName = (
-  node: ts.ArrowFunction | ts.FunctionExpression,
-  context: Context,
-) => {
+export const getAnonymousName = (node: ts.ArrowFunction | HeapClass, context: Context) => {
   const named = ts.findAncestor(node.parent, (parent) => !ts.isParenthesizedExpression(parent));
   if (named === undefined) return undefined;
   if (ts.isVariableDeclaration(named)) {
@@ -697,21 +695,22 @@ const NAMING_ASSIGNMENTS = new Set([
   ts.SyntaxKind.AmpersandAmpersandEqualsToken,
 ]);
 
-const getFunctionName = (node: HeapClass | ts.ArrowFunction) => {
+const getFunctionName = (node: HeapClass | ts.ArrowFunction, context: Context) => {
   const named = ts.findAncestor(node.parent, (parent) => !ts.isParenthesizedExpression(parent));
-  return (
-    (ts.isArrowFunction(node) ? undefined : node.name?.text) ??
-    (named !== undefined &&
-    (ts.isVariableDeclaration(named) || ts.isBindingElement(named) || ts.isParameter(named)) &&
+  const ownName = ts.isArrowFunction(node) ? undefined : node.name?.text;
+  if (ownName !== undefined) return ownName;
+  if (
+    named !== undefined &&
+    (ts.isBindingElement(named) || ts.isParameter(named)) &&
     ts.isIdentifier(named.name)
-      ? named.name.text
-      : named !== undefined &&
-          ts.isBinaryExpression(named) &&
-          ts.isIdentifier(named.left) &&
-          NAMING_ASSIGNMENTS.has(named.operatorToken.kind)
-        ? named.left.text
-        : "")
-  );
+  ) {
+    return named.name.text;
+  }
+  const anonymousName = getAnonymousName(node, context);
+  if (anonymousName === undefined && named !== undefined && ts.isPropertyAssignment(named)) {
+    throw new TlaTypeScriptError("Give this function a key whose name tla-ts can tell", named);
+  }
+  return anonymousName ?? "";
 };
 
 // A function's length: its parameters before the first with a default or the rest parameter. A
@@ -891,7 +890,7 @@ const translateClass = (
           [false, false, true],
         ),
         string("name"),
-        string(getFunctionName(node)),
+        string(getFunctionName(node, context)),
         [false, false, true],
       ),
       string("prototype"),
@@ -1005,7 +1004,7 @@ const translateClassObject = (node: ts.ClassExpression, heap: Expression, contex
           [false, false, true],
         ),
         "name",
-        string(getFunctionName(node)),
+        string(getFunctionName(node, context)),
         [false, false, true],
       ),
       "prototype",
@@ -1456,7 +1455,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
               string(
                 ts.isMethodDeclaration(binding.target)
                   ? (binding.method?.key ?? "")
-                  : getFunctionName(binding.target),
+                  : getFunctionName(binding.target, context),
               ),
               number(Math.max(0, length)),
               boolean(
@@ -1515,7 +1514,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
           "GeneratorFunctionObject",
           [
             translateBuiltInValue("%GeneratorFunction%.prototype", node, context),
-            string(getFunctionName(node)),
+            string(getFunctionName(node, context)),
             number(getFunctionLength(getParameters(node))),
             useJavaScript("NextRef", [heap, number(1)], context),
           ],
@@ -1538,7 +1537,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
               "ArrowObject",
               [
                 translateBuiltInValue("Function.prototype", node, context),
-                string(getFunctionName(node)),
+                string(getFunctionName(node, context)),
                 number(getFunctionLength(getParameters(node))),
               ],
               context,

@@ -2104,7 +2104,10 @@ const isReadClass = (node: ts.Node): boolean => {
     (ts.isBinaryExpression(parent) &&
       parent.right === node &&
       ts.isIdentifier(parent.left) &&
-      LOGICAL_ASSIGNMENTS.has(parent.operatorToken.kind))
+      (LOGICAL_ASSIGNMENTS.has(parent.operatorToken.kind) ||
+        parent.operatorToken.kind === ts.SyntaxKind.EqualsToken)) ||
+    (ts.isPropertyAssignment(parent) && parent.initializer === node) ||
+    (ts.isShorthandPropertyAssignment(parent) && parent.objectAssignmentInitializer === node)
   );
 };
 

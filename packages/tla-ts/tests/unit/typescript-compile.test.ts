@@ -22313,6 +22313,42 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("names the classes that an assignment and an object literal make", async () => {
+    const getSource = (expected: string) => `
+      const named = Symbol("tag");
+      const anonymous = Symbol();
+      var held, plain, statics;
+      held = class Own {};
+      plain = class {};
+      statics = class { static name() {} };
+      const object = { id: class {}, [named]: class {}, [anonymous]: class {}, "a key": class {}, 0x10: class {} };
+      const result = [
+        held.name,
+        plain.name,
+        typeof statics.name,
+        object.id.name,
+        object[named].name,
+        object[anonymous].name,
+        object["a key"].name,
+        object[16].name,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "Own|plain|function|id|[tag]||a key|16";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("Own|plain|function|id|tag||a key|16"))).failure?.message,
+    ).toContain(expected);
+    expect(() =>
+      compile(`
+        const keys = ["a", "b"];
+        const key = keys[1];
+        const object = { [key]: class {} };
+        const name = object[key].name;
+      `),
+    ).toThrow("Give this function a key whose name tla-ts can tell");
+  });
+
   it("gives the object that Object.defineProperty and Object.freeze change", async () => {
     const result = await check(
       compile(
