@@ -288,6 +288,20 @@ export const getTlcFingerprint = (state: Value[]) => {
   return fingerprint;
 };
 
+// The low 32 bits of the fingerprint of the values extend adds, by which TLC orders a state's
+// successors in its liveness graph.
+export const getLowFingerprint = (extend: () => void) => {
+  const outerHigh = high;
+  const outerLow = low;
+  high = initialHigh;
+  low = initialLow;
+  extend();
+  const fingerprint = low | 0;
+  high = outerHigh;
+  low = outerLow;
+  return fingerprint;
+};
+
 // Fingerprints each of count states from the values extend adds for it.
 export const getExtendedFingerprints = (count: number, extend: (position: number) => void) => {
   const fingerprints = new BigInt64Array(count);

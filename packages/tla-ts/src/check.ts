@@ -1103,8 +1103,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     options.dump === undefined &&
     // A set of small integers on the tier is a 31-bit mask, which a lower bound could overflow.
     options.maxSetSize === undefined &&
-    !hasPostconditions
-      ? search.getTypedChecks()
+    !hasPostconditions &&
+    !(liveness && options.livenessCheck === "off")
+      ? search.getTypedChecks(liveness?.solutions)
       : undefined;
   const typed =
     typedChecks &&
@@ -1114,13 +1115,26 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       reportInitialStatesProgress(count, options.onProgress);
     }
     options.onProgress?.({ kind: "initial-states-computed", initialStates: typed.initialStates });
-    return {
+    const statistics = {
       ...createResult("success"),
       generatedStates: typed.generatedStates,
       distinctStates: typed.distinctStates,
       queuedStates: 0,
       depth: typed.generatedStates === 0 ? 0 : Math.max(typed.depth, 1),
       initialStates: typed.initialStates,
+    };
+    if (liveness) {
+      options.onProgress?.({
+        kind: "liveness-started",
+        branches: liveness.branches,
+        isComplete: true,
+        states: typed.distinctStates,
+        statistics,
+      });
+      options.onProgress?.({ kind: "liveness-finished" });
+    }
+    return {
+      ...statistics,
       outDegrees: typed.outDegrees,
       fingerprintDistance: options.isFingerprintDistanceSkipped
         ? undefined

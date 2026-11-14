@@ -88,6 +88,7 @@ describe("typed tier matches TLC", () => {
     ["ScrambledImages", 21],
     ["SparseBags", 13],
     ["PartialSteps", 4],
+    ["FairProcesses", 55],
   ])("counts each successor TLC generates in %s", async (name, generatedStates) => {
     const results = await Promise.all([checkFixture(name, false), checkFixture(name, true)]);
     expect(results.map((result) => result.generatedStates)).toEqual([
@@ -127,7 +128,13 @@ describe("typed tier matches TLC", () => {
     },
   );
 
-  it.each(["PartialStepsReached"])("checks %s as the interpreter does", async (name) => {
+  it.each([
+    "FairProcesses",
+    "StarvedProcesses",
+    "PartialStepsReached",
+    "LiveComparers",
+    "EnabledInstance",
+  ])("checks %s as the interpreter does", async (name) => {
     const [typed, interpreted] = await Promise.all([
       checkFixture(name, true),
       checkFixture(name, true, false),

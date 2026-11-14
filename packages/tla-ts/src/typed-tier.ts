@@ -14,7 +14,14 @@ import {
 } from "./ast";
 import { isConstantLevel, isExpressionImpure } from "./dependencies";
 import { isStackOverflow, TlaError } from "./errors";
+import {
+  createLiveGraph,
+  getLiveAtoms,
+  type LiveAtom,
+  type LiveSuccessor,
+} from "./liveness-checker";
 import { permuteValue, type Images } from "./symmetry";
+import type { Solution } from "./tableau";
 import {
   evaluate,
   findGlobalName,
@@ -25,7 +32,13 @@ import {
 } from "./evaluate";
 import { getContext } from "./search";
 import { forEachInitialState, hasBranches } from "./successors";
-import { extendFunction, extendSet, extendValue, getExtendedFingerprints } from "./tlc/fingerprint";
+import {
+  extendFunction,
+  extendSet,
+  extendValue,
+  getExtendedFingerprints,
+  getLowFingerprint,
+} from "./tlc/fingerprint";
 import { OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import {
   compareValues,
@@ -194,6 +207,8 @@ export interface TypedCheck {
   variableOrder: number[];
   // Fingerprints a state that is the smallest of its images.
   getFingerprint: (state: Value[]) => bigint;
+  // The solutions of the temporal properties the search checks, without symmetry or a view.
+  liveness: Solution[] | undefined;
 }
 
 export interface TypedResult {
@@ -917,8 +932,8 @@ const getPlainCode = (program: Program, plain: Plain) =>
 const getDomainCode = (program: Program, map: MapType, domain: Value[]) =>
   getPlainCode(program, toPlain(createSet(domain), map.keys, program.plains));
 
-const once = (build: () => string) => {
-  const built: string[] = [];
+const once = <Built>(build: () => Built) => {
+  const built: Built[] = [];
   return () => {
     if (built.length === 0) built.push(build());
     return built[0];
@@ -3129,16 +3144,15 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
         [{ expression: expression.expression, scope: frame.scope, inlining: [] }],
         frame.primed,
       );
-      return {
-        type: createBool(),
-        emit: () =>
-          `(() => { let isFound = false; const emit = () => { isFound = true; }; ${step()} return isFound; })()`,
-      };
+      return { type: createBool(), emit: () => getEnabledCode(step) };
     }
     default:
       return unsupported();
   }
 };
+
+const getEnabledCode = (step: () => string) =>
+  `(() => { let isFound = false; const emit = () => { isFound = true; }; ${step()} return isFound; })()`;
 
 // TLC evaluates UNCHANGED e outside an action's conjuncts as e' = e, which for a tuple holds when
 // each element is unchanged.
@@ -3602,7 +3616,9 @@ const getPrimedVariable = (program: Program, expression: Expression, scope: Tier
   const name = expression.expression.name;
   if (scope.has(name)) return undefined;
   const global = findGlobalName(name, program.environment);
-  return global?.kind === "Variable" ? global.index : undefined;
+  if (global?.kind !== "Variable") return undefined;
+  // ENABLED through an INSTANCE primes the instance's variables as variables of their own.
+  return global.index < program.variableTypes.length ? global.index : unsupported();
 };
 
 const compileAssignment = (
@@ -4608,6 +4624,8 @@ interface CompiledSpec {
   next: (state: Plain[], emit: (successor: Plain[]) => void) => void;
   invariants: ((state: Plain[]) => boolean)[];
   actionProperties: ((state: Plain[], next: Plain[]) => boolean)[];
+  // Whether each atom of the temporal properties holds of a state, or of a step to next.
+  liveAtoms: ((state: Plain[], next: Plain[]) => boolean)[];
   constraints: ((state: Plain[]) => boolean)[];
   encode: (state: Plain[], arena: Arena) => void;
   decode: (data: Uint8Array, start: number) => Plain[];
@@ -4621,7 +4639,27 @@ interface CompiledSpec {
   represent: (state: Plain[]) => Plain[];
 }
 
-const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
+// The scope a temporal property's atom is evaluated in binds values, such as a process of \A p.
+const getAtomScope = (program: Program, scope: Scope | undefined) => {
+  const atomScope = new Map<string, Binding>();
+  for (let current = scope; current !== undefined; current = current.parent) {
+    const binding = current.binding;
+    if (atomScope.has(current.name)) continue;
+    if (binding.kind !== "Value" || binding.argument !== undefined) return unsupported();
+    atomScope.set(current.name, {
+      kind: "Code",
+      compiled: compileConstant(program, binding.value),
+      source: undefined,
+    });
+  }
+  return atomScope;
+};
+
+const compileSpec = (
+  program: Program,
+  check: TypedCheck,
+  temporalAtoms: LiveAtom[],
+): CompiledSpec => {
   const unprimed = program.variableTypes.map(() => undefined);
   const next = compileStep(
     program,
@@ -4646,6 +4684,31 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
       action: expectBool(compileValue(program, property.action, frame)),
       unchanged: compileUnchanged(program, property.subscript, frame),
     };
+  });
+  const liveAtoms = temporalAtoms.map((atom) => {
+    const scope = getAtomScope(program, atom.scope);
+    const variables = getVariableCodes(program);
+    if (atom.kind === "State") {
+      const holds = expectBool(
+        compileValue(program, atom.expression, { scope, primed: unprimed, variables }),
+      );
+      return () => holds.emit();
+    }
+    const frame = { scope, primed: successor, variables };
+    if (atom.kind === "Enabled") {
+      // A fairness condition's step is <<A>>_v, whose successors are those of A that change v.
+      const angle = atom.step.kind === "AngleAction" ? atom.step : undefined;
+      const action = angle?.action ?? atom.step;
+      const step = compileStep(program, [{ expression: action, scope, inlining: [] }], unprimed);
+      const unchanged = angle && compileUnchanged(program, angle.subscript, frame);
+      return () =>
+        unchanged
+          ? `(() => { let isFound = false; const emit = ([${successor.join(", ")}]) => { if (!(${unchanged.emit()})) isFound = true; }; ${step()} return isFound; })()`
+          : getEnabledCode(step);
+    }
+    const action = expectBool(compileValue(program, atom.expression, frame));
+    const unchanged = atom.subscript && compileUnchanged(program, atom.subscript, frame);
+    return () => (unchanged ? `!(${unchanged.emit()}) && (${action.emit()})` : action.emit());
   });
   program.variableTypes.forEach(closeType);
   const parameters = program.variableTypes.map((_, index) => `v${index}`).join(", ");
@@ -4751,9 +4814,14 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
         if (c < 0) { d.copyWithin(W.start, W.start + m, n); m = n - W.start - m; chosen = G; }
       }
       n = W.start + m;`;
+  // Emitting adds the comparers the code calls, so all of it is emitted before they are joined.
   const nextCode = next();
   const invariantCodes = invariants.map(predicate);
   const constraintCodes = constraints.map(predicate);
+  const liveAtomCodes = liveAtoms.map(
+    (atom) =>
+      `(state, next) => { ${unpack} const [${successor.join(", ")}] = next; return ${atom()}; }`,
+  );
   const actionPropertyCodes = actionProperties.map(
     (property) =>
       `(state, next) => { ${unpack} const [${successor.join(", ")}] = next; return (${property.action.emit()}) || (${property.unchanged.emit()}); }`,
@@ -4777,6 +4845,7 @@ const compileSpec = (program: Program, check: TypedCheck): CompiledSpec => {
     next: (state, emit) => { ${unpack} ${nextCode} },
     invariants: [${invariantCodes.join(", ")}],
     actionProperties: [${actionPropertyCodes.join(", ")}],
+    liveAtoms: [${liveAtomCodes.join(", ")}],
     constraints: [${constraintCodes.join(", ")}],
     encode: (state, arena) => {
       ${unpack}
@@ -4962,7 +5031,8 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   );
   const images = check.symmetry ?? [];
   images.forEach((table) => table.forEach((image) => image && getAtom(program.plains, image)));
-  const compiled = compileSpec(program, check);
+  const atoms = getLiveAtoms(check.liveness ?? []);
+  const compiled = compileSpec(program, check, atoms);
   const keys = createArena();
   const starts = { data: new Int32Array(1 << 16), size: 0 };
   // The state each state was found from, to rebuild the path to a deadlock.
@@ -4996,8 +5066,9 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     table.mask = mask;
   };
   // Each encoding is padded with zeros to a whole number of words, which hash and compare at once.
-  // A slot holds the hash of a key and one more than the index of its first word.
-  const addEncoded = () => {
+  // A slot holds the hash of a key and one more than the index of its state. Finds the index of the
+  // state whose key was just written, or adds it if isAdded and returns -1.
+  const findEncoded = (isAdded: boolean) => {
     const words = keys.words[keys.words.length - 1];
     const start = keys.start;
     const first = start >> 2;
@@ -5007,16 +5078,21 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     for (let slot = hash & table.mask; ; slot = (slot + 1) & table.mask) {
       const entry = slots[slot * 2 + 1];
       if (entry === 0) {
+        if (!isAdded) {
+          keys.size = start;
+          return -1;
+        }
         slots[slot * 2] = hash;
-        slots[slot * 2 + 1] = (((keys.pages.length - 1) * PAGE_SIZE) >> 2) + first + 1;
+        slots[slot * 2 + 1] = statistics.distinct + 1;
         if (++statistics.distinct * 8 > slots.length * 3) grow();
-        return true;
+        return -1;
       }
       if (slots[slot * 2] !== hash) continue;
       // No encoding is a prefix of another, so two states of different lengths differ before the
       // shorter one ends.
-      const page = keys.words[(entry - 1) >>> (PAGE_BITS - 2)];
-      const otherFirst = (entry - 1) & ((PAGE_SIZE >> 2) - 1);
+      const other = starts.data[entry - 1];
+      const page = keys.words[other >>> PAGE_BITS];
+      const otherFirst = (other & (PAGE_SIZE - 1)) >> 2;
       let isSameState = true;
       for (let offset = 0; offset < length; offset++) {
         if (page[otherFirst + offset] !== words[first + offset]) {
@@ -5026,43 +5102,93 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       }
       if (isSameState) {
         keys.size = start;
-        return false;
+        return entry - 1;
       }
     }
   };
+  // Returns the index of a state in the model, or -1 for a state outside it.
   const visit = (state: Plain[]) => {
     statistics.generated++;
     if (!isInModel(state)) {
       checkInvariants(state);
-      return false;
+      return -1;
     }
     if (isEncoded) compiled.encode(state, keys);
     const image = isEncoded ? -1 : compiled.writeKey(state, keys);
-    const isNew = addEncoded();
-    if (!isNew) return false;
+    const found = findEncoded(true);
+    if (found !== -1) return found;
     if (isImaged) pushWord(chosenImages, image);
     if (check.view !== undefined) compiled.writeRest(state, keys);
     pushWord(starts, (keys.pages.length - 1) * PAGE_SIZE + keys.start);
     if (check.isDeadlockChecked) pushWord(parents, expanding.index);
     checkInvariants(state);
-    return true;
+    return statistics.distinct - 1;
   };
+  const holders = new Map(atoms.map((atom, position) => [atom, compiled.liveAtoms[position]]));
+  const holds = (atom: LiveAtom, state: Plain[], next: Plain[]) =>
+    (holders.get(atom) ?? unsupported())(state, next);
+  const liveFingerprints: number[] = [];
+  const getLiveFingerprinters = once(() =>
+    program.variableTypes.map((type) => createFingerprinter(type, program.plains)),
+  );
+  const live =
+    check.liveness &&
+    createLiveGraph<Plain[]>(
+      check.liveness,
+      {
+        atoms: { holdsState: (atom, state) => holds(atom, state, state), holdsAction: holds },
+        isShared: true,
+        // Without symmetry or a view, a state's index identifies it.
+        isSame: () => true,
+        evaluateFrom: (_source, evaluate) => evaluate(),
+      },
+      {
+        getFingerprint: (successor) =>
+          (liveFingerprints[successor.index] ??= getLowFingerprint(() => {
+            const fingerprinters = getLiveFingerprinters();
+            for (const variable of check.variableOrder) {
+              fingerprinters[variable](successor.state[variable]);
+            }
+          })),
+        // The successors of a state the search expanded are all stored.
+        getSuccessors: (_index, state) => {
+          const successors: LiveSuccessor<Plain[]>[] = [];
+          compiled.next(state, (successor) => {
+            if (!isInModel(successor)) return;
+            compiled.encode(successor, keys);
+            const index = findEncoded(false);
+            successors.push({ index: index === -1 ? deopt() : index, state: successor });
+          });
+          return successors;
+        },
+      },
+      environment.runtime.version !== "1.7.4",
+    );
   const cursor: Cursor = { data: initialBytes.data, position: 0 };
   for (let index = 0; index < initialStarts.size; index++) {
     const state = program.variableTypes.map((type) => readPlain(cursor, type, program.plains));
-    if (visit(state)) statistics.depth = 1;
+    const distinct = statistics.distinct;
+    const stateIndex = visit(state);
+    if (statistics.distinct === distinct) continue;
+    statistics.depth = 1;
+    live?.addInitialState(stateIndex, state);
   }
   initialBytes.data = new Uint8Array(0);
   initialStarts.data = new Int32Array(0);
   const initialStates = { generated: statistics.generated, distinct: statistics.distinct };
   const level = { depth: 1, end: statistics.distinct };
   const expansion = { successors: 0, newStates: 0 };
+  const liveSuccessors: LiveSuccessor<Plain[]>[] = [];
+  const liveChecks = { at: 1024 };
   const onSuccessor = (successor: Plain[]) => {
     for (const property of compiled.actionProperties) {
       if (!property(expanding.state, successor)) deopt();
     }
     expansion.successors++;
-    if (visit(successor)) {
+    const distinct = statistics.distinct;
+    const index = visit(successor);
+    if (live && index !== -1) liveSuccessors.push({ index, state: successor });
+    if (statistics.distinct > distinct) {
       expansion.newStates++;
       statistics.depth = Math.max(statistics.depth, level.depth + 1);
     }
@@ -5118,8 +5244,17 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     expanding.index = index;
     expansion.successors = 0;
     expansion.newStates = 0;
+    liveSuccessors.length = 0;
     compiled.next(state, onSuccessor);
-    if (expansion.successors === 0 && check.isDeadlockChecked) {
+    const isDeadlocked = expansion.successors === 0 && check.isDeadlockChecked;
+    // The interpreter reports a violation of a temporal property, and a deadlock beside one. Like
+    // TLC, it finds a violation early in the part of the graph it checks periodically.
+    if (live && (isDeadlocked || live.addState(index, state, liveSuccessors))) deopt();
+    if (live && index + 1 === liveChecks.at) {
+      liveChecks.at *= 2;
+      if (live.findViolation()) deopt();
+    }
+    if (isDeadlocked) {
       const path: Plain[][] = [];
       for (let position = index; position !== -1; position = parents.data[position]) {
         path.unshift(getState(position));
@@ -5138,5 +5273,6 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     }
     outDegrees[Math.min(expansion.newStates, OUT_DEGREE_BUCKETS - 1)]++;
   }
+  if (live?.findViolation()) deopt();
   return getResult(undefined, 0);
 };

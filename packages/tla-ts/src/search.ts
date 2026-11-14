@@ -60,6 +60,7 @@ import {
   VARIABLE_LEVEL,
 } from "./levels";
 import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty } from "./liveness";
+import { getLiveExpressions } from "./liveness-checker";
 import { prettyPrint } from "./pretty-print";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import {
@@ -69,6 +70,7 @@ import {
   type SpecDescription,
 } from "./spec-description";
 import { getRepresentative, getSymmetryGroup, type Images } from "./symmetry";
+import type { Solution } from "./tableau";
 import {
   formatInnerMessage,
   formatNestedMessage,
@@ -708,7 +710,7 @@ export interface Search {
   getTlcOrder: () => number[];
   isSymmetric: boolean;
   isConstrained: boolean;
-  getTypedChecks: () =>
+  getTypedChecks: (liveness: Solution[] | undefined) =>
     | {
         init: Expression;
         next: Expression;
@@ -721,6 +723,7 @@ export interface Search {
         view: Expression | undefined;
         variableOrder: number[];
         getFingerprint: (state: Value[]) => bigint;
+        liveness: Solution[] | undefined;
       }
     | undefined;
   findViolatedInvariant: (state: Value[], parent?: Value[]) => StateCheck | undefined;
@@ -1202,7 +1205,7 @@ export const createSearch = (
     },
     isSymmetric: symmetryGroup !== undefined,
     isConstrained: constraints.length > 0 || actionConstraints.length > 0,
-    getTypedChecks: () => {
+    getTypedChecks: (liveness) => {
       const isInterpreted =
         coverage !== undefined ||
         possible.length > 0 ||
@@ -1210,7 +1213,8 @@ export const createSearch = (
         [...invariants, ...constraints].some((check) => check.scope !== undefined) ||
         actionConstraints.length > 0 ||
         properties.actionProperties.some((property) => property.scope !== undefined) ||
-        properties.liveness.length > 0;
+        (properties.liveness.length > 0 &&
+          (liveness === undefined || symmetryGroup !== undefined || view !== undefined));
       if (isInterpreted || spec.init === undefined || spec.next === undefined) return undefined;
       const invariantExpressions = invariantPredicates.map((invariant) => invariant.predicate);
       const constraintExpressions = [
@@ -1248,6 +1252,7 @@ export const createSearch = (
                 ]),
                 ...(view ? [view.expression] : []),
                 ...scopeExpressions,
+                ...getLiveExpressions(liveness ?? []),
               ],
               environment,
               "replayed",
@@ -1267,6 +1272,7 @@ export const createSearch = (
             view: view?.expression,
             variableOrder: getTlcOrder(),
             getFingerprint: getRepresentativeFingerprint,
+            liveness,
           };
     },
     getTlcOrder,
