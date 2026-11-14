@@ -2879,6 +2879,23 @@ export const getGetterCall = (node: ts.Node, context: Context) => {
 
 // A call of a method of an Intl constructor's prototype, through call or on a receiver, which
 // throws the TypeError of a receiver that isn't the kind of object the method reads.
+// Symbol.prototype.valueOf through call on a value that may be neither a symbol nor a Symbol object,
+// which throws a TypeError: the value that it reads.
+export const getThisSymbolCall = (node: ts.Node, context: Context) => {
+  const argument = ts.isCallExpression(node) ? node.arguments.at(0) : undefined;
+  return context.heap !== undefined &&
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    node.expression.name.text === "call" &&
+    node.arguments.length === 1 &&
+    argument !== undefined &&
+    !ts.isSpreadElement(argument) &&
+    !isEvery(context.checker.getTypeAtLocation(argument), ts.TypeFlags.ESSymbolLike) &&
+    getPrototypeMethod(node.expression.expression, "Symbol", context) === "valueOf"
+    ? argument
+    : undefined;
+};
+
 export const getIntlMethodCall = (node: ts.Node, context: Context) => {
   if (context.heap === undefined || !ts.isCallExpression(node)) return undefined;
   const callee = skipCasts(node.expression);
@@ -5060,6 +5077,7 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
   if (intlError !== undefined) return [intlError];
   if (getGetterCall(node, context) !== undefined) return ["TypeError"];
   if (getIntlMethodCall(node, context) !== undefined) return ["TypeError"];
+  if (getThisSymbolCall(node, context) !== undefined) return ["TypeError"];
   if (isInvalidRegExp(node, context)) return ["SyntaxError"];
   if (isArrayConstruction(node, context)) return ["TypeError", "RangeError"];
   const created = getNewClass(node, context);

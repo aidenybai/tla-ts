@@ -11503,6 +11503,32 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain('"method"');
   });
 
+  it("throws the TypeError of Symbol.prototype.valueOf.call on a value that isn't a symbol", async () => {
+    const getSource = (expected: string) => `
+      const getError = (call: () => unknown) => {
+        try {
+          call();
+          return "none";
+        } catch (error) {
+          return error instanceof TypeError ? "type" : "other";
+        }
+      };
+      const symbol = Symbol("ok");
+      const values: unknown[] = [undefined, null, {}, Symbol.prototype];
+      const errors: string[] = values.map((value) =>
+        getError(() => Symbol.prototype.valueOf.call(value)),
+      );
+      const held: unknown = symbol;
+      const kept = Symbol.prototype.valueOf.call(held) === symbol;
+      const text = \`\${errors.join()}:\${kept}\`;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect((await checkModel(getSource("type,type,type,type:true"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("type,type,none,type:true"))).failure?.message).toContain(
+      "type,type,type,type:true",
+    );
+  });
+
   it("stops on Symbol.prototype.valueOf where a script replaced it", async () => {
     const result = await checkModel(`
       const holder = { seen: 0 };

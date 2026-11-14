@@ -219,6 +219,7 @@ import {
   getViewCall,
   getGetterCall,
   getIntlMethodCall,
+  getThisSymbolCall,
   translateNewBufferOf,
   isRevoke,
   getPrimitiveObjectCall,
@@ -2877,6 +2878,16 @@ export const translateCallStatement = (
   }
   if (getIteratorDisposeCall(expression, context) !== undefined) {
     return translateIteratorDisposeCall(expression, path, context, frame, continueWith);
+  }
+  const thisSymbol = getThisSymbolCall(expression, context);
+  if (thisSymbol !== undefined) {
+    const heap = getHeap(path.scope, expression, context);
+    const value = translateExpression(thisSymbol, path.scope, context);
+    return ifThenElse(
+      useJavaScript("ThisSymbolThrows", [heap, value], context),
+      throwTypeError(path, expression, context, frame),
+      continueWith(path, translateExpression(expression, path.scope, context)),
+    );
   }
   const intlMethodCall = getIntlMethodCall(expression, context);
   if (intlMethodCall !== undefined) {
@@ -10307,6 +10318,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getViewCall(node, context) !== undefined ||
     getGetterCall(node, context) !== undefined ||
     getIntlMethodCall(node, context) !== undefined ||
+    getThisSymbolCall(node, context) !== undefined ||
     getCalledThrough(node, context) !== undefined ||
     getStackCall(node, context) !== undefined ||
     getIteratorDisposeCall(node, context) !== undefined ||

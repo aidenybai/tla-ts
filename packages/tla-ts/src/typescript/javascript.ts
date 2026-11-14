@@ -2145,6 +2145,13 @@ ThisSymbol(heap, value) ==
     [] IsHeap(value) /\\ "symbol" \\in DOMAIN Lookup(heap, value) -> Lookup(heap, value).symbol
     [] OTHER -> Assert(FALSE, "tla-ts can't call a Symbol.prototype method on a value that isn't a symbol")
 
+\\* Whether Symbol.prototype.valueOf, while Symbol.prototype holds the built-in method, throws the
+\\* TypeError of a value that is neither a symbol nor a Symbol object.
+ThisSymbolThrows(heap, value) ==
+  /\\ HoldsBuiltIn(heap, Ref :> "Symbol.prototype", "valueOf", "Symbol.prototype.valueOf")
+  /\\ ~IsSymbol(value)
+  /\\ ~(IsHeap(value) /\\ "symbol" \\in DOMAIN Lookup(heap, value))
+
 \\* The BigInt that BigInt.prototype.valueOf reads from a BigInt or a BigInt object, while
 \\* BigInt.prototype holds the built-in method.
 ThisBigIntObject(heap, value) ==
