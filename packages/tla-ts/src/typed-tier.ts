@@ -2907,6 +2907,11 @@ const compileBuiltin = (
             : `(${operand.emit()}).length`,
       };
     }
+    // Every set the tier builds is enumerated.
+    if (operator === "IsFiniteSet") {
+      getSetElement(operand);
+      return { type: createBool(), emit: () => `(${operand.emit()}, true)` };
+    }
   }
   return unsupported();
 };
