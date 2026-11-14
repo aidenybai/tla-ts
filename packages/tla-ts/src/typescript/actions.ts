@@ -12466,11 +12466,18 @@ const getLeadingAssignment = (
     if (leading !== undefined || !ts.isElementAccessExpression(node)) return leading;
     // An element access evaluates its object, and then its key.
     const inKey = getLeadingAssignment(node.argumentExpression, results, context);
-    return inKey !== undefined &&
-      isIncrement(inKey) &&
+    const written = inKey === undefined ? undefined : getWrittenOperand(inKey);
+    return written !== undefined &&
       node.questionDotToken === undefined &&
-      isUnaffected(node.expression, inKey.operand, context)
+      isUnaffected(node.expression, written, context)
       ? inKey
+      : undefined;
+  }
+  // An object literal evaluates its first property's computed key before anything else.
+  if (ts.isObjectLiteralExpression(node)) {
+    const name = node.properties.at(0)?.name;
+    return name !== undefined && ts.isComputedPropertyName(name)
+      ? getLeadingAssignment(name.expression, results, context)
       : undefined;
   }
   if (ts.isConditionalExpression(node))

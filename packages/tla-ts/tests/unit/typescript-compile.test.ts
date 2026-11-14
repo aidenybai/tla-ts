@@ -1542,6 +1542,20 @@ describe("values", () => {
     expect((await checkModel(getSource(44, 44))).failure?.message).toContain("bytes");
   });
 
+  it("runs an assignment in a computed key or an element's key first", async () => {
+    const getSource = (expected: number) => `
+      let x = 0;
+      const box = { [x = 1]: 2, [x + 1]: 3 } as Record<number, number>;
+      const read = box[x = 2];
+      let index = 0;
+      const list = [10, 20, 30];
+      const picked = list[index += 1] + list[index];
+      if (read !== 3 || x !== 2 || box[1] !== 2 || picked !== ${expected}) throw new Error("key");
+    `;
+    expect((await checkModel(getSource(40))).failure).toBeUndefined();
+    expect((await checkModel(getSource(30))).failure?.message).toContain("key");
+  });
+
   describe("throws the TypeError of writing a property of null to a value off the heap", () => {
     const getSource = (caught: string, written: number) => `
       type Box = { prop?: number };
