@@ -892,7 +892,7 @@ const annotate = (text: string) => {
 const MISSING_PROPERTY_ERROR = 2339;
 // A value of another type than an assignment's target or a call's parameter.
 const UNASSIGNABLE_ERRORS = new Set([2322, 2345]);
-const UNTYPED_READ_ERRORS = new Set([MISSING_PROPERTY_ERROR, 2551, 7053]);
+const UNTYPED_READ_ERRORS = new Set([MISSING_PROPERTY_ERROR, 2551, 7017, 7053]);
 const UNUSED_OPERAND_ERROR = 2695;
 const UNRESOLVED_NAME_ERROR = 2304;
 const NOT_ITERABLE_ERROR = 2488;
