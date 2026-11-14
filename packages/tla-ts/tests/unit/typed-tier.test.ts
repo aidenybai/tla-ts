@@ -91,6 +91,8 @@ describe("typed tier matches TLC", () => {
     ["FairProcesses", 55],
     ["PermutedSchedules", 85],
     ["InfiniteDifference", 8],
+    ["HeterogeneousTuples", 52],
+    ["SymmetricTuples", 289],
   ])("counts each successor TLC generates in %s", async (name, generatedStates) => {
     const results = await Promise.all([checkFixture(name, false), checkFixture(name, true)]);
     expect(results.map((result) => result.generatedStates)).toEqual([
@@ -111,6 +113,7 @@ describe("typed tier matches TLC", () => {
     ["SparseMissing", "error", undefined],
     ["SparseSuffix", "error", undefined],
     ["TupleLengths", "error", undefined],
+    ["TupleWidening", "error", undefined],
     ["OperatorDomains", "error", undefined],
     ["SubSeqRanges", "error", undefined],
     ["MissingFields", "error", undefined],

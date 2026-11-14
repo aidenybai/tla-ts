@@ -93,6 +93,14 @@ interface OptType {
   target: OptType | undefined;
 }
 
+// A tuple whose elements have types of their own, in the pass that keeps tuples apart from
+// sequences. Any use but reading a position by a number makes it a sequence.
+interface TupType {
+  kind: "Tup";
+  elements: Type[];
+  target: Type | undefined;
+}
+
 interface SeqType {
   kind: "Seq";
   element: Type;
@@ -153,6 +161,7 @@ type Type =
   | BoolType
   | StrType
   | SeqType
+  | TupType
   | RecType
   | FnType
   | MapType
@@ -235,6 +244,7 @@ const DEOPT = { reason: "deopt" };
 const WIDE = { reason: "wide" };
 // A sparse function where a sequence was typed. The search starts again with empty functions open.
 const SPARSE = { reason: "sparse" };
+const TUPLED = { reason: "tupled" };
 // A value's type is still unknown where it is applied, and a later disjunct may reveal it, as an
 // action that sends a message reveals its fields to an earlier action that reads them.
 const UNKNOWN = { reason: "unknown" };
@@ -360,6 +370,18 @@ const unify = (left: Type, right: Type): void => {
   if (rightType.kind === "Var") {
     rightType.target = leftType;
     return;
+  }
+  if (leftType.kind === "Tup" || rightType.kind === "Tup") {
+    if (
+      leftType.kind === "Tup" &&
+      rightType.kind === "Tup" &&
+      leftType.elements.length === rightType.elements.length
+    ) {
+      rightType.target = leftType;
+      leftType.elements.forEach((element, index) => unify(element, rightType.elements[index]));
+      return;
+    }
+    return unify(toSequence(leftType), toSequence(rightType));
   }
   if (leftType.kind === "Empty" && rightType.kind !== "Empty") return unify(rightType, leftType);
   if (rightType.kind === "Empty") {
@@ -502,6 +524,14 @@ const unify = (left: Type, right: Type): void => {
   }
 };
 
+const toSequence = (type: Type): Type => {
+  if (type.kind !== "Tup") return type;
+  const sequence: SeqType = { kind: "Seq", element: createVar() };
+  type.target = sequence;
+  type.elements.forEach((element) => unify(sequence.element, element));
+  return sequence;
+};
+
 // A type left open, such as the element of a set that is always empty, holds no values.
 const closeType = (type: Type): Type => {
   const resolved = resolveType(type);
@@ -518,6 +548,7 @@ const closeType = (type: Type): Type => {
     return sequence;
   }
   if (resolved.kind === "Seq" || resolved.kind === "Set") closeType(resolved.element);
+  if (resolved.kind === "Tup") resolved.elements.forEach(closeType);
   if (resolved.kind === "Map") [resolved.keys, resolved.values].forEach(closeType);
   if (resolved.kind === "Fn") closeType(resolved.range);
   if (resolved.kind === "Rec") resolved.fields.forEach((field) => closeType(field));
@@ -545,10 +576,24 @@ const getIntervalBounds = (elements: Value[]) => {
   return isInterval ? { low, high: low + elements.length - 1 } : undefined;
 };
 
+// Elements of a tuple that don't unify are kept apart in a second pass.
+const unifyElements = (elements: Type[], element: Type) => {
+  try {
+    elements.forEach((inner) => unify(element, inner));
+  } catch (error) {
+    throw error === UNSUPPORTED && elements.length > 1 ? TUPLED : error;
+  }
+};
+
 const getValueType = (value: Value, plains: Plains): Type => {
   if (typeof value === "number") return createInt();
   if (typeof value === "boolean") return createBool();
-  if (typeof value === "string" || value.kind === "ModelValue") return createStr();
+  if (typeof value === "string" || value.kind === "ModelValue") {
+    // Marking the atom now finds an integer that meets it as the types unify.
+    const type = createStr();
+    addAtom(type, plains, value);
+    return type;
+  }
   if (value.kind === "Interval") return { kind: "Set", element: createInt() };
   if (value.kind !== "Function") {
     const element: Type = createVar();
@@ -557,8 +602,10 @@ const getValueType = (value: Value, plains: Plains): Type => {
   }
   if (value.domain.length === 0 && plains.isSparse) return { kind: "Empty", target: undefined };
   if (value.functionClass === "tuple" || value.domain.length === 0) {
+    const elements = value.range.map((inner) => getValueType(inner, plains));
+    if (plains.isTupled && elements.length > 0) return { kind: "Tup", elements, target: undefined };
     const element: Type = createVar();
-    value.range.forEach((inner) => unify(element, getValueType(inner, plains)));
+    unifyElements(elements, element);
     return { kind: "Seq", element };
   }
   if (value.functionClass === "record") {
@@ -630,6 +677,7 @@ interface Plains {
   isMaskUsed: boolean;
   // Whether a function with an empty domain may be a sparse function, not only a sequence.
   isSparse: boolean;
+  isTupled: boolean;
 }
 
 const getAtom = (plains: Plains, value: Value) => {
@@ -736,6 +784,12 @@ const toPlain = (value: Value, type: Type, plains: Plains): Plain => {
   if (resolved.kind === "Seq") {
     return value.range.map((inner) => toPlain(inner, resolved.element, plains));
   }
+  if (resolved.kind === "Tup") {
+    if (value.functionClass !== "tuple" || value.range.length !== resolved.elements.length) {
+      return unsupported();
+    }
+    return value.range.map((inner, index) => toPlain(inner, resolved.elements[index], plains));
+  }
   if (resolved.kind === "Rec") {
     const names = getFieldNames(value);
     const tag = getShapeIndex(resolved, names);
@@ -783,6 +837,10 @@ const createValueReader = (type: Type, plains: Plains): ((plain: Plain) => Value
   if (resolved.kind === "Seq") {
     const readElement = createValueReader(resolved.element, plains);
     return (plain) => createTuple(getItems(plain).map(readElement));
+  }
+  if (resolved.kind === "Tup") {
+    const readers = resolved.elements.map((element) => createValueReader(element, plains));
+    return (plain) => createTuple(getItems(plain).map((item, index) => readers[index](item)));
   }
   if (resolved.kind === "Fn") {
     const readRange = createValueReader(resolved.range, plains);
@@ -1006,6 +1064,10 @@ const getComparerCode = (program: Program, type: Type): string => {
       const length =
         resolved.kind === "Fn" ? "" : "if (l.length !== r.length) return l.length - r.length; ";
       return `${length}for (let i = 0; i < l.length; i++) { c = ${getCompareCode(program, element, "l[i]", "r[i]")}; if (c !== 0) return c; } return 0;`;
+    }
+    // TLC orders tuples of one length by their elements.
+    if (resolved.kind === "Tup") {
+      return getChain(resolved.elements.map((type, position) => ({ type, position })));
     }
     // TLC orders functions by their domains, which it orders as sets, and then by their values.
     if (resolved.kind === "Map") {
@@ -2237,6 +2299,10 @@ const compileApplication = (
   argument: Compiled,
 ): Compiled => {
   const type = resolveType(functionCode.type);
+  if (type.kind === "Tup") {
+    toSequence(type);
+    return compileApplication(program, functionCode, argument);
+  }
   if (type.kind === "Lambda") {
     unify(argument.type, type.argument);
     return { type: type.result, emit: () => `(${functionCode.emit()})(${argument.emit()})` };
@@ -3031,11 +3097,14 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
           },
         };
       }
+      const elements = expression.elements.map((inner) => compileValue(program, inner, frame));
+      const types = elements.map((inner) => inner.type);
       const element: Type = createVar();
-      const elements = expression.elements.map((inner) =>
-        expectType(compileValue(program, inner, frame), element),
-      );
-      const type: SeqType = { kind: "Seq", element };
+      if (!program.plains.isTupled || elements.length === 0) unifyElements(types, element);
+      const type: Type =
+        program.plains.isTupled && elements.length > 0
+          ? { kind: "Tup", elements: types, target: undefined }
+          : { kind: "Seq", element };
       return {
         type,
         emit: () =>
@@ -3085,6 +3154,25 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
       const target = compileValue(program, expression.function, frame);
       const field = getFieldName(target.type, expression.args);
       if (field !== undefined) return compileField(program, target, field);
+      const tuple = resolveType(target.type);
+      const [position] = expression.args;
+      if (
+        tuple.kind === "Tup" &&
+        expression.args.length === 1 &&
+        position.kind === "Number" &&
+        Number.isInteger(position.value) &&
+        position.value >= 1 &&
+        position.value <= tuple.elements.length
+      ) {
+        return {
+          type: tuple.elements[position.value - 1],
+          // A tuple that became a sequence may be shorter than the position.
+          emit: () =>
+            resolveType(target.type).kind === "Tup"
+              ? `(${target.emit()})[${position.value - 1}]`
+              : `H.at(${readSequence(program, target.type, target.emit())}, ${position.value - 1})`,
+        };
+      }
       return compileApplication(
         program,
         target,
@@ -3906,6 +3994,10 @@ const readPlain = (cursor: Cursor, type: Type, plains: Plains): Plain => {
     readItems(createInt());
     return readItems(resolved.element);
   }
+  if (resolved.kind === "Tup" && length === resolved.elements.length) {
+    readItems(createInt());
+    return resolved.elements.map((element) => readPlain(cursor, element, plains));
+  }
   return resolved.kind === "Set" ? readItems(resolved.element) : unsupported();
 };
 
@@ -4317,6 +4409,7 @@ const hasVariableSize = (type: Type): boolean => {
   const resolved = resolveType(type);
   if (resolved.kind === "Seq" || resolved.kind === "Set" || resolved.kind === "Map") return true;
   if (resolved.kind === "Rec") return [...resolved.fields.values()].some(hasVariableSize);
+  if (resolved.kind === "Tup") return resolved.elements.some(hasVariableSize);
   return resolved.kind === "Fn" && hasVariableSize(resolved.range);
 };
 
@@ -4331,6 +4424,9 @@ const getFixedSize = (type: Type): number => {
     return Math.max(...sizes) + (sizes.length === 1 ? 0 : 1);
   }
   if (resolved.kind === "Fn") return resolved.domain.length * getFixedSize(resolved.range);
+  if (resolved.kind === "Tup") {
+    return resolved.elements.reduce((sum, element) => sum + getFixedSize(element), 0);
+  }
   return 1;
 };
 
@@ -4338,6 +4434,7 @@ const getParts = (type: Type): Type[] => {
   if (type.kind === "Rec") return type.shapes[0].map((name) => getFieldType(type, name));
   if (type.kind === "Fn") return type.domain.map(() => type.range);
   if (type.kind === "Map") return [type.keys, type.values];
+  if (type.kind === "Tup") return type.elements;
   return unsupported();
 };
 
@@ -4500,6 +4597,15 @@ const getPermuteCode = (
     return inner && wrap(name, inner);
   };
   switch (resolved.kind) {
+    case "Tup": {
+      const tuple = getName(program, "t");
+      const elements = resolved.elements.map((element, index) =>
+        getPermuteCode(program, images, element, `${tuple}[${index}]`),
+      );
+      if (elements.every((element) => element === undefined)) return undefined;
+      const permuted = elements.map((element, index) => element ?? `${tuple}[${index}]`);
+      return `((${tuple}) => [${permuted.join(", ")}])(${code})`;
+    }
     case "Str":
       return `P[${code}]`;
     case "Mix":
@@ -5017,23 +5123,26 @@ export const runTypedSearch = (
   environment: Environment,
   check: TypedCheck,
 ): TypedResult | undefined => {
-  const run = (isMaskUsed: boolean, isSparse: boolean): TypedResult => {
+  const run = (isMaskUsed: boolean, isSparse: boolean, isTupled: boolean): TypedResult => {
     try {
-      return search(environment, check, { ids: new Map(), values: [], isMaskUsed, isSparse });
+      const plains = { ids: new Map(), values: [], isMaskUsed, isSparse, isTupled };
+      return search(environment, check, plains);
     } catch (error) {
-      if (error === WIDE && isMaskUsed) return run(false, isSparse);
-      if (error === SPARSE && !isSparse) return run(isMaskUsed, true);
+      if (error === WIDE && isMaskUsed) return run(false, isSparse, isTupled);
+      if (error === SPARSE && !isSparse) return run(isMaskUsed, true, isTupled);
+      if (error === TUPLED && !isTupled) return run(isMaskUsed, isSparse, true);
       throw error;
     }
   };
   try {
-    return run(true, false);
+    return run(true, false, false);
   } catch (error) {
     // The interpreter reports these errors when it reruns the search.
     if (
       error === UNSUPPORTED ||
       error === UNKNOWN ||
       error === SPARSE ||
+      error === TUPLED ||
       error === DEOPT ||
       error instanceof TlaError ||
       isStackOverflow(error) ||
