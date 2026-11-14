@@ -322,7 +322,6 @@ const getSharedCall = (
   callbacks: ReadonlyMap<ts.Symbol, FunctionNode>,
   path: Path,
   context: Context,
-  frame: Frame,
 ) => {
   const helper = context.sharedHelpers.get(callee);
   const passed = [...callbacks.values()].map((callback) => context.sharedCallbacks.get(callback));
@@ -331,7 +330,6 @@ const getSharedCall = (
   const read = [...new Set(runs.flatMap((run) => run.read))];
   const changed = [...new Set(runs.flatMap((run) => run.changed))];
   const isCatching = path.scope.isCatching;
-  const isThrowing = frame.throwTo !== undefined;
   const captured = read.filter(
     (symbol) => !context.variables.has(symbol) && path.scope.bindings.has(symbol),
   );
@@ -357,16 +355,12 @@ const getSharedCall = (
   const defined = (context.sharedCalls.get(callee) ?? []).find(
     (shared) =>
       shared.isCatching === isCatching &&
-      shared.isThrowing === isThrowing &&
       shared.captured.length === captured.length &&
       shared.captured.every((symbol) => captured.includes(symbol)) &&
       [...callbacks].every((entry) => shared.callbacks.get(entry[0]) === entry[1]),
   );
   if (defined !== undefined && context.inProgress.has(callee)) defined.isRecursive = true;
-  return (
-    defined ??
-    defineShared(callee, { changed, isCatching, isThrowing, captured, callbacks }, context)
-  );
+  return defined ?? defineShared(callee, { changed, isCatching, captured, callbacks }, context);
 };
 
 // The parameters that take values, not the functions that the operator calls.
@@ -426,7 +420,7 @@ export const defineThrown = (context: Context) =>
 // or what it threw, the message and the place of the throw, and the state that it changed.
 const defineShared = (
   callee: FunctionNode,
-  variant: Pick<SharedCall, "changed" | "isCatching" | "isThrowing" | "captured" | "callbacks">,
+  variant: Pick<SharedCall, "changed" | "isCatching" | "captured" | "callbacks">,
   context: Context,
 ) => {
   const parameters = getParameters(callee);
@@ -450,6 +444,7 @@ const defineShared = (
     parameters: named.map((item) => ({ name: item.name, arity: 0 })),
     isRecursive: false,
     isReturning: true,
+    isThrowing: true,
   };
   // A call inside the body that the operator runs calls the operator itself.
   context.sharedCalls.set(callee, [...(context.sharedCalls.get(callee) ?? []), shared]);
@@ -517,22 +512,21 @@ const defineShared = (
         : end(current, "returnValue", returned, string(""), number(0)),
     breakTo: undefined,
     continueTo: undefined,
-    // Where nothing can catch what the body throws, it stops there, as the inlined body would.
-    throwTo: variant.isThrowing
-      ? (current, thrown) =>
-          end(
-            current,
-            "throw",
-            thrown.value,
-            getThrownMessage(thrown, callee),
-            thrown.shared?.place ?? getPlace(thrown.uncaught.location, context),
-          )
-      : undefined,
+    // The caller catches what the body throws, or stops where the body threw it.
+    throwTo: (current, thrown) =>
+      end(
+        current,
+        "throw",
+        thrown.value,
+        getThrownMessage(thrown, callee),
+        thrown.shared?.place ?? getPlace(thrown.uncaught.location, context),
+      ),
     yieldTo: undefined,
     awaitTo: undefined,
     inlining: new Set([callee]),
   });
   shared.isReturning = [...kinds].some((kind) => kind !== "throw");
+  shared.isThrowing = kinds.has("throw");
   context.inProgress = outer.inProgress;
   context.selfCalls = outer.selfCalls;
   context.output.push(
@@ -579,7 +573,7 @@ export const translateSharedCall = (
           callbacks.has(symbol)
       );
     })
-      ? getSharedCall(callee, callbacks, path, context, frame)
+      ? getSharedCall(callee, callbacks, path, context)
       : undefined;
     if (shared === undefined) return inlineCall(bound, inner);
     const changed = shared.changed;
@@ -630,19 +624,17 @@ export const translateSharedCall = (
           ifExpression(apply("=", [kind, string("returnValue")]), value, getUndefined(context)),
         )
       : leaf(boolean(false));
-    const ended =
-      throwTo === undefined
-        ? returned
-        : ifThenElse(
-            apply("=", [kind, string("throw")]),
-            // The throw that nothing catches reports where the helper threw it.
-            throwTo(after, {
-              value,
-              uncaught: getThrown(place, message, context),
-              shared: { message, place },
-            }),
-            returned,
-          );
+    // The throw that nothing catches reports where the helper threw it.
+    const uncaught = getThrown(place, message, context);
+    const ended = shared.isThrowing
+      ? ifThenElse(
+          apply("=", [kind, string("throw")]),
+          throwTo === undefined
+            ? leaf(uncaught)
+            : throwTo(after, { value, uncaught, shared: { message, place } }),
+          returned,
+        )
+      : returned;
     const operands = [
       ...getValueParameters(callee, shared.callbacks, context).map((parameter) => {
         const symbol = getSymbol(parameter.name, context.checker);

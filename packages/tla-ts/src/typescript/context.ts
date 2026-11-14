@@ -37,8 +37,7 @@ export interface SharedCall {
   name: string;
   // Whether a try catches what the call throws, which an expression's call inside may not throw.
   isCatching: boolean;
-  // Whether the caller goes on where the call throws, so the operator gives what it threw rather
-  // than stopping there.
+  // Whether its body can end in a throw, which the operator gives its caller to catch or stop at.
   isThrowing: boolean;
   captured: ts.Symbol[];
   // The function that each parameter takes, which the operator calls where the body calls it.
