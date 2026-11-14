@@ -116,7 +116,7 @@ describe("Zenon agrees with tlapm's Zenon", () => {
     (fixture) => {
       expect(decideZenon(fixture.text, { timeLimitMs: TIME_LIMIT_MS })).toEqual({
         verdict: "unsat",
-        proof: fixture.isar,
+        output: fixture.isar,
       });
     },
   );
@@ -125,7 +125,7 @@ describe("Zenon agrees with tlapm's Zenon", () => {
     "prints the proof of $path that tlapm writes, up to the names of variables",
     (fixture) => {
       const decision = decideZenon(fixture.text, { timeLimitMs: TIME_LIMIT_MS });
-      const proof = decision.verdict === "unsat" ? decision.proof : "";
+      const proof = decision.output ?? "";
       expect(proof).not.toBe(fixture.isar);
       expect(isEqualUpToRenaming(proof, fixture.isar)).toBe(true);
     },

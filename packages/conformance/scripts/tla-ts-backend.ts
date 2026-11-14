@@ -21,7 +21,9 @@ if (isSmtScript(process.argv[3])) {
 } else if (backend === "zenon") {
   const decision = decideZenon(text, options);
   console.log(
-    decision.verdict === "unsat" ? getBackendVerdict("zenon", decision.proof, 0) : decision.verdict,
+    decision.output === undefined
+      ? decision.verdict
+      : getBackendVerdict("zenon", decision.output, 0),
   );
 } else if (backend === "z3") {
   console.log(decideSmt(text, options, () => {}));

@@ -316,7 +316,7 @@ export const getSubsetNodes = (literal: Literal): Item[] | undefined => {
           ]);
     }
     if (isApp(right, "TLA.cap", 2)) {
-      // tlapm's Zenon builds both subsets from the second set, and Isabelle rejects its proofs.
+      // Deviation from Zenon: ext_tla.ml builds both subsets from the second set, which is unsound.
       const first = exprs.eapp("TLA.subseteq", [left, right.args[0]]);
       const second = exprs.eapp("TLA.subseteq", [left, right.args[1]]);
       return isNegated
