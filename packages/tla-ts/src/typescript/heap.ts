@@ -1741,6 +1741,8 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   }
   const intl = getNewIntl(node, context);
   if (intl !== undefined) {
+    // The function that the object's compare or format getter gives, which the object holds.
+    const boundLength = BOUND_LENGTHS.get(intl);
     // The constructor, which the prototype's constructor property holds.
     context.builtIns.add(`Intl.${intl}`);
     return ifExpression(
@@ -1752,13 +1754,32 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
       useJavaScript(
         "Allocate",
         [
-          heap,
+          boundLength === undefined
+            ? heap
+            : useJavaScript(
+                "Allocate",
+                [
+                  heap,
+                  useJavaScript(
+                    "ArrowObject",
+                    [
+                      translateBuiltInValue("Function.prototype", node, context),
+                      string(""),
+                      number(boundLength),
+                    ],
+                    context,
+                  ),
+                ],
+                context,
+              ),
           useJavaScript(
-            "SlotObject",
+            "IntlObject",
             [
               translateBuiltInValue(`Intl.${intl}.prototype`, node, context),
-              string("intl"),
               string(intl),
+              boundLength === undefined
+                ? getUndefined(context)
+                : useJavaScript("NextRef", [heap, number(1)], context),
             ],
             context,
           ),
@@ -2151,6 +2172,13 @@ export const isNewDate = (node: ts.Node, context: Context): node is ts.NewExpres
     ? isNumeric(values[0], context) || isDateType(values[0], context)
     : values.length !== 1 && areDateFields(values, context);
 };
+
+// The lengths of the functions that the compare and format getters of Intl's objects give.
+const BOUND_LENGTHS = new Map([
+  ["Collator", 2],
+  ["NumberFormat", 1],
+  ["DateTimeFormat", 1],
+]);
 
 // The Intl constructors that make an object when a script calls them without new.
 const CALLABLE_INTL_CONSTRUCTORS = new Set(["Collator", "DateTimeFormat", "NumberFormat"]);
@@ -2572,6 +2600,19 @@ const GETTERS = new Map([
   ["ArrayBuffer", new Set(["byteLength", "maxByteLength", "resizable", "detached"])],
   ["SharedArrayBuffer", new Set(["byteLength", "maxByteLength", "growable"])],
   ["DataView", new Set(["buffer", "byteLength", "byteOffset"])],
+  ["Intl.Collator", new Set(["compare"])],
+  ["Intl.NumberFormat", new Set(["format"])],
+  ["Intl.DateTimeFormat", new Set(["format"])],
+  [
+    "Intl.Locale",
+    new Set(
+      Object.keys(BUILT_INS).flatMap((name) =>
+        name.startsWith("get Intl.Locale.prototype.")
+          ? [name.slice("get Intl.Locale.prototype.".length)]
+          : [],
+      ),
+    ),
+  ],
   ["Map", new Set(["size"])],
   ["Set", new Set(["size"])],
 ]);
@@ -2604,10 +2645,18 @@ export const getGetterCall = (node: ts.Node, context: Context) => {
       ? skipCasts(descriptor.arguments[0])
       : undefined;
   const key = ts.isCallExpression(descriptor) ? descriptor.arguments.at(1) : undefined;
-  const builtIn =
+  const constructor =
     owner !== undefined && ts.isPropertyAccessExpression(owner) && owner.name.text === "prototype"
-      ? getBuiltIn(owner.expression, context)
+      ? owner.expression
       : undefined;
+  const builtIn =
+    constructor !== undefined &&
+    ts.isPropertyAccessExpression(constructor) &&
+    getBuiltIn(constructor.expression, context) === "Intl"
+      ? `Intl.${constructor.name.text}`
+      : constructor === undefined
+        ? undefined
+        : getBuiltIn(constructor, context);
   const speciesOwner =
     owner !== undefined &&
     key !== undefined &&

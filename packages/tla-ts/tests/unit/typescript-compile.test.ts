@@ -14465,6 +14465,44 @@ describe("errors", () => {
     ).toContain("[object Intl.NumberFormat]");
   });
 
+  it("reads the function that a Collator's compare gives, bound to the Collator", async () => {
+    const getSource = (expected: string) => `
+      const holder: { [key: string]: unknown } = {};
+      const collator = new Intl.Collator();
+      const compare = collator.compare;
+      const result = [
+        compare.length,
+        compare === collator.compare,
+        compare === new Intl.Collator().compare,
+        Object.getOwnPropertyNames(compare).join("|"),
+        Object.getPrototypeOf(compare) === Function.prototype,
+      ].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("2,true,false,length|name,true"))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("2,true,true,length|name,true"))).failure?.message,
+    ).toContain("2,true,false");
+  });
+
+  it("throws the TypeError of an Intl getter on another kind of object", async () => {
+    const getSource = (receiver: string) => `
+      const holder: { [key: string]: unknown } = {};
+      const descriptor = Object.getOwnPropertyDescriptor(Intl.NumberFormat.prototype, "format")!;
+      let name = "none";
+      try {
+        descriptor.get!.call(${receiver});
+      } catch (error) {
+        name = (error as Error).name;
+      }
+      if (name !== "TypeError") throw new Error(name);
+    `;
+    expect((await checkModel(getSource("{}"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("new Intl.NumberFormat()"))).failure?.message).toContain(
+      "none",
+    );
+  });
+
   it("reads the prototypes of the iterators that strings, maps, sets, and regexps make", async () => {
     const result = await checkModel(`
       const holder: { [key: string]: unknown } = {};

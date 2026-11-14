@@ -1270,6 +1270,40 @@ Prototype(heap, ref) ==
 LOCAL HasElement(heap, ref, key) ==
   TypedKey(key) = "index" /\\ ToIndex(key) < ViewLength(heap, heap.objects[ref[Ref]])
 
+\\* Whether an object or one of its prototypes is a proxy, whose traps a walk up them runs.
+RECURSIVE ReachesProxy(_, _)
+ReachesProxy(heap, ref) ==
+  \\/ IsProxy(heap, ref)
+  \\/ LET prototype == Prototype(heap, ref) IN prototype # Null /\\ ReachesProxy(heap, prototype)
+
+\\* The kind of Intl object whose internal slots a getter reads, or "" for other getters.
+LOCAL IntlGetterKind(path) ==
+  CASE HasPrefix(path, "get Intl.Collator.prototype.") -> "Collator"
+    [] HasPrefix(path, "get Intl.NumberFormat.prototype.") -> "NumberFormat"
+    [] HasPrefix(path, "get Intl.DateTimeFormat.prototype.") -> "DateTimeFormat"
+    [] HasPrefix(path, "get Intl.Locale.prototype.") -> "Locale"
+    [] OTHER -> ""
+
+LOCAL IntlReceives(heap, path, receiver) ==
+  /\\ IsHeap(receiver)
+  /\\ "intl" \\in DOMAIN heap.objects[receiver[Ref]]
+  /\\ heap.objects[receiver[Ref]].intl = IntlGetterKind(path)
+
+\\* Whether a getter throws its TypeError on another object only after it walks the object's
+\\* prototypes, as NumberFormat's and DateTimeFormat's do for the objects that legacy code makes.
+LOCAL IntlMayWalk(heap, path, receiver) ==
+  /\\ IntlGetterKind(path) \\in {"NumberFormat", "DateTimeFormat"}
+  /\\ IsRef(receiver)
+  /\\ ReachesProxy(heap, receiver)
+
+\\* What one of those getters gives for the kind of object it reads: the function that a compare or
+\\* a format getter gives, bound to the object. The rest read locale data.
+LOCAL IntlGet(heap, path, receiver) ==
+  CASE IntlReceives(heap, path, receiver) /\\ heap.objects[receiver[Ref]].bound # Undefined ->
+         heap.objects[receiver[Ref]].bound
+    [] IntlReceives(heap, path, receiver) -> Assert(FALSE, "tla-ts can't read locale data")
+    [] OTHER -> Assert(FALSE, "tla-ts can't throw the TypeError of a getter on another kind of object")
+
 RECURSIVE Has(_, _, _)
 Has(heap, ref, key) ==
   IF IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
@@ -1341,6 +1375,8 @@ GetFrom(heap, ref, key, receiver) ==
                    /\\ path \\in ViewGetters -> ViewGet(heap, path, receiver)
               [] key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
                    /\\ path \\in RegExpGetters -> RegExpGet(heap, path, receiver)
+              [] key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
+                   /\\ IntlGetterKind(path) # "" -> IntlGet(heap, path, receiver)
               [] key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
                    /\\ path = "get Symbol.prototype.description" ->
                    CASE IsSymbol(receiver) -> SymbolDescription(heap, receiver)
@@ -1665,6 +1701,9 @@ ReadError(heap, ref, key) ==
   LET path == GetterPath(GetterOf(heap, ref, key))
   IN IF \\/ path = "get Function.prototype.arguments"
         \\/ path \\in ViewGetters /\\ ~ViewReceives(heap, path, ref)
+        \\/ /\\ IntlGetterKind(path) # ""
+           /\\ ~IntlReceives(heap, path, ref)
+           /\\ ~IntlMayWalk(heap, path, ref)
      THEN "TypeError"
      ELSE ""
 
@@ -3559,6 +3598,11 @@ ErrorToString(heap, ref) ==
        [] messageText = "" -> nameText
        [] OTHER -> nameText \\o ": " \\o messageText
 
+\\* An object that an Intl constructor makes, of a kind, which holds the function that its compare
+\\* or format getter gives, bound to it, or Undefined.
+IntlObject(prototype, kind, bound) ==
+  [EmptyObject EXCEPT !.prototype = prototype] @@ [intl |-> kind, bound |-> bound]
+
 DateObject(prototype, time) == [EmptyObject EXCEPT !.prototype = prototype] @@ [time |-> time]
 
 \\* The time value that new Date takes from another Date.
@@ -3656,6 +3700,11 @@ GetterCall(heap, getter, receiver) ==
               [] OTHER -> Assert(FALSE, "tla-ts can't read the prototype of " \\o ToString(receiver))
        [] path \\in ViewGetters ->
             IF ViewReceives(heap, path, receiver) THEN give(ViewGet(heap, path, receiver)) ELSE typeError
+       [] IntlGetterKind(path) # "" ->
+            CASE IntlReceives(heap, path, receiver) -> give(IntlGet(heap, path, receiver))
+              [] IntlMayWalk(heap, path, receiver) ->
+                   Assert(FALSE, "tla-ts can't run a proxy's internal method here")
+              [] OTHER -> typeError
        [] path \\in {"get " \\o owner \\o ".@@species" :
                      owner \\in {"Array", "RegExp", "Map", "Set", "Promise", "ArrayBuffer",
                                 "SharedArrayBuffer"}} ->

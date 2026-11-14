@@ -2419,10 +2419,15 @@ const translatePropertyAccess = (
             ? otherwise
             : ifExpression(apply("=", [value, candidateValue]), property, otherwise);
         },
-        apply("Assert", [
-          boolean(false),
-          string("tla-ts can't tell which function this value holds"),
-        ]),
+        // A built-in's function on the heap, such as the one that a Collator's compare gives.
+        ifExpression(
+          useJavaScript("IsRef", [value], context),
+          useJavaScript("Get", [getHeap(scope, node, context), value, string(name)], context),
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't tell which function this value holds"),
+          ]),
+        ),
       ),
     );
   }
