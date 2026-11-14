@@ -12525,6 +12525,10 @@ const getLeadingAssignment = (
     return getLeadingAssignment(node.condition, results, context);
   // A call evaluates its callee first, which reading a getter could make see the change.
   if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+    const inCallee = ts.isElementAccessExpression(node.expression)
+      ? getLeadingAssignment(node.expression, results, context)
+      : undefined;
+    if (inCallee !== undefined) return inCallee;
     const first = node.arguments?.at(0);
     return first !== undefined && isPlainCallee(node.expression, context)
       ? getLeadingAssignment(first, results, context)

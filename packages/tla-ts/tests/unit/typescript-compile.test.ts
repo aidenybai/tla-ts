@@ -13850,6 +13850,44 @@ describe("errors", () => {
     );
   });
 
+  it("runs an assignment in an element's key, as of a call's callee, before the rest of its statement", async () => {
+    const getSource = (expected: string) => `
+      let x = 0;
+      let key = "a";
+      const results: unknown[] = [];
+      const record = (value: unknown) => {
+        results.push(value);
+      };
+      class C {
+        [x ||= 1]() {
+          return 2;
+        }
+        static [x ||= 1]() {
+          return 3;
+        }
+      }
+      const c = new C() as unknown as Record<number | string, () => number>;
+      const D = C as unknown as Record<number | string, () => number>;
+      record(c[x ||= 1]());
+      record(D[String(x ||= 1)]());
+      const methods = {
+        a: (value: string) => \`a:\${value}\`,
+        b: (value: string) => \`b:\${value}\`,
+      };
+      record(methods[(key = "b") as "a" | "b"](key));
+      const list = [10, 20, 30];
+      let index = 0;
+      record(list[index += 2]);
+      record(\`\${x},\${index}\`);
+      const result = results.join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("2,3,b:b,30,1,2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("2,3,b:a,30,1,2"))).failure?.message).toContain(
+      "2,3,b:b,30,1,2",
+    );
+  });
+
   it("throws the ReferenceError of a name that a class's computed key reads", async () => {
     const getSource = (caught: string) => `
       let caught = "";
