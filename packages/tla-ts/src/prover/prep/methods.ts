@@ -120,6 +120,29 @@ export const parseOcamlFloat = (text: string) => {
   return DECIMAL_FLOAT.test(digits) ? Number(digits) : undefined;
 };
 
+const OCAML_INT =
+  /^([+-]?)(?:0x([\da-f][\da-f_]*)|0o([0-7][0-7_]*)|0b([01][01_]*)|(0u)?(\d[\d_]*))$/i;
+
+// OCaml's int_of_string_opt: only an unprefixed decimal is range-checked as a signed 63-bit integer.
+export const parseOcamlInt = (text: string) => {
+  const match = OCAML_INT.exec(text);
+  if (!match) return undefined;
+  const isNegative = match[1] === "-";
+  const prefixed =
+    match[2] === undefined
+      ? match[3] === undefined
+        ? match[4] === undefined
+          ? match[6]
+          : `0b${match[4]}`
+        : `0o${match[3]}`
+      : `0x${match[2]}`;
+  const magnitude = BigInt(prefixed.replaceAll("_", ""));
+  const isSigned = prefixed === match[6] && match[5] === undefined;
+  if (magnitude > (isSigned ? 2n ** 62n - (isNegative ? 0n : 1n) : 2n ** 63n - 1n))
+    return undefined;
+  return Number(BigInt.asIntN(63, isNegative ? -magnitude : magnitude));
+};
+
 const getRlimit = (budget: string, locus: Locus | undefined) => {
   const count = parseOcamlFloat(budget.slice(1));
   if (!/^[rR]./s.test(budget) || count === undefined || !Number.isFinite(count) || count <= 0)

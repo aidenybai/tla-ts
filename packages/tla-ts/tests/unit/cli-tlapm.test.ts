@@ -194,8 +194,10 @@ describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () =
 
   it("reports a --debug without its flags", () => {
     const result = runTlapm("obligations", ["Proofs.tla", "--debug"]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toBe("Error: option '--debug' needs an argument.\n");
+    expect(result.status).toBe(2);
+    expect(result.stderr).toMatch(
+      /^tla-ts tlapm: option '--debug' needs an argument\.\nUsage: tla-ts tlapm <options> FILE \.\.\.\n/,
+    );
   });
 
   it.each(["constructor", "toString", "__proto__"])(
@@ -217,7 +219,7 @@ describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () =
 
   it.each(["constructor", "toString", "__proto__"])("reports the unknown --method %s", (method) => {
     const result = runTlapm("obligations", ["--method", method, "Proofs.tla"]);
-    expect(result.stderr).toContain(`--method: unknown method "${method}"\n`);
+    expect(result.stderr).toContain(`--method: unknown method "${method}".\n`);
   });
 });
 

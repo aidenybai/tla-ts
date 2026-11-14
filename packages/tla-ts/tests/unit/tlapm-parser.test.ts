@@ -158,8 +158,12 @@ describe("tlapm reads a float as OCaml's float_of_string does", () => {
     const directory = writeModule("Empty", "---- MODULE Empty ----\n====\n");
     ["", "0b11"].forEach((stretch) => {
       const result = runTlapm(directory, ["--stretch", stretch, "-N", "Empty.tla"]);
-      expect(result.stderr).toBe("Error: option '--stretch' expects a float.\n");
-      expect(result.status).toBe(1);
+      expect(result.stderr).toMatch(
+        new RegExp(
+          `^tla-ts tlapm: wrong argument '${stretch}'; option '--stretch' expects a float\\.\nUsage: `,
+        ),
+      );
+      expect(result.status).toBe(2);
     });
   });
 
