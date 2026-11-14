@@ -10177,7 +10177,8 @@ const usesHeap = (node: ts.Node, context: Context, visited: Set<ts.Node>): boole
     (ts.isObjectLiteralExpression(node) && !isArrayFromLength(node, context)) ||
     ts.isRegularExpressionLiteral(node) ||
     isAllocation(node, context) ||
-    isClosure(node, context)
+    isClosure(node, context) ||
+    (ts.isExpression(node) && getConversion(node, context) !== undefined)
   ) {
     return true;
   }

@@ -19,7 +19,7 @@ import { getBuiltIn } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { bind, callValue, getMethods, getWrittenFunctions, isNullish, read } from "./protocols";
 import { apply, boolean, junction, not, string, tuple } from "./tla";
-import { getKind, isEvery, mayBeSequenceType } from "./types";
+import { getKind, hasHeapType, isEvery, isHeapType, mayBeSequenceType } from "./types";
 
 // The hint that ToPrimitive takes, which decides whether it calls valueOf or toString first.
 type Hint = "default" | "number" | "string";
@@ -128,16 +128,27 @@ const hasFlags = (node: ts.Expression, flags: ts.TypeFlags, context: Context) =>
 const isAnyOperand = (node: ts.Expression, context: Context) =>
   hasFlags(node, ts.TypeFlags.Any, context);
 
+const PRIMITIVE_FLAGS =
+  ts.TypeFlags.NumberLike |
+  ts.TypeFlags.StringLike |
+  ts.TypeFlags.BooleanLike |
+  ts.TypeFlags.Undefined |
+  ts.TypeFlags.Null;
+
 const isPrimitiveOperand = (node: ts.Expression, context: Context) =>
-  hasFlags(
-    node,
-    ts.TypeFlags.NumberLike |
-      ts.TypeFlags.StringLike |
-      ts.TypeFlags.BooleanLike |
-      ts.TypeFlags.Undefined |
-      ts.TypeFlags.Null,
-    context,
+  hasFlags(node, PRIMITIVE_FLAGS, context);
+
+// A union of objects in the heap and primitives, which ToPrimitive tells apart as it runs.
+const isMixedOperand = (node: ts.Expression, context: Context) => {
+  const type = context.checker.getTypeAtLocation(skipCasts(node));
+  return (
+    type.isUnion() &&
+    hasHeapType(type, context) &&
+    type.types.every(
+      (member) => (member.flags & PRIMITIVE_FLAGS) !== 0 || isHeapType(member, context),
+    )
   );
+};
 
 // A primitive that an operator on numbers converts, which tla-ts otherwise rejects.
 const isConvertedPrimitive = (node: ts.Expression, context: Context) =>
@@ -165,12 +176,14 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
     operands.some(
       (operand) =>
         isObjectOperand(operand, context) ||
+        isMixedOperand(operand, context) ||
         (isOnNumbers && isConvertedPrimitive(operand, context)) ||
         (isAnyConverted && isAnyOperand(operand, context)),
     ) &&
     operands.every(
       (operand) =>
         isObjectOperand(operand, context) ||
+        isMixedOperand(operand, context) ||
         isPrimitiveOperand(operand, context) ||
         (isAnyConverted && isAnyOperand(operand, context)),
     )

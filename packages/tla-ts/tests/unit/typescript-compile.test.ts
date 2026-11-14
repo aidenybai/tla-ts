@@ -9426,6 +9426,31 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("converts a value that may be an object or a primitive in a function", async () => {
+    const getSource = (expected: string) => `
+      class Counter {
+        count = 0;
+      }
+      const counter = new Counter();
+      interface Box {
+        kind: "box";
+        toString(): string;
+      }
+      interface Plain {
+        kind: "plain";
+      }
+      const show = (pairs: (Box | Plain | number | undefined)[][]) =>
+        pairs.map((pair) => \`\${String(pair[0])} |-> \${String(pair[1])}\`).join();
+      const join = (value: Plain | string) => value + "!";
+      const box: Box = { kind: "box", toString: () => "custom" };
+      const result = show([[box, 1], [{ kind: "plain" }, undefined], [1, box]]) + join({ kind: "plain" }) + join("a");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "custom |-> 1,[object Object] |-> undefined,1 |-> custom[object Object]!a!";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect((await checkModel(getSource("custom"))).failure?.message).toContain(expected);
+  });
+
   it("throws what a conversion's method throws, or a TypeError where none gives a primitive", async () => {
     const result = await checkModel(`
       const box = { size: 0 };
