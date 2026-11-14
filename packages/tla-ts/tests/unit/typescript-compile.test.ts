@@ -26732,6 +26732,84 @@ describe("regular expressions", () => {
     expect(result.failure?.message).toContain("tla-ts can't call a regexp's method");
   });
 
+  it("call a regexp's method where a script gave the regexp its own flags or constructor", async () => {
+    const getSource = (expected: string) => `
+      const first = /b/g;
+      Object.defineProperty(first, "global", { value: false });
+      const found = first[Symbol.match]("abcb");
+      const second = /b/g;
+      Object.defineProperty(second, "global", { value: false });
+      const viaString = "abcb".match(second);
+      const third = /b/;
+      Object.defineProperty(third, "unicode", { value: true });
+      const executed = third.exec("abcb");
+      const fourth = /b/g;
+      Object.defineProperty(fourth, "sticky", { value: true });
+      const all = "abcb".match(fourth);
+      const fifth = /b/y;
+      Object.defineProperty(fifth, "global", { value: 0 });
+      const tested = fifth.test("bb");
+      const noSpecies = function () {};
+      const split = /[db]/;
+      (split as unknown as { constructor: unknown }).constructor = noSpecies;
+      (noSpecies as unknown as { [Symbol.species]: unknown })[Symbol.species] = null;
+      const other = /c/;
+      (other as unknown as { constructor: unknown }).constructor = undefined;
+      const result = [
+        found?.index,
+        first.lastIndex,
+        viaString?.index,
+        second.lastIndex,
+        executed?.index,
+        all?.length,
+        fourth.lastIndex,
+        tested,
+        fifth.lastIndex,
+        split[Symbol.split]("abcde").join("-"),
+        "abcde".split(other).join("-"),
+      ].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "1,2,1,2,1,2,0,true,1,a-c-e,ab-de";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("1,0,1,2,1,2,0,true,1,a-c-e,ab-de"))).failure?.message,
+    ).toContain(expected);
+  });
+
+  it("stop where a regexp's own flag or constructor changes what its method gives", async () => {
+    const getMessage = async (source: string) => (await checkModel(source)).failure?.message;
+    const message = "tla-ts can't call a regexp's method where a script changed what it reads";
+    expect(
+      await getMessage(`
+        const re = /a/;
+        Object.defineProperty(re, "global", { value: true });
+        const missed = re[Symbol.match]("bbb");
+      `),
+    ).toContain(message);
+    expect(
+      await getMessage(`
+        const re = /(?:)/g;
+        Object.defineProperty(re, "unicode", { value: true });
+        const all = "😀".match(re);
+      `),
+    ).toContain(message);
+    expect(
+      await getMessage(`
+        const re = /b/;
+        Object.defineProperty(re, "ignoreCase", { value: true });
+        const pieces = "aBcbd".split(re);
+      `),
+    ).toContain(message);
+    expect(
+      await getMessage(`
+        const re = /[db]/;
+        (re as unknown as { constructor: unknown }).constructor = 1;
+        const pieces = re[Symbol.split]("abcde");
+      `),
+    ).toContain(message);
+  });
+
   it("match a surrogate pair as one character with the u flag", async () => {
     const getSource = (pattern: string) => `
       const found = /./u.exec("😀x");

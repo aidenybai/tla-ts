@@ -3767,15 +3767,32 @@ RegExpObject(prototype, regexp) ==
     @@ [regexp |-> regexp]
 
 \\* The record of a regexp's pattern, where tla-ts follows the built-in methods only while a script
-\\* has given the regexp no property but its lastIndex and hasn't changed the built-in objects in
-\\* changeable, which hold the methods that the call reads.
-RegExpOf(heap, ref, changeable) ==
-  IF /\\ IsRegExp(heap, ref)
-     /\\ heap.objects[ref[Ref]].prototype = Ref :> "RegExp.prototype"
-     /\\ heap.objects[ref[Ref]].keys = <<"lastIndex">>
-     /\\ DOMAIN heap.changed \\cap changeable = {}
-  THEN heap.objects[ref[Ref]].regexp
-  ELSE Assert(FALSE, "tla-ts can't call a regexp's method where a script changed what it reads")
+\\* has given the regexp no property but its lastIndex and its own data properties of the keys in
+\\* owned, and hasn't changed the built-in objects in changeable, which hold the methods that the
+\\* call reads.
+LOCAL RegExpOwning(heap, ref, changeable, owned) ==
+  LET object == heap.objects[ref[Ref]]
+  IN  IF /\\ IsRegExp(heap, ref)
+         /\\ object.prototype = Ref :> "RegExp.prototype"
+         /\\ object.keys[1] = "lastIndex"
+         /\\ \\A position \\in 2..Len(object.keys) :
+              /\\ object.keys[position] \\in owned
+              /\\ object.attributes[object.keys[position]].kind = "data"
+         /\\ DOMAIN heap.changed \\cap changeable = {}
+      THEN object.regexp
+      ELSE Assert(FALSE, "tla-ts can't call a regexp's method where a script changed what it reads")
+
+RegExpOf(heap, ref, changeable) == RegExpOwning(heap, ref, changeable, {})
+
+\\* The properties that the flags getter reads, which RegExpBuiltinExec doesn't, as it reads the flags
+\\* that the regexp was made with.
+LOCAL RegExpFlagNames ==
+  {"hasIndices", "global", "ignoreCase", "multiline", "dotAll", "unicode", "unicodeSets", "sticky"}
+
+\\* A flag as the flags getter reads it, from the regexp's own data property where it has one.
+LOCAL RegExpFlag(heap, ref, regexp, name) ==
+  LET object == heap.objects[ref[Ref]]
+  IN  IF name \\in DOMAIN object.values THEN ToBoolean(object.values[name]) ELSE regexp[name]
 
 \\* Whether a script hasn't changed a built-in object, whose properties tla-ts records.
 IsKept(heap, key) == key \\notin DOMAIN heap.changed
@@ -3897,7 +3914,7 @@ LOCAL RegExpResult(heap, prototype, regexp, text, match) ==
 \\* it throws the TypeError of setting a lastIndex that isn't writable. The calls of a regexp's
 \\* methods below give the same.
 RegExpExecIn(heap, ref, value, prototype) ==
-  LET regexp == RegExpOf(heap, ref, {"RegExp.prototype"})
+  LET regexp == RegExpOwning(heap, ref, {"RegExp.prototype"}, RegExpFlagNames)
       text == Text(value)
       run == RegExpRun(heap, ref, regexp, text)
       made == RegExpResult(run.heap, prototype, regexp, text, run.match)
@@ -3907,20 +3924,25 @@ RegExpExecIn(heap, ref, value, prototype) ==
 
 \\* RegExp.prototype.test, as the heap after it and whether exec finds a match.
 RegExpTestIn(heap, ref, value) ==
-  LET regexp == RegExpOf(heap, ref, {"RegExp.prototype"})
+  LET regexp == RegExpOwning(heap, ref, {"RegExp.prototype"}, RegExpFlagNames)
       run == RegExpRun(heap, ref, regexp, Text(value))
   IN  [heap |-> run.heap, value |-> run.match.end # -1, isThrown |-> run.isThrown]
 
-\\* String.prototype.match through RegExp.prototype[@@match]: what exec gives for a regexp that isn't
-\\* global, and else the array of each match's text, or null, which leaves lastIndex at 0.
+\\* String.prototype.match through RegExp.prototype[@@match]: what exec gives where the flags getter
+\\* tells that the regexp isn't global, and else the array of each match's text, or null, which leaves
+\\* lastIndex at 0. tla-ts finds each match of a global regexp only with the flags it was made with.
 RegExpMatchIn(heap, ref, value, prototype) ==
-  LET regexp == RegExpOf(heap, ref, {"RegExp.prototype", "String.prototype"})
+  LET regexp == RegExpOwning(heap, ref, {"RegExp.prototype", "String.prototype"}, RegExpFlagNames)
       text == Text(value)
       reset == SetLastIndex(heap, ref, 0)
       matches == RegExpMatches(regexp, text, 0)
       made == Allocate(reset, ArrayObject(prototype, [position \\in DOMAIN matches |->
                                                          RegExpCapture(text, matches[position], 0)]))
-  IN  CASE ~regexp.global -> RegExpExecIn(heap, ref, value, prototype)
+      isFullUnicode ==
+        RegExpFlag(heap, ref, regexp, "unicode") \\/ RegExpFlag(heap, ref, regexp, "unicodeSets")
+  IN  CASE ~RegExpFlag(heap, ref, regexp, "global") -> RegExpExecIn(heap, ref, value, prototype)
+        [] ~regexp.global \\/ isFullUnicode # regexp.unicode ->
+             Assert(FALSE, "tla-ts can't call a regexp's method where a script changed what it reads")
         [] IsLastIndexFixed(heap, ref) -> [heap |-> heap, value |-> Null, isThrown |-> TRUE]
         [] matches = <<>> -> [heap |-> reset, value |-> Null, isThrown |-> FALSE]
         [] OTHER -> [heap |-> made, value |-> Allocated(made), isThrown |-> FALSE]
@@ -3992,10 +4014,18 @@ RegExpSearchIn(heap, ref, value) ==
        isThrown |-> (IsLastIndexFixed(heap, ref) /\\ ~SameValue(previous, 0)) \\/ run.isThrown]
 
 \\* String.prototype.split through RegExp.prototype[@@split], which splits with a new regexp that the
-\\* RegExp constructor makes, so the regexp's lastIndex stays as it is.
+\\* RegExp constructor makes, so the regexp's lastIndex stays as it is. SpeciesConstructor gives the
+\\* RegExp constructor where the regexp's own constructor is undefined or has no @@species.
 RegExpSplitIn(heap, ref, value, limit) ==
-  LET regexp == RegExpOf(heap, ref, {"RegExp.prototype", "String.prototype", "RegExp"})
-  IN  [heap |-> heap, value |-> RegExpPieces(regexp, Text(value), limit), isThrown |-> FALSE]
+  LET regexp == RegExpOwning(heap, ref, {"RegExp.prototype", "String.prototype", "RegExp"},
+                             {"constructor"})
+      object == heap.objects[ref[Ref]]
+      constructor == object.values["constructor"]
+  IN  IF \\/ "constructor" \\notin DOMAIN object.values
+         \\/ constructor = Undefined
+         \\/ IsHeap(constructor) /\\ Get(heap, constructor, WellKnownSymbol("species")) \\in {Undefined, Null}
+      THEN [heap |-> heap, value |-> RegExpPieces(regexp, Text(value), limit), isThrown |-> FALSE]
+      ELSE Assert(FALSE, "tla-ts can't call a regexp's method where a script changed what it reads")
 
 \\* The length that a value gives an array, or -1 where ArraySetLength throws a RangeError.
 LOCAL ArrayLengthOf(value) ==
