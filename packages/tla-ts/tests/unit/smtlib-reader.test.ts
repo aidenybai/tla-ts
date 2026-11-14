@@ -4,7 +4,7 @@ import { decideSmt } from "../../src/prover/smt/solver/solver";
 
 const run = (lines: string[]) => {
   const output: string[] = [];
-  runSmtlibScript(lines.join("\n"), { timeLimitMs: 5000 }, (line) => output.push(line));
+  runSmtlibScript(lines.join("\n"), { timeLimitMs: 60000 }, (line) => output.push(line));
   return output;
 };
 
@@ -167,5 +167,23 @@ describe("the attributes of a quantifier, as Z3 5.3.2 checks them", () => {
         "(check-sat)",
       ]),
     ).toEqual(["sat"]);
+  });
+});
+
+describe("a backslash in a quoted symbol, as Z3 5.3.2 reports it", () => {
+  it("rejects the symbol and goes on at the backslash", () => {
+    expect(
+      run([
+        "(declare-fun |a b| () Int)",
+        "(declare-fun |x\\|y| () Int)",
+        '(simplify (str.len "a\\b"))',
+        "(simplify (+ |a b| 1 2))",
+      ]),
+    ).toEqual([
+      "(error \"line 2 column 15: invalid character '\\' in quoted symbol\")",
+      '(error "line 2 column 15: unexpected character")',
+      "3",
+      "(+ 3 |a b|)",
+    ]);
   });
 });

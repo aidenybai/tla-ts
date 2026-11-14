@@ -648,6 +648,11 @@ const createScanner = (text: string) => {
               { line: state.line, column: getColumn() },
             );
           const current = text[state.index];
+          if (character === "|" && current === "\\")
+            throw new SmtParseError("invalid character '\\' in quoted symbol", {
+              line: state.line,
+              column: getColumn(),
+            });
           advance();
           // Z3's scanner starts the line before it reads past a newline in a quoted symbol or a
           // string, so the columns of the rest of the line count one more.
