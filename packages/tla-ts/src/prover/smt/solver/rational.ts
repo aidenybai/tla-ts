@@ -1,4 +1,5 @@
 // Ported from Z3 (src/util/rational.h), MIT license, see z3-license.txt.
+import { SmtInvariantError } from "../../../errors";
 
 export const getGcd = (first: bigint, second: bigint) => {
   let left = first < 0n ? -first : first;
@@ -85,6 +86,7 @@ export class Rational {
   }
 
   static fromDouble(value: number) {
+    if (!Number.isFinite(value)) throw new SmtInvariantError(`${value} is not a rational number`);
     let den = 1n;
     let scaled = value;
     while (!Number.isInteger(scaled)) {
