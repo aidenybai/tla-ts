@@ -366,4 +366,108 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       ")",
     ]);
   });
+
+  // dl_query_cmd prints the exception of the query and then the unknown status.
+  it("reports a failed query as an error and unknown", () => {
+    expect(
+      run([
+        "(declare-rel q (Int))",
+        "(declare-rel p (Int))",
+        "(declare-var x Int)",
+        "(declare-fun f (Int) Int)",
+        "(rule (=> (= (f x) x) (p x)))",
+        "(rule (=> (p x) (q x)))",
+        "(query q)",
+        "(get-info :reason-unknown)",
+        "(query (q 1))",
+        "(query)",
+        "(query zz)",
+      ]),
+    ).toEqual([
+      "(error \"query failed: Uninterpreted 'f' in <null>:",
+      "p(#0) :- ",
+      " (= (f (:var 0)) (:var 0)).",
+      '")',
+      "unknown",
+      '(:reason-unknown "state of the most recent check-sat command is not known")',
+      "(error \"line 9 column 10: Invalid function name. Expecting sort list starting with '(' to disambiguate function name got q\")",
+      '(error "line 10 column 6: invalid query command, argument expected")',
+      '(error "line 11 column 7: invalid function declaration reference, unknown function zz")',
+    ]);
+  });
+
+  // parser::parse_func_decl_ref and dl_query_cmd::set_next_arg.
+  it("reads the predicate of a query as a function declaration reference", () => {
+    expect(
+      run([
+        "(declare-rel q (Int))",
+        "(declare-rel p (Int Int))",
+        "(declare-fun g (Int) Bool)",
+        "(declare-var x Int)",
+        "(rule (q 1))",
+        "(query (q 1))",
+        "(query (q (Int) Bool))",
+        "(query (p (Int)))",
+        "(query (p (Int) Bool))",
+        "(query ())",
+        "(query 1)",
+        "(query (q))",
+        "(query (q (Int)))",
+        "(query (q Int Bool))",
+        "(query (zz (Int) Bool))",
+        "(query g)",
+      ]),
+    ).toEqual([
+      "(error \"line 6 column 10: Invalid function name. Expecting sort list starting with '(' to disambiguate function name got q\")",
+      "sat",
+      "(error \"line 8 column 15: Invalid function name invalid sort, unexpected ')'\")",
+      '(error "line 9 column 20: invalid function declaration reference, unknown indexed function p")',
+      "(error \"line 10 column 8: invalid function declaration reference, symbol or '(' expected got query\")",
+      "(error \"line 11 column 7: invalid function declaration reference, symbol or '(' expected got query\")",
+      "(error \"line 12 column 9: Invalid function name. Expecting sort list starting with '(' to disambiguate function name got q\")",
+      "(error \"line 13 column 15: Invalid function name invalid sort, unexpected ')'\")",
+      "(error \"line 14 column 10: Invalid function name. Expecting sort list starting with '(' to disambiguate function name got Int\")",
+      '(error "line 15 column 21: invalid function declaration reference, unknown indexed function zz")',
+      '(error "line 16 column 8: Invalid query argument, expected a predicate registered as a relation")',
+    ]);
+  });
+
+  // cmd_context::reason_unknown and check_sat_using_tactic_cmd.
+  it("prints the reason of an unknown answer", () => {
+    expect(
+      run([
+        "(get-info :reason-unknown)",
+        "(declare-const x Int)",
+        "(assert (> x 1))",
+        "(check-sat-using smt)",
+        "(get-info :reason-unknown)",
+        "(assert (< x 5))",
+        "(get-info :reason-unknown)",
+        "(check-sat-using fail)",
+        "(get-info :reason-unknown)",
+        "(assert (< x 0))",
+        "(check-sat-using (then simplify smt))",
+        "(get-info :reason-unknown)",
+        "(push)",
+        "(get-info :reason-unknown)",
+        "(check-sat-using (fail-if (> num-consts 0)))",
+        "(get-info :reason-unknown)",
+        "(pop)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      '(:reason-unknown "state of the most recent check-sat command is not known")',
+      "sat",
+      '(:reason-unknown "")',
+      '(:reason-unknown "state of the most recent check-sat command is not known")',
+      "unknown",
+      '(:reason-unknown "fail tactic")',
+      "unsat",
+      '(:reason-unknown "")',
+      '(:reason-unknown "state of the most recent check-sat command is not known")',
+      "unknown",
+      '(:reason-unknown "fail-if tactic")',
+      '(:reason-unknown "state of the most recent check-sat command is not known")',
+    ]);
+  });
 });

@@ -276,6 +276,8 @@ interface CheckResult {
   isOptimizing: boolean;
   model: ProtoModel | undefined;
   core: number[] | undefined;
+  // check_sat_result::reason_unknown, where the port tracks it.
+  reasonUnknown?: string;
 }
 
 interface ScriptState {
@@ -790,6 +792,61 @@ export const runSmtlibScript = (
     manager.decRef(result);
     manager.decRef(substituted);
   };
+  // parser::parse_func_decl_ref: a name, or a name with its signature. Z3 ends the message of an
+  // unexpected token with the last identifier it read.
+  const getFuncDeclRef = (reference: SExpr) => {
+    const state = script.state;
+    if (isSymbol(reference)) {
+      const decls = state.reader.getFuncs(reference.text);
+      if (decls.length > 1)
+        throw new SmtParseError(
+          `ambiguous function declaration reference, provide full signature to disambiguate (<symbol> (<sort>*) <sort>) ${reference.text}`,
+          reference,
+        );
+      if (decls.length === 0)
+        throw new SmtParseError(
+          `invalid function declaration reference, unknown function ${reference.text}`,
+          reference,
+        );
+      return decls[0];
+    }
+    const name = reference.kind === "list" ? (reference.items[0] ?? reference.end) : reference;
+    if (reference.kind !== "list" || name.kind !== "symbol") {
+      if (name.kind === "list")
+        throw new SmtUnsupportedError("an indexed function declaration reference");
+      throw new SmtParseError(
+        "invalid function declaration reference, symbol or '(' expected got query",
+        name,
+      );
+    }
+    const domain = reference.items[1] ?? reference.end;
+    if (domain.kind !== "list")
+      throw new SmtParseError(
+        `Invalid function name. Expecting sort list starting with '(' to disambiguate function name got ${domain.kind === "symbol" || domain.kind === "keyword" ? domain.text : name.text}`,
+        domain,
+      );
+    const sorts = domain.items.map((sort) => state.reader.parseSort(sort));
+    if (reference.items[2] === undefined)
+      throw new SmtParseError("Invalid function name invalid sort, unexpected ')'", reference.end);
+    const range = state.reader.parseSort(reference.items[2]);
+    const follower = reference.items[3] ?? reference.end;
+    const found = state.reader.getFuncs(name.text).find((decl) => {
+      const funcDecl = state.manager.funcDecls[decl];
+      return (
+        funcDecl.range === range &&
+        funcDecl.domain.length === sorts.length &&
+        funcDecl.domain.every((sort, index) => sort === sorts[index])
+      );
+    });
+    if (found === undefined)
+      throw new SmtParseError(
+        `invalid function declaration reference, unknown indexed function ${name.text}`,
+        follower,
+      );
+    if (follower !== reference.end)
+      throw new SmtUnsupportedError("a function declaration reference with trailing terms");
+    return found;
+  };
   const runCommand: Record<string, (list: SmtList) => void> = {
     assert: (list) => {
       const state = script.state;
@@ -855,27 +912,28 @@ export const runSmtlibScript = (
     },
     query: (list) => {
       const state = script.state;
-      const target = list.items[1];
-      if (!isSymbol(target))
+      if (list.items[1] === undefined)
         throw new SmtParseError("invalid query command, argument expected", list.end);
-      const decls = state.reader.getFuncs(target.text);
-      if (decls.length !== 1)
-        throw new SmtParseError(
-          `invalid function declaration reference, unknown function ${target.text}`,
-          target,
-        );
+      const relation = getFuncDeclRef(list.items[1]);
       const datalog = getDatalog();
-      const relation = decls[0];
+      // dl_query_cmd::set_next_arg runs once the parser is past the reference.
+      const follower = list.items[2] ?? list.end;
       if (!datalog.isPredicateDecl(relation))
         throw new SmtParseError(
           "Invalid query argument, expected a predicate registered as a relation",
-          target,
+          follower,
         );
+      if (follower.kind !== "keyword" && follower !== list.end)
+        throw new SmtParseError("invalid command argument, keyword expected", follower);
       for (const assertion of state.assertions) datalog.assertExpr(assertion);
       state.manager.limit.restart(Date.now() + options.timeLimitMs);
       state.manager.limit.push(settings.rlimit);
       try {
         print(getVerdict(datalog.relQuery(relation)));
+      } catch (error) {
+        if (!(error instanceof SmtTacticError)) throw error;
+        print(`(error "query failed: ${error.message}")`);
+        print("unknown");
       } finally {
         state.manager.limit.pop();
       }
@@ -902,6 +960,7 @@ export const runSmtlibScript = (
             builder.isTrackingDependencies || !hasNames()
               ? getDependencyValues(checked.core)
               : undefined,
+          reasonUnknown: checked.reasonUnknown,
         };
         print(getVerdict(checked.status));
       } finally {
@@ -1434,13 +1493,22 @@ export const runSmtlibScript = (
       if (info?.kind !== "keyword")
         throw new SmtParseError("invalid command argument, keyword expected", info ?? list.end);
       const optimizer = script.state.optimizer;
+      const check = script.state.check;
       if (
         info.text === ":reason-unknown" &&
-        script.state.check?.status === L_UNDEF &&
+        check?.status === L_UNDEF &&
         optimizer !== undefined &&
         optimizer.reasonUnknown !== ""
       ) {
         print(`(:reason-unknown "${optimizer.reasonUnknown}")`);
+        return;
+      }
+      const reasonUnknown =
+        check === undefined
+          ? "state of the most recent check-sat command is not known"
+          : check.reasonUnknown;
+      if (info.text === ":reason-unknown" && reasonUnknown !== undefined) {
+        print(`(:reason-unknown "${reasonUnknown.replaceAll('"', '\\"')}")`);
         return;
       }
       if (info.text !== ":error-behavior")

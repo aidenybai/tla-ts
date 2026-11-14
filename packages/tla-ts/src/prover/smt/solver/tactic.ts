@@ -1874,6 +1874,8 @@ interface TacticCheck {
   status: number;
   model: ProtoModel | undefined;
   core: Dependency | undefined;
+  // What check_sat leaves in reason_unknown, or undefined where the port does not track it.
+  reasonUnknown: string | undefined;
 }
 
 // The port's declarations of division by zero leave out their domain; Z3's have two arguments.
@@ -1941,23 +1943,32 @@ export const convertModel = (goal: Goal, model: ProtoModel) =>
   }, model);
 
 export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
+  const undecided = { status: L_UNDEF, model: undefined, core: undefined };
   const goals = (() => {
     try {
       return tactic(goal);
     } catch (error) {
-      if (error instanceof SmtTacticError || error instanceof SmtCanceledError) return undefined;
+      if (error instanceof SmtTacticError) return error.message;
+      if (error instanceof SmtCanceledError) return undefined;
       throw error;
     }
   })();
+  if (typeof goals === "string") return { ...undecided, reasonUnknown: goals };
   if (goals !== undefined && isDecidedSat(goals))
     return {
       status: L_TRUE,
       model: convertModel(goals[0], goals[0].model ?? new ProtoModel(goal.manager)),
       core: undefined,
+      reasonUnknown: "",
     };
   if (goals !== undefined && isDecidedUnsat(goals))
-    return { status: L_FALSE, model: undefined, core: goals[0].getDependency(0) };
-  return { status: L_UNDEF, model: undefined, core: undefined };
+    return {
+      status: L_FALSE,
+      model: undefined,
+      core: goals[0].getDependency(0),
+      reasonUnknown: "",
+    };
+  return { ...undecided, reasonUnknown: undefined };
 };
 
 export const applyTactic = (tactic: Tactic, goal: Goal) => {
