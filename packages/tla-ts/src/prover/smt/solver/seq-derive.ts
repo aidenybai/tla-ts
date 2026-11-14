@@ -177,7 +177,8 @@ export class Derive {
   }
 
   private reset() {
-    for (const cache of [...this.caches, ...this.topCaches]) cache.clear();
+    // Deviation from Z3: the xor caches go too, as the trail was all that kept their results alive.
+    for (const cache of [...this.caches, ...this.topCaches, ...this.xorCaches]) cache.clear();
     this.resetOpCaches();
     this.trail.reset();
     this.element = assign(this.manager, this.element, -1);
@@ -1248,6 +1249,7 @@ export class Derive {
     const elementSort = manager.getSeqElementSort(manager.getReSeqSort(manager.sorts[regex]));
     const element = manager.mkVar(0, elementSort);
     const derivative = this.derive(DERIVATIVE_BRZOZOWSKI, element, regex);
+    // Deviation from Z3: a cached derivative leaves m_ele null there, which stops the pruning.
     this.getCofactors(element, derivative, result);
   }
 

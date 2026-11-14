@@ -121,3 +121,51 @@ describe("the setup of the smt kernel", () => {
     );
   });
 });
+
+describe("regular expressions", () => {
+  it("collapses a character class given by re.of.pred as Z3 does", () => {
+    const below = "(re.of.pred (lambda ((c Unicode)) (char.<= c (_ Char 98))))";
+    expect(
+      run([
+        `(simplify (re.union ${below} (re.range "a" "z")))`,
+        `(simplify (re.inter ${below} (re.range "a" "z")))`,
+        '(simplify (re.diff (re.range "a" "z") (re.of.pred (lambda ((c Unicode)) (= c (_ Char 98))))))',
+        '(simplify (re.inter (re.of.pred (lambda ((c Unicode)) (not (= c (_ Char 98))))) (re.range "a" "c")))',
+      ]),
+    ).toEqual([
+      '(re.range "\\u{0}" "z")',
+      '(re.range "a" "b")',
+      '(re.union (str.to_re "a") (re.range "c" "z"))',
+      '(re.union (str.to_re "a") (str.to_re "c"))',
+    ]);
+  });
+
+  it("rejects an argument to the empty and the full character regular expression", () => {
+    expect(
+      run([
+        "(simplify ((as re.none (RegEx String)) 1))",
+        "(simplify ((as re.empty (RegEx String)) 1))",
+        "(simplify ((as re.allchar (RegEx String)) 1))",
+        "(simplify (re.none 1))",
+        "(simplify (re.allchar 1))",
+        "(simplify (re.empty 1))",
+        "(simplify ((as re.empty (RegEx (Seq Int))) 1))",
+        "(simplify ((as re.allchar (RegEx (Seq Int))) 1))",
+        "(declare-const x String)",
+        "(assert (str.in_re x ((as re.none (RegEx String)) 1)))",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      "(error \"line 1 column 41: Unexpected number of arguments to 're.none' 0 arguments expected 1 given\")",
+      "(error \"line 2 column 41: Unexpected number of arguments to 're.empty' 0 arguments expected 1 given\")",
+      "(error \"line 3 column 43: Unexpected number of arguments to 're.allchar' 0 arguments expected 1 given\")",
+      "(error \"line 4 column 20: Unexpected number of arguments to 're.none' 0 arguments expected 1 given\")",
+      "(error \"line 5 column 23: Unexpected number of arguments to 're.allchar' 0 arguments expected 1 given\")",
+      "(error \"line 6 column 21: Unexpected number of arguments to 're.empty' 0 arguments expected 1 given\")",
+      "(re.empty 1)",
+      "(re.allchar 1)",
+      "(error \"line 10 column 51: Unexpected number of arguments to 're.none' 0 arguments expected 1 given\")",
+      "sat",
+    ]);
+  });
+});
