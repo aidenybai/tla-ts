@@ -1,0 +1,3 @@
+---- MODULE SymmetricStarvation ----
+EXTENDS SymmetricLiveness
+====

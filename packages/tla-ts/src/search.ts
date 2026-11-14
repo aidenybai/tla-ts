@@ -1213,8 +1213,7 @@ export const createSearch = (
         [...invariants, ...constraints].some((check) => check.scope !== undefined) ||
         actionConstraints.length > 0 ||
         properties.actionProperties.some((property) => property.scope !== undefined) ||
-        (properties.liveness.length > 0 &&
-          (liveness === undefined || symmetryGroup !== undefined || view !== undefined));
+        (properties.liveness.length > 0 && (liveness === undefined || view !== undefined));
       if (isInterpreted || spec.init === undefined || spec.next === undefined) return undefined;
       const invariantExpressions = invariantPredicates.map((invariant) => invariant.predicate);
       const constraintExpressions = [

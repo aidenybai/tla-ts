@@ -5465,8 +5465,8 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       {
         atoms: { holdsState: (atom, state) => holds(atom, state, state), holdsAction: holds },
         isShared: true,
-        // Without symmetry or a view, a state's index identifies it.
-        isSame: () => true,
+        // Without symmetry, a state's index identifies it. With it, states of one class share it.
+        isSame: isImaged ? isSame : () => true,
         evaluateFrom: (_source, evaluate) => evaluate(),
       },
       {
@@ -5482,7 +5482,8 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
           const successors: LiveSuccessor<Plain[]>[] = [];
           compiled.next(state, (successor) => {
             if (!isInModel(successor)) return;
-            compiled.encode(successor, keys);
+            if (isEncoded) compiled.encode(successor, keys);
+            else compiled.writeKey(successor, keys);
             const index = findEncoded(false);
             successors.push({ index: index === -1 ? deopt() : index, state: successor });
           });
