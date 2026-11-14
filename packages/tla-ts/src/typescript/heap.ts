@@ -4429,9 +4429,9 @@ export const findHeapArrays = (
     }
   });
   // An array literal that a variable holds, where the script gives the array a property that isn't
-  // its length or an index, as a test of exec builds the array it expects, keeps an iterator of it,
-  // which sees the array change, or takes it from a pattern assignment. The script must read it
-  // only as an object.
+  // its length or an index, as a test of exec builds the array it expects, deletes an element,
+  // keeps an iterator of it, which sees the array change, or takes it from a pattern assignment.
+  // The script must read it only as an object.
   const isNamedWrite = (use: ts.Identifier) =>
     ts.isPropertyAccessExpression(use.parent) &&
     use.parent.expression === use &&
@@ -4439,6 +4439,11 @@ export const findHeapArrays = (
     ts.isBinaryExpression(use.parent.parent) &&
     use.parent.parent.left === use.parent &&
     use.parent.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken;
+  // Deleting an element leaves a hole.
+  const isElementDelete = (use: ts.Identifier) =>
+    ts.isElementAccessExpression(use.parent) &&
+    use.parent.expression === use &&
+    ts.isDeleteExpression(use.parent.parent);
   // A pattern assignment gives the array that it destructures to a variable, which a script that
   // only compares the variable or passes it on can tell apart from a copy.
   const isPatternResult = (use: ts.Identifier) => {
@@ -4487,6 +4492,7 @@ export const findHeapArrays = (
       reads.some(
         (use) =>
           isNamedWrite(use) ||
+          isElementDelete(use) ||
           isPatternResult(use) ||
           getKeptIterator(use.parent.parent, context) !== undefined ||
           getIteratedArray(use.parent, context) === use,
@@ -4505,7 +4511,7 @@ export const findHeapArrays = (
       initializer !== undefined &&
       ts.isCallExpression(initializer) &&
       isFreshArrayCall(initializer, context) &&
-      reads.some(isNamedWrite) &&
+      reads.some((use) => isNamedWrite(use) || isElementDelete(use)) &&
       reads.every((use) => isArrayObjectUse(use, context))
     ) {
       arrays.add(initializer);

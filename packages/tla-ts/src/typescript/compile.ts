@@ -392,6 +392,10 @@ export const compile = (
       [context.checker.getTypeAtLocation(node.left.expression)]
         .flatMap((type) => (type.isIntersection() ? type.types : [type]))
         .some((type) => context.checker.isArrayType(type) || context.checker.isTupleType(type))) ||
+    // An array whose element a script deletes, which leaves a hole that only an object can hold.
+    (ts.isDeleteExpression(node) &&
+      ts.isElementAccessExpression(node.expression) &&
+      context.checker.isArrayType(context.checker.getTypeAtLocation(node.expression.expression))) ||
     (ts.forEachChild(node, usesObjects) ?? false);
   const reached = getReached(roots, context);
   context.reached = new Set(reached);

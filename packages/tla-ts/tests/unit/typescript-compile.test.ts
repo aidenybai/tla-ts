@@ -5158,6 +5158,51 @@ describe("errors", () => {
     });
   });
 
+  describe("deletes an array's element, which leaves a hole", () => {
+    const getSource = (expected: string) => `
+      const arr = [1, 2, 3, 4];
+      const visited: number[] = [];
+      delete arr[1];
+      arr.forEach((value, index) => {
+        visited.push(index);
+        if (index === 0) delete arr[2];
+      });
+      const seen = [arr.length, arr[1], arr.join("-"), visited.join(), 2 in arr, arr.indexOf(4)];
+      if (seen.join(";") !== "${expected}") throw new Error(seen.join(";"));
+    `;
+
+    it("skips the holes", async () => {
+      const result = await checkModel(getSource("4;;1---4;0,3;false;3"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkModel(getSource("4;;1---4;0,2,3;false;3"));
+      expect(result.failure?.message).toContain("4;;1---4;0,3;false;3");
+    });
+  });
+
+  describe("deletes an element of an array that a built-in method makes", () => {
+    const getSource = (expected: string) => `
+      const keys = Object.keys({ prop1: 100, prop2: 200 });
+      delete keys[0];
+      const sliced = [1, 2, 3].slice(1);
+      delete sliced[1];
+      const seen = [keys.length, typeof keys[0], keys.join(), 0 in keys, sliced.join()];
+      if (seen.join(";") !== "${expected}") throw new Error(seen.join(";"));
+    `;
+
+    it("leaves a hole", async () => {
+      const result = await checkModel(getSource("2;undefined;,prop2;false;2,"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkModel(getSource("2;undefined;,prop2;true;2,"));
+      expect(result.failure?.message).toContain("2;undefined;,prop2;false;2,");
+    });
+  });
+
   describe("skips to the next element after a hole where a callback runs as statements", () => {
     const getSource = (expected: string) => `
       const visited: number[] = [];
