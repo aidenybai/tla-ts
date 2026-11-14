@@ -10,13 +10,11 @@ export interface SearchState {
 
 export interface Search {
   states: SearchState[];
-  chartStates: SearchState[];
   stateCount: number;
 }
 
-const SHOWN_STATES = 8;
+const SHOWN_STATES = 4;
 const WHOLE_STATE_LENGTH = 24;
-const CHART_STATES = 24;
 const EDGE = /^(-?\d+) -> (-?\d+) \[label="((?:[^"\\]|\\.)*)"/;
 const NODE = /^(-?\d+) \[label="((?:[^"\\]|\\.)*)"/;
 
@@ -61,13 +59,12 @@ export const getSearch = (
   }
   const failing = [...states.values()].find((state) => state.isFailing);
   const failingIds = getPath([...states.values()], failing?.id).map((state) => state.id);
-  const getShown = (count: number) => {
-    const shown = new Set([...[...states.keys()].slice(0, count), ...failingIds]);
-    return [...states.values()].filter((state) => shown.has(state.id));
-  };
+  // A failing run shows only the steps to the failing state.
+  const shown = new Set(
+    failingIds.length > 0 ? failingIds : [...states.keys()].slice(0, SHOWN_STATES),
+  );
   return {
-    states: getShown(SHOWN_STATES),
-    chartStates: getShown(CHART_STATES),
+    states: [...states.values()].filter((state) => shown.has(state.id)),
     stateCount: states.size,
   };
 };

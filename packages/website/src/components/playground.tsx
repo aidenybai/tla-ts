@@ -20,8 +20,6 @@ import { GitHubIcon } from "./github-icon";
 import { Logo } from "./logo";
 import { RunIcon } from "./run-icon";
 import { SearchCell, useSearchPath } from "./search-cell";
-import { StateChart } from "./state-chart";
-import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
 import { ThemeMenu } from "./theme-menu";
 import { Verdict } from "./verdict";
 import { Button } from "./ui/button";
@@ -206,14 +204,13 @@ export const PlaygroundPanes = () => {
   const isHydrated = useIsHydrated();
   const search = state.result?.search;
   const path = useSearchPath(search);
-  const [view, setView] = useState("code");
-  const outputRef = useRef<HTMLDivElement>(null);
+  const outputRef = useRef<HTMLElement>(null);
   useEffect(() => {
     const output = outputRef.current;
     (
       output?.querySelector('[data-state="failing"]') ?? output?.querySelector("[data-state]")
-    )?.scrollIntoView({ block: "center", inline: "center" });
-  }, [search, view]);
+    )?.scrollIntoView({ block: "center" });
+  }, [search]);
   const source = (
     <Pane name="source">
       <CodeEditor
@@ -228,75 +225,53 @@ export const PlaygroundPanes = () => {
     </Pane>
   );
   const output = (
-    <div className="relative size-full">
-      {search && (
-        <ToggleGroup
-          label="View"
-          value={view}
-          onValueChange={setView}
-          className="absolute top-3 right-3 z-10 rounded-lg"
-        >
-          <ToggleGroupItem value="code" className="h-7 rounded-md px-2 text-xs">
-            Code
-          </ToggleGroupItem>
-          <ToggleGroupItem value="chart" className="h-7 rounded-md px-2 text-xs">
-            States
-          </ToggleGroupItem>
-        </ToggleGroup>
-      )}
-      <Pane name="output">
-        <div ref={outputRef} className="relative min-h-full">
-          {search && view === "chart" ? (
-            <StateChart search={search} />
-          ) : (
-            <code
-              onPointerOver={(event) =>
-                state.setHoveredName(
-                  event.target instanceof HTMLElement ? event.target.dataset.region : undefined,
+    <Pane name="output">
+      <code
+        ref={outputRef}
+        onPointerOver={(event) =>
+          state.setHoveredName(
+            event.target instanceof HTMLElement ? event.target.dataset.region : undefined,
+          )
+        }
+        onPointerLeave={() => state.setHoveredName(undefined)}
+        className={cn(
+          "@container block font-mono text-[13px]/[1.7] text-foreground transition-opacity duration-150 ease-out",
+          (state.isCompiling || state.error) && "opacity-50",
+        )}
+      >
+        {state.tla?.lines
+          .map((tokens, index) => ({ tokens, number: index + 1 }))
+          .map((line) => (
+            <CodeLine
+              key={line.number}
+              number={line.number}
+              tokens={line.tokens}
+              offset={state.outputOffsets[line.number - 1]}
+              marks={state.outputMarks}
+              hoveredName={state.hoveredName}
+              colors={state.colors}
+              note={state.result?.notes.find((note) => note.line === line.number)}
+              isActive={(path.states.at(0)?.line ?? state.result?.activeLine) === line.number}
+              isDimmed={
+                path.states.length > 0 &&
+                path.states.every((innerState) => innerState.line !== line.number)
+              }
+              aside={
+                search && (
+                  <SearchCell
+                    search={search}
+                    line={line.number}
+                    path={path.states}
+                    onHover={path.hover}
+                    className="max-sm:pl-10"
+                  />
                 )
               }
-              onPointerLeave={() => state.setHoveredName(undefined)}
-              className={cn(
-                "@container block font-mono text-[13px]/[1.7] text-foreground transition-opacity duration-150 ease-out",
-                (state.isCompiling || state.error) && "opacity-50",
-              )}
-            >
-              {state.tla?.lines
-                .map((tokens, index) => ({ tokens, number: index + 1 }))
-                .map((line) => (
-                  <CodeLine
-                    key={line.number}
-                    number={line.number}
-                    tokens={line.tokens}
-                    offset={state.outputOffsets[line.number - 1]}
-                    marks={state.outputMarks}
-                    hoveredName={state.hoveredName}
-                    colors={state.colors}
-                    note={state.result?.notes.find((note) => note.line === line.number)}
-                    isActive={(path.states.at(0)?.line ?? state.result?.activeLine) === line.number}
-                    isDimmed={
-                      path.states.length > 0 &&
-                      path.states.every((innerState) => innerState.line !== line.number)
-                    }
-                    aside={
-                      search && (
-                        <SearchCell
-                          search={search}
-                          line={line.number}
-                          path={path.states}
-                          onHover={path.hover}
-                          className="max-sm:pl-10"
-                        />
-                      )
-                    }
-                    className="-mr-4 -ml-4 pr-4 pl-4"
-                  />
-                ))}
-            </code>
-          )}
-        </div>
-      </Pane>
-    </div>
+              className="-mr-4 -ml-4 pr-4 pl-4"
+            />
+          ))}
+      </code>
+    </Pane>
   );
   return (
     <main className="relative min-h-0 flex-1">
