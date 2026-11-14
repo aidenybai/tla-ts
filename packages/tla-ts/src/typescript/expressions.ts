@@ -2457,6 +2457,17 @@ const translatePropertyAccess = (
   if (context.heap !== undefined && mayBeGeneratorType(receiver, context)) {
     throw new TlaTypeScriptError(`tla-ts can't read a generator's ${name} as a value`, node);
   }
+  if (
+    context.heap !== undefined &&
+    getKind(receiver, context) !== "object" &&
+    (context.checker.getTypeAtLocation(receiver).flags & ts.TypeFlags.Any) !== 0
+  ) {
+    return useJavaScript(
+      "GetAny",
+      [getHeap(scope, node, context), translateExpression(receiver, scope, context), string(name)],
+      context,
+    );
+  }
   rejectAnyReceiver(receiver, context);
   if (context.heap !== undefined && isNativeErrorValue(receiver, context)) {
     return translateNativeErrorRead(
@@ -2767,6 +2778,20 @@ const translateElementRead = (
   if (context.heap !== undefined && isCaughtRead(node.expression, context)) {
     return useJavaScript(
       "Get",
+      [
+        getHeap(scope, node, context),
+        translateExpression(node.expression, scope, context),
+        translatePropertyKey(node.argumentExpression, scope, context),
+      ],
+      context,
+    );
+  }
+  if (
+    context.heap !== undefined &&
+    (context.checker.getTypeAtLocation(node.expression).flags & ts.TypeFlags.Any) !== 0
+  ) {
+    return useJavaScript(
+      "GetAny",
       [
         getHeap(scope, node, context),
         translateExpression(node.expression, scope, context),

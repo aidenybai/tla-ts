@@ -1360,6 +1360,15 @@ Get(heap, ref, key) ==
          [] OTHER -> Get(heap, Get(heap, ref.constructor, "prototype"), key)
   ELSE GetFrom(heap, ref, key, ref)
 
+\\* A read of a property of a value whose type doesn't tell what it is: an object, an array, an error,
+\\* or a function. tla-ts stops at a primitive, and at undefined or null, whose read throws.
+GetAny(heap, value, key) ==
+  CASE value \\in {Undefined, Null} ->
+         Assert(FALSE, "tla-ts can't throw the TypeError of reading a property of undefined or null")
+    [] IsRef(value) \\/ IsSequenceValue(value) \\/ IsError(value) \\/ TypeOf(value) = "function" ->
+         Get(heap, value, key)
+    [] OTHER -> Assert(FALSE, "tla-ts can't read a property of this value")
+
 \\* A generator object that tla-ts follows, which is neither a promise nor a function.
 IsGeneratorObject(heap, ref) ==
   LET object == heap.objects[ref[Ref]]

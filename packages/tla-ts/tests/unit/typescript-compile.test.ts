@@ -8534,6 +8534,34 @@ describe("errors", () => {
     });
   });
 
+  describe("reads a property of a value of type any", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 2 };
+      const held: any = box;
+      let caught: any;
+      try {
+        throw new RangeError("range");
+      } catch (error) {
+        caught = error;
+      }
+      const list: any = [1, 2, 3];
+      const read = [
+        held.size, caught.constructor === RangeError, caught.message, list.length, list[1],
+      ].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2,true,range,3,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects another constructor for the caught error", async () => {
+      expect((await checkModel(getSource("2,false,range,3,2"))).failure?.message).toContain(
+        "2,true,range,3,2",
+      );
+    });
+  });
+
   describe("tells typeof a name that a closure assigns", () => {
     const getSource = (expected: string) => `
       const box = { size: 0 };
