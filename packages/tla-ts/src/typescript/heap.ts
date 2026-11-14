@@ -997,15 +997,36 @@ const translateWrapperObject = (
       ? argument === undefined
         ? boolean(false)
         : useJavaScript("ToBoolean", [translateExpression(argument, scope, context)], context)
-      : wrapper === "Number"
-        ? argument === undefined
+      : argument === undefined
+        ? wrapper === "Number"
           ? number(0)
-          : translateToNumber(argument, node, scope, context)
-        : argument === undefined
-          ? string("")
-          : translateToString(argument, scope, context);
+          : string("")
+        : translateConverted(
+            argument,
+            wrapper === "Number"
+              ? translateToNumber(argument, node, scope, context)
+              : translateToString(argument, scope, context),
+            wrapper === "Number" ? "number" : "string",
+            scope,
+            context,
+          );
   return useJavaScript("WrapperObject", [prototype, primitive], context);
 };
+
+// What ToNumber or ToString gives an argument, which a cast may type as a primitive though it holds
+// an object, whose valueOf or toString an expression can't call.
+const translateConverted = (
+  argument: ts.Expression,
+  converted: Expression,
+  primitive: "number" | "string",
+  scope: Scope,
+  context: Context,
+) =>
+  ifExpression(
+    useJavaScript("IsRef", [translateExpression(argument, scope, context)], context),
+    apply("Assert", [boolean(false), string(`tla-ts can't convert this object to a ${primitive}`)]),
+    converted,
+  );
 
 // An error that the Error constructor gives a message and options to: the message, where it isn't
 // undefined, as an own property that isn't enumerable, and so the options' cause where they have
@@ -1675,7 +1696,15 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
           : (getLiteralTime(values[0]) ??
             useJavaScript(
               "TimeFromNumber",
-              [translateToNumber(values[0], node, scope, context)],
+              [
+                translateConverted(
+                  values[0],
+                  translateToNumber(values[0], node, scope, context),
+                  "number",
+                  scope,
+                  context,
+                ),
+              ],
               context,
             ));
     // The constructor, which the prototype's constructor property holds.
@@ -2287,7 +2316,15 @@ export const translateDateFields = (
     "TimeFromFields",
     [0, 1, 2, 3, 4, 5, 6].map((position) => {
       const argument = values.at(position);
-      if (argument !== undefined) return translateToNumber(argument, node, scope, context);
+      if (argument !== undefined) {
+        return translateConverted(
+          argument,
+          translateToNumber(argument, node, scope, context),
+          "number",
+          scope,
+          context,
+        );
+      }
       return position === 0 ? identifier("NaN") : number(position === 2 ? 1 : 0);
     }),
     context,

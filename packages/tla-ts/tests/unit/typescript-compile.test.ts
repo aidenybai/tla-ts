@@ -5392,6 +5392,44 @@ describe("errors", () => {
     });
   });
 
+  it("stops where a cast gives a Date's or a wrapper's argument an object", async () => {
+    const converts = async (cast: string, made: string, read: string, expected: string) =>
+      (
+        await checkModel(`
+          const value = {
+            valueOf() { return 5; },
+            toString() { return "x"; },
+          } as unknown as ${cast};
+          const made = ${made};
+          if (${read} !== ${expected}) throw new Error("converted");
+        `)
+      ).failure?.message;
+    expect(await converts("number", "new Date(value)", "made.getTime()", "5")).toContain(
+      "tla-ts can't convert this object to a number",
+    );
+    expect(await converts("number", "new Date(2020, 1, value)", "made.getDate()", "5")).toContain(
+      "tla-ts can't convert this object to a number",
+    );
+    expect(await converts("number", "new Number(value)", "made.valueOf()", "5")).toContain(
+      "tla-ts can't convert this object to a number",
+    );
+    expect(await converts("string", "new String(value)", "made.valueOf()", '"x"')).toContain(
+      "tla-ts can't convert this object to a string",
+    );
+    const result = await checkModel(`
+      const time = 5;
+      const first = new Date(time);
+      const fields = new Date(2020, 1, time);
+      const copied = new Date(first);
+      const number = new Number("7");
+      const string = new String(time);
+      if (first.getTime() !== 5 || copied.getTime() !== 5) throw new Error("time");
+      if (fields.getDate() !== 5) throw new Error("fields");
+      if (number.valueOf() !== 7 || string.valueOf() !== "5") throw new Error("wrap");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("makes a Date that reads the clock but stops where something reads its time", async () => {
     const result = await checkModel(`
       const now = new Date(Date.now());
