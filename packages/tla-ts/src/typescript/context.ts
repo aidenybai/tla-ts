@@ -287,31 +287,6 @@ const getDeclaredReads = (
     [...(writers.get(node.getSourceFile())?.get(key) ?? [])].some(
       (writer) => writer !== getFunction(node),
     );
-  const getDeclaredType = (node: ts.Node) => {
-    const symbol = ts.isIdentifier(node)
-      ? getSymbol(node, checker)
-      : ts.isPropertyAccessExpression(node)
-        ? checker.getSymbolAtLocation(node.name)
-        : ts.isElementAccessExpression(node) &&
-            (ts.isStringLiteralLike(node.argumentExpression) ||
-              ts.isNumericLiteral(node.argumentExpression))
-          ? checker.getSymbolAtLocation(node.argumentExpression)
-          : undefined;
-    const declaration = symbol?.valueDeclaration;
-    if (symbol === undefined || declaration === undefined) return undefined;
-    if (ts.isIdentifier(node)) {
-      return (ts.isVariableDeclaration(declaration) || ts.isParameter(declaration)) &&
-        isWrittenElsewhere(symbol, node)
-        ? checker.getTypeOfSymbol(symbol)
-        : undefined;
-    }
-    const isIndex = symbol.name === "length" || String(Number(symbol.name)) === symbol.name;
-    return isWrittenElsewhere(symbol.name, node) ||
-      isWrittenElsewhere(anyProperty, node) ||
-      (isIndex && isWrittenElsewhere(anyIndex, node))
-      ? checker.getTypeOfSymbol(symbol)
-      : undefined;
-  };
   const sources = files.filter((file) => !file.isDeclarationFile);
   // The types of the objects that a getter, a setter, or a proxy's trap may run for.
   const accessorTypes = sources.flatMap((file) =>
@@ -368,6 +343,34 @@ const getDeclaredReads = (
           checker.isTypeAssignableTo(accessor, type) || checker.isTypeAssignableTo(type, accessor),
       )
     );
+  };
+  const getDeclaredType = (node: ts.Node) => {
+    const symbol = ts.isIdentifier(node)
+      ? getSymbol(node, checker)
+      : ts.isPropertyAccessExpression(node)
+        ? checker.getSymbolAtLocation(node.name)
+        : ts.isElementAccessExpression(node) &&
+            (ts.isStringLiteralLike(node.argumentExpression) ||
+              ts.isNumericLiteral(node.argumentExpression))
+          ? checker.getSymbolAtLocation(node.argumentExpression)
+          : undefined;
+    const declaration = symbol?.valueDeclaration;
+    if (symbol === undefined || declaration === undefined) return undefined;
+    if (ts.isIdentifier(node)) {
+      return (ts.isVariableDeclaration(declaration) || ts.isParameter(declaration)) &&
+        isWrittenElsewhere(symbol, node)
+        ? checker.getTypeOfSymbol(symbol)
+        : undefined;
+    }
+    const isIndex = symbol.name === "length" || String(Number(symbol.name)) === symbol.name;
+    // A getter or a proxy's trap may give another value at each read.
+    return isWrittenElsewhere(symbol.name, node) ||
+      isWrittenElsewhere(anyProperty, node) ||
+      (isIndex && isWrittenElsewhere(anyIndex, node)) ||
+      ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+        isAccessed(node.expression))
+      ? checker.getTypeOfSymbol(symbol)
+      : undefined;
   };
   // Whether a script gives an object its own valueOf, toString, or Symbol.toPrimitive.
   const isConverting = sources.some(

@@ -6670,6 +6670,24 @@ describe("errors", () => {
       expect((await checkModel(getSource(3))).failure?.message).toContain("2");
     });
 
+    it("keeps the declared type of a property that a proxy's trap gives", () => {
+      expect(() =>
+        compile(`
+          class Heap {
+            x = 1;
+          }
+          const heap = new Heap();
+          let count = 0;
+          const box: { x: number | string } = new Proxy(
+            { x: 1 },
+            { get: () => (count++ === 0 ? 1 : "s") },
+          );
+          const run = () => (typeof box.x === "number" ? box.x * 3 : 0);
+          const result = run();
+        `),
+      ).toThrow("* needs numbers");
+    });
+
     it.each([
       ["a call in the guard", "", 'typeof box.x === "number" && setText()', ""],
       [
