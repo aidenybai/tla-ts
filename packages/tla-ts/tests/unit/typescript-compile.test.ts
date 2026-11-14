@@ -9260,6 +9260,44 @@ describe("errors", () => {
     ).toThrow("tla-ts can't name the built-in Array, which Array hides");
   });
 
+  // Node gives 1 for a script, which puts its top-level var on the global object, and the
+  // built-in for a module.
+  describe("stops where it reads a global object's key that the script's var may hold", () => {
+    const getSource = (read: string) => `
+      var parseInt = 1;
+      function isNaN() {
+        return false;
+      }
+      const holder = { value: undefined as unknown, other: globalThis.parseFloat === parseFloat };
+      if (!holder.other) throw new Error("other");
+      holder.value = ${read};
+    `;
+
+    it.each([
+      "globalThis.parseInt",
+      'globalThis["parseInt"]',
+      '"parseInt" in globalThis',
+      'Object.hasOwn(globalThis, "parseInt")',
+      'Object.getOwnPropertyDescriptor(globalThis, "parseInt")',
+      "globalThis.isNaN",
+    ])("stops at %s", async (read) => {
+      const result = await checkModel(getSource(read));
+      expect(result.failure?.message).toContain(
+        "tla-ts can't tell which properties the global object has",
+      );
+    });
+
+    it("reads the global object's other keys", async () => {
+      const result = await checkModel(getSource("parseInt"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another value of another key", async () => {
+      const source = getSource("parseInt").replace("=== parseFloat", "!== parseFloat");
+      expect((await checkModel(source)).failure?.message).toContain("other");
+    });
+  });
+
   describe("reads, writes, and deletes the standard globals of the global object", () => {
     const getSource = (expected: string) => `
       interface Properties {

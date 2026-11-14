@@ -761,9 +761,12 @@ LOCAL LookupFor(heap, ref, isGlobalKey) ==
 Lookup(heap, ref) == LookupFor(heap, ref, FALSE)
 
 \\* An object's own properties, where what reads or writes them names a key, which is a standard
-\\* global's where the object is the global object.
+\\* global's where the object is the global object, and not one that the script's own var or
+\\* function may hold.
 LookupKey(heap, ref, key) ==
-  LookupFor(heap, ref, key \\in DOMAIN BuiltIns[GlobalObject[Ref]].values)
+  LookupFor(heap, ref,
+            LET global == BuiltIns[GlobalObject[Ref]]
+            IN key \\in DOMAIN global.values /\\ global.attributes[key].kind # "hidden")
 
 Update(heap, ref, object) ==
   IF IsHeap(ref)

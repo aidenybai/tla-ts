@@ -14,6 +14,7 @@ import {
   translateArrayIteratorPrototype,
   translateHoldsIteratorMethod,
 } from "./collections";
+import { getVarNames } from "./early-errors";
 import { getConstructor, getErrorClass, NATIVE_ERRORS } from "./exceptions";
 import { getNumberValue, getRawString, translateExpression } from "./expressions";
 import { getHeap, isFunctionValue, translateFunctionObject } from "./heap";
@@ -809,7 +810,19 @@ const translateBuiltInProperty = (value: string, node: ts.Node, context: Context
 // The built-in objects that a script's heap holds: those the script names, their prototypes, and
 // the objects of the functions that model values stand for, with the prototype objects they start
 // with.
-export const translateBuiltIns = (node: ts.Node, context: Context) => {
+export const translateBuiltIns = (node: ts.SourceFile, context: Context) => {
+  // The global object's keys that a script's top-level var or function declares, which a script
+  // that isn't a module puts on the global object, so tla-ts doesn't read them.
+  const hidden = new Set([
+    ...getVarNames(node),
+    ...node.statements.flatMap((statement) =>
+      ts.isFunctionDeclaration(statement) && statement.name !== undefined
+        ? [statement.name.text]
+        : [],
+    ),
+  ]);
+  const isHidden = (name: string, property: string[]) =>
+    name === "globalThis" && hidden.has(property[0]);
   const included = new Set<string>();
   const include = (name: string | null) => {
     const entry = name === null ? undefined : BUILT_INS[name];
@@ -822,8 +835,7 @@ export const translateBuiltIns = (node: ts.Node, context: Context) => {
   const referenced = new Set(
     [...included].flatMap((name) =>
       BUILT_INS[name][3].flatMap((property) =>
-        property
-          .slice(2)
+        (isHidden(name, property) ? [] : property.slice(2))
           .filter((value) => value.startsWith("o") && !included.has(value.slice(1)))
           .map((value) => value.slice(1)),
       ),
@@ -877,6 +889,9 @@ export const translateBuiltIns = (node: ts.Node, context: Context) => {
             },
           ]);
           return { key, value: accessor, attributes: getAttributes(flags, "accessor") };
+        }
+        if (isHidden(name, property)) {
+          return { key, value: getUndefined(context), attributes: getAttributes(flags, "hidden") };
         }
         const value =
           name === "Symbol" && WELL_KNOWN_SYMBOLS.includes(property[0])
