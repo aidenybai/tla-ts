@@ -1,6 +1,6 @@
 // Ported from Z3 (src/smt/smt_theory.h, src/smt/smt_theory.cpp), MIT license, see z3-license.txt.
 import { shrink } from "./array";
-import type { AstManager } from "./ast";
+import { type AstManager, OP_ITE } from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
 import { type BoolVar, FALSE_LITERAL, type Literal, negate, TRUE_LITERAL } from "./literal";
@@ -84,6 +84,21 @@ export abstract class Theory {
     const node = context.getEnode(expr)!;
     context.markAsRelevant(expr);
     return node;
+  }
+
+  protected getIteValue(expr: number) {
+    const context = this.context;
+    const manager = this.manager;
+    let current = expr;
+    while (manager.getOp(current) === OP_ITE && context.isEInternalized(current)) {
+      const root = context.getEnode(current)?.root;
+      const thenExpr = manager.getArg(current, 1);
+      const elseExpr = manager.getArg(current, 2);
+      if (context.getEnode(thenExpr)?.root === root) current = thenExpr;
+      else if (context.getEnode(elseExpr)?.root === root) current = elseExpr;
+      else break;
+    }
+    return current;
   }
 
   abstract internalizeAtom(atom: number, isGateContext: boolean): boolean;

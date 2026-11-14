@@ -311,7 +311,7 @@ export class SeqEqSolver {
   }
 
   private matchTernaryEqR(ls: readonly number[], rs: readonly number[]): TernaryEq | undefined {
-    if (ls.length <= 1 || rs.length <= 1 || !this.isVar(rs[0]) || !this.isVar(rs.at(-1)!))
+    if (ls.length <= 1 || rs.length <= 1 || !this.isVar(rs[0]) || !this.isVar(rs[rs.length - 1]))
       return undefined;
     const numLsUnits = this.countUnitsR2l(ls, ls.length - 1);
     if (numLsUnits === 0 || numLsUnits === ls.length) return undefined;
@@ -334,7 +334,7 @@ export class SeqEqSolver {
   }
 
   private matchTernaryEqL(ls: readonly number[], rs: readonly number[]): TernaryEq | undefined {
-    if (ls.length <= 1 || rs.length <= 1 || !this.isVar(rs[0]) || !this.isVar(rs.at(-1)!))
+    if (ls.length <= 1 || rs.length <= 1 || !this.isVar(rs[0]) || !this.isVar(rs[rs.length - 1]))
       return undefined;
     const numLsUnits = this.countUnitsL2r(ls, 0);
     if (numLsUnits === 0 || numLsUnits === ls.length) return undefined;
@@ -360,11 +360,11 @@ export class SeqEqSolver {
       ls.length > 1 &&
       this.isVar(ls[0]) &&
       rs.length > 1 &&
-      this.isVar(rs.at(-1)!) &&
+      this.isVar(rs[rs.length - 1]) &&
       ls.slice(1).every((expr) => this.isUnit(expr)) &&
       rs.slice(0, -1).every((expr) => this.isUnit(expr))
     )
-      return { x: ls[0], y: rs.at(-1)!, xs: ls.slice(1), ys: rs.slice(0, -1) };
+      return { x: ls[0], y: rs[rs.length - 1], xs: ls.slice(1), ys: rs.slice(0, -1) };
     return undefined;
   }
 
@@ -380,10 +380,10 @@ export class SeqEqSolver {
     if (
       ls.length <= 1 ||
       !this.isVar(ls[0]) ||
-      !this.isVar(ls.at(-1)!) ||
+      !this.isVar(ls[ls.length - 1]) ||
       rs.length <= 1 ||
       !this.isVar(rs[0]) ||
-      !this.isVar(rs.at(-1)!)
+      !this.isVar(rs[rs.length - 1])
     )
       return undefined;
     const lsNonUnit = this.countNonUnitsL2r(ls, 0);
@@ -404,7 +404,7 @@ export class SeqEqSolver {
 
   canAlignFromLhs(ls: readonly number[], rs: readonly number[]) {
     const manager = this.manager;
-    const last = rs.at(-1)!;
+    const last = rs[rs.length - 1];
     for (let index = 0; index < ls.length; index++) {
       if (manager.areDistinct(ls[index], last)) continue;
       if (index === 0) return true;

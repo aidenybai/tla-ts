@@ -36,7 +36,9 @@ const IS_CGC_ENABLED = 8;
 const IS_MARKED = 16;
 const IS_MARKED2 = 32;
 const IS_INTERPRETED = 64;
-const NUM_ARGS_SHIFT = 7;
+const IS_COMMUTATIVE = 128;
+const IS_COMMUTATIVE_TABLE = 256;
+const NUM_ARGS_SHIFT = 9;
 
 class ThVarCell {
   constructor(
@@ -77,6 +79,8 @@ export class Enode {
     moreArgs: Enode[],
     public generation: number,
     isEq: boolean,
+    isCommutative: boolean,
+    isCommutativeTable: boolean,
     isBool: boolean,
     isMergeTf: boolean,
     isCgcEnabled: boolean,
@@ -88,6 +92,8 @@ export class Enode {
     this.flags =
       (numArgs << NUM_ARGS_SHIFT) |
       (isEq ? IS_EQ : 0) |
+      (isCommutative ? IS_COMMUTATIVE : 0) |
+      (isCommutativeTable ? IS_COMMUTATIVE_TABLE : 0) |
       (isBool ? IS_BOOL : 0) |
       (isMergeTf ? IS_MERGE_TF : 0) |
       (isCgcEnabled ? IS_CGC_ENABLED : 0);
@@ -109,10 +115,12 @@ export class Enode {
     return (this.flags & IS_EQ) !== 0;
   }
 
-  // Deviation from Z3: smt::enode::m_commutative holds for every binary application of a
-  // commutative declaration; the internalizer flags only equalities.
   get isCommutative() {
-    return (this.flags & IS_EQ) !== 0;
+    return (this.flags & IS_COMMUTATIVE) !== 0;
+  }
+
+  get isCommutativeTable() {
+    return (this.flags & IS_COMMUTATIVE_TABLE) !== 0;
   }
 
   get isBool() {

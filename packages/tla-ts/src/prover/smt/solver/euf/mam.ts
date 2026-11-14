@@ -55,8 +55,6 @@ export type OnBinding = (
   pattern: number,
   bindings: readonly Enode[],
   maxGeneration: number,
-  minTopGeneration: number,
-  maxTopGeneration: number,
 ) => void;
 
 const isAcDecl = (manager: AstManager, decl: number) => {
@@ -85,9 +83,6 @@ class Interpreter {
   private top = 0;
   private maxGeneration = 0;
   private currMaxGeneration = 0;
-  private patternInstances: Enode[] = [];
-  private minTopGeneration: number[] = [];
-  private maxTopGeneration: number[] = [];
   private acArgs: Enode[] = [];
   private acBitset: boolean[] = [];
   private acPatArg: number[] = [];
@@ -96,25 +91,6 @@ class Interpreter {
     private ctx: MamSolver,
     private onBinding: OnBinding,
   ) {}
-
-  private getMinMaxTopGeneration() {
-    const minTop = this.minTopGeneration;
-    const maxTop = this.maxTopGeneration;
-    const instances = this.patternInstances;
-    if (minTop.length === 0) {
-      minTop.push(instances[0].generation);
-      maxTop.push(instances[0].generation);
-    }
-    let min = minTop[minTop.length - 1];
-    let max = maxTop[maxTop.length - 1];
-    for (let index = minTop.length; index < instances.length; index++) {
-      min = Math.min(min, instances[index].generation);
-      minTop.push(min);
-      max = Math.max(max, instances[index].generation);
-      maxTop.push(max);
-    }
-    return [min, max];
-  }
 
   private pushPoint(instr: Instruction<Enode>, oldMaxGeneration: number) {
     let point = this.backtrackStack[this.top];
@@ -353,12 +329,6 @@ class Interpreter {
         for (point.index++; point.index < point.candidates.length; point.index++) {
           const node = point.candidates[point.index];
           if (node.numArgs === instr.numArgs && node.isRelevant) {
-            const instances = this.patternInstances;
-            if (instances.length === this.maxTopGeneration.length) {
-              this.maxTopGeneration.pop();
-              this.minTopGeneration.pop();
-            }
-            instances[instances.length - 1] = node;
             this.updateMaxGeneration(node);
             this.setArgs(instr.oreg, node, instr.numArgs);
             return instr.next;
@@ -374,9 +344,6 @@ class Interpreter {
     const egraph = this.ctx.egraph;
     const registers = this.registers;
     if (!node.isRelevant) return false;
-    this.patternInstances = [node];
-    this.minTopGeneration = [];
-    this.maxTopGeneration = [];
     this.maxGeneration = node.generation;
     registers[0] = node;
     this.top = 0;
@@ -445,15 +412,7 @@ class Interpreter {
           for (const binding of bindings)
             this.maxGeneration = Math.max(this.maxGeneration, binding.generation);
           if (!manager.limit.inc()) return false;
-          const topGenerations = this.getMinMaxTopGeneration();
-          this.onBinding(
-            instr.quantifier,
-            instr.pattern,
-            bindings,
-            this.maxGeneration,
-            topGenerations[0],
-            topGenerations[1],
-          );
+          this.onBinding(instr.quantifier, instr.pattern, bindings, this.maxGeneration);
           break;
         }
         case OP_GET_ENODE:
@@ -483,7 +442,6 @@ class Interpreter {
         case OP_CONTINUE: {
           const found = this.initContinue(instr);
           if (found === null) break;
-          this.patternInstances.push(found);
           this.setArgs(instr.oreg, found, instr.numArgs);
           pc = instr.next;
           break;

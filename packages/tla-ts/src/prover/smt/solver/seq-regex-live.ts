@@ -76,8 +76,7 @@ export class LiveStates {
 
   private markLive(search: LiveSearch, start: number) {
     const todo = [start];
-    while (todo.length > 0) {
-      const id = todo.pop()!;
+    for (let id = todo.pop(); id !== undefined; id = todo.pop()) {
       if (!search.seen.has(id) || search.live[id]) continue;
       search.live[id] = true;
       search.liveFrontier.push(id);
@@ -175,8 +174,9 @@ export class LiveStates {
     if (target === -1) this.membershipSearches.set(state, search);
     else {
       search.targetId = this.intern(target);
-      if (!this.reachSearches.has(state)) this.reachSearches.set(state, new Map());
-      this.reachSearches.get(state)!.set(target, search);
+      const searches = this.reachSearches.get(state);
+      if (searches === undefined) this.reachSearches.set(state, new Map([[target, search]]));
+      else searches.set(target, search);
     }
     this.addState(search, search.rootId);
     return search;

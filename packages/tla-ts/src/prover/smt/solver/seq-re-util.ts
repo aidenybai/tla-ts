@@ -651,8 +651,7 @@ const getLengthShape = (manager: AstManager, seq: number) => {
   let stride = 0;
   const multiplicities = new Map<number, number>();
   const todo = [seq];
-  while (todo.length > 0) {
-    const expr = todo.pop()!;
+  for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
     if (isBinaryApp(manager, expr, OP_SEQ_CONCAT)) {
       todo.push(manager.getArg(expr, 0), manager.getArg(expr, 1));
       continue;

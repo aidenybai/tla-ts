@@ -218,8 +218,7 @@ export abstract class TheorySeqRegex extends TheorySeqSolve {
   private collectVars(seq: number, vars: number[]) {
     const manager = this.manager;
     const todo = [seq];
-    while (todo.length > 0) {
-      const expr = todo.pop()!;
+    for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
       if (manager.getOp(expr) === OP_SEQ_CONCAT) {
         todo.push(...manager.getArgs(expr));
         continue;
@@ -257,8 +256,7 @@ export abstract class TheorySeqRegex extends TheorySeqSolve {
     const manager = this.manager;
     const todo = [term];
     let length = 0;
-    while (todo.length > 0) {
-      const expr = todo.pop()!;
+    for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
       if (this.isConcat(expr)) {
         todo.push(manager.getArg(expr, 0), manager.getArg(expr, 1));
         continue;
@@ -508,8 +506,7 @@ export abstract class TheorySeqRegex extends TheorySeqSolve {
     if (this.hasLength(seq)) return true;
     const todo = [seq];
     let hasVar = false;
-    while (todo.length > 0) {
-      const expr = todo.pop()!;
+    for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
       if (this.isConcat(expr)) {
         todo.push(manager.getArg(expr, 0), manager.getArg(expr, 1));
         continue;

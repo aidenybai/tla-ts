@@ -774,8 +774,7 @@ export const isBinaryApp = (manager: AstManager, expr: number, op: number) =>
 
 export const getConcat = (manager: AstManager, expr: number, result: number[]) => {
   const todo = [expr];
-  while (todo.length > 0) {
-    const current = todo.pop()!;
+  for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
     if (isBinaryApp(manager, current, OP_SEQ_CONCAT)) {
       todo.push(manager.getArg(current, 1), manager.getArg(current, 0));
       continue;

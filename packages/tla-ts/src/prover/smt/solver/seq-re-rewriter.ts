@@ -770,8 +770,7 @@ export class ReRewriter {
     };
     const isEveryInterArmEndingWithFullSeq = (regex: number) => {
       const todo = [regex];
-      while (todo.length > 0) {
-        const current = todo.pop()!;
+      for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
         const split = this.getSplit(current, OP_RE_INTERSECT);
         if (split !== undefined) todo.push(split.head, split.tail);
         else if (!isEndingWithFullSeq(current)) return false;

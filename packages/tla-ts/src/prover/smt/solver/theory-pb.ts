@@ -694,19 +694,23 @@ export class TheoryPb extends Theory {
   override popScopeEh(numScopes: number) {
     let newLim = this.ineqsLim.length - numScopes;
     let size = this.ineqsLim[newLim];
-    while (this.ineqsTrail.length > size) {
-      const boolVar = this.ineqsTrail.pop() as BoolVar;
-      this.clearIneqWatch(this.ineqs[boolVar] as Ineq);
+    for (let index = this.ineqsTrail.length - 1; index >= size; index--) {
+      const boolVar = this.ineqsTrail[index];
+      const ineq = this.ineqs[boolVar];
+      if (ineq !== undefined) this.clearIneqWatch(ineq);
       this.ineqs[boolVar] = undefined;
     }
+    this.ineqsTrail.length = size;
     this.ineqsLim.length = newLim;
     newLim = this.cardLim.length - numScopes;
     size = this.cardLim[newLim];
-    while (this.cardTrail.length > size) {
-      const boolVar = this.cardTrail.pop() as BoolVar;
-      this.clearCardWatch(this.cards[boolVar] as Card);
+    for (let index = this.cardTrail.length - 1; index >= size; index--) {
+      const boolVar = this.cardTrail[index];
+      const card = this.cards[boolVar];
+      if (card !== undefined) this.clearCardWatch(card);
       this.cards[boolVar] = undefined;
     }
+    this.cardTrail.length = size;
     this.cardLim.length = newLim;
     super.popScopeEh(numScopes);
   }
