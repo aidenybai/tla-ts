@@ -1961,7 +1961,7 @@ describe("values", () => {
     it("stops where tla-ts can't follow it", async () => {
       await expect(
         checkModel(
-          "const exponent = -1;\nconst value = 2 ** exponent;\nif (value > 5) throw new Error();",
+          "const exponent = -1;\nconst value = 3 ** exponent;\nif (value > 5) throw new Error();",
         ),
       ).rejects.toThrow("tla-ts can't represent this value");
     });
@@ -26004,6 +26004,33 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("range,none,ba"))).failure?.message).toContain(
         "range,range,ba",
       );
+    });
+  });
+
+  describe("raises a power of 2 to a negative power exactly", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      box.size = 1;
+      const read = [
+        2 ** -1 === 0.5,
+        (-2) ** -3 === -0.125,
+        2 ** -1 * 2,
+        1024 ** -10 * 2 ** 100,
+        2 ** -1074 > 0,
+        2 ** -1074 / 2 === 0,
+        8 ** -2 === 0.015625,
+      ].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,true,1,1,true,true,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects 2 ** -1 as 0", async () => {
+      expect(
+        (await checkModel(getSource("false,true,0,1,true,true,true"))).failure?.message,
+      ).toContain("true,true,1,1,true,true,true");
     });
   });
 });

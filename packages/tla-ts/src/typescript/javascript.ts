@@ -683,6 +683,9 @@ Power(base, exponent) ==
     [] Absolute(base) = 1 -> IF IsOdd(exponent) THEN base ELSE 1
     \\* 2 ** -1075 is half the least number above 0, so it and any power nearer 0 round to 0.
     [] exponent <= -1075 -> IF IsNegative(base) /\\ IsOdd(exponent) THEN NegativeZero ELSE 0
+    \\* A power of 2 to a power is a power of 2, which a double holds exactly.
+    [] TwoPower(base) > 0 ->
+         FromBinary(<<IsNegative(base) /\\ IsOdd(exponent), TwoPower(base) * exponent, 0, 1>>)
     [] OTHER -> Assert(FALSE, "tla-ts can't represent this value")
 
 \\* The order of numbers, by their kind, then their floor, then their position in Fractions, where
