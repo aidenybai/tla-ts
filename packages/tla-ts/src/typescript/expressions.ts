@@ -843,14 +843,7 @@ export const translateCall = (
     const value = translateExpression(argument, scope, context);
     if (method === "isFinite") return useJavaScript("IsFinite", [value], context);
     if (method === "isSafeInteger") return useJavaScript("IsSafeInteger", [value], context);
-    if (method !== "isNaN") {
-      return share(value, "value", context, (shared) =>
-        junction("And", [
-          useJavaScript("IsFinite", [shared], context),
-          not(useJavaScript("IsFraction", [shared], context)),
-        ]),
-      );
-    }
+    if (method !== "isNaN") return useJavaScript("IsIntegral", [value], context);
     context.prelude.add("JavaScript");
     return apply("=", [value, identifier("NaN")]);
   }
@@ -1968,10 +1961,12 @@ export const getNumberValue = (value: number, context: Context) => {
   }
   if (!context.hasSpecialNumbers) return undefined;
   const special = SPECIAL_NUMBER_NAMES.get(Object.is(value, -0) ? "-0" : String(value));
-  if (special === undefined && Number.isInteger(value)) {
-    return Math.abs(value) > 2 ** 53 ? undefined : translateWideInteger(value, context);
+  if (special === undefined && Number.isInteger(value) && Math.abs(value) <= 2 ** 53) {
+    return translateWideInteger(value, context);
   }
-  if (special === undefined && Math.abs(value) >= 2 ** 31 - 1) return undefined;
+  if (special === undefined && (Number.isInteger(value) || Math.abs(value) >= 2 ** 31 - 1)) {
+    return useJavaScript(":>", [identifier("Double"), getBinary(value)], context);
+  }
   context.prelude.add("JavaScript");
   if (special !== undefined) return identifier(special);
   getFraction(-value, context);
@@ -1989,6 +1984,25 @@ const translateWideInteger = (value: number, context: Context) => {
     [identifier("Wide"), tuple([number(high), number(value - high * 2 ** 31)])],
     context,
   );
+};
+
+// A finite number other than 0 as its sign, the power of 2 of its significand's last bit, and that
+// odd significand's high and low halves, as the JavaScript module holds a Double, where the same
+// number always has the same four.
+export const getBinary = (value: number) => {
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, Math.abs(value));
+  const bits = view.getBigUint64(0);
+  const biased = Number(bits >> 52n);
+  const significand = biased === 0 ? bits : (bits & ((1n << 52n) - 1n)) | (1n << 52n);
+  const zeros = significand.toString(2).length - significand.toString(2).replace(/0+$/, "").length;
+  const odd = significand >> BigInt(zeros);
+  return tuple([
+    boolean(value < 0),
+    number(Math.max(biased, 1) - 1075 + zeros),
+    number(Number(odd >> 31n)),
+    number(Number(odd & (2n ** 31n - 1n))),
+  ]);
 };
 
 const translateFraction = (value: number, node: ts.Node, context: Context) => {

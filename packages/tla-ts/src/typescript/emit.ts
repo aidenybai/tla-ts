@@ -172,7 +172,9 @@ export const emit = (
     ...context.fractions.values(),
   ];
   const modelValues = [
-    ...(isJavaScript ? ["Undefined", "Null", "Ref", "Big", "Wide", ...SPECIAL_NUMBERS] : []),
+    ...(isJavaScript
+      ? ["Undefined", "Null", "Ref", "Big", "Wide", "Double", ...SPECIAL_NUMBERS]
+      : []),
     ...constants,
   ];
   const heap = context.heap === undefined ? undefined : context.variables.get(context.heap);

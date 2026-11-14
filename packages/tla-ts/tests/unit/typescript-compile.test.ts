@@ -1137,6 +1137,45 @@ describe("values", () => {
     ).rejects.toThrow("tla-ts can't represent");
   });
 
+  describe("compares and scales exact doubles as Node does", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const MAX = Number.MAX_VALUE;
+      const MIN = Number.MIN_VALUE;
+      const checks = [
+        MAX > MAX / 2, MAX / 2 < MAX, MIN < MIN * 2, MIN * 2 > MIN, -MAX < MAX, MAX === MAX,
+        MAX * 2 === Infinity, -MAX + MAX === 0, MAX > 1.1, 0.1 < MIN * 2 === false,
+        Number.isInteger(MAX), Number.isInteger(MIN * 4), MAX % Infinity === MAX, typeof (MAX / 4),
+        1 / 2 === 0.5, 3 / 4 > 0.5, -MAX < -1e300,
+      ];
+      if (checks.join() !== "${expected}" || box.size !== 0) throw new Error(checks.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "true,true,true,true,true,true,true,true,true,true,true,false,true,number,true,true,true",
+            ),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a subnormal times 4 as an integer", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "true,true,true,true,true,true,true,true,true,true,true,true,true,number,true,true,true",
+            ),
+          )
+        ).failure?.message,
+      ).toContain("true,false,true");
+    });
+  });
+
   describe("converts lengths and indices beyond 32 bits as Node does", () => {
     const getSource = (expected: string) => `
       const like = { 0: 12, length: -4294967294 };
@@ -18231,7 +18270,7 @@ describe("errors", () => {
     ).toContain("tla-ts can't call valueOf");
   });
 
-  it("divides numbers in a script with objects, and stops on a fraction", async () => {
+  it("divides numbers in a script with objects, and gives a fraction exactly", async () => {
     const result = await checkModel(`
       const negative = 1 / -0;
       const zero = 1 / -Infinity;
@@ -18244,9 +18283,15 @@ describe("errors", () => {
     const fraction = await checkModel(`
       const object = {};
       const half = 7 / 2;
+      if (half !== 3.5) throw new Error("missed");
+    `);
+    expect(fraction.failure).toBeUndefined();
+    const truncated = await checkModel(`
+      const object = {};
+      const half = 7 / 2;
       if (half !== 3) throw new Error("missed");
     `);
-    expect(fraction.failure?.message).toContain("tla-ts can't represent the fraction 7 / 2");
+    expect(truncated.failure?.message).toContain("missed");
   });
 
   describe("compares, writes, and truncates the fractions that literals give", () => {

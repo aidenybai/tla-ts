@@ -14,6 +14,7 @@ import {
 } from "./context";
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
 import { render } from "./formula";
+import { getBinary } from "./expressions";
 import { translateBody } from "./functions";
 import {
   findChangedArrays,
@@ -583,6 +584,7 @@ export const compile = (
                 { name: "value", value: identifier(fraction[1]) },
                 { name: "text", value: string(String(fraction[0])) },
                 { name: "floor", value: number(Math.floor(fraction[0])) },
+                { name: "binary", value: getBinary(fraction[0]) },
                 {
                   name: "round",
                   value: Object.is(Math.round(fraction[0]), -0)
