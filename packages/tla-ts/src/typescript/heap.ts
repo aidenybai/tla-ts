@@ -4647,7 +4647,28 @@ export const isUnreachableChange = (node: ts.Node, context: Context) =>
 // on another receiver and toISOString's RangeError of an invalid date, replaceAll's TypeError of a
 // regexp that isn't global, the SyntaxError of a pattern that isn't valid, and the URIError of a
 // malformed URI.
-export const getEngineErrors = (node: ts.Node, context: Context) => {
+export const getEngineErrors = (node: ts.Node, context: Context) => [
+  ...getNumberMethodErrors(node, context),
+  ...getOwnEngineErrors(node, context),
+];
+
+// toFixed, toExponential, and toPrecision throw a RangeError for digits outside their range, and a
+// Number.prototype method that a value holds a TypeError where call gives it another receiver.
+const getNumberMethodErrors = (node: ts.Node, context: Context) =>
+  ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+    ? [
+        ...(["toFixed", "toExponential", "toPrecision"].includes(node.expression.name.text) &&
+        isNumberLike(node.expression.expression, context)
+          ? ["RangeError"]
+          : []),
+        ...(node.expression.name.text === "call" &&
+        ts.isIdentifier(skipCasts(node.expression.expression))
+          ? ["TypeError"]
+          : []),
+      ]
+    : [];
+
+const getOwnEngineErrors = (node: ts.Node, context: Context) => {
   const isDefinition =
     isObjectChange(node, context) && node.expression.name.text.startsWith("define");
   const isFallible =
@@ -4660,24 +4681,6 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
     return ["TypeError", "RangeError"];
   }
   if (isUnresolved(node, context)) return ["ReferenceError"];
-  // toFixed, toExponential, and toPrecision throw a RangeError for digits outside their range, and
-  // a Number.prototype method that a value holds a TypeError where call gives it another receiver.
-  if (
-    ts.isCallExpression(node) &&
-    ts.isPropertyAccessExpression(node.expression) &&
-    ["toFixed", "toExponential", "toPrecision"].includes(node.expression.name.text) &&
-    isNumberLike(node.expression.expression, context)
-  ) {
-    return ["RangeError"];
-  }
-  if (
-    ts.isCallExpression(node) &&
-    ts.isPropertyAccessExpression(node.expression) &&
-    node.expression.name.text === "call" &&
-    ts.isIdentifier(skipCasts(node.expression.expression))
-  ) {
-    return ["TypeError"];
-  }
   // A let or a const that a function reads, or that a read comes before, may be read before its
   // declaration runs.
   const declaration = ts.isIdentifier(node)

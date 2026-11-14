@@ -1093,6 +1093,29 @@ describe("top-level statements", () => {
 });
 
 describe("values", () => {
+  describe("keeps the RangeError of a Date method that call runs", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const box = { size: 0 };
+      const toISOString = Date.prototype.toISOString;
+      let caught = "none";
+      try {
+        toISOString.call(new Date(NaN));
+      } catch (error) {
+        caught = error instanceof RangeError ? "range" : "other";
+      }
+      if (caught !== "${expected}" || box.size !== 0) throw new Error(caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("range"))).failure).toBeUndefined();
+    });
+
+    it("rejects the error as another kind", async () => {
+      expect((await checkModel(getSource("other"))).failure?.message).toContain("range");
+    });
+  });
+
   describe("throws the errors of toFixed, toExponential, and toPrecision", () => {
     const getSource = (expected: string) => `
       "use strict";
