@@ -53,6 +53,8 @@ export interface Scope {
   results: ReadonlyMap<ts.Expression, Expression>;
   // The links of optional chains whose base tla-ts found isn't null or undefined.
   checked?: ReadonlySet<ts.Expression>;
+  // The calls of built-in functions that tla-ts found the script didn't replace.
+  heldCalls?: ReadonlySet<ts.CallExpression>;
   // The object that this names in the method that a call through it inlines.
   receiver?: Receiver;
   // The object that this names in each arrow function that a call takes, from where it was written.

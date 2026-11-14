@@ -14176,6 +14176,51 @@ describe("errors", () => {
     });
   });
 
+  describe("stops at a built-in function that a script replaced", () => {
+    it.each([
+      ["Array.isArray", "Array", "isArray", "holder.seen = String(Array.isArray([1]));"],
+      [
+        "Map.prototype.get",
+        "Map.prototype",
+        "get",
+        "const map = new Map([[1, 2]]);\nholder.seen = String(map.get(1));",
+      ],
+      ["String.prototype.trim", "String.prototype", "trim", 'holder.seen = " a ".trim();'],
+      [
+        "Object.prototype.hasOwnProperty",
+        "Object.prototype",
+        "hasOwnProperty",
+        'holder.seen = String({ a: 1 }.hasOwnProperty("a"));',
+      ],
+      ["Object.assign", "Object", "assign", "holder.seen = String(Object.assign({}, { a: 1 }));"],
+    ])("stops at %s", async (path, owner, key, call) => {
+      expect(
+        (
+          await checkModel(`
+            const holder = { seen: "" };
+            Object.defineProperty(${owner}, "${key}", { value: () => "mine" });
+            ${call}
+          `)
+        ).failure?.message,
+      ).toContain(`tla-ts can't call ${path} where a script replaced it`);
+    });
+
+    const getSource = (expected: string) => `
+      const holder = { seen: "" };
+      Object.defineProperty(Array, "other", { value: () => "mine" });
+      holder.seen = String(Array.isArray([1]));
+      if (holder.seen !== "${expected}") throw new Error("seen");
+    `;
+
+    it("runs one that the script didn't replace, as Node does", async () => {
+      expect((await checkModel(getSource("true"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("false"))).failure?.message).toContain('"seen"');
+    });
+  });
+
   describe("tells that the global object and an object the heap holds aren't arrays", () => {
     const getSource = (expected: string) => `
       const holder = { seen: 0 };

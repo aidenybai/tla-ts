@@ -676,6 +676,72 @@ export const translateBuiltInValue = (
   return getBuiltInValue(name, node, context);
 };
 
+// The built-in function that a built-in object holds at a key, by its path, such as "Math.max".
+const getBuiltInFunction = (owner: string, key: string) => {
+  const value = BUILT_INS[owner]?.[3].find(
+    (property) => property[0] === key && property.length === 3,
+  )?.[2];
+  return value?.startsWith("o") ? value.slice(1) : undefined;
+};
+
+// The prototype of the interface that declares a library method, such as Map.prototype for get.
+const getDeclaringPrototype = (symbol: ts.Symbol) =>
+  (symbol.declarations ?? [])
+    .map((declaration) => declaration.parent)
+    .filter(ts.isInterfaceDeclaration)
+    .map(
+      (declaration) =>
+        `${declaration.name.text.replace(/^Readonly/, "").replace(/^(Callable|Newable)Function$/, "Function")}.prototype`,
+    )
+    .find((prototype) => Object.hasOwn(BUILT_INS, prototype));
+
+// Whether a call that tla-ts runs as a built-in function still calls it, as the object that the call
+// reads the function from holds it, or undefined where the call isn't of a built-in function.
+export const translateHoldsCallee = (node: ts.CallExpression, scope: Scope, context: Context) => {
+  if (context.heap === undefined || !scope.bindings.has(context.heap)) return undefined;
+  const include = (name: string) => {
+    context.builtIns.add(name);
+    return getBuiltInValue(name, node, context);
+  };
+  const callee = node.expression;
+  const symbol = ts.isPropertyAccessExpression(callee)
+    ? getSymbol(callee, context.checker)
+    : undefined;
+  if (!ts.isPropertyAccessExpression(callee) || symbol === undefined || !isLibrary(symbol)) {
+    return undefined;
+  }
+  const receiver = callee.expression;
+  const key = callee.name.text;
+  const named = getName(receiver, context);
+  const prototype = named === undefined ? getPrototype(receiver, context) : undefined;
+  const owners = [named, prototype, getDeclaringPrototype(symbol)].flatMap((owner) =>
+    owner === undefined || owner === "null" ? [] : [owner],
+  );
+  const path = owners
+    .map((owner) => getBuiltInFunction(owner, key))
+    .find((found) => found !== undefined);
+  // An object that the heap holds may hold the key itself, where a name reads it with nothing to
+  // run first.
+  const held = skipCasts(receiver);
+  const base =
+    named ??
+    (getKind(receiver, context) === "object" &&
+    (ts.isIdentifier(held) || held.kind === ts.SyntaxKind.ThisKeyword)
+      ? undefined
+      : (prototype ?? owners.at(-1)));
+  if (path === undefined) return undefined;
+  const read = useJavaScript(
+    "Get",
+    [
+      getHeap(scope, node, context),
+      base === undefined ? translateExpression(receiver, scope, context) : include(base),
+      string(key),
+    ],
+    context,
+  );
+  return { path, holds: useJavaScript("SameValue", [read, include(path)], context) };
+};
+
 // A symbol's toString(), valueOf(), or description, which the heap's Symbol.prototype must still
 // hold the built-in of.
 export const translateSymbolProperty = (

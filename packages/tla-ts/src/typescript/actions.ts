@@ -255,6 +255,7 @@ import {
   getStoredBuiltIn,
   isInvalidRegExp,
   translateBuiltInValue,
+  translateHoldsCallee,
   getGeneratorPrototypeRef,
 } from "./intrinsics";
 import { getTypeNames, getURICall, translateToNumber, useJavaScript } from "./javascript";
@@ -1884,6 +1885,33 @@ export const translateCallStatement = (
   }
   const leading = getLeading();
   if (leading !== undefined) return runLeading(leading);
+  const builtIn = path.scope.heldCalls?.has(expression)
+    ? undefined
+    : translateHoldsCallee(expression, path.scope, context);
+  if (builtIn !== undefined) {
+    return ifThenElse(
+      builtIn.holds,
+      translateCallStatement(
+        expression,
+        {
+          ...path,
+          scope: {
+            ...path.scope,
+            heldCalls: new Set([...(path.scope.heldCalls ?? []), expression]),
+          },
+        },
+        context,
+        frame,
+        continueWith,
+      ),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string(`tla-ts can't call ${builtIn.path} where a script replaced it`),
+        ]),
+      ),
+    );
+  }
   if (isNullishArrayMethodCall(expression, context)) {
     return throwTypeError(path, expression, context, frame);
   }

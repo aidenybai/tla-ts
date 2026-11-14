@@ -122,6 +122,7 @@ import {
   translateBuiltInValue,
   getMadeRegExp,
   translateRegExpValue,
+  translateHoldsCallee,
   translateSymbolProperty,
 } from "./intrinsics";
 import {
@@ -809,7 +810,28 @@ const translateMath = (node: ts.CallExpression, method: string, scope: Scope, co
   return translateUnknown(node, `Unsupported call: Math.${method}`, context);
 };
 
+// A call, which stops where tla-ts would run a built-in function that a script replaced.
 export const translateCall = (
+  node: ts.CallExpression,
+  scope: Scope,
+  context: Context,
+  isDefined: boolean,
+) => {
+  const translated = translateBuiltInCall(node, scope, context, isDefined);
+  const callee = translateHoldsCallee(node, scope, context);
+  return callee === undefined
+    ? translated
+    : ifExpression(
+        callee.holds,
+        translated,
+        apply("Assert", [
+          boolean(false),
+          string(`tla-ts can't call ${callee.path} where a script replaced it`),
+        ]),
+      );
+};
+
+const translateBuiltInCall = (
   node: ts.CallExpression,
   scope: Scope,
   context: Context,
