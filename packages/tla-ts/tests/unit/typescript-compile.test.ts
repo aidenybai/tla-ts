@@ -4458,6 +4458,48 @@ describe("values", () => {
       ).toThrow("Don't change an array while a for-of iterates it");
     });
   });
+
+  describe("orders booleans as the numbers 1 and 0", () => {
+    const getSource = (count: string, expected: string) => `
+      const log: string[] = [];
+      const flags = [false, true];
+      const compare = (left: boolean, right: boolean) =>
+        \`\${left < right} \${left <= right} \${left > right} \${left >= right}\`;
+      for (const left of flags) for (const right of flags) log.push(compare(left, right));
+      const mixed = (flag: boolean, count: number) =>
+        // @ts-expect-error JavaScript converts the boolean to a number.
+        \`\${flag < count} \${count <= flag} \${flag > count} \${count >= flag}\`;
+      log.push(mixed(true, 1), mixed(false, 1), mixed(true, 0), mixed(true, ${count}));
+      if (log.join() !== "${expected}") throw new Error(log.join());
+    `;
+    const compared = [
+      "false true false true",
+      "true true false false",
+      "false false true true",
+      "false true false true",
+      "false true false true",
+      "true false false true",
+      "false true true false",
+    ];
+
+    it("compares a boolean with a boolean or a number", async () => {
+      const expected = [...compared, "false true true false"].join();
+      expect((await checkModel(getSource("-2", expected))).failure).toBeUndefined();
+      const swapped = [...compared, "true false false true"].join();
+      expect((await checkModel(getSource("-2", swapped))).failure?.message).toContain(expected);
+    });
+
+    it("compares a boolean with NaN as false", async () => {
+      const expected = [...compared, "false false false false"].join();
+      expect(
+        (await checkModel(getSource("({ count: NaN }).count", expected))).failure,
+      ).toBeUndefined();
+      const ordered = [...compared, "false true true false"].join();
+      expect(
+        (await checkModel(getSource("({ count: NaN }).count", ordered))).failure?.message,
+      ).toContain(expected);
+    });
+  });
 });
 
 describe("bounds", () => {

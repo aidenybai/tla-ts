@@ -1750,15 +1750,20 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
       context,
     );
   }
+  // An ordering converts a boolean to a number, true to 1 and false to 0.
+  const isOrderedBoolean = (side: ts.Expression) =>
+    ORDERING_OPERATORS.has(kind) && isBooleanLike(side, context);
+  const translateOperand = (side: ts.Expression) =>
+    isOrderedBoolean(side) ? translateToNumber(side, node, scope, context) : translate(side);
   if (
     ARITHMETIC_OPERATORS.has(kind) &&
-    (!isNumberLike(node.left, context) || !isNumberLike(node.right, context))
+    [node.left, node.right].some((side) => !isNumberLike(side, context) && !isOrderedBoolean(side))
   ) {
     throw new TlaTypeScriptError(`${node.operatorToken.getText()} needs numbers`, node);
   }
   const numberOperator = context.hasSpecialNumbers ? NUMBER_OPERATORS.get(kind) : undefined;
   if (numberOperator !== undefined) {
-    const operands = [translate(node.left), translate(node.right)];
+    const operands = [translateOperand(node.left), translateOperand(node.right)];
     return useJavaScript(
       numberOperator.name,
       numberOperator.isSwapped ? operands.toReversed() : operands,
@@ -1961,7 +1966,7 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
       node.operatorToken,
     );
   }
-  return apply(operator, [translate(node.left), translate(node.right)]);
+  return apply(operator, [translateOperand(node.left), translateOperand(node.right)]);
 };
 
 // A field of the state before the step, which is the variable's unprimed value.
