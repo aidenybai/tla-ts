@@ -605,8 +605,10 @@ export const translateSharedCall = (
     if (shared === undefined) return inlineCall(bound, inner);
     const changed = shared.changed;
     const state = getState(context);
-    // What the call evaluated of the helper's own code, such as a default, belongs to that call.
-    const isOwn = (entry: [ts.Node, Expression]) =>
+    // What the call evaluated of the helper's own code, such as a default, belongs to that call,
+    // though a call inside the helper's body keeps what its caller evaluated before it.
+    const isOwn = (entry: [ts.Node, Expression], before: ReadonlyMap<ts.Node, Expression>) =>
+      !before.has(entry[0]) &&
       ts.findAncestor(entry[0], (ancestor) => ancestor === callee) !== undefined;
     const caller: Path = {
       ...inner,
@@ -614,8 +616,12 @@ export const translateSharedCall = (
         ...inner.scope,
         previous: path.scope.previous,
         entered: path.scope.entered,
-        results: new Map([...inner.scope.results].filter((entry) => !isOwn(entry))),
-        allocated: new Map([...inner.scope.allocated].filter((entry) => !isOwn(entry))),
+        results: new Map(
+          [...inner.scope.results].filter((entry) => !isOwn(entry, path.scope.results)),
+        ),
+        allocated: new Map(
+          [...inner.scope.allocated].filter((entry) => !isOwn(entry, path.scope.allocated)),
+        ),
       },
     };
     const result = context.names.getFresh("result");
