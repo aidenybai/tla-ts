@@ -5018,6 +5018,37 @@ describe("errors", () => {
     });
   });
 
+  describe("runs a call in new's arguments before a method of what new makes", () => {
+    const getSource = (expected: string) => `
+      function doubled(values: number[]): any {
+        return [...values, ...values];
+      }
+      function kept(values: number[]): any {
+        return values;
+      }
+      const factories = [doubled, kept];
+      const holder = { text: "" };
+      function show(values: Int8Array) {
+        for (let index = 0; index < values.length; index++) holder.text += values[index] + ",";
+      }
+      for (let index = 0; index < factories.length; index++) {
+        const factory = factories[index];
+        show(new Int8Array(factory([1, 2])).fill(7, 1));
+      }
+      if (holder.text !== "${expected}") throw new Error(holder.text);
+    `;
+
+    it("fills what the call makes", async () => {
+      const result = await checkModel(getSource("1,7,7,7,1,7,"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkModel(getSource("1,7,7,7,1,2,"));
+      expect(result.failure?.message).toContain("1,7,7,7,1,7,");
+    });
+  });
+
   describe("holds an array that a script writes at a key it computes on the heap", () => {
     const getSource = (expected: string) => `
       const cache: number[][] = [];

@@ -13184,6 +13184,15 @@ const findLeadingCall = (
         ? findLeadingCall(receiver, before, path, context)
         : none;
     if (fromReceiver.call !== undefined || fromReceiver.isBlocked) return fromReceiver;
+    // A method of what new makes runs the calls in new's arguments first.
+    if (receiver !== undefined && ts.isNewExpression(receiver)) {
+      const evaluated: ts.Node[] = [];
+      const fromNew = findLeadingCall(receiver, evaluated, path, context);
+      if (fromNew.call !== undefined) {
+        before.push(...evaluated);
+        return fromNew;
+      }
+    }
     // A regexp's method under a well-known symbol reads no getter.
     const isRegExpMethod =
       ts.isElementAccessExpression(node.expression) &&
