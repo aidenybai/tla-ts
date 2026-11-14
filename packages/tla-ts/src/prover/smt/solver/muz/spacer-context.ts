@@ -1,10 +1,13 @@
 // Ported from Z3 (src/muz/spacer/spacer_context.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError, SmtUnsupportedError } from "../../../../errors";
 import { type AstManager, getSymbolName, KIND_VAR, OP_AND, OP_IMPLIES, SORT_BOOL } from "../ast";
-import { compareAsts } from "../ast-lt";
-import { pushNotOwned } from "../ast-util";
+import { flattenOrVector, pushNotOwned } from "../ast-util";
+import { ObjHashtable, ObjMap } from "../hashtable";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
-import type { ProtoModel } from "../proto-model";
+import { ExprSafeReplace } from "../expr-safe-replace";
+import { FuncInterp, ProtoModel } from "../proto-model";
+import { RefVector } from "../ref-vector";
+import { Rewriter, TACTIC_REWRITER_OPTIONS } from "../rewriter";
 import { getFreeVarSorts, VarSubst } from "../var-subst";
 import type { DatalogContext, FpParams } from "./dl-context";
 import { blastTermIte } from "./dl-mk-elim-term-ite";
@@ -128,7 +131,7 @@ export class Lemma {
 const isLemmaLess = (manager: AstManager, first: Lemma, second: Lemma) =>
   first.level !== second.level
     ? first.level < second.level
-    : compareAsts(manager, second.getExpr(), first.getExpr()) > 0;
+    : manager.ids[first.getExpr()] < manager.ids[second.getExpr()];
 
 export class Pob {
   readonly id: number;
@@ -1035,6 +1038,7 @@ export class SpacerContext {
   query: PredTransformer | undefined;
   readonly pobQueue: PobQueue;
   expandedLevel = 0;
+  private inductiveLevel = 0;
   private generalizers: LemmaGeneralizer[] = [];
   readonly isUsingCtp: boolean;
   readonly isUsingGroundPob: boolean;
@@ -1089,18 +1093,23 @@ export class SpacerContext {
   }
 
   updateRules(rules: RuleSet) {
-    const rels = new Map<number, PredTransformer>();
     const manager = this.manager;
-    for (const predicate of rules.getHeadPredicates()) {
+    // decl2rel and the grouped rules are tables that Z3 walks in slot order.
+    const getHash = (decl: number) => manager.getDeclHash(decl);
+    const heads = new ObjHashtable(getHash);
+    for (const predicate of rules.getHeadPredicates()) heads.add(predicate);
+    const table = new ObjMap<PredTransformer>(getHash);
+    for (const predicate of heads) {
       const pt = new PredTransformer(this, predicate);
-      rels.set(predicate, pt);
+      table.set(predicate, pt);
       pt.rules.push(...rules.getPredicateRules(predicate));
     }
     for (const rule of rules.rules)
       for (let index = 0; index < rule.uninterpretedSize; index++) {
         const predicate = rule.getTailDecl(manager, index);
-        if (!rels.has(predicate)) rels.set(predicate, new PredTransformer(this, predicate));
+        if (!table.has(predicate)) table.set(predicate, new PredTransformer(this, predicate));
       }
+    const rels = new Map(table);
     for (const [predicate, pt] of rels)
       for (const dependency of rules.deps.getDeps(predicate)) {
         const user = rels.get(dependency) as PredTransformer;
@@ -1301,8 +1310,49 @@ export class SpacerContext {
         isAllPropagated = pt.propagateToNextLevel(level) && isAllPropagated;
       if (!isAllPropagated) continue;
       for (const pt of this.rels.values()) pt.propagateToInfinity(level);
-      return level <= maxLevel;
+      if (level > maxLevel) return false;
+      this.inductiveLevel = level;
+      return true;
     }
+  }
+
+  // context::get_model with get_level_property and inductive_property::to_model, before the
+  // model converter.
+  getModel() {
+    const manager = this.manager;
+    const model = new ProtoModel(manager);
+    const rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
+    for (const pt of this.rels.values()) {
+      if (pt.head === this.queryPred) continue;
+      const clauses = flattenAnd(manager, [
+        this.spacerManager.formulaN2o(pt.getFormulas(this.inductiveLevel), 0),
+      ]).map((clause) => {
+        const disjuncts = new RefVector(manager);
+        disjuncts.push(clause);
+        flattenOrVector(manager, disjuncts);
+        const fixed = pin(manager, rewriter.mkOr([...disjuncts.items]));
+        disjuncts.reset();
+        return fixed;
+      });
+      const replace = new ExprSafeReplace(manager);
+      pt.sig.forEach((decl, index) =>
+        replace.insert(
+          this.spacerManager.constOf(decl),
+          pin(manager, manager.mkVar(index, manager.funcDecls[decl].range)),
+        ),
+      );
+      const property = replace.apply(pin(manager, rewriter.mkAnd(clauses)));
+      replace.release();
+      if (pt.sig.length === 0) model.registerConst(pt.head, property);
+      else {
+        const interp = new FuncInterp(manager, pt.sig.length);
+        interp.setElse(property);
+        model.registerFunc(pt.head, interp);
+      }
+      manager.decRef(property);
+    }
+    rewriter.release();
+    return model;
   }
 
   createChildren(

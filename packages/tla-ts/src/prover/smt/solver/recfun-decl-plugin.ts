@@ -33,28 +33,43 @@ export const getSubterms = (manager: AstManager, expr: number, isUnderQuantifier
   return [...visited];
 };
 
+// Whether a subterm of the roots satisfies the predicate, which the walk calls in no particular
+// order.
+export const hasSubterm = (
+  manager: AstManager,
+  roots: readonly number[],
+  predicate: (term: number) => boolean,
+  isUnderQuantifiers = true,
+) => {
+  const visited = new Set<number>();
+  const todo = [...roots];
+  for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
+    if (visited.has(current)) continue;
+    visited.add(current);
+    if (predicate(current)) return true;
+    if (manager.kinds[current] === KIND_APP) manager.pushArgs(current, todo);
+    else if (isUnderQuantifiers && manager.kinds[current] === KIND_QUANTIFIER)
+      todo.push(manager.getQuantifier(current).body);
+  }
+  return false;
+};
+
 export const isDefinedApp = (manager: AstManager, expr: number) =>
   manager.getOp(expr) === OP_FUN_DEFINED;
 
-const hasPredicate = (
-  manager: AstManager,
-  expr: number,
-  predicate: (term: number) => boolean,
-  isUnderQuantifiers = false,
-) => getSubterms(manager, expr, isUnderQuantifiers).some(predicate);
-
 export const containsDef = (manager: AstManager, expr: number) =>
-  hasPredicate(manager, expr, (term) => isDefinedApp(manager, term));
+  hasSubterm(manager, [expr], (term) => isDefinedApp(manager, term), false);
 
 // An ite on a condition without a defined function, with one in a branch.
 const containsIte = (manager: AstManager, expr: number) =>
-  hasPredicate(
+  hasSubterm(
     manager,
-    expr,
+    [expr],
     (term) =>
       manager.getOp(term) === OP_ITE &&
       !containsDef(manager, manager.getArg(term, 0)) &&
       containsDef(manager, term),
+    false,
   );
 
 interface ChoiceList {
@@ -154,12 +169,7 @@ const computeCases = (manager: AstManager, def: RecFunDef, isMacro: boolean, rhs
         const caseRhs = subst.apply(rhs);
         const guards = conditions.map((condition) => subst.apply(condition));
         subst.release();
-        const isImmediate = !hasPredicate(
-          manager,
-          caseRhs,
-          (term) => isDefinedApp(manager, term),
-          true,
-        );
+        const isImmediate = !hasSubterm(manager, [caseRhs], (term) => isDefinedApp(manager, term));
         addCase(manager, def, guards, caseRhs, isImmediate);
         manager.decRef(caseRhs);
         for (const guard of guards) manager.decRef(guard);

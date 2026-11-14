@@ -1,5 +1,5 @@
 // Ported from Z3 (src/muz/base/rule_properties.cpp), MIT license, see z3-license.txt.
-import { SmtTacticError, SmtUnsupportedError } from "../../../../errors";
+import { SmtTacticError } from "../../../../errors";
 import {
   type AstManager,
   FAMILY_USER,
@@ -11,11 +11,14 @@ import {
   OP_DIV,
   OP_DIV0,
   OP_DT_ACCESSOR,
+  OP_DT_IS,
+  OP_DT_RECOGNISER,
   OP_FUN_DEFINED,
   OP_EQ,
   OP_IDIV,
   OP_IDIV0,
   OP_IMPLIES,
+  OP_ITE,
   OP_MOD,
   OP_MOD0,
   OP_OR,
@@ -24,6 +27,11 @@ import {
   SORT_SIZE_INFINITE,
   QUANTIFIER_EXISTS,
 } from "../ast";
+import {
+  getAccessorConstructor,
+  getDatatypeConstructors,
+  getRecognizerConstructor,
+} from "../datatype-decl-plugin";
 import { ObjMap } from "../hashtable";
 import { Rewriter } from "../rewriter";
 import type { DatalogContext } from "./dl-context";
@@ -120,15 +128,121 @@ export class RuleProperties {
       const rules = this.interpretedPredicateRules;
       if (rules[rules.length - 1] !== rule) rules.push(rule);
     } else if (manager.getFamily(expr) === FAMILY_USER) this.uninterpretedFuncs.set(decl, rule);
-    else if (op === OP_DT_ACCESSOR)
-      throw new SmtUnsupportedError("datatype accessors in Horn rules");
-    else if (
+    else if (op === OP_DT_ACCESSOR) {
+      if (!this.checkAccessor(rule, expr)) this.uninterpretedFuncs.set(decl, rule);
+    } else if (
       DIVISION_BY_ZERO_OPS.has(op) ||
       op === OP_FUN_DEFINED ||
       (DIVISION_OPS.has(op) && !this.evaluatesToNonZeroNumeral(manager.getArg(expr, 1)))
     )
       this.uninterpretedFuncs.set(decl, rule);
     this.checkSort(rule, manager.sorts[expr]);
+  }
+
+  // Whether a recognizer of the accessor's constructor guards each use of it in the tail.
+  private checkAccessor(rule: Rule, accessor: number) {
+    const manager = this.manager;
+    const subject = manager.getArg(accessor, 0);
+    const constructors = getDatatypeConstructors(manager, manager.sorts[subject]);
+    if (constructors.length <= 1) return true;
+    const constructor = getAccessorConstructor(manager, manager.decls[accessor]);
+    const ctors: number[] = [];
+    const isSubjectRecognizer = (term: number) =>
+      (manager.getOp(term) === OP_DT_RECOGNISER || manager.getOp(term) === OP_DT_IS) &&
+      manager.getArg(term, 0) === subject;
+    const addRecognizer = (term: number) => {
+      if (!isSubjectRecognizer(term)) return;
+      const other = getRecognizerConstructor(manager, manager.decls[term]);
+      if (other !== constructor) ctors.push(other);
+    };
+    const addNotRecognizer = (term: number) => {
+      if (manager.isNot(term)) addRecognizer(manager.getArg(term, 0));
+    };
+    const isRecognizerBase = (term: number) =>
+      isSubjectRecognizer(term) &&
+      getRecognizerConstructor(manager, manager.decls[term]) === constructor;
+    const isRecognizer = (term: number) =>
+      (manager.getOp(term) === OP_AND && manager.getArgs(term).some(isRecognizerBase)) ||
+      isRecognizerBase(term);
+    for (let index = rule.uninterpretedSize; index < rule.tail.length; index++) {
+      if (isRecognizer(rule.tail[index])) return true;
+      addNotRecognizer(rule.tail[index]);
+    }
+    // The parents of every subterm of the tail, where -1 marks a tail formula itself.
+    const useList = new Map<number, number[]>();
+    const addUse = (term: number, parent: number) => {
+      const parents = useList.get(term);
+      if (parents === undefined) useList.set(term, [parent]);
+      else parents.push(parent);
+    };
+    for (let index = rule.uninterpretedSize; index < rule.tail.length; index++) {
+      addUse(rule.tail[index], -1);
+      const marked = new Set<number>();
+      const stack = [rule.tail[index]];
+      while (stack.length > 0) {
+        const sub = stack[stack.length - 1];
+        marked.add(sub);
+        if (manager.kinds[sub] === KIND_APP)
+          for (const arg of manager.getArgs(sub)) {
+            addUse(arg, sub);
+            stack.push(arg);
+          }
+        else if (manager.kinds[sub] === KIND_QUANTIFIER)
+          stack.push(manager.getQuantifier(sub).body);
+        while (stack.length > 0 && marked.has(stack[stack.length - 1])) stack.pop();
+      }
+    }
+    const exprs = [accessor];
+    const ctorSizes = [0];
+    const isVisited = [false];
+    while (exprs.length > 0) {
+      const top = exprs.length - 1;
+      const current = exprs[top];
+      if (isVisited[top]) {
+        ctors.length = Math.min(ctors.length, ctorSizes[top]);
+        exprs.pop();
+        ctorSizes.pop();
+        isVisited.pop();
+        continue;
+      }
+      isVisited[top] = true;
+      const parents = useList.get(current);
+      if (parents === undefined) return false;
+      for (const parent of parents) {
+        if (parent === -1) {
+          const unguarded = constructors.filter((other) => !ctors.includes(other));
+          if (unguarded.length === 1 && unguarded[0] === constructor) continue;
+          return false;
+        }
+        if (isRecognizer(parent)) continue;
+        const op = manager.getOp(parent);
+        if (op === OP_ITE) {
+          const condition = manager.getArg(parent, 0);
+          if (
+            manager.getArg(parent, 1) === current &&
+            isRecognizer(condition) &&
+            manager.getArg(parent, 2) !== current
+          )
+            continue;
+          addRecognizer(condition);
+        }
+        if (op === OP_AND) for (const arg of manager.getArgs(parent)) addNotRecognizer(arg);
+        let isGuarded = false;
+        if (op === OP_OR)
+          for (const arg of manager.getArgs(parent)) {
+            addRecognizer(arg);
+            if (manager.isNot(arg) && isRecognizer(manager.getArg(arg, 0))) {
+              isGuarded = true;
+              break;
+            }
+          }
+        if (isGuarded) continue;
+        exprs.push(parent);
+        ctorSizes.push(ctors.length);
+        isVisited.push(false);
+      }
+    }
+    return true;
   }
 
   // evaluates_to_numeral, with the zero test of its caller.
