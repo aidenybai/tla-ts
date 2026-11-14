@@ -25,6 +25,106 @@ export interface MboRow {
   id: number;
 }
 
+export const DEF_ADD = 0;
+export const DEF_MUL = 1;
+export const DEF_DIV = 2;
+export const DEF_CONST = 3;
+export const DEF_VAR = 4;
+
+interface AddDef {
+  readonly kind: typeof DEF_ADD;
+  readonly x: MboDef;
+  readonly y: MboDef;
+}
+
+interface MulDef {
+  readonly kind: typeof DEF_MUL;
+  readonly x: MboDef;
+  readonly y: MboDef;
+}
+
+interface DivDef {
+  readonly kind: typeof DEF_DIV;
+  readonly x: MboDef;
+  readonly div: Rational;
+}
+
+interface ConstDef {
+  readonly kind: typeof DEF_CONST;
+  readonly value: Rational;
+}
+
+interface VarDef {
+  readonly kind: typeof DEF_VAR;
+  readonly v: MboVar;
+}
+
+// A definition of a projected variable, a linear term of the other variables.
+export type MboDef = AddDef | MulDef | DivDef | ConstDef | VarDef;
+
+const mkAddDef = (x: MboDef, y: MboDef): MboDef => ({ kind: DEF_ADD, x, y });
+
+const mkMulDef = (x: MboDef, y: MboDef): MboDef => ({ kind: DEF_MUL, x, y });
+
+const mkConstDef = (value: Rational): MboDef => ({ kind: DEF_CONST, value });
+
+const divDef = (def: MboDef, div: Rational): MboDef =>
+  div.equals(Rational.one) ? def : { kind: DEF_DIV, x: def, div };
+
+const mulDefBy = (def: MboDef, factor: Rational) =>
+  factor.equals(Rational.one) ? def : mkMulDef(def, mkConstDef(factor));
+
+const addDefConst = (def: MboDef, value: Rational) =>
+  value.isZero() ? def : mkAddDef(def, mkConstDef(value));
+
+const substituteDef = (def: MboDef, id: number, other: MboDef): MboDef => {
+  if (def.kind === DEF_ADD || def.kind === DEF_MUL) {
+    const x = substituteDef(def.x, id, other);
+    const y = substituteDef(def.y, id, other);
+    if (x === def.x && y === def.y) return def;
+    return def.kind === DEF_ADD ? mkAddDef(x, y) : mkMulDef(x, y);
+  }
+  if (def.kind === DEF_DIV) {
+    const x = substituteDef(def.x, id, other);
+    return x === def.x ? def : divDef(x, def.div);
+  }
+  if (def.kind === DEF_VAR && def.v.id === id)
+    return def.v.coeff.equals(Rational.one) ? other : mulDefBy(other, def.v.coeff);
+  return def;
+};
+
+// def::from_row: x := (value - coeffs - coeff)/a for the row a*x + coeffs + coeff, rounded so the
+// row holds.
+const getDefFromRow = (row: MboRow, id: number) => {
+  let div = Rational.one;
+  let lc = Rational.of(row.coeff.den);
+  for (const innerVar of row.vars) {
+    lc = getRationalLcm(lc, Rational.of(innerVar.coeff.den));
+    if (innerVar.id === id) {
+      div = innerVar.coeff.neg();
+      break;
+    }
+  }
+  div = div.mul(lc);
+  const isNegative = div.isNegative();
+  let coeff = lc.mul(row.coeff);
+  if (row.type === T_LT) coeff = coeff.add(div);
+  else if (row.type === T_LE && !isNegative) coeff = coeff.add(div).sub(Rational.one);
+  if (isNegative) {
+    div = div.neg();
+    lc = lc.neg();
+    coeff = coeff.neg();
+  }
+  let result = mkConstDef(coeff);
+  for (const innerVar of row.vars)
+    if (innerVar.id !== id)
+      result = mkAddDef(result, {
+        kind: DEF_VAR,
+        v: { id: innerVar.id, coeff: innerVar.coeff.mul(lc) },
+      });
+  return div.compare(Rational.one) > 0 ? divDef(result, div) : result;
+};
+
 const NONE = -1;
 const OBJECTIVE_ID = 0;
 
@@ -87,6 +187,7 @@ export class ModelBasedOpt {
   private var2Value: Rational[] = [];
   private var2IsInt: boolean[] = [];
   private retiredRows: number[] = [];
+  private result: (MboDef | null)[] = [];
 
   addVar(value: Rational, isInt: boolean) {
     const id = this.var2Value.length;
@@ -127,8 +228,27 @@ export class ModelBasedOpt {
     return this.rows.filter((row) => row.isAlive);
   }
 
-  project(vars: readonly number[]) {
-    for (const id of vars) this.projectVar(id);
+  // With isComputingDef, also the definitions of the projected variables, in their order.
+  project(vars: readonly number[], isComputingDef: boolean) {
+    this.result = [];
+    for (const id of vars) {
+      const def = this.projectVar(id, isComputingDef);
+      this.result.push(def);
+      if (def !== null) this.eliminate(id, def);
+    }
+    return this.result;
+  }
+
+  private eliminate(id: number, def: MboDef) {
+    this.result = this.result.map((other) => other && substituteDef(other, id, def));
+  }
+
+  private evalDef(def: MboDef): Rational {
+    if (def.kind === DEF_ADD) return this.evalDef(def.x).add(this.evalDef(def.y));
+    if (def.kind === DEF_DIV) return this.evalDef(def.x).div(def.div);
+    if (def.kind === DEF_MUL) return this.evalDef(def.x).mul(this.evalDef(def.y));
+    if (def.kind === DEF_VAR) return def.v.coeff.mul(this.var2Value[def.v.id]);
+    return def.value;
   }
 
   private evalTerm(coeffs: readonly MboVar[], coeff: Rational) {
@@ -383,7 +503,7 @@ export class ModelBasedOpt {
   }
 
   // Picks the glb or lub that represents the fewest inequalities.
-  private projectVar(id: number) {
+  private projectVar(id: number, isComputingDef: boolean): MboDef | null {
     const lubRows: number[] = [];
     const glbRows: number[] = [];
     const divideRows: number[] = [];
@@ -439,26 +559,24 @@ export class ModelBasedOpt {
         isGlbUnit &&= coeff.equals(Rational.minusOne);
       }
     }
-    if (divideRows.length > 0) {
-      this.solveDivides(id, divideRows);
-      return;
-    }
-    if (divRows.length > 0 || modRows.length > 0) {
-      this.solveModDiv(id, modRows, divRows);
-      return;
-    }
-    if (eqRow !== NONE) {
-      this.solveFor(eqRow, id);
-      return;
-    }
+    if (divideRows.length > 0) return this.solveDivides(id, divideRows, isComputingDef);
+    if (divRows.length > 0 || modRows.length > 0)
+      return this.solveModDiv(id, modRows, divRows, isComputingDef);
+    if (eqRow !== NONE) return this.solveFor(eqRow, id, isComputingDef);
     const lubSize = lubRows.length;
     const glbSize = glbRows.length;
     const rowIndex = lubSize <= glbSize ? lubIndex : glbIndex;
     if (rowIndex === NONE) {
+      if (isComputingDef) {
+        if (lubIndex !== NONE) return this.solveFor(lubIndex, id, true);
+        if (glbIndex !== NONE) return this.solveFor(glbIndex, id, true);
+        return mkConstDef(this.var2Value[id]);
+      }
       for (const rowId of lubRows) this.retireRow(rowId);
       for (const rowId of glbRows) this.retireRow(rowId);
-      return;
+      return null;
     }
+    const result = isComputingDef ? getDefFromRow(this.rows[rowIndex], id) : null;
     if (
       (lubSize <= 2 || glbSize <= 2) &&
       lubSize <= 3 &&
@@ -474,16 +592,22 @@ export class ModelBasedOpt {
         }
       }
       for (const rowId of lubRows) this.retireRow(rowId);
-      return;
+      return result;
     }
     const coeff = this.getCoefficient(rowIndex, id);
     for (const rowId of lubRows) if (rowId !== rowIndex) this.resolve(rowIndex, coeff, rowId, id);
     for (const rowId of glbRows) if (rowId !== rowIndex) this.resolve(rowIndex, coeff, rowId, id);
     this.retireRow(rowIndex);
+    return result;
   }
 
   // Replaces x by K*y + z, 0 <= z < K, for the lcm K of the mod and div rows.
-  private solveModDiv(id: number, modRowIds: readonly number[], divRowIds: readonly number[]) {
+  private solveModDiv(
+    id: number,
+    modRowIds: readonly number[],
+    divRowIds: readonly number[],
+    isComputingDef: boolean,
+  ) {
     let modulus = Rational.one;
     for (const rowId of divRowIds) modulus = getRationalLcm(modulus, this.rows[rowId].mod);
     for (const rowId of modRowIds) modulus = getRationalLcm(modulus, this.rows[rowId].mod);
@@ -586,13 +710,23 @@ export class ModelBasedOpt {
       this.retireRow(rowId);
       defined.push(definedVar);
     }
-    for (const definedVar of defined) this.projectVar(definedVar);
-    this.projectVar(zVar);
-    this.projectVar(yVar);
+    for (const definedVar of defined) {
+      const def = this.projectVar(definedVar, isComputingDef);
+      if (def !== null) this.eliminate(definedVar, def);
+    }
+    const zDef = this.projectVar(zVar, isComputingDef);
+    const yDef = this.projectVar(yVar, isComputingDef);
+    if (zDef === null || yDef === null) return null;
+    const substituted = substituteDef(zDef, yVar, yDef);
+    this.eliminate(yVar, yDef);
+    this.eliminate(zVar, substituted);
+    const result = mkAddDef(mulDefBy(yDef, modulus), substituted);
+    this.var2Value[id] = this.evalDef(result);
+    return result;
   }
 
   // x := D*x' + u, for the lcm D of the divisors and u = eval(x) mod D.
-  private solveDivides(id: number, divideRows: readonly number[]) {
+  private solveDivides(id: number, divideRows: readonly number[], isComputingDef: boolean) {
     let modulus = Rational.one;
     for (const rowId of divideRows) modulus = getRationalLcm(modulus, this.rows[rowId].mod);
     if (modulus.isZero()) throw new SmtInvariantError("modulo 0 is not defined");
@@ -611,7 +745,11 @@ export class ModelBasedOpt {
       visited.add(rowId);
       this.normalize(rowId);
     }
-    this.projectVar(yVar);
+    const def = this.projectVar(yVar, isComputingDef);
+    if (def === null) return null;
+    const result = addDefConst(mulDefBy(def, modulus), remainder);
+    this.var2Value[id] = this.evalDef(result);
+    return result;
   }
 
   // x |-> C
@@ -667,7 +805,7 @@ export class ModelBasedOpt {
     if (!zFactor.isZero()) this.var2RowIds[zVar].push(rowId);
   }
 
-  private solveFor(rowId1: number, id: number) {
+  private solveFor(rowId1: number, id: number, isComputingDef: boolean) {
     let coeff = this.getCoefficient(rowId1, id);
     const row1 = this.rows[rowId1];
     const type = row1.type;
@@ -699,6 +837,9 @@ export class ModelBasedOpt {
         this.solve(rowId1, coeff, rowId2, id);
       else throw new SmtInvariantError("model_based_opt: mod reduction left a row");
     }
+    const result = isComputingDef ? getDefFromRow(row1, id) : null;
+    if (result !== null) this.var2Value[id] = this.evalDef(result);
     this.retireRow(rowId1);
+    return result;
   }
 }

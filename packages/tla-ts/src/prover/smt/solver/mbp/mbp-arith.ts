@@ -1,10 +1,11 @@
 // Ported from Z3 (src/qe/mbp/mbp_arith.cpp), MIT license, see z3-license.txt.
-import { SmtUnsupportedError } from "../../../../errors";
+import { SmtInvariantError, SmtUnsupportedError } from "../../../../errors";
 import {
   type AstManager,
   OP_ADD,
   OP_AND,
   OP_DISTINCT,
+  OP_DIV,
   OP_EQ,
   OP_GE,
   OP_GT,
@@ -23,8 +24,14 @@ import {
   SORT_REAL,
 } from "../ast";
 import { getExtendedNumeral, isAppOf, mkNot } from "../ast-util";
+import { ExprSafeReplace } from "../expr-safe-replace";
 import { ObjMap } from "../hashtable";
 import {
+  DEF_ADD,
+  DEF_CONST,
+  DEF_DIV,
+  DEF_MUL,
+  type MboDef,
   type MboRow,
   type MboVar,
   ModelBasedOpt,
@@ -57,8 +64,15 @@ interface Constant {
   value: Rational;
 }
 
+interface Definition {
+  readonly variable: number;
+  readonly term: number;
+}
+
 export class ArithProjectPlugin {
   private manager: AstManager;
+  isCheckPurified = true;
+  isApplyProjection = false;
 
   constructor(private context: MbpContext) {
     this.manager = context.manager;
@@ -70,7 +84,7 @@ export class ArithProjectPlugin {
 
   private mkBinary(op: number, left: number, right: number) {
     const sort =
-      op === OP_ADD || op === OP_MUL || op === OP_IDIV || op === OP_MOD
+      op === OP_ADD || op === OP_MUL || op === OP_IDIV || op === OP_MOD || op === OP_DIV
         ? this.manager.sorts[left]
         : SORT_BOOL;
     return this.manager.mkApp(op, [left, right], sort);
@@ -303,9 +317,11 @@ export class ArithProjectPlugin {
     for (const expr of tids.keys())
       if (isArith(manager, expr) && !isPure(expr) && !varMark.has(expr))
         markRec(manager, fmlsMark, expr);
-    for (const formula of fmls.items) markRec(manager, fmlsMark, formula);
-    for (const expr of tids.keys())
-      if (!varMark.has(expr) && !isPure(expr)) markRec(manager, fmlsMark, expr);
+    if (this.isCheckPurified) {
+      for (const formula of fmls.items) markRec(manager, fmlsMark, formula);
+      for (const expr of tids.keys())
+        if (!varMark.has(expr) && !isPure(expr)) markRec(manager, fmlsMark, expr);
+    }
     const index2Expr: number[] = [];
     for (const [expr, id] of tids) index2Expr[id] = expr;
     const realVars: number[] = [];
@@ -316,11 +332,67 @@ export class ArithProjectPlugin {
       else vars[keptVars++] = innerVar;
     }
     vars.length = keptVars;
-    mbo.project(realVars);
+    const defs = mbo.project(realVars, this.isApplyProjection);
     const rows = mbo.getLiveRows();
     const defVars = new Map<number, MboRow>();
     for (const row of rows) if (row.type === T_MOD || row.type === T_DIV) defVars.set(row.id, row);
     this.rows2Fmls(defVars, rows, index2Expr, fmls);
+    if (!this.isApplyProjection) return true;
+    const definitions = defs.map((def, index) => {
+      if (def === null) throw new SmtInvariantError("mbo computes a definition for each variable");
+      const variable = index2Expr[realVars[index]];
+      const isInt = manager.sorts[variable] === SORT_INT;
+      return { variable, term: context.pin(this.fromDef(defVars, def, isInt, index2Expr)) };
+    });
+    return this.applyProjection(definitions, fmls);
+  }
+
+  private fromDef(
+    defVars: Map<number, MboRow>,
+    def: MboDef,
+    isInt: boolean,
+    index2Expr: number[],
+  ): number {
+    if (def.kind === DEF_ADD || def.kind === DEF_MUL)
+      return this.mkBinary(
+        def.kind === DEF_ADD ? OP_ADD : OP_MUL,
+        this.fromDef(defVars, def.x, isInt, index2Expr),
+        this.fromDef(defVars, def.y, isInt, index2Expr),
+      );
+    if (def.kind === DEF_CONST) return this.mkNumeral(def.value, isInt);
+    if (def.kind === DEF_DIV)
+      return this.mkBinary(
+        isInt ? OP_IDIV : OP_DIV,
+        this.fromDef(defVars, def.x, isInt, index2Expr),
+        this.mkNumeral(def.div, isInt),
+      );
+    const term = this.id2Expr(defVars, index2Expr, def.v.id);
+    return def.v.coeff.equals(Rational.one)
+      ? term
+      : this.mkBinary(OP_MUL, this.mkNumeral(def.v.coeff, isInt), term);
+  }
+
+  // apply_projection: substitutes the definitions into the formulas, and fails on a formula the
+  // model falsifies.
+  private applyProjection(definitions: Definition[], fmls: RefVector) {
+    const context = this.context;
+    if (fmls.size === 0 || definitions.length === 0) return true;
+    const subst = new ExprSafeReplace(this.manager);
+    for (let index = definitions.length; index-- > 0;) {
+      const term = subst.apply(definitions[index].term);
+      context.pinned.pushOwned(term);
+      subst.insert(definitions[index].variable, term);
+    }
+    for (let index = 0; index < fmls.size; index++) {
+      const replaced = subst.apply(fmls.items[index]);
+      context.pinned.pushOwned(replaced);
+      if (context.isFalse(replaced, true)) {
+        subst.release();
+        return false;
+      }
+      fmls.set(index, replaced);
+    }
+    subst.release();
     return true;
   }
 
