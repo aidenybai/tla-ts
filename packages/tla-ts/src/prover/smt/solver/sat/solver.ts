@@ -106,11 +106,11 @@ interface Scope {
 const getLuby = (index: number) => {
   let size = 1;
   let sequence = 0;
-  while (size < index + 1) {
+  while (size < index) {
     sequence++;
     size = 2 * size + 1;
   }
-  let remaining = index;
+  let remaining = index - 1;
   while (size - 1 !== remaining) {
     size = (size - 1) >> 1;
     sequence--;

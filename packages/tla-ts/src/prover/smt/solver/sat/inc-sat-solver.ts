@@ -189,7 +189,6 @@ export class IncSatSolver {
       seen.add(lit);
       this.asms.push(lit);
     }
-    return L_TRUE;
   }
 
   check(assumptions: readonly number[] = []) {

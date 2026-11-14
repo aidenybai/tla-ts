@@ -41,7 +41,7 @@ import { applyCase, dropJudgment } from "./rule-cases";
 import { parseType } from "./inner-syntax";
 import type { FixedVariable, MethodText, StatementPart } from "./theory";
 
-export const initGoal = (prop: Term) =>
+const initGoal = (prop: Term) =>
   instantiate([{ variable: mkVar("A", 0, propT), term: prop }], protectI);
 
 export const insertTac = (limits: Limits, facts: readonly Thm[], index: number): Tactic =>
@@ -52,7 +52,6 @@ type Mode = "forward" | "chain" | "backward";
 type AfterQed = (resultContext: IsarContext, results: readonly Thm[], state: State) => State;
 
 interface Goal {
-  readonly isGlobal: boolean;
   readonly props: readonly Term[];
   readonly using: readonly Thm[];
   readonly goal: Thm;
@@ -227,7 +226,6 @@ const genericGoal = (
   state: State,
   goalContext: IsarContext,
   props: readonly Term[],
-  isGlobal: boolean,
   afterQed: AfterQed,
 ): State => {
   if (props.length !== 1) throw error("Unsupported goal of several propositions");
@@ -236,13 +234,8 @@ const genericGoal = (
   const opened = putMode(openBlock(putMode(state, "forward")), "backward");
   const goalState = mapTop(opened, (node) => ({
     ...node,
-    context: maybeBindTerm(
-      { ...goalContext, isBody: true },
-      "thesis",
-      0,
-      props.length === 1 ? thesisOf(props[0]) : undefined,
-    ),
-    goal: { isGlobal, props, using: [], goal: initGoal(props[0]), afterQed },
+    context: maybeBindTerm({ ...goalContext, isBody: true }, "thesis", 0, thesisOf(props[0])),
+    goal: { props, using: [], goal: initGoal(props[0]), afterQed },
   }));
   return putFactsOf(isChaining ? usingFacts(goalState, theFacts(state)) : goalState, undefined);
 };
@@ -287,7 +280,7 @@ export const readStatement = (
   });
   return {
     props: grouped,
-    context: binds.reduce((result, bind) => bindTerm(result, ...bind), propsContext),
+    context: bindAll(propsContext, binds),
     binds,
   };
 };
@@ -313,15 +306,11 @@ const localResults = (
 };
 
 // Proof.local_goal for have and show, whose statements are propositions only.
-const localGoal = (
-  state: State,
-  parts: readonly StatementPart[],
-  afterQed: (resultContext: IsarContext, results: readonly Thm[], state: State) => State,
-): State => {
+const localGoal = (state: State, parts: readonly StatementPart[], afterQed: AfterQed): State => {
   const statement = readStatement(contextOf(state), parts, "default");
   const props = statement.props.flat();
   const goalContext = props.reduce(augment, statement.context);
-  return genericGoal(state, goalContext, props, false, (resultContext, results, outer) => {
+  return genericGoal(state, goalContext, props, (resultContext, results, outer) => {
     const bound = mapContext(outer, (context) => bindAll(context, statement.binds));
     const exported = results.map((result) =>
       exportThm(resultContext, contextOf(bound), false, result),
@@ -402,9 +391,7 @@ export const have = (state: State, parts: readonly StatementPart[]) =>
   localGoal(state, parts, (_context, _results, result) => result);
 
 export const show = (state: State, parts: readonly StatementPart[]) =>
-  localGoal(state, parts, (resultContext, results, result) =>
-    refineGoals(resultContext, results, result),
-  );
+  localGoal(state, parts, refineGoals);
 
 // Proof.chain: the current facts feed the next goal.
 export const chain = (state: State) =>
@@ -564,7 +551,6 @@ export const theorem = (
     [{ context, facts: undefined, mode: "forward", goal: undefined }],
     context,
     props,
-    true,
     (resultContext, results, state) => {
       afterQed(resultContext, results);
       return state;

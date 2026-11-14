@@ -1,19 +1,12 @@
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import { getHost, runPool, runTest } from "./hosts";
 import { getBackend, TLAPM_OUTCOME_EXITS } from "./tlapm";
 import {
-  formatYaml,
+  listFiles,
   parseTest,
+  renderTest,
   SUITE_DIRECTORY,
   writeRecordings,
   type Recording,
@@ -41,14 +34,6 @@ if (!checkout || !existsSync(join(checkout, "test")) || !existsSync(join(checkou
   process.exit(1);
 }
 const testDirectory = join(checkout, "test");
-
-const listFiles = (directory: string): string[] =>
-  readdirSync(directory)
-    .sort()
-    .flatMap((entry) => {
-      const path = join(directory, entry);
-      return statSync(path).isDirectory() ? listFiles(path) : [path];
-    });
 
 const splitTrailer = (text: string) => {
   const lines = text.split("\n");
@@ -318,7 +303,7 @@ const writePending = (pending: PendingTest, outcome: string) => {
     outcome,
     ...(pending.fixtures.length > 0 ? { includes: pending.fixtures } : {}),
   };
-  writeFileSync(getTestPath(pending), `(*---\n${formatYaml(metadata)}\n---*)\n${pending.module}`);
+  writeFileSync(getTestPath(pending), renderTest(metadata, pending.module));
 };
 
 // A fixture can be a test too, so every file is written before any test runs and rewritten after

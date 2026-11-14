@@ -179,7 +179,7 @@ export class Maxcore extends MaxsmtSolverBase {
     }
     if (status !== L_TRUE) return status;
     if (cores.length === 0) return L_FALSE;
-    for (const { core, weight } of cores) this.processCore(core, weight);
+    for (const entry of cores) this.processCore(entry.core, entry.weight);
     return L_TRUE;
   }
 

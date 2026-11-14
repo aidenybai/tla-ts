@@ -1057,6 +1057,131 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("keeps a term under 64 bound variables apart from its neighbour under none", () => {
+    const binders = Array.from({ length: 64 }, (_unused, index) => `(y${index} Int)`).join(" ");
+    const forall = `(forall (${binders}) (R x y0))`;
+    const exists = `(exists (${binders}) (R x y0))`;
+    expect(
+      run([
+        "(declare-fun P (Int) Bool)",
+        "(declare-fun R (Int Int) Bool)",
+        `(simplify (forall ((x Int)) (let ((t (and ${forall} ${exists}))) (exists ((z Int)) (and (P z) t)))))`,
+        `(dbg-used-vars (forall ((x Int)) (and (or ${forall} ${exists}) (or ${forall} (P 0)))))`,
+        `(assert (forall ((x Int)) (let ((t (or (forall (${binders}) (= x y0)) (exists (${binders}) (= x y0))))) (exists ((z Int)) t))))`,
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      [
+        "(forall ((x Int))",
+        "  (exists ((z Int))",
+        "    (and (P z) (forall ((y0 Int)) (R x y0)) (exists ((y0 Int)) (R x y0)))))",
+      ].join("\n"),
+      "(vars\n  (0      Int))",
+      "sat",
+    ]);
+  });
+
+  it("reports a malformed # literal and skips a #| |# comment", () => {
+    expect(
+      run([
+        "(assert (= #xfg #x0))",
+        "(assert (= #x #x0))",
+        "(assert (= #b #b0))",
+        "(assert (= #q12 #x0))",
+        '(echo "a") #| (echo "b")',
+        "|# (assert q)",
+        "(simplify (bvadd #xA5 #b10100101))",
+      ]),
+    ).toEqual([
+      '(error "line 1 column 15: unknown constant g")',
+      '(error "line 2 column 13: invalid empty bit-vector literal")',
+      '(error "line 3 column 13: invalid empty bit-vector literal")',
+      "(error \"line 4 column 12: invalid bit-vector literal, expecting 'x' or 'b'\")",
+      "a",
+      '(error "line 6 column 11: unknown constant q")',
+      "#x4a",
+    ]);
+  });
+
+  it("takes only an integer exponent for an even power", () => {
+    expect(
+      run([
+        "(declare-const x Real)",
+        "(declare-const y Real)",
+        "(simplify (>= (* (^ x 2.0) (^ y 2.0)) 0.0))",
+      ]),
+    ).toEqual(["(or (= (>= (^ x 2.0) 0.0) (>= (^ y 2.0) 0.0)) (= x 0.0) (= y 0.0))"]);
+  });
+
+  it("keeps the bounds of a variable that fm finds under a quantifier", () => {
+    expect(
+      run([
+        "(declare-const x Real)",
+        "(declare-fun f (Real) Real)",
+        "(assert (forall ((y Real)) (! (> (f y) x) :pattern ((f y)))))",
+        "(assert (<= (f 0.0) 0.0))",
+        "(assert (>= x 1.0))",
+        "(apply fm)",
+        "(check-sat-using (then fm smt))",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  (forall ((y Real)) (! (not (<= (+ (f y) (* (- 1.0) x)) 0.0)) :pattern ((f y))))",
+        "  (<= (f 0.0) 0.0)",
+        "  (>= x 1.0)",
+        "  :precision precise :depth 2)",
+        ")",
+      ].join("\n"),
+      "unsat",
+    ]);
+  });
+
+  it("leaves fp.isInfinite and fp.isNormal of an integer whose overflow bound is too large", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(simplify (fp.isInfinite ((_ to_fp 40 8) RNE (to_real x))))",
+        "(simplify (fp.isNormal ((_ to_fp 40 8) RNE (to_real x))))",
+      ]),
+    ).toEqual([
+      "(fp.isInfinite ((_ to_fp 40 8) roundNearestTiesToEven (to_real x)))",
+      "(fp.isNormal ((_ to_fp 40 8) roundNearestTiesToEven (to_real x)))",
+    ]);
+  });
+
+  it("orders an unsat core by expression id, not by where the expression is stored", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(declare-const s Bool)",
+        "(simplify (and p p (> x 2)))",
+        "(simplify (and p p (> x 3)))",
+        "(simplify (and p p (> x 2)))",
+        "(assert (or (not q) (not r) (not s) (not p)))",
+        "(check-sat-assuming (q r s p))",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual([
+      "(and p (not (<= x 2)))",
+      "(and p (not (<= x 3)))",
+      "(and p (not (<= x 2)))",
+      "unsat",
+      "(q r s p)",
+    ]);
+  });
+
+  it("throws at a command named like a property of Object", () => {
+    expect(() => run(["(constructor)"])).toThrow(SmtUnsupportedError);
+    expect(() => run(["(toString)"])).toThrow(SmtUnsupportedError);
+    expect(() => run(["(__proto__)"])).toThrow(SmtUnsupportedError);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),

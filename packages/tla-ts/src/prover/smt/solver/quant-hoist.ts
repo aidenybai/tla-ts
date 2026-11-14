@@ -10,6 +10,7 @@ import {
   OP_OR,
   SORT_BOOL,
   QUANTIFIER_FORALL,
+  QUANTIFIER_LAMBDA,
 } from "./ast";
 import { isAppOf } from "./ast-util";
 import { RefVector } from "./ref-vector";
@@ -140,6 +141,7 @@ export class QuantifierHoister {
     const kind = manager.kinds[formula];
     if (kind === KIND_QUANTIFIER) {
       const data = manager.getQuantifier(formula);
+      if (data.kind === QUANTIFIER_LAMBDA) return formula;
       if (!isCompatible(type.value, data.kind === QUANTIFIER_FORALL)) return formula;
       setQuantifierType(type, data.kind === QUANTIFIER_FORALL);
       return this.pull(this.extractQuantifier(formula, vars), type, vars);

@@ -9,7 +9,7 @@ import { RandomGen } from "../random-gen";
 import { RefVector } from "../ref-vector";
 import { SmtKernel } from "../smt-kernel";
 import type { SpacerManager } from "./spacer-manager";
-import { INFTY_LEVEL, isInftyLevel, isFalseIn, pin } from "./spacer-util";
+import { INFTY_LEVEL, isInftyLevel, pin } from "./spacer-util";
 
 class DefManager {
   readonly expr2proxy = new Map<number, number>();
@@ -335,10 +335,5 @@ export class PropSolver {
     const result = body();
     this.isInLevel = saved;
     return result;
-  }
-
-  isFalseInModel(expr: number) {
-    const model = this.model?.value;
-    return model !== undefined && isFalseIn(model, expr);
   }
 }

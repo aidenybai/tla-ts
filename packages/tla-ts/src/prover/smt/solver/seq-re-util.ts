@@ -42,7 +42,7 @@ const MAX_PERIOD = 64;
 export const addTruncate = (first: number, second: number) =>
   first + second > UINT_MAX ? UINT_MAX : first + second;
 
-export const mulTruncate = (first: number, second: number) =>
+const mulTruncate = (first: number, second: number) =>
   first * second > UINT_MAX ? UINT_MAX : first * second;
 
 const getGcd = (first: number, second: number): number => {
@@ -93,7 +93,7 @@ const getCommonPeriod = (first: number, second: number) => {
 
 const getEffectivePeriod = (abs: LenAbs) => (abs.lo === abs.hi ? 0 : abs.period);
 
-export const isLenAbsEmpty = (abs: LenAbs) => {
+const isLenAbsEmpty = (abs: LenAbs) => {
   if (abs.lo > abs.hi || abs.residues === 0n) return true;
   if (abs.period <= 1) return false;
   if (abs.hi === UINT_MAX || abs.hi - abs.lo >= abs.period - 1) return false;
@@ -211,12 +211,7 @@ const loopLenAbs = (abs: LenAbs, lower: number, upper: number) => {
   return result;
 };
 
-export const isResidueReachable = (
-  period: number,
-  residues: bigint,
-  constant: number,
-  stride: number,
-) => {
+const isResidueReachable = (period: number, residues: bigint, constant: number, stride: number) => {
   if (period === 0) return true;
   const offset = constant % period;
   const gcd = stride === 0 ? period : getGcd(stride, period);
@@ -250,8 +245,6 @@ const mkInfo = (
   ...(abs ?? mkLenAbs(minLength, maxLength)),
 });
 
-const negateLbool = (value: number) => -value;
-
 const starInfo = (info: ReInfo) =>
   mkInfo(info.isInterpreted, L_TRUE, 0, 0, info.isClassical, starLenAbs(info, 0));
 
@@ -272,7 +265,7 @@ const optInfo = (info: ReInfo) =>
 
 const complementInfo = (info: ReInfo) => {
   if (!info.isKnown) return info;
-  const nullable = negateLbool(info.nullable);
+  const nullable = -info.nullable;
   return mkInfo(info.isInterpreted, nullable, nullable === L_FALSE ? 1 : 0, UINT_MAX, false);
 };
 
@@ -519,13 +512,7 @@ export class ReInfoCache {
   }
 }
 
-export const getReMinLength = (info: ReInfoCache, expr: number) => info.getInfo(expr).lo;
-
-export const getReMaxLength = (info: ReInfoCache, expr: number) => info.getInfo(expr).hi;
-
 export const isReGround = (info: ReInfoCache, expr: number) => info.getInfo(expr).isInterpreted;
-
-export const isLengthEmpty = (info: ReInfo) => info.isKnown && isLenAbsEmpty(info);
 
 const getUnsigned = (manager: AstManager, expr: number) => {
   const value = manager.getNumeral(expr);
@@ -638,7 +625,7 @@ export const getStrMinLength = (manager: AstManager, seq: number): number => {
   return result + getLength(current);
 };
 
-export const getStrMaxLength = (manager: AstManager, seq: number): number => {
+const getStrMaxLength = (manager: AstManager, seq: number): number => {
   const getLength = (part: number) => {
     if (isEmptySeq(manager, part)) return 0;
     const op = manager.getOp(part);
@@ -659,7 +646,7 @@ export const getStrMaxLength = (manager: AstManager, seq: number): number => {
   return addTruncate(getLength(current), result);
 };
 
-export const getLengthShape = (manager: AstManager, seq: number) => {
+const getLengthShape = (manager: AstManager, seq: number) => {
   let constant = 0;
   let stride = 0;
   const multiplicities = new Map<number, number>();
@@ -772,6 +759,3 @@ export const getUnitStringChar = (manager: AstManager, seq: number) => {
   if (chars !== undefined) return chars.length === 1 ? manager.mkChar(chars[0]) : -1;
   return manager.getOp(seq) === OP_SEQ_UNIT ? manager.getArg(seq, 0) : -1;
 };
-
-export const isReSortOf = (manager: AstManager, expr: number) =>
-  manager.isReSort(manager.sorts[expr]);

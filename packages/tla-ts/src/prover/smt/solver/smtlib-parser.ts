@@ -630,7 +630,36 @@ const createScanner = (text: string) => {
       }
       if (character === "#") {
         advance();
-        readWhile(/[0-9A-Za-z]/);
+        const radix = text[state.index];
+        if (radix === "|") {
+          advance();
+          while (state.index < text.length) {
+            const current = text[state.index];
+            advance();
+            if (current !== "|" || text[state.index] !== "#") continue;
+            advance();
+            break;
+          }
+          continue;
+        }
+        if (radix === "f") {
+          advance();
+          readWhile(/[0-9m-]/);
+          return getToken("symbol");
+        }
+        if (radix !== "x" && radix !== "b")
+          throw new SmtParseError("invalid bit-vector literal, expecting 'x' or 'b'", {
+            line: state.line,
+            column: getColumn(),
+          });
+        advance();
+        const digitsStart = state.index;
+        readWhile(radix === "x" ? /[0-9a-fA-F]/ : /[01]/);
+        if (state.index === digitsStart)
+          throw new SmtParseError("invalid empty bit-vector literal", {
+            line: state.line,
+            column: getColumn(),
+          });
         return getToken("bitvector");
       }
       if (character === ":" || SYMBOL_CHARACTER.test(character)) {

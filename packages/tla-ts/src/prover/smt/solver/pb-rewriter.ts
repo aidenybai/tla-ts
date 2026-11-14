@@ -11,6 +11,7 @@ import {
   OP_PB_LE,
   SORT_BOOL,
 } from "./ast";
+import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { getGcd, getLcm, Rational } from "./rational";
 import type { Rewrite } from "./rewriter-tpl";
 
@@ -100,12 +101,6 @@ export const mkPbEq = (
   return mkPbApp(manager, OP_PB_EQ, [normalized.k, ...normalized.coeffs], args);
 };
 
-export const mkAtMostK = (manager: AstManager, args: number[], k: number) =>
-  mkPbApp(manager, OP_AT_MOST_K, [Rational.fromNumber(k)], args);
-
-export const mkAtLeastK = (manager: AstManager, args: number[], k: number) =>
-  mkPbApp(manager, OP_AT_LEAST_K, [Rational.fromNumber(k)], args);
-
 // ast_util's mk_not.
 const mkNot = (manager: AstManager, expr: number) =>
   manager.isNot(expr) ? manager.getArg(expr, 0) : manager.mkNot(expr);
@@ -133,10 +128,6 @@ const unique = (manager: AstManager, args: PbArg[], bound: { k: Rational }) => {
   }
   args.splice(0, args.length, ...coalesced.filter((arg) => !arg.coeff.isZero()));
 };
-
-const L_TRUE = 1;
-const L_FALSE = -1;
-const L_UNDEF = 0;
 
 const normalizePb = (manager: AstManager, args: PbArg[], bound: { k: Rational }, isEq: boolean) => {
   let sum = Rational.zero;

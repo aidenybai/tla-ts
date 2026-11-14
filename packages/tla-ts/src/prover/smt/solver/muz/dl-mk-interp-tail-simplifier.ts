@@ -6,8 +6,6 @@ import {
   KIND_VAR,
   OP_AND,
   OP_EQ,
-  OP_GE,
-  OP_LE,
   OP_NOT,
   OP_OR,
   SORT_BOOL,
@@ -236,8 +234,6 @@ export class MkInterpTailSimplifier implements RuleTransformerPlugin {
           tryUnify(first, manager.falseExpr);
         else if (manager.kinds[first] === KIND_VAR && isNeg && manager.isFalse(second))
           tryUnify(first, manager.trueExpr);
-      } else if (!isNeg && (op === OP_LE || op === OP_GE)) {
-        // Z3 collects the differences of the inequalities but never unifies them.
       }
     }
     if (!isFound) return undefined;

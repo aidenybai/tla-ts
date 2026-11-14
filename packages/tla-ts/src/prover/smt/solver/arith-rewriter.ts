@@ -1015,7 +1015,7 @@ export class ArithRewriter extends PolyRewriter {
     if (op !== OP_POWER) return false;
     const base = manager.getArg(expr, 0);
     const exponent = manager.getArg(expr, 1);
-    if (manager.isNumeral(exponent)) {
+    if (manager.isNumeral(exponent) && manager.isInt(exponent)) {
       const value = this.getValue(exponent);
       if (value.isInt() && value.num >= 0n && value.num < 2n ** 32n && value.num % 2n === 0n)
         return true;

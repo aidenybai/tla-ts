@@ -8,7 +8,7 @@ import type { Solver } from "./solver";
 const UNVISITED = -1;
 
 export class Scc {
-  big: Big;
+  private big: Big;
 
   constructor(
     private solver: Solver,

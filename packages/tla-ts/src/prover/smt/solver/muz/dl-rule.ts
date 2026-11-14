@@ -45,13 +45,6 @@ export class Rule {
       if (this.isNegated[index]) return true;
     return false;
   }
-
-  isInTail(manager: AstManager, decl: number, isOnlyPositive = false) {
-    const size = isOnlyPositive ? this.positiveSize : this.uninterpretedSize;
-    for (let index = 0; index < size; index++)
-      if (manager.decls[this.tail[index]] === decl) return true;
-    return false;
-  }
 }
 
 // The sorts of the free variables of the expressions, by index, as Z3's used_vars collects them.
@@ -294,17 +287,6 @@ export class RuleManager {
     return rule;
   }
 
-  mkFrom(source: Rule, head = source.head, name = source.name) {
-    return new Rule(
-      this.pin(head),
-      [...source.tail],
-      [...source.isNegated],
-      source.uninterpretedSize,
-      source.positiveSize,
-      name,
-    );
-  }
-
   normVars(rule: Rule) {
     const manager = this.manager;
     const used = getRuleVars(manager, rule);
@@ -318,14 +300,6 @@ export class RuleManager {
     for (let index = 0; index < rule.tail.length; index++)
       rule.tail[index] = this.pin(this.ensureApp(subst.apply(rule.tail[index], substitution)));
     subst.release();
-  }
-
-  substitute(rule: Rule, values: number[]) {
-    const subst = new VarSubst(this.manager, false);
-    const head = subst.apply(rule.head, values);
-    const tail = rule.tail.map((literal) => subst.apply(literal, values));
-    subst.release();
-    return this.mk(head, tail, rule.isNegated, rule.name, false);
   }
 
   toFormula(rule: Rule) {

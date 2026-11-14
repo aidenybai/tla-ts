@@ -69,7 +69,6 @@ export class DatalogContext {
   private bindVariables: BindVariables;
   private isBindingVariables = true;
   ruleSet: RuleSet;
-  transformedRuleSet: RuleSet;
   private ruleFmls: number[] = [];
   private ruleNames: string[] = [];
   private ruleFmlsHead = 0;
@@ -90,7 +89,6 @@ export class DatalogContext {
     this.ruleProperties = new RuleProperties(this);
     this.bindVariables = new BindVariables(manager);
     this.ruleSet = new RuleSet(this);
-    this.transformedRuleSet = new RuleSet(this);
     this.rewriter = new Rewriter(manager, rewriterOptions);
   }
 
@@ -107,10 +105,6 @@ export class DatalogContext {
     if (this.preds.has(decl)) return;
     this.manager.incDeclRef(decl);
     this.preds.add(decl);
-  }
-
-  getPredicates(): ReadonlySet<number> {
-    return this.preds;
   }
 
   isPredicateDecl(decl: number) {
@@ -215,10 +209,6 @@ export class DatalogContext {
 
   replaceRules(rules: RuleSet) {
     this.ruleSet.replaceRules(rules);
-  }
-
-  recordTransformedRules() {
-    this.transformedRuleSet.replaceRules(this.ruleSet);
   }
 
   getEngine(query = -1) {

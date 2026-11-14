@@ -61,11 +61,6 @@ export class TheoryLra extends TheoryLraFinalCheck {
     return thVar;
   }
 
-  getObjectiveValue(thVar: number) {
-    const value = this.solver.getValue(this.solver.externalToLocalColumn(thVar));
-    return InfEps.of(value.x, value.y);
-  }
-
   // With isComputingUpper, the maximum of the linear relaxation is also an upper bound of the
   // objective when the bounds that prove it hold; it holds globally when they hold at the base
   // level.

@@ -1,15 +1,14 @@
 // Ported from Z3 (src/model/seq_factory.h, src/model/char_factory.h), MIT license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../errors";
-import type { AstManager } from "./ast";
+import { type AstManager, OP_SEQ_TO_RE, OP_SEQ_UNIT } from "./ast";
 import { mkConcatOf, mkSeqApp } from "./seq-decl-plugin";
-import { OP_SEQ_TO_RE, OP_SEQ_UNIT } from "./ast";
 
 interface ElementModel {
   getFreshValue(sort: number): number | null;
   getSomeValue(sort: number): number;
 }
 
-export const encodeZstring = (chars: readonly number[]) =>
+const encodeZstring = (chars: readonly number[]) =>
   chars
     .map((char, index) =>
       char < 32 || char >= 127 || (char === 92 && chars[index + 1] === 117)

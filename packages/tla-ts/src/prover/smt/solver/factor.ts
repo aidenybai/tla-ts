@@ -140,7 +140,7 @@ export const factor = (manager: AstManager, goal: Goal, isSplittingFactors: bool
           const next = rewriter.rewrite(form);
           if (rewritten !== -1) manager.decRef(rewritten);
           rewritten = next;
-          if (rewritten !== form) goal.update(index, rewritten);
+          if (rewritten !== form) goal.update(index, rewritten, goal.getDependency(index));
         });
         if (rewritten !== -1) manager.decRef(rewritten);
       },

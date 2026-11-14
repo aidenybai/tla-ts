@@ -378,7 +378,7 @@ export const runSmtlibScript = (
   const getNamedAssertions = () => {
     const state = script.state;
     const manager = state.manager;
-    const isNamed = state.names.some((name) => name !== -1);
+    const isNamed = hasNames();
     return state.assertions.map((assertion, index) =>
       isNamed && state.names[index] !== -1
         ? manager.mkApp(OP_IMPLIES, [state.names[index], assertion], SORT_BOOL)
@@ -431,7 +431,7 @@ export const runSmtlibScript = (
     clearCheck();
     state.manager.limit.push(settings.rlimit);
     try {
-      const hasAssumptions = extra.length > 0 || state.names.some((name) => name !== -1);
+      const hasAssumptions = extra.length > 0 || hasNames();
       const status = optimizer.optimize(hard, {
         ...getOptOptions(),
         hasAssumptions,
@@ -1469,7 +1469,9 @@ export const runSmtlibScript = (
       throw new SmtParseError("invalid command, symbol expected", head ?? list.end);
     const command = DECLARATIONS.has(head.text)
       ? (declaration: SmtList) => script.state.reader.declareCommand(declaration)
-      : runCommand[head.text];
+      : Object.hasOwn(runCommand, head.text)
+        ? runCommand[head.text]
+        : undefined;
     if (command === undefined) throw new SmtUnsupportedError(`the command ${head.text}`);
     if (!MANAGERLESS_COMMANDS.has(head.text) && script.state.isProofsEnabled === undefined) {
       script.state.isProofsEnabled = settings.parameters.get("proof") === "true";

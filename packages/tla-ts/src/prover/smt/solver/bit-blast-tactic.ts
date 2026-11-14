@@ -61,7 +61,7 @@ import { mkBvApp } from "./bv-decl-plugin";
 import { release } from "./expr-ref";
 import type { Goal } from "./goal";
 import { ObjMap } from "./hashtable";
-import { FuncInterp, ProtoModel } from "./proto-model";
+import { ProtoModel } from "./proto-model";
 import { RefVector } from "./ref-vector";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { type Rewrite, RewriterTpl, VarShifter } from "./rewriter-tpl";
@@ -508,13 +508,7 @@ const convertModel = (manager: AstManager, consts: BlastedConst[], source: Proto
     for (const bit of manager.getArgs(blasted.bits)) bitDecls.add(manager.decls[bit]);
   for (const decl of source.getConstDecls())
     if (!bitDecls.has(decl)) target.registerConst(decl, source.constInterps.get(decl) as number);
-  for (const entry of source.funcInterps) {
-    const copied = new FuncInterp(manager, entry[1].arity);
-    for (const funcEntry of entry[1].entries)
-      copied.insertNewEntry(funcEntry.args, funcEntry.result);
-    if (entry[1].elseExpr !== null) copied.setElse(entry[1].elseExpr);
-    target.registerFunc(entry[0], copied);
-  }
+  for (const entry of source.funcInterps) target.registerFunc(entry[0], entry[1].copy());
   for (const sort of source.getUninterpretedSorts())
     for (const value of source.getKnownUniverse(sort)) target.registerValue(value);
   for (const blasted of consts) {
