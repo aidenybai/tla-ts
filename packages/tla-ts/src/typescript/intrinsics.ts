@@ -795,7 +795,15 @@ export const getMissingMethod = (node: ts.Expression, context: Context) => {
   if (!ts.isPropertyAccessExpression(node) || symbol === undefined || !isLibrary(symbol)) {
     return undefined;
   }
-  const owner = getName(node.expression, context) ?? getDeclaringPrototype(symbol);
+  // An interface that a subtype extends, as Iterator for an array iterator, may declare a method
+  // that the subtype's prototype holds, so the receiver's type must be the declaring one.
+  const declared = getDeclaringPrototype(symbol);
+  const receiver = context.checker.getTypeAtLocation(node.expression).getSymbol()?.name;
+  const owner =
+    getName(node.expression, context) ??
+    (receiver !== undefined && declared === `${receiver.replace(/^Readonly/, "")}.prototype`
+      ? declared
+      : undefined);
   const key = node.name.text;
   const isLacked = (name: string): boolean => {
     const entry = BUILT_INS[name];
