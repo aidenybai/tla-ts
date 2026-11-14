@@ -3526,9 +3526,12 @@ export const translateCallStatement = (
                     rejectCallback(target.name.text),
                     stop,
                   )
-                : accessor === null || keyNode === undefined
-                  ? stop
-                  : ifThenElse(
+                : OWN_CHECKS.has(target.name.text) &&
+                    expression.arguments.length === 1 &&
+                    keyNode !== undefined &&
+                    isInertValue(keyNode) &&
+                    isEvery(context.checker.getTypeAtLocation(keyNode), ts.TypeFlags.StringLike)
+                  ? ifThenElse(
                       apply("=", [
                         value,
                         translateBuiltInValue(
@@ -3537,9 +3540,38 @@ export const translateCallStatement = (
                           context,
                         ),
                       ]),
-                      translateAccessor(accessor[1], accessor[2] === "G" ? "get" : "set", keyNode),
+                      continueWith(
+                        path,
+                        useJavaScript(
+                          target.name.text === "hasOwnProperty" ? "HasOwn" : "IsEnumerableOwn",
+                          [
+                            getHeap(path.scope, expression, context),
+                            receiver,
+                            translateExpression(keyNode, path.scope, context),
+                          ],
+                          context,
+                        ),
+                      ),
                       stop,
-                    ),
+                    )
+                  : accessor === null || keyNode === undefined
+                    ? stop
+                    : ifThenElse(
+                        apply("=", [
+                          value,
+                          translateBuiltInValue(
+                            `Object.prototype.${target.name.text}`,
+                            expression,
+                            context,
+                          ),
+                        ]),
+                        translateAccessor(
+                          accessor[1],
+                          accessor[2] === "G" ? "get" : "set",
+                          keyNode,
+                        ),
+                        stop,
+                      ),
       ),
     );
   }
@@ -9821,6 +9853,10 @@ const getDispatched = (
   const dispatched = [...getFunctionCandidates(callee, context), ...getClosures(callee, context)];
   return dispatched.length > 0 ? dispatched : undefined;
 };
+
+// The methods of Object.prototype that tell whether an object has an own key, which a key that may
+// hold one runs on its receiver.
+const OWN_CHECKS = new Set(["hasOwnProperty", "propertyIsEnumerable"]);
 
 // The Iterator.prototype methods that take a callback first, which they check before they read the
 // iterator's next.

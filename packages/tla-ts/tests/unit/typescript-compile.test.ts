@@ -25651,4 +25651,39 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs hasOwnProperty and propertyIsEnumerable that a key of an unknown object holds", () => {
+    const getSource = (expected: string) => `
+      const o = {};
+      Object.defineProperty(o, "b", { value: 3, enumerable: false });
+      let read = "";
+      const record = (value: unknown) => {
+        read += String(value) + ",";
+      };
+      class Parent {
+        constructor(obj: { hasOwnProperty?: unknown; propertyIsEnumerable?: unknown }) {
+          record((obj.hasOwnProperty as (...args: unknown[]) => unknown)("b"));
+          record((obj.propertyIsEnumerable as (...args: unknown[]) => unknown)("b"));
+        }
+      }
+      class Child extends Parent {
+        constructor() {
+          super({ ...o });
+        }
+      }
+      new Parent(o);
+      new Child();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,false,false,false,"))).failure).toBeUndefined();
+    });
+
+    it("rejects the spread copy as holding the hidden key", async () => {
+      expect((await checkModel(getSource("true,false,true,false,"))).failure?.message).toContain(
+        "true,false,false,false,",
+      );
+    });
+  });
 });
