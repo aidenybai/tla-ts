@@ -14,12 +14,13 @@ import {
 } from "./ast";
 import { hasUninterpreted, isAppOf, pushNotOwned } from "./ast-util";
 import { MBQI_MAX_ITERATIONS } from "./context";
-import { extractVars } from "./qe";
+import { extractVars, mkQuantifierOfConsts } from "./qe";
 import type { Goal } from "./goal";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import type { ProtoModel } from "./proto-model";
 import { Mbproj } from "./qe-mbp";
 import { QuantifierHoister } from "./quant-hoist";
+import { hasSubterm } from "./recfun-decl-plugin";
 import { RefVector } from "./ref-vector";
 import { SmtKernel } from "./smt-kernel";
 
@@ -682,38 +683,32 @@ class Qsat {
     if (manager.hasQuantifierFlags[formula]) return -1;
     this.reset();
     const exists = this.pin(
-      manager.mkQuantifier({
-        kind: QUANTIFIER_EXISTS,
-        sorts: vars.items.map((innerVar) => manager.sorts[innerVar]),
-        names: vars.items.map((innerVar) => manager.getDeclName(innerVar)),
-        body: this.abstractVars(vars, formula),
-        patterns: [],
-        noPatterns: [],
-        weight: 0,
-        qid: "",
-      }),
+      mkQuantifierOfConsts(
+        manager,
+        QUANTIFIER_EXISTS,
+        vars.items,
+        this.abstractVars(vars, formula),
+        0,
+      ),
     );
     const hoisted = this.hoist(this.pinOwned(pushNotOwned(manager, exists)));
     this.assertFormula(hoisted);
     if (this.checkSat() !== L_FALSE) return -1;
     let result = this.pin(manager.mkAnd(this.answer.items));
     const freeVars = this.freeVars.items.filter((innerVar) =>
-      isOccurringIn(manager, innerVar, result),
+      hasSubterm(manager, [result], (expr) => expr === innerVar),
     );
     if (freeVars.length > 0) {
       const subVars = new RefVector(manager);
       for (const innerVar of freeVars) subVars.push(innerVar);
       result = this.pin(
-        manager.mkQuantifier({
-          kind: QUANTIFIER_EXISTS,
-          sorts: freeVars.map((innerVar) => manager.sorts[innerVar]),
-          names: freeVars.map((innerVar) => manager.getDeclName(innerVar)),
-          body: this.abstractVars(subVars, result),
-          patterns: [],
-          noPatterns: [],
-          weight: 0,
-          qid: "",
-        }),
+        mkQuantifierOfConsts(
+          manager,
+          QUANTIFIER_EXISTS,
+          freeVars,
+          this.abstractVars(subVars, result),
+          0,
+        ),
       );
       subVars.reset();
     }
@@ -809,20 +804,6 @@ class Qsat {
     }
   }
 }
-
-const isOccurringIn = (manager: AstManager, variable: number, expr: number) => {
-  const visited = new Set<number>();
-  const todo = [expr];
-  for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
-    if (current === variable) return true;
-    if (visited.has(current)) continue;
-    visited.add(current);
-    if (manager.kinds[current] === KIND_APP) manager.pushArgs(current, todo);
-    else if (manager.kinds[current] === KIND_QUANTIFIER)
-      todo.push(manager.getQuantifier(current).body);
-  }
-  return false;
-};
 
 export const runQsat = (manager: AstManager, mode: number) => (goal: Goal) => {
   const qsat = new Qsat(manager, mode);

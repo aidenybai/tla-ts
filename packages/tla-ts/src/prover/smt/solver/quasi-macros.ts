@@ -15,6 +15,7 @@ import {
 } from "./ast";
 import type { Goal } from "./goal";
 import { MacroManager } from "./macro-finder";
+import { hasSubterm } from "./recfun-decl-plugin";
 import { RefVector } from "./ref-vector";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 
@@ -27,21 +28,6 @@ const isNonGroundUninterp = (manager: AstManager, expr: number) =>
   !manager.isGroundApp(expr) &&
   manager.kinds[expr] === KIND_APP &&
   manager.funcDecls[manager.decls[expr]].family === FAMILY_USER;
-
-const isDependingOn = (manager: AstManager, expr: number, decl: number) => {
-  const visited = new Set<number>();
-  const todo = [expr];
-  for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
-    if (visited.has(current)) continue;
-    if (manager.kinds[current] === KIND_APP) {
-      if (manager.decls[current] === decl) return true;
-      for (let index = manager.getNumArgs(current); index > 0; index--)
-        todo.push(manager.getArg(current, index - 1));
-    }
-    visited.add(current);
-  }
-  return false;
-};
 
 const isFullyDependingOn = (manager: AstManager, app: number, numDecls: number) => {
   const isUsed = Array.from({ length: numDecls }, () => false);
@@ -96,7 +82,12 @@ class QuasiMacros {
     return (
       isNonGroundUninterp(manager, lhs) &&
       this.isUnique(manager.decls[lhs]) &&
-      !isDependingOn(manager, rhs, manager.decls[lhs]) &&
+      !hasSubterm(
+        manager,
+        [rhs],
+        (expr) => manager.kinds[expr] === KIND_APP && manager.decls[expr] === manager.decls[lhs],
+        false,
+      ) &&
       isFullyDependingOn(manager, lhs, numDecls)
     );
   }
