@@ -1866,7 +1866,7 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
     );
   }
   if (bitwise !== undefined) {
-    return useJavaScript(
+    const result = useJavaScript(
       bitwise,
       [node.left, node.right].map(
         (operand) =>
@@ -1874,6 +1874,10 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
       ),
       context,
     );
+    // >>> may give an integer beyond 32 bits, which a script without special numbers can't hold.
+    return bitwise === "UnsignedRightShift" && !context.hasSpecialNumbers
+      ? useJavaScript("PlainNumber", [result], context)
+      : result;
   }
   if (kind === ts.SyntaxKind.SlashToken) {
     throw new TlaTypeScriptError("Write division as Math.floor(a / b) or Math.trunc(a / b)", node);

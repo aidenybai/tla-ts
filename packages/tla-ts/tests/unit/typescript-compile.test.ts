@@ -1093,6 +1093,50 @@ describe("top-level statements", () => {
 });
 
 describe("values", () => {
+  describe("multiplies and raises integers beyond 32 bits as Node does", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const values = [
+        2 ** 32, Math.pow(2, 53), 2 ** 53 - 1, -(-2147483648), -1 >>> 0, (2 ** 40) * 3,
+        -(2 ** 33) * 1000, (-Infinity) ** 2147483649, (-2) ** 31, 3 ** 30, 4294967296 * -2,
+      ];
+      if (values.join() !== "${expected}" || box.size !== 0) throw new Error(values.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "4294967296,9007199254740992,9007199254740991,2147483648,4294967295,3298534883328,-8589934592000,-Infinity,-2147483648,205891132094649,-8589934592",
+            ),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects an even power of -Infinity for an odd Wide exponent", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "4294967296,9007199254740992,9007199254740991,2147483648,4294967295,3298534883328,-8589934592000,Infinity,-2147483648,205891132094649,-8589934592",
+            ),
+          )
+        ).failure?.message,
+      ).toContain("-Infinity");
+    });
+  });
+
+  it("stops where a script without special numbers raises an integer beyond 32 bits", async () => {
+    await expect(
+      checkModel(`
+        const n = Math.pow(2, 32);
+        if (String(n) !== "4294967296") throw new Error(String(n));
+      `),
+    ).rejects.toThrow("tla-ts can't represent");
+  });
+
   describe("converts lengths and indices beyond 32 bits as Node does", () => {
     const getSource = (expected: string) => `
       const like = { 0: 12, length: -4294967294 };
@@ -1274,12 +1318,20 @@ describe("values", () => {
     expect(result.status).toBe("success");
   });
 
-  it("stops where >>> gives an integer that TLC can't hold", async () => {
-    const result = await checkModel(`
+  describe("gives the integer beyond 32 bits that >>> gives", () => {
+    const getSource = (expected: number) => `
       const box = { value: -1 };
       box.value = box.value >>> 0;
-    `);
-    expect(result.failure?.message).toContain("tla-ts can't hold -1 >>> 0 in an integer");
+      if (box.value !== ${expected}) throw new Error("unsigned");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(4294967295))).failure).toBeUndefined();
+    });
+
+    it("rejects 2^32", async () => {
+      expect((await checkModel(getSource(4294967296))).failure?.message).toContain("unsigned");
+    });
   });
 
   it("assigns with the compound forms of %, **, and the bitwise operators", async () => {

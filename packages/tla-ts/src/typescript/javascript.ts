@@ -193,6 +193,16 @@ LOCAL WideText(value) ==
 
 LOCAL BeyondInteger == Assert(FALSE, "tla-ts can't use an integer beyond 32 bits here")
 
+\\* An integer's magnitude, which is Wide for -2^31.
+LOCAL Unsigned(value) == IF IsNegative(value) THEN WideNegate(value) ELSE value
+
+\\* A Wide integer from 0 times an integer from 2 below 2^31, from its high half's product and its
+\\* low half's.
+LOCAL WideTimes(wide, factor) ==
+  IF wide[Wide][1] > 4194304 \\div factor
+  THEN Assert(FALSE, "tla-ts can't hold an integer beyond 2^53")
+  ELSE WideAdd(WideOf(<<wide[Wide][1] * factor, 0>>), WideProduct(wide[Wide][2], factor))
+
 Negate(value) ==
   CASE value = NaN -> NaN
     [] value = Infinity -> NegativeInfinity
@@ -201,6 +211,7 @@ Negate(value) ==
     [] IsWide(value) -> WideNegate(value)
     [] value = 0 -> NegativeZero
     [] IsFraction(value) -> Fractions[Len(Fractions) + 1 - FractionPosition(value)].value
+    [] value = -2147483647 - 1 -> WideNegate(value)
     [] OTHER -> -value
 
 Add(left, right) ==
@@ -232,7 +243,15 @@ Multiply(left, right) ==
               [] isNegative -> NegativeInfinity
               [] OTHER -> Infinity
        [] IsZero(left) \\/ IsZero(right) -> IF isNegative THEN NegativeZero ELSE 0
-       [] IsWide(left) \\/ IsWide(right) -> BeyondInteger
+       [] IsWide(left) \\/ IsWide(right) ->
+            LET wide == Unsigned(IF IsWide(left) THEN left ELSE right)
+                factor == Unsigned(IF IsWide(left) THEN right ELSE left)
+                signed(product) == IF isNegative THEN WideNegate(product) ELSE product
+            IN CASE IsFraction(left) \\/ IsFraction(right) ->
+                      Assert(FALSE, "tla-ts can't multiply fractions")
+                 [] IsWide(factor) -> Assert(FALSE, "tla-ts can't hold an integer beyond 2^53")
+                 [] factor = 1 -> signed(wide)
+                 [] OTHER -> signed(WideTimes(wide, factor))
        [] left = 1 -> right
        [] right = 1 -> left
        [] left = -1 -> Negate(right)
@@ -279,7 +298,14 @@ Remainder(left, right) ==
               [] remainder = 0 -> NegativeZero
               [] OTHER -> -remainder
 
-LOCAL IsOdd(value) == IsInteger(value) /\\ value % 2 = 1
+\\* 2^31 is even, so a Wide integer is odd where its low half is.
+LOCAL IsOdd(value) ==
+  \\/ IsInteger(value) /\\ value % 2 = 1
+  \\/ IsWide(value) /\\ value[Wide][2] % 2 = 1
+
+\\* An integer to a power, one product at a time, where each may need a Wide integer.
+RECURSIVE WidePower(_, _)
+WidePower(base, exponent) == IF exponent = 0 THEN 1 ELSE Multiply(base, WidePower(base, exponent - 1))
 
 \\* JavaScript's **, as Number::exponentiate defines it.
 Power(base, exponent) ==
@@ -309,7 +335,7 @@ Power(base, exponent) ==
     [] IsFraction(base) \\/ IsFraction(exponent) ->
          Assert(FALSE, "tla-ts can't raise fractions to a power")
     [] IsWide(base) \\/ IsWide(exponent) -> BeyondInteger
-    [] exponent >= 0 -> base ^ exponent
+    [] exponent >= 0 -> IF Absolute(base) <= 1 THEN base ^ exponent ELSE WidePower(base, exponent)
     [] Absolute(base) = 1 -> IF IsOdd(exponent) THEN base ELSE 1
     \\* 2 ** -1075 is half the least number above 0, so it and any power nearer 0 round to 0.
     [] exponent <= -1075 -> IF IsNegative(base) /\\ IsOdd(exponent) THEN NegativeZero ELSE 0
@@ -530,14 +556,14 @@ SignedRightShift(left, right) ==
        [] a < 0 -> -1
        [] OTHER -> 0
 
-\\* JavaScript's >>>, which reads its left operand as unsigned. tla-ts can't hold an integer from
-\\* 2^31 that the shift doesn't make smaller.
+\\* JavaScript's >>>, which reads its left operand as unsigned, so that a shift by 0 of an integer
+\\* below 0 gives a Wide integer.
 UnsignedRightShift(left, right) ==
   LET a == Int32(left)
       count == ShiftCount(right)
   IN CASE a >= 0 /\\ count < 31 -> a \\div 2 ^ count
        [] a >= 0 -> 0
-       [] count = 0 -> Assert(FALSE, "tla-ts can't hold " \\o ToString(a) \\o " >>> 0 in an integer")
+       [] count = 0 -> WideOf(<<1, a + MaxInteger + 1>>)
        [] count = 31 -> 1
        [] OTHER -> a \\div 2 ^ count + 2 ^ (31 - count) + 2 ^ (31 - count)
 
@@ -3375,7 +3401,7 @@ LessOrEqualPrimitives(left, right) ==
 
 \\* A number in a script that holds only integers, which can't hold NaN, the infinities, or -0.
 PlainNumber(value) ==
-  IF value \\in SpecialNumbers
+  IF value \\in SpecialNumbers \\/ IsWide(value)
   THEN Assert(FALSE, "tla-ts can't represent " \\o ToString(value) \\o " in this script")
   ELSE value
 
