@@ -23388,6 +23388,17 @@ describe("buffers", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("keeps the identity of an array that a typed array's constructor reads", async () => {
+    const result = await checkModel(`
+      const source = [1, 2];
+      const holder = { source };
+      holder.source.push(3);
+      const made = new Int8Array(source);
+      if (made.length !== 3 || made[2] !== 3 || source.length !== 3) throw new Error("source");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops at a number a typed array's float can't hold exactly", async () => {
     const result = await checkModel(`
       const floats = new Float32Array(1);

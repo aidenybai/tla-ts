@@ -3351,8 +3351,12 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         return parent.left === use ? addSource(parent.right) : addHolder(parent.left);
       }
       if (ts.isNonNullExpression(parent)) return isUse(parent);
-      // A new set or map that copies one.
-      if (isFreshCollection(parent, context) && ts.isNewExpression(parent)) {
+      // A new set or map that copies one, or a new typed array of its elements.
+      if (
+        ts.isNewExpression(parent) &&
+        (isFreshCollection(parent, context) ||
+          TYPED_ARRAYS.has(getBuiltIn(parent.expression, context) ?? ""))
+      ) {
         return parent.arguments?.[0] === use;
       }
       if (ts.isPropertyAccessExpression(parent) && isSetOrMap(use)) {
