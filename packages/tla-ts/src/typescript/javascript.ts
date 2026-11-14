@@ -5642,6 +5642,12 @@ LOCAL TypedArrayMade(heap, type, prototype, bufferPrototype, arguments, isIterat
        [] offset + length * size > byteLength -> Failed("RangeError")
        [] OTHER -> view(heap, first, offset, length)
 
+\\* The RangeError that a typed array viewing a buffer throws for its byteOffset, which it checks
+\\* before it converts its length.
+TypedArrayOffsetError(type, arguments) ==
+  LET offset == IndexOfArgument(IF Len(arguments) >= 2 THEN arguments[2] ELSE Undefined)
+  IN IF offset = -1 \\/ offset % ElementSize(type) # 0 THEN "RangeError" ELSE ""
+
 \\* The prototype that an instance takes from the constructor that a construction names as its
 \\* newTarget, or the default where newTarget's prototype property isn't an object.
 PrototypeFromConstructor(heap, newTarget, default) ==

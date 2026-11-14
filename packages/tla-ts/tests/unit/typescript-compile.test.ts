@@ -39560,4 +39560,69 @@ describe("BigInts", () => {
       "pending would share an object that changes in place, so copy it",
     );
   });
+
+  describe("converts the byteOffset and the length of a typed array that views a buffer in order", () => {
+    const expected =
+      "offset,length,2,1,odd,length,failing,true,offset,length,2,8,odd,true,failing,true";
+    const getSource = (seen: string) => `
+      const seen: unknown[] = [];
+      let size = 1;
+      const offset = {
+        valueOf: function () {
+          seen.push("offset");
+          return size;
+        },
+      };
+      const length = {
+        toString: function () {
+          seen.push("length");
+          return "2";
+        },
+      };
+      const odd = {
+        valueOf: function () {
+          seen.push("odd");
+          return 1;
+        },
+      };
+      const failing = {
+        valueOf: function () {
+          seen.push("failing");
+          throw new EvalError();
+        },
+      };
+      for (const TA of [Int8Array, Float64Array]) {
+        size = TA.BYTES_PER_ELEMENT;
+        const buffer = new ArrayBuffer(size * 4);
+        // @ts-ignore
+        const view = new TA(buffer, offset, length);
+        seen.push(view.length, view.byteOffset);
+        try {
+          // @ts-ignore
+          new TA(buffer, odd, length);
+        } catch (thrown) {
+          seen.push(thrown instanceof RangeError);
+        }
+        try {
+          // @ts-ignore
+          new TA(buffer, failing, length);
+        } catch (thrown) {
+          seen.push(thrown instanceof EvalError);
+        }
+      }
+      if (seen.join() !== "${seen}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it.each([
+      "offset,length,2,1,odd,length,failing,true,offset,length,2,8,odd,length,true,failing,true",
+      "offset,length,2,1,odd,length,failing,length,true,offset,length,2,8,odd,true,failing,true",
+      "offset,length,2,1,odd,length,failing,true,offset,length,2,8,odd,false,failing,true",
+    ])("rejects the expectation %s", async (wrong) => {
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
+    });
+  });
 });
