@@ -25708,4 +25708,25 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("calls the function that bind gives inside an expression", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const o = { tag: 2 };
+      function f(this: { tag: number }, add: number, more: number) {
+        return this.tag + add + more;
+      }
+      const read = [f.bind(o, 10)(5), f.bind(o)(1, 1) === 4].join();
+      box.size = 1;
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("17,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects the bound arguments as dropped", async () => {
+      expect((await checkModel(getSource("7,true"))).failure?.message).toContain("17,true");
+    });
+  });
 });

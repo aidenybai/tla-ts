@@ -7,6 +7,7 @@ import {
   type FunctionNode,
   findNodes,
   getAnyFunction,
+  getBound,
   getCallee,
   getParameters,
   getFactoryCall,
@@ -310,6 +311,7 @@ const inlineCall = (
   scope: Scope,
   context: Context,
   called?: CalledMethod,
+  receiver = getReceiver(scope, context, called),
 ) => {
   if (callee.body === undefined) throw new TlaTypeScriptError("Give this a body", callee);
   // TypeScript's this parameter types the receiver, which no argument passes.
@@ -397,7 +399,7 @@ const inlineCall = (
       allocated: new Map([...bound.scope.allocated].filter(isOutside)),
       results: new Map([...bound.scope.results].filter(isOutside)),
       functions: new Map([...bound.scope.functions, ...callbacks]),
-      receiver: getReceiver(scope, context, called),
+      receiver,
       arrowReceivers: getArrowReceivers(callbacks, scope),
     },
     context,
@@ -836,6 +838,32 @@ export const translateLocalCall = (
               ).length === 0),
         )
       : [];
+  // A function that bind gives, which runs its target with the bound receiver and arguments first.
+  const binding = callee === undefined ? getBound(skipCasts(node.expression), context) : undefined;
+  if (
+    binding !== undefined &&
+    binding.isSteady &&
+    binding.method === undefined &&
+    !context.inProgress.has(binding.target)
+  ) {
+    const target = binding.target;
+    return inlineCall(
+      target,
+      [...binding.arguments, ...node.arguments],
+      scope,
+      context,
+      undefined,
+      ts.isArrowFunction(target)
+        ? scope.receiver
+        : {
+            value:
+              binding.receiver === undefined
+                ? getUndefined(context)
+                : translateExpression(binding.receiver, scope, context),
+            method: target,
+          },
+    );
+  }
   const stored = callee === undefined ? getStoredCall(node, context) : undefined;
   if (callee === undefined && (candidates.length > 0 || stored !== undefined)) {
     const stop = apply("Assert", [
