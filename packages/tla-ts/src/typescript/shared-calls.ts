@@ -392,6 +392,7 @@ const defineShared = (
     captured,
     parameters: named.map((item) => ({ name: item.name, arity: 0 })),
     isRecursive: false,
+    isReturning: true,
   };
   // A call inside the body that the operator runs calls the operator itself.
   context.sharedCalls.set(callee, [...(context.sharedCalls.get(callee) ?? []), shared]);
@@ -406,14 +407,16 @@ const defineShared = (
       ),
     ]),
   };
+  const kinds = new Set<string>();
   const end = (
     current: Path,
     kind: string,
     value: Expression,
     message: Expression,
     place: Expression,
-  ) =>
-    leaf(
+  ) => {
+    kinds.add(kind);
+    return leaf(
       tuple([
         string(kind),
         value,
@@ -422,6 +425,7 @@ const defineShared = (
         ...changed.map((symbol) => current.scope.bindings.get(symbol) ?? getUndefined(context)),
       ]),
     );
+  };
   const inner: Path = {
     scope,
     mutable: new Set([
@@ -470,6 +474,7 @@ const defineShared = (
     awaitTo: undefined,
     inlining: new Set([callee]),
   });
+  shared.isReturning = [...kinds].some((kind) => kind !== "throw");
   context.inProgress = outer.inProgress;
   context.selfCalls = outer.selfCalls;
   context.output.push(
@@ -548,10 +553,13 @@ export const translateSharedCall = (
       isAssigned: caller.isAssigned || changed.some((symbol) => context.variables.has(symbol)),
     };
     const throwTo = frame.throwTo;
-    const returned = continueWith(
-      after,
-      ifExpression(apply("=", [kind, string("returnValue")]), value, getUndefined(context)),
-    );
+    // Where the helper only throws, as the inlined body would, the caller doesn't go on.
+    const returned = shared.isReturning
+      ? continueWith(
+          after,
+          ifExpression(apply("=", [kind, string("returnValue")]), value, getUndefined(context)),
+        )
+      : leaf(boolean(false));
     const ended =
       throwTo === undefined
         ? returned

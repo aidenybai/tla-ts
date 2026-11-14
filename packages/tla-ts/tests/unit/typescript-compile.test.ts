@@ -5048,6 +5048,29 @@ describe("calls", () => {
     ).toContain("UNION b {c}}|6");
   });
 
+  it("runs nothing after a helper's operator that only throws, as a pattern's default calls it", async () => {
+    const getSource = (expected: string) => `
+      let initCount = 0;
+      function thrower(): number {
+        throw new Error("thrown");
+      }
+      const run = () => {
+        let caught = "none";
+        try {
+          const { a, b = thrower(), c = ++initCount } = {} as { a?: number; b?: number; c?: number };
+          caught = \`\${a}\${b}\${c}\`;
+        } catch (error) {
+          caught = (error as Error).message;
+        }
+        return \`\${caught},\${initCount}\`;
+      };
+      const text = run();
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect((await checkModel(getSource("thrown,0"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("thrown,1"))).failure?.message).toContain("thrown,0");
+  });
+
   it("runs helpers that call one that throws as operators, where the caller catches it", async () => {
     const getSource = (expected: string) => `
       const run = () => {

@@ -43,6 +43,8 @@ export interface SharedCall {
   parameters: OperatorParam[];
   // Whether a call inside its own body, or a body that it runs, calls it.
   isRecursive: boolean;
+  // Whether its body can end but by a throw, as a call inside its own body takes it to.
+  isReturning: boolean;
 }
 
 // A helper that can run as an operator: the names that it and the functions it runs read from
