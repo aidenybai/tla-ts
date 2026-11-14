@@ -19663,6 +19663,40 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  describe("rejects a promise that an object resolves whose then getter throws", () => {
+    const getSource = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      const value = { size: 1 };
+      const poisoned = Object.defineProperty({}, "then", {
+        get: function () {
+          throw value;
+        },
+      });
+      let log = "";
+      Promise.resolve(poisoned).then(
+        () => {
+          log += "fulfilled";
+        },
+        (reason) => {
+          log += reason === value ? "rejected" : "other";
+        },
+      );
+      setTimeout(() => {
+        if (log !== "${expected}") throw new Error(log);
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("rejected"))).failure).toBeUndefined();
+    });
+
+    it("rejects the promise as fulfilled", async () => {
+      expect((await checkModel(getSource("fulfilled"))).failure?.message).toContain(
+        "A timer threw an exception",
+      );
+    });
+  });
+
   it("fulfills Promise.any with the first value, or rejects it with an AggregateError", async () => {
     const result = await checkModel(`
       declare function setTimeout(callback: () => void): void;

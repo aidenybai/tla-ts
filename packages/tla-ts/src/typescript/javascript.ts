@@ -1661,6 +1661,13 @@ GetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "get")
 
 SetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "set")
 
+\\* The getter that an object that the heap holds reads its then through, where it isn't a promise, a
+\\* generator, or a proxy, whose then tla-ts reads otherwise.
+ThenGetter(heap, value) ==
+  IF IsHeap(value) /\\ ~heap.objects[value[Ref]].isOpaque /\\ ~IsProxy(heap, value)
+  THEN GetterOf(heap, value, "then")
+  ELSE Undefined
+
 \\* The TypeError that a read throws where it runs %ThrowTypeError% or a getter of a buffer or a view
 \\* on another kind of object, or "".
 ReadError(heap, ref, key) ==
