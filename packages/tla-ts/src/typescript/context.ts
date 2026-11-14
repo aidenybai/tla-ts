@@ -2639,6 +2639,17 @@ export const isHeldError = (
       return parent.expression === child;
     }
     if (ts.isTypeOfExpression(parent)) return true;
+    // A descriptor in the map that Object.create or Object.defineProperties reads.
+    if (ts.isPropertyAssignment(parent)) {
+      const call = parent.parent.parent;
+      return (
+        parent.initializer === child &&
+        ts.isCallExpression(call) &&
+        ts.isPropertyAccessExpression(call.expression) &&
+        getBuiltIn(call.expression.expression, context) === "Object" &&
+        call.arguments.some((argument) => argument === parent.parent)
+      );
+    }
     if (ts.isBinaryExpression(parent)) {
       const kind = parent.operatorToken.kind;
       // An error that stays a record can't equal one that the heap holds.

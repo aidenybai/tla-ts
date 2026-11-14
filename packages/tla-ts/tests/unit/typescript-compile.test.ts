@@ -13024,6 +13024,29 @@ describe("errors", () => {
     });
   });
 
+  describe("holds an error that Object.create or Object.defineProperties reads as a descriptor", () => {
+    const getSource = (expected: number) => `
+      const holder = { seen: 0 };
+      const described: Error & { enumerable?: boolean; value?: number } = new Error();
+      described.enumerable = true;
+      described.value = 7;
+      const made: { prop?: number } = Object.create({}, { prop: described });
+      const target: { prop?: number } = {};
+      Object.defineProperties(target, { prop: described });
+      holder.seen =
+        (made.prop ?? 0) + (target.prop ?? 0) + Object.keys(made).length + Object.keys(target).length;
+      if (holder.seen !== ${expected}) throw new Error("described");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(16))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource(14))).failure?.message).toContain('"described"');
+    });
+  });
+
   describe("names an anonymous function by a comma, a static field, or a shorthand default", () => {
     const getSource = (expected: string) => `
       const holder = { seen: 0 };
