@@ -12884,6 +12884,57 @@ describe("errors", () => {
     });
   });
 
+  describe("names an anonymous function by a comma, a static field, or a shorthand default", () => {
+    const getSource = (expected: string) => `
+      const holder = { seen: 0 };
+      // @ts-ignore
+      const covered = (0, function () {});
+      class Shapes {
+        static #hidden = () => 1;
+        static shown = function () {
+          return 2;
+        };
+        static getHidden() {
+          return Shapes.#hidden;
+        }
+      }
+      let defaulted: unknown;
+      ({ defaulted = () => {} } = {} as { defaulted?: () => void });
+      const names = [
+        covered.name,
+        Shapes.getHidden().name,
+        Shapes.shown.name,
+        (defaulted as () => void).name,
+      ].join(",");
+      if (names !== "${expected}") throw new Error("named");
+      holder.seen = 1;
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(",#hidden,shown,defaulted"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect(
+        (await checkModel(getSource("covered,hidden,shown,defaulted"))).failure?.message,
+      ).toContain('"named"');
+    });
+
+    it("stops where an instance field names a function that each instance makes", async () => {
+      const result = await checkModel(`
+        const holder = { seen: 0 };
+        class Shapes {
+          instance = () => 1;
+        }
+        if (new Shapes().instance.name !== "instance") throw new Error("named");
+        holder.seen = 1;
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't tell which function this value holds",
+      );
+    });
+  });
+
   it("assigns a constructor's parameter properties before its body runs", async () => {
     const getSource = (keys: string, extra: number) => `
       class Base {

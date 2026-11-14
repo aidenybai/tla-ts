@@ -101,6 +101,7 @@ import {
   areDateFields,
   translateDateFields,
   getMethodValue,
+  getAnonymousName,
   getHeldName,
   translateHasPrivate,
   translateHoldsMethod,
@@ -2483,23 +2484,19 @@ const translatePropertyAccess = (
       }
       if (name === "length") return number(getFunctionLength(getParameters(candidate)));
       if (name !== "name") return undefined;
-      const parent = candidate.parent;
       const given =
         (ts.isFunctionDeclaration(candidate) || ts.isFunctionExpression(candidate)) &&
         candidate.name !== undefined
-          ? candidate.name
+          ? candidate.name.text
           : ts.isMethodDeclaration(candidate) &&
               (ts.isIdentifier(candidate.name) ||
                 ts.isPrivateIdentifier(candidate.name) ||
                 ts.isStringLiteral(candidate.name))
-            ? candidate.name
-            : (ts.isArrowFunction(candidate) || ts.isFunctionExpression(candidate)) &&
-                ts.isVariableDeclaration(parent) &&
-                parent.initializer === candidate &&
-                ts.isIdentifier(parent.name)
-              ? parent.name
+            ? candidate.name.text
+            : ts.isArrowFunction(candidate) || ts.isFunctionExpression(candidate)
+              ? getAnonymousName(candidate, context)
               : undefined;
-      return given === undefined ? undefined : string(given.text);
+      return given === undefined ? undefined : string(given);
     };
     const heldProperty = held === undefined ? undefined : getProperty(held);
     if (heldProperty !== undefined) return heldProperty;

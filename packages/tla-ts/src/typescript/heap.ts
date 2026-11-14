@@ -370,7 +370,8 @@ const holdObject = (node: FunctionNode, value: Expression, context: Context) => 
 // The name that a key gives a function, where a symbol that a variable holds gives its description
 // in brackets, or no name where it has none.
 const getKeyName = (key: ts.PropertyName, context: Context) => {
-  if (ts.isIdentifier(key) || ts.isStringLiteral(key)) return key.text;
+  if (ts.isIdentifier(key) || ts.isPrivateIdentifier(key) || ts.isStringLiteral(key))
+    return key.text;
   if (!ts.isComputedPropertyName(key) || !ts.isIdentifier(key.expression)) return undefined;
   const symbol = getSymbol(key.expression, context.checker);
   const declaration = symbol?.valueDeclaration;
@@ -394,10 +395,14 @@ const getKeyName = (key: ts.PropertyName, context: Context) => {
     : undefined;
 };
 
-// The name of an anonymous function, which the binding, the assignment to a name or the property
-// that it initializes gives, and which is empty where it's an argument, an element, an operand of
-// in, or what an assignment to anything else assigns.
-const getAnonymousName = (node: ts.ArrowFunction | ts.FunctionExpression, context: Context) => {
+// The name of an anonymous function, which the binding, the assignment to a name, the default of a
+// shorthand property that an assignment destructures, or the property or static field that it
+// initializes gives, and which is empty where it's an argument, an element, an operand of in or of
+// a comma, or what an assignment to anything else assigns.
+export const getAnonymousName = (
+  node: ts.ArrowFunction | ts.FunctionExpression,
+  context: Context,
+) => {
   const named = ts.findAncestor(node.parent, (parent) => !ts.isParenthesizedExpression(parent));
   if (named === undefined) return undefined;
   if (ts.isVariableDeclaration(named)) {
@@ -406,12 +411,21 @@ const getAnonymousName = (node: ts.ArrowFunction | ts.FunctionExpression, contex
   if (ts.isPropertyAssignment(named) && ts.isObjectLiteralExpression(named.parent)) {
     return getKeyName(named.name, context);
   }
+  if (ts.isShorthandPropertyAssignment(named)) return named.name.text;
+  if (
+    ts.isPropertyDeclaration(named) &&
+    named.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword)
+  ) {
+    return getKeyName(named.name, context);
+  }
   if (ts.isBinaryExpression(named) && NAMING_ASSIGNMENTS.has(named.operatorToken.kind)) {
     return ts.isIdentifier(named.left) ? named.left.text : "";
   }
   return ts.isCallExpression(named) ||
     ts.isArrayLiteralExpression(named) ||
-    (ts.isBinaryExpression(named) && named.operatorToken.kind === ts.SyntaxKind.InKeyword)
+    (ts.isBinaryExpression(named) &&
+      (named.operatorToken.kind === ts.SyntaxKind.InKeyword ||
+        named.operatorToken.kind === ts.SyntaxKind.CommaToken))
     ? ""
     : undefined;
 };
