@@ -4650,8 +4650,10 @@ export const isUnreachableChange = (node: ts.Node, context: Context) =>
 // malformed URI.
 export const getEngineErrors = (node: ts.Node, context: Context) => [
   ...getNumberMethodErrors(node, context),
-  // Array.prototype.map makes an array of an object's length, which throws a RangeError from 2^32.
-  ...(ts.isCallExpression(node) && getArrayMethodCall(node, context) === "map"
+  // Array.prototype.map, toReversed, toSorted, and with make an array of an object's length, which
+  // throws a RangeError from 2^32.
+  ...(ts.isCallExpression(node) &&
+  ["map", "toReversed", "toSorted", "with"].includes(getArrayMethodCall(node, context) ?? "")
     ? ["RangeError"]
     : []),
   ...getOwnEngineErrors(node, context),

@@ -25973,4 +25973,37 @@ describe("BigInts", () => {
       ).toContain("9007199254740990,9007199254740988,9007199254740988,0,4294967295");
     });
   });
+
+  describe("throws the RangeError of toReversed and with on an object whose length is from 2^32", () => {
+    const getSource = (expected: string) => `
+      const huge = { length: 2 ** 32 };
+      const small = { 0: "a", 1: "b", length: 2 };
+      const read: string[] = [];
+      try {
+        Array.prototype.toReversed.call(huge);
+        read.push("none");
+      } catch (error) {
+        read.push(error instanceof RangeError ? "range" : "other");
+      }
+      try {
+        Array.prototype.with.call(huge, 0, 1);
+        read.push("none");
+      } catch (error) {
+        read.push(error instanceof RangeError ? "range" : "other");
+      }
+      const reversed = Array.prototype.toReversed.call(small);
+      read.push(reversed.join(""));
+      if (read.join() !== "${expected}") throw new Error(read.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("range,range,ba"))).failure).toBeUndefined();
+    });
+
+    it("rejects with as allowed", async () => {
+      expect((await checkModel(getSource("range,none,ba"))).failure?.message).toContain(
+        "range,range,ba",
+      );
+    });
+  });
 });

@@ -3709,15 +3709,14 @@ LOCAL IsArrayObject(object) == "isArray" \\in DOMAIN object /\\ object.isArray
 
 \\* IsArray, which reads a proxy's target, where an array outside the heap is a sequence.
 RECURSIVE IsArray(_, _)
-\\* Whether Array.prototype.map with a callback throws the RangeError of making an array of an
-\\* object's length, which is Infinity or an integer from 2^32, for an ordinary object that isn't an
-\\* array and whose length is a data property.
-MapCreateThrows(heap, ref, callback) ==
+\\* Whether an array method throws the RangeError of making an array of an object's length, which is
+\\* Infinity or an integer from 2^32, for an ordinary object that isn't an array and whose length is
+\\* a data property.
+ArrayCreateThrows(heap, ref) ==
   /\\ IsHeap(ref)
   /\\ ~IsProxy(heap, ref)
   /\\ ~heap.objects[ref[Ref]].isOpaque
   /\\ ~IsArray(heap, ref)
-  /\\ TypeOfIn(heap, callback) = "function"
   \\* A length that a getter gives is left to the call, which runs the getter.
   /\\ GetterOf(heap, ref, "length") = Undefined
   /\\ LET length == Get(heap, ref, "length")

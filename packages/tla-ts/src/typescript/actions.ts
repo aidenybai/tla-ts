@@ -1771,28 +1771,45 @@ const getRootCall = (node: ts.Expression | undefined): ts.Expression | undefined
 
 // Whether Array.prototype.map.call on an object that isn't an array, with a callback, throws the
 // RangeError of making an array of the object's length, from 2^32.
-const getMapCreateThrows = (expression: ts.Expression, path: Path, context: Context) => {
+// Whether Array.prototype.map, toReversed, toSorted, or with, through call, throws the RangeError of
+// making an array of an object's length, after map reads a callback and with an index, which
+// convert nothing.
+const getArrayCreateThrows = (expression: ts.Expression, path: Path, context: Context) => {
   if (!ts.isCallExpression(expression)) return undefined;
-  const mappedArgument = expression.arguments.at(0);
-  const mapperArgument = expression.arguments.at(1);
-  const mapped = mappedArgument === undefined ? undefined : skipCasts(mappedArgument);
-  const mapper = mapperArgument === undefined ? undefined : skipCasts(mapperArgument);
-  return context.heap !== undefined &&
-    getArrayMethodCall(expression, context) === "map" &&
-    mapped !== undefined &&
-    mapper !== undefined &&
-    ts.isIdentifier(mapped) &&
-    ts.isIdentifier(mapper)
-    ? useJavaScript(
-        "MapCreateThrows",
-        [
-          getHeap(path.scope, expression, context),
-          translateExpression(mapped, path.scope, context),
-          translateExpression(mapper, path.scope, context),
-        ],
-        context,
-      )
-    : undefined;
+  const method = getArrayMethodCall(expression, context);
+  const passed = expression.arguments.map(skipCasts);
+  const object = passed.at(0);
+  const rest = passed.slice(1);
+  const isPassed =
+    (method === "map" && rest.length === 1 && ts.isIdentifier(rest[0])) ||
+    ((method === "toReversed" || method === "toSorted") && rest.length === 0) ||
+    (method === "with" &&
+      rest.length === 2 &&
+      ts.isNumericLiteral(rest[0]) &&
+      isLiteral(rest[1]) &&
+      !ts.isRegularExpressionLiteral(rest[1]));
+  if (context.heap === undefined || object === undefined || !ts.isIdentifier(object) || !isPassed) {
+    return undefined;
+  }
+  const heap = getHeap(path.scope, expression, context);
+  const isCreateThrowing = useJavaScript(
+    "ArrayCreateThrows",
+    [heap, translateExpression(object, path.scope, context)],
+    context,
+  );
+  return method === "map"
+    ? apply("/\\", [
+        apply("=", [
+          useJavaScript(
+            "TypeOfIn",
+            [heap, translateExpression(rest[0], path.scope, context)],
+            context,
+          ),
+          string("function"),
+        ]),
+        isCreateThrowing,
+      ])
+    : isCreateThrowing;
 };
 
 export const translateCallStatement = (
@@ -1805,10 +1822,10 @@ export const translateCallStatement = (
   if (expression.expression.kind === ts.SyntaxKind.SuperKeyword) {
     return translateSuperCall(expression, path, context, frame, continueWith);
   }
-  const mapThrows = getMapCreateThrows(expression, path, context);
-  if (mapThrows !== undefined) {
+  const createThrows = getArrayCreateThrows(expression, path, context);
+  if (createThrows !== undefined) {
     return ifThenElse(
-      mapThrows,
+      createThrows,
       throwError("RangeError", path, expression, context, frame),
       translateCallStatementBody(expression, path, context, frame, continueWith),
     );
@@ -10216,11 +10233,11 @@ export const translateDeclarations = (
   const declaration = declarations[0];
   rejectCatchRedeclaration(declaration);
   const initializer = declaration.initializer;
-  const mapThrows =
-    initializer === undefined ? undefined : getMapCreateThrows(initializer, path, context);
-  if (initializer !== undefined && mapThrows !== undefined) {
+  const createThrows =
+    initializer === undefined ? undefined : getArrayCreateThrows(initializer, path, context);
+  if (initializer !== undefined && createThrows !== undefined) {
     return ifThenElse(
-      mapThrows,
+      createThrows,
       throwError("RangeError", path, initializer, context, frame),
       translateCheckedDeclarations(declarations, path, context, frame, continueWith),
     );
