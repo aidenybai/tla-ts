@@ -2088,6 +2088,8 @@ interface RegExpCall {
   text: ts.Expression;
   // Whether the text is a String object, which the call converts to its string.
   isWrapped: boolean;
+  // Whether the call is the string's method, which reads the regexp's method.
+  isStringMethod: boolean;
   // The arguments after the regexp and the text: split's limit, or replace's replacement.
   values: readonly ts.Expression[];
 }
@@ -2118,6 +2120,7 @@ const getRegExpCall = (node: ts.Node, context: Context): RegExpCall | undefined 
     regexp,
     text,
     isWrapped: text === receiver && isWrapped,
+    isStringMethod: text === receiver,
     values: rest,
   });
   if (isRegExp(receiver) && (isSymbol || method === "exec" || method === "test")) {

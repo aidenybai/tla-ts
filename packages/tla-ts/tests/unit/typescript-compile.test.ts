@@ -25126,6 +25126,29 @@ describe("regular expressions", () => {
     ).toContain("TypeError,TypeError,none,TypeError");
   });
 
+  it("replaces a regexp's string as text where its own @@replace is undefined", async () => {
+    const getSource = (expected: string) => `
+      const holder: { [key: string]: unknown } = {};
+      const custom = /./iyg;
+      Object.defineProperty(custom, Symbol.replace, { value: undefined });
+      const all = "aa /./giy /./iyg aa".replaceAll(custom, "z$1");
+      const plain = /a/;
+      Object.defineProperty(plain, Symbol.replace, { value: undefined });
+      let name = "none";
+      try {
+        const thrown = "a".replaceAll(plain, "b");
+        holder.thrown = thrown;
+      } catch (error) {
+        name = (error as Error).name;
+      }
+      if (all + "|" + name !== "${expected}") throw new Error(all + "|" + name);
+    `;
+    expect((await checkModel(getSource("aa z$1 /./iyg aa|TypeError"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("aa z /./iyg aa|TypeError"))).failure?.message).toContain(
+      "aa z$1 /./iyg aa|TypeError",
+    );
+  });
+
   it("drop a regexp that a statement makes of literals", async () => {
     const getSource = (count: number) => `
       /(?i-s:)/;

@@ -3915,6 +3915,27 @@ RegExpReplaceIn(heap, ref, value, template) ==
        value |-> RegExpReplaced(regexp, Text(value), found.value, Text(template)),
        isThrown |-> found.isThrown]
 
+\\* Whether String.prototype.replace or replaceAll finds no @@replace method on a regexp, whose own
+\\* @@replace a script defines as undefined, while a script hasn't changed what else they read.
+IsUnreplacing(heap, ref) ==
+  LET key == WellKnownSymbol("replace")
+  IN  /\\ IsRegExp(heap, ref)
+      /\\ heap.objects[ref[Ref]].prototype = Ref :> "RegExp.prototype"
+      /\\ heap.objects[ref[Ref]].keys = <<"lastIndex", key>>
+      /\\ heap.objects[ref[Ref]].attributes[key].kind = "data"
+      /\\ heap.objects[ref[Ref]].values[key] = Undefined
+      /\\ DOMAIN heap.changed \\cap {"RegExp.prototype", "String.prototype"} = {}
+
+\\* String.prototype.replace or replaceAll of that regexp, which replaces the string that its
+\\* toString gives as text, as the error that it throws, or "", and the string that it gives.
+\\* replaceAll requires a global regexp, as the flags that it reads tell.
+RegExpUnreplaced(heap, ref, value, template, isAll) ==
+  LET regexp == heap.objects[ref[Ref]].regexp
+      search == "/" \\o regexp.source \\o "/" \\o regexp.flags
+  IN  CASE ~isAll -> [error |-> "", value |-> StringReplace(value, search, template)]
+        [] regexp.global -> [error |-> "", value |-> StringReplaceAll(value, search, template)]
+        [] OTHER -> [error |-> "TypeError", value |-> ""]
+
 \\* The argument at a position that replace calls a function with where a script has objects, which
 \\* would pass the named groups as an object.
 RegExpArgumentIn(regexp, text, match, position) ==

@@ -2206,6 +2206,56 @@ export const translateCallStatement = (
           );
     // replaceAll throws a TypeError where the regexp isn't global, as its flags tell, and exec
     // where the receiver is RegExp.prototype, which has no pattern.
+    const checked =
+      method === "replaceAll"
+        ? ifThenElse(
+            field(
+              useJavaScript("RegExpOf", [heap, identifier(regexp), changeable], context),
+              "global",
+            ),
+            run,
+            throwTypeError(path, expression, context, frame),
+          )
+        : method === "exec" || method === "test"
+          ? ifThenElse(
+              useJavaScript("IsRegExpPrototypeExec", [heap, identifier(regexp)], context),
+              throwTypeError(path, expression, context, frame),
+              run,
+            )
+          : run;
+    const replacedName = context.names.getFresh("replaced");
+    const replaced = identifier(replacedName);
+    // A string's replace or replaceAll replaces the regexp's string as text where the regexp's own
+    // @@replace is undefined.
+    const body =
+      (method === "replace" || method === "replaceAll") &&
+      regExpCall.isStringMethod &&
+      replacer === undefined
+        ? ifThenElse(
+            useJavaScript("IsUnreplacing", [heap, identifier(regexp)], context),
+            bindOnce(
+              path,
+              replacedName,
+              useJavaScript(
+                "RegExpUnreplaced",
+                [
+                  heap,
+                  identifier(regexp),
+                  text,
+                  translateExpression(regExpCall.values[0], path.scope, context),
+                  boolean(method === "replaceAll"),
+                ],
+                context,
+              ),
+              ifThenElse(
+                apply("=", [field(replaced, "error"), string("")]),
+                continueWith(path, field(replaced, "value")),
+                throwTypeError(path, expression, context, frame),
+              ),
+            ),
+            checked,
+          )
+        : checked;
     return bindOnce(
       path,
       regexp,
@@ -2214,22 +2264,7 @@ export const translateCallStatement = (
         path,
         textName,
         translateRegExpText(regExpCall, expression, path.scope, context),
-        method === "replaceAll"
-          ? ifThenElse(
-              field(
-                useJavaScript("RegExpOf", [heap, identifier(regexp), changeable], context),
-                "global",
-              ),
-              run,
-              throwTypeError(path, expression, context, frame),
-            )
-          : method === "exec" || method === "test"
-            ? ifThenElse(
-                useJavaScript("IsRegExpPrototypeExec", [heap, identifier(regexp)], context),
-                throwTypeError(path, expression, context, frame),
-                run,
-              )
-            : run,
+        body,
       ),
     );
   }
