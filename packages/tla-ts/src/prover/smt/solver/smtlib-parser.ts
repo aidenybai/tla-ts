@@ -1293,11 +1293,24 @@ export const createSmtlibReader = (
         noPatterns.push(noPattern);
         continue;
       }
+      const value = attribute.value ?? (bodySExpr.kind === "list" ? bodySExpr.end : list.end);
+      // consume_attributes: check_int, and curr_unsigned for the weight.
+      if (attribute.keyword.text === ":weight") {
+        if (value.kind !== "numeral")
+          throw new SmtParseError("invalid weight attribute, integer expected", value);
+        if (BigInt(value.text) < 0n || BigInt(value.text) > 0xffffffffn)
+          throw new SmtParseError(
+            "invalid indexed identifier, index is too big to fit in an unsigned machine integer",
+            value,
+          );
+      }
+      if (
+        (attribute.keyword.text === ":qid" || attribute.keyword.text === ":skolemid") &&
+        value.kind !== "symbol"
+      )
+        throw new SmtParseError("invalid attribute value, symbol expected", value);
       if (attribute.keyword.text !== ":pattern") continue;
-      const pattern = parsePattern(
-        attribute.value ?? (bodySExpr.kind === "list" ? bodySExpr.end : list.end),
-        list.end,
-      );
+      const pattern = parsePattern(value, list.end);
       if (pattern === undefined) continue;
       manager.incRef(pattern);
       patterns.push(pattern);

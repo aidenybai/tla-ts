@@ -132,3 +132,40 @@ describe("a term that fails to parse, as Z3 5.3.2 reports it", () => {
     ]);
   });
 });
+
+describe("the attributes of a quantifier, as Z3 5.3.2 checks them", () => {
+  it.each([
+    [":weight foo", "line 2 column 49: invalid weight attribute, integer expected"],
+    [":weight 1.5", "line 2 column 49: invalid weight attribute, integer expected"],
+    [":weight (1)", "line 2 column 49: invalid weight attribute, integer expected"],
+    [":weight", "line 2 column 48: invalid weight attribute, integer expected"],
+    [
+      ":weight -3",
+      "line 2 column 49: invalid indexed identifier, index is too big to fit in an unsigned machine integer",
+    ],
+    [
+      ":weight 4294967296",
+      "line 2 column 49: invalid indexed identifier, index is too big to fit in an unsigned machine integer",
+    ],
+    [":qid 5", "line 2 column 46: invalid attribute value, symbol expected"],
+    [":skolemid (a)", "line 2 column 51: invalid attribute value, symbol expected"],
+    [":pattern ((g x)) :weight foo", "line 2 column 55: unknown constant g (Int) "],
+  ])("rejects %s", (attributes, error) => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        `(assert (forall ((x Int)) (! (> (f x) 0) ${attributes})))`,
+      ]),
+    ).toEqual([`(error "${error}")`]);
+  });
+
+  it("takes a weight of 32 bits and quoted names", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(assert (forall ((x Int)) (! (> (f x) 0) :weight 4294967295 :qid |a b| :skolemid s)))",
+        "(check-sat)",
+      ]),
+    ).toEqual(["sat"]);
+  });
+});
