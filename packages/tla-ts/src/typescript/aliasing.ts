@@ -1,5 +1,6 @@
 import ts from "@typescript/typescript6";
 import { getWritten } from "./actions";
+import { getReplacers } from "./json";
 import { MUTATING_METHODS, REORDER_METHODS } from "./collections";
 import {
   type Context,
@@ -408,6 +409,10 @@ const getEscapes = (
         return land(getPath(parent.expression.expression, context), getContainer(depths));
       }
       if (COPYING_METHODS.has(method)) return getFrom(parent, getCopy(depths));
+    }
+    // A replacer may change what JSON.stringify's value holds while JSON.stringify walks it.
+    if (parent.arguments[0] === node && getReplacers(parent, context) !== undefined) {
+      return land(undefined, depths);
     }
     const callee = getCallee(parent.expression, context);
     return callee === undefined

@@ -7966,6 +7966,147 @@ describe("errors", () => {
     );
   });
 
+  describe("calls JSON.stringify's replacer on each key it walks, in order", () => {
+    const source = `
+      let log = "";
+      const value = { a: 1, b: [2, 3], c: { d: 4 }, e: "skip" };
+      const doubled = JSON.stringify(value, function (this: unknown, key: string, found: unknown) {
+        log += \`\${key}:\${this === value ? "value" : typeof this},\`;
+        if (key === "e") return undefined;
+        return typeof found === "number" ? found * 2 : found;
+      });
+      if (doubled !== '{"a":2,"b":[4,6],"c":{"d":8}}') throw new Error("doubled");
+      if (log !== ":object,a:value,b:value,0:object,1:object,c:value,d:object,e:value,") throw new Error("order");
+      const nested = JSON.stringify(null, (key: string, found: unknown) =>
+        key === "" ? { x: [1, { y: true }] } : found,
+        2,
+      );
+      if (nested !== '{\\n  "x": [\\n    1,\\n    {\\n      "y": true\\n    }\\n  ]\\n}') throw new Error("nested");
+      if (JSON.stringify(1, () => undefined) !== undefined) throw new Error("undefined");
+      let calls = 0;
+      let thrown = "";
+      try {
+        JSON.stringify({ p: 1, q: 2 }, (key: string, found: unknown) => {
+          calls++;
+          return key === "p" ? 1n : found;
+        });
+      } catch (error) {
+        thrown = error instanceof TypeError ? "TypeError" : "other";
+      }
+      if (thrown !== "TypeError" || calls !== 2) throw new Error("bigint");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it("writes the arrays that a replacer makes", async () => {
+      const made = `
+        const out = JSON.stringify(null, (key: string, found: unknown) => {
+          if (key === "") return { a: null };
+          if (key === "a") return [null, null];
+          if (key === "0") return 1;
+          if (key === "1") return 2;
+          return found;
+        });
+        if (out !== '{"a":[1,2]}') throw new Error("made");
+      `;
+      expect((await checkModel(made)).failure).toBeUndefined();
+      expect(
+        (await checkModel(made.replace(`'{"a":[1,2]}'`, `'{"a":[null,null]}'`))).failure?.message,
+      ).toContain('"made"');
+    });
+
+    it.each([
+      ["doubled", `'{"a":2,"b":[4,6],"c":{"d":8}}'`, `'{"a":2,"b":[4,6],"c":{"d":8},"e":"skip"}'`],
+      [
+        "order",
+        ":object,a:value,b:value,0:object,1:object,c:value,d:object,e:value,",
+        ":object,a:value,b:value,c:value,0:object,1:object,d:object,e:value,",
+      ],
+      ["nested", '"x": [\\n    1,', '"x": [\\n  1,'],
+      ["undefined", "() => undefined) !== undefined", '() => undefined) !== ""'],
+      ["bigint", "calls !== 2", "calls !== 3"],
+    ])("rejects a wrong %s", async (label, expected, wrong) => {
+      expect((await checkModel(source.replace(expected, wrong))).failure?.message).toContain(
+        `"${label}"`,
+      );
+    });
+
+    it.each([
+      [
+        "a value's toJSON",
+        `JSON.stringify({ a: { toJSON: () => 5 } }, (key: string, found: unknown) => found);`,
+        "tla-ts can't call toJSON",
+      ],
+      [
+        "a change of an array that the heap holds",
+        `
+          const holder = { b: [1, 2] };
+          JSON.stringify(holder, (key: string, found: unknown) => {
+            if (key === "0") holder.b[1] = 9;
+            return found;
+          });
+        `,
+        "tla-ts can't write an array outside the heap that a replacer changes",
+      ],
+      [
+        "a change of an array that a replacer gives back",
+        `
+          const holder = { b: [1, 2] };
+          JSON.stringify(holder, (key: string, found: unknown) => {
+            if (key === "b") holder.b[1] = 9;
+            return found;
+          });
+        `,
+        "tla-ts can't write an array outside the heap that a replacer changes",
+      ],
+      [
+        "a cycle",
+        `
+          const cycle: { self?: unknown } = {};
+          cycle.self = cycle;
+          JSON.stringify(cycle, (key: string, found: unknown) => found);
+        `,
+        "tla-ts can't throw the TypeError of JSON.stringify of a cycle",
+      ],
+    ])("stops at %s", async (_, source, message) => {
+      expect((await checkModel(source)).failure?.message).toContain(message);
+    });
+
+    it.each([
+      [
+        "an array that the heap doesn't hold",
+        `
+          const list = [1, 2];
+          JSON.stringify({ a: 1 }, (key: string, found: unknown) => {
+            list.push(list.length);
+            return found;
+          });
+        `,
+        "tla-ts can't call a replacer that changes list, which the heap doesn't hold",
+      ],
+      [
+        "a value that its parameter's type doesn't hold",
+        `JSON.stringify({ a: 1 }, (key: string, found: number) => found);`,
+        "tla-ts can't pass a replacer values that its parameter's type doesn't hold",
+      ],
+      [
+        "a value that it changes in place",
+        `
+          const other = { list: [1, 2] };
+          JSON.stringify(other.list, (key: string, found: unknown) => {
+            if (key === "0") other.list[1] = 9;
+            return found;
+          });
+        `,
+        "other.list would share an object that changes in place",
+      ],
+    ])("rejects a replacer that takes %s", (_, source, message) => {
+      expect(() => compile(source)).toThrow(message);
+    });
+  });
+
   it("stops where JSON.stringify would call a script's function", async () => {
     const result = await checkModel(`
       const value = { a: 1, toJSON: () => 2 };

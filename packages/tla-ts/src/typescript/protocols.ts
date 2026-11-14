@@ -1718,30 +1718,27 @@ export const getTrapFunctions = (node: ts.Node, context: Context) =>
     ? []
     : TRAPS.flatMap((trap) => getMethods(node, trap, context));
 
-// Runs visit on each key of a list, in a recursive operator, as a loop's iterations run, that
-// carries the values that the traps it runs can change and what it gathers. A visit goes on to
-// the next key, or stops with a result, and a throw leaves the operator to reach what catches it.
-const loopKeys = (
+// Runs step on a state, in a recursive operator, as a loop's iterations run, that carries the
+// values that the steps can change. A step goes on with the next state, or stops with a result,
+// and a throw leaves the operator to reach what catches it.
+export const loopStates = (
   site: ts.Node,
-  keys: Expression,
   seed: Expression,
+  changed: readonly ts.Symbol[],
   path: Path,
   context: Context,
   frame: Frame,
-  visit: (
+  step: (
     current: Path,
-    key: Expression,
-    gathered: Expression,
+    state: Expression,
     inner: Frame,
-    again: (current: Path, gathered: Expression) => Formula,
+    again: (current: Path, state: Expression) => Formula,
     stop: (current: Path, result: Expression) => Formula,
   ) => Formula,
   continueWith: (path: Path, result: Expression) => Formula,
 ): Formula => {
-  const changed = getChanged(site, path, context);
-  const name = context.names.getFresh("Keys");
-  const position = context.names.getFresh("position");
-  const gathered = context.names.getFresh("gathered");
+  const name = context.names.getFresh("Loop");
+  const state = context.names.getFresh("state");
   const parameters = changed.map((symbol) => {
     const binding = path.scope.bindings.get(symbol);
     return context.names.getFresh(binding?.kind === "Identifier" ? binding.name : "value");
@@ -1781,32 +1778,20 @@ const loopKeys = (
   const operator: OperatorDefinition = {
     ...define(
       name,
-      [position, gathered, ...parameters].map((parameter) => ({ name: parameter, arity: 0 })),
+      [state, ...parameters].map((parameter) => ({ name: parameter, arity: 0 })),
       render(
-        ifThenElse(
-          apply("<=", [identifier(position), apply("Len", [keys])]),
-          visit(
-            inner,
-            index(keys, [identifier(position)]),
-            identifier(gathered),
-            innerFrame,
-            (current, next) =>
-              leaf(
-                call(name, [
-                  apply("+", [identifier(position), number(1)]),
-                  next,
-                  ...getValues(current),
-                ]),
-              ),
-            (current, result) => end(current, "next", result, string("")),
-          ),
-          end(inner, "next", identifier(gathered), string("")),
+        step(
+          inner,
+          identifier(state),
+          innerFrame,
+          (current, next) => leaf(call(name, [next, ...getValues(current)])),
+          (current, result) => end(current, "next", result, string("")),
         ),
       ),
     ),
     isRecursive: true,
   };
-  const result = context.names.getFresh("keyed");
+  const result = context.names.getFresh("looped");
   const after = {
     ...withValues(
       path,
@@ -1820,7 +1805,7 @@ const loopKeys = (
     bindOnce(
       path,
       result,
-      call(name, [number(1), seed, ...getValues(path)]),
+      call(name, [seed, ...getValues(path)]),
       throwTo === undefined
         ? continueWith(after, value)
         : ifThenElse(
@@ -1834,6 +1819,51 @@ const loopKeys = (
     ),
   );
 };
+
+// Runs visit on each key of a list, as loopStates runs its steps, carrying the position and what
+// the visits gather. A visit goes on to the next key, or stops with a result.
+const loopKeys = (
+  site: ts.Node,
+  keys: Expression,
+  seed: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  visit: (
+    current: Path,
+    key: Expression,
+    gathered: Expression,
+    inner: Frame,
+    again: (current: Path, gathered: Expression) => Formula,
+    stop: (current: Path, result: Expression) => Formula,
+  ) => Formula,
+  continueWith: (path: Path, result: Expression) => Formula,
+): Formula =>
+  loopStates(
+    site,
+    tuple([number(1), seed]),
+    getChanged(site, path, context),
+    path,
+    context,
+    frame,
+    (current, state, inner, again, stop) => {
+      const position = index(state, [number(1)]);
+      const gathered = index(state, [number(2)]);
+      return ifThenElse(
+        apply("<=", [position, apply("Len", [keys])]),
+        visit(
+          current,
+          index(keys, [position]),
+          gathered,
+          inner,
+          (after, next) => again(after, tuple([apply("+", [position, number(1)]), next])),
+          stop,
+        ),
+        stop(current, gathered),
+      );
+    },
+    continueWith,
+  );
 
 // The targets of a proxy that the script makes, through each target that is such a proxy too.
 const getTargets = (

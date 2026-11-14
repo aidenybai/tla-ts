@@ -132,9 +132,11 @@ import {
 } from "./conversions";
 import {
   getJsonText,
+  getReplacers,
   getRevival,
   isBigIntStringify,
   parseJson,
+  replaceJson,
   reviveJson,
   translateHoldsJson,
   translateStringify,
@@ -2956,6 +2958,10 @@ export const translateCallStatement = (
   const revival = getRevival(expression, context);
   if (revival !== undefined) {
     return reviveJson(expression, revival, path, context, frame, continueWith);
+  }
+  const replacers = getReplacers(expression, context);
+  if (replacers !== undefined) {
+    return replaceJson(expression, replacers, path, context, frame, continueWith);
   }
   if (isBigIntStringify(expression, context)) {
     return allocateAll(
@@ -10224,6 +10230,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getStringCall(node, context) !== undefined ||
     isBigIntStringify(node, context) ||
     getRevival(node, context) !== undefined ||
+    getReplacers(node, context) !== undefined ||
     isDescriptorsRead(node, context) ||
     isOwnValuesRead(node, context) ||
     isRevoke(node, context) ||

@@ -67,7 +67,14 @@ import {
   translateSpliced,
   translateNew,
 } from "./collections";
-import { getJsonText, getRevival, isParsedObject, parseJson, translateParsedObjects } from "./json";
+import {
+  getJsonText,
+  getReplacers,
+  getRevival,
+  isParsedObject,
+  parseJson,
+  translateParsedObjects,
+} from "./json";
 import { getCalledError, getConstructor, getErrorClass, isNativeErrorName } from "./exceptions";
 import {
   translateElements,
@@ -4982,6 +4989,7 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
   const jsonText = getJsonText(node, context);
   if (jsonText !== undefined) return "error" in parseJson(jsonText) ? ["SyntaxError"] : [];
   if (getRevival(node, context) !== undefined) return ["SyntaxError"];
+  if (getReplacers(node, context) !== undefined) return ["TypeError"];
   const dateCall = getDateCall(node, context);
   if (dateCall !== undefined) {
     return [

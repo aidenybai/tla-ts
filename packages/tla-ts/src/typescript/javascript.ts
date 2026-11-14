@@ -5416,12 +5416,16 @@ LOCAL JSONPrimitive(heap, ref, kind, method) ==
 WrapperString(heap, ref) ==
   IF TypeOf(ref) = "string" THEN ref ELSE JSONPrimitive(heap, ref, "String", "toString")
 
+\\* The primitive of a Number or a String object that JSON.stringify takes as its space argument.
+JSONSpace(heap, space) ==
+  LET kind == IF IsRef(space) THEN JSONWrapperKind(heap, space) ELSE ""
+  IN CASE kind = "Number" -> JSONPrimitive(heap, space, kind, "valueOf")
+       [] kind = "String" -> JSONPrimitive(heap, space, kind, "toString")
+       [] OTHER -> space
+
 \\* The gap that JSON.stringify indents by for its space argument.
 LOCAL JSONGap(heap, space) ==
-  LET kind == IF IsRef(space) THEN JSONWrapperKind(heap, space) ELSE ""
-      value == CASE kind = "Number" -> JSONPrimitive(heap, space, kind, "valueOf")
-                 [] kind = "String" -> JSONPrimitive(heap, space, kind, "toString")
-                 [] OTHER -> space
+  LET value == JSONSpace(heap, space)
       count == CASE value \\in {NaN, NegativeInfinity, NegativeZero} -> 0
                  [] IsFraction(value) -> IF Truncate(value) > 10 THEN 10 ELSE Truncate(value)
                  [] value = Infinity -> 10
@@ -5535,6 +5539,98 @@ JSONStringify(heap, value, replacer, space, arrayPrototype, functionPrototype, i
           /\\ ~isList ->
             Assert(FALSE, "tla-ts can't tell whether " \\o ToString(replacer) \\o " is an array")
        [] keys = keys /\\ gap = gap -> SerializeJSON(heap, value, state, {}, "")
+
+\\* JSON.stringify where a replacer function replaces each value it writes, which a statement walks,
+\\* as it calls the function. Each frame of the walk holds an object that the walk writes, its keys,
+\\* the position of the next, the replaced values that it gathered by key, and its key in the frame
+\\* below, the first frame's object being the wrapper that holds the value under "".
+JSONReplacing(wrapper) ==
+  <<[holder |-> wrapper, keys |-> <<"">>, position |-> 1, pairs |-> <<>>, key |-> "",
+     isArray |-> FALSE, isRead |-> FALSE]>>
+
+LOCAL JSONTop(frames) == frames[Len(frames)]
+
+\\* Whether the top frame gathered a value for each key.
+JSONIsClosing(frames) == JSONTop(frames).position > Len(JSONTop(frames).keys)
+
+\\* The value that the replacer gave for the wrapper's "", once the walk closes the wrapper.
+JSONReplaced(frames) == frames[1].pairs[1][2]
+
+JSONHolder(frames) == JSONTop(frames).holder
+
+JSONKey(frames) == JSONTop(frames).keys[JSONTop(frames).position]
+
+\\* The value that the walk reads at the top frame's next key. An array outside the heap that the
+\\* walk read from what holds it must still be the value that it holds, as the replacer may write it.
+JSONRead(heap, frames) ==
+  IF \\A position \\in 2..Len(frames) :
+       frames[position].isRead =>
+         ~Differs(frames[position].holder,
+                  Get(heap, frames[position - 1].holder, frames[position].key))
+  THEN Get(heap, JSONHolder(frames), JSONKey(frames))
+  ELSE Assert(FALSE, "tla-ts can't write an array outside the heap that a replacer changes")
+
+\\* Whether SerializeJSONProperty would call a toJSON of a value, before it calls the replacer.
+JSONHasToJSON(heap, value, arrayPrototype, functionPrototype, isSequence) ==
+  LET hasToJSON(ref) == TypeOfIn(heap, Get(heap, ref, "toJSON")) = "function"
+  IN CASE IsBigInt(value) -> hasToJSON(Ref :> "BigInt.prototype")
+       [] IsRef(value) -> hasToJSON(value)
+       [] TypeOf(value) = "function" -> hasToJSON(functionPrototype)
+       [] isSequence /\\ IsSequenceValue(value) -> hasToJSON(arrayPrototype)
+       [] OTHER -> FALSE
+
+\\* Whether a replacer gave a BigInt, or an object that holds one, which JSON.stringify throws a
+\\* TypeError for before it calls the replacer again.
+JSONIsBigInt(heap, value) ==
+  \\/ IsBigInt(value)
+  \\/ IsHeap(value) /\\ "bigint" \\in DOMAIN heap.objects[value[Ref]]
+
+\\* Whether the walk writes a replaced value's keys: an object that isn't a function or a wrapper.
+LOCAL JSONDescends(heap, value, isSequence) ==
+  CASE IsProxy(heap, value) -> Assert(FALSE, "tla-ts can't replace the values that a proxy holds")
+    [] IsRef(value) -> TypeOfIn(heap, value) = "object" /\\ JSONWrapperKind(heap, value) = ""
+    [] isSequence /\\ IsSequenceValue(value) -> TRUE
+    [] \\/ value \\in {Undefined, Null}
+       \\/ TypeOf(value) \\in {"boolean", "string", "number", "bigint", "symbol", "function"} -> FALSE
+    [] OTHER -> Assert(FALSE, "tla-ts can't tell what JSON.stringify writes for " \\o ToString(value))
+
+\\* The frames once the replacer gave a value for the top frame's next key, where it read another: a
+\\* frame for an object whose keys the walk writes, or else the value among those the top frame
+\\* gathered. An array outside the heap that may be the one the walk read must stay what holds it holds.
+JSONReplace(heap, frames, read, value, isSequence) ==
+  LET top == JSONTop(frames)
+      advanced == [top EXCEPT !.position = @ + 1]
+      below == SubSeq(frames, 1, Len(frames) - 1)
+      isArray == IsSequenceValue(value) \\/ IsArray(heap, value)
+      keys == CASE IsSequenceValue(value) -> [position \\in DOMAIN value |-> ToString(position - 1)]
+                [] isArray ->
+                     [position \\in 1..ToLength(Get(heap, value, "length")) |-> ToString(position - 1)]
+                [] OTHER -> ObjectKeys(heap, value)
+  IN CASE ~JSONDescends(heap, value, isSequence) ->
+            Append(below, [advanced EXCEPT !.pairs = Append(@, <<JSONKey(frames), value>>)])
+       [] \\E position \\in 2..Len(frames) :
+            IsRef(frames[position].holder) /\\ ToString(frames[position].holder) = ToString(value) ->
+            Assert(FALSE, "tla-ts can't throw the TypeError of JSON.stringify of a cycle")
+       [] OTHER ->
+            below \\o <<advanced, [holder |-> value, keys |-> keys, position |-> 1, pairs |-> <<>>,
+                                  key |-> JSONKey(frames), isArray |-> isArray,
+                                  isRead |->
+                                    /\\ IsSequenceValue(value)
+                                    /\\ \\/ ~Differs(value, read)
+                                       \\/ ~Differs(value, Get(heap, top.holder, JSONKey(frames)))]>>
+
+\\* The heap and the frames once the walk closes the top frame, which makes an object of the values
+\\* that it gathered, with no prototype, which the frame below gathers.
+JSONClose(heap, frames) ==
+  LET top == JSONTop(frames)
+      parent == frames[Len(frames) - 1]
+      made == Allocate(heap,
+                       IF top.isArray
+                       THEN ArrayObject(Null, [position \\in DOMAIN top.pairs |-> top.pairs[position][2]])
+                       ELSE [PairsObject(top.pairs) EXCEPT !.prototype = Null])
+  IN [heap |-> made,
+      frames |-> Append(SubSeq(frames, 1, Len(frames) - 2),
+                        [parent EXCEPT !.pairs = Append(@, <<top.key, Allocated(made)>>)])]
 
 ===============================================================================`;
 

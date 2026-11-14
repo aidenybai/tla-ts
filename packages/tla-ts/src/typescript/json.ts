@@ -22,6 +22,7 @@ import {
   inlineValues,
   type Path,
   throwError,
+  throwTypeError,
   translateJoined,
 } from "./actions";
 import { type Formula, ifThenElse, leaf } from "./formula";
@@ -31,13 +32,14 @@ import {
   callValue,
   getFunctionCandidates,
   isRunnableGetter,
+  loopStates,
   readWith,
   withHeap,
 } from "./protocols";
 import { getBuiltIn, isBuiltInObject, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
-import { apply, boolean, identifier, ifExpression, number, string, tuple } from "./tla";
+import { apply, boolean, field, identifier, ifExpression, number, string, tuple } from "./tla";
 import { getKind } from "./types";
 
 const COLLECTIONS = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
@@ -290,29 +292,35 @@ export const isBigIntStringify = (node: ts.CallExpression, context: Context) => 
 
 // JSON.stringify of a value, a replacer, and a space, which gives JSONTypeError where it throws a
 // TypeError.
-export const translateStringify = (node: ts.CallExpression, scope: Scope, context: Context) => {
+// The value, the replacer, and the space that JSON.stringify takes.
+const translateStringifyArguments = (node: ts.CallExpression, scope: Scope, context: Context) => {
   if (node.arguments.length > 3 || node.arguments.some(ts.isSpreadElement)) {
     throw new TlaTypeScriptError(`Unsupported call: ${node.getText()}`, node);
   }
   context.builtIns.add("BigInt.prototype");
-  const values = [0, 1, 2].map((position) => {
+  return [0, 1, 2].map((position) => {
     const argument = node.arguments.at(position);
     if (argument === undefined) return getUndefined(context);
     return getKind(argument, context) === "object" || isBuiltInObject(argument, context)
       ? translateObjectValue(argument, scope, context)
       : translateExpression(argument, scope, context);
   });
+};
+
+// What JSONStringify takes after the heap and its value, replacer, and space.
+const getStringifyPrototypes = (node: ts.CallExpression, context: Context) => [
+  translateBuiltInValue("Array.prototype", node, context),
+  translateBuiltInValue("Function.prototype", node, context),
+  boolean(!usesCollections(node.getSourceFile())),
+];
+
+export const translateStringify = (node: ts.CallExpression, scope: Scope, context: Context) => {
+  const values = translateStringifyArguments(node, scope, context);
   return ifExpression(
     translateHoldsJson(node, "stringify", scope, context),
     useJavaScript(
       "JSONStringify",
-      [
-        getHeap(scope, node, context),
-        ...values,
-        translateBuiltInValue("Array.prototype", node, context),
-        translateBuiltInValue("Function.prototype", node, context),
-        boolean(!usesCollections(node.getSourceFile())),
-      ],
+      [getHeap(scope, node, context), ...values, ...getStringifyPrototypes(node, context)],
       context,
     ),
     apply("Assert", [
@@ -345,6 +353,243 @@ export const translateJsonCall = (node: ts.CallExpression, scope: Scope, context
       ]),
       value,
     ),
+  );
+};
+
+// JSON.stringify with a function that replaces each value it writes, which only a statement runs,
+// as it calls the function: the functions that it may call.
+export const getReplacers = (node: ts.Node, context: Context) => {
+  const replacer =
+    ts.isCallExpression(node) && isStringify(node, context) ? node.arguments.at(1) : undefined;
+  const candidates =
+    replacer === undefined || ts.isSpreadElement(replacer)
+      ? []
+      : getFunctionCandidates(replacer, context);
+  return candidates.length > 0 ? candidates : undefined;
+};
+
+// JSON.stringify with a replacer function, as SerializeJSONProperty runs it: it wraps the value in
+// an object under "", and then reads each key in turn, calls toJSON, which tla-ts stops at, and
+// the replacer with the holder as this, and walks the keys of an object that the replacer gives
+// before the next key. The values that the replacer gave make new objects, which JSONStringify
+// writes once the walk ends.
+export const replaceJson = (
+  node: ts.CallExpression,
+  candidates: readonly FunctionNode[],
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  // The replacer takes a string key, and a holder and a value of any type, which the types of its
+  // parameters must hold.
+  candidates.forEach((candidate) => {
+    const holder = candidate.parameters.find(
+      (parameter) => ts.isIdentifier(parameter.name) && parameter.name.text === "this",
+    );
+    const key = getParameters(candidate).at(0);
+    const value = getParameters(candidate).at(1);
+    const isOpen = (parameter: ts.ParameterDeclaration) =>
+      (context.checker.getTypeAtLocation(parameter).flags &
+        (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
+      0;
+    const wrong = [
+      ...(holder === undefined || isOpen(holder) ? [] : [holder]),
+      ...(key === undefined ||
+      context.checker.isTypeAssignableTo(
+        context.checker.getStringType(),
+        context.checker.getTypeAtLocation(key),
+      )
+        ? []
+        : [key]),
+      ...(value === undefined || isOpen(value) ? [] : [value]),
+    ].at(0);
+    if (wrong !== undefined) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't pass a replacer values that its parameter's type doesn't hold",
+        wrong,
+      );
+    }
+  });
+  // The walk keeps the objects outside the heap that it writes, so the replacer may change only
+  // the heap and primitives.
+  const primitive =
+    ts.TypeFlags.StringLike |
+    ts.TypeFlags.NumberLike |
+    ts.TypeFlags.BooleanLike |
+    ts.TypeFlags.BigIntLike |
+    ts.TypeFlags.ESSymbolLike |
+    ts.TypeFlags.Undefined |
+    ts.TypeFlags.Null;
+  const isPrimitive = (type: ts.Type): boolean =>
+    type.isUnion() ? type.types.every(isPrimitive) : (type.flags & primitive) !== 0;
+  const object = getChanged(node, path, context).find(
+    (symbol) =>
+      symbol !== context.heap &&
+      !isPrimitive(context.checker.getTypeOfSymbolAtLocation(symbol, node)),
+  );
+  if (object !== undefined) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't call a replacer that changes ${object.name}, which the heap doesn't hold`,
+      node,
+    );
+  }
+  return allocateAll(
+    getAllocated(node, context).filter((inner) => !path.scope.allocated.has(inner)),
+    path,
+    context,
+    (allocated) => {
+      const values = translateStringifyArguments(node, allocated.scope, context);
+      const prototypes = getStringifyPrototypes(node, context);
+      const heap = getHeap(allocated.scope, node, context);
+      // JSON.stringify converts its space before it calls the replacer.
+      const walk = bind(allocated, "replacer", values[1], context, (bound, replacer) =>
+        bind(
+          bound,
+          "space",
+          useJavaScript("JSONSpace", [heap, values[2]], context),
+          context,
+          (spaced, space) =>
+            bind(
+              spaced,
+              "heap",
+              useJavaScript(
+                "Allocate",
+                [
+                  heap,
+                  useJavaScript("PairsObject", [tuple([tuple([string(""), values[0]])])], context),
+                ],
+                context,
+              ),
+              context,
+              (wrapped, wrappedHeap) =>
+                loopStates(
+                  node,
+                  useJavaScript(
+                    "JSONReplacing",
+                    [useJavaScript("Allocated", [wrappedHeap], context)],
+                    context,
+                  ),
+                  // The walk makes objects of what the replacer gives, which the heap holds.
+                  [
+                    ...new Set([
+                      ...getChanged(node, wrapped, context),
+                      ...(context.heap === undefined ? [] : [context.heap]),
+                    ]),
+                  ],
+                  withHeap(wrapped, wrappedHeap, context),
+                  context,
+                  frame,
+                  (current, frames, inner, again, stop) => {
+                    const currentHeap = getHeap(current.scope, node, context);
+                    const close = ifThenElse(
+                      apply("=", [apply("Len", [frames]), number(1)]),
+                      stop(current, useJavaScript("JSONReplaced", [frames], context)),
+                      bind(
+                        current,
+                        "closed",
+                        useJavaScript("JSONClose", [currentHeap, frames], context),
+                        context,
+                        (closed, record) =>
+                          again(
+                            withHeap(closed, field(record, "heap"), context),
+                            field(record, "frames"),
+                          ),
+                      ),
+                    );
+                    const replace = bind(
+                      current,
+                      "value",
+                      useJavaScript("JSONRead", [currentHeap, frames], context),
+                      context,
+                      (read, value) =>
+                        ifThenElse(
+                          useJavaScript(
+                            "JSONHasToJSON",
+                            [getHeap(read.scope, node, context), value, ...prototypes],
+                            context,
+                          ),
+                          leaf(
+                            apply("Assert", [boolean(false), string("tla-ts can't call toJSON")]),
+                          ),
+                          callValue(
+                            node,
+                            candidates,
+                            replacer,
+                            useJavaScript("JSONHolder", [frames], context),
+                            [useJavaScript("JSONKey", [frames], context), value],
+                            read,
+                            context,
+                            inner,
+                            () =>
+                              leaf(
+                                apply("Assert", [
+                                  boolean(false),
+                                  string("tla-ts can't tell which function replaces this"),
+                                ]),
+                              ),
+                            (called, result) => {
+                              const calledHeap = getHeap(called.scope, node, context);
+                              return ifThenElse(
+                                useJavaScript("JSONIsBigInt", [calledHeap, result], context),
+                                throwTypeError(called, node, context, inner),
+                                again(
+                                  called,
+                                  useJavaScript(
+                                    "JSONReplace",
+                                    [calledHeap, frames, value, result, prototypes[2]],
+                                    context,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                    );
+                    return ifThenElse(
+                      useJavaScript("JSONIsClosing", [frames], context),
+                      close,
+                      replace,
+                    );
+                  },
+                  (after, replaced) =>
+                    bind(
+                      after,
+                      "stringified",
+                      useJavaScript(
+                        "JSONStringify",
+                        [
+                          getHeap(after.scope, node, context),
+                          replaced,
+                          getUndefined(context),
+                          space,
+                          ...prototypes,
+                        ],
+                        context,
+                      ),
+                      context,
+                      (done, text) =>
+                        ifThenElse(
+                          useJavaScript("IsError", [text], context),
+                          throwTypeError(done, node, context, frame),
+                          continueWith(done, text),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+      );
+      return ifThenElse(
+        translateHoldsJson(node, "stringify", allocated.scope, context),
+        walk,
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't call JSON.stringify where a script replaced it"),
+          ]),
+        ),
+      );
+    },
   );
 };
 
