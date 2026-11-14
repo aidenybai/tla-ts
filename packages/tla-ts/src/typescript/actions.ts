@@ -10177,18 +10177,18 @@ const isIteratedTypedArray = (node: ts.Expression, context: Context) => {
   );
 };
 
-// new of an Intl constructor whose literals it rejects, which a statement runs, and which throws
-// where it reads what tla-ts records.
+// new of an Intl constructor, or a call of a function that reads locales, whose literals it
+// rejects, which a statement runs, and which throws where it reads what tla-ts records.
 const translateIntlError = (node: ts.Expression, path: Path, context: Context, frame: Frame) => {
   const error = getIntlError(node, context);
   if (error === undefined) throw new TlaTypeScriptError("Unsupported Intl constructor", node);
   return ifThenElse(
-    translateIntlKept(node, getHeap(path.scope, node, context), context),
+    translateIntlKept(node, getHeap(path.scope, node, context), path.scope, context),
     throwError(error, path, node, context, frame),
     leaf(
       apply("Assert", [
         boolean(false),
-        string("tla-ts can't construct an Intl object where a script changed what it reads"),
+        string("tla-ts can't run an Intl function where a script changed what it reads"),
       ]),
     ),
   );

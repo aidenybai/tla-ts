@@ -339,6 +339,23 @@ const CONSTRUCTORS: Record<string, { checks: readonly Check[]; unchecked: readon
   },
 };
 
+// The tags of literal locales, or undefined where CanonicalizeLocaleList reads the length of the
+// object that a number or a boolean converts to. Locale takes one tag.
+const getTags = (name: string, locales: LiteralValue | readonly LiteralValue[]) =>
+  name !== "Locale" && (typeof locales === "number" || typeof locales === "boolean")
+    ? undefined
+    : name === "Locale" || !Array.isArray(locales)
+      ? locales === undefined && name !== "Locale"
+        ? []
+        : [locales]
+      : locales;
+
+const getTagOutcome = (tag: LiteralValue): IntlOutcome => {
+  if (typeof tag !== "string") return "TypeError";
+  const isValid = isStructurallyValidLanguageTag(tag);
+  return isValid === undefined ? undefined : isValid ? "" : "RangeError";
+};
+
 // What new of an Intl constructor throws for literal locales, or a Locale's literal tag, and
 // literal options: CanonicalizeLocaleList, or the Locale constructor, reads the tags first.
 export const getIntlOutcome = (
@@ -347,28 +364,26 @@ export const getIntlOutcome = (
   options: Options,
 ): IntlOutcome => {
   const constructor = CONSTRUCTORS[name];
-  // CanonicalizeLocaleList reads the length of the object that a number or a boolean converts to.
-  if (
-    constructor === undefined ||
-    (name !== "Locale" && (typeof locales === "number" || typeof locales === "boolean"))
-  ) {
-    return undefined;
-  }
-  const tags =
-    name === "Locale" || !Array.isArray(locales)
-      ? locales === undefined && name !== "Locale"
-        ? []
-        : [locales]
-      : locales;
+  const tags = getTags(name, locales);
+  if (constructor === undefined || tags === undefined) return undefined;
   const outcome = getFirst([
-    ...tags.map((tag): IntlOutcome => {
-      if (typeof tag !== "string") return "TypeError";
-      const isValid = isStructurallyValidLanguageTag(tag);
-      return isValid === undefined ? undefined : isValid ? "" : "RangeError";
-    }),
+    ...tags.map(getTagOutcome),
     ...constructor.checks.map((check) => check(options)),
   ]);
   return outcome === "" && constructor.unchecked.some((key) => options.get(key) !== undefined)
     ? undefined
     : outcome;
+};
+
+// What Intl.getCanonicalLocales, or a constructor's supportedLocalesOf, throws for literal locales
+// and options, or "" where it gives an empty array as they name no locales. Where they name one,
+// what it gives depends on locale data.
+export const getLocalesOutcome = (
+  locales: LiteralValue | readonly LiteralValue[],
+  options: Options,
+): IntlOutcome => {
+  const tags = getTags("", locales);
+  if (tags === undefined) return undefined;
+  const outcome = getFirst([...tags.map(getTagOutcome), LOCALE_MATCHER(options)]);
+  return outcome === "" && tags.length > 0 ? undefined : outcome;
 };

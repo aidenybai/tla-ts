@@ -14911,6 +14911,34 @@ describe("errors", () => {
     ).toContain("locale data");
   });
 
+  it("gives the empty array of Intl's functions that read locales, or the error they throw", async () => {
+    const getSource = (expected: string) => `
+      const holder: { [key: string]: unknown } = {};
+      const supportedLocalesOf = Intl.DurationFormat.supportedLocalesOf;
+      const names: string[] = [];
+      const run = (callback: () => unknown) => {
+        try {
+          callback();
+          names.push("none");
+        } catch (error) {
+          names.push((error as Error).name);
+        }
+      };
+      run(() => Intl.getCanonicalLocales("en-"));
+      run(() => Intl.Collator.supportedLocalesOf([], { localeMatcher: "x" as "lookup" }));
+      run(() => supportedLocalesOf.call({}, [5 as unknown as string]));
+      const empty = supportedLocalesOf.call(undefined);
+      const result = [...names, empty.length, Array.isArray(Intl.getCanonicalLocales())].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect(
+      (await checkModel(getSource("RangeError,RangeError,TypeError,0,true"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("RangeError,RangeError,TypeError,0,false"))).failure?.message,
+    ).toContain("TypeError,0,true");
+  });
+
   it("constructs Intl's objects of literal locales and options", async () => {
     const getSource = (expected: string) => `
       const holder: { [key: string]: unknown } = {};

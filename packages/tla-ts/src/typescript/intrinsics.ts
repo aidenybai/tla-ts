@@ -661,7 +661,7 @@ export const translateBuiltInValue = (
     | "Promise.prototype"
     | "JSON"
     | "Intl"
-    | `Intl.${string}.prototype${string}`
+    | `Intl.${string}`
     | `${Collection}.prototype${string}`,
   node: ts.Node,
   context: Context,

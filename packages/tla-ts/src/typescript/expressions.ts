@@ -96,6 +96,8 @@ import {
   getNewWrapper,
   isNewDate,
   getNewIntl,
+  isEmptyLocalesCall,
+  translateIntlKept,
   areDateFields,
   translateDateFields,
   getMethodValue,
@@ -763,6 +765,16 @@ export const translateCall = (
     return uriCall.isUnescape
       ? useJavaScript("Unescape", [text], context)
       : useJavaScript("EncodeURI", [text, uriCall.kept], context);
+  }
+  if (isEmptyLocalesCall(node, context)) {
+    return ifExpression(
+      translateIntlKept(node, getHeap(scope, node, context), scope, context),
+      tuple([]),
+      apply("Assert", [
+        boolean(false),
+        string("tla-ts can't run an Intl function where a script changed what it reads"),
+      ]),
+    );
   }
   const symbol = getSymbol(node.expression, context.checker);
   const helper = getTopLevelDeclaration(symbol);

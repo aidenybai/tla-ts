@@ -97,7 +97,7 @@ import {
 import { isDescriptorsRead, isProxyOperation } from "./protocols";
 import { getReached } from "./aliasing";
 import { createStateScope, type Scope } from "./scope";
-import { getIntlOutcome } from "./locales";
+import { getIntlOutcome, getLocalesOutcome } from "./locales";
 import { BUILT_INS } from "./built-ins";
 import { getStackCall } from "./stacks";
 import { getIteratorDisposeCall } from "./disposal";
@@ -1748,7 +1748,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     // The constructor, which the prototype's constructor property holds.
     context.builtIns.add(`Intl.${intl}`);
     return ifExpression(
-      translateIntlKept(node, heap, context),
+      translateIntlKept(node, heap, scope, context),
       useJavaScript(
         "Allocate",
         [
@@ -2199,20 +2199,43 @@ const getLiteralValue = (node: ts.Expression, context: Context) => {
             : undefined;
 };
 
-// A new of an Intl constructor, or a call of one that may run without new, whose locales and
-// options literals write, with what it throws, or "", and the object literal of its options.
+// A new of an Intl constructor, a call of one that may run without new, or a call of a function
+// that reads locales, whose locales and options literals write, with what it throws, or "", the
+// object literal of its options, and the function that a call of locales runs.
 const getIntlConstruction = (node: ts.Node, context: Context) => {
-  if (
-    context.heap === undefined ||
-    !(ts.isNewExpression(node) || ts.isCallExpression(node)) ||
-    !ts.isPropertyAccessExpression(node.expression) ||
-    getBuiltIn(node.expression.expression, context) !== "Intl" ||
-    !(ts.isNewExpression(node) || CALLABLE_INTL_CONSTRUCTORS.has(node.expression.name.text))
-  ) {
+  if (context.heap === undefined || !(ts.isNewExpression(node) || ts.isCallExpression(node))) {
     return undefined;
   }
-  const name = node.expression.name.text;
-  const [locales, options, ...rest] = (node.arguments ?? []).map(skipCasts);
+  const callee = skipCasts(node.expression);
+  const isCall =
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(callee) &&
+    callee.name.text === "call";
+  const method = isCall ? callee.expression : callee;
+  const origin = getOrigin(method, context);
+  const owner = ts.isPropertyAccessExpression(origin) ? origin.expression : undefined;
+  const name = ts.isPropertyAccessExpression(origin) ? origin.name.text : "";
+  // Intl.getCanonicalLocales, or a constructor's supportedLocalesOf, which a call may run through
+  // call, and which only reads its locales and options.
+  const localesPath =
+    !ts.isCallExpression(node) || owner === undefined
+      ? undefined
+      : name === "getCanonicalLocales" && getBuiltIn(owner, context) === "Intl"
+        ? ("Intl.getCanonicalLocales" as const)
+        : name === "supportedLocalesOf" &&
+            ts.isPropertyAccessExpression(owner) &&
+            getBuiltIn(owner.expression, context) === "Intl" &&
+            BUILT_INS[`Intl.${owner.name.text}.supportedLocalesOf`] !== undefined
+          ? (`Intl.${owner.name.text}.supportedLocalesOf` as const)
+          : undefined;
+  const isConstruction =
+    callee === origin &&
+    owner !== undefined &&
+    getBuiltIn(owner, context) === "Intl" &&
+    (ts.isNewExpression(node) || CALLABLE_INTL_CONSTRUCTORS.has(name));
+  if (localesPath === undefined && !isConstruction) return undefined;
+  const values = (node.arguments ?? []).map(skipCasts);
+  const [locales, options, ...rest] = isCall ? values.slice(1) : values;
   const elements =
     locales !== undefined && ts.isArrayLiteralExpression(locales)
       ? locales.elements.map((element) => getLiteralValue(element, context))
@@ -2228,56 +2251,106 @@ const getIntlConstruction = (node: ts.Node, context: Context) => {
     : [];
   const isLiteral =
     rest.length === 0 &&
+    (!isCall || values.length === 0 || isInertValue(values[0])) &&
     elements.every((element) => element !== undefined) &&
-    (options === undefined || isUndefinedValue(options, context) || isOptionsLiteral) &&
+    (options === undefined ||
+      (localesPath !== "Intl.getCanonicalLocales" &&
+        (isUndefinedValue(options, context) || isOptionsLiteral))) &&
     entries.every((entry) => entry?.literal !== undefined);
-  const values = elements.flatMap((element) => (element === undefined ? [] : [element.value]));
-  const outcome = isLiteral
-    ? getIntlOutcome(
-        name,
-        locales !== undefined && ts.isArrayLiteralExpression(locales) ? values : values[0],
-        new Map(
-          entries.flatMap((entry) =>
-            entry?.literal === undefined ? [] : [[entry.key, entry.literal.value] as const],
-          ),
-        ),
-      )
-    : undefined;
+  const literals = elements.flatMap((element) => (element === undefined ? [] : [element.value]));
+  const tags =
+    locales !== undefined && ts.isArrayLiteralExpression(locales) ? literals : literals[0];
+  const read = new Map(
+    entries.flatMap((entry) =>
+      entry?.literal === undefined ? [] : [[entry.key, entry.literal.value] as const],
+    ),
+  );
+  const outcome = !isLiteral
+    ? undefined
+    : localesPath === undefined
+      ? getIntlOutcome(name, tags, read)
+      : getLocalesOutcome(tags, read);
   return outcome === undefined
     ? undefined
-    : { name, outcome, options: isOptionsLiteral ? options : undefined };
+    : {
+        name,
+        outcome,
+        options: isOptionsLiteral ? options : undefined,
+        locales: localesPath === undefined ? undefined : { path: localesPath, method, isCall },
+      };
 };
 
 // The Intl constructor whose new, or call where it may run without new, takes literal locales and
 // options that it accepts, so that what it makes depends on no locale data until a method reads it.
 export const getNewIntl = (node: ts.Node, context: Context) => {
   const construction = getIntlConstruction(node, context);
-  return construction?.outcome === "" ? construction.name : undefined;
+  return construction?.outcome === "" && construction.locales === undefined
+    ? construction.name
+    : undefined;
 };
 
-// The error that new of an Intl constructor throws where it rejects the literals of its locales or
-// options.
+// A call of Intl.getCanonicalLocales, or of a constructor's supportedLocalesOf, whose literal
+// locales and options name no locales, so that it gives an empty array.
+export const isEmptyLocalesCall = (node: ts.Node, context: Context) => {
+  const construction = getIntlConstruction(node, context);
+  return construction?.outcome === "" && construction.locales !== undefined;
+};
+
+// The error that new of an Intl constructor, or a call of a function that reads locales, throws
+// where it rejects the literals of its locales or options.
 export const getIntlError = (node: ts.Node, context: Context) => {
   const outcome = getIntlConstruction(node, context)?.outcome;
   return outcome === "" ? undefined : outcome;
 };
 
-// Whether new of an Intl constructor reads what tla-ts records: the constructor that Intl holds,
-// and Object.prototype, through which its options literal reads the options it lacks.
-export const translateIntlKept = (node: ts.Node, heap: Expression, context: Context) => {
+// Whether new of an Intl constructor, or a call of a function that reads locales, reads what
+// tla-ts records: the constructor that Intl holds, or the function that the call runs, and
+// Object.prototype, through which an options literal reads the options it lacks.
+export const translateIntlKept = (
+  node: ts.Node,
+  heap: Expression,
+  scope: Scope,
+  context: Context,
+) => {
   const construction = getIntlConstruction(node, context);
-  if (construction === undefined)
+  if (construction === undefined) {
     throw new TlaTypeScriptError("Unsupported Intl constructor", node);
-  const held = useJavaScript(
-    "HoldsBuiltIn",
-    [
-      heap,
-      translateBuiltInValue("Intl", node, context),
-      string(construction.name),
-      string(`Intl.${construction.name}`),
-    ],
-    context,
-  );
+  }
+  const locales = construction.locales;
+  const held =
+    locales === undefined
+      ? useJavaScript(
+          "HoldsBuiltIn",
+          [
+            heap,
+            translateBuiltInValue("Intl", node, context),
+            string(construction.name),
+            string(`Intl.${construction.name}`),
+          ],
+          context,
+        )
+      : apply("/\\", [
+          useJavaScript(
+            "SameValue",
+            [
+              translateExpression(locales.method, scope, context),
+              translateBuiltInValue(locales.path, node, context),
+            ],
+            context,
+          ),
+          locales.isCall
+            ? useJavaScript(
+                "HoldsBuiltIn",
+                [
+                  heap,
+                  translateBuiltInValue(locales.path, node, context),
+                  string("call"),
+                  string("Function.prototype.call"),
+                ],
+                context,
+              )
+            : boolean(true),
+        ]);
   return construction.options === undefined
     ? held
     : apply("/\\", [held, useJavaScript("IsKept", [heap, string("Object.prototype")], context)]);
