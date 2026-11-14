@@ -10081,7 +10081,11 @@ const usesHeap = (node: ts.Node, context: Context, visited: Set<ts.Node>): boole
       node.operatorToken.kind === ts.SyntaxKind.InKeyword &&
       getKind(node.right, context) === "object") ||
     (ts.isObjectBindingPattern(node) &&
-      isHeapPattern(context.checker.getTypeAtLocation(node), node, context));
+      isHeapPattern(
+        context.checker.getNonNullableType(context.checker.getTypeAtLocation(node)),
+        node,
+        context,
+      ));
   if (isRead) return true;
   if (ts.isCallExpression(node)) {
     const callee = getCallee(node.expression, context);

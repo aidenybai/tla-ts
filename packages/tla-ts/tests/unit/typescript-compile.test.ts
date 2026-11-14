@@ -20035,6 +20035,28 @@ describe("errors", () => {
     );
   });
 
+  it("throws the TypeError of an object pattern in a parameter's array pattern that takes undefined", async () => {
+    const getSource = (expected: string) => `
+      const getError = (call: () => unknown) => {
+        try {
+          call();
+          return "none";
+        } catch (error) {
+          return error instanceof TypeError ? "type" : "other";
+        }
+      };
+      // @ts-ignore
+      const read = ([{ x }]: [{ x?: number }?]) => x;
+      const box = { x: 1 };
+      const errors: string[] = [getError(() => read([])), getError(() => read([box]))];
+      const value = read([box]);
+      const text = \`\${errors.join()}:\${value}\`;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect((await checkModel(getSource("type,none:1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("none,none:1"))).failure?.message).toContain("type,none:1");
+  });
+
   it("rejects a pattern with defaults that destructures an object through its iterator", () => {
     expect(() =>
       compile(`
