@@ -1568,6 +1568,47 @@ const translateRawTemplate = (
       );
 };
 
+// An attribute of a descriptor that defineProperty takes as it's written, which only its
+// ToPropertyDescriptor reads, as a truth value.
+const isDescriptorAttribute = (node: ts.Expression, context: Context) => {
+  const property = node.parent;
+  const call = property.parent?.parent;
+  return (
+    ts.isPropertyAssignment(property) &&
+    call !== undefined &&
+    ts.isCallExpression(call) &&
+    call.arguments[2] === property.parent &&
+    ts.isPropertyAccessExpression(call.expression) &&
+    call.expression.name.text === "defineProperty" &&
+    ["Object", "Reflect"].includes(getBuiltIn(call.expression.expression, context) ?? "")
+  );
+};
+
+// The primitive that a cast from unknown or any gives a value, which nothing checked, so that the
+// value may be an object, whose conversion to that primitive would run code, or which an operator
+// on a boolean would misread.
+const getUnverifiedPrimitive = (node: ts.Expression, context: Context) => {
+  // A key converts to a property key, which an index reads from any primitive.
+  if (
+    (!ts.isAsExpression(node) && !ts.isTypeAssertionExpression(node)) ||
+    (ts.isElementAccessExpression(node.parent) && node.parent.argumentExpression === node)
+  ) {
+    return undefined;
+  }
+  const source = context.checker.getTypeAtLocation(node.expression).flags;
+  if ((source & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) === 0) return undefined;
+  const target = context.checker.getTypeAtLocation(node).flags;
+  return (target & ts.TypeFlags.NumberLike) !== 0
+    ? "number"
+    : (target & ts.TypeFlags.StringLike) !== 0
+      ? "string"
+      : (target & ts.TypeFlags.BooleanLike) !== 0 && !isDescriptorAttribute(node, context)
+        ? "boolean"
+        : (target & ts.TypeFlags.BigIntLike) !== 0
+          ? "bigint"
+          : undefined;
+};
+
 const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Context) => {
   const kind = node.operatorToken.kind;
   const translate = (inner: ts.Expression) => translateExpression(inner, scope, context);
@@ -3104,7 +3145,22 @@ const translateNode = (
     ts.isSatisfiesExpression(node) ||
     ts.isTypeAssertionExpression(node)
   ) {
-    return translateExpression(node.expression, scope, context, isDefined);
+    const value = translateExpression(node.expression, scope, context, isDefined);
+    const primitive = getUnverifiedPrimitive(node, context);
+    return primitive === undefined
+      ? value
+      : share(value, "cast", context, (cast) =>
+          ifExpression(
+            apply("=", [useJavaScript("TypeOf", [cast], context), string(primitive)]),
+            cast,
+            apply("Assert", [
+              boolean(false),
+              string(
+                `tla-ts can't follow a cast that gives a value that isn't a ${primitive} its type`,
+              ),
+            ]),
+          ),
+        );
   }
   if (ts.isNonNullExpression(node)) {
     return translateExpression(node.expression, scope, context, true);

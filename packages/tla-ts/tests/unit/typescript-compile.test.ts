@@ -5474,14 +5474,15 @@ describe("errors", () => {
     });
   });
 
-  it("stops where a cast gives a Date's or a wrapper's argument an object", async () => {
+  it("stops where a Date's or a wrapper's argument holds an object that its type calls a primitive", async () => {
     const converts = async (cast: string, made: string, read: string, expected: string) =>
       (
         await checkModel(`
-          const value = {
+          const raw: any = {
             valueOf() { return 5; },
             toString() { return "x"; },
-          } as unknown as ${cast};
+          };
+          const value: ${cast} = raw;
           const made = ${made};
           if (${read} !== ${expected}) throw new Error("converted");
         `)
@@ -5508,6 +5509,46 @@ describe("errors", () => {
       if (first.getTime() !== 5 || copied.getTime() !== 5) throw new Error("time");
       if (fields.getDate() !== 5) throw new Error("fields");
       if (number.valueOf() !== 7 || string.valueOf() !== "5") throw new Error("wrap");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("stops where a cast from unknown gives a value that isn't a primitive that primitive's type", async () => {
+    const stops = async (source: string) => (await checkModel(source)).failure?.message;
+    const lying = (primitive: string) =>
+      `tla-ts can't follow a cast that gives a value that isn't a ${primitive} its type`;
+    const object = '{ valueOf() { return 5; }, toString() { return "x"; } }';
+    expect(
+      await stops(`
+        const time = ${object} as unknown as number;
+        if (time + 1 !== 6) throw new Error("number");
+      `),
+    ).toContain(lying("number"));
+    expect(
+      await stops(`
+        const text = ${object} as unknown as string;
+        if (\`\${text}!\` !== "x!") throw new Error("string");
+      `),
+    ).toContain(lying("string"));
+    expect(
+      await stops(`
+        const holder = { value: { a: 1 } as unknown };
+        const flag = holder.value as boolean;
+        if (!flag || (flag as unknown) !== holder.value) throw new Error("boolean");
+      `),
+    ).toContain(lying("boolean"));
+    const result = await checkModel(`
+      const parsed = JSON.parse("5") as number;
+      const text = JSON.parse('"a"') as unknown as string;
+      const total = (5 as unknown as number) + 1;
+      const keys: unknown[] = ["1"];
+      const list = ["a", "b"];
+      const count = new Number(-123);
+      const holder = {};
+      Object.defineProperty(holder, "p", { value: 1, configurable: count as unknown as boolean });
+      if (parsed + 1 !== 6 || text + "b" !== "ab" || total !== 6) throw new Error("casts");
+      if (list[keys[0] as number] !== "b") throw new Error("key");
+      if (Object.getOwnPropertyDescriptor(holder, "p")!.configurable !== true) throw new Error("p");
     `);
     expect(result.failure).toBeUndefined();
   });
