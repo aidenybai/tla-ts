@@ -23334,6 +23334,60 @@ describe("buffers", () => {
     ).toContain("tla-ts can't");
   });
 
+  it("stops at a typed array of an array whose iterator a script replaced", async () => {
+    const replaced = "tla-ts can't iterate an array whose iterator a script replaced";
+    const nextReplaced = `
+      const prototype = Object.getPrototypeOf([].values()) as { next: () => IteratorResult<number> };
+      const values = [1, 2];
+      prototype.next = function () {
+        const done = values.length === 0;
+        const value = values.pop();
+        return { value, done } as IteratorResult<number>;
+      };
+    `;
+    expect(
+      (
+        await checkModel(`
+          ${nextReplaced}
+          const made = new Int8Array([0]);
+          if (made.length !== 2 || made[0] !== 2 || made[1] !== 1) throw new Error("next");
+        `)
+      ).failure?.message,
+    ).toContain(replaced);
+    expect(
+      (
+        await checkModel(`
+          ${nextReplaced}
+          const source = [0];
+          const holder = { source };
+          holder.source.push(5);
+          const made = new Int8Array(source);
+          if (made.length !== 2 || made[0] !== 2) throw new Error("next");
+        `)
+      ).failure?.message,
+    ).toContain(replaced);
+    expect(
+      (
+        await checkModel(`
+          const source = [1, 2];
+          Array.prototype[Symbol.iterator] = function* () {
+            yield 7;
+          } as () => ArrayIterator<never>;
+          const made = new Int8Array(source);
+          if (made.length !== 1 || made[0] !== 7) throw new Error("iterator");
+        `)
+      ).failure?.message,
+    ).toContain(replaced);
+    const result = await checkModel(`
+      ${nextReplaced}
+      const like = new Int8Array({ length: 2, 0: 6, 1: 7 } as ArrayLike<number>);
+      const copied = new Int8Array(like);
+      const sized = new Int8Array(3);
+      if (like[1] !== 7 || copied[1] !== 7 || sized.length !== 3) throw new Error("like");
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
   it("stops at a number a typed array's float can't hold exactly", async () => {
     const result = await checkModel(`
       const floats = new Float32Array(1);

@@ -60,6 +60,7 @@ import { TlaTypeScriptError } from "../errors";
 import {
   ARRAY_LIKE_METHODS,
   getHeapRegExpCall,
+  holdsArrayIteration,
   IN_PLACE_METHODS,
   isUnheldSplice,
   translateSpliced,
@@ -2315,6 +2316,7 @@ const translateNewBuffer = (
           prototype,
           translateBuiltInValue("ArrayBuffer.prototype", node, context),
           values,
+          holdsArrayIteration(heap, node, context),
         ],
         context,
       )

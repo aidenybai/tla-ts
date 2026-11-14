@@ -3934,8 +3934,9 @@ LOCAL DataViewMade(heap, prototype, arguments) ==
                                         [] OTHER -> Len(object.bytes) - offset))
 
 \\* The heap with a new typed array of a length, of the elements of an array or a typed array, or
-\\* viewing a buffer.
-LOCAL TypedArrayMade(heap, type, prototype, bufferPrototype, arguments) ==
+\\* viewing a buffer, where isIterating tells whether an array still iterates through the built-in
+\\* iterator and next.
+LOCAL TypedArrayMade(heap, type, prototype, bufferPrototype, arguments, isIterating) ==
   LET argument(position) == IF Len(arguments) >= position THEN arguments[position] ELSE Undefined
       size == ElementSize(type)
       first == argument(1)
@@ -3944,6 +3945,10 @@ LOCAL TypedArrayMade(heap, type, prototype, bufferPrototype, arguments) ==
       withBytes(bytes) ==
         LET allocated == Allocate(heap, BufferObject(bufferPrototype, bytes, Undefined, FALSE))
         IN view(allocated, Allocated(allocated), 0, Len(bytes) \\div size)
+      iterated(bytes) ==
+        IF isIterating
+        THEN withBytes(bytes)
+        ELSE Assert(FALSE, "tla-ts can't iterate an array whose iterator a script replaced")
       object == heap.objects[first[Ref]]
       offset == IndexOfArgument(argument(2))
       length == IF argument(3) = Undefined THEN Undefined ELSE IndexOfArgument(argument(3))
@@ -3961,15 +3966,15 @@ LOCAL TypedArrayMade(heap, type, prototype, bufferPrototype, arguments) ==
             ELSE withBytes(NumbersBytes(type, [position \\in 1..ViewLength(heap, object) |->
                                                  TypedElement(heap, first, position - 1)]))
        [] IsSequenceValue(first) ->
-            withBytes(NumbersBytes(type, [position \\in DOMAIN first |-> ToNumber(first[position])]))
+            iterated(NumbersBytes(type, [position \\in DOMAIN first |-> ToNumber(first[position])]))
        [] ~IsBuffer(heap, first) /\\ IsHeap(first) ->
             LET method == Get(heap, first, WellKnownSymbol("iterator"))
                 count == ToLength(Get(heap, first, "length"))
-            IN IF \\/ method \\in {Undefined, Null}
-                  \\/ IsArray(heap, first) /\\ method = Ref :> "Array.prototype.values"
-               THEN withBytes(NumbersBytes(type, [position \\in 1..count |->
-                                                    ToNumber(Get(heap, first, ToString(position - 1)))]))
-               ELSE Assert(FALSE, "tla-ts can't make a typed array of this object")
+                bytes == NumbersBytes(type, [position \\in 1..count |->
+                                               ToNumber(Get(heap, first, ToString(position - 1)))])
+            IN CASE method \\in {Undefined, Null} -> withBytes(bytes)
+                 [] IsArray(heap, first) /\\ method = Ref :> "Array.prototype.values" -> iterated(bytes)
+                 [] OTHER -> Assert(FALSE, "tla-ts can't make a typed array of this object")
        [] ~IsBuffer(heap, first) -> Assert(FALSE, "tla-ts can't make a typed array of this object")
        [] offset = -1 \\/ offset % size # 0 -> Failed("RangeError")
        [] length = -1 -> Failed("RangeError")
@@ -3994,11 +3999,11 @@ NewDataView(heap, prototype, arguments) == Made(DataViewMade(heap, prototype, ar
 
 NewDataViewError(heap, prototype, arguments) == ErrorOf(DataViewMade(heap, prototype, arguments))
 
-NewTypedArray(heap, type, prototype, bufferPrototype, arguments) ==
-  Made(TypedArrayMade(heap, type, prototype, bufferPrototype, arguments))
+NewTypedArray(heap, type, prototype, bufferPrototype, arguments, isIterating) ==
+  Made(TypedArrayMade(heap, type, prototype, bufferPrototype, arguments, isIterating))
 
-NewTypedArrayError(heap, type, prototype, bufferPrototype, arguments) ==
-  ErrorOf(TypedArrayMade(heap, type, prototype, bufferPrototype, arguments))
+NewTypedArrayError(heap, type, prototype, bufferPrototype, arguments, isIterating) ==
+  ErrorOf(TypedArrayMade(heap, type, prototype, bufferPrototype, arguments, isIterating))
 
 \\* Whether new of a typed array iterates an object through an @@iterator method that a script
 \\* gives, which only statements can call.
@@ -4162,7 +4167,7 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
                 viewing == NewTypedArray(heap, view.elementType, Get(heap, species, "prototype"),
                                       bufferPrototype,
                                       IF isTracking THEN <<view.viewed, begin>>
-                                      ELSE <<view.viewed, begin, count>>)
+                                      ELSE <<view.viewed, begin, count>>, TRUE)
             IN CASE buffer.isDetached -> Thrown(heap, "TypeError")
                  [] begin + (IF isTracking THEN 0 ELSE count * ElementSize(view.elementType))
                       > Len(buffer.bytes) -> Thrown(heap, "RangeError")
