@@ -876,15 +876,24 @@ describe("top-level statements", () => {
     expect((await checkModel(getSource("1:7,1:7,y5"))).failure?.message).toContain("1:7,4:6,y5");
   });
 
-  it("stop the check at a catch's array pattern over a thrown object", async () => {
-    const result = await checkModel(`
+  it("throws a TypeError where a catch's array pattern takes a thrown object", async () => {
+    const getSource = (expected: string) => `
       const box = { size: 1 };
+      let caught = "none";
       try {
-        throw box;
-        // @ts-ignore
-      } catch ([first]) {}
-    `);
-    expect(result.failure?.message).toContain("tla-ts can't destructure an object");
+        try {
+          throw box;
+          // @ts-ignore
+        } catch ([first]) {
+          caught = "destructured";
+        }
+      } catch (error) {
+        caught = error instanceof TypeError ? "TypeError" : "other";
+      }
+      if (caught !== "${expected}") throw new Error(caught);
+    `;
+    expect((await checkModel(getSource("TypeError"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("other"))).failure?.message).toContain("TypeError");
   });
 
   it("take a catch's array pattern from a generator object that the try throws", async () => {
