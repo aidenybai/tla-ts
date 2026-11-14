@@ -683,6 +683,97 @@ interface HeapWrite {
   key: Expression;
 }
 
+// Whether anything that tla-ts translates may run a collection's method that a script replaces at
+// the top level. Only the adder qualifies, as the methods of sets read has, keys, and size of the
+// sets they take. The adder may run where a construction from an iterable runs after the write, or
+// where the script reads the adder from a collection or a value of any type, or reaches the
+// collection other than to construct one, to test instances, to write the adder, or to keep the
+// original adder in a constant before the write.
+const isCollectionMethodRun = (write: ts.PropertyAccessExpression, context: Context) => {
+  const prototype = write.expression;
+  const collection = ts.isPropertyAccessExpression(prototype)
+    ? getBuiltIn(prototype.expression, context)
+    : undefined;
+  const key = write.name.text;
+  if (key !== (collection === "Set" || collection === "WeakSet" ? "add" : "set")) return true;
+  const isTopLevel = (node: ts.Node) =>
+    ts.findAncestor(
+      node.parent,
+      (ancestor) =>
+        ts.isFunctionLike(ancestor) ||
+        ts.isClassLike(ancestor) ||
+        ts.isIterationStatement(ancestor, false),
+    ) === undefined;
+  const isWritten = (node: ts.Node) =>
+    ts.isBinaryExpression(node.parent) &&
+    node.parent.left === node &&
+    node.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken;
+  // A write of the adder, or a constant that keeps the original before the write.
+  const isAdderKept = (node: ts.Node) =>
+    isTopLevel(node) &&
+    (isWritten(node) ||
+      (ts.isVariableDeclaration(node.parent) &&
+        node.parent.initializer === node &&
+        ts.isIdentifier(node.parent.name) &&
+        (ts.getCombinedNodeFlags(node.parent) & ts.NodeFlags.Const) !== 0 &&
+        node.getStart() < write.getStart()));
+  const isAdderUse = (node: ts.Node) =>
+    ts.isPropertyAccessExpression(node.parent) &&
+    node.parent.name.text === "prototype" &&
+    ts.isPropertyAccessExpression(node.parent.parent) &&
+    node.parent.parent.name.text === key &&
+    isAdderKept(node.parent.parent);
+  const isCollectionUse = (node: ts.Node) =>
+    ts.isIdentifier(node) &&
+    getBuiltIn(node, context) === collection &&
+    !(ts.isNewExpression(node.parent) && node.parent.expression === node) &&
+    !(
+      ts.isBinaryExpression(node.parent) &&
+      node.parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
+      node.parent.right === node
+    ) &&
+    !isAdderUse(node);
+  // A read of a property that leads from a value to its prototype, other than a constructor that
+  // only an equality compares, or of the adder, or of a key that may be the adder, from a
+  // collection or a value of any type.
+  const isAdderRead = (node: ts.Node) => {
+    if (!ts.isPropertyAccessExpression(node) && !ts.isElementAccessExpression(node)) return false;
+    const type = context.checker.getTypeAtLocation(node.expression);
+    const name = ts.isPropertyAccessExpression(node)
+      ? node.name.text
+      : ts.isStringLiteralLike(node.argumentExpression) ||
+          ts.isNumericLiteral(node.argumentExpression)
+        ? node.argumentExpression.text
+        : undefined;
+    return (
+      ["getPrototypeOf", "__proto__"].some((reach) => reach === name) ||
+      (name === "constructor" &&
+        !(
+          ts.isBinaryExpression(node.parent) &&
+          [
+            ts.SyntaxKind.EqualsEqualsEqualsToken,
+            ts.SyntaxKind.ExclamationEqualsEqualsToken,
+          ].includes(node.parent.operatorToken.kind)
+        )) ||
+      ((name === undefined || name === key) &&
+        !isAdderKept(node) &&
+        ((type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+          type.getSymbol()?.name === collection))
+    );
+  };
+  const isRun = (node: ts.Node): boolean =>
+    !ts.isTypeReferenceNode(node) &&
+    !ts.isTypeQueryNode(node) &&
+    (isCollectionUse(node) ||
+      isAdderRead(node) ||
+      (ts.isNewExpression(node) &&
+        getBuiltIn(node.expression, context) === collection &&
+        (node.arguments ?? []).length > 0 &&
+        (!isTopLevel(node) || node.getStart() > write.getStart())) ||
+      (ts.forEachChild(node, isRun) ?? false));
+  return !isTopLevel(write) || isRun(write.getSourceFile());
+};
+
 const getHeapWrite = (node: ts.Expression, path: Path, context: Context): HeapWrite | undefined => {
   if (!ts.isPropertyAccessExpression(node) && !ts.isElementAccessExpression(node)) return undefined;
   if (ts.isPropertyAccessExpression(node) && ts.isPrivateIdentifier(node.name)) return undefined;
@@ -691,7 +782,8 @@ const getHeapWrite = (node: ts.Expression, path: Path, context: Context): HeapWr
   if (
     ts.isPropertyAccessExpression(receiver) &&
     receiver.name.text === "prototype" &&
-    COLLECTIONS.some((collection) => collection === getBuiltIn(receiver.expression, context))
+    COLLECTIONS.some((collection) => collection === getBuiltIn(receiver.expression, context)) &&
+    (!ts.isPropertyAccessExpression(node) || isCollectionMethodRun(node, context))
   ) {
     throw new TlaTypeScriptError("tla-ts can't replace a collection's methods", node);
   }

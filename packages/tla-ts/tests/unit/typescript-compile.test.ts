@@ -26907,7 +26907,7 @@ ${call}
     expect(result.failure).toBeUndefined();
   });
 
-  it("rejects a script that assigns a collection's method", () => {
+  it("rejects a script that assigns a collection's method that a construction then calls", () => {
     expect(() =>
       compile(`
         const holder = {};
@@ -26915,8 +26915,46 @@ ${call}
         WeakSet.prototype.add = function (value) {
           return add.call(this, value);
         };
+        const made = new WeakSet([holder]);
       `),
     ).toThrow("tla-ts can't replace a collection's methods");
+  });
+
+  it("rejects a script that reaches a set's replaced add through another path", () => {
+    const getSource = (call: string) => `
+      const box = { size: 0 };
+      const made = new Set([1]);
+      Set.prototype.add = function (this: Set<number>, ...rest: [number]) {
+        box.size++;
+        return this;
+      };
+      ${call};
+    `;
+    expect(() => compile(getSource("Set.prototype.add.call(made, 2)"))).toThrow(
+      "tla-ts can't replace a collection's methods",
+    );
+    expect(() =>
+      compile(getSource("const proto: any = Object.getPrototypeOf(made); proto.add(2)")),
+    ).toThrow("tla-ts can't replace a collection's methods");
+  });
+
+  it("replaces a set's add that nothing then calls, as union doesn't", async () => {
+    const getSource = (expected: number) => `
+      const box = { size: 0 };
+      const s1 = new Set([1, 2]);
+      const s2 = new Set([3]);
+      const originalAdd = Set.prototype.add;
+      let count = 0;
+      Set.prototype.add = function (this: Set<number>, ...rest: [number]) {
+        count++;
+        return originalAdd.apply(this, rest);
+      };
+      const combined = s1.union(s2);
+      if (combined.size !== ${expected} || count !== 0) throw new Error("union");
+      Set.prototype.add = originalAdd;
+    `;
+    expect((await checkModel(getSource(3))).failure).toBeUndefined();
+    expect((await checkModel(getSource(2))).failure?.message).toContain("union");
   });
 
   it("evaluates the operand of void and gives undefined", async () => {
