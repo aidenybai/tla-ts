@@ -11197,17 +11197,31 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
-  it("names a function's model value so that TLC doesn't type it", async () => {
-    const result = await checkModel(`
+  describe("names a function's model value so that TLC doesn't type it", () => {
+    const getConstructed = (expected: string) => `
       function __make(this: { [key: string]: unknown }, value: string, ...rest: unknown[]) {
         this.value = value;
         return true;
         this.extra = arguments[1];
       }
       const made = new (__make as unknown as new (...args: unknown[]) => { value: string })("x", "y");
-      if (made.value !== "x") throw new Error("made");
-    `);
-    expect(result.failure?.message).toContain("tla-ts can't");
+      if (made.value !== "${expected}") throw new Error("made");
+    `;
+    const getRead = (name: string) => `
+      const holder = { seen: 0 };
+      const __make = (value: string) => value;
+      if (__make.length !== 1 || __make.name !== "${name}") throw new Error("read");
+    `;
+
+    it("constructs the instance that a returned primitive leaves, as Node does", async () => {
+      expect((await checkModel(getConstructed("x"))).failure).toBeUndefined();
+      expect((await checkModel(getConstructed("y"))).failure?.message).toContain("made");
+    });
+
+    it("reads the properties of a function whose name has _ second", async () => {
+      expect((await checkModel(getRead("__make"))).failure).toBeUndefined();
+      expect((await checkModel(getRead("_make"))).failure?.message).toContain("read");
+    });
   });
 
   it("assigns a constructor's parameter properties before its body runs", async () => {
