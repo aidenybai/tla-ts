@@ -3015,11 +3015,12 @@ const STORED_ARRAY_CHANGES = new Set(["push", "pop", "shift", "unshift", "revers
 export const getArrayLikeChange = (node: ts.CallExpression, context: Context) => {
   const method = getArrayMethodCall(node, context);
   const object = node.arguments.at(0);
-  // reverse and copyWithin give the object, whose type the call's says is an array, so only a
-  // statement drops it.
+  // reverse, copyWithin, and fill give the object, whose type the call's says is an array, so only
+  // a statement drops it.
   return method !== undefined &&
-    (STORED_ARRAY_CHANGES.has(method) || method === "copyWithin") &&
-    (!["reverse", "copyWithin"].includes(method) || ts.isExpressionStatement(node.parent)) &&
+    (STORED_ARRAY_CHANGES.has(method) || method === "copyWithin" || method === "fill") &&
+    (!["reverse", "copyWithin", "fill"].includes(method) ||
+      ts.isExpressionStatement(node.parent)) &&
     object !== undefined &&
     getKind(object, context) === "object" &&
     !node.arguments.some(ts.isSpreadElement)

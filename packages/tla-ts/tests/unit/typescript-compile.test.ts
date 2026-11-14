@@ -26109,4 +26109,34 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("ab,b,1"))).failure?.message).toContain("ab,b,0");
     });
   });
+
+  describe("fills an array-like object, whose length may pass 2^31", () => {
+    const getSource = (expected: string) => `
+      const max = Number.MAX_SAFE_INTEGER;
+      const long: { [key: string]: unknown } = { length: max };
+      Array.prototype.fill.call(long, "v", max - 3, max - 1);
+      const short: { [key: string]: unknown } = { 0: "a", 1: "b", 2: "c", length: 3 };
+      Array.prototype.fill.call(short, "z", -2);
+      const locked: { [key: string]: unknown } = { length: 2 };
+      Object.defineProperty(locked, "1", { value: "kept", writable: false });
+      let caught = "none";
+      try {
+        Array.prototype.fill.call(locked, "w");
+      } catch (error) {
+        caught = error instanceof TypeError ? "type" : "other";
+      }
+      const read = [long[max - 3], long[max - 2], max - 1 in long, short[0], short[1], short[2], locked[0], locked[1], caught].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("v,v,false,a,z,z,w,kept,type"))).failure).toBeUndefined();
+    });
+
+    it("rejects the failed write as allowed", async () => {
+      expect((await checkModel(getSource("v,v,false,a,z,z,w,w,none"))).failure?.message).toContain(
+        "v,v,false,a,z,z,w,kept,type",
+      );
+    });
+  });
 });

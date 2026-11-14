@@ -5364,6 +5364,22 @@ LOCAL LongIndex(value, length) ==
            [] OTHER -> Add(length, value)
     [] OTHER -> Assert(FALSE, "tla-ts can't use this index of an array-like object")
 
+\\* fill on an array-like object that the heap holds, which writes the value at each index from start
+\\* to end, and throws a TypeError where a write fails.
+ArrayLikeFill(heap, ref, value, start, end) ==
+  LET raw == Get(heap, ref, "length")
+      length == IF IsLong(raw) THEN LongLength(raw) ELSE ToLength(raw)
+      first == LongIndex(start, length)
+      final == IF end = Undefined THEN length ELSE LongIndex(end, length)
+      count == IF LessThan(first, final) THEN Subtract(final, first) ELSE 0
+  IN CASE ~IsHeap(ref) \\/ IsProxy(heap, ref) \\/ IsTypedArray(heap, ref) \\/ heap.objects[ref[Ref]].isOpaque ->
+            Assert(FALSE, "tla-ts can't fill this object")
+       [] IsBig(count) -> Assert(FALSE, "tla-ts can't fill this many elements")
+       [] OTHER ->
+            LET state == LongSets([heap |-> heap, isThrown |-> FALSE], ref, first,
+                                  [position \\in 1..count |-> value])
+            IN [heap |-> state.heap, value |-> ref, isThrown |-> state.isThrown]
+
 \\* slice of an array-like object whose length is past 2^31, which gives the elements from start to
 \\* end where the object or its prototypes hold each.
 LongSlice(heap, ref, start, end) ==

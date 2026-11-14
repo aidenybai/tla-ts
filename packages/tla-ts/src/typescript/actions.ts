@@ -2290,20 +2290,35 @@ const translateCallStatementBody = (
               ],
               context,
             )
-          : useJavaScript(
-              "ArrayChange",
-              [
-                heap,
-                ref,
-                string(arrayLikeChange.method),
-                tuple(
-                  arrayLikeChange.items.map((item) =>
-                    translateExpression(item, path.scope, context),
+          : arrayLikeChange.method === "fill"
+            ? useJavaScript(
+                "ArrayLikeFill",
+                [
+                  heap,
+                  ref,
+                  ...[0, 1, 2].map((position) => {
+                    const item = arrayLikeChange.items.at(position);
+                    return item === undefined
+                      ? getUndefined(context)
+                      : translateExpression(item, path.scope, context);
+                  }),
+                ],
+                context,
+              )
+            : useJavaScript(
+                "ArrayChange",
+                [
+                  heap,
+                  ref,
+                  string(arrayLikeChange.method),
+                  tuple(
+                    arrayLikeChange.items.map((item) =>
+                      translateExpression(item, path.scope, context),
+                    ),
                   ),
-                ),
-              ],
-              context,
-            ),
+                ],
+                context,
+              ),
       ifThenElse(
         field(change, "isThrown"),
         throwTypeError(withHeap(field(change, "heap")), expression, context, frame),
