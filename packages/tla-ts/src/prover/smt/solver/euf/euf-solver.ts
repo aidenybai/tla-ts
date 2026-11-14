@@ -580,7 +580,9 @@ export class EufSolver implements SatExtension {
 
   getThAntecedents(explain: ThExplain, antecedents: number[]) {
     for (const lit of explain.lits) antecedents.push(lit);
-    for (const eq of explain.eqs) this.egraph.explainEq(this.explanation, eq[0], eq[1]);
+    for (const eq of explain.eqs)
+      if (eq[0].owner > eq[1].owner) this.egraph.explainEq(this.explanation, eq[1], eq[0]);
+      else this.egraph.explainEq(this.explanation, eq[0], eq[1]);
   }
 
   explainDiseq(justifications: number[], first: Enode, second: Enode) {
