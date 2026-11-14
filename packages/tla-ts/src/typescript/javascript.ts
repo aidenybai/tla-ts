@@ -3200,10 +3200,12 @@ DefineAccessor(object, key, field, function, isEnumerable) ==
 
 LOCAL IsArrayObject(object) == "isArray" \\in DOMAIN object /\\ object.isArray
 
-\\* IsArray, which reads a proxy's target, where an array outside the heap is a sequence.
+\\* IsArray, which reads a proxy's target, where an array outside the heap is a sequence. The global
+\\* object is an ordinary object.
 RECURSIVE IsArray(_, _)
 IsArray(heap, value) ==
-  CASE IsProxy(heap, value) ->
+  CASE IsRef(value) /\\ value = GlobalObject -> FALSE
+    [] IsProxy(heap, value) ->
          IF ProxyHandler(heap, value) = Null
          THEN Assert(FALSE, "tla-ts can't throw the TypeError of a revoked proxy here")
          ELSE LET target == ProxyTarget(heap, value)

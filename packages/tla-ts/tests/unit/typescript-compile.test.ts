@@ -13362,6 +13362,22 @@ describe("errors", () => {
     });
   });
 
+  describe("tells that the global object isn't an array", () => {
+    const getSource = (expected: string) => `
+      const holder = { seen: 0 };
+      if (Array.isArray(globalThis) !== ${expected}) throw new Error("array");
+      holder.seen = 1;
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("false"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("true"))).failure?.message).toContain('"array"');
+    });
+  });
+
   describe("names an anonymous function by a comma, a static field, or a shorthand default", () => {
     const getSource = (expected: string) => `
       const holder = { seen: 0 };
