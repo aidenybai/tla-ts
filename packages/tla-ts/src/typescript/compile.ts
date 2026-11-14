@@ -6,7 +6,9 @@ import {
   createContext,
   findNodes,
   getCallee,
+  getFunction,
   getSymbol,
+  getTopLevelDeclaration,
   isInertValue,
   isScript,
 } from "./context";
@@ -367,6 +369,15 @@ export const compile = (
     node.kind === ts.SyntaxKind.AsyncKeyword ||
     isHoleyArray(node) ||
     isThrownArray(node) ||
+    // A function that a script holds as a value, such as an array's element or an operand, which
+    // only a model value on the heap can be.
+    (ts.isIdentifier(node) &&
+      (ts.isArrayLiteralExpression(node.parent) ||
+        ts.isBinaryExpression(node.parent) ||
+        ts.isPrefixUnaryExpression(node.parent) ||
+        ts.isConditionalExpression(node.parent) ||
+        (ts.isVariableDeclaration(node.parent) && node.parent.initializer === node)) &&
+      getFunction(getTopLevelDeclaration(getSymbol(node, context.checker))) !== undefined) ||
     isPrototypeArray(node) ||
     getKeptIterator(node, context) !== undefined ||
     getWrappedThis(node, context) !== undefined ||

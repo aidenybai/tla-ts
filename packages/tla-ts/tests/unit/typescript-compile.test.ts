@@ -11450,6 +11450,20 @@ describe("errors", () => {
     });
   });
 
+  it("holds a function as a value where the script makes no objects", async () => {
+    const getSource = (index: number) => `
+      function __make(value: string) { return value; }
+      const make = (value: string) => value + "b";
+      const values: unknown[] = ["a", __make, make];
+      const alias = make;
+      if (values[${index}] !== __make || values[2] === __make || !make || alias("a") !== "ab") {
+        throw new Error("held");
+      }
+    `;
+    expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    expect((await checkModel(getSource(2))).failure?.message).toContain("held");
+  });
+
   it("assigns a constructor's parameter properties before its body runs", async () => {
     const getSource = (keys: string, extra: number) => `
       class Base {
