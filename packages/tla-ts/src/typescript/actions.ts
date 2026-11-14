@@ -383,7 +383,6 @@ import {
   isNullishArrayMethodCall,
   getArrayMethodCall,
 } from "./types";
-import { getReached } from "./aliasing";
 
 export interface Path {
   scope: Scope;
@@ -4288,12 +4287,43 @@ const isSelfCallable = (
   );
 };
 
+// The declarations that a function's body names, and those that the functions it may call name. It
+// enters only a declaration that may hold a function, as a call runs no other's initializer.
+const getCalledReach = (body: ts.Node, context: Context) => {
+  const reached: ts.Node[] = [];
+  const seen = new Set<ts.Node>();
+  const isHoldingFunction = (declaration: ts.Node) =>
+    ts.isFunctionLike(declaration) ||
+    ts.isClassLike(declaration) ||
+    ((ts.isVariableDeclaration(declaration) ||
+      ts.isParameter(declaration) ||
+      ts.isBindingElement(declaration) ||
+      ts.isPropertyAssignment(declaration) ||
+      ts.isPropertyDeclaration(declaration)) &&
+      context.checker.getTypeAtLocation(declaration).getCallSignatures().length > 0);
+  const visit = (node: ts.Node): void => {
+    if (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) return;
+    const declarations = ts.isIdentifier(node)
+      ? (getSymbol(node, context.checker)?.declarations ?? [])
+      : [];
+    for (const declaration of declarations) {
+      if (seen.has(declaration) || declaration.getSourceFile().isDeclarationFile) continue;
+      seen.add(declaration);
+      reached.push(declaration);
+      if (isHoldingFunction(declaration)) visit(declaration);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(body);
+  return reached;
+};
+
 // Whether a function may call itself, through the functions that it names. A local one may read the
 // locals of a function around it, which a call runs it with only where it binds them all.
 const isCallingItself = (callee: FunctionNode, path: Path, context: Context) => {
   const declaration = ts.isVariableDeclaration(callee.parent) ? callee.parent : callee;
   if (callee.body === undefined) return false;
-  const reached = getReached([callee.body], context);
+  const reached = getCalledReach(callee.body, context);
   // A function declaration, or a const that holds a function, is the same function at each call.
   const getFixedFunction = (node: ts.Node) =>
     ts.isFunctionDeclaration(node)

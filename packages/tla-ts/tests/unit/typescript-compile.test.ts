@@ -4419,6 +4419,19 @@ describe("calls", () => {
     );
   });
 
+  it("runs a function that calls itself through the function that a factory returns", async () => {
+    const getSource = (expected: number) => `
+      const make = () => (count: number): number => (count > 0 ? 2 + step(count - 1) : 0);
+      const run = make();
+      function step(count: number): number {
+        return run(count);
+      }
+      if (step(3) !== ${expected}) throw new Error("step");
+    `;
+    expect((await checkModel(getSource(6))).failure).toBeUndefined();
+    await expect(checkModel(getSource(5))).rejects.toThrow('"step"');
+  });
+
   it("runs a local function that calls itself as one operator, which reads the locals around it", async () => {
     const getSource = (cases: number, expected: string) => {
       const kinds = Array.from({ length: cases }, (_, position) => `K${position}`);
