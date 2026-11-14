@@ -19,6 +19,7 @@ import { translateBody } from "./functions";
 import {
   findChangedArrays,
   findHeapArrays,
+  isArrayLengthening,
   isHoleyArray,
   isThrownArray,
   isPrototypeArray,
@@ -408,6 +409,7 @@ export const compile = (
     node.kind === ts.SyntaxKind.AsyncKeyword ||
     isHoleyArray(node, context) ||
     isThrownArray(node) ||
+    isArrayLengthening(node, context) ||
     // The indices of a match, which are arrays inside an array.
     (ts.isPropertyAccessExpression(node) &&
       node.name.text === "indices" &&

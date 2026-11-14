@@ -4693,7 +4693,7 @@ describe("calls", () => {
     expect((await checkModel(getSource("1,2"))).status).toBe("invariant-violation");
   });
 
-  it("truncates an array whose length a script sets, and stops where it would leave holes", async () => {
+  it("truncates an array whose length a script sets", async () => {
     const result = await checkModel(`
       const x = [1, 2, 3, 4];
       x.length = 2;
@@ -4704,7 +4704,28 @@ describe("calls", () => {
         arr.length = 2;
       });
       if (x.join(",") !== "1,2" || visited !== 3) throw new Error("truncated");
-      x.length = 3;
+    `);
+    expect(result.failure).toBeUndefined();
+  });
+
+  it("lengthens an array whose length a script sets, which holds holes", async () => {
+    const getSource = (expected: number) => `
+      const x: number[] = [];
+      x.length = 1;
+      x[5] = 1;
+      x.length = 10;
+      if (x.length !== ${expected} || x[5] !== 1 || 0 in x) throw new Error("lengthened");
+    `;
+    expect((await checkModel(getSource(10))).failure).toBeUndefined();
+    expect((await checkModel(getSource(6))).failure?.message).toContain("lengthened");
+  });
+
+  it("stops where a model lengthens an array, which can't hold holes", async () => {
+    const result = await checkModel(`
+      let values: number[] = [3];
+      export const step = () => {
+        values.length = 2;
+      };
     `);
     expect(result.failure?.message).toContain("tla-ts can't lengthen an array");
   });

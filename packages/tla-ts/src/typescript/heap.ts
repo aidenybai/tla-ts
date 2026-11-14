@@ -4827,6 +4827,21 @@ export const getMapCall = (node: ts.CallExpression, context: Context) => {
     : { receiver, callback, isCall };
 };
 
+// A write of an array's length that may lengthen it, which leaves holes that only an object holds.
+// Setting it to 0 only empties it.
+export const isArrayLengthening = (node: ts.Node, context: Context) =>
+  ts.isBinaryExpression(node) &&
+  node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+  node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+  ts.isPropertyAccessExpression(node.left) &&
+  node.left.name.text === "length" &&
+  !(
+    node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isNumericLiteral(node.right) &&
+    node.right.text === "0"
+  ) &&
+  context.checker.isArrayType(context.checker.getTypeAtLocation(node.left.expression));
+
 export const findHeapArrays = (
   roots: readonly ts.Node[],
   changed: readonly ts.Node[],
@@ -5000,6 +5015,7 @@ export const findHeapArrays = (
         (use) =>
           isNamedWrite(use) ||
           isElementDelete(use) ||
+          isArrayLengthening(use.parent.parent, context) ||
           isPatternResult(use) ||
           getKeptIterator(use.parent.parent, context) !== undefined ||
           getIteratedArray(use.parent, context) === use ||
