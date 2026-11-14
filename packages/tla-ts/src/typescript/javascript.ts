@@ -4951,6 +4951,14 @@ WithOrderedCollectionData(heap, ref, data, isMap) ==
                       [] Cardinality(added) = 1 -> Append(kept, CHOOSE key \\in added : TRUE)
                       [] OTHER -> Assert(FALSE, "tla-ts can't tell the order of this collection's keys")]
 
+\\* The order of the keys that Set.prototype's union, intersection, difference, or
+\\* symmetricDifference gives them in, from the keys of the set it runs on and those that the other
+\\* collection's keys gives. intersection iterates the smaller of the two.
+SetMethodOrder(method, keys, otherKeys) ==
+  CASE method = "intersection" -> IF Len(keys) <= Len(otherKeys) THEN keys ELSE otherKeys
+    [] method = "difference" -> keys
+    [] OTHER -> keys \\o otherKeys
+
 \\* What an ordered set's or map's keys, values, or entries method iterates, in the order of its keys,
 \\* where a set's value is its key.
 OrderedValues(heap, ref, isMap, method) ==

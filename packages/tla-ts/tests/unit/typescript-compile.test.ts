@@ -28362,6 +28362,34 @@ describe("buffers", () => {
     );
   });
 
+  it("gives the keys of a set method's set in the order that the method adds them", async () => {
+    const getSource = (expected: string) => `
+      const a = new Set<number>([3, 1, 2]);
+      const b = new Set<number>([5, 2, 4, 3]);
+      const m = new Map<number, string>([[4, "x"], [1, "y"]]);
+      const union = a.union(b);
+      union.add(9);
+      const result = [
+        [...union].join("-"),
+        [...a.intersection(b)].join("-"),
+        [...b.intersection(a)].join("-"),
+        [...a.difference(b)].join("-"),
+        [...a.symmetricDifference(b)].join("-"),
+        [...b.symmetricDifference(m)].join("-"),
+        [...a.union(m)].join("-"),
+        a.union(b).size,
+        a.intersection(b) instanceof Set,
+      ].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "3-1-2-5-4-9,3-2,3-2,1,1-5-4,5-2-3-1,3-1-2-4,5,true";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("3-1-2-5-4-9,3-2,2-3,1,1-5-4,5-2-1-3,3-1-2-4,5,true"))).failure
+        ?.message,
+    ).toContain(expected);
+  });
+
   it("stops at iterating a set whose iterator a script replaced", async () => {
     const result = await checkModel(`
       const set = new Set<number>([1, 2]);

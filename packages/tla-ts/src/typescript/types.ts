@@ -460,7 +460,11 @@ export const getHolders = (node: ts.Expression, checker: ts.TypeChecker) => {
 export const isHeapSetOrMap = (node: ts.Expression, context: Context) => {
   if (context.heapCollections.size === 0) return false;
   const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(node));
-  return (isSetType(type) || isMapType(type)) && isHeld(node, context);
+  // A set that a set method makes, which the heap holds as it makes it.
+  return (
+    (isSetType(type) || isMapType(type)) &&
+    (context.heapCollections.has(node) || isHeld(node, context))
+  );
 };
 
 export const isHeapArray = (node: ts.Expression, context: Context) => {

@@ -81,7 +81,10 @@ import {
   translateElements,
   translateCondition,
   translateCall,
+  SET_METHODS,
   translateExpression,
+  translateNode,
+  translateOrderedValues,
   translateToString,
 } from "./expressions";
 import {
@@ -147,6 +150,7 @@ import {
   isBigIntLike,
   getWrappedThis,
   getCollection,
+  isHeapSetOrMap,
   isOrderedCollection,
 } from "./types";
 
@@ -1677,6 +1681,58 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
       context,
     );
   }
+  // A set that a set method makes keeps the order that the method adds its keys in.
+  const setMethod = context.heapCollections.has(node)
+    ? getOrderedSetMethod(node, context)
+    : undefined;
+  if (ts.isCallExpression(node) && setMethod !== undefined) {
+    const other = setMethod.other;
+    if (!isHeapSetOrMap(setMethod.receiver, context) || !isHeapSetOrMap(other, context)) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't tell the order of what this set method gives",
+        node,
+      );
+    }
+    return useJavaScript(
+      "Allocate",
+      [
+        heap,
+        useJavaScript(
+          "OrderedCollectionObject",
+          [
+            translateBuiltInValue("Set.prototype", node, context),
+            translateCall(node, scope, context, false),
+            useJavaScript(
+              "SetMethodOrder",
+              [
+                string(setMethod.method),
+                useJavaScript(
+                  "OrderedValues",
+                  [
+                    heap,
+                    translateNode(setMethod.receiver, scope, context, false),
+                    boolean(false),
+                    string("keys"),
+                  ],
+                  context,
+                ),
+                translateOrderedValues(
+                  { receiver: other, method: "keys" },
+                  heap,
+                  translateNode(other, scope, context, false),
+                  context,
+                ),
+              ],
+              context,
+            ),
+            boolean(false),
+          ],
+          context,
+        ),
+      ],
+      context,
+    );
+  }
   // A new array that a built-in call makes, as the call's sequence.
   if (ts.isCallExpression(node) && context.heapCollections.has(node)) {
     const prototype = translateBuiltInValue("Array.prototype", node, context);
@@ -2127,6 +2183,23 @@ export const translateAllocatedValue = (
         )
       : useJavaScript("NewestSymbol", [heap], context)
     : useJavaScript("Allocated", [heap], context);
+
+// A call of Set.prototype's union, intersection, difference, or symmetricDifference that gives a
+// set that keeps its order.
+const getOrderedSetMethod = (node: ts.Node, context: Context) =>
+  isMethodCall(node) &&
+  ["union", "intersection", "difference", "symmetricDifference"].includes(
+    node.expression.name.text,
+  ) &&
+  node.arguments.length === 1 &&
+  getKind(node.expression.expression, context) === "set" &&
+  isOrderedCollection(node, context)
+    ? {
+        receiver: node.expression.expression,
+        method: node.expression.name.text,
+        other: node.arguments[0],
+      }
+    : undefined;
 
 export const isAllocation = (node: ts.Node, context: Context) =>
   getBinding(node, context) !== undefined ||
@@ -3832,7 +3905,11 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       );
     };
     const addSource = (node: ts.Expression): boolean => {
-      if (isFreshCollection(node, context) || isNewArrayOfElements(node, context)) {
+      if (
+        isFreshCollection(node, context) ||
+        isNewArrayOfElements(node, context) ||
+        getOrderedSetMethod(node, context) !== undefined
+      ) {
         nodes.push(node);
         return true;
       }
@@ -3972,6 +4049,15 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         return parent.left === use ? addSource(parent.right) : addHolder(parent.left);
       }
       if (ts.isNonNullExpression(parent)) return isUse(parent);
+      // A set method reads the set or the map that it takes.
+      if (
+        isMethodCall(parent) &&
+        parent.arguments[0] === use &&
+        SET_METHODS.has(parent.expression.name.text) &&
+        getKind(parent.expression.expression, context) === "set"
+      ) {
+        return true;
+      }
       // Array.from copies what iterating its argument gives.
       if (
         ts.isCallExpression(parent) &&
@@ -4004,6 +4090,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
               (method !== "forEach" ||
                 !isOrderedCollection(use, context) ||
                 addCallbackArray(call, method, use))) ||
+              SET_METHODS.has(method) ||
               ["delete", "clear"].includes(method) ||
               (["add", "set"].includes(method) && isDiscarded(call))))
         );
@@ -4548,6 +4635,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       isReachedNode(node) &&
       !found.has(node) &&
       (isNewSubclassCollection(node, context) ||
+        getOrderedSetMethod(node, context) !== undefined ||
         (ts.isNewExpression(node) &&
           isFreshCollection(node, context) &&
           isOrderedCollection(node, context)))

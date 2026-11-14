@@ -3200,6 +3200,17 @@ export const translateExpression = (
   );
 };
 
+// The methods of Set.prototype that take another set or map.
+export const SET_METHODS = new Set([
+  "union",
+  "intersection",
+  "difference",
+  "symmetricDifference",
+  "isSubsetOf",
+  "isSupersetOf",
+  "isDisjointFrom",
+]);
+
 // Whether an expression gives a set or a map that the heap holds where a script reads its value,
 // rather than passes it on or changes it.
 const isSetOrMapRead = (node: ts.Expression, context: Context) => {
@@ -3211,7 +3222,11 @@ const isSetOrMapRead = (node: ts.Expression, context: Context) => {
     (ts.isForOfStatement(parent) && parent.expression === node) ||
     ts.isSpreadElement(parent) ||
     (ts.isNewExpression(parent) &&
-      ["Set", "Map"].includes(getBuiltIn(parent.expression, context) ?? ""));
+      ["Set", "Map"].includes(getBuiltIn(parent.expression, context) ?? "")) ||
+    (isMethodCall(parent) &&
+      parent.arguments[0] === node &&
+      SET_METHODS.has(parent.expression.name.text) &&
+      getKind(parent.expression.expression, context) === "set");
   return isRead && isHeapSetOrMap(node, context);
 };
 
