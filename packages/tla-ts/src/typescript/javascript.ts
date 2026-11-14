@@ -1718,18 +1718,37 @@ ThrowsOnReceiver(heap, value, receiver) ==
                  IN /\\ DOMAIN object \\ {"isArray", "isArguments"} = DOMAIN EmptyObject
                     /\\ ~object.isOpaque
                     /\\ ~object.isCallable
+         \\* The type of the primitive that a wrapper object holds, or "".
+         wrapped ==
+           IF IsHeap(receiver) /\\ "primitive" \\in DOMAIN heap.objects[receiver[Ref]]
+           THEN TypeOf(heap.objects[receiver[Ref]].primitive)
+           ELSE ""
+         \\* An object without the internal slot a method needs: an ordinary one, a wrapper, or a
+         \\* function, which holds no slot of these but [[Call]].
+         isSlotless(isFunctionHeld) ==
+           \\/ isOrdinary
+           \\/ wrapped # ""
+           \\/ isFunctionHeld /\\ TypeOfIn(heap, receiver) = "function"
      IN \\/ receiver \\in {Undefined, Null} /\\ ThrowsWithoutReceiver(value)
         \\/ /\\ isMethod
-           /\\ \\E name \\in {"Map.prototype", "Set.prototype", "WeakMap.prototype", "WeakSet.prototype",
-                          "WeakRef.prototype", "FinalizationRegistry.prototype", "Function.prototype",
-                          "%GeneratorFunction%.prototype.prototype"} :
-                isUnder(name)
-           /\\ receiver \\in {Undefined, Null} \\/ isPrimitive \\/ isOrdinary
+           /\\ \\/ \\E name \\in {"Map.prototype", "Set.prototype", "WeakMap.prototype",
+                             "WeakSet.prototype", "WeakRef.prototype", "FinalizationRegistry.prototype",
+                             "%GeneratorFunction%.prototype.prototype",
+                             "%RegExpStringIteratorPrototype%"} :
+                   isUnder(name)
+              \\/ path = "Promise.prototype.then"
+           /\\ receiver \\in {Undefined, Null} \\/ isPrimitive \\/ isSlotless(TRUE)
+        \\/ /\\ isMethod
+           /\\ isUnder("Function.prototype")
+           /\\ receiver \\in {Undefined, Null} \\/ isPrimitive \\/ isSlotless(FALSE)
         \\/ /\\ isMethod
            /\\ \\E pair \\in {<<"Symbol", "symbol">>, <<"BigInt", "bigint">>, <<"Number", "number">>,
                           <<"Boolean", "boolean">>} :
                 /\\ isUnder(pair[1] \\o ".prototype")
-                /\\ (isPrimitive /\\ TypeOf(receiver) # pair[2]) \\/ isOrdinary
+                /\\ \\/ isPrimitive /\\ TypeOf(receiver) # pair[2]
+                   \\/ wrapped \\notin {"", pair[2]}
+                   \\/ isOrdinary
+                   \\/ TypeOfIn(heap, receiver) = "function"
 
 \\* The TypeError that a read throws where it runs %ThrowTypeError% or a getter of a buffer or a view
 \\* on another kind of object, or "".

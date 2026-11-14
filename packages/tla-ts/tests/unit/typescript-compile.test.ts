@@ -25608,4 +25608,47 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("throws the TypeError of a method that call runs on a function or another wrapper", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const toExponential = Number.prototype.toExponential;
+      const valueOf = Symbol.prototype.valueOf;
+      const iterator = Object.getPrototypeOf(/./[Symbol.matchAll](""));
+      const wrapped = new Number(1);
+      const read: string[] = [];
+      const record = (run: () => void) => {
+        try {
+          run();
+          read.push("none");
+        } catch (error) {
+          read.push(error instanceof TypeError ? "type" : "other");
+        }
+      };
+      record(() => {
+        toExponential.call(Number, 1);
+      });
+      record(() => {
+        valueOf.call(wrapped);
+      });
+      record(() => {
+        Promise.prototype.then.call({});
+      });
+      record(() => {
+        iterator.next.call(1);
+      });
+      box.size = read.length;
+      if (read.join() !== "${expected}") throw new Error(read.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("type,type,type,type"))).failure).toBeUndefined();
+    });
+
+    it("rejects a Number object as a symbol", async () => {
+      expect((await checkModel(getSource("type,none,type,type"))).failure?.message).toContain(
+        "type,type,type,type",
+      );
+    });
+  });
 });
