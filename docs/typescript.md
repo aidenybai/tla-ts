@@ -152,12 +152,11 @@ JSDoc tags cover what TypeScript has no syntax for:
 | `@terminating`         | A boolean function             | Stopping where it holds isn't a deadlock           |
 | `@noDeadlock`          | The first statement            | Allow states where no action can run               |
 
-A function that takes `before` reads the state before the step from it, and the variables themselves hold the state after the step.
+A function that takes `before` reads the state before the step from it, and the variables themselves hold the state after the step. A boolean function never needs `@always`. Without parameters, it holds in every state, which TLC checks the same way as `[]P`. With one parameter that holds state variables, as `before: { count: number }` holds `count`, it holds on every step.
 
 Parameters of a temporal property hold for every value of their type. `@leadsTo` passes them to the target.
 
 ```ts
-/** @always */
 export const neverDecreases = (before: { count: number }) => count >= before.count;
 
 /** @leadsTo isServed */

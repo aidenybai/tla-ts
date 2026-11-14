@@ -51,7 +51,6 @@ export const countInvariant = () => {
   return count === totalSwitched - oneIfUp || count === totalSwitched - oneIfUp + 1;
 };
 
-/** @always */
 export const safety = () => !isDone() || Object.values(timesSwitched).every((times) => times > 0);
 
 /** @eventually */
