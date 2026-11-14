@@ -14284,6 +14284,37 @@ describe("errors", () => {
     });
   });
 
+  it("stops where a try could read what a pattern bound before its iterator threw", () => {
+    expect(() =>
+      compile(`
+        "use strict";
+        const log = { text: "", count: 0 };
+        const iterator = {
+          next() {
+            log.count += 1;
+            if (log.count === 2) throw new RangeError("next");
+            return { done: false, value: log.count };
+          },
+        };
+        const iterable: { [key: string | symbol]: unknown } = {
+          [Symbol.iterator]() {
+            return iterator;
+          },
+        };
+        let a: unknown = 0;
+        let b: unknown = 0;
+        try {
+          // @ts-ignore
+          [a, b] = iterable;
+        } catch (error) {
+          log.text += "caught";
+        }
+        log.text += ":" + a + ":" + b;
+        if (log.text !== "caught:1:0") throw new Error(log.text);
+      `),
+    ).toThrow("tla-ts can't destructure this object through its iterator");
+  });
+
   describe("writes a property that a rest element takes from an iterator", () => {
     const getSource = (expected: string) => `
       "use strict";

@@ -156,10 +156,19 @@ const isWritable = (symbol: ts.Symbol) => {
   );
 };
 
+// The nodes between a node and an ancestor, which is undefined for the source file.
+const findAncestors = (node: ts.Node, ancestor: ts.Node | undefined): ts.Node[] =>
+  node.parent === undefined || node.parent === ancestor
+    ? []
+    : [node.parent, ...findAncestors(node.parent, ancestor)];
+
+const isInside = (node: ts.Node, container: ts.Node) =>
+  node.pos >= container.pos && node.end <= container.end;
+
 // A pattern whose elements only bind or assign names, which nothing outside the function that holds
-// the pattern reads, other than a declaration without an initializer. Binding or assigning them can't throw or run code, and the functions of the
-// iterator can't see them, so the pattern can take all its values before it binds them, which
-// JavaScript interleaves.
+// the pattern reads, other than a declaration without an initializer. Binding or assigning them
+// can't throw or run code, and the functions of the iterator can't see them, so the pattern can
+// take all its values before it binds them, which JavaScript interleaves.
 const isPlainPattern = (
   pattern: ts.ArrayBindingPattern | ts.ArrayLiteralExpression,
   context: Context,
@@ -174,7 +183,25 @@ const isPlainPattern = (
   );
   // A name that nothing binds holds nothing that the iterator's functions could read.
   const unresolved = names.filter((name) => name !== undefined && isUnresolved(name, context));
+  // Where the iterator throws, JavaScript has bound the names before it, which a try around the
+  // pattern could read, unless the try's block declares them with let or const.
+  const tries = findAncestors(pattern, owner).filter(
+    (ancestor): ancestor is ts.TryStatement =>
+      ts.isTryStatement(ancestor) && isInside(pattern, ancestor.tryBlock),
+  );
+  const isHidden = tries.every((tryStatement) =>
+    symbols.every((symbol) => {
+      const declaration = symbol.valueDeclaration;
+      return (
+        declaration !== undefined &&
+        ts.isVariableDeclaration(declaration) &&
+        (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.BlockScoped) !== 0 &&
+        isInside(declaration, tryStatement.tryBlock)
+      );
+    }),
+  );
   return (
+    isHidden &&
     symbols.length + unresolved.length === names.length &&
     (ts.isArrayBindingPattern(pattern) || symbols.every(isWritable)) &&
     findNodes(pattern.getSourceFile(), ts.isIdentifier).every((name) => {
