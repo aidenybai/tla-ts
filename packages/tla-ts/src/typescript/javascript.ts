@@ -4650,7 +4650,8 @@ LOCAL CanDefineOn(ref, key, descriptor) ==
                    type \\in {"Int8", "Uint8", "Uint8Clamped", "Int16", "Uint16", "Float16", "Int32",
                             "Uint32", "Float32", "Float64", "BigInt64", "BigUint64"}}
             /\\ TypedKey(key) # "property"
-         \\/ /\\ BuiltInKey(ref) \\in {"Boolean.prototype", "Number.prototype", "String.prototype"}
+         \\/ /\\ BuiltInKey(ref) \\in {"Boolean.prototype", "Number.prototype", "String.prototype",
+                                 "Error.prototype", "Date.prototype", "RegExp.prototype"}
             /\\ ~IsSymbol(key)
             /\\ TypedKey(key) = "property"
             /\\ key \\notin DOMAIN BuiltIns[BuiltInKey(ref)].values

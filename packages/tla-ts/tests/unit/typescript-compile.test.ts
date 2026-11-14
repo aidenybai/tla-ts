@@ -25240,4 +25240,44 @@ describe("BigInts", () => {
     `);
     expect(division.failure?.message).toContain("tla-ts can't throw the RangeError");
   });
+
+  describe("defines an accessor under a new key of Date.prototype and RegExp.prototype", () => {
+    const getSource = (expected: string) => `
+      let data = "data";
+      Object.defineProperty(Date.prototype, "prop", {
+        get: function () {
+          return data;
+        },
+        set: function (value: string) {
+          data = value;
+        },
+        enumerable: true,
+        configurable: true,
+      });
+      Object.defineProperty(RegExp.prototype, "tag", {
+        get: function () {
+          return "regexp";
+        },
+        enumerable: true,
+        configurable: true,
+      });
+      const date = new Date(0) as unknown as { prop: string; hasOwnProperty(key: string): boolean };
+      date.prop = "own";
+      const regexp = new RegExp("a") as unknown as { tag: string };
+      let seen = "";
+      for (const key in regexp) seen += key;
+      const read = [date.hasOwnProperty("prop"), date.prop, data, regexp.tag, seen].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("false,own,own,regexp,tag"))).failure).toBeUndefined();
+    });
+
+    it("rejects the write as an own property", async () => {
+      expect((await checkModel(getSource("true,own,data,regexp,tag"))).failure?.message).toContain(
+        "false,own,own,regexp,tag",
+      );
+    });
+  });
 });
