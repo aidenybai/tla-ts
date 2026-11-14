@@ -26953,6 +26953,18 @@ describe("proxies", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("stops where a proxy changes an array that the heap doesn't hold", async () => {
+    const result = await checkModel(`
+      const getArray = (): number[] => [];
+      const proxy = new Proxy(getArray(), {});
+      Object.defineProperty(proxy, "0", { value: 1 });
+      if (proxy[0] !== 1) throw new Error("defined");
+    `);
+    expect(result.failure?.message).toContain(
+      "tla-ts can't change an object that the heap doesn't hold",
+    );
+  });
+
   it("runs a proxy's getOwnPropertyDescriptor trap and checks the descriptor it gives", async () => {
     const getSource = (expected: number) => `
       const target: { attr?: number; fixed?: number } = { attr: 1 };

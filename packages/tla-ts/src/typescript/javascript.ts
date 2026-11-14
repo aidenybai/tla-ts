@@ -820,6 +820,8 @@ Update(heap, ref, object) ==
   CASE IsHeap(ref) ->
          LET held == IF IsProxy(heap, ref) THEN ProxiedObject(heap, ref) ELSE ref
          IN [heap EXCEPT !.objects[held[Ref]] = object]
+    [] ~IsRef(ref) /\\ TypeOf(ref) = "object" ->
+         Assert(FALSE, "tla-ts can't change an object that the heap doesn't hold")
     [] /\\ BuiltInKey(ref) \\in IteratorPrototypes \\cap DOMAIN BuiltIns
        /\\ \\/ "return" \\in DOMAIN object.values
           \\/ ToString(object.prototype) # ToString(BuiltIns[BuiltInKey(ref)].prototype) ->
