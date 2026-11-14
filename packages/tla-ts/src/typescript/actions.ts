@@ -11712,6 +11712,15 @@ const translateIntlError = (node: ts.Expression, path: Path, context: Context, f
 const getBufferConstruction = (node: ts.Expression, context: Context) =>
   getNewBuffer(node, context) && getConstruction(node, context);
 
+// new of a typed array whose byteOffset or length may be an object, which it converts to a
+// primitive where it views a buffer, running the object's valueOf and toString.
+const isIndexConvertingNew = (node: ts.Node, context: Context) =>
+  ts.isExpression(node) &&
+  (getNewBuffer(node, context) ?? []).every((buffer) => TYPED_ARRAYS.has(buffer)) &&
+  (getBufferConstruction(node, context)?.arguments ?? [])
+    .slice(1, 3)
+    .some((value) => !isPrimitiveIndex(getCast(value), context));
+
 // Runs new of a buffer, a DataView, or a typed array, which throws the error its constructor does,
 // and makes a typed array of an object's iterator's values where a script's @@iterator method
 // gives them.
@@ -11760,7 +11769,7 @@ const translateNewBufferStatement = (
             tuple(madeArguments),
             current.scope,
             context,
-            true,
+            "error",
           ),
           ifThenElse(
             apply("=", [error, string("")]),
@@ -11785,6 +11794,57 @@ const translateNewBufferStatement = (
           ),
         );
       };
+      // A typed array that views a buffer throws its byteOffset's RangeError before it converts
+      // its length.
+      const isConverted = isIndexConvertingNew(node, context);
+      const toIndex = (
+        current: Path,
+        value: Expression,
+        next: (path: Path, primitive: Expression) => Formula,
+      ) =>
+        runToPrimitive(node, value, "number", current, context, frame, (after, primitive) =>
+          ifThenElse(
+            junction("Or", [
+              useJavaScript("IsSymbol", [primitive], context),
+              useJavaScript("IsBigInt", [primitive], context),
+            ]),
+            throwTypeError(after, node, context, frame),
+            next(after, primitive),
+          ),
+        );
+      const makeViewing = (current: Path, madeArguments: Expression[]) =>
+        !isConverted
+          ? make(current, madeArguments)
+          : ifThenElse(
+              useJavaScript(
+                "IsBuffer",
+                [getHeap(current.scope, node, context), madeArguments[0]],
+                context,
+              ),
+              toIndex(current, madeArguments[1] ?? getUndefined(context), (offsetPath, offset) =>
+                ifThenElse(
+                  apply("=", [
+                    translateNewBufferOf(
+                      node,
+                      construction,
+                      getHeap(offsetPath.scope, node, context),
+                      tuple([madeArguments[0], offset]),
+                      offsetPath.scope,
+                      context,
+                      "offset error",
+                    ),
+                    string("RangeError"),
+                  ]),
+                  throwError("RangeError", offsetPath, node, context, frame),
+                  madeArguments[2] === undefined
+                    ? make(offsetPath, [madeArguments[0], offset])
+                    : toIndex(offsetPath, madeArguments[2], (lengthPath, length) =>
+                        make(lengthPath, [madeArguments[0], offset, length]),
+                      ),
+                ),
+              ),
+              make(current, madeArguments),
+            );
       const throwWith = (after: Path) => throwTypeError(after, node, context, frame);
       const step = (
         current: Path,
@@ -11833,9 +11893,9 @@ const translateNewBufferStatement = (
               throwWith,
               (opened, iterator, next) => step(opened, iterator, next, []),
             ),
-            make(allocated, values),
+            makeViewing(allocated, values),
           )
-        : make(allocated, values);
+        : makeViewing(allocated, values);
     },
   );
 
@@ -12636,7 +12696,8 @@ const getEffects = (
   // of an array's length.
   const conversions =
     (ts.isExpression(node) && getConversion(node, context) !== undefined) ||
-    (isObjectChange(node, context) && mayDefineObjectLength(node, context))
+    (isObjectChange(node, context) && mayDefineObjectLength(node, context)) ||
+    isIndexConvertingNew(node, context)
       ? getConversionFunctions(node, context)
       : undefined;
   // A definition that reads its descriptor's fields, a read of a key with getters, or an
