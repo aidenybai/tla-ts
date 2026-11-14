@@ -1093,6 +1093,35 @@ describe("top-level statements", () => {
 });
 
 describe("values", () => {
+  describe("converts lengths and indices beyond 32 bits as Node does", () => {
+    const getSource = (expected: string) => `
+      const like = { 0: 12, length: -4294967294 };
+      const every = Array.prototype.every.call(like, (value: unknown) => value === 0);
+      let caught = "";
+      try {
+        new ArrayBuffer(9007199254740992);
+      } catch (error) {
+        caught += error instanceof RangeError ? "buffer" : "other";
+      }
+      try {
+        Object.defineProperty([], "length", { value: 4294967296 });
+      } catch (error) {
+        caught += error instanceof RangeError ? "length" : "other";
+      }
+      if (\`\${every},\${caught}\` !== "${expected}") throw new Error(\`\${every},\${caught}\`);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,bufferlength"))).failure).toBeUndefined();
+    });
+
+    it("rejects a length below 0 that every reads past", async () => {
+      expect((await checkModel(getSource("false,bufferlength"))).failure?.message).toContain(
+        "true,bufferlength",
+      );
+    });
+  });
+
   describe("holds integers beyond 32 bits, such as time values, as Node does", () => {
     const getSource = (expected: string) => `
       const date = new Date(2016, 6, 6);

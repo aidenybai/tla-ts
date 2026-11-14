@@ -1667,7 +1667,7 @@ ToLength(value) ==
     [] value = Infinity -> Assert(FALSE, "tla-ts can't represent this value")
     [] value \\in SpecialNumbers -> 0
     [] IsFraction(value) -> IF Floor(value) < 0 THEN 0 ELSE Floor(value)
-    [] IsWide(value) -> BeyondInteger
+    [] IsWide(value) -> IF IsNegative(value) THEN 0 ELSE BeyondInteger
     [] TypeOf(value) = "number" -> IF value < 0 THEN 0 ELSE value
     [] TypeOf(value) = "string" -> ToLengthOfText(value)
     [] value = <<>> -> 0
@@ -3917,7 +3917,7 @@ LOCAL ArrayLengthOf(value) ==
          ReadNumber(value, LAMBDA kind, isNegative, magnitude :
            IF kind = "integer" /\\ (~isNegative \\/ magnitude = 0) THEN magnitude ELSE -1)
     [] value = NegativeZero -> 0
-    [] IsWide(value) -> BeyondInteger
+    [] IsWide(value) -> IF IsNegative(value) \\/ value[Wide][1] >= 2 THEN -1 ELSE BeyondInteger
     [] IsInteger(value) /\\ value >= 0 -> value
     [] IsNumber(value) \\/ value = Undefined -> -1
     [] OTHER -> Assert(FALSE, "tla-ts can't convert this value to an array length")
@@ -4055,7 +4055,7 @@ IndexOfArgument(value) ==
   IN CASE number \\in {NaN, NegativeZero} -> 0
        [] number \\in {Infinity, NegativeInfinity} -> -1
        [] IsFraction(number) -> IF Truncate(number) < 0 THEN -1 ELSE Truncate(number)
-       [] IsWide(number) -> BeyondInteger
+       [] IsWide(number) -> IF IsNegative(number) \\/ number[Wide][1] = 4194304 THEN -1 ELSE BeyondInteger
        [] number < 0 -> -1
        [] OTHER -> number
 
