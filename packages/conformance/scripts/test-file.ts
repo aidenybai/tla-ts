@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, extname, join, relative } from "node:path";
+import { basename, dirname, extname, join, relative } from "node:path";
 import { dump, load } from "js-yaml";
 import { BACKEND_VERDICTS, getBackend, TLAPM_OUTCOME_EXITS } from "./tlapm";
 
@@ -119,7 +119,11 @@ export const listFiles = (directory: string, isSorted = true): string[] => {
 
 export const findTests = (filters: string[]) =>
   listFiles(SUITE_DIRECTORY)
-    .filter((path) => filters.length === 0 || filters.some((filter) => path.includes(filter)))
+    .filter(
+      (path) =>
+        filters.length === 0 ||
+        filters.some((filter) => relative(dirname(SUITE_DIRECTORY), path).includes(filter)),
+    )
     .flatMap((path) => parseTest(path, readFileSync(path, "utf8")) ?? []);
 
 export const getBackendInput = (test: SuiteTest) => test.source.replace(HEADER, "");
