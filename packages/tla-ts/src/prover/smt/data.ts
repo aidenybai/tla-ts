@@ -63,7 +63,7 @@ export interface CollectState {
   recordFields: Map<string, string[]>;
   setTypes: Map<string, Type>;
   strings: string[];
-  integers: number[];
+  integers: string[];
   isFunConstr: boolean;
   isFunSet: boolean;
   isExcept: boolean;
@@ -74,6 +74,10 @@ export interface CollectState {
 
 const getOmittedDeclaration = (name: string) =>
   `; omitted declaration of 'TLA__${name}' (second-order)`;
+
+// tlapm orders the axioms of the literals by their values, which a longer numeral or, at the same
+// length, a later digit string has the greater of.
+const getLiteralOrder = (digits: string) => [digits.length, digits];
 
 const getLiteralNames = (count: number) =>
   Array.from({ length: count }, (_value, index) => `IntLit_${index + 1}`);
@@ -466,23 +470,34 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
   }
   const integer = /^IntLit_(\d+)$/.exec(name);
   if (integer) {
-    const value = Number(integer[1]);
+    const value = integer[1];
     const distinct = state.integers.map((other) =>
-      axiom("IntLitDistinct", [other, value], `(distinct ${tla(`IntLit_${other}`)} ${symbol})`),
+      axiom(
+        "IntLitDistinct",
+        [getLiteralOrder(other), getLiteralOrder(value)],
+        `(distinct ${tla(`IntLit_${other}`)} ${symbol})`,
+        `IntLitDistinct ${other} ${value}`,
+      ),
     );
     state.integers.push(value);
     const zero = tla("IntLit_0");
-    const isPositivityNeeded = value === 0 && !state.isArithmetic;
+    const isPositivityNeeded = value === "0" && !state.isArithmetic;
     return declareSpec(
       name,
       0,
       ["Mem", "IntSet", "IntLit_0", "IntLteq", ...(isPositivityNeeded ? ["IntLit_1"] : [])],
       [
-        axiom("IntLitIsint", [value], `(${MEM} ${symbol} ${INT_SET})`),
+        axiom(
+          "IntLitIsint",
+          [getLiteralOrder(value)],
+          `(${MEM} ${symbol} ${INT_SET})`,
+          `IntLitIsint ${value}`,
+        ),
         axiom(
           "IntLitZeroCmp",
-          [value],
-          value === 0 ? `(${INT_LTEQ} ${symbol} ${zero})` : `(${INT_LTEQ} ${zero} ${symbol})`,
+          [getLiteralOrder(value)],
+          value === "0" ? `(${INT_LTEQ} ${symbol} ${zero})` : `(${INT_LTEQ} ${zero} ${symbol})`,
+          `IntLitZeroCmp ${value}`,
         ),
         ...distinct,
         ...(isPositivityNeeded
