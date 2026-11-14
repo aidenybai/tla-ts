@@ -3149,15 +3149,28 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
   if (!ts.isFunctionDeclaration(node) && !ts.isFunctionExpression(node)) return false;
   const known = heapFunctions.get(node);
   if (known !== undefined) return known;
+  // A variable or an object literal's property may name a function expression, as obj.f names
+  // the function of { f: function () {} }.
   const nameNode = ts.isFunctionDeclaration(node)
     ? node.name
-    : ts.isVariableDeclaration(node.parent) && node.parent.initializer === node
+    : (ts.isVariableDeclaration(node.parent) || ts.isPropertyAssignment(node.parent)) &&
+        node.parent.initializer === node
       ? node.parent.name
       : undefined;
   const symbol =
     nameNode === undefined || !ts.isIdentifier(nameNode)
       ? undefined
       : getSymbol(nameNode, context.checker);
+  // A read names the function where it reads its variable, or its property of the object literal,
+  // whose symbol each read of the object makes anew.
+  const isNamedBy = (target: ts.Expression) => {
+    const found = getSymbol(skipCasts(target), context.checker);
+    return (
+      found !== undefined &&
+      (found === symbol ||
+        (ts.isPropertyAssignment(node.parent) && found.valueDeclaration === node.parent))
+    );
+  };
   const sourceFile = node.getSourceFile();
   // A function that a new constructs where the script writes it, which the new makes once. A body
   // that runs no code takes only arguments and defaults that can't throw or change anything.
@@ -3196,7 +3209,7 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
               ? []
               : [construction.callee, construction.newTarget];
     return (
-      targets.some((target) => getSymbol(skipCasts(target), context.checker) === symbol) ||
+      targets.some(isNamedBy) ||
       (ts.forEachChild(child, (inner) => isNewTarget(inner) || undefined) ?? false)
     );
   };
@@ -3214,7 +3227,7 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
           ts.isBinaryExpression(child) &&
           child.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
           (ts.isPropertyAccessExpression(child.left) || ts.isElementAccessExpression(child.left)) &&
-          getSymbol(skipCasts(child.left.expression), context.checker) === symbol,
+          isNamedBy(child.left.expression),
       ).length > 0 ||
       isPassedAsObject(symbol, sourceFile, context));
   heapFunctions.set(node, isHeap);

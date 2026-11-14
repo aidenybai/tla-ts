@@ -9204,6 +9204,48 @@ describe("errors", () => {
     });
   });
 
+  describe("holds an object literal's function on the heap where a script writes its properties", () => {
+    const getSource = (expected: string) => `
+      const holder = { seen: "" };
+      const obj = { constructor: function () {} };
+      // @ts-ignore
+      obj.constructor[Symbol.species] = 5;
+      // @ts-ignore
+      obj.constructor.tag = "t";
+      holder.seen = [
+        // @ts-ignore
+        obj.constructor[Symbol.species],
+        // @ts-ignore
+        obj.constructor.tag,
+        typeof obj.constructor,
+        obj.constructor.name,
+        obj.constructor.length,
+      ].join(",");
+      if (holder.seen !== "${expected}") throw new Error("unexpected");
+    `;
+
+    it("agrees with Node on 5,t,function,constructor,0", async () => {
+      expect((await checkModel(getSource("5,t,function,constructor,0"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 5,t,function,constructor,1", async () => {
+      expect(
+        (await checkModel(getSource("5,t,function,constructor,1"))).failure?.message,
+      ).toContain("unexpected");
+    });
+
+    it("stops at a call of the function through the property", async () => {
+      const result = await checkModel(`
+        const obj = { make: function (value: number) { return value + 1; } };
+        // @ts-ignore
+        obj.make.tag = "t";
+        const seen = obj.make(1);
+        if (seen !== 2) throw new Error("unexpected");
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't tell which function this call runs");
+    });
+  });
+
   it("runs the getter that a rest pattern copies where the script defines getters under other keys", async () => {
     const getSource = (expected: number) => `
       let count = 0;
