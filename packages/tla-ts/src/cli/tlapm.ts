@@ -311,17 +311,18 @@ const reportAbnormalEnding = (
     );
 };
 
-const generateObligations = (
-  generate: (errorSetting: ErrorSetting) => ModuleObligations[],
-  isToolbox: boolean,
-) => {
-  const errorSetting: ErrorSetting = { message: "" };
+type Outcome<Value> = { kind: "done"; value: Value } | { kind: "aborted"; error: TlaProofError };
+
+const getAbortedOutcome = (error: unknown): Outcome<never> => {
+  if (!(error instanceof TlaProofError)) throw error;
+  return { kind: "aborted", error };
+};
+
+const generateObligations = (generate: () => ModuleObligations[]): Outcome<ModuleObligations[]> => {
   try {
-    return generate(errorSetting);
+    return { kind: "done", value: generate() };
   } catch (error) {
-    if (!(error instanceof TlaProofError)) throw error;
-    reportAbnormalEnding(error, errorSetting, isToolbox);
-    return undefined;
+    return getAbortedOutcome(error);
   }
 };
 
@@ -343,8 +344,15 @@ const printAttempt = (
   const reason = getFailureReason(attempt);
   const isProved = isProvedAttempt(attempt);
   const isReused = attempt.kind === "reused";
-  const note = attempt.kind === "decided" || attempt.kind === "failed" ? attempt.note : undefined;
-  const shipped = attempt.kind === "failed" || isReused ? attempt.shipped : undefined;
+  const note =
+    attempt.kind === "decided"
+      ? attempt.note
+      : attempt.kind === "refused"
+        ? `${attempt.reason}\nObligation:\n\n`
+        : attempt.kind === "unavailable"
+          ? `\n\\* ${attempt.warning}\n`
+          : undefined;
+  const shipped = attempt.kind === "unavailable" || isReused ? attempt.shipped : undefined;
   printObligationMessage(obligation, isProved ? "proved" : "failed", [
     `prover:${attempt.method.prover}`,
     ...(method === "" ? [] : [`meth:${method}`]),
@@ -443,8 +451,7 @@ const proveModule = async (
       report.attempts.forEach((attempt) => {
         if (attempt.kind === "decided" && attempt.errorOutput !== undefined)
           process.stdout.write(attempt.errorOutput);
-        if (attempt.kind === "failed" && attempt.warning !== undefined)
-          process.stderr.write(`${attempt.warning}\n`);
+        if (attempt.kind === "unavailable") process.stderr.write(`${attempt.warning}\n`);
       });
       report.warnings.forEach((warning) => printWarning(warning, settings.isToolbox));
       if (!settings.isToolbox) return;
@@ -568,7 +575,8 @@ export const runTlapm = async (args: string[]) => {
     getLibraryDirectories(parsed),
   );
   const moduleNames = new Set<string>();
-  const modules = generateObligations((errorSetting) => {
+  const errorSettings: ObligationWarning[] = [];
+  const generation = generateObligations(() => {
     const missingIndex = modulePaths.findIndex((path) => !existsSync(path));
     if (missingIndex !== -1) {
       const missing = files[missingIndex];
@@ -588,17 +596,29 @@ export const runTlapm = async (args: string[]) => {
         lines,
         printing,
         onWarning: (warning) => {
-          if (warning.channel === "error") {
-            errorSetting.location = warning.locus && getLocusText(warning.locus);
-            errorSetting.message = `${warning.text}\n\n${errorSetting.message}`;
-            return;
-          }
-          printWarning(warning, isToolbox);
+          if (warning.channel === "error") errorSettings.push(warning);
+          else printWarning(warning, isToolbox);
         },
       },
     );
-  }, isToolbox);
-  if (!modules) return TLAPM_FAILURE_STATUS;
+  });
+  if (generation.kind === "aborted") {
+    const lastLocus = errorSettings.at(-1)?.locus;
+    // Errors.set keeps the last location and puts each message before the earlier ones.
+    reportAbnormalEnding(
+      generation.error,
+      {
+        location: lastLocus && getLocusText(lastLocus),
+        message: errorSettings
+          .toReversed()
+          .map((setting) => `${setting.text}\n\n`)
+          .join(""),
+      },
+      isToolbox,
+    );
+    return TLAPM_FAILURE_STATUS;
+  }
+  const modules = generation.value;
   const cacheDirectory =
     parsed.get("--cache-dir")?.[0] ?? process.env.TLAPM_CACHE_DIR ?? ".tlacache";
   const forgottenLines = parsed.get("--nofpl")?.map((value) => parseOcamlInt(value) ?? 0) ?? [0, 0];
@@ -678,26 +698,22 @@ export const runTlapm = async (args: string[]) => {
         (name) => `${name}.tla`,
       ),
     );
-    const isFailed = await proveModule(module, directory, fingerprintsPath, settings).catch(
-      (error: unknown) => {
-        if (!(error instanceof TlaProofError)) throw error;
-        return error;
-      },
+    const proving = await proveModule(module, directory, fingerprintsPath, settings).then(
+      (isFailed): Outcome<boolean> => ({ kind: "done", value: isFailed }),
+      getAbortedOutcome,
     );
-    if (isFailed instanceof TlaProofError) {
-      console.error(`${getAtPrefix(isFailed.locus)}Error: ${isFailed.message}`);
+    if (proving.kind === "aborted") {
+      const error = proving.error;
+      console.error(`${getAtPrefix(error.locus)}Error: ${error.message}`);
       reportAbnormalEnding(
-        isFailed,
-        {
-          location: isFailed.locus && getLocusText(isFailed.locus),
-          message: isFailed.message,
-        },
+        error,
+        { location: error.locus && getLocusText(error.locus), message: error.message },
         isToolbox,
       );
       return TLAPM_FAILURE_STATUS;
     }
-    if (isFailed && parsed.has("--strict")) statuses.push(STRICT_EXIT_STATUS.failed);
-    if (isFailed && !parsed.has("--strict") && !isToolbox) {
+    if (proving.value && parsed.has("--strict")) statuses.push(STRICT_EXIT_STATUS.failed);
+    if (proving.value && !parsed.has("--strict") && !isToolbox) {
       console.error(UNPROVED_ENDING);
       return TLAPM_FAILURE_STATUS;
     }

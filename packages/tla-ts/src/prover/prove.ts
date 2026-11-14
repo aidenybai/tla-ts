@@ -85,14 +85,10 @@ export type ProofAttempt =
       errorOutput?: string;
     }
   | { kind: "error"; method: Method }
-  | {
-      kind: "failed";
-      method: Method;
-      reason?: string;
-      note?: string;
-      warning?: string;
-      shipped?: string;
-    }
+  // A frontend whose soundness check failed, or a backend whose encoding failed.
+  | { kind: "refused" | "unencoded"; method: Method; reason: string }
+  // Cooper's method, which tlapm warns it no longer has.
+  | { kind: "unavailable"; method: Method; warning: string; shipped: string }
   | { kind: "skipped"; method: Method; reason: string }
   | {
       kind: "stored" | "reused";
@@ -292,6 +288,8 @@ export const getFailureReason = (attempt: ProofAttempt) => {
         : "false";
     case "error":
       return "false";
+    case "unavailable":
+      return undefined;
     default:
       return attempt.reason;
   }
@@ -441,10 +439,9 @@ const proveWithBackends = async (
     const prover = FAILING_FRONTENDS.find((name) => methods.frontends.has(name));
     if (prover === undefined) throw expanded;
     record({
-      kind: "failed",
+      kind: "refused",
       method: { prover, timeLimitMs: Infinity },
       reason: expanded.message,
-      note: `${expanded.message}\nObligation:\n\n`,
     });
     // Prep.ship goes on with the obligation normalize_expand left, whose goal is FALSE: it checks
     // that for triviality, then each method still answers from the fingerprints file. A stored
@@ -504,10 +501,9 @@ const proveWithBackends = async (
     if (method.prover === "cooper") {
       const warning = "Cooper's method is not available any more.\n";
       record({
-        kind: "failed",
+        kind: "unavailable",
         method,
         warning,
-        note: `\n\\* ${warning}\n`,
         shipped: `${formatObligation(shipFirstOrder(sequent, run.settings.isFlattened))}\n`,
       });
       failures.push({ reason: warning.trim(), isDecided: true });
@@ -526,27 +522,35 @@ const proveWithBackends = async (
       const name = getTemporaryName();
       const file = `${name}${encoder.suffix}`;
       const chunks: string[] = [];
-      // A failed encoding leaves the file as far as it got.
-      try {
-        encoder.encode({
-          obligation,
-          sequent,
-          fingerprint,
-          method,
-          session,
-          name,
-          settings: run.settings,
-          write: (text) => chunks.push(text),
-        });
-      } catch (error) {
-        if (!(error instanceof TlaProverError)) throw error;
-        record({ kind: "failed", method, reason: error.message });
-        failures.push({ reason: `${method.prover} failed: ${error.message}`, isDecided: true });
-        continue;
-      } finally {
-        run.settings.onInput?.(file, chunks.join(""));
-      }
+      const encodingError = (() => {
+        try {
+          encoder.encode({
+            obligation,
+            sequent,
+            fingerprint,
+            method,
+            session,
+            name,
+            settings: run.settings,
+            write: (text) => chunks.push(text),
+          });
+          return undefined;
+        } catch (error: unknown) {
+          return error;
+        }
+      })();
       const text = chunks.join("");
+      // A failed encoding leaves the file as far as it got.
+      run.settings.onInput?.(file, text);
+      if (encodingError instanceof TlaProverError) {
+        record({ kind: "unencoded", method, reason: encodingError.message });
+        failures.push({
+          reason: `${method.prover} failed: ${encodingError.message}`,
+          isDecided: true,
+        });
+        continue;
+      }
+      if (encodingError !== undefined) throw encodingError;
       const timeLimitMs = Math.max(method.timeLimitMs, BACKEND_WAIT_MS);
       const decision =
         method.prover === "smt" && run.settings.solveSmt
