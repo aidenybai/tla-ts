@@ -9264,6 +9264,50 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("throws the TypeError of converting a symbol that Symbol.toPrimitive gives", async () => {
+    const getSource = (expected: string) => `
+      const log = { text: "" };
+      const getError = (call: () => unknown) => {
+        try {
+          call();
+          return "none";
+        } catch (error) {
+          return error instanceof TypeError ? "type" : "other";
+        }
+      };
+      let result: unknown = 86;
+      const value = { [Symbol.toPrimitive]: () => result };
+      const other = {
+        valueOf: () => {
+          log.text += "v";
+          return 1;
+        },
+      };
+      // @ts-ignore
+      const before = [1 + value, \`\${value}\`, String(value)].join();
+      result = Symbol.toPrimitive;
+      const errors: string[] = [
+        // @ts-ignore
+        getError(() => 0 + value),
+        getError(() => "" + value),
+        // @ts-ignore
+        getError(() => value - other),
+        // @ts-ignore
+        getError(() => value + other),
+        getError(() => \`\${value}\`),
+        getError(() => String(value)),
+      ];
+      const text = \`\${before}:\${errors.join()}:\${log.text}\`;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect(
+      (await checkModel(getSource("87,86,86:type,type,type,type,type,type:v"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("87,86,86:type,type,type,type,type,none:v"))).failure?.message,
+    ).toContain("87,86,86:type,type,type,type,type,type:v");
+  });
+
   describe("converts the primitives and wrappers that an operator on numbers takes", () => {
     const getOrdered = (first: string, second: string) => `
       const first = { toString: () => "${first}" };

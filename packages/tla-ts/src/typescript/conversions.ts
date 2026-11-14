@@ -18,7 +18,7 @@ import { getHeap } from "./heap";
 import { getBuiltIn } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { bind, callValue, getMethods, getWrittenFunctions, isNullish, read } from "./protocols";
-import { apply, boolean, not, string, tuple } from "./tla";
+import { apply, boolean, junction, not, string, tuple } from "./tla";
 import { getKind, isEvery, mayBeSequenceType } from "./types";
 
 // The hint that ToPrimitive takes, which decides whether it calls valueOf or toString first.
@@ -35,6 +35,12 @@ interface Conversion {
   order?: readonly number[];
   // The methods that the operation reads from objects among its operands before it converts them.
   lookups?: readonly Lookup[];
+  // The symbols that the operation throws the TypeError of converting to a string or a number: any,
+  // or for String only one that an object converts to, or for == none.
+  thrownSymbols?: "converted" | "none";
+  // Whether the operation converts every operand to a primitive before it converts any primitive
+  // to a string or a number, as + and the comparisons do, rather than each operand in turn.
+  isPrimitiveFirst?: boolean;
   combine: (primitives: readonly Expression[]) => Expression;
 }
 
@@ -275,9 +281,10 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
       return make([argument], "number", (primitives) => toNumber(primitives[0]));
     }
     if (node.expression.text === "String") {
-      return make([argument], "string", (primitives) =>
+      const conversion = make([argument], "string", (primitives) =>
         useJavaScript("StringOf", [primitives[0]], context),
       );
+      return conversion && { ...conversion, thrownSymbols: "converted" };
     }
     return undefined;
   }
@@ -319,18 +326,22 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
   }
   const kind = COMPOUND_OPERATORS.get(node.operatorToken.kind) ?? node.operatorToken.kind;
   const operands = [node.left, node.right];
+  const withPrimitivesFirst = (conversion: Conversion | undefined) =>
+    conversion && { ...conversion, isPrimitiveFirst: true };
   // + joins strings, which tla-ts does without converting.
   if (kind === ts.SyntaxKind.PlusToken) {
     const isOnNumbers = !operands.some((operand) =>
       hasFlags(operand, ts.TypeFlags.StringLike, context),
     );
     // + joins a string with a value of type any as it is, but += must convert the value it reads.
-    return make(
-      operands,
-      "default",
-      (primitives) => plain(useJavaScript("AddPrimitives", [...primitives], context)),
-      isOnNumbers,
-      isOnNumbers || isCompoundAssignment(node),
+    return withPrimitivesFirst(
+      make(
+        operands,
+        "default",
+        (primitives) => plain(useJavaScript("AddPrimitives", [...primitives], context)),
+        isOnNumbers,
+        isOnNumbers || isCompoundAssignment(node),
+      ),
     );
   }
   const operation = NUMBER_OPERATIONS.get(kind) ?? BITWISE_OPERATORS.get(kind);
@@ -359,10 +370,11 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
       return undefined;
     }
     if (operands.some(isNullish)) return undefined;
-    return make(operands, "default", (primitives) => {
+    const conversion = make(operands, "default", (primitives) => {
       const isEqual = useJavaScript("LooseEquals", [tuple([]), ...primitives], context);
       return kind === ts.SyntaxKind.EqualsEqualsToken ? isEqual : not(isEqual);
     });
+    return conversion && { ...conversion, thrownSymbols: "none" };
   }
   // a > b and a <= b compare b with a, though they convert a first. Two strings don't convert, and
   // a value of type any compares as it is.
@@ -373,26 +385,30 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
     useJavaScript(name, [left, right], context);
   if (kind === ts.SyntaxKind.LessThanToken || kind === ts.SyntaxKind.GreaterThanToken) {
     const isSwapped = kind === ts.SyntaxKind.GreaterThanToken;
-    return make(
-      operands,
-      "number",
-      (primitives) =>
-        isSwapped
-          ? compare("LessThanPrimitives", primitives[1], primitives[0])
-          : compare("LessThanPrimitives", primitives[0], primitives[1]),
-      isOrdered,
+    return withPrimitivesFirst(
+      make(
+        operands,
+        "number",
+        (primitives) =>
+          isSwapped
+            ? compare("LessThanPrimitives", primitives[1], primitives[0])
+            : compare("LessThanPrimitives", primitives[0], primitives[1]),
+        isOrdered,
+      ),
     );
   }
   if (kind === ts.SyntaxKind.LessThanEqualsToken || kind === ts.SyntaxKind.GreaterThanEqualsToken) {
     const isSwapped = kind === ts.SyntaxKind.GreaterThanEqualsToken;
-    return make(
-      operands,
-      "number",
-      (primitives) =>
-        isSwapped
-          ? compare("LessOrEqualPrimitives", primitives[1], primitives[0])
-          : compare("LessOrEqualPrimitives", primitives[0], primitives[1]),
-      isOrdered,
+    return withPrimitivesFirst(
+      make(
+        operands,
+        "number",
+        (primitives) =>
+          isSwapped
+            ? compare("LessOrEqualPrimitives", primitives[1], primitives[0])
+            : compare("LessOrEqualPrimitives", primitives[0], primitives[1]),
+        isOrdered,
+      ),
     );
   }
   return undefined;
@@ -658,7 +674,16 @@ export const runConversion = (
     const position = order[converted.length];
     if (position === undefined) {
       const primitives = values.map((_, inner) => converted[order.indexOf(inner)]);
-      return bind(current, "converted", conversion.combine(primitives), context, continueWith);
+      const combined = bind(
+        current,
+        "converted",
+        conversion.combine(primitives),
+        context,
+        continueWith,
+      );
+      return conversion.isPrimitiveFirst === true
+        ? throwSymbols(current, primitives, values, combined)
+        : combined;
     }
     // An array that a sequence holds reads its methods from Array.prototype.
     const type = context.checker.getTypeAtLocation(conversion.operands[position]);
@@ -675,8 +700,36 @@ export const runConversion = (
       current,
       context,
       frame,
-      (after, primitive) => convert(after, values, [...converted, primitive]),
+      (after, primitive) => {
+        const next = convert(after, values, [...converted, primitive]);
+        return conversion.isPrimitiveFirst === true
+          ? next
+          : throwSymbols(after, [primitive], [values[position]], next);
+      },
     );
   };
+  const throwSymbols = (
+    current: Path,
+    primitives: readonly Expression[],
+    values: readonly Expression[],
+    next: Formula,
+  ) =>
+    conversion.thrownSymbols === "none"
+      ? next
+      : ifThenElse(
+          junction(
+            "Or",
+            primitives.map((primitive, position) =>
+              conversion.thrownSymbols === "converted"
+                ? apply("/\\", [
+                    useJavaScript("IsSymbol", [primitive], context),
+                    not(useJavaScript("IsSymbol", [values[position]], context)),
+                  ])
+                : useJavaScript("IsSymbol", [primitive], context),
+            ),
+          ),
+          throwTypeError(current, node, context, frame),
+          next,
+        );
   return evaluate(path, conversion.operands, []);
 };
