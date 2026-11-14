@@ -1116,7 +1116,7 @@ class UserSortValues {
   }
 
   registerWith(model: ProtoModel) {
-    for (const entry of this.sort2values) for (const value of entry[1]) model.registerValue(value);
+    for (const entry of this.sort2values) model.registerUsort(entry[0], entry[1]);
   }
 }
 

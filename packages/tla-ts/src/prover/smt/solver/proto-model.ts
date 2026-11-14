@@ -314,6 +314,8 @@ export class ProtoModel {
   private funcDecls: number[] = [];
   private auxDecls: ObjHashtable;
   private values = new Map<number, ObjHashtable>();
+  // model_core::m_usort2universe: a universe registered as a whole keeps its order.
+  private universes = new Map<number, number[]>();
   private userSortValues: RefVector;
   private arithValues: RefVector;
   private bvValues: RefVector;
@@ -672,7 +674,12 @@ export class ProtoModel {
   }
 
   getKnownUniverse(sort: number): number[] {
-    return [...(this.values.get(sort) ?? [])];
+    return [...(this.universes.get(sort) ?? this.values.get(sort) ?? [])];
+  }
+
+  registerUsort(sort: number, universe: number[]) {
+    for (const value of universe) this.addValue(sort, value);
+    this.universes.set(sort, [...universe]);
   }
 
   compress() {
@@ -1001,7 +1008,7 @@ export class ProtoModel {
     for (const decl of this.funcDecls)
       model.registerFunc(decl, (this.funcInterps.get(decl) as FuncInterp).copy());
     for (const sort of this.getUninterpretedSorts())
-      for (const value of this.getKnownUniverse(sort)) model.registerValue(value);
+      model.registerUsort(sort, this.getKnownUniverse(sort));
     return model;
   }
 
@@ -1016,7 +1023,9 @@ export class ProtoModel {
     this.funcInterps.clear();
     this.funcDecls = [];
     for (const entry of this.values)
-      if (!isArithSort(entry[0])) for (const value of entry[1]) model.registerValue(value);
+      if (this.manager.isUninterpretedSort(entry[0]))
+        model.registerUsort(entry[0], this.getKnownUniverse(entry[0]));
+      else if (!isArithSort(entry[0])) for (const value of entry[1]) model.registerValue(value);
     return model;
   }
 

@@ -803,6 +803,47 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("prints a sat.euf universe in the order its values were made", () => {
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        "(set-option :tactic.default_tactic smt)",
+        "(declare-sort U 0)",
+        "(declare-fun a (U) U)",
+        "(declare-const x U)",
+        "(declare-const y U)",
+        "(assert (= (a x) y))",
+        "(assert (= (a y) x))",
+        "(assert (not (= x y)))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  ;; universe for U:",
+        "  ;;   U!val!0 U!val!1 ",
+        "  ;; -----------",
+        "  ;; definitions for universe elements:",
+        "  (declare-fun U!val!0 () U)",
+        "  (declare-fun U!val!1 () U)",
+        "  ;; cardinality constraint:",
+        "  (forall ((x U)) (or (= x U!val!0) (= x U!val!1)))",
+        "  ;; -----------",
+        "  (define-fun x () U",
+        "    U!val!0)",
+        "  (define-fun y () U",
+        "    U!val!1)",
+        "  (define-fun a ((x!1 U)) U",
+        "    (ite (= x!1 U!val!0) U!val!1",
+        "    (ite (= x!1 U!val!1) U!val!0",
+        "      #unspecified)))",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),
