@@ -319,9 +319,15 @@ const MANAGERLESS_COMMANDS = new Set([
 export const runSmtlibScript = (
   text: string,
   options: DecideOptions,
-  print: (line: string, isDiagnostic?: boolean) => void,
+  printLine: (line: string, isDiagnostic?: boolean) => void,
 ) => {
   const commands = createCommandReader(text);
+  // Z3 writes to a stream: text left without a newline starts the next line.
+  let pendingText = "";
+  const print = (line: string, isDiagnostic?: boolean) => {
+    printLine(pendingText + line, isDiagnostic);
+    pendingText = "";
+  };
   const settings = {
     isPrintingSuccess: false,
     isProducingModels: true,
@@ -672,12 +678,12 @@ export const runSmtlibScript = (
       core: undefined,
     };
   };
-  let pendingText = "";
   const printDiagnostic = (line: string) => print(line, !settings.isDiagnosticOnStdout);
   const write = (text: string, isDiagnostic: boolean) => {
-    const lines = (pendingText + text).split("\n");
-    pendingText = lines.pop() ?? "";
+    const lines = text.split("\n");
+    const rest = lines.pop() ?? "";
     for (const line of lines) (isDiagnostic ? printDiagnostic : print)(line);
+    pendingText += rest;
   };
   const getSetup = () => ({
     logic: script.state.logic,
@@ -1568,14 +1574,15 @@ export const runSmtlibScript = (
   for (;;) {
     try {
       const list = commands.read();
-      if (list === undefined || isSymbol(list.items[0], "exit")) return;
+      if (list === undefined || isSymbol(list.items[0], "exit")) break;
       run(list);
     } catch (error) {
       if (!(error instanceof SmtParseError)) throw error;
       report(error);
-      if (settings.isExitingOnError) return;
+      if (settings.isExitingOnError) break;
       script.state.reader.reset();
       commands.skip(report);
     }
   }
+  if (pendingText !== "") printLine(pendingText);
 };

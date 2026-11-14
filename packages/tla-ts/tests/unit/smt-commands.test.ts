@@ -593,4 +593,19 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       "(:rlimit 14)",
     ]);
   });
+
+  // Z3 writes to a stream, so text without a newline starts the next line and ends the output.
+  it("keeps text written without a newline", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(dbg-elim-unused-vars p)",
+        '(echo "b")',
+        "(dbg-elim-unused-vars (and p p))",
+        "(simplify (or p p))",
+        "(dbg-elim-unused-vars (forall ((x Int) (y Int)) (> x 0)))",
+        "(dbg-elim-unused-vars (not p))",
+      ]),
+    ).toEqual(["pb", "(and p p)p", "(forall ((x Int)) (> x 0))", "(not p)"]);
+  });
 });
