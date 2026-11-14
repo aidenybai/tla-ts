@@ -39,7 +39,6 @@ import {
   TrailStack,
 } from "./th-solver";
 
-// The sat_internalizer that goal2sat gives the euf solver.
 export interface EufInternalizer {
   internalize(expr: number): number;
   isBoolOp(expr: number): boolean;
@@ -204,8 +203,6 @@ export class EufSolver implements SatExtension {
     return this.unhandledFunctions.length > 0;
   }
 
-  // euf_internalize.cpp
-
   internalizeTerm(expr: number) {
     if (this.getEnode(expr) !== undefined) return;
     if (this.si.isBoolOp(expr)) this.attachLit(this.si.internalize(expr), expr);
@@ -238,7 +235,6 @@ export class EufSolver implements SatExtension {
     return manager.isBool(expr) ? 2 * this.si.toBoolVar(expr) + (isSign ? 1 : 0) : NULL_LITERAL;
   }
 
-  // sat::th_internalizer::visit_rec
   private visitRec(expr: number, isSign: boolean, isRoot: boolean) {
     const stack = this.stack;
     const manager = this.manager;
@@ -505,8 +501,6 @@ export class EufSolver implements SatExtension {
   addClause(lits: number[], isRedundant: boolean) {
     this.s.mkClause(lits, isRedundant, true);
   }
-
-  // euf_solver.cpp
 
   mkConstraint(owner: ThSolver, data: unknown) {
     return this.pushConstraint({ owner, kind: K_LIT, node: null, data });
@@ -936,8 +930,6 @@ export class EufSolver implements SatExtension {
   initUseList() {}
 
   findMutexes() {}
-
-  // euf_model.cpp
 
   saveModel(model: ProtoModel | null) {
     model?.incRef();

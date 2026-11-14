@@ -141,7 +141,6 @@ export abstract class ThSolver {
     return false;
   }
 
-  // sat::th_internalizer::visit_rec
   protected visitRec(expr: number, isSign: boolean, isRoot: boolean) {
     const manager = this.manager;
     const stack = this.stack;

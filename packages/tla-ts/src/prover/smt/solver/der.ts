@@ -217,7 +217,6 @@ export class Der {
   }
 }
 
-// der_rewriter: der on every quantifier of an expression.
 export class DerRewriter extends RewriterTpl {
   readonly der: Der;
 

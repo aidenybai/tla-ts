@@ -103,7 +103,6 @@ export class FuncInterp {
     this.entryTable.set(args.join(","), entry);
   }
 
-  // del_entry: the last entry takes the place of the deleted one.
   delEntry(index: number) {
     this.resetInterpCache();
     const entry = this.entries[index];

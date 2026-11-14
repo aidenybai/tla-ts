@@ -312,7 +312,6 @@ const mkCoreDependency = (core: number[]) =>
     undefined,
   );
 
-// The sat.* parameters, as the sat_params of a sat solver read them.
 export const getSatParams = (parameters: ReadonlyMap<string, string>) =>
   new Map(
     [...parameters]

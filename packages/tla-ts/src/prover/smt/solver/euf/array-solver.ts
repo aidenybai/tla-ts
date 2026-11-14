@@ -105,8 +105,6 @@ export class ArraySolver extends ArrayAxioms {
     return this.manager.funcDecls[decl].op === OP_ARRAY_EXT;
   }
 
-  // array_model.cpp
-
   override initModel() {
     this.collectDefaults();
     this.collectSelects();

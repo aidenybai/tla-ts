@@ -110,8 +110,6 @@ export abstract class ArrayInternalize extends ThSolver {
     return result;
   }
 
-  // array_axioms.cpp
-
   protected pushAxiom(record: AxiomRecord) {
     const key = getAxiomKey(record);
     if (this.axioms.has(key)) return;
@@ -134,8 +132,6 @@ export abstract class ArrayInternalize extends ThSolver {
   protected extensionalityAxiom(first: Enode, second: Enode): AxiomRecord {
     return { kind: KIND_EXTENSIONALITY, state: STATE_NEW, node: first, select: second };
   }
-
-  // array_internalize.cpp
 
   internalize(expr: number, isSign: boolean, isRoot: boolean) {
     if (!this.visitRec(expr, isSign, isRoot)) return NULL_LITERAL;
@@ -293,8 +289,6 @@ export abstract class ArrayInternalize extends ThSolver {
   override isSelfPropagating() {
     return true;
   }
-
-  // array_solver.cpp
 
   private mergeEh(first: number, second: number) {
     const firstNode = this.var2enodeOf(first);

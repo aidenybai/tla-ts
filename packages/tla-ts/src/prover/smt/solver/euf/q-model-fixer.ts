@@ -71,7 +71,6 @@ const getProjectionTerm = (data: ProjectionData, value: number) => {
   return term;
 };
 
-// arith_value_order: compares numerals and irrational algebraic numerals by value.
 const isArithValueSupported = (manager: AstManager, expr: number) =>
   manager.isNumeral(expr) || manager.isAlgebraicNumeral(expr);
 

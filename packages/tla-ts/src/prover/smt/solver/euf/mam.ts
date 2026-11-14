@@ -50,7 +50,6 @@ export interface MamSolver {
   readonly trail: TrailStack;
 }
 
-// euf::on_binding_callback.
 export type OnBinding = (
   quantifier: number,
   pattern: number,
@@ -60,7 +59,6 @@ export type OnBinding = (
   maxTopGeneration: number,
 ) => void;
 
-// func_decl::is_associative() && is_commutative().
 const isAcDecl = (manager: AstManager, decl: number) => {
   const info = manager.funcDecls[decl];
   if (info.family === FAMILY_BASIC)

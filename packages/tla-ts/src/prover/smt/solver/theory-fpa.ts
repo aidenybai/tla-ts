@@ -62,7 +62,6 @@ export const mkFpaConversion = (manager: AstManager) => {
   return { theoryRewriter, converter, rewriter: new Fpa2BvRewriter(manager, converter) };
 };
 
-// fpa2bv_converter_wrapped::bv2rm_value
 export const mkRmValue = (manager: AstManager, value: number) => {
   const rm = Number(manager.getBvNumeralValue(value));
   return mkRmNumeral(manager, rm <= 3 ? rm : 4);

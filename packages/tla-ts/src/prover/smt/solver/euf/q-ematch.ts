@@ -44,7 +44,6 @@ export class Binding {
   ) {}
 }
 
-// q::clause: a quantifier as a disjunction of literals.
 export class Clause {
   watch = 0;
   bindings: Binding | null = null;
@@ -70,7 +69,6 @@ interface Justification {
   readonly binding: readonly Enode[];
 }
 
-// dll_base::push_to_front.
 const pushToFront = (clause: Clause, binding: Binding) => {
   const list = clause.bindings;
   if (list === null) {
@@ -89,7 +87,6 @@ const pushToFront = (clause: Clause, binding: Binding) => {
   clause.bindings = binding;
 };
 
-// dll_base::remove_from.
 const removeFrom = (clause: Clause, binding: Binding) => {
   const list = clause.bindings as Binding;
   if (list.next === list) {
@@ -108,7 +105,6 @@ const detach = (binding: Binding) => {
 
 type EnodePair = readonly [Enode, Enode];
 
-// q::eval: evaluates a clause under a binding in the e-graph.
 class Eval {
   private evals = new Map<number, Enode | null>();
   private indirectNodes: Enode[] = [];
@@ -399,7 +395,6 @@ interface Prop {
 
 const GENERATION_PROPAGATION_THRESHOLD = 3;
 
-// q::ematch: e-matching quantifier instantiation.
 export class Ematch {
   private eval: Eval;
   private bindings = new Set<string>();
