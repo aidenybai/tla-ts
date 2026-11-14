@@ -147,7 +147,8 @@ export interface SmtList {
   offset: number;
   // Z3 reports an error in making an application at its closing parenthesis.
   end: SmtToken;
-  // The token after a root-obj or an indexed identifier, where Z3 reports an error in making it.
+  // The token after a root-obj or an indexed or qualified identifier, where Z3 reports an error in
+  // making it.
   follower?: SmtToken;
 }
 
@@ -600,6 +601,8 @@ const BUILTIN_NAMES = new Set([
   ...CHAR_OP_NAMES.keys(),
 ]);
 
+const FOLLOWED_HEADS = new Set(["root-obj", "_", "as"]);
+
 const FF_LITERAL = /^#f-?[0-9]+m[0-9]+$/;
 const FF_LOGICS = new Set(["QF_FF", "QF_FFA", "ALL", "HO_ALL"]);
 
@@ -775,7 +778,7 @@ export const createCommandReader = (text: string) => {
         continue;
       }
       current.end = token;
-      if (isSymbol(current.items[0], "root-obj") || isSymbol(current.items[0], "_"))
+      if (isSymbol(current.items[0]) && FOLLOWED_HEADS.has(current.items[0].text))
         followed = current;
       state.depth--;
       const parent = stack.pop();
@@ -2103,7 +2106,7 @@ export const createSmtlibReader = (
           parseApp(
             qualified,
             [],
-            qualified,
+            current.follower ?? qualified,
             [],
             parseSort(current.items[2], "Invalid qualified identifier"),
           ),

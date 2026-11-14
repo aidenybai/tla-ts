@@ -229,6 +229,17 @@ describe("a malformed application or indexed constant, as Z3 5.3.2 reports it", 
   });
 });
 
+describe("a qualified constant, as Z3 5.3.2 reports it", () => {
+  it("reports one that is unknown at the token after it", () => {
+    expect(
+      run(["(declare-const x Int)", "(simplify (as foo Int)  )", "(simplify (as x Bool)  )"]),
+    ).toEqual([
+      '(error "line 2 column 24: unknown constant fooInt ")',
+      '(error "line 3 column 23: unknown constant xBool \ndeclared: (declare-fun x () Int) ")',
+    ]);
+  });
+});
+
 describe("a finite-field literal, as Z3 5.3.2 reports it", () => {
   it("rejects one without a value and a modulus, and any in a logic without finite fields", () => {
     expect(
