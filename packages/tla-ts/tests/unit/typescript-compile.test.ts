@@ -13919,6 +13919,31 @@ describe("errors", () => {
     });
   });
 
+  describe("constructs a function expression that new calls where the script writes it", () => {
+    const getSource = (expected: string) => `
+      class Box {}
+      const box = new Box();
+      const made = new (function named(this: { prop: number }) {
+        this.prop = 1;
+      } as unknown as new () => { prop: number })();
+      const self = new (function (this: object) {
+        return this;
+      } as unknown as new () => object)();
+      const seen = [made.prop, typeof self, (self as unknown) === globalThis].join();
+      if (seen !== "${expected}") throw new Error(seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,object,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("1,object,true"))).failure?.message).toContain(
+        "1,object,false",
+      );
+    });
+  });
+
   describe("compares an object on the heap with globalThis", () => {
     const getSource = (expected: string) => `
       class Box {}

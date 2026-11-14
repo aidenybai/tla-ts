@@ -2612,6 +2612,24 @@ const isObjectArgument = (argument: ts.Expression, checker: ts.TypeChecker) => {
 const isPassedAsObject = (symbol: ts.Symbol, sourceFile: ts.SourceFile, context: Context) =>
   context.objectArguments.get(sourceFile)?.has(symbol) ?? false;
 
+// The new that constructs a function expression where the script writes it.
+const getInPlaceNew = (node: ts.Node) => {
+  const constructed = ts.findAncestor(
+    node.parent,
+    (ancestor) =>
+      !ts.isParenthesizedExpression(ancestor) &&
+      !ts.isAsExpression(ancestor) &&
+      !ts.isTypeAssertionExpression(ancestor) &&
+      !ts.isNonNullExpression(ancestor),
+  );
+  return ts.isFunctionExpression(node) &&
+    constructed !== undefined &&
+    ts.isNewExpression(constructed) &&
+    skipCasts(constructed.expression) === node
+    ? constructed
+    : undefined;
+};
+
 export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFunction => {
   if (context.heap === undefined) return false;
   if (!ts.isFunctionDeclaration(node) && !ts.isFunctionExpression(node)) return false;
@@ -2627,6 +2645,13 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
       ? undefined
       : getSymbol(nameNode, context.checker);
   const sourceFile = node.getSourceFile();
+  // A function that a new constructs where the script writes it, which the new makes once.
+  const constructed = getInPlaceNew(node);
+  if (constructed !== undefined) {
+    const isHeap = isPlain(node) && isOnce(constructed);
+    heapFunctions.set(node, isHeap);
+    return isHeap;
+  }
   // A new or Reflect.construct constructs the function or takes it as newTarget, an Object
   // function reads or changes it as an object, or its @@hasInstance or an instanceof reads its
   // prototype.
@@ -2676,7 +2701,11 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
 
 // The heap class that a name names.
 export const getHeapClass = (node: ts.Expression, context: Context): HeapClass | undefined => {
-  const declaration = getSymbol(skipCasts(node), context.checker)?.valueDeclaration;
+  const inPlace = skipCasts(node);
+  if (getInPlaceNew(inPlace) !== undefined) {
+    return isHeapFunction(inPlace, context) ? inPlace : undefined;
+  }
+  const declaration = getSymbol(inPlace, context.checker)?.valueDeclaration;
   const found =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
