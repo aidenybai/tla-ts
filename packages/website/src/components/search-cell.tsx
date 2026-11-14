@@ -18,7 +18,7 @@ interface SearchCellProps {
 
 export const useSearchPath = (search: Search | undefined) => {
   const [hoveredStateId, setHoveredStateId] = useState<string>();
-  return { states: search ? getPath(search, hoveredStateId) : [], hover: setHoveredStateId };
+  return { states: search ? getPath(search.states, hoveredStateId) : [], hover: setHoveredStateId };
 };
 
 interface SearchRow {
@@ -43,6 +43,26 @@ const getBranch = (search: Search, state: SearchState, parent?: SearchRow): Sear
   ];
 };
 
+interface StateValuesProps {
+  state: SearchState;
+}
+
+const StateValues = (props: StateValuesProps) =>
+  props.state.isFailing
+    ? props.state.change
+    : (props.state.change.match(VALUES) ?? []).map((value, index) => (
+        <span
+          key={index}
+          className={cn(
+            value.startsWith('"') && "text-success",
+            /^-?\d/.test(value) && "text-syntax-number",
+            /^(TRUE|FALSE)$/.test(value) && "text-syntax-keyword",
+          )}
+        >
+          {value}
+        </span>
+      ));
+
 interface SearchMoreProps {
   count: number;
 }
@@ -66,11 +86,29 @@ export const SearchCell = (props: SearchCellProps) => {
   const lastTrunkLine = Math.max(...rows.filter(isTrunkRow).map((row) => row.state.line ?? 0));
   const lastTrunkIndex = lineRows.findLastIndex(isTrunkRow);
   const isBelowRoot = props.line > firstLine;
+  // Until a state is hovered, the steps to the failing state stand out, numbered in order.
+  const path =
+    props.path.length > 0
+      ? props.path
+      : getPath(props.search.states, props.search.states.find((state) => state.isFailing)?.id);
+  // A line with no states gives its width back to the code. The trunk keeps its place, half the
+  // code block from the right, and is cut where the code reaches it.
+  if (lineRows.length === 0)
+    return (
+      isBelowRoot &&
+      props.line < lastTrunkLine && (
+        <span
+          data-trunk
+          className="relative min-w-0 flex-1 self-stretch overflow-hidden max-sm:hidden"
+        >
+          <span className="absolute top-0 right-[calc(50cqw-13px)] h-full w-px bg-input" />
+        </span>
+      )
+    );
   return (
     <span
       className={cn(
         "relative flex w-1/2 shrink-0 flex-col self-stretch text-xs max-sm:w-full",
-        lineRows.length === 0 && "pointer-events-none -ml-[calc(50%+1rem)] max-sm:hidden",
         props.className,
       )}
     >
@@ -82,8 +120,8 @@ export const SearchCell = (props: SearchCellProps) => {
           {hiddenCount > 0 && index === SHOWN_ROWS && <SearchMore count={hiddenCount} />}
           <span
             className={cn(
-              "relative flex min-h-[22px] items-center py-px transition-opacity duration-150 ease",
-              props.path.length > 0 && !props.path.includes(row.state) && "opacity-40",
+              "relative flex min-h-[22px] items-center py-px transition-opacity duration-150 ease-[ease]",
+              path.length > 0 && !path.includes(row.state) && "opacity-40",
             )}
           >
             {isBelowRoot && props.line === lastTrunkLine && index <= lastTrunkIndex && (
@@ -125,22 +163,15 @@ export const SearchCell = (props: SearchCellProps) => {
                   : "bg-background text-foreground ring-1 ring-border",
               )}
             >
-              {row.state.isFailing && <X weight="bold" className="shrink-0" />}
+              {row.state.isFailing ? (
+                <X weight="bold" className="shrink-0" />
+              ) : (
+                path.includes(row.state) && (
+                  <span className="text-faint">{path.length - path.indexOf(row.state)}</span>
+                )
+              )}
               <span className="min-w-0 wrap-anywhere">
-                {row.state.isFailing
-                  ? row.state.change
-                  : (row.state.change.match(VALUES) ?? []).map((value, index) => (
-                      <span
-                        key={index}
-                        className={cn(
-                          value.startsWith('"') && "text-success",
-                          /^-?\d/.test(value) && "text-syntax-number",
-                          /^(TRUE|FALSE)$/.test(value) && "text-syntax-keyword",
-                        )}
-                      >
-                        {value}
-                      </span>
-                    ))}
+                <StateValues state={row.state} />
               </span>
             </span>
           </span>
