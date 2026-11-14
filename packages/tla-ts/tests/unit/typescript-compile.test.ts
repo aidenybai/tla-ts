@@ -3023,6 +3023,35 @@ describe("values", () => {
     ).toThrow("getPrototypeOf needs a value whose type tells");
   });
 
+  it("reads the constructor of an async function from its prototype", async () => {
+    const getSource = (expected: string) => `
+      async function run() {}
+      const AsyncFunction = run.constructor;
+      const Inline = async function () {}.constructor;
+      const result = [
+        Object.getPrototypeOf(AsyncFunction) === Function,
+        Object.getPrototypeOf(Inline.prototype) === Function.prototype,
+        Inline === AsyncFunction,
+        run instanceof Function,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("true|true|true|true"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("true|true|false|true"))).failure?.message).toContain(
+      "true|true|true|true",
+    );
+    expect(
+      (
+        await checkModel(`
+          async function run() {}
+          const keep = (value: unknown) => value;
+          keep(run);
+          const prototype = Object.getPrototypeOf(run.constructor);
+        `)
+      ).failure?.message,
+    ).toContain("tla-ts can't read the properties");
+  });
+
   it("gives an error a message only where its message isn't undefined", async () => {
     const getSource = (expected: string) => `
       class Err extends Error {}

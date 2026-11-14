@@ -227,7 +227,12 @@ const getName = (node: ts.Expression, context: Context): string | undefined => {
   }
   const key = getBuiltInKey(node, context);
   if (key !== undefined) {
-    const owner = getName(key.owner, context);
+    // A function that keeps its prototype reads its constructor from there.
+    const owner =
+      getName(key.owner, context) ??
+      (key.name === "constructor" && isUntouchedFunction(skipCasts(key.owner), context)
+        ? getFunctionPrototype(context.checker.getTypeAtLocation(key.owner))
+        : undefined);
     const property =
       owner === undefined
         ? undefined
@@ -385,6 +390,39 @@ export const getGeneratorPrototypeRef = (node: ts.Node | undefined, context: Con
     : useJavaScript(":>", [identifier("Ref"), number(position)], context);
 };
 
+// Whether a script writes a function in place, or declares it and only calls it and reads its
+// prototype, its constructor, or its own prototype through getPrototypeOf or instanceof, so that the
+// function keeps the properties and the prototype it starts with.
+const isUntouchedFunction = (owner: ts.Expression, context: Context) => {
+  const checker = context.checker;
+  const symbol = ts.isIdentifier(owner) ? getSymbol(owner, checker) : undefined;
+  return (
+    ts.isFunctionExpression(owner) ||
+    (symbol !== undefined &&
+      findNodes(owner.getSourceFile(), ts.isIdentifier).every((reference) => {
+        const parent = reference.parent;
+        return (
+          getSymbol(reference, checker) !== symbol ||
+          ((ts.isFunctionDeclaration(parent) || ts.isVariableDeclaration(parent)) &&
+            parent.name === reference) ||
+          (ts.isCallExpression(parent) && parent.expression === reference) ||
+          (isPrototypeCall(parent, context) && parent.arguments[0] === reference) ||
+          (ts.isBinaryExpression(parent) &&
+            parent.left === reference &&
+            parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword) ||
+          (ts.isPropertyAccessExpression(parent) &&
+            parent.expression === reference &&
+            parent.name.text === "constructor" &&
+            getAssignedTarget(parent.parent) !== parent) ||
+          (ts.isPropertyAccessExpression(parent) &&
+            parent.name.text === "prototype" &&
+            isPrototypeCall(parent.parent, context) &&
+            parent.parent.arguments[0] === parent)
+        );
+      }))
+  );
+};
+
 // The prototype object of a generator function that a script writes in place, or declares and only
 // calls and asks for its prototype and for the prototype of that object, so that the object is the
 // one the function starts with, which inherits from the built-in one.
@@ -403,25 +441,7 @@ const getGeneratorObjectPrototype = (node: ts.Expression, context: Context) => {
   if (owner === undefined) return undefined;
   const checker = context.checker;
   const prototype = getFunctionPrototype(checker.getTypeAtLocation(owner));
-  const symbol = ts.isIdentifier(owner) ? getSymbol(owner, checker) : undefined;
-  const isUntouched =
-    ts.isFunctionExpression(owner) ||
-    (symbol !== undefined &&
-      findNodes(node.getSourceFile(), ts.isIdentifier).every((reference) => {
-        const parent = reference.parent;
-        return (
-          getSymbol(reference, checker) !== symbol ||
-          ((ts.isFunctionDeclaration(parent) || ts.isVariableDeclaration(parent)) &&
-            parent.name === reference) ||
-          (ts.isCallExpression(parent) && parent.expression === reference) ||
-          (isPrototypeCall(parent, context) && parent.arguments[0] === reference) ||
-          (ts.isPropertyAccessExpression(parent) &&
-            parent.name.text === "prototype" &&
-            isPrototypeCall(parent.parent, context) &&
-            parent.parent.arguments[0] === parent)
-        );
-      }));
-  return isUntouched &&
+  return isUntouchedFunction(owner, context) &&
     (prototype === "%GeneratorFunction%.prototype" ||
       prototype === "%AsyncGeneratorFunction%.prototype")
     ? `${prototype}.prototype`
@@ -568,7 +588,8 @@ const getHeldBuiltIn = (node: ts.Expression, context: Context) => {
     symbol !== undefined &&
     initializer !== undefined &&
     node.pos > initializer.end &&
-    (context.checker.getTypeAtLocation(initializer).flags & ts.TypeFlags.Any) !== 0 &&
+    ((context.checker.getTypeAtLocation(initializer).flags & ts.TypeFlags.Any) !== 0 ||
+      getBuiltInKey(initializer, context)?.name === "constructor") &&
     isBuiltInObject(initializer, context) &&
     !isAssigned(symbol, node.getSourceFile(), context)
     ? initializer
