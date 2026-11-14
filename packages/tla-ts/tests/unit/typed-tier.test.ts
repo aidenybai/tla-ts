@@ -89,6 +89,7 @@ describe("typed tier matches TLC", () => {
     ["SparseBags", 13],
     ["PartialSteps", 4],
     ["FairProcesses", 55],
+    ["PermutedSchedules", 85],
   ])("counts each successor TLC generates in %s", async (name, generatedStates) => {
     const results = await Promise.all([checkFixture(name, false), checkFixture(name, true)]);
     expect(results.map((result) => result.generatedStates)).toEqual([

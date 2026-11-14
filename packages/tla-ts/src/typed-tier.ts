@@ -3072,9 +3072,14 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
       );
     }
     case "FunctionConstruction": {
-      if (expression.bounds.length !== 1 || expression.isRecursive) return unsupported();
+      if (expression.bounds.length !== 1) return unsupported();
       const bound = expression.bounds[0];
       const pattern = bound.pattern;
+      if (expression.isRecursive) {
+        return pattern.kind === "Name"
+          ? compileLambda(program, createLambda(), pattern.name, bound.set, expression.body, frame)
+          : unsupported();
+      }
       if (!isConstantExpression(program, bound.set, frame.scope)) {
         return pattern.kind === "Name"
           ? compileSequenceConstruction(program, pattern.name, bound.set, expression.body, frame)
@@ -3163,6 +3168,41 @@ const getEnabledCode = (step: () => string) =>
 // TLC evaluates UNCHANGED e outside an action's conjuncts as e' = e, which for a tuple holds when
 // each element is unchanged.
 // Binds the definitions of a LET, each compiled where the LET is.
+const createLambda = (): LambdaType => ({
+  kind: "Lambda",
+  argument: createVar(),
+  result: createVar(),
+});
+
+// A function TLC builds lazily applies its body to each argument it's applied to.
+const compileLambda = (
+  program: Program,
+  type: LambdaType,
+  parameter: string,
+  set: Expression,
+  body: Expression,
+  frame: Frame,
+): Compiled => {
+  const argument = getName(program, "a");
+  const isInDomain = compileMembership(
+    program,
+    { type: type.argument, emit: () => argument },
+    set,
+    frame,
+  );
+  const result = expectType(
+    compileValue(program, body, {
+      ...frame,
+      scope: bindCode(frame.scope, parameter, type.argument, argument),
+    }),
+    type.result,
+  );
+  return {
+    type,
+    emit: () => `((${argument}) => (${isInDomain.emit()}) ? ${result.emit()} : H.deopt())`,
+  };
+};
+
 const bindLet = (program: Program, expression: LetExpression, frame: Frame) => {
   const names: LazyDefinition[] = [];
   const scope = expression.definitions.reduce<TierScope>((current, definition) => {
@@ -3170,28 +3210,14 @@ const bindLet = (program: Program, expression: LetExpression, frame: Frame) => {
       const bound = definition.bounds[0];
       if (definition.bounds.length !== 1 || bound.pattern.kind !== "Name") return unsupported();
       const name = getName(program, "l");
-      const argument = getName(program, "a");
-      const type: LambdaType = { kind: "Lambda", argument: createVar(), result: createVar() };
+      const type = createLambda();
       const inner = bindCode(current, definition.name, type, getLazyCode(name));
-      const isInDomain = compileMembership(
-        program,
-        { type: type.argument, emit: () => argument },
-        bound.set,
-        { ...frame, scope: inner },
-      );
-      const body = expectType(
-        compileValue(program, definition.body, {
-          ...frame,
-          scope: bindCode(inner, bound.pattern.name, type.argument, argument),
-        }),
-        type.result,
-      );
       names.push({
         name,
-        value: {
-          type,
-          emit: () => `(${argument}) => (${isInDomain.emit()}) ? ${body.emit()} : H.deopt()`,
-        },
+        value: compileLambda(program, type, bound.pattern.name, bound.set, definition.body, {
+          ...frame,
+          scope: inner,
+        }),
       });
       return inner;
     }
