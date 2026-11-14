@@ -2113,6 +2113,30 @@ NextElementPosition(heap, ref, position, length, isReversed) ==
             [] isReversed -> CHOOSE other \\in later : \\A more \\in later : more <= other
             [] OTHER -> CHOOSE other \\in later : \\A more \\in later : other <= more
 
+\\* The integer of a key of decimal digits from 10 on, below 2^53.
+RECURSIVE DecimalOf(_)
+DecimalOf(text) ==
+  IF Len(text) <= 9
+  THEN ParseDigits(text, 10)
+  ELSE Add(Multiply(DecimalOf(SubSeq(text, 1, Len(text) - 9)), 1000000000),
+           ParseDigits(SubSeq(text, Len(text) - 8, Len(text)), 10))
+
+\\* Whether a key is an integer below 2^53 in its canonical decimal form.
+LOCAL IsLongKey(key) ==
+  /\\ ~IsSymbol(key)
+  /\\ Len(key) > 0
+  /\\ Len(key) <= 16
+  /\\ \\A position \\in 1..Len(key) : SubSeq(key, position, position) \\in Digits \\ {"-"}
+  /\\ Len(key) = 1 \\/ SubSeq(key, 1, 1) # "0"
+  /\\ Len(key) < 16 \\/ DigitsBelow(key, "9007199254740992")
+
+\\* The keys below 2^53 that an object or its prototypes hold.
+RECURSIVE LongKeys(_, _)
+LongKeys(heap, ref) ==
+  LET object == Lookup(heap, ref)
+  IN {key \\in DOMAIN object.values : IsLongKey(key)}
+       \\cup IF object.prototype = Null THEN {} ELSE LongKeys(heap, object.prototype)
+
 \\* The elements that an array-like object or its prototypes hold below its length, in order, with
 \\* their indices. The array methods that skip holes visit these. A record holds the length, so TLC
 \\* reads it even when no element is present.
@@ -2128,9 +2152,11 @@ PresentElements(heap, ref) ==
       indices == [position \\in 1..Cardinality(present) |->
                    CHOOSE element \\in present :
                      Cardinality({other \\in present : other < element}) = position - 1]
-  IN [length |-> length,
-      indices |-> indices,
-      values |-> Read([position \\in DOMAIN indices |-> Get(heap, ref, ToString(indices[position]))])]
+  IN IF isBeyond /\\ \\E key \\in LongKeys(heap, ref) : Len(key) >= 10
+     THEN Assert(FALSE, "tla-ts can't order keys this big")
+     ELSE [length |-> length,
+           indices |-> indices,
+           values |-> Read([position \\in DOMAIN indices |-> Get(heap, ref, ToString(indices[position]))])]
 
 \\* The accessor that a write to a key calls, which the object or a prototype holds, or Undefined
 \\* where the write makes or changes a data property.
@@ -5236,30 +5262,6 @@ LOCAL LongChange(heap, ref, method, items, length) ==
        IN IF LessThan(MaxLength, total)
           THEN [heap |-> heap, value |-> Undefined, isThrown |-> TRUE]
           ELSE [heap |-> state.heap, value |-> total, isThrown |-> state.isThrown]
-
-\\* The integer of a key of decimal digits from 10 on, below 2^53.
-RECURSIVE DecimalOf(_)
-DecimalOf(text) ==
-  IF Len(text) <= 9
-  THEN ParseDigits(text, 10)
-  ELSE Add(Multiply(DecimalOf(SubSeq(text, 1, Len(text) - 9)), 1000000000),
-           ParseDigits(SubSeq(text, Len(text) - 8, Len(text)), 10))
-
-\\* Whether a key is an integer below 2^53 in its canonical decimal form.
-LOCAL IsLongKey(key) ==
-  /\\ ~IsSymbol(key)
-  /\\ Len(key) > 0
-  /\\ Len(key) <= 16
-  /\\ \\A position \\in 1..Len(key) : SubSeq(key, position, position) \\in Digits \\ {"-"}
-  /\\ Len(key) = 1 \\/ SubSeq(key, 1, 1) # "0"
-  /\\ Len(key) < 16 \\/ DigitsBelow(key, "9007199254740992")
-
-\\* The keys below 2^53 that an object or its prototypes hold.
-RECURSIVE LongKeys(_, _)
-LongKeys(heap, ref) ==
-  LET object == Lookup(heap, ref)
-  IN {key \\in DOMAIN object.values : IsLongKey(key)}
-       \\cup IF object.prototype = Null THEN {} ELSE LongKeys(heap, object.prototype)
 
 \\* Moves the elements of an array-like object at keys below 2^53 by an offset, from the highest
 \\* key, where a hole deletes the key it moves to.

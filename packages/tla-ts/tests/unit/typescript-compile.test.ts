@@ -1611,6 +1611,28 @@ describe("values", () => {
     });
   });
 
+  describe("stops where an array-like object past 2^31 holds a key from 2^32", () => {
+    const getSource = (key: string) => `
+      const wide: { [key: string]: unknown } = { 0: 1, "${key}": 3, length: 2 ** 40 };
+      const found = Array.prototype.indexOf.call(wide, 3);
+      if (found !== 2) throw new Error(String(found));
+    `;
+
+    it("stops at a key past 2^32", async () => {
+      expect((await checkModel(getSource("10000000000"))).failure?.message).toContain(
+        "tla-ts can't order keys this big",
+      );
+    });
+
+    it("finds a key below 2^31 as Node does", async () => {
+      expect((await checkModel(getSource("2"))).failure).toBeUndefined();
+    });
+
+    it("rejects a key below 2^31 at another index", async () => {
+      expect((await checkModel(getSource("1"))).failure?.message).toContain("1");
+    });
+  });
+
   describe("converts lengths and indices beyond 32 bits as Node does", () => {
     const getSource = (expected: string) => `
       const like = { 0: 12, length: -4294967294 };
