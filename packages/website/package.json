@@ -19,6 +19,7 @@
     "@tanstack/react-virtual": "^3.14.26",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.5.2",
+    "geist": "^1.9.2",
     "motion": "^14.12.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

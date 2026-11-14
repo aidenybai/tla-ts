@@ -10,7 +10,7 @@ export const HeroRoot = (props: PartProps) => (
 );
 
 export const HeroTitle = (props: PartProps) => (
-  <h1 className="flex items-center gap-2 text-xl font-medium text-foreground">
+  <h1 className="flex items-center gap-2 font-pixel text-xl font-medium text-foreground">
     <Logo />
     {props.children}
   </h1>
