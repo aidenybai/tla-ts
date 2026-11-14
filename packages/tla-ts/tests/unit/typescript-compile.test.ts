@@ -24211,6 +24211,27 @@ describe("calls through values", () => {
     });
   });
 
+  describe("reads the name and length of a built-in getter that a descriptor holds", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const descriptor = Object.getOwnPropertyDescriptor(Map, Symbol.species)!;
+      const getter = descriptor.get!;
+      const read = [getter.name, getter.length].join();
+      box.size = 1;
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("get [Symbol.species],0"))).failure).toBeUndefined();
+    });
+
+    it("rejects the key without brackets as the name", async () => {
+      expect((await checkModel(getSource("get species,0"))).failure?.message).toContain(
+        "get [Symbol.species],0",
+      );
+    });
+  });
+
   describe("throws the TypeError of a built-in next on an object that isn't its iterator", () => {
     const getSource = (expected: string) => `
       "use strict";

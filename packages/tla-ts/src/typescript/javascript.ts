@@ -2562,6 +2562,12 @@ ThrowsOnRegExpReceiver(heap, value, receiver) ==
        [] OTHER -> FALSE
 
 \\* Whether a value is %ArrayIteratorPrototype%.next or %StringIteratorPrototype%.next.
+\\* A property of a value that may be a built-in function, which only a built-in's object tells.
+BuiltInFunctionProperty(heap, value, key) ==
+  IF IsBuiltIn(value)
+  THEN Get(heap, value, key)
+  ELSE Assert(FALSE, "tla-ts can't tell which function this value holds")
+
 IsBuiltInIteratorNext(value) ==
   /\\ IsRef(value)
   /\\ TypeOf(value[Ref]) = "string"

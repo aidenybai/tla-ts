@@ -56,6 +56,9 @@ export interface Context {
   heap: ts.Symbol | undefined;
   // The built-in objects, by path, that a script names.
   builtIns: Set<string>;
+  // Whether a script reads a property of a function that may be a built-in accessor, whose objects
+  // the heap then holds.
+  isAccessorRead: boolean;
   // The literal that each function a script holds as a value returns, by its model value's name,
   // for the functions that return only a literal.
   constantFunctions: Map<string, Expression>;
@@ -150,6 +153,7 @@ export const createContext = (checker: ts.TypeChecker): Context => ({
   unknowns: undefined,
   heap: undefined,
   builtIns: new Set(),
+  isAccessorRead: false,
   constantFunctions: new Map(),
   functionObjects: new Map(),
   hasSpecialNumbers: false,

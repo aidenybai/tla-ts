@@ -831,6 +831,16 @@ export const translateBuiltIns = (node: ts.SourceFile, context: Context) => {
     include(entry[0]);
   };
   ["Object.prototype", ...context.builtIns].forEach(include);
+  if (context.isAccessorRead) {
+    [...included].forEach((name) =>
+      BUILT_INS[name][3].forEach((property) =>
+        property
+          .slice(2)
+          .filter((value) => value.startsWith("oget ") || value.startsWith("oset "))
+          .forEach((value) => include(value.slice(1))),
+      ),
+    );
+  }
   // The objects that the included objects' properties hold, which typeof needs to tell apart.
   const referenced = new Set(
     [...included].flatMap((name) =>

@@ -2408,6 +2408,7 @@ const translatePropertyAccess = (
     if (held !== undefined || context.heap === undefined) {
       throw new TlaTypeScriptError(`Unsupported property: ${node.getText()}`, node);
     }
+    context.isAccessorRead = true;
     return share(translateExpression(receiver, scope, context), "function", context, (value) =>
       getFunctionCandidates(receiver, context).reduceRight<Expression>(
         (otherwise, candidate) => {
@@ -2417,10 +2418,11 @@ const translatePropertyAccess = (
             ? otherwise
             : ifExpression(apply("=", [value, candidateValue]), property, otherwise);
         },
-        apply("Assert", [
-          boolean(false),
-          string("tla-ts can't tell which function this value holds"),
-        ]),
+        useJavaScript(
+          "BuiltInFunctionProperty",
+          [getHeap(scope, node, context), value, string(name)],
+          context,
+        ),
       ),
     );
   }
