@@ -5,7 +5,7 @@ import {
   bindOnce,
   findChanged,
   type Frame,
-  getCallback,
+  getPassedCallbacks,
   type Path,
   type Thrown,
   throwOnDestructured,
@@ -570,37 +570,16 @@ export const translateSharedCall = (
     const parameters = getParameters(callee);
     // A parameter whose type is a function takes the function that the call passes it, which the
     // operator runs as the inlined body would.
-    const callbacks = parameters.map((parameter, position) => {
+    const callbacks = new Map(getPassedCallbacks(parameters, argumentNodes, path, context));
+    const shared = parameters.every((parameter) => {
       const symbol = getSymbol(parameter.name, context.checker);
-      const argument = argumentNodes.at(position);
-      const callback = symbol && bound.scope.functions.get(symbol);
-      const isFunctionTyped =
-        context.checker.getTypeAtLocation(parameter).getCallSignatures().length > 0;
-      // A function that a call around this one passed the same parameter isn't this call's.
-      const passed =
-        callback !== undefined &&
-        callback ===
-          (argument === undefined
-            ? getAnyFunction(parameter.initializer)
-            : getCallback(argument, path, context))
-          ? callback
-          : undefined;
-      return { symbol, passed, isMatched: isFunctionTyped === (passed !== undefined) };
-    });
-    const shared = callbacks.every((entry) => entry.symbol !== undefined && entry.isMatched)
-      ? getSharedCall(
-          callee,
-          new Map(
-            callbacks.flatMap((entry): [ts.Symbol, FunctionNode][] =>
-              entry.symbol === undefined || entry.passed === undefined
-                ? []
-                : [[entry.symbol, entry.passed]],
-            ),
-          ),
-          path,
-          context,
-          frame,
-        )
+      return (
+        symbol !== undefined &&
+        context.checker.getTypeAtLocation(parameter).getCallSignatures().length > 0 ===
+          callbacks.has(symbol)
+      );
+    })
+      ? getSharedCall(callee, callbacks, path, context, frame)
       : undefined;
     if (shared === undefined) return inlineCall(bound, inner);
     const changed = shared.changed;

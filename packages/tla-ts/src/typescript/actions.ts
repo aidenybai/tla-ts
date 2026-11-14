@@ -3865,6 +3865,36 @@ const rejectDefaultRun = (
 // Binds a call's arguments to its callee's parameters. A parameter's default makes its objects
 // whether or not the call passes the parameter, as making an object that nothing reads can't be
 // seen.
+// The function that each parameter takes from a call, which the body calls where it calls the
+// parameter. A function that the heap holds passes as an object where the parameter takes one, not
+// a function.
+export const getPassedCallbacks = (
+  parameters: readonly ts.ParameterDeclaration[],
+  argumentNodes: readonly ts.Expression[],
+  path: Path,
+  context: Context,
+) =>
+  parameters.flatMap((parameter, position): [ts.Symbol, FunctionNode][] => {
+    const argument = argumentNodes.at(position);
+    const held = argument === undefined ? undefined : getCallee(argument, context);
+    const isObject =
+      argument !== undefined &&
+      (getHeapClass(argument, context) !== undefined ||
+        (held !== undefined && isFunctionObject(held, context))) &&
+      context.checker.getTypeAtLocation(parameter).getCallSignatures().length === 0;
+    // A parameter that the call passes nothing takes the function that its default writes.
+    const callback =
+      argument === undefined
+        ? argumentNodes.some(ts.isSpreadElement)
+          ? undefined
+          : getAnyFunction(parameter.initializer)
+        : isObject
+          ? undefined
+          : (getCallback(argument, path, context) ?? getAsyncCallee(argument, path, context));
+    const symbol = getSymbol(parameter.name, context.checker);
+    return callback?.body !== undefined && symbol !== undefined ? [[symbol, callback]] : [];
+  });
+
 export const bindCall = (
   node: ts.Node,
   callee: FunctionNode,
@@ -4031,28 +4061,7 @@ export const bindCall = (
       ),
     );
   }
-  // A function that the heap holds passes as an object where the parameter takes one, not a
-  // function.
-  const callbacks = parameters.flatMap((parameter, position): [ts.Symbol, FunctionNode][] => {
-    const argument = argumentNodes.at(position);
-    const held = argument === undefined ? undefined : getCallee(argument, context);
-    const isObject =
-      argument !== undefined &&
-      (getHeapClass(argument, context) !== undefined ||
-        (held !== undefined && isFunctionObject(held, context))) &&
-      context.checker.getTypeAtLocation(parameter).getCallSignatures().length === 0;
-    // A parameter that the call passes nothing takes the function that its default writes.
-    const callback =
-      argument === undefined
-        ? argumentNodes.some(ts.isSpreadElement)
-          ? undefined
-          : getAnyFunction(parameter.initializer)
-        : isObject
-          ? undefined
-          : (getCallback(argument, path, context) ?? getAsyncCallee(argument, path, context));
-    const symbol = getSymbol(parameter.name, context.checker);
-    return callback?.body !== undefined && symbol !== undefined ? [[symbol, callback]] : [];
-  });
+  const callbacks = getPassedCallbacks(parameters, argumentNodes, path, context);
   // A function that no parameter takes evaluates to an object that nothing reads, unless the
   // callee reads its arguments.
   const isArgumentsRead =
