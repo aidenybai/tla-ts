@@ -235,6 +235,7 @@ import {
   getBuiltIn,
   isBuiltInObject,
   getMadeRegExp,
+  getStoredBuiltIn,
   isInvalidRegExp,
   translateBuiltInValue,
   getGeneratorPrototypeRef,
@@ -3218,9 +3219,6 @@ export const translateCallStatement = (
         : getUndefined(context);
     if (dispatched.some(isAnyGenerator)) rejectGeneratorUse(expression, context);
     context.prelude.add("Null");
-    const stop = leaf(
-      apply("Assert", [boolean(false), string("tla-ts can't tell which function this call runs")]),
-    );
     const accessor = ts.isPropertyAccessExpression(target)
       ? /^__(define|lookup)([GS])etter__$/.exec(target.name.text)
       : null;
@@ -3337,6 +3335,20 @@ export const translateCallStatement = (
         ),
       );
     };
+    const unknown = translateStoredRegExpCall(
+      expression,
+      value,
+      receiver,
+      path,
+      context,
+      frame,
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't tell which function this call runs"),
+        ]),
+      ),
+    );
     return dispatched.reduceRight(
       (otherwise, candidate) => {
         const candidateValue = getCandidateValue(candidate, context);
@@ -3415,7 +3427,7 @@ export const translateCallStatement = (
         apply("\\in", [value, set([getUndefined(context), identifier("Null")])]),
         throwTypeError(path, expression, context, frame),
         !ts.isPropertyAccessExpression(target) || expression.arguments.some(ts.isSpreadElement)
-          ? stop
+          ? unknown
           : ITERATOR_CALLBACK_METHODS.has(target.name.text)
             ? ifThenElse(
                 apply("=", [
@@ -3427,10 +3439,10 @@ export const translateCallStatement = (
                   ),
                 ]),
                 rejectCallback(target.name.text),
-                stop,
+                unknown,
               )
             : accessor === null || keyNode === undefined
-              ? stop
+              ? unknown
               : ifThenElse(
                   apply("=", [
                     value,
@@ -3441,7 +3453,7 @@ export const translateCallStatement = (
                     ),
                   ]),
                   translateAccessor(accessor[1], accessor[2] === "G" ? "get" : "set", keyNode),
-                  stop,
+                  unknown,
                 ),
       ),
     );
@@ -3480,11 +3492,19 @@ export const translateCallStatement = (
         ]),
       ]),
       throwTypeError(path, expression, context, frame),
-      leaf(
-        apply("Assert", [
-          boolean(false),
-          string("tla-ts can't tell which function this call runs"),
-        ]),
+      translateStoredRegExpCall(
+        expression,
+        value,
+        getUndefined(context),
+        path,
+        context,
+        frame,
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't tell which function this call runs"),
+          ]),
+        ),
       ),
     );
   }
@@ -9675,6 +9695,107 @@ const getDispatched = (
   }
   const dispatched = [...getFunctionCandidates(callee, context), ...getClosures(callee, context)];
   return dispatched.length > 0 ? dispatched : undefined;
+};
+
+// RegExp.prototype.exec and test, where a script stores them as values, which throw a TypeError
+// where the receiver can't be a regexp: exec requires one, and test calls the receiver's exec where
+// that's a function, which RegExp.prototype.exec is, and requires a regexp otherwise.
+const translateStoredRegExpCall = (
+  expression: ts.CallExpression,
+  value: Expression,
+  receiver: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  otherwise: Formula,
+) => {
+  const rejectRegExp = (method: string) => {
+    const unfollowed = leaf(
+      apply("Assert", [
+        boolean(false),
+        string(`tla-ts can't run RegExp.prototype.${method} on this receiver`),
+      ]),
+    );
+    const reject = (current: Path) =>
+      ifThenElse(
+        useJavaScript(
+          "LacksRegExpMatcher",
+          [getHeap(current.scope, expression, context), receiver],
+          context,
+        ),
+        throwTypeError(current, expression, context, frame),
+        unfollowed,
+      );
+    if (method === "exec") return reject(path);
+    const argument = expression.arguments.at(0);
+    // test converts its argument to a string before it reads exec, which only a primitive other
+    // than a symbol does without running anything.
+    const isPrimitive =
+      argument === undefined ||
+      (getTypeNames(context.checker.getTypeAtLocation(argument), context.checker)?.every((name) =>
+        ["string", "number", "boolean", "undefined", "null", "bigint"].includes(name),
+      ) ??
+        false);
+    return ifThenElse(
+      apply("\\/", [
+        apply("=", [receiver, identifier("Null")]),
+        not(
+          apply("\\in", [
+            useJavaScript(
+              "TypeOfIn",
+              [getHeap(path.scope, expression, context), receiver],
+              context,
+            ),
+            set([string("object"), string("function")]),
+          ]),
+        ),
+      ]),
+      throwTypeError(path, expression, context, frame),
+      isPrimitive
+        ? read(expression, receiver, "exec", path, context, frame, (found, exec) =>
+            ifThenElse(
+              apply("/\\", [
+                apply("=", [
+                  useJavaScript(
+                    "TypeOfIn",
+                    [getHeap(found.scope, expression, context), exec],
+                    context,
+                  ),
+                  string("function"),
+                ]),
+                not(
+                  apply("=", [
+                    exec,
+                    translateBuiltInValue("RegExp.prototype.exec", expression, context),
+                  ]),
+                ),
+              ]),
+              unfollowed,
+              reject(found),
+            ),
+          )
+        : unfollowed,
+    );
+  };
+  const stored = new Set(
+    findNodes(expression.getSourceFile(), ts.isPropertyAccessExpression).map((inner) =>
+      getStoredBuiltIn(inner, context),
+    ),
+  );
+  return ["exec", "test"]
+    .filter((method) => stored.has(`RegExp.prototype.${method}`))
+    .reduceRight<Formula>(
+      (rest, method) =>
+        ifThenElse(
+          apply("=", [
+            value,
+            translateBuiltInValue(`RegExp.prototype.${method}`, expression, context),
+          ]),
+          rejectRegExp(method),
+          rest,
+        ),
+      otherwise,
+    );
 };
 
 // The Iterator.prototype methods that take a callback first, which they check before they read the

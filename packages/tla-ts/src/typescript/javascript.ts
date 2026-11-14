@@ -1301,6 +1301,13 @@ IsSequenceValue(value) ==
 
 LOCAL IsRegExp(heap, value) == IsHeap(value) /\\ "regexp" \\in DOMAIN heap.objects[value[Ref]]
 
+\\* Whether a value has no [[RegExpMatcher]]: a primitive, a function, or an object that the heap holds
+\\* that isn't a regexp. tla-ts may hold other objects that are regexps outside the heap.
+LacksRegExpMatcher(heap, value) ==
+  \\/ value = Null
+  \\/ TypeOfIn(heap, value) # "object"
+  \\/ IsHeap(value) /\\ ~IsRegExp(heap, value)
+
 LOCAL IsRegExpPrototype(value) == IsRef(value) /\\ ~IsHeap(value) /\\ value[Ref] = "RegExp.prototype"
 
 \\* The getters of RegExp.prototype that read a regexp's record, which flags doesn't.

@@ -12817,6 +12817,46 @@ describe("errors", () => {
     });
   });
 
+  describe("throw where a stored RegExp.prototype.exec or test runs on a receiver that isn't a regexp", () => {
+    const getSource = (expected: string) => `
+      type Method = (...args: unknown[]) => unknown;
+      const subject: { [key: string | symbol]: unknown } = {};
+      subject.exec = RegExp.prototype.exec;
+      subject.test = RegExp.prototype.test;
+      subject.size = function () {
+        return 0;
+      };
+      const exec = RegExp.prototype.exec;
+      const caught: string[] = [];
+      try {
+        (subject.exec as Method)("a");
+      } catch (error) {
+        caught.push(error instanceof TypeError ? "type" : "other");
+      }
+      try {
+        (subject.test as Method)("a");
+      } catch (error) {
+        caught.push(error instanceof TypeError ? "type" : "other");
+      }
+      try {
+        exec("a");
+      } catch (error) {
+        caught.push(error instanceof TypeError ? "type" : "other");
+      }
+      if (caught.join() !== "${expected}") throw new Error(caught.join());
+    `;
+
+    it("throws the TypeError of each", async () => {
+      expect((await checkModel(getSource("type,type,type"))).failure).toBeUndefined();
+    });
+
+    it("doesn't run one of them", async () => {
+      expect((await checkModel(getSource("type,type"))).failure?.message).toContain(
+        "type,type,type",
+      );
+    });
+  });
+
   describe("close an object and throw where an Iterator.prototype method's callback isn't callable", () => {
     const getSource = (expected: string) => `
       type Method = (...args: unknown[]) => unknown;
