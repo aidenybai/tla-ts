@@ -1,12 +1,10 @@
-// Ported from Z3 (src/sat/smt/q_mbi.h, src/sat/smt/q_mbi.cpp, src/sat/smt/q_model_fixer.h,
-// src/sat/smt/q_model_fixer.cpp, src/ast/macros/quantifier_macro_info.cpp,
+// Ported from Z3 (src/sat/smt/q_mbi.h, src/sat/smt/q_mbi.cpp,
 // src/ast/for_each_expr.cpp), MIT license, see z3-license.txt.
-import { SmtInvariantError, SmtUnsupportedError } from "../../../../errors";
+import { SmtInvariantError } from "../../../../errors";
 import {
   type AstManager,
   FAMILY_ARITH,
   FAMILY_ARRAY,
-  FAMILY_BV,
   FAMILY_DATATYPE,
   OP_EQ,
   OP_NOT,
@@ -16,21 +14,16 @@ import {
 } from "../ast";
 import { flattenAndVector, flattenOrVector, mkNot } from "../ast-util";
 import { ExprSafeReplace } from "../expr-safe-replace";
-import { ObjHashtable } from "../hashtable";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
-import {
-  type CondMacro,
-  collectMacroCandidates,
-  releaseCondMacros,
-  solveMacros,
-} from "../model-macro-solver";
+import { ArithProjectPlugin } from "../mbp/mbp-arith";
+import { MbpContext, ProjectPlugin } from "../mbp/mbp-plugin";
 import { ProtoModel } from "../proto-model";
 import { RefVector } from "../ref-vector";
-import { Rewriter, TACTIC_REWRITER_OPTIONS } from "../rewriter";
 import { IncSatSolver } from "../sat/inc-sat-solver";
 import { VarSubst } from "../var-subst";
 import { type Enode, getClass } from "./egraph";
 import type { EufSolver } from "./euf-solver";
+import { getSubterms, isUninterpretedApp, ModelFixer } from "./q-model-fixer";
 import type { QSolver } from "./q-solver";
 
 const UINT_MAX = 4294967295;
@@ -57,24 +50,6 @@ interface Instantiation {
   readonly fml: number;
   readonly generation: number;
 }
-
-// subterms::ground: the subterms of an expression, outside quantifier bodies.
-const getSubterms = (manager: AstManager, expr: number) => {
-  const subterms: number[] = [];
-  const stack = [expr];
-  const visited = new Set<number>();
-  while (stack.length > 0) {
-    const current = stack[stack.length - 1];
-    subterms.push(current);
-    visited.add(current);
-    if (manager.isApp(current)) stack.push(...manager.getArgs(current));
-    while (stack.length > 0 && visited.has(stack[stack.length - 1])) stack.pop();
-  }
-  return subterms;
-};
-
-const isUninterpretedApp = (manager: AstManager, expr: number) =>
-  manager.isApp(expr) && manager.isUninterpreted(expr);
 
 export class Mbqi {
   private readonly manager: AstManager;
@@ -352,6 +327,9 @@ export class Mbqi {
     return qb;
   }
 
+  // The variables of the plugins' families go through the plugins' projections; the array and
+  // datatype plugins have no projection without definitions, and leave their variables to the
+  // model values.
   private solverProject(model: ProtoModel, qb: QBody, eqs: number[], isUsingInst: boolean) {
     const manager = this.manager;
     const qmodel = this.getModel();
@@ -359,14 +337,30 @@ export class Mbqi {
     qmodel.resetEvalCache();
     for (const sk of qb.vars.items)
       qmodel.registerConst(manager.decls[sk], this.eval(model, sk, true));
-    const fmls = [...qb.vbody.items];
-    const vars = qb.vars.items;
+    const fmls = new RefVector(manager);
+    for (const fml of qb.vbody.items) fmls.push(fml);
+    const vars = [...qb.vars.items];
+    const context = new MbpContext(manager, qmodel);
+    let isExtracted = false;
     for (let index = 0; !isUsingInst && index < vars.length; index++) {
-      if (!PLUGIN_FAMILIES.has(manager.getSortFamily(manager.sorts[vars[index]]))) continue;
-      fmls.push(...qb.domainEqs.items);
-      this.eliminateNestedVars(fmls, qb);
-      if (!fmls.every((fml) => this.isTrue(fml))) return null;
-      throw new SmtUnsupportedError("the theory projections of sat.euf mbqi");
+      const family = manager.getSortFamily(manager.sorts[vars[index]]);
+      if (!PLUGIN_FAMILIES.has(family)) continue;
+      if (!isExtracted) {
+        for (const eq of qb.domainEqs.items) fmls.push(eq);
+        this.eliminateNestedVars(fmls, qb);
+        if (!fmls.items.every((fml) => this.isTrue(fml))) {
+          fmls.reset();
+          context.release();
+          return null;
+        }
+        new ProjectPlugin(context).extractLiterals(fmls);
+        isExtracted = true;
+      }
+      if (family !== FAMILY_ARITH) continue;
+      const arith = new ArithProjectPlugin(context);
+      arith.isCheckPurified = false;
+      arith.isApplyProjection = true;
+      arith.project(vars, fmls);
     }
     const replace = new ExprSafeReplace(manager);
     for (const sk of vars) {
@@ -374,17 +368,26 @@ export class Mbqi {
       replace.insert(sk, this.replaceModelValue(value));
       eqs.push(this.pin(manager.mkEq(sk, value)));
     }
-    const replaced = fmls.map((fml) => this.pinOwned(replace.apply(fml)));
+    const replaced = fmls.items.map((fml) => this.pinOwned(replace.apply(fml)));
     replace.release();
+    fmls.reset();
+    context.release();
     return this.pin(manager.mkAnd(replaced));
   }
 
-  // add_domain_eqs: a variable that some positive equality binds takes one of at most
-  // MAX_UNBOUNDED_EQUALITIES ground values. The bounds of variable arguments come from projection
-  // functions, which only arithmetic and bit-vector arguments have.
+  // add_domain_eqs: an argument of an uninterpreted function is one of the terms its ground
+  // applications have, and a variable that some positive equality binds takes one of at most
+  // MAX_UNBOUNDED_EQUALITIES ground values.
   private addDomainEqs(qb: QBody) {
     const manager = this.manager;
     qb.domainEqs.reset();
+    for (const varArg of qb.varArgs) {
+      const bounds = this.pin(this.modelFixer.restrictArg(varArg[0], varArg[1]));
+      if (manager.isTrue(bounds)) continue;
+      const vbounds = this.substitute(bounds, qb);
+      this.assertExpr(this.substitute(this.eval(this.getModel(), bounds, true), qb));
+      qb.domainEqs.push(vbounds);
+    }
     const vars = qb.vars.items;
     for (let index = 0; index < vars.length; index++) {
       if (!qb.freeVars.has(index)) continue;
@@ -423,9 +426,8 @@ export class Mbqi {
     this.manager.decRef(expr);
   }
 
-  // add_domain_bounds: the model of the sub-solver gives the variables their values. The bounds
-  // under uninterpreted functions come from projection functions, which only arithmetic and
-  // bit-vector arguments have.
+  // add_domain_bounds: the model of the sub-solver gives the variables their values, and the
+  // arguments of uninterpreted functions get the bounds of the projections around their values.
   private addDomainBounds(model: ProtoModel, qb: QBody) {
     const manager = this.manager;
     const qmodel = this.getModel();
@@ -434,11 +436,16 @@ export class Mbqi {
     for (const sk of qb.vars.items)
       qmodel.registerConst(manager.decls[sk], this.eval(model, sk, true));
     this.ctx.modelUpdated(qmodel);
+    for (const varArg of qb.varArgs) {
+      const term = this.substitute(varArg[0], qb);
+      const value = this.eval(qmodel, manager.getArg(term, varArg[1]), false);
+      if (manager.isValue(value)) this.modelFixer.invertArg(term, varArg[1], value, qb.domainEqs);
+    }
   }
 
   // eliminate_nested_vars: F[g(t)] becomes F[s] and g(t) = s, for the ground s that g(t) evaluates
   // to.
-  private eliminateNestedVars(fmls: number[], qb: QBody) {
+  private eliminateNestedVars(fmls: RefVector, qb: QBody) {
     if (qb.varArgs.length === 0) return;
     const manager = this.manager;
     const replace = new ExprSafeReplace(manager);
@@ -454,10 +461,10 @@ export class Mbqi {
       replace.insert(term, inverse);
       eqs.push(this.pin(manager.mkEq(term, inverse)));
     }
-    for (let index = 0; index < fmls.length; index++)
-      fmls[index] = this.pinOwned(replace.apply(fmls[index]));
+    for (let index = 0; index < fmls.size; index++)
+      fmls.setOwned(index, replace.apply(fmls.items[index]));
     replace.release();
-    fmls.push(...eqs);
+    for (const eq of eqs) fmls.push(eq);
   }
 
   // extract_var_args: the arguments of uninterpreted functions that hold bound variables.
@@ -576,111 +583,5 @@ export class Mbqi {
 
   finalizeModel(model: ProtoModel) {
     this.modelFixer.fix(model);
-  }
-}
-
-// The quantifier_macro_info of a flattened quantifier, with the macro candidates of its body.
-interface MacroInfo {
-  readonly condMacros: CondMacro[];
-  readonly ngDecls: Set<number>;
-  readonly isAuf: boolean;
-  readonly flatQ: number;
-  theOne: number | null;
-}
-
-class ModelFixer {
-  private readonly manager: AstManager;
-  private q2info = new Map<number, MacroInfo>();
-  private readonly macroRewriter: Rewriter;
-
-  constructor(
-    private readonly ctx: EufSolver,
-    private readonly qs: QSolver,
-  ) {
-    this.manager = ctx.manager;
-    this.macroRewriter = new Rewriter(ctx.manager, TACTIC_REWRITER_OPTIONS);
-  }
-
-  // operator(): macros for the universal quantifiers, then an else for every partial function.
-  fix(model: ProtoModel) {
-    const manager = this.manager;
-    const univ = this.qs.universal.map((lit) => this.ctx.boolVar2expr(lit >> 1) as number);
-    if (univ.length === 0) return;
-    const qs = solveMacros(manager, model, univ, (quantifier) => this.getInfo(quantifier));
-    this.addProjectionFunctions(model, qs);
-    const decls = model.getFuncDecls();
-    for (let index = decls.length; index-- > 0;) {
-      const decl = decls[index];
-      const interp = model.funcInterps.get(decl);
-      if (interp === undefined) continue;
-      const maxOcc = interp.isPartial() ? interp.getMaxOccResult() : null;
-      if (maxOcc !== null) interp.setElse(maxOcc);
-      if (interp.isPartial()) interp.setElse(model.getSomeValue(manager.funcDecls[decl].range));
-    }
-  }
-
-  private getInfo(quantifier: number) {
-    const existing = this.q2info.get(quantifier);
-    if (existing !== undefined) return existing;
-    const manager = this.manager;
-    const flatQ = this.qs.flatten(quantifier);
-    const info: MacroInfo = {
-      condMacros: collectMacroCandidates(manager, this.macroRewriter, flatQ),
-      ngDecls: new Set(),
-      isAuf: true,
-      flatQ,
-      theOne: null,
-    };
-    this.q2info.set(quantifier, info);
-    this.ctx.trail.push(() => {
-      this.q2info.delete(quantifier);
-      releaseCondMacros(manager, info.condMacros);
-    });
-    return info;
-  }
-
-  private addProjectionFunctions(model: ProtoModel, qs: readonly number[]) {
-    const manager = this.manager;
-    const decls = new ObjHashtable((decl) => manager.getDeclHash(decl));
-    for (const quantifier of qs) {
-      const body = manager.getQuantifier(this.getInfo(quantifier).flatQ).body;
-      for (const subterm of getSubterms(manager, body))
-        if (isUninterpretedApp(manager, subterm) && !manager.isGroundApp(subterm))
-          decls.add(manager.decls[subterm]);
-    }
-    for (const decl of decls) this.addProjectionFunctionsOf(model, decl);
-  }
-
-  private addProjectionFunctionsOf(model: ProtoModel, decl: number) {
-    const interp = model.funcInterps.get(decl);
-    if (interp === undefined || interp.isConstant()) return;
-    const domain = this.manager.funcDecls[decl].domain;
-    domain.forEach((_sort, index) => this.checkProjectionFunction(model, decl, index));
-    if (interp.isPartial() && interp.entries.length > 0) {
-      const index = this.ctx.s.rand.next() % interp.entries.length;
-      interp.setElse(interp.entries[index].result);
-      interp.delEntry(index);
-    }
-  }
-
-  // add_projection_function: arithmetic and bit-vector arguments with values get a projection
-  // function, which needs the value orders the port lacks.
-  private checkProjectionFunction(model: ProtoModel, decl: number, index: number) {
-    const manager = this.manager;
-    const family = manager.getSortFamily(manager.funcDecls[decl].domain[index]);
-    if (family !== FAMILY_ARITH && family !== FAMILY_BV) return;
-    const nodes = this.ctx.egraph.enodesOf(decl);
-    for (const node of nodes) {
-      const value = model.eval(node.getArg(index).owner, false);
-      const isValue = manager.isValue(value);
-      manager.decRef(value);
-      if (!isValue) return;
-    }
-    if (nodes.length > 0) throw new SmtUnsupportedError("the projection functions of sat.euf mbqi");
-  }
-
-  // invert_app: the root of the class whose value t has.
-  invertApp(value: number) {
-    return this.ctx.values2root().get(value)?.owner ?? value;
   }
 }

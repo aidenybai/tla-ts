@@ -965,6 +965,98 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ).toEqual(["sat", "((x U!val!1)\n (y U!val!0)\n ((select a x) U!val!0))"]);
   });
 
+  // z3test's regressions/issues/5482.smt2, and quantifiers whose model-based instantiation projects
+  // its variables, with what Z3 prints for them.
+  it("projects sat.euf's model-based instantiations through the theories", () => {
+    const header = [
+      "(set-option :sat.euf true)",
+      "(set-option :tactic.default_tactic smt)",
+      "(set-option :model_validate true)",
+    ];
+    expect(
+      run([
+        ...header,
+        "(declare-fun A () (Array (_ FloatingPoint 2 2) (_ FloatingPoint 2 2)))",
+        "(declare-fun A2 () (Array (_ FloatingPoint 2 2) (_ FloatingPoint 2 2)))",
+        "(assert (forall ((AP (_ FloatingPoint 2 2))) (forall ((D (Array Int (Array Int (_ FloatingPoint 2 2))))) (and (not (= A A2)) (= (select (D 0) 1) (_ +oo 2 2)) (= (select A (_ +oo 2 2)) (select A (_ -oo 2 2)))))))",
+        "(check-sat)",
+        "(reset)",
+        ...header,
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (forall ((x Int)) (or (< x a) (> x b))))",
+        "(check-sat)",
+        "(get-model)",
+        "(reset)",
+        ...header,
+        "(declare-const a Int)",
+        "(assert (forall ((x Int)) (or (< x a) (= (div x 2) 5) (> x (+ a 10)))))",
+        "(check-sat)",
+        "(reset)",
+        ...header,
+        "(declare-datatypes ((L 0)) (((nil) (cons (hd Int) (tl L)))))",
+        "(declare-const l L)",
+        "(assert (forall ((m L)) (not (= (cons 1 m) l))))",
+        "(assert ((_ is cons) l))",
+        "(check-sat)",
+        "(get-value (l))",
+      ]),
+    ).toEqual([
+      "unsat",
+      "sat",
+      [
+        "(",
+        "  (define-fun b () Int",
+        "    0)",
+        "  (define-fun a () Int",
+        "    1)",
+        "  (define-fun x!0 () Int",
+        "    1)",
+        ")",
+      ].join("\n"),
+      "unsat",
+      "sat",
+      "((l (cons 0 nil)))",
+    ]);
+  });
+
+  it("projects the arguments of sat.euf's functions onto the values they have", () => {
+    const header = [
+      "(set-option :sat.euf true)",
+      "(set-option :tactic.default_tactic smt)",
+      "(set-option :model_validate true)",
+      "(declare-fun f (Int) Int)",
+    ];
+    expect(
+      run([
+        ...header,
+        "(assert (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))))",
+        "(assert (= (f 0) 0))",
+        "(assert (= (f 4) 2))",
+        "(check-sat)",
+        "(get-model)",
+        "(reset)",
+        ...header,
+        "(assert (forall ((x Int)) (=> (and (<= 0 x) (<= x 3)) (= (f x) (* 2 x)))))",
+        "(assert (= (f 2) 5))",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun x!2 () Int",
+        "    2)",
+        "  (define-fun y!3 () Int",
+        "    2)",
+        "  (define-fun f ((x!0 Int)) Int",
+        "    (ite (<= 4 x!0) 2 0))",
+        ")",
+      ].join("\n"),
+      "unsat",
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),

@@ -2125,6 +2125,17 @@ export class AstManager {
     return this.isNumeral(expr) ? new Anum(this.getRationalValue(expr)) : undefined;
   }
 
+  // arith_value_order: the numeric order of numerals and irrational algebraic numerals.
+  compareArithValues(first: number, second: number) {
+    if (this.isNumeral(first) && this.isNumeral(second))
+      return this.getRationalValue(first).compare(this.getRationalValue(second));
+    const firstValue = this.getAnumOrNumeral(first);
+    const secondValue = this.getAnumOrNumeral(second);
+    if (firstValue === undefined || secondValue === undefined)
+      throw new SmtInvariantError("arith_value_order compares numerals");
+    return this.am.compare(firstValue, secondValue);
+  }
+
   getAlgebraicId(expr: number) {
     return this.algebraicNumerals[this.values[expr]].id;
   }

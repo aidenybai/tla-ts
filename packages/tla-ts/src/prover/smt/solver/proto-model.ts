@@ -370,13 +370,18 @@ export class ProtoModel {
   }
 
   registerFunc(decl: number, interp: FuncInterp) {
+    this.updateFuncInterp(decl, interp)?.release();
+  }
+
+  // model_core::update_func_interp: the replaced interpretation goes to the caller.
+  updateFuncInterp(decl: number, interp: FuncInterp) {
     const old = this.funcInterps.get(decl);
     if (old === undefined) {
       this.funcDecls.push(decl);
       this.manager.incDeclRef(decl);
     }
     this.funcInterps.set(decl, interp);
-    old?.release();
+    return old;
   }
 
   // add_rec_funs: a recursive function without an interpretation takes its definition, whose

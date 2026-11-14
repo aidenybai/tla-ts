@@ -1,5 +1,4 @@
 {
-  "tlapm/backends/z3/z3test/regressions/issues/5482.smt2": "time-limit",
   "tlapm/imported/fast/basic/cvc3_false_test": "text-mismatch",
   "tlapm/imported/zenon/test/test13.znn": "text-mismatch",
   "tlapm/imported/zenon/test/test14.znn": "text-mismatch",
