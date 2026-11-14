@@ -1069,8 +1069,6 @@ DescribeAll(heap, object) ==
                 Ref :> (first + CHOOSE position \\in DOMAIN keys : keys[position] = key)]
   IN Allocate(described, PutAll(EmptyObject, refs, keys))
 
-HasOwn(heap, ref, key) == key \\in DOMAIN LookupKey(heap, ref, key).values
-
 IsEnumerableOwn(heap, ref, key) ==
   LET object == LookupKey(heap, ref, key)
   IN key \\in DOMAIN object.values /\\ object.attributes[key].enumerable
@@ -1268,13 +1266,22 @@ Prototype(heap, ref) ==
   THEN heap.objects[ref[Ref]].prototype
   ELSE Lookup(heap, ref).prototype
 
+\\* Whether a typed array has an element at a key that is a number, which is an index before its end.
+LOCAL HasElement(heap, ref, key) ==
+  TypedKey(key) = "index" /\\ ToIndex(key) < ViewLength(heap, heap.objects[ref[Ref]])
+
 RECURSIVE Has(_, _, _)
 Has(heap, ref, key) ==
   IF IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
-  THEN TypedKey(key) = "index" /\\ ToIndex(key) < ViewLength(heap, heap.objects[ref[Ref]])
+  THEN HasElement(heap, ref, key)
   ELSE LET object == ReadPropertiesOf(heap, ref, key)
        IN \\/ key \\in DOMAIN object.values
           \\/ object.prototype # Null /\\ Has(heap, object.prototype, key)
+
+HasOwn(heap, ref, key) ==
+  IF IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
+  THEN HasElement(heap, ref, key)
+  ELSE key \\in DOMAIN PropertiesOf(heap, ref, key).values
 
 \\* An error is a record of its constructor, its message and its name, an AggregateError's also of its
 \\* errors, a SuppressedError's also of its error and the error it suppressed, and one that a script

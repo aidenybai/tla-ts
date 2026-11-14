@@ -8492,6 +8492,24 @@ describe("errors", () => {
     });
   });
 
+  describe("tells a typed array's own elements by their keys", () => {
+    const getSource = (expected: string) => `
+      const typed = new Int8Array([42]);
+      const keys = ["-0", "0", "1", "length"];
+      if (keys.map((key) => typed.hasOwnProperty(key)).join() !== "${expected}") throw new Error("own");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("false,true,false,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation false,true,true,false", async () => {
+      expect((await checkModel(getSource("false,true,true,false"))).failure?.message).toContain(
+        "own",
+      );
+    });
+  });
+
   describe("runs the getters of the descriptor that Reflect.defineProperty reads", () => {
     const getSource = (expected: string) => `
       let reads = "";
