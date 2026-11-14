@@ -388,6 +388,7 @@ import {
   isAddedToBuiltIn,
   isBigIntLike,
   isNumberLike,
+  isPrimitiveIndex,
   isBuiltInIteratorType,
   isGeneratorType,
   isSyncGeneratorType,
@@ -7962,8 +7963,8 @@ const translateLoopCall = (
     isRecursive: true,
   };
   const from = callback === undefined && !isCopy ? loop.initial : undefined;
-  if (from !== undefined && !isNumberLike(from, context)) {
-    throw new TlaTypeScriptError("Pass a number as the index to search from", from);
+  if (from !== undefined && !isPrimitiveIndex(from, context)) {
+    throw new TlaTypeScriptError("Pass a primitive as the index to search from", from);
   }
   // The value that a search looks for, or that with gives at the index that it replaces.
   const searched =
@@ -7980,7 +7981,16 @@ const translateLoopCall = (
       ? undefined
       : useJavaScript(
           "RelativeIndex",
-          [translateExpression(from, path.scope, context), length],
+          [
+            isNumberLike(from, context)
+              ? translateExpression(from, path.scope, context)
+              : useJavaScript(
+                  "ToNumber",
+                  [translateExpression(from, path.scope, context)],
+                  context,
+                ),
+            length,
+          ],
           context,
         );
   const start =

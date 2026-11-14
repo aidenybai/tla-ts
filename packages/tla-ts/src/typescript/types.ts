@@ -1189,6 +1189,18 @@ export const isBooleanLike = (node: ts.Expression, context: Context) =>
 export const isNumberLike = (node: ts.Expression, context: Context) =>
   isEvery(context.checker.getTypeAtLocation(node), ts.TypeFlags.NumberLike | ts.TypeFlags.Never);
 
+// A primitive that ToNumber converts without running a method.
+export const isPrimitiveIndex = (node: ts.Expression, context: Context) =>
+  isEvery(
+    context.checker.getTypeAtLocation(node),
+    ts.TypeFlags.NumberLike |
+      ts.TypeFlags.StringLike |
+      ts.TypeFlags.BooleanLike |
+      ts.TypeFlags.Null |
+      ts.TypeFlags.Undefined |
+      ts.TypeFlags.Never,
+  );
+
 export const isBigIntLike = (node: ts.Expression, context: Context) =>
   isEvery(context.checker.getTypeAtLocation(node), ts.TypeFlags.BigIntLike);
 

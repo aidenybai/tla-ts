@@ -81,6 +81,7 @@ import {
   getKind,
   isBooleanType,
   isEvery,
+  isPrimitiveIndex,
   getIteratedArray,
   getIteratedString,
   getIteratorFromArgument,
@@ -912,14 +913,10 @@ const translateSequenceOperation = (
         from !== undefined &&
         (context.checker.getTypeAtLocation(from).flags & ts.TypeFlags.Undefined) !== 0;
       if (from === undefined || (isUndefined && !isLast)) return use(getEqual);
-      if (!isUndefined && !isNumberLike(from, context)) {
-        throw new TlaTypeScriptError("Pass a number as the index to search from", from);
+      if (!isUndefined && !isPrimitiveIndex(from, context)) {
+        throw new TlaTypeScriptError("Pass a primitive as the index to search from", from);
       }
-      const start = isUndefined
-        ? number(0)
-        : ts.isNumericLiteral(from) && Number.isInteger(Number(from.text))
-          ? translate(from)
-          : useJavaScript("RelativeIndex", [translate(from), getLength()], context);
+      const start = isUndefined ? number(0) : getRelative(from, "RelativeIndex");
       // A search back from index start reaches position start + 1, as positions count from 1.
       return share(start, "start", context, (shared) =>
         use((position) =>

@@ -508,6 +508,73 @@ describe("top-level statements", () => {
     });
   });
 
+  describe("searches an array for any value from a primitive index that ToNumber converts", () => {
+    const source = `
+      function same(actual: unknown, expected: unknown, label: string) {
+        if (!Object.is(actual, expected)) throw new Error(label);
+      }
+      const target = {};
+      const others = [
+        // @ts-ignore
+        ["true"].indexOf(true),
+        // @ts-ignore
+        ["0"].lastIndexOf(0),
+        // @ts-ignore
+        [, , ,].indexOf(10),
+        // @ts-ignore
+        [{}].indexOf(target),
+        // @ts-ignore
+        [0, target].lastIndexOf(target),
+      ];
+      same(others.join(), "-1,-1,-1,-1,1", "others");
+      const list = [1, 2, 1, true, 2];
+      const found = [
+        // @ts-ignore
+        list.indexOf(2, "2"),
+        // @ts-ignore
+        list.indexOf(1, "one"),
+        // @ts-ignore
+        list.indexOf(1, true),
+        // @ts-ignore
+        list.lastIndexOf(1, null),
+        // @ts-ignore
+        list.lastIndexOf(2, "-Infinity"),
+        // @ts-ignore
+        list.lastIndexOf(2, "Infinity"),
+        list.lastIndexOf(1, undefined),
+        // @ts-ignore
+        list.includes(1, "3"),
+      ];
+      same(found.join(), "4,0,2,0,-1,4,0,false", "found");
+      const held: number[] = [5, 6, 5];
+      Object.defineProperty(held, "1", {
+        get: function () {
+          return 5;
+        },
+        configurable: true,
+      });
+      // @ts-ignore
+      same(held.indexOf(5, "1"), 1, "getter");
+      // @ts-ignore
+      same(held.lastIndexOf(5, false), 0, "back");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["others", '"-1,-1,-1,-1,1"', '"-1,-1,-1,0,1"'],
+      ["found", '"4,0,2,0,-1,4,0,false"', '"4,0,2,2,-1,4,0,false"'],
+      ["getter", '1, "getter"', '3, "getter"'],
+      ["back", '0, "back"', '2, "back"'],
+    ])("rejects a wrong %s", async (label, expected, wrong) => {
+      expect((await checkModel(source.replace(expected, wrong))).failure?.message).toContain(
+        `"${label}"`,
+      );
+    });
+  });
+
   it("throw a TypeError where a reduce without an initial value finds no element", async () => {
     const result = await checkModel(`
       const empty: number[] & { tag?: string } = [];
