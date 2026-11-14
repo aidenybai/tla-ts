@@ -4,7 +4,9 @@ import { hasRepeatedEffects, type Environment } from "./evaluate";
 import {
   evaluateLive,
   evaluateOnLasso,
+  getInterpretedAtoms,
   toLiveExpression,
+  type LiveAtoms,
   type ScopedExpression,
   type TemporalProperty,
 } from "./liveness";
@@ -14,15 +16,18 @@ import {
   getSolutions,
   getTermKey,
   isFulfilling,
+  type LiveAction,
+  type LiveEnabled,
   type LiveExpression,
+  type LiveState,
   type Solution,
   type Tableau,
 } from "./tableau";
 import { isSameValue, type Value } from "./values";
 
-export interface LiveSuccessor {
+export interface LiveSuccessor<State = Value[]> {
   index: number;
-  state: Value[];
+  state: State;
 }
 
 export interface Lasso {
@@ -33,6 +38,7 @@ export interface Lasso {
 
 export interface LivenessChecker {
   branches: number;
+  solutions: Solution[];
   addInitialState: (index: number, state: Value[], tracing?: Environment) => void;
   addState: (
     index: number,
@@ -44,9 +50,30 @@ export interface LivenessChecker {
   getViolatedProperties: (path: Value[][], cycleStart: number) => string[];
 }
 
-interface SearchGraph {
-  getFingerprint: (successor: LiveSuccessor) => number;
-  getSuccessors: (index: number, state: Value[]) => LiveSuccessor[];
+export interface LiveGraph<State> {
+  branches: number;
+  addInitialState: (index: number, state: State) => void;
+  // The path to an accepting node the state reaches, if any.
+  addState: (
+    index: number,
+    state: State,
+    successors: LiveSuccessor<State>[],
+  ) => number[] | undefined;
+  findViolation: () => Lasso | undefined;
+}
+
+export interface SearchGraph<State> {
+  getFingerprint: (successor: LiveSuccessor<State>) => number;
+  getSuccessors: (index: number, state: State) => LiveSuccessor<State>[];
+}
+
+export interface LiveEvaluation<State> {
+  atoms: LiveAtoms<State>;
+  // Whether a check's result for a state holds for every step from it.
+  isShared: boolean;
+  isSame: (left: State, right: State) => boolean;
+  // Evaluates the checks of a state the search found from the state at source.
+  evaluateFrom: <Result>(source: number | undefined, evaluate: () => Result) => Result;
 }
 
 interface Pool<Data extends Int32Array | Uint8Array> {
@@ -191,35 +218,11 @@ const UNVISITED = -1;
 
 const MAXIMUM_LINK = Number.MAX_SAFE_INTEGER;
 
-const getScopedExpressions = (expression: LiveExpression): ScopedExpression[] => {
-  switch (expression.kind) {
-    case "Boolean":
-      return [];
-    case "State":
-      return [expression];
-    case "Enabled":
-      return [{ expression: expression.step, scope: expression.scope }];
-    case "Action": {
-      const scope = expression.scope;
-      return [expression.expression, expression.subscript].flatMap((inner) =>
-        inner ? [{ expression: inner, scope }] : [],
-      );
-    }
-    case "And":
-    case "Or":
-      return expression.operands.flatMap(getScopedExpressions);
-    default:
-      return getScopedExpressions(expression.body);
-  }
-};
-
-export const createLivenessChecker = (
+const getLiveFormula = (
   properties: TemporalProperty[],
   temporals: ScopedExpression[],
   environment: Environment,
-  search: SearchGraph,
-): LivenessChecker | undefined => {
-  if (properties.length === 0) return undefined;
+) => {
   const fairness = temporals.map((item) =>
     toLiveExpression(item.expression, item.scope, environment),
   );
@@ -229,7 +232,140 @@ export const createLivenessChecker = (
   const violation = negations.length === 1 ? negations[0] : createJunction("Or", negations);
   const formula =
     fairness.length === 0 ? violation : createJunction("And", [...fairness, violation]);
-  const solutions = getSolutions(formula);
+  return { formula, negations };
+};
+
+export type LiveAtom = LiveState | LiveEnabled | LiveAction;
+
+const getAtomExpressions = (atom: LiveAtom): ScopedExpression[] => {
+  switch (atom.kind) {
+    case "State":
+      return [atom];
+    case "Enabled":
+      return [{ expression: atom.step, scope: atom.scope }];
+    case "Action":
+      return [atom.expression, atom.subscript].flatMap((inner) =>
+        inner ? [{ expression: inner, scope: atom.scope }] : [],
+      );
+  }
+};
+
+const collectAtoms = (expression: LiveExpression, atoms: Set<LiveAtom>) => {
+  switch (expression.kind) {
+    case "Boolean":
+      return;
+    case "State":
+    case "Enabled":
+    case "Action":
+      atoms.add(expression);
+      return;
+    case "And":
+    case "Or":
+      expression.operands.forEach((operand) => collectAtoms(operand, atoms));
+      return;
+    default:
+      collectAtoms(expression.body, atoms);
+  }
+};
+
+// The atoms the checks of the solutions evaluate.
+export const getLiveAtoms = (solutions: Solution[]) => {
+  const atoms = new Set<LiveAtom>();
+  for (const solution of solutions) {
+    [
+      ...solution.stateChecks,
+      ...solution.actionChecks,
+      ...(solution.tableau?.nodes.flatMap((node) => node.statePredicates) ?? []),
+    ].forEach((check) => collectAtoms(check, atoms));
+  }
+  return [...atoms];
+};
+
+// The expressions the checks of the solutions evaluate.
+export const getLiveExpressions = (solutions: Solution[]) =>
+  getLiveAtoms(solutions).flatMap((atom) =>
+    getAtomExpressions(atom).map((item) => item.expression),
+  );
+
+export const createLivenessChecker = (
+  properties: TemporalProperty[],
+  temporals: ScopedExpression[],
+  environment: Environment,
+  search: SearchGraph<Value[]>,
+): LivenessChecker | undefined => {
+  if (properties.length === 0) return undefined;
+  const live = getLiveFormula(properties, temporals, environment);
+  // A check evaluated once for a state shows what TLC shows when no check repeats an effect. A
+  // definition TLC evaluates as it starts repeats nothing, but a scope can bind any definition.
+  const formulaAtoms = new Set<LiveAtom>();
+  collectAtoms(live.formula, formulaAtoms);
+  const checked = [...formulaAtoms].flatMap(getAtomExpressions);
+  const isShared = checked.every((item) => item.scope === undefined)
+    ? !isExpressionImpure(
+        checked.map((item) => item.expression),
+        environment,
+        "repeated",
+      )
+    : !hasRepeatedEffects(environment);
+  const tracing = { environment, atoms: getInterpretedAtoms(environment) };
+  const solutions = getSolutions(live.formula);
+  const graph = createLiveGraph(
+    solutions,
+    {
+      atoms: {
+        holdsState: (atom, state) => tracing.atoms.holdsState(atom, state),
+        holdsAction: (atom, state, next) => tracing.atoms.holdsAction(atom, state, next),
+      },
+      isShared,
+      isSame: isSameState,
+      evaluateFrom: (source, evaluate) => {
+        environment.runtime.setLivenessSource(source);
+        try {
+          return evaluate();
+        } finally {
+          environment.runtime.setLivenessSource(undefined);
+        }
+      },
+    },
+    search,
+    environment.runtime.version !== "1.7.4",
+  );
+  const traceWith = <Result>(replay: Environment | undefined, run: () => Result) => {
+    if (replay === undefined) return run();
+    tracing.atoms = getInterpretedAtoms(replay);
+    try {
+      return run();
+    } finally {
+      tracing.atoms = getInterpretedAtoms(environment);
+    }
+  };
+  return {
+    branches: graph.branches,
+    solutions,
+    addInitialState: (index, state, replay) =>
+      traceWith(replay, () => graph.addInitialState(index, state)),
+    addState: (index, state, successors, replay) =>
+      traceWith(replay, () => graph.addState(index, state, successors)),
+    findViolation: graph.findViolation,
+    getViolatedProperties: (path, cycleStart) => [
+      ...new Set(
+        properties
+          .filter(
+            (_property, position) =>
+              !evaluateOnLasso(live.negations[position].body, path, cycleStart, 0, environment),
+          )
+          .map((property) => property.name),
+      ),
+    ],
+  };
+};
+
+export const createLiveGraph = <State>(
+  solutions: Solution[],
+  evaluation: LiveEvaluation<State>,
+  search: SearchGraph<State>,
+  isAcceptingFound: boolean,
+): LiveGraph<State> => {
   const actionIds = new Map<string, number>();
   const behaviors = solutions.map((solution): BehaviorGraph => ({
     solution,
@@ -255,91 +391,52 @@ export const createLivenessChecker = (
     errorNode: undefined,
   }));
   let capacityMultiplier = 1;
-
-  // A check evaluated once for a state shows what TLC shows when no check repeats an effect. A
-  // definition TLC evaluates as it starts repeats nothing, but a scope can bind any definition.
-  const checked = getScopedExpressions(formula);
-  const isShared = checked.every((item) => item.scope === undefined)
-    ? !isExpressionImpure(
-        checked.map((item) => item.expression),
-        environment,
-        "repeated",
-      )
-    : !hasRepeatedEffects(environment);
-  let evaluationEnvironment = environment;
-  const sharedStates = new Map<Value[], Map<LiveExpression, boolean>>();
-  const sharedActions = new Map<Value[], Map<Value[], Int8Array>>();
-  const getStateCache = (state: Value[]) => {
+  const isShared = evaluation.isShared;
+  const atoms = evaluation.atoms;
+  const evaluateFrom = evaluation.evaluateFrom;
+  const sharedStates = new Map<State, Map<LiveExpression, boolean>>();
+  const sharedActions = new Map<State, Map<State, Int8Array>>();
+  const getStateCache = (state: State) => {
     const cache = sharedStates.get(state) ?? new Map<LiveExpression, boolean>();
     sharedStates.set(state, cache);
     return cache;
   };
-  const evaluateFrom = <Result>(source: number | undefined, evaluate: () => Result) => {
-    environment.runtime.setLivenessSource(source);
-    try {
-      return evaluate();
-    } finally {
-      environment.runtime.setLivenessSource(undefined);
-    }
-  };
-  const evaluateState = (predicate: LiveExpression, state: Value[]) =>
-    evaluateLive(
-      predicate,
-      state,
-      undefined,
-      evaluationEnvironment,
-      isShared ? getStateCache(state) : new Map(),
-    );
-  const checkState = (behavior: BehaviorGraph, source: number, state: Value[]) =>
+  const evaluateState = (predicate: LiveExpression, state: State) =>
+    evaluateLive(predicate, state, undefined, atoms, isShared ? getStateCache(state) : new Map());
+  const checkState = (behavior: BehaviorGraph, source: number, state: State) =>
     evaluateFrom(source, () =>
       Uint8Array.from(behavior.solution.stateChecks, (predicate) =>
         evaluateState(predicate, state) ? 1 : 0,
       ),
     );
-  const checkAction = (
-    behavior: BehaviorGraph,
-    source: number,
-    state: Value[],
-    successor: Value[],
-  ) =>
+  const checkAction = (behavior: BehaviorGraph, source: number, state: State, successor: State) =>
     evaluateFrom(source, () => {
       const predicates = behavior.solution.actionChecks;
       if (!isShared) {
         return Uint8Array.from(predicates, (predicate) =>
-          evaluateLive(predicate, state, successor, evaluationEnvironment, new Map()) ? 1 : 0,
+          evaluateLive(predicate, state, successor, atoms, new Map()) ? 1 : 0,
         );
       }
       const stateCache = getStateCache(state);
-      const results = sharedActions.get(state) ?? new Map<Value[], Int8Array>();
+      const results = sharedActions.get(state) ?? new Map<State, Int8Array>();
       sharedActions.set(state, results);
       const known = results.get(successor) ?? new Int8Array(actionIds.size).fill(-1);
       results.set(successor, known);
       return Uint8Array.from(behavior.actionIds, (actionId, position) => {
         if (known[actionId] === -1) {
-          known[actionId] = evaluateLive(
-            predicates[position],
-            state,
-            successor,
-            evaluationEnvironment,
-            stateCache,
-          )
+          known[actionId] = evaluateLive(predicates[position], state, successor, atoms, stateCache)
             ? 1
             : 0;
         }
         return known[actionId];
       });
     });
-  const isConsistent = (
-    tableau: Tableau,
-    node: number,
-    source: number | undefined,
-    state: Value[],
-  ) =>
+  const isConsistent = (tableau: Tableau, node: number, source: number | undefined, state: State) =>
     evaluateFrom(source, () =>
       tableau.nodes[node].statePredicates.every((predicate) => evaluateState(predicate, state)),
     );
   const isAccepting = (tableau: Tableau, node: number) => {
-    if (environment.runtime.version === "1.7.4") return false;
+    if (!isAcceptingFound) return false;
     const tableauNode = tableau.nodes[node];
     return (
       tableauNode.particle.length === 0 &&
@@ -400,12 +497,15 @@ export const createLivenessChecker = (
   };
 
   // TLC iterates a state's successors and the state itself in the slot order of a SetOfStates, a hash set whose capacity grows with every set that outgrows it.
-  const getSuccessorSet = (index: number, state: Value[], successors: LiveSuccessor[]) => {
-    let successorSlots = Array.from<LiveSuccessor | undefined>({
+  const getSuccessorSet = (index: number, state: State, successors: LiveSuccessor<State>[]) => {
+    let successorSlots = Array.from<LiveSuccessor<State> | undefined>({
       length: SUCCESSOR_CAPACITY * capacityMultiplier,
     });
     let successorCount = 0;
-    const insertSuccessor = (slots: (LiveSuccessor | undefined)[], successor: LiveSuccessor) => {
+    const insertSuccessor = (
+      slots: (LiveSuccessor<State> | undefined)[],
+      successor: LiveSuccessor<State>,
+    ) => {
       for (
         let slot = (search.getFingerprint(successor) & 0x7fffffff) % slots.length;
         ;
@@ -416,14 +516,16 @@ export const createLivenessChecker = (
           slots[slot] = successor;
           return true;
         }
-        if (entry.index === successor.index && isSameState(entry.state, successor.state))
+        if (entry.index === successor.index && evaluation.isSame(entry.state, successor.state))
           return false;
       }
     };
-    const addSuccessor = (successor: LiveSuccessor) => {
+    const addSuccessor = (successor: LiveSuccessor<State>) => {
       if (successorCount >= successorSlots.length >> 1) {
         const old = successorSlots;
-        successorSlots = Array.from<LiveSuccessor | undefined>({ length: 2 * old.length + 1 });
+        successorSlots = Array.from<LiveSuccessor<State> | undefined>({
+          length: 2 * old.length + 1,
+        });
         for (const entry of old) if (entry) insertSuccessor(successorSlots, entry);
       }
       if (insertSuccessor(successorSlots, successor)) successorCount++;
@@ -431,13 +533,13 @@ export const createLivenessChecker = (
     successors.forEach(addSuccessor);
     addSuccessor({ index, state });
     if (successorSlots.length > SUCCESSOR_CAPACITY * capacityMultiplier) capacityMultiplier++;
-    return successorSlots.filter((entry): entry is LiveSuccessor => entry !== undefined);
+    return successorSlots.filter((entry): entry is LiveSuccessor<State> => entry !== undefined);
   };
 
   const expandLate = (
     behavior: BehaviorGraph,
     tableau: Tableau,
-    state: Value[],
+    state: State,
     index: number,
     node: number,
   ) => {
@@ -489,7 +591,7 @@ export const createLivenessChecker = (
   const addTableauState = (
     behavior: BehaviorGraph,
     tableau: Tableau,
-    set: LiveSuccessor[],
+    set: LiveSuccessor<State>[],
     actionResults: Uint8Array[],
     stateResults: Uint8Array,
     index: number,
@@ -525,7 +627,7 @@ export const createLivenessChecker = (
 
   const addPlainState = (
     behavior: BehaviorGraph,
-    set: LiveSuccessor[],
+    set: LiveSuccessor<State>[],
     actionResults: Uint8Array[],
     stateResults: Uint8Array,
     index: number,
@@ -800,58 +902,48 @@ export const createLivenessChecker = (
 
   return {
     branches: behaviors.length,
-    addInitialState: (index, state, tracing) => {
-      evaluationEnvironment = tracing ?? environment;
+    addInitialState: (index, state) => {
       sharedStates.clear();
       sharedActions.clear();
-      try {
-        for (const behavior of behaviors) {
-          const tableau = behavior.solution.tableau;
-          if (!tableau) {
-            behavior.initial.push(index);
-            continue;
-          }
-          for (let node = 0; node < tableau.initialCount; node++) {
-            if (!isConsistent(tableau, node, undefined, state)) continue;
-            behavior.initial.push(
-              getNodeId(behavior, index, node) ?? recordNode(behavior, index, node),
-            );
-          }
+      for (const behavior of behaviors) {
+        const tableau = behavior.solution.tableau;
+        if (!tableau) {
+          behavior.initial.push(index);
+          continue;
         }
-      } finally {
-        evaluationEnvironment = environment;
+        for (let node = 0; node < tableau.initialCount; node++) {
+          if (!isConsistent(tableau, node, undefined, state)) continue;
+          behavior.initial.push(
+            getNodeId(behavior, index, node) ?? recordNode(behavior, index, node),
+          );
+        }
       }
     },
-    addState: (index, state, successors, tracing) => {
-      evaluationEnvironment = tracing ?? environment;
+    addState: (index, state, successors) => {
       sharedStates.clear();
       sharedActions.clear();
-      try {
-        const set = getSuccessorSet(index, state, successors);
-        for (const behavior of behaviors) {
-          const actionResults = set.map((successor) =>
-            checkAction(behavior, index, state, successor.state),
-          );
-          const stateResults = checkState(behavior, index, state);
-          const tableau = behavior.solution.tableau;
-          if (!tableau) {
-            addPlainState(behavior, set, actionResults, stateResults, index);
-            continue;
-          }
-          const accepted = addTableauState(
-            behavior,
-            tableau,
-            set,
-            actionResults,
-            stateResults,
-            index,
-          );
-          if (accepted) return accepted;
+      const set = getSuccessorSet(index, state, successors);
+      for (const behavior of behaviors) {
+        const actionResults = set.map((successor) =>
+          checkAction(behavior, index, state, successor.state),
+        );
+        const stateResults = checkState(behavior, index, state);
+        const tableau = behavior.solution.tableau;
+        if (!tableau) {
+          addPlainState(behavior, set, actionResults, stateResults, index);
+          continue;
         }
-        return undefined;
-      } finally {
-        evaluationEnvironment = environment;
+        const accepted = addTableauState(
+          behavior,
+          tableau,
+          set,
+          actionResults,
+          stateResults,
+          index,
+        );
+        if (accepted) return accepted;
       }
+      return undefined;
     },
     findViolation: () => {
       for (const behavior of behaviors) {
@@ -862,15 +954,5 @@ export const createLivenessChecker = (
       }
       return undefined;
     },
-    getViolatedProperties: (path, cycleStart) => [
-      ...new Set(
-        properties
-          .filter(
-            (_property, position) =>
-              !evaluateOnLasso(negations[position].body, path, cycleStart, 0, environment),
-          )
-          .map((property) => property.name),
-      ),
-    ],
   };
 };

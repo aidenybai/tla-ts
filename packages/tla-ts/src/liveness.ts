@@ -37,8 +37,10 @@ import {
   createPair,
   createUnary,
   getLiveLevel,
+  type LiveAction,
   type LiveEnabled,
   type LiveExpression,
+  type LiveState,
 } from "./tableau";
 import { isEqualLikeTlc, type Value } from "./values";
 
@@ -599,15 +601,50 @@ export const toLiveExpression = (
   return convert(root, rootScope);
 };
 
-export const evaluateLive = (
+// Evaluates the atoms of a formula, which the interpreter and the typed tier evaluate differently.
+export interface LiveAtoms<State> {
+  holdsState: (atom: LiveState | LiveEnabled, state: State) => boolean;
+  holdsAction: (atom: LiveAction, state: State, next: State) => boolean;
+}
+
+export const getInterpretedAtoms = (environment: Environment): LiveAtoms<Value[]> => ({
+  holdsState: (atom, state) => {
+    const context = { environment, scope: atom.scope, state, next: undefined };
+    const value =
+      atom.kind === "State" ? evaluate(atom.expression, context) : isEnabled(atom.step, context);
+    if (typeof value !== "boolean") {
+      throw new TlaEvaluationError("A state predicate was evaluated to a non-boolean value.");
+    }
+    return value;
+  },
+  holdsAction: (atom, state, next) => {
+    const scope = atom.scope;
+    const subscript = atom.subscript;
+    if (
+      subscript &&
+      isEqualLikeTlc(
+        evaluate(subscript, { environment, scope, state, next: undefined }),
+        evaluate(subscript, { environment, scope, state: next, next: undefined }),
+      )
+    )
+      return false;
+    const value = evaluate(atom.expression, { environment, scope, state, next });
+    if (typeof value !== "boolean") {
+      throw new TlaEvaluationError("Encountered an action predicate that's not a boolean.");
+    }
+    return value;
+  },
+});
+
+export const evaluateLive = <State>(
   expression: LiveExpression,
-  state: Value[],
-  next: Value[] | undefined,
-  environment: Environment,
+  state: State,
+  next: State | undefined,
+  atoms: LiveAtoms<State>,
   stateCache: Map<LiveExpression, boolean>,
 ): boolean => {
   const recurse = (operand: LiveExpression) =>
-    evaluateLive(operand, state, next, environment, stateCache);
+    evaluateLive(operand, state, next, atoms, stateCache);
   switch (expression.kind) {
     case "Boolean":
       return expression.value;
@@ -615,35 +652,13 @@ export const evaluateLive = (
     case "Enabled": {
       const cached = stateCache.get(expression);
       if (cached !== undefined) return cached;
-      const context = { environment, scope: expression.scope, state, next: undefined };
-      const value =
-        expression.kind === "State"
-          ? evaluate(expression.expression, context)
-          : isEnabled(expression.step, context);
-      if (typeof value !== "boolean") {
-        throw new TlaEvaluationError("A state predicate was evaluated to a non-boolean value.");
-      }
+      const value = atoms.holdsState(expression, state);
       stateCache.set(expression, value);
       return value;
     }
-    case "Action": {
+    case "Action":
       if (expression.enabled && stateCache.get(expression.enabled) === false) return false;
-      const scope = expression.scope;
-      const subscript = expression.subscript;
-      if (
-        subscript &&
-        isEqualLikeTlc(
-          evaluate(subscript, { environment, scope, state, next: undefined }),
-          evaluate(subscript, { environment, scope, state: next, next: undefined }),
-        )
-      )
-        return false;
-      const value = evaluate(expression.expression, { environment, scope, state, next });
-      if (typeof value !== "boolean") {
-        throw new TlaEvaluationError("Encountered an action predicate that's not a boolean.");
-      }
-      return value;
-    }
+      return next !== undefined && atoms.holdsAction(expression, state, next);
     case "Not":
       return !recurse(expression.body);
     case "And":
@@ -651,7 +666,7 @@ export const evaluateLive = (
     case "Or":
       return expression.operands.some(recurse);
     case "Next":
-      return evaluateLive(expression.body, next ?? state, undefined, environment, new Map());
+      return evaluateLive(expression.body, next ?? state, undefined, atoms, new Map());
     case "Always":
     case "Eventually":
       throw new TlaEvaluationError("TLC cannot evaluate a temporal formula in a single step");
@@ -688,7 +703,7 @@ export const evaluateOnLasso = (
         expression,
         path[position],
         path[getNext(position)],
-        environment,
+        getInterpretedAtoms(environment),
         new Map(),
       );
   }
