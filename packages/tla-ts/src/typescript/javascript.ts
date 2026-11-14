@@ -5237,13 +5237,78 @@ LOCAL LongChange(heap, ref, method, items, length) ==
           THEN [heap |-> heap, value |-> Undefined, isThrown |-> TRUE]
           ELSE [heap |-> state.heap, value |-> total, isThrown |-> state.isThrown]
 
+\\* The integer of a key of decimal digits from 10 on, below 2^53.
+RECURSIVE DecimalOf(_)
+DecimalOf(text) ==
+  IF Len(text) <= 9
+  THEN ParseDigits(text, 10)
+  ELSE Add(Multiply(DecimalOf(SubSeq(text, 1, Len(text) - 9)), 1000000000),
+           ParseDigits(SubSeq(text, Len(text) - 8, Len(text)), 10))
+
+\\* Whether a key is an integer below 2^53 in its canonical decimal form.
+LOCAL IsLongKey(key) ==
+  /\\ ~IsSymbol(key)
+  /\\ Len(key) > 0
+  /\\ Len(key) <= 16
+  /\\ \\A position \\in 1..Len(key) : SubSeq(key, position, position) \\in Digits \\ {"-"}
+  /\\ Len(key) = 1 \\/ SubSeq(key, 1, 1) # "0"
+  /\\ Len(key) < 16 \\/ DigitsBelow(key, "9007199254740992")
+
+\\* The keys below 2^53 that an object or its prototypes hold.
+RECURSIVE LongKeys(_, _)
+LongKeys(heap, ref) ==
+  LET object == Lookup(heap, ref)
+  IN {key \\in DOMAIN object.values : IsLongKey(key)}
+       \\cup IF object.prototype = Null THEN {} ELSE LongKeys(heap, object.prototype)
+
+\\* Moves the elements of an array-like object at keys below 2^53 by an offset, from the highest
+\\* key, where a hole deletes the key it moves to.
+RECURSIVE LongMoves(_, _, _, _)
+LongMoves(state, ref, froms, offset) ==
+  IF state.isThrown \\/ froms = {}
+  THEN state
+  ELSE LET from == CHOOSE key \\in froms :
+                     \\A other \\in froms : ~LessThan(DecimalOf(key), DecimalOf(other))
+           key == StringOf(Add(DecimalOf(from), offset))
+           value == Get(state.heap, ref, from)
+       IN LongMoves(
+            CASE ~Has(state.heap, ref, from) -> ArrayDelete(state.heap, ref, key)
+              \\* HACK: TLC reads a value only where it needs it, and Get runs before a write that
+              \\* fails, so comparing the value reads it first.
+              [] value = value -> ArraySet(state.heap, ref, key, value),
+            ref, froms \\ {from}, offset)
+
+\\* unshift on an array-like object whose length is past 2^31, which throws a TypeError where the
+\\* length it gives passes 2^53 - 1, and moves only the keys that the object or its prototypes
+\\* hold, or that a move deletes.
+LOCAL LongUnshift(heap, ref, items, length) ==
+  LET count == Len(items)
+      total == Add(length, count)
+      own == {key \\in DOMAIN Lookup(heap, ref).values : IsLongKey(key)}
+      isMoved(value) == ~IsNegative(value) /\\ LessThan(value, length)
+      froms == IF count = 0
+               THEN {}
+               ELSE {key \\in LongKeys(heap, ref) : isMoved(DecimalOf(key))}
+                      \\cup {StringOf(Add(DecimalOf(key), -count)) :
+                            key \\in {key \\in own : isMoved(Add(DecimalOf(key), -count))}}
+      state == AndThen(ArraySets(LongMoves([heap |-> heap, isThrown |-> FALSE], ref, froms, count),
+                                 ref, 0, items),
+                       LAMBDA after : ArraySet(after, ref, "length", total))
+  IN CASE ~IsHeap(ref) \\/ IsProxy(heap, ref) \\/ IsTypedArray(heap, ref) \\/ heap.objects[ref[Ref]].isOpaque ->
+            Assert(FALSE, "tla-ts can't unshift onto this object")
+       [] count > 0 /\\ LessThan(MaxLength, total) ->
+            [heap |-> heap, value |-> Undefined, isThrown |-> TRUE]
+       [] OTHER -> [heap |-> state.heap, value |-> total, isThrown |-> state.isThrown]
+
 ArrayChange(heap, ref, method, items) ==
   LET raw == Get(heap, ref, "length")
       length == ToLength(raw)
-  IN IF method \\in {"pop", "push"} /\\ IsLong(raw)
-     THEN LongChange(heap, ref, method, items, LongLength(raw))
-     ELSE ArrayChangeFrom(heap, ref, method, items, length,
-                          Get(heap, ref, ToString(IF method = "pop" THEN length - 1 ELSE 0)))
+  IN CASE method \\in {"pop", "push"} /\\ IsLong(raw) ->
+            LongChange(heap, ref, method, items, LongLength(raw))
+       [] method = "unshift" /\\ IsLong(raw) -> LongUnshift(heap, ref, items, LongLength(raw))
+       [] OTHER ->
+            ArrayChangeFrom(heap, ref, method, items, length,
+                            Get(heap, ref, ToString(IF method = "pop" THEN length - 1 ELSE 0)))
 
 \\* copyWithin() on an array-like object that the heap holds, as the spec runs it index by index,
 \\* backward where the indices it copies to overlap the end of those it copies from, where only the

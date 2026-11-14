@@ -1530,6 +1530,64 @@ describe("values", () => {
     });
   });
 
+  describe("unshifts onto array-like objects whose length is near 2^53 or Infinity", () => {
+    const getSource = (expected: string) => `
+      const like: { [key: string]: unknown } = {
+        "9007199254740987": "a",
+        "9007199254740989": "b",
+        length: 2 ** 53 - 2,
+      };
+      Object.defineProperty(like, "9007199254740988", { value: "n", writable: false });
+      let moved = "none";
+      try {
+        Array.prototype.unshift.call(like, "x");
+      } catch (error) {
+        moved = error instanceof TypeError ? "type" : "other";
+      }
+      const endless: { [key: string]: unknown } = { length: Infinity };
+      const kept = Array.prototype.unshift.call(endless);
+      let caught = "none";
+      try {
+        Array.prototype.unshift.call(endless, "y");
+      } catch (error) {
+        caught = error instanceof TypeError ? "type" : "other";
+      }
+      const read = [
+        moved,
+        like.length,
+        like["9007199254740987"],
+        like["9007199254740988"],
+        like["9007199254740989"],
+        like["9007199254740990"],
+        0 in like,
+        kept,
+        endless.length,
+        caught,
+      ].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource("type,9007199254740990,a,n,n,b,false,9007199254740991,9007199254740991,type"),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a hole that moves as kept", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource("type,9007199254740990,a,n,b,b,false,9007199254740991,9007199254740991,type"),
+          )
+        ).failure?.message,
+      ).toContain("a,n,n,b");
+    });
+  });
+
   describe("skips holes of array-like objects whose length is Infinity or beyond 32 bits", () => {
     const getSource = (expected: string) => `
       const like = { 0: 12, 1: 9, length: Infinity };
