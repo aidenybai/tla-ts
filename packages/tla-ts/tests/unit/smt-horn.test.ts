@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { SmtTacticError, SmtUnsupportedError } from "../../src/errors";
+import { SmtUnsupportedError } from "../../src/errors";
 import {
   AstManager,
   OP_GT,
@@ -25,6 +25,9 @@ const run = (lines: string[]) => {
   return output;
 };
 
+// dl_query_cmd prints the exception of a query and then the unknown status.
+const getFailedQuery = (message: string) => [`(error "query failed: ${message}")`, "unknown"];
+
 const COUNTER_RELATIONS = [
   "(declare-rel reach (Int))",
   "(declare-rel bad ())",
@@ -47,8 +50,7 @@ const UNINTERPRETED_RELATION = [
   "(declare-var x Int)",
 ];
 
-// The expected values are the output of z3 5.3.2, where Z3 wraps the message of a failed query in
-// (error "query failed: ...").
+// The expected values are the output of z3 5.3.2.
 describe("datalog queries", () => {
   it("answers sat for a reachable relation", () => {
     expect(
@@ -171,22 +173,22 @@ describe("horn tactic", () => {
 
 describe("rule errors", () => {
   it("displays the rule with a negated predicate", () => {
-    expect(() =>
+    expect(
       run([
         ...UNINTERPRETED_RELATION,
         "(rule (=> (> x 0) (p x)))",
         "(rule (=> (and (not (p x)) (< x 5)) (q x)) myrule)",
         "(query q)",
       ]),
-    ).toThrow(
-      new SmtTacticError(
+    ).toEqual(
+      getFailedQuery(
         "Rule contains negative predicate myrule:\nq(#0) :- \n not p(#0),\n (< (:var 0) 5).\n",
       ),
     );
   });
 
   it("numbers the declared variables as Z3 binds them", () => {
-    expect(() =>
+    expect(
       run([
         "(declare-rel p (Int Bool))",
         "(declare-fun f (Int) Int)",
@@ -195,15 +197,15 @@ describe("rule errors", () => {
         "(rule (=> (and (> (f x) 0) (= (+ x 1) 3) b) (p (+ x 2) (not b))))",
         "(query p)",
       ]),
-    ).toThrow(
-      new SmtTacticError(
+    ).toEqual(
+      getFailedQuery(
         "Uninterpreted 'f' in <null>:\np(#2,#3) :- \n (= (:var 3) (not (:var 0))),\n (= (:var 2) (+ (:var 1) 2)),\n (= (+ (:var 1) 1) 3),\n (> (f (:var 1)) 0),\n (= (:var 0) true).\n",
       ),
     );
   });
 
   it("reports the first uninterpreted function of Z3's table with its last rule", () => {
-    expect(() =>
+    expect(
       run([
         "(declare-rel p (Int))",
         "(declare-fun foo (Int) Int)",
@@ -217,27 +219,27 @@ describe("rule errors", () => {
         "(rule (=> (> (bar (+ x 2)) (baz 3)) (p x)) r5)",
         "(query p)",
       ]),
-    ).toThrow(
-      new SmtTacticError("Uninterpreted 'foo' in r4:\np(#0) :- \n (> (foo (+ (:var 0) 1)) 3).\n"),
+    ).toEqual(
+      getFailedQuery("Uninterpreted 'foo' in r4:\np(#0) :- \n (> (foo (+ (:var 0) 1)) 3).\n"),
     );
   });
 
   it("visits the patterns of a quantifier", () => {
-    expect(() =>
+    expect(
       run([
         ...UNINTERPRETED_RELATION,
         "(rule (=> (forall ((y Int)) (! (> (+ y x) y) :pattern ((f y)))) (p x)) r1)",
         "(query p)",
       ]),
-    ).toThrow(
-      new SmtTacticError(
+    ).toEqual(
+      getFailedQuery(
         "Uninterpreted 'f' in r1:\np(#0) :- \n (= (forall ((y Int)) (! (> (+ y (:var 1)) y) :pattern ((f y)))) true).\n",
       ),
     );
   });
 
   it("takes a divisor that rewrites to zero as uninterpreted", () => {
-    expect(() =>
+    expect(
       run([
         "(declare-rel p (Int))",
         "(declare-var x Int)",
@@ -245,15 +247,15 @@ describe("rule errors", () => {
         "(rule (=> (and (p x) (> (mod x (- 3 3)) 0)) (p (+ x 1))) r2)",
         "(query p)",
       ]),
-    ).toThrow(
-      new SmtTacticError(
+    ).toEqual(
+      getFailedQuery(
         "Uninterpreted 'mod' in r2:\np(#1) :- \n p(#0),\n (= (:var 1) (+ (:var 0) 1)),\n (> (mod (:var 0) (- 3 3)) 0).\n",
       ),
     );
   });
 
   it("displays the rule with an existential quantifier", () => {
-    expect(() =>
+    expect(
       run([
         "(declare-rel p (Int))",
         "(declare-var x Int)",
@@ -261,15 +263,15 @@ describe("rule errors", () => {
         "(rule (=> (and (p x) (exists ((y Int)) (forall ((z Int)) (> (* y z x) x)))) (p (+ 1 x))) r2)",
         "(query p)",
       ]),
-    ).toThrow(
-      new SmtTacticError(
+    ).toEqual(
+      getFailedQuery(
         "cannot process EXISTS quantifier in rule r2:\np(#1) :- \n p(#0),\n (= (:var 1) (+ 1 (:var 0))),\n (let ((a!1 (exists ((y Int)) (forall ((z Int)) (> (* y z (:var 2)) (:var 2))))))\n  (= a!1 true)).\n",
       ),
     );
   });
 
   it("prints the term a recursive predicate is nested in", () => {
-    expect(() =>
+    expect(
       run([
         "(declare-rel p (Int))",
         "(declare-rel q (Int))",
@@ -278,34 +280,32 @@ describe("rule errors", () => {
         "(rule (=> (and (q x) (= (p x) (> x 3))) (p (+ x 1))) r2)",
         "(query p)",
       ]),
-    ).toThrow(
-      new SmtTacticError(
+    ).toEqual(
+      getFailedQuery(
         "recursive predicate (= (p (:var 0)) (> (:var 0) 3)) occurs nested in the body of a rule",
       ),
     );
   });
 
   it("names the fresh predicate of a disjunction with an empty suffix", () => {
-    expect(() =>
+    expect(
       run([
         ...UNINTERPRETED_RELATION,
         "(rule (=> (and (q x) (or (p x) (> (f x) 0))) (p x)) r1)",
         "(query p)",
       ]),
-    ).toThrow(
-      new SmtTacticError("Uninterpreted 'f' in r1:\nr1!!0(#0) :- \n (> (f (:var 0)) 0).\n"),
-    );
+    ).toEqual(getFailedQuery("Uninterpreted 'f' in r1:\nr1!!0(#0) :- \n (> (f (:var 0)) 0).\n"));
   });
 
   it("finds a predicate in the pattern of a quantifier", () => {
-    expect(() =>
+    expect(
       run([
         ...UNINTERPRETED_RELATION,
         "(rule (=> (and (q x) (forall ((y Int)) (! (> (f y) x) :pattern ((p y))))) (p x)) r1)",
         "(query p)",
       ]),
-    ).toThrow(
-      new SmtTacticError(
+    ).toEqual(
+      getFailedQuery(
         "recursive predicate (r1!!0 (:var 0) (:var 1)) occurs nested in the body of a rule",
       ),
     );
@@ -330,7 +330,7 @@ describe("rule transformations", () => {
   ];
 
   it("substitutes under the quantifier of a resolvent", () => {
-    expect(() =>
+    expect(
       run([
         ...UNBOUND_SQUARE,
         "(rule (=> (> x 3) (v 1 x)))",
@@ -342,8 +342,8 @@ describe("rule transformations", () => {
         "(rule (=> (and (w x) (t y) (= x 2)) bad))",
         "(query bad)",
       ]),
-    ).toThrow(
-      new SmtTacticError(
+    ).toEqual(
+      getFailedQuery(
         "cannot process EXISTS quantifier in rule <null>;<null>;<null>:\nw(#0) :- \n (not (<= (:var 0) 3)),\n (let ((a!1 (exists ((x!1 Int)) (not (<= (:var 1) (* x!1 x!1))))))\n  (= a!1 true)).\n",
       ),
     );
@@ -352,7 +352,7 @@ describe("rule transformations", () => {
   // Z3 answers unsat: it keeps the resolvent that has a quantifier without inlining u into it and
   // drops the rule of u. The query is reachable through p(0, 0), u(1), w(1), w(2).
   it("inlines the rest of the tail of a resolvent that has a quantifier", () => {
-    expect(() =>
+    expect(
       run([
         ...UNBOUND_SQUARE,
         "(rule (=> (< x 5) (u x)))",
@@ -361,8 +361,8 @@ describe("rule transformations", () => {
         "(rule (=> (and (w x) (= x 2)) bad))",
         "(query bad)",
       ]),
-    ).toThrow(
-      new SmtTacticError(
+    ).toEqual(
+      getFailedQuery(
         "cannot process EXISTS quantifier in rule <null>;<null>;<null>:\nw(#0) :- \n (not (<= 5 (:var 0))),\n (let ((a!1 (exists ((x!1 Int)) (not (<= (:var 1) (* x!1 x!1))))))\n  (= a!1 true)).\n",
       ),
     );
