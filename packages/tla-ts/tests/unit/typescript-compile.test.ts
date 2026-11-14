@@ -9180,6 +9180,30 @@ describe("errors", () => {
     expect((await checkModel(getSource(8))).failure?.message).toContain("unexpected");
   });
 
+  describe("passes no argument to the this parameter of a function that a script calls", () => {
+    const getSource = (expected: string) => `
+      const holder = { seen: "" };
+      const name = function (this: unknown, value: number) {
+        return value === 1 ? "one" : "other";
+      };
+      const tagged = function (this: unknown, value: number) {
+        return value + 1;
+      };
+      // @ts-ignore
+      tagged.tag = "t";
+      holder.seen = [name(1), tagged(1)].join(",");
+      if (holder.seen !== "${expected}") throw new Error("unexpected");
+    `;
+
+    it("agrees with Node on one,2", async () => {
+      expect((await checkModel(getSource("one,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation other,2", async () => {
+      expect((await checkModel(getSource("other,2"))).failure?.message).toContain("unexpected");
+    });
+  });
+
   it("runs the getter that a rest pattern copies where the script defines getters under other keys", async () => {
     const getSource = (expected: number) => `
       let count = 0;

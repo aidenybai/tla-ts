@@ -12,6 +12,7 @@ import {
   getFunction,
   getFunctionCandidates,
   getGetters,
+  getParameters,
   getSymbol,
   getTopLevelDeclaration,
   getUndefined,
@@ -181,7 +182,7 @@ export const getDefinition = (declaration: HelperDeclaration, context: Context):
   if (declaration.name === undefined)
     throw new TlaTypeScriptError("Name this function", declaration);
   const callee = getHelper(declaration, context);
-  const parameters = declareParameters(callee?.parameters ?? [], context);
+  const parameters = declareParameters(callee === undefined ? [] : getParameters(callee), context);
   // An operator parameter declares how many arguments it takes, as in F(_, _).
   const declared = parameters.map((parameter) => {
     const signatures = context.checker.getTypeAtLocation(parameter.node.name).getCallSignatures();
@@ -311,7 +312,7 @@ const inlineCall = (
   called?: CalledMethod,
 ) => {
   if (callee.body === undefined) throw new TlaTypeScriptError("Give this a body", callee);
-  const passedCallbacks = callee.parameters.flatMap(
+  const passedCallbacks = getParameters(callee).flatMap(
     (parameter, position): [ts.Symbol, FunctionNode][] => {
       const argument = argumentNodes.at(position);
       const symbol = getSymbol(parameter.name, context.checker);
@@ -330,7 +331,7 @@ const inlineCall = (
   const defaultCallbacks =
     context.heap === undefined || argumentNodes.some(ts.isSpreadElement)
       ? []
-      : callee.parameters
+      : getParameters(callee)
           .slice(argumentNodes.length)
           .flatMap((parameter): [ts.Symbol, FunctionNode][] => {
             const initializer = parameter.initializer;
@@ -354,12 +355,12 @@ const inlineCall = (
   const callbacks = [...passedCallbacks, ...defaultCallbacks];
   const isValue = (position: number) =>
     !callbacks.some(
-      (entry) => entry[0] === getSymbol(callee.parameters[position].name, context.checker),
+      (entry) => entry[0] === getSymbol(getParameters(callee)[position].name, context.checker),
     );
   const passed = translateArgumentValues(
-    callee.parameters,
+    getParameters(callee),
     argumentNodes,
-    (position) => position >= callee.parameters.length || isValue(position),
+    (position) => position >= getParameters(callee).length || isValue(position),
     scope,
     context,
   );
@@ -384,7 +385,7 @@ const inlineCall = (
     context,
   );
   const bound = bindValues(
-    callee.parameters.filter((_, position) => isValue(position)),
+    getParameters(callee).filter((_, position) => isValue(position)),
     passed.isSpread ? values.shared.slice(0, -1) : values.shared,
     made.scope,
     context,
@@ -457,7 +458,7 @@ const translateOperatorArgument = (
       node,
     );
   }
-  const parameters = declareParameters(callee.parameters, context);
+  const parameters = declareParameters(getParameters(callee), context);
   context.inProgress.add(callee);
   const body = translateBody(callee.body, bindNames(scope, parameters), context);
   context.inProgress.delete(callee);
@@ -490,7 +491,7 @@ export const callStateOperator = (
         symbol: entry[0],
         name: context.names.getFresh(entry[0].name),
       }));
-      const parameters = callee.parameters.map((parameter) => {
+      const parameters = getParameters(callee).map((parameter) => {
         if (
           !ts.isIdentifier(parameter.name) ||
           parameter.dotDotDotToken !== undefined ||
@@ -557,7 +558,7 @@ export const callStateOperator = (
     })();
   return call(definition.name, [
     ...variables.map((entry) => scope.bindings.get(entry[0]) ?? entry[1]),
-    ...callee.parameters.map((_, position) => values[position] ?? getUndefined(context)),
+    ...getParameters(callee).map((_, position) => values[position] ?? getUndefined(context)),
   ]);
 };
 
@@ -709,7 +710,7 @@ export const isLiftable = (callee: FunctionNode, context: Context, isStateTaken 
       ts.isFunctionDeclaration(callee)) &&
     callee.body !== undefined &&
     isPlain(callee) &&
-    callee.parameters.every(
+    getParameters(callee).every(
       (parameter) =>
         ts.isIdentifier(parameter.name) &&
         parameter.initializer === undefined &&
@@ -754,7 +755,7 @@ export const callLifted = (
         symbol: entry[0],
         name: context.names.getFresh(entry[0].name),
       }));
-      const parameters = declareParameters(callee.parameters, context);
+      const parameters = declareParameters(getParameters(callee), context);
       const captured = found.captured.map((symbol) => ({
         symbol,
         name: context.names.getFresh(symbol.name),
@@ -801,7 +802,7 @@ export const callLifted = (
     return binding;
   });
   return call(definition.name, [
-    ...callee.parameters.map((_, position) => values[position] ?? getUndefined(context)),
+    ...getParameters(callee).map((_, position) => values[position] ?? getUndefined(context)),
     ...capturedValues,
     ...variables.map((entry) => scope.bindings.get(entry[0]) ?? entry[1]),
   ]);
