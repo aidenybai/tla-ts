@@ -5241,6 +5241,39 @@ LOCAL MaxLength == Wide :> <<4194303, 2147483647>>
 LOCAL LongLength(length) ==
   IF IsWide(length) /\\ length[Wide] # <<4194304, 0>> THEN length ELSE MaxLength
 
+\\* Whether an object that the heap holds has a length past 2^31.
+HasLongLength(heap, ref) == IsHeap(ref) /\\ IsLong(Get(heap, ref, "length"))
+
+\\* indexOf or lastIndexOf on an array-like object whose length is past 2^31, which searches only the
+\\* keys that the object or its prototypes hold, from an index that an integer or an infinity gives.
+LongSearch(heap, ref, target, from, isLast) ==
+  LET length == LongLength(Get(heap, ref, "length"))
+      last == Add(length, -1)
+      given == IF from = NegativeZero THEN 0 ELSE from
+      start ==
+        CASE given = Undefined -> IF isLast THEN last ELSE 0
+          [] given \\in {Infinity, NegativeInfinity} \\/ IsWide(given) \\/ IsInteger(given) ->
+               CASE given = NegativeInfinity -> IF isLast THEN -1 ELSE 0
+                 [] ~IsNegative(given) -> IF isLast /\\ LessThan(last, given) THEN last ELSE given
+                 [] LessThan(Add(length, given), 0) -> IF isLast THEN -1 ELSE 0
+                 [] OTHER -> Add(length, given)
+          [] OTHER -> Assert(FALSE, "tla-ts can't search an array-like object from this index")
+      isSearched(value) ==
+        IF isLast
+        THEN ~LessThan(start, value)
+        ELSE ~LessThan(value, start) /\\ LessThan(value, length)
+      found == {key \\in LongKeys(heap, ref) :
+                  isSearched(DecimalOf(key)) /\\ StrictEquals(Get(heap, ref, key), target)}
+  IN CASE IsProxy(heap, ref) \\/ IsTypedArray(heap, ref) \\/ heap.objects[ref[Ref]].isOpaque ->
+            Assert(FALSE, "tla-ts can't search this object")
+       [] found = {} -> -1
+       [] OTHER ->
+            DecimalOf(CHOOSE key \\in found :
+                        \\A other \\in found :
+                          IF isLast
+                          THEN ~LessThan(DecimalOf(key), DecimalOf(other))
+                          ELSE ~LessThan(DecimalOf(other), DecimalOf(key)))
+
 \\* Writes items to an array-like object from an index that may be past 2^31.
 RECURSIVE LongSets(_, _, _, _)
 LongSets(state, ref, from, items) ==

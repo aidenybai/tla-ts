@@ -8,6 +8,7 @@ import {
   getParameters,
   getSymbol,
   getUndefined,
+  isInertValue,
   isMethodCall,
   isNameRead,
   type MethodCall,
@@ -2920,7 +2921,7 @@ export const translateArrayLikeCall = (
   // A search from an index counts from the length, which the present elements don't have.
   const isSkippingHoles =
     HOLE_SKIPPING_METHODS.has(method) && (!method.endsWith("ndexOf") || methodArguments.length < 2);
-  return share(translateExpression(object, scope, context), "object", context, (owner) =>
+  const translateElements = (owner: Expression) =>
     isSkippingHoles
       ? share(
           translateMethodElements(method, owner, "PresentElements", node, scope, context),
@@ -2940,7 +2941,34 @@ export const translateArrayLikeCall = (
           "sequence",
           context,
           (sequence) => operate(owner, sequence),
-        ),
+        );
+  // A search of an object whose length is past 2^31 reads only the keys that it holds.
+  const isSearch =
+    (method === "indexOf" || method === "lastIndexOf") &&
+    methodArguments.length <= 2 &&
+    methodArguments.every(isInertValue);
+  return share(translateExpression(object, scope, context), "object", context, (owner) =>
+    isSearch
+      ? ifExpression(
+          useJavaScript("HasLongLength", [getHeap(scope, node, context), owner], context),
+          useJavaScript(
+            "LongSearch",
+            [
+              getHeap(scope, node, context),
+              owner,
+              ...[0, 1].map((position) => {
+                const argument = methodArguments[position];
+                return argument === undefined
+                  ? getUndefined(context)
+                  : translateExpression(argument, scope, context);
+              }),
+              boolean(method === "lastIndexOf"),
+            ],
+            context,
+          ),
+          translateElements(owner),
+        )
+      : translateElements(owner),
   );
 };
 

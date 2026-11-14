@@ -1711,8 +1711,11 @@ describe("values", () => {
   describe("stops where an array-like object past 2^31 holds a key from 2^32", () => {
     const getSource = (key: string) => `
       const wide: { [key: string]: unknown } = { 0: 1, "${key}": 3, length: 2 ** 40 };
-      const found = Array.prototype.indexOf.call(wide, 3);
-      if (found !== 2) throw new Error(String(found));
+      const found = Array.prototype.some.call(
+        wide,
+        (value: unknown, index: number) => value === 3 && index === 2,
+      );
+      if (!found) throw new Error("missing");
     `;
 
     it("stops at a key past 2^32", async () => {
@@ -1726,7 +1729,7 @@ describe("values", () => {
     });
 
     it("rejects a key below 2^31 at another index", async () => {
-      expect((await checkModel(getSource("1"))).failure?.message).toContain("1");
+      expect((await checkModel(getSource("1"))).failure?.message).toContain("missing");
     });
   });
 
@@ -25929,5 +25932,45 @@ describe("BigInts", () => {
       quotient = quotient / 0n;
     `);
     expect(division.failure?.message).toContain("tla-ts can't throw the RangeError");
+  });
+
+  describe("searches an array-like object whose length is past 2^31 through the keys it holds", () => {
+    const getSource = (expected: string) => `
+      const el = {};
+      const like: { [key: string]: unknown } = { 0: "zero", length: Number.MAX_SAFE_INTEGER };
+      like[Number.MAX_SAFE_INTEGER - 1] = el;
+      like[Number.MAX_SAFE_INTEGER - 3] = el;
+      const wide: { [key: string]: unknown } = { 0: el, 4294967294: el, 4294967295: el, length: 4294967296 };
+      const from = Number.MAX_SAFE_INTEGER - 2;
+      const before = -2;
+      const read = [
+        Array.prototype.indexOf.call(like, el, from),
+        Array.prototype.lastIndexOf.call(like, el, from),
+        Array.prototype.lastIndexOf.call(like, el, before),
+        Array.prototype.indexOf.call(wide, el),
+        Array.prototype.lastIndexOf.call(wide, el),
+      ].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource("9007199254740990,9007199254740988,9007199254740988,0,4294967295"),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the last index below 2^32 - 1 as the last", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource("9007199254740990,9007199254740988,9007199254740988,0,4294967294"),
+          )
+        ).failure?.message,
+      ).toContain("9007199254740990,9007199254740988,9007199254740988,0,4294967295");
+    });
   });
 });
