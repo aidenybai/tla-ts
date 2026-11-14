@@ -715,8 +715,17 @@ export const runSmtlibScript = (
     return goal;
   };
   const hasNames = () => script.state.names.some((name) => name !== -1);
-  const parseFormulas = (items: SmtList["items"]) =>
-    items.map((literal) => script.state.reader.parseFormula(literal));
+  // parse_check_sat shrinks the expression stack once the check has run.
+  const checkSatAssuming = (items: SmtList["items"]) => {
+    const state = script.state;
+    const literals: number[] = [];
+    try {
+      for (const item of items) literals.push(state.reader.parseFormula(item));
+      checkSat(literals);
+    } finally {
+      for (const literal of literals) state.manager.decRef(literal);
+    }
+  };
   const addObjective = (list: SmtList, isMax: boolean) => {
     const state = script.state;
     const term = state.reader.parseTerm(list.items[1] ?? list.end);
@@ -811,7 +820,7 @@ export const runSmtlibScript = (
       assertInKernel(assertion.formula, state.names[state.names.length - 1]);
       clearCheck();
     },
-    "check-sat": (list) => checkSat(parseFormulas(list.items.slice(1))),
+    "check-sat": (list) => checkSatAssuming(list.items.slice(1)),
     "declare-rel": (list) => {
       const state = script.state;
       const name = list.items[1];
@@ -906,7 +915,7 @@ export const runSmtlibScript = (
           "invalid check-sat-assuming command, '(' expected",
           literals ?? list.end,
         );
-      checkSat(parseFormulas(literals.items));
+      checkSatAssuming(literals.items);
     },
     "get-consequences": (list) => {
       const state = script.state;

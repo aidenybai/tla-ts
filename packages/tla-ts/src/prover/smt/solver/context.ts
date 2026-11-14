@@ -1495,6 +1495,7 @@ export class Context extends Internalizer {
 
   initAssumptions(assumptions: number[], asserted: AssertedFormulas) {
     this.literalAssumptions.clear();
+    for (const assumption of this.unsatCore) this.manager.decRef(assumption);
     this.unsatCore = [];
     if (assumptions.length > 0) {
       this.propagate();
@@ -1586,6 +1587,7 @@ export class Context extends Internalizer {
       const assumption = literalAssumptions.get(assumed);
       if (assumption === undefined || found.has(assumed)) continue;
       found.add(assumed);
+      this.manager.incRef(assumption);
       core.push(assumption);
     }
     literalAssumptions.clear();
