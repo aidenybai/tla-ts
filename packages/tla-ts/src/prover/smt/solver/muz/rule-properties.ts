@@ -25,9 +25,16 @@ import {
   QUANTIFIER_EXISTS,
 } from "../ast";
 import { ObjMap } from "../hashtable";
+import { Rewriter } from "../rewriter";
 import type { DatalogContext } from "./dl-context";
 import { mkPp, type Rule } from "./dl-rule";
 import type { RuleSet } from "./dl-rule-set";
+
+// quantifier::get_child: the body, then the patterns, then the no-patterns.
+const getQuantifierChildren = (manager: AstManager, expr: number) => {
+  const quantifier = manager.getQuantifier(expr);
+  return [quantifier.body, ...quantifier.patterns, ...quantifier.noPatterns];
+};
 
 const DIVISION_OPS = new Set([OP_DIV, OP_IDIV, OP_MOD, OP_REM]);
 const DIVISION_BY_ZERO_OPS = new Set([OP_DIV0, OP_IDIV0, OP_MOD0, OP_POWER0]);
@@ -71,21 +78,37 @@ export class RuleProperties {
     }
   }
 
+  // for_each_expr_core, which marks every expression and visits the patterns of a quantifier.
   private visit(rule: Rule, root: number, visited: Set<number>) {
     const manager = this.manager;
-    const todo = [root];
-    for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
-      if (visited.has(expr)) continue;
-      visited.add(expr);
-      const kind = manager.kinds[expr];
-      if (kind === KIND_VAR) this.checkSort(rule, manager.sorts[expr]);
-      else if (kind === KIND_QUANTIFIER) {
-        this.quantifiers.set(expr, rule);
-        todo.push(manager.getQuantifier(expr).body);
-      } else {
-        this.visitApp(rule, expr);
-        manager.pushArgs(expr, todo);
+    if (visited.has(root)) return;
+    visited.add(root);
+    const stack = [root];
+    const positions = [0];
+    while (stack.length > 0) {
+      const top = stack.length - 1;
+      const current = stack[top];
+      const kind = manager.kinds[current];
+      const children =
+        kind === KIND_VAR
+          ? []
+          : kind === KIND_QUANTIFIER
+            ? getQuantifierChildren(manager, current)
+            : manager.getArgs(current);
+      while (positions[top] < children.length && visited.has(children[positions[top]]))
+        positions[top]++;
+      if (positions[top] < children.length) {
+        const child = children[positions[top]++];
+        visited.add(child);
+        stack.push(child);
+        positions.push(0);
+        continue;
       }
+      stack.pop();
+      positions.pop();
+      if (kind === KIND_VAR) this.checkSort(rule, manager.sorts[current]);
+      else if (kind === KIND_QUANTIFIER) this.quantifiers.set(current, rule);
+      else this.visitApp(rule, current);
     }
   }
 
@@ -99,14 +122,25 @@ export class RuleProperties {
     } else if (manager.getFamily(expr) === FAMILY_USER) this.uninterpretedFuncs.set(decl, rule);
     else if (op === OP_DT_ACCESSOR)
       throw new SmtUnsupportedError("datatype accessors in Horn rules");
-    else if (DIVISION_BY_ZERO_OPS.has(op) || op === OP_FUN_DEFINED)
+    else if (
+      DIVISION_BY_ZERO_OPS.has(op) ||
+      op === OP_FUN_DEFINED ||
+      (DIVISION_OPS.has(op) && !this.evaluatesToNonZeroNumeral(manager.getArg(expr, 1)))
+    )
       this.uninterpretedFuncs.set(decl, rule);
-    else if (DIVISION_OPS.has(op)) {
-      const divisor = this.context.simplify(manager.getArg(expr, 1));
-      if (!manager.isNumeral(divisor) || manager.getRationalValue(divisor).isZero())
-        this.uninterpretedFuncs.set(decl, rule);
-    }
     this.checkSort(rule, manager.sorts[expr]);
+  }
+
+  // evaluates_to_numeral, with the zero test of its caller.
+  private evaluatesToNonZeroNumeral(expr: number) {
+    const manager = this.manager;
+    if (manager.isNumeral(expr)) return !manager.getRationalValue(expr).isZero();
+    const rewriter = new Rewriter(manager, this.context.rewriterOptions);
+    const value = rewriter.rewrite(expr);
+    const isNonZeroNumeral = manager.isNumeral(value) && !manager.getRationalValue(value).isZero();
+    manager.decRef(value);
+    rewriter.release();
+    return isNonZeroNumeral;
   }
 
   private checkSort(rule: Rule, sort: number) {
