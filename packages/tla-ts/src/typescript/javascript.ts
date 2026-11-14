@@ -4514,6 +4514,66 @@ DataViewGet(heap, ref, type, request, littleEndian) ==
        [] index + size > ViewLength(heap, view) -> Thrown(heap, "RangeError")
        [] OTHER -> Returned(heap, NumberOfBytes(type, IF isLittle THEN bytes ELSE Reversed(bytes)))
 
+\\* Whether a WeakRef or a FinalizationRegistry can hold a value: an object, or a symbol that the
+\\* registry doesn't hold.
+LOCAL CanBeHeldWeakly(heap, value) ==
+  IsObjectIn(heap, value) \\/ (TypeOfIn(heap, value) = "symbol" /\\ ~IsRegisteredSymbol(heap, value))
+
+LOCAL ArgumentAt(arguments, position) ==
+  IF Len(arguments) >= position THEN arguments[position] ELSE Undefined
+
+\\* The heap with a new WeakRef of its target, which tla-ts never collects, as the spec allows a
+\\* host to.
+LOCAL WeakRefMade(heap, prototype, arguments) ==
+  IF CanBeHeldWeakly(heap, ArgumentAt(arguments, 1))
+  THEN Allocate(heap, [weakRefTarget |-> ArgumentAt(arguments, 1)]
+                        @@ [EmptyObject EXCEPT !.prototype = prototype])
+  ELSE Failed("TypeError")
+
+NewWeakRef(heap, prototype, arguments) == Made(WeakRefMade(heap, prototype, arguments))
+
+NewWeakRefError(heap, prototype, arguments) == ErrorOf(WeakRefMade(heap, prototype, arguments))
+
+\\* The heap with a new FinalizationRegistry, whose cells hold the unregister tokens that its register
+\\* takes. It never calls its cleanup callback, as tla-ts collects nothing.
+LOCAL FinalizationRegistryMade(heap, prototype, arguments) ==
+  IF TypeOfIn(heap, ArgumentAt(arguments, 1)) = "function"
+  THEN Allocate(heap, [registryTokens |-> <<>>] @@ [EmptyObject EXCEPT !.prototype = prototype])
+  ELSE Failed("TypeError")
+
+NewFinalizationRegistry(heap, prototype, arguments) ==
+  Made(FinalizationRegistryMade(heap, prototype, arguments))
+
+NewFinalizationRegistryError(heap, prototype, arguments) ==
+  ErrorOf(FinalizationRegistryMade(heap, prototype, arguments))
+
+\\* WeakRef.prototype.deref, which gives the target, as nothing collects it.
+WeakRefDeref(heap, ref) ==
+  IF IsHeap(ref) /\\ "weakRefTarget" \\in DOMAIN heap.objects[ref[Ref]]
+  THEN Returned(heap, heap.objects[ref[Ref]].weakRefTarget)
+  ELSE Thrown(heap, "TypeError")
+
+\\* FinalizationRegistry.prototype.register, which keeps the cell's token, where it has one.
+FinalizationRegistryRegister(heap, ref, target, held, token) ==
+  CASE ~(IsHeap(ref) /\\ "registryTokens" \\in DOMAIN heap.objects[ref[Ref]]) -> Thrown(heap, "TypeError")
+    [] ~CanBeHeldWeakly(heap, target) -> Thrown(heap, "TypeError")
+    [] SameValue(target, held) -> Thrown(heap, "TypeError")
+    [] CanBeHeldWeakly(heap, token) ->
+         Returned([heap EXCEPT !.objects[ref[Ref]].registryTokens = Append(@, token)], Undefined)
+    [] token # Undefined -> Thrown(heap, "TypeError")
+    [] OTHER -> Returned(heap, Undefined)
+
+\\* FinalizationRegistry.prototype.unregister, which removes the cells of a token and tells whether
+\\* it removed any.
+FinalizationRegistryUnregister(heap, ref, token) ==
+  LET tokens == heap.objects[ref[Ref]].registryTokens
+      kept == SelectSeq(tokens, LAMBDA held : ~SameValue(held, token))
+  IN CASE ~(IsHeap(ref) /\\ "registryTokens" \\in DOMAIN heap.objects[ref[Ref]]) ->
+            Thrown(heap, "TypeError")
+       [] ~CanBeHeldWeakly(heap, token) -> Thrown(heap, "TypeError")
+       [] OTHER ->
+            Returned([heap EXCEPT !.objects[ref[Ref]].registryTokens = kept], Len(kept) # Len(tokens))
+
 DataViewSet(heap, ref, type, request, value, littleEndian) ==
   LET view == heap.objects[ref[Ref]]
       index == IndexOfArgument(request)

@@ -2953,40 +2953,48 @@ export const translateCallStatement = (
             ],
             context,
           )
-        : viewCall.owner === "DataView"
-          ? method.startsWith("get")
-            ? useJavaScript("DataViewGet", [heap, ref, type, values[0], values[1]], context)
-            : useJavaScript("DataViewSet", [heap, ref, type, ...values], context)
-          : method === "slice"
-            ? useJavaScript(
-                "BufferSlice",
-                [
-                  heap,
-                  ref,
-                  values[0],
-                  values[1],
-                  isShared,
-                  translateBuiltInValue(
-                    viewCall.owner === "SharedArrayBuffer" ? "SharedArrayBuffer" : "ArrayBuffer",
-                    expression,
+        : viewCall.owner === "WeakRef"
+          ? useJavaScript("WeakRefDeref", [heap, ref], context)
+          : viewCall.owner === "FinalizationRegistry"
+            ? method === "register"
+              ? useJavaScript("FinalizationRegistryRegister", [heap, ref, ...values], context)
+              : useJavaScript("FinalizationRegistryUnregister", [heap, ref, values[0]], context)
+            : viewCall.owner === "DataView"
+              ? method.startsWith("get")
+                ? useJavaScript("DataViewGet", [heap, ref, type, values[0], values[1]], context)
+                : useJavaScript("DataViewSet", [heap, ref, type, ...values], context)
+              : method === "slice"
+                ? useJavaScript(
+                    "BufferSlice",
+                    [
+                      heap,
+                      ref,
+                      values[0],
+                      values[1],
+                      isShared,
+                      translateBuiltInValue(
+                        viewCall.owner === "SharedArrayBuffer"
+                          ? "SharedArrayBuffer"
+                          : "ArrayBuffer",
+                        expression,
+                        context,
+                      ),
+                    ],
                     context,
-                  ),
-                ],
-                context,
-              )
-            : method === "resize" || method === "grow"
-              ? useJavaScript("Resize", [heap, ref, values[0], isShared], context)
-              : useJavaScript(
-                  "Transfer",
-                  [
-                    heap,
-                    ref,
-                    values[0],
-                    boolean(method === "transfer"),
-                    translateBuiltInValue("ArrayBuffer.prototype", expression, context),
-                  ],
-                  context,
-                );
+                  )
+                : method === "resize" || method === "grow"
+                  ? useJavaScript("Resize", [heap, ref, values[0], isShared], context)
+                  : useJavaScript(
+                      "Transfer",
+                      [
+                        heap,
+                        ref,
+                        values[0],
+                        boolean(method === "transfer"),
+                        translateBuiltInValue("ArrayBuffer.prototype", expression, context),
+                      ],
+                      context,
+                    );
     const run = bindOnce(
       path,
       changeName,

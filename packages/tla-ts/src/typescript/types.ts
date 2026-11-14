@@ -139,6 +139,12 @@ export const isBufferName = (name: string): name is BufferName =>
   name === "DataView" ||
   TYPED_ARRAYS.has(name);
 
+// The built-ins that hold a value weakly, whose new makes an object that the heap holds.
+export type WeakHolderName = "WeakRef" | "FinalizationRegistry";
+
+export const isWeakHolderName = (name: string): name is WeakHolderName =>
+  name === "WeakRef" || name === "FinalizationRegistry";
+
 const LIBRARY_OBJECTS = new Set([
   "Promise",
   "PromiseFulfilledResult",
@@ -157,6 +163,8 @@ const LIBRARY_OBJECTS = new Set([
   "ArrayBuffer",
   "SharedArrayBuffer",
   "DataView",
+  "WeakRef",
+  "FinalizationRegistry",
   "DisposableStack",
   "AsyncDisposableStack",
   "Int8Array",

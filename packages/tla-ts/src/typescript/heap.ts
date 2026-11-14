@@ -142,6 +142,8 @@ import {
   TYPED_ARRAYS,
   type BufferName,
   isBufferName,
+  isWeakHolderName,
+  type WeakHolderName,
   isCollectionName,
   isArrayConstruction,
   isHoleyNewArray,
@@ -2663,7 +2665,9 @@ export const getNewBuffer = (node: ts.Node, context: Context) => {
     return undefined;
   }
   const name = getBuiltIn(construction.callee, context);
-  if (name !== undefined) return isBufferName(name) ? [name] : undefined;
+  if (name !== undefined) {
+    return isBufferName(name) || isWeakHolderName(name) ? [name] : undefined;
+  }
   // A constructor typed only by what it makes, such as an array's constructor, may be the
   // constructor of each typed array that its instance's type allows.
   const type = context.checker.getTypeAtLocation(construction.callee);
@@ -2732,7 +2736,7 @@ export const translateNewBufferOf = (
 };
 
 const translateNewBuffer = (
-  buffer: BufferName,
+  buffer: BufferName | WeakHolderName,
   heap: Expression,
   values: Expression,
   newTarget: Expression | undefined,
@@ -2762,8 +2766,8 @@ const translateNewBuffer = (
         ],
         context,
       )
-    : buffer === "DataView"
-      ? useJavaScript(`NewDataView${suffix}`, [heap, prototype, values], context)
+    : buffer === "DataView" || isWeakHolderName(buffer)
+      ? useJavaScript(`New${buffer}${suffix}`, [heap, prototype, values], context)
       : useJavaScript(
           `NewBuffer${suffix}`,
           [heap, prototype, values, boolean(buffer === "SharedArrayBuffer")],
@@ -2839,6 +2843,8 @@ export const getViewCall = (node: ts.Node, context: Context) => {
   const isKnown =
     (owner === "TypedArray" && (declared !== undefined || TYPED_ARRAY_METHODS.has(method))) ||
     (owner === "DataView" && VIEW_ACCESSOR.test(method)) ||
+    (owner === "WeakRef" && method === "deref") ||
+    (owner === "FinalizationRegistry" && ["register", "unregister"].includes(method)) ||
     (owner === "ArrayBuffer" &&
       (method === "resize" || method === "transfer" || method === "transferToFixedLength")) ||
     (owner === "SharedArrayBuffer" && method === "grow") ||

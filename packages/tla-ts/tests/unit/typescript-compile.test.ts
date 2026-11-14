@@ -29210,6 +29210,79 @@ describe("buffers", () => {
     );
   });
 
+  it("makes a WeakRef and a FinalizationRegistry, which hold what they take and collect nothing", async () => {
+    const getSource = (expected: string) => `
+      const target = { a: 1 };
+      const wref = new WeakRef(target);
+      const deref = WeakRef.prototype.deref;
+      const registry = new FinalizationRegistry(function () {});
+      const token = {};
+      const registered = registry.register(target, 1, token);
+      const symbol = Symbol("held");
+      const held = new WeakRef(symbol);
+      const errors: string[] = [];
+      try {
+        registry.register(target, target);
+      } catch (error) {
+        errors.push(error instanceof TypeError ? "same" : "other");
+      }
+      try {
+        new WeakRef(1 as unknown as object);
+      } catch (error) {
+        errors.push(error instanceof TypeError ? "number" : "other");
+      }
+      try {
+        new WeakRef(Symbol.for("registered"));
+      } catch (error) {
+        errors.push(error instanceof TypeError ? "registered" : "other");
+      }
+      try {
+        deref.call({});
+      } catch (error) {
+        errors.push(error instanceof TypeError ? "slot" : "other");
+      }
+      try {
+        new FinalizationRegistry(1 as unknown as () => void);
+      } catch (error) {
+        errors.push(error instanceof TypeError ? "callback" : "other");
+      }
+      const result = [
+        wref.deref() === target,
+        deref.call(wref) === target,
+        held.deref() === symbol,
+        wref instanceof WeakRef,
+        Object.getPrototypeOf(registry) === FinalizationRegistry.prototype,
+        Object.getOwnPropertyNames(wref).length,
+        registered,
+        errors.join("-"),
+        registry.unregister(token),
+        registry.unregister(token),
+      ].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "true,true,true,true,true,0,,same-number-registered-slot-callback,true,false";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (
+        await checkModel(
+          getSource("true,true,true,true,true,0,,same-number-registered-slot-callback,true,true"),
+        )
+      ).failure?.message,
+    ).toContain(expected);
+  });
+
+  it("stops at WeakRef.prototype.deref where a script replaced it", async () => {
+    const result = await checkModel(`
+      const target = {};
+      const wref = new WeakRef(target);
+      (WeakRef.prototype as unknown as { deref: () => unknown }).deref = () => 1;
+      const isTarget = wref.deref() === target;
+    `);
+    expect(result.failure?.message).toContain(
+      "tla-ts can't call WeakRef.prototype.deref where a script replaced it",
+    );
+  });
+
   it("gets and sets a DataView's numbers, in either byte order", async () => {
     const result = await checkModel(`
       const buffer = new ArrayBuffer(12, { maxByteLength: 16 });

@@ -737,6 +737,10 @@ export const translateBuiltInValue = (
     | `${string}Error`
     | `${string}Error.prototype`
     | "DataView.prototype"
+    | "WeakRef.prototype"
+    | "FinalizationRegistry.prototype"
+    | "WeakRef"
+    | "FinalizationRegistry"
     | "Symbol.prototype"
     | "Iterator"
     | "Iterator.prototype"
