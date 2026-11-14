@@ -19457,6 +19457,124 @@ describe("errors", () => {
     ).toThrow("Unsupported");
   });
 
+  it("makes a buffer or a typed array of a class that extends one", async () => {
+    const getSource = (expected: string) => `
+      class Bytes extends Uint8Array {
+        first() {
+          return this[0];
+        }
+      }
+      const Buffer = class extends ArrayBuffer {};
+      class Shared extends SharedArrayBuffer {}
+      class View extends DataView<ArrayBuffer> {}
+      const bytes = new Bytes(4);
+      bytes[0] = 7;
+      const buffer = new Buffer(8);
+      const view = new View(new ArrayBuffer(4));
+      const result = [
+        bytes instanceof Bytes,
+        bytes instanceof Uint8Array,
+        Object.getPrototypeOf(bytes) === Bytes.prototype,
+        bytes.length,
+        bytes.first(),
+        buffer instanceof Buffer,
+        buffer.byteLength,
+        new Shared(2) instanceof Shared,
+        view instanceof View,
+        view.byteLength,
+      ].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "true,true,true,4,7,true,8,true,true,4";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("true,true,false,4,0,true,8,true,true,4"))).failure?.message,
+    ).toContain(expected);
+  });
+
+  it("constructs a typed array's subclass through Reflect.construct", async () => {
+    const getSource = (expected: string) => `
+      class Bytes extends Uint8Array {
+        static made = 0;
+        sum() {
+          let total = 0;
+          for (let index = 0; index < this.length; index++) total += this[index];
+          return total;
+        }
+      }
+      const made = Reflect.construct(Uint8Array, [2], Bytes);
+      const other = new Bytes(2);
+      other[1] = 5;
+      const result = [made instanceof Bytes, other.sum(), Bytes.made, typeof Bytes].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("true,5,0,function"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("false,5,0,function"))).failure?.message).toContain(
+      "true,5,0,function",
+    );
+  });
+
+  it("constructs a buffer's or a typed array's subclass itself through Reflect.construct", async () => {
+    const getSource = (expected: string) => `
+      class Buffer extends ArrayBuffer {}
+      class Other extends ArrayBuffer {}
+      class Bytes extends Uint8Array {}
+      const buffer: ArrayBuffer = Reflect.construct(Buffer, [2]);
+      const bytes: Uint8Array = Reflect.construct(Bytes, [3]);
+      const other: ArrayBuffer = Reflect.construct(Buffer, [4], Other);
+      const result = [
+        buffer instanceof Buffer,
+        buffer.byteLength,
+        bytes instanceof Bytes,
+        bytes.length,
+        Object.prototype.toString.call(bytes),
+        other instanceof Buffer,
+        other instanceof Other,
+        other.byteLength,
+      ].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "true,2,true,3,[object Uint8Array],false,true,4";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("true,0,true,3,[object Uint8Array],false,true,4"))).failure
+        ?.message,
+    ).toContain(expected);
+  });
+
+  it("rejects a typed array's subclass that adds a constructor, a field, or a subclass", () => {
+    expect(() =>
+      compile(
+        `class Bytes extends Uint8Array {\n  constructor() {\n    super(2);\n  }\n}\nconst made = new Bytes();\nif (made.length !== 2) throw new Error("x");`,
+      ),
+    ).toThrow("Unsupported");
+    expect(() =>
+      compile(
+        `class Bytes extends Uint8Array {\n  tag = "t";\n}\nconst made = new Bytes(2);\nif (made.tag !== "t") throw new Error("x");`,
+      ),
+    ).toThrow("Unsupported");
+    expect(() =>
+      compile(
+        `class Bytes extends Uint8Array {}\nclass More extends Bytes {}\nconst made = new More(2);\nif (!(made instanceof More)) throw new Error("x");`,
+      ),
+    ).toThrow("Unsupported");
+    expect(() =>
+      compile(
+        `class Bytes extends Uint8Array {}\nconst made = new Bytes([1, 2]);\nconst mapped = made.map((value) => value * 2);\nif (!(mapped instanceof Bytes)) throw new Error("x");`,
+      ),
+    ).toThrow("Unsupported");
+    expect(() =>
+      compile(
+        `class Bytes extends Uint8Array {}\nclass More extends Bytes {}\nconst made: Uint8Array = Reflect.construct(More, [2]);\nif (!(made instanceof More)) throw new Error("x");`,
+      ),
+    ).toThrow("Unsupported call: Reflect.construct");
+    expect(() =>
+      compile(
+        `class Bytes extends Uint8Array {}\nconst Bound = Bytes.bind(null);\nconst made = new Bound(2);\nif (!(made instanceof Bytes)) throw new Error("x");`,
+      ),
+    ).toThrow("Unsupported call: Bytes.bind");
+  });
+
   it("extends an empty class that the extends clause makes", async () => {
     const result = await check(
       compile(

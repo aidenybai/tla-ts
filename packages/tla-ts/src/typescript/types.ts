@@ -112,6 +112,14 @@ export const TYPED_ARRAYS = new Map(
 export const isFractionKey = (text: string) =>
   Number.isFinite(Number(text)) && !Number.isInteger(Number(text)) && String(Number(text)) === text;
 
+export type BufferName = "ArrayBuffer" | "SharedArrayBuffer" | "DataView" | `${string}Array`;
+
+export const isBufferName = (name: string): name is BufferName =>
+  name === "ArrayBuffer" ||
+  name === "SharedArrayBuffer" ||
+  name === "DataView" ||
+  TYPED_ARRAYS.has(name);
+
 const LIBRARY_OBJECTS = new Set([
   "Promise",
   "PromiseFulfilledResult",

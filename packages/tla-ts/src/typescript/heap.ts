@@ -134,6 +134,8 @@ import {
   isNumberLike,
   isSequenceType,
   TYPED_ARRAYS,
+  type BufferName,
+  isBufferName,
   isHoleyNewArray,
   isNewArrayOfElements,
   getArraySource,
@@ -2677,14 +2679,6 @@ const translateNewBuffer = (
           context,
         );
 };
-
-type BufferName = "ArrayBuffer" | "SharedArrayBuffer" | "DataView" | `${string}Array`;
-
-const isBufferName = (name: string): name is BufferName =>
-  name === "ArrayBuffer" ||
-  name === "SharedArrayBuffer" ||
-  name === "DataView" ||
-  TYPED_ARRAYS.has(name);
 
 // The methods of %TypedArray%.prototype that tla-ts runs.
 const TYPED_ARRAY_METHODS = new Set([

@@ -4,7 +4,7 @@ import { getTypeNames, JAVASCRIPT_OPERATORS } from "./javascript";
 import { BUILT_INS } from "./built-ins";
 import { getErrorClass, isNativeErrorName, isPrototypeRead, NATIVE_ERRORS } from "./exceptions";
 import { getBuiltIn, isHeldBuiltInObject } from "./intrinsics";
-import { isHeapArray, isHeapSetOrMap } from "./types";
+import { type BufferName, isBufferName, isHeapArray, isHeapSetOrMap } from "./types";
 import { TlaTypeScriptError } from "../errors";
 import { createNames, type Names } from "./names";
 import type { Link } from "./regions";
@@ -1365,11 +1365,12 @@ const isNullSafe = (node: ts.ClassLikeDeclaration, context: Context) => {
 // extends it or extends a class that does. Its default constructor passes new's arguments on. A
 // class that extends a native error is one where it has members or the script reads its
 // prototype, as its errors are records otherwise, and its constructors may run, as super(...)
-// gives the error its message and cause.
+// gives the error its message and cause. A class that extends a buffer or a typed array itself,
+// whose new makes the built-in's object with the class's prototype, adds only methods.
 export const getBuiltInBase = (
   node: ts.ClassLikeDeclaration,
   context: Context,
-): "Object" | "Boolean" | "Number" | "String" | `${string}Error` | undefined => {
+): "Object" | "Boolean" | "Number" | "String" | `${string}Error` | BufferName | undefined => {
   const hasConstructor = node.members.some(ts.isConstructorDeclaration);
   const heritage = node.heritageClauses?.find(
     (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
@@ -1377,6 +1378,15 @@ export const getBuiltInBase = (
   const name = heritage === undefined ? undefined : getBuiltIn(heritage, context);
   if (name === "Object" || name === "Boolean" || name === "Number" || name === "String") {
     return hasConstructor ? undefined : name;
+  }
+  if (name !== undefined && isBufferName(name)) {
+    return hasConstructor ||
+      node.members.some(
+        (member) =>
+          (ts.isPropertyDeclaration(member) && !isStatic(member)) || isPrivateMember(member),
+      )
+      ? undefined
+      : name;
   }
   const symbol = node.name === undefined ? undefined : getSymbol(node.name, context.checker);
   if (
@@ -1391,7 +1401,9 @@ export const getBuiltInBase = (
   }
   const base = getBaseClass(node, context);
   const inherited = base === undefined ? undefined : getBuiltInBase(base, context);
-  return inherited !== undefined && (!hasConstructor || isNativeErrorName(inherited))
+  return inherited !== undefined &&
+    !isBufferName(inherited) &&
+    (!hasConstructor || isNativeErrorName(inherited))
     ? inherited
     : undefined;
 };
@@ -2624,9 +2636,32 @@ export interface Construction {
   newTarget: ts.Expression;
 }
 
+// The built-in that a class extends where the class is a buffer's or a typed array's, which makes
+// the class's instance as super(...args) would, with the same new.target.
+const getConstructedBase = (callee: ts.Expression, context: Context) => {
+  const declaration = getSymbol(skipCasts(callee), context.checker)?.valueDeclaration;
+  const created =
+    declaration !== undefined && ts.isVariableDeclaration(declaration)
+      ? declaration.initializer
+      : declaration;
+  const extended =
+    created !== undefined && ts.isClassLike(created) ? getExtended(created) : undefined;
+  return created !== undefined &&
+    ts.isClassLike(created) &&
+    extended !== undefined &&
+    isBufferName(getBuiltIn(extended, context) ?? "") &&
+    getBuiltInBase(created, context) !== undefined
+    ? extended
+    : undefined;
+};
+
 export const getConstruction = (node: ts.Node, context: Context): Construction | undefined => {
   if (ts.isNewExpression(node)) {
-    return { callee: node.expression, arguments: node.arguments ?? [], newTarget: node.expression };
+    return {
+      callee: getConstructedBase(node.expression, context) ?? node.expression,
+      arguments: node.arguments ?? [],
+      newTarget: node.expression,
+    };
   }
   if (
     !ts.isCallExpression(node) ||
@@ -2648,7 +2683,7 @@ export const getConstruction = (node: ts.Node, context: Context): Construction |
     list.elements.every(
       (element) => !ts.isSpreadElement(element) && !ts.isOmittedExpression(element),
     )
-    ? { callee, arguments: list.elements, newTarget }
+    ? { callee: getConstructedBase(callee, context) ?? callee, arguments: list.elements, newTarget }
     : undefined;
 };
 
