@@ -8619,6 +8619,25 @@ describe("errors", () => {
     });
   });
 
+  describe("reads a key that is a fraction from a typed array as a number", () => {
+    const getSource = (expected: string) => `
+      const sample = new Int8Array([42]);
+      const keyed = sample as unknown as Record<string, number>;
+      const isSet = Reflect.set(sample, "1.1", 1);
+      keyed["2.5"] = 3;
+      const own = [sample.hasOwnProperty("1.1"), keyed["2.5"] === undefined];
+      if (!isSet || own.join() !== "${expected}") throw new Error("keys");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("false,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation true,true", async () => {
+      expect((await checkModel(getSource("true,true"))).failure?.message).toContain("keys");
+    });
+  });
+
   describe("runs the getters of the descriptor that Reflect.defineProperty reads", () => {
     const getSource = (expected: string) => `
       let reads = "";

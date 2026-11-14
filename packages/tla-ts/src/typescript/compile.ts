@@ -13,6 +13,7 @@ import {
   isScript,
 } from "./context";
 import { type CompiledSpec, createSections, emit, type Sections } from "./emit";
+import { getNumberValue } from "./expressions";
 import { render } from "./formula";
 import { translateBody } from "./functions";
 import {
@@ -46,7 +47,7 @@ import {
 } from "./tla";
 import { BUILT_INS } from "./built-ins";
 import { isEsModule, NATIVE_ERRORS } from "./exceptions";
-import { getDomain, getKeptIterator, getWrappedThis, TYPED_ARRAYS } from "./types";
+import { getDomain, getKeptIterator, getWrappedThis, isFractionKey, TYPED_ARRAYS } from "./types";
 
 // A state variable starts at its initializer, or at every value of its type without one.
 const translateInitial = (variable: Variable, context: Context) => {
@@ -434,10 +435,19 @@ export const compile = (
         Number(node.operand.text) === 0) ||
       // Division may give an infinity or -0.
       (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.SlashToken) ||
-      // A literal may give a fraction.
+      // A literal may give a fraction, and a string may key a typed array by one.
       (ts.isNumericLiteral(node) && !Number.isInteger(Number(node.text))) ||
+      (ts.isStringLiteral(node) && isFractionKey(node.text)) ||
       (ts.forEachChild(node, usesSpecialNumbers) ?? false);
     context.hasSpecialNumbers = roots.some(usesSpecialNumbers);
+    // TypedKey finds a number that a string gives in Fractions by its text.
+    const addFractionKeys = (node: ts.Node) => {
+      if (ts.isStringLiteral(node) && isFractionKey(node.text)) {
+        getNumberValue(Number(node.text), context);
+      }
+      ts.forEachChild(node, addFractionKeys);
+    };
+    roots.forEach(addFractionKeys);
     // A variable may hold any typed array's constructor, so the heap holds them all, their
     // prototypes, and the methods that they share.
     const usesTypedArrays = (node: ts.Node): boolean =>

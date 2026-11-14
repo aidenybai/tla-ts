@@ -107,6 +107,11 @@ export const TYPED_ARRAYS = new Map(
   ].map((type) => [`${type}Array`, type]),
 );
 
+// A string that is how JavaScript writes a number that isn't an integer, which a typed array reads as
+// a number that is no index.
+export const isFractionKey = (text: string) =>
+  Number.isFinite(Number(text)) && !Number.isInteger(Number(text)) && String(Number(text)) === text;
+
 const LIBRARY_OBJECTS = new Set([
   "Promise",
   "PromiseFulfilledResult",
