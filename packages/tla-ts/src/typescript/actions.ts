@@ -3160,6 +3160,54 @@ export const translateCallStatement = (
         ),
       );
     };
+    // An Iterator.prototype method of an object that tla-ts doesn't follow as an iterator, which
+    // closes the object and throws a TypeError where its callback isn't callable. A throw while it
+    // closes gives way to the TypeError.
+    const rejectCallback = (name: string) => {
+      const callback = expression.arguments.at(0);
+      const closing = {
+        ...frame,
+        throwTo: (after: Path) => throwTypeError(after, expression, context, frame),
+      };
+      return ifThenElse(
+        apply("=", [
+          useJavaScript(
+            "TypeOfIn",
+            [
+              getHeap(path.scope, expression, context),
+              callback === undefined
+                ? getUndefined(context)
+                : translateExpression(callback, path.scope, context),
+            ],
+            context,
+          ),
+          string("function"),
+        ]),
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string(`tla-ts can't run Iterator.prototype.${name} on an object it doesn't follow`),
+          ]),
+        ),
+        read(expression, receiver, "return", path, context, closing, (found, method) =>
+          ifThenElse(
+            isNullish(method, context),
+            throwTypeError(found, expression, context, frame),
+            callMethod(
+              expression,
+              "return",
+              method,
+              receiver,
+              found,
+              context,
+              closing,
+              (after) => throwTypeError(after, expression, context, frame),
+              (after) => throwTypeError(after, expression, context, frame),
+            ),
+          ),
+        ),
+      );
+    };
     return dispatched.reduceRight(
       (otherwise, candidate) => {
         const candidateValue = getCandidateValue(candidate, context);
@@ -3237,19 +3285,35 @@ export const translateCallStatement = (
       ifThenElse(
         apply("\\in", [value, set([getUndefined(context), identifier("Null")])]),
         throwTypeError(path, expression, context, frame),
-        accessor === null ||
-          keyNode === undefined ||
-          expression.arguments.some(ts.isSpreadElement) ||
-          !ts.isPropertyAccessExpression(target)
+        !ts.isPropertyAccessExpression(target) || expression.arguments.some(ts.isSpreadElement)
           ? stop
-          : ifThenElse(
-              apply("=", [
-                value,
-                translateBuiltInValue(`Object.prototype.${target.name.text}`, expression, context),
-              ]),
-              translateAccessor(accessor[1], accessor[2] === "G" ? "get" : "set", keyNode),
-              stop,
-            ),
+          : ITERATOR_CALLBACK_METHODS.has(target.name.text)
+            ? ifThenElse(
+                apply("=", [
+                  value,
+                  translateBuiltInValue(
+                    `Iterator.prototype.${target.name.text}`,
+                    expression,
+                    context,
+                  ),
+                ]),
+                rejectCallback(target.name.text),
+                stop,
+              )
+            : accessor === null || keyNode === undefined
+              ? stop
+              : ifThenElse(
+                  apply("=", [
+                    value,
+                    translateBuiltInValue(
+                      `Object.prototype.${target.name.text}`,
+                      expression,
+                      context,
+                    ),
+                  ]),
+                  translateAccessor(accessor[1], accessor[2] === "G" ? "get" : "set", keyNode),
+                  stop,
+                ),
       ),
     );
   }
@@ -9483,6 +9547,19 @@ const getDispatched = (
   const dispatched = [...getFunctionCandidates(callee, context), ...getClosures(callee, context)];
   return dispatched.length > 0 ? dispatched : undefined;
 };
+
+// The Iterator.prototype methods that take a callback first, which they check before they read the
+// iterator's next.
+const ITERATOR_CALLBACK_METHODS = new Set([
+  "map",
+  "filter",
+  "flatMap",
+  "forEach",
+  "some",
+  "every",
+  "find",
+  "reduce",
+]);
 
 // A call to a function or a method whose body or parameters' defaults change state, which inlines
 // as statements that give its result.

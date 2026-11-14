@@ -12546,6 +12546,58 @@ describe("errors", () => {
     });
   });
 
+  describe("close an object and throw where an Iterator.prototype method's callback isn't callable", () => {
+    const getSource = (expected: string) => `
+      type Method = (...args: unknown[]) => unknown;
+      let closed = 0;
+      const closable: { [key: string | symbol]: unknown } = {
+        __proto__: Iterator.prototype,
+        get next() {
+          throw new Error("next");
+        },
+        return() {
+          closed += 1;
+          return {};
+        },
+      };
+      const thrower: { [key: string | symbol]: unknown } = {
+        __proto__: Iterator.prototype,
+        return() {
+          throw new Error("return");
+        },
+      };
+      const caught: string[] = [];
+      try {
+        (closable.map as Method)();
+      } catch (error) {
+        caught.push(error instanceof TypeError ? "type" : "other");
+      }
+      try {
+        (closable.reduce as Method)({});
+      } catch (error) {
+        caught.push(error instanceof TypeError ? "type" : "other");
+      }
+      try {
+        (thrower.some as Method)(1);
+      } catch (error) {
+        caught.push(error instanceof TypeError ? "type" : "other");
+      }
+      if (\`\${caught.join()},\${closed}\` !== "${expected}") {
+        throw new Error(\`\${caught.join()},\${closed}\`);
+      }
+    `;
+
+    it("closes it, and throws the TypeError over what return throws", async () => {
+      expect((await checkModel(getSource("type,type,type,2"))).failure).toBeUndefined();
+    });
+
+    it("doesn't skip closing it", async () => {
+      expect((await checkModel(getSource("type,type,type,1"))).failure?.message).toContain(
+        "type,type,type,2",
+      );
+    });
+  });
+
   describe("define an accessor through Object.prototype.__defineGetter__ or __defineSetter__", () => {
     const getSource = (expected: string) => `
       type Method = (...args: unknown[]) => unknown;
