@@ -13047,6 +13047,39 @@ describe("errors", () => {
     });
   });
 
+  describe("reads a property of an error record that a getter may hold", () => {
+    const getSource = (compared: string) => `
+      const holder = { seen: 0 };
+      class Poison extends Error {}
+      const throws = (expected: Function, run: () => unknown) => {
+        try {
+          run();
+        } catch (thrown) {
+          if (typeof thrown !== "object" || thrown === null) throw new Poison("primitive");
+          if (thrown.constructor ${compared} expected) throw new Poison("other");
+          return;
+        }
+        throw new Poison("none");
+      };
+      const poisoned: number[] = [];
+      Object.defineProperty(poisoned, "constructor", {
+        get() {
+          throw new Poison();
+        },
+      });
+      throws(Poison, () => poisoned.map((value) => value));
+      holder.seen = 1;
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("!=="))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("==="))).failure?.message).toContain('"other"');
+    });
+  });
+
   describe("names an anonymous function by a comma, a static field, or a shorthand default", () => {
     const getSource = (expected: string) => `
       const holder = { seen: 0 };

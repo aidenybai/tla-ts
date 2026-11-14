@@ -1691,10 +1691,18 @@ AccessorOf(heap, ref, key) ==
        [] object.prototype = Null -> Undefined
        [] OTHER -> AccessorOf(heap, object.prototype, key)
 
+\\* An error record's own properties are data, as is the constructor that Get reads from its record,
+\\* and it inherits the others from its constructor's prototype.
 RECURSIVE AccessorFieldOf(_, _, _, _)
 AccessorFieldOf(heap, ref, key, field) ==
   LET object == PropertiesOf(heap, ref, key)
-  IN CASE IsTypedArray(heap, ref) /\\ TypedKey(key) # "property" -> Undefined
+  IN CASE ~IsRef(ref) /\\ IsError(ref) ->
+            IF \\/ key = "message" /\\ ref.message # ""
+               \\/ key \\in DOMAIN ref \\ {"constructor", "identity", "message", "name"}
+               \\/ key = "constructor" /\\ ~IsHeap(ref.constructor) /\\ ~IsBuiltIn(ref.constructor)
+            THEN Undefined
+            ELSE AccessorFieldOf(heap, Get(heap, ref.constructor, "prototype"), key, field)
+       [] IsTypedArray(heap, ref) /\\ TypedKey(key) # "property" -> Undefined
        [] key \\in DOMAIN object.values ->
             IF object.attributes[key].kind = "accessor"
             THEN object.values[key][field]
