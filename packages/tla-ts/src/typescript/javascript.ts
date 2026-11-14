@@ -1721,18 +1721,23 @@ IsInstanceOfError(heap, value, constructors, name) ==
          Assert(FALSE, "tla-ts can't tell whether this object is an instance of " \\o name)
     [] OTHER -> IsErrorOf(value, constructors)
 
+\\* A typed array's element can't be deleted, and a key that is a number and no element has nothing to
+\\* delete.
 CanDelete(heap, ref, key) ==
-  LET object == LookupKey(heap, ref, key)
-  IN key \\notin DOMAIN object.values \\/ object.attributes[key].configurable
+  IF IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
+  THEN ~HasElement(heap, ref, key)
+  ELSE LET object == LookupKey(heap, ref, key)
+       IN key \\notin DOMAIN object.values \\/ object.attributes[key].configurable
 
 Delete(heap, ref, key) ==
   LET object == LookupKey(heap, ref, key)
       kept == DOMAIN object.values \\ {key}
-  IN IF key \\in DOMAIN object.values
-     THEN Update(heap, ref, [object EXCEPT !.keys = SelectSeq(@, LAMBDA other : other # key),
-                                           !.values = [other \\in kept |-> @[other]],
-                                           !.attributes = [other \\in kept |-> @[other]]])
-     ELSE heap
+  IN CASE IsTypedArray(heap, ref) /\\ TypedKey(key) # "property" -> heap
+       [] key \\in DOMAIN object.values ->
+            Update(heap, ref, [object EXCEPT !.keys = SelectSeq(@, LAMBDA other : other # key),
+                                             !.values = [other \\in kept |-> @[other]],
+                                             !.attributes = [other \\in kept |-> @[other]]])
+       [] OTHER -> heap
 
 \\* Whether a value is one that only itself equals: anything but an object outside the heap, or an
 \\* error that a script made, whose record holds its identity.

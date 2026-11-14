@@ -8534,6 +8534,31 @@ describe("errors", () => {
     });
   });
 
+  describe("throws the TypeError of deleting a typed array's element", () => {
+    const getSource = (expected: string) => `
+      const typed = new Int8Array(2);
+      const remove = (key: string) => {
+        try {
+          delete (typed as unknown as Record<string, number>)[key];
+          return "deleted";
+        } catch (error) {
+          return error instanceof TypeError ? "type" : "other";
+        }
+      };
+      if ([remove("1"), remove("2"), remove("-0")].join() !== "${expected}") throw new Error("delete");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("type,deleted,deleted"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation deleted,deleted,deleted", async () => {
+      expect((await checkModel(getSource("deleted,deleted,deleted"))).failure?.message).toContain(
+        "delete",
+      );
+    });
+  });
+
   describe("runs the getters of the descriptor that Reflect.defineProperty reads", () => {
     const getSource = (expected: string) => `
       let reads = "";
