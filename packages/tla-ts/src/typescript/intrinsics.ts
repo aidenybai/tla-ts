@@ -6,6 +6,7 @@ import {
   getSymbol,
   getUndefined,
   isAssigned,
+  isUnresolved,
   isWrittenBy,
   share,
   skipCasts,
@@ -23,7 +24,7 @@ import { getHeap, isFunctionValue, translateFunctionObject } from "./heap";
 import { useJavaScript, WELL_KNOWN_SYMBOLS } from "./javascript";
 import type { Scope } from "./scope";
 import type { Expression } from "../ast";
-import { BUILT_INS } from "./built-ins";
+import { BUILT_INS, HOST_GLOBAL_KEYS } from "./built-ins";
 import {
   apply,
   boolean,
@@ -886,15 +887,26 @@ const translateBuiltInProperty = (value: string, node: ts.Node, context: Context
 // the objects of the functions that model values stand for, with the prototype objects they start
 // with.
 export const translateBuiltIns = (node: ts.SourceFile, context: Context) => {
-  // The global object's keys that a script's top-level var or function declares, which a script
-  // that isn't a module puts on the global object, so tla-ts doesn't read them.
+  // The global object's keys that tla-ts doesn't read: those that a script's var or function
+  // declares, which a script that isn't a module puts on the global object, those that a name
+  // that nothing declares reads from it, and those that the host gives it. It reads any other key,
+  // which the global object lacks until the script adds it.
   const hidden = new Set([
     ...getVarNames(node),
-    ...node.statements.flatMap((statement) =>
-      ts.isFunctionDeclaration(statement) && statement.name !== undefined
-        ? [statement.name.text]
-        : [],
-    ),
+    ...findNodes(
+      node,
+      (child): child is ts.FunctionDeclaration =>
+        ts.isFunctionDeclaration(child) &&
+        ts.findAncestor(child.parent, ts.isFunctionLike) === undefined,
+    ).flatMap((declaration) => (declaration.name === undefined ? [] : [declaration.name.text])),
+    ...findNodes(
+      node,
+      (child): child is ts.Identifier =>
+        isUnresolved(child, context) &&
+        !(ts.isPropertyAccessExpression(child.parent) && child.parent.name === child) &&
+        ts.findAncestor(child, ts.isTypeNode) === undefined,
+    ).map((name) => name.text),
+    ...HOST_GLOBAL_KEYS,
   ]);
   const named = new Set(
     findNodes(
@@ -991,16 +1003,30 @@ export const translateBuiltIns = (node: ts.SourceFile, context: Context) => {
           attributes: getAttributes(flags, value === undefined ? "opaque" : "data"),
         };
       });
+      const standard = new Set(properties.map((property) => property[0]));
+      const others =
+        name === "globalThis"
+          ? [...hidden]
+              .filter((key) => !standard.has(key))
+              .map((key) => ({
+                key: key.startsWith("@@")
+                  ? useJavaScript("WellKnownSymbol", [string(key.slice(2))], context)
+                  : string(key),
+                value: getUndefined(context),
+                attributes: getAttributes("", "hidden"),
+              }))
+          : [];
+      const described = [...translated, ...others];
       const prototype = entry[0];
       const object = record("Record", [
-        { name: "keys", value: tuple(translated.map((property) => property.key)) },
+        { name: "keys", value: tuple(described.map((property) => property.key)) },
         {
           name: "values",
-          value: functionFrom(translated.map((property) => [property.key, property.value])),
+          value: functionFrom(described.map((property) => [property.key, property.value])),
         },
         {
           name: "attributes",
-          value: functionFrom(translated.map((property) => [property.key, property.attributes])),
+          value: functionFrom(described.map((property) => [property.key, property.attributes])),
         },
         { name: "extensible", value: boolean(entry[2]) },
         {

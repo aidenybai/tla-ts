@@ -798,13 +798,15 @@ LOCAL LookupFor(heap, ref, isGlobalKey) ==
 
 Lookup(heap, ref) == LookupFor(heap, ref, FALSE)
 
-\\* An object's own properties, where what reads or writes them names a key, which is a standard
-\\* global's where the object is the global object, and not one that the script's own var or
-\\* function may hold.
-LookupKey(heap, ref, key) ==
+\\* An object's own properties, where what reads or writes them names keys, none of which is one
+\\* that tla-ts hides where the object is the global object.
+LookupKeys(heap, ref, keys) ==
   LookupFor(heap, ref,
             LET global == BuiltIns[GlobalObject[Ref]]
-            IN key \\in DOMAIN global.values /\\ global.attributes[key].kind # "hidden")
+            IN \\A key \\in keys :
+                 key \\notin DOMAIN global.values \\/ global.attributes[key].kind # "hidden")
+
+LookupKey(heap, ref, key) == LookupKeys(heap, ref, {key})
 
 \\* The built-in objects that a built-in iterator inherits from, whose return closing the iterator
 \\* calls where a loop or a pattern leaves it early. tla-ts doesn't call it, so it stops where a
@@ -1346,7 +1348,7 @@ Prototype(heap, ref) ==
         /\\ heap.objects[ref[Ref]].isOpaque
         /\\ ToString(heap.objects[ref[Ref]].prototype) = ToString(PromiseObject.prototype)
   THEN heap.objects[ref[Ref]].prototype
-  ELSE Lookup(heap, ref).prototype
+  ELSE LookupKeys(heap, ref, {}).prototype
 
 \\* Whether a typed array has an element at a key that is a number, which is an index before its end.
 LOCAL HasElement(heap, ref, key) ==
@@ -5071,7 +5073,10 @@ LOCAL TypedDefine(heap, ref, key, descriptor) ==
 
 \\* Defines each key with the descriptor that ToPropertyDescriptor gave it, in order.
 DefineConvertedAll(heap, ref, keys, descriptors) ==
-  LET applied == ApplyAll(OrdinaryOf(heap, ref), keys, descriptors)
+  LET applied == ApplyAll(IF IsTypedArray(heap, ref)
+                          THEN heap.objects[ref[Ref]]
+                          ELSE LookupKeys(heap, ref, {keys[position] : position \\in DOMAIN keys}),
+                          keys, descriptors)
   IN CASE \\E position \\in DOMAIN keys :
             ~descriptors[position].isValid \\/ ~CanDefineOn(ref, keys[position], descriptors[position]) ->
             [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE]

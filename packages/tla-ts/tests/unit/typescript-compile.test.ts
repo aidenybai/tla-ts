@@ -14378,6 +14378,81 @@ describe("errors", () => {
     });
   });
 
+  describe("adds, reads, and deletes the global object's properties that no name reads", () => {
+    const getSource = (expected: string) => `
+      const holder = { seen: "" };
+      const global = globalThis as unknown as Record<string, unknown>;
+      global.color = "red";
+      global.color = global.color + "!";
+      Object.defineProperty(globalThis, "size", { value: 12, configurable: true });
+      const size = Object.getOwnPropertyDescriptor(globalThis, "size")!;
+      const had = Object.prototype.hasOwnProperty.call(globalThis, "color");
+      delete global.color;
+      holder.seen = [
+        had,
+        global.color,
+        size.value,
+        size.writable,
+        size.enumerable,
+        size.configurable,
+        "missing" in globalThis,
+        "toString" in globalThis,
+      ].join();
+      if (holder.seen !== "${expected}") throw new Error("seen");
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,,12,false,false,true,false,true"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect(
+        (await checkModel(getSource("true,red!,12,false,false,true,false,true"))).failure?.message,
+      ).toContain('"seen"');
+    });
+  });
+
+  describe("stops at the global object's keys that a host or a name may hold", () => {
+    it("stops where the host gives the global object the key", async () => {
+      expect(
+        (
+          await checkModel(`
+            const holder = { seen: 0 };
+            (globalThis as unknown as Record<string, unknown>).process = 1;
+            holder.seen = 1;
+          `)
+        ).failure?.message,
+      ).toContain("tla-ts can't tell which properties the global object has");
+    });
+
+    it("stops where a name that nothing declares may read the key", async () => {
+      expect(
+        (
+          await checkModel(`
+            const holder = { seen: 0 };
+            (globalThis as unknown as Record<string, unknown>).missing = 1;
+            // @ts-ignore
+            holder.seen = typeof missing === "undefined" ? 1 : 2;
+          `)
+        ).failure?.message,
+      ).toContain("tla-ts can't tell which properties the global object has");
+    });
+
+    it("stops where a var declares the key", async () => {
+      expect(
+        (
+          await checkModel(`
+            var declared = 1;
+            const holder = { seen: 0 };
+            holder.seen = (globalThis as unknown as Record<string, unknown>).declared === 1 ? 1 : 2;
+          `)
+        ).failure?.message,
+      ).toContain("tla-ts can't tell which properties the global object has");
+    });
+  });
+
   describe("tells that the global object and an object the heap holds aren't arrays", () => {
     const getSource = (expected: string) => `
       const holder = { seen: 0 };
