@@ -1551,6 +1551,21 @@ const parse = (
     apply,
   });
 
+  // expr_or_op's non_test: a postfix operator before an expression in parentheses is an atom.
+  const parseTlapmNonfixPostfix = (token: Token) =>
+    token.kind === "Operator" && DEFINABLE_POSTFIX_OPERATORS.has(token.text) && isAt("(", 1)
+      ? attempt(() =>
+          withBracketLayout(() => {
+            advance();
+            advance();
+            const operand = parseExpression();
+            const end = cursor - 1;
+            expect(")");
+            return { end, expression: getPostfixApplication(token, operand) };
+          }),
+        )
+      : undefined;
+
   const parseTlapmItem = (isStart: boolean): TlapmItem | undefined => {
     const start = cursor;
     const token = peek();
@@ -1595,6 +1610,11 @@ const parse = (
       }
       if (token.kind !== "Operator" || !DEFINABLE_POSTFIX_OPERATORS.has(token.text))
         return undefined;
+      // Pco.resolve has no operator to put before that atom, so the expression ends here.
+      if (parseTlapmNonfixPostfix(token)) {
+        cursor = start;
+        return undefined;
+      }
       advance();
       return getTlapmOperator(start, "Postfix", POSTFIX_PRECEDENCE, (operands) =>
         getPostfixApplication(token, operands[0].expression),
@@ -1617,6 +1637,11 @@ const parse = (
           )
         : undefined;
     if (nonfix) return getTlapmOperand(nonfix, start);
+    const nonfixPostfix = parseTlapmNonfixPostfix(token);
+    if (nonfixPostfix) {
+      nonfixPostfix.expression.location.range = getRange(start, nonfixPostfix.end);
+      return { start, end: nonfixPostfix.end, expression: nonfixPostfix.expression };
+    }
     const prefix = isOperator ? TLAPM_PREFIX_OPERATORS.get(token.text) : undefined;
     if (prefix) {
       advance();
