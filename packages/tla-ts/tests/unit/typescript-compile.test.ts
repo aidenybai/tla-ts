@@ -467,6 +467,47 @@ describe("top-level statements", () => {
     expect((await checkModel(source(6))).failure?.message).toContain("reduce");
   });
 
+  describe("runs a reducer whose result the reduce's signature doesn't take on its values", () => {
+    const source = `
+      const seen: unknown[] = [];
+      function same(actual: unknown, expected: unknown, label: string) {
+        if (!Object.is(actual, expected)) throw new Error(label);
+      }
+      function record(previous: number | undefined, current: number | undefined, index: number) {
+        seen.push(previous, index);
+      }
+      // @ts-ignore
+      [0, , 2].reduce(record);
+      // @ts-ignore
+      [0, 1].reduceRight(record, 5);
+      // @ts-ignore
+      same([].reduce(function () {}, "first"), "first", "empty");
+      same(
+        // @ts-ignore
+        [11, 12].reduce(function (previous: unknown, current: number) {
+          return previous === 1 && current === 11;
+        }, 1),
+        false,
+        "result",
+      );
+      same(seen.join(), "0,2,5,1,,0", "seen");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["seen", '"0,2,5,1,,0"', '"0,2,5,1,5,0"'],
+      ["empty", '"first", "empty"', '"second", "empty"'],
+      ["result", "false,", "true,"],
+    ])("rejects a wrong %s", async (label, expected, wrong) => {
+      expect((await checkModel(source.replace(expected, wrong))).failure?.message).toContain(
+        `"${label}"`,
+      );
+    });
+  });
+
   it("throw a TypeError where a reduce without an initial value finds no element", async () => {
     const result = await checkModel(`
       const empty: number[] & { tag?: string } = [];

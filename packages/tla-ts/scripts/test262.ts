@@ -900,6 +900,10 @@ const NOT_ITERABLE_ERROR = 2488;
 // An argument of a type that a call's signatures don't take, which tla-ts converts where a string's
 // method or RegExp takes a primitive or an object.
 const CONVERTED_ARGUMENT_ERRORS = new Set([2345, 2769]);
+// The array methods that tla-ts runs a reducer for on the values it gets, not its declared types,
+// where a test's reducer returns a type that the method's signatures don't take. Each needs a unit
+// test of such a call, since tla-ts reads a value by its declared type.
+const REDUCING_METHODS = new Set(["reduce", "reduceRight"]);
 // A call of a value of type unknown, which tla-ts runs where a key stores a String.prototype method.
 const UNKNOWN_CALLEE_ERROR = 2571;
 
@@ -1293,6 +1297,88 @@ const ignoreSoundErrors = () => {
       )
     );
   };
+  // A call of an array's method that REDUCING_METHODS lists, whose reducer is a function that the
+  // test writes and that takes each value it gets: the initial value, an element, or what it
+  // returns as the accumulator, then an element, an index, and the array. The call's result, which
+  // may be what the reducer returns, is discarded or taken as unknown. The error is the call's, at
+  // an argument, a function expression's name or keyword, or the method's name.
+  const isReducingCall = (diagnostic: ts.Diagnostic) => {
+    const start = diagnostic.start ?? 0;
+    const end = start + (diagnostic.length ?? 0);
+    const isSpan = (inner: ts.Node | undefined) =>
+      inner !== undefined && inner.getStart() === start && inner.getEnd() === end;
+    const call = ts.findAncestor(
+      getNode(start),
+      (ancestor): ancestor is ts.CallExpression =>
+        ts.isCallExpression(ancestor) &&
+        ((ts.isPropertyAccessExpression(ancestor.expression) && isSpan(ancestor.expression.name)) ||
+          ancestor.arguments.some(
+            (value) =>
+              isSpan(value) ||
+              (ts.isFunctionExpression(value) &&
+                isSpan(
+                  value.name ??
+                    value
+                      .getChildren()
+                      .find((child) => child.kind === ts.SyntaxKind.FunctionKeyword),
+                )),
+          )),
+    );
+    if (
+      call === undefined ||
+      !ts.isPropertyAccessExpression(call.expression) ||
+      !REDUCING_METHODS.has(call.expression.name.text) ||
+      call.arguments.length < 1 ||
+      call.arguments.length > 2
+    ) {
+      return false;
+    }
+    const array = checker.getTypeAtLocation(call.expression.expression);
+    const element = checker.getIndexTypeOfType(array, ts.IndexKind.Number);
+    const reducer = call.arguments[0];
+    const declaration = ts.isIdentifier(reducer)
+      ? checker.getSymbolAtLocation(reducer)?.valueDeclaration
+      : reducer;
+    const signatures = checker.getSignaturesOfType(
+      checker.getTypeAtLocation(reducer),
+      ts.SignatureKind.Call,
+    );
+    const contextual = checker.getContextualType(call);
+    if (
+      !checker.isArrayType(array) ||
+      element === undefined ||
+      declaration === undefined ||
+      declaration.getSourceFile() !== sourceFile ||
+      !(
+        ts.isFunctionDeclaration(declaration) ||
+        ts.isFunctionExpression(declaration) ||
+        ts.isArrowFunction(declaration)
+      ) ||
+      signatures.length !== 1 ||
+      !(
+        ts.isExpressionStatement(call.parent) ||
+        (contextual !== undefined && (contextual.flags & ts.TypeFlags.Unknown) !== 0)
+      )
+    ) {
+      return false;
+    }
+    const signature = signatures[0];
+    const returned = signature.getReturnType();
+    const accumulators = [
+      (returned.flags & ts.TypeFlags.Void) === 0 ? returned : checker.getUndefinedType(),
+      call.arguments.length === 2 ? checker.getTypeAtLocation(call.arguments[1]) : element,
+    ];
+    const taken = [accumulators, [element], [checker.getNumberType()], [array]];
+    return (
+      signature.parameters.length <= taken.length &&
+      declaration.parameters.every((parameter) => parameter.dotDotDotToken === undefined) &&
+      signature.parameters.every((parameter, position) =>
+        taken[position].every((type) =>
+          checker.isTypeAssignableTo(type, checker.getTypeOfSymbol(parameter)),
+        ),
+      )
+    );
+  };
   // A call of a key of type unknown, as (object as unknown as { [key: string]: unknown }).slice(0)
   // calls, where the test stores String.prototype's method of the key's name as a value, writes no
   // function of its own under the key, and passes primitives that the method converts. tla-ts runs
@@ -1351,7 +1437,8 @@ const ignoreSoundErrors = () => {
         isNullableArrayPattern(node)) ||
       (diagnostic.code === NOT_ITERABLE_ERROR && isCaughtArrayPattern(node)) ||
       (UNASSIGNABLE_ERRORS.has(diagnostic.code) && isPatternArgument(node)) ||
-      (CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) && isConvertedCall(diagnostic)) ||
+      (CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) &&
+        (isConvertedCall(diagnostic) || isReducingCall(diagnostic))) ||
       (diagnostic.code === UNKNOWN_CALLEE_ERROR && isStoredStringCall(node)) ||
       diagnostic.code === UNUSED_OPERAND_ERROR ||
       (diagnostic.code === UNINTENDED_COMPARISON_ERROR && isUnnarrowed(node, diagnostic)) ||
