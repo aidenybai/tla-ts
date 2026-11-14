@@ -3623,6 +3623,87 @@ describe("values", () => {
     expect((await checkModel(getSource("bacd"))).failure?.message).toContain("g");
   });
 
+  describe("makes the regexps whose patterns an index reads of arrays and strings that a variable takes", () => {
+    const source = `
+      let hex = ["\\\\x41", "\\\\x42"];
+      let letters = ["A", "B"];
+      const isMatchingAll = () => {
+        let isMatched = true;
+        for (let index = 0; index < hex.length; index++) {
+          const found = new RegExp(hex[index]).exec(letters[index]);
+          if (found === null || found[0] !== letters[index]) isMatched = false;
+        }
+        return isMatched;
+      };
+      if (!isMatchingAll()) throw new Error("upper");
+      hex = ["\\\\x61", "\\\\x62"];
+      letters = ["a", "b"];
+      if (!isMatchingAll()) throw new Error("lower");
+      const marks = "$^.";
+      const holder = { count: 0 };
+      for (let index = 0; index < marks.length; index++) {
+        const found = new RegExp("\\\\" + marks[index], "g").exec(marks);
+        if (found !== null && found.index === index) holder.count++;
+      }
+      if (holder.count !== 3) throw new Error("marks");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["upper", 'letters = ["A", "B"]', 'letters = ["A", "C"]'],
+      ["lower", 'letters = ["a", "b"]', 'letters = ["b", "a"]'],
+      ["marks", '"\\\\" + marks[index]', "marks[index]"],
+    ])("rejects a wrong %s", async (label, expected, wrong) => {
+      expect((await checkModel(source.replace(expected, wrong))).failure?.message).toContain(
+        `"${label}"`,
+      );
+    });
+
+    it("stops at an index past the end", async () => {
+      const result = checkModel(`
+        const patterns = ["a"];
+        for (let index = 0; index < 2; index++) {
+          const found = new RegExp(patterns[index]).exec("a");
+          if (found === null) throw new Error("found");
+        }
+      `);
+      await expect(result).rejects.toThrow(
+        "tla-ts can't make a regexp of a pattern that it didn't find as it compiled",
+      );
+    });
+
+    it.each([
+      [
+        "an array that changes in place",
+        `
+          const patterns = ["a"];
+          patterns.push("b");
+          const found = new RegExp(patterns[1]).exec("b");
+          if (found === null) throw new Error("found");
+        `,
+      ],
+      [
+        "an index past the end of an array that holds only an invalid pattern",
+        `
+          const patterns = ["("];
+          let isThrown = false;
+          try {
+            const made = new RegExp(patterns[1]);
+            if (made.source !== "(?:)") throw new Error("source");
+          } catch (error) {
+            isThrown = true;
+          }
+          if (isThrown) throw new Error("thrown");
+        `,
+      ],
+    ])("stops at %s", (_, source) => {
+      expect(() => compile(source)).toThrow("Unsupported constructor: new RegExp");
+    });
+  });
+
   it("makes the empty regexp that new RegExp gives without arguments", async () => {
     const getSource = (expected: string) => `
       // @ts-ignore

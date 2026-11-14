@@ -2,9 +2,11 @@ import ts from "@typescript/typescript6";
 import {
   type Context,
   findNodes,
+  getAssignedTarget,
   getSymbol,
   getUndefined,
   isAssigned,
+  isWrittenBy,
   share,
   skipCasts,
 } from "./context";
@@ -1700,16 +1702,19 @@ const ELEMENT_METHODS = new Set(["map", "forEach", "flatMap", "filter", "some", 
 // The values that an expression may take that tla-ts finds as it compiles: the strings that
 // literals, String.raw and templates write and that + joins, and the regexps that literals and
 // RegExp make, through variables that a script never assigns, the elements that an array method
-// passes its callback or a for-of over an array literal takes, and the arguments that each call in
-// its file passes a function. A run checks what it makes against them.
+// passes its callback or a for-of over an array literal takes, the elements of the arrays and the
+// characters of the strings that a variable that a script only reads by index is ever given, unless
+// the values must be exact, and the arguments that each call in its file passes a function. A run
+// checks what it makes against them.
 const getConstantValues = (
   node: ts.Expression,
   context: Context,
   visited: ReadonlySet<ts.Node>,
+  isExact: boolean,
 ): (string | RegExpTexts)[] | undefined => {
   const expression = skipCasts(node);
   const getStrings = (inner: ts.Expression) => {
-    const values = getConstantValues(inner, context, visited);
+    const values = getConstantValues(inner, context, visited, isExact);
     const strings = values?.filter((value) => typeof value === "string");
     return strings?.length === values?.length ? strings : undefined;
   };
@@ -1726,7 +1731,7 @@ const getConstantValues = (
     const end = expression.text.lastIndexOf("/");
     return [{ pattern: expression.text.slice(1, end), flags: expression.text.slice(end + 1) }];
   }
-  const made = getRegExpTexts(expression, context, visited);
+  const made = getRegExpTexts(expression, context, visited, isExact);
   if (made !== undefined) return made;
   if (ts.isTemplateExpression(expression)) {
     return join([
@@ -1764,7 +1769,7 @@ const getConstantValues = (
     ts.isPropertyAccessExpression(expression) &&
     ["source", "flags"].includes(expression.name.text)
   ) {
-    const values = getConstantValues(expression.expression, context, visited);
+    const values = getConstantValues(expression.expression, context, visited, isExact);
     const regexps = values?.flatMap((value) => {
       const valid = typeof value === "string" ? undefined : getValidRegExp(value);
       return valid === undefined
@@ -1782,7 +1787,12 @@ const getConstantValues = (
       : body.statements.length === 1 && statement !== undefined && ts.isReturnStatement(statement)
         ? statement.expression
         : undefined;
-    return returned === undefined ? undefined : getConstantValues(returned, context, visited);
+    return returned === undefined
+      ? undefined
+      : getConstantValues(returned, context, visited, isExact);
+  }
+  if (ts.isElementAccessExpression(expression)) {
+    return isExact ? undefined : getIndexedValues(expression.expression, context, visited);
   }
   const symbol = ts.isIdentifier(expression) ? getSymbol(expression, context.checker) : undefined;
   const declaration = symbol?.valueDeclaration;
@@ -1791,7 +1801,7 @@ const getConstantValues = (
   }
   const inner = new Set([...visited, declaration]);
   const getUnion = (nodes: readonly ts.Expression[]) => {
-    const values = nodes.map((value) => getConstantValues(value, context, inner));
+    const values = nodes.map((value) => getConstantValues(value, context, inner, isExact));
     return nodes.length === 0 || values.some((value) => value === undefined)
       ? undefined
       : [...new Set(values.flatMap((value) => value ?? []))];
@@ -1820,7 +1830,7 @@ const getConstantValues = (
     return declaration.initializer !== undefined &&
       ((declaration.parent.flags & ts.NodeFlags.Const) !== 0 ||
         (isReadAfter && !isAssigned(symbol, declaration.getSourceFile(), context)))
-      ? getConstantValues(declaration.initializer, context, inner)
+      ? getConstantValues(declaration.initializer, context, inner, isExact)
       : undefined;
   }
   if (
@@ -1864,6 +1874,83 @@ const getConstantValues = (
     : undefined;
 };
 
+// The elements and characters that an index may read of a variable that a script declares once and
+// only ever sets to arrays of strings, which it otherwise only reads by index or for their length,
+// or to strings. An index past the end reads undefined, which none of them is.
+const getIndexedValues = (node: ts.Expression, context: Context, visited: ReadonlySet<ts.Node>) => {
+  const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
+  const declaration = symbol?.valueDeclaration;
+  if (
+    symbol === undefined ||
+    declaration === undefined ||
+    symbol.declarations?.length !== 1 ||
+    !ts.isVariableDeclaration(declaration) ||
+    !ts.isIdentifier(declaration.name) ||
+    ts.isForInStatement(declaration.parent.parent) ||
+    ts.isForOfStatement(declaration.parent.parent) ||
+    visited.has(declaration)
+  ) {
+    return undefined;
+  }
+  const file = declaration.getSourceFile();
+  const writes = findNodes(file, (inner): inner is ts.Node => {
+    const target = getAssignedTarget(inner);
+    return target !== undefined && isWrittenBy(target, symbol, context);
+  });
+  const given = writes.map((write) =>
+    ts.isBinaryExpression(write) &&
+    write.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isIdentifier(write.left)
+      ? write.right
+      : undefined,
+  );
+  const sources = [declaration.initializer, ...given].map((source) =>
+    source === undefined ? undefined : skipCasts(source),
+  );
+  if (given.includes(undefined) || sources.every((source) => source === undefined)) {
+    return undefined;
+  }
+  // An array may change in place where a script does more than read it.
+  const isRead = (reference: ts.Identifier) => {
+    const parent = reference.parent;
+    return (
+      (ts.isBinaryExpression(parent) && parent.left === reference) ||
+      (((ts.isElementAccessExpression(parent) && parent.expression === reference) ||
+        (ts.isPropertyAccessExpression(parent) &&
+          parent.expression === reference &&
+          parent.name.text === "length")) &&
+        getAssignedTarget(parent.parent) !== parent &&
+        !ts.isDeleteExpression(parent.parent))
+    );
+  };
+  if (
+    sources.some((source) => source !== undefined && ts.isArrayLiteralExpression(source)) &&
+    !findNodes(file, ts.isIdentifier).every(
+      (reference) =>
+        reference === declaration.name ||
+        getSymbol(reference, context.checker) !== symbol ||
+        isRead(reference),
+    )
+  ) {
+    return undefined;
+  }
+  const inner = new Set([...visited, declaration]);
+  const values = sources.map((source) => {
+    if (source === undefined) return [];
+    const elements = ts.isArrayLiteralExpression(source) ? source.elements : undefined;
+    if (elements?.some(ts.isSpreadElement)) return undefined;
+    const parts = (elements ?? [source]).map((part) =>
+      getConstantValues(part, context, inner, false),
+    );
+    const strings = parts.flatMap((part) => part ?? [undefined]);
+    if (!strings.every((text) => typeof text === "string")) return undefined;
+    return elements === undefined ? strings.flatMap((text) => text.split("")) : strings;
+  });
+  return values.includes(undefined)
+    ? undefined
+    : [...new Set(values.flatMap((value) => value ?? []))];
+};
+
 // The function that a call without arguments makes and runs in place, where it takes no parameters
 // and is neither async nor a generator.
 const getCalledFunction = (node: ts.Expression) => {
@@ -1886,7 +1973,8 @@ const getCalledFunction = (node: ts.Expression) => {
 const getRegExpTexts = (
   node: ts.Node,
   context: Context,
-  visited: ReadonlySet<ts.Node> = new Set(),
+  visited: ReadonlySet<ts.Node>,
+  isExact: boolean,
 ): RegExpTexts[] | undefined => {
   if (
     (!ts.isNewExpression(node) && !ts.isCallExpression(node)) ||
@@ -1895,7 +1983,7 @@ const getRegExpTexts = (
     return undefined;
   }
   const values = node.arguments ?? [];
-  const regexps = values[0] && getRegExpValues(values[0], context, visited);
+  const regexps = values[0] && getRegExpValues(values[0], context, visited, isExact);
   if (regexps !== undefined) {
     const [regexp] = regexps;
     const flags = values[1];
@@ -1913,7 +2001,7 @@ const getRegExpTexts = (
   const texts = values.map((value) => {
     const primitive = getPrimitiveText(value, context);
     if (primitive !== undefined) return [primitive];
-    const constants = getConstantValues(value, context, visited);
+    const constants = getConstantValues(value, context, visited, isExact);
     const strings = constants?.filter((constant) => typeof constant === "string");
     return getKind(value, context) === "string" && strings?.length === constants?.length
       ? strings
@@ -1927,8 +2015,13 @@ const getRegExpTexts = (
 };
 
 // The regexps that an expression may be, where tla-ts finds them all as it compiles.
-const getRegExpValues = (node: ts.Expression, context: Context, visited: ReadonlySet<ts.Node>) => {
-  const values = getConstantValues(node, context, visited);
+const getRegExpValues = (
+  node: ts.Expression,
+  context: Context,
+  visited: ReadonlySet<ts.Node>,
+  isExact: boolean,
+) => {
+  const values = getConstantValues(node, context, visited, isExact);
   const regexps = values?.filter((value) => typeof value !== "string");
   return regexps?.length === values?.length ? regexps : undefined;
 };
@@ -1969,7 +2062,7 @@ const getValidRegExp = (texts: RegExpTexts) => {
 // new RegExp or RegExp of literals that make a valid regexp, whose source the engine that tla-ts
 // runs on escapes as the spec's EscapeRegExpPattern does.
 export const getMadeRegExp = (node: ts.Node, context: Context) => {
-  const made = getRegExpTexts(node, context)?.map((texts) => {
+  const made = getRegExpTexts(node, context, new Set(), false)?.map((texts) => {
     const valid = getValidRegExp(texts);
     return valid === undefined ? undefined : { ...texts, source: valid.source };
   });
@@ -1978,7 +2071,7 @@ export const getMadeRegExp = (node: ts.Node, context: Context) => {
 
 // new RegExp or RegExp of literals that make no valid regexp, which throws a SyntaxError.
 export const isInvalidRegExp = (node: ts.Node, context: Context) => {
-  const texts = getRegExpTexts(node, context);
+  const texts = getRegExpTexts(node, context, new Set(), true);
   return texts?.length === 1 && getValidRegExp(texts[0]) === undefined;
 };
 
@@ -2005,7 +2098,7 @@ export const translateRegExpValue = (node: ts.Node, scope: Scope, context: Conte
       (argument) =>
         ts.isStringLiteralLike(argument) ||
         getPrimitiveText(argument, context) !== undefined ||
-        getRegExpValues(argument, context, new Set()) !== undefined,
+        getRegExpValues(argument, context, new Set(), false) !== undefined,
     )
   ) {
     const values = (node.arguments ?? []).map((argument) => {
@@ -2050,7 +2143,7 @@ export const translateRegExpValue = (node: ts.Node, scope: Scope, context: Conte
     // only while a script hasn't changed the regexp.
     return copied &&
       !ts.isRegularExpressionLiteral(skipCasts(copied)) &&
-      getRegExpValues(copied, context, new Set()) !== undefined &&
+      getRegExpValues(copied, context, new Set(), false) !== undefined &&
       context.heap !== undefined
       ? ifExpression(
           apply("=", [

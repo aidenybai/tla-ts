@@ -842,7 +842,7 @@ const getWrittenNames = (target: ts.Node): ts.Expression[] => {
 };
 
 // Whether an assignment's target writes a name, alone or in a pattern.
-const isWrittenBy = (target: ts.Node, symbol: ts.Symbol, context: Context) =>
+export const isWrittenBy = (target: ts.Node, symbol: ts.Symbol, context: Context) =>
   getWrittenNames(target).some(
     (name) => ts.isIdentifier(name) && getSymbol(name, context.checker) === symbol,
   );
@@ -877,7 +877,7 @@ export const getLiteralName = (node: ts.ObjectLiteralExpression, context: Contex
 };
 
 // The target that an assignment, an increment, or a for-in or for-of without a declaration writes.
-const getAssignedTarget = (node: ts.Node) =>
+export const getAssignedTarget = (node: ts.Node) =>
   ts.isBinaryExpression(node) &&
   node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
   node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
