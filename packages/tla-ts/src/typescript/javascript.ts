@@ -36,7 +36,7 @@ export const WELL_KNOWN_SYMBOLS = [
 export const JAVASCRIPT_MODULE = `------------------------------ MODULE JavaScript ------------------------------
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
-CONSTANTS Undefined, Null, Ref, Big, BuiltIns, ConstantFunctions, Symbols, Fractions,
+CONSTANTS Undefined, Null, Ref, Big, Wide, BuiltIns, ConstantFunctions, Symbols, Fractions,
           Characters, Cases, NaN, Infinity, NegativeInfinity, NegativeZero
 
 LOCAL Digits == {"-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
@@ -78,6 +78,11 @@ IsBigInt(value) ==
   LET text == ToString(value)
   IN Len(text) >= 7 /\\ SubSeq(text, 1, 7) = "(Big :>"
 
+\\* An integer beyond TLC's 32 bits, which tla-ts holds as two halves under the model value Wide.
+IsWide(value) ==
+  LET text == ToString(value)
+  IN Len(text) >= 8 /\\ SubSeq(text, 1, 8) = "(Wide :>"
+
 TypeOf(value) ==
   LET text == ToString(value)
       first == SubSeq(text, 1, 1)
@@ -88,6 +93,7 @@ TypeOf(value) ==
        [] first = "\\"" -> "string"
        [] \\A i \\in 1..Len(text) : SubSeq(text, i, i) \\in Digits -> "number"
        [] IsBigInt(value) -> "bigint"
+       [] IsWide(value) -> "number"
        [] first \\in {"[", "<", "{", "("} \\cup Digits -> "object"
        [] IsSymbol(value) -> "symbol"
        [] IsFraction(value) -> "number"
@@ -96,28 +102,103 @@ TypeOf(value) ==
 \\* TLC can't tell whether a value that isn't an integer is in Int, so this asks TypeOf.
 IsNumber(value) == TypeOf(value) = "number"
 
-LOCAL IsInteger(value) == IsNumber(value) /\\ value \\notin SpecialNumbers /\\ ~IsFraction(value)
+LOCAL IsInteger(value) ==
+  IsNumber(value) /\\ value \\notin SpecialNumbers /\\ ~IsFraction(value) /\\ ~IsWide(value)
+
+\\* Whether a value is an integer from 0 to a maximum.
+IsIntegerWithin(value, maximum) == IsInteger(value) /\\ value \\in 0..maximum
 
 \\* Whether a value is a number other than NaN and the infinities.
-IsFinite(value) == IsInteger(value) \\/ value = NegativeZero \\/ IsFraction(value)
+IsFinite(value) == IsInteger(value) \\/ value = NegativeZero \\/ IsFraction(value) \\/ IsWide(value)
 
-LOCAL IsZero(value) == value = 0 \\/ value = NegativeZero
+\\* Number.isSafeInteger, where a Wide integer is past 2^53 - 1 only at 2^53 either way.
+IsSafeInteger(value) ==
+  /\\ IsFinite(value)
+  /\\ ~IsFraction(value)
+  /\\ ~(IsWide(value) /\\ value[Wide][1] \\in {-4194304, 4194304} /\\ value[Wide][2] = 0)
+
+LOCAL IsZero(value) == value = NegativeZero \\/ (~IsWide(value) /\\ value = 0)
 
 LOCAL IsNegative(value) ==
   \\/ value = NegativeZero
   \\/ value = NegativeInfinity
   \\/ IsFraction(value) /\\ Floor(value) < 0
+  \\/ IsWide(value) /\\ value[Wide][1] < 0
   \\/ IsInteger(value) /\\ value < 0
 
 LOCAL Magnitude(value) == IF value = NegativeZero THEN 0 ELSE value
 
 LOCAL Absolute(value) == IF value < 0 THEN -value ELSE value
 
+LOCAL MaxInteger == 2147483647
+
+\\* A Wide integer is high * 2^31 + low, with low from 0 to 2^31 - 1, so that each half fits TLC's
+\\* integers. tla-ts holds an integer as Wide only outside them, and only up to 2^53 either way,
+\\* where every integer is a number.
+LOCAL Halves(value) ==
+  CASE IsWide(value) -> value[Wide]
+    [] value >= 0 -> <<0, value>>
+    [] OTHER -> <<-1, value + MaxInteger + 1>>
+
+LOCAL WideOf(halves) ==
+  CASE halves[1] = 0 -> halves[2]
+    [] halves[1] = -1 -> halves[2] - MaxInteger - 1
+    [] \\/ halves[1] > 4194304
+       \\/ halves[1] = 4194304 /\\ halves[2] > 0
+       \\/ halves[1] < -4194304 ->
+         Assert(FALSE, "tla-ts can't hold an integer beyond 2^53")
+    [] OTHER -> Wide :> halves
+
+LOCAL WideNegate(value) ==
+  LET halves == Halves(value)
+  IN WideOf(IF halves[2] = 0
+            THEN <<-halves[1], 0>>
+            ELSE <<-halves[1] - 1, MaxInteger - halves[2] + 1>>)
+
+LOCAL WideAdd(left, right) ==
+  LET augend == Halves(left)
+      addend == Halves(right)
+      isCarried == augend[2] > MaxInteger - addend[2]
+  IN WideOf(<<augend[1] + addend[1] + (IF isCarried THEN 1 ELSE 0),
+              IF isCarried THEN augend[2] - (MaxInteger - addend[2]) - 1 ELSE augend[2] + addend[2]>>)
+
+\\* An integer from 0 below 2^31 times 2^shift, for a shift from 1 to 30.
+LOCAL Shifted(value, shift) ==
+  WideOf(<<value \\div 2^(31 - shift), (value % 2^(31 - shift)) * 2^shift>>)
+
+\\* The product of two integers from 0 below 2^31, from the products of their 16-bit halves.
+LOCAL WideProduct(left, right) ==
+  LET leftHigh == left \\div 65536
+      leftLow == left % 65536
+      rightHigh == right \\div 65536
+      rightLow == right % 65536
+  IN WideAdd(WideAdd(WideOf(<<2 * leftHigh * rightHigh, 0>>), Shifted(leftHigh * rightLow, 16)),
+             WideAdd(WideAdd(Shifted(leftLow * rightHigh, 16), Shifted((leftLow \\div 256) * rightLow, 8)),
+                     (leftLow % 256) * rightLow))
+
+\\* The decimal digits of high * 2^31 + low, from 0, each a division by 10 with 2^31 as
+\\* 10 * 214748364 + 8.
+RECURSIVE WideDigits(_, _)
+WideDigits(high, low) ==
+  IF high = 0
+  THEN ToString(low)
+  ELSE LET part == (high % 10) * 8 + (low % 10)
+       IN WideDigits(high \\div 10, (high % 10) * 214748364 + low \\div 10 + part \\div 10)
+            \\o ToString(part % 10)
+
+LOCAL WideText(value) ==
+  IF value[Wide][1] < 0
+  THEN "-" \\o WideDigits(WideNegate(value)[Wide][1], WideNegate(value)[Wide][2])
+  ELSE WideDigits(value[Wide][1], value[Wide][2])
+
+LOCAL BeyondInteger == Assert(FALSE, "tla-ts can't use an integer beyond 32 bits here")
+
 Negate(value) ==
   CASE value = NaN -> NaN
     [] value = Infinity -> NegativeInfinity
     [] value = NegativeInfinity -> Infinity
     [] value = NegativeZero -> 0
+    [] IsWide(value) -> WideNegate(value)
     [] value = 0 -> NegativeZero
     [] IsFraction(value) -> Fractions[Len(Fractions) + 1 - FractionPosition(value)].value
     [] OTHER -> -value
@@ -129,9 +210,16 @@ Add(left, right) ==
     [] right \\in Infinities -> right
     [] left = NegativeZero -> right
     [] right = NegativeZero -> left
+    [] IsWide(left) \\/ IsWide(right) ->
+         IF IsFraction(left) \\/ IsFraction(right)
+         THEN Assert(FALSE, "tla-ts can't add fractions")
+         ELSE WideAdd(left, right)
     [] left = 0 -> right
     [] right = 0 -> left
     [] IsFraction(left) \\/ IsFraction(right) -> Assert(FALSE, "tla-ts can't add fractions")
+    [] \\/ right > 0 /\\ left > MaxInteger - right
+       \\/ right < 0 /\\ left < -MaxInteger - 1 - right ->
+         WideAdd(left, right)
     [] OTHER -> left + right
 
 Subtract(left, right) == Add(left, Negate(right))
@@ -144,11 +232,15 @@ Multiply(left, right) ==
               [] isNegative -> NegativeInfinity
               [] OTHER -> Infinity
        [] IsZero(left) \\/ IsZero(right) -> IF isNegative THEN NegativeZero ELSE 0
+       [] IsWide(left) \\/ IsWide(right) -> BeyondInteger
        [] left = 1 -> right
        [] right = 1 -> left
        [] left = -1 -> Negate(right)
        [] right = -1 -> Negate(left)
        [] IsFraction(left) \\/ IsFraction(right) -> Assert(FALSE, "tla-ts can't multiply fractions")
+       [] Absolute(left) > MaxInteger \\div Absolute(right) ->
+            LET product == WideProduct(Absolute(left), Absolute(right))
+            IN IF isNegative THEN WideNegate(product) ELSE product
        [] OTHER ->
             LET product == Magnitude(left) * Magnitude(right)
             IN IF product = 0 /\\ isNegative THEN NegativeZero ELSE product
@@ -166,6 +258,7 @@ Divide(left, right) ==
        [] IsZero(right) /\\ IsZero(left) -> NaN
        [] IsZero(right) -> IF isNegative THEN NegativeInfinity ELSE Infinity
        [] IsZero(left) -> signed(0)
+       [] IsWide(left) \\/ IsWide(right) -> BeyondInteger
        [] right = 1 -> left
        [] IsFraction(left) \\/ IsFraction(right) -> Assert(FALSE, "tla-ts can't divide fractions")
        [] Absolute(Magnitude(left)) % Absolute(Magnitude(right)) = 0 ->
@@ -179,6 +272,7 @@ Remainder(left, right) ==
     [] right \\in Infinities \\/ IsZero(left) -> left
     [] IsFraction(left) \\/ IsFraction(right) ->
          Assert(FALSE, "tla-ts can't compute the remainder of fractions")
+    [] IsWide(left) \\/ IsWide(right) -> BeyondInteger
     [] OTHER ->
          LET remainder == Absolute(left) % Absolute(right)
          IN CASE left > 0 -> remainder
@@ -198,6 +292,7 @@ Power(base, exponent) ==
            [] ~IsNegative(exponent) -> Infinity
            [] IsOdd(exponent) -> NegativeZero
            [] OTHER -> 0
+    [] IsWide(base) /\\ exponent \\notin Infinities -> BeyondInteger
     [] base = 0 -> IF IsNegative(exponent) THEN Infinity ELSE 0
     [] base = NegativeZero ->
          CASE ~IsNegative(exponent) /\\ IsOdd(exponent) -> NegativeZero
@@ -205,14 +300,15 @@ Power(base, exponent) ==
            [] IsOdd(exponent) -> NegativeInfinity
            [] OTHER -> Infinity
     [] exponent \\in Infinities ->
-         LET exceedsOne == IF IsFraction(base)
-                           THEN Floor(base) >= 1 \\/ Floor(base) <= -2
-                           ELSE Absolute(base) > 1
+         LET exceedsOne == CASE IsFraction(base) -> Floor(base) >= 1 \\/ Floor(base) <= -2
+                              [] IsWide(base) -> TRUE
+                              [] OTHER -> Absolute(base) > 1
          IN CASE base \\in {1, -1} -> NaN
               [] exceedsOne = (exponent = Infinity) -> Infinity
               [] OTHER -> 0
     [] IsFraction(base) \\/ IsFraction(exponent) ->
          Assert(FALSE, "tla-ts can't raise fractions to a power")
+    [] IsWide(base) \\/ IsWide(exponent) -> BeyondInteger
     [] exponent >= 0 -> base ^ exponent
     [] Absolute(base) = 1 -> IF IsOdd(exponent) THEN base ELSE 1
     \\* 2 ** -1075 is half the least number above 0, so it and any power nearer 0 round to 0.
@@ -222,10 +318,10 @@ Power(base, exponent) ==
 \\* The order of numbers, by their kind, then their floor, then their position in Fractions, where
 \\* an integer comes before the fractions above it.
 LOCAL Rank(value) ==
-  CASE value = NegativeInfinity -> <<0, 0, 0>>
-    [] value = Infinity -> <<2, 0, 0>>
-    [] IsFraction(value) -> <<1, Floor(value), FractionPosition(value)>>
-    [] OTHER -> <<1, Magnitude(value), 0>>
+  CASE value = NegativeInfinity -> <<0, 0, 0, 0>>
+    [] value = Infinity -> <<2, 0, 0, 0>>
+    [] IsFraction(value) -> <<1, Halves(Floor(value))[1], Halves(Floor(value))[2], FractionPosition(value)>>
+    [] OTHER -> <<1, Halves(Magnitude(value))[1], Halves(Magnitude(value))[2], 0>>
 
 LOCAL Precedes(left, right) ==
   \\E position \\in DOMAIN left :
@@ -238,8 +334,6 @@ LessOrEqual(left, right) == left # NaN /\\ right # NaN /\\ ~LessThan(right, left
 
 \\* TLC's integers have 32 bits, where a BigInt has as many as it needs, so tla-ts stops where one
 \\* would leave them.
-LOCAL MaxInteger == 2147483647
-
 \\* The integer that a BigInt holds, where TypeScript's types may let another value through.
 LOCAL IntegerOfBigInt(value) ==
   IF IsBigInt(value)
@@ -301,7 +395,8 @@ BigIntPower(base, exponent) ==
        [] OTHER -> BigIntPowerOf(base, count)
 
 \\* The order of numbers and BigInts, which compares their mathematical values.
-LOCAL NumericRank(value) == IF IsBigInt(value) THEN <<1, value[Big], 0>> ELSE Rank(value)
+LOCAL NumericRank(value) ==
+  IF IsBigInt(value) THEN <<1, Halves(value[Big])[1], Halves(value[Big])[2], 0>> ELSE Rank(value)
 
 NumericLessThan(left, right) ==
   left # NaN /\\ right # NaN /\\ Precedes(NumericRank(left), NumericRank(right))
@@ -313,7 +408,7 @@ AbsoluteValue(value) == IF IsNegative(value) THEN Negate(value) ELSE value
 
 \\* Math.sign.
 Sign(value) ==
-  CASE value \\in {NaN, NegativeZero, 0} -> value
+  CASE value \\in {NaN, NegativeZero} \\/ IsZero(value) -> value
     [] IsNegative(value) -> -1
     [] OTHER -> 1
 
@@ -324,6 +419,8 @@ Round(value) == IF IsFraction(value) THEN Fractions[FractionPosition(value)].rou
 LOCAL Int32(value) ==
   CASE value \\in SpecialNumbers -> 0
     [] IsFraction(value) -> Truncate(value)
+    [] IsWide(value) ->
+         IF value[Wide][1] % 2 = 1 THEN value[Wide][2] - MaxInteger - 1 ELSE value[Wide][2]
     [] OTHER -> value
 
 \\* The count that a shift takes: ToUint32 of its right operand, modulo 32.
@@ -412,6 +509,7 @@ Hypot(values) ==
        [] has({NaN}) -> NaN
        [] \\E position \\in DOMAIN values : IsFraction(values[position]) ->
             Assert(FALSE, "tla-ts can't represent a fraction")
+       [] \\E position \\in DOMAIN values : IsWide(values[position]) -> BeyondInteger
        [] root * root # square -> Assert(FALSE, "tla-ts can't represent a fraction")
        [] OTHER -> root
 
@@ -478,7 +576,9 @@ LOCAL Quotient(left, right, isFloor) ==
        [] IsFraction(left) /\\ right = 1 ->
             LET whole == IF isFloor THEN Floor(left) ELSE Truncate(left)
             IN IF whole = 0 /\\ isNegative THEN NegativeZero ELSE whole
+       [] IsWide(left) /\\ right = 1 -> left
        [] IsFraction(left) \\/ IsFraction(right) -> Assert(FALSE, "tla-ts can't divide fractions")
+       [] IsWide(left) \\/ IsWide(right) -> BeyondInteger
        [] isFloor /\\ isNegative /\\ Absolute(left) % Absolute(right) # 0 ->
             -(Absolute(left) \\div Absolute(right) + 1)
        [] OTHER -> signed(Absolute(left) \\div Absolute(right))
@@ -492,10 +592,14 @@ TruncDivide(left, right) == Quotient(left, right, FALSE)
 ElementPosition(value) ==
   CASE value = NegativeZero -> 1
     [] value \\in SpecialNumbers \\/ IsFraction(value) -> 0
+    [] IsWide(value) -> BeyondInteger
     [] OTHER -> value + 1
 
 \\* The value that a Set or a Map keeps as a key, where -0 is 0.
-KeyOf(value) == IF value = NegativeZero THEN 0 ELSE value
+KeyOf(value) ==
+  CASE value = NegativeZero -> 0
+    [] IsWide(value) -> BeyondInteger
+    [] OTHER -> value
 
 \\* The map that new Map makes from an array of entries, each a key and its value, where a later
 \\* entry of a key replaces an earlier one's value.
@@ -522,6 +626,7 @@ RelativeIndex(index, length) ==
     [] index = Infinity -> length
     [] index = NegativeInfinity -> -1
     [] IsFraction(index) -> IF Truncate(index) < 0 THEN length + Truncate(index) ELSE Truncate(index)
+    [] IsWide(index) -> BeyondInteger
     [] index < 0 -> length + index
     [] OTHER -> index
 
@@ -535,6 +640,7 @@ ClampedCount(count, maximum) ==
     [] count = Infinity -> maximum
     [] IsFraction(count) ->
          IF Truncate(count) < 0 THEN 0 ELSE IF Truncate(count) > maximum THEN maximum ELSE Truncate(count)
+    [] IsWide(count) -> BeyondInteger
     [] count < 0 -> 0
     [] count > maximum -> maximum
     [] OTHER -> count
@@ -1561,6 +1667,7 @@ ToLength(value) ==
     [] value = Infinity -> Assert(FALSE, "tla-ts can't represent this value")
     [] value \\in SpecialNumbers -> 0
     [] IsFraction(value) -> IF Floor(value) < 0 THEN 0 ELSE Floor(value)
+    [] IsWide(value) -> BeyondInteger
     [] TypeOf(value) = "number" -> IF value < 0 THEN 0 ELSE value
     [] TypeOf(value) = "string" -> ToLengthOfText(value)
     [] value = <<>> -> 0
@@ -1756,18 +1863,20 @@ IsIdentical(left, right) ==
 SameValue(left, right) ==
   /\\ TypeOf(left) = TypeOf(right)
   /\\ Assert(HasIdentity(left) \\/ HasIdentity(right), "tla-ts can't compare objects by identity")
-  /\\ IF IsRef(left) \\/ IsRef(right) THEN ToString(left) = ToString(right) ELSE left = right
+  /\\ IF IsRef(left) \\/ IsRef(right) \\/ IsWide(left) \\/ IsWide(right)
+     THEN ToString(left) = ToString(right)
+     ELSE left = right
 
 \\* JavaScript's ===, where NaN differs from itself and -0 equals 0.
 StrictEquals(left, right) ==
   IF IsNumber(left) /\\ IsNumber(right)
-  THEN left # NaN /\\ right # NaN /\\ Magnitude(left) = Magnitude(right)
+  THEN left # NaN /\\ right # NaN /\\ SameValue(Magnitude(left), Magnitude(right))
   ELSE SameValue(left, right)
 
 \\* What includes and Set compare by, where NaN equals itself and -0 equals 0.
 SameValueZero(left, right) ==
   IF IsNumber(left) /\\ IsNumber(right)
-  THEN Magnitude(left) = Magnitude(right)
+  THEN SameValue(Magnitude(left), Magnitude(right))
   ELSE SameValue(left, right)
 
 \\* Whether a value that a proxy's get or set trap gives or takes agrees with a property that the
@@ -1795,6 +1904,7 @@ StringOf(value) ==
     [] value = NegativeInfinity -> "-Infinity"
     [] value = NegativeZero -> "0"
     [] IsFraction(value) -> Fractions[FractionPosition(value)].text
+    [] IsWide(value) -> WideText(value)
     [] TypeOf(value) = "number" -> ToString(value)
     [] IsBigInt(value) -> ToString(value[Big])
     [] OTHER -> Assert(FALSE, "tla-ts can't convert objects to strings")
@@ -2001,6 +2111,7 @@ NumberOfBigInt(value) == IntegerOfBigInt(value)
 LOCAL IntegerOf(value) ==
   CASE value \\in {Undefined, NaN, NegativeZero} -> 0
     [] IsFraction(value) -> Truncate(value)
+    [] IsWide(value) -> BeyondInteger
     [] OTHER -> value
 
 \\* An integer or an infinity, clamped to 0..length.
@@ -2105,6 +2216,7 @@ FromCharCodes(codes, isCodePoint) ==
   THEN ""
   ELSE LET code == Head(codes)
            point == CASE code \\in {NaN, Infinity, NegativeInfinity, NegativeZero} -> 0
+                      [] isCodePoint /\\ IsWide(code) -> BeyondInteger
                       [] isCodePoint -> code
                       [] OTHER -> IntegerOf(code) % 65536
        IN  CASE isCodePoint /\\ (code \\in {NaN, Infinity, NegativeInfinity} \\/ IsFraction(code) \\/ point < 0 \\/ point > 1114111) ->
@@ -2510,6 +2622,7 @@ NumberToString(value, radix) ==
              Assert(FALSE, "tla-ts can't throw the RangeError of a radix outside 2 to 36")
         [] IsFraction(value) /\\ base # 10 ->
              Assert(FALSE, "tla-ts can't write a fraction in a radix other than 10")
+        [] IsWide(value) /\\ base # 10 -> BeyondInteger
         [] ~IsInteger(value) \\/ base = 10 -> StringOf(value)
         [] value < 0 -> "-" \\o RadixDigits(-value, base)
         [] OTHER -> RadixDigits(value, base)
@@ -2943,7 +3056,7 @@ RegExpSplit(regexp, value, limit) == RegExpPieces(regexp, Text(value), limit)
 ToBoolean(value) ==
   CASE value \\in {Undefined, Null} -> FALSE
     [] TypeOf(value) = "boolean" -> value
-    [] TypeOf(value) = "number" -> value \\notin {0, NaN, NegativeZero}
+    [] TypeOf(value) = "number" -> value # NaN /\\ ~IsZero(value)
     [] TypeOf(value) = "string" -> value # ""
     [] IsBigInt(value) -> value[Big] # 0
     [] OTHER -> TRUE
@@ -3403,21 +3516,43 @@ LOCAL TimeClip(time) ==
 LOCAL ToIntegerOrInfinity(value) ==
   CASE value \\in {NaN, NegativeZero} -> 0
     [] IsFraction(value) -> Truncate(value)
+    [] IsWide(value) -> BeyondInteger
     [] OTHER -> value
 
 LOCAL AreFinite(values) == \\A position \\in DOMAIN values : IsFinite(values[position])
 
+\\* The quotient and the remainder of remainder * 2^(bit + 1) + low % 2^(bit + 1) by a divisor below
+\\* 2^30, one bit at a time, after a quotient's bits so far.
+RECURSIVE DivideLow(_, _, _, _, _)
+DivideLow(remainder, low, bit, quotient, divisor) ==
+  IF bit < 0
+  THEN <<quotient, remainder>>
+  ELSE LET next == 2 * remainder + ((low \\div 2^bit) % 2)
+       IN IF next >= divisor
+          THEN DivideLow(next - divisor, low, bit - 1, 2 * quotient + 1, divisor)
+          ELSE DivideLow(next, low, bit - 1, 2 * quotient, divisor)
+
+\\* The time value of a Wide integer, whose day is outside TLC's integers only past what TimeClip
+\\* allows.
+LOCAL WideTime(value) ==
+  LET halves == Halves(value)
+      low == DivideLow(halves[1] % MsPerDay, halves[2], 30, 0, MsPerDay)
+      day == WideOf(<<halves[1] \\div MsPerDay, low[1]>>)
+  IN IF IsWide(day) THEN NaN ELSE TimeClip([day |-> day, ms |-> low[2]])
+
 \\* The time value that new Date or setTime makes from a number.
 TimeFromNumber(value) ==
-  IF IsFinite(value) THEN TimeClip(TimeValue(0, ToIntegerOrInfinity(value))) ELSE NaN
+  CASE IsWide(value) -> WideTime(value)
+    [] IsFinite(value) -> TimeClip(TimeValue(0, ToIntegerOrInfinity(value)))
+    [] OTHER -> NaN
 
-\\* The number that a time value is, where it fits TLC's integers.
+\\* The number that a time value is.
 TimeNumber(time) ==
   CASE time = NaN -> NaN
     [] time.day \\in -24..23 -> time.day * MsPerDay + time.ms
     [] time.day = 24 /\\ time.ms <= 73883647 -> 23 * MsPerDay + (time.ms + MsPerDay)
     [] time.day = -25 /\\ time.ms >= 12516352 -> -24 * MsPerDay + (time.ms - MsPerDay)
-    [] OTHER -> Assert(FALSE, "tla-ts can't hold a time value this far from 1970 in a number")
+    [] OTHER -> Add(Multiply(time.day, MsPerDay), time.ms)
 
 LOCAL DayFromYear(year) ==
   365 * (year - 1970) + (year - 1969) \\div 4 - (year - 1901) \\div 100 + (year - 1601) \\div 400
@@ -3782,6 +3917,7 @@ LOCAL ArrayLengthOf(value) ==
          ReadNumber(value, LAMBDA kind, isNegative, magnitude :
            IF kind = "integer" /\\ (~isNegative \\/ magnitude = 0) THEN magnitude ELSE -1)
     [] value = NegativeZero -> 0
+    [] IsWide(value) -> BeyondInteger
     [] IsInteger(value) /\\ value >= 0 -> value
     [] IsNumber(value) \\/ value = Undefined -> -1
     [] OTHER -> Assert(FALSE, "tla-ts can't convert this value to an array length")
@@ -3868,6 +4004,7 @@ LOCAL FloatBytes(value, type) ==
        [] value = NegativeZero -> encode(TRUE, 0, none)
        [] value = 0 -> encode(FALSE, 0, none)
        [] IsFraction(value) -> Assert(FALSE, "tla-ts can't write a fraction's bits")
+       [] IsWide(value) -> BeyondInteger
        [] value = -2147483647 - 1 -> Assert(FALSE, "tla-ts can't represent a number this big")
        [] (shift < 0 /\\ magnitude % 2^(-shift) # 0) \\/ power + 2^(exponentBits - 1) - 1 >= ones ->
             Assert(FALSE, "tla-ts can't round a number to a float")
@@ -3879,6 +4016,7 @@ LOCAL FloatBytes(value, type) ==
 \\* The little-endian bytes that an element of a type holds for a number.
 NumberBytes(type, value) ==
   CASE type \\in {"Float16", "Float32", "Float64"} -> FloatBytes(value, type)
+    [] IsWide(value) -> BeyondInteger
     [] IsFraction(value) /\\ type = "Uint8Clamped" ->
          Assert(FALSE, "tla-ts can't round a fraction to a byte")
     [] IsFraction(value) ->
@@ -3917,6 +4055,7 @@ IndexOfArgument(value) ==
   IN CASE number \\in {NaN, NegativeZero} -> 0
        [] number \\in {Infinity, NegativeInfinity} -> -1
        [] IsFraction(number) -> IF Truncate(number) < 0 THEN -1 ELSE Truncate(number)
+       [] IsWide(number) -> BeyondInteger
        [] number < 0 -> -1
        [] OTHER -> number
 
@@ -5119,6 +5258,7 @@ LOCAL JSONGap(heap, space) ==
                  [] OTHER -> space
       count == CASE value \\in {NaN, NegativeInfinity, NegativeZero} -> 0
                  [] IsFraction(value) -> IF Truncate(value) > 10 THEN 10 ELSE Truncate(value)
+                 [] IsWide(value) -> IF IsNegative(value) THEN 0 ELSE 10
                  [] value = Infinity -> 10
                  [] value > 10 -> 10
                  [] OTHER -> value

@@ -825,7 +825,9 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
             context,
             (length) =>
               ifExpression(
-                apply("\\in", [length, apply("..", [number(0), apply("Len", [sequence])])]),
+                context.hasSpecialNumbers
+                  ? useJavaScript("IsIntegerWithin", [length, apply("Len", [sequence])], context)
+                  : apply("\\in", [length, apply("..", [number(0), apply("Len", [sequence])])]),
                 apply("SubSeq", [sequence, number(1), length]),
                 apply("Assert", [
                   boolean(false),

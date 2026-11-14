@@ -842,6 +842,7 @@ export const translateCall = (
     if (argument === undefined) return boolean(false);
     const value = translateExpression(argument, scope, context);
     if (method === "isFinite") return useJavaScript("IsFinite", [value], context);
+    if (method === "isSafeInteger") return useJavaScript("IsSafeInteger", [value], context);
     if (method !== "isNaN") {
       return share(value, "value", context, (shared) =>
         junction("And", [
@@ -1963,13 +1964,27 @@ export const getNumberValue = (value: number, context: Context) => {
   }
   if (!context.hasSpecialNumbers) return undefined;
   const special = SPECIAL_NUMBER_NAMES.get(Object.is(value, -0) ? "-0" : String(value));
-  if (special === undefined && (Number.isInteger(value) || Math.abs(value) >= 2 ** 31 - 1)) {
-    return undefined;
+  if (special === undefined && Number.isInteger(value)) {
+    return Math.abs(value) > 2 ** 53 ? undefined : translateWideInteger(value, context);
   }
+  if (special === undefined && Math.abs(value) >= 2 ** 31 - 1) return undefined;
   context.prelude.add("JavaScript");
   if (special !== undefined) return identifier(special);
   getFraction(-value, context);
   return identifier(getFraction(value, context));
+};
+
+// An integer beyond TLC's 32 bits, which the JavaScript module holds as Wide :> <<high, low>>, high
+// * 2^31 + low with low from 0 to 2^31 - 1. TLC holds -2^31 itself.
+const translateWideInteger = (value: number, context: Context) => {
+  if (value === -(2 ** 31)) return apply("-", [number(-(2 ** 31 - 1)), number(1)]);
+  context.prelude.add("JavaScript");
+  const high = Math.floor(value / 2 ** 31);
+  return useJavaScript(
+    ":>",
+    [identifier("Wide"), tuple([number(high), number(value - high * 2 ** 31)])],
+    context,
+  );
 };
 
 const translateFraction = (value: number, node: ts.Node, context: Context) => {
@@ -3276,10 +3291,11 @@ const translateNode = (
   if (ts.isNumericLiteral(node)) {
     const value = Number(node.text);
     if (!Number.isInteger(value)) return translateFraction(value, node, context);
-    if (value > 2 ** 31 - 1) {
+    const translated = getNumberValue(value, context);
+    if (translated === undefined) {
       throw new TlaTypeScriptError(`TLC's integers have 32 bits, so ${node.text} is too big`, node);
     }
-    return number(value);
+    return translated;
   }
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
     return translateString(node.text, context);
@@ -3337,6 +3353,16 @@ const translateNode = (
     // TLC's least integer, whose negation would overflow, as TLC computes it without overflow.
     if (isLiteral && Number(node.operand.text) === 2 ** 31) {
       return apply("-", [apply("-.", [number(2 ** 31 - 1)]), number(1)]);
+    }
+    if (isLiteral && Number(node.operand.text) > 2 ** 31) {
+      const translated = getNumberValue(-Number(node.operand.text), context);
+      if (translated === undefined) {
+        throw new TlaTypeScriptError(
+          `TLC's integers have 32 bits, so ${node.getText()} is too big`,
+          node,
+        );
+      }
+      return translated;
     }
     const operand = isNumberLike(node.operand, context)
       ? translateExpression(node.operand, scope, context)

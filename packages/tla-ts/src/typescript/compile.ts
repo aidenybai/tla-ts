@@ -427,6 +427,8 @@ export const compile = (
           "Float16Array",
           "Float32Array",
           "Float64Array",
+          // A time value may be NaN or an integer beyond 32 bits.
+          "Date",
         ].includes(node.text)) ||
       (ts.isPrefixUnaryExpression(node) &&
         node.operator === ts.SyntaxKind.MinusToken &&
@@ -434,8 +436,9 @@ export const compile = (
         Number(node.operand.text) === 0) ||
       // Division may give an infinity or -0.
       (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.SlashToken) ||
-      // A literal may give a fraction.
-      (ts.isNumericLiteral(node) && !Number.isInteger(Number(node.text))) ||
+      // A literal may give a fraction or an integer beyond 32 bits.
+      (ts.isNumericLiteral(node) &&
+        (!Number.isInteger(Number(node.text)) || Number(node.text) > 2 ** 31 - 1)) ||
       (ts.forEachChild(node, usesSpecialNumbers) ?? false);
     context.hasSpecialNumbers = roots.some(usesSpecialNumbers);
     // A variable may hold any typed array's constructor, so the heap holds them all, their

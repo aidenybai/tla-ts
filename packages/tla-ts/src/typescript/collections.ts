@@ -3202,8 +3202,13 @@ export const translateNew = (node: ts.NewExpression, scope: Scope, context: Cont
     if (argument === undefined || elements.length > 1 || !isNumberLike(argument, context)) {
       return tuple(elements);
     }
+    if (ts.isNumericLiteral(argument) && Number(argument.text) > 2 ** 31 - 1) {
+      throw new TlaTypeScriptError("tla-ts can't hold an array this long", argument);
+    }
     return ifExpression(
-      apply("=", [elements[0], number(0)]),
+      context.hasSpecialNumbers
+        ? useJavaScript("IsIntegerWithin", [elements[0], number(0)], context)
+        : apply("=", [elements[0], number(0)]),
       tuple([]),
       apply("Assert", [boolean(false), string("TLA+ sequences can't have holes")]),
     );

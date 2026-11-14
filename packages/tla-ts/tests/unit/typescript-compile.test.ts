@@ -1093,6 +1093,45 @@ describe("top-level statements", () => {
 });
 
 describe("values", () => {
+  describe("holds integers beyond 32 bits, such as time values, as Node does", () => {
+    const getSource = (expected: string) => `
+      const date = new Date(2016, 6, 6);
+      const time = date.getTime();
+      const written = [
+        time, time - 1467763200001, time + 1 > time, new Date(time).getUTCDate(), 100000 * -100000,
+        2147483647 + 1, -2147483647 - 2, new Date(8.64e15 + 1).getTime(),
+        Math.abs(-9007199254740991), Number.isSafeInteger(-9007199254740991),
+        Number.isSafeInteger(9007199254740992), time === 1467763200000,
+        new Date(-8.64e15).getUTCFullYear(),
+      ];
+      if (written.join() !== "${expected}") throw new Error(written.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "1467763200000,-1,true,6,-10000000000,2147483648,-2147483649,NaN,9007199254740991,true,false,true,-271821",
+            ),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects 2^53 as a safe integer", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "1467763200000,-1,true,6,-10000000000,2147483648,-2147483649,NaN,9007199254740991,true,true,true,-271821",
+            ),
+          )
+        ).failure?.message,
+      ).toContain("true,false,true");
+    });
+  });
+
   it("updates records by key", async () => {
     const result = await checkModel(`
       type Account = "alice" | "bob";
@@ -5707,7 +5746,7 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("tla-ts can't read the clock");
   });
 
-  it("gives Date.UTC's time value where it fits TLC's integers", async () => {
+  it("gives Date.UTC's time value, beyond TLC's integers too", async () => {
     const result = await checkModel(`
       const same = (actual: unknown, expected: unknown) => {
         if (!Object.is(actual, expected)) throw new Error("same");
@@ -5717,10 +5756,9 @@ describe("errors", () => {
       same(Date.UTC(1970, Infinity), NaN);
       const late = Date.UTC(2016, 6);
       same(late > 0, true);
+      same(late, 1467331200000);
     `);
-    expect(result.failure?.message).toContain(
-      "tla-ts can't hold a time value this far from 1970 in a number",
-    );
+    expect(result.failure).toBeUndefined();
   });
 
   it("tells whether a value inherits from a built-in constructor's prototype", async () => {
