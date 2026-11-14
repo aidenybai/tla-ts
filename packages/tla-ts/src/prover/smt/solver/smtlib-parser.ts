@@ -2167,7 +2167,9 @@ export const createSmtlibReader = (
         }
         frame.isBodyParsed = true;
         const body = frame.list.items[2];
-        enter(body.kind === "list" && isSymbol(body.items[0], "!") ? body.items[1] : body);
+        enter(
+          body.kind === "list" && isSymbol(body.items[0], "!") ? (body.items[1] ?? body.end) : body,
+        );
         continue;
       }
       if (frame.kind === "attribute") {
@@ -2695,6 +2697,12 @@ export const createSmtlibReader = (
     for (const restore of undo.splice(start).reverse()) restore();
   };
 
+  // parser::reset, after an error: the bindings of the term that failed are gone.
+  const reset = () => {
+    scopes.length = 0;
+    binders.depth = 0;
+  };
+
   // cmd_context::set_logic on a manager that is in use: restrict_builtin_sorts takes the sorts the
   // logic lacks, and the declarations and the operators stay.
   const restrictSorts = (name: string) => {
@@ -2743,6 +2751,7 @@ export const createSmtlibReader = (
     getLogicError: logicChecker.checkExpr,
     push,
     pop,
+    reset,
     restrictSorts,
     isUsed,
     isClashing,
@@ -2824,6 +2833,7 @@ export const parseSmtlib = (
     } catch (error) {
       if (!(error instanceof SmtParseError)) throw error;
       report(error);
+      state.reader.reset();
       commands.skip(report);
     }
   }

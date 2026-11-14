@@ -1493,6 +1493,7 @@ export const runSmtlibScript = (
       if (!(error instanceof SmtParseError)) throw error;
       report(error);
       if (settings.isExitingOnError) return;
+      script.state.reader.reset();
       commands.skip(report);
     }
   }

@@ -104,3 +104,31 @@ describe("terms nested 20,000 deep, which Z3 5.3.2 reads on its own stack", () =
     ).toEqual(["done"]);
   });
 });
+
+describe("a term that fails to parse, as Z3 5.3.2 reports it", () => {
+  it("drops the bindings of the let and the quantifier it was read in", () => {
+    expect(
+      run([
+        "(simplify (let ((y 1)) (foo y)))",
+        "(simplify y)",
+        "(declare-fun p (Int) Bool)",
+        "(assert (forall ((x Int)) (and (p x) (foo x))))",
+        "(simplify x)",
+        "(assert (forall ((z Int)) (p z)))",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      '(error "line 1 column 30: unknown constant foo (Int) ")',
+      '(error "line 2 column 10: unknown constant y")',
+      '(error "line 4 column 43: unknown constant foo (Int) ")',
+      '(error "line 5 column 10: unknown constant x")',
+      "sat",
+    ]);
+  });
+
+  it("rejects an attributed quantifier body without a term", () => {
+    expect(run(["(assert (forall ((x Int)) (!)))"])).toEqual([
+      '(error "line 1 column 29: invalid expression")',
+    ]);
+  });
+});
