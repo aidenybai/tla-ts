@@ -1446,9 +1446,9 @@ export const runSmtlibScript = (
       if (!isSymbol(logic))
         throw new SmtParseError("invalid logic name, symbol expected", logic ?? list.end);
       if (state.logic !== undefined)
-        throw new SmtParseError("the logic has already been set", list.end);
+        throw new SmtParseError("the logic has already been set", logic);
       if (state.assertions.length > 0)
-        throw new SmtParseError("logic must be set before initialization", list.end);
+        throw new SmtParseError("logic must be set before initialization", logic);
       if (!isSupportedLogic(logic.text)) {
         print("unsupported");
         printDiagnostic(
@@ -1457,8 +1457,12 @@ export const runSmtlibScript = (
         return;
       }
       state.logic = logic.text;
-      state.reader = createSmtlibReader(state.manager, logic.text, settings.parserOptions);
-      if (state.isProofsEnabled !== undefined) resetKernel();
+      if (state.isProofsEnabled === undefined)
+        state.reader = createSmtlibReader(state.manager, logic.text, settings.parserOptions);
+      else {
+        state.reader.restrictSorts(logic.text);
+        resetKernel();
+      }
       if (settings.isPrintingSuccess) print("success");
     },
     "set-info": () => {},
@@ -1489,6 +1493,7 @@ export const runSmtlibScript = (
       if (!(error instanceof SmtParseError)) throw error;
       report(error);
       if (settings.isExitingOnError) return;
+      script.state.reader.reset();
       commands.skip(report);
     }
   }

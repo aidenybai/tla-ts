@@ -147,6 +147,8 @@ export interface SmtList {
   offset: number;
   // Z3 reports an error in making an application at its closing parenthesis.
   end: SmtToken;
+  // The token after a root-obj or an indexed or qualified identifier, where Z3 reports an error in
+  // making it.
   follower?: SmtToken;
 }
 
@@ -215,6 +217,7 @@ interface SmtProblem {
 }
 
 interface ApplicationFrame {
+  kind: "application";
   head: SmtToken;
   indices: number[];
   build?: (args: number[]) => number;
@@ -222,6 +225,43 @@ interface ApplicationFrame {
   start: number;
   next: number;
 }
+
+interface LetFrame {
+  kind: "let";
+  list: SmtList;
+  bindings: SExpr[];
+  scope: Map<string, Binding>;
+  name: string;
+  start: number;
+  next: number;
+}
+
+interface QuantifierFrame {
+  kind: "quantifier";
+  list: SmtList;
+  quantifierKind: number;
+  names: string[];
+  varSorts: number[];
+  boundVars: number[];
+  isBodyParsed: boolean;
+}
+
+interface AttributeFrame {
+  kind: "attribute";
+  list: SmtList;
+  isTermParsed: boolean;
+}
+
+// The kinds of smt2parser.cpp's expr_frame that hold a term of any depth.
+type TermFrame = ApplicationFrame | LetFrame | QuantifierFrame | AttributeFrame;
+
+const QUANTIFIER_KINDS = new Map([
+  ["forall", QUANTIFIER_FORALL],
+  ["exists", QUANTIFIER_EXISTS],
+  ["lambda", QUANTIFIER_LAMBDA],
+]);
+
+const LET_MESSAGE = "invalid let declaration, symbol expected";
 
 const BUILTIN_OPS = new Map<string, number>([
   ["and", OP_AND],
@@ -544,6 +584,9 @@ interface MappedDecl {
 }
 const ARRAY_EXTENSION_LOGICS = new Set(["HORN", "ALL"]);
 
+// arith_decl_plugin::get_sort_names gives these logics no Int.
+const INT_FREE_LOGICS = new Set(["NRA", "QF_NRA", "QF_NTA", "QF_UFNRA"]);
+
 const BUILTIN_NAMES = new Set([
   "true",
   "false",
@@ -557,6 +600,14 @@ const BUILTIN_NAMES = new Set([
   ...SEQ_OP_NAMES.keys(),
   ...CHAR_OP_NAMES.keys(),
 ]);
+
+const FOLLOWED_HEADS = new Set(["root-obj", "_", "as"]);
+
+const FF_LITERAL = /^#f-?[0-9]+m[0-9]+$/;
+const FF_LOGICS = new Set(["QF_FF", "QF_FFA", "ALL", "HO_ALL"]);
+
+// rational::is_unsigned of a numeral token.
+const isUnsigned = (numeral: string) => BigInt(numeral) >= 0n && BigInt(numeral) <= 0xffffffffn;
 
 const SYMBOL_CHARACTER = /[A-Za-z0-9~!@$%^&*_\-+=<>.?/,]/;
 
@@ -607,6 +658,11 @@ const createScanner = (text: string) => {
               { line: state.line, column: getColumn() },
             );
           const current = text[state.index];
+          if (character === "|" && current === "\\")
+            throw new SmtParseError("invalid character '\\' in quoted symbol", {
+              line: state.line,
+              column: getColumn(),
+            });
           advance();
           // Z3's scanner starts the line before it reads past a newline in a quoted symbol or a
           // string, so the columns of the rest of the line count one more.
@@ -695,13 +751,13 @@ export const createCommandReader = (text: string) => {
       offset: open.offset,
       end: open,
     };
-    let rootObject: SmtList | undefined;
+    let followed: SmtList | undefined;
     for (let current = root; ;) {
       const token = take();
       if (token === undefined)
         throw new SmtParseError("unexpected end of file", scanner.getPosition());
-      if (rootObject !== undefined) rootObject.follower = token;
-      rootObject = undefined;
+      if (followed !== undefined) followed.follower = token;
+      followed = undefined;
       if (token.kind === "(") {
         const list: SmtList = {
           kind: "list",
@@ -722,7 +778,8 @@ export const createCommandReader = (text: string) => {
         continue;
       }
       current.end = token;
-      if (isSymbol(current.items[0], "root-obj")) rootObject = current;
+      if (isSymbol(current.items[0]) && FOLLOWED_HEADS.has(current.items[0].text))
+        followed = current;
       state.depth--;
       const parent = stack.pop();
       if (parent === undefined) return root;
@@ -776,7 +833,6 @@ export const createSmtlibReader = (
 ) => {
   const hasArith = logic === undefined || logicHasArith(logic);
   const hasBv = logic === undefined || logicHasBv(logic);
-  const isNumeralAsReal = logic !== undefined && logicHasRealsOnly(logic);
   const logicChecker = createLogicChecker(manager, logic);
   const sortDecls = new Map<string, SortDecl>([
     ["Bool", { kind: "sort", sort: SORT_BOOL }],
@@ -810,6 +866,11 @@ export const createSmtlibReader = (
   const hasFpa = logic === undefined || logicHasFpa(logic);
   const hasArrayExtensions = logic === undefined || ARRAY_EXTENSION_LOGICS.has(logic);
   const hasSeq = logic === undefined || logicHasSeq(logic);
+  const restricted = {
+    isNumeralAsReal: logic !== undefined && logicHasRealsOnly(logic),
+    hasSetSort: hasArrayExtensions,
+    hasFf: logic === undefined || FF_LOGICS.has(logic),
+  };
 
   const getFirstFunc = (name: string) => funcs.get(name)?.[0];
 
@@ -938,7 +999,8 @@ export const createSmtlibReader = (
   ): number => {
     const head = sexpr.items[0];
     if (!isSymbol(head)) throw new SmtParseError("invalid sort, symbol or '_' expected", head);
-    const isArray = ARRAY_SORT_NAMES.has(head.text) || (head.text === "Set" && hasArrayExtensions);
+    const isArray =
+      ARRAY_SORT_NAMES.has(head.text) || (head.text === "Set" && restricted.hasSetSort);
     if (isArray && hasArrays) {
       const parameters = sexpr.items.slice(1).map((item) => parseSort(item, context, bindings));
       if (head.text === "Set" ? parameters.length !== 1 : parameters.length < 2)
@@ -998,7 +1060,7 @@ export const createSmtlibReader = (
   };
 
   const isBuiltinParametricSort = (name: string) =>
-    (hasArrays && (ARRAY_SORT_NAMES.has(name) || (name === "Set" && hasArrayExtensions))) ||
+    (hasArrays && (ARRAY_SORT_NAMES.has(name) || (name === "Set" && restricted.hasSetSort))) ||
     (hasSeq && (name === "Seq" || name === "RegEx")) ||
     (hasFpa && FPA_SORT_NAMES.has(name));
 
@@ -1212,24 +1274,15 @@ export const createSmtlibReader = (
     binders.depth -= count;
   };
 
-  const parseQuantifier = (list: SmtList, kind: number) => {
-    if (list.items.length !== 3)
-      throw new SmtParseError(
-        "invalid quantified expression, syntax error: (forall|exists ((<symbol> <sort>)*) <expr>) expected",
-        list.end,
-      );
-    const bound = bindSortedVars(list.items[1], list);
-    const varSorts = bound.varSorts;
-    // parse_sorted_vars: the variables are created first, the first declared with the largest index,
-    // and the parser's stack holds them until the quantifier is created.
-    const boundVars = varSorts.map((sort, index) =>
-      manager.mkVar(varSorts.length - 1 - index, sort),
-    );
-    for (const boundVar of boundVars) manager.incRef(boundVar);
+  // pop_quant_frame, after the attributes of an annotated body.
+  const mkParsedQuantifier = (frame: QuantifierFrame, parsedBody: number) => {
+    const list = frame.list;
+    const kind = frame.quantifierKind;
+    const varSorts = frame.varSorts;
+    const boundVars = frame.boundVars;
     const bodySExpr = list.items[2];
-    const isAnnotated = bodySExpr.kind === "list" && isSymbol(bodySExpr.items[0], "!");
-    const annotations = bodySExpr.kind === "list" && isAnnotated ? bodySExpr.items : [];
-    const parsedBody = parseTerm(isAnnotated ? annotations[1] : bodySExpr);
+    const annotations =
+      bodySExpr.kind === "list" && isSymbol(bodySExpr.items[0], "!") ? bodySExpr.items : [];
     if (kind !== QUANTIFIER_LAMBDA && manager.sorts[parsedBody] !== SORT_BOOL)
       throw new SmtParseError("expected a formula", bodySExpr);
     const attributes = Array.from(
@@ -1257,11 +1310,24 @@ export const createSmtlibReader = (
         noPatterns.push(noPattern);
         continue;
       }
+      const value = attribute.value ?? (bodySExpr.kind === "list" ? bodySExpr.end : list.end);
+      // consume_attributes: check_int, and curr_unsigned for the weight.
+      if (attribute.keyword.text === ":weight") {
+        if (value.kind !== "numeral")
+          throw new SmtParseError("invalid weight attribute, integer expected", value);
+        if (!isUnsigned(value.text))
+          throw new SmtParseError(
+            "invalid indexed identifier, index is too big to fit in an unsigned machine integer",
+            value,
+          );
+      }
+      if (
+        (attribute.keyword.text === ":qid" || attribute.keyword.text === ":skolemid") &&
+        value.kind !== "symbol"
+      )
+        throw new SmtParseError("invalid attribute value, symbol expected", value);
       if (attribute.keyword.text !== ":pattern") continue;
-      const pattern = parsePattern(
-        attribute.value ?? (bodySExpr.kind === "list" ? bodySExpr.end : list.end),
-        list.end,
-      );
+      const pattern = parsePattern(value, list.end);
       if (pattern === undefined) continue;
       manager.incRef(pattern);
       patterns.push(pattern);
@@ -1300,7 +1366,7 @@ export const createSmtlibReader = (
     const quantifier = manager.mkQuantifier({
       kind,
       sorts: varSorts,
-      names: bound.names,
+      names: frame.names,
       body,
       patterns,
       noPatterns,
@@ -1312,26 +1378,6 @@ export const createSmtlibReader = (
     for (const noPattern of noPatterns) manager.decRef(noPattern);
     for (const boundVar of boundVars) manager.decRef(boundVar);
     return quantifier;
-  };
-
-  const parseLet = (list: SmtList) => {
-    const message = "invalid let declaration, symbol expected";
-    const scope = new Map<string, Binding>();
-    const exprs: number[] = [];
-    for (const binding of expectList(list.items[1], message, list).items) {
-      const pair = expectList(binding, message, binding);
-      const name = expectSymbol(pair.items[0], message, pair);
-      const expr = parseTerm(pair.items[1] ?? pair.end);
-      exprs.push(expr);
-      scope.set(name.text, { kind: "let", depth: binders.depth, expr });
-    }
-    scopes.push(scope);
-    // Z3 takes the last expression on its stack, so a let without a body is its last binding.
-    for (const body of list.items.slice(2)) exprs.push(parseTerm(body));
-    scopes.pop();
-    const result = exprs.at(-1);
-    if (result === undefined) throw new SmtParseError("invalid let expression", list.end);
-    return result;
   };
 
   const expandMacro = (macro: Macro, args: number[]) =>
@@ -1528,6 +1574,8 @@ export const createSmtlibReader = (
   const parseBvNumeral = (list: SmtList) => {
     const name = list.items[1];
     const indices = list.items.slice(2);
+    // parse_qualified_name makes the term once it has read past the closing parenthesis.
+    const at = list.follower ?? list.end;
     if (
       isSymbol(name) &&
       isSeqOpName(name.text) &&
@@ -1537,7 +1585,7 @@ export const createSmtlibReader = (
         name.text,
         [],
         indices.map((index) => (index.kind === "list" ? 0 : Number(index.text))),
-        list.end,
+        at,
       );
     if (
       isSymbol(name) &&
@@ -1550,17 +1598,16 @@ export const createSmtlibReader = (
         indices.map((index) => (index.kind === "list" ? 0 : Number(index.text))),
         [],
       );
-      if (typeof signature === "string")
-        throw new SmtParseError(signature, { line: list.end.line, column: list.end.column + 1 });
+      if (typeof signature === "string") throw new SmtParseError(signature, at);
       return mkFpaAppOf(manager, signature, []);
     }
     const value = isSymbol(name) ? /^bv([0-9]+)$/.exec(name.text) : null;
     if (value === null) throw new SmtUnsupportedError("indexed identifiers");
     const width = list.items[2];
-    if (list.items.length !== 3 || width.kind !== "numeral")
-      throw new SmtParseError("invalid bit-vector constant, index expected", list.end);
+    if (list.items.length !== 3 || width.kind !== "numeral" || !isUnsigned(width.text))
+      throw new SmtParseError("invalid bit-vector constant, index expected", at);
     if (BigInt(width.text) === 0n)
-      throw new SmtParseError("bit-vector size must be greater than zero", list.end);
+      throw new SmtParseError("bit-vector size must be greater than zero", at);
     return manager.mkBvNumeral(BigInt(value[1]), Number(width.text));
   };
 
@@ -1806,6 +1853,13 @@ export const createSmtlibReader = (
     const decls = funcs.get(name);
     const declared = decls === undefined ? undefined : mkDeclaredApp(name, decls, args, range, at);
     if (declared !== undefined) return declared;
+    // cmd_context::mk_app: a constant that starts with #f is a finite-field literal.
+    if (args.length === 0 && name.startsWith("#f")) {
+      if (!FF_LITERAL.test(name))
+        throw new SmtParseError("invalid finite-field literal, expected #f<integer>m<prime>", at);
+      if (!restricted.hasFf) throw new SmtParseError("logic does not support finite fields", at);
+      throw new SmtUnsupportedError("finite-field literals");
+    }
     if (isSeqOpName(name)) return mkSeqTerm(name, args, indices, at, range);
     if (range !== undefined)
       throw new SmtParseError(getUnknownConstantMessage(name, args, range), at);
@@ -1867,9 +1921,9 @@ export const createSmtlibReader = (
       : args.slice(1).reduce((left, right) => mkApp(op, [left, right], at, domainSort), args[0]);
   };
 
-  const parseLeaf = (sexpr: SExpr): number => {
+  const parseLeaf = (sexpr: SmtToken): number => {
     if (sexpr.kind === "numeral")
-      return isNumeralAsReal
+      return restricted.isNumeralAsReal
         ? manager.mkRealNumeral(Rational.of(BigInt(sexpr.text), 1n))
         : manager.mkNumeral(BigInt(sexpr.text));
     if (sexpr.kind === "decimal") {
@@ -1904,36 +1958,7 @@ export const createSmtlibReader = (
             );
       return parseApp(sexpr, [], sexpr);
     }
-    if (sexpr.kind !== "list") throw new SmtParseError("invalid expression", sexpr);
-    const head = sexpr.items[0];
-    if (isSymbol(head, "forall") || isSymbol(head, "exists") || isSymbol(head, "lambda"))
-      return parseQuantifier(
-        sexpr,
-        head.text === "forall"
-          ? QUANTIFIER_FORALL
-          : head.text === "exists"
-            ? QUANTIFIER_EXISTS
-            : QUANTIFIER_LAMBDA,
-      );
-    if (isSymbol(head, "let")) return parseLet(sexpr);
-    // Each attribute applies to the expression the attributes before it made.
-    return sexpr.items.slice(2).reduce(
-      (annotated, keyword, index, attributes) => {
-        if (keyword.kind !== "keyword") return annotated;
-        const value = attributes[index + 1];
-        if (keyword.text === ":lblpos" || keyword.text === ":lblneg")
-          return mkLabel(annotated, keyword.text === ":lblpos", value, sexpr);
-        if (keyword.text !== ":named") return annotated;
-        const name = expectSymbol(value, "invalid attribute value, symbol expected", sexpr).text;
-        manager.incRef(annotated);
-        lastNamed.name = name;
-        lastNamed.expr = annotated;
-        manager.mkMacro(name, annotated);
-        declare(macros, name, { domain: [], range: manager.sorts[annotated], body: annotated });
-        return annotated;
-      },
-      parseTerm(sexpr.items[1] ?? sexpr.end),
-    );
+    throw new SmtParseError("invalid expression", sexpr);
   };
 
   const mkLabel = (expr: number, isPositive: boolean, value: SExpr | undefined, at: SExpr) => {
@@ -1944,7 +1969,7 @@ export const createSmtlibReader = (
   };
 
   const parseTerm = (sexpr: SExpr): number => {
-    const frames: ApplicationFrame[] = [];
+    const frames: TermFrame[] = [];
     const results: number[] = [];
     const enter = (current: SExpr) => {
       if (current.kind !== "list") {
@@ -1953,8 +1978,12 @@ export const createSmtlibReader = (
       }
       const head = current.items[0];
       if (head === undefined)
-        throw new SmtParseError("invalid expression, unexpected ')'", current.end);
+        throw new SmtParseError("invalid expression, '(' or symbol expected", current.end);
       if (head.kind === "list") {
+        // push_app_frame: the head of an application may be a term, which Z3 starts to read.
+        const first = head.items[0] ?? head.end;
+        if (first.kind !== "symbol" && first.kind !== "list")
+          throw new SmtParseError("invalid expression, '(' or symbol expected", first);
         const name = head.items[1];
         const indices = head.items.slice(2);
         if (
@@ -1965,6 +1994,7 @@ export const createSmtlibReader = (
         ) {
           const sort = parseSort(head.items[2], "");
           frames.push({
+            kind: "application",
             head: name,
             indices: [],
             build: (args) => mkArrayTerm(OP_CONST_ARRAY, args, [sort], current.end),
@@ -1983,6 +2013,7 @@ export const createSmtlibReader = (
         ) {
           const mapped = parseFuncDeclRef(head.items[2]);
           frames.push({
+            kind: "application",
             head: name,
             indices: [],
             build: (args) => mkMapTerm(mapped, args, current.end),
@@ -2000,6 +2031,7 @@ export const createSmtlibReader = (
           head.items.length === 3
         ) {
           frames.push({
+            kind: "application",
             head: name,
             indices: [],
             build: (args) =>
@@ -2015,6 +2047,7 @@ export const createSmtlibReader = (
         if (isSymbol(head.items[0], "as") && isSymbol(name) && head.items.length === 3) {
           const range = parseSort(head.items[2], "Invalid qualified identifier");
           frames.push({
+            kind: "application",
             head: name,
             indices: [],
             build: (args) => parseApp(name, args, current.end, [], range),
@@ -2034,6 +2067,7 @@ export const createSmtlibReader = (
             Rational.of(BigInt(index.kind === "list" ? 0 : index.text)),
           );
           frames.push({
+            kind: "application",
             head: name,
             indices: [],
             build: (args) => mkPbTerm(name.text, args, parameters, current.end),
@@ -2051,6 +2085,7 @@ export const createSmtlibReader = (
         )
           throw new SmtUnsupportedError("indexed and qualified identifiers");
         frames.push({
+          kind: "application",
           head: name,
           indices: indices.map((index) => (index.kind === "list" ? 0 : Number(index.text))),
           list: current,
@@ -2060,7 +2095,7 @@ export const createSmtlibReader = (
         return;
       }
       if (head.kind !== "symbol")
-        throw new SmtParseError("invalid function application, symbol expected", head);
+        throw new SmtParseError("invalid expression, '(' or symbol expected", head);
       if (head.text === "_") {
         results.push(parseBvNumeral(current));
         return;
@@ -2071,7 +2106,7 @@ export const createSmtlibReader = (
           parseApp(
             qualified,
             [],
-            qualified,
+            current.follower ?? qualified,
             [],
             parseSort(current.items[2], "Invalid qualified identifier"),
           ),
@@ -2084,13 +2119,132 @@ export const createSmtlibReader = (
       }
       if (head.text === "as" || head.text === "match")
         throw new SmtUnsupportedError(`the expression ${head.text}`);
-      if (["forall", "exists", "lambda", "let", "!"].includes(head.text))
-        results.push(parseLeaf(current));
-      else frames.push({ head, indices: [], list: current, start: results.length, next: 1 });
+      if (head.text === "let") {
+        frames.push({
+          kind: "let",
+          list: current,
+          bindings: expectList(current.items[1], LET_MESSAGE, current).items,
+          scope: new Map(),
+          name: "",
+          start: results.length,
+          next: 0,
+        });
+        return;
+      }
+      if (head.text === "!") {
+        frames.push({ kind: "attribute", list: current, isTermParsed: false });
+        return;
+      }
+      const quantifierKind = QUANTIFIER_KINDS.get(head.text);
+      if (quantifierKind === undefined) {
+        frames.push({
+          kind: "application",
+          head,
+          indices: [],
+          list: current,
+          start: results.length,
+          next: 1,
+        });
+        return;
+      }
+      if (current.items.length !== 3)
+        throw new SmtParseError(
+          "invalid quantified expression, syntax error: (forall|exists ((<symbol> <sort>)*) <expr>) expected",
+          current.end,
+        );
+      const bound = bindSortedVars(current.items[1], current);
+      // parse_sorted_vars: the variables are created first, the first declared with the largest index,
+      // and the parser's stack holds them until the quantifier is created.
+      const boundVars = bound.varSorts.map((sort, index) =>
+        manager.mkVar(bound.varSorts.length - 1 - index, sort),
+      );
+      for (const boundVar of boundVars) manager.incRef(boundVar);
+      frames.push({
+        kind: "quantifier",
+        list: current,
+        quantifierKind,
+        names: bound.names,
+        varSorts: bound.varSorts,
+        boundVars,
+        isBodyParsed: false,
+      });
     };
     enter(sexpr);
     while (frames.length > 0) {
       const frame = frames[frames.length - 1];
+      if (frame.kind === "let") {
+        const bindings = frame.bindings;
+        if (frame.next > 0 && frame.next <= bindings.length)
+          frame.scope.set(frame.name, {
+            kind: "let",
+            depth: binders.depth,
+            expr: results[results.length - 1],
+          });
+        if (frame.next === bindings.length) scopes.push(frame.scope);
+        if (frame.next < bindings.length) {
+          const binding = bindings[frame.next++];
+          const pair = expectList(binding, LET_MESSAGE, binding);
+          frame.name = expectSymbol(pair.items[0], LET_MESSAGE, pair).text;
+          enter(pair.items[1] ?? pair.end);
+          continue;
+        }
+        const body = frame.list.items[2 + frame.next++ - bindings.length];
+        if (body !== undefined) {
+          enter(body);
+          continue;
+        }
+        scopes.pop();
+        frames.pop();
+        // Z3 takes the last expression on its stack, so a let without a body is its last binding.
+        if (results.length === frame.start)
+          throw new SmtParseError("invalid let expression", frame.list.end);
+        results.splice(frame.start, results.length - frame.start - 1);
+        continue;
+      }
+      if (frame.kind === "quantifier") {
+        if (frame.isBodyParsed) {
+          frames.pop();
+          results[results.length - 1] = mkParsedQuantifier(frame, results[results.length - 1]);
+          continue;
+        }
+        frame.isBodyParsed = true;
+        const body = frame.list.items[2];
+        enter(
+          body.kind === "list" && isSymbol(body.items[0], "!") ? (body.items[1] ?? body.end) : body,
+        );
+        continue;
+      }
+      if (frame.kind === "attribute") {
+        if (!frame.isTermParsed) {
+          frame.isTermParsed = true;
+          enter(frame.list.items[1] ?? frame.list.end);
+          continue;
+        }
+        frames.pop();
+        // Each attribute applies to the expression the attributes before it made.
+        results[results.length - 1] = frame.list.items.slice(2).reduce(
+          (annotated, keyword, index, attributes) => {
+            if (keyword.kind !== "keyword") return annotated;
+            const value = attributes[index + 1];
+            if (keyword.text === ":lblpos" || keyword.text === ":lblneg")
+              return mkLabel(annotated, keyword.text === ":lblpos", value, frame.list);
+            if (keyword.text !== ":named") return annotated;
+            const name = expectSymbol(
+              value,
+              "invalid attribute value, symbol expected",
+              frame.list,
+            ).text;
+            manager.incRef(annotated);
+            lastNamed.name = name;
+            lastNamed.expr = annotated;
+            manager.mkMacro(name, annotated);
+            declare(macros, name, { domain: [], range: manager.sorts[annotated], body: annotated });
+            return annotated;
+          },
+          results[results.length - 1],
+        );
+        continue;
+      }
       if (frame.next < frame.list.items.length) {
         enter(frame.list.items[frame.next++]);
         continue;
@@ -2585,6 +2739,21 @@ export const createSmtlibReader = (
     for (const restore of undo.splice(start).reverse()) restore();
   };
 
+  // parser::reset, after an error: the bindings of the term that failed are gone.
+  const reset = () => {
+    scopes.length = 0;
+    binders.depth = 0;
+  };
+
+  // cmd_context::set_logic on a manager that is in use: restrict_builtin_sorts takes the sorts the
+  // logic lacks, and the declarations and the operators stay.
+  const restrictSorts = (name: string) => {
+    if (logicHasRealsOnly(name)) restricted.isNumeralAsReal = true;
+    if (!ARRAY_EXTENSION_LOGICS.has(name)) restricted.hasSetSort = false;
+    if (INT_FREE_LOGICS.has(name)) sortDecls.delete("Int");
+    restricted.hasFf = FF_LOGICS.has(name);
+  };
+
   const isUsed = (name: string) => funcs.has(name) || BUILTIN_NAMES.has(name);
 
   const isClashing = (decl: number) => {
@@ -2625,6 +2794,8 @@ export const createSmtlibReader = (
     getLogicError: logicChecker.checkExpr,
     push,
     pop,
+    reset,
+    restrictSorts,
     isUsed,
     isClashing,
     getDeclaredFuncs,
@@ -2654,7 +2825,7 @@ export const parseSmtlib = (
   report: (error: SmtParseError) => void,
 ): SmtProblem => {
   const commands = createCommandReader(text);
-  const state = { reader: createSmtlibReader(manager), logic: "", rlimit: 0 };
+  const state = { reader: createSmtlibReader(manager), logic: "", rlimit: 0, isInUse: false };
   const assertions: number[] = [];
   const runCommand = (list: SmtList) => {
     const name = expectSymbol(list.items[0], "invalid command, symbol expected", list).text;
@@ -2670,17 +2841,20 @@ export const parseSmtlib = (
     if (name === "set-logic") {
       if (!isSymbol(option))
         throw new SmtParseError("invalid logic name, symbol expected", option ?? list.end);
-      if (state.logic !== "") throw new SmtParseError("the logic has already been set", list.end);
+      if (state.logic !== "") throw new SmtParseError("the logic has already been set", option);
       if (assertions.length > 0)
-        throw new SmtParseError("logic must be set before initialization", list.end);
+        throw new SmtParseError("logic must be set before initialization", option);
       if (!isSupportedLogic(option.text)) return;
       state.logic = option.text;
-      state.reader = createSmtlibReader(manager, option.text);
+      if (state.isInUse) state.reader.restrictSorts(option.text);
+      else state.reader = createSmtlibReader(manager, option.text);
     } else if (DECLARATIONS.has(name)) {
+      state.isInUse = true;
       if (name.startsWith("define-"))
         throw new SmtUnsupportedError(`the command ${name} is not supported`);
       state.reader.declareCommand(list);
     } else if (name === "assert") {
+      state.isInUse = true;
       const assertion = state.reader.parseFormula(list.items[1] ?? list.end);
       const logicError = state.reader.getLogicError(assertion);
       if (logicError !== undefined) {
@@ -2702,6 +2876,7 @@ export const parseSmtlib = (
     } catch (error) {
       if (!(error instanceof SmtParseError)) throw error;
       report(error);
+      state.reader.reset();
       commands.skip(report);
     }
   }
