@@ -3,6 +3,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
+import { decideIsabelle } from "../../src/prover/isabelle/decide";
+import { parseTheory } from "../../src/prover/isabelle/isar/theory";
+import { runTheory } from "../../src/prover/isabelle/isar/toplevel";
+import { loadLogic } from "../../src/prover/isabelle/tla/logic";
 import { CLI } from "./cli-harness";
 
 const directories: string[] = [];
@@ -404,5 +408,90 @@ THEOREM ASSUME FALSE PROVE 1 + 1 = 2
       "[ERROR]: 1/3 obligations failed.",
     ]);
     expect(result.status).toBe(0);
+  });
+});
+
+const wrapTheory = (body: string) => `theory T imports Constant begin\n${body}\nend\n`;
+
+const decideTheory = (body: string) => decideIsabelle(wrapTheory(body), { timeLimitMs: 30_000 });
+
+const FOO = 'definition foo where "foo \\<equiv> {}"';
+const FOO_EMPTY = '"foo = {}" by (simp add: foo_def)';
+const NOT_IN_FOO = '"(y \\<in> foo) = FALSE"';
+const EMPTY = 'definition P where "P(x) \\<equiv> x = {}"';
+const BY_DEFINITION = "by (simp add: P_def)";
+
+describe("Isabelle's declaration attributes add a theorem to the set its methods read", () => {
+  it.each([
+    ["a lemma", `${FOO}\nlemma a [simp]: ${FOO_EMPTY}\nlemma b: ${NOT_IN_FOO} by simp`],
+    [
+      "a lemma's statement",
+      `${FOO}\nlemma shows a [simp]: ${FOO_EMPTY}\nlemma ${NOT_IN_FOO} by simp`,
+    ],
+    [
+      "a lemma's assumption",
+      `consts foo :: "c"\nlemma fixes y assumes a [simp]: "foo = {}" shows ${NOT_IN_FOO} by simp`,
+    ],
+    [
+      "have",
+      `${FOO}\nlemma fixes y shows ${NOT_IN_FOO}\nproof -\nhave a [simp]: ${FOO_EMPTY}\nshow ${NOT_IN_FOO} by simp\nqed`,
+    ],
+  ])("simp of %s", (_name, body) => {
+    expect(decideTheory(body)).toBe("unsat");
+    expect(decideTheory(body.replace(" [simp]", ""))).toBe("unknown");
+  });
+
+  it("simp of a definition, of a declare and of each assumption joined by and", () => {
+    expect(
+      decideTheory(`definition foo [simp]: "foo \\<equiv> {}"\nlemma ${NOT_IN_FOO} by simp`),
+    ).toBe("unsat");
+    expect(
+      decideTheory(`${FOO}\nlemma a: ${FOO_EMPTY}\ndeclare a [simp]\nlemma ${NOT_IN_FOO} by simp`),
+    ).toBe("unsat");
+    expect(
+      decideTheory(
+        'consts foo :: "c"\nconsts bar :: "c"\nlemma fixes y shows "foo = {} \\<Longrightarrow> bar = {} \\<Longrightarrow> (y \\<in> foo) = (y \\<in> bar)"\nproof -\nassume a [simp]: "foo = {}" and b [simp]: "bar = {}"\nshow "(y \\<in> foo) = (y \\<in> bar)" by simp\nqed',
+      ),
+    ).toBe("unsat");
+  });
+
+  it.each([
+    ["intro", `"x = {} \\<Longrightarrow> P(x)" ${BY_DEFINITION}\nlemma "P({})" by blast`],
+    [
+      "elim",
+      `"P(x) \\<Longrightarrow> (x = {} \\<Longrightarrow> Q) \\<Longrightarrow> Q" ${BY_DEFINITION}\nlemma "P(x) \\<Longrightarrow> x = {}" by blast`,
+    ],
+    [
+      "dest",
+      `"P(x) \\<Longrightarrow> x = {}" ${BY_DEFINITION}\nlemma "P(x) \\<Longrightarrow> x = {}" by blast`,
+    ],
+  ])("%s", (attribute, rest) => {
+    expect(decideTheory(`${EMPTY}\nlemma p [${attribute}]: ${rest}`)).toBe("unsat");
+    expect(decideTheory(`${EMPTY}\nlemma p: ${rest}`)).toBe("unknown");
+  });
+
+  it("gives an attribute of a later part the fact an earlier part names", () => {
+    expect(
+      decideTheory(
+        'consts foo :: "c"\nlemma fixes y assumes a: "foo = {}" and b [OF a]: "foo = {} \\<Longrightarrow> y = {}" shows "y = {}" by (rule b)',
+      ),
+    ).toBe("unsat");
+  });
+});
+
+describe("the where attribute quotes the variable a theorem lacks, as Isabelle does", () => {
+  it.each([
+    ["?zz", '"?zz"'],
+    ["zz1", '"?zz1"'],
+  ])("%s", (variable, printed) => {
+    expect(() =>
+      runTheory(
+        loadLogic(),
+        parseTheory(
+          wrapTheory(`lemma fixes x shows "x = x" by (rule refl[where ${variable} = "x"])`),
+        ),
+        { deadline: Date.now() + 30_000, signal: undefined },
+      ),
+    ).toThrow(new RegExp(`^No such variable in theorem: ${printed.replace("?", "\\?")}$`));
   });
 });

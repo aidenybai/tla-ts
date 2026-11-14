@@ -26,7 +26,7 @@ describe("the where attribute names its variables as Args.var reads them", () =>
 
   it("reports a variable the theorem lacks", () => {
     expect(() => run('lemma fixes x shows "x = x" by (rule refl[where ?zz = "x"])')).toThrow(
-      "No such variable in theorem: ?zz",
+      'No such variable in theorem: "?zz"',
     );
   });
 });
@@ -59,10 +59,10 @@ describe("a fact keeps the attributes of its name", () => {
   });
 
   it.each([
-    ["a lemma", `lemma a [simp]: "${FORALL}" by simp`],
-    ["a definition", 'definition foo where foo_def [simp]: "foo \\<equiv> {}"'],
+    ["a lemma", `lemma a [iff]: "${FORALL}" by simp`],
+    ["a definition", 'definition foo where foo_def [iff]: "foo \\<equiv> {}"'],
   ])("rejects an attribute of %s that it cannot apply", (_name, body) => {
-    expect(() => run(body)).toThrow("Unsupported attribute: simp");
+    expect(() => run(body)).toThrow("Unsupported attribute: iff");
     expect(decide(body)).toBe("unknown");
   });
 });
