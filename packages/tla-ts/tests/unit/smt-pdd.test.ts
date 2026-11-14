@@ -337,6 +337,7 @@ describe("nla grobner", () => {
     const base = lra.addVar(0, isXInt);
     const monic = lra.addVar(1, true);
     const core = new NlaCore(lra, new ResourceLimit(Infinity));
+    core.grobner.updateParams();
     core.addMonic(monic, [base, base]);
     const constraints = addBounds(lra, monic, base);
     for (const constraint of constraints) lra.activate(constraint);

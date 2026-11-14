@@ -382,11 +382,12 @@ export class Solver {
     return this.ext !== null && (!this.isProbing || this.atBaseLvl());
   }
 
-  mkClause(lits: number[], isLearned = false) {
+  mkClause(lits: number[], isLearned = false, isTheory = false) {
     this.isModelCurrent = false;
     return this.mkClauseCore(
       this.userScopeLiterals.length === 0 ? lits : [...lits, ...this.userScopeLiterals],
       isLearned,
+      isTheory,
     );
   }
 
@@ -395,8 +396,8 @@ export class Solver {
     this.arena.delClause(clause);
   }
 
-  mkClauseCore(lits: number[], isRedundant: boolean): number {
-    if (!isRedundant) {
+  mkClauseCore(lits: number[], isRedundant: boolean, isTheory = false): number {
+    if (!isRedundant || isTheory) {
       if (!this.simplifyClause(lits)) return -1;
       if (!this.isSearching) this.mc.addClause(lits);
     }

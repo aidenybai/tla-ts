@@ -59,6 +59,18 @@ const mkBound = (manager: AstManager, target: number) => {
           );
 };
 
+// bv_util::mk_bv_divrem_bound: the clause b = 0 or bound, for a division or remainder by b.
+export const mkBvDivremBound = (manager: AstManager, term: number) => {
+  if (manager.kinds[term] !== KIND_APP || !DIVREM_OPS.has(manager.getOp(term))) return [];
+  const divisor = manager.getArg(term, 1);
+  if (manager.isBvNumeral(divisor)) return [];
+  const bound = mkBound(manager, term);
+  return [
+    manager.mkEq(divisor, manager.mkBvNumeral(0n, manager.getBvSize(manager.sorts[divisor]))),
+    bound,
+  ];
+};
+
 export const runBvDivremBounds = (manager: AstManager) => (goal: Goal) => {
   runSimplifier(goal, true, (state) => ({
     reduce: () => {
@@ -73,12 +85,9 @@ export const runBvDivremBounds = (manager: AstManager) => (goal: Goal) => {
         manager.pushArgs(expr, todo);
       }
       for (const target of targets) {
-        const divisor = manager.getArg(target, 1);
-        if (manager.isBvNumeral(divisor)) continue;
         const outer = manager.beginTemporaries();
-        const bound = mkBound(manager, target);
-        const zero = manager.mkBvNumeral(0n, manager.getBvSize(manager.sorts[divisor]));
-        goal.assert(manager.mkOr([manager.mkEq(divisor, zero), bound]));
+        const clause = mkBvDivremBound(manager, target);
+        if (clause.length > 0) goal.assert(manager.mkOr(clause));
         manager.endTemporaries(outer);
       }
     },

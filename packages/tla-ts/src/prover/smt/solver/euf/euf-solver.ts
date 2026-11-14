@@ -1,7 +1,7 @@
 // Ported from Z3 (src/sat/smt/euf_solver.h, src/sat/smt/euf_solver.cpp,
 // src/sat/smt/euf_internalize.cpp, src/sat/smt/euf_model.cpp, src/util/top_sort.h), MIT license,
 // see z3-license.txt.
-import { SmtUnsupportedError } from "../../../../errors";
+import { SmtInvariantError, SmtUnsupportedError } from "../../../../errors";
 import {
   type AstManager,
   FAMILY_BASIC,
@@ -31,7 +31,13 @@ import {
   type Solver,
 } from "../sat/solver";
 import { Egraph, type Enode, getClass, mkExternal, NULL_BOOL_VAR } from "./egraph";
-import { type Dependencies, type ThExplain, type ThSolver, TrailStack } from "./th-solver";
+import {
+  addDependency,
+  type Dependencies,
+  type ThExplain,
+  type ThSolver,
+  TrailStack,
+} from "./th-solver";
 
 // The sat_internalizer that goal2sat gives the euf solver.
 export interface EufInternalizer {
@@ -446,7 +452,7 @@ export class EufSolver implements SatExtension {
     return setShared(false);
   }
 
-  private isBetaRedex(parent: Enode, node: Enode) {
+  isBetaRedex(parent: Enode, node: Enode) {
     for (const thVar of parent.thVars)
       if (this.id2solver.get(thVar.id)?.isBetaRedex(parent, node) === true) return true;
     return false;
@@ -495,8 +501,8 @@ export class EufSolver implements SatExtension {
     return node;
   }
 
-  addClause(lits: number[]) {
-    this.s.mkClause(lits);
+  addClause(lits: number[], isRedundant: boolean) {
+    this.s.mkClause(lits, isRedundant, true);
   }
 
   // euf_solver.cpp
@@ -579,6 +585,10 @@ export class EufSolver implements SatExtension {
     this.egraph.explainEq(this.explanation, first, second);
     this.explainQueue(antecedents);
     this.egraph.endExplain();
+  }
+
+  addEqAntecedent(first: Enode, second: Enode) {
+    this.egraph.explainEq(this.explanation, first, second);
   }
 
   getThAntecedents(explain: ThExplain, antecedents: number[]) {
@@ -918,7 +928,9 @@ export class EufSolver implements SatExtension {
     return false;
   }
 
-  flushRoots() {}
+  flushRoots() {
+    for (const solver of this.solvers) solver.flushRoots();
+  }
 
   initUseList() {}
 
@@ -939,7 +951,7 @@ export class EufSolver implements SatExtension {
     this.values = [];
     this.values2rootMap = null;
     const userSorts = new UserSortValues(this.manager);
-    const deps = new EnodeTopSort();
+    const deps = new EnodeTopSort(this.manager);
     this.collectDependencies(userSorts, deps);
     deps.sort();
     this.dependencies2values(userSorts, deps, model);
@@ -947,6 +959,23 @@ export class EufSolver implements SatExtension {
     for (const solver of this.solvers) solver.finalizeModel(model);
     userSorts.registerWith(model);
     return model;
+  }
+
+  // validate_model, for its side effect: evaluating an application of a partial theory function,
+  // such as a division by zero, completes its interpretation with some value.
+  validateModel(model: ProtoModel) {
+    if (this.hasUnhandled() || this.solvers.some((solver) => solver.hasUnhandled())) return;
+    const manager = this.manager;
+    for (const node of this.egraph.nodes) {
+      const expr = node.owner;
+      if (!manager.isBool(expr) || manager.hasQuantifierFlags[expr] === 1) continue;
+      if (node.boolVar === NULL_BOOL_VAR) continue;
+      const value = model.eval(expr, false);
+      if (
+        this.s.value(2 * node.boolVar) === L_TRUE ? manager.isFalse(value) : manager.isTrue(value)
+      )
+        throw new SmtInvariantError("the euf model falsifies an assignment");
+    }
   }
 
   private includeFuncInterp(decl: number) {
@@ -978,7 +1007,7 @@ export class EufSolver implements SatExtension {
           manager.sorts[root.owner] === manager.sorts[node.owner] &&
           !freshSet.has(root)
         )
-          deps.add(node, root);
+          addDependency(deps.deps, node, root);
   }
 
   private dependencies2values(userSorts: UserSortValues, deps: EnodeTopSort, model: ProtoModel) {
@@ -1036,7 +1065,7 @@ export class EufSolver implements SatExtension {
         continue;
       const value = values[node.root.owner];
       if (value === undefined) continue;
-      const arity = manager.funcDecls[decl].domain.length;
+      const arity = node.numArgs;
       if (arity === 0) {
         model.registerConst(decl, value);
         continue;
@@ -1129,14 +1158,10 @@ class EnodeTopSort {
   private stackS: Enode[] = [];
   private stackP: Enode[] = [];
 
+  constructor(private manager: AstManager) {}
+
   insert(node: Enode, deps: Enode[] | null) {
     this.deps.set(node, deps);
-  }
-
-  add(node: Enode, dep: Enode) {
-    const existing = this.deps.get(node);
-    if (existing === undefined || existing === null) this.deps.set(node, [dep]);
-    else if (!existing.includes(dep)) existing.push(dep);
   }
 
   sort() {
@@ -1161,7 +1186,7 @@ class EnodeTopSort {
     this.stackP.push(node);
     const deps = this.deps.get(node);
     if (deps !== null && deps !== undefined)
-      for (const dep of sortByExprId(deps)) this.traverse(dep);
+      for (const dep of sortByExprId(this.manager, deps)) this.traverse(dep);
     if (node !== this.stackP.at(-1)) return;
     const partition = this.sorted.length;
     for (let top = this.stackS.pop(); top !== undefined; top = this.stackS.pop()) {
@@ -1174,8 +1199,8 @@ class EnodeTopSort {
 }
 
 // An obj_hashtable<enode> iterates its nodes by hash, which is the id of their expression.
-const sortByExprId = (nodes: readonly Enode[]) => {
-  const table = new ObjHashtable((id) => id);
+const sortByExprId = (manager: AstManager, nodes: readonly Enode[]) => {
+  const table = new ObjHashtable((expr) => manager.ids[expr]);
   const byId = new Map<number, Enode>();
   for (const node of nodes) {
     table.add(node.owner);

@@ -110,9 +110,14 @@ interface BvDiseq {
   readonly index: number;
 }
 
-type Blast = (blaster: BitBlaster, bits: number[][], parameter: number, out: number[]) => void;
+export type Blast = (
+  blaster: BitBlaster,
+  bits: number[][],
+  parameter: number,
+  out: number[],
+) => void;
 
-const UNARY_BLASTS = new Map<number, Blast>([
+export const UNARY_BLASTS = new Map<number, Blast>([
   [OP_BNEG, (blaster, bits, _parameter, out) => blaster.mkNeg(bits[0], out)],
   [OP_BNOT, (blaster, bits, _parameter, out) => blaster.mkNotBits(bits[0], out)],
   [OP_BREDAND, (blaster, bits, _parameter, out) => blaster.mkRedand(bits[0], out)],
@@ -129,7 +134,7 @@ const UNARY_BLASTS = new Map<number, Blast>([
   ],
 ]);
 
-const BINARY_BLASTS = new Map<number, Blast>([
+export const BINARY_BLASTS = new Map<number, Blast>([
   [OP_BUDIV_I, (blaster, bits, _parameter, out) => blaster.mkUdiv(bits[0], bits[1], out)],
   [OP_BSDIV_I, (blaster, bits, _parameter, out) => blaster.mkSdiv(bits[0], bits[1], out)],
   [OP_BUREM_I, (blaster, bits, _parameter, out) => blaster.mkUrem(bits[0], bits[1], out)],
@@ -150,7 +155,7 @@ const BINARY_BLASTS = new Map<number, Blast>([
 ]);
 
 // MK_AC_BINARY: folded from the last argument to the first.
-const AC_BLASTS = new Map<number, Blast>([
+export const AC_BLASTS = new Map<number, Blast>([
   [OP_BADD, (blaster, bits, _parameter, out) => blaster.mkAdder(bits[0], bits[1], out)],
   [OP_BMUL, (blaster, bits, _parameter, out) => blaster.mkMultiplier(bits[0], bits[1], out)],
   [OP_BAND, (blaster, bits, _parameter, out) => blaster.mkAndBits(bits[0], bits[1], out)],

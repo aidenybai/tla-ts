@@ -3,6 +3,7 @@
 import { SmtInvariantError } from "../../../errors";
 import { mkArrayApp, mkArrayDecl, mkAsArray } from "./array-decl-plugin";
 import {
+  type AstManager,
   FAMILY_ARRAY,
   OP_ARRAY_DEFAULT,
   OP_ARRAY_EXT,
@@ -35,6 +36,25 @@ const DEFAULT_MAP_FINGERPRINT = 0xffffffff - 112;
 const DEFAULT_STORE_FINGERPRINT = 0xffffffff - 113;
 const DEFAULT_CONST_FINGERPRINT = 0xffffffff - 115;
 const LARGE_DOMAIN_SIZE = 1n << 14n;
+
+const getDomainSizes = (manager: AstManager, array: number) =>
+  manager
+    .getSortParameters(manager.sorts[array])
+    .slice(0, -1)
+    .map((domain) => manager.getSortSize(domain));
+
+export const hasUnitaryDomain = (manager: AstManager, array: number) =>
+  getDomainSizes(manager, array).every((size) => size === 1n);
+
+export const hasLargeDomain = (manager: AstManager, array: number) => {
+  let size = 1n;
+  for (const domainSize of getDomainSizes(manager, array)) {
+    if (domainSize === SORT_SIZE_INFINITE || domainSize === SORT_SIZE_VERY_BIG) return true;
+    size *= domainSize;
+    if (size >= LARGE_DOMAIN_SIZE) return true;
+  }
+  return false;
+};
 
 interface Reach {
   root: Enode;
@@ -843,29 +863,6 @@ export class TheoryArray extends Theory {
     return this.tryAssignEq(asArraySelect, value);
   }
 
-  private getDomainSizes(array: number) {
-    const manager = this.manager;
-    const sort = manager.sorts[array];
-    return manager
-      .getSortParameters(sort)
-      .slice(0, -1)
-      .map((domain) => manager.getSortSize(domain));
-  }
-
-  private hasUnitaryDomain(array: number) {
-    return this.getDomainSizes(array).every((size) => size === 1n);
-  }
-
-  private hasLargeDomain(array: number) {
-    let size = 1n;
-    for (const domainSize of this.getDomainSizes(array)) {
-      if (domainSize === SORT_SIZE_INFINITE || domainSize === SORT_SIZE_VERY_BIG) return true;
-      size *= domainSize;
-      if (size >= LARGE_DOMAIN_SIZE) return true;
-    }
-    return false;
-  }
-
   private mkEpsilon(sort: number) {
     const manager = this.manager;
     let epsilon = this.epsilons.get(sort);
@@ -902,10 +899,10 @@ export class TheoryArray extends Theory {
     const storeExpr = store.owner;
     const array = store.getArg(0).owner;
     const storeDefault = this.mkDefault(storeExpr);
-    const arrayDefault = this.hasUnitaryDomain(storeExpr)
+    const arrayDefault = hasUnitaryDomain(manager, storeExpr)
       ? store.getArg(store.numArgs - 1).owner
       : this.mkDefault(array);
-    if (!this.hasUnitaryDomain(storeExpr) && !this.hasLargeDomain(storeExpr)) {
+    if (!hasUnitaryDomain(manager, storeExpr) && !hasLargeDomain(manager, storeExpr)) {
       const epsilons: number[] = [];
       const diagonals: number[] = [];
       for (let index = 1; index + 1 < store.numArgs; index++) {

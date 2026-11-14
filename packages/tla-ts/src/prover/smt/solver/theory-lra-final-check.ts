@@ -1,21 +1,11 @@
 // Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt.
-import {
-  OP_ADD,
-  OP_GE,
-  OP_LE,
-  OP_MUL,
-  OP_POWER,
-  OP_POWER0,
-  OP_TO_REAL,
-  SORT_BOOL,
-  SORT_INT,
-  SORT_REAL,
-} from "./ast";
+import { OP_POWER, OP_POWER0 } from "./ast";
 import { FC_CONTINUE, FC_DONE, FC_GIVEUP } from "./theory";
 import { TheoryJustification } from "./enode";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { getVar, Literal, negate } from "./literal";
-import { getGcd, getLcm, Rational } from "./rational";
+import { Rational } from "./rational";
+import { mkBoundAtom, mkTermEqSides } from "./arith-terms";
 import { KIND_EQ, KIND_GE, KIND_GT, KIND_LT, KIND_NE } from "./lp/constraints";
 import type { Explanation } from "./lp/explanation";
 import { IntSolver } from "./lp/int-solver";
@@ -174,13 +164,9 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
 
   private mkTermEq(term: LarTerm, offset: Rational) {
     const manager = this.manager;
-    const coeffs = this.getTermCoeffs(term);
-    const isInt =
-      offset.isInt() && coeffs.every((entry) => this.isIntVar(entry[0]) && entry[1].isInt());
-    const left = this.coeffsToApp(coeffs, isInt);
-    const right = manager.mkNumeralOfSort(offset, isInt ? SORT_INT : SORT_REAL);
-    if (left === right) return manager.trueExpr;
-    const atom = manager.mkEq(left, right);
+    const sides = mkTermEqSides(manager, this.solver, term, offset, (thVar) => this.getExpr(thVar));
+    if (sides[0] === sides[1]) return manager.trueExpr;
+    const atom = manager.mkEq(sides[0], sides[1]);
     this.context.internalize(atom, true);
     this.context.markAsRelevant(atom);
     return atom;
@@ -223,66 +209,13 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
     return move.kind === "sat";
   }
 
-  private mkBound(lpTerm: LarTerm, inputOffset: Rational, inputIsLower: boolean) {
-    const manager = this.manager;
+  private mkBound(lpTerm: LarTerm, offset: Rational, isLower: boolean) {
     const context = this.context;
-    let coeffs = this.getTermCoeffs(lpTerm);
-    let offset = inputOffset;
-    let isLower = inputIsLower;
-    let lcm = offset.den;
-    const isInt = coeffs.every((entry) => this.isIntVar(entry[0]));
-    if (isInt) {
-      for (const entry of coeffs) lcm = getLcm(lcm, entry[1].den);
-      if (lcm !== 1n) {
-        const scale = Rational.of(lcm);
-        offset = offset.mul(scale);
-        coeffs = coeffs.map((entry) => [entry[0], entry[1].mul(scale)]);
-      }
-      let gcd = 0n;
-      for (const entry of coeffs) gcd = getGcd(gcd, entry[1].num);
-      if (gcd !== 0n && gcd !== 1n) {
-        const divisor = Rational.of(gcd);
-        coeffs = coeffs.map((entry) => [entry[0], entry[1].div(divisor)]);
-        offset = isLower ? offset.div(divisor).ceil() : offset.div(divisor).floor();
-      }
-    }
-    if (coeffs.length > 0 && coeffs[0][1].isNegative()) {
-      offset = offset.neg();
-      isLower = !isLower;
-      coeffs = coeffs.map((entry) => [entry[0], entry[1].neg()]);
-    }
-    const sort = isInt ? SORT_INT : SORT_REAL;
-    const term = this.coeffsToApp(coeffs, isInt);
-    const atom = manager.mkApp(
-      isLower ? OP_GE : OP_LE,
-      [term, manager.mkNumeralOfSort(offset, sort)],
-      SORT_BOOL,
+    const atom = mkBoundAtom(this.manager, this.solver, lpTerm, offset, isLower, (thVar) =>
+      this.getExpr(thVar),
     );
     context.internalize(atom, true);
     context.markAsRelevant(atom);
     return atom;
-  }
-
-  // Int expressions of a Real sum are coerced to Real.
-  protected coeffsToApp(coeffs: [number, Rational][], isInt: boolean) {
-    const manager = this.manager;
-    const sort = isInt ? SORT_INT : SORT_REAL;
-    const summands = coeffs
-      .filter((entry) => !entry[1].isZero())
-      .map((entry) => {
-        const original = this.getExpr(entry[0]);
-        const expr =
-          !isInt && manager.isInt(original)
-            ? manager.mkApp(OP_TO_REAL, [original], SORT_REAL)
-            : original;
-        return entry[1].equals(Rational.one)
-          ? expr
-          : manager.mkApp(OP_MUL, [manager.mkNumeralOfSort(entry[1], sort), expr], sort);
-      });
-    return summands.length === 0
-      ? manager.mkNumeralOfSort(Rational.zero, sort)
-      : summands.length === 1
-        ? summands[0]
-        : manager.mkApp(OP_ADD, summands, sort);
   }
 }
