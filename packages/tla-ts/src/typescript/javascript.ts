@@ -657,6 +657,10 @@ Power(base, exponent) ==
            [] ~IsNegative(exponent) -> Infinity
            [] IsOdd(exponent) -> NegativeZero
            [] OTHER -> 0
+    [] /\\ IsNegative(base)
+       /\\ base # NegativeZero
+       /\\ exponent \\notin Infinities
+       /\\ ~IsIntegral(exponent) -> NaN
     [] IsBig(base) /\\ exponent \\notin Infinities -> BeyondInteger
     [] ~IsBig(base) /\\ base = 0 -> IF IsNegative(exponent) THEN Infinity ELSE 0
     [] base = NegativeZero ->

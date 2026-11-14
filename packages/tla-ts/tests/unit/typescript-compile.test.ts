@@ -1555,6 +1555,31 @@ describe("values", () => {
     });
   });
 
+  describe("raises a negative number to a power that isn't an integer as NaN", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const bases = [-1.7976931348623157e308, -1.5, -2, -0];
+      const exponents = [0.5, -Math.PI];
+      box.size = 1;
+      const read = bases
+        .flatMap((base) => exponents.map((exponent) => String(Math.pow(base, exponent))))
+        .join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("NaN,NaN,NaN,NaN,NaN,NaN,0,Infinity"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects -0 to a fraction as NaN", async () => {
+      expect(
+        (await checkModel(getSource("NaN,NaN,NaN,NaN,NaN,NaN,NaN,Infinity"))).failure?.message,
+      ).toContain("NaN,NaN,NaN,NaN,NaN,NaN,0,Infinity");
+    });
+  });
+
   describe("unshifts onto array-like objects whose length is near 2^53 or Infinity", () => {
     const getSource = (expected: string) => `
       const like: { [key: string]: unknown } = {
