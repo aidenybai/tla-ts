@@ -1171,12 +1171,13 @@ const assignPattern = <Result>(
         : context.checker.getTypeOfAssignmentPattern(target),
     );
     const isHeapObject = isHeapPattern(type, target, context);
-    // A rest alone of a primitive copies what the object that wraps it owns.
+    // A rest alone of a primitive copies what the object that wraps it owns, and of null or
+    // undefined, which leave no other type, throws the TypeError of its pattern first.
     const isPrimitiveRest =
       !isHeapObject &&
       target.properties.length === 1 &&
       (type.isUnion() ? type.types : [type]).every(
-        (member) => (member.flags & PRIMITIVE_TYPES) !== 0,
+        (member) => (member.flags & (PRIMITIVE_TYPES | ts.TypeFlags.Never)) !== 0,
       );
     // The heap after the pattern reads its properties, which the statement evaluates.
     const keys = target.properties.flatMap((property) =>
@@ -1313,12 +1314,14 @@ const assignPatternWith = (
   context: Context,
   frame: Frame,
   continueWith: (path: Path) => Formula,
-): Formula =>
-  (ts.isArrayLiteralExpression(target) &&
+): Formula => {
+  const taken =
+    ts.isArrayLiteralExpression(target) &&
     takeFromIterator(target, value, path, context, frame, (after, values) =>
       assignPatternWith(site, target, source, values, after, context, frame, continueWith),
-    )) ||
-  assignPattern(
+    );
+  if (taken) return taken;
+  const assigned = assignPattern(
     target,
     source,
     value,
@@ -1378,6 +1381,20 @@ const assignPatternWith = (
         readRestGetters(restSite, keys, innerValue, current, context, frame, next),
     },
   );
+  // An object pattern throws a TypeError where it destructures null or undefined.
+  if (
+    !ts.isObjectLiteralExpression(target) ||
+    !isMaybeNullish(context.checker.getTypeOfAssignmentPattern(target))
+  ) {
+    return assigned;
+  }
+  context.prelude.add("Null");
+  return ifThenElse(
+    isNullish(value, context),
+    throwTypeError(path, target, context, frame),
+    assigned,
+  );
+};
 
 const REMOVING_METHODS = new Set(["push", "unshift", "splice", "shift", "pop"]);
 

@@ -1572,6 +1572,25 @@ describe("values", () => {
     expect((await checkModel(getSource(621))).failure?.message).toContain("declare");
   });
 
+  it("throws the TypeError of a for-of's object pattern with a rest over null or undefined", async () => {
+    const getSource = (element: string, expected: string) => `
+      let rest: any;
+      let caught = "";
+      let counter = 0;
+      try {
+        for ({ ...rest } of [${element}]) {
+          counter += 1;
+        }
+      } catch (error) {
+        caught = error instanceof TypeError ? "TypeError" : "other";
+      }
+      if (caught !== "${expected}" || counter !== 0) throw new Error("caught");
+    `;
+    expect((await checkModel(getSource("undefined", "TypeError"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("null", "TypeError"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("null", ""))).failure?.message).toContain("caught");
+  });
+
   it("runs an assignment in a computed key or an element's key first", async () => {
     const getSource = (expected: number) => `
       let x = 0;
