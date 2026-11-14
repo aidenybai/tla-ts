@@ -17498,13 +17498,20 @@ describe("errors", () => {
     ).toThrow("Unsupported call: Array.prototype.reverse.call");
   });
 
-  it("reads the length of an object that reverse through call has nothing to swap in", async () => {
-    const result = await checkModel(`
+  it("throws a TypeError where reverse through call reads a length that is a symbol", async () => {
+    const getSource = (expected: string) => `
       const object: { [key: string | symbol]: unknown } = {};
       object.length = Symbol("length");
-      Array.prototype.reverse.call(object);
-    `);
-    expect(result.failure?.message).toContain("tla-ts can't convert Symbol to a length");
+      let caught = "none";
+      try {
+        Array.prototype.reverse.call(object);
+      } catch (error) {
+        caught = error instanceof TypeError ? "TypeError" : "other";
+      }
+      if (caught !== "${expected}") throw new Error(caught);
+    `;
+    expect((await checkModel(getSource("TypeError"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("none"))).failure?.message).toContain("TypeError");
   });
 
   it("runs [].method.call as Array.prototype.method.call, through the object's getters", async () => {
