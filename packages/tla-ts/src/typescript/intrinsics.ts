@@ -607,7 +607,7 @@ export const translateBuiltInValue = (
     | "Function.prototype.bind"
     | "Array.prototype"
     | "Object.prototype"
-    | "Object.prototype.toString"
+    | `Object.prototype.${string}`
     | `Array.prototype.${string}`
     | "Array"
     | `get ${string}`

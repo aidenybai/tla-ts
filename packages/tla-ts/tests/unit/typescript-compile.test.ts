@@ -12331,6 +12331,96 @@ describe("errors", () => {
     });
   });
 
+  describe("define an accessor through Object.prototype.__defineGetter__ or __defineSetter__", () => {
+    const getSource = (expected: string) => `
+      type Method = (...args: unknown[]) => unknown;
+      const subject: { [key: string]: unknown } = {};
+      const set = function () {};
+      const values: string[] = [];
+      (subject.__defineSetter__ as Method)("x", set);
+      const described = Object.getOwnPropertyDescriptor(subject, "x");
+      values.push(String(described?.set === set), String(described?.enumerable));
+      try {
+        (subject.__defineGetter__ as Method)("y", 1);
+      } catch (error) {
+        values.push(error instanceof TypeError ? "type" : "other");
+      }
+      Object.defineProperty(subject, "z", { value: 1 });
+      try {
+        (subject.__defineGetter__ as Method)("z", set);
+      } catch (error) {
+        values.push(error instanceof TypeError ? "type" : "other");
+      }
+      if (values.join() !== "${expected}") throw new Error(values.join());
+    `;
+
+    it("defines it, and throws a TypeError where it can't", async () => {
+      expect((await checkModel(getSource("true,true,type,type"))).failure).toBeUndefined();
+    });
+
+    it("doesn't define it as not enumerable", async () => {
+      expect((await checkModel(getSource("true,false,type,type"))).failure?.message).toContain(
+        "true,true,type,type",
+      );
+    });
+  });
+
+  describe("throw the TypeError of __defineGetter__'s function before converting its key", () => {
+    const getSource = (expected: string) => `
+      type Method = (...args: unknown[]) => unknown;
+      const subject: { [key: string]: unknown } = {};
+      let converted = 0;
+      const key = {
+        toString: function () {
+          converted += 1;
+          return "x";
+        },
+      };
+      let thrown = "";
+      try {
+        (subject.__defineGetter__ as Method)(key, 1);
+      } catch (error) {
+        thrown = error instanceof TypeError ? "type" : "other";
+      }
+      if (\`\${thrown},\${converted}\` !== "${expected}") throw new Error(\`\${thrown},\${converted}\`);
+    `;
+
+    it("throws it without converting the key", async () => {
+      expect((await checkModel(getSource("type,0"))).failure).toBeUndefined();
+    });
+
+    it("doesn't convert the key first", async () => {
+      expect((await checkModel(getSource("type,1"))).failure?.message).toContain("type,0");
+    });
+  });
+
+  describe("look up an accessor through Object.prototype.__lookupGetter__ or __lookupSetter__", () => {
+    const getSource = (expected: string) => `
+      type Method = (...args: unknown[]) => unknown;
+      const get = function () {};
+      const set = function () {};
+      const root = Object.defineProperty({}, "target", { get, set, configurable: true });
+      const middle: { [key: string]: unknown } = Object.create(root, { data: { value: 1 } });
+      const subject: { [key: string]: unknown } = Object.create(middle);
+      const values: unknown[] = [];
+      values.push((subject.__lookupGetter__ as Method)("target") === get);
+      values.push((subject.__lookupSetter__ as Method)("target") === set);
+      values.push((subject.__lookupGetter__ as Method)("data"));
+      values.push((subject.__lookupGetter__ as Method)("missing"));
+      if (values.join() !== "${expected}") throw new Error(values.join());
+    `;
+
+    it("finds it along the prototype chain", async () => {
+      expect((await checkModel(getSource("true,true,,"))).failure).toBeUndefined();
+    });
+
+    it("doesn't give the getter for the setter", async () => {
+      expect((await checkModel(getSource("true,false,,"))).failure?.message).toContain(
+        "true,true,,",
+      );
+    });
+  });
+
   describe("throw the ReferenceError of a yield* of a name that no declaration binds", () => {
     const getSource = (expected: string) => `
       let caught = "";

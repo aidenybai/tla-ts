@@ -4615,6 +4615,13 @@ DefineConvertedAll(heap, ref, keys, descriptors) ==
 
 DefineConverted(heap, ref, key, converted) == DefineConvertedAll(heap, ref, <<key>>, <<converted>>)
 
+\\* Object.prototype.__defineGetter__ and __defineSetter__, which define an enumerable, configurable
+\\* half of an accessor where the function is callable.
+DefineLegacyAccessor(heap, ref, key, field, function) ==
+  LET fields == {field, "enumerable", "configurable"}
+      values == [name \\in fields |-> IF name = field THEN function ELSE TRUE]
+  IN DefineConverted(heap, ref, key, FieldsDescriptor(heap, fields, values))
+
 DefineProperty(heap, ref, key, descriptor) ==
   IF IsObjectArgument(ref) /\\ IsObjectArgument(descriptor)
   THEN DefineConverted(heap, ref, key, ToDescriptor(heap, descriptor))

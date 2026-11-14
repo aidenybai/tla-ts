@@ -3084,6 +3084,77 @@ export const translateCallStatement = (
         : getUndefined(context);
     if (dispatched.some(isAnyGenerator)) rejectGeneratorUse(expression, context);
     context.prelude.add("Null");
+    const stop = leaf(
+      apply("Assert", [boolean(false), string("tla-ts can't tell which function this call runs")]),
+    );
+    const accessor = ts.isPropertyAccessExpression(target)
+      ? /^__(define|lookup)([GS])etter__$/.exec(target.name.text)
+      : null;
+    const keyNode = expression.arguments.at(0);
+    // Object.prototype's legacy accessor methods, where a script calls one through a key that it
+    // may hold.
+    const translateAccessor = (method: string, half: string, key: ts.Expression) => {
+      const heap = getHeap(path.scope, expression, context);
+      const unconverted = leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't convert an object to a property key here"),
+        ]),
+      );
+      const isKey =
+        getTypeNames(context.checker.getTypeAtLocation(key), context.checker)?.every((name) =>
+          ["string", "number", "symbol"].includes(name),
+        ) ?? false;
+      if (method === "lookup") {
+        return isKey
+          ? continueWith(
+              path,
+              useJavaScript(
+                "AccessorFieldOf",
+                [heap, receiver, translatePropertyKey(key, path.scope, context), string(half)],
+                context,
+              ),
+            )
+          : unconverted;
+      }
+      const functionNode = expression.arguments.at(1);
+      const translatedFunction =
+        functionNode === undefined
+          ? getUndefined(context)
+          : translateExpression(functionNode, path.scope, context);
+      // The definition throws where the function isn't callable before it converts the key.
+      if (!isKey) {
+        return ifThenElse(
+          apply("=", [
+            useJavaScript("TypeOfIn", [heap, translatedFunction], context),
+            string("function"),
+          ]),
+          unconverted,
+          throwTypeError(path, expression, context, frame),
+        );
+      }
+      const change = context.names.getFresh("change");
+      return bindOnce(
+        path,
+        change,
+        useJavaScript(
+          "DefineLegacyAccessor",
+          [
+            heap,
+            receiver,
+            translatePropertyKey(key, path.scope, context),
+            string(half),
+            translatedFunction,
+          ],
+          context,
+        ),
+        ifThenElse(
+          field(identifier(change), "isDone"),
+          continueWith(withHeap(field(identifier(change), "heap")), getUndefined(context)),
+          throwTypeError(path, expression, context, frame),
+        ),
+      );
+    };
     return dispatched.reduceRight(
       (otherwise, candidate) => {
         const candidateValue = getCandidateValue(candidate, context);
@@ -3161,12 +3232,19 @@ export const translateCallStatement = (
       ifThenElse(
         apply("\\in", [value, set([getUndefined(context), identifier("Null")])]),
         throwTypeError(path, expression, context, frame),
-        leaf(
-          apply("Assert", [
-            boolean(false),
-            string("tla-ts can't tell which function this call runs"),
-          ]),
-        ),
+        accessor === null ||
+          keyNode === undefined ||
+          expression.arguments.some(ts.isSpreadElement) ||
+          !ts.isPropertyAccessExpression(target)
+          ? stop
+          : ifThenElse(
+              apply("=", [
+                value,
+                translateBuiltInValue(`Object.prototype.${target.name.text}`, expression, context),
+              ]),
+              translateAccessor(accessor[1], accessor[2] === "G" ? "get" : "set", keyNode),
+              stop,
+            ),
       ),
     );
   }
