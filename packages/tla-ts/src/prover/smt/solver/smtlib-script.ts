@@ -832,677 +832,782 @@ export const runSmtlibScript = (
       throw new SmtUnsupportedError("a function declaration reference with trailing terms");
     return found;
   };
-  const runCommand: Record<string, (list: SmtList) => void> = {
-    assert: (list) => {
-      const term = list.items[1] ?? list.end;
-      const assertion = state.reader.parseAssertion(term);
-      const logicError = state.reader.getLogicError(assertion.formula);
-      if (logicError !== undefined) {
-        state.manager.decRef(assertion.formula);
-        throw new SmtParseError(logicError, list.end);
-      }
-      state.assertions.push(assertion.formula);
-      state.assertionTexts.push(
-        text.slice(term.offset, (term.kind === "list" ? term.end : term).endOffset).trim(),
-      );
-      if (state.hasChecked) state.isIncremental = true;
-      resetOptimizer();
-      if (!settings.isProducingUnsatCores || assertion.name === undefined) state.names.push(-1);
-      else {
-        const manager = state.manager;
-        const answer = manager.mkApp(
-          manager.mkFuncDecl(assertion.name, [], SORT_BOOL, true),
-          [],
+  const runCommand = new Map<string, (list: SmtList) => void>([
+    [
+      "assert",
+      (list) => {
+        const term = list.items[1] ?? list.end;
+        const assertion = state.reader.parseAssertion(term);
+        const logicError = state.reader.getLogicError(assertion.formula);
+        if (logicError !== undefined) {
+          state.manager.decRef(assertion.formula);
+          throw new SmtParseError(logicError, list.end);
+        }
+        state.assertions.push(assertion.formula);
+        state.assertionTexts.push(
+          text.slice(term.offset, (term.kind === "list" ? term.end : term).endOffset).trim(),
+        );
+        if (state.hasChecked) state.isIncremental = true;
+        resetOptimizer();
+        if (!settings.isProducingUnsatCores || assertion.name === undefined) state.names.push(-1);
+        else {
+          const manager = state.manager;
+          const answer = manager.mkApp(
+            manager.mkFuncDecl(assertion.name, [], SORT_BOOL, true),
+            [],
+            SORT_BOOL,
+          );
+          manager.incRef(answer);
+          state.names.push(answer);
+        }
+        assertInKernel(assertion.formula, state.names[state.names.length - 1]);
+        clearCheck();
+      },
+    ],
+    ["check-sat", (list) => checkSatAssuming(list.items.slice(1))],
+    [
+      "declare-rel",
+      (list) => {
+        const name = list.items[1];
+        const domain = list.items[2];
+        if (!isSymbol(name) || domain?.kind !== "list")
+          throw new SmtParseError("at least 2 arguments expected", list.end);
+        const decl = state.manager.mkFuncDecl(
+          name.text,
+          domain.items.map((sort) => state.reader.parseSort(sort)),
           SORT_BOOL,
         );
-        manager.incRef(answer);
-        state.names.push(answer);
-      }
-      assertInKernel(assertion.formula, state.names[state.names.length - 1]);
-      clearCheck();
-    },
-    "check-sat": (list) => checkSatAssuming(list.items.slice(1)),
-    "declare-rel": (list) => {
-      const name = list.items[1];
-      const domain = list.items[2];
-      if (!isSymbol(name) || domain?.kind !== "list")
-        throw new SmtParseError("at least 2 arguments expected", list.end);
-      const decl = state.manager.mkFuncDecl(
-        name.text,
-        domain.items.map((sort) => state.reader.parseSort(sort)),
-        SORT_BOOL,
-      );
-      state.reader.insertFunc(decl, list.end);
-      getDatalog().registerPredicate(decl);
-    },
-    "declare-var": (list) => {
-      const name = list.items[1];
-      const sort = list.items[2];
-      if (!isSymbol(name) || sort === undefined)
-        throw new SmtParseError("invalid declare-var command, symbol and sort expected", list.end);
-      const manager = state.manager;
-      const range = state.reader.parseSort(sort);
-      const decl = manager.mkFuncDecl(name.text, [], range);
-      state.reader.insertFunc(decl, list.end);
-      getDatalog().registerVariable(manager.mkApp(decl, [], range));
-    },
-    rule: (list) => {
-      const rule = list.items[1];
-      if (rule === undefined) throw new SmtParseError("invalid rule, expected formula", list.end);
-      const name = list.items[2];
-      getDatalog().addRule(state.reader.parseFormula(rule), isSymbol(name) ? name.text : "");
-    },
-    query: (list) => {
-      if (list.items[1] === undefined)
-        throw new SmtParseError("invalid query command, argument expected", list.end);
-      const relation = getFuncDeclRef(list.items[1]);
-      const datalog = getDatalog();
-      // dl_query_cmd::set_next_arg runs once the parser is past the reference.
-      const follower = list.items[2] ?? list.end;
-      if (!datalog.isPredicateDecl(relation))
-        throw new SmtParseError(
-          "Invalid query argument, expected a predicate registered as a relation",
-          follower,
-        );
-      if (follower.kind !== "keyword" && follower !== list.end)
-        throw new SmtParseError("invalid command argument, keyword expected", follower);
-      for (const assertion of state.assertions) datalog.assertExpr(assertion);
-      state.manager.limit.restart(Date.now() + options.timeLimitMs);
-      state.manager.limit.push(settings.rlimit);
-      try {
-        print(getVerdict(datalog.relQuery(relation)));
-      } catch (error) {
-        if (!(error instanceof SmtTacticError)) throw error;
-        print(`(error "query failed: ${error.message}")`);
-        print("unknown");
-      } finally {
-        state.manager.limit.pop();
-      }
-    },
-    "check-sat-using": (list) => {
-      const params = getCommandParams(list.items, CHECK_SAT_USING_PARAMETERS);
-      if (list.items[1] === undefined)
-        throw new SmtParseError("check-sat-using needs a tactic argument", list.end);
-      const builder = getTactic(list.items[1], list.end);
-      const tactic = builder.build(params);
-      clearCheck();
-      state.manager.limit.restart(Date.now() + options.timeLimitMs);
-      state.manager.limit.push(settings.rlimit);
-      try {
-        const checked = checkSatUsing(tactic, getGoal(builder.isTrackingDependencies));
-        setCheck(checked.status, {
-          model: checked.model,
-          core:
-            builder.isTrackingDependencies || !hasNames()
-              ? getDependencyValues(checked.core)
-              : undefined,
-          reasonUnknown: checked.reasonUnknown,
+        state.reader.insertFunc(decl, list.end);
+        getDatalog().registerPredicate(decl);
+      },
+    ],
+    [
+      "declare-var",
+      (list) => {
+        const name = list.items[1];
+        const sort = list.items[2];
+        if (!isSymbol(name) || sort === undefined)
+          throw new SmtParseError(
+            "invalid declare-var command, symbol and sort expected",
+            list.end,
+          );
+        const manager = state.manager;
+        const range = state.reader.parseSort(sort);
+        const decl = manager.mkFuncDecl(name.text, [], range);
+        state.reader.insertFunc(decl, list.end);
+        getDatalog().registerVariable(manager.mkApp(decl, [], range));
+      },
+    ],
+    [
+      "rule",
+      (list) => {
+        const rule = list.items[1];
+        if (rule === undefined) throw new SmtParseError("invalid rule, expected formula", list.end);
+        const name = list.items[2];
+        getDatalog().addRule(state.reader.parseFormula(rule), isSymbol(name) ? name.text : "");
+      },
+    ],
+    [
+      "query",
+      (list) => {
+        if (list.items[1] === undefined)
+          throw new SmtParseError("invalid query command, argument expected", list.end);
+        const relation = getFuncDeclRef(list.items[1]);
+        const datalog = getDatalog();
+        // dl_query_cmd::set_next_arg runs once the parser is past the reference.
+        const follower = list.items[2] ?? list.end;
+        if (!datalog.isPredicateDecl(relation))
+          throw new SmtParseError(
+            "Invalid query argument, expected a predicate registered as a relation",
+            follower,
+          );
+        if (follower.kind !== "keyword" && follower !== list.end)
+          throw new SmtParseError("invalid command argument, keyword expected", follower);
+        for (const assertion of state.assertions) datalog.assertExpr(assertion);
+        state.manager.limit.restart(Date.now() + options.timeLimitMs);
+        state.manager.limit.push(settings.rlimit);
+        try {
+          print(getVerdict(datalog.relQuery(relation)));
+        } catch (error) {
+          if (!(error instanceof SmtTacticError)) throw error;
+          print(`(error "query failed: ${error.message}")`);
+          print("unknown");
+        } finally {
+          state.manager.limit.pop();
+        }
+      },
+    ],
+    [
+      "check-sat-using",
+      (list) => {
+        const params = getCommandParams(list.items, CHECK_SAT_USING_PARAMETERS);
+        if (list.items[1] === undefined)
+          throw new SmtParseError("check-sat-using needs a tactic argument", list.end);
+        const builder = getTactic(list.items[1], list.end);
+        const tactic = builder.build(params);
+        clearCheck();
+        state.manager.limit.restart(Date.now() + options.timeLimitMs);
+        state.manager.limit.push(settings.rlimit);
+        try {
+          const checked = checkSatUsing(tactic, getGoal(builder.isTrackingDependencies));
+          setCheck(checked.status, {
+            model: checked.model,
+            core:
+              builder.isTrackingDependencies || !hasNames()
+                ? getDependencyValues(checked.core)
+                : undefined,
+            reasonUnknown: checked.reasonUnknown,
+          });
+          print(getVerdict(checked.status));
+        } finally {
+          state.manager.limit.pop();
+        }
+      },
+    ],
+    [
+      "check-sat-assuming",
+      (list) => {
+        const literals = list.items[1];
+        if (literals?.kind !== "list")
+          throw new SmtParseError(
+            "invalid check-sat-assuming command, '(' expected",
+            literals ?? list.end,
+          );
+        checkSatAssuming(literals.items);
+      },
+    ],
+    [
+      "get-consequences",
+      (list) => {
+        const manager = state.manager;
+        const [assumptions, vars] = [list.items[1], list.items[2]].map((terms) => {
+          if (terms === undefined)
+            throw new SmtParseError("invalid command, argument(s) missing", list.end);
+          if (terms.kind !== "list")
+            throw new SmtParseError("invalid list of terms, '(' expected", terms);
+          return terms.items.map((item) => state.reader.parseTerm(item));
         });
-        print(getVerdict(checked.status));
-      } finally {
-        state.manager.limit.pop();
-      }
-    },
-    "check-sat-assuming": (list) => {
-      const literals = list.items[1];
-      if (literals?.kind !== "list")
-        throw new SmtParseError(
-          "invalid check-sat-assuming command, '(' expected",
-          literals ?? list.end,
-        );
-      checkSatAssuming(literals.items);
-    },
-    "get-consequences": (list) => {
-      const manager = state.manager;
-      const [assumptions, vars] = [list.items[1], list.items[2]].map((terms) => {
-        if (terms === undefined)
-          throw new SmtParseError("invalid command, argument(s) missing", list.end);
-        if (terms.kind !== "list")
-          throw new SmtParseError("invalid list of terms, '(' expected", terms);
-        return terms.items.map((item) => state.reader.parseTerm(item));
-      });
-      if (list.items.length > 3)
-        throw new SmtParseError("invalid command, too many arguments", list.items[3]);
-      clearCheck();
-      manager.limit.restart(Date.now() + options.timeLimitMs);
-      manager.limit.push(settings.rlimit);
-      const names = state.names.filter((name) => name !== -1);
-      try {
-        if (isUsingFdSolver()) {
-          if (names.length > 0)
-            throw new SmtUnsupportedError("the named assertions of the finite-domain solver");
-          const found = getFdConsequences(manager, new Map(), state.assertions, assumptions, vars);
-          setCheck(found.result, { model: found.model });
+        if (list.items.length > 3)
+          throw new SmtParseError("invalid command, too many arguments", list.items[3]);
+        clearCheck();
+        manager.limit.restart(Date.now() + options.timeLimitMs);
+        manager.limit.push(settings.rlimit);
+        const names = state.names.filter((name) => name !== -1);
+        try {
+          if (isUsingFdSolver()) {
+            if (names.length > 0)
+              throw new SmtUnsupportedError("the named assertions of the finite-domain solver");
+            const found = getFdConsequences(
+              manager,
+              new Map(),
+              state.assertions,
+              assumptions,
+              vars,
+            );
+            setCheck(found.result, { model: found.model });
+            print(getVerdict(found.result));
+            print("");
+            for (const consequence of found.consequences.items) display(consequence);
+            found.consequences.reset();
+            return;
+          }
+          const kernel = state.kernel ?? new SmtKernel(manager, getKernelParams());
+          if (state.kernel === undefined)
+            for (const assertion of getNamedAssertions()) kernel.assertExpr(assertion);
+          const found = getConsequences(kernel, [...names, ...assumptions], vars);
+          setCheck(found.result, { context: kernel.context, core: kernel.context.unsatCore });
           print(getVerdict(found.result));
           print("");
           for (const consequence of found.consequences.items) display(consequence);
           found.consequences.reset();
-          return;
+        } finally {
+          manager.limit.pop();
         }
-        const kernel = state.kernel ?? new SmtKernel(manager, getKernelParams());
-        if (state.kernel === undefined)
-          for (const assertion of getNamedAssertions()) kernel.assertExpr(assertion);
-        const found = getConsequences(kernel, [...names, ...assumptions], vars);
-        setCheck(found.result, { context: kernel.context, core: kernel.context.unsatCore });
-        print(getVerdict(found.result));
-        print("");
-        for (const consequence of found.consequences.items) display(consequence);
-        found.consequences.reset();
-      } finally {
-        manager.limit.pop();
-      }
-    },
-    minimize: (list) => addObjective(list, false),
-    maximize: (list) => addObjective(list, true),
-    "assert-soft": (list) => {
-      const formula = state.reader.parseTerm(list.items[1] ?? list.end);
-      if (state.manager.sorts[formula] !== SORT_BOOL)
-        throw new SmtParseError("Invalid type for expression. Expected Boolean type.", list.end);
-      const parameters = getSoftParameters(list.items.slice(2));
-      resetOptimizer();
-      const existing = state.objectives.findIndex(
-        (objective) => objective.type === O_MAXSMT && objective.id === parameters.id,
-      );
-      const index = existing === -1 ? state.objectives.length : existing;
-      if (existing === -1)
-        state.objectives.push({
-          type: O_MAXSMT,
-          term: -1,
-          terms: [],
-          weights: [],
-          id: parameters.id,
-        });
-      if (parameters.weight.isZero()) return;
-      state.manager.incRef(formula);
-      state.objectives[index].terms.push(formula);
-      state.objectives[index].weights.push(parameters.weight);
-      state.softTrail.push(index);
-    },
-    push: (list) => {
-      clearCheck();
-      for (let index = getScopeCount(list); index > 0; index--) {
-        state.scopes.push({
-          assertions: state.assertions.length,
-          objectives: state.objectives.length,
-          softTrail: state.softTrail.length,
-        });
-        state.reader.push();
-        state.isIncremental = true;
-        state.kernel?.push();
-        useEufSolver((solver) => solver.push());
-      }
-    },
-    pop: (list) => {
-      const count = getScopeCount(list);
-      if (count > state.scopes.length)
-        throw new SmtParseError(
-          "invalid pop command, argument is greater than the current stack depth",
-          list.end,
+      },
+    ],
+    ["minimize", (list) => addObjective(list, false)],
+    ["maximize", (list) => addObjective(list, true)],
+    [
+      "assert-soft",
+      (list) => {
+        const formula = state.reader.parseTerm(list.items[1] ?? list.end);
+        if (state.manager.sorts[formula] !== SORT_BOOL)
+          throw new SmtParseError("Invalid type for expression. Expected Boolean type.", list.end);
+        const parameters = getSoftParameters(list.items.slice(2));
+        resetOptimizer();
+        const existing = state.objectives.findIndex(
+          (objective) => objective.type === O_MAXSMT && objective.id === parameters.id,
         );
-      clearCheck();
-      if (count === 0) return;
-      state.isIncremental = true;
-      const scope = state.scopes[state.scopes.length - count];
-      state.kernel?.pop(count);
-      useEufSolver((solver) => solver.pop(count));
-      for (let index = 0; index < count; index++) state.reader.pop();
-      restoreAssertions(scope.assertions);
-      resetOptimizer();
-      releaseObjectives(scope.objectives, scope.softTrail);
-      state.scopes.length -= count;
-    },
-    reset: () => {
-      clearCheck();
-      resetOptimizer();
-      state = createState();
-    },
-    "reset-assertions": () => {
-      clearCheck();
-      restoreAssertions(0);
-      resetOptimizer();
-      releaseObjectives(0, 0);
-      state.scopes = state.scopes.map(() => ({ assertions: 0, objectives: 0, softTrail: 0 }));
-      if (state.isProofsEnabled !== undefined) resetKernel();
-      state.isIncremental = state.scopes.length > 0;
-      state.hasChecked = false;
-    },
-    simplify: (list) => {
-      const manager = state.manager;
-      if (list.items.length < 2)
-        throw new SmtParseError("invalid simplify command, argument expected", list.end);
-      const term = state.reader.parseTerm(list.items[1]);
-      manager.incRef(term);
-      const rewriter = new Rewriter(
-        manager,
-        getRewriterOptions(manager, getSimplifyParams(list.items.slice(2))),
-      );
-      const simplified = rewriter.rewrite(term);
-      rewriter.cleanup();
-      display(simplified);
-      rewriter.release();
-      manager.decRef(simplified);
-      manager.decRef(term);
-    },
-    // The Boolean rewriter alone matches the simplifier only on Boolean structure over constants.
-    "dbg-bool-flat-rewriter": (list) => {
-      const manager = state.manager;
-      if (list.items.length !== 2)
-        throw new SmtParseError("invalid command, one argument expected", list.end);
-      const term = state.reader.parseTerm(list.items[1]);
-      manager.incRef(term);
-      const visited = new Set<number>();
-      const todo = [term];
-      while (todo.length > 0) {
-        const expr = todo.pop() as number;
-        if (visited.has(expr)) continue;
-        visited.add(expr);
-        const family = manager.kinds[expr] === KIND_APP ? manager.getFamily(expr) : -1;
-        if (family !== FAMILY_BASIC && family !== FAMILY_USER && !manager.isNumeral(expr))
-          throw new SmtUnsupportedError("the command dbg-bool-flat-rewriter beyond Boolean terms");
-        manager.pushArgs(expr, todo);
-      }
-      const rewriter = new Rewriter(manager, getRewriterOptions(manager, new Map()));
-      const rewritten = rewriter.rewrite(term);
-      display(rewritten);
-      rewriter.release();
-      manager.decRef(rewritten);
-      manager.decRef(term);
-    },
-    apply: (list) => {
-      const params = getCommandParams(list.items, APPLY_PARAMETERS);
-      if (list.items[1] === undefined)
-        throw new SmtParseError("apply needs a tactic argument", list.end);
-      const builder = getTactic(list.items[1], list.end);
-      const tactic = builder.build(params);
-      const isPrintingDependencies = params.get("print_dependencies") === true;
-      if (isPrintingDependencies && !builder.isTrackingDependencies && hasNames())
-        throw new SmtUnsupportedError("the dependencies of a tactic that drops dependencies");
-      state.manager.limit.restart(Date.now() + options.timeLimitMs);
-      const input = getGoal(builder.isTrackingDependencies);
-      const goals = (() => {
-        try {
-          return applyTactic(tactic, input);
-        } catch (error) {
-          if (!(error instanceof SmtTacticError)) throw error;
-          print(`(error "tactic failed: ${error.message}")`);
-          return undefined;
+        const index = existing === -1 ? state.objectives.length : existing;
+        if (existing === -1)
+          state.objectives.push({
+            type: O_MAXSMT,
+            term: -1,
+            terms: [],
+            weights: [],
+            id: parameters.id,
+          });
+        if (parameters.weight.isZero()) return;
+        state.manager.incRef(formula);
+        state.objectives[index].terms.push(formula);
+        state.objectives[index].weights.push(parameters.weight);
+        state.softTrail.push(index);
+      },
+    ],
+    [
+      "push",
+      (list) => {
+        clearCheck();
+        for (let index = getScopeCount(list); index > 0; index--) {
+          state.scopes.push({
+            assertions: state.assertions.length,
+            objectives: state.objectives.length,
+            softTrail: state.softTrail.length,
+          });
+          state.reader.push();
+          state.isIncremental = true;
+          state.kernel?.push();
+          useEufSolver((solver) => solver.push());
         }
-      })();
-      // apply_tactic_cmd releases the result goals and then the input goal.
-      if (goals === undefined) {
-        input.reset();
-        return;
-      }
-      try {
-        const manager = state.manager;
-        const environment = getPrintEnvironment();
-        if (params.get("print") !== false)
-          print(
-            [
-              "(goals",
-              ...goals.map((goal) =>
-                [
-                  "(goal",
-                  ...goal.forms.items.flatMap((form, index) => [
-                    ...(isPrintingDependencies
-                      ? [
-                          [
-                            "  |-",
-                            ...getDependencyValues(goal.getDependency(index)).map(format),
-                          ].join(" "),
-                        ]
-                      : []),
-                    `  ${printExpr(state.manager, environment, form, 2)}`,
-                  ]),
-                  `  :precision ${PRECISION_NAMES[goal.precision]} :depth ${goal.depth})`,
-                ].join("\n"),
-              ),
-              ")",
-            ].join("\n"),
-          );
-        if (
-          params.get("print_model_converter") === true &&
-          input.converters.some(
-            (entry) => !("definitions" in entry) || entry.definitions.length > 0,
-          )
-        )
-          throw new SmtUnsupportedError("printing a model converter");
-        if (params.get("print_benchmark") !== true) return;
-        const assertions =
-          goals.length === 1
-            ? goals[0].forms.items
-            : [
-                manager.mkOr(
-                  goals.map((goal) =>
-                    goal.forms.size === 1 ? goal.forms.items[0] : manager.mkAnd(goal.forms.items),
-                  ),
-                ),
-              ];
-        for (const assertion of assertions) manager.incRef(assertion);
-        const visited = new Set<number>();
-        const decls = new Set<number>();
-        for (const assertion of assertions) {
-          const todo = [assertion];
-          while (todo.length > 0) {
-            const expr = todo.pop() as number;
-            if (visited.has(expr)) continue;
-            visited.add(expr);
-            if (manager.kinds[expr] === KIND_QUANTIFIER) {
-              const data = manager.getQuantifier(expr);
-              todo.push(data.body, ...data.patterns, ...data.noPatterns);
-            } else if (manager.kinds[expr] === KIND_APP) {
-              manager.pushArgs(expr, todo);
-              const decl = manager.decls[expr];
-              const family = manager.funcDecls[decl].family;
-              if (family === FAMILY_USER || family === FAMILY_MODEL_VALUE) decls.add(decl);
-            }
-          }
-        }
-        const lines = [...decls].map((decl) => {
-          const funcDecl = manager.funcDecls[decl];
-          return renderFormat(
-            mkSeq1(
-              [
-                mkText(getQuotedName(funcDecl.name)),
-                mkSeq5(funcDecl.domain.map((sort) => formatSort(manager, sort))),
-                formatSort(manager, funcDecl.range),
-              ],
-              "declare-fun",
-            ),
-            environment.options,
-          );
-        });
-        for (const assertion of assertions)
-          lines.push(`(assert ${printExpr(manager, environment, assertion, 8)})`);
-        print([...lines, "(check-sat)"].join("\n"));
-        for (const assertion of assertions) manager.decRef(assertion);
-      } finally {
-        for (const goal of goals) if (goal !== input) goal.reset();
-        input.reset();
-      }
-    },
-    "get-assertions": (list) => {
-      if (!settings.isInteractive)
-        throw new SmtParseError(
-          "command is only available in interactive mode, use command (set-option :interactive-mode true)",
-          list.end,
-        );
-      print(`(${state.assertionTexts.join("\n ")})`);
-    },
-    "get-unsat-core": (list) => {
-      if (!settings.isProducingUnsatCores)
-        throw new SmtParseError(
-          "unsat core construction is not enabled, use command (set-option :produce-unsat-cores true)",
-          list.end,
-        );
-      const check = state.check;
-      if (check === undefined || check.status !== L_FALSE)
-        throw new SmtParseError("unsat core is not available", list.end);
-      if (check.core === undefined)
-        throw new SmtUnsupportedError("the unsat core of a tactic that drops dependencies");
-      print(`(${check.core.map(format).join(" ")})`);
-    },
-    eval: (list) => {
-      const target = list.items[1];
-      const term = target === undefined ? -1 : state.reader.parseTerm(target);
-      if (list.items.length > 2) throw new SmtUnsupportedError("the parameters of eval");
-      const model = getModel(list);
-      if (term === -1) throw new SmtParseError("no arguments passed to eval", list.end);
-      const manager = state.manager;
-      manager.incRef(term);
-      const value = model.eval(term, false);
-      display(value);
-      manager.decRef(value);
-      manager.decRef(term);
-    },
-    "get-value": (list) => {
-      const terms = list.items[1];
-      if (terms?.kind !== "list")
-        throw new SmtParseError("invalid get-value command, '(' expected", terms ?? list.end);
-      const manager = state.manager;
-      const exprs = terms.items.map((item) => state.reader.parseTerm(item));
-      if (exprs.length === 0)
-        throw new SmtParseError("invalid get-value command, empty list of terms", terms.end);
-      if (list.items.length > 2) throw new SmtUnsupportedError("the parameters of get-value");
-      const model = getModel(list);
-      model.compact();
-      // Z3 prints each term as the script spells it, from the end of the term before.
-      const offsets = [
-        terms.offset + 1,
-        ...terms.items.map((item) => (item.kind === "list" ? item.end : item).endOffset),
-      ];
-      const lines = exprs.map((expr, index) => {
-        manager.incRef(expr);
-        const value = model.eval(expr, true);
-        const line = `(${text.slice(offsets[index], offsets[index + 1]).trim()} ${format(value)})`;
-        manager.decRef(value);
-        manager.decRef(expr);
-        return line;
-      });
-      print(`(${lines.join("\n ")})`);
-    },
-    "get-objectives": () => {
-      const optimizer = state.optimizer;
-      if (optimizer === undefined || state.check === undefined)
-        throw new SmtUnsupportedError("the command get-objectives");
-      print(optimizer.getObjectives(format));
-    },
-    "get-model": (list) => {
-      if (list.items.length > 1) throw new SmtUnsupportedError("the index of get-model");
-      const manager = state.manager;
-      const model = getModel(list);
-      model.compact();
-      for (const decl of state.reader.getDeclaredFuncs()) {
-        const funcDecl = manager.funcDecls[decl];
-        if (
-          funcDecl.family !== FAMILY_USER ||
-          model.constInterps.has(decl) ||
-          model.funcInterps.has(decl)
-        )
-          continue;
-        const value = model.getSomeValue(funcDecl.range);
-        if (funcDecl.domain.length === 0) {
-          model.registerConst(decl, value);
-          continue;
-        }
-        const interp = new FuncInterp(manager, funcDecl.domain.length);
-        interp.setElse(value);
-        model.registerFunc(decl, interp);
-      }
-      model.addRecFuns();
-      print(`(\n${printModel(manager, getPrintEnvironment(), model, 2)})`);
-    },
-    display: (list) => display(state.reader.parseTerm(list.items[1] ?? list.end)),
-    "dbg-lt": (list) => {
-      const first = state.reader.parseTerm(list.items[1] ?? list.end);
-      const second = state.reader.parseTerm(list.items[2] ?? list.end);
-      print(String(isAstLess(state.manager, first, second)));
-    },
-    "dbg-some-value": (list) => {
-      display(
-        getManagerSomeValue(state.manager, state.reader.parseSort(list.items[1] ?? list.end)),
-      );
-    },
-    "dbg-used-vars": (list) => {
-      const manager = state.manager;
-      const term = state.reader.parseTerm(list.items[1] ?? list.end);
-      const body =
-        manager.kinds[term] === KIND_QUANTIFIER ? manager.getQuantifier(term).body : term;
-      const sorts = getFreeVarSorts(manager, body, manager.freeVarBounds[body]);
-      const lines = sorts.map(
-        (sort, index) =>
-          `\n  (${String(index).padEnd(6)} ${sort === undefined ? "<not-used>" : renderFormat(formatSort(manager, sort), settings.printOptions)})`,
-      );
-      print(`(vars${lines.join("")})`);
-    },
-    "dbg-elim-unused-vars": (list) => {
-      const manager = state.manager;
-      const term = state.reader.parseTerm(list.items[1] ?? list.end);
-      if (manager.kinds[term] !== KIND_QUANTIFIER) {
-        write(format(term), false);
-        return;
-      }
-      display(elimUnusedVars(manager, term));
-    },
-    "dbg-instantiate": (list) => instantiate(list, false),
-    "dbg-instantiate-nested": (list) => instantiate(list, true),
-    echo: (list) => {
-      const message = list.items[1];
-      if (message?.kind !== "string")
-        throw new SmtParseError("invalid echo command, string expected", message ?? list.end);
-      print(message.text);
-    },
-    "set-option": (list) => {
-      const option = list.items[1];
-      const keyword = option?.kind === "keyword" ? option.text : "";
-      const optionName = `:${getParameterName(keyword)}`;
-      const value = list.items[2];
-      const isTrue = isSymbol(value, "true");
-      if (keyword === ":produce-models") settings.isProducingModels = isTrue;
-      if (keyword === ":produce-unsat-cores") settings.isProducingUnsatCores = isTrue;
-      if (keyword === ":produce-proofs") settings.isProducingProofs = isTrue;
-      if (keyword === ":interactive-mode") settings.isInteractive = isTrue;
-      if (keyword === ":diagnostic-output-channel")
-        settings.isDiagnosticOnStdout = value?.kind === "string" && value.text === "stdout";
-      if (keyword === ":int-real-coercions" && !isTrue)
-        throw new SmtUnsupportedError("the option :int-real-coercions false");
-      if (keyword === ":error-behavior") {
-        if (!isSymbol(value, "immediate-exit") && !isSymbol(value, "continued-execution"))
+      },
+    ],
+    [
+      "pop",
+      (list) => {
+        const count = getScopeCount(list);
+        if (count > state.scopes.length)
           throw new SmtParseError(
-            "error setting :error-behavior, 'immediate-execution' or 'continued-execution' expected",
+            "invalid pop command, argument is greater than the current stack depth",
             list.end,
           );
-        settings.isExitingOnError = isSymbol(value, "immediate-exit");
-      }
-      if (
-        keyword !== "" &&
-        !BUILTIN_OPTIONS.has(keyword) &&
-        value !== undefined &&
-        value.kind !== "list"
-      )
-        settings.parameters.set(getParameterName(keyword), value.text);
-      if (optionName === ":print_success") settings.isPrintingSuccess = isTrue;
-      if (!BUILTIN_OPTIONS.has(keyword) && settings.parameters.get("smtlib2_compliant") === "true")
-        settings.isPrintingSuccess = true;
-      if (optionName === ":smt.mbqi") settings.isMbqi = isTrue;
-      if (optionName === ":smt.macro_finder") settings.isFindingMacros = isTrue;
-      if (optionName === ":smt.mbqi.max_iterations" && value?.kind === "numeral")
-        settings.mbqiMaxIterations = Number(value.text);
-      if (optionName === ":rlimit" && value?.kind === "numeral")
-        settings.rlimit = Number(value.text);
-      if (optionName === ":rewriter.hi_div0") {
-        settings.isHiDiv0 = isTrue;
-        state.manager.isHiDiv0 = isTrue;
-      }
-      if (optionName === ":encoding" && value !== undefined && value.kind !== "list") {
-        settings.encoding = ENCODINGS.get(value.text) ?? UNICODE_ENCODING;
-        state.manager.maxChar = settings.encoding.maxChar;
-        state.manager.charBits = settings.encoding.charBits;
-      }
-      if (optionName === ":parser.ignore_bad_patterns")
-        settings.parserOptions.isIgnoringBadPatterns = isTrue;
-      const numericOption = NUMERIC_PRINT_OPTIONS.get(optionName);
-      if (numericOption !== undefined && value?.kind === "numeral")
-        settings.printOptions[numericOption] = Number(value.text);
-      const booleanOption = BOOLEAN_PRINT_OPTIONS.get(optionName);
-      if (booleanOption !== undefined) settings.printOptions[booleanOption] = isTrue;
-      if (
-        optionName.startsWith(":pp.") &&
-        numericOption === undefined &&
-        booleanOption === undefined
-      )
-        throw new SmtUnsupportedError(`the option ${optionName}`);
-    },
-    "get-option": (list) => {
-      const option = list.items[1];
-      if (option?.kind !== "keyword")
-        throw new SmtParseError("invalid command argument, keyword expected", option ?? list.end);
-      const builtinValues = new Map<string, boolean | string>([
-        [":print-success", settings.isPrintingSuccess],
-        [":produce-models", settings.isProducingModels],
-        [":produce-unsat-cores", settings.isProducingUnsatCores],
-        [":int-real-coercions", true],
-        [":error-behavior", settings.isExitingOnError ? "immediate-exit" : "continued-execution"],
-      ]);
-      const name = getParameterName(option.text);
-      const value =
-        builtinValues.get(option.text) ??
-        (BUILTIN_OPTIONS.has(option.text)
-          ? undefined
-          : (settings.parameters.get(name) ?? PARAMETER_DEFAULTS.get(name)));
-      if (value === undefined) throw new SmtUnsupportedError(`the option ${option.text}`);
-      print(String(value));
-    },
-    "get-info": (list) => {
-      const info = list.items[1];
-      if (info?.kind !== "keyword")
-        throw new SmtParseError("invalid command argument, keyword expected", info ?? list.end);
-      const optimizer = state.optimizer;
-      const check = state.check;
-      if (
-        info.text === ":reason-unknown" &&
-        check?.status === L_UNDEF &&
-        optimizer !== undefined &&
-        optimizer.reasonUnknown !== ""
-      ) {
-        print(`(:reason-unknown "${optimizer.reasonUnknown}")`);
-        return;
-      }
-      const reasonUnknown =
-        check === undefined
-          ? "state of the most recent check-sat command is not known"
-          : check.reasonUnknown;
-      if (info.text === ":reason-unknown" && reasonUnknown !== undefined) {
-        print(`(:reason-unknown "${reasonUnknown.replaceAll('"', '\\"')}")`);
-        return;
-      }
-      if (info.text === ":rlimit") {
-        print(`(:rlimit ${state.manager.limit.count})`);
-        return;
-      }
-      if (info.text !== ":error-behavior")
-        throw new SmtUnsupportedError(`the information ${info.text}`);
-      print(
-        `(:error-behavior ${settings.isExitingOnError ? "immediate-exit" : "continued-execution"})`,
-      );
-    },
-    "set-logic": (list) => {
-      const logic = list.items[1];
-      if (!isSymbol(logic))
-        throw new SmtParseError("invalid logic name, symbol expected", logic ?? list.end);
-      if (state.logic !== undefined)
-        throw new SmtParseError("the logic has already been set", logic);
-      if (state.assertions.length > 0)
-        throw new SmtParseError("logic must be set before initialization", logic);
-      if (!isSupportedLogic(logic.text)) {
-        print("unsupported");
-        printDiagnostic(
-          `; ignoring unsupported logic ${logic.text} line: ${list.line} position: ${list.column}`,
+        clearCheck();
+        if (count === 0) return;
+        state.isIncremental = true;
+        const scope = state.scopes[state.scopes.length - count];
+        state.kernel?.pop(count);
+        useEufSolver((solver) => solver.pop(count));
+        for (let index = 0; index < count; index++) state.reader.pop();
+        restoreAssertions(scope.assertions);
+        resetOptimizer();
+        releaseObjectives(scope.objectives, scope.softTrail);
+        state.scopes.length -= count;
+      },
+    ],
+    [
+      "reset",
+      () => {
+        clearCheck();
+        resetOptimizer();
+        state = createState();
+      },
+    ],
+    [
+      "reset-assertions",
+      () => {
+        clearCheck();
+        restoreAssertions(0);
+        resetOptimizer();
+        releaseObjectives(0, 0);
+        state.scopes = state.scopes.map(() => ({ assertions: 0, objectives: 0, softTrail: 0 }));
+        if (state.isProofsEnabled !== undefined) resetKernel();
+        state.isIncremental = state.scopes.length > 0;
+        state.hasChecked = false;
+      },
+    ],
+    [
+      "simplify",
+      (list) => {
+        const manager = state.manager;
+        if (list.items.length < 2)
+          throw new SmtParseError("invalid simplify command, argument expected", list.end);
+        const term = state.reader.parseTerm(list.items[1]);
+        manager.incRef(term);
+        const rewriter = new Rewriter(
+          manager,
+          getRewriterOptions(manager, getSimplifyParams(list.items.slice(2))),
         );
-        return;
-      }
-      state.logic = logic.text;
-      if (state.isProofsEnabled === undefined)
-        state.reader = createSmtlibReader(state.manager, logic.text, settings.parserOptions);
-      else {
-        state.reader.restrictSorts(logic.text);
-        // Deviation from Z3: its new solver starts without the open scopes, so it ignores their pop
-        // and keeps what they asserted.
-        resetKernel();
-      }
-      if (settings.isPrintingSuccess) print("success");
-    },
-    "set-info": () => {},
-  };
+        const simplified = rewriter.rewrite(term);
+        rewriter.cleanup();
+        display(simplified);
+        rewriter.release();
+        manager.decRef(simplified);
+        manager.decRef(term);
+      },
+    ],
+    // The Boolean rewriter alone matches the simplifier only on Boolean structure over constants.
+    [
+      "dbg-bool-flat-rewriter",
+      (list) => {
+        const manager = state.manager;
+        if (list.items.length !== 2)
+          throw new SmtParseError("invalid command, one argument expected", list.end);
+        const term = state.reader.parseTerm(list.items[1]);
+        manager.incRef(term);
+        const visited = new Set<number>();
+        const todo = [term];
+        while (todo.length > 0) {
+          const expr = todo.pop() as number;
+          if (visited.has(expr)) continue;
+          visited.add(expr);
+          const family = manager.kinds[expr] === KIND_APP ? manager.getFamily(expr) : -1;
+          if (family !== FAMILY_BASIC && family !== FAMILY_USER && !manager.isNumeral(expr))
+            throw new SmtUnsupportedError(
+              "the command dbg-bool-flat-rewriter beyond Boolean terms",
+            );
+          manager.pushArgs(expr, todo);
+        }
+        const rewriter = new Rewriter(manager, getRewriterOptions(manager, new Map()));
+        const rewritten = rewriter.rewrite(term);
+        display(rewritten);
+        rewriter.release();
+        manager.decRef(rewritten);
+        manager.decRef(term);
+      },
+    ],
+    [
+      "apply",
+      (list) => {
+        const params = getCommandParams(list.items, APPLY_PARAMETERS);
+        if (list.items[1] === undefined)
+          throw new SmtParseError("apply needs a tactic argument", list.end);
+        const builder = getTactic(list.items[1], list.end);
+        const tactic = builder.build(params);
+        const isPrintingDependencies = params.get("print_dependencies") === true;
+        if (isPrintingDependencies && !builder.isTrackingDependencies && hasNames())
+          throw new SmtUnsupportedError("the dependencies of a tactic that drops dependencies");
+        state.manager.limit.restart(Date.now() + options.timeLimitMs);
+        const input = getGoal(builder.isTrackingDependencies);
+        const goals = (() => {
+          try {
+            return applyTactic(tactic, input);
+          } catch (error) {
+            if (!(error instanceof SmtTacticError)) throw error;
+            print(`(error "tactic failed: ${error.message}")`);
+            return undefined;
+          }
+        })();
+        // apply_tactic_cmd releases the result goals and then the input goal.
+        if (goals === undefined) {
+          input.reset();
+          return;
+        }
+        try {
+          const manager = state.manager;
+          const environment = getPrintEnvironment();
+          if (params.get("print") !== false)
+            print(
+              [
+                "(goals",
+                ...goals.map((goal) =>
+                  [
+                    "(goal",
+                    ...goal.forms.items.flatMap((form, index) => [
+                      ...(isPrintingDependencies
+                        ? [
+                            [
+                              "  |-",
+                              ...getDependencyValues(goal.getDependency(index)).map(format),
+                            ].join(" "),
+                          ]
+                        : []),
+                      `  ${printExpr(state.manager, environment, form, 2)}`,
+                    ]),
+                    `  :precision ${PRECISION_NAMES[goal.precision]} :depth ${goal.depth})`,
+                  ].join("\n"),
+                ),
+                ")",
+              ].join("\n"),
+            );
+          if (
+            params.get("print_model_converter") === true &&
+            input.converters.some(
+              (entry) => !("definitions" in entry) || entry.definitions.length > 0,
+            )
+          )
+            throw new SmtUnsupportedError("printing a model converter");
+          if (params.get("print_benchmark") !== true) return;
+          const assertions =
+            goals.length === 1
+              ? goals[0].forms.items
+              : [
+                  manager.mkOr(
+                    goals.map((goal) =>
+                      goal.forms.size === 1 ? goal.forms.items[0] : manager.mkAnd(goal.forms.items),
+                    ),
+                  ),
+                ];
+          for (const assertion of assertions) manager.incRef(assertion);
+          const visited = new Set<number>();
+          const decls = new Set<number>();
+          for (const assertion of assertions) {
+            const todo = [assertion];
+            while (todo.length > 0) {
+              const expr = todo.pop() as number;
+              if (visited.has(expr)) continue;
+              visited.add(expr);
+              if (manager.kinds[expr] === KIND_QUANTIFIER) {
+                const data = manager.getQuantifier(expr);
+                todo.push(data.body, ...data.patterns, ...data.noPatterns);
+              } else if (manager.kinds[expr] === KIND_APP) {
+                manager.pushArgs(expr, todo);
+                const decl = manager.decls[expr];
+                const family = manager.funcDecls[decl].family;
+                if (family === FAMILY_USER || family === FAMILY_MODEL_VALUE) decls.add(decl);
+              }
+            }
+          }
+          const lines = [...decls].map((decl) => {
+            const funcDecl = manager.funcDecls[decl];
+            return renderFormat(
+              mkSeq1(
+                [
+                  mkText(getQuotedName(funcDecl.name)),
+                  mkSeq5(funcDecl.domain.map((sort) => formatSort(manager, sort))),
+                  formatSort(manager, funcDecl.range),
+                ],
+                "declare-fun",
+              ),
+              environment.options,
+            );
+          });
+          for (const assertion of assertions)
+            lines.push(`(assert ${printExpr(manager, environment, assertion, 8)})`);
+          print([...lines, "(check-sat)"].join("\n"));
+          for (const assertion of assertions) manager.decRef(assertion);
+        } finally {
+          for (const goal of goals) if (goal !== input) goal.reset();
+          input.reset();
+        }
+      },
+    ],
+    [
+      "get-assertions",
+      (list) => {
+        if (!settings.isInteractive)
+          throw new SmtParseError(
+            "command is only available in interactive mode, use command (set-option :interactive-mode true)",
+            list.end,
+          );
+        print(`(${state.assertionTexts.join("\n ")})`);
+      },
+    ],
+    [
+      "get-unsat-core",
+      (list) => {
+        if (!settings.isProducingUnsatCores)
+          throw new SmtParseError(
+            "unsat core construction is not enabled, use command (set-option :produce-unsat-cores true)",
+            list.end,
+          );
+        const check = state.check;
+        if (check === undefined || check.status !== L_FALSE)
+          throw new SmtParseError("unsat core is not available", list.end);
+        if (check.core === undefined)
+          throw new SmtUnsupportedError("the unsat core of a tactic that drops dependencies");
+        print(`(${check.core.map(format).join(" ")})`);
+      },
+    ],
+    [
+      "eval",
+      (list) => {
+        const target = list.items[1];
+        const term = target === undefined ? -1 : state.reader.parseTerm(target);
+        if (list.items.length > 2) throw new SmtUnsupportedError("the parameters of eval");
+        const model = getModel(list);
+        if (term === -1) throw new SmtParseError("no arguments passed to eval", list.end);
+        const manager = state.manager;
+        manager.incRef(term);
+        const value = model.eval(term, false);
+        display(value);
+        manager.decRef(value);
+        manager.decRef(term);
+      },
+    ],
+    [
+      "get-value",
+      (list) => {
+        const terms = list.items[1];
+        if (terms?.kind !== "list")
+          throw new SmtParseError("invalid get-value command, '(' expected", terms ?? list.end);
+        const manager = state.manager;
+        const exprs = terms.items.map((item) => state.reader.parseTerm(item));
+        if (exprs.length === 0)
+          throw new SmtParseError("invalid get-value command, empty list of terms", terms.end);
+        if (list.items.length > 2) throw new SmtUnsupportedError("the parameters of get-value");
+        const model = getModel(list);
+        model.compact();
+        // Z3 prints each term as the script spells it, from the end of the term before.
+        const offsets = [
+          terms.offset + 1,
+          ...terms.items.map((item) => (item.kind === "list" ? item.end : item).endOffset),
+        ];
+        const lines = exprs.map((expr, index) => {
+          manager.incRef(expr);
+          const value = model.eval(expr, true);
+          const line = `(${text.slice(offsets[index], offsets[index + 1]).trim()} ${format(value)})`;
+          manager.decRef(value);
+          manager.decRef(expr);
+          return line;
+        });
+        print(`(${lines.join("\n ")})`);
+      },
+    ],
+    [
+      "get-objectives",
+      () => {
+        const optimizer = state.optimizer;
+        if (optimizer === undefined || state.check === undefined)
+          throw new SmtUnsupportedError("the command get-objectives");
+        print(optimizer.getObjectives(format));
+      },
+    ],
+    [
+      "get-model",
+      (list) => {
+        if (list.items.length > 1) throw new SmtUnsupportedError("the index of get-model");
+        const manager = state.manager;
+        const model = getModel(list);
+        model.compact();
+        for (const decl of state.reader.getDeclaredFuncs()) {
+          const funcDecl = manager.funcDecls[decl];
+          if (
+            funcDecl.family !== FAMILY_USER ||
+            model.constInterps.has(decl) ||
+            model.funcInterps.has(decl)
+          )
+            continue;
+          const value = model.getSomeValue(funcDecl.range);
+          if (funcDecl.domain.length === 0) {
+            model.registerConst(decl, value);
+            continue;
+          }
+          const interp = new FuncInterp(manager, funcDecl.domain.length);
+          interp.setElse(value);
+          model.registerFunc(decl, interp);
+        }
+        model.addRecFuns();
+        print(`(\n${printModel(manager, getPrintEnvironment(), model, 2)})`);
+      },
+    ],
+    ["display", (list) => display(state.reader.parseTerm(list.items[1] ?? list.end))],
+    [
+      "dbg-lt",
+      (list) => {
+        const first = state.reader.parseTerm(list.items[1] ?? list.end);
+        const second = state.reader.parseTerm(list.items[2] ?? list.end);
+        print(String(isAstLess(state.manager, first, second)));
+      },
+    ],
+    [
+      "dbg-some-value",
+      (list) => {
+        display(
+          getManagerSomeValue(state.manager, state.reader.parseSort(list.items[1] ?? list.end)),
+        );
+      },
+    ],
+    [
+      "dbg-used-vars",
+      (list) => {
+        const manager = state.manager;
+        const term = state.reader.parseTerm(list.items[1] ?? list.end);
+        const body =
+          manager.kinds[term] === KIND_QUANTIFIER ? manager.getQuantifier(term).body : term;
+        const sorts = getFreeVarSorts(manager, body, manager.freeVarBounds[body]);
+        const lines = sorts.map(
+          (sort, index) =>
+            `\n  (${String(index).padEnd(6)} ${sort === undefined ? "<not-used>" : renderFormat(formatSort(manager, sort), settings.printOptions)})`,
+        );
+        print(`(vars${lines.join("")})`);
+      },
+    ],
+    [
+      "dbg-elim-unused-vars",
+      (list) => {
+        const manager = state.manager;
+        const term = state.reader.parseTerm(list.items[1] ?? list.end);
+        if (manager.kinds[term] !== KIND_QUANTIFIER) {
+          write(format(term), false);
+          return;
+        }
+        display(elimUnusedVars(manager, term));
+      },
+    ],
+    ["dbg-instantiate", (list) => instantiate(list, false)],
+    ["dbg-instantiate-nested", (list) => instantiate(list, true)],
+    [
+      "echo",
+      (list) => {
+        const message = list.items[1];
+        if (message?.kind !== "string")
+          throw new SmtParseError("invalid echo command, string expected", message ?? list.end);
+        print(message.text);
+      },
+    ],
+    [
+      "set-option",
+      (list) => {
+        const option = list.items[1];
+        const keyword = option?.kind === "keyword" ? option.text : "";
+        const optionName = `:${getParameterName(keyword)}`;
+        const value = list.items[2];
+        const isTrue = isSymbol(value, "true");
+        if (keyword === ":produce-models") settings.isProducingModels = isTrue;
+        if (keyword === ":produce-unsat-cores") settings.isProducingUnsatCores = isTrue;
+        if (keyword === ":produce-proofs") settings.isProducingProofs = isTrue;
+        if (keyword === ":interactive-mode") settings.isInteractive = isTrue;
+        if (keyword === ":diagnostic-output-channel")
+          settings.isDiagnosticOnStdout = value?.kind === "string" && value.text === "stdout";
+        if (keyword === ":int-real-coercions" && !isTrue)
+          throw new SmtUnsupportedError("the option :int-real-coercions false");
+        if (keyword === ":error-behavior") {
+          if (!isSymbol(value, "immediate-exit") && !isSymbol(value, "continued-execution"))
+            throw new SmtParseError(
+              "error setting :error-behavior, 'immediate-execution' or 'continued-execution' expected",
+              list.end,
+            );
+          settings.isExitingOnError = isSymbol(value, "immediate-exit");
+        }
+        if (
+          keyword !== "" &&
+          !BUILTIN_OPTIONS.has(keyword) &&
+          value !== undefined &&
+          value.kind !== "list"
+        )
+          settings.parameters.set(getParameterName(keyword), value.text);
+        if (optionName === ":print_success") settings.isPrintingSuccess = isTrue;
+        if (
+          !BUILTIN_OPTIONS.has(keyword) &&
+          settings.parameters.get("smtlib2_compliant") === "true"
+        )
+          settings.isPrintingSuccess = true;
+        if (optionName === ":smt.mbqi") settings.isMbqi = isTrue;
+        if (optionName === ":smt.macro_finder") settings.isFindingMacros = isTrue;
+        if (optionName === ":smt.mbqi.max_iterations" && value?.kind === "numeral")
+          settings.mbqiMaxIterations = Number(value.text);
+        if (optionName === ":rlimit" && value?.kind === "numeral")
+          settings.rlimit = Number(value.text);
+        if (optionName === ":rewriter.hi_div0") {
+          settings.isHiDiv0 = isTrue;
+          state.manager.isHiDiv0 = isTrue;
+        }
+        if (optionName === ":encoding" && value !== undefined && value.kind !== "list") {
+          settings.encoding = ENCODINGS.get(value.text) ?? UNICODE_ENCODING;
+          state.manager.maxChar = settings.encoding.maxChar;
+          state.manager.charBits = settings.encoding.charBits;
+        }
+        if (optionName === ":parser.ignore_bad_patterns")
+          settings.parserOptions.isIgnoringBadPatterns = isTrue;
+        const numericOption = NUMERIC_PRINT_OPTIONS.get(optionName);
+        if (numericOption !== undefined && value?.kind === "numeral")
+          settings.printOptions[numericOption] = Number(value.text);
+        const booleanOption = BOOLEAN_PRINT_OPTIONS.get(optionName);
+        if (booleanOption !== undefined) settings.printOptions[booleanOption] = isTrue;
+        if (
+          optionName.startsWith(":pp.") &&
+          numericOption === undefined &&
+          booleanOption === undefined
+        )
+          throw new SmtUnsupportedError(`the option ${optionName}`);
+      },
+    ],
+    [
+      "get-option",
+      (list) => {
+        const option = list.items[1];
+        if (option?.kind !== "keyword")
+          throw new SmtParseError("invalid command argument, keyword expected", option ?? list.end);
+        const builtinValues = new Map<string, boolean | string>([
+          [":print-success", settings.isPrintingSuccess],
+          [":produce-models", settings.isProducingModels],
+          [":produce-unsat-cores", settings.isProducingUnsatCores],
+          [":int-real-coercions", true],
+          [":error-behavior", settings.isExitingOnError ? "immediate-exit" : "continued-execution"],
+        ]);
+        const name = getParameterName(option.text);
+        const value =
+          builtinValues.get(option.text) ??
+          (BUILTIN_OPTIONS.has(option.text)
+            ? undefined
+            : (settings.parameters.get(name) ?? PARAMETER_DEFAULTS.get(name)));
+        if (value === undefined) throw new SmtUnsupportedError(`the option ${option.text}`);
+        print(String(value));
+      },
+    ],
+    [
+      "get-info",
+      (list) => {
+        const info = list.items[1];
+        if (info?.kind !== "keyword")
+          throw new SmtParseError("invalid command argument, keyword expected", info ?? list.end);
+        const optimizer = state.optimizer;
+        const check = state.check;
+        if (
+          info.text === ":reason-unknown" &&
+          check?.status === L_UNDEF &&
+          optimizer !== undefined &&
+          optimizer.reasonUnknown !== ""
+        ) {
+          print(`(:reason-unknown "${optimizer.reasonUnknown}")`);
+          return;
+        }
+        const reasonUnknown =
+          check === undefined
+            ? "state of the most recent check-sat command is not known"
+            : check.reasonUnknown;
+        if (info.text === ":reason-unknown" && reasonUnknown !== undefined) {
+          print(`(:reason-unknown "${reasonUnknown.replaceAll('"', '\\"')}")`);
+          return;
+        }
+        if (info.text === ":rlimit") {
+          print(`(:rlimit ${state.manager.limit.count})`);
+          return;
+        }
+        if (info.text !== ":error-behavior")
+          throw new SmtUnsupportedError(`the information ${info.text}`);
+        print(
+          `(:error-behavior ${settings.isExitingOnError ? "immediate-exit" : "continued-execution"})`,
+        );
+      },
+    ],
+    [
+      "set-logic",
+      (list) => {
+        const logic = list.items[1];
+        if (!isSymbol(logic))
+          throw new SmtParseError("invalid logic name, symbol expected", logic ?? list.end);
+        if (state.logic !== undefined)
+          throw new SmtParseError("the logic has already been set", logic);
+        if (state.assertions.length > 0)
+          throw new SmtParseError("logic must be set before initialization", logic);
+        if (!isSupportedLogic(logic.text)) {
+          print("unsupported");
+          printDiagnostic(
+            `; ignoring unsupported logic ${logic.text} line: ${list.line} position: ${list.column}`,
+          );
+          return;
+        }
+        state.logic = logic.text;
+        if (state.isProofsEnabled === undefined)
+          state.reader = createSmtlibReader(state.manager, logic.text, settings.parserOptions);
+        else {
+          state.reader.restrictSorts(logic.text);
+          // Deviation from Z3: its new solver starts without the open scopes, so it ignores their pop
+          // and keeps what they asserted.
+          resetKernel();
+        }
+        if (settings.isPrintingSuccess) print("success");
+      },
+    ],
+    ["set-info", () => {}],
+  ]);
   const run = (list: SmtList) => {
     const head = list.items[0];
     if (!isSymbol(head))
       throw new SmtParseError("invalid command, symbol expected", head ?? list.end);
     const command = DECLARATIONS.has(head.text)
       ? (declaration: SmtList) => state.reader.declareCommand(declaration)
-      : Object.hasOwn(runCommand, head.text)
-        ? runCommand[head.text]
-        : undefined;
+      : runCommand.get(head.text);
     if (command === undefined) throw new SmtUnsupportedError(`the command ${head.text}`);
     if (!MANAGERLESS_COMMANDS.has(head.text) && state.isProofsEnabled === undefined) {
       state.isProofsEnabled = settings.parameters.get("proof") === "true";
