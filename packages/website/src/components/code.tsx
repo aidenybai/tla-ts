@@ -149,8 +149,9 @@ export const CodeRun = (props: RunProps) => {
       variant={props.isDone || props.isRunning ? "outline" : "success"}
       size="icon"
       aria-label={props.isRunning ? "Running" : props.isDone ? "Run again" : "Run"}
-      disabled={props.isRunning || !isHydrated}
-      onClick={props.onRun}
+      disabled={!isHydrated}
+      aria-disabled={props.isRunning}
+      onClick={() => !props.isRunning && props.onRun()}
     >
       <RunIcon isRunning={props.isRunning} isDone={props.isDone} />
     </Button>

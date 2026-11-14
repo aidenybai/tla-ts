@@ -28,33 +28,40 @@ interface LineNumberProps {
 }
 
 export const LineNumber = (props: LineNumberProps) => (
-  <span aria-hidden className="block w-[3ch] shrink-0 text-right text-faint select-none">
+  <span aria-hidden className="block min-w-[3ch] shrink-0 text-right text-faint select-none">
     {props.number}
   </span>
 );
 
 interface CodeWordsProps {
   tokens: Token[];
-  offset?: number;
   marks?: Mark[];
   hoveredName?: string;
+  isHighlighted?: boolean;
   colors?: Record<string, string>;
 }
 
 // Memoized so hovering a state, which re-renders every line, does not re-tokenize the code.
 const CodeWords = memo((props: CodeWordsProps) => {
-  const color = props.hoveredName && props.colors?.[props.hoveredName];
   const words = getWords(props.tokens).map((word) => {
-    const start = (props.offset ?? 0) + word.column;
-    const marks = (props.marks ?? []).filter((mark) => mark.start <= start && start < mark.end);
-    const isTinted =
-      !/^\s/.test(word.text) && color && marks.some((mark) => mark.name === props.hoveredName);
+    const marks = (props.marks ?? []).filter(
+      (mark) => mark.start <= word.column && word.column < mark.end,
+    );
+    const isHovered = marks.some((mark) => mark.name === props.hoveredName);
+    const name = isHovered ? props.hoveredName : props.isHighlighted && marks.at(0)?.name;
+    const color = !/^\s/.test(word.text) && name && props.colors?.[name];
+    const strength =
+      marks.at(0)?.name === props.hoveredName
+        ? 28
+        : isHovered
+          ? 12
+          : props.hoveredName === undefined
+            ? 16
+            : 8;
     return {
       ...word,
       region: marks.at(0)?.name,
-      tint: isTinted
-        ? `color-mix(in srgb, ${color} ${marks[0].name === props.hoveredName ? 28 : 12}%, transparent)`
-        : undefined,
+      tint: color ? `color-mix(in srgb, ${color} ${strength}%, transparent)` : undefined,
     };
   });
   return words.map((word, index) => {
@@ -69,7 +76,6 @@ const CodeWords = memo((props: CodeWordsProps) => {
         key={`${word.column}:${word.text}`}
         data-token
         data-region={word.region}
-        data-linked={word.tint && word.region === props.hoveredName ? "" : undefined}
         style={{
           ...word.style,
           backgroundColor: word.tint,
@@ -91,17 +97,18 @@ interface CodeLineProps {
   isActive?: boolean;
   isDimmed?: boolean;
   isWrapped?: boolean;
-  offset?: number;
   marks?: Mark[];
   hoveredName?: string;
+  isHighlighted?: boolean;
   colors?: Record<string, string>;
   className?: string;
 }
 
 export const CodeLine = (props: CodeLineProps) => (
   <span
+    data-line={props.number}
     className={cn(
-      "flex min-h-[1.7em] gap-x-4 max-sm:flex-wrap transition-[background-color,box-shadow] duration-200 ease-out",
+      "flex min-h-[1.7em] gap-x-4 max-sm:flex-wrap",
       props.isActive && "bg-muted shadow-[inset_2px_0_0_var(--foreground)]",
       props.note?.tone === "danger" &&
         "bg-destructive/10 shadow-[inset_2px_0_0_var(--destructive)]",
@@ -111,16 +118,16 @@ export const CodeLine = (props: CodeLineProps) => (
     {props.number !== undefined && <LineNumber number={props.number} />}
     <span
       className={cn(
-        "min-w-0 flex-1 transition-opacity duration-150 ease-[ease]",
+        "min-w-0 flex-1",
         props.isDimmed && "opacity-40",
         props.isWrapped === false ? "whitespace-pre" : "break-words whitespace-pre-wrap",
       )}
     >
       <CodeWords
         tokens={props.tokens}
-        offset={props.offset}
         marks={props.marks}
-        hoveredName={props.hoveredName}
+        hoveredName={props.marks?.length ? props.hoveredName : undefined}
+        isHighlighted={props.isHighlighted}
         colors={props.colors}
       />
     </span>

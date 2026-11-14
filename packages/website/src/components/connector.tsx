@@ -1,113 +1,135 @@
-import { useId, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+import { cn } from "cn";
 
-interface Point {
-  x: number;
-  y: number;
-}
+// An arrow bends only this close to the other pane, so it stays off the code on other lines.
+const BEND_WIDTH_PX = 96;
 
 interface Link {
-  from: Point;
-  to: Point;
+  name: string;
+  fromX: number;
+  fromY: number;
+  bendX: number;
+  toX: number;
+  toY: number;
+}
+
+interface Box {
+  left: number;
+  right: number;
+  middle: number;
+  isClipped: boolean;
 }
 
 interface ConnectorProps {
-  name: string | undefined;
-  color: string | undefined;
+  names: string[];
+  hoveredName: string | undefined;
+  colors: Record<string, string>;
 }
 
-// Points at the first linked row in view, so code that is linked twice still gets an arrow when
+// A name points at its first row in view, so code that is linked twice still gets an arrow when
 // its first use is scrolled away.
-const getBox = (container: Element, name: string) => {
-  const pane = container.querySelector(`[data-pane="${name}"]`);
+const getBoxes = (container: Element, paneName: string) => {
+  const boxes = new Map<string, Box>();
+  const pane = container.querySelector(`[data-pane="${paneName}"]`);
   const view = pane?.getBoundingClientRect();
-  if (!pane || !view) return undefined;
-  const rows = [...pane.querySelectorAll("[data-linked]")].map((element) => ({
-    line: element.parentElement?.parentElement?.getBoundingClientRect(),
-    box: element.getBoundingClientRect(),
-  }));
-  const first = rows.find(
-    (row) => row.box.top + row.box.height / 2 > view.top && row.box.bottom < view.bottom,
-  );
-  return (
-    first && {
-      left: first.line?.left ?? first.box.left,
-      right: Math.min(
-        view.right,
-        Math.max(
-          ...rows.filter((row) => row.box.top === first.box.top).map((row) => row.box.right),
-        ),
-      ),
-      middle: first.box.top + first.box.height / 2,
+  if (!pane || !view) return boxes;
+  for (const element of pane.querySelectorAll<HTMLElement>("[data-region]")) {
+    const name = element.dataset.region ?? "";
+    const box = element.getBoundingClientRect();
+    const middle = box.top + box.height / 2;
+    const first = boxes.get(name);
+    if (first) {
+      if (first.middle === middle) {
+        first.right = box.right;
+        first.isClipped = box.right > view.right;
+      }
+    } else if (middle > view.top && box.bottom < view.bottom) {
+      boxes.set(name, {
+        left: element.parentElement?.parentElement?.getBoundingClientRect().left ?? box.left,
+        right: box.right,
+        middle,
+        isClipped: box.right > view.right,
+      });
     }
-  );
+  }
+  return boxes;
 };
 
 export const Connector = (props: ConnectorProps) => {
   const svgRef = useRef<SVGSVGElement>(null);
-  const markerId = useId();
-  const [link, setLink] = useState<Link | undefined>(undefined);
+  const [links, setLinks] = useState<Link[]>([]);
+  const namesKey = props.names.join("\n");
 
   useLayoutEffect(() => {
     const container = svgRef.current?.parentElement;
-    if (!container || props.name === undefined) return setLink(undefined);
+    const names = namesKey === "" ? [] : namesKey.split("\n");
+    if (!container || names.length === 0) return setLinks([]);
     const update = () => {
       const origin = container.getBoundingClientRect();
-      const source = getBox(container, "source");
-      const output = getBox(container, "output");
-      setLink(
-        source && output
-          ? {
-              from: { x: source.right - origin.left + 6, y: source.middle - origin.top },
-              to: { x: output.left - origin.left + 10, y: output.middle - origin.top },
-            }
-          : undefined,
+      const sources = getBoxes(container, "source");
+      const outputs = getBoxes(container, "output");
+      setLinks(
+        names.flatMap((name) => {
+          const source = sources.get(name);
+          const output = outputs.get(name);
+          return source && output && !source.isClipped
+            ? {
+                name,
+                fromX: source.right - origin.left + 6,
+                fromY: source.middle - origin.top,
+                bendX: Math.max(
+                  source.right - origin.left + 6,
+                  output.left - origin.left + 10 - BEND_WIDTH_PX,
+                ),
+                toX: output.left - origin.left + 10,
+                toY: output.middle - origin.top,
+              }
+            : [];
+        }),
       );
     };
     update();
     const observer = new ResizeObserver(update);
-    for (const content of container.querySelectorAll("[data-pane] > *")) observer.observe(content);
-    container.addEventListener("scroll", update, { capture: true, passive: true });
+    for (const element of container.querySelectorAll("[data-pane], [data-pane] > *"))
+      observer.observe(element);
+    const updateOnScroll = (event: Event) => {
+      if (event.target instanceof Element && event.target.matches("[data-pane]")) update();
+    };
+    container.addEventListener("scroll", updateOnScroll, { capture: true, passive: true });
     return () => {
       observer.disconnect();
-      container.removeEventListener("scroll", update, { capture: true });
+      container.removeEventListener("scroll", updateOnScroll, { capture: true });
     };
-  }, [props.name]);
+  }, [namesKey]);
 
-  const middle = link ? (link.from.x + link.to.x) / 2 : 0;
   return (
     <svg
       ref={svgRef}
       aria-hidden
+      fill="none"
+      strokeLinecap="round"
+      strokeLinejoin="round"
       className="pointer-events-none absolute inset-0 z-10 size-full overflow-hidden max-md:hidden"
     >
-      <marker
-        id={markerId}
-        viewBox="0 0 8 8"
-        refX="6"
-        refY="4"
-        markerWidth="7"
-        markerHeight="7"
-        orient="auto"
-      >
-        <path
-          d="M1.5 1.5 6 4 1.5 6.5"
-          fill="none"
-          stroke={props.color}
-          strokeWidth="1.25"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </marker>
-      {link && (
-        <path
-          d={`M ${link.from.x} ${link.from.y} C ${middle} ${link.from.y}, ${middle} ${link.to.y}, ${link.to.x} ${link.to.y}`}
-          fill="none"
-          stroke={props.color}
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          markerEnd={`url(#${markerId})`}
-        />
-      )}
+      {links.map((link) => (
+        <g
+          key={link.name}
+          stroke={props.colors[link.name]}
+          className={cn(
+            "transition-opacity duration-150 ease-out",
+            props.hoveredName !== undefined && props.hoveredName !== link.name && "opacity-15",
+          )}
+        >
+          <path
+            d={`M ${link.fromX} ${link.fromY} H ${link.bendX} C ${(link.bendX + link.toX) / 2} ${link.fromY}, ${(link.bendX + link.toX) / 2} ${link.toY}, ${link.toX} ${link.toY}`}
+            strokeWidth="1.5"
+          />
+          <path
+            d={`M ${link.toX - 4} ${link.toY - 2.5} L ${link.toX} ${link.toY} L ${link.toX - 4} ${link.toY + 2.5}`}
+            strokeWidth="1.25"
+          />
+        </g>
+      ))}
     </svg>
   );
 };

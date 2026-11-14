@@ -13,26 +13,37 @@ interface RootProps {
   children: ReactNode;
 }
 
-export const ThemeSwitcherRoot = (props: RootProps) => {
-  const theme = useSyncExternalStore(
+export const useTheme = () => ({
+  theme: useSyncExternalStore(
     subscribeToTheme,
     () => localStorage.getItem(STORAGE_KEY) ?? "system",
     () => "system",
-  );
+  ),
+  setTheme: (nextTheme: string) => {
+    if (nextTheme === "system") localStorage.removeItem(STORAGE_KEY);
+    else localStorage.setItem(STORAGE_KEY, nextTheme);
+    document.documentElement.classList.toggle(
+      "dark",
+      nextTheme === "dark" ||
+        (nextTheme === "system" && matchMedia("(prefers-color-scheme: dark)").matches),
+    );
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute(
+        "content",
+        getComputedStyle(document.documentElement).getPropertyValue("--background"),
+      );
+    dispatchEvent(new Event(THEME_EVENT));
+  },
+});
+
+export const ThemeSwitcherRoot = (props: RootProps) => {
+  const theme = useTheme();
   return (
     <ToggleGroup
       label="Theme"
-      value={theme}
-      onValueChange={(nextTheme) => {
-        if (nextTheme === "system") localStorage.removeItem(STORAGE_KEY);
-        else localStorage.setItem(STORAGE_KEY, nextTheme);
-        document.documentElement.classList.toggle(
-          "dark",
-          nextTheme === "dark" ||
-            (nextTheme === "system" && matchMedia("(prefers-color-scheme: dark)").matches),
-        );
-        dispatchEvent(new Event(THEME_EVENT));
-      }}
+      value={theme.theme}
+      onValueChange={theme.setTheme}
       className="rounded-lg"
     >
       {props.children}

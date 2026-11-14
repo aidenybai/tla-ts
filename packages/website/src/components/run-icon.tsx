@@ -1,7 +1,7 @@
 import { ArrowCounterClockwise, Play } from "@phosphor-icons/react";
 import { AnimatePresence, m } from "motion/react";
+import { Spinner } from "./spinner";
 
-const LINE_COUNT = 8;
 const HIDDEN = { opacity: 0, scale: 0.5, filter: "blur(4px)" };
 
 interface RunIconProps {
@@ -20,27 +20,7 @@ export const RunIcon = (props: RunIconProps) => (
       className="flex size-4 items-center justify-center"
     >
       {props.isRunning ? (
-        <svg
-          aria-hidden
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={2.5}
-          strokeLinecap="round"
-          className="size-4"
-        >
-          {Array.from({ length: LINE_COUNT }, (_line, index) => (
-            <line
-              key={index}
-              x1={12}
-              y1={3}
-              x2={12}
-              y2={7}
-              transform={`rotate(${(index * 360) / LINE_COUNT} 12 12)`}
-              style={{ animationDelay: `${index / LINE_COUNT - 1}s` }}
-              className="animate-line-fade"
-            />
-          ))}
-        </svg>
+        <Spinner />
       ) : props.isDone ? (
         <ArrowCounterClockwise weight="bold" className="size-4" />
       ) : (
