@@ -23,6 +23,7 @@ import {
   SORT_REAL,
 } from "../ast";
 import { getExtendedNumeral, isAppOf, mkNot } from "../ast-util";
+import { ObjMap } from "../hashtable";
 import {
   type MboRow,
   type MboVar,
@@ -49,7 +50,7 @@ const getBinaryArgs = (manager: AstManager, expr: number, op: number) =>
 const getNumeral = (manager: AstManager, expr: number) =>
   isAppOf(manager, expr, OP_NUM) ? manager.getRationalValue(expr) : undefined;
 
-const insertMul = (terms: Map<number, Rational>, expr: number, value: Rational) =>
+const insertMul = (terms: ObjMap<Rational>, expr: number, value: Rational) =>
   terms.set(expr, (terms.get(expr) ?? Rational.zero).add(value));
 
 interface Constant {
@@ -98,7 +99,7 @@ export class ArithProjectPlugin {
   ): boolean {
     const context = this.context;
     const manager = this.manager;
-    const terms = new Map<number, Rational>();
+    const terms = new ObjMap<Rational>((expr) => manager.hashes[expr]);
     const constant: Constant = { value: Rational.zero };
     let mul = Rational.one;
     let type = T_LE;
@@ -186,7 +187,7 @@ export class ArithProjectPlugin {
     term: number,
     constant: Constant,
     fmls: RefVector,
-    terms: Map<number, Rational>,
+    terms: ObjMap<Rational>,
     tids: Map<number, number>,
   ): void {
     const context = this.context;
@@ -194,7 +195,7 @@ export class ArithProjectPlugin {
     const recurse = (factor: Rational, arg: number) =>
       this.linearize(mbo, factor, arg, constant, fmls, terms, tids);
     const addDef = (arg: number) => {
-      const termsOfArg = new Map<number, Rational>();
+      const termsOfArg = new ObjMap<Rational>((expr) => manager.hashes[expr]);
       const argConstant: Constant = { value: Rational.zero };
       this.linearize(mbo, Rational.one, arg, argConstant, fmls, termsOfArg, tids);
       const coeffs = this.extractCoefficients(mbo, termsOfArg, tids);
@@ -243,7 +244,7 @@ export class ArithProjectPlugin {
 
   private extractCoefficients(
     mbo: ModelBasedOpt,
-    terms: Map<number, Rational>,
+    terms: ObjMap<Rational>,
     tids: Map<number, number>,
   ) {
     const manager = this.manager;
