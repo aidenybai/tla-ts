@@ -171,3 +171,63 @@ THEOREM ASSUME NEW P, NEW Q, NEW R, (P /\\ Q) /\\ R PROVE (R /\\ Q) /\\ P
     expect(getAssumptions({ TLAPM_FLATTEN: value })).toBe(2);
   });
 });
+
+const PARSE_FAILURE = [
+  'File "<unknown>":',
+  'Error: Could not parse "./Bad.tla" successfully.',
+  ' tlapm ending abnormally with Failure("Module.Parser.parse_file")',
+  "",
+  "",
+].join("\n");
+
+const getParseError = (body: string) => {
+  const directory = writeModule(
+    "Bad",
+    `---- MODULE Bad ----\nEXTENDS Naturals\nVARIABLE x\n${body}\n====\n`,
+  );
+  const result = runTlapm(directory, ["-N", "Bad.tla"]);
+  expect(result.status).toBe(3);
+  expect(result.stderr.endsWith(PARSE_FAILURE)).toBe(true);
+  return result.stderr.slice(0, -PARSE_FAILURE.length);
+};
+
+describe("tlapm ends an expression before an infix operator applied as a nonfix one", () => {
+  it.each([
+    ["A == x +(x, x)", "line 4, character 7\nUnexpected operator +\n"],
+    ["A == x + x +(x, x)", "line 4, character 11\nUnexpected operator +\n"],
+    ["A == x \\in (x, x)", "line 4, character 7\nUnexpected operator \\in\n"],
+    ["A == IF x +(x, x) THEN 1 ELSE 2", "line 4, character 5\nUnexpected operator +\n"],
+    ["A == (x +(x, x))", "line 4, character 5\nrequired expressions(s) missing before '('\n"],
+    ["A == {x +(x, x)}", "line 4, character 5\nrequired expressions(s) missing before '{'\n"],
+    ["A == x +(x, )", "line 4, character 5\nincomplete expression\n"],
+  ])("%s", (body, message) => {
+    expect(getParseError(body)).toBe(`File "./Bad.tla", ${message}`);
+  });
+
+  it("reads the operator as infix when its parentheses hold one expression", () => {
+    const directory = writeModule(
+      "Infix",
+      `---- MODULE Infix ----
+EXTENDS Naturals
+VARIABLE x
+A == x = (\\E a, b \\in {x} : a) \\/ x \\in (x \\cup ({x, x} \\cup (<<x, x>>[1] \\cup +(x, x))))
+B == x + (x + (x + [a, b \\in {x} |-> a][x, x])) + x
+THEOREM A /\\ B = B BY DEF A, B
+====
+`,
+    );
+    const result = runTlapm(directory, ["-N", "--toolbox", "0", "0", "--printallobs", "Infix.tla"]);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain(
+      [
+        "@!!obl:ASSUME NEW VARIABLE x,",
+        "       A ==",
+        "         x = (\\E a, b \\in {x} : a)",
+        "         \\/ x \\in x \\cup ({x, x} \\cup (<<x, x>>[1] \\cup x + x)),",
+        "       B == x + (x + (x + [a, b \\in {x} |-> a][x, x])) + x",
+        "PROVE  A /\\ B = B",
+        "",
+      ].join("\n"),
+    );
+  });
+});

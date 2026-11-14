@@ -1588,6 +1588,42 @@ const parse = (
         return getTlapmOperator(start, "Postfix", TLAPM_SELECTION_PRECEDENCE, (operands) => ({
           kind: "FieldAccess",
           record: operands[0].expression,
+  // A comma directly inside the parentheses after the operator, without which non_test's
+  // attempt at `(e, f)` fails. A selector's << or >> isn't a bracket.
+  const hasNonfixComma = () => {
+    let depth = 0;
+    for (let index = cursor + 1; index < tokens.length; index++) {
+      const token = tokens[index];
+      if (token.kind !== "Operator") continue;
+      if (depth === 1 && token.text === ",") return true;
+      if (tokens[index - 1].text === "!") continue;
+      if (OPENING_BRACKETS.has(token.text)) depth++;
+      if (CLOSING_BRACKETS.has(token.text) && --depth === 0) return false;
+    }
+    return false;
+  };
+
+  // expr_or_op's non_test: an infix operator before two expressions in parentheses is an atom.
+  const parseTlapmNonfixInfix = (token: Token) =>
+    isAt("(", 1) && hasNonfixComma()
+      ? attempt(() =>
+          withBracketLayout((): Expression => {
+            advance();
+            advance();
+            const left = parseExpression();
+            expect(",");
+            const right = parseExpression();
+            expect(")");
+            return {
+              kind: "Apply",
+              operator: token.text,
+              args: [left, right],
+              location: getLocation(token),
+            };
+          }),
+        )
+      : undefined;
+
           field,
           location,
         }));
@@ -1615,6 +1651,11 @@ const parse = (
         cursor = start;
         return undefined;
       }
+        // Pco.resolve has no operator to put before that atom, so the expression ends here.
+        if (parseTlapmNonfixInfix(token)) {
+          cursor = start;
+          return undefined;
+        }
       advance();
       return getTlapmOperator(start, "Postfix", POSTFIX_PRECEDENCE, (operands) =>
         getPostfixApplication(token, operands[0].expression),
@@ -1622,20 +1663,7 @@ const parse = (
     }
     if (token.kind === "Operator" && isBullet(token))
       return getTlapmOperand(commit(parseJunctionList), start);
-    const nonfix =
-      infix && isAt("(", 1)
-        ? attempt(() =>
-            withBracketLayout((): Expression => {
-              advance();
-              advance();
-              const left = parseExpression();
-              expect(",");
-              const right = parseExpression();
-              expect(")");
-              return { kind: "Apply", operator: token.text, args: [left, right], location };
-            }),
-          )
-        : undefined;
+    const nonfix = infix ? parseTlapmNonfixInfix(token) : undefined;
     if (nonfix) return getTlapmOperand(nonfix, start);
     const nonfixPostfix = parseTlapmNonfixPostfix(token);
     if (nonfixPostfix) {
