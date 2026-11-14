@@ -4888,6 +4888,16 @@ describe("errors", () => {
     ).toThrow("spec.ts:3:37 typeof can't tell a @symmetric value from a function");
   });
 
+  it("runs a call in typeof's operand, which may throw", async () => {
+    const getSource = (count: number) => `
+      const count: number = ${count};
+      const result: string = typeof "ab".repeat(count);
+      if (result !== "string") throw new Error(result);
+    `;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    await expect(checkModel(getSource(-1))).rejects.toThrow("RangeError of repeat");
+  });
+
   it("rejects Object.is on objects", () => {
     expect(() => compile(`let isSame = Object.is([1], [1]);`)).toThrow(
       "spec.ts:1:14 TLA+ compares objects by value, not by identity",

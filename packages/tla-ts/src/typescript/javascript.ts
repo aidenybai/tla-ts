@@ -5229,7 +5229,17 @@ export const translateTypeOf = (node: ts.TypeOfExpression, scope: Scope, context
   const isProperty =
     kind === "object" ||
     (ts.isElementAccessExpression(read) && (kind === "sequence" || kind === "string"));
-  if (known?.length === 1 && !isProperty) return string(known[0]);
+  // A call in the operand still runs, as it may throw.
+  const hasCall = (inner: ts.Node): boolean =>
+    ts.isCallExpression(inner) ||
+    ts.isNewExpression(inner) ||
+    ts.isTaggedTemplateExpression(inner) ||
+    (!ts.isFunctionLike(inner) && ts.forEachChild(inner, hasCall) === true);
+  if (known?.length === 1 && !isProperty && !hasCall(read)) return string(known[0]);
+  if (known?.length === 1 && !isProperty) {
+    const operand = translateExpression(node.expression, scope, context);
+    return ifExpression(apply("=", [operand, operand]), string(known[0]), string(known[0]));
+  }
   if (context.modelValues.size > 0) {
     throw new TlaTypeScriptError("typeof can't tell a @symmetric value from a function", node);
   }
