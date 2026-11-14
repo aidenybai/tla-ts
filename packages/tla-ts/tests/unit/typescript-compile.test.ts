@@ -14929,6 +14929,22 @@ describe("errors", () => {
     ).toContain("TypeError");
   });
 
+  it("stops at Intl's locales that a number gives, whose object's length the constructor reads", async () => {
+    const getSource = (locales: string) => `
+      const holder: { [key: string]: unknown } = {};
+      let name = "none";
+      try {
+        const collator = new Intl.Collator(${locales} as unknown as string);
+        holder.collator = collator;
+      } catch (error) {
+        name = (error as Error).name;
+      }
+      if (name !== "TypeError") throw new Error(name);
+    `;
+    expect(() => compile(getSource("5"))).toThrow("Unsupported constructor");
+    expect((await checkModel(getSource("[5]"))).failure).toBeUndefined();
+  });
+
   it("reads the prototypes of the iterators that strings, maps, sets, and regexps make", async () => {
     const result = await checkModel(`
       const holder: { [key: string]: unknown } = {};

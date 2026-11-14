@@ -347,7 +347,13 @@ export const getIntlOutcome = (
   options: Options,
 ): IntlOutcome => {
   const constructor = CONSTRUCTORS[name];
-  if (constructor === undefined) return undefined;
+  // CanonicalizeLocaleList reads the length of the object that a number or a boolean converts to.
+  if (
+    constructor === undefined ||
+    (name !== "Locale" && (typeof locales === "number" || typeof locales === "boolean"))
+  ) {
+    return undefined;
+  }
   const tags =
     name === "Locale" || !Array.isArray(locales)
       ? locales === undefined && name !== "Locale"
