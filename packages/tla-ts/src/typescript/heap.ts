@@ -2760,6 +2760,47 @@ export const getGetterCall = (node: ts.Node, context: Context) => {
     : undefined;
 };
 
+// A call of a method of an Intl constructor's prototype, through call or on a receiver, which
+// throws the TypeError of a receiver that isn't the kind of object the method reads.
+export const getIntlMethodCall = (node: ts.Node, context: Context) => {
+  if (context.heap === undefined || !ts.isCallExpression(node)) return undefined;
+  const callee = skipCasts(node.expression);
+  const isCall = ts.isPropertyAccessExpression(callee) && callee.name.text === "call";
+  const method = isCall ? callee.expression : callee;
+  const origin = getOrigin(method, context);
+  const owner = ts.isPropertyAccessExpression(origin) ? skipCasts(origin.expression) : undefined;
+  const constructor =
+    owner !== undefined && ts.isPropertyAccessExpression(owner) && owner.name.text === "prototype"
+      ? owner.expression
+      : undefined;
+  const kind =
+    constructor !== undefined &&
+    ts.isPropertyAccessExpression(constructor) &&
+    getBuiltIn(constructor.expression, context) === "Intl"
+      ? constructor.name.text
+      : undefined;
+  const name = ts.isPropertyAccessExpression(origin) ? origin.name.text : "";
+  const path = `Intl.${kind}.prototype.${name}` as const;
+  return kind !== undefined &&
+    BUILT_INS[path] !== undefined &&
+    !node.arguments.some(ts.isSpreadElement) &&
+    node.arguments.slice(isCall ? 1 : 0).every(isInertValue)
+    ? {
+        kind,
+        path,
+        method,
+        isCall,
+        receiver: isCall
+          ? node.arguments.at(0)
+          : ts.isPropertyAccessExpression(method)
+            ? method.expression
+            : undefined,
+        unwraps:
+          (kind === "NumberFormat" || kind === "DateTimeFormat") && name === "resolvedOptions",
+      }
+    : undefined;
+};
+
 // new Proxy of a target and a handler.
 export const isNewProxy = (node: ts.Node, context: Context): node is ts.NewExpression =>
   context.heap !== undefined &&
@@ -4883,6 +4924,7 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
   const intlError = getIntlError(node, context);
   if (intlError !== undefined) return [intlError];
   if (getGetterCall(node, context) !== undefined) return ["TypeError"];
+  if (getIntlMethodCall(node, context) !== undefined) return ["TypeError"];
   if (isInvalidRegExp(node, context)) return ["SyntaxError"];
   const created = getNewClass(node, context);
   if (created !== undefined && ts.isClassLike(created) && isNullBased(created)) {

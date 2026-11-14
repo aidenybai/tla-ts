@@ -1292,25 +1292,37 @@ LOCAL IntlGetterKind(path) ==
     [] HasPrefix(path, "get Intl.Locale.prototype.") -> "Locale"
     [] OTHER -> ""
 
-LOCAL IntlReceives(heap, path, receiver) ==
+LOCAL IntlReceives(heap, kind, receiver) ==
   /\\ IsHeap(receiver)
   /\\ "intl" \\in DOMAIN heap.objects[receiver[Ref]]
-  /\\ heap.objects[receiver[Ref]].intl = IntlGetterKind(path)
+  /\\ heap.objects[receiver[Ref]].intl = kind
 
-\\* Whether a getter throws its TypeError on another object only after it walks the object's
-\\* prototypes, as NumberFormat's and DateTimeFormat's do for the objects that legacy code makes.
-LOCAL IntlMayWalk(heap, path, receiver) ==
-  /\\ IntlGetterKind(path) \\in {"NumberFormat", "DateTimeFormat"}
+\\* Whether a getter or a method throws its TypeError on another object only after it walks the
+\\* object's prototypes, as NumberFormat's and DateTimeFormat's do for the objects that legacy code
+\\* makes.
+LOCAL IntlMayWalk(heap, kind, receiver) ==
+  /\\ kind \\in {"NumberFormat", "DateTimeFormat"}
   /\\ IsRef(receiver)
   /\\ ReachesProxy(heap, receiver)
 
 \\* What one of those getters gives for the kind of object it reads: the function that a compare or
 \\* a format getter gives, bound to the object. The rest read locale data.
 LOCAL IntlGet(heap, path, receiver) ==
-  CASE IntlReceives(heap, path, receiver) /\\ heap.objects[receiver[Ref]].bound # Undefined ->
+  CASE IntlReceives(heap, IntlGetterKind(path), receiver) /\\
+       heap.objects[receiver[Ref]].bound # Undefined ->
          heap.objects[receiver[Ref]].bound
-    [] IntlReceives(heap, path, receiver) -> Assert(FALSE, "tla-ts can't read locale data")
+    [] IntlReceives(heap, IntlGetterKind(path), receiver) ->
+         Assert(FALSE, "tla-ts can't read locale data")
     [] OTHER -> Assert(FALSE, "tla-ts can't throw the TypeError of a getter on another kind of object")
+
+\\* Whether a method of an Intl prototype throws the TypeError of a receiver that isn't the kind of
+\\* object it reads, which it does before it reads its arguments. NumberFormat's and DateTimeFormat's
+\\* resolvedOptions unwrap their receiver first.
+IntlThrows(heap, kind, unwraps, receiver) ==
+  CASE IntlReceives(heap, kind, receiver) -> Assert(FALSE, "tla-ts can't read locale data")
+    [] unwraps /\\ IntlMayWalk(heap, kind, receiver) ->
+         Assert(FALSE, "tla-ts can't run a proxy's internal method here")
+    [] OTHER -> TRUE
 
 RECURSIVE Has(_, _, _)
 Has(heap, ref, key) ==
@@ -1650,8 +1662,8 @@ ReadError(heap, ref, key) ==
   IN IF \\/ path = "get Function.prototype.arguments"
         \\/ path \\in ViewGetters /\\ ~ViewReceives(heap, path, ref)
         \\/ /\\ IntlGetterKind(path) # ""
-           /\\ ~IntlReceives(heap, path, ref)
-           /\\ ~IntlMayWalk(heap, path, ref)
+           /\\ ~IntlReceives(heap, IntlGetterKind(path), ref)
+           /\\ ~IntlMayWalk(heap, IntlGetterKind(path), ref)
      THEN "TypeError"
      ELSE ""
 
@@ -3733,8 +3745,9 @@ GetterCall(heap, getter, receiver) ==
        [] path \\in ViewGetters ->
             IF ViewReceives(heap, path, receiver) THEN give(ViewGet(heap, path, receiver)) ELSE typeError
        [] IntlGetterKind(path) # "" ->
-            CASE IntlReceives(heap, path, receiver) -> give(IntlGet(heap, path, receiver))
-              [] IntlMayWalk(heap, path, receiver) ->
+            CASE IntlReceives(heap, IntlGetterKind(path), receiver) ->
+                   give(IntlGet(heap, path, receiver))
+              [] IntlMayWalk(heap, IntlGetterKind(path), receiver) ->
                    Assert(FALSE, "tla-ts can't run a proxy's internal method here")
               [] OTHER -> typeError
        [] path \\in {"get " \\o owner \\o ".@@species" :

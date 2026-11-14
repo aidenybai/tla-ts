@@ -212,6 +212,7 @@ import {
   getNewBuffer,
   getViewCall,
   getGetterCall,
+  getIntlMethodCall,
   translateNewBufferOf,
   isRevoke,
   getPrimitiveObjectCall,
@@ -2791,6 +2792,46 @@ export const translateCallStatement = (
   }
   if (getIteratorDisposeCall(expression, context) !== undefined) {
     return translateIteratorDisposeCall(expression, path, context, frame, continueWith);
+  }
+  const intlMethodCall = getIntlMethodCall(expression, context);
+  if (intlMethodCall !== undefined) {
+    const heap = getHeap(path.scope, expression, context);
+    const method = translateBuiltInValue(intlMethodCall.path, expression, context);
+    return ifThenElse(
+      apply("/\\", [
+        useJavaScript(
+          "SameValue",
+          [translateExpression(intlMethodCall.method, path.scope, context), method],
+          context,
+        ),
+        intlMethodCall.isCall
+          ? useJavaScript(
+              "HoldsBuiltIn",
+              [heap, method, string("call"), string("Function.prototype.call")],
+              context,
+            )
+          : boolean(true),
+        useJavaScript(
+          "IntlThrows",
+          [
+            heap,
+            string(intlMethodCall.kind),
+            boolean(intlMethodCall.unwraps),
+            intlMethodCall.receiver === undefined
+              ? getUndefined(context)
+              : translateExpression(intlMethodCall.receiver, path.scope, context),
+          ],
+          context,
+        ),
+      ]),
+      throwTypeError(path, expression, context, frame),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string(`tla-ts can't call ${intlMethodCall.path} where a script replaced it`),
+        ]),
+      ),
+    );
   }
   const getterCall = getGetterCall(expression, context);
   if (getterCall !== undefined) {
@@ -10064,6 +10105,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getURICall(node, context)?.isDecode === true ||
     getViewCall(node, context) !== undefined ||
     getGetterCall(node, context) !== undefined ||
+    getIntlMethodCall(node, context) !== undefined ||
     getCalledThrough(node, context) !== undefined ||
     getStackCall(node, context) !== undefined ||
     getIteratorDisposeCall(node, context) !== undefined ||

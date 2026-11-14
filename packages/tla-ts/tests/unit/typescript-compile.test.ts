@@ -14882,6 +14882,35 @@ describe("errors", () => {
     );
   });
 
+  it("throws the TypeError of an Intl method on another kind of object", async () => {
+    const getSource = (calls: readonly string[]) => `
+      const holder: { [key: string]: unknown } = {};
+      const format = Intl.RelativeTimeFormat.prototype.format;
+      const names: string[] = [];
+      const run = (callback: () => unknown) => {
+        try {
+          callback();
+          names.push("none");
+        } catch (error) {
+          names.push((error as Error).name);
+        }
+      };
+      ${calls.map((call) => `run(() => ${call});`).join("\n")}
+      if (names.join() !== "${calls.map(() => "TypeError").join()}") throw new Error(names.join());
+    `;
+    const calls = [
+      'format.call({}, 1, "day")',
+      'format.call(Symbol(), 1, "day")',
+      "Intl.DisplayNames.prototype.resolvedOptions()",
+      "Intl.NumberFormat.prototype.resolvedOptions.call(new Intl.DateTimeFormat())",
+    ];
+    expect((await checkModel(getSource(calls))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource(['format.call(new Intl.RelativeTimeFormat(), 1, "day")'])))
+        .failure?.message,
+    ).toContain("locale data");
+  });
+
   it("constructs Intl's objects of literal locales and options", async () => {
     const getSource = (expected: string) => `
       const holder: { [key: string]: unknown } = {};
