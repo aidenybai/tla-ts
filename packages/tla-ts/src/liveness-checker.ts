@@ -2,7 +2,6 @@ import { TlaEvaluationError } from "./errors";
 import { isExpressionImpure } from "./dependencies";
 import { hasRepeatedEffects, type Environment } from "./evaluate";
 import {
-  evaluateLive,
   evaluateOnLasso,
   getInterpretedAtoms,
   toLiveExpression,
@@ -82,8 +81,18 @@ interface Pool<Data extends Int32Array | Uint8Array> {
   create: (length: number) => Data;
 }
 
-interface BehaviorGraph {
+type Check<State> = (state: State, row: Int8Array, next: State | undefined) => boolean;
+
+interface BehaviorChecks<State> {
+  states: Check<State>[];
+  actions: Check<State>[];
+  // The state predicates of each tableau node.
+  nodes: Check<State>[][];
+}
+
+interface BehaviorGraph<State> {
   solution: Solution;
+  checks: BehaviorChecks<State>;
   actionIds: Int32Array;
   nodeStates: number[];
   nodeTableaux: number[];
@@ -176,20 +185,20 @@ const createNodes = (length: number) => new Int32Array(length).fill(NO_NODE);
 
 const UNWRITTEN = -1;
 
-const isWritten = (behavior: BehaviorGraph, node: number) =>
+const isWritten = <State>(behavior: BehaviorGraph<State>, node: number) =>
   (behavior.edgeStarts[node] ?? UNWRITTEN) !== UNWRITTEN;
 
-const getNodeSuccessors = (behavior: BehaviorGraph, node: number) => {
+const getNodeSuccessors = <State>(behavior: BehaviorGraph<State>, node: number) => {
   const start = behavior.edgeStarts[node];
   return behavior.edgeTargets.data.subarray(start, start + behavior.edgeCounts[node]);
 };
 
-const getStateResult = (behavior: BehaviorGraph, node: number, position: number) =>
+const getStateResult = <State>(behavior: BehaviorGraph<State>, node: number, position: number) =>
   behavior.stateResults.data[
     behavior.nodeStates[node] * behavior.solution.stateChecks.length + position
   ] === 1;
 
-const pushNode = (behavior: BehaviorGraph, state: number, tableauNode: number) => {
+const pushNode = <State>(behavior: BehaviorGraph<State>, state: number, tableauNode: number) => {
   behavior.nodeStates.push(state);
   behavior.nodeTableaux.push(tableauNode);
   behavior.edgeStarts.push(UNWRITTEN);
@@ -198,7 +207,7 @@ const pushNode = (behavior: BehaviorGraph, state: number, tableauNode: number) =
   return behavior.nodeStates.length - 1;
 };
 
-const getStateNodes = (behavior: BehaviorGraph, state: number) => {
+const getStateNodes = <State>(behavior: BehaviorGraph<State>, state: number) => {
   const nodes: number[] = [];
   for (
     let node = behavior.firstNodes.data[state] ?? NO_NODE;
@@ -367,8 +376,73 @@ export const createLiveGraph = <State>(
   isAcceptingFound: boolean,
 ): LiveGraph<State> => {
   const actionIds = new Map<string, number>();
-  const behaviors = solutions.map((solution): BehaviorGraph => ({
+  let capacityMultiplier = 1;
+  const isShared = evaluation.isShared;
+  const atoms = evaluation.atoms;
+  const evaluateFrom = evaluation.evaluateFrom;
+  const stateAtoms = new Map<LiveExpression, number>();
+  const getAtomId = (atom: LiveExpression) => {
+    const id = stateAtoms.get(atom) ?? stateAtoms.size;
+    stateAtoms.set(atom, id);
+    return id;
+  };
+  // A row holds whether each state atom holds of a state: 1 or 0, or -1 before it is evaluated.
+  const createRow = () => new Int8Array(stateAtoms.size).fill(-1);
+  // An edge row holds the result of each action check, shared by the behaviors that check it.
+  const createEdgeRow = () => new Int8Array(actionIds.size).fill(-1);
+  // Unless the checks share results, each check evaluates its atoms afresh.
+  const getRow = (row: Int8Array) => (isShared ? row : createRow());
+  const compileCheck = (expression: LiveExpression): Check<State> => {
+    switch (expression.kind) {
+      case "Boolean": {
+        const value = expression.value;
+        return () => value;
+      }
+      case "State":
+      case "Enabled": {
+        const id = getAtomId(expression);
+        return (state, row) => {
+          if (row[id] === -1) row[id] = atoms.holdsState(expression, state) ? 1 : 0;
+          return row[id] === 1;
+        };
+      }
+      case "Action": {
+        const enabled = expression.enabled && getAtomId(expression.enabled);
+        return (state, row, next) =>
+          !(enabled !== undefined && row[enabled] === 0) &&
+          next !== undefined &&
+          atoms.holdsAction(expression, state, next);
+      }
+      case "Not": {
+        const body = compileCheck(expression.body);
+        return (state, row, next) => !body(state, row, next);
+      }
+      case "And": {
+        const operands = expression.operands.map(compileCheck);
+        return (state, row, next) => operands.every((operand) => operand(state, row, next));
+      }
+      case "Or": {
+        const operands = expression.operands.map(compileCheck);
+        return (state, row, next) => operands.some((operand) => operand(state, row, next));
+      }
+      case "Next": {
+        const body = compileCheck(expression.body);
+        return (state, _row, next) => body(next ?? state, createRow(), undefined);
+      }
+      case "Always":
+      case "Eventually":
+        return () => {
+          throw new TlaEvaluationError("TLC cannot evaluate a temporal formula in a single step");
+        };
+    }
+  };
+  const behaviors = solutions.map((solution): BehaviorGraph<State> => ({
     solution,
+    checks: {
+      states: solution.stateChecks.map(compileCheck),
+      actions: solution.actionChecks.map(compileCheck),
+      nodes: solution.tableau?.nodes.map((node) => node.statePredicates.map(compileCheck)) ?? [],
+    },
     actionIds: Int32Array.from(solution.actionChecks, (predicate) => {
       const key = getTermKey(predicate);
       const actionId = actionIds.get(key) ?? actionIds.size;
@@ -390,50 +464,45 @@ export const createLiveGraph = <State>(
     isDone: [],
     errorNode: undefined,
   }));
-  let capacityMultiplier = 1;
-  const isShared = evaluation.isShared;
-  const atoms = evaluation.atoms;
-  const evaluateFrom = evaluation.evaluateFrom;
-  const sharedStates = new Map<State, Map<LiveExpression, boolean>>();
-  const sharedActions = new Map<State, Map<State, Int8Array>>();
-  const getStateCache = (state: State) => {
-    const cache = sharedStates.get(state) ?? new Map<LiveExpression, boolean>();
-    sharedStates.set(state, cache);
-    return cache;
-  };
-  const evaluateState = (predicate: LiveExpression, state: State) =>
-    evaluateLive(predicate, state, undefined, atoms, isShared ? getStateCache(state) : new Map());
-  const checkState = (behavior: BehaviorGraph, source: number, state: State) =>
+  const checkState = (
+    behavior: BehaviorGraph<State>,
+    source: number,
+    state: State,
+    row: Int8Array,
+  ) =>
     evaluateFrom(source, () =>
-      Uint8Array.from(behavior.solution.stateChecks, (predicate) =>
-        evaluateState(predicate, state) ? 1 : 0,
+      Uint8Array.from(behavior.checks.states, (check) =>
+        check(state, getRow(row), undefined) ? 1 : 0,
       ),
     );
-  const checkAction = (behavior: BehaviorGraph, source: number, state: State, successor: State) =>
+  const checkAction = (
+    behavior: BehaviorGraph<State>,
+    source: number,
+    state: State,
+    row: Int8Array,
+    successor: State,
+    edge: Int8Array,
+  ) =>
     evaluateFrom(source, () => {
-      const predicates = behavior.solution.actionChecks;
+      const actions = behavior.checks.actions;
       if (!isShared) {
-        return Uint8Array.from(predicates, (predicate) =>
-          evaluateLive(predicate, state, successor, atoms, new Map()) ? 1 : 0,
-        );
+        return Uint8Array.from(actions, (check) => (check(state, createRow(), successor) ? 1 : 0));
       }
-      const stateCache = getStateCache(state);
-      const results = sharedActions.get(state) ?? new Map<State, Int8Array>();
-      sharedActions.set(state, results);
-      const known = results.get(successor) ?? new Int8Array(actionIds.size).fill(-1);
-      results.set(successor, known);
       return Uint8Array.from(behavior.actionIds, (actionId, position) => {
-        if (known[actionId] === -1) {
-          known[actionId] = evaluateLive(predicates[position], state, successor, atoms, stateCache)
-            ? 1
-            : 0;
-        }
-        return known[actionId];
+        if (edge[actionId] === -1)
+          edge[actionId] = actions[position](state, row, successor) ? 1 : 0;
+        return edge[actionId];
       });
     });
-  const isConsistent = (tableau: Tableau, node: number, source: number | undefined, state: State) =>
+  const isConsistent = (
+    behavior: BehaviorGraph<State>,
+    node: number,
+    source: number | undefined,
+    state: State,
+    row: Int8Array,
+  ) =>
     evaluateFrom(source, () =>
-      tableau.nodes[node].statePredicates.every((predicate) => evaluateState(predicate, state)),
+      behavior.checks.nodes[node].every((check) => check(state, getRow(row), undefined)),
     );
   const isAccepting = (tableau: Tableau, node: number) => {
     if (!isAcceptingFound) return false;
@@ -445,13 +514,13 @@ export const createLiveGraph = <State>(
     );
   };
 
-  const getNodeId = (behavior: BehaviorGraph, state: number, tableauNode: number) => {
+  const getNodeId = (behavior: BehaviorGraph<State>, state: number, tableauNode: number) => {
     if (!behavior.solution.tableau) return state;
     const slots = behavior.nodeIds.slots;
     const slot = getNodeSlot(behavior.nodeIds, state, tableauNode);
     return slots[slot] === 0 ? undefined : slots[slot + 2];
   };
-  const recordNode = (behavior: BehaviorGraph, state: number, tableauNode: number) => {
+  const recordNode = (behavior: BehaviorGraph<State>, state: number, tableauNode: number) => {
     const node = pushNode(behavior, state, tableauNode);
     const table = behavior.nodeIds;
     if (++table.size * 2 > table.slots.length / 3) {
@@ -475,7 +544,7 @@ export const createLiveGraph = <State>(
     return node;
   };
   const writeNode = (
-    behavior: BehaviorGraph,
+    behavior: BehaviorGraph<State>,
     node: number,
     targets: number[],
     actions: Uint8Array[],
@@ -537,22 +606,23 @@ export const createLiveGraph = <State>(
   };
 
   const expandLate = (
-    behavior: BehaviorGraph,
+    behavior: BehaviorGraph<State>,
     tableau: Tableau,
     state: State,
     index: number,
     node: number,
+    row: Int8Array,
   ) => {
-    const stateResults = checkState(behavior, index, state);
+    const stateResults = checkState(behavior, index, state, row);
     const tableauNode = tableau.nodes[behavior.nodeTableaux[node]];
     const actions: Uint8Array[] = [];
     const successors: number[] = [];
     const selfActions =
       tableauNode.successors.length > 0
-        ? checkAction(behavior, index, state, state)
+        ? checkAction(behavior, index, state, row, state, createEdgeRow())
         : new Uint8Array(0);
     for (const next of tableauNode.successors) {
-      if (!isConsistent(tableau, next, index, state)) continue;
+      if (!isConsistent(behavior, next, index, state, row)) continue;
       if (
         isAccepting(tableau, next) &&
         behavior.errorNode === undefined &&
@@ -566,13 +636,21 @@ export const createLiveGraph = <State>(
       const target = existing ?? recordNode(behavior, index, next);
       successors.push(target);
       actions.push(selfActions);
-      if (existing === undefined) expandLate(behavior, tableau, state, index, target);
+      if (existing === undefined) expandLate(behavior, tableau, state, index, target, row);
     }
     for (const successor of search.getSuccessors(index, state)) {
-      const successorActions = checkAction(behavior, index, state, successor.state);
+      const successorRow = createRow();
+      const successorActions = checkAction(
+        behavior,
+        index,
+        state,
+        row,
+        successor.state,
+        createEdgeRow(),
+      );
       const isDone = behavior.isDone[successor.index] === true;
       for (const next of tableauNode.successors) {
-        if (!isConsistent(tableau, next, index, successor.state)) continue;
+        if (!isConsistent(behavior, next, index, successor.state, successorRow)) continue;
         // Deviation from TLC: TLC records the node of a successor the search never stored, which it never expands.
         if (successor.index === -1) continue;
         const existing = getNodeId(behavior, successor.index, next);
@@ -581,7 +659,7 @@ export const createLiveGraph = <State>(
         successors.push(target);
         actions.push(successorActions);
         if (existing === undefined && isDone) {
-          expandLate(behavior, tableau, successor.state, successor.index, target);
+          expandLate(behavior, tableau, successor.state, successor.index, target, successorRow);
         }
       }
     }
@@ -589,15 +667,18 @@ export const createLiveGraph = <State>(
   };
 
   const addTableauState = (
-    behavior: BehaviorGraph,
+    behavior: BehaviorGraph<State>,
     tableau: Tableau,
     set: LiveSuccessor<State>[],
+    rows: Int8Array[],
     actionResults: Uint8Array[],
     stateResults: Uint8Array,
     index: number,
   ) => {
     const consistency = tableau.nodes.map((_tableauNode, node) =>
-      set.map((successor) => isConsistent(tableau, node, index, successor.state)),
+      set.map((successor, position) =>
+        isConsistent(behavior, node, index, successor.state, rows[position]),
+      ),
     );
     behavior.isDone[index] = true;
     // TLC expands the nodes recorded before the loop, not the ones the loop records.
@@ -614,7 +695,7 @@ export const createLiveGraph = <State>(
           successors.push(target);
           actions.push(actionResults[position]);
           if (existing === undefined && isDone) {
-            expandLate(behavior, tableau, successor.state, successor.index, target);
+            expandLate(behavior, tableau, successor.state, successor.index, target, rows[position]);
           }
         }
       });
@@ -626,7 +707,7 @@ export const createLiveGraph = <State>(
   };
 
   const addPlainState = (
-    behavior: BehaviorGraph,
+    behavior: BehaviorGraph<State>,
     set: LiveSuccessor<State>[],
     actionResults: Uint8Array[],
     stateResults: Uint8Array,
@@ -643,7 +724,7 @@ export const createLiveGraph = <State>(
     writeNode(behavior, index, successors, actions, stateResults);
   };
 
-  const getPath = (behavior: BehaviorGraph, target: number) => {
+  const getPath = (behavior: BehaviorGraph<State>, target: number) => {
     if (behavior.initial.includes(target)) return [target];
     const parents = new Map<number, number>();
     const queue: number[] = [];
@@ -669,7 +750,7 @@ export const createLiveGraph = <State>(
     throw new TlaEvaluationError(`Couldn't re-create liveness trace (path) starting at: ${target}`);
   };
 
-  const getStatePath = (behavior: BehaviorGraph, target: number) =>
+  const getStatePath = (behavior: BehaviorGraph<State>, target: number) =>
     removeRepeats(
       getPath(behavior, target)
         .reverse()
@@ -677,7 +758,7 @@ export const createLiveGraph = <State>(
     );
 
   const findLassoInModel = (
-    behavior: BehaviorGraph,
+    behavior: BehaviorGraph<State>,
     model: Solution["models"][number],
   ): Lasso | undefined => {
     const solution = behavior.solution;
@@ -903,8 +984,7 @@ export const createLiveGraph = <State>(
   return {
     branches: behaviors.length,
     addInitialState: (index, state) => {
-      sharedStates.clear();
-      sharedActions.clear();
+      const row = createRow();
       for (const behavior of behaviors) {
         const tableau = behavior.solution.tableau;
         if (!tableau) {
@@ -912,7 +992,7 @@ export const createLiveGraph = <State>(
           continue;
         }
         for (let node = 0; node < tableau.initialCount; node++) {
-          if (!isConsistent(tableau, node, undefined, state)) continue;
+          if (!isConsistent(behavior, node, undefined, state, row)) continue;
           behavior.initial.push(
             getNodeId(behavior, index, node) ?? recordNode(behavior, index, node),
           );
@@ -920,14 +1000,16 @@ export const createLiveGraph = <State>(
       }
     },
     addState: (index, state, successors) => {
-      sharedStates.clear();
-      sharedActions.clear();
       const set = getSuccessorSet(index, state, successors);
+      const rows = set.map(createRow);
+      // The set holds the state itself, as a successor of the same index.
+      const row = rows[set.findIndex((successor) => successor.index === index)];
+      const edges = set.map(createEdgeRow);
       for (const behavior of behaviors) {
-        const actionResults = set.map((successor) =>
-          checkAction(behavior, index, state, successor.state),
+        const actionResults = set.map((successor, position) =>
+          checkAction(behavior, index, state, row, successor.state, edges[position]),
         );
-        const stateResults = checkState(behavior, index, state);
+        const stateResults = checkState(behavior, index, state, row);
         const tableau = behavior.solution.tableau;
         if (!tableau) {
           addPlainState(behavior, set, actionResults, stateResults, index);
@@ -937,6 +1019,7 @@ export const createLiveGraph = <State>(
           behavior,
           tableau,
           set,
+          rows,
           actionResults,
           stateResults,
           index,
