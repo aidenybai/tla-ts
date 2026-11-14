@@ -17,6 +17,7 @@ import { getHeap } from "./heap";
 import { useJavaScript } from "./javascript";
 import { bind, callMethod, getWrittenFunctions, isNullish, read } from "./protocols";
 import { apply, boolean, string, tuple } from "./tla";
+import { getCaughtElements } from "./scope";
 import { getCollectionType } from "./types";
 
 // The values that patterns took from iterators, which they bind as they would an array's.
@@ -184,7 +185,7 @@ const isPlainPattern = (
   // A name that nothing binds holds nothing that the iterator's functions could read.
   const unresolved = names.filter((name) => name !== undefined && isUnresolved(name, context));
   // Where the iterator throws, JavaScript has bound the names before it, which a try around the
-  // pattern could read, unless the try's block declares them with let or const.
+  // pattern could read, unless the try's block declares them with let or const, or as a catch's.
   const tries = findAncestors(pattern, owner).filter(
     (ancestor): ancestor is ts.TryStatement =>
       ts.isTryStatement(ancestor) && isInside(pattern, ancestor.tryBlock),
@@ -196,7 +197,8 @@ const isPlainPattern = (
         ts.findAncestor(symbol.valueDeclaration, ts.isVariableDeclaration);
       return (
         declaration !== undefined &&
-        (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.BlockScoped) !== 0 &&
+        ((ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.BlockScoped) !== 0 ||
+          ts.isCatchClause(declaration.parent)) &&
         isInside(declaration, tryStatement.tryBlock)
       );
     }),
@@ -255,6 +257,59 @@ export const takeFromIterator = (
           return continueWith(after, held);
         },
         (rejoin) => takeAll(pattern, iterable, path, context, frame, throwWith, rejoin),
+      ),
+  );
+};
+
+// A catch's array pattern whose type doesn't tell what the try threw, which takes the values of an
+// object other than an array through its iterator.
+export const isCaughtIteration = (
+  node: ts.Node,
+  context: Context,
+): node is ts.ArrayBindingPattern =>
+  ts.isArrayBindingPattern(node) &&
+  ts.isVariableDeclaration(node.parent) &&
+  ts.isCatchClause(node.parent.parent) &&
+  isUntypedPattern(node, context) &&
+  isPlainPattern(node, context);
+
+// Takes the values that a catch's array pattern binds from what the try threw: an object's through
+// its iterator, and an array's, or null's or undefined's for the pattern's TypeError, as the
+// pattern would.
+export const takeFromCaught = (
+  pattern: ts.ArrayBindingPattern,
+  value: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, values: Expression) => Formula,
+) => {
+  const heap = getHeap(path.scope, pattern, context);
+  return translateJoined(
+    pattern,
+    path,
+    context,
+    (after) => throwTypeError(after, pattern, context, frame),
+    (throwWith) =>
+      translateJoined(
+        pattern,
+        path,
+        context,
+        (after, values) => {
+          const held = values ?? tuple([]);
+          taken.add(held);
+          return continueWith(after, held);
+        },
+        (rejoin) =>
+          ifThenElse(
+            apply("/\\", [
+              useJavaScript("IsRef", [value], context),
+              apply("~", [useJavaScript("IsProxy", [heap, value], context)]),
+              apply("~", [useJavaScript("IsArray", [heap, value], context)]),
+            ]),
+            takeAll(pattern, value, path, context, frame, throwWith, rejoin),
+            rejoin(path, getCaughtElements(value, heap, pattern, context)),
+          ),
       ),
   );
 };

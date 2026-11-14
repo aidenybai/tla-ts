@@ -150,6 +150,7 @@ import {
   getIteratedSpreads,
   getIteratorFunctions,
   getTaken,
+  isCaughtIteration,
   isIteratedPattern,
   isSteppedPattern,
   isIteratedValue,
@@ -159,6 +160,7 @@ import {
   openIterator,
   readValue,
   stepIterator,
+  takeFromCaught,
   takeFromIterator,
   takeSpreads,
 } from "./iterators";
@@ -11264,6 +11266,7 @@ const getEffects = (
   // runs the functions of the object's iterator.
   const isIterated =
     (ts.isArrayBindingPattern(node) && isIteratedPattern(node, context)) ||
+    isCaughtIteration(node, context) ||
     (written !== undefined &&
       ts.isArrayLiteralExpression(written) &&
       isIteratedPattern(written, context)) ||
@@ -13405,7 +13408,11 @@ const translateTry = (
         (after, values) => runCatch(catchClause, after, values),
       );
     }
-    return runCatch(catchClause, caught, thrown.value);
+    return pattern !== undefined && isCaughtIteration(pattern, context)
+      ? takeFromCaught(pattern, thrown.value, caught, context, bodyFrame, (after, values) =>
+          runCatch(catchClause, after, values),
+        )
+      : runCatch(catchClause, caught, thrown.value);
   };
   return translateStatements(
     statement.tryBlock.statements,

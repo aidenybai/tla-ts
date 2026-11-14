@@ -309,7 +309,7 @@ const isCaughtPattern = (pattern: ts.BindingPattern): boolean => {
 // The elements that a catch's array pattern takes from a value of any type: an array's, where the
 // heap holds the array or it's a sequence. Null and undefined stay, for the TypeError that the
 // pattern throws, and tla-ts doesn't follow the iterator of another value.
-const getCaughtElements = (
+export const getCaughtElements = (
   value: Expression,
   heap: Expression,
   pattern: ts.ArrayBindingPattern,

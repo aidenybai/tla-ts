@@ -19979,6 +19979,62 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("destructures what a try threw through its iterator in a catch's pattern", async () => {
+    const getSource = (expected: string) => `
+      const log = { text: "" };
+      const iterable = {
+        [Symbol.iterator]: () => ({
+          next: () => {
+            log.text += "n";
+            return { value: log.text.length, done: false };
+          },
+          return: () => {
+            log.text += "r";
+            return {};
+          },
+        }),
+      };
+      const failing = {
+        [Symbol.iterator]: () => ({
+          next: () => {
+            throw new RangeError("step");
+          },
+        }),
+      };
+      let taken = 0;
+      try {
+        throw iterable;
+        // @ts-ignore
+      } catch ([first, second]) {
+        taken = first + second;
+      }
+      let caught = "";
+      try {
+        try {
+          throw failing;
+          // @ts-ignore
+        } catch ([value]) {
+          caught = "inner";
+        }
+      } catch (error) {
+        caught = error instanceof RangeError ? "outer" : "other";
+      }
+      let element = 0;
+      try {
+        throw [5, 6];
+        // @ts-ignore
+      } catch ([, last]) {
+        element = last;
+      }
+      const text = \`\${log.text}:\${taken}:\${caught}:\${element}\`;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect((await checkModel(getSource("nnr:3:outer:6"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("nn:3:outer:6"))).failure?.message).toContain(
+      "nnr:3:outer:6",
+    );
+  });
+
   it("rejects a pattern with defaults that destructures an object through its iterator", () => {
     expect(() =>
       compile(`
