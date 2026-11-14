@@ -2995,10 +2995,18 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
       ? undefined
       : getSymbol(nameNode, context.checker);
   const sourceFile = node.getSourceFile();
-  // A function that a new constructs where the script writes it, which the new makes once.
+  // A function that a new constructs where the script writes it, which the new makes once. A body
+  // that runs no code takes only arguments and defaults that can't throw or change anything.
   const constructed = getInPlaceNew(node);
   if (constructed !== undefined) {
-    const isHeap = isPlain(node) && isOnce(constructed);
+    const isHeap =
+      isPlain(node) &&
+      isOnce(constructed) &&
+      ((node.body?.statements.length ?? 0) > 0 ||
+        [
+          ...(constructed.arguments ?? []),
+          ...node.parameters.flatMap((parameter) => parameter.initializer ?? []),
+        ].every(isInertValue));
     heapFunctions.set(node, isHeap);
     return isHeap;
   }
