@@ -12935,6 +12935,37 @@ describe("errors", () => {
     });
   });
 
+  describe("reads the name and the length of a built-in getter or setter", () => {
+    const getSource = (expected: string) => `
+      const holder = { seen: 0 };
+      const getter = Object.getOwnPropertyDescriptor(Map, Symbol.species)!.get!;
+      const proto = Object.getOwnPropertyDescriptor(Object.prototype, "__proto__")!;
+      const described = [
+        getter.name,
+        getter.length,
+        proto.get!.name,
+        proto.set!.name,
+        proto.set!.length,
+      ].join(",");
+      if (described !== "${expected}") throw new Error("described");
+      holder.seen = 1;
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("get [Symbol.species],0,get __proto__,set __proto__,1")))
+          .failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect(
+        (await checkModel(getSource("get @@species,0,get __proto__,set __proto__,0"))).failure
+          ?.message,
+      ).toContain('"described"');
+    });
+  });
+
   it("assigns a constructor's parameter properties before its body runs", async () => {
     const getSource = (keys: string, extra: number) => `
       class Base {

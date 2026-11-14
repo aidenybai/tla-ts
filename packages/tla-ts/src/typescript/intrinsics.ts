@@ -830,6 +830,12 @@ export const translateBuiltIns = (node: ts.SourceFile, context: Context) => {
     if (name === null || entry === undefined || included.has(name)) return;
     included.add(name);
     include(entry[0]);
+    // The getters and setters of its accessors, which a descriptor gives as functions.
+    entry[3]
+      .filter((property) => property.length === 4)
+      .flatMap((property) => property.slice(2))
+      .filter((value) => value.startsWith("o"))
+      .forEach((value) => include(value.slice(1)));
   };
   ["Object.prototype", ...context.builtIns].forEach(include);
   // The objects that the included objects' properties hold, which typeof needs to tell apart.
