@@ -13790,13 +13790,50 @@ describe("errors", () => {
       }
     `);
     expect(result.failure).toBeUndefined();
-    expect(() =>
-      checkModel(`
-        const items: number[] & { tag?: string } = [1, 2];
-        items.tag = "t";
-        for (const item of items) if (item === 1) items.push(3);
-      `),
-    ).toThrow("tla-ts can't iterate an array that the heap holds while the loop changes objects");
+  });
+
+  it("rereads an array that the heap holds at each step of a loop that changes objects", async () => {
+    const getPushed = (expected: string) => `
+      const items: number[] & { tag?: string } = [1, 2];
+      items.tag = "t";
+      const seen: number[] = [];
+      for (const item of items) {
+        seen.push(item);
+        if (item === 1) items.push(3);
+      }
+      if (seen.join(",") !== "${expected}") throw new Error(seen.join(","));
+    `;
+    expect((await checkModel(getPushed("1,2,3"))).failure).toBeUndefined();
+    expect((await checkModel(getPushed("1,2"))).failure?.message).toContain("1,2,3");
+    const getSearched = (expected: string) => `
+      interface Tree {
+        heirs: Tree[];
+        column: number;
+      }
+      const state = { reads: 0 };
+      const leaf = (column: number): Tree => ({ heirs: [], column });
+      const tree: Tree = { heirs: [leaf(3), { heirs: [leaf(1)], column: 5 }], column: 4 };
+      tree.heirs.push(leaf(0));
+      const find = (node: Tree): Tree | undefined => {
+        for (const child of node.heirs) {
+          state.reads += 1;
+          if (child.column < 2) return child;
+          const found = find(child);
+          if (found !== undefined) return found;
+        }
+        return undefined;
+      };
+      const work = { queue: [1, 2], seen: [] as number[] };
+      const alias = work.queue;
+      for (const item of work.queue) {
+        work.seen.push(item);
+        if (item < 3) alias.push(item + 2);
+      }
+      const text = \`\${find(tree)?.column};\${state.reads};\${work.seen.join(",")}\`;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect((await checkModel(getSearched("1;3;1,2,3,4"))).failure).toBeUndefined();
+    expect((await checkModel(getSearched("1;3;1,2"))).failure?.message).toContain("1;3;1,2,3,4");
   });
 
   it("changes a caller's array through a parameter", async () => {

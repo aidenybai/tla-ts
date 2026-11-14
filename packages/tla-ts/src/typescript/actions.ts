@@ -13317,16 +13317,11 @@ const translateIterations = (
   }
   const changed = getChanged(loop, path, context);
   // The iterator reads each element as the loop reaches it, which a copy of the elements matches
-  // only while the body changes no object. A set's or a map's iterator steps through its entries,
-  // where an entry that the loop adds comes last, which reading its entries again at each step
-  // matches while no key leaves it.
+  // only while the body changes no object. Where it may, each step reads the array's length and
+  // elements again, as an array iterator does. A set's or a map's iterator steps through its
+  // entries, where an entry that the loop adds comes last, which reading its entries again at each
+  // step matches while no key leaves it.
   const isLive = isHeapIteration && changesObjects(loop, path, context);
-  if (isLive && ordered === undefined) {
-    throw new TlaTypeScriptError(
-      "Unsupported loop: tla-ts can't iterate an array that the heap holds while the loop changes objects",
-      iterated?.expression,
-    );
-  }
   if (isLive && isKeyDeleted(loop, context)) {
     throw new TlaTypeScriptError(
       "Unsupported loop: tla-ts can't iterate a set or a map while the loop changes objects and the script deletes keys",
@@ -13420,14 +13415,20 @@ const translateIterations = (
     const position = context.names.getFresh("position");
     const sequence = context.names.getFresh("sequence");
     const getSequence = (current: Path) =>
-      isLive && ordered !== undefined
-        ? translateOrderedValues(
-            ordered,
-            getHeap(current.scope, ordered.receiver, context),
-            identifier(sequence),
-            context,
-          )
-        : identifier(sequence);
+      !isLive || iterated === undefined
+        ? identifier(sequence)
+        : ordered !== undefined
+          ? translateOrderedValues(
+              ordered,
+              getHeap(current.scope, ordered.receiver, context),
+              identifier(sequence),
+              context,
+            )
+          : useJavaScript(
+              "ArrayLikeValues",
+              [getHeap(current.scope, iterated.expression, context), identifier(sequence)],
+              context,
+            );
     const getValues = (current: Path) =>
       changed.flatMap((symbol) => current.scope.bindings.get(symbol) ?? []);
     const bindValues = (current: Path, values: Expression[]): Path => ({
@@ -13753,28 +13754,42 @@ const translateIterations = (
                           )
                         : isLive && ordered !== undefined
                           ? translateNode(ordered.receiver, path.scope, context, false)
-                          : isHeapIteration
-                            ? translateIteratedSequence(
-                                iterated.expression,
-                                iterated,
-                                path.scope,
+                          : isLive
+                            ? share(
+                                translateExpression(iterated.expression, path.scope, context),
+                                "array",
                                 context,
-                              )
-                            : isUnordered
-                              ? useJavaScript(
-                                  "SetToSequence",
-                                  [translateExpression(iterated.expression, path.scope, context)],
-                                  context,
-                                )
-                              : context.heap !== undefined &&
-                                  getKind(iterated.expression, context) === "sequence"
-                                ? translateArrayIteration(
-                                    translateExpression(iterated.expression, path.scope, context),
+                                (array) =>
+                                  translateArrayIteration(
+                                    array,
                                     getHeap(path.scope, iterated.expression, context),
                                     iterated.expression,
                                     context,
+                                    array,
+                                  ),
+                              )
+                            : isHeapIteration
+                              ? translateIteratedSequence(
+                                  iterated.expression,
+                                  iterated,
+                                  path.scope,
+                                  context,
+                                )
+                              : isUnordered
+                                ? useJavaScript(
+                                    "SetToSequence",
+                                    [translateExpression(iterated.expression, path.scope, context)],
+                                    context,
                                   )
-                                : translateExpression(iterated.expression, path.scope, context),
+                                : context.heap !== undefined &&
+                                    getKind(iterated.expression, context) === "sequence"
+                                  ? translateArrayIteration(
+                                      translateExpression(iterated.expression, path.scope, context),
+                                      getHeap(path.scope, iterated.expression, context),
+                                      iterated.expression,
+                                      context,
+                                    )
+                                  : translateExpression(iterated.expression, path.scope, context),
               ),
             ]),
         operator,
