@@ -1560,6 +1560,18 @@ describe("values", () => {
     expect((await checkModel(getSource(0))).failure?.message).toContain("head");
   });
 
+  it("runs an assignment in a later declaration's initializer after the declarations before it", async () => {
+    const getSource = (expected: number) => `
+      let c = 1;
+      let a = c, b = (c = 2), d = c + (c = 3);
+      let total = 0;
+      for (let i = 1, j = (c = c + 1); i < 3; i++) total += i + j;
+      if (a + b * 10 + d * 100 !== ${expected} || total !== 11 || c !== 4) throw new Error("declare");
+    `;
+    expect((await checkModel(getSource(521))).failure).toBeUndefined();
+    expect((await checkModel(getSource(621))).failure?.message).toContain("declare");
+  });
+
   it("runs an assignment in a computed key or an element's key first", async () => {
     const getSource = (expected: number) => `
       let x = 0;

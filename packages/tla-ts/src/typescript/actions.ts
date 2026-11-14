@@ -9651,6 +9651,32 @@ export const translateDeclarations = (
   const declaration = declarations[0];
   rejectCatchRedeclaration(declaration);
   const initializer = declaration.initializer;
+  // An assignment that a later declaration's initializer evaluates first runs after the
+  // declarations before it.
+  const hoisted =
+    initializer === undefined
+      ? undefined
+      : getLeadingAssignment(initializer, path.scope.results, context);
+  if (initializer !== undefined && hoisted !== undefined) {
+    const earlier = getEarlierReads(hoisted, initializer, path.scope, context);
+    return runAssignment(hoisted, path, context, frame, (after, value) =>
+      translateDeclarations(
+        declarations,
+        {
+          ...after,
+          scope: {
+            ...after.scope,
+            results: new Map([...after.scope.results, ...earlier, [hoisted, value]]),
+          },
+        },
+        context,
+        frame,
+        continueWith,
+      ),
+    );
+  }
+  // A declaration that a new of a function that TypeScript gives no construct signature
+  // initializes throws before it binds anything.
   if (initializer !== undefined && isForeignNew(initializer, context)) {
     const callee = context.checker.getTypeAtLocation(getCast(initializer.expression));
     if (
