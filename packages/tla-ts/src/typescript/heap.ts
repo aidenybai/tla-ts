@@ -66,6 +66,7 @@ import {
   REORDER_METHODS,
   translateSpliced,
   translateNew,
+  translateNewKeys,
 } from "./collections";
 import {
   getJsonText,
@@ -145,6 +146,8 @@ import {
   getKeptIterator,
   isBigIntLike,
   getWrappedThis,
+  getCollection,
+  isOrderedCollection,
 } from "./types";
 
 const SHORT_CIRCUITS = new Set([
@@ -1593,12 +1596,13 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     context.heapCollections.has(node) &&
     isFreshCollection(node, context)
   ) {
+    const isOrdered = isOrderedCollection(node, context);
     return useJavaScript(
       "Allocate",
       [
         heap,
         useJavaScript(
-          "CollectionObject",
+          isOrdered ? "OrderedCollectionObject" : "CollectionObject",
           [
             isNewSubclassCollection(node, context)
               ? useJavaScript(
@@ -1614,6 +1618,12 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
                   context,
                 ),
             translateNew(node, scope, context),
+            ...(isOrdered
+              ? [
+                  translateNewKeys(node, scope, context),
+                  boolean(getCollection(node, context) === "Map"),
+                ]
+              : []),
           ],
           context,
         ),
@@ -3962,6 +3972,17 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         return parent.left === use ? addSource(parent.right) : addHolder(parent.left);
       }
       if (ts.isNonNullExpression(parent)) return isUse(parent);
+      // Array.from copies what iterating its argument gives.
+      if (
+        ts.isCallExpression(parent) &&
+        parent.arguments.length === 1 &&
+        parent.arguments[0] === use &&
+        ts.isPropertyAccessExpression(parent.expression) &&
+        parent.expression.name.text === "from" &&
+        getBuiltIn(parent.expression.expression, context) === "Array"
+      ) {
+        return true;
+      }
       // A new set or map that copies one, or a new typed array of its elements.
       if (
         ts.isNewExpression(parent) &&
@@ -3978,7 +3999,11 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
           (ts.isCallExpression(call) &&
             call.expression === parent &&
             !call.arguments.some(ts.isSpreadElement) &&
-            (SET_OR_MAP_READS.has(method) ||
+            // The forEach of a set or a map that keeps its order passes it to its callback.
+            ((SET_OR_MAP_READS.has(method) &&
+              (method !== "forEach" ||
+                !isOrderedCollection(use, context) ||
+                addCallbackArray(call, method, use))) ||
               ["delete", "clear"].includes(method) ||
               (["add", "set"].includes(method) && isDiscarded(call))))
         );
@@ -4518,7 +4543,15 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       ts.SyntaxKind.ExclamationEqualsToken,
     ].includes(node.operatorToken.kind);
   expressions.forEach((node) => {
-    if (isReachedNode(node) && !found.has(node) && isNewSubclassCollection(node, context)) {
+    // The heap holds each set and map that keeps its order.
+    if (
+      isReachedNode(node) &&
+      !found.has(node) &&
+      (isNewSubclassCollection(node, context) ||
+        (ts.isNewExpression(node) &&
+          isFreshCollection(node, context) &&
+          isOrderedCollection(node, context)))
+    ) {
       grow([], [], [node]).forEach((inner) => found.add(inner));
     }
     const key =

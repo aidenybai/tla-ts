@@ -24,7 +24,7 @@ import {
   isPrototypeArray,
   translateConstantFunctions,
 } from "./heap";
-import { findGeneratorPrototypes, getCodePoint, translateBuiltIns } from "./intrinsics";
+import { findGeneratorPrototypes, getBuiltIn, getCodePoint, translateBuiltIns } from "./intrinsics";
 import { WELL_KNOWN_SYMBOLS } from "./javascript";
 import { type Exported, isDeclaration, type Model, readModel, type Variable } from "./model";
 import { createProgram } from "./program";
@@ -50,6 +50,7 @@ import { BUILT_INS } from "./built-ins";
 import { isEsModule, NATIVE_ERRORS } from "./exceptions";
 import {
   getDomain,
+  getKind,
   getKeptIterator,
   getWrappedThis,
   isCollectionName,
@@ -408,6 +409,31 @@ export const compile = (
     (ts.forEachChild(node, usesObjects) ?? false);
   const reached = getReached(roots, context);
   context.reached = new Set(reached);
+  // A set or a map that a script iterates, spreads, copies, or calls forEach, keys, values, or entries
+  // on, whose order every set and map then keeps.
+  const usesOrder = (node: ts.Node): boolean => {
+    const parent = node.parent;
+    const isIterated =
+      ts.isExpression(node) &&
+      parent !== undefined &&
+      ((ts.isForOfStatement(parent) && parent.expression === node) ||
+        ts.isSpreadElement(parent) ||
+        (ts.isPropertyAccessExpression(parent) &&
+          parent.expression === node &&
+          ["forEach", "keys", "values", "entries"].includes(parent.name.text)) ||
+        ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) &&
+          parent.arguments?.[0] === node &&
+          (ts.isNewExpression(parent)
+            ? ["Set", "Map"].includes(getBuiltIn(parent.expression, context) ?? "")
+            : ts.isPropertyAccessExpression(parent.expression) &&
+              parent.expression.name.text === "from" &&
+              getBuiltIn(parent.expression.expression, context) === "Array")));
+    return (
+      (isIterated && ["set", "map"].includes(getKind(node, context))) ||
+      (ts.forEachChild(node, usesOrder) ?? false)
+    );
+  };
+  context.hasOrderedCollections = isScript(sourceFile) && reached.some(usesOrder);
   const changedArrays = isScript(sourceFile) ? findChangedArrays(reached, context) : [];
   if (
     heap !== undefined &&

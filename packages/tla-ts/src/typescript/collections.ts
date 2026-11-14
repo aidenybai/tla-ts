@@ -20,7 +20,7 @@ import { TlaTypeScriptError } from "../errors";
 import {
   translateElements,
   translateExpression,
-  translateIterated,
+  translateIteratedSequence,
   translateSetKey,
   translateToString,
 } from "./expressions";
@@ -90,6 +90,8 @@ import {
   getCollectionType,
   mayBeSequenceType,
   getArrayMethodCall,
+  getCollection,
+  getOrderedIteration,
   isBuiltInIteratorType,
   isGeneratorType,
 } from "./types";
@@ -454,6 +456,8 @@ const translateUnordered = (
   ) {
     const spread = node.elements[0].expression;
     const kind = getKind(spread, context);
+    // A set or a map that keeps its order spreads into an array.
+    if (getOrderedIteration(spread, context) !== undefined) return undefined;
     if (kind === "set") return { set: translate(spread), isMapped: false };
     if (kind === "map") return getEntries(translate(spread), context);
     return translateUnordered(spread, scope, context);
@@ -754,20 +758,21 @@ export const translateArrayConstructor = (node: MethodCall, scope: Scope, contex
     const inner = bindIndexed(callback, undefined, identifier(position), scope, context);
     return getFrom(functionOf([indices], translateCallback(callback, inner, context)));
   }
-  // Array.from of an array or a string gives what iterating it gives, as a spread does.
+  // Array.from of an array, a string, or an ordered set or map gives what iterating it gives, as a
+  // spread does.
   if (
     getBuiltIn(receiver, context) === "Array" &&
     method === "from" &&
     node.arguments.length === 1 &&
     !ts.isSpreadElement(options) &&
     (isHeapArray(options, context) ||
+      getOrderedIteration(options, context) !== undefined ||
       isEvery(context.checker.getTypeAtLocation(options), ts.TypeFlags.StringLike) ||
       (getKind(options, context) === "sequence" &&
         !isGeneratorType(options, context) &&
         !isBuiltInIteratorType(options, context)))
   ) {
-    const values = translateIterated(options, node, scope, context);
-    return getFrom(Array.isArray(values) ? tuple(values) : values);
+    return getFrom(translateIteratedSequence(options, node, scope, context));
   }
   if (method !== "fill" || node.arguments.length !== 1) return undefined;
   const length =
@@ -3301,6 +3306,35 @@ export const translateNew = (node: ts.NewExpression, scope: Scope, context: Cont
       shared,
     ),
   );
+};
+
+// The keys that new Set or new Map adds, in the order that it adds them, which an ordered set or map
+// keeps: the elements that iterating its argument gives, or the keys of those entries.
+export const translateNewKeys = (node: ts.NewExpression, scope: Scope, context: Context) => {
+  const argument = node.arguments?.[0];
+  const isMap = getCollection(node, context) === "Map";
+  if (argument === undefined) return tuple([]);
+  if (ts.isArrayLiteralExpression(argument) && !argument.elements.some(ts.isSpreadElement)) {
+    return tuple(
+      argument.elements.map((element) =>
+        translateSetKey(
+          isMap && ts.isArrayLiteralExpression(element) && element.elements.length === 2
+            ? element.elements[0]
+            : element,
+          scope,
+          context,
+        ),
+      ),
+    );
+  }
+  const sequence = translateIteratedSequence(argument, node, scope, context);
+  const position = context.names.getFresh("position");
+  return isMap
+    ? functionOf(
+        [bound(position, apply("DOMAIN", [sequence]))],
+        index(index(sequence, [identifier(position)]), [number(1)]),
+      )
+    : sequence;
 };
 
 // The set or the map that new Set or new Map makes, or a weak one, which holds its keys alike.

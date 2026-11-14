@@ -656,6 +656,8 @@ export const translateBuiltInValue = (
     | "%AsyncIteratorPrototype%.@@asyncDispose"
     | "%ArrayIteratorPrototype%"
     | "%StringIteratorPrototype%"
+    | "%MapIteratorPrototype%"
+    | "%SetIteratorPrototype%"
     | "%GeneratorFunction%.prototype"
     | "%GeneratorFunction%.prototype.prototype"
     | "%AsyncFunction%.prototype"

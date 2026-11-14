@@ -111,6 +111,8 @@ export interface Context {
   functionObjects: Map<string, FunctionObject>;
   // Whether a script names NaN, Infinity, or -0, so that its numbers compute as JavaScript's.
   hasSpecialNumbers: boolean;
+  // Whether a script iterates a set or a map, so that each keeps the order of its keys.
+  hasOrderedCollections: boolean;
   // The file of a script without exported actions that reports what it doesn't catch as Node does,
   // and whether Node runs it as an ES module.
   script: { sourceFile: ts.SourceFile; isEsModule: boolean } | undefined;
@@ -473,6 +475,7 @@ export const createContext = (
     constantFunctions: new Map(),
     functionObjects: new Map(),
     hasSpecialNumbers: false,
+    hasOrderedCollections: false,
     script: undefined,
     reached: undefined,
     symbols: [],

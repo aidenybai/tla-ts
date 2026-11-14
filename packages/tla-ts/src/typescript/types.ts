@@ -17,6 +17,7 @@ import {
   isNestedFunction,
   isRestOnly,
   isStatic,
+  skipCasts,
 } from "./context";
 import {
   type Collection,
@@ -532,6 +533,40 @@ const isHeld = (node: ts.Expression, context: Context): boolean => {
         ),
       ))
   );
+};
+
+// Whether a set or a map keeps the order of its keys, as a script that iterates one needs. A weak
+// one has no order to keep.
+export const isOrderedCollection = (node: ts.Expression, context: Context) =>
+  context.hasOrderedCollections && ["Set", "Map"].includes(getCollection(node, context) ?? "");
+
+export interface OrderedIteration {
+  receiver: ts.Expression;
+  method: string;
+}
+
+// What a for-of, a spread, or Array.from iterates where it's a set or a map that keeps its order on
+// the heap, or a call of its keys, values, or entries: the collection, and the method that gives
+// the iterator, which is @@iterator for the collection itself.
+export const getOrderedIteration = (
+  node: ts.Expression,
+  context: Context,
+): OrderedIteration | undefined => {
+  const iterated = skipCasts(node);
+  const call =
+    ts.isCallExpression(iterated) &&
+    iterated.arguments.length === 0 &&
+    ts.isPropertyAccessExpression(iterated.expression) &&
+    ["keys", "values", "entries"].includes(iterated.expression.name.text)
+      ? iterated.expression
+      : undefined;
+  const receiver = call?.expression ?? iterated;
+  return isOrderedCollection(receiver, context) && isHeapSetOrMap(receiver, context)
+    ? {
+        receiver,
+        method: call?.name.text ?? "@@iterator",
+      }
+    : undefined;
 };
 
 // The built-in collection that a set or a map is, which a weak one's type names.

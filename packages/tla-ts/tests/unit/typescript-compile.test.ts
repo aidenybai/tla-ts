@@ -28255,6 +28255,128 @@ describe("buffers", () => {
     );
   });
 
+  it("iterates a set and a map in the order that their keys went in", async () => {
+    const getSource = (expected: string) => `
+      const set = new Set<number>([3, 1]);
+      set.add(2);
+      set.add(3);
+      set.delete(1);
+      set.add(1);
+      const map = new Map<string, number>([["b", 1], ["a", 2]]);
+      map.set("c", 3);
+      map.set("b", 4);
+      map.delete("a");
+      map.set("a", 5);
+      const seen: string[] = [];
+      for (const value of set) seen.push(String(value));
+      for (const [key, value] of map) seen.push(key + value);
+      const copied = new Set(set);
+      copied.add(0);
+      const cleared = new Map(map);
+      cleared.clear();
+      cleared.set("z", 9);
+      const result = [
+        seen.join("-"),
+        [...set].join("-"),
+        Array.from(map.keys()).join("-"),
+        [...map.values()].join("-"),
+        [...map.entries()].map((entry) => entry.join(":")).join("-"),
+        [...set.entries()].map((entry) => entry.join(":")).join("-"),
+        Array.from(copied).join("-"),
+        [...new Map(map)].map((entry) => entry[0]).join("-"),
+        [...cleared.keys()].join("-"),
+        set.size,
+        map.size,
+      ].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "3-2-1-b4-c3-a5,3-2-1,b-c-a,4-3-5,b:4-c:3-a:5,3:3-2:2-1:1,3-2-1-0,b-c-a,z,3,3";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (
+        await checkModel(
+          getSource("3-1-2-a2-b4-c3,3-1-2,a-b-c,2-4-3,a:2-b:4-c:3,3:3-1:1-2:2,3-1-2-0,a-b-c,z,3,3"),
+        )
+      ).failure?.message,
+    ).toContain(expected);
+  });
+
+  it("visits the entries that a loop or a forEach adds to a set or a map, with the values it sets", async () => {
+    const getSource = (expected: string) => `
+      const map = new Map<string, number>([["a", 1], ["b", 2]]);
+      const seen: string[] = [];
+      for (const [key, value] of map) {
+        seen.push(key + value);
+        if (key === "a") {
+          map.set("b", 20);
+          map.set("c", 3);
+        }
+      }
+      const set = new Set<number>([1]);
+      for (const value of set.values()) {
+        seen.push(String(value));
+        if (value < 3) set.add(value + 1);
+      }
+      map.forEach((value, key, owner) => {
+        seen.push(key + value + owner.size);
+        if (key === "b") map.set("d", 4);
+      });
+      set.forEach(function (this: { total: number }, value, again) {
+        this.total += value;
+        seen.push(String(value === again) + this.total);
+      }, { total: 0 });
+      const result = [seen.join("-"), map.size, set.size].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "a1-b20-c3-1-2-3-a13-b203-c34-d44-true1-true3-true6,4,3";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect((await checkModel(getSource("a1-b2-1-a12-b22-true1,2,1"))).failure?.message).toContain(
+      expected,
+    );
+  });
+
+  it("stops at a loop over a set or a map that changes objects where the script deletes keys", () => {
+    expect(() =>
+      compile(`
+        const set = new Set<number>([1, 2, 3]);
+        const seen: number[] = [];
+        for (const value of set) {
+          seen.push(value);
+          if (value === 1) set.delete(2);
+        }
+      `),
+    ).toThrow(
+      "tla-ts can't iterate a set or a map while the loop changes objects and the script deletes keys",
+    );
+    expect(() =>
+      compile(`
+        const map = new Map<string, number>([["a", 1], ["b", 2]]);
+        const seen: string[] = [];
+        map.forEach((value, key) => {
+          seen.push(key);
+          if (key === "a") map.delete("b");
+        });
+      `),
+    ).toThrow(
+      "tla-ts can't call forEach on a set or a map while its callback changes objects and the script deletes keys",
+    );
+  });
+
+  it("stops at iterating a set whose iterator a script replaced", async () => {
+    const result = await checkModel(`
+      const set = new Set<number>([1, 2]);
+      Object.defineProperty(Set.prototype, Symbol.iterator, {
+        value: function* () {
+          yield 7;
+        },
+      });
+      const values = [...set];
+    `);
+    expect(result.failure?.message).toContain(
+      "tla-ts can't iterate a set whose method a script replaced",
+    );
+  });
+
   it("gets and sets a DataView's numbers, in either byte order", async () => {
     const result = await checkModel(`
       const buffer = new ArrayBuffer(12, { maxByteLength: 16 });

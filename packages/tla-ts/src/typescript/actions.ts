@@ -167,6 +167,9 @@ import {
 import {
   translateCondition,
   translateExpression,
+  translateIteratedSequence,
+  translateNode,
+  translateOrderedValues,
   translateKey,
   translateSetKey,
   translateBigInt,
@@ -374,6 +377,8 @@ import {
   getArrayLiteral,
   isHeapArray,
   isHeapSetOrMap,
+  isOrderedCollection,
+  getOrderedIteration,
   getPathStep,
   isHeapPattern,
   isHeapType,
@@ -2460,7 +2465,15 @@ export const translateCallStatement = (
       throw new TlaTypeScriptError(`Unsupported method: ${method}`, expression);
     }
     const changed = continueWith(
-      withHeap(useJavaScript("WithCollectionData", [heap, ref, updated], context)),
+      withHeap(
+        isOrderedCollection(collectionChange.receiver, context)
+          ? useJavaScript(
+              "WithOrderedCollectionData",
+              [heap, ref, updated, boolean(collection === "Map")],
+              context,
+            )
+          : useJavaScript("WithCollectionData", [heap, ref, updated], context),
+      ),
       value,
     );
     // A holder that may hold undefined gives undefined to an optional chain, and throws otherwise.
@@ -6813,6 +6826,8 @@ interface LoopCall {
   isInherited: boolean;
   // Whether the receiver is a typed array, whose method the call checks is %TypedArray%.prototype's.
   isTyped: boolean;
+  // Whether the receiver is a set or a map that keeps its order, whose forEach visits its entries.
+  isOrdered: boolean;
 }
 
 // An array method that calls back for each element, on an array or an array-like object.
@@ -6867,6 +6882,18 @@ const isOrderFree = (body: ts.Node | undefined, element: ts.Node | undefined, co
   );
 };
 
+// Whether a script deletes a key from a set or a map, which leaves a gap in its entries that an
+// iterator that has passed it skips, where a list of its keys closes the gap.
+const isKeyDeleted = (node: ts.Node, context: Context) =>
+  findNodes(
+    node.getSourceFile(),
+    (inner): inner is ts.PropertyAccessExpression =>
+      ts.isPropertyAccessExpression(inner) &&
+      ["delete", "clear"].includes(inner.name.text) &&
+      (["Set", "Map"].includes(getCollection(inner.expression, context) ?? "") ||
+        /^(Set|Map)\.prototype$/.test(inner.expression.getText())),
+  ).length > 0;
+
 // A set's forEach whose callback ends the same in any order.
 const isOrderFreeForEach = (node: ts.CallExpression, receiver: ts.Expression, context: Context) => {
   const argument = node.arguments.length === 1 ? node.arguments[0] : undefined;
@@ -6916,6 +6943,7 @@ const getLoopTarget = (node: ts.Node, context: Context) => {
       isUnordered: false,
       isInherited: true,
       isTyped: false,
+      isOrdered: false,
     };
   }
   if (!isMethodCall(node)) return undefined;
@@ -6945,10 +6973,17 @@ const getLoopTarget = (node: ts.Node, context: Context) => {
           isUnordered: false,
           isInherited: false,
           isTyped: true,
+          isOrdered: false,
         }
       : undefined;
   }
   const isUnordered = method === "forEach" && isOrderFreeForEach(node, receiver, context);
+  const isOrdered =
+    method === "forEach" &&
+    !isCall &&
+    !isUnordered &&
+    isOrderedCollection(receiver, context) &&
+    isHeapSetOrMap(receiver, context);
   const callbackArguments = isCall ? node.arguments.slice(1) : node.arguments;
   // toSorted without a comparator reads an array-like object's elements as a loop where a getter
   // may answer its length or an element, or its length may be an object that it converts.
@@ -6963,7 +6998,7 @@ const getLoopTarget = (node: ts.Node, context: Context) => {
     UNCALLED_METHODS.has(method) ||
     isSortedCopy ||
     ((SORT_METHODS.has(method) || method === "flatMap") && !isArrayLike)) &&
-    (isArrayLike || isUnordered || getKind(receiver, context) === "sequence")
+    (isArrayLike || isUnordered || isOrdered || getKind(receiver, context) === "sequence")
     ? {
         method,
         receiver,
@@ -6972,6 +7007,7 @@ const getLoopTarget = (node: ts.Node, context: Context) => {
         isUnordered,
         isInherited: false,
         isTyped: false,
+        isOrdered,
       }
     : undefined;
 };
@@ -7100,6 +7136,7 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
           isUnordered: target.isUnordered,
           isInherited: target.isInherited,
           isTyped: target.isTyped,
+          isOrdered: target.isOrdered,
         }
       : undefined;
   }
@@ -7117,6 +7154,7 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
       getLoopGetters(node, context).length > 0 ||
       isLengthConverted ||
       context.heapCollections.has(node) ||
+      target.isOrdered ||
       (target.isArrayLike && target.method === "forEach"))
     ? {
         method: target.method,
@@ -7128,6 +7166,7 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
         isUnordered: target.isUnordered,
         isInherited: target.isInherited,
         isTyped: target.isTyped,
+        isOrdered: target.isOrdered,
       }
     : undefined;
 };
@@ -7208,20 +7247,33 @@ const translateLoopCall = (
   // visits it, after it reads the length once.
   const isLive =
     !loop.isArrayLike &&
+    !loop.isOrdered &&
     ts.isIdentifier(receiver) &&
     changed.some((symbol) => symbol === getSymbol(receiver, context.checker));
   // An array-like object's method reads it through the reference that it took before the loop, and
   // sort writes back the elements that it read.
-  if (!loop.isArrayLike && (isSort || !isLive) && isReceiverChanged(receiver)) {
+  if (
+    loop.isOrdered &&
+    changed.some((symbol) => symbol === context.heap) &&
+    isKeyDeleted(expression, context)
+  ) {
+    throw new TlaTypeScriptError(
+      "Unsupported call: tla-ts can't call forEach on a set or a map while its callback changes objects and the script deletes keys",
+      site,
+    );
+  }
+  if (!loop.isArrayLike && !loop.isOrdered && (isSort || !isLive) && isReceiverChanged(receiver)) {
     throw new TlaTypeScriptError("Don't change an array while its method calls back", receiver);
   }
   if (changed.some((symbol) => path.scope.functions.has(symbol))) {
     throw new TlaTypeScriptError("Don't reassign a function inside a callback", site);
   }
-  // The array parameter holds a sequence, which only a parameter typed as an array can read.
+  // The array parameter holds a sequence, which only a parameter typed as an array can read, where
+  // a set's or a map's holds the collection.
   const callbackParameters = callback === undefined ? [] : getParameters(callback);
   const arrayName = callbackParameters.at(isReduce ? 3 : 2)?.name;
   if (
+    !loop.isOrdered &&
     arrayName !== undefined &&
     ts.isIdentifier(arrayName) &&
     getKind(arrayName, context) !== (loop.isArrayLike ? "object" : "sequence") &&
@@ -7236,6 +7288,14 @@ const translateLoopCall = (
   const owner = identifier(ownerName);
   const sequenceName = context.names.getFresh("sequence");
   const sequence = identifier(sequenceName);
+  // A set's or a map's forEach reads its entries again at each step, as its iterator does.
+  const getEntries = (current: Path) =>
+    translateOrderedValues(
+      { receiver, method: "forEach" },
+      getHeap(current.scope, receiver, context),
+      owner,
+      context,
+    );
   const presentName = context.names.getFresh("present");
   const lengthName = context.names.getFresh("length");
   const isSkippingHoles =
@@ -7432,18 +7492,20 @@ const translateLoopCall = (
         : value;
     const passed = isSort
       ? [index(element, [number(1)]), index(element, [number(2)])]
-      : [
-          ...(isReduce ? [getChecked(kept, 0)] : []),
-          getChecked(element, isReduce ? 1 : 0),
-          isSkippingHoles
-            ? index(field(identifier(presentName), "indices"), [identifier(position)])
-            : apply("-", [identifier(position), number(1)]),
-          loop.isArrayLike
-            ? owner
-            : isLive
-              ? translateExpression(receiver, current.scope, context)
-              : sequence,
-        ];
+      : loop.isOrdered
+        ? [index(element, [number(2)]), index(element, [number(1)]), owner]
+        : [
+            ...(isReduce ? [getChecked(kept, 0)] : []),
+            getChecked(element, isReduce ? 1 : 0),
+            isSkippingHoles
+              ? index(field(identifier(presentName), "indices"), [identifier(position)])
+              : apply("-", [identifier(position), number(1)]),
+            loop.isArrayLike
+              ? owner
+              : isLive
+                ? translateExpression(receiver, current.scope, context)
+                : sequence,
+          ];
     const afterCallback = getAfterCallback(element);
     const callbackReceiver = getCallbackReceiver(loop.argument, callback, current.scope, context);
     // A callback that the method runs from inside itself calls itself, as a call in it would.
@@ -7592,7 +7654,10 @@ const translateLoopCall = (
       missing,
     );
   };
-  const length = getters === undefined ? apply("Len", [sequence]) : identifier(lengthName);
+  const length =
+    getters !== undefined
+      ? identifier(lengthName)
+      : apply("Len", [loop.isOrdered ? getEntries(inner) : sequence]);
   const isInRange = isSort
     ? apply("#", [field(kept, "stage"), string("done")])
     : isReversed
@@ -7615,7 +7680,7 @@ const translateLoopCall = (
                   inner,
                   isSort
                     ? useJavaScript("SortPair", [kept], context)
-                    : index(sequence, [identifier(position)]),
+                    : index(loop.isOrdered ? getEntries(inner) : sequence, [identifier(position)]),
                 ),
           done(inner, finished),
         ),
@@ -7987,7 +8052,9 @@ const translateLoopCall = (
               [translateExpression(receiver, path.scope, context)],
               context,
             )
-          : translateExpression(receiver, path.scope, context),
+          : loop.isOrdered
+            ? translateNode(receiver, path.scope, context, false)
+            : translateExpression(receiver, path.scope, context),
       ),
       ...(isSkippingHoles
         ? [
@@ -8010,18 +8077,20 @@ const translateLoopCall = (
         [],
         isSkippingHoles
           ? field(identifier(presentName), "values")
-          : translateMethodElements(
-              method,
-              owner,
-              loop.isArrayLike
-                ? EVERY_INDEX_METHODS.has(method)
-                  ? "ArrayLikeValues"
-                  : "ArrayLike"
-                : undefined,
-              receiver,
-              path.scope,
-              context,
-            ),
+          : loop.isOrdered
+            ? getEntries(path)
+            : translateMethodElements(
+                method,
+                owner,
+                loop.isArrayLike
+                  ? EVERY_INDEX_METHODS.has(method)
+                    ? "ArrayLikeValues"
+                    : "ArrayLike"
+                  : undefined,
+                receiver,
+                path.scope,
+                context,
+              ),
       ),
     ],
     getSeeded(path),
@@ -12770,11 +12839,16 @@ const translateIterations = (
   continueWith: (path: Path) => Formula,
 ): Formula => {
   const iterated = ts.isForOfStatement(loop) || ts.isForInStatement(loop) ? loop : undefined;
-  // A for-of over an array that the heap holds visits its elements, as its iterator reads them.
+  // A for-of over an array, or a set or a map that keeps its order, that the heap holds visits its
+  // elements, as its iterator reads them.
+  const ordered =
+    iterated !== undefined && ts.isForOfStatement(iterated)
+      ? getOrderedIteration(iterated.expression, context)
+      : undefined;
   const isHeapIteration =
     iterated !== undefined &&
     ts.isForOfStatement(iterated) &&
-    isHeapArray(iterated.expression, context);
+    (isHeapArray(iterated.expression, context) || ordered !== undefined);
   // A for-of over an object that a script declares iterates through the object's iterator.
   const isUnordered =
     iterated !== undefined && ts.isForOfStatement(iterated) && isOrderFreeForOf(iterated, context);
@@ -12842,10 +12916,19 @@ const translateIterations = (
   }
   const changed = getChanged(loop, path, context);
   // The iterator reads each element as the loop reaches it, which a copy of the elements matches
-  // only while the body changes no object.
-  if (isHeapIteration && changesObjects(loop, path, context)) {
+  // only while the body changes no object. A set's or a map's iterator steps through its entries,
+  // where an entry that the loop adds comes last, which reading its entries again at each step
+  // matches while no key leaves it.
+  const isLive = isHeapIteration && changesObjects(loop, path, context);
+  if (isLive && ordered === undefined) {
     throw new TlaTypeScriptError(
       "Unsupported loop: tla-ts can't iterate an array that the heap holds while the loop changes objects",
+      iterated?.expression,
+    );
+  }
+  if (isLive && isKeyDeleted(loop, context)) {
+    throw new TlaTypeScriptError(
+      "Unsupported loop: tla-ts can't iterate a set or a map while the loop changes objects and the script deletes keys",
       iterated?.expression,
     );
   }
@@ -12863,7 +12946,7 @@ const translateIterations = (
     (!ts.isMethodDeclaration(node) &&
       !ts.isAccessor(node) &&
       (ts.forEachChild(node, (child) => isIteratedChanged(child) || undefined) ?? false));
-  if (iterated !== undefined && !isIterator && isIteratedChanged(iterated.expression)) {
+  if (iterated !== undefined && !isIterator && !isLive && isIteratedChanged(iterated.expression)) {
     throw new TlaTypeScriptError(
       "Don't change an array while a for-of iterates it",
       iterated.expression,
@@ -12936,6 +13019,15 @@ const translateIterations = (
     });
     const position = context.names.getFresh("position");
     const sequence = context.names.getFresh("sequence");
+    const getSequence = (current: Path) =>
+      isLive && ordered !== undefined
+        ? translateOrderedValues(
+            ordered,
+            getHeap(current.scope, ordered.receiver, context),
+            identifier(sequence),
+            context,
+          )
+        : identifier(sequence);
     const getValues = (current: Path) =>
       changed.flatMap((symbol) => current.scope.bindings.get(symbol) ?? []);
     const bindValues = (current: Path, values: Expression[]): Path => ({
@@ -13030,7 +13122,7 @@ const translateIterations = (
       const untested = { ...current, scope: { ...current.scope, results: tested.scope.results } };
       return ifThenElse(
         iterated !== undefined
-          ? apply("<=", [identifier(position), apply("Len", [identifier(sequence)])])
+          ? apply("<=", [identifier(position), apply("Len", [getSequence(current)])])
           : condition === undefined
             ? boolean(true)
             : translateCondition(condition, current.scope, context),
@@ -13073,7 +13165,7 @@ const translateIterations = (
       if (opened !== undefined) {
         return translateStep(iterated, opened, current, bodyFrame, done);
       }
-      const element = index(identifier(sequence), [identifier(position)]);
+      const element = index(getSequence(current), [identifier(position)]);
       const run = bindIteration(
         iterated.initializer,
         element,
@@ -13244,23 +13336,30 @@ const translateIterations = (
                             [translateExpression(iterated.expression, path.scope, context)],
                             context,
                           )
-                        : isHeapIteration
-                          ? translateHeapElements(iterated.expression, path.scope, context)
-                          : isUnordered
-                            ? useJavaScript(
-                                "SetToSequence",
-                                [translateExpression(iterated.expression, path.scope, context)],
+                        : isLive && ordered !== undefined
+                          ? translateNode(ordered.receiver, path.scope, context, false)
+                          : isHeapIteration
+                            ? translateIteratedSequence(
+                                iterated.expression,
+                                iterated,
+                                path.scope,
                                 context,
                               )
-                            : context.heap !== undefined &&
-                                getKind(iterated.expression, context) === "sequence"
-                              ? translateArrayIteration(
-                                  translateExpression(iterated.expression, path.scope, context),
-                                  getHeap(path.scope, iterated.expression, context),
-                                  iterated.expression,
+                            : isUnordered
+                              ? useJavaScript(
+                                  "SetToSequence",
+                                  [translateExpression(iterated.expression, path.scope, context)],
                                   context,
                                 )
-                              : translateExpression(iterated.expression, path.scope, context),
+                              : context.heap !== undefined &&
+                                  getKind(iterated.expression, context) === "sequence"
+                                ? translateArrayIteration(
+                                    translateExpression(iterated.expression, path.scope, context),
+                                    getHeap(path.scope, iterated.expression, context),
+                                    iterated.expression,
+                                    context,
+                                  )
+                                : translateExpression(iterated.expression, path.scope, context),
               ),
             ]),
         operator,

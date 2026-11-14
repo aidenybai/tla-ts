@@ -4918,6 +4918,49 @@ CollectionData(heap, ref) == IF ref \\in {Undefined, Null} THEN ref ELSE heap.ob
 
 WithCollectionData(heap, ref, data) == [heap EXCEPT !.objects[ref[Ref]].data = data]
 
+\\* The keys of a set's or a map's data.
+LOCAL CollectionKeys(data, isMap) == IF isMap THEN DOMAIN data ELSE data
+
+RECURSIVE DistinctKeys(_, _)
+\\* The keys of a sequence in the order that each first comes, after those that kept holds.
+DistinctKeys(keys, kept) ==
+  IF keys = <<>>
+  THEN kept
+  ELSE DistinctKeys(Tail(keys),
+                    IF \\E position \\in DOMAIN kept : kept[position] = Head(keys)
+                    THEN kept
+                    ELSE Append(kept, Head(keys)))
+
+\\* A set or a map that the heap holds in a script that iterates one, which keeps the order that a
+\\* script added its keys in, as the keys that made it give them.
+OrderedCollectionObject(prototype, data, keys, isMap) ==
+  LET order == DistinctKeys(SelectSeq(keys, LAMBDA key : key \\in CollectionKeys(data, isMap)), <<>>)
+  IN IF Len(order) = Cardinality(CollectionKeys(data, isMap))
+     THEN [order |-> order] @@ CollectionObject(prototype, data)
+     ELSE Assert(FALSE, "tla-ts can't tell the order of this collection's keys")
+
+\\* WithCollectionData of an ordered set or map, which drops the keys that a change removes and adds
+\\* the key that it adds last.
+WithOrderedCollectionData(heap, ref, data, isMap) ==
+  LET keys == CollectionKeys(data, isMap)
+      kept == SelectSeq(heap.objects[ref[Ref]].order, LAMBDA key : key \\in keys)
+      added == keys \\ {kept[position] : position \\in DOMAIN kept}
+  IN [heap EXCEPT !.objects[ref[Ref]].data = data,
+                  !.objects[ref[Ref]].order =
+                    CASE added = {} -> kept
+                      [] Cardinality(added) = 1 -> Append(kept, CHOOSE key \\in added : TRUE)
+                      [] OTHER -> Assert(FALSE, "tla-ts can't tell the order of this collection's keys")]
+
+\\* What an ordered set's or map's keys, values, or entries method iterates, in the order of its keys,
+\\* where a set's value is its key.
+OrderedValues(heap, ref, isMap, method) ==
+  LET object == heap.objects[ref[Ref]]
+      order == object.order
+      ValueAt(key) == IF isMap THEN object.data[key] ELSE key
+  IN CASE method = "keys" -> order
+       [] method = "values" -> [position \\in DOMAIN order |-> ValueAt(order[position])]
+       [] OTHER -> [position \\in DOMAIN order |-> <<order[position], ValueAt(order[position])>>]
+
 \\* The elements of a set in an order that TLC picks, which only a loop that ends the same in any
 \\* order visits, as a set that TLC holds keeps no insertion order.
 RECURSIVE SetToSequence(_)

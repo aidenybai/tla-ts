@@ -173,6 +173,8 @@ import {
   isHeapArray,
   hasHeapType,
   isHeapSetOrMap,
+  getOrderedIteration,
+  type OrderedIteration,
   isHeapType,
   isBigIntLike,
   isNumberLike,
@@ -406,6 +408,15 @@ export const translateIterated = (
       context,
     );
   }
+  const ordered = getOrderedIteration(iterated, context);
+  if (ordered !== undefined) {
+    return translateOrderedValues(
+      ordered,
+      getHeap(scope, node, context),
+      translateNode(ordered.receiver, scope, context, false),
+      context,
+    );
+  }
   if (
     (isGeneratorType(iterated, context) || isBuiltInIteratorType(iterated, context)) &&
     !isArrayIteration(iterated, context)
@@ -422,6 +433,87 @@ export const translateIterated = (
   return context.heap !== undefined && !isArrayIteration(iterated, context)
     ? translateArrayIteration(value, getHeap(scope, node, context), node, context)
     : value;
+};
+
+// What iterating a set or a map that keeps its order gives, where heap holds the collection, or the
+// entries that its forEach visits, while the collection reads the built-in method, and an iterator
+// the built-in next.
+export const translateOrderedValues = (
+  ordered: OrderedIteration,
+  heap: Expression,
+  collection: Expression,
+  context: Context,
+) => {
+  const owner = getCollection(ordered.receiver, context) === "Map" ? "Map" : "Set";
+  const iterated =
+    ordered.method === "@@iterator"
+      ? owner === "Map"
+        ? "entries"
+        : "values"
+      : ordered.method === "forEach"
+        ? "entries"
+        : ordered.method;
+  // A set's keys is its values.
+  const builtIn =
+    ordered.method === "forEach"
+      ? "forEach"
+      : owner === "Set" && iterated === "keys"
+        ? "values"
+        : iterated;
+  const iteratorPrototype = owner === "Map" ? "%MapIteratorPrototype%" : "%SetIteratorPrototype%";
+  if (ordered.method !== "forEach") context.builtIns.add(`${iteratorPrototype}.next`);
+  return ifExpression(
+    junction("And", [
+      useJavaScript(
+        "HoldsBuiltIn",
+        [
+          heap,
+          collection,
+          ordered.method === "@@iterator"
+            ? useJavaScript("WellKnownSymbol", [string("iterator")], context)
+            : string(ordered.method),
+          string(`${owner}.prototype.${builtIn}`),
+        ],
+        context,
+      ),
+      ...(ordered.method === "forEach"
+        ? []
+        : [
+            useJavaScript(
+              "HoldsBuiltIn",
+              [
+                heap,
+                translateBuiltInValue(iteratorPrototype, ordered.receiver, context),
+                string("next"),
+                string(`${iteratorPrototype}.next`),
+              ],
+              context,
+            ),
+          ]),
+    ]),
+    useJavaScript(
+      "OrderedValues",
+      [heap, collection, boolean(owner === "Map"), string(iterated)],
+      context,
+    ),
+    apply("Assert", [
+      boolean(false),
+      string(
+        `tla-ts can't iterate a ${owner === "Map" ? "map" : "set"} whose method a script replaced`,
+      ),
+    ]),
+  );
+};
+
+// translateIterated as one sequence.
+export const translateIteratedSequence = (
+  iterated: ts.Expression,
+  node: ts.Node,
+  scope: Scope,
+  context: Context,
+) => {
+  const values = translateIterated(iterated, node, scope, context);
+  return Array.isArray(values) ? tuple(values) : values;
 };
 
 // The elements that an array literal or a call's arguments list, where runs of plain elements become
@@ -3267,7 +3359,7 @@ const translateOptionalChain = (node: ts.Expression, scope: Scope, context: Cont
   );
 };
 
-const translateNode = (
+export const translateNode = (
   node: ts.Expression,
   scope: Scope,
   context: Context,
