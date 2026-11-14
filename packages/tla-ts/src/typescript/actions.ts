@@ -13038,9 +13038,7 @@ const translateLoop = (
     (initializer.flags & ts.NodeFlags.Let) === 0
       ? []
       : initializer.declarations.flatMap((declaration) =>
-          findNodes(declaration.name, ts.isIdentifier).flatMap(
-            (name) => getSymbol(name, context.checker) ?? [],
-          ),
+          getBoundNames(declaration.name).flatMap((name) => getSymbol(name, context.checker) ?? []),
         );
   const reads = initializer.declarations
     .flatMap((declaration) => findNodes(declaration, ts.isFunctionLike))

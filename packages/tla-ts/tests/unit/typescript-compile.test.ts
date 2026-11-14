@@ -2300,6 +2300,29 @@ describe("values", () => {
     expect((await checkModel(getSource("01202020101"))).failure?.message).toContain("01200020001");
   });
 
+  it("names the functions and classes that a for's let pattern defaults to", async () => {
+    const getSource = (expected: string) => `
+      var count = 0, out = "";
+      for (
+        let {
+          cls = class {},
+          xCls = class X { static m() {} },
+          xFn = function x() {},
+          statics = class { static name() {} },
+        } = {};
+        count < 1;
+      ) {
+        out = [cls.name, xCls.name, xFn.name, typeof statics.name].join("|");
+        count += 1;
+      }
+      if (out !== "${expected}") throw new Error(out);
+    `;
+    expect((await checkModel(getSource("cls|X|x|function"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("cls|xCls|x|function"))).failure?.message).toContain(
+      "cls|X|x|function",
+    );
+  });
+
   it("stops where a function that a for's let makes writes its binding", () => {
     expect(() =>
       compile(`
