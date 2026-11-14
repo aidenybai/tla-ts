@@ -19369,6 +19369,56 @@ describe("errors", () => {
     ).toContain("before+base+field+after field+twice+ReferenceError,field,plain");
   });
 
+  it("constructs a class expression that a new writes in place", async () => {
+    const getSource = (expected: string) => `
+      class Base {
+        kind() {
+          return "base";
+        }
+      }
+      let early = "";
+      const made = new (class extends Base {
+        size: number;
+        constructor(size: number) {
+          const read = () => this;
+          try {
+            read();
+          } catch (error) {
+            early = error instanceof ReferenceError ? "ReferenceError" : "other";
+          }
+          super();
+          this.size = size;
+          early += String(read() === this);
+        }
+        describe() {
+          return this.kind() + this.size;
+        }
+      })(3);
+      const plain = new (class {
+        value = 7;
+      })();
+      const result = [made.describe(), made instanceof Base, early, plain.value].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "base3|true|ReferenceErrortrue|7";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("base3|true|ReferenceErrorfalse|7"))).failure?.message,
+    ).toContain(expected);
+    expect(() =>
+      compile(`
+        const log: string[] = [];
+        for (let i = 0; i < 2; i++) {
+          new (class {
+            constructor() {
+              log.push("made");
+            }
+          })();
+        }
+      `),
+    ).toThrow("Unsupported expression: class");
+  });
+
   it("throws the ReferenceError of a derived constructor's this before super(...)", async () => {
     const getSource = (expected: string) => `
       class Base {}

@@ -2156,8 +2156,11 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): bo
         isDerivedSafe(node, base, context) &&
         (getBuiltInBase(base, context) === undefined ||
           getBuiltInBase(node, context) !== undefined)) &&
-    symbol !== undefined &&
-    (ts.isClassDeclaration(node) || ts.isVariableDeclaration(declared) || isField) &&
+    (symbol !== undefined || getInPlaceNew(node) !== undefined) &&
+    (ts.isClassDeclaration(node) ||
+      ts.isVariableDeclaration(declared) ||
+      isField ||
+      getInPlaceNew(node) !== undefined) &&
     isOnce(node) &&
     node.members.every(
       (member) =>
@@ -2173,7 +2176,7 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): bo
             isLiteralKey(member.name) ||
             (ts.isComputedPropertyName(member.name) && isLiteralKey(member.name.expression)))),
     ) &&
-    !isAssigned(symbol, node.getSourceFile(), context);
+    (symbol === undefined || !isAssigned(symbol, node.getSourceFile(), context));
   heapClasses.set(node, isHeap);
   return isHeap;
 };
@@ -3125,7 +3128,7 @@ const isObjectArgument = (argument: ts.Expression, checker: ts.TypeChecker) => {
 const isPassedAsObject = (symbol: ts.Symbol, sourceFile: ts.SourceFile, context: Context) =>
   context.objectArguments.get(sourceFile)?.has(symbol) ?? false;
 
-// The new that constructs a function expression where the script writes it.
+// The new that constructs a function or a class expression where the script writes it.
 const getInPlaceNew = (node: ts.Node) => {
   const constructed = ts.findAncestor(
     node.parent,
@@ -3135,7 +3138,7 @@ const getInPlaceNew = (node: ts.Node) => {
       !ts.isTypeAssertionExpression(ancestor) &&
       !ts.isNonNullExpression(ancestor),
   );
-  return ts.isFunctionExpression(node) &&
+  return (ts.isFunctionExpression(node) || ts.isClassExpression(node)) &&
     constructed !== undefined &&
     ts.isNewExpression(constructed) &&
     skipCasts(constructed.expression) === node
@@ -3224,7 +3227,10 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
 export const getHeapClass = (node: ts.Expression, context: Context): HeapClass | undefined => {
   const inPlace = skipCasts(node);
   if (getInPlaceNew(inPlace) !== undefined) {
-    return isHeapFunction(inPlace, context) ? inPlace : undefined;
+    return isHeapFunction(inPlace, context) ||
+      (ts.isClassExpression(inPlace) && isHeapClass(inPlace, context))
+      ? inPlace
+      : undefined;
   }
   const declaration = getSymbol(inPlace, context.checker)?.valueDeclaration;
   const found =
