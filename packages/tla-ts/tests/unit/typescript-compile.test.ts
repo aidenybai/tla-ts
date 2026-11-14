@@ -10851,6 +10851,46 @@ describe("errors", () => {
     );
   });
 
+  it("tests the elements that Boolean takes as a callback as a condition does", async () => {
+    const getAnalyzed = (expected: string) => `
+      interface Unit {
+        kinds: number[];
+        alternatives: Unit[];
+      }
+      interface Analysis {
+        first: Set<number>;
+        isNullable: boolean;
+      }
+      const leaf = (kinds: number[]): Unit => ({ kinds, alternatives: [] });
+      const analyze = (unit: Unit): Analysis => {
+        const analysis: Analysis = { first: new Set<number>(), isNullable: unit.kinds.length === 0 };
+        const add = (inner: Unit) => {
+          const innerAnalysis = analyze(inner);
+          for (const kind of innerAnalysis.first) analysis.first.add(kind);
+          return innerAnalysis.isNullable;
+        };
+        for (const kind of unit.kinds) analysis.first.add(kind);
+        if (unit.alternatives.length > 0) {
+          analysis.isNullable = unit.alternatives.map(add).some(Boolean);
+        }
+        return analysis;
+      };
+      const result = analyze({ kinds: [], alternatives: [leaf([1]), leaf([]), leaf([2])] });
+      const text = \`\${[...result.first].join(",")};\${result.isNullable}\`;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect((await checkModel(getAnalyzed("1,2;true"))).failure).toBeUndefined();
+    expect((await checkModel(getAnalyzed("1,2;false"))).failure?.message).toContain("1,2;true");
+    const getCounted = (expected: string) => `
+      const counts = [0, 2];
+      const names = ["", "a", "b"];
+      const text = \`\${counts.some(Boolean)};\${counts.every(Boolean)};\${names.filter(Boolean).length}\`;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect((await checkModel(getCounted("true;false;2"))).failure).toBeUndefined();
+    await expect(checkModel(getCounted("true;false;3"))).rejects.toThrow("true;false;2");
+  });
+
   const getUncallableSource = (expected: string) => `
       const holder = { seen: 0 };
       const GeneratorFunctionPrototype = Object.getPrototypeOf(function* () {});

@@ -23,6 +23,7 @@ import {
   translateIteratedSequence,
   translateSetKey,
   translateToString,
+  translateTruthy,
 } from "./expressions";
 import {
   callLifted,
@@ -863,6 +864,13 @@ const translateSequenceOperation = (
     if (isDefined) return value;
     return ifExpression(exists, value, getUndefined(context));
   };
+  // Boolean as a test converts each element as a condition does.
+  const isBooleanTest =
+    argument !== undefined &&
+    getBuiltIn(argument, context) === "Boolean" &&
+    call.elementType !== undefined;
+  const getTruthy = (element: Expression) =>
+    translateTruthy(argument, element, context, call.elementType);
   const translateEach =
     (
       format: (bounds: ReturnType<typeof bound>[], body: Expression) => Expression,
@@ -870,6 +878,12 @@ const translateSequenceOperation = (
     ) =>
     () => {
       const position = context.names.getFresh("index");
+      if (translateElement === translateTest && isBooleanTest) {
+        return format(
+          [bound(position, getDomain(sequence))],
+          getTruthy(index(sequence, [identifier(position)])),
+        );
+      }
       const inner = bindIndexed(argument, sequence, identifier(position), scope, context, {
         owner: call.owner,
         indices: call.indices,
@@ -1160,6 +1174,10 @@ const translateSequenceOperation = (
     [
       "filter",
       () => {
+        if (isBooleanTest) {
+          const element = context.names.getFresh("element");
+          return apply("SelectSeq", [sequence, lambda([element], getTruthy(identifier(element)))]);
+        }
         if (getCallback(argument, scope, context).parameters.length < 2) {
           const element = bindElement(argument, scope, context);
           return apply("SelectSeq", [

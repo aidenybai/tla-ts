@@ -3122,9 +3122,13 @@ const translateElementRead = (
 // tells: undefined and null are falsy, an object truthy, and a string, a number, or a boolean is
 // truthy unless it's "", 0, or false. Undefined and null compare first, as TLC compares them with
 // any value.
-const translateTruthy = (node: ts.Expression, value: Expression, context: Context) => {
+export const translateTruthy = (
+  node: ts.Expression,
+  value: Expression,
+  context: Context,
+  type = context.checker.getTypeAtLocation(node),
+) => {
   if (context.heap !== undefined) return useJavaScript("ToBoolean", [value], context);
-  const type = context.checker.getTypeAtLocation(node);
   const members = type.isUnion() ? type.types : [type];
   const getTruthKind = (member: ts.Type) =>
     (member.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0
