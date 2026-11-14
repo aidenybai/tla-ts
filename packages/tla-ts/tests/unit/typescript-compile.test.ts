@@ -8510,6 +8510,30 @@ describe("errors", () => {
     });
   });
 
+  describe("skips the accessors of a typed array's prototype under a key that is a number", () => {
+    const getSource = (expected: string) => `
+      let reads = 0;
+      Object.defineProperty(Object.getPrototypeOf(Int8Array.prototype), "5", {
+        get() {
+          reads++;
+          return 9;
+        },
+      });
+      const count = () => reads;
+      const typed = new Int8Array([1]);
+      const object: Record<string, number> = Object.create(Int8Array.prototype);
+      if ([typed[5], object[5], count()].join() !== "${expected}") throw new Error("reads");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(",9,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 9,9,2", async () => {
+      expect((await checkModel(getSource("9,9,2"))).failure?.message).toContain("reads");
+    });
+  });
+
   describe("runs the getters of the descriptor that Reflect.defineProperty reads", () => {
     const getSource = (expected: string) => `
       let reads = "";

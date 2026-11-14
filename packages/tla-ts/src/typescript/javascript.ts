@@ -1631,7 +1631,8 @@ PresentElements(heap, ref) ==
 RECURSIVE AccessorOf(_, _, _)
 AccessorOf(heap, ref, key) ==
   LET object == PropertiesOf(heap, ref, key)
-  IN CASE key \\in DOMAIN object.values ->
+  IN CASE IsTypedArray(heap, ref) /\\ TypedKey(key) # "property" -> Undefined
+       [] key \\in DOMAIN object.values ->
             IF object.attributes[key].kind = "accessor" THEN object.values[key] ELSE Undefined
        [] object.prototype = Null -> Undefined
        [] OTHER -> AccessorOf(heap, object.prototype, key)
@@ -1639,7 +1640,8 @@ AccessorOf(heap, ref, key) ==
 RECURSIVE AccessorFieldOf(_, _, _, _)
 AccessorFieldOf(heap, ref, key, field) ==
   LET object == PropertiesOf(heap, ref, key)
-  IN CASE key \\in DOMAIN object.values ->
+  IN CASE IsTypedArray(heap, ref) /\\ TypedKey(key) # "property" -> Undefined
+       [] key \\in DOMAIN object.values ->
             IF object.attributes[key].kind = "accessor"
             THEN object.values[key][field]
             ELSE Undefined
@@ -4630,11 +4632,17 @@ IsObjectArgument(value) ==
 \\* array, which reads Array.prototype past its end. Function.prototype is the one built-in function
 \\* that inherits from Object.prototype, and only functions that the heap holds read it. A primitive
 \\* reads only the built-in keys of its prototype as tla-ts compiles, and stops at any other key, so a
-\\* script may define an accessor under a string key that is neither of those nor an index.
+\\* script may define an accessor under a string key that is neither of those nor an index. A typed
+\\* array, which the heap holds, never reads its prototypes under a key that is a number.
 LOCAL CanDefineOn(ref, key, descriptor) ==
   Assert(\\/ IsHeap(ref)
          \\/ ~descriptor.isAccessor
          \\/ BuiltInKey(ref) \\in {"Array.prototype", "Object.prototype"}
+         \\/ /\\ BuiltInKey(ref) \\in {"%Int8Array.prototype.[[Prototype]]%"} \\cup
+                {type \\o "Array.prototype" :
+                   type \\in {"Int8", "Uint8", "Uint8Clamped", "Int16", "Uint16", "Float16", "Int32",
+                            "Uint32", "Float32", "Float64", "BigInt64", "BigUint64"}}
+            /\\ TypedKey(key) # "property"
          \\/ /\\ BuiltInKey(ref) \\in {"Boolean.prototype", "Number.prototype", "String.prototype"}
             /\\ ~IsSymbol(key)
             /\\ TypedKey(key) = "property"
