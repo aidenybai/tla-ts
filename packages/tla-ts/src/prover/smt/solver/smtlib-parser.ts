@@ -6,6 +6,7 @@ import {
   getSymbolHash,
   FAMILY_ARITH,
   FAMILY_BASIC,
+  KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
   OP_ABS,
@@ -37,6 +38,7 @@ import {
   OP_MUL,
   OP_NOT,
   OP_OR,
+  OP_PATTERN,
   OP_POWER,
   OP_POWER0,
   OP_SIN,
@@ -98,6 +100,7 @@ import {
   mkFpaAppOf,
 } from "./fpa-decl-plugin";
 import { createLogicChecker } from "./check-logic";
+import { shrink } from "./array";
 import { ObjMap } from "./hashtable";
 import {
   CHAR_OP_NAMES,
@@ -149,23 +152,23 @@ export interface SmtList {
   // The token after a root-obj or an indexed or qualified identifier, where Z3 reports an error in
   // making it.
   follower?: SmtToken;
+  // The command that a list a command reader read is part of.
+  root?: SmtList;
 }
 
 export type SExpr = SmtToken | SmtList;
 
-interface VarBinding {
-  kind: "var";
-  depth: number;
-  sort: number;
-}
-
-interface LetBinding {
-  kind: "let";
-  depth: number;
+// smt2parser's local: a term, and the number of binders around it where it was bound.
+interface Local {
   expr: number;
+  level: number;
 }
 
-type Binding = VarBinding | LetBinding;
+interface ParsedTerm {
+  expr: number;
+  isOwned: boolean;
+  root: SmtList | undefined;
+}
 
 interface Macro {
   domain: number[];
@@ -215,12 +218,25 @@ interface SmtProblem {
   rlimit: number;
 }
 
-interface ApplicationFrame {
-  kind: "application";
+interface QualifiedHead {
   head: SmtToken;
   indices: number[];
   build?: (args: number[]) => number;
+}
+
+interface ApplicationFrame extends QualifiedHead {
+  kind: "application";
   list: SmtList;
+  isTail: boolean;
+  start: number;
+  next: number;
+}
+
+// An application whose head is a term, which selects from the array it stands for.
+interface SelectionFrame {
+  kind: "selection";
+  list: SmtList;
+  isTail: boolean;
   start: number;
   next: number;
 }
@@ -228,10 +244,17 @@ interface ApplicationFrame {
 interface LetFrame {
   kind: "let";
   list: SmtList;
-  bindings: SExpr[];
-  scope: Map<string, Binding>;
-  name: string;
+  bindings: SmtList;
+  names: string[];
+  isInDecls: boolean;
+  isTail: boolean;
   start: number;
+  next: number;
+}
+
+interface LetDeclFrame {
+  kind: "let-decl";
+  list: SmtList;
   next: number;
 }
 
@@ -241,18 +264,42 @@ interface QuantifierFrame {
   quantifierKind: number;
   names: string[];
   varSorts: number[];
-  boundVars: number[];
-  isBodyParsed: boolean;
+  weight: number;
+  qid: string;
+  skid: string | undefined;
+  isTail: boolean;
+  start: number;
+  patternStart: number;
+  noPatternStart: number;
+  next: number;
 }
 
 interface AttributeFrame {
   kind: "attribute";
   list: SmtList;
-  isTermParsed: boolean;
+  quantifier: QuantifierFrame | undefined;
+  lastKeyword: string;
+  isTail: boolean;
+  start: number;
+  next: number;
 }
 
-// The kinds of smt2parser.cpp's expr_frame that hold a term of any depth.
-type TermFrame = ApplicationFrame | LetFrame | QuantifierFrame | AttributeFrame;
+interface PatternFrame {
+  kind: "pattern";
+  list: SmtList;
+  start: number;
+  next: number;
+}
+
+// smt2parser.cpp's expr_frame.
+type TermFrame =
+  | ApplicationFrame
+  | SelectionFrame
+  | LetFrame
+  | LetDeclFrame
+  | QuantifierFrame
+  | AttributeFrame
+  | PatternFrame;
 
 const QUANTIFIER_KINDS = new Map([
   ["forall", QUANTIFIER_FORALL],
@@ -261,6 +308,9 @@ const QUANTIFIER_KINDS = new Map([
 ]);
 
 const LET_MESSAGE = "invalid let declaration, symbol expected";
+
+// The attributes that consume_attributes takes only in the body of a quantifier.
+const QUANTIFIER_ATTRIBUTES = new Set([":weight", ":skolemid", ":qid", ":pattern", ":no-pattern"]);
 
 const IS_PARAMETER_MESSAGE =
   "invalid parameter to datatype function arity == 1 && num_parameters == 1 && parameters[0].is_ast() && is_func_decl(parameters[0].get_ast())";
@@ -753,6 +803,7 @@ export const createCommandReader = (text: string) => {
           column: token.column,
           offset: token.offset,
           end: token,
+          root,
         };
         current.items.push(list);
         stack.push(current);
@@ -803,6 +854,28 @@ export const createCommandReader = (text: string) => {
 export const isSymbol = (sexpr: SExpr | undefined, text?: string): sexpr is SmtToken =>
   sexpr !== undefined && sexpr.kind === "symbol" && (text === undefined || sexpr.text === text);
 
+// The identifier Z3's scanner read last, which check_next prints after "got".
+const getLastId = (sexpr: SExpr | undefined): string | undefined => {
+  if (sexpr === undefined) return undefined;
+  if (sexpr.kind !== "list")
+    return sexpr.kind === "symbol" || sexpr.kind === "keyword" ? sexpr.text : undefined;
+  return getLastIdBefore(sexpr.items, sexpr.items.length);
+};
+
+const getLastIdBefore = (items: SExpr[], end: number): string | undefined => {
+  for (let index = end - 1; index >= 0; index--) {
+    const id = getLastId(items[index]);
+    if (id !== undefined) return id;
+  }
+  return undefined;
+};
+
+const isSimpleIndex = (index: SExpr) =>
+  index.kind === "numeral" ||
+  index.kind === "bitvector" ||
+  index.kind === "decimal" ||
+  index.kind === "keyword";
+
 const expectList = (sexpr: SExpr | undefined, message: string, at: SExpr): SmtList => {
   if (sexpr?.kind !== "list") throw new SmtParseError(message, sexpr ?? at);
   return sexpr;
@@ -837,8 +910,25 @@ export const createSmtlibReader = (
   const notifiedSorts = new Set<number>();
   const undo: (() => void)[] = [];
   const scopeStarts: number[] = [];
-  const scopes: Map<string, Binding>[] = [];
+  // smt2parser's m_env, a scoped symbol table: one map, and the trail of what each scope shadowed.
+  const locals = new Map<string, Local>();
+  const shadowedNames: string[] = [];
+  const shadowedLocals: (Local | undefined)[] = [];
+  const localScopes: number[] = [];
   const binders = { depth: 0 };
+  // smt2parser's expr_stack, pattern_stack and nopattern_stack, which hold a reference to each term.
+  // -1 on the first stands for a pattern that Z3 ignores.
+  const exprStack: number[] = [];
+  const patternStack: number[] = [];
+  const noPatternStack: number[] = [];
+  // The term that parseTerm returns leaves the stack before its caller takes a reference. One that
+  // only the stack held keeps a reference in pending until a term of another command is parsed, and
+  // one that nothing held, in floating or, where its command is not known, in unrooted, gets one
+  // there when another term is parsed while its caller may still read it.
+  const parsed: ParsedTerm = { expr: -1, isOwned: false, root: undefined };
+  const floating: number[] = [];
+  const unrooted: number[] = [];
+  const pending: number[] = [];
 
   const declare = <Value>(names: Map<string, Value>, name: string, value: Value) => {
     const previous = names.get(name);
@@ -1071,6 +1161,8 @@ export const createSmtlibReader = (
     context: string,
     bindings: ReadonlyMap<string, number> = NO_BINDINGS,
   ): number => {
+    if (sexpr.kind === ")")
+      throw new SmtParseError(`${context} invalid sort, unexpected ')'`, sexpr);
     if (sexpr.kind === "list") {
       if (!isSymbol(sexpr.items[0], "_")) return parseParametricSort(sexpr, context, bindings);
       if (hasFpa && isSymbol(sexpr.items[1], "FloatingPoint"))
@@ -1119,12 +1211,60 @@ export const createSmtlibReader = (
     );
   };
 
-  const lookup = (name: string) => {
-    for (let index = scopes.length - 1; index >= 0; index--) {
-      const binding = scopes[index].get(name);
-      if (binding !== undefined) return binding;
+  const beginScope = () => localScopes.push(shadowedNames.length);
+
+  const insertLocal = (name: string, expr: number) => {
+    shadowedNames.push(name);
+    shadowedLocals.push(locals.get(name));
+    locals.set(name, { expr, level: binders.depth });
+  };
+
+  const endScope = () => {
+    const start = localScopes.pop() ?? 0;
+    for (let index = shadowedNames.length - 1; index >= start; index--) {
+      const shadowed = shadowedLocals[index];
+      if (shadowed === undefined) locals.delete(shadowedNames[index]);
+      else locals.set(shadowedNames[index], shadowed);
     }
-    return undefined;
+    shrink(shadowedNames, start);
+    shrink(shadowedLocals, start);
+  };
+
+  const pushRef = (stack: number[], expr: number) => {
+    if (expr !== -1) manager.incRef(expr);
+    stack.push(expr);
+  };
+
+  // ref_vector::shrink, which releases from the new end on.
+  const shrinkRefs = (stack: number[], size: number) => {
+    for (let index = size; index < stack.length; index++)
+      if (stack[index] !== -1) manager.decRef(stack[index]);
+    shrink(stack, size);
+  };
+
+  const releasePending = () => {
+    for (const expr of pending) manager.decRef(expr);
+    shrink(pending, 0);
+  };
+
+  const protect = (exprs: number[]) => {
+    for (const expr of exprs)
+      if (manager.ids[expr] !== -1 && manager.getRefCount(expr) === 0) pushRef(pending, expr);
+    shrink(exprs, 0);
+  };
+
+  // push_local: var_shifter moves the free variables of a term that was bound under fewer binders.
+  // Its cache holds the terms it makes, which replaceFreeVars rebuilds.
+  const getLocalTerm = (local: Local) => {
+    if (local.level === binders.depth) return local.expr;
+    if (manager.kinds[local.expr] === KIND_VAR)
+      return manager.mkVar(
+        manager.values[local.expr] + binders.depth - local.level,
+        manager.sorts[local.expr],
+      );
+    return replaceFreeVars(manager, local.expr, (variable, index, shift) =>
+      manager.mkVar(index + shift + binders.depth - local.level, manager.sorts[variable]),
+    );
   };
 
   // basic_decl_plugin::join.
@@ -1274,28 +1414,11 @@ export const createSmtlibReader = (
     return mkApp(OP_AND, pairs, at, SORT_BOOL);
   };
 
-  const rejectPattern = (message: string, at: SExpr) => {
-    if (!options.isIgnoringBadPatterns) throw new SmtParseError(message, at);
-    return undefined;
-  };
-
-  const parsePattern = (sexpr: SExpr, at: SExpr) => {
-    if (sexpr.kind === ")") {
-      // Z3 skips a bad pattern as an s-expression, which cannot start with ')'.
-      if (options.isIgnoringBadPatterns)
-        throw new SmtParseError("invalid s-expression, unexpected ')'", sexpr);
-      throw new SmtParseError("invalid pattern, '(' expected", sexpr);
-    }
-    if (sexpr.kind !== "list") return rejectPattern("invalid pattern, '(' expected", sexpr);
-    if (sexpr.items.length === 0) return rejectPattern("invalid empty pattern", at);
-    const head = sexpr.items[0];
-    if (head.kind === "list") return manager.mkPattern(sexpr.items.map(parseTerm));
-    const decl = head.text === "true" || head.text === "false" ? -1 : getFirstFunc(head.text);
-    if (decl === -1 || (decl !== undefined && manager.funcDecls[decl].domain.length === 0))
-      return rejectPattern("invalid constant pattern", head);
-    if (head.kind !== "symbol")
-      throw new SmtParseError("invalid pattern, '(' or identifier expected", head);
-    return manager.mkPattern([parseTerm(sexpr)]);
+  // ast_manager::mk_pattern.
+  const mkPattern = (terms: number[], at: SExpr) => {
+    if (terms.some((term) => manager.kinds[term] !== KIND_APP))
+      throw new SmtParseError("patterns cannot be variables or quantifiers", at);
+    return manager.mkPattern(terms);
   };
 
   const isValidPattern = (pattern: number, numDecls: number) => {
@@ -1320,135 +1443,90 @@ export const createSmtlibReader = (
     return manager.everyArg(pattern, isValid) && found.size === numDecls;
   };
 
-  const bindSortedVars = (sexpr: SExpr | undefined, at: SExpr) => {
-    const message = "invalid sorted variables, syntax error: ((<symbol> <sort>)*) expected";
-    const declarations = expectList(sexpr, message, at).items.map((declaration) =>
-      expectList(declaration, message, declaration),
-    );
-    const scope = new Map<string, Binding>();
-    const names = declarations.map(
-      (declaration) => expectSymbol(declaration.items[0], message, declaration).text,
-    );
-    const varSorts = declarations.map((declaration, index) => {
-      if (declaration.items.length !== 2) throw new SmtParseError(message, declaration.end);
-      const sort = parseSort(declaration.items[1], "invalid sorted variables");
-      scope.set(names[index], { kind: "var", depth: binders.depth + index, sort });
-      return sort;
-    });
-    scopes.push(scope);
+  // parse_sorted_vars: the variables are created the first declared with the largest index, and
+  // the stack holds them. previousId is the identifier before the list.
+  const bindSortedVars = (sexpr: SExpr | undefined, at: SExpr, previousId: string) => {
+    if (sexpr?.kind !== "list")
+      throw new SmtParseError(
+        `invalid list of sorted variables, '(' expected got ${getLastId(sexpr) ?? previousId}`,
+        sexpr ?? at,
+      );
+    const names: string[] = [];
+    const varSorts: number[] = [];
+    for (const [index, declaration] of sexpr.items.entries()) {
+      if (declaration.kind !== "list")
+        throw new SmtParseError(
+          `invalid sorted variable, '(' expected got ${getLastId(declaration) ?? getLastIdBefore(sexpr.items, index) ?? previousId}`,
+          declaration,
+        );
+      const name = declaration.items[0];
+      if (!isSymbol(name))
+        throw new SmtParseError(
+          "invalid sorted variable, symbol expected",
+          name ?? declaration.end,
+        );
+      names.push(name.text);
+      varSorts.push(parseSort(declaration.items[1] ?? declaration.end, "invalid sorted variables"));
+      const extra = declaration.items[2];
+      if (extra !== undefined)
+        throw new SmtParseError(
+          `invalid sorted variable, ')' expected got ${getLastId(extra) ?? getLastId(declaration.items[1]) ?? name.text}`,
+          extra,
+        );
+    }
+    beginScope();
     binders.depth += varSorts.length;
+    for (const [index, sort] of varSorts.entries()) {
+      const boundVar = manager.mkVar(varSorts.length - 1 - index, sort);
+      pushRef(exprStack, boundVar);
+      insertLocal(names[index], boundVar);
+    }
     return { names, varSorts };
   };
 
   const unbindSortedVars = (count: number) => {
-    scopes.pop();
+    endScope();
     binders.depth -= count;
   };
 
-  // pop_quant_frame, after the attributes of an annotated body.
-  const mkParsedQuantifier = (frame: QuantifierFrame, parsedBody: number) => {
+  // pop_quant_frame, up to the quantifier.
+  const mkParsedQuantifier = (frame: QuantifierFrame) => {
     const list = frame.list;
-    const kind = frame.quantifierKind;
-    const varSorts = frame.varSorts;
-    const boundVars = frame.boundVars;
-    const bodySExpr = list.items[2];
-    const annotations =
-      bodySExpr.kind === "list" && isSymbol(bodySExpr.items[0], "!") ? bodySExpr.items : [];
-    if (kind !== QUANTIFIER_LAMBDA && manager.sorts[parsedBody] !== SORT_BOOL)
-      throw new SmtParseError("expected a formula", bodySExpr);
-    const attributes = Array.from(
-      { length: Math.ceil((annotations.length - 2) / 2) },
-      (_unused, index) => ({
-        keyword: annotations[2 + 2 * index],
-        value: annotations[3 + 2 * index],
-      }),
-    );
-    const body = attributes.reduce(
-      (labeled, attribute) =>
-        attribute.keyword.kind === "keyword" &&
-        (attribute.keyword.text === ":lblpos" || attribute.keyword.text === ":lblneg")
-          ? mkLabel(labeled, attribute.keyword.text === ":lblpos", attribute.value, bodySExpr)
-          : labeled,
-      parsedBody,
-    );
-    const patterns: number[] = [];
-    const noPatterns: number[] = [];
-    for (const attribute of attributes) {
-      if (attribute.keyword.kind !== "keyword") continue;
-      if (attribute.keyword.text === ":no-pattern") {
-        const noPattern = parseTerm(attribute.value ?? list.end);
-        manager.incRef(noPattern);
-        noPatterns.push(noPattern);
-        continue;
-      }
-      const value = attribute.value ?? (bodySExpr.kind === "list" ? bodySExpr.end : list.end);
-      // consume_attributes: check_int, and curr_unsigned for the weight.
-      if (attribute.keyword.text === ":weight") {
-        if (value.kind !== "numeral")
-          throw new SmtParseError("invalid weight attribute, integer expected", value);
-        if (!isUnsigned(value.text))
-          throw new SmtParseError(
-            "invalid indexed identifier, index is too big to fit in an unsigned machine integer",
-            value,
-          );
-      }
-      if (
-        (attribute.keyword.text === ":qid" || attribute.keyword.text === ":skolemid") &&
-        value.kind !== "symbol"
-      )
-        throw new SmtParseError("invalid attribute value, symbol expected", value);
-      if (attribute.keyword.text !== ":pattern") continue;
-      const pattern = parsePattern(value, list.end);
-      if (pattern === undefined) continue;
-      manager.incRef(pattern);
-      patterns.push(pattern);
-    }
-    const getAttribute = (name: string) => {
-      const value = attributes
-        .filter(
-          (attribute) =>
-            attribute.keyword.kind === "keyword" &&
-            attribute.keyword.text === name &&
-            attribute.value?.kind !== "list",
-        )
-        .at(-1)?.value;
-      return value?.kind === "list" ? undefined : value?.text;
-    };
-    const weight = Number(getAttribute(":weight") ?? 1);
-    const qid = getAttribute(":qid") ?? "";
-    const skid = getAttribute(":skolemid");
-    unbindSortedVars(varSorts.length);
-    // pop_quant_frame: the invalid patterns leave the parser's stack before the quantifier is made,
-    // and the valid ones after.
-    let numKept = 0;
-    for (const pattern of patterns) {
-      if (!isValidPattern(pattern, varSorts.length)) {
-        rejectPattern("invalid pattern", list.end);
+    const numDecls = frame.varSorts.length;
+    if (exprStack.length - frame.start !== numDecls + 1)
+      throw new SmtParseError(
+        "invalid quantified expression, syntax error: (forall|exists ((<symbol> <sort>)*) <expr>) expected",
+        list.end,
+      );
+    let numKept = frame.patternStart;
+    for (let index = frame.patternStart; index < patternStack.length; index++) {
+      const pattern = patternStack[index];
+      if (!isValidPattern(pattern, numDecls)) {
+        if (!options.isIgnoringBadPatterns) throw new SmtParseError("invalid pattern", list.end);
         continue;
       }
       manager.incRef(pattern);
-      manager.decRef(patterns[numKept]);
-      patterns[numKept] = pattern;
+      manager.decRef(patternStack[numKept]);
+      patternStack[numKept] = pattern;
       numKept++;
     }
-    for (const removed of patterns.splice(numKept)) manager.decRef(removed);
-    if (patterns.length > 0 && noPatterns.length > 0)
+    shrinkRefs(patternStack, numKept);
+    const body = exprStack[exprStack.length - 1];
+    if (frame.quantifierKind !== QUANTIFIER_LAMBDA && manager.sorts[body] !== SORT_BOOL)
+      throw new SmtParseError("quantifier body must be a Boolean expression", list.end);
+    if (patternStack.length > frame.patternStart && noPatternStack.length > frame.noPatternStart)
       throw new SmtParseError("simultaneous patterns and no-patterns not supported", list.end);
-    const quantifier = manager.mkQuantifier({
-      kind,
-      sorts: varSorts,
+    return manager.mkQuantifier({
+      kind: frame.quantifierKind,
+      sorts: frame.varSorts,
       names: frame.names,
       body,
-      patterns,
-      noPatterns,
-      weight,
-      qid,
-      ...(skid === undefined ? {} : { skid }),
+      patterns: patternStack.slice(frame.patternStart),
+      noPatterns: noPatternStack.slice(frame.noPatternStart),
+      weight: frame.weight,
+      qid: frame.qid,
+      ...(frame.skid === undefined ? {} : { skid: frame.skid }),
     });
-    for (const pattern of patterns) manager.decRef(pattern);
-    for (const noPattern of noPatterns) manager.decRef(noPattern);
-    for (const boundVar of boundVars) manager.decRef(boundVar);
-    return quantifier;
   };
 
   const expandMacro = (macro: Macro, args: number[]) =>
@@ -1642,27 +1720,97 @@ export const createSmtlibReader = (
     return manager.mkAlgebraicNumeral(root);
   };
 
-  const parseBvNumeral = (list: SmtList) => {
+  const isKnownOperator = (name: string) => BUILTIN_NAMES.has(name) || THEORY_OPERATOR.test(name);
+
+  // parse_indexed_identifier_core.
+  const getIndexedName = (list: SmtList) => {
     const name = list.items[1];
+    if (!isSymbol(name))
+      throw new SmtParseError("invalid indexed identifier, symbol expected", name ?? list.end);
+    for (const index of list.items.slice(2)) {
+      if (index.kind === "string")
+        throw new SmtParseError(
+          "invalid indexed identifier, integer, identifier or '(' expected",
+          index,
+        );
+      // parse_func_decl_ref of an index that is a symbol.
+      if (
+        index.kind === "symbol" &&
+        name.text !== "is" &&
+        !isUsed(index.text) &&
+        !macros.has(index.text)
+      )
+        throw new SmtParseError(
+          `invalid function declaration reference, unknown function ${index.text}`,
+          index,
+        );
+    }
+    return name;
+  };
+
+  // parse_qualified_identifier_core on (as <identifier> <sort>), up to the sort.
+  const parseQualifierSort = (list: SmtList) => {
+    const target = list.items[1];
+    if (target === undefined || (target.kind !== "symbol" && target.kind !== "list"))
+      throw new SmtParseError(
+        `invalid (indexed) identifier, '(_' or symbol expected got ${getLastId(target) ?? "as"}`,
+        target ?? list.end,
+      );
+    if (target.kind === "list") {
+      if (!isSymbol(target.items[0], "_"))
+        throw new SmtParseError(
+          "invalid indexed identifier, '_' expected",
+          target.items[0] ?? target.end,
+        );
+      getIndexedName(target);
+    }
+    const sort = parseSort(list.items[2] ?? list.end, "Invalid qualified identifier");
+    const extra = list.items[3];
+    if (extra !== undefined)
+      throw new SmtParseError(
+        `invalid qualified identifier, ')' expected got ${getLastId(extra) ?? getLastIdBefore(list.items, 3) ?? "as"}`,
+        extra,
+      );
+    return sort;
+  };
+
+  // parse_qualified_name on (_ <symbol> <index>*). Z3 makes the term once it has read past the
+  // closing parenthesis, where at is.
+  const parseIndexedTerm = (list: SmtList, at: SExpr, range?: number) => {
+    const name = getIndexedName(list);
     const indices = list.items.slice(2);
-    // parse_qualified_name makes the term once it has read past the closing parenthesis.
-    const at = list.follower ?? list.end;
-    if (
-      isSymbol(name) &&
-      isSeqOpName(name.text) &&
-      indices.every((index) => index.kind === "numeral")
-    )
+    const local = locals.get(name.text);
+    if (local !== undefined) {
+      if (indices.length > 0)
+        throw new SmtParseError("invalid indexed identifier, symbol is a local declaration", at);
+      return getLocalTerm(local);
+    }
+    const value = /^bv([0-9]+)$/.exec(name.text);
+    if (value !== null) {
+      const width = indices[0];
+      const digits =
+        indices.length !== 1
+          ? "-1"
+          : width.kind === "bitvector"
+            ? `0${width.text.slice(1)}`
+            : width.kind === "numeral"
+              ? width.text
+              : "-1";
+      if (!isUnsigned(digits))
+        throw new SmtParseError("invalid bit-vector constant, index expected", at);
+      if (BigInt(digits) === 0n)
+        throw new SmtParseError("bit-vector size must be greater than zero", at);
+      return manager.mkBvNumeral(BigInt(value[1]), Number(BigInt(digits)));
+    }
+    const isNumbered = indices.every((index) => index.kind === "numeral");
+    if (isNumbered && isSeqOpName(name.text))
       return mkSeqTerm(
         name.text,
         [],
         indices.map((index) => (index.kind === "list" ? 0 : Number(index.text))),
         at,
       );
-    if (
-      isSymbol(name) &&
-      isFpaOpName(name.text) &&
-      indices.every((index) => index.kind === "numeral")
-    ) {
+    if (isNumbered && isFpaOpName(name.text)) {
       const signature = getFpaSignature(
         manager,
         FPA_OP_NAMES.get(name.text) ?? -1,
@@ -1672,14 +1820,36 @@ export const createSmtlibReader = (
       if (typeof signature === "string") throw new SmtParseError(signature, at);
       return mkFpaAppOf(manager, signature, []);
     }
-    const value = isSymbol(name) ? /^bv([0-9]+)$/.exec(name.text) : null;
-    if (value === null) throw new SmtUnsupportedError("indexed identifiers");
-    const width = list.items[2];
-    if (list.items.length !== 3 || width.kind !== "numeral" || !isUnsigned(width.text))
-      throw new SmtParseError("invalid bit-vector constant, index expected", at);
-    if (BigInt(width.text) === 0n)
-      throw new SmtParseError("bit-vector size must be greater than zero", at);
-    return manager.mkBvNumeral(BigInt(value[1]), Number(width.text));
+    if (isKnownOperator(name.text) || !indices.every(isSimpleIndex))
+      throw new SmtUnsupportedError("indexed identifiers");
+    return parseApp(name, [], at, [], range);
+  };
+
+  // parse_qualified_name.
+  const parseQualifiedName = (list: SmtList) => {
+    const at = list.follower ?? list.end;
+    if (isSymbol(list.items[0], "_")) return parseIndexedTerm(list, at);
+    const sort = parseQualifierSort(list);
+    const target = list.items[1];
+    const local = isSymbol(target) ? locals.get(target.text) : undefined;
+    if (isSymbol(target) && local === undefined)
+      return hasArrays && target.text === "const"
+        ? mkArrayTerm(OP_CONST_ARRAY, [], [sort], at)
+        : parseApp(target, [], at, [], sort);
+    const term =
+      local === undefined
+        ? parseIndexedTerm(
+            expectList(target, "invalid indexed identifier, '_' expected", list),
+            at,
+            sort,
+          )
+        : getLocalTerm(local);
+    if (manager.sorts[term] !== sort)
+      throw new SmtParseError(
+        `sort mismatch in qualified identifier, expected: ${manager.getSortName(sort)}, got: ${manager.getSortName(manager.sorts[term])}`,
+        at,
+      );
+    return term;
   };
 
   const mkArrayTerm = (op: number, inputArgs: number[], parameters: number[], at: SExpr) => {
@@ -1926,10 +2096,11 @@ export const createSmtlibReader = (
   ) => {
     const name = head.text;
     // A bound variable applied to arguments selects from the array it stands for, one at a time.
-    if (args.length > 0 && lookup(name) !== undefined)
+    const local = locals.get(name);
+    if (args.length > 0 && local !== undefined)
       return args.reduce(
         (array, arg) => mkArrayTerm(OP_SELECT, [array, arg], [], at),
-        parseLeaf(head),
+        getLocalTerm(local),
       );
     if (indices.length > 0)
       return isFpaOpName(name)
@@ -1995,10 +2166,7 @@ export const createSmtlibReader = (
       throw new SmtUnsupportedError(`the operator ${name}`);
     const instance = mkDatatypeInstanceApp(name, args, at);
     if (instance !== undefined) return instance;
-    throw new SmtParseError(
-      getUnknownConstantMessage(name, args, undefined),
-      args.length === 0 ? head : at,
-    );
+    throw new SmtParseError(getUnknownConstantMessage(name, args, undefined), at);
   };
 
   const parseLeaf = (sexpr: SmtToken): number => {
@@ -2022,322 +2190,458 @@ export const createSmtlibReader = (
     }
     if (sexpr.kind === "string") return manager.mkString(parseZstring(sexpr.text, manager.maxChar));
     if (sexpr.kind === "symbol") {
+      const local = locals.get(sexpr.text);
+      if (local !== undefined) return getLocalTerm(local);
       if (sexpr.text === "true") return manager.trueExpr;
       if (sexpr.text === "false") return manager.falseExpr;
-      const binding = lookup(sexpr.text);
-      if (binding?.kind === "var")
-        return manager.mkVar(binders.depth - 1 - binding.depth, binding.sort);
-      // Z3's var_shifter moves the free variables of a let binding up by the binders since. Its cache
-      // holds the terms it makes, but this parser holds no references, so it rebuilds the binding
-      // with replaceFreeVars.
-      if (binding !== undefined)
-        return binders.depth === binding.depth
-          ? binding.expr
-          : replaceFreeVars(manager, binding.expr, (variable, index, shift) =>
-              manager.mkVar(index + shift + binders.depth - binding.depth, manager.sorts[variable]),
-            );
       return parseApp(sexpr, [], sexpr);
     }
-    throw new SmtParseError("invalid expression", sexpr);
+    throw new SmtParseError(
+      sexpr.kind === "keyword"
+        ? "invalid expression, unexpected keyword"
+        : "invalid expression, unexpected ')'",
+      sexpr,
+    );
   };
 
-  const mkLabel = (expr: number, isPositive: boolean, value: SExpr | undefined, at: SExpr) => {
-    const name = expectSymbol(value, "invalid attribute value, symbol expected", at).text;
-    if (manager.sorts[expr] !== SORT_BOOL)
-      throw new SmtParseError("invalid labeled expression, expression must have Bool sort", at);
-    return manager.mkLabel(isPositive, [name], expr);
+  // name_expr and cmd_context::insert of a named term. Z3 reports an error at the token after the
+  // name.
+  const nameExpr = (expr: number, name: string, at: SExpr) => {
+    if (manager.freeVarBounds[expr] > 0)
+      throw new SmtParseError("invalid named expression, expression contains free variables", at);
+    if (macros.get(name)?.domain.length === 0)
+      throw new SmtParseError("named expression already defined", at);
+    if (
+      (funcs.get(name) ?? []).some(
+        (decl) =>
+          manager.funcDecls[decl].domain.length === 0 &&
+          manager.funcDecls[decl].range === manager.sorts[expr],
+      )
+    )
+      throw new SmtParseError(
+        `invalid named expression, declaration already defined with this name ${name}`,
+        at,
+      );
+    manager.incRef(expr);
+    lastNamed.name = name;
+    lastNamed.expr = expr;
+    manager.mkMacro(name, expr);
+    declare(macros, name, { domain: [], range: manager.sorts[expr], body: expr });
   };
 
-  const parseTerm = (sexpr: SExpr): number => {
+  // push_app_frame's parse_qualified_identifier_core, on a head that is (_ <symbol> <index>*) or
+  // (as <identifier> <sort>).
+  const parseQualifiedHead = (list: SmtList, head: SmtList): QualifiedHead => {
+    if (isSymbol(head.items[0], "as")) {
+      const range = parseQualifierSort(head);
+      const target = head.items[1];
+      if (!isSymbol(target)) throw new SmtUnsupportedError("indexed and qualified identifiers");
+      return {
+        head: target,
+        indices: [],
+        build:
+          hasArrays && target.text === "const"
+            ? (args) => mkArrayTerm(OP_CONST_ARRAY, args, [range], list.end)
+            : (args) => parseApp(target, args, list.end, [], range),
+      };
+    }
+    const name = getIndexedName(head);
+    const indices = head.items.slice(2);
+    const indexed = indices[0];
+    if (hasArrays && hasArrayExtensions && name.text === "map" && indices.length === 1) {
+      const mapped = parseFuncDeclRef(indexed);
+      return { head: name, indices: [], build: (args) => mkMapTerm(mapped, args, list.end) };
+    }
+    if ((name.text === "is" || name.text === "update-field") && indices.length === 1) {
+      if (!isSymbol(indexed)) throw new SmtUnsupportedError("indexed and qualified identifiers");
+      return {
+        head: name,
+        indices: [],
+        build: (args) =>
+          name.text === "is"
+            ? mkIsApp(indexed, args, list.end)
+            : mkUpdateFieldApp(indexed, args, list.end),
+      };
+    }
+    const isNumbered = indices.every((index) => index.kind === "numeral");
+    if (isNumbered && isPbOpName(name.text)) {
+      const parameters = indices.map((index) =>
+        Rational.of(BigInt(index.kind === "list" ? 0 : index.text)),
+      );
+      return {
+        head: name,
+        indices: [],
+        build: (args) => mkPbTerm(name.text, args, parameters, list.end),
+      };
+    }
+    if (isNumbered && (isBvOpName(name.text) || isFpaOpName(name.text) || isSeqOpName(name.text)))
+      return {
+        head: name,
+        indices: indices.map((index) => (index.kind === "list" ? 0 : Number(index.text))),
+      };
+    // cmd_context::mk_app finds a name that no theory knows among the declarations, whatever its
+    // indices are.
+    if (isKnownOperator(name.text) || !indices.every(isSimpleIndex))
+      throw new SmtUnsupportedError("indexed and qualified identifiers");
+    return { head: name, indices: [] };
+  };
+
+  // parse_expr. Z3 leaves the term on its stack until the command ends. A tail term is one whose
+  // value is the value of the whole: it stays off the stack, in parsed, so that the caller of
+  // parseTerm can have a term that nothing else holds without a reference of the parser's.
+  const runTerm = (sexpr: SExpr, isRootTail: boolean) => {
+    const root = sexpr.kind === "list" ? sexpr.root : undefined;
+    if (root === undefined || root === parsed.root) protect(floating);
+    else {
+      releasePending();
+      shrink(floating, 0);
+      parsed.root = root;
+    }
+    protect(unrooted);
     const frames: TermFrame[] = [];
-    const results: number[] = [];
-    const enter = (current: SExpr) => {
+    // The value of a frame replaces what the frame left on the stack. Z3 holds it in an expr_ref
+    // meanwhile.
+    const deliver = (expr: number, isTail: boolean, start: number) => {
+      const isOwned = !isTail || manager.getRefCount(expr) > 0;
+      if (isOwned) manager.incRef(expr);
+      shrinkRefs(exprStack, start);
+      if (!isTail) {
+        exprStack.push(expr);
+        return;
+      }
+      parsed.expr = expr;
+      parsed.isOwned = isOwned;
+    };
+    // push_pattern_frame.
+    const enterPattern = (value: SExpr, frame: AttributeFrame) => {
+      if (value.kind !== "list") {
+        if (!options.isIgnoringBadPatterns)
+          throw new SmtParseError("invalid pattern, '(' expected", value);
+        // Z3 skips a bad pattern as an s-expression, which cannot start with ')'.
+        if (value.kind === ")")
+          throw new SmtParseError("invalid s-expression, unexpected ')'", value);
+        frame.next++;
+        exprStack.push(-1);
+        return;
+      }
+      frame.next++;
+      const first = value.items[0];
+      if (first === undefined) {
+        exprStack.push(-1);
+        return;
+      }
+      if (first.kind === "list") {
+        frames.push({ kind: "pattern", list: value, start: exprStack.length, next: 0 });
+        return;
+      }
+      const decl = first.text === "true" || first.text === "false" ? -1 : getFirstFunc(first.text);
+      if (decl === -1 || (decl !== undefined && manager.funcDecls[decl].domain.length === 0)) {
+        if (!options.isIgnoringBadPatterns)
+          throw new SmtParseError("invalid constant pattern", first);
+        exprStack.push(-1);
+        return;
+      }
+      if (first.kind !== "symbol")
+        throw new SmtParseError("invalid pattern, '(' or identifier expected", first);
+      frames.push({
+        kind: "application",
+        list: value,
+        head: first,
+        indices: [],
+        isTail: false,
+        start: exprStack.length,
+        next: 1,
+      });
+    };
+    const enter = (current: SExpr, isTail: boolean) => {
       if (current.kind !== "list") {
-        results.push(parseLeaf(current));
+        deliver(parseLeaf(current), isTail, exprStack.length);
         return;
       }
       const head = current.items[0];
-      if (head === undefined)
-        throw new SmtParseError("invalid expression, '(' or symbol expected", current.end);
+      if (head === undefined || (head.kind !== "symbol" && head.kind !== "list"))
+        throw new SmtParseError("invalid expression, '(' or symbol expected", head ?? current.end);
       if (head.kind === "list") {
-        // push_app_frame: the head of an application may be a term, which Z3 starts to read.
-        const first = head.items[0] ?? head.end;
-        if (first.kind !== "symbol" && first.kind !== "list")
-          throw new SmtParseError("invalid expression, '(' or symbol expected", first);
-        const name = head.items[1];
-        const indices = head.items.slice(2);
-        if (
-          hasArrays &&
-          isSymbol(head.items[0], "as") &&
-          isSymbol(name, "const") &&
-          head.items.length === 3
-        ) {
-          const sort = parseSort(head.items[2], "");
-          frames.push({
-            kind: "application",
-            head: name,
-            indices: [],
-            build: (args) => mkArrayTerm(OP_CONST_ARRAY, args, [sort], current.end),
-            list: current,
-            start: results.length,
-            next: 1,
-          });
-          return;
-        }
-        if (
-          hasArrays &&
-          hasArrayExtensions &&
-          isSymbol(head.items[0], "_") &&
-          isSymbol(name, "map") &&
-          head.items.length === 3
-        ) {
-          const mapped = parseFuncDeclRef(head.items[2]);
-          frames.push({
-            kind: "application",
-            head: name,
-            indices: [],
-            build: (args) => mkMapTerm(mapped, args, current.end),
-            list: current,
-            start: results.length,
-            next: 1,
-          });
-          return;
-        }
-        const indexed = head.items[2];
-        if (
-          isSymbol(head.items[0], "_") &&
-          (isSymbol(name, "is") || isSymbol(name, "update-field")) &&
-          isSymbol(indexed) &&
-          head.items.length === 3
-        ) {
-          frames.push({
-            kind: "application",
-            head: name,
-            indices: [],
-            build: (args) =>
-              name.text === "is"
-                ? mkIsApp(indexed, args, current.end)
-                : mkUpdateFieldApp(indexed, args, current.end),
-            list: current,
-            start: results.length,
-            next: 1,
-          });
-          return;
-        }
-        if (isSymbol(head.items[0], "as") && isSymbol(name) && head.items.length === 3) {
-          const range = parseSort(head.items[2], "Invalid qualified identifier");
-          frames.push({
-            kind: "application",
-            head: name,
-            indices: [],
-            build: (args) => parseApp(name, args, current.end, [], range),
-            list: current,
-            start: results.length,
-            next: 1,
-          });
-          return;
-        }
-        if (
-          isSymbol(head.items[0], "_") &&
-          isSymbol(name) &&
-          isPbOpName(name.text) &&
-          indices.every((index) => index.kind === "numeral")
-        ) {
-          const parameters = indices.map((index) =>
-            Rational.of(BigInt(index.kind === "list" ? 0 : index.text)),
-          );
-          frames.push({
-            kind: "application",
-            head: name,
-            indices: [],
-            build: (args) => mkPbTerm(name.text, args, parameters, current.end),
-            list: current,
-            start: results.length,
-            next: 1,
-          });
-          return;
-        }
-        if (
-          !isSymbol(head.items[0], "_") ||
-          !isSymbol(name) ||
-          !(isBvOpName(name.text) || isFpaOpName(name.text) || isSeqOpName(name.text)) ||
-          !indices.every((index) => index.kind === "numeral")
-        )
+        // push_app_frame: Z3 reads a head that is neither indexed nor qualified as a term.
+        if (isSymbol(head.items[0], "lambda"))
           throw new SmtUnsupportedError("indexed and qualified identifiers");
-        frames.push({
-          kind: "application",
-          head: name,
-          indices: indices.map((index) => (index.kind === "list" ? 0 : Number(index.text))),
-          list: current,
-          start: results.length,
-          next: 1,
-        });
-        return;
-      }
-      if (head.kind !== "symbol")
-        throw new SmtParseError("invalid expression, '(' or symbol expected", head);
-      if (head.text === "_") {
-        results.push(parseBvNumeral(current));
-        return;
-      }
-      const qualified = current.items[1];
-      if (head.text === "as" && isSymbol(qualified) && current.items.length === 3) {
-        results.push(
-          parseApp(
-            qualified,
-            [],
-            current.follower ?? qualified,
-            [],
-            parseSort(current.items[2], "Invalid qualified identifier"),
-          ),
+        frames.push(
+          isSymbol(head.items[0], "_") || isSymbol(head.items[0], "as")
+            ? {
+                kind: "application",
+                list: current,
+                ...parseQualifiedHead(current, head),
+                isTail,
+                start: exprStack.length,
+                next: 1,
+              }
+            : { kind: "selection", list: current, isTail, start: exprStack.length, next: 0 },
         );
         return;
       }
-      if (head.text === "root-obj") {
-        results.push(parseRootObj(current));
+      if (head.text === "_" || head.text === "as") {
+        deliver(parseQualifiedName(current), isTail, exprStack.length);
         return;
       }
-      if (head.text === "as" || head.text === "match")
-        throw new SmtUnsupportedError(`the expression ${head.text}`);
+      if (head.text === "root-obj") {
+        deliver(parseRootObj(current), isTail, exprStack.length);
+        return;
+      }
+      if (head.text === "match") throw new SmtUnsupportedError("the expression match");
       if (head.text === "let") {
+        const bindings = current.items[1];
+        if (bindings?.kind !== "list")
+          throw new SmtParseError(
+            `invalid let declaration, '(' expected got ${getLastId(bindings) ?? "let"}`,
+            bindings ?? current.end,
+          );
         frames.push({
           kind: "let",
           list: current,
-          bindings: expectList(current.items[1], LET_MESSAGE, current).items,
-          scope: new Map(),
-          name: "",
-          start: results.length,
+          bindings,
+          names: [],
+          isInDecls: true,
+          isTail,
+          start: exprStack.length,
           next: 0,
         });
         return;
       }
       if (head.text === "!") {
-        frames.push({ kind: "attribute", list: current, isTermParsed: false });
+        const parent = frames[frames.length - 1];
+        frames.push({
+          kind: "attribute",
+          list: current,
+          quantifier: parent?.kind === "quantifier" ? parent : undefined,
+          lastKeyword: "",
+          isTail,
+          start: exprStack.length,
+          next: 1,
+        });
         return;
       }
       const quantifierKind = QUANTIFIER_KINDS.get(head.text);
       if (quantifierKind === undefined) {
         frames.push({
           kind: "application",
+          list: current,
           head,
           indices: [],
-          list: current,
-          start: results.length,
+          isTail,
+          start: exprStack.length,
           next: 1,
         });
         return;
       }
-      if (current.items.length !== 3)
+      // push_quant_frame.
+      const start = exprStack.length;
+      const bound = bindSortedVars(current.items[1], current.end, head.text);
+      if (bound.varSorts.length === 0)
         throw new SmtParseError(
-          "invalid quantified expression, syntax error: (forall|exists ((<symbol> <sort>)*) <expr>) expected",
-          current.end,
+          "invalid quantifier, list of sorted variables is empty",
+          current.items[2] ?? current.end,
         );
-      const bound = bindSortedVars(current.items[1], current);
-      // parse_sorted_vars: the variables are created first, the first declared with the largest index,
-      // and the parser's stack holds them until the quantifier is created.
-      const boundVars = bound.varSorts.map((sort, index) =>
-        manager.mkVar(bound.varSorts.length - 1 - index, sort),
-      );
-      for (const boundVar of boundVars) manager.incRef(boundVar);
       frames.push({
         kind: "quantifier",
         list: current,
         quantifierKind,
         names: bound.names,
         varSorts: bound.varSorts,
-        boundVars,
-        isBodyParsed: false,
+        weight: 1,
+        qid: "",
+        skid: undefined,
+        isTail,
+        start,
+        patternStart: patternStack.length,
+        noPatternStart: noPatternStack.length,
+        next: 2,
       });
     };
-    enter(sexpr);
+    enter(sexpr, isRootTail);
     while (frames.length > 0) {
       const frame = frames[frames.length - 1];
       if (frame.kind === "let") {
-        const bindings = frame.bindings;
-        if (frame.next > 0 && frame.next <= bindings.length)
-          frame.scope.set(frame.name, {
-            kind: "let",
-            depth: binders.depth,
-            expr: results[results.length - 1],
-          });
-        if (frame.next === bindings.length) scopes.push(frame.scope);
-        if (frame.next < bindings.length) {
-          const binding = bindings[frame.next++];
-          const pair = expectList(binding, LET_MESSAGE, binding);
-          frame.name = expectSymbol(pair.items[0], LET_MESSAGE, pair).text;
-          enter(pair.items[1] ?? pair.end);
+        if (frame.isInDecls) {
+          const declaration = frame.bindings.items[frame.next];
+          if (declaration !== undefined) {
+            // push_let_decl_frame.
+            if (declaration.kind !== "list")
+              throw new SmtParseError(
+                `invalid let declaration, '(' expected got ${getLastId(declaration) ?? getLastIdBefore(frame.bindings.items, frame.next) ?? "let"}`,
+                declaration,
+              );
+            const name = declaration.items[0];
+            if (!isSymbol(name)) throw new SmtParseError(LET_MESSAGE, name ?? declaration.end);
+            frame.names.push(name.text);
+            frame.next++;
+            frames.push({ kind: "let-decl", list: declaration, next: 1 });
+            continue;
+          }
+          // pop_let_frame at the end of the declarations.
+          if (frame.names.length !== exprStack.length - frame.start)
+            throw new SmtParseError("malformed let expression", frame.bindings.end);
+          beginScope();
+          for (const [index, name] of frame.names.entries())
+            insertLocal(name, exprStack[frame.start + index]);
+          frame.isInDecls = false;
+          frame.next = 2;
           continue;
         }
-        const body = frame.list.items[2 + frame.next++ - bindings.length];
+        const body = frame.list.items[frame.next];
         if (body !== undefined) {
-          enter(body);
+          frame.next++;
+          enter(body, frame.isTail && frame.next === frame.list.items.length);
           continue;
         }
-        scopes.pop();
         frames.pop();
         // Z3 takes the last expression on its stack, so a let without a body is its last binding.
-        if (results.length === frame.start)
+        if (frame.isTail && frame.list.items.length > 2) shrinkRefs(exprStack, frame.start);
+        else if (exprStack.length === frame.start)
           throw new SmtParseError("invalid let expression", frame.list.end);
-        results.splice(frame.start, results.length - frame.start - 1);
+        else deliver(exprStack[exprStack.length - 1], frame.isTail, frame.start);
+        endScope();
         continue;
       }
-      if (frame.kind === "quantifier") {
-        if (frame.isBodyParsed) {
-          frames.pop();
-          results[results.length - 1] = mkParsedQuantifier(frame, results[results.length - 1]);
-          continue;
-        }
-        frame.isBodyParsed = true;
-        const body = frame.list.items[2];
-        enter(
-          body.kind === "list" && isSymbol(body.items[0], "!") ? (body.items[1] ?? body.end) : body,
-        );
-        continue;
-      }
+      const items = frame.list.items;
       if (frame.kind === "attribute") {
-        if (!frame.isTermParsed) {
-          frame.isTermParsed = true;
-          enter(frame.list.items[1] ?? frame.list.end);
+        // consume_attributes.
+        if (exprStack.length === frame.start) {
+          if (frame.next >= items.length)
+            throw new SmtParseError("invalid expression", frame.list.end);
+          enter(items[frame.next++], false);
           continue;
         }
-        frames.pop();
-        // Each attribute applies to the expression the attributes before it made.
-        results[results.length - 1] = frame.list.items.slice(2).reduce(
-          (annotated, keyword, index, attributes) => {
-            if (keyword.kind !== "keyword") return annotated;
-            const value = attributes[index + 1];
-            if (keyword.text === ":lblpos" || keyword.text === ":lblneg")
-              return mkLabel(annotated, keyword.text === ":lblpos", value, frame.list);
-            if (keyword.text !== ":named") return annotated;
-            const name = expectSymbol(
-              value,
-              "invalid attribute value, symbol expected",
-              frame.list,
-            ).text;
-            manager.incRef(annotated);
-            lastNamed.name = name;
-            lastNamed.expr = annotated;
-            manager.mkMacro(name, annotated);
-            declare(macros, name, { domain: [], range: manager.sorts[annotated], body: annotated });
-            return annotated;
-          },
-          results[results.length - 1],
-        );
+        // process_last_symbol.
+        const last = exprStack[exprStack.length - 1];
+        if (frame.lastKeyword === ":pattern") {
+          const at = items[frame.next] ?? frame.list.end;
+          if (last === -1 && !options.isIgnoringBadPatterns)
+            throw new SmtParseError("invalid empty pattern", at);
+          if (last !== -1)
+            pushRef(
+              patternStack,
+              manager.kinds[last] === KIND_APP && manager.decls[last] === OP_PATTERN
+                ? last
+                : mkPattern([last], at),
+            );
+          shrinkRefs(exprStack, exprStack.length - 1);
+        } else if (frame.lastKeyword === ":no-pattern") {
+          pushRef(noPatternStack, last);
+          shrinkRefs(exprStack, exprStack.length - 1);
+        }
+        frame.lastKeyword = "";
+        if (frame.next >= items.length) {
+          frames.pop();
+          if (frame.isTail) deliver(exprStack[exprStack.length - 1], true, frame.start);
+          continue;
+        }
+        while (frame.next < items.length && frame.lastKeyword === "") {
+          const keyword = items[frame.next];
+          if (keyword.kind !== "keyword")
+            throw new SmtParseError("invalid attributed expression, keyword expected", keyword);
+          const value = items[frame.next + 1] ?? frame.list.end;
+          const annotated = exprStack[exprStack.length - 1];
+          const quantifier = frame.quantifier;
+          if (keyword.text === ":named") {
+            if (!isSymbol(value))
+              throw new SmtParseError("invalid attribute value, symbol expected", value);
+            nameExpr(annotated, value.text, items[frame.next + 2] ?? frame.list.end);
+            frame.next += 2;
+          } else if (keyword.text === ":lblpos" || keyword.text === ":lblneg") {
+            if (!isSymbol(value))
+              throw new SmtParseError("invalid attribute value, symbol expected", value);
+            if (manager.sorts[annotated] !== SORT_BOOL)
+              throw new SmtParseError(
+                "invalid labeled expression, expression must have Bool sort",
+                value,
+              );
+            deliver(
+              manager.mkLabel(keyword.text === ":lblpos", [value.text], annotated),
+              false,
+              exprStack.length - 1,
+            );
+            frame.next += 2;
+          } else if (!QUANTIFIER_ATTRIBUTES.has(keyword.text)) {
+            // Z3 warns of an unknown attribute and skips its value as an s-expression.
+            if (value.kind === ")")
+              throw new SmtParseError("invalid s-expression, unexpected ')'", value);
+            frame.next += 2;
+          } else if (quantifier === undefined)
+            throw new SmtParseError("invalid attribute, not in the scope of a quantifier", keyword);
+          else if (keyword.text === ":weight") {
+            // check_int, and curr_unsigned.
+            if (value.kind !== "numeral")
+              throw new SmtParseError("invalid weight attribute, integer expected", value);
+            if (!isUnsigned(value.text))
+              throw new SmtParseError(
+                "invalid indexed identifier, index is too big to fit in an unsigned machine integer",
+                value,
+              );
+            quantifier.weight = Number(value.text);
+            frame.next += 2;
+          } else if (keyword.text === ":skolemid" || keyword.text === ":qid") {
+            if (!isSymbol(value))
+              throw new SmtParseError("invalid attribute value, symbol expected", value);
+            if (keyword.text === ":qid") quantifier.qid = value.text;
+            else quantifier.skid = value.text;
+            frame.next += 2;
+          } else {
+            frame.lastKeyword = keyword.text;
+            frame.next++;
+            if (keyword.text === ":pattern") enterPattern(value, frame);
+            else if (value.kind === ")")
+              throw new SmtParseError("invalid expression, unexpected input", value);
+            else enter(items[frame.next++], false);
+          }
+        }
         continue;
       }
-      if (frame.next < frame.list.items.length) {
-        enter(frame.list.items[frame.next++]);
+      if (frame.next < items.length) {
+        enter(items[frame.next++], false);
         continue;
       }
       frames.pop();
-      if (frame.list.items.length === 1)
+      if (frame.kind === "let-decl") continue;
+      if (frame.kind === "pattern") {
+        deliver(mkPattern(exprStack.slice(frame.start), frame.list.end), false, frame.start);
+        continue;
+      }
+      if (frame.kind === "quantifier") {
+        // pop_quant_frame.
+        deliver(mkParsedQuantifier(frame), frame.isTail, frame.start);
+        shrinkRefs(patternStack, frame.patternStart);
+        shrinkRefs(noPatternStack, frame.noPatternStart);
+        unbindSortedVars(frame.varSorts.length);
+        continue;
+      }
+      // pop_app_frame.
+      const args = exprStack.slice(frame.start);
+      if (args.length < (frame.kind === "selection" ? 2 : 1))
         throw new SmtParseError("invalid function application, arguments missing", frame.list.end);
-      const args = results.splice(frame.start);
-      results.push(
-        frame.build?.(args) ?? parseApp(frame.head, args, frame.list.end, frame.indices),
+      deliver(
+        frame.kind === "selection"
+          ? args
+              .slice(1)
+              .reduce(
+                (array, arg) => mkArrayTerm(OP_SELECT, [array, arg], [], frame.list.end),
+                args[0],
+              )
+          : (frame.build?.(args) ?? parseApp(frame.head, args, frame.list.end, frame.indices)),
+        frame.isTail,
+        frame.start,
       );
     }
-    return results[0];
+  };
+
+  const parseTerm = (sexpr: SExpr) => {
+    runTerm(sexpr, true);
+    const expr = parsed.expr;
+    parsed.expr = -1;
+    if (!parsed.isOwned)
+      (sexpr.kind === "list" && sexpr.root !== undefined ? floating : unrooted).push(expr);
+    else if (manager.getRefCount(expr) > 1) manager.decRef(expr);
+    else pending.push(expr);
+    return expr;
   };
 
   const parseDomain = (sexpr: SExpr | undefined, at: SExpr) => {
@@ -2615,14 +2919,15 @@ export const createSmtlibReader = (
     );
   };
 
-  // parse_rec_fun_decl: the variables are bound only while the range is parsed.
+  // parse_rec_fun_decl: the variables are bound only while the range is parsed, and Z3 holds them
+  // until the command ends, as the stack does here.
   const declareRecFun = (items: SExpr[], at: SExpr) => {
     const symbol = expectSymbol(
       items[0],
       "invalid function/constant definition, symbol expected",
       at,
     );
-    const bound = bindSortedVars(items[1], at);
+    const bound = bindSortedVars(items[1], at, symbol.text);
     const range = parseSort(items[2] ?? at, "Invalid recursive function definition");
     unbindSortedVars(bound.varSorts.length);
     return manager.mkRecFuncDecl(symbol.text, bound.varSorts, range);
@@ -2630,16 +2935,19 @@ export const createSmtlibReader = (
 
   // parse_rec_fun_body: Z3 reports a body of another sort at the token after it.
   const defineRecFun = (decl: number, variables: SExpr, body: SExpr, next: SExpr) => {
-    const bound = bindSortedVars(variables, body);
-    const parsed = parseTerm(body);
+    const start = exprStack.length;
+    const bound = bindSortedVars(variables, body, "");
+    runTerm(body, false);
+    const parsedBody = exprStack[exprStack.length - 1];
     unbindSortedVars(bound.varSorts.length);
     const range = manager.funcDecls[decl].range;
-    if (manager.sorts[parsed] !== range)
+    if (manager.sorts[parsedBody] !== range)
       throw new SmtParseError(
-        `invalid function definition, sort mismatch. Expcected ${manager.getSortName(range)} but function body has sort ${manager.getSortName(manager.sorts[parsed])}`,
+        `invalid function definition, sort mismatch. Expcected ${manager.getSortName(range)} but function body has sort ${manager.getSortName(manager.sorts[parsedBody])}`,
         next,
       );
-    setRecFunDefinition(manager, manager.recFunDefs.get(decl)!, false, parsed);
+    setRecFunDefinition(manager, manager.recFunDefs.get(decl)!, false, parsedBody);
+    shrinkRefs(exprStack, start);
   };
 
   // parse_define and insert_macro: Z3 declares a macro as a recursive function with one case, which
@@ -2665,11 +2973,13 @@ export const createSmtlibReader = (
   };
 
   const declareCommand = (list: SmtList) => {
+    releasePending();
     const name = list.items[0].kind === "list" ? "" : list.items[0].text;
     if (name === "define-fun-rec") {
       const decl = declareRecFun(list.items.slice(1), list.end);
       insertFunc(decl, list.items[4] ?? list.end);
       defineRecFun(decl, list.items[2], list.items[4] ?? list.end, list.items[5] ?? list.end);
+      shrinkRefs(exprStack, 0);
       return;
     }
     if (name === "define-funs-rec") {
@@ -2700,6 +3010,7 @@ export const createSmtlibReader = (
       const extra = bodies.items[signatures.length];
       if (extra !== undefined)
         throw new SmtParseError("invalid recursive function definition, ')' expected", extra);
+      shrinkRefs(exprStack, 0);
       return;
     }
     if (name === "declare-datatypes") {
@@ -2746,12 +3057,15 @@ export const createSmtlibReader = (
     }
     if (name === "define-fun" || name === "define-const") {
       const isConst = name === "define-const";
-      const bound = isConst ? { names: [], varSorts: [] } : bindSortedVars(list.items[2], list);
+      const bound = isConst
+        ? { names: [], varSorts: [] }
+        : bindSortedVars(list.items[2], list.end, symbol.text);
       const range = parseSort(
         list.items[isConst ? 2 : 3] ?? list.end,
         isConst ? "Invalid constant definition" : "Invalid function definition",
       );
-      const body = parseTerm(list.items[isConst ? 3 : 4] ?? list.end);
+      runTerm(list.items[isConst ? 3 : 4] ?? list.end, false);
+      const body = exprStack[exprStack.length - 1];
       if (!isConst) unbindSortedVars(bound.varSorts.length);
       if (manager.sorts[body] !== range)
         throw new SmtParseError(
@@ -2763,6 +3077,7 @@ export const createSmtlibReader = (
       manager.incRef(body);
       declare(macros, symbol.text, { domain: bound.varSorts, range, body });
       defineMacroFunc(symbol.text, bound.varSorts, body);
+      shrinkRefs(exprStack, 0);
       return;
     }
     const domain = name === "declare-fun" ? parseDomain(list.items[2], list) : [];
@@ -2796,37 +3111,60 @@ export const createSmtlibReader = (
     declare(funcs, symbol.text, [...existing, decl]);
   };
 
+  // The caller takes the reference of the stack.
   const parseFormula = (sexpr: SExpr) => {
-    const assertion = parseTerm(sexpr);
+    runTerm(sexpr, false);
+    const assertion = exprStack[exprStack.length - 1];
     if (manager.sorts[assertion] !== SORT_BOOL)
       throw new SmtParseError("invalid assert command, term is not Boolean", sexpr);
-    manager.incRef(assertion);
+    exprStack.pop();
     return assertion;
   };
 
   // An assertion is named when the last name of its term is its own.
   const parseAssertion = (sexpr: SExpr) => {
+    releasePending();
     lastNamed.expr = -1;
     const formula = parseFormula(sexpr);
     return { formula, name: lastNamed.expr === formula ? lastNamed.name : undefined };
   };
 
-  const push = () => scopeStarts.push(undo.length);
+  const push = () => {
+    releasePending();
+    scopeStarts.push(undo.length);
+  };
 
   const pop = () => {
+    releasePending();
     const start = scopeStarts.pop() ?? 0;
     for (const restore of undo.splice(start).reverse()) restore();
   };
 
-  // parser::reset, after an error: the bindings of the term that failed are gone.
+  // parser::reset, after an error: Z3 frees its stacks, and with them the terms that only the
+  // command that failed held.
   const reset = () => {
-    scopes.length = 0;
+    protect(floating);
+    protect(unrooted);
+    releasePending();
+    shrinkRefs(exprStack, 0);
+    if (parsed.expr !== -1) {
+      if (!parsed.isOwned) manager.incRef(parsed.expr);
+      manager.decRef(parsed.expr);
+      parsed.expr = -1;
+    }
+    shrinkRefs(patternStack, 0);
+    shrinkRefs(noPatternStack, 0);
+    locals.clear();
+    shrink(shadowedNames, 0);
+    shrink(shadowedLocals, 0);
+    shrink(localScopes, 0);
     binders.depth = 0;
   };
 
   // cmd_context::set_logic on a manager that is in use: restrict_builtin_sorts takes the sorts the
   // logic lacks, and the declarations and the operators stay.
   const restrictSorts = (name: string) => {
+    releasePending();
     if (logicHasRealsOnly(name)) restricted.isNumeralAsReal = true;
     if (!ARRAY_EXTENSION_LOGICS.has(name)) restricted.hasSetSort = false;
     if (INT_FREE_LOGICS.has(name)) sortDecls.delete("Int");

@@ -129,3 +129,191 @@ describe("applications of the builtin operators, as Z3 5.3.2 makes them", () => 
     ]);
   });
 });
+
+describe("terms that Z3 5.3.2 rejects", () => {
+  it("rejects an empty list of variables, attributes outside a quantifier and bad attributes", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-const p Bool)",
+        "(simplify (forall () p))",
+        "(simplify (! p :weight 2))",
+        "(simplify (! p :pattern ((f 1))))",
+        "(simplify (! p :qid foo))",
+        "(simplify (! p foo bar))",
+        "(simplify (! p :foo))",
+        "(simplify (forall ((x Int)) (or (! (> (f x) 0) :pattern ((f x))) p)))",
+        "(simplify (forall ((x Int)) (! (> (f x) 0) :no-pattern)))",
+        "(simplify (forall ((x Int)) (! (> (f x) 0) :pattern ((f x) x))))",
+        "(simplify (forall ((x Int)) x))",
+        "(simplify (forall ((x Int)) zz p))",
+        "(simplify (forall (x Int) p))",
+        "(simplify (forall ((x Int) 5) p))",
+        "(simplify (forall ((x Int Int)) p))",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 21: invalid quantifier, list of sorted variables is empty")',
+      '(error "line 4 column 15: invalid attribute, not in the scope of a quantifier")',
+      '(error "line 5 column 15: invalid attribute, not in the scope of a quantifier")',
+      '(error "line 6 column 15: invalid attribute, not in the scope of a quantifier")',
+      '(error "line 7 column 15: invalid attributed expression, keyword expected")',
+      "(error \"line 8 column 19: invalid s-expression, unexpected ')'\")",
+      '(error "line 9 column 47: invalid attribute, not in the scope of a quantifier")',
+      '(error "line 10 column 54: invalid expression, unexpected input")',
+      '(error "line 11 column 60: patterns cannot be variables or quantifiers")',
+      '(error "line 12 column 29: quantifier body must be a Boolean expression")',
+      '(error "line 13 column 28: unknown constant zz")',
+      "(error \"line 14 column 19: invalid sorted variable, '(' expected got x\")",
+      "(error \"line 15 column 27: invalid sorted variable, '(' expected got Int\")",
+      "(error \"line 16 column 26: invalid sorted variable, ')' expected got Int\")",
+    ]);
+  });
+
+  it("rejects a malformed let, at the token where Z3 stops", () => {
+    expect(
+      run([
+        "(declare-const c Int)",
+        "(simplify (let ((x 1 2)) x))",
+        "(simplify (let ((x)) 1))",
+        "(simplify (let (x 1) x))",
+        "(simplify (let ((x (+ c 1)) 5) x))",
+        "(simplify (let))",
+        "(simplify (let ((x 1) (x 2)) x))",
+        "(simplify (let ((x 1))))",
+      ]),
+    ).toEqual([
+      '(error "line 2 column 23: malformed let expression")',
+      '(error "line 3 column 19: malformed let expression")',
+      "(error \"line 4 column 16: invalid let declaration, '(' expected got x\")",
+      "(error \"line 5 column 28: invalid let declaration, '(' expected got c\")",
+      "(error \"line 6 column 14: invalid let declaration, '(' expected got let\")",
+      "2",
+      "1",
+    ]);
+  });
+
+  it("rejects a second name, a name of a declaration and a name over free variables", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (! p :named a))",
+        "(assert (! q :named a))",
+        "(simplify (! p :named p))",
+        "(simplify (forall ((x Int)) (! (> x 0) :named d)))",
+        "(simplify (forall ((x Int)) (or (! (> 1 0) :named g) p)))",
+        "(simplify (! (! p :named h) :named h))",
+        "(simplify (! p :lblpos))",
+        "(simplify (! 1 :lblneg l))",
+      ]),
+    ).toEqual([
+      '(error "line 4 column 21: named expression already defined")',
+      '(error "line 5 column 23: invalid named expression, declaration already defined with this name p")',
+      '(error "line 6 column 47: invalid named expression, expression contains free variables")',
+      "true",
+      '(error "line 8 column 36: named expression already defined")',
+      '(error "line 9 column 22: invalid attribute value, symbol expected")',
+      '(error "line 10 column 23: invalid labeled expression, expression must have Bool sort")',
+    ]);
+  });
+});
+
+describe("messages of the reader, as Z3 5.3.2 prints them", () => {
+  it("reports an unknown indexed or qualified identifier and goes on", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-const c Int)",
+        "(simplify ((f) 1))",
+        "(simplify ((f 1) 2))",
+        "(simplify ((_ foo 1) c))",
+        "(simplify (_ foo 1))",
+        "(simplify (_ bv5 #x3))",
+        "(simplify (_ bv5 3.0))",
+        "(simplify (_ f 3))",
+        "(simplify (as c Bool))",
+        "(simplify (as c Int Int))",
+        "(simplify (as (_ bv5 3) Int))",
+        "(simplify (and (as c Bool) true))",
+        "(simplify ((as f Bool) 1))",
+        "(simplify :k)",
+        "(simplify (_ 5))",
+        "(simplify ((_ extract 1 zz) #b1010))",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 13: invalid function application, arguments missing")',
+      '(error "line 4 column 18: select expects the first argument sort to be an array, but was provided a value of sort Int")',
+      '(error "line 5 column 22: unknown constant foo (Int) ")',
+      '(error "line 6 column 19: unknown constant foo")',
+      "#b101",
+      '(error "line 8 column 21: invalid bit-vector constant, index expected")',
+      "(_ as-array f)",
+      '(error "line 10 column 21: unknown constant cBool \ndeclared: (declare-fun c () Int) ")',
+      "(error \"line 11 column 20: invalid qualified identifier, ')' expected got Int\")",
+      '(error "line 12 column 28: sort mismatch in qualified identifier, expected: Int, got: (_ BitVec 3)")',
+      '(error "line 13 column 27: unknown constant cBool \ndeclared: (declare-fun c () Int) ")',
+      '(error "line 14 column 24: unknown constant f (Int) Bool \ndeclared: (declare-fun f (Int) Int) ")',
+      '(error "line 15 column 10: invalid expression, unexpected keyword")',
+      '(error "line 16 column 13: invalid indexed identifier, symbol expected")',
+      '(error "line 17 column 24: invalid function declaration reference, unknown function zz")',
+    ]);
+  });
+});
+
+describe("the terms the reader makes and frees, in Z3's order", () => {
+  it("makes a label and a pattern in the order of their attributes", () => {
+    expect(
+      run([
+        "(declare-fun q (Int) Bool)",
+        "(declare-fun r (Int) Bool)",
+        "(declare-const p Bool)",
+        "(assert (forall ((x Int)) (! (q x) :pattern ((r x)) :lblpos l1)))",
+        "(simplify (forall ((x Int)) (or (or (! (q x) :lblpos l1) (r x)) p)))",
+        "(simplify (forall ((x Int)) (or (or (r x) (! (q x) :lblpos l1)) p)))",
+      ]),
+    ).toEqual([
+      "(forall ((x Int)) (or (r x) (! (q x) :lblpos l1) p))",
+      "(forall ((x Int)) (or (r x) (! (q x) :lblpos l1) p))",
+    ]);
+  });
+
+  it("frees the terms of a command that failed", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Bool)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(declare-const s Bool)",
+        "(simplify (and p q r s zzz))",
+        "(simplify (or (or s r) q p))",
+      ]),
+    ).toEqual(['(error "line 6 column 23: unknown constant zzz")', "(or q r s p)"]);
+    expect(
+      run([
+        "(declare-fun f (Int) Bool)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(declare-const s Bool)",
+        "(simplify (or (forall ((x Int)) (! (or (f x) (f 1) (f 2)) :pattern ((f x)) :pattern ((f 2) (f x)))) (f 3) zzz))",
+        "(simplify (or (or s r) q p))",
+      ]),
+    ).toEqual(['(error "line 6 column 106: unknown constant zzz")', "(or r q p s)"]);
+  });
+
+  it("frees a binding of a let that its body drops", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(declare-const s Bool)",
+        "(simplify (let ((x (and p q r s))) 2))",
+        "(simplify (or (or s r) q p))",
+        "(simplify (let ((x (and p q))) x))",
+        "(simplify (or (or s r) q p))",
+      ]),
+    ).toEqual(["2", "(or s r q p)", "(and p q)", "(or s r q p)"]);
+  });
+});
