@@ -13377,6 +13377,51 @@ describe("errors", () => {
     });
   });
 
+  describe("stops where a script gives the prototypes of an array's iterator a return", () => {
+    const getSource = (holder: string, body: string, expected: number) => `
+      let closed = 0;
+      let seen = 0;
+      const close = () => {
+        closed += 1;
+        return {};
+      };
+      ${holder}
+      const run = () => {
+        ${body}
+      };
+      try {
+        run();
+      } catch {}
+      if (closed !== ${expected} || seen !== 1) throw new Error("closed " + closed);
+    `;
+    const getHolder = (target: string) =>
+      `Object.defineProperty(${target}, "return", { value: close, configurable: true });`;
+    const arrayIterator = "Object.getPrototypeOf([][Symbol.iterator]())";
+
+    it("stops before a break, a throw, a return, or a pattern closes the iterator", async () => {
+      const cases = [
+        [getHolder("Object.prototype"), "for (const value of [1, 2]) { seen += value; break; }"],
+        [
+          getHolder(`Object.getPrototypeOf(${arrayIterator})`),
+          'for (const value of [1, 2]) { seen += value; throw new Error("left"); }',
+        ],
+        [getHolder(arrayIterator), "for (const value of [1, 2]) { seen += value; return; }"],
+        [getHolder("Object.prototype"), "const [first] = [1, 2]; seen += first;"],
+      ];
+      for (const [holder, body] of cases) {
+        expect((await checkModel(getSource(holder, body, 1))).failure?.message).toContain(
+          "tla-ts can't close an iterator whose prototypes a script may give a return",
+        );
+      }
+    });
+
+    it("leaves the loop where no prototype has a return", async () => {
+      const body = "for (const value of [1, 2]) { seen += value; break; }";
+      expect((await checkModel(getSource("", body, 0))).failure).toBeUndefined();
+      expect((await checkModel(getSource("", body, 1))).failure?.message).toContain("closed 0");
+    });
+  });
+
   it("throws the ReferenceError of a name that an object literal spreads", async () => {
     const getSource = (expected: number) => `
       let caught = 0;

@@ -803,11 +803,24 @@ LookupKey(heap, ref, key) ==
             LET global == BuiltIns[GlobalObject[Ref]]
             IN key \\in DOMAIN global.values /\\ global.attributes[key].kind # "hidden")
 
+\\* The built-in objects that a built-in iterator inherits from, whose return closing the iterator
+\\* calls where a loop or a pattern leaves it early. tla-ts doesn't call it, so it stops where a
+\\* script gives one a return or another prototype.
+LOCAL IteratorPrototypes ==
+  {"Object.prototype", "Iterator.prototype", "%ArrayIteratorPrototype%",
+   "%StringIteratorPrototype%", "%MapIteratorPrototype%", "%SetIteratorPrototype%",
+   "%RegExpStringIteratorPrototype%"}
+
 Update(heap, ref, object) ==
-  IF IsHeap(ref)
-  THEN LET held == IF IsProxy(heap, ref) THEN ProxiedObject(heap, ref) ELSE ref
-       IN [heap EXCEPT !.objects[held[Ref]] = object]
-  ELSE [heap EXCEPT !.changed = (BuiltInKey(ref) :> object) @@ @]
+  CASE IsHeap(ref) ->
+         LET held == IF IsProxy(heap, ref) THEN ProxiedObject(heap, ref) ELSE ref
+         IN [heap EXCEPT !.objects[held[Ref]] = object]
+    [] /\\ BuiltInKey(ref) \\in IteratorPrototypes \\cap DOMAIN BuiltIns
+       /\\ \\/ "return" \\in DOMAIN object.values
+          \\/ ToString(object.prototype) # ToString(BuiltIns[BuiltInKey(ref)].prototype) ->
+         Assert(FALSE,
+                "tla-ts can't close an iterator whose prototypes a script may give a return")
+    [] OTHER -> [heap EXCEPT !.changed = (BuiltInKey(ref) :> object) @@ @]
 
 \\* Whether new can call a value.
 IsConstructor(heap, value) ==
