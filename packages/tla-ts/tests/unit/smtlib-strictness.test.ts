@@ -258,6 +258,48 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
       '(error "line 17 column 24: invalid function declaration reference, unknown function zz")',
     ]);
   });
+
+  it("does not know Set after a late set-logic, and reports the indices of a sort", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(set-logic QF_LIA)",
+        "(declare-const s (Set Int))",
+        "(declare-const t (Array Int Int))",
+        "(declare-const b (_ BitVec 3))",
+        "(declare-const fb (_ Foo 5))",
+        "(declare-const c (_ BitVec))",
+        "(declare-const e (_ BitVec p))",
+      ]),
+    ).toEqual([
+      "(error \"line 3 column 18: unknown sort 'Set'\")",
+      "(error \"line 6 column 25: unknown sort 'Foo'\")",
+      '(error "line 7 column 26: expecting one integer parameter to bit-vector sort")',
+      "(error \"line 8 column 27: invalid indexed sort, integer or ')' expected\")",
+    ]);
+  });
+
+  it("does not know Int in a logic of reals only", () => {
+    expect(
+      run([
+        "(set-logic QF_NRA)",
+        "(declare-const x Int)",
+        "(declare-const y Real)",
+        "(declare-fun f (Int) Real)",
+        "(simplify (+ y 1))",
+        "(declare-const s (Set Real))",
+        "(declare-const b (_ BitVec 3))",
+        "(declare-const st String)",
+      ]),
+    ).toEqual([
+      "(error \"line 2 column 17: Invalid constant declaration: unknown sort 'Int'\")",
+      "(error \"line 4 column 16: Parsing function declaration. Expecting sort list '(': unknown sort 'Int'\")",
+      "(+ 1.0 y)",
+      "(error \"line 6 column 18: unknown sort 'Set'\")",
+      "(error \"line 7 column 27: unknown sort 'BitVec'\")",
+      "(error \"line 8 column 18: Invalid constant declaration: unknown sort 'String'\")",
+    ]);
+  });
 });
 
 describe("the terms the reader makes and frees, in Z3's order", () => {

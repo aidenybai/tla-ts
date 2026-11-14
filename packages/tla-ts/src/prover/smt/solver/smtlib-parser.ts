@@ -896,12 +896,10 @@ export const createSmtlibReader = (
   const logicChecker = createLogicChecker(manager, logic);
   const sortDecls = new Map<string, SortDecl>([
     ["Bool", { kind: "sort", sort: SORT_BOOL }],
-    ...(hasArith
-      ? [
-          ["Int", { kind: "sort", sort: SORT_INT }] as const,
-          ["Real", { kind: "sort", sort: SORT_REAL }] as const,
-        ]
+    ...(hasArith && !(logic !== undefined && INT_FREE_LOGICS.has(logic))
+      ? [["Int", { kind: "sort", sort: SORT_INT }] as const]
       : []),
+    ...(hasArith ? [["Real", { kind: "sort", sort: SORT_REAL }] as const] : []),
     ...(logic === undefined ? [["List", { kind: "list" }] as const] : []),
   ]);
   const funcs = new Map<string, readonly number[]>();
@@ -1109,7 +1107,7 @@ export const createSmtlibReader = (
       return parseSort(head, context, bindings);
     }
     if (decl === undefined) {
-      if (THEORY_SORTS.has(head.text) && !isArray)
+      if (THEORY_SORTS.has(head.text) && !isLackingSort(head.text))
         throw new SmtUnsupportedError(`the sort ${head.text}`);
       throw new SmtParseError(`unknown sort '${head.text}'`, head);
     }
@@ -1135,6 +1133,18 @@ export const createSmtlibReader = (
     }
     for (const item of (sexpr as SmtList).items.slice(1)) checkPsort(item, bindings);
   };
+
+  // Z3 does not know the sorts of a theory that the logic lacks.
+  const isLackingSort = (name: string) =>
+    name === "Set"
+      ? !hasArrays || !restricted.hasSetSort
+      : ARRAY_SORT_NAMES.has(name)
+        ? !hasArrays
+        : name === "BitVec"
+          ? !hasBv
+          : SEQ_SORT_NAMES.has(name) || name === "Unicode"
+            ? !hasSeq
+            : FPA_SORT_NAMES.has(name) && !hasFpa;
 
   const isBuiltinParametricSort = (name: string) =>
     (hasArrays && (ARRAY_SORT_NAMES.has(name) || (name === "Set" && restricted.hasSetSort))) ||
@@ -1165,17 +1175,27 @@ export const createSmtlibReader = (
       throw new SmtParseError(`${context} invalid sort, unexpected ')'`, sexpr);
     if (sexpr.kind === "list") {
       if (!isSymbol(sexpr.items[0], "_")) return parseParametricSort(sexpr, context, bindings);
-      if (hasFpa && isSymbol(sexpr.items[1], "FloatingPoint"))
-        return mkFloatSort(sexpr.items.slice(2), sexpr);
-      const width = sexpr.items[2];
-      if (!hasBv && isSymbol(sexpr.items[1], "BitVec"))
-        throw new SmtParseError("unknown sort 'BitVec'", width ?? sexpr.end);
-      if (
-        !isSymbol(sexpr.items[1], "BitVec") ||
-        sexpr.items.length !== 3 ||
-        width.kind !== "numeral"
-      )
-        throw new SmtUnsupportedError("indexed sorts");
+      // parse_indexed_sort.
+      const name = sexpr.items[1];
+      if (!isSymbol(name))
+        throw new SmtParseError("invalid indexed sort, symbol expected", name ?? sexpr.end);
+      if (hasFpa && name.text === "FloatingPoint") return mkFloatSort(sexpr.items.slice(2), sexpr);
+      const indices = sexpr.items.slice(2);
+      if (isLackingSort(name.text) || !(THEORY_SORTS.has(name.text) || sortDecls.has(name.text)))
+        throw new SmtParseError(`unknown sort '${name.text}'`, indices[0] ?? sexpr.end);
+      if (name.text !== "BitVec") throw new SmtUnsupportedError("indexed sorts");
+      for (const index of indices) {
+        if (index.kind !== "numeral")
+          throw new SmtParseError("invalid indexed sort, integer or ')' expected", index);
+        if (!isUnsigned(index.text))
+          throw new SmtParseError(
+            "invalid indexed identifier, index is too big to fit in an unsigned machine integer",
+            index,
+          );
+      }
+      const width = indices[0];
+      if (indices.length !== 1 || width.kind !== "numeral")
+        throw new SmtParseError("expecting one integer parameter to bit-vector sort", sexpr.end);
       if (BigInt(width.text) === 0n)
         throw new SmtParseError("bit-vector size must be greater than zero", sexpr.end);
       return manager.mkBvSort(Number(width.text));
@@ -1204,7 +1224,8 @@ export const createSmtlibReader = (
       const bits = FPA_SORT_NAMES.get(sexpr.text);
       return bits === undefined ? mkFloatSort([], sexpr) : manager.mkFpSort(bits[0], bits[1]);
     }
-    if (THEORY_SORTS.has(sexpr.text)) throw new SmtUnsupportedError(`the sort ${sexpr.text}`);
+    if (THEORY_SORTS.has(sexpr.text) && !isLackingSort(sexpr.text))
+      throw new SmtUnsupportedError(`the sort ${sexpr.text}`);
     throw new SmtParseError(
       `${context === "" ? "" : `${context}: `}unknown sort '${sexpr.text}'`,
       sexpr,
@@ -3256,8 +3277,12 @@ export const parseSmtlib = (
     )
       state.rlimit = Number(value.text);
     if (name === "set-logic") {
+      if (option === undefined)
+        throw new SmtParseError("invalid command, argument(s) missing", list.end);
       if (!isSymbol(option))
-        throw new SmtParseError("invalid logic name, symbol expected", option ?? list.end);
+        throw new SmtParseError("invalid command argument, symbol expected", option);
+      if (value !== undefined)
+        throw new SmtParseError("invalid command, too many arguments", value);
       if (state.logic !== "") throw new SmtParseError("the logic has already been set", option);
       if (assertions.length > 0)
         throw new SmtParseError("logic must be set before initialization", option);
