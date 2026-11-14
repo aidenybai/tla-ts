@@ -60,6 +60,8 @@ import {
   TYPED_ARRAYS,
 } from "./types";
 
+const NORMAL_FORMS = ["NFC", "NFD", "NFKC", "NFKD"];
+
 // A state variable starts at its initializer, or at every value of its type without one.
 const translateInitial = (variable: Variable, context: Context) => {
   const declaration = variable.declaration;
@@ -207,6 +209,22 @@ export const compile = (
     ts.forEachChild(node, visit);
   };
   [sourceFile, ...files].forEach(visit);
+  // The forms of each string literal outside ASCII that normalize gives, and of those forms, where
+  // the script calls normalize, which the module reads by the text.
+  const isNormalized = (node: ts.Node): boolean =>
+    (ts.isPropertyAccessExpression(node) && node.name.text === "normalize") ||
+    (ts.forEachChild(node, isNormalized) ?? false);
+  const getLiterals = (node: ts.Node): string[] => [
+    ...(ts.isStringLiteralLike(node) && /[^\0-\x7f]/.test(node.text) ? [node.text] : []),
+    ...node.getChildren().flatMap(getLiterals),
+  ];
+  const getForms = (text: string) =>
+    NORMAL_FORMS.map((form) => text.normalize(form)).filter((form) => form !== text);
+  const literals = [sourceFile, ...files].some(isNormalized)
+    ? [sourceFile, ...files].flatMap(getLiterals)
+    : [];
+  const normals = [...new Set([...literals, ...literals.flatMap(getForms)])];
+  texts.push(...normals.flatMap(getForms));
   const getCodes = (text: string) =>
     Array.from({ length: text.length }, (_, position) => text.charCodeAt(position)).filter(
       (code) => code >= 128,
@@ -662,6 +680,18 @@ export const compile = (
                 { name: "lower", value: string(point.toLowerCase()) },
               ]),
             ),
+        ),
+      ),
+      define(
+        "UsedNormals",
+        [],
+        tuple(
+          normals.map((text) =>
+            record("Record", [
+              { name: "text", value: string(text) },
+              ...NORMAL_FORMS.map((form) => ({ name: form, value: string(text.normalize(form)) })),
+            ]),
+          ),
         ),
       ),
       define(

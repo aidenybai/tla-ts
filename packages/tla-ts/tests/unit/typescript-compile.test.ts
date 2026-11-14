@@ -20968,6 +20968,23 @@ describe("errors", () => {
     await expect(checkModel(getSource("\\uFFFDc\\uD83D\\uDCA9"))).rejects.toThrow("to");
   });
 
+  it("normalizes a string outside ASCII that the script writes, and the forms of it", async () => {
+    const getSource = (expected: string) => `
+      const text = "\\u1E9B\\u0323";
+      const forms = [text.normalize("NFD"), text.normalize("NFKC"), text.normalize("NFD").normalize()];
+      if (forms.join("|") !== "${expected}") throw new Error("forms");
+    `;
+    expect(
+      (await checkModel(getSource("\\u017F\\u0323\\u0307|\\u1E69|\\u1E9B\\u0323"))).failure,
+    ).toBeUndefined();
+    await expect(
+      checkModel(getSource("\\u017F\\u0323\\u0307|\\u1E9B|\\u1E9B\\u0323")),
+    ).rejects.toThrow("forms");
+    await expect(
+      checkModel(`if (("\\u00C5" + "\\u0301").normalize("NFC") === "") throw new Error("never");`),
+    ).rejects.toThrow("tla-ts can't normalize a character outside ASCII");
+  });
+
   it("splits and replaces at a string", async () => {
     const result = await checkModel(`
       const text: string = "one two  three";

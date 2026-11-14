@@ -37,7 +37,7 @@ export const JAVASCRIPT_MODULE = `------------------------------ MODULE JavaScri
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
 CONSTANTS Undefined, Null, Ref, Big, BuiltIns, ConstantFunctions, Symbols, Fractions,
-          Characters, Cases, NaN, Infinity, NegativeInfinity, NegativeZero
+          Characters, Cases, Normals, NaN, Infinity, NegativeInfinity, NegativeZero
 
 LOCAL Digits == {"-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
 
@@ -2487,13 +2487,16 @@ ToWellFormed(value) ==
   LET text == Text(value)
   IN  IF IsWellFormed(text) THEN text ELSE WellFormedBetween(text, 1, Len(text))
 
-\\* String.prototype.normalize, which leaves a string of ASCII as it is in every form, and throws a
-\\* RangeError for any other form.
+\\* String.prototype.normalize, which leaves a string of ASCII as it is in every form, gives the form
+\\* of a string that the script writes or a form of one, and throws a RangeError for any other form.
 StringNormalize(value, form) ==
   LET text == Text(value)
+      known == {Normals[position] : position \\in DOMAIN Normals}
+      found == {normal \\in known : normal.text = text}
   IN  CASE form # Undefined /\\ form \\notin {"NFC", "NFD", "NFKC", "NFKD"} ->
              Assert(FALSE, "tla-ts can't throw the RangeError of normalize")
         [] IsAscii(text) -> text
+        [] found # {} -> (CHOOSE normal \\in found : TRUE)[IF form = Undefined THEN "NFC" ELSE form]
         [] OTHER -> Assert(FALSE, "tla-ts can't normalize a character outside ASCII")
 
 \\* String.prototype.localeCompare, which gives 0 for equal strings. The order of others depends on
