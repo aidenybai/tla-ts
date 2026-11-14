@@ -24128,6 +24128,35 @@ describe("regular expressions", () => {
 });
 
 describe("calls through values", () => {
+  describe("gives the values of built-ins that a call gives no receiver", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const toString = Object.prototype.toString;
+      const hasInstance = Function.prototype[Symbol.hasInstance];
+      const getter = Object.getOwnPropertyDescriptor(
+        Object.getPrototypeOf(Int8Array.prototype),
+        Symbol.toStringTag,
+      )!.get!;
+      const named = (): string => "named";
+      const isNamed = (value: unknown): boolean => value === named;
+      const box = { size: 0 };
+      const values = [toString(), hasInstance(box), getter(), named(), isNamed(box)];
+      if (values.join() !== "${expected}" || box.size !== 0) throw new Error(values.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("[object Undefined],false,,named,false"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the global object as the receiver", async () => {
+      expect(
+        (await checkModel(getSource("[object Object],false,,named,false"))).failure?.message,
+      ).toContain("[object Undefined]");
+    });
+  });
+
   describe("throws the TypeError of calling a built-in method without a receiver", () => {
     const getSource = (expected: string) => `
       "use strict";

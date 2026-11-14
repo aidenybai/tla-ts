@@ -3410,7 +3410,11 @@ export const translateCallStatement = (
             ? ifThenElse(
                 useJavaScript("ThrowsWithoutReceiver", [value], context),
                 throwTypeError(path, expression, context, frame),
-                stop,
+                ifThenElse(
+                  useJavaScript("HasReceiverlessValue", [value], context),
+                  continueWith(path, useJavaScript("ReceiverlessValue", [value], context)),
+                  stop,
+                ),
               )
             : stop
           : ITERATOR_CALLBACK_METHODS.has(target.name.text)
@@ -3478,11 +3482,15 @@ export const translateCallStatement = (
         useJavaScript("ThrowsWithoutReceiver", [value], context),
       ]),
       throwTypeError(path, expression, context, frame),
-      leaf(
-        apply("Assert", [
-          boolean(false),
-          string("tla-ts can't tell which function this call runs"),
-        ]),
+      ifThenElse(
+        useJavaScript("HasReceiverlessValue", [value], context),
+        continueWith(path, useJavaScript("ReceiverlessValue", [value], context)),
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't tell which function this call runs"),
+          ]),
+        ),
       ),
     );
   }

@@ -20,6 +20,7 @@ import {
   isLiteral,
   isPlain,
   share,
+  isInertValue,
   skipCasts,
 } from "./context";
 import {
@@ -842,10 +843,19 @@ export const translateLocalCall = (
       : [];
   const stored = callee === undefined ? getStoredCall(node, context) : undefined;
   if (callee === undefined && (candidates.length > 0 || stored !== undefined)) {
-    const unknown = apply("Assert", [
+    const stop = apply("Assert", [
       boolean(false),
       string("tla-ts can't tell which function this call runs"),
     ]);
+    // A built-in that gives a value without a receiver, such as Object.prototype.toString.
+    const getUnknown = (value: Expression) =>
+      ts.isIdentifier(skipCasts(node.expression)) && node.arguments.every(isInertValue)
+        ? ifExpression(
+            useJavaScript("HasReceiverlessValue", [value], context),
+            useJavaScript("ReceiverlessValue", [value], context),
+            stop,
+          )
+        : stop;
     return share(
       translateExpression(node.expression, scope, context),
       "function",
@@ -863,7 +873,7 @@ export const translateLocalCall = (
                 );
           },
           stored === undefined
-            ? unknown
+            ? getUnknown(value)
             : field(
                 translateStoredCall(
                   stored,

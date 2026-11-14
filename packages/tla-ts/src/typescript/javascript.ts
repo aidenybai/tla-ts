@@ -1670,6 +1670,20 @@ ThrowsWithoutReceiver(value) ==
                          "Object.prototype.isPrototypeOf"}
         /\\ ~(Len(path) >= 13 /\\ SubSeq(path, Len(path) - 12, Len(path)) = "@@toStringTag")
 
+\\* Whether a value is a built-in that gives a value where a call gives it no receiver:
+\\* Object.prototype.toString, Function.prototype[@@hasInstance], and the @@toStringTag getter of
+\\* typed arrays.
+HasReceiverlessValue(value) ==
+  /\\ IsRef(value)
+  /\\ TypeOf(value[Ref]) = "string"
+  /\\ value[Ref] \\in {"Object.prototype.toString", "Function.prototype.@@hasInstance",
+                     "get %Int8Array.prototype.[[Prototype]]%.@@toStringTag"}
+
+ReceiverlessValue(value) ==
+  CASE value[Ref] = "Object.prototype.toString" -> "[object Undefined]"
+    [] value[Ref] = "Function.prototype.@@hasInstance" -> FALSE
+    [] OTHER -> Undefined
+
 \\* The TypeError that a read throws where it runs %ThrowTypeError% or a getter of a buffer or a view
 \\* on another kind of object, or "".
 ReadError(heap, ref, key) ==
