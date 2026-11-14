@@ -25686,4 +25686,26 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("passes arguments past TypeScript's this parameter of a function", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      function g(this: void, a: string, b?: string) {
+        return \`\${a}-\${b}\`;
+      }
+      box.size = 1;
+      const read = g("x", "y") + "|" + [g("p", "q")].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("x-y|p-q"))).failure).toBeUndefined();
+    });
+
+    it("rejects the first argument as the receiver", async () => {
+      expect((await checkModel(getSource("y-undefined|q-undefined"))).failure?.message).toContain(
+        "x-y|p-q",
+      );
+    });
+  });
 });
