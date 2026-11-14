@@ -69,3 +69,38 @@ describe("set-logic after the first declaration, as Z3 5.3.2 prints it", () => {
     ).toBe("unsat");
   });
 });
+
+describe("terms nested 20,000 deep, which Z3 5.3.2 reads on its own stack", () => {
+  const DEPTH = 20000;
+
+  it("reads nested lets", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        `(assert (= x (let ((y x)) ${"(let ((y y)) ".repeat(DEPTH - 1)}y${")".repeat(DEPTH)}))`,
+        "(check-sat)",
+      ]),
+    ).toEqual(["sat"]);
+  });
+
+  it("reads nested quantifiers", () => {
+    expect(
+      run([
+        "(declare-fun p (Int) Bool)",
+        `(assert ${"(forall ((y Int)) ".repeat(DEPTH)}(p y)${")".repeat(DEPTH)})`,
+        '(echo "done")',
+      ]),
+    ).toEqual(["done"]);
+  });
+
+  it("reads nested attributed terms", () => {
+    const labels = Array.from({ length: DEPTH }, (_unused, index) => ` :lblpos l${index})`);
+    expect(
+      run([
+        "(declare-const p Bool)",
+        `(assert ${"(! ".repeat(DEPTH)}p${labels.join("")})`,
+        '(echo "done")',
+      ]),
+    ).toEqual(["done"]);
+  });
+});

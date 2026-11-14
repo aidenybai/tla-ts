@@ -215,6 +215,7 @@ interface SmtProblem {
 }
 
 interface ApplicationFrame {
+  kind: "application";
   head: SmtToken;
   indices: number[];
   build?: (args: number[]) => number;
@@ -222,6 +223,43 @@ interface ApplicationFrame {
   start: number;
   next: number;
 }
+
+interface LetFrame {
+  kind: "let";
+  list: SmtList;
+  bindings: SExpr[];
+  scope: Map<string, Binding>;
+  name: string;
+  start: number;
+  next: number;
+}
+
+interface QuantifierFrame {
+  kind: "quantifier";
+  list: SmtList;
+  quantifierKind: number;
+  names: string[];
+  varSorts: number[];
+  boundVars: number[];
+  isBodyParsed: boolean;
+}
+
+interface AttributeFrame {
+  kind: "attribute";
+  list: SmtList;
+  isTermParsed: boolean;
+}
+
+// The kinds of smt2parser.cpp's expr_frame that hold a term of any depth.
+type TermFrame = ApplicationFrame | LetFrame | QuantifierFrame | AttributeFrame;
+
+const QUANTIFIER_KINDS = new Map([
+  ["forall", QUANTIFIER_FORALL],
+  ["exists", QUANTIFIER_EXISTS],
+  ["lambda", QUANTIFIER_LAMBDA],
+]);
+
+const LET_MESSAGE = "invalid let declaration, symbol expected";
 
 const BUILTIN_OPS = new Map<string, number>([
   ["and", OP_AND],
@@ -1219,24 +1257,15 @@ export const createSmtlibReader = (
     binders.depth -= count;
   };
 
-  const parseQuantifier = (list: SmtList, kind: number) => {
-    if (list.items.length !== 3)
-      throw new SmtParseError(
-        "invalid quantified expression, syntax error: (forall|exists ((<symbol> <sort>)*) <expr>) expected",
-        list.end,
-      );
-    const bound = bindSortedVars(list.items[1], list);
-    const varSorts = bound.varSorts;
-    // parse_sorted_vars: the variables are created first, the first declared with the largest index,
-    // and the parser's stack holds them until the quantifier is created.
-    const boundVars = varSorts.map((sort, index) =>
-      manager.mkVar(varSorts.length - 1 - index, sort),
-    );
-    for (const boundVar of boundVars) manager.incRef(boundVar);
+  // pop_quant_frame, after the attributes of an annotated body.
+  const mkParsedQuantifier = (frame: QuantifierFrame, parsedBody: number) => {
+    const list = frame.list;
+    const kind = frame.quantifierKind;
+    const varSorts = frame.varSorts;
+    const boundVars = frame.boundVars;
     const bodySExpr = list.items[2];
-    const isAnnotated = bodySExpr.kind === "list" && isSymbol(bodySExpr.items[0], "!");
-    const annotations = bodySExpr.kind === "list" && isAnnotated ? bodySExpr.items : [];
-    const parsedBody = parseTerm(isAnnotated ? annotations[1] : bodySExpr);
+    const annotations =
+      bodySExpr.kind === "list" && isSymbol(bodySExpr.items[0], "!") ? bodySExpr.items : [];
     if (kind !== QUANTIFIER_LAMBDA && manager.sorts[parsedBody] !== SORT_BOOL)
       throw new SmtParseError("expected a formula", bodySExpr);
     const attributes = Array.from(
@@ -1307,7 +1336,7 @@ export const createSmtlibReader = (
     const quantifier = manager.mkQuantifier({
       kind,
       sorts: varSorts,
-      names: bound.names,
+      names: frame.names,
       body,
       patterns,
       noPatterns,
@@ -1319,26 +1348,6 @@ export const createSmtlibReader = (
     for (const noPattern of noPatterns) manager.decRef(noPattern);
     for (const boundVar of boundVars) manager.decRef(boundVar);
     return quantifier;
-  };
-
-  const parseLet = (list: SmtList) => {
-    const message = "invalid let declaration, symbol expected";
-    const scope = new Map<string, Binding>();
-    const exprs: number[] = [];
-    for (const binding of expectList(list.items[1], message, list).items) {
-      const pair = expectList(binding, message, binding);
-      const name = expectSymbol(pair.items[0], message, pair);
-      const expr = parseTerm(pair.items[1] ?? pair.end);
-      exprs.push(expr);
-      scope.set(name.text, { kind: "let", depth: binders.depth, expr });
-    }
-    scopes.push(scope);
-    // Z3 takes the last expression on its stack, so a let without a body is its last binding.
-    for (const body of list.items.slice(2)) exprs.push(parseTerm(body));
-    scopes.pop();
-    const result = exprs.at(-1);
-    if (result === undefined) throw new SmtParseError("invalid let expression", list.end);
-    return result;
   };
 
   const expandMacro = (macro: Macro, args: number[]) =>
@@ -1874,7 +1883,7 @@ export const createSmtlibReader = (
       : args.slice(1).reduce((left, right) => mkApp(op, [left, right], at, domainSort), args[0]);
   };
 
-  const parseLeaf = (sexpr: SExpr): number => {
+  const parseLeaf = (sexpr: SmtToken): number => {
     if (sexpr.kind === "numeral")
       return restricted.isNumeralAsReal
         ? manager.mkRealNumeral(Rational.of(BigInt(sexpr.text), 1n))
@@ -1911,36 +1920,7 @@ export const createSmtlibReader = (
             );
       return parseApp(sexpr, [], sexpr);
     }
-    if (sexpr.kind !== "list") throw new SmtParseError("invalid expression", sexpr);
-    const head = sexpr.items[0];
-    if (isSymbol(head, "forall") || isSymbol(head, "exists") || isSymbol(head, "lambda"))
-      return parseQuantifier(
-        sexpr,
-        head.text === "forall"
-          ? QUANTIFIER_FORALL
-          : head.text === "exists"
-            ? QUANTIFIER_EXISTS
-            : QUANTIFIER_LAMBDA,
-      );
-    if (isSymbol(head, "let")) return parseLet(sexpr);
-    // Each attribute applies to the expression the attributes before it made.
-    return sexpr.items.slice(2).reduce(
-      (annotated, keyword, index, attributes) => {
-        if (keyword.kind !== "keyword") return annotated;
-        const value = attributes[index + 1];
-        if (keyword.text === ":lblpos" || keyword.text === ":lblneg")
-          return mkLabel(annotated, keyword.text === ":lblpos", value, sexpr);
-        if (keyword.text !== ":named") return annotated;
-        const name = expectSymbol(value, "invalid attribute value, symbol expected", sexpr).text;
-        manager.incRef(annotated);
-        lastNamed.name = name;
-        lastNamed.expr = annotated;
-        manager.mkMacro(name, annotated);
-        declare(macros, name, { domain: [], range: manager.sorts[annotated], body: annotated });
-        return annotated;
-      },
-      parseTerm(sexpr.items[1] ?? sexpr.end),
-    );
+    throw new SmtParseError("invalid expression", sexpr);
   };
 
   const mkLabel = (expr: number, isPositive: boolean, value: SExpr | undefined, at: SExpr) => {
@@ -1951,7 +1931,7 @@ export const createSmtlibReader = (
   };
 
   const parseTerm = (sexpr: SExpr): number => {
-    const frames: ApplicationFrame[] = [];
+    const frames: TermFrame[] = [];
     const results: number[] = [];
     const enter = (current: SExpr) => {
       if (current.kind !== "list") {
@@ -1972,6 +1952,7 @@ export const createSmtlibReader = (
         ) {
           const sort = parseSort(head.items[2], "");
           frames.push({
+            kind: "application",
             head: name,
             indices: [],
             build: (args) => mkArrayTerm(OP_CONST_ARRAY, args, [sort], current.end),
@@ -1990,6 +1971,7 @@ export const createSmtlibReader = (
         ) {
           const mapped = parseFuncDeclRef(head.items[2]);
           frames.push({
+            kind: "application",
             head: name,
             indices: [],
             build: (args) => mkMapTerm(mapped, args, current.end),
@@ -2007,6 +1989,7 @@ export const createSmtlibReader = (
           head.items.length === 3
         ) {
           frames.push({
+            kind: "application",
             head: name,
             indices: [],
             build: (args) =>
@@ -2022,6 +2005,7 @@ export const createSmtlibReader = (
         if (isSymbol(head.items[0], "as") && isSymbol(name) && head.items.length === 3) {
           const range = parseSort(head.items[2], "Invalid qualified identifier");
           frames.push({
+            kind: "application",
             head: name,
             indices: [],
             build: (args) => parseApp(name, args, current.end, [], range),
@@ -2041,6 +2025,7 @@ export const createSmtlibReader = (
             Rational.of(BigInt(index.kind === "list" ? 0 : index.text)),
           );
           frames.push({
+            kind: "application",
             head: name,
             indices: [],
             build: (args) => mkPbTerm(name.text, args, parameters, current.end),
@@ -2058,6 +2043,7 @@ export const createSmtlibReader = (
         )
           throw new SmtUnsupportedError("indexed and qualified identifiers");
         frames.push({
+          kind: "application",
           head: name,
           indices: indices.map((index) => (index.kind === "list" ? 0 : Number(index.text))),
           list: current,
@@ -2091,13 +2077,130 @@ export const createSmtlibReader = (
       }
       if (head.text === "as" || head.text === "match")
         throw new SmtUnsupportedError(`the expression ${head.text}`);
-      if (["forall", "exists", "lambda", "let", "!"].includes(head.text))
-        results.push(parseLeaf(current));
-      else frames.push({ head, indices: [], list: current, start: results.length, next: 1 });
+      if (head.text === "let") {
+        frames.push({
+          kind: "let",
+          list: current,
+          bindings: expectList(current.items[1], LET_MESSAGE, current).items,
+          scope: new Map(),
+          name: "",
+          start: results.length,
+          next: 0,
+        });
+        return;
+      }
+      if (head.text === "!") {
+        frames.push({ kind: "attribute", list: current, isTermParsed: false });
+        return;
+      }
+      const quantifierKind = QUANTIFIER_KINDS.get(head.text);
+      if (quantifierKind === undefined) {
+        frames.push({
+          kind: "application",
+          head,
+          indices: [],
+          list: current,
+          start: results.length,
+          next: 1,
+        });
+        return;
+      }
+      if (current.items.length !== 3)
+        throw new SmtParseError(
+          "invalid quantified expression, syntax error: (forall|exists ((<symbol> <sort>)*) <expr>) expected",
+          current.end,
+        );
+      const bound = bindSortedVars(current.items[1], current);
+      // parse_sorted_vars: the variables are created first, the first declared with the largest index,
+      // and the parser's stack holds them until the quantifier is created.
+      const boundVars = bound.varSorts.map((sort, index) =>
+        manager.mkVar(bound.varSorts.length - 1 - index, sort),
+      );
+      for (const boundVar of boundVars) manager.incRef(boundVar);
+      frames.push({
+        kind: "quantifier",
+        list: current,
+        quantifierKind,
+        names: bound.names,
+        varSorts: bound.varSorts,
+        boundVars,
+        isBodyParsed: false,
+      });
     };
     enter(sexpr);
     while (frames.length > 0) {
       const frame = frames[frames.length - 1];
+      if (frame.kind === "let") {
+        const bindings = frame.bindings;
+        if (frame.next > 0 && frame.next <= bindings.length)
+          frame.scope.set(frame.name, {
+            kind: "let",
+            depth: binders.depth,
+            expr: results[results.length - 1],
+          });
+        if (frame.next === bindings.length) scopes.push(frame.scope);
+        if (frame.next < bindings.length) {
+          const binding = bindings[frame.next++];
+          const pair = expectList(binding, LET_MESSAGE, binding);
+          frame.name = expectSymbol(pair.items[0], LET_MESSAGE, pair).text;
+          enter(pair.items[1] ?? pair.end);
+          continue;
+        }
+        const body = frame.list.items[2 + frame.next++ - bindings.length];
+        if (body !== undefined) {
+          enter(body);
+          continue;
+        }
+        scopes.pop();
+        frames.pop();
+        // Z3 takes the last expression on its stack, so a let without a body is its last binding.
+        if (results.length === frame.start)
+          throw new SmtParseError("invalid let expression", frame.list.end);
+        results.splice(frame.start, results.length - frame.start - 1);
+        continue;
+      }
+      if (frame.kind === "quantifier") {
+        if (frame.isBodyParsed) {
+          frames.pop();
+          results[results.length - 1] = mkParsedQuantifier(frame, results[results.length - 1]);
+          continue;
+        }
+        frame.isBodyParsed = true;
+        const body = frame.list.items[2];
+        enter(body.kind === "list" && isSymbol(body.items[0], "!") ? body.items[1] : body);
+        continue;
+      }
+      if (frame.kind === "attribute") {
+        if (!frame.isTermParsed) {
+          frame.isTermParsed = true;
+          enter(frame.list.items[1] ?? frame.list.end);
+          continue;
+        }
+        frames.pop();
+        // Each attribute applies to the expression the attributes before it made.
+        results[results.length - 1] = frame.list.items.slice(2).reduce(
+          (annotated, keyword, index, attributes) => {
+            if (keyword.kind !== "keyword") return annotated;
+            const value = attributes[index + 1];
+            if (keyword.text === ":lblpos" || keyword.text === ":lblneg")
+              return mkLabel(annotated, keyword.text === ":lblpos", value, frame.list);
+            if (keyword.text !== ":named") return annotated;
+            const name = expectSymbol(
+              value,
+              "invalid attribute value, symbol expected",
+              frame.list,
+            ).text;
+            manager.incRef(annotated);
+            lastNamed.name = name;
+            lastNamed.expr = annotated;
+            manager.mkMacro(name, annotated);
+            declare(macros, name, { domain: [], range: manager.sorts[annotated], body: annotated });
+            return annotated;
+          },
+          results[results.length - 1],
+        );
+        continue;
+      }
       if (frame.next < frame.list.items.length) {
         enter(frame.list.items[frame.next++]);
         continue;
