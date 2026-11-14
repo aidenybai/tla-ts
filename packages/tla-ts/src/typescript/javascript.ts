@@ -4331,8 +4331,9 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
             LET indices == {index \\in 0..last : StrictEquals(elements[index + 1], argument(1))}
             IN Returned(heap, IF length = 0 \\/ indices = {} THEN -1
                               ELSE CHOOSE index \\in indices : \\A other \\in indices : index >= other)
-       [] method = "join" -> Returned(heap, Join([position \\in 1..length |-> StringOf(elements[position])], separator))
-       [] method = "fill" ->
+       [] method = "join" /\\ separator = separator ->
+            Returned(heap, Join([position \\in 1..length |-> StringOf(elements[position])], separator))
+       [] method = "fill" /\\ ToNumber(argument(1)) = ToNumber(argument(1)) ->
             LET number == ToNumber(argument(1))
                 first == start(2)
                 final == end(3)

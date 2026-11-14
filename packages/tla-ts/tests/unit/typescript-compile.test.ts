@@ -25263,6 +25263,49 @@ describe("buffers", () => {
     });
   });
 
+  describe("converts fill's value and join's separator of a typed array without elements", () => {
+    const source = `
+      const empty = new Int8Array(0);
+      empty.fill(NaN);
+      if (empty.join("-") !== "") throw new Error("empty join");
+      const one = new Float32Array(1);
+      one.fill(NaN);
+      if (!Number.isNaN(one[0])) throw new Error("fill NaN");
+      if (one.join(undefined) !== "NaN") throw new Error("one join");
+    `;
+    const joined = source.replace('one.join(undefined) !== "NaN"', 'one.join(undefined) !== ""');
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong expectation", async () => {
+      expect((await checkModel(joined)).failure?.message).toContain('"one join"');
+    });
+
+    it.each([
+      ["fill", "new Int8Array(0).fill(value);", "tla-ts can't convert this object to a number"],
+      ["join", "new Int8Array(0).join(value);", "tla-ts can't convert objects to strings"],
+    ])("stops where %s converts an object", async (_, call, message) => {
+      const result = await checkModel(`
+        let calls = 0;
+        const value: any = {
+          valueOf() {
+            calls++;
+            return 1;
+          },
+          toString() {
+            calls++;
+            return "-";
+          },
+        };
+        ${call}
+        if (calls !== 1) throw new Error("converted");
+      `);
+      expect(result.failure?.message).toContain(message);
+    });
+  });
+
   it("throws a TypeError where a typed array's method runs through call on another value", async () => {
     const result = await checkModel(`
       function throws(expected: Function, func: () => unknown, message: string) {
