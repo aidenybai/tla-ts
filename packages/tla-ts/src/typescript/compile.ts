@@ -329,8 +329,9 @@ export const compile = (
       (node.heritageClauses ?? []).every((clause) =>
         clause.types.every(
           (type) =>
-            ts.isIdentifier(type.expression) &&
-            ["Object", "Boolean", "Number", "String"].includes(type.expression.text),
+            type.expression.kind === ts.SyntaxKind.NullKeyword ||
+            (ts.isIdentifier(type.expression) &&
+              ["Object", "Boolean", "Number", "String"].includes(type.expression.text)),
         ),
       )) ||
     (ts.isPropertyAccessExpression(node) &&

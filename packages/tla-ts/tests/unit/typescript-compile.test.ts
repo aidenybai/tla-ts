@@ -14151,6 +14151,290 @@ describe("errors", () => {
     );
   });
 
+  it("runs a derived constructor's super(...) inside try, catch, and finally", async () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      class Base {
+        seen = 1;
+      }
+      class CatchFinally extends Base {
+        constructor() {
+          try {
+            throw null;
+          } catch (error) {
+            log.push("catch");
+            return;
+          } finally {
+            super();
+            log.push("finally");
+          }
+        }
+      }
+      class FinallySuper extends Base {
+        constructor() {
+          try {
+            return;
+          } finally {
+            super();
+          }
+        }
+      }
+      const first = new CatchFinally();
+      const second = new FinallySuper();
+      const result = \`\${log.join("+")},\${first.seen},\${second.seen},\${first instanceof CatchFinally}\`;
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("catch+finally,1,1,true"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("catch+finally,1,1,false"))).failure?.message).toContain(
+      "catch+finally,1,1,true",
+    );
+  });
+
+  it("gives what a derived constructor returns before super(...), or throws", async () => {
+    const getSource = (expected: string) => `
+      class Base {}
+      class ReturnsZero extends Base {
+        constructor() {
+          try {
+            // @ts-ignore
+            return 0;
+          } catch (error) {
+            super();
+          }
+        }
+      }
+      class ReturnsNothing extends Base {
+        // @ts-ignore
+        constructor() {
+          return;
+        }
+      }
+      class ReturnsObject extends Base {
+        // @ts-ignore
+        constructor() {
+          return { made: 3 };
+        }
+      }
+      const results: string[] = [];
+      const attempt = (make: () => unknown) => {
+        try {
+          const made = make() as { made?: number };
+          results.push(\`made \${made.made}\`);
+        } catch (error) {
+          results.push(error instanceof TypeError ? "TypeError" : error instanceof ReferenceError ? "ReferenceError" : "other");
+        }
+      };
+      attempt(() => new ReturnsZero());
+      attempt(() => new ReturnsNothing());
+      attempt(() => new ReturnsObject());
+      const result = results.join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect(
+      (await checkModel(getSource("TypeError,ReferenceError,made 3"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("TypeError,made undefined,made 3"))).failure?.message,
+    ).toContain("TypeError,ReferenceError,made 3");
+  });
+
+  it("defines a derived class's fields once a later super(...) returns", async () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      const note = (entry: string) => {
+        log.push(entry);
+        return entry;
+      };
+      class Base {
+        constructor() {
+          note("base");
+        }
+      }
+      class Late extends Base {
+        field = note("field");
+        constructor() {
+          note("before");
+          super();
+          note(\`after \${this.field}\`);
+        }
+      }
+      class Plain {
+        kind = "plain";
+      }
+      class Twice extends Plain {
+        constructor() {
+          note("twice");
+          super();
+          try {
+            super();
+          } catch (error) {
+            note(error instanceof ReferenceError ? "ReferenceError" : "other");
+          }
+        }
+      }
+      const made = new Late();
+      const twice = new Twice();
+      const result = \`\${log.join("+")},\${made.field},\${twice.kind}\`;
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect(
+      (
+        await checkModel(
+          getSource("before+base+field+after field+twice+ReferenceError,field,plain"),
+        )
+      ).failure,
+    ).toBeUndefined();
+    expect(
+      (
+        await checkModel(
+          getSource("before+field+base+after field+twice+ReferenceError,field,plain"),
+        )
+      ).failure?.message,
+    ).toContain("before+base+field+after field+twice+ReferenceError,field,plain");
+  });
+
+  it("throws the ReferenceError of a derived constructor's this before super(...)", async () => {
+    const getSource = (expected: string) => `
+      class Base {}
+      class ReadsEarly extends Base {
+        constructor() {
+          // @ts-ignore
+          this;
+          super();
+        }
+      }
+      class Branches extends Base {
+        value: number;
+        constructor(flag: boolean) {
+          if (flag) {
+            super();
+            this.value = 1;
+          } else {
+            super();
+            this.value = 2;
+          }
+        }
+      }
+      class Skips extends Base {
+        constructor(flag: boolean) {
+          if (flag) super();
+        }
+      }
+      const results: string[] = [];
+      try {
+        new ReadsEarly();
+      } catch (error) {
+        results.push(error instanceof ReferenceError ? "ReferenceError" : "other");
+      }
+      const left = new Branches(true);
+      const right = new Branches(false);
+      results.push(\`\${left.value}\${right.value}\`);
+      const kept = new Skips(true);
+      results.push(kept instanceof Skips ? "kept" : "lost");
+      try {
+        new Skips(false);
+      } catch (error) {
+        results.push(error instanceof ReferenceError ? "ReferenceError" : "other");
+      }
+      const result = results.join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect(
+      (await checkModel(getSource("ReferenceError,12,kept,ReferenceError"))).failure,
+    ).toBeUndefined();
+    expect((await checkModel(getSource("other,12,kept,kept"))).failure?.message).toContain(
+      "ReferenceError,12,kept,ReferenceError",
+    );
+  });
+
+  it("throws the ReferenceError of this where a derived constructor skips super(...)", async () => {
+    const getSource = (expected: string) => `
+      class Base {}
+      class Maybe extends Base {
+        value = 0;
+        constructor(flag: boolean) {
+          if (flag) super();
+          // @ts-ignore
+          this.value = 5;
+        }
+      }
+      const results: string[] = [];
+      const made = new Maybe(true);
+      results.push(\`\${made.value}\`);
+      try {
+        new Maybe(false);
+      } catch (error) {
+        results.push(error instanceof ReferenceError ? "ReferenceError" : "other");
+      }
+      const result = results.join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("5,ReferenceError"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("5,other"))).failure?.message).toContain("5,ReferenceError");
+  });
+
+  it("throws the ReferenceError of this in the constructor of a class that extends null", async () => {
+    const getSource = (expected: string) => `
+      class Null extends null {
+        constructor() {
+          // @ts-ignore
+          this;
+          throw new Error("not reached");
+        }
+      }
+      const results: string[] = [];
+      for (let i = 0; i < 2; i++) {
+        try {
+          new Null();
+        } catch (error) {
+          results.push(error instanceof ReferenceError ? "ReferenceError" : "other");
+        }
+      }
+      const result = results.join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("ReferenceError,ReferenceError"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("other,other"))).failure?.message).toContain(
+      "ReferenceError,ReferenceError",
+    );
+  });
+
+  it("stops where a second super(...) would run a base's constructor", async () => {
+    const result = await checkModel(`
+      const log: string[] = [];
+      const note = (entry: string) => {
+        log.push(entry);
+        return entry;
+      };
+      class Base {
+        constructor() {
+          note("base");
+        }
+      }
+      class Late extends Base {
+        field = note("field");
+        constructor(isTwice: boolean) {
+          note("before");
+          super();
+          note("after");
+          if (isTwice) super();
+        }
+      }
+      const results: string[] = [];
+      const made = new Late(false);
+      results.push(made.field);
+      try {
+        new Late(true);
+      } catch (error) {
+        results.push(error instanceof ReferenceError ? "ReferenceError" : "other");
+      }
+      const result = \`\${log.join("+")},\${results.join("+")}\`;
+    `);
+    expect(result.failure?.message).toContain(
+      "tla-ts can't run a base's constructor for a second super(...)",
+    );
+  });
+
   it("throws the ReferenceError of a name that a class's computed key reads", async () => {
     const getSource = (caught: string) => `
       let caught = "";
@@ -15511,10 +15795,10 @@ describe("errors", () => {
     expect((await checkModel(getSource(5))).failure?.message).toContain("read");
   });
 
-  it("rejects a derived constructor that runs code before super", () => {
+  it("rejects a derived constructor that calls super inside a loop", () => {
     expect(() =>
       compile(
-        "const box = { size: 1 };\nclass Base {}\nclass Derived extends Base {\n  constructor() {\n    box.size = 2;\n    super();\n  }\n}\nconst made = new Derived();",
+        "class Base {}\nclass Derived extends Base {\n  constructor() {\n    for (let index = 0; index < 2; index++) super();\n  }\n}\nconst made = new Derived();",
       ),
     ).toThrow("Unsupported");
   });

@@ -113,6 +113,7 @@ import {
   getBaseClass,
   getExtended,
   getSettableSupers,
+  getDeferredSuperCalls,
   getSuperCall,
   isNullBased,
 } from "./context";
@@ -308,6 +309,7 @@ import {
   getArrowReceivers,
   getDefaulted,
   getOptionalField,
+  getThisOwner,
   initialize,
   rejectBeforeDeclaration,
   type Receiver,
@@ -386,6 +388,8 @@ export interface Path {
   tasks: Tasks | undefined;
   // The resources that the using declarations of the block that runs added.
   disposal?: Disposal;
+  // The derived constructors running whose this is still uninitialized, until their super(...).
+  unboundThis?: ReadonlySet<ts.ConstructorDeclaration>;
 }
 
 interface KnownDefault {
@@ -7351,11 +7355,54 @@ const translateConstruction = (
     isNullBase ||
     (ts.isConstructorDeclaration(constructor) &&
       getBaseClass(constructor.parent, context) !== undefined);
-  // A class that extends null never gets a this, so its constructor must return an object.
+  // A constructor whose this stays uninitialized until a later super(...), or for good where its
+  // class extends null, ends where this is still uninitialized only by returning an object.
+  const deferred =
+    ts.isConstructorDeclaration(constructor) &&
+    constructor.body !== undefined &&
+    (isNullBase || getDeferredSuperCalls(constructor, context) !== undefined)
+      ? constructor
+      : undefined;
+  // An arrow that reads this outlives a constructor that ends without one, where it would throw.
+  const isEscaping =
+    deferred?.body !== undefined &&
+    findNodes(deferred.body, ts.isArrowFunction).some(
+      (arrow) =>
+        isMade(arrow, context) &&
+        findNodes(
+          arrow,
+          (inner): inner is ts.Node =>
+            inner.kind === ts.SyntaxKind.ThisKeyword && getThisOwner(inner) === deferred,
+        ).length > 0,
+    );
+  const isUnbound = (after: Path) =>
+    isNullBase || (deferred !== undefined && (after.unboundThis?.has(deferred) ?? false));
+  const leave = (after: Path) => ({ ...after, unboundThis: path.unboundThis });
+  const stopEscaping = () =>
+    leaf(
+      apply("Assert", [
+        boolean(false),
+        string("tla-ts can't run an arrow that reads this once its constructor ends without one"),
+      ]),
+    );
   const giveInstance = (after: Path) =>
-    isNullBase
-      ? throwError("ReferenceError", after, expression, context, frame)
-      : continueWith(after, instance);
+    !isUnbound(after)
+      ? continueWith(leave(after), instance)
+      : isEscaping
+        ? stopEscaping()
+        : throwError("ReferenceError", leave(after), expression, context, frame);
+  const bodyFrame: Frame =
+    deferred === undefined
+      ? frame
+      : {
+          ...frame,
+          throwTo: (inner, thrown) =>
+            isEscaping && isUnbound(inner)
+              ? stopEscaping()
+              : frame.throwTo === undefined
+                ? leaf(thrown.uncaught)
+                : frame.throwTo(leave(inner), thrown),
+        };
   const created = getNewClass(expression, context);
   const fields = created === undefined ? [] : getRunFields(created, context);
   const run = () =>
@@ -7374,11 +7421,15 @@ const translateConstruction = (
                   ? undefined
                   : translateExpression(newTarget, defined.scope, context),
             },
-            defined,
+            deferred === undefined
+              ? defined
+              : { ...defined, unboundThis: new Set([...(defined.unboundThis ?? []), deferred]) },
             context,
-            frame,
+            bodyFrame,
             (after, value) => {
-              if (value === undefined) return giveInstance(after);
+              if (value === undefined || (isEscaping && isUnbound(after))) {
+                return giveInstance(after);
+              }
               const name = context.names.getFresh("returned");
               const returned = identifier(name);
               context.prelude.add("Null");
@@ -7396,9 +7447,9 @@ const translateConstruction = (
                       ]),
                       apply("=", [type, string("function")]),
                     ]),
-                    continueWith(after, returned),
+                    continueWith(leave(after), returned),
                     isDerived
-                      ? throwTypeError(after, expression, context, frame)
+                      ? throwTypeError(leave(after), expression, context, frame)
                       : continueWith(after, instance),
                   ),
                 ),
@@ -7436,7 +7487,8 @@ const translateSuperCall = (
   if (
     constructor === undefined ||
     receiver?.method !== constructor ||
-    getSuperCall(constructor) !== expression
+    (getSuperCall(constructor) !== expression &&
+      !(getDeferredSuperCalls(constructor, context) ?? []).includes(expression))
   ) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
   }
@@ -7535,6 +7587,28 @@ const runSuperCall = (
   }
   const builtInBase = getBuiltInBase(constructor.parent, context);
   const heapSymbol = context.heap;
+  // A super(...) initializes this, which one that runs after it can't, once the base's constructor
+  // makes another object. tla-ts follows that only where the base makes it without running code.
+  const isDeferred = getDeferredSuperCalls(constructor, context) !== undefined;
+  if (isDeferred && !(path.unboundThis?.has(constructor) ?? false)) {
+    return called === undefined && builtInBase === undefined
+      ? throwError("ReferenceError", path, expression, context, frame)
+      : leaf(
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't run a base's constructor for a second super(...)"),
+          ]),
+        );
+  }
+  const bind = (after: Path) =>
+    isDeferred
+      ? {
+          ...after,
+          unboundThis: new Set(
+            [...(after.unboundThis ?? [])].filter((running) => running !== constructor),
+          ),
+        }
+      : after;
   // The Error constructor gives the error that the new made its message and cause.
   if (
     called === undefined &&
@@ -7563,13 +7637,13 @@ const runSuperCall = (
         context,
       ),
       continueWith(
-        {
+        bind({
           ...path,
           scope: {
             ...path.scope,
             bindings: new Map([...path.scope.bindings, [heapSymbol, identifier(name)]]),
           },
-        },
+        }),
         receiver.value,
       ),
     );
@@ -7578,7 +7652,7 @@ const runSuperCall = (
     if (expression.arguments.length > 0) {
       throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
     }
-    return continueWith(path, receiver.value);
+    return continueWith(bind(path), receiver.value);
   }
   return inlineBody(
     expression,
@@ -7592,7 +7666,7 @@ const runSuperCall = (
       translateElements(
         getFieldsAfterSuper(constructor.parent, context),
         receiver.value,
-        { ...after, scope: { ...after.scope, receiver } },
+        { ...bind(after), scope: { ...after.scope, receiver } },
         context,
         frame,
         (defined) => continueWith(defined, receiver.value),
@@ -10538,6 +10612,11 @@ export const translateJoined = (
       isCompletedFrom(exit.path.generators, path.generators) &&
       exit.path.tasks === path.tasks &&
       exit.path.disposal === path.disposal &&
+      // Each exit initialized the this of the same constructors.
+      (exit.path.unboundThis?.size ?? 0) === (exits[0].path.unboundThis?.size ?? 0) &&
+      [...(exit.path.unboundThis ?? [])].every((constructor) =>
+        exits[0].path.unboundThis?.has(constructor),
+      ) &&
       isKept(exit.path.scope.bindings, path.scope.bindings) &&
       isKept(exit.path.scope.functions, path.scope.functions),
   );
@@ -10548,6 +10627,7 @@ export const translateJoined = (
     {
       ...path,
       generators: exits[0].path.generators,
+      unboundThis: exits[0].path.unboundThis,
       scope: {
         ...path.scope,
         bindings: new Map([
@@ -13563,6 +13643,54 @@ export const translateStatements = (
       context,
       frame,
     );
+  }
+  // A derived constructor's this is uninitialized until its super(...), so a statement that reads it
+  // first throws a ReferenceError. The functions in the statement read it only as they run.
+  const unbound = path.unboundThis ?? new Set();
+  const getUnboundReads = (node: ts.Node): ts.Node[] => {
+    if (ts.isFunctionLike(node)) return [];
+    const isRead =
+      (node.kind === ts.SyntaxKind.ThisKeyword ||
+        (node.kind === ts.SyntaxKind.SuperKeyword && !ts.isCallExpression(node.parent))) &&
+      [...unbound].some((constructor) => constructor === getThisOwner(node));
+    const nested: ts.Node[] = [];
+    ts.forEachChild(node, (child) => {
+      nested.push(...getUnboundReads(child));
+    });
+    return isRead ? [node, ...nested] : nested;
+  };
+  const unboundReads =
+    unbound.size === 0 || ts.isBlock(statement) || ts.isTryStatement(statement)
+      ? []
+      : getUnboundReads(ts.isIfStatement(statement) ? statement.expression : statement);
+  if (unboundReads.length > 0) {
+    const getFirst = (node: ts.Node): ts.Node =>
+      ts.isExpressionStatement(node) ||
+      ts.isReturnStatement(node) ||
+      ts.isThrowStatement(node) ||
+      ts.isParenthesizedExpression(node) ||
+      ts.isAsExpression(node) ||
+      ts.isNonNullExpression(node) ||
+      ts.isPropertyAccessExpression(node) ||
+      ts.isElementAccessExpression(node) ||
+      ts.isCallExpression(node)
+        ? node.expression === undefined
+          ? node
+          : getFirst(node.expression)
+        : ts.isVariableStatement(node) &&
+            node.declarationList.declarations[0]?.initializer !== undefined
+          ? getFirst(node.declarationList.declarations[0].initializer)
+          : ts.isBinaryExpression(node)
+            ? getFirst(node.left)
+            : node;
+    const first = getFirst(statement);
+    if (first.kind !== ts.SyntaxKind.ThisKeyword || !unboundReads.includes(first)) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't read this here before super(...) runs",
+        unboundReads[0],
+      );
+    }
+    return throwError("ReferenceError", path, first, context, frame);
   }
   const continueWith = (inner: Path) =>
     translateStatements(statements.slice(1), inner, context, frame);

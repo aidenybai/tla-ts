@@ -1118,13 +1118,11 @@ const isNullSafe = (node: ts.ClassLikeDeclaration, context: Context) => {
   );
   if (!isNullBased(node) || isFielded) return false;
   const constructor = node.members.find(ts.isConstructorDeclaration);
+  // Its this is never initialized, which tla-ts follows as the constructor runs.
   if (constructor?.body !== undefined) {
     return (
-      findNodes(
-        constructor,
-        (inner): inner is ts.Node =>
-          inner.kind === ts.SyntaxKind.ThisKeyword || inner.kind === ts.SyntaxKind.SuperKeyword,
-      ).length === 0
+      findNodes(constructor, (inner): inner is ts.Node => inner.kind === ts.SyntaxKind.SuperKeyword)
+        .length === 0
     );
   }
   const declared = ts.isClassExpression(node) ? node.parent : node;
@@ -1250,9 +1248,51 @@ export const getSuperCall = (constructor: ts.ConstructorDeclaration) => {
     : undefined;
 };
 
+// Whether a class or one it extends gives an instance field a value that isn't a literal, which
+// tla-ts gives as the new makes the instance.
+const hasComputedFields = (node: ts.ClassLikeDeclaration | undefined, context: Context): boolean =>
+  node !== undefined &&
+  (node.members.some(
+    (member) =>
+      ts.isPropertyDeclaration(member) &&
+      !isStatic(member) &&
+      member.initializer !== undefined &&
+      !isLiteral(member.initializer),
+  ) ||
+    hasComputedFields(getBaseClass(node, context), context));
+
+// The super(...) calls of a derived constructor that doesn't start with one, each of which runs in
+// the constructor's own body, before which its this is uninitialized. Its parameters can't read
+// this, which their defaults would read first, and the classes it extends give their fields only
+// literals, which tla-ts gives before the statements before super(...) run.
+export const getDeferredSuperCalls = (constructor: ts.ConstructorDeclaration, context: Context) => {
+  const calls = findNodes(
+    constructor.body ?? constructor,
+    (node): node is ts.CallExpression =>
+      ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.SuperKeyword,
+  );
+  return constructor.body !== undefined &&
+    hasExtends(constructor.parent) &&
+    !isNullBased(constructor.parent) &&
+    getSuperCall(constructor) === undefined &&
+    constructor.parameters.every(isBeforeThis) &&
+    calls.every(
+      (call) =>
+        ts.findAncestor(call.parent, ts.isFunctionLike) === constructor &&
+        // A loop runs its body from one path, which can't tell a later super(...) from the first.
+        ts.findAncestor(call, (ancestor) =>
+          ancestor === constructor ? "quit" : ts.isIterationStatement(ancestor, false),
+        ) === undefined,
+    ) &&
+    !hasComputedFields(getBaseClass(constructor.parent, context), context)
+    ? calls
+    : undefined;
+};
+
 // A derived class whose constructor starts with super(...), so its instance needs only the fields
-// of each class in order. A class that adds fields or private names to the instance needs bases
-// that run no constructor, since a base's constructor would see them before they exist.
+// of each class in order, or one whose this is uninitialized until a later super(...). A class that
+// adds fields or private names to the instance needs bases that run no constructor, since a base's
+// constructor would see them before they exist.
 const isDerivedSafe = (
   node: ts.ClassLikeDeclaration,
   base: ts.ClassLikeDeclaration,
@@ -1275,7 +1315,8 @@ const isDerivedSafe = (
       false);
   return (
     (constructor === undefined ||
-      (constructor.body !== undefined && getSuperCall(constructor) !== undefined)) &&
+      (constructor.body !== undefined && getSuperCall(constructor) !== undefined) ||
+      getDeferredSuperCalls(constructor, context) !== undefined) &&
     (!isAdding || getRunConstructor(base, context) === undefined)
   );
 };
@@ -2517,13 +2558,17 @@ export const getRunFields = (node: HeapClass, context: Context) => {
 };
 
 // The fields of a derived class whose constructor defines them once super(...) returns, as its
-// base's constructor runs code, which would see them otherwise.
+// base's constructor or the statements before super(...) run code, which would see them otherwise.
 export const getFieldsAfterSuper = (node: HeapClass, context: Context) => {
   const base = ts.isClassLike(node) ? getBaseClass(node, context) : undefined;
+  const constructor = ts.isClassLike(node)
+    ? node.members.find(ts.isConstructorDeclaration)
+    : undefined;
   return ts.isClassLike(node) &&
-    node.members.some(ts.isConstructorDeclaration) &&
+    constructor !== undefined &&
     base !== undefined &&
-    getRunConstructor(base, context) !== undefined
+    (getRunConstructor(base, context) !== undefined ||
+      getDeferredSuperCalls(constructor, context) !== undefined)
     ? node.members.filter(
         (member): member is ts.PropertyDeclaration =>
           ts.isPropertyDeclaration(member) && !isStatic(member) && !isAmbient(member),
