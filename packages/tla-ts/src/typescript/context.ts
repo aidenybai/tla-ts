@@ -1,5 +1,5 @@
 import ts from "@typescript/typescript6";
-import type { Expression, OperatorDefinition, OperatorParam } from "../ast";
+import type { Expression, OperatorDefinition, OperatorParam, SourceLocation } from "../ast";
 import { getTypeNames, JAVASCRIPT_OPERATORS } from "./javascript";
 import { BUILT_INS } from "./built-ins";
 import { getErrorClass, isNativeErrorName, isPrototypeRead, NATIVE_ERRORS } from "./exceptions";
@@ -23,6 +23,28 @@ export interface SelfCall {
   functions: (FunctionNode | undefined)[];
 }
 
+// A helper that a statement calls, compiled once as an operator beside the top-level definitions.
+// It takes the arguments, the names it reads from outside itself, and the state, and gives how its
+// body ended, its value or what it threw, the message and the place of a throw, and the state.
+export interface SharedCall {
+  name: string;
+  // Whether a try catches what the call throws, which an expression's call inside may not throw.
+  isCatching: boolean;
+  // Whether the caller goes on where the call throws, so the operator gives what it threw rather
+  // than stopping there.
+  isThrowing: boolean;
+  captured: ts.Symbol[];
+  // Where each throw that the body may end with is, which reports it where nothing catches it.
+  throws: SourceLocation[];
+}
+
+// A helper that can run as an operator: the names that it and the functions it runs read from
+// outside them, and the state that it changes.
+export interface SharedHelper {
+  read: ts.Symbol[];
+  changed: ts.Symbol[];
+}
+
 export interface Passed {
   node: ts.Expression;
   value: Expression;
@@ -43,6 +65,10 @@ export interface Context {
   // The recursive operator of each function that changes state and calls itself, while its body
   // compiles, with what it changes.
   selfCalls: Map<ts.Node, SelfCall[]>;
+  // The helpers that can run as operators, which tla-ts finds before it compiles the code.
+  sharedHelpers: Map<ts.Node, SharedHelper>;
+  // The operators of each helper, one for each kind of call.
+  sharedCalls: Map<ts.Node, SharedCall[]>;
   output: OperatorDefinition[];
   // The TypeScript that each emitted definition or expression compiles from.
   links: Link[];
@@ -209,6 +235,8 @@ export const createContext = (checker: ts.TypeChecker): Context => ({
   inProgress: new Set(),
   recursive: new Set(),
   selfCalls: new Map(),
+  sharedHelpers: new Map(),
+  sharedCalls: new Map(),
   output: [],
   links: [],
   modelValues: new Map(),

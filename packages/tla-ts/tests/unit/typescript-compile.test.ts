@@ -4419,6 +4419,105 @@ describe("calls", () => {
     );
   });
 
+  it("runs a helper that makes objects as one operator that each call shares", async () => {
+    const getSource = (expected: string) => `
+      interface Mark {
+        text: string;
+        marks: number[];
+      }
+      const run = () => {
+        const made = { count: 0 };
+        const make = (text: string): Mark => {
+          made.count++;
+          return { text, marks: [made.count] };
+        };
+        const first = make("a");
+        const second = make("b");
+        first.marks.push(5);
+        return \`\${first.text},\${second.text},\${first.marks.length},\${second.marks.length},\${second.marks[0]},\${made.count}\`;
+      };
+      const text = run();
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect(printModule(compile(getSource("a,b,2,1,2,2")).source)).toMatch(/^make\(/m);
+    expect((await checkModel(getSource("a,b,2,1,2,2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("a,b,2,2,2,2"))).failure?.message).toContain("a,b,2,1,2,2");
+  });
+
+  it("runs a helper with defaults as one operator that each call shares", async () => {
+    const getSource = (expected: string) => `
+      const run = () => {
+        const cursor = { index: 0 };
+        const take = (step = 1, from = cursor.index) => {
+          cursor.index = from + step;
+          return cursor.index;
+        };
+        const one = take();
+        const three = take(2);
+        const ten = take(undefined, 9);
+        const twelve = take(2, undefined);
+        return \`\${one},\${three},\${ten},\${twelve},\${cursor.index}\`;
+      };
+      const text = run();
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect(printModule(compile(getSource("1,3,10,12,12")).source)).toMatch(/^take\(/m);
+    expect((await checkModel(getSource("1,3,10,12,12"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1,3,10,11,12"))).failure?.message).toContain(
+      "1,3,10,12,12",
+    );
+  });
+
+  it("runs helpers that call one that throws as operators, where the caller catches it", async () => {
+    const getSource = (expected: string) => `
+      const run = () => {
+        const cursor = { index: 0 };
+        const fail = (wanted: string) => {
+          throw new Error(\`Expected \${wanted} at \${cursor.index}\`);
+        };
+        const expect = (text: string, wanted: string) => {
+          if (text !== wanted) fail(wanted);
+          cursor.index++;
+          return text;
+        };
+        let caught = "";
+        try {
+          expect("x", "x");
+          expect("y", "x");
+        } catch (error) {
+          caught = (error as Error).message;
+        }
+        return \`\${caught}/\${cursor.index}\`;
+      };
+      const text = run();
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect(printModule(compile(getSource("Expected x at 1/1")).source)).toMatch(/^fail\(/m);
+    expect((await checkModel(getSource("Expected x at 1/1"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("Expected x at 1/2"))).failure?.message).toContain(
+      "Expected x at 1/1",
+    );
+  });
+
+  it("stops where a helper that runs as an operator throws and nothing catches it", async () => {
+    const getSource = (wanted: string) => `
+      const cursor = { index: 0 };
+      const fail = (wanted: string) => {
+        throw new Error(\`Expected \${wanted} at \${cursor.index}\`);
+      };
+      const expect = (text: string, wanted: string) => {
+        if (text !== wanted) fail(wanted);
+        cursor.index++;
+        return text;
+      };
+      expect("x", "x");
+      expect("y", "${wanted}");
+    `;
+    expect(printModule(compile(getSource("x")).source)).toMatch(/^expect\(/m);
+    expect((await checkModel(getSource("x"))).failure?.message).toContain("Expected x at 1");
+    expect((await checkModel(getSource("y"))).failure).toBeUndefined();
+  });
+
   it("runs a function that calls itself through the function that a factory returns", async () => {
     const getSource = (expected: number) => `
       const make = () => (count: number): number => (count > 0 ? 2 + step(count - 1) : 0);

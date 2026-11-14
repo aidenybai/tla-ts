@@ -48,6 +48,7 @@ import {
 import { translateAsyncCall } from "./promises";
 import { useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
+import { getThrownMessage } from "./shared-calls";
 import { getKind, isHeapPattern } from "./types";
 import {
   apply,
@@ -1752,15 +1753,7 @@ const loopKeys = (
     continueTo: undefined,
     throwTo:
       throwTo &&
-      ((current, thrown) =>
-        end(
-          current,
-          "throw",
-          thrown.value,
-          thrown.uncaught.kind === "Apply" && thrown.uncaught.operator === "Assert"
-            ? (thrown.uncaught.args[1] ?? string(""))
-            : string(site.getText()),
-        )),
+      ((current, thrown) => end(current, "throw", thrown.value, getThrownMessage(thrown, site))),
   };
   const operator: OperatorDefinition = {
     ...define(

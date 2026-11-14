@@ -31,6 +31,7 @@ import { createProgram } from "./program";
 import { link } from "./regions";
 import { translateCall, translateInvariant, translateProperty, VALUE_TAGS } from "./properties";
 import { createStateScope } from "./scope";
+import { classifySharedHelpers } from "./shared-calls";
 import { TlaTypeScriptError } from "../errors";
 import { translateStep } from "./steps";
 import {
@@ -514,6 +515,7 @@ export const compile = (
       ? { sourceFile, isEsModule: isEsModule(sourceFile) }
       : undefined;
   rejectSharing(roots, context);
+  classifySharedHelpers(reached, context);
   // A using declaration disposes nothing where it holds only null or undefined.
   const isNothing = (node: ts.Expression | undefined) =>
     node !== undefined &&

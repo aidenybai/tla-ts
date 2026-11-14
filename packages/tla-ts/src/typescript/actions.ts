@@ -1,5 +1,5 @@
 import ts from "@typescript/typescript6";
-import type { ExceptPathStep, Expression, OperatorDefinition } from "../ast";
+import type { ExceptPathStep, Expression, OperatorDefinition, SourceLocation } from "../ast";
 import {
   checkElement,
   getCallbackReceiver,
@@ -326,6 +326,7 @@ import {
   type Receiver,
   type Scope,
 } from "./scope";
+import { getThrownMessage, translateSharedCall } from "./shared-calls";
 import {
   set,
   lambda,
@@ -519,6 +520,9 @@ interface Removed {
 export interface Thrown {
   value: Expression;
   uncaught: Expression;
+  // The message and the place of a throw that a shared helper's operator gave, with where each
+  // place is, which the operator of a helper that called it gives on.
+  shared?: { message: Expression; place: Expression; throws: readonly SourceLocation[] };
   // Whether the value is a generator object that tla-ts follows, from which a catch's array pattern
   // takes its values through the generator's next.
   isGenerator?: boolean;
@@ -4668,15 +4672,7 @@ const translateSelfCall = (
     throwTo:
       frame.throwTo === undefined && ts.forEachChild(body, hasTry) !== true
         ? undefined
-        : (current, thrown) =>
-            end(
-              current,
-              "throw",
-              thrown.value,
-              thrown.uncaught.kind === "Apply" && thrown.uncaught.operator === "Assert"
-                ? (thrown.uncaught.args[1] ?? string(""))
-                : string(node.getText()),
-            ),
+        : (current, thrown) => end(current, "throw", thrown.value, getThrownMessage(thrown, node)),
     yieldTo: undefined,
     awaitTo: undefined,
     inlining: new Set([...frame.inlining, callee]),
@@ -4829,56 +4825,66 @@ export const inlineBody = (
               context,
             )))
       ? translateSelfCall(node, callee, argumentNodes, receiver, path, context, frame, continueWith)
-      : bindCall(node, callee, argumentNodes, receiver, path, context, frame, (bound, inner) => {
-          // What the call evaluated or made of the function's own code, such as a default that it
-          // skipped or an object that a default made, belongs to that call, not to a later one.
-          const isOwn = (entry: [ts.Node, Expression]) =>
-            ts.findAncestor(entry[0], (ancestor) => ancestor === callee) !== undefined;
-          const getCaller = (current: Path): Path => ({
-            ...current,
-            scope: {
-              ...current.scope,
-              previous: inner.scope.previous,
-              entered: inner.scope.entered,
-              results: new Map([...current.scope.results].filter((entry) => !isOwn(entry))),
-              allocated: new Map([...current.scope.allocated].filter((entry) => !isOwn(entry))),
-            },
-          });
-          return translateJoined(node, getCaller(inner), context, continueWith, (next) => {
-            const afterCall = (after: Path, value?: Expression) => next(getCaller(after), value);
-            const bodyFrame = {
-              next: afterCall,
-              exit: afterCall,
-              breakTo: undefined,
-              continueTo: undefined,
-              throwTo: frame.throwTo,
-              yieldTo: undefined,
-              awaitTo: undefined,
-              inlining: new Set([...frame.inlining, callee]),
-            };
-            return letIn(
-              bound.definitions,
-              throwOnDestructured(
-                bound.scope,
-                inner,
-                context,
-                bodyFrame,
-                forceHeap(
-                  inner.scope,
+      : translateSharedCall(
+          node,
+          callee,
+          argumentNodes,
+          receiver,
+          path,
+          context,
+          frame,
+          continueWith,
+          (bound, inner) => {
+            // What the call evaluated or made of the function's own code, such as a default that it
+            // skipped or an object that a default made, belongs to that call, not to a later one.
+            const isOwn = (entry: [ts.Node, Expression]) =>
+              ts.findAncestor(entry[0], (ancestor) => ancestor === callee) !== undefined;
+            const getCaller = (current: Path): Path => ({
+              ...current,
+              scope: {
+                ...current.scope,
+                previous: inner.scope.previous,
+                entered: inner.scope.entered,
+                results: new Map([...current.scope.results].filter((entry) => !isOwn(entry))),
+                allocated: new Map([...current.scope.allocated].filter((entry) => !isOwn(entry))),
+              },
+            });
+            return translateJoined(node, getCaller(inner), context, continueWith, (next) => {
+              const afterCall = (after: Path, value?: Expression) => next(getCaller(after), value);
+              const bodyFrame = {
+                next: afterCall,
+                exit: afterCall,
+                breakTo: undefined,
+                continueTo: undefined,
+                throwTo: frame.throwTo,
+                yieldTo: undefined,
+                awaitTo: undefined,
+                inlining: new Set([...frame.inlining, callee]),
+              };
+              return letIn(
+                bound.definitions,
+                throwOnDestructured(
                   bound.scope,
-                  translateStatements(
-                    getBody(callee, bound.scope, context),
-                    { ...inner, scope: { ...bound.scope, destructured: undefined } },
-                    context,
-                    bodyFrame,
-                  ),
-                  leaf(boolean(false)),
+                  inner,
                   context,
+                  bodyFrame,
+                  forceHeap(
+                    inner.scope,
+                    bound.scope,
+                    translateStatements(
+                      getBody(callee, bound.scope, context),
+                      { ...inner, scope: { ...bound.scope, destructured: undefined } },
+                      context,
+                      bodyFrame,
+                    ),
+                    leaf(boolean(false)),
+                    context,
+                  ),
                 ),
-              ),
-            );
-          });
-        });
+              );
+            });
+          },
+        );
 
 // The path of the code that resumed a function's body, with what the body changed outside itself.
 export const leaveBody = (
@@ -9896,7 +9902,7 @@ const isMaybeNullish = (type: ts.Type): boolean =>
 
 // Throws the TypeError of a pattern that destructures null or undefined, which a statement throws
 // though nothing reads what the pattern binds.
-const throwOnDestructured = (
+export const throwOnDestructured = (
   scope: Scope,
   path: Path,
   context: Context,
@@ -11221,13 +11227,14 @@ const getSummary = (
   return summarize(root, bindings, context);
 };
 
-export const getChanged = (
+// What a node may change, with the functions that it runs, where functions binds the parameters
+// that hold them.
+export const findChanged = (
   loop: ts.Node,
-  path: Path,
+  functions: ReadonlyMap<ts.Symbol, FunctionNode>,
   context: Context,
   isIdentityIgnored = false,
 ) => {
-  const functions = path.scope.functions;
   const changed = new Set<ts.Symbol>();
   const visited = new Set<ts.Node>();
   const add = (inner: { changed: Iterable<ts.Symbol>; isErrorMade: boolean }) => {
@@ -11249,6 +11256,16 @@ export const getChanged = (
     ts.forEachChild(node, visit);
   };
   visit(loop);
+  return changed;
+};
+
+export const getChanged = (
+  loop: ts.Node,
+  path: Path,
+  context: Context,
+  isIdentityIgnored = false,
+) => {
+  const changed = findChanged(loop, path.scope.functions, context, isIdentityIgnored);
   return [...path.mutable].filter((symbol) => changed.has(symbol));
 };
 
