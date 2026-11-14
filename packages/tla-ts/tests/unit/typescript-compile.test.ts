@@ -1153,6 +1153,27 @@ describe("values", () => {
     });
   });
 
+  describe("adds a double or a fraction to itself and to its negation exactly", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const M = Number.MAX_VALUE;
+      const sums = [M + M, -M - M, 0.1 + 0.1 === 0.2, 1.5 + -1.5, 1e308 + 1e308, (-M + M) + M === M];
+      if (sums.join() !== "${expected}" || box.size !== 0) throw new Error(sums.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("Infinity,-Infinity,true,0,Infinity,true"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects 0.1 + 0.1 as other than 0.2", async () => {
+      expect(
+        (await checkModel(getSource("Infinity,-Infinity,false,0,Infinity,true"))).failure?.message,
+      ).toContain("Infinity,-Infinity,true");
+    });
+  });
+
   describe("writes the doubles that literals give as Node does", () => {
     const getSource = (expected: string) => `
       const box = { size: 0 };

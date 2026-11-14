@@ -318,6 +318,7 @@ Add(left, right) ==
     [] right = NegativeZero -> left
     [] IsDouble(left) \\/ IsDouble(right) ->
          CASE IsDouble(left) /\\ IsDouble(right) /\\ left = Negate(right) -> 0
+           [] IsDouble(left) /\\ IsDouble(right) /\\ left = right -> Scaled(left, 1)
            [] IsZero(left) -> right
            [] IsZero(right) -> left
            [] OTHER -> Assert(FALSE, "tla-ts can't add this number exactly")
@@ -327,6 +328,9 @@ Add(left, right) ==
          ELSE WideAdd(left, right)
     [] left = 0 -> right
     [] right = 0 -> left
+    \\* A number plus itself is twice it, and plus its negation 0, exactly.
+    [] IsFraction(left) /\\ IsFraction(right) /\\ left = right -> Scaled(left, 1)
+    [] IsFraction(left) /\\ IsFraction(right) /\\ left = Negate(right) -> 0
     [] IsFraction(left) \\/ IsFraction(right) -> Assert(FALSE, "tla-ts can't add fractions")
     [] \\/ right > 0 /\\ left > MaxInteger - right
        \\/ right < 0 /\\ left < -MaxInteger - 1 - right ->
