@@ -4212,6 +4212,34 @@ BufferSlice(heap, ref, start, end, isShared, constructor) ==
                                                     Undefined, isShared))
             IN Returned(made, Allocated(made))
 
+\\* The constructor that a typed array's methods make a typed array of its element type through, of
+\\* those that constructors holds by their element types, where tla-ts follows only the built-in one.
+LOCAL TypedSpecies(heap, ref, constructors) ==
+  LET constructor == Get(heap, ref, "constructor")
+      own == constructors[heap.objects[ref[Ref]].elementType]
+  IN IF /\\ constructor \\in {Undefined, own}
+        /\\ GetterOf(heap, own, WellKnownSymbol("species"))
+             = Ref :> "get %Int8Array.[[Prototype]]%.@@species"
+     THEN own
+     ELSE Assert(FALSE, "tla-ts can't make a typed array through a constructor that a script gives")
+
+\\* The heap after a typed array's slice or filter makes a typed array of its element type that holds
+\\* values, through its constructor. filter converts each value, as it keeps undefined for an index
+\\* that a callback shrank the buffer past.
+TypedArrayHolding(heap, ref, values, bufferPrototype, constructors) ==
+  LET type == heap.objects[ref[Ref]].elementType
+      bytes == NumbersBytes(type, [position \\in DOMAIN values |-> ToNumber(values[position])])
+      allocated == Allocate(heap, BufferObject(bufferPrototype, bytes, Undefined, FALSE))
+      prototype == Get(allocated, TypedSpecies(heap, ref, constructors), "prototype")
+  IN Allocate(allocated, [elementType |-> type] @@ ViewObject(prototype, Allocated(allocated), 0, Len(values)))
+
+\\* A typed array's length, or -1 where a method that validates it throws a TypeError, as for a value
+\\* that isn't a typed array or one out of bounds.
+TypedArrayLength(heap, ref) ==
+  IF IsTypedArray(heap, ref) /\\ ~IsOutOfBounds(heap, heap.objects[ref[Ref]])
+  THEN ViewLength(heap, heap.objects[ref[Ref]])
+  ELSE -1
+
 \\* %TypedArray%.prototype's methods that read and write a typed array's elements, which give the
 \\* heap after them, their value, and the error they throw, if any. slice and subarray make their
 \\* typed array through the receiver's constructor, of those that constructors holds by their element
@@ -4248,22 +4276,7 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
         THEN current
         ELSE WithBytes(current, view, view.byteOffset + first * ElementSize(view.elementType),
                        NumbersBytes(view.elementType, values))
-      constructor == Get(heap, ref, "constructor")
-      own == constructors[view.elementType]
-      species ==
-        IF /\\ constructor \\in {Undefined, own}
-           /\\ GetterOf(heap, own, WellKnownSymbol("species"))
-                = Ref :> "get %Int8Array.[[Prototype]]%.@@species"
-        THEN own
-        ELSE Assert(FALSE, "tla-ts can't make a typed array through a constructor that a script gives")
-      made(current, kept) ==
-        LET allocated == Allocate(current, BufferObject(bufferPrototype,
-                                                        NumbersBytes(view.elementType, kept),
-                                                        Undefined, FALSE))
-            prototype == Get(allocated, species, "prototype")
-            result == Allocate(allocated, [elementType |-> view.elementType]
-                                            @@ ViewObject(prototype, Allocated(allocated), 0, Len(kept)))
-        IN Returned(result, Allocated(result))
+      species == TypedSpecies(heap, ref, constructors)
   IN CASE ~IsTypedArray(heap, ref) -> Thrown(heap, "TypeError")
        [] method \\notin {"at", "includes", "indexOf", "lastIndexOf", "join", "fill", "reverse", "slice",
                          "subarray", "set", "copyWithin"} ->
@@ -4340,7 +4353,9 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
        [] method = "slice" ->
             LET first == start(1)
                 final == end(2)
-            IN made(heap, IF final > first THEN SubSeq(elements, first + 1, final) ELSE <<>>)
+                made == TypedArrayHolding(heap, ref, IF final > first THEN SubSeq(elements, first + 1, final)
+                                                     ELSE <<>>, bufferPrototype, constructors)
+            IN Returned(made, Allocated(made))
 
 SetProperty(heap, ref, key, value) ==
   LET accessor == AccessorOf(heap, ref, key)

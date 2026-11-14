@@ -25161,6 +25161,108 @@ describe("buffers", () => {
     });
   });
 
+  describe("runs a typed array's callback methods as loops over its length and live elements", () => {
+    const source = `
+      const sample = new Int8Array([3, 1, 4, 1, 5]);
+      let calls = 0;
+      const seen: number[] = [];
+      sample.forEach(function (value, index, array) {
+        calls++;
+        seen.push(value * 10 + index);
+        if (array !== sample) throw new Error("array");
+      });
+      if (calls !== 5 || seen.join() !== "30,11,42,13,54") throw new Error("forEach");
+      if (!sample.every((value) => value > 0)) throw new Error("every");
+      if (sample.some((value) => value > 5)) throw new Error("some");
+      if (sample.find((value) => value > 3) !== 4) throw new Error("find");
+      if (sample.findIndex((value) => value === 1) !== 1) throw new Error("findIndex");
+      if (sample.findLast((value) => value < 4) !== 1) throw new Error("findLast");
+      if (sample.findLastIndex((value) => value === 1) !== 3) throw new Error("findLastIndex");
+      const odd = sample.filter((value) => value % 2 === 1);
+      if (!(odd instanceof Int8Array) || odd.join() !== "3,1,1,5") throw new Error("filter");
+      const live = new Uint8Array([1, 2, 3]);
+      const visited: number[] = [];
+      live.forEach((value, index) => {
+        visited.push(value);
+        if (index === 0) live[2] = 9;
+      });
+      if (visited.join() !== "1,2,9") throw new Error("live");
+      const buffer = new ArrayBuffer(4);
+      const detached = new Uint8Array(buffer);
+      let detachedCalls = 0;
+      detached.forEach(() => {
+        detachedCalls++;
+        if (detachedCalls === 1) buffer.transfer();
+      });
+      if (detachedCalls !== 4) throw new Error("detached calls");
+      let thrown = "";
+      try {
+        detached.forEach(() => {});
+      } catch (error) {
+        thrown = error instanceof TypeError ? "TypeError" : "other";
+      }
+      if (thrown !== "TypeError") throw new Error("out of bounds");
+      const shrunk = new ArrayBuffer(3, { maxByteLength: 3 });
+      const shrinking = new Uint8Array(shrunk);
+      shrinking.set([1, 2, 3]);
+      let shrinkCalls = 0;
+      const kept = shrinking.filter(() => {
+        if (shrinkCalls === 0) shrunk.resize(1);
+        shrinkCalls++;
+        return true;
+      });
+      if (shrinkCalls !== 3 || kept.join() !== "1,0,0") throw new Error("kept");
+    `;
+    const visited = source.replace('"30,11,42,13,54"', '"30,11,42,13,5"');
+    const live = source.replace('"1,2,9"', '"1,2,3"');
+    const detached = source.replace("detachedCalls !== 4", "detachedCalls !== 1");
+    const filtered = source.replace('odd.join() !== "3,1,1,5"', 'odd.join() !== "3,1,4,1,5"');
+    const outOfBounds = source.replace('thrown !== "TypeError"', 'thrown !== ""');
+    const kept = source.replace('kept.join() !== "1,0,0"', 'kept.join() !== "1,2,3"');
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(visited)).failure?.message).toContain('"forEach"');
+    });
+
+    it("rejects wrong expectation 2", async () => {
+      expect((await checkModel(live)).failure?.message).toContain('"live"');
+    });
+
+    it("rejects wrong expectation 3", async () => {
+      expect((await checkModel(detached)).failure?.message).toContain('"detached calls"');
+    });
+
+    it("rejects wrong expectation 4", async () => {
+      expect((await checkModel(filtered)).failure?.message).toContain('"filter"');
+    });
+
+    it("rejects wrong expectation 5", async () => {
+      expect((await checkModel(outOfBounds)).failure?.message).toContain('"out of bounds"');
+    });
+
+    it("rejects wrong expectation 6", async () => {
+      expect((await checkModel(kept)).failure?.message).toContain('"kept"');
+    });
+
+    it("stops where a script replaced the method", async () => {
+      const result = await checkModel(`
+        let calls = 0;
+        Int8Array.prototype.forEach = function () {
+          calls = 100;
+        };
+        new Int8Array(2).forEach(() => {
+          calls++;
+        });
+        if (calls !== 100) throw new Error("replaced");
+      `);
+      expect(result.failure?.message).toContain("where a script replaced it");
+    });
+  });
+
   it("throws a TypeError where a typed array's method runs through call on another value", async () => {
     const result = await checkModel(`
       function throws(expected: Function, func: () => unknown, message: string) {

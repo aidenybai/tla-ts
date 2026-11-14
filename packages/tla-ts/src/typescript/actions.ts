@@ -1774,6 +1774,19 @@ const getUpdate = (expression: ts.BinaryExpression, path: Path, context: Context
 const getRootCall = (node: ts.Expression | undefined): ts.Expression | undefined =>
   node !== undefined && ts.isPropertyAccessExpression(node) ? getRootCall(node.expression) : node;
 
+// ArrayBuffer.prototype and the typed array constructors by their element types, through which a
+// typed array's method makes a typed array.
+const translateTypedConstructors = (site: ts.Node, context: Context) => [
+  translateBuiltInValue("ArrayBuffer.prototype", site, context),
+  record(
+    "Record",
+    [...TYPED_ARRAYS.values()].map((type) => ({
+      name: type,
+      value: translateBuiltInValue(`${type}Array`, site, context),
+    })),
+  ),
+];
+
 export const translateCallStatement = (
   expression: ts.CallExpression,
   path: Path,
@@ -2623,14 +2636,7 @@ export const translateCallStatement = (
               tuple(
                 viewCall.values.map((value) => translateExpression(value, path.scope, context)),
               ),
-              translateBuiltInValue("ArrayBuffer.prototype", expression, context),
-              record(
-                "Record",
-                [...TYPED_ARRAYS.values()].map((type) => ({
-                  name: type,
-                  value: translateBuiltInValue(`${type}Array`, expression, context),
-                })),
-              ),
+              ...translateTypedConstructors(expression, context),
             ],
             context,
           )
@@ -6494,6 +6500,19 @@ const UNCALLED_METHODS = new Set([
   "with",
 ]);
 
+// The methods of %TypedArray%.prototype that run as loops, which read each index below the length
+// that they validate first.
+const TYPED_LOOP_METHODS = new Set([
+  "forEach",
+  "every",
+  "some",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+  "filter",
+]);
+
 // The array methods that gather what they read into the array that they give.
 const GATHERING_METHODS = new Set(["filter", "map", "flatMap", "toReversed", "toSpliced", "with"]);
 
@@ -6513,6 +6532,8 @@ interface LoopCall {
   isUnordered: boolean;
   // Whether the receiver inherits the method, which the call checks is Array.prototype's.
   isInherited: boolean;
+  // Whether the receiver is a typed array, whose method the call checks is %TypedArray%.prototype's.
+  isTyped: boolean;
 }
 
 // An array method that calls back for each element, on an array or an array-like object.
@@ -6615,6 +6636,7 @@ const getLoopTarget = (node: ts.Node, context: Context) => {
       isArrayLike: true,
       isUnordered: false,
       isInherited: true,
+      isTyped: false,
     };
   }
   if (!isMethodCall(node)) return undefined;
@@ -6628,6 +6650,25 @@ const getLoopTarget = (node: ts.Node, context: Context) => {
   const isArrayLike = isCall || isHeapArray(target, context);
   const method = isCall ? called : node.expression.name.text;
   const receiver = isCall ? node.arguments[0] : target;
+  const type = context.checker.getTypeAtLocation(target);
+  if (
+    !isCall &&
+    (type.isUnion() ? type.types : [type]).every((member) =>
+      TYPED_ARRAYS.has(member.getSymbol()?.name ?? ""),
+    )
+  ) {
+    return TYPED_LOOP_METHODS.has(method)
+      ? {
+          method,
+          receiver,
+          callbackArguments: node.arguments,
+          isArrayLike: true,
+          isUnordered: false,
+          isInherited: false,
+          isTyped: true,
+        }
+      : undefined;
+  }
   const isUnordered = method === "forEach" && isOrderFreeForEach(node, receiver, context);
   return (LOOP_METHODS.has(method) ||
     UNCALLED_METHODS.has(method) ||
@@ -6640,6 +6681,7 @@ const getLoopTarget = (node: ts.Node, context: Context) => {
         isArrayLike,
         isUnordered,
         isInherited: false,
+        isTyped: false,
       }
     : undefined;
 };
@@ -6745,6 +6787,7 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
           isArrayLike: target.isArrayLike,
           isUnordered: target.isUnordered,
           isInherited: target.isInherited,
+          isTyped: target.isTyped,
         }
       : undefined;
   }
@@ -6756,7 +6799,8 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
     (ts.isArrowFunction(callback) ||
       ts.isFunctionExpression(callback) ||
       ts.isFunctionDeclaration(callback)) &&
-    (getChanged(callback, path, context).length > 0 ||
+    (target.isTyped ||
+      getChanged(callback, path, context).length > 0 ||
       (path.scope.isCatching && mayThrow(callback, context)) ||
       getLoopGetters(node, context).length > 0 ||
       context.heapCollections.has(node) ||
@@ -6770,6 +6814,7 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
         isArrayLike: target.isArrayLike,
         isUnordered: target.isUnordered,
         isInherited: target.isInherited,
+        isTyped: target.isTyped,
       }
     : undefined;
 };
@@ -6802,21 +6847,26 @@ const translateLoopCall = (
   // objects, the method reads its length and then each element as it visits it, as JavaScript
   // does. reduce without an initial value takes the first element that it finds as its
   // accumulator, and throws a TypeError where it finds none.
-  const lengthGetters = loop.isArrayLike ? getDefinedGetters(receiver, "length", context) : [];
-  const speciesGetters = loop.isArrayLike ? getSpeciesGetters(method, receiver, context) : [];
-  const isLengthConverted = loop.isArrayLike && isObjectLength(receiver, context);
+  // A typed array's method reads its length from the view, and each element from its buffer, which
+  // no getter answers.
+  const isObject = loop.isArrayLike && !loop.isTyped;
+  const lengthGetters = isObject ? getDefinedGetters(receiver, "length", context) : [];
+  const speciesGetters = isObject ? getSpeciesGetters(method, receiver, context) : [];
+  const isLengthConverted = isObject && isObjectLength(receiver, context);
   // The array that map makes, where the heap holds it, gathers its elements and its holes.
   const isHeapMap = method === "map" && context.heapCollections.has(expression);
-  const getters = loop.isArrayLike
-    ? (getElementGetters(receiver, context) ??
-      (lengthGetters.length + speciesGetters.length > 0 ||
-      isLengthConverted ||
-      isHeapMap ||
-      (callback !== undefined &&
-        getChanged(callback, path, context).some((symbol) => symbol === context.heap))
-        ? []
-        : undefined))
-    : undefined;
+  const getters = loop.isTyped
+    ? []
+    : loop.isArrayLike
+      ? (getElementGetters(receiver, context) ??
+        (lengthGetters.length + speciesGetters.length > 0 ||
+        isLengthConverted ||
+        isHeapMap ||
+        (callback !== undefined &&
+          getChanged(callback, path, context).some((symbol) => symbol === context.heap))
+          ? []
+          : undefined))
+      : undefined;
   const changed =
     getters === undefined && callback !== undefined
       ? getChanged(callback, path, context)
@@ -7154,7 +7204,7 @@ const translateLoopCall = (
             repeat(inner, apply("Append", [kept, identifier(searchName)])),
             read,
           )
-        : EVERY_INDEX_METHODS.has(method)
+        : EVERY_INDEX_METHODS.has(method) || loop.isTyped
           ? read
           : ifThenElse(
               useJavaScript("Has", [getHeap(inner.scope, receiver, context), owner, key], context),
@@ -7283,28 +7333,44 @@ const translateLoopCall = (
       (ts.isIdentifier(sorted) ||
         ts.isPropertyAccessExpression(sorted) ||
         ts.isElementAccessExpression(sorted));
+    // map's array where the heap holds it, and a typed array's filter's typed array, which it
+    // makes through the receiver's constructor after it visits the elements.
+    const made = isHeapMap
+      ? useJavaScript(
+          "Allocate",
+          [
+            getHeap(after.scope, expression, context),
+            useJavaScript(
+              "ArrayObjectWithHoles",
+              [
+                translateBuiltInValue("Array.prototype", expression, context),
+                index(value, [number(1)]),
+                index(value, [number(2)]),
+              ],
+              context,
+            ),
+          ],
+          context,
+        )
+      : loop.isTyped && method === "filter"
+        ? useJavaScript(
+            "TypedArrayHolding",
+            [
+              getHeap(after.scope, expression, context),
+              owner,
+              value,
+              ...translateTypedConstructors(expression, context),
+            ],
+            context,
+          )
+        : undefined;
     const finish = (): Formula =>
-      !isHeapMap || context.heap === undefined
+      made === undefined || context.heap === undefined
         ? continueWith(isWrittenBack ? assign(receiver, after, context, () => value) : after, value)
         : bindOnce(
             after,
             heapName,
-            useJavaScript(
-              "Allocate",
-              [
-                getHeap(after.scope, expression, context),
-                useJavaScript(
-                  "ArrayObjectWithHoles",
-                  [
-                    translateBuiltInValue("Array.prototype", expression, context),
-                    index(value, [number(1)]),
-                    index(value, [number(2)]),
-                  ],
-                  context,
-                ),
-              ],
-              context,
-            ),
+            made,
             continueWith(
               {
                 ...after,
@@ -7374,6 +7440,45 @@ const translateLoopCall = (
               ),
             );
   if (getters !== undefined) {
+    // A typed array's method, where the receiver holds the built-in one, throws a TypeError for a
+    // receiver that isn't a typed array or is out of bounds.
+    const readLength = (next: (path: Path, value: Expression) => Formula) => {
+      const heap = getHeap(path.scope, expression, context);
+      return loop.isTyped
+        ? ifThenElse(
+            useJavaScript(
+              "HoldsBuiltIn",
+              [
+                heap,
+                owner,
+                string(method),
+                string(`%Int8Array.prototype.[[Prototype]]%.${method}`),
+              ],
+              context,
+            ),
+            bind(
+              path,
+              "length",
+              useJavaScript("TypedArrayLength", [heap, owner], context),
+              context,
+              (found, length) =>
+                ifThenElse(
+                  apply("=", [length, number(-1)]),
+                  throwTypeError(found, expression, context, frame),
+                  next(found, length),
+                ),
+            ),
+            leaf(
+              apply("Assert", [
+                boolean(false),
+                string(
+                  `tla-ts can't call %Int8Array.prototype.[[Prototype]]%.${method} where a script replaced it`,
+                ),
+              ]),
+            ),
+          )
+        : readWith(expression, owner, string("length"), lengthGetters, path, context, frame, next);
+    };
     // The length, which the method reads once, running its getter, after which map and filter
     // check the array's constructor, as ArraySpeciesCreate reads it.
     return letIn(
@@ -7400,117 +7505,104 @@ const translateLoopCall = (
             ]
           : []),
       ],
-      readWith(
-        expression,
-        owner,
-        string("length"),
-        lengthGetters,
-        path,
-        context,
-        frame,
-        (found, held) => {
-          const visitWith = (after: Path, value: Expression) => {
-            // with throws a RangeError where the index it replaces isn't below the length.
-            const seeded = (current: Path) =>
-              letIn(
-                [
-                  define(lengthName, [], useJavaScript("ToLength", [value], context)),
-                  ...(isSpliced
-                    ? [
-                        define(
-                          startName,
-                          [],
-                          translateClampedIndex(
-                            loop.argument,
-                            number(0),
-                            length,
-                            path.scope,
-                            context,
-                          ),
-                        ),
-                        define(
-                          skippedName,
-                          [],
-                          translateSkipped(
-                            loop.argument,
-                            loop.initial,
-                            apply("-", [length, identifier(startName)]),
-                            path.scope,
-                            context,
-                          ),
-                        ),
-                      ]
-                    : []),
-                  ...(replaced === undefined
-                    ? []
-                    : [
-                        define(
-                          replacedName,
-                          [],
-                          useJavaScript(
-                            "RelativeIndex",
-                            [translateExpression(replaced, path.scope, context), length],
-                            context,
-                          ),
-                        ),
-                      ]),
-                ],
-                replaced === undefined
-                  ? getSeeded(current)
-                  : ifThenElse(
-                      junction("And", [
-                        apply(">=", [identifier(replacedName), number(0)]),
-                        apply("<", [identifier(replacedName), length]),
-                      ]),
-                      getSeeded(current),
-                      throwError("RangeError", current, expression, context, frame),
-                    ),
-              );
-            // ArraySpeciesCreate reads an array's constructor, running its getter, where tla-ts
-            // follows only Array.
-            return ["filter", "map"].includes(method)
-              ? ifThenElse(
-                  useJavaScript(
-                    "IsArray",
-                    [getHeap(after.scope, receiver, context), owner],
-                    context,
-                  ),
-                  readWith(
-                    expression,
-                    owner,
-                    string("constructor"),
-                    speciesGetters,
-                    after,
-                    context,
-                    frame,
-                    (read, constructor) =>
-                      ifThenElse(
-                        useJavaScript(
-                          "SameValue",
-                          [constructor, translateBuiltInValue("Array", receiver, context)],
+      readLength((found, held) => {
+        const visitWith = (after: Path, value: Expression) => {
+          // with throws a RangeError where the index it replaces isn't below the length.
+          const seeded = (current: Path) =>
+            letIn(
+              [
+                define(lengthName, [], useJavaScript("ToLength", [value], context)),
+                ...(isSpliced
+                  ? [
+                      define(
+                        startName,
+                        [],
+                        translateClampedIndex(
+                          loop.argument,
+                          number(0),
+                          length,
+                          path.scope,
                           context,
                         ),
-                        seeded(read),
-                        leaf(
-                          apply("Assert", [
-                            boolean(false),
-                            string(
-                              "tla-ts can't make an array through a constructor that a script gives",
-                            ),
-                          ]),
+                      ),
+                      define(
+                        skippedName,
+                        [],
+                        translateSkipped(
+                          loop.argument,
+                          loop.initial,
+                          apply("-", [length, identifier(startName)]),
+                          path.scope,
+                          context,
                         ),
                       ),
+                    ]
+                  : []),
+                ...(replaced === undefined
+                  ? []
+                  : [
+                      define(
+                        replacedName,
+                        [],
+                        useJavaScript(
+                          "RelativeIndex",
+                          [translateExpression(replaced, path.scope, context), length],
+                          context,
+                        ),
+                      ),
+                    ]),
+              ],
+              replaced === undefined
+                ? getSeeded(current)
+                : ifThenElse(
+                    junction("And", [
+                      apply(">=", [identifier(replacedName), number(0)]),
+                      apply("<", [identifier(replacedName), length]),
+                    ]),
+                    getSeeded(current),
+                    throwError("RangeError", current, expression, context, frame),
                   ),
-                  seeded(after),
-                )
-              : seeded(after);
-          };
-          // ToLength converts a length that's an object to a primitive first.
-          return isLengthConverted
-            ? runToPrimitive(expression, held, "number", found, context, frame, visitWith)
-            : visitWith(found, held);
-        },
-      ),
+            );
+          // ArraySpeciesCreate reads an array's constructor, running its getter, where tla-ts
+          // follows only Array.
+          return ["filter", "map"].includes(method) && !loop.isTyped
+            ? ifThenElse(
+                useJavaScript("IsArray", [getHeap(after.scope, receiver, context), owner], context),
+                readWith(
+                  expression,
+                  owner,
+                  string("constructor"),
+                  speciesGetters,
+                  after,
+                  context,
+                  frame,
+                  (read, constructor) =>
+                    ifThenElse(
+                      useJavaScript(
+                        "SameValue",
+                        [constructor, translateBuiltInValue("Array", receiver, context)],
+                        context,
+                      ),
+                      seeded(read),
+                      leaf(
+                        apply("Assert", [
+                          boolean(false),
+                          string(
+                            "tla-ts can't make an array through a constructor that a script gives",
+                          ),
+                        ]),
+                      ),
+                    ),
+                ),
+                seeded(after),
+              )
+            : seeded(after);
+        };
+        // ToLength converts a length that's an object to a primitive first.
+        return isLengthConverted
+          ? runToPrimitive(expression, held, "number", found, context, frame, visitWith)
+          : visitWith(found, held);
+      }),
     );
   }
   return letIn(
