@@ -196,13 +196,13 @@ Power(base, exponent) ==
     [] base = NegativeInfinity ->
          CASE ~IsNegative(exponent) /\\ IsOdd(exponent) -> NegativeInfinity
            [] ~IsNegative(exponent) -> Infinity
-           [] IsOdd(Negate(exponent)) -> NegativeZero
+           [] IsOdd(exponent) -> NegativeZero
            [] OTHER -> 0
     [] base = 0 -> IF IsNegative(exponent) THEN Infinity ELSE 0
     [] base = NegativeZero ->
          CASE ~IsNegative(exponent) /\\ IsOdd(exponent) -> NegativeZero
            [] ~IsNegative(exponent) -> 0
-           [] IsOdd(Negate(exponent)) -> NegativeInfinity
+           [] IsOdd(exponent) -> NegativeInfinity
            [] OTHER -> Infinity
     [] exponent \\in Infinities ->
          LET exceedsOne == IF IsFraction(base)
@@ -214,7 +214,9 @@ Power(base, exponent) ==
     [] IsFraction(base) \\/ IsFraction(exponent) ->
          Assert(FALSE, "tla-ts can't raise fractions to a power")
     [] exponent >= 0 -> base ^ exponent
-    [] Absolute(base) = 1 -> IF IsOdd(Negate(exponent)) THEN base ELSE 1
+    [] Absolute(base) = 1 -> IF IsOdd(exponent) THEN base ELSE 1
+    \\* 2 ** -1075 is half the least number above 0, so it and any power nearer 0 round to 0.
+    [] exponent <= -1075 -> IF IsNegative(base) /\\ IsOdd(exponent) THEN NegativeZero ELSE 0
     [] OTHER -> Assert(FALSE, "tla-ts can't represent this value")
 
 \\* The order of numbers, by their kind, then their floor, then their position in Fractions, where

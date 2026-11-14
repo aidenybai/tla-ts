@@ -1259,6 +1259,25 @@ describe("values", () => {
     });
   });
 
+  it("rounds a power nearer 0 than half the least number to 0", async () => {
+    const source = `
+      const least = -2147483648;
+      const values = [2 ** least, Math.pow(-3, -1075), 1 ** least, (-1) ** -1075, Math.pow(-2, -1076)];
+      if (
+        !Object.is(values[0], 0) ||
+        !Object.is(values[1], -0) ||
+        values[2] !== 1 ||
+        values[3] !== -1 ||
+        !Object.is(values[4], 0)
+      ) {
+        throw new Error("power");
+      }
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace("values[3] !== -1", "values[3] !== 1");
+    expect((await checkModel(wrong)).failure?.message).toContain('"power"');
+  });
+
   it("multiplies with Math.imul and reads a literal past 32 bits as ToInt32 does", async () => {
     const result = await checkModel(`
       const hash = (seed: number, value: number) => Math.imul(seed ^ value, 0x01000193);
