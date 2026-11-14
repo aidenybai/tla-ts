@@ -5079,6 +5079,89 @@ describe("calls", () => {
     );
   });
 
+  it("runs a helper that takes a callback as an operator for each function that its calls pass", async () => {
+    const getSource = (expected: string) => `
+      const run = () => {
+        const holder = { seen: 0 };
+        let steps = 0;
+        const isDigit = (character: string) => character >= "0" && character <= "9";
+        const skipWhile = (source: string, index: number, isMatch: (character: string) => boolean) => {
+          const end = { value: index };
+          while (end.value < source.length && isMatch(source[end.value])) end.value++;
+          holder.seen += 1;
+          return end.value;
+        };
+        const readWord = (text: string, first: number, stop: string) =>
+          skipWhile(text, first, (character) => {
+            steps++;
+            return character !== stop;
+          });
+        const readNumber = (text: string, first: number) => skipWhile(text, first, isDigit);
+        return \`\${readNumber("12a", 0)},\${readNumber("x345", 1)},\${readWord("ab;c", 0, ";")},\${readWord("ab;c", 3, "c")},\${holder.seen},\${steps}\`;
+      };
+      const text = run();
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect(printModule(compile(getSource("2,4,2,3,4,4")).source)).toMatch(/^skipWhile\(/m);
+    expect((await checkModel(getSource("2,4,2,3,4,4"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("2,4,2,3,4,3"))).failure?.message).toContain("2,4,2,3,4,4");
+  });
+
+  it("runs a helper that passes its callback's call back into itself as a recursive operator", async () => {
+    const getSource = (expected: string) => `
+      interface Tree {
+        first: number;
+        last: number;
+        children: Tree[];
+      }
+      const parseText = (text: string) => {
+        const skipSpaces = (index: number) => {
+          let end = index;
+          while (text[end] === " ") end++;
+          return end;
+        };
+        const parseItems = (
+          start: number,
+          close: string,
+          parseItem: (index: number) => Tree | undefined,
+        ): Tree | undefined => {
+          const node: Tree = { first: start, last: start, children: [] };
+          let index = skipSpaces(start);
+          while (index < text.length && text[index] !== close) {
+            const item = parseItem(index);
+            if (item === undefined) return undefined;
+            node.children.push(item);
+            index = skipSpaces(item.last + 1);
+            if (text[index] === ",") index = skipSpaces(index + 1);
+          }
+          node.last = index;
+          return node;
+        };
+        const parse = (index: number): Tree | undefined =>
+          text[index] === "("
+            ? parseItems(index + 1, ")", (inner) => parse(inner))
+            : text[index] === undefined || text[index] === ")"
+              ? undefined
+              : { first: index, last: index, children: [] };
+        const show = (tree: Tree | undefined): string => {
+          if (tree === undefined) return "?";
+          if (tree.children.length === 0) return text[tree.first];
+          let shown = "[";
+          for (const child of tree.children) shown += show(child);
+          return \`\${shown}]\`;
+        };
+        return show(parse(0));
+      };
+      const result = \`\${parseText("(a, (b c), d)")};\${parseText("(a, (b")}\`;
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect(printModule(compile(getSource("[a[bc]d];[a[b]]")).source)).toMatch(/^parseItems\(/m);
+    expect((await checkModel(getSource("[a[bc]d];[a[b]]"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("[a[bc]d];?"))).failure?.message).toContain(
+      "[a[bc]d];[a[b]]",
+    );
+  });
+
   it("runs helpers that call each other as recursive operators that change the caller's names", async () => {
     const getSource = (expected: string, deepest: number) => `
       const run = () => {

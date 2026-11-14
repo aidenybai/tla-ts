@@ -5,6 +5,7 @@ import {
   bindOnce,
   findChanged,
   type Frame,
+  getCallback,
   type Path,
   type Thrown,
   throwOnDestructured,
@@ -21,6 +22,8 @@ import {
   isClosure,
   isPlain,
   type SharedCall,
+  type SharedHelper,
+  skipCasts,
 } from "./context";
 import { forceHeap } from "./functions";
 import { type Formula, ifThenElse, leaf, letIn, render } from "./formula";
@@ -180,9 +183,10 @@ const getUnit = (unit: ts.Node, context: Context): Unit => {
 };
 
 // Finds, before the model's code compiles, each helper that can run as an operator: a function
-// that a const or a declaration holds, whose parameters are names of values, that makes no closure,
-// and that reads no function from outside itself. One that calls itself, through itself or through
-// the functions it runs, calls its own operator.
+// that a const or a declaration holds, whose parameters are names, that makes no closure, and that
+// reads no function from outside itself but through a parameter. One that calls itself, through
+// itself or through the functions it runs, calls its own operator. A function that a call passes a
+// helper's parameter, written there or named, runs inside the operator where it reads the same.
 export const classifySharedHelpers = (reached: readonly ts.Node[], context: Context) => {
   if (context.heap === undefined) return;
   const found = reached.flatMap((node) =>
@@ -195,17 +199,40 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
         inner.body !== undefined &&
         !isClosure(inner, context) &&
         getParameters(inner).every(
-          (parameter) =>
-            ts.isIdentifier(parameter.name) &&
-            parameter.dotDotDotToken === undefined &&
-            context.checker.getTypeAtLocation(parameter.name).getCallSignatures().length === 0,
+          (parameter) => ts.isIdentifier(parameter.name) && parameter.dotDotDotToken === undefined,
         ),
     ),
   );
   const candidates = [...new Set(found)];
-  // The units that the candidates run, each found once.
+  const isCandidate = new Set<ts.Node>(candidates);
+  const callbacks = [
+    ...new Set(
+      reached.flatMap((node) =>
+        findNodes(node, ts.isCallExpression).flatMap((call) => {
+          const declaration = getSymbol(call.expression, context.checker)?.valueDeclaration;
+          const callee = declaration === undefined ? undefined : getFixedFunction(declaration);
+          return callee === undefined || !isCandidate.has(callee)
+            ? []
+            : call.arguments.flatMap((argument) => {
+                const passed = skipCasts(argument);
+                const named = ts.isIdentifier(passed)
+                  ? getSymbol(passed, context.checker)?.valueDeclaration
+                  : undefined;
+                const callback =
+                  ts.isArrowFunction(passed) || ts.isFunctionExpression(passed)
+                    ? passed
+                    : named === undefined
+                      ? undefined
+                      : getFixedFunction(named);
+                return callback?.body !== undefined && isPlain(callback) ? [callback] : [];
+              });
+        }),
+      ),
+    ),
+  ];
+  // The units that the candidates and the callbacks run, each found once.
   const units = new Map<ts.Node, Unit>();
-  const pending: ts.Node[] = [...candidates];
+  const pending: ts.Node[] = [...candidates, ...callbacks];
   while (pending.length > 0) {
     const node = pending.pop() ?? candidates[0];
     if (units.has(node)) continue;
@@ -214,7 +241,9 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
     pending.push(...unit.runs);
   }
   const state = getState(context);
-  candidates.forEach((callee) => {
+  // What a function and the functions it runs read from outside it and change, where all of their
+  // code runs as an operator's would.
+  const getHelper = (callee: ts.Node): SharedHelper | undefined => {
     const reach = new Set<ts.Node>([callee]);
     const queued: ts.Node[] = [callee];
     const read = new Map<ts.Symbol, ts.Node>();
@@ -225,8 +254,8 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
         queued.push(run);
       });
     }
-    const reached = [...reach].flatMap((node) => units.get(node) ?? []);
-    reached.forEach((unit) =>
+    const reachedUnits = [...reach].flatMap((node) => units.get(node) ?? []);
+    reachedUnits.forEach((unit) =>
       unit.read.forEach((declaration, symbol) => read.set(symbol, declaration)),
     );
     // A name that a function around the helper declares comes from outside, though the helper runs
@@ -242,22 +271,30 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
         ) === undefined,
     );
     if (
-      reached.some((unit) => unit.isTaskNamed || !unit.isOwn) ||
+      reachedUnits.some((unit) => unit.isTaskNamed || !unit.isOwn) ||
       outside.some(
         (entry) =>
           context.checker.getTypeOfSymbolAtLocation(entry[0], entry[1]).getCallSignatures().length >
           0,
       )
     ) {
-      return;
+      return undefined;
     }
     // The operator gives back the state and the names from outside that the helper changes.
     const changed = findChanged(callee, new Map(), context);
     const outsideNames = outside.map((entry) => entry[0]);
-    context.sharedHelpers.set(callee, {
+    return {
       read: outsideNames,
       changed: [...new Set([...state, ...outsideNames])].filter((symbol) => changed.has(symbol)),
-    });
+    };
+  };
+  candidates.forEach((callee) => {
+    const helper = getHelper(callee);
+    if (helper !== undefined) context.sharedHelpers.set(callee, helper);
+  });
+  callbacks.forEach((callback) => {
+    const helper = getHelper(callback);
+    if (helper !== undefined) context.sharedCallbacks.set(callback, helper);
   });
 };
 
@@ -280,12 +317,22 @@ export const isSharedCall = (
 // The operator that a call of a helper runs, where the helper runs as its inlined body would: where
 // the call binds each name that the helper reads from a function around it, and takes back each
 // one that it changes. A call inside the helper's own operator calls that operator.
-const getSharedCall = (callee: FunctionNode, path: Path, context: Context, frame: Frame) => {
+const getSharedCall = (
+  callee: FunctionNode,
+  callbacks: ReadonlyMap<ts.Symbol, FunctionNode>,
+  path: Path,
+  context: Context,
+  frame: Frame,
+) => {
   const helper = context.sharedHelpers.get(callee);
-  if (helper === undefined) return undefined;
+  const passed = [...callbacks.values()].map((callback) => context.sharedCallbacks.get(callback));
+  if (helper === undefined || passed.some((callback) => callback === undefined)) return undefined;
+  const runs = [helper, ...passed.flatMap((callback) => callback ?? [])];
+  const read = [...new Set(runs.flatMap((run) => run.read))];
+  const changed = [...new Set(runs.flatMap((run) => run.changed))];
   const isCatching = path.scope.isCatching;
   const isThrowing = frame.throwTo !== undefined;
-  const captured = helper.read.filter(
+  const captured = read.filter(
     (symbol) => !context.variables.has(symbol) && path.scope.bindings.has(symbol),
   );
   const isReadable = (symbol: ts.Symbol) => {
@@ -302,8 +349,8 @@ const getSharedCall = (callee: FunctionNode, path: Path, context: Context, frame
   // resume or close.
   if (
     path.generators.size > 0 ||
-    !helper.read.every(isReadable) ||
-    !helper.changed.every((symbol) => context.variables.has(symbol) || captured.includes(symbol))
+    !read.every(isReadable) ||
+    !changed.every((symbol) => context.variables.has(symbol) || captured.includes(symbol))
   ) {
     return undefined;
   }
@@ -312,15 +359,26 @@ const getSharedCall = (callee: FunctionNode, path: Path, context: Context, frame
       shared.isCatching === isCatching &&
       shared.isThrowing === isThrowing &&
       shared.captured.length === captured.length &&
-      shared.captured.every((symbol) => captured.includes(symbol)),
+      shared.captured.every((symbol) => captured.includes(symbol)) &&
+      [...callbacks].every((entry) => shared.callbacks.get(entry[0]) === entry[1]),
   );
   if (defined !== undefined && context.inProgress.has(callee)) defined.isRecursive = true;
-  return {
-    helper,
-    shared:
-      defined ?? defineShared(callee, helper.changed, isCatching, isThrowing, captured, context),
-  };
+  return (
+    defined ??
+    defineShared(callee, { changed, isCatching, isThrowing, captured, callbacks }, context)
+  );
 };
+
+// The parameters that take values, not the functions that the operator calls.
+const getValueParameters = (
+  callee: FunctionNode,
+  callbacks: ReadonlyMap<ts.Symbol, FunctionNode>,
+  context: Context,
+) =>
+  getParameters(callee).filter((parameter) => {
+    const symbol = getSymbol(parameter.name, context.checker);
+    return symbol === undefined || !callbacks.has(symbol);
+  });
 
 // The place of a throw that an operator gives its caller, among every operator's.
 const getPlace = (location: SourceLocation, context: Context) => {
@@ -368,20 +426,18 @@ export const defineThrown = (context: Context) =>
 // or what it threw, the message and the place of the throw, and the state that it changed.
 const defineShared = (
   callee: FunctionNode,
-  changed: readonly ts.Symbol[],
-  isCatching: boolean,
-  isThrowing: boolean,
-  captured: ts.Symbol[],
+  variant: Pick<SharedCall, "changed" | "isCatching" | "isThrowing" | "captured" | "callbacks">,
   context: Context,
 ) => {
   const parameters = getParameters(callee);
   const state = getState(context);
+  const changed = variant.changed;
   const named = [
-    ...parameters.map((parameter) => ({
+    ...getValueParameters(callee, variant.callbacks, context).map((parameter) => ({
       symbol: getSymbol(parameter.name, context.checker),
       name: context.names.getFresh(parameter.name.getText()),
     })),
-    ...captured.map((symbol) => ({ symbol, name: context.names.getFresh(symbol.name) })),
+    ...variant.captured.map((symbol) => ({ symbol, name: context.names.getFresh(symbol.name) })),
     ...state.map((symbol) => ({ symbol, name: context.names.getFresh(symbol.name) })),
   ];
   const shared: SharedCall = {
@@ -390,9 +446,7 @@ const defineShared = (
         ? callee.parent.name.text
         : (callee.name?.getText() ?? "helper"),
     ),
-    isCatching,
-    isThrowing,
-    captured,
+    ...variant,
     parameters: named.map((item) => ({ name: item.name, arity: 0 })),
     isRecursive: false,
     isReturning: true,
@@ -402,7 +456,8 @@ const defineShared = (
   const base = createStateScope(context);
   const scope = {
     ...base,
-    isCatching,
+    isCatching: variant.isCatching,
+    functions: new Map([...base.functions, ...variant.callbacks]),
     bindings: new Map([
       ...base.bindings,
       ...named.flatMap((item): [ts.Symbol, Expression][] =>
@@ -463,7 +518,7 @@ const defineShared = (
     breakTo: undefined,
     continueTo: undefined,
     // Where nothing can catch what the body throws, it stops there, as the inlined body would.
-    throwTo: isThrowing
+    throwTo: variant.isThrowing
       ? (current, thrown) =>
           end(
             current,
@@ -513,15 +568,42 @@ export const translateSharedCall = (
   };
   return bindCall(node, callee, argumentNodes, receiver, path, context, outside, (bound, inner) => {
     const parameters = getParameters(callee);
-    const found = parameters.some((parameter) => {
+    // A parameter whose type is a function takes the function that the call passes it, which the
+    // operator runs as the inlined body would.
+    const callbacks = parameters.map((parameter, position) => {
       const symbol = getSymbol(parameter.name, context.checker);
-      return symbol === undefined || bound.scope.functions.has(symbol);
-    })
-      ? undefined
-      : getSharedCall(callee, path, context, frame);
-    if (found === undefined) return inlineCall(bound, inner);
-    const shared = found.shared;
-    const changed = found.helper.changed;
+      const argument = argumentNodes.at(position);
+      const callback = symbol && bound.scope.functions.get(symbol);
+      const isFunctionTyped =
+        context.checker.getTypeAtLocation(parameter).getCallSignatures().length > 0;
+      // A function that a call around this one passed the same parameter isn't this call's.
+      const passed =
+        callback !== undefined &&
+        callback ===
+          (argument === undefined
+            ? getAnyFunction(parameter.initializer)
+            : getCallback(argument, path, context))
+          ? callback
+          : undefined;
+      return { symbol, passed, isMatched: isFunctionTyped === (passed !== undefined) };
+    });
+    const shared = callbacks.every((entry) => entry.symbol !== undefined && entry.isMatched)
+      ? getSharedCall(
+          callee,
+          new Map(
+            callbacks.flatMap((entry): [ts.Symbol, FunctionNode][] =>
+              entry.symbol === undefined || entry.passed === undefined
+                ? []
+                : [[entry.symbol, entry.passed]],
+            ),
+          ),
+          path,
+          context,
+          frame,
+        )
+      : undefined;
+    if (shared === undefined) return inlineCall(bound, inner);
+    const changed = shared.changed;
     const state = getState(context);
     // What the call evaluated of the helper's own code, such as a default, belongs to that call.
     const isOwn = (entry: [ts.Node, Expression]) =>
@@ -577,7 +659,7 @@ export const translateSharedCall = (
             returned,
           );
     const operands = [
-      ...parameters.map((parameter) => {
+      ...getValueParameters(callee, shared.callbacks, context).map((parameter) => {
         const symbol = getSymbol(parameter.name, context.checker);
         return (symbol && bound.scope.bindings.get(symbol)) ?? getUndefined(context);
       }),

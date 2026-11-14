@@ -40,6 +40,10 @@ export interface SharedCall {
   // than stopping there.
   isThrowing: boolean;
   captured: ts.Symbol[];
+  // The function that each parameter takes, which the operator calls where the body calls it.
+  callbacks: ReadonlyMap<ts.Symbol, FunctionNode>;
+  // The state and the names from outside that it changes, which it gives back in that order.
+  changed: ts.Symbol[];
   parameters: OperatorParam[];
   // Whether a call inside its own body, or a body that it runs, calls it.
   isRecursive: boolean;
@@ -76,6 +80,9 @@ export interface Context {
   selfCalls: Map<ts.Node, SelfCall[]>;
   // The helpers that can run as operators, which tla-ts finds before it compiles the code.
   sharedHelpers: Map<ts.Node, SharedHelper>;
+  // The functions that a helper's operator can call where a parameter takes them, with what they
+  // read and change outside them.
+  sharedCallbacks: Map<ts.Node, SharedHelper>;
   // The operators of each helper, one for each kind of call.
   sharedCalls: Map<ts.Node, SharedCall[]>;
   // Where each throw that an operator gives its caller is, by its place, and the operator that
@@ -273,6 +280,7 @@ export const createContext = (
   recursive: new Set(),
   selfCalls: new Map(),
   sharedHelpers: new Map(),
+  sharedCallbacks: new Map(),
   sharedCalls: new Map(),
   throwPlaces: [],
   thrownName: undefined,
