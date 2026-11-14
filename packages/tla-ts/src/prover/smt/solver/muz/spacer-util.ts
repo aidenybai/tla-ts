@@ -23,7 +23,6 @@ import type { ProtoModel } from "../proto-model";
 import { Mbproj } from "../qe-mbp";
 import { RefVector } from "../ref-vector";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "../rewriter";
-import { getFreeVarSorts, VarSubst } from "../var-subst";
 
 export const INFTY_LEVEL = 0xffffffff;
 
@@ -266,20 +265,7 @@ export const qeProject = (
 };
 
 export class ZkConsts {
-  private consts = new Map<string, number>();
-
   constructor(private manager: AstManager) {}
-
-  mk(index: number, sort: number) {
-    const key = `${index}:${sort}`;
-    const existing = this.consts.get(key);
-    if (existing !== undefined) return existing;
-    const manager = this.manager;
-    const decl = manager.mkFuncDecl(`sk!${index}`, [], sort);
-    const result = pin(manager, manager.mkApp(decl, [], sort));
-    this.consts.set(key, result);
-    return result;
-  }
 
   has(expr: number) {
     const manager = this.manager;
@@ -293,17 +279,5 @@ export class ZkConsts {
       manager.pushArgs(current, todo);
     }
     return false;
-  }
-
-  // ground_expr: replaces the free variables by skolem constants.
-  ground(expr: number) {
-    const manager = this.manager;
-    const sorts = getFreeVarSorts(manager, expr, manager.freeVarBounds[expr]);
-    if (sorts.length === 0) return expr;
-    const consts = sorts.map((sort, index) => this.mk(index, sort ?? SORT_BOOL));
-    const subst = new VarSubst(manager, false);
-    const result = pin(manager, subst.apply(expr, consts));
-    subst.release();
-    return result;
   }
 }

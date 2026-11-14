@@ -38,7 +38,7 @@ const IS_MARKED2 = 32;
 const IS_INTERPRETED = 64;
 const NUM_ARGS_SHIFT = 7;
 
-export class ThVarCell {
+class ThVarCell {
   constructor(
     public thId: number,
     public thVar: number,
@@ -155,13 +155,6 @@ export class Enode {
     for (let cell = this.thNext; cell !== null; cell = cell.next)
       if (cell.thId === thId) return cell.thVar;
     return -1;
-  }
-
-  getNumThVars() {
-    if (this.thVar < 0) return 0;
-    let count = 1;
-    for (let cell = this.thNext; cell !== null; cell = cell.next) count++;
-    return count;
   }
 
   forEachThVar(visit: (thId: number, thVar: number) => void) {

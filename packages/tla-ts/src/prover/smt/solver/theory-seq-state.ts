@@ -493,16 +493,6 @@ export abstract class TheorySeqState extends Theory {
     return { id: this.eqId++, ls, rs, dep };
   }
 
-  protected mkEqDepOf(lefts: readonly number[], rights: readonly number[], dep: Dependency): DepEq {
-    const ls: number[] = [];
-    const rs: number[] = [];
-    for (const expr of lefts) this.getConcatUnits(expr, ls);
-    for (const expr of rights) this.getConcatUnits(expr, rs);
-    for (const expr of ls) this.keep(expr);
-    for (const expr of rs) this.keep(expr);
-    return { id: ++this.eqId, ls, rs, dep };
-  }
-
   protected mkDepEq(id: number, ls: readonly number[], rs: readonly number[], dep: Dependency) {
     return {
       id,

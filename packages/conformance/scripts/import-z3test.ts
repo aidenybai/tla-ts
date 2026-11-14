@@ -1,17 +1,9 @@
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { getHost, runPool, runTest } from "./hosts";
 import { BACKEND_VERDICTS } from "./tlapm";
-import { formatYaml, parseTest, SUITE_DIRECTORY, writeRecordings } from "./test-file";
+import { listFiles, parseTest, renderTest, SUITE_DIRECTORY, writeRecordings } from "./test-file";
 
 const WORKERS = Number(process.env.CONFORMANCE_WORKERS ?? Math.min(2, availableParallelism()));
 const LIMITS = { milliseconds: 60_000, memoryBytes: 4 * 1024 ** 3 };
@@ -24,14 +16,6 @@ if (!checkout || !existsSync(join(checkout, "regressions"))) {
   console.error("Usage: bun scripts/run.ts import-z3test <z3test checkout>");
   process.exit(1);
 }
-
-const listFiles = (directory: string): string[] =>
-  readdirSync(directory)
-    .sort()
-    .flatMap((entry) => {
-      const path = join(directory, entry);
-      return statSync(path).isDirectory() ? listFiles(path) : [path];
-    });
 
 const getExpectedOutput = (path: string) =>
   readFileSync(path.replace(/\.smt2$/, ".expected.out"), "utf8")
@@ -61,14 +45,11 @@ pendingScripts.forEach((script) => {
     outcome: BACKEND_VERDICTS.includes(firstLine) ? firstLine : "any",
   };
   mkdirSync(dirname(getTestPath(script)), { recursive: true });
-  writeFileSync(
-    getTestPath(script),
-    `(*---\n${formatYaml(metadata)}\n---*)\n${readFileSync(script, "utf8")}`,
-  );
+  writeFileSync(getTestPath(script), renderTest(metadata, readFileSync(script, "utf8")));
 });
 
 const host = getHost("tlapm");
-const keptCount = { value: 0 };
+let keptCount = 0;
 
 await runPool(pendingScripts, WORKERS, async (script) => {
   const path = getTestPath(script);
@@ -95,8 +76,8 @@ await runPool(pendingScripts, WORKERS, async (script) => {
       ...(first.transcript === "" ? {} : { transcript: first.transcript }),
     },
   });
-  keptCount.value++;
+  keptCount++;
 });
 
 skipped.sort().forEach((line) => console.log(`SKIPPED ${line}`));
-console.log(`Imported ${keptCount.value} of ${scripts.length} z3test regressions`);
+console.log(`Imported ${keptCount} of ${scripts.length} z3test regressions`);

@@ -314,10 +314,6 @@ class PredAbs {
     const concrete = this.mkConcrete(fmls.items, this.pred2Lit);
     concrete.forEach((formula, index) => fmls.set(index, formula));
   }
-
-  release() {
-    this.reset();
-  }
 }
 
 class Kernel {
@@ -375,7 +371,7 @@ class Kernel {
   }
 }
 
-export class Qsat {
+class Qsat {
   private mbp: Mbproj;
   private fa: Kernel;
   private ex: Kernel;
@@ -492,7 +488,6 @@ export class Qsat {
     this.setModelSave(undefined);
     this.avars.reset();
     this.trail.reset();
-    this.predAbs.release();
     this.mbp.release();
   }
 

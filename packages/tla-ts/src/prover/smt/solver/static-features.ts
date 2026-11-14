@@ -76,9 +76,6 @@ export const isDense = (features: StaticFeatures) =>
   features.numUninterpretedConstants < 1000 &&
   features.numArithEqs + features.numArithIneqs > features.numUninterpretedConstants * 9;
 
-export const isArithKSumSmall = (features: StaticFeatures) =>
-  features.arithKSum.compare(Rational.of(BigInt(Math.trunc(0x7fffffff / 8)))) < 0;
-
 export const collectStaticFeatures = (
   manager: AstManager,
   formulas: readonly number[],

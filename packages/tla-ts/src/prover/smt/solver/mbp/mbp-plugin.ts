@@ -90,7 +90,7 @@ export const pickEquality = (context: MbpContext, distinct: number) => {
   throw new SmtUnsupportedError("pick_equality found no equal arguments");
 };
 
-export const eraseLit = (lits: RefVector, index: number) => {
+const eraseLit = (lits: RefVector, index: number) => {
   lits.set(index, lits.items[lits.size - 1]);
   lits.pop();
   return index - 1;

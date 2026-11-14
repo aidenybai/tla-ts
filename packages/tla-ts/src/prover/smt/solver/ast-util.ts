@@ -158,8 +158,7 @@ export const getExtendedNumeral = (manager: AstManager, expr: number) => {
   if (manager.isNumeral(expr)) return manager.getRationalValue(expr);
   const todo = [{ term: expr, isVisited: false, isNegated: false }];
   const values: Rational[] = [];
-  while (todo.length > 0) {
-    const frame = todo.pop()!;
+  for (let frame = todo.pop(); frame !== undefined; frame = todo.pop()) {
     if (frame.isVisited) {
       const op = manager.getOp(frame.term);
       const numArgs = manager.getNumArgs(frame.term);

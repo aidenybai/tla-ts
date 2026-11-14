@@ -19,8 +19,6 @@ export const TLAPM_OUTCOME_EXITS = {
 
 export const BACKEND_VERDICTS = ["unsat", "sat", "unknown"];
 
-export const TLAPM_MODES = ["obligations", "proof", "encoding"];
-
 const MODE_ARGUMENTS: Record<string, string[]> = {
   obligations: ["-N", "--printallobs"],
   proof: [],
@@ -39,7 +37,7 @@ export const getTlapmArguments = (mode: string, cacheDirectory: string) => [
   ...MODE_ARGUMENTS[mode],
 ];
 
-export const BACKEND_EXTENSIONS: Record<string, string> = {
+const BACKEND_EXTENSIONS: Record<string, string> = {
   ".smt": "z3",
   ".smt2": "z3",
   ".znn": "zenon",
@@ -123,28 +121,24 @@ const MISSING_EXECUTABLE = /(not found in this PATH:\n).*\n/g;
 const SHELL_NOT_FOUND = /^sh: .*type: \S+: not found\n/gm;
 const CONFIG_DUMP = /^version == ".*"\n((?!@!!).*\S.*\n)*/gm;
 
-interface ToolboxMessage {
-  fields: Map<string, string>;
-}
-
-const parseToolboxMessage = (block: string): ToolboxMessage => {
+const parseToolboxMessage = (block: string) => {
   const fields = new Map<string, string>();
-  const state = { key: "" };
+  let key = "";
   block.split("\n").forEach((line) => {
     const field = /^@!!([a-z]+):(.*)$/.exec(line);
     if (field) {
-      state.key = field[1];
-      fields.set(field[1], field[2]);
+      key = field[1];
+      fields.set(key, field[2]);
       return;
     }
-    if (state.key) fields.set(state.key, `${fields.get(state.key)}\n${line}`);
+    if (key) fields.set(key, `${fields.get(key)}\n${line}`);
   });
-  fields.forEach((value, key) => fields.set(key, value.trimEnd()));
-  return { fields };
+  fields.forEach((value, innerKey) => fields.set(innerKey, value.trimEnd()));
+  return fields;
 };
 
-const formatToolboxMessage = (message: ToolboxMessage) =>
-  [...message.fields.entries()].map((entry) => `@${entry[0]}: ${entry[1]}`).join("\n");
+const formatToolboxMessage = (fields: Map<string, string>) =>
+  [...fields.entries()].map((entry) => `@${entry[0]}: ${entry[1]}`).join("\n");
 
 export const normalizeTlapmTranscript = (output: string, directory: string) => {
   const text = output
@@ -156,7 +150,7 @@ export const normalizeTlapmTranscript = (output: string, directory: string) => {
     .replace(BACKTRACE_LINE, "")
     .replace(CONFIG_DUMP, "")
     .replace(MISSING_EXECUTABLE, "$1<PATH>\n");
-  const messages: ToolboxMessage[] = [];
+  const messages: Map<string, string>[] = [];
   const lines: string[] = [];
   const remainder = text.replace(/@!!BEGIN\n([\s\S]*?)@!!END\n?/g, (_, block: string) => {
     messages.push(parseToolboxMessage(block));
@@ -171,11 +165,11 @@ export const normalizeTlapmTranscript = (output: string, directory: string) => {
       return;
     lines.push(line.replaceAll("\u0000", ""));
   });
-  const obligations = new Map<number, ToolboxMessage[]>();
-  const others: ToolboxMessage[] = [];
+  const obligations = new Map<number, Map<string, string>[]>();
+  const others: Map<string, string>[] = [];
   messages.forEach((message) => {
-    const id = message.fields.get("id");
-    if (message.fields.get("type") !== "obligation" || id === undefined) {
+    const id = message.get("id");
+    if (message.get("type") !== "obligation" || id === undefined) {
       others.push(message);
       return;
     }

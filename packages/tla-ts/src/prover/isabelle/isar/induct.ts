@@ -49,7 +49,7 @@ import {
   type CaseInfo,
   type CasesRule,
 } from "./rule-cases";
-import type { OuterToken } from "./theory";
+import { syntaxError, type OuterToken } from "./theory";
 
 export interface NamedCasesRule {
   readonly name: string;
@@ -75,9 +75,6 @@ interface CasesArgs {
 }
 
 const error = (message: string) => new TlaIsabelleError("ERROR", message);
-
-const syntaxError = (token: OuterToken | undefined) =>
-  error(`Outer syntax error at: ${token === undefined ? "end of input" : token.text}`);
 
 const isInductConst = (term: Term) =>
   term.kind === "Const" && term.name.startsWith("PredicateLogic.cases_");

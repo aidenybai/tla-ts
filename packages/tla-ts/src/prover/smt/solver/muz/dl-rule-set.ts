@@ -178,10 +178,6 @@ export class RuleSet {
     return this.pred2orig.get(predicate) ?? predicate;
   }
 
-  getPred(orig: number) {
-    return this.orig2pred.get(orig) ?? orig;
-  }
-
   inheritPredicates(other: RuleSet) {
     for (const predicate of other.outputPredicates) this.outputPredicates.add(predicate);
     for (const [orig, predicate] of other.orig2pred) this.orig2pred.set(orig, predicate);
@@ -201,31 +197,6 @@ export class RuleSet {
     const existing = this.head2rules.get(decl);
     if (existing === undefined) this.head2rules.set(decl, [rule]);
     else existing.push(rule);
-  }
-
-  delRule(rule: Rule) {
-    const remove = (rules: Rule[]) => {
-      for (let index = rules.length - 1; index >= 0; index--) {
-        if (rules[index] !== rule) continue;
-        rules[index] = rules[rules.length - 1];
-        rules.pop();
-        break;
-      }
-    };
-    remove(this.head2rules.get(rule.getDecl(this.manager)) ?? []);
-    remove(this.rules);
-  }
-
-  replaceRule(rule: Rule, other: Rule) {
-    const replace = (rules: Rule[]) => {
-      for (let index = rules.length - 1; index >= 0; index--) {
-        if (rules[index] !== rule) continue;
-        rules[index] = other;
-        break;
-      }
-    };
-    replace(this.head2rules.get(rule.getDecl(this.manager)) ?? []);
-    replace(this.rules);
   }
 
   isClosed() {

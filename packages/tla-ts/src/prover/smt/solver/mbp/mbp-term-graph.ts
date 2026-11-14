@@ -9,13 +9,11 @@ class Term {
   repr: Term | undefined;
   next: Term = this;
   isMarked = false;
-  isInterpreted = false;
   readonly isEq: boolean;
   readonly isNeq: boolean;
   readonly isDistinct: boolean;
   isNeqChild = false;
   isCgr = false;
-  isGr = false;
   // Maintained for roots only.
   readonly parents: Term[] = [];
   readonly children: Term[] = [];
@@ -51,10 +49,6 @@ class Term {
     this.root.isGrClass = value;
   }
 
-  get isRoot() {
-    return this.root === this;
-  }
-
   get isRepr() {
     return this.repr === this;
   }
@@ -75,7 +69,6 @@ class Term {
     other.isGrClass = false;
   }
 
-  // Makes this term the representative of its class.
   mkRepr() {
     this.repr = this;
     for (let current = this.next; current !== this; current = current.next) current.repr = this;
@@ -141,10 +134,7 @@ export class TermGraph {
     this.lits = new RefVector(manager);
     this.pinned = new RefVector(manager);
     const isVariable = (expr: number) => this.isVar.isVariable(expr);
-    const pin = (expr: number) => {
-      this.pinned.push(expr);
-      return expr;
-    };
+    const pin = (expr: number) => this.pin(expr);
     this.plugins = [
       mkBasicSolvePlugin(manager, isVariable, pin),
       mkArithSolvePlugin(manager, isVariable, pin),
@@ -251,11 +241,6 @@ export class TermGraph {
     return this.terms.filter((term) => !term.isNeqChild).map((term) => term.expr);
   }
 
-  isCgr(expr: number) {
-    const term = this.app2Term.get(expr);
-    return term !== undefined && !term.isEq && term.isCgr;
-  }
-
   isInternalized(expr: number) {
     return this.app2Term.has(expr);
   }
@@ -272,14 +257,12 @@ export class TermGraph {
     this.pin(expr);
     const term = new Term(expr, manager, this.app2Term);
     if (this.isGround(expr)) {
-      term.isGr = true;
       term.isCgr = true;
       term.isClassGr = true;
     } else if (term.children.length > 0 && term.areAllChildrenGround()) {
       term.isCgr = true;
       term.isClassGr = true;
     }
-    if (term.children.length === 0 && manager.isUniqueValue(expr)) term.isInterpreted = true;
     this.terms.push(term);
     this.app2Term.set(expr, term);
     return term;
