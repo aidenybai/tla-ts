@@ -6381,6 +6381,38 @@ describe("errors", () => {
     });
   });
 
+  describe("read a variable that a function called where it's written assigns", () => {
+    it("tells the type that the function's assignment narrows it to", async () => {
+      const getSource = (expected: string) => `
+        const log = { text: "" };
+        var arg;
+        (function fun(...extraArguments: unknown[]) {
+          arg = arguments;
+        })(1, 2, 3);
+        const isArray = Array.isArray(arg);
+        if (isArray !== ${expected}) throw new Error(String(isArray));
+      `;
+      expect((await checkModel(getSource("false"))).failure).toBeUndefined();
+      expect((await checkModel(getSource("true"))).failure?.message).toContain("false");
+    });
+
+    it("keeps the declared type where a later call may run the function again", async () => {
+      const getSource = (expected: string) => `
+        const box = { again: () => {} };
+        let value: number | string = 0;
+        (function set() {
+          value = "a";
+          box.again = set;
+        })();
+        value = 1;
+        box.again();
+        if (typeof value !== "${expected}") throw new Error(typeof value);
+      `;
+      expect((await checkModel(getSource("string"))).failure).toBeUndefined();
+      expect((await checkModel(getSource("number"))).failure?.message).toContain("string");
+    });
+  });
+
   it("runs a call in typeof's operand, which may throw", async () => {
     const getSource = (count: number) => `
       const count: number = ${count};

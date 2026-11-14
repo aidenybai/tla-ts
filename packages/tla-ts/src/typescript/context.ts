@@ -185,8 +185,23 @@ export type HelperDeclaration = ts.FunctionDeclaration | ts.VariableDeclaration;
 const anyProperty = Symbol("any property");
 
 const withDeclaredReads = (checker: ts.TypeChecker): ts.TypeChecker => {
-  const getFunction = (node: ts.Node) =>
-    ts.findAncestor(node.parent, ts.isFunctionLike) ?? node.getSourceFile();
+  // TypeScript's control flow runs through a function that a call runs where it's written, unless
+  // it's async or a generator, so it narrows what that function assigns. Where the function names
+  // itself, a later call may run it again.
+  const getFunction = (node: ts.Node): ts.Node => {
+    const found = ts.findAncestor(node.parent, ts.isFunctionLike) ?? node.getSourceFile();
+    const name = ts.isFunctionExpression(found) ? found.name : undefined;
+    const isInlined =
+      (ts.isFunctionExpression(found) || ts.isArrowFunction(found)) &&
+      isCalledInPlace(found) &&
+      isPlain(found) &&
+      (name === undefined ||
+        findNodes(
+          found.body,
+          (inner): inner is ts.Identifier => ts.isIdentifier(inner) && inner.text === name.text,
+        ).length === 0);
+    return isInlined ? getFunction(found) : found;
+  };
   const getWrittenKey = (name: ts.Expression) => {
     if (ts.isIdentifier(name)) return getSymbol(name, checker);
     if (ts.isPropertyAccessExpression(name)) return name.name.text;
