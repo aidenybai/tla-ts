@@ -2860,6 +2860,20 @@ LOCAL IsSameCharacter(regexp, left, right) ==
          Canonical(regexp, left) = Canonical(regexp, right)
     [] OTHER -> Assert(FALSE, "tla-ts can't compare the case of characters that aren't ASCII letters")
 
+\\* The capture of the groups that a backreference names, of which at most one took part, as groups
+\\* in separate alternatives may share a name, or <<>> where none did.
+LOCAL RegExpCaptureOf(captures, indices) ==
+  LET matched == {indices[position] : position \\in DOMAIN indices} \\cap
+                 {index \\in DOMAIN captures : captures[index] # <<>>}
+  IN  IF matched = {} THEN <<>> ELSE captures[CHOOSE index \\in matched : TRUE]
+
+\\* The index of the group with a name that took part in a match, or the first with it where none did.
+LOCAL RegExpNamed(regexp, match, name) ==
+  LET indices == regexp.names[name]
+      matched == {indices[position] : position \\in DOMAIN indices} \\cap
+                 {index \\in DOMAIN match.captures : match.captures[index] # <<>>}
+  IN  IF matched = {} THEN indices[1] ELSE CHOOSE index \\in matched : TRUE
+
 RECURSIVE RegExpStep(_, _, _, _, _)
 RECURSIVE RegExpContinue(_, _, _, _)
 RECURSIVE RegExpRepeat(_, _, _, _, _, _, _)
@@ -2909,7 +2923,7 @@ RegExpStep(regexp, text, node, state, stack) ==
                [] found.end = -1 -> RegExpFailure
                [] OTHER -> RegExpContinue(regexp, text, [state EXCEPT !.captures = found.captures], stack)
     [] node.kind = "backreference" ->
-         LET captured == state.captures[node.index]
+         LET captured == RegExpCaptureOf(state.captures, node.indices)
              length == IF captured = <<>> THEN 0 ELSE captured[2] - captured[1]
          IN  IF /\\ state.end + length <= Len(text)
                 /\\ \\A offset \\in 0..(length - 1) :
@@ -2982,7 +2996,7 @@ LOCAL RegExpCapture(text, match, index) ==
 
 \\* The text of each named group of a match, by its name.
 LOCAL RegExpGroups(regexp, text, match) ==
-  [name \\in DOMAIN regexp.names |-> RegExpCapture(text, match, regexp.names[name])]
+  [name \\in DOMAIN regexp.names |-> RegExpCapture(text, match, RegExpNamed(regexp, match, name))]
 
 RECURSIVE RegExpMatches(_, _, _)
 \\* The matches that a global regexp finds from an index on, where an empty match moves the next
@@ -3028,7 +3042,7 @@ RegExpSubstitute(regexp, text, match, template) ==
               ELSE SubSeq(template, 1, width)) \\o after(width)
         [] second = "<" /\\ close # -1 /\\ DOMAIN regexp.names # {} ->
              LET name == SubSeq(template, 3, close)
-             IN  (IF name \\in DOMAIN regexp.names THEN capture(regexp.names[name]) ELSE "")
+             IN  (IF name \\in DOMAIN regexp.names THEN capture(RegExpNamed(regexp, match, name)) ELSE "")
                    \\o after(close + 1)
         [] OTHER -> first \\o after(1)
 
@@ -3958,7 +3972,7 @@ LOCAL RegExpIndices(heap, prototype, regexp, match) ==
       groups == [EmptyObject EXCEPT
                    !.prototype = Null,
                    !.keys = regexp.groupNames,
-                   !.values = [name \\in DOMAIN regexp.names |-> refOf(regexp.names[name] + 1)],
+                   !.values = [name \\in DOMAIN regexp.names |-> refOf(RegExpNamed(regexp, match, name) + 1)],
                    !.attributes = [name \\in DOMAIN regexp.names |-> Writable]]
       array == ArrayObject(prototype, [position \\in positions |-> refOf(position)])
       added == "groups" :> IF hasGroups THEN NextRef(heap, Len(matched) + 1) ELSE Undefined

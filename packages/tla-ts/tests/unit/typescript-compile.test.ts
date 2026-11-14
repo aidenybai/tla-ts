@@ -27769,6 +27769,27 @@ describe("regular expressions", () => {
     await expect(checkModel(getSource("!"))).rejects.toThrow("class");
   });
 
+  it("replace and backreference groups in separate alternatives that share a name", async () => {
+    const getSource = (template: string) => `
+      const replaced = "ab".replace(/(?<x>a)|(?<x>b)/, "${template}") + "ba".replace(/(?<x>a)|(?<x>b)/g, "[$<x>]");
+      if (replaced !== "[a][a][]b[b][a]") throw new Error("replaced");
+      const repeated = /(?:(?:(?<x>a)|(?<x>b))\\k<x>){2}/;
+      if (!repeated.test("aabb") || repeated.test("abab")) throw new Error("test");
+    `;
+    expect((await checkModel(getSource("[$<x>][$1][$2]"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("[$<x>][$2][$1]"))).rejects.toThrow("replaced");
+  });
+
+  it("give a match's groups the group that took part where groups share a name", async () => {
+    const getSource = (keys: string) => `
+      const box = { size: 0 };
+      const match = /(?<y>c)|(?<x>a)|(?<x>b)/.exec("b")!;
+      if (Object.keys(match.groups!).join() !== "${keys}" || match.groups!.x !== "b") throw new Error("groups");
+    `;
+    expect((await checkModel(getSource("y,x"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("x,y"))).failure?.message).toContain("groups");
+  });
+
   it("make the indices of a match for a regexp with the d flag", async () => {
     const getSource = (end: number, keys: string) => `
       const match = /b(c)?(?<x>d)?|(?<y>q)/d.exec("abcd")!;

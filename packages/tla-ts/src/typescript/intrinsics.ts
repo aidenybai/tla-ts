@@ -1248,7 +1248,7 @@ type Matcher =
   | { kind: "start" | "end"; flags: string }
   | { kind: "boundary"; isInverted: boolean; flags: string }
   | { kind: "lookahead"; body: Matcher; isNegative: boolean }
-  | { kind: "backreference"; index: number; flags: string };
+  | { kind: "backreference"; indices: number[]; flags: string };
 
 const LINE_TERMINATORS = [0x0a, 0x0d, 0x2028, 0x2029];
 
@@ -1316,7 +1316,8 @@ const getCharacterSet =
 // The number of capturing groups that a pattern opens and the indices of its named groups, which a
 // backreference before a group may name.
 const getGroups = (source: string) => {
-  const names = new Map<string, number>();
+  // Groups in separate alternatives may share a name.
+  const names = new Map<string, number[]>();
   const scan = { position: 0, count: 0, isInClass: false };
   while (scan.position < source.length) {
     const character = source[scan.position];
@@ -1326,7 +1327,7 @@ const getGroups = (source: string) => {
     if (character === "(" && !scan.isInClass && /^\((?!\?)|^\(\?<(?![=!])/.test(rest)) {
       scan.count += 1;
       const name = /^\(\?<([^>]*)>/.exec(rest)?.[1];
-      if (name !== undefined) names.set(name, scan.count);
+      if (name !== undefined) names.set(name, [...(names.get(name) ?? []), scan.count]);
     }
     scan.position += character === "\\" ? 2 : 1;
   }
@@ -1483,9 +1484,6 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
     cursor.position += name === undefined ? 1 : name.length + 4;
     cursor.captures += 1;
     const index = cursor.captures;
-    if (name !== undefined && groups.names.get(name) !== index) {
-      throw new TlaTypeScriptError("tla-ts can't match groups that share a name", node);
-    }
     const body = parseDisjunction();
     close();
     return { kind: "group", index, body };
@@ -1503,14 +1501,14 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
     const decimal = /^[1-9]\d*/.exec(source.slice(cursor.position + 1))?.[0];
     if (decimal !== undefined && Number(decimal) <= groups.count) {
       cursor.position += 1 + decimal.length;
-      return { kind: "backreference", index: Number(decimal), flags: cursor.flags };
+      return { kind: "backreference", indices: [Number(decimal)], flags: cursor.flags };
     }
     if (escaped === "k" && (isUnicode || groups.names.size > 0)) {
       const name = /^\\k<([^>]*)>/.exec(getRest())?.[1];
-      const index = name === undefined ? undefined : groups.names.get(name);
-      if (name === undefined || index === undefined) throw invalid();
+      const indices = name === undefined ? undefined : groups.names.get(name);
+      if (name === undefined || indices === undefined) throw invalid();
       cursor.position += name.length + 4;
-      return { kind: "backreference", index, flags: cursor.flags };
+      return { kind: "backreference", indices, flags: cursor.flags };
     }
     const classEscape = getClassEscape(escaped, isUnicode && cursor.flags.includes("i"));
     if (classEscape !== undefined) {
@@ -1750,7 +1748,7 @@ const translateMatcher = (matcher: Matcher, flags: string, characters: Set<numbe
   if (matcher.kind === "backreference") {
     return record("Record", [
       kind,
-      { name: "index", value: number(matcher.index) },
+      { name: "indices", value: tuple(matcher.indices.map(number)) },
       { name: "ignoreCase", value: boolean(matcher.flags.includes("i")) },
     ]);
   }
@@ -1792,7 +1790,9 @@ const translateRegExp = (
     { name: "captures", value: number(parsed.count) },
     {
       name: "names",
-      value: functionFrom([...parsed.names].map(([name, index]) => [string(name), number(index)])),
+      value: functionFrom(
+        [...parsed.names].map(([name, indices]) => [string(name), tuple(indices.map(number))]),
+      ),
     },
     { name: "groupNames", value: tuple([...parsed.names.keys()].map(string)) },
     { name: "source", value: string(source) },
