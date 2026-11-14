@@ -50,6 +50,7 @@ import {
   getCaptures,
   getCapturedArguments,
   skipCasts,
+  getGivenValue,
   isAssigned,
   getFunctionValue,
   isAnyGenerator,
@@ -3142,14 +3143,21 @@ export const isNewObject = (node: ts.Node, context: Context) => {
 // making an object that nothing reads can't be seen, but not its descriptions and creations,
 // which may stop the run.
 // The objects that the defaults of an assignment's pattern make, which run only where their part
-// is undefined.
+// is undefined. A default's function or class is made anyway, as making one can't stop the run.
+const getDefaultAllocated = (node: ts.Expression, context: Context) => {
+  const given = getGivenValue(node);
+  return isFunctionObject(given, context)
+    ? [...getAllocated(node, context, true), given]
+    : getAllocated(node, context, true);
+};
+
 export const getPatternAllocated = (node: ts.Expression, context: Context): ts.Node[] => {
   if (ts.isObjectLiteralExpression(node)) {
     return node.properties.flatMap((property) =>
       ts.isShorthandPropertyAssignment(property)
         ? property.objectAssignmentInitializer === undefined
           ? []
-          : getAllocated(property.objectAssignmentInitializer, context, true)
+          : getDefaultAllocated(property.objectAssignmentInitializer, context)
         : ts.isPropertyAssignment(property)
           ? getPatternAllocated(property.initializer, context)
           : ts.isSpreadAssignment(property)
@@ -3163,7 +3171,7 @@ export const getPatternAllocated = (node: ts.Expression, context: Context): ts.N
     );
   }
   return ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken
-    ? [...getPatternAllocated(node.left, context), ...getAllocated(node.right, context, true)]
+    ? [...getPatternAllocated(node.left, context), ...getDefaultAllocated(node.right, context)]
     : [];
 };
 

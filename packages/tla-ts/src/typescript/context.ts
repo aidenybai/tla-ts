@@ -1346,6 +1346,144 @@ export const isRestOnly = (symbol: ts.Symbol, context: Context) => {
   );
 };
 
+// Whether a part of a literal belongs to the pattern that an assignment or a for-of writes, through
+// the nested patterns and the defaults in it.
+const isPatternPart = (node: ts.Node): boolean => {
+  const parent = node.parent;
+  const isDefaulted =
+    ts.isBinaryExpression(parent) &&
+    parent.left === node &&
+    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    (ts.isArrayLiteralExpression(parent.parent) || ts.isPropertyAssignment(parent.parent));
+  return isDefaulted ||
+    ts.isArrayLiteralExpression(parent) ||
+    ts.isObjectLiteralExpression(parent) ||
+    ts.isShorthandPropertyAssignment(parent) ||
+    (ts.isPropertyAssignment(parent) && parent.initializer === node) ||
+    ts.isSpreadElement(parent) ||
+    ts.isSpreadAssignment(parent)
+    ? isPatternPart(parent)
+    : (ts.isArrayLiteralExpression(node) || ts.isObjectLiteralExpression(node)) &&
+        getAssignedTarget(parent) === node;
+};
+
+// The name whose default in an assignment's pattern a node gives, which runs only where the part
+// that the name takes is undefined.
+const getPatternDefaultTarget = (node: ts.Node) => {
+  const parent = node.parent;
+  const target =
+    ts.isShorthandPropertyAssignment(parent) && parent.objectAssignmentInitializer === node
+      ? parent.name
+      : ts.isBinaryExpression(parent) &&
+          parent.right === node &&
+          parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          ts.isIdentifier(parent.left) &&
+          (ts.isArrayLiteralExpression(parent.parent) || ts.isPropertyAssignment(parent.parent))
+        ? parent.left
+        : undefined;
+  return target !== undefined && isPatternPart(target) ? target : undefined;
+};
+
+// Whether a value of a type lacks a part, as the type has no such property or element, or one that
+// is only undefined.
+const isMissingPart = (type: ts.Type | undefined, key: string, checker: ts.TypeChecker) => {
+  if (type === undefined || (type.flags & ts.TypeFlags.Object) === 0) return false;
+  const property = checker.getPropertyOfType(checker.getApparentType(type), key);
+  const part =
+    property === undefined
+      ? checker.getIndexTypeOfType(
+          type,
+          /^\d+$/.test(key) ? ts.IndexKind.Number : ts.IndexKind.String,
+        )
+      : checker.getTypeOfSymbol(property);
+  return (
+    part === undefined ||
+    (part.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Never)) !== 0
+  );
+};
+
+// The name of the property that a part of an object pattern reads.
+const getPatternKey = (key: ts.PropertyName | ts.BindingName) =>
+  ts.isIdentifier(key) || ts.isStringLiteral(key) || ts.isNumericLiteral(key)
+    ? key.text
+    : undefined;
+
+// Whether a variable that a script declares without a type or a value is assigned only the
+// functions and classes that a plain assignment makes, or that the defaults of a whole pattern
+// make where the value that the pattern takes lacks the part, so that it holds undefined or an
+// object. A pattern's binding that nothing assigns may take such a default too.
+export const isMadeOnly = (symbol: ts.Symbol, context: Context) => {
+  const checker = context.checker;
+  const declaration = symbol.valueDeclaration;
+  const isMadeValue = (node: ts.Expression | undefined) =>
+    node !== undefined && isFunctionObject(getGivenValue(node), context);
+  if (declaration !== undefined && ts.isBindingElement(declaration)) {
+    const pattern = declaration.parent;
+    const key = ts.isArrayBindingPattern(pattern)
+      ? String(pattern.elements.indexOf(declaration))
+      : getPatternKey(declaration.propertyName ?? declaration.name);
+    return (
+      key !== undefined &&
+      declaration.dotDotDotToken === undefined &&
+      isMadeValue(declaration.initializer) &&
+      !isAssigned(symbol, declaration.getSourceFile(), context) &&
+      isMissingPart(checker.getTypeAtLocation(pattern), key, checker)
+    );
+  }
+  if (
+    declaration === undefined ||
+    !ts.isVariableDeclaration(declaration) ||
+    declaration.type !== undefined ||
+    declaration.initializer !== undefined
+  ) {
+    return false;
+  }
+  // Whether the value that a whole pattern takes lacks a part.
+  const isMissing = (pattern: ts.Node, key: string | undefined) => {
+    const parent = pattern.parent;
+    const type = ts.isForOfStatement(parent)
+      ? checker.getIndexTypeOfType(
+          checker.getTypeAtLocation(parent.expression),
+          ts.IndexKind.Number,
+        )
+      : ts.isBinaryExpression(parent) && parent.left === pattern && !isPatternPart(parent)
+        ? checker.getTypeAtLocation(parent.right)
+        : undefined;
+    return key !== undefined && isMissingPart(type, key, checker);
+  };
+  const isMadeWrite = (name: ts.Expression) => {
+    const parent = name.parent;
+    if (ts.isShorthandPropertyAssignment(parent) && ts.isIdentifier(name)) {
+      return isMadeValue(parent.objectAssignmentInitializer) && isMissing(parent.parent, name.text);
+    }
+    if (
+      !ts.isBinaryExpression(parent) ||
+      parent.left !== name ||
+      parent.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+      !isMadeValue(parent.right)
+    ) {
+      return false;
+    }
+    const holder = parent.parent;
+    if (ts.isArrayLiteralExpression(holder)) {
+      return isMissing(holder, String(holder.elements.indexOf(parent)));
+    }
+    if (ts.isPropertyAssignment(holder)) {
+      return isMissing(holder.parent, getPatternKey(holder.name));
+    }
+    return !isPatternPart(parent);
+  };
+  const written = findNodes(declaration.getSourceFile(), (inner): inner is ts.Node => {
+    const target = getAssignedTarget(inner);
+    return target !== undefined && isWrittenBy(target, symbol, context);
+  }).flatMap((inner) =>
+    getWrittenNames(getAssignedTarget(inner) ?? inner).filter(
+      (name) => ts.isIdentifier(name) && getSymbol(name, checker) === symbol,
+    ),
+  );
+  return written.length > 0 && written.every(isMadeWrite);
+};
+
 // The names that a function reads from the functions around it, through the functions it names,
 // which a call of an enclosing function binds anew. A function that runs once that call returns
 // keeps the bindings where the script made it, which tla-ts follows only if nothing assigns them.
@@ -2532,9 +2670,10 @@ const isDefault = (node: ts.Node): boolean =>
     node.parent.operatorToken.kind === ts.SyntaxKind.CommaToken &&
     node.parent.right === node)
     ? isDefault(node.parent)
-    : (ts.isBindingElement(node.parent) || ts.isParameter(node.parent)) &&
-      node.parent.initializer === node &&
-      ts.isIdentifier(node.parent.name);
+    : ((ts.isBindingElement(node.parent) || ts.isParameter(node.parent)) &&
+        node.parent.initializer === node &&
+        ts.isIdentifier(node.parent.name)) ||
+      getPatternDefaultTarget(node) !== undefined;
 
 export type HeapFunction = ts.FunctionDeclaration | ts.FunctionExpression;
 
@@ -2553,6 +2692,14 @@ export const skipCasts = (node: ts.Expression): ts.Expression =>
   ts.isTypeAssertionExpression(node)
     ? skipCasts(node.expression)
     : node;
+
+// The value that an expression gives, through casts and the commas that end in it.
+export const getGivenValue = (node: ts.Expression): ts.Expression => {
+  const skipped = skipCasts(node);
+  return ts.isBinaryExpression(skipped) && skipped.operatorToken.kind === ts.SyntaxKind.CommaToken
+    ? getGivenValue(skipped.right)
+    : skipped;
+};
 
 // A function that a script makes once and calls with new, which it makes into objects on the heap
 // as it does a heap class: a constructor object, and the prototype that its instances inherit.

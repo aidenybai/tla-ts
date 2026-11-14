@@ -22701,6 +22701,55 @@ describe("errors", () => {
     ).toThrow("Give this function a key whose name tla-ts can tell");
   });
 
+  it("names the functions and classes that an assignment's pattern defaults to", async () => {
+    const getSource = (expected: string) => `
+      var xCls, cls, arrow, gen, fn, held, missing;
+      var out = "";
+      for ({ xCls = class x {}, cls = class {}, arrow = () => {} } of [{}]) {
+        out += [xCls.name, cls.name, arrow.name].join("|");
+      }
+      [gen = function* () {}, fn = function named() {}] = [];
+      ({ held = class {} } = {});
+      const result = [out, gen.name, fn.name, held.name, typeof missing].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "x|cls|arrow|gen|named|held|undefined";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("xCls|cls|arrow|gen|named|held|undefined"))).failure?.message,
+    ).toContain(expected);
+    expect(() =>
+      compile(`
+        var held;
+        const source: any = { held: { name: "own" } };
+        ({ held = class {} } = source);
+        const name = held.name;
+      `),
+    ).toThrow("Give this value a type to use its properties");
+  });
+
+  it("names the functions and classes that a pattern of an untyped value defaults to", async () => {
+    const getSource = (expected: string) => `
+      var cover, out = "";
+      // @ts-ignore
+      ({ cover = (0, function () {}) } = {});
+      const coverName = cover.name;
+      async function run() {
+        // @ts-ignore
+        for await (const { cls = class {}, xFn = function x() {} } of [{}]) {
+          out = [coverName, cls.name, xFn.name].join("|");
+        }
+      }
+      run().then(() => {
+        if (out !== "${expected}") throw new Error(out);
+      });
+    `;
+    expect((await checkModel(getSource("|cls|x"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("cover|cls|x"))).failure?.message).toContain(
+      "A promise rejected with no handler",
+    );
+  });
+
   it("gives the object that Object.defineProperty and Object.freeze change", async () => {
     const result = await check(
       compile(

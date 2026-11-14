@@ -16,6 +16,7 @@ import {
   isHeldErrorName,
   isNestedFunction,
   isRestOnly,
+  isMadeOnly,
   isStatic,
   skipCasts,
 } from "./context";
@@ -871,7 +872,7 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
     declared !== undefined &&
     symbol !== undefined &&
     (declared.flags & ts.TypeFlags.Any) !== 0 &&
-    isRestOnly(symbol, context)
+    (isRestOnly(symbol, context) || isMadeOnly(symbol, context))
   ) {
     return "object";
   }
