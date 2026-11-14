@@ -4515,6 +4515,23 @@ describe("values", () => {
     });
   });
 
+  it("skips a key that a for-in's body deletes, and not one that it adds", async () => {
+    const getSource = (expected: string) => `
+      const object: Record<string, number> = { a: 1, b: 2, c: 3 };
+      let seen = "";
+      for (const key in object) {
+        seen += key;
+        if (key === "a") {
+          delete object.b;
+          object.d = 4;
+        }
+      }
+      if (seen !== "${expected}") throw new Error(seen);
+    `;
+    expect((await checkModel(getSource("ac"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("abc"))).failure?.message).toContain("ac");
+  });
+
   describe("orders booleans as the numbers 1 and 0", () => {
     const getSource = (count: string, expected: string) => `
       const log: string[] = [];

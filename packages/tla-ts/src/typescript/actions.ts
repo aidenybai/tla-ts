@@ -13180,10 +13180,9 @@ const translateIterations = (
       iterated?.expression,
     );
   }
-  // A for-in skips a key that its body deletes before visiting it, which a list of keys can't.
-  if (isForIn && changesObjects(loop, path, context)) {
-    throw new TlaTypeScriptError("Don't change objects while a for-in iterates one", loop);
-  }
+  // A for-in visits the keys that the object and its prototypes have as it starts, and skips one
+  // that the body deletes before the loop reaches it, as Node does.
+  const isKeyChecked = isForIn && changesObjects(loop, path, context);
   if (changed.some((symbol) => path.scope.functions.has(symbol))) {
     throw new TlaTypeScriptError("Don't reassign a function inside a loop", loop);
   }
@@ -13423,9 +13422,24 @@ const translateIterations = (
         bodyFrame,
         (bound, innerFrame) => translateStatements([loop.statement], bound, context, innerFrame),
       );
-      return ts.isForOfStatement(iterated)
-        ? keepHoles(iterated, element, identifier(position), current, context, run)
-        : run;
+      if (!isKeyChecked) {
+        return ts.isForOfStatement(iterated)
+          ? keepHoles(iterated, element, identifier(position), current, context, run)
+          : run;
+      }
+      const object = translateObjectValue(iterated.expression, current.scope, context);
+      return ifThenElse(
+        apply("\\/", [
+          not(useJavaScript("IsRef", [object], context)),
+          useJavaScript(
+            "Has",
+            [getHeap(current.scope, iterated.expression, context), object, element],
+            context,
+          ),
+        ]),
+        run,
+        advance(current),
+      );
     };
     const inner = {
       ...bindValues(
