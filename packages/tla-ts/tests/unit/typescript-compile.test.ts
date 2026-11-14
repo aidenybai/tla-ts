@@ -717,7 +717,7 @@ describe("top-level statements", () => {
     ).toThrow("Unsupported operator: =");
   });
 
-  it("reject properties of a value of type any in a script with objects", () => {
+  it("reject a function's prototype that a value of type any reaches in a script with objects", () => {
     expect(() =>
       compile(`
         const box = {};
@@ -725,7 +725,7 @@ describe("top-level statements", () => {
         Shape.prototype.inner = { sides: 4 };
         Shape.prototype.inner.sides = 3;
       `),
-    ).toThrow("Give this value a type to use its properties");
+    ).toThrow("Unsupported property: Shape.prototype");
   });
 
   it("destructure an object that a value of type any holds in a script with objects", async () => {
@@ -8559,6 +8559,25 @@ describe("errors", () => {
       expect((await checkModel(getSource("2,false,range,3,2"))).failure?.message).toContain(
         "2,true,range,3,2",
       );
+    });
+  });
+
+  describe("writes a property of a value of type any", () => {
+    const getSource = (expected: string) => `
+      const target: any = { a: 1 };
+      target.b = 2;
+      target["c"] = 3;
+      const seen: { a: number; b?: number; c?: number } = target;
+      const read = [seen.a, seen.b, seen.c].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,2,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects the write as dropped", async () => {
+      expect((await checkModel(getSource("1,,3"))).failure?.message).toContain("1,2,3");
     });
   });
 

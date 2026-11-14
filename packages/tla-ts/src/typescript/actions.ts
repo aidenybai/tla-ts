@@ -666,8 +666,12 @@ const getHeapWrite = (node: ts.Expression, path: Path, context: Context): HeapWr
     throw new TlaTypeScriptError("tla-ts can't replace a collection's methods", node);
   }
   const isBuiltIn = context.heap !== undefined && isBuiltInObject(receiver, context);
-  rejectAnyReceiver(receiver, context);
-  if (!isBuiltIn && getKind(receiver, context) !== "object") return undefined;
+  // A value of type any writes as an object, and the write stops where it holds another value.
+  const isAny =
+    context.heap !== undefined &&
+    (context.checker.getTypeAtLocation(receiver).flags & ts.TypeFlags.Any) !== 0;
+  if (!isAny) rejectAnyReceiver(receiver, context);
+  if (!isBuiltIn && !isAny && getKind(receiver, context) !== "object") return undefined;
   const symbol = context.heap;
   const heap = symbol === undefined ? undefined : path.scope.bindings.get(symbol);
   if (symbol === undefined || heap === undefined || !path.mutable.has(symbol)) {
