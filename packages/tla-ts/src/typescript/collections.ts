@@ -704,6 +704,27 @@ export const translateArrayConstructor = (node: MethodCall, scope: Scope, contex
   };
   const callback = node.arguments[1];
   const options = node.arguments[0];
+  // Array.from where a script may have replaced it.
+  const getFrom = (made: Expression) =>
+    context.heap === undefined
+      ? made
+      : ifExpression(
+          useJavaScript(
+            "HoldsBuiltIn",
+            [
+              getHeap(scope, node, context),
+              translateBuiltInValue("Array", node, context),
+              string("from"),
+              string("Array.from"),
+            ],
+            context,
+          ),
+          made,
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't call Array.from where a script replaced it"),
+          ]),
+        );
   if (
     ts.isIdentifier(receiver) &&
     receiver.text === "Array" &&
@@ -721,9 +742,11 @@ export const translateArrayConstructor = (node: MethodCall, scope: Scope, contex
     if (length === undefined) throw new TlaTypeScriptError("Array.from needs { length: n }", node);
     const position = context.names.getFresh("index");
     const inner = bindIndexed(callback, undefined, identifier(position), scope, context);
-    return functionOf(
-      [bound(position, getIndices(length, "ToLength"))],
-      translateCallback(callback, inner, context),
+    return getFrom(
+      functionOf(
+        [bound(position, getIndices(length, "ToLength"))],
+        translateCallback(callback, inner, context),
+      ),
     );
   }
   if (method !== "fill" || node.arguments.length !== 1) return undefined;

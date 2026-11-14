@@ -15569,6 +15569,23 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("stops at Array.from where a script replaced it", async () => {
+    const getMessage = async (call: string) =>
+      (
+        await checkModel(`
+          const holder = { tag: 1 };
+          (Array as unknown as { from: () => number[] }).from = () => [5];
+          function* g(): Generator<number> {
+            yield 1;
+          }
+          const made = ${call};
+        `)
+      ).failure?.message;
+    const message = "tla-ts can't call Array.from where a script replaced it";
+    expect(await getMessage("Array.from(g())")).toContain(message);
+    expect(await getMessage("Array.from({ length: 2 }, (_, index) => index)")).toContain(message);
+  });
+
   it("defines an accessor on a primitive's prototype under a key that tla-ts doesn't read", async () => {
     const result = await checkModel(`
       const holder = { count: 0 };

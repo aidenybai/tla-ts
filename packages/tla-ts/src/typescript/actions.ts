@@ -1923,22 +1923,28 @@ export const translateCallStatement = (
   const translateStep =
     consumer !== undefined
       ? (current: Path) =>
-          (ITERATOR_HELPERS.has(consumer.method)
-            ? translateIteratorHelper
-            : translateGeneratorConsumer)(
+          translateHoldsArrayFrom(
+            consumer.method === "from",
             expression,
-            consumer,
-            consumer.receiver !== undefined && isBuiltInIteratorType(consumer.receiver, context)
-              ? withBuiltInIterator(
-                  expression,
-                  current,
-                  translateExpression(consumer.receiver, current.scope, context),
-                  context,
-                )
-              : current,
+            current,
             context,
-            frame,
-            continueWith,
+            (ITERATOR_HELPERS.has(consumer.method)
+              ? translateIteratorHelper
+              : translateGeneratorConsumer)(
+              expression,
+              consumer,
+              consumer.receiver !== undefined && isBuiltInIteratorType(consumer.receiver, context)
+                ? withBuiltInIterator(
+                    expression,
+                    current,
+                    translateExpression(consumer.receiver, current.scope, context),
+                    context,
+                  )
+                : current,
+              context,
+              frame,
+              continueWith,
+            ),
           )
       : stepped &&
         ((current: Path) => translateGeneratorStep(stepped, current, context, frame, continueWith));
@@ -5582,6 +5588,36 @@ const translateHoldsIteratorFrom = (node: ts.Node, path: Path, context: Context,
           apply("Assert", [
             boolean(false),
             string("tla-ts can't call Iterator.from where a script replaced it"),
+          ]),
+        ),
+      );
+
+// Runs the rest where Array still holds the built-in from that a call of it reads.
+const translateHoldsArrayFrom = (
+  isFrom: boolean,
+  node: ts.Node,
+  path: Path,
+  context: Context,
+  rest: Formula,
+) =>
+  !isFrom || context.heap === undefined
+    ? rest
+    : ifThenElse(
+        useJavaScript(
+          "HoldsBuiltIn",
+          [
+            getHeap(path.scope, node, context),
+            translateBuiltInValue("Array", node, context),
+            string("from"),
+            string("Array.from"),
+          ],
+          context,
+        ),
+        rest,
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't call Array.from where a script replaced it"),
           ]),
         ),
       );
