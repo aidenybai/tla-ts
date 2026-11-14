@@ -6,7 +6,6 @@ import {
   getSymbolHash,
   FAMILY_ARITH,
   FAMILY_BASIC,
-  FAMILY_DATATYPE,
   KIND_QUANTIFIER,
   KIND_VAR,
   OP_ABS,
@@ -23,6 +22,7 @@ import {
   OP_DISTINCT,
   OP_DIV,
   OP_DT_ACCESSOR,
+  OP_DT_CONSTRUCTOR,
   OP_EQ,
   OP_GE,
   OP_GT,
@@ -62,8 +62,6 @@ import {
   OP_TRUE,
   OP_FALSE,
   OP_UMINUS,
-  OP_UNINTERPRETED,
-  OP_FUN_DEFINED,
   OP_XOR,
   SORT_BOOL,
   SORT_INT,
@@ -120,6 +118,7 @@ import {
   isSupportedLogic,
 } from "./smt-logics";
 import { setRecFunDefinition } from "./recfun-decl-plugin";
+import { DEFAULT_PRINT_OPTIONS, printExpr } from "./smt2-printer";
 import { replaceFreeVars, VarSubst } from "./var-subst";
 import { UpolynomialManager } from "./nlsat/upolynomial";
 
@@ -262,6 +261,9 @@ const QUANTIFIER_KINDS = new Map([
 ]);
 
 const LET_MESSAGE = "invalid let declaration, symbol expected";
+
+const IS_PARAMETER_MESSAGE =
+  "invalid parameter to datatype function arity == 1 && num_parameters == 1 && parameters[0].is_ast() && is_func_decl(parameters[0].get_ast())";
 
 const BUILTIN_OPS = new Map<string, number>([
   ["and", OP_AND],
@@ -429,17 +431,19 @@ const THEORY_OPERATORS = new Set([
   "transitive-closure",
 ]);
 
-// The operators that are associative but not flat: xor and => nest to the right, the others to the
-// left.
-const NESTED_OPS = new Set([OP_XOR, OP_IMPLIES, OP_SUB, OP_DIV, OP_IDIV]);
+// func_decl_info of the builtin declarations: associative to both sides, flat, and associative to
+// the left only. => alone is associative to the right only.
+const ASSOCIATIVE_OPS = new Set([OP_AND, OP_OR, OP_XOR, OP_ADD, OP_MUL]);
+const FLAT_OPS = new Set([OP_AND, OP_OR, OP_ADD, OP_MUL]);
+const LEFT_ASSOCIATIVE_OPS = new Set([OP_SUB, OP_DIV, OP_IDIV]);
 
+// arith_decl_plugin's use_coercion.
 const COERCING_OPS = new Set([
   OP_ADD,
   OP_SUB,
   OP_UMINUS,
   OP_MUL,
   OP_POWER,
-  OP_POWER0,
   OP_LE,
   OP_GE,
   OP_LT,
@@ -464,30 +468,12 @@ const REAL_FUNCTION_OPS = new Set([
   OP_LOG,
 ]);
 
-const ARITIES = new Map<number, [number, number]>([
-  [OP_AND, [0, Infinity]],
-  [OP_OR, [0, Infinity]],
-  [OP_ITE, [3, 3]],
-  [OP_EQ, [2, Infinity]],
-  [OP_DISTINCT, [1, Infinity]],
+// The arity of each builtin declaration but distinct, which takes the arguments it is given.
+const ARITIES = new Map<number, number>([
+  [OP_ITE, 3],
   ...[OP_NOT, OP_UMINUS, OP_ABS, OP_TO_REAL, OP_TO_INT, OP_IS_INT, ...REAL_FUNCTION_OPS]
     .filter((op) => op !== OP_ATAN2)
-    .map((op): [number, [number, number]] => [op, [1, 1]]),
-  ...[
-    OP_IMPLIES,
-    OP_XOR,
-    OP_IDIV,
-    OP_MOD,
-    OP_REM,
-    OP_DIV,
-    OP_LE,
-    OP_GE,
-    OP_LT,
-    OP_GT,
-    OP_POWER,
-    OP_POWER0,
-    OP_ATAN2,
-  ].map((op): [number, [number, number]] => [op, [2, 2]]),
+    .map((op): [number, number] => [op, 1]),
 ]);
 
 const RANGES = new Map<number, number>([
@@ -523,6 +509,7 @@ const CHAINABLE_OPS = new Map<string, number>([
   ["<", OP_LT],
   [">", OP_GT],
 ]);
+const CHAINABLE_DECLS = new Set(CHAINABLE_OPS.values());
 
 const BV_EXTENSION_NAMES = new Set([
   "bvumul_noovfl",
@@ -1140,67 +1127,151 @@ export const createSmtlibReader = (
     return undefined;
   };
 
-  const getJoin = (args: number[]) => {
-    const argSorts = args.map((arg) => manager.sorts[arg]);
-    if (!argSorts.every(isArithSort)) return argSorts[0];
-    return argSorts.includes(SORT_REAL) ? SORT_REAL : SORT_INT;
+  // basic_decl_plugin::join.
+  const getJoin = (left: number, right: number, at: SExpr) => {
+    if (left === right) return left;
+    if (isArithSort(left) && isArithSort(right)) return left === SORT_REAL ? left : right;
+    if (left === SORT_BOOL && isArithSort(right)) return right;
+    if (right === SORT_BOOL && isArithSort(left)) return left;
+    throw new SmtParseError(
+      `Sorts ${manager.getSortName(left)} and ${manager.getSortName(right)} are incompatible`,
+      at,
+    );
   };
 
-  const getDomainSort = (op: number, args: number[]) => {
-    if (op === OP_ITE) return getJoin(args.slice(1));
-    if (op === OP_EQ || op === OP_DISTINCT) return getJoin(args);
-    if (COERCING_OPS.has(op)) return getJoin(args) === SORT_REAL ? SORT_REAL : SORT_INT;
-    if (op === OP_ABS || op === OP_TO_REAL || op === OP_TO_INT) return manager.sorts[args[0]];
-    if (op === OP_IDIV || op === OP_MOD || op === OP_REM) return SORT_INT;
+  const getJoinOfArgs = (args: number[], at: SExpr) =>
+    args.reduce((join, arg) => getJoin(join, manager.sorts[arg], at), manager.sorts[args[0]]);
+
+  // basic_decl_plugin::mk_func_decl and arith_decl_plugin::mk_func_decl: the sort of the arguments
+  // that the declaration takes, the condition of ite aside, or -1 where the plugin makes none.
+  const getDomainSort = (op: number, args: number[], at: SExpr) => {
+    if (op === OP_ITE)
+      return args.length === 3 ? getJoin(manager.sorts[args[1]], manager.sorts[args[2]], at) : -1;
+    if (op === OP_EQ) return args.length >= 2 ? getJoinOfArgs(args, at) : -1;
+    if (op === OP_DISTINCT) return args.length === 0 ? SORT_BOOL : getJoinOfArgs(args, at);
+    if (manager.funcDecls[op].family === FAMILY_BASIC) return SORT_BOOL;
+    if (COERCING_OPS.has(op))
+      return args.some((arg) => manager.sorts[arg] === SORT_REAL) ? SORT_REAL : SORT_INT;
     if (op === OP_DIV || op === OP_IS_INT || REAL_FUNCTION_OPS.has(op)) return SORT_REAL;
-    return SORT_BOOL;
+    if (op === OP_IDIV || op === OP_MOD || op === OP_REM) return SORT_INT;
+    return manager.sorts[args[0]] === SORT_REAL ? SORT_REAL : SORT_INT;
   };
 
+  // ast_manager::coerce_to.
   const coerce = (arg: number, sort: number) => {
     const argSort = manager.sorts[arg];
-    if (argSort === sort || !isArithSort(argSort) || !isArithSort(sort)) return arg;
-    return sort === SORT_REAL
-      ? manager.mkApp(OP_TO_REAL, [arg], SORT_REAL)
-      : manager.mkApp(OP_TO_INT, [arg], SORT_INT);
+    if (argSort === sort || !isArithSort(sort)) return arg;
+    if (isArithSort(argSort))
+      return sort === SORT_REAL
+        ? manager.mkApp(OP_TO_REAL, [arg], SORT_REAL)
+        : manager.mkApp(OP_TO_INT, [arg], SORT_INT);
+    if (argSort !== SORT_BOOL) return arg;
+    const one = manager.mkNumeralOfSort(Rational.of(1n), sort);
+    return manager.mkApp(OP_ITE, [arg, one, manager.mkNumeralOfSort(Rational.of(0n), sort)], sort);
   };
 
-  const mkApp = (decl: number, inputArgs: number[], at: SExpr, domainSort?: number) => {
-    const op = manager.funcDecls[decl].op;
-    const name = manager.funcDecls[decl].name;
-    const isUninterpreted =
-      op === OP_UNINTERPRETED ||
-      op === OP_FUN_DEFINED ||
-      manager.funcDecls[decl].family === FAMILY_DATATYPE;
-    const domain = manager.funcDecls[decl].domain;
-    const builtinSort = isUninterpreted ? -1 : (domainSort ?? getDomainSort(op, inputArgs));
-    const getExpected = (index: number) =>
-      isUninterpreted ? domain[index] : op === OP_ITE && index === 0 ? SORT_BOOL : builtinSort;
-    const args = inputArgs.map((arg, index) =>
-      getExpected(index) === undefined ? arg : coerce(arg, getExpected(index)),
+  // A declaration of the script has its own domain, and a builtin one takes domainSort.
+  const getArity = (decl: number, numArgs: number, domainSort: number) =>
+    domainSort === -1
+      ? manager.funcDecls[decl].domain.length
+      : decl === OP_DISTINCT
+        ? numArgs
+        : (ARITIES.get(decl) ?? 2);
+
+  const getExpectedSort = (decl: number, index: number, domainSort: number) =>
+    domainSort === -1
+      ? manager.funcDecls[decl].domain[index]
+      : decl === OP_ITE && index === 0
+        ? SORT_BOOL
+        : domainSort;
+
+  const formatDecl = (decl: number, numArgs: number, domainSort: number) => {
+    const domain = Array.from({ length: getArity(decl, numArgs, domainSort) }, (_unused, index) =>
+      manager.getSortName(getExpectedSort(decl, index, domainSort)),
     );
-    const arity = ARITIES.get(op) ?? [1, Infinity];
-    const isArityOk = isUninterpreted
-      ? args.length === domain.length
-      : args.length >= arity[0] && args.length <= arity[1];
-    const isBuiltinArith = manager.funcDecls[decl].family === FAMILY_ARITH;
-    const isWellSorted =
-      isArityOk &&
-      (!isBuiltinArith || isArithSort(builtinSort)) &&
-      args.every((arg, index) => manager.sorts[arg] === getExpected(index));
-    if (!isWellSorted) throw new SmtParseError(`ill-sorted application of ${name}`, at);
+    const range =
+      domainSort === -1 ? manager.funcDecls[decl].range : (RANGES.get(decl) ?? domainSort);
+    return `(declare-fun ${String(manager.funcDecls[decl].name)} (${domain.join(" ")}) ${manager.getSortName(range)})`;
+  };
+
+  // ast_manager::mk_app_core: coercion_needed, coerce_to and check_args.
+  const mkAppCore = (decl: number, args: number[], at: SExpr, domainSort: number) => {
+    const isAssociative = domainSort !== -1 && ASSOCIATIVE_OPS.has(decl);
+    const isCoercing =
+      (isAssociative || getArity(decl, args.length, domainSort) === args.length) &&
+      args.some((arg, index) => {
+        const expected = getExpectedSort(decl, index, domainSort);
+        return isArithSort(expected) && expected !== manager.sorts[arg];
+      });
+    const coerced = isCoercing
+      ? args.map((arg, index) => coerce(arg, getExpectedSort(decl, index, domainSort)))
+      : args;
+    for (let index = 0; index < coerced.length; index++) {
+      const sort = manager.sorts[coerced[index]];
+      if (sort !== getExpectedSort(decl, index, domainSort))
+        throw new SmtParseError(
+          `Sort mismatch at argument #${index + 1} for function ${formatDecl(decl, args.length, domainSort)} supplied sort is ${manager.getSortName(sort)}`,
+          at,
+        );
+    }
+    // Z3 keeps xor, / and div of fewer than two arguments until its rewriters make false or the
+    // argument of them, which those of this port do not.
+    if (
+      coerced.length < 2 &&
+      domainSort !== -1 &&
+      (decl === OP_XOR || LEFT_ASSOCIATIVE_OPS.has(decl))
+    )
+      return coerced[0] ?? manager.falseExpr;
     return manager.mkApp(
       decl,
-      args,
-      isUninterpreted ? manager.funcDecls[decl].range : (RANGES.get(op) ?? builtinSort),
+      coerced,
+      domainSort === -1 ? manager.funcDecls[decl].range : (RANGES.get(decl) ?? domainSort),
     );
   };
 
-  const mkChain = (op: number, args: number[], at: SExpr) => {
-    const domainSort = getDomainSort(op, args);
+  // ast_manager::mk_app.
+  const mkApp = (decl: number, args: number[], at: SExpr, domainSort = -1): number => {
+    const isBuiltin = domainSort !== -1;
+    const isAssociative = isBuiltin && ASSOCIATIVE_OPS.has(decl);
+    const isLeftAssociative = isAssociative || (isBuiltin && LEFT_ASSOCIATIVE_OPS.has(decl));
+    const isRightAssociative = isAssociative || (isBuiltin && decl === OP_IMPLIES);
+    const isChainable = isBuiltin && CHAINABLE_DECLS.has(decl);
+    if (
+      getArity(decl, args.length, domainSort) !== args.length &&
+      ((!isLeftAssociative && !isRightAssociative && !isChainable) ||
+        (args.length < 2 && manager.funcDecls[decl].family === FAMILY_BASIC && !isAssociative))
+    ) {
+      const environment = { options: DEFAULT_PRINT_OPTIONS, isUsed, isClashing };
+      // Z3 prints an error without the newlines that end it.
+      throw new SmtParseError(
+        `Wrong number of arguments (${args.length}) passed to function ${formatDecl(decl, args.length, domainSort)} ${args
+          .map((arg) => `\narg: ${printExpr(manager, environment, arg)}\n`)
+          .join("")}`.replace(/\n+$/, ""),
+        at,
+      );
+    }
+    if (args.length === 1 && isChainable) return manager.trueExpr;
+    if (args.length <= 2 || (isBuiltin && FLAT_OPS.has(decl)))
+      return mkAppCore(decl, args, at, domainSort);
+    if (isRightAssociative)
+      return args
+        .slice(0, -2)
+        .reduceRight(
+          (right, left) => mkAppCore(decl, [left, right], at, domainSort),
+          mkAppCore(decl, args.slice(-2), at, domainSort),
+        );
+    if (isLeftAssociative)
+      return args
+        .slice(2)
+        .reduce(
+          (left, right) => mkAppCore(decl, [left, right], at, domainSort),
+          mkAppCore(decl, args.slice(0, 2), at, domainSort),
+        );
+    if (!isChainable) return mkAppCore(decl, args, at, domainSort);
     const pairs: number[] = [];
-    for (let index = 0; index + 1 < args.length; index++)
-      pairs.push(mkApp(op, [args[index], args[index + 1]], at, domainSort));
-    return pairs.length === 1 ? pairs[0] : mkApp(OP_AND, pairs, at);
+    for (let index = 1; index < args.length; index++)
+      pairs.push(mkAppCore(decl, [args[index - 1], args[index]], at, domainSort));
+    return mkApp(OP_AND, pairs, at, SORT_BOOL);
   };
 
   const rejectPattern = (message: string, at: SExpr) => {
@@ -1451,7 +1522,7 @@ export const createSmtlibReader = (
       const pair = [args[index], args[index + 1]];
       pairs.push(mkFpaAppOf(manager, getSignature(pair), pair));
     }
-    return mkApp(OP_AND, pairs, at);
+    return mkApp(OP_AND, pairs, at, SORT_BOOL);
   };
 
   const isSeqOpName = (name: string) =>
@@ -1725,10 +1796,23 @@ export const createSmtlibReader = (
 
   const mkIsApp = (constructorName: SmtToken, args: number[], at: SExpr) => {
     const declared = findFuncDecl(constructorName);
-    if (declared !== undefined) return mkApp(getConstructorIs(manager, declared), args, at);
+    // datatype::decl::plugin::mk_is.
+    if (declared !== undefined) {
+      if (args.length !== 1) throw new SmtParseError(IS_PARAMETER_MESSAGE, at);
+      if (!manager.isDatatypeSort(manager.sorts[args[0]]))
+        throw new SmtParseError(
+          "invalid parameter to datatype function u().is_datatype(domain[0])",
+          at,
+        );
+      if (manager.sorts[args[0]] !== manager.funcDecls[declared].range)
+        throw new SmtParseError("invalid sort argument passed to recognizer", at);
+      if (manager.funcDecls[declared].op !== OP_DT_CONSTRUCTOR)
+        throw new SmtParseError("expecting constructor argument to recognizer", at);
+      return manager.mkApp(getConstructorIs(manager, declared), args, SORT_BOOL);
+    }
     const argSort = args.length === 1 ? manager.sorts[args[0]] : -1;
     if (argSort === -1 || !manager.isDatatypeSort(argSort))
-      throw new SmtUnsupportedError("the operator is");
+      throw new SmtParseError(IS_PARAMETER_MESSAGE, at);
     const constructor = getDatatypeConstructors(manager, argSort).find(
       (decl) => manager.funcDecls[decl].name === constructorName.text,
     );
@@ -1747,9 +1831,23 @@ export const createSmtlibReader = (
         `invalid function declaration reference, unknown function ${accessorName.text}`,
         accessorName,
       );
-    if (manager.funcDecls[accessor].op !== OP_DT_ACCESSOR)
-      throw new SmtUnsupportedError("the operator update-field");
-    return mkApp(mkUpdateField(manager, accessor), args, at);
+    // datatype::decl::plugin::mk_update_field.
+    if (args.length !== 2)
+      throw new SmtParseError("invalid number of arguments for datatype field update", at);
+    const funcDecl = manager.funcDecls[accessor];
+    if (funcDecl.op !== OP_DT_ACCESSOR)
+      throw new SmtParseError(
+        "datatype field update requires a datatype accessor as the second argument",
+        at,
+      );
+    if (funcDecl.domain[0] !== manager.sorts[args[0]])
+      throw new SmtParseError("first argument to field update should be a data-type", at);
+    if (funcDecl.range !== manager.sorts[args[1]])
+      throw new SmtParseError(
+        `second argument to field update should be ${manager.getSortName(funcDecl.range)} instead of ${manager.getSortName(manager.sorts[args[1]])}`,
+        at,
+      );
+    return manager.mkApp(mkUpdateField(manager, accessor), args, funcDecl.domain[0]);
   };
 
   const getUnknownConstantMessage = (name: string, args: number[], range: number | undefined) => {
@@ -1840,16 +1938,21 @@ export const createSmtlibReader = (
           ? mkSeqTerm(name, args, indices, at)
           : mkBvApp(name, args, indices, at);
     const macro = macros.get(name);
-    // macros_find: a macro of another arity leaves the name to a declaration.
-    if (macro !== undefined && (macro.domain.length === args.length || !funcs.has(name))) {
-      const coerced = args.map((arg, index) => coerce(arg, macro.domain[index]));
-      if (
-        coerced.length !== macro.domain.length ||
-        coerced.some((arg, index) => manager.sorts[arg] !== macro.domain[index])
+    // macros_find: a macro takes its own sorts, and Int for Real or Real for Int. Any other
+    // application leaves the name to a declaration.
+    if (
+      macro !== undefined &&
+      macro.domain.length === args.length &&
+      args.every(
+        (arg, index) =>
+          manager.sorts[arg] === macro.domain[index] ||
+          (isArithSort(manager.sorts[arg]) && isArithSort(macro.domain[index])),
       )
-        throw new SmtParseError(`ill-sorted application of ${name}`, at);
-      return expandMacro(macro, coerced);
-    }
+    )
+      return expandMacro(
+        macro,
+        args.map((arg, index) => coerce(arg, macro.domain[index])),
+      );
     const decls = funcs.get(name);
     const declared = decls === undefined ? undefined : mkDeclaredApp(name, decls, args, range, at);
     if (declared !== undefined) return declared;
@@ -1874,51 +1977,28 @@ export const createSmtlibReader = (
     const transcendentalOp = isTranscendental ? TRANSCENDENTAL_OPS.get(builtin) : undefined;
     if (isTranscendental && transcendentalOp === undefined)
       throw new SmtUnsupportedError(`the operator ${name}`);
-    const chainable = CHAINABLE_OPS.get(builtin);
-    const arithOp =
-      chainable ?? (builtin === "~" ? OP_UMINUS : (BUILTIN_OPS.get(builtin) ?? transcendentalOp));
+    const named =
+      builtin === "~"
+        ? OP_UMINUS
+        : (CHAINABLE_OPS.get(builtin) ?? BUILTIN_OPS.get(builtin) ?? transcendentalOp);
     if (
       args.length === 0 &&
-      arithOp !== undefined &&
-      manager.funcDecls[arithOp].family === FAMILY_ARITH
+      named !== undefined &&
+      manager.funcDecls[named].family === FAMILY_ARITH
     )
       throw new SmtParseError("no arguments supplied to arithmetical operator", head);
-    if (chainable === OP_EQ && args.length < 2)
-      throw new SmtParseError(
-        getUnknownConstantMessage(name, args, undefined),
-        args.length === 0 ? head : at,
-      );
-    if (chainable !== undefined) return mkChain(chainable, args, at);
-    if (builtin === "~") return mkApp(OP_UMINUS, args, at);
-    if (builtin === "-" && args.length === 1) return mkApp(OP_UMINUS, args, at);
-    const op = BUILTIN_OPS.get(builtin) ?? transcendentalOp;
-    if (op === undefined) {
-      if (THEORY_OPERATOR.test(name) || THEORY_OPERATORS.has(name))
-        throw new SmtUnsupportedError(`the operator ${name}`);
-      const instance = mkDatatypeInstanceApp(name, args, at);
-      if (instance !== undefined) return instance;
-      throw new SmtParseError(
-        getUnknownConstantMessage(name, args, undefined),
-        args.length === 0 ? head : at,
-      );
-    }
-    // xor is associative, so ast_manager::mk_app takes fewer than two arguments, which
-    // bool_rewriter reduces to false or the argument.
-    if (op === OP_XOR && args.length < 2) {
-      if (args.some((arg) => manager.sorts[arg] !== SORT_BOOL))
-        throw new SmtParseError(`ill-sorted application of ${name}`, at);
-      return args[0] ?? manager.falseExpr;
-    }
-    if (args.length <= 2 || !NESTED_OPS.has(op)) return mkApp(op, args, at);
-    const domainSort = getDomainSort(op, args);
-    return op === OP_XOR || op === OP_IMPLIES
-      ? args
-          .slice(0, -1)
-          .reduceRight(
-            (right, left) => mkApp(op, [left, right], at, domainSort),
-            args[args.length - 1],
-          )
-      : args.slice(1).reduce((left, right) => mkApp(op, [left, right], at, domainSort), args[0]);
+    // arith_decl_plugin::fix_kind.
+    const op = named === OP_SUB && args.length === 1 ? OP_UMINUS : named;
+    const domainSort = op === undefined ? -1 : getDomainSort(op, args, at);
+    if (op !== undefined && domainSort !== -1) return mkApp(op, args, at, domainSort);
+    if (op === undefined && (THEORY_OPERATOR.test(name) || THEORY_OPERATORS.has(name)))
+      throw new SmtUnsupportedError(`the operator ${name}`);
+    const instance = mkDatatypeInstanceApp(name, args, at);
+    if (instance !== undefined) return instance;
+    throw new SmtParseError(
+      getUnknownConstantMessage(name, args, undefined),
+      args.length === 0 ? head : at,
+    );
   };
 
   const parseLeaf = (sexpr: SmtToken): number => {
@@ -2673,17 +2753,16 @@ export const createSmtlibReader = (
       );
       const body = parseTerm(list.items[isConst ? 3 : 4] ?? list.end);
       if (!isConst) unbindSortedVars(bound.varSorts.length);
-      const coerced = coerce(body, range);
-      if (manager.sorts[coerced] !== range)
+      if (manager.sorts[body] !== range)
         throw new SmtParseError(
           isConst
             ? "invalid constant definition, sort mismatch"
             : "invalid function/constant definition, sort mismatch",
           list.end,
         );
-      manager.incRef(coerced);
-      declare(macros, symbol.text, { domain: bound.varSorts, range, body: coerced });
-      defineMacroFunc(symbol.text, bound.varSorts, coerced);
+      manager.incRef(body);
+      declare(macros, symbol.text, { domain: bound.varSorts, range, body });
+      defineMacroFunc(symbol.text, bound.varSorts, body);
       return;
     }
     const domain = name === "declare-fun" ? parseDomain(list.items[2], list) : [];
