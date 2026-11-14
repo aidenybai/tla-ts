@@ -25125,6 +25125,42 @@ describe("buffers", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  describe("copies a typed array's elements within it as copyWithin does, byte for byte", () => {
+    const source = `
+      const sample = new Int16Array([0, 1, 2, 3, 4]);
+      if (sample.copyWithin(1, 0, 3) !== sample) throw new Error("returns");
+      if (sample.join() !== "0,0,1,2,4") throw new Error("overlap");
+      const other = new Int8Array([1, 2, 3, 4, 5]);
+      other.copyWithin(0, 2);
+      if (other.join() !== "3,4,5,4,5") throw new Error("forward");
+      const relative = new Uint8Array([0, 1, 2, 3]);
+      relative.copyWithin(-10, -2, -1);
+      if (relative.join() !== "2,1,2,3") throw new Error("relative");
+      const bytes = new Uint8Array([1, 0, 0xc0, 0x7f, 0xff, 0xff, 0xff, 0xff]);
+      new Float32Array(bytes.buffer).copyWithin(1, 0);
+      if (bytes.join() !== "1,0,192,127,1,0,192,127") throw new Error("bits");
+    `;
+    const overlap = source.replace('"0,0,1,2,4"', '"0,0,0,0,4"');
+    const relative = source.replace('"2,1,2,3"', '"0,1,2,3"');
+    const bits = source.replace('"1,0,192,127,1,0,192,127"', '"1,0,192,127,0,0,192,127"');
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(overlap)).failure?.message).toContain('"overlap"');
+    });
+
+    it("rejects wrong expectation 2", async () => {
+      expect((await checkModel(relative)).failure?.message).toContain('"relative"');
+    });
+
+    it("rejects wrong expectation 3", async () => {
+      expect((await checkModel(bits)).failure?.message).toContain('"bits"');
+    });
+  });
+
   it("throws a TypeError where a typed array's method runs through call on another value", async () => {
     const result = await checkModel(`
       function throws(expected: Function, func: () => unknown, message: string) {

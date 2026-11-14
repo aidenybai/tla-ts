@@ -4216,7 +4216,7 @@ BufferSlice(heap, ref, start, end, isShared, constructor) ==
 \\* heap after them, their value, and the error they throw, if any. slice and subarray make their
 \\* typed array through the receiver's constructor, of those that constructors holds by their element
 \\* types, where tla-ts follows only the built-in one. Any method throws a TypeError for a receiver
-\\* that isn't a typed array.
+\\* that isn't a typed array. copyWithin copies bytes, which keeps a NaN's bits.
 TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
   LET argument(position) == IF Len(arguments) >= position THEN arguments[position] ELSE Undefined
       integer(position) == ToIntegerOrInfinity(ToNumber(argument(position)))
@@ -4266,7 +4266,7 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
         IN Returned(result, Allocated(result))
   IN CASE ~IsTypedArray(heap, ref) -> Thrown(heap, "TypeError")
        [] method \\notin {"at", "includes", "indexOf", "lastIndexOf", "join", "fill", "reverse", "slice",
-                         "subarray", "set"} ->
+                         "subarray", "set", "copyWithin"} ->
             Assert(FALSE, "tla-ts can't run this typed array method")
        [] method = "subarray" ->
             LET buffer == heap.objects[view.viewed[Ref]]
@@ -4325,6 +4325,16 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
                 final == end(3)
                 count == IF final > first THEN final - first ELSE 0
             IN Returned(write(heap, first, [position \\in 1..count |-> number]), ref)
+       [] method = "copyWithin" ->
+            LET target == start(1)
+                first == start(2)
+                count == IF end(3) - first < length - target THEN end(3) - first ELSE length - target
+                size == ElementSize(view.elementType)
+            IN Returned(IF count > 0
+                        THEN WithBytes(heap, view, view.byteOffset + target * size,
+                                       SubSeq(ViewedBytes(heap, view), view.byteOffset + first * size + 1,
+                                              view.byteOffset + (first + count) * size))
+                        ELSE heap, ref)
        [] method = "reverse" ->
             Returned(write(heap, 0, [position \\in 1..length |-> elements[length + 1 - position]]), ref)
        [] method = "slice" ->
