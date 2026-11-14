@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
+import { createAigTactic } from "../../src/prover/smt/solver/aig-tactic";
 import {
   AstManager,
   OP_ADD,
   OP_GE,
+  OP_IMPLIES,
+  OP_ITE,
   OP_LE,
+  OP_XOR,
   SORT_BOOL,
   SORT_INT,
 } from "../../src/prover/smt/solver/ast";
@@ -117,5 +121,53 @@ describe("the model evaluator folds mkbv as Z3 5.3.2 does", () => {
       "(((mkbv b a) #b10)",
       " ((bvadd (mkbv a b) #b01) #b10))",
     ]);
+  });
+});
+
+// The expected goal is Z3 5.3.2's (apply aig :print_dependencies true).
+describe("aig keeps the dependencies Z3 keeps", () => {
+  it("rewrites a formula with a dependency on its own and conjoins the others", () => {
+    const manager = new AstManager(new ResourceLimit(Infinity));
+    const mkBool = (name: string) =>
+      manager.mkApp(manager.mkFuncDecl(name, [], SORT_BOOL), [], SORT_BOOL);
+    const a = mkBool("a");
+    const b = mkBool("b");
+    const c = mkBool("c");
+    const orAb = manager.mkOr([a, b]);
+    const implies = manager.mkApp(OP_IMPLIES, [a, c], SORT_BOOL);
+    const ite = manager.mkApp(OP_ITE, [a, manager.mkNot(c), manager.mkNot(b)], SORT_BOOL);
+    const eq = manager.mkEq(a, manager.mkAnd([b, c]));
+    const goal = new Goal(manager);
+    goal.isCoresEnabled = true;
+    const names = new Map<number, string>();
+    const mkNamed = (name: string) => {
+      const leaf = mkBool(name);
+      names.set(leaf, name);
+      return mkDependencyLeaf(leaf);
+    };
+    goal.assert(manager.mkAnd([orAb, orAb, implies]), mkNamed("n1"));
+    goal.assert(ite, mkNamed("n2"));
+    goal.assert(manager.mkOr([a, b, c]));
+    goal.assert(eq, mkNamed("n3"));
+    goal.assert(
+      manager.mkApp(OP_IMPLIES, [c, manager.mkApp(OP_XOR, [a, b], SORT_BOOL)], SORT_BOOL),
+    );
+    createAigTactic(manager)(goal);
+    expect(
+      goal.forms.items.map((form, index) => [
+        getDependencyValues(goal.getDependency(index))
+          .map((leaf) => names.get(leaf))
+          .join(" "),
+        form,
+      ]),
+    ).toEqual([
+      ["n1", orAb],
+      ["n1", orAb],
+      ["n1", implies],
+      ["n2", ite],
+      ["n3", eq],
+      ["", manager.mkApp(OP_ITE, [c, manager.mkEq(a, manager.mkNot(b)), orAb], SORT_BOOL)],
+    ]);
+    expect(goal.depth).toBe(1);
   });
 });
