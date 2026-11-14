@@ -9123,7 +9123,12 @@ const translateExpressionStatement = (
       throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
     }
     const heap = useJavaScript("Delete", [deleted.heap, deleted.ref, deleted.key], context);
-    return ifThenElse(
+    const target = skipCasts(expression.expression);
+    // ToObject of the base throws on undefined or null, where a literal key converts nothing.
+    const isBaseChecked =
+      ts.isPropertyAccessExpression(target) ||
+      (ts.isElementAccessExpression(target) && isLiteral(target.argumentExpression));
+    const deletion = ifThenElse(
       useJavaScript("CanDelete", [deleted.heap, deleted.ref, deleted.key], context),
       shareHeap(
         {
@@ -9138,6 +9143,13 @@ const translateExpressionStatement = (
       ),
       throwTypeError(path, expression, context, frame),
     );
+    return isBaseChecked
+      ? ifThenElse(
+          apply("\\in", [deleted.ref, set([getUndefined(context), identifier("Null")])]),
+          throwTypeError(path, expression, context, frame),
+          deletion,
+        )
+      : deletion;
   }
   // A regexp that a statement makes of literals and drops, or an object whose members evaluate
   // nothing, changes nothing.

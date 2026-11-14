@@ -25450,4 +25450,28 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("throws the TypeError of deleting a property of undefined", () => {
+    const getSource = (expected: string) => `
+      const holder: { [key: string]: { [key: string]: unknown } | undefined } = { kept: { a: 1 } };
+      const read: string[] = [];
+      try {
+        delete holder.missing![0];
+        read.push("none");
+      } catch (error) {
+        read.push(error instanceof TypeError ? "type" : "other");
+      }
+      delete holder.kept!.a;
+      read.push(String("a" in holder.kept!));
+      if (read.join() !== "${expected}") throw new Error(read.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("type,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects the deletion as allowed", async () => {
+      expect((await checkModel(getSource("none,false"))).failure?.message).toContain("type,false");
+    });
+  });
 });
