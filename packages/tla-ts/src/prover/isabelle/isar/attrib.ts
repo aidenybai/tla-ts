@@ -181,6 +181,16 @@ const parseWhere = (args: readonly OuterToken[]) => {
 const ofFacts = (context: IsarContext, rule: Thm, facts: readonly Thm[]): Thm => {
   const [results] = chopSeq(2, multiResolves(context.tactics.limits, facts, [rule]));
   if (results.length === 0) throw new TlaIsabelleError("THM", "OF: no unifiers");
+// Thm.proof_attributes over a fact's theorems.
+export const applyAttributes = (
+  context: IsarContext,
+  attributes: readonly AttributeSource[],
+  thms: readonly Thm[],
+): Thm[] =>
+  thms.map((thm) =>
+    attributes.reduce((result, attribute) => applyAttribute(context, attribute, result), thm),
+  );
+
   if (results.length > 1) throw new TlaIsabelleError("THM", "OF: multiple unifiers");
   return results[0];
 };
@@ -207,10 +217,5 @@ export const applyAttribute = (context: IsarContext, attribute: AttributeSource,
 
 export const getThms = (context: IsarContext, references: readonly FactReference[]): Thm[] =>
   references.flatMap((reference) =>
-    getFact(context, reference.name).map((thm) =>
-      reference.attributes.reduce(
-        (result, attribute) => applyAttribute(context, attribute, result),
-        thm,
-      ),
-    ),
+    applyAttributes(context, reference.attributes, getFact(context, reference.name)),
   );

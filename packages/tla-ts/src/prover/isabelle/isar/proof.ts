@@ -36,10 +36,11 @@ import {
   type IsarContext,
   type ReadMode,
 } from "./context";
+import { applyAttributes } from "./attrib";
 import { evaluate, finishTac, normHhfTac, unfoldGoals, unfoldRule, type GoalState } from "./method";
 import { applyCase, dropJudgment } from "./rule-cases";
 import { parseType } from "./inner-syntax";
-import type { FixedVariable, MethodText, StatementPart } from "./theory";
+import type { AttributeSource, FixedVariable, MethodText, StatementPart } from "./theory";
 
 const initGoal = (prop: Term) =>
   instantiate([{ variable: mkVar("A", 0, propT), term: prop }], protectI);
@@ -294,14 +295,15 @@ const localResults = (
   parts: readonly StatementPart[],
   results: readonly (readonly Thm[])[],
 ): State => {
-  const named = parts.reduce(
-    (context, part, index) =>
-      part.name === undefined ? context : putFacts(context, part.name, results[index]),
-    contextOf(state),
-  );
+  const noted: Thm[] = [];
+  const named = parts.reduce((context, part, index) => {
+    const thms = applyAttributes(context, part.attributes, results[index]);
+    noted.push(...thms);
+    return part.name === undefined ? context : putFacts(context, part.name, thms);
+  }, contextOf(state));
   return putFactsOf(
     mapContext(state, () => named),
-    results.flat(),
+    noted,
   );
 };
 
@@ -421,23 +423,33 @@ export const collect = (state: State, isFinal: boolean): State => {
 // Proof.assume: each group of propositions becomes hypotheses, which a named group names.
 const assumeProps = (
   state: State,
-  groups: readonly { readonly name: string | undefined; readonly props: readonly Term[] }[],
+  groups: readonly {
+    readonly name: string | undefined;
+    readonly attributes: readonly AttributeSource[];
+    readonly props: readonly Term[];
+  }[],
 ): State => {
   assertMode(state, ["forward"]);
   const props = groups.flatMap((group) => group.props);
   const [thms, context] = addAssumptions(contextOf(state), false, props);
   let offset = 0;
+  const noted: Thm[] = [];
   const named = groups.reduce(
     (current, group) => {
-      const slice = thms.slice(offset, offset + group.props.length);
+      const slice = applyAttributes(
+        current,
+        group.attributes,
+        thms.slice(offset, offset + group.props.length),
+      );
       offset += group.props.length;
+      noted.push(...slice);
       return group.name === undefined ? current : putFacts(current, group.name, slice);
     },
     props.reduce(declareTerm, context),
   );
   return putFactsOf(
     mapContext(state, () => named),
-    thms,
+    noted,
   );
 };
 
@@ -446,7 +458,11 @@ export const assume = (state: State, parts: readonly StatementPart[]): State => 
   const statement = readStatement(contextOf(state), parts, "default");
   return assumeProps(
     mapContext(state, (context) => bindAll(context, statement.binds)),
-    parts.map((part, index) => ({ name: part.name, props: statement.props[index] })),
+    parts.map((part, index) => ({
+      name: part.name,
+      attributes: part.attributes,
+      props: statement.props[index],
+    })),
   );
 };
 
@@ -491,6 +507,7 @@ export const invokeCase = (
     mapContext(state, () => updateCases(bound, applied.cases)),
     applied.assumes.map((assumption) => ({
       name: assumption.name === "" ? undefined : `${caseName}.${assumption.name}`,
+      attributes: [],
       props: assumption.props,
     })),
   );
