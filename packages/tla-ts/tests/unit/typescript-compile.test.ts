@@ -23294,6 +23294,46 @@ describe("buffers", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("stops where a new that a statement drops runs code", async () => {
+    const caught = (made: string, name: string) => `
+      const holder: { tag?: string } = {};
+      holder.tag = "made";
+      let caught = "none";
+      try {
+        ${made}
+      } catch (error) {
+        caught = (error as Error).constructor.name;
+      }
+      if (caught !== "${name}") throw new Error(caught);
+    `;
+    expect(() => checkModel(caught("new AggregateError(5 as never);", "TypeError"))).toThrow(
+      "Unsupported statement",
+    );
+    expect(
+      (
+        await checkModel(
+          caught("new (AggregateError as unknown as new () => object)();", "TypeError"),
+        )
+      ).failure?.message,
+    ).toContain("tla-ts can't call this constructor");
+    expect(() =>
+      checkModel(
+        caught(
+          'new Error({ toString() { throw new RangeError("no"); } } as unknown as string);',
+          "RangeError",
+        ),
+      ),
+    ).toThrow("Unsupported statement");
+    expect(
+      (
+        await checkModel(`
+          const time = { valueOf() { throw new RangeError("no"); } } as unknown as number;
+          ${caught("new Date(time);", "RangeError")}
+        `)
+      ).failure?.message,
+    ).toContain("tla-ts can't");
+  });
+
   it("stops at a number a typed array's float can't hold exactly", async () => {
     const result = await checkModel(`
       const floats = new Float32Array(1);

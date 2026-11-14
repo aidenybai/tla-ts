@@ -8523,13 +8523,18 @@ const translateExpressionStatement = (
   ) {
     return continueWith(path);
   }
-  // An object that a statement makes, such as new ArrayBuffer, and drops is done once it's made, as
-  // is a new that only makes an empty object or collection.
+  // A new that a statement makes and drops is done once it's made, where it isn't an error, whose
+  // constructor runs later, and it passes only literals, which no conversion runs code for, as is a
+  // new that only makes an empty object or collection.
   if (
-    path.scope.allocated.has(expression) ||
-    (ts.isNewExpression(expression) &&
-      (expression.arguments ?? []).length === 0 &&
-      EMPTY_CONSTRUCTORS.has(getBuiltIn(expression.expression, context) ?? ""))
+    ts.isNewExpression(expression) &&
+    ((path.scope.allocated.has(expression) &&
+      !isNewError(expression, context) &&
+      (expression.arguments ?? []).every(
+        (argument) => isLiteral(argument) && !ts.isRegularExpressionLiteral(argument),
+      )) ||
+      ((expression.arguments ?? []).length === 0 &&
+        EMPTY_CONSTRUCTORS.has(getBuiltIn(expression.expression, context) ?? "")))
   ) {
     return continueWith(path);
   }
