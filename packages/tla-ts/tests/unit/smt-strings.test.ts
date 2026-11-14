@@ -1,4 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
+import { AstManager } from "../../src/prover/smt/solver/ast";
+import { L_TRUE } from "../../src/prover/smt/solver/lbool";
+import { ResourceLimit } from "../../src/prover/smt/solver/rlimit";
+import { SmtKernel } from "../../src/prover/smt/solver/smt-kernel";
+import { parseSmtlib } from "../../src/prover/smt/solver/smtlib-parser";
 import { runSmtlibScript } from "../../src/prover/smt/solver/smtlib-script";
 
 const run = (lines: string[]) => {
@@ -509,5 +514,43 @@ describe("regular expression membership", () => {
         "(check-sat)",
       ]).join("\n"),
     ).toBe(["unsat"].join("\n"));
+  });
+});
+
+class ReleaseCountingManager extends AstManager {
+  numDeadReleases = 0;
+
+  override decRef(expr: number) {
+    if (this.ids[expr] === -1) this.numDeadReleases++;
+    super.decRef(expr);
+  }
+}
+
+describe("the terms the theory of sequences internalizes", () => {
+  it("are not released while their enodes hold them", () => {
+    const manager = new ReleaseCountingManager(new ResourceLimit(Infinity));
+    const problem = parseSmtlib(
+      [
+        "(declare-const x String)",
+        "(declare-const y String)",
+        "(declare-const z String)",
+        '(assert (str.suffixof (str.++ x "a") (str.++ y z)))',
+      ].join("\n"),
+      manager,
+      () => {},
+      (error) => {
+        throw error;
+      },
+    );
+    const kernel = new SmtKernel(manager, {
+      isMbqi: true,
+      mbqiMaxIterations: 1000,
+      isFindingMacros: false,
+    });
+    kernel.push();
+    for (const assertion of problem.assertions) kernel.assertExpr(assertion);
+    expect(kernel.check()).toBe(L_TRUE);
+    kernel.pop(1);
+    expect(manager.numDeadReleases).toBe(0);
   });
 });
