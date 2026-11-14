@@ -7077,10 +7077,13 @@ const translateLoopCall = (
           ? []
           : undefined))
       : undefined;
-  const changed =
+  // A let or a const whose declaration hasn't run yet has no value to pass to the loop: only a
+  // getter that the loop stops at instead of calling can change it.
+  const changed = (
     getters === undefined && callback !== undefined
       ? getChanged(callback, path, context)
-      : getChanged(expression, path, context);
+      : getChanged(expression, path, context)
+  ).filter((symbol) => !path.scope.uninitialized.has(symbol));
   // Otherwise an array-like object's method reads its elements before it visits them, which a
   // callback that changes objects could change.
   if (

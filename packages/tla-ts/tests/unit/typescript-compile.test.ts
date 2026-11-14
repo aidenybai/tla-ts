@@ -5405,6 +5405,27 @@ describe("errors", () => {
     });
   });
 
+  describe("runs a getter loop before a const that another object's getter reads", () => {
+    const getSource = (expected: string) => `
+      const like = { get 0() { return "b"; }, length: 1 };
+      const copied = Array.prototype.toReversed.call(like) as unknown[];
+      const arr = [5, 0, 3];
+      Object.defineProperty(arr, "0", { get() { arr.push(1); return 5; } });
+      const seen = [copied.join(), arr.toReversed().join(), arr.length];
+      if (seen.join(";") !== "${expected}") throw new Error(seen.join(";"));
+    `;
+
+    it("calls only the getter that the object holds", async () => {
+      const result = await checkModel(getSource("b;3,0,5;4"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkModel(getSource("b;3,0,5;3"));
+      expect(result.failure?.message).toContain("b;3,0,5;4");
+    });
+  });
+
   describe("skips to the next element after a hole where a callback runs as statements", () => {
     const getSource = (expected: string) => `
       const visited: number[] = [];
