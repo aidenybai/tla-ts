@@ -882,7 +882,7 @@ const translateBuiltInCall = (
     const text = translateExpression(uriCall.text, scope, context);
     return uriCall.isUnescape
       ? useJavaScript("Unescape", [text], context)
-      : useJavaScript("EncodeURI", [text, uriCall.kept], context);
+      : useJavaScript("EncodeURI", [text, uriCall.kept, boolean(uriCall.isEscape)], context);
   }
   if (isEmptyLocalesCall(node, context)) {
     return ifExpression(

@@ -2508,21 +2508,41 @@ CreateHTML(value, tag) == "<" \\o tag \\o ">" \\o Text(value) \\o "</" \\o tag \
 
 LOCAL HexDigits == "0123456789ABCDEF"
 
-\\* encodeURI and encodeURIComponent, which escape each character but those in kept as the bytes of
-\\* its UTF-8, where a character of ASCII is one byte.
-RECURSIVE EncodeURI(_, _)
-EncodeURI(text, kept) ==
+LOCAL HexDigit(value) == SubSeq(HexDigits, value + 1, value + 1)
+
+LOCAL HexByte(byte) == "%" \\o HexDigit(byte \\div 16) \\o HexDigit(byte % 16)
+
+\\* The escapes of the bytes of a code point's UTF-8.
+LOCAL UTF8Escapes(point) ==
+  LET tail(shift) == HexByte(128 + ((point \\div shift) % 64))
+  IN  CASE point < 128 -> HexByte(point)
+        [] point < 2048 -> HexByte(192 + point \\div 64) \\o tail(1)
+        [] point < 65536 -> HexByte(224 + point \\div 4096) \\o tail(64) \\o tail(1)
+        [] OTHER -> HexByte(240 + point \\div 262144) \\o tail(4096) \\o tail(64) \\o tail(1)
+
+\\* encodeURI and encodeURIComponent, which escape each code point but those in kept as the bytes of
+\\* its UTF-8 and throw a URIError for a lone surrogate, or Annex B's escape, which escapes each code
+\\* unit below 256 as %XX and any other as %uXXXX.
+RECURSIVE EncodeURI(_, _, _)
+EncodeURI(text, kept, isEscape) ==
   IF text = ""
   THEN ""
   ELSE LET character == SubSeq(text, 1, 1)
-           code == IF character \\in DOMAIN AsciiCodes
-                   THEN AsciiCodes[character]
-                   ELSE Assert(FALSE, "tla-ts can't encode a character outside ASCII")
-       IN  (IF character \\in kept
-            THEN character
-            ELSE "%" \\o SubSeq(HexDigits, code \\div 16 + 1, code \\div 16 + 1)
-                     \\o SubSeq(HexDigits, (code % 16) + 1, (code % 16) + 1))
-             \\o EncodeURI(Tail(text), kept)
+           code == CharacterCode(character)
+           next == CharacterCode(SubSeq(text, 2, 2))
+           isPair == ~isEscape /\\ IsHighSurrogate(code) /\\ Len(text) >= 2 /\\ IsLowSurrogate(next)
+           width == IF isPair THEN 2 ELSE 1
+           encoded ==
+             CASE character \\in kept -> character
+               [] isEscape /\\ code < 256 -> HexByte(code)
+               [] isEscape ->
+                    "%u" \\o HexDigit(code \\div 4096) \\o HexDigit((code \\div 256) % 16)
+                      \\o HexDigit((code \\div 16) % 16) \\o HexDigit(code % 16)
+               [] isPair -> UTF8Escapes((code - 55296) * 1024 + next - 56320 + 65536)
+               [] IsHighSurrogate(code) \\/ IsLowSurrogate(code) ->
+                    Assert(FALSE, "tla-ts can't throw the URIError of encodeURI")
+               [] OTHER -> UTF8Escapes(code)
+       IN  encoded \\o EncodeURI(SubSeq(text, width + 1, Len(text)), kept, isEscape)
 
 LOCAL IsEscapeAt(text, position) ==
   /\\ position + 2 <= Len(text)
@@ -6174,6 +6194,7 @@ export const getURICall = (node: ts.Node, context: Context) => {
     ? {
         isDecode: node.expression.text.startsWith("decode"),
         isUnescape: node.expression.text === "unescape",
+        isEscape: node.expression.text === "escape",
         text,
         kept: set([...kept].map(string)),
       }

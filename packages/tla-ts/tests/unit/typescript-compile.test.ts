@@ -9694,10 +9694,21 @@ describe("errors", () => {
     expect((await checkModel(getSource("%E4%B8%AC"))).failure?.message).toContain('"units"');
   });
 
-  it("stops where it can't encode a character outside ASCII", async () => {
+  it("encodes and escapes characters outside ASCII", async () => {
+    const getSource = (expected: string) => `
+      const escaped = [escape("\\u0100\\xff"), escape("\\ud834\\udf06"), encodeURIComponent("é ü"), encodeURI("\\u0800😀#")];
+      if (escaped.join(" ") !== "${expected}") throw new Error("escaped");
+    `;
+    expect(
+      (await checkModel(getSource("%u0100%FF %uD834%uDF06 %C3%A9%20%C3%BC %E0%A0%80%F0%9F%98%80#")))
+        .failure,
+    ).toBeUndefined();
     await expect(
-      checkModel(`if (encodeURI("é") === "") throw new Error("never");`),
-    ).rejects.toThrow("tla-ts can't encode a character outside ASCII");
+      checkModel(getSource("%u0100%FF %uD834%uDF06 %C3%A9%20%C3%BC %E0%A0%80%F0%9F%98%81#")),
+    ).rejects.toThrow("escaped");
+    await expect(
+      checkModel(`if (encodeURI("a\\ud800") === "") throw new Error("never");`),
+    ).rejects.toThrow("tla-ts can't throw the URIError of encodeURI");
   });
 
   describe("converts the arguments of Math's functions, and stops where it can't", () => {
@@ -20943,7 +20954,7 @@ describe("errors", () => {
     await expect(checkModel(getSource("é", "\\ud83d\\ude01"))).rejects.toThrow("emoji");
     await expect(
       checkModel(`if (encodeURI(decodeURI("%C3" + "%A9")) === "") throw new Error("never");`),
-    ).rejects.toThrow("tla-ts can't encode a character outside ASCII");
+    ).rejects.toThrow("tla-ts can't tell the code of a character outside ASCII");
   });
 
   it("escapes and unescapes strings of ASCII", async () => {
