@@ -2364,39 +2364,48 @@ export const translateCallStatement = (
     const change = identifier(changeName);
     const heap = getHeap(path.scope, expression, context);
     const ref = translateExpression(arrayLikeChange.object, path.scope, context);
-    return bindOnce(
-      path,
-      changeName,
-      arrayLikeChange.method === "reverse"
-        ? useJavaScript("ArrayLikeReverse", [heap, ref], context)
-        : arrayLikeChange.method === "copyWithin"
-          ? useJavaScript(
-              "ArrayLikeCopyWithin",
-              [
-                heap,
-                ref,
-                ...translateCopyWithinArguments(arrayLikeChange.items, path.scope, context),
-              ],
-              context,
-            )
-          : useJavaScript(
-              "ArrayChange",
-              [
-                heap,
-                ref,
-                string(arrayLikeChange.method),
-                tuple(
-                  arrayLikeChange.items.map((item) =>
-                    translateExpression(item, path.scope, context),
+    const length = useJavaScript("Get", [heap, ref, string("length")], context);
+    // ToLength throws a TypeError where the length is a symbol or a BigInt.
+    return ifThenElse(
+      apply("\\/", [
+        useJavaScript("IsSymbol", [length], context),
+        useJavaScript("IsBigInt", [length], context),
+      ]),
+      throwTypeError(path, expression, context, frame),
+      bindOnce(
+        path,
+        changeName,
+        arrayLikeChange.method === "reverse"
+          ? useJavaScript("ArrayLikeReverse", [heap, ref], context)
+          : arrayLikeChange.method === "copyWithin"
+            ? useJavaScript(
+                "ArrayLikeCopyWithin",
+                [
+                  heap,
+                  ref,
+                  ...translateCopyWithinArguments(arrayLikeChange.items, path.scope, context),
+                ],
+                context,
+              )
+            : useJavaScript(
+                "ArrayChange",
+                [
+                  heap,
+                  ref,
+                  string(arrayLikeChange.method),
+                  tuple(
+                    arrayLikeChange.items.map((item) =>
+                      translateExpression(item, path.scope, context),
+                    ),
                   ),
-                ),
-              ],
-              context,
-            ),
-      ifThenElse(
-        field(change, "isThrown"),
-        throwTypeError(withHeap(field(change, "heap")), expression, context, frame),
-        continueWith(withHeap(field(change, "heap")), field(change, "value")),
+                ],
+                context,
+              ),
+        ifThenElse(
+          field(change, "isThrown"),
+          throwTypeError(withHeap(field(change, "heap")), expression, context, frame),
+          continueWith(withHeap(field(change, "heap")), field(change, "value")),
+        ),
       ),
     );
   }

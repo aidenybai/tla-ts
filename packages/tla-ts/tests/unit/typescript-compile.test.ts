@@ -17451,6 +17451,27 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("flatMap");
   });
 
+  it("throws a TypeError where an array-like object's length is a symbol", async () => {
+    const getSource = (expected: string) => `
+      const object: { [key: string | symbol]: unknown } = { 0: "a" };
+      object.length = Symbol("length");
+      const caught: string[] = [];
+      try {
+        Array.prototype.copyWithin.call(object, 0, 0);
+      } catch (error) {
+        caught.push(error instanceof TypeError ? "type" : "other");
+      }
+      try {
+        Array.prototype.reverse.call(object);
+      } catch (error) {
+        caught.push(error instanceof TypeError ? "type" : "other");
+      }
+      if (caught.join() !== "${expected}") throw new Error(caught.join());
+    `;
+    expect((await checkModel(getSource("type,type"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("type,other"))).failure?.message).toContain("type,type");
+  });
+
   describe("copies within an array-like object through call, index by index", () => {
     const getSource = (expected: string) => `
       const show = (object: { [key: string]: unknown }) =>
@@ -17489,15 +17510,6 @@ describe("errors", () => {
         Array.prototype.copyWithin.call(object, 0, 0);
       `);
       expect(result.failure?.message).toContain("tla-ts can't call getters");
-    });
-
-    it("reads the length where it copies nothing", async () => {
-      const result = await checkModel(`
-        const object: { [key: string | symbol]: unknown } = {};
-        object.length = Symbol("length");
-        Array.prototype.copyWithin.call(object, 0, 0);
-      `);
-      expect(result.failure?.message).toContain("tla-ts can't convert Symbol to a length");
     });
   });
 
