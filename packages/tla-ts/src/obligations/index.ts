@@ -2,6 +2,7 @@ import { TlaProofError, TlaSyntaxError, type SyntaxFailure } from "../errors";
 import { createAnonymizer } from "./anonymize";
 import {
   getAtPrefix,
+  getErrorNote,
   getErrorSetting,
   getLocusPosition,
   getLocusPrefix,
@@ -139,7 +140,8 @@ const loadMule = (
       endLine: proofFailure.stop.line,
       endColumn: proofFailure.stop.column,
     };
-    warnError(onWarning, locus, parsed[0].reason);
+    onWarning(getErrorNote(locus, proofFailure.printed));
+    onWarning(getErrorSetting(locus, parsed[0].reason));
     throw new TlaProofError(parsed[0].reason, { failure: proofFailure.exception });
   }
   if (Array.isArray(parsed)) {

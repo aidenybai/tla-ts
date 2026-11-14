@@ -231,3 +231,112 @@ THEOREM A /\\ B = B BY DEF A, B
     );
   });
 });
+
+describe("tlapm reports a failure in a hypothesis where Pco.star leaves the input", () => {
+  it.each([
+    [
+      "THEOREM ASSUME NEW P, ASSUME NEW Q, Q /\\ PROVE Q PROVE P",
+      "line 4, character 21\nincomplete expression\n",
+    ],
+    ["THEOREM ASSUME NEW Q, Q /\\ PROVE Q", "line 4, character 21\nincomplete expression\n"],
+    [
+      "THEOREM ASSUME ASSUME NEW Q, Q /\\ PROVE Q PROVE x",
+      "line 4, character 28\nincomplete expression\n",
+    ],
+    [
+      "THEOREM ASSUME NEW P, ASSUME NEW Q PROVE Q /\\ PROVE P",
+      "line 4, character 21\nincomplete expression\n",
+    ],
+    ["THEOREM ASSUME NEW P, P, {P PROVE P", "line 4, character 24\nUnexpected ,\n"],
+    ["THEOREM ASSUME NEW P, PROVE P", "line 4, character 21\nUnexpected ,\n"],
+    ["THEOREM ASSUME (x PROVE x", "line 4, character 15\nUnexpected (\n"],
+    [
+      "THEOREM ASSUME NEW P, P, ASSUME PROVE P PROVE P",
+      "line 4, character 21\nUnexpected keyword PROVE\n",
+    ],
+    ["THEOREM ASSUME NEW P, P, NEW PROVE P", "line 4, character 21\nUnexpected keyword PROVE\n"],
+  ])("%s", (body, message) => {
+    expect(getParseError(body)).toBe(`File "./Bad.tla", ${message}`);
+  });
+});
+
+describe("tlapm names the bullet whose first item fails", () => {
+  it.each([
+    ["A == /\\", "line 4, character 5\nrequired expressions(s) missing before 'operator /\\'\n"],
+    [
+      "A == /\\(x, x)",
+      "line 4, character 5\nrequired expressions(s) missing before 'operator /\\'\n",
+    ],
+    ["A == \\/ +", "line 4, character 5\nrequired expressions(s) missing before 'operator \\/'\n"],
+    ["A == x + /\\", "line 4, character 5\nincomplete expression\n"],
+    ["A == /\\ x +", "line 4, character 5\nincomplete expression\n"],
+  ])("%s", (body, message) => {
+    expect(getParseError(body)).toBe(`File "./Bad.tla", ${message}`);
+  });
+});
+
+describe("tlapm ends the messages p_parser.ml ends with a newline", () => {
+  const getProofError = (proof: string) => {
+    const directory = writeModule(
+      "Steps",
+      `---- MODULE Steps ----\nTHEOREM TRUE\n${proof}\n====\n`,
+    );
+    const result = runTlapm(directory, ["-N", "--toolbox", "0", "0", "Steps.tla"]);
+    expect(result.status).toBe(3);
+    return result.stderr;
+  };
+
+  it.each([
+    [
+      "<1>1. TRUE OBVIOUS\n<1>2. TRUE OBVIOUS",
+      "line 4, character 19",
+      "Unexpected end of (sub)proof at level 1 before QED step\n",
+      "\n",
+    ],
+    [
+      "<1>1. TRUE OBVIOUS\nOBVIOUS",
+      "line 4, characters 1-7",
+      "Expecting a proof step but found an OBVIOUS leaf proof\n",
+      "\n",
+    ],
+    [
+      "<1>1. TRUE OBVIOUS\nPROOF <1>2. QED OBVIOUS",
+      "line 4, characters 7-15",
+      "PROOF keyword found in step that does not begin subproof\n",
+      "",
+    ],
+    [
+      "<1>1. TRUE OBVIOUS\n<+> QED OBVIOUS",
+      "line 4, characters 1-7",
+      "<+> used but no subproof expected\n",
+      "",
+    ],
+    [
+      "<1>1. QED OBVIOUS\n<1>2. QED OBVIOUS",
+      "line 4, characters 1-9",
+      "extra step(s) after finished proof",
+      "",
+    ],
+  ])("%j", (proof, location, printed, set) => {
+    const message = printed.trimEnd();
+    const exception = `Proof.Parser${message.startsWith("extra") ? ".toplevel" : ""}`;
+    expect(getProofError(proof)).toBe(
+      [
+        `File "./Steps.tla", ${location}:`,
+        `Error: ${printed}`,
+        ` tlapm ending abnormally with Failure("${exception}")`,
+        "",
+        "@!!BEGIN",
+        "@!!type:warning",
+        `@!!msg:File "./Steps.tla", ${location}`,
+        "",
+        `${message}${set}`,
+        "",
+        "",
+        "@!!END",
+        "",
+        "",
+      ].join("\n"),
+    );
+  });
+});
