@@ -95,3 +95,27 @@ describe("lia2pb keeps the dependencies Z3 keeps", () => {
     ]);
   });
 });
+
+describe("the model evaluator folds mkbv as Z3 5.3.2 does", () => {
+  it("turns a mkbv of truth values into a numeral, the first bit lowest", () => {
+    expect(
+      run([
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(assert (and a (not b)))",
+        "(simplify (mkbv true false true))",
+        "(check-sat)",
+        "(eval (mkbv true false true))",
+        "(eval (mkbv a b a a))",
+        "(get-value ((mkbv b a) (bvadd (mkbv a b) #b01)))",
+      ]),
+    ).toEqual([
+      "(mkbv true false true)",
+      "sat",
+      "#b101",
+      "#xd",
+      "(((mkbv b a) #b10)",
+      " ((bvadd (mkbv a b) #b01) #b10))",
+    ]);
+  });
+});

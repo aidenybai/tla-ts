@@ -94,6 +94,7 @@ export interface BvRewriterOptions {
   readonly isHiDiv0: boolean;
   readonly isMul2concat: boolean;
   readonly isSplitConcatEq: boolean;
+  readonly isMkbv2num?: boolean;
 }
 
 export const DEFAULT_BV_OPTIONS: Omit<BvRewriterOptions, "isHiDiv0"> = {
@@ -391,7 +392,7 @@ export class BvRewriter extends PolyRewriter {
           2,
         );
       case OP_MKBV:
-        return undefined;
+        return this.mkMkbv(args);
       case OP_BIT2BOOL:
         return this.mkBit2boolIndex(args[0], parameters[0]);
       case OP_BSMUL_NO_OVFL:
@@ -1541,6 +1542,17 @@ export class BvRewriter extends PolyRewriter {
     const size = this.getSize(product[0]);
     const kept = this.mkExtractTerm(size - shift - 1, 0, product[1]);
     return rewrite(this.mkConcatTerm([kept, this.mkZero(shift)]), 2);
+  }
+
+  private mkMkbv(args: number[]) {
+    const manager = this.manager;
+    if (this.bvOptions.isMkbv2num !== true) return undefined;
+    let value = 0n;
+    for (let index = args.length - 1; index >= 0; index--) {
+      if (!manager.isTrue(args[index]) && !manager.isFalse(args[index])) return undefined;
+      value = value * 2n + (manager.isTrue(args[index]) ? 1n : 0n);
+    }
+    return this.mkBv(value, args.length);
   }
 
   private mkBit2boolIndex(arg: number, index: number): Result {
