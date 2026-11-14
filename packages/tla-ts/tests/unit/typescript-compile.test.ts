@@ -13566,6 +13566,42 @@ describe("errors", () => {
     });
   });
 
+  describe("throws the RangeError of new Array of a number that isn't a length", () => {
+    const getSource = (expected: string) => `
+      class Box {}
+      const box = new Box();
+      const seen: string[] = [];
+      const note = (run: () => void) => {
+        try {
+          run();
+          seen.push("none");
+        } catch (error) {
+          seen.push(error instanceof RangeError ? "range" : "other");
+        }
+      };
+      note(() => {
+        new Array(-1);
+      });
+      note(() => {
+        new Array(4294967296);
+      });
+      note(() => {
+        new Array(1.5);
+      });
+      if (seen.join() !== "${expected}") throw new Error(seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("range,range,range"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("range,range,none"))).failure?.message).toContain(
+        "range,range,range",
+      );
+    });
+  });
+
   describe("stops where a script gives the prototypes of an array's iterator a return", () => {
     const getSource = (holder: string, body: string, expected: number) => `
       let closed = 0;

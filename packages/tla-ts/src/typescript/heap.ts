@@ -5034,6 +5034,9 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
   if (getGetterCall(node, context) !== undefined) return ["TypeError"];
   if (getIntlMethodCall(node, context) !== undefined) return ["TypeError"];
   if (isInvalidRegExp(node, context)) return ["SyntaxError"];
+  if (ts.isNewExpression(node) && getBuiltIn(node.expression, context) === "Array") {
+    return ["TypeError", "RangeError"];
+  }
   const created = getNewClass(node, context);
   if (created !== undefined && ts.isClassLike(created) && isNullBased(created)) {
     return ["ReferenceError"];

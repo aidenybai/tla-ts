@@ -10576,19 +10576,38 @@ const translateForeignNew = (
   path: Path,
   context: Context,
   frame: Frame,
-) =>
-  ifThenElse(
-    useJavaScript(
-      "IsConstructor",
-      [
-        getHeap(path.scope, expression, context),
-        translateExpression(getCast(expression.expression), path.scope, context),
-      ],
-      context,
-    ),
+) => {
+  const callee = translateExpression(getCast(expression.expression), path.scope, context);
+  const constructed = ifThenElse(
+    useJavaScript("IsConstructor", [getHeap(path.scope, expression, context), callee], context),
     leaf(apply("Assert", [boolean(false), string("tla-ts can't call this constructor")])),
     throwTypeError(path, expression, context, frame),
   );
+  const argument =
+    expression.arguments?.length === 1 ? skipCasts(expression.arguments[0]) : undefined;
+  const length =
+    argument === undefined
+      ? undefined
+      : ts.isNumericLiteral(argument)
+        ? Number(argument.text)
+        : ts.isPrefixUnaryExpression(argument) &&
+            argument.operator === ts.SyntaxKind.MinusToken &&
+            ts.isNumericLiteral(argument.operand)
+          ? -Number(argument.operand.text)
+          : undefined;
+  // Array's constructor throws a RangeError where its one argument is a number but not a length.
+  return length === undefined || (Number.isInteger(length) && length >= 0 && length < 2 ** 32)
+    ? constructed
+    : ifThenElse(
+        useJavaScript(
+          "SameValue",
+          [callee, translateBuiltInValue("Array", expression, context)],
+          context,
+        ),
+        throwError("RangeError", path, expression, context, frame),
+        constructed,
+      );
+};
 
 export const translateDeclarations = (
   declarations: readonly ts.VariableDeclaration[],
