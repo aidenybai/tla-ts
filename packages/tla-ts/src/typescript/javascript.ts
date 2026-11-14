@@ -2016,6 +2016,19 @@ ArrayLike(heap, ref) ==
      THEN Assert(FALSE, "tla-ts can't read an array-like object with holes")
      ELSE Read([position \\in 1..length |-> Get(heap, ref, ToString(position - 1))])
 
+\\* The value at a position of an array that concat makes, and whether the array has an element there.
+Present(value) == [isPresent |-> TRUE, value |-> value]
+
+PresentParts(elements) == [position \\in DOMAIN elements |-> Present(elements[position])]
+
+\\* The parts of an array-like object at each index below its length, where a hole that no prototype
+\\* fills is no element.
+ArrayLikeParts(heap, ref) ==
+  Read([position \\in 1..LengthOf(heap, ref) |->
+          IF Has(heap, ref, ToString(position - 1))
+          THEN Present(Get(heap, ref, ToString(position - 1)))
+          ELSE [isPresent |-> FALSE, value |-> Undefined]])
+
 \\* An iterator of an array's keys, values, or entries, which reads the array as next steps it, so
 \\* that it sees what the script changes in the array meanwhile.
 ArrayIterator(heap, array, kind, prototype) ==
@@ -3346,6 +3359,15 @@ ConcatSpread(heap, value) ==
       THEN ArrayLike(heap, value)
       ELSE <<value>>
 
+\\* The parts that concat appends for an argument, where the array that the heap holds keeps holes.
+ConcatSpreadParts(heap, value) ==
+  LET spreadable == IF IsRef(value)
+                    THEN Get(heap, value, WellKnownSymbol("isConcatSpreadable"))
+                    ELSE Undefined
+  IN  IF IF spreadable = Undefined THEN IsArray(heap, value) ELSE ToBoolean(spreadable)
+      THEN ArrayLikeParts(heap, value)
+      ELSE <<Present(value)>>
+
 \\* Whether a proxy or a proxy that it reads through is revoked, so that IsArray throws a TypeError.
 RECURSIVE IsRevokedProxy(_, _)
 IsRevokedProxy(heap, value) ==
@@ -3631,6 +3653,10 @@ ArrayObjectWithHoles(prototype, elements, holes) ==
       isOpaque |-> FALSE, privates |-> <<>>, isArray |-> TRUE]
 
 ArrayObject(prototype, elements) == ArrayObjectWithHoles(prototype, elements, {})
+
+ArrayObjectOfParts(prototype, parts) ==
+  ArrayObjectWithHoles(prototype, [position \\in DOMAIN parts |-> parts[position].value],
+                       {position \\in DOMAIN parts : ~parts[position].isPresent})
 
 \\* The description of a property of an array that a sequence holds.
 DescribeElement(elements, key) == DescribeObject(ArrayObject(Null, elements), key)

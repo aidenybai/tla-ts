@@ -1734,7 +1734,14 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
         : translateCall(node, scope, context, false);
     return useJavaScript(
       "Allocate",
-      [heap, useJavaScript("ArrayObject", [prototype, elements], context)],
+      [
+        heap,
+        useJavaScript(
+          isConcatParts(node, context) ? "ArrayObjectOfParts" : "ArrayObject",
+          [prototype, elements],
+          context,
+        ),
+      ],
       context,
     );
   }
@@ -4851,6 +4858,10 @@ export const isArrayLengthening = (node: ts.Node, context: Context) =>
   ) &&
   context.checker.isArrayType(context.checker.getTypeAtLocation(node.left.expression));
 
+// A concat that makes an array that the heap holds, which keeps the holes of what it spreads.
+export const isConcatParts = (node: ts.Node, context: Context) =>
+  isMethodCall(node) && node.expression.name.text === "concat" && context.heapCollections.has(node);
+
 export const findHeapArrays = (
   roots: readonly ts.Node[],
   changed: readonly ts.Node[],
@@ -5076,6 +5087,39 @@ export const findHeapArrays = (
     }
   });
   changed.forEach((node) => arrays.add(node));
+  // The array that concat makes from an array that the heap holds and that may have holes, as a
+  // script lengthens it, deletes an element, or makes it with holes, which the new array keeps. The
+  // script must read it only as an object.
+  references.forEach((uses, symbol) => {
+    const declaration = symbol.valueDeclaration;
+    if (declaration === undefined || !ts.isVariableDeclaration(declaration)) return;
+    const call = declaration.initializer;
+    if (call === undefined || !isMethodCall(call) || call.expression.name.text !== "concat") return;
+    const isHeldArray = (inner: ts.Expression) => {
+      const held = ts.isIdentifier(inner) ? getSymbol(inner, context.checker) : undefined;
+      const heldDeclaration = held?.valueDeclaration;
+      return (
+        held !== undefined &&
+        heldDeclaration !== undefined &&
+        ts.isVariableDeclaration(heldDeclaration) &&
+        heldDeclaration.initializer !== undefined &&
+        arrays.has(heldDeclaration.initializer) &&
+        (isHoleyArray(heldDeclaration.initializer, context) ||
+          (references.get(held) ?? []).some(
+            (use) => isElementDelete(use) || isArrayLengthening(use.parent.parent, context),
+          ))
+      );
+    };
+    if (
+      [call.expression.expression, ...call.arguments].some(isHeldArray) &&
+      uses
+        .filter((use) => use.parent !== declaration)
+        .every((use) => isArrayObjectUse(use, context))
+    ) {
+      arrays.add(call);
+      arrays.add(declaration);
+    }
+  });
   // The array that map makes, which lacks an element where the array that it visits does: an
   // array-like object, which may lack any index below its length, or an array that the callback, or
   // what it calls, changes in place. The script must read it only as an object.

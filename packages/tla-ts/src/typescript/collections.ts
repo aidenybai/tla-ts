@@ -36,6 +36,7 @@ import {
   getHeap,
   getPrototypeMethod,
   hasPrototypeArray,
+  isConcatParts,
   isDateType,
   TIME_METHODS,
   isDescriptionOfAll,
@@ -1028,23 +1029,32 @@ const translateSequenceOperation = (
     ],
     [
       "concat",
-      () =>
-        [
-          sequence,
+      () => {
+        // An array that the heap holds keeps the holes of the arrays that concat spreads, so it
+        // gathers each position's value with whether there is an element there.
+        const isParts = isConcatParts(node, context);
+        const receiver = isMethodCall(node) ? node.expression.expression : undefined;
+        return [
+          isParts && receiver !== undefined && getKind(receiver, context) === "sequence"
+            ? useJavaScript("PresentParts", [sequence], context)
+            : sequence,
           // An object, such as an array that the heap holds, spreads as its
           // @@isConcatSpreadable property or IsArray tells.
           ...call.arguments.map((inner) =>
             getKind(inner, context) === "sequence"
-              ? translate(inner)
+              ? isParts
+                ? useJavaScript("PresentParts", [translate(inner)], context)
+                : translate(inner)
               : context.heap === undefined
                 ? tuple([translate(inner)])
                 : useJavaScript(
-                    "ConcatSpread",
+                    isParts ? "ConcatSpreadParts" : "ConcatSpread",
                     [getHeap(scope, inner, context), translate(inner)],
                     context,
                   ),
           ),
-        ].reduce((left, right) => apply("\\o", [left, right])),
+        ].reduce((left, right) => apply("\\o", [left, right]));
+      },
     ],
     [
       "with",
@@ -2578,7 +2588,7 @@ const SPECIES_METHODS = new Set(["concat", "filter", "flat", "flatMap", "map", "
 export const translateMethodElements = (
   method: string,
   owner: Expression,
-  read: "ArrayLike" | "ArrayLikeValues" | "PresentElements" | undefined,
+  read: "ArrayLike" | "ArrayLikeParts" | "ArrayLikeValues" | "PresentElements" | undefined,
   node: ts.Node,
   scope: Scope,
   context: Context,
@@ -2959,11 +2969,17 @@ export const translateArrayLikeCall = (
         ]),
         operate(
           owner,
-          ifExpression(
-            useJavaScript("IsArray", [heap, owner], context),
-            translateMethodElements(method, owner, "ArrayLike", node, scope, context),
-            tuple([owner]),
-          ),
+          isConcatParts(node, context)
+            ? ifExpression(
+                useJavaScript("IsArray", [heap, owner], context),
+                translateMethodElements(method, owner, "ArrayLikeParts", node, scope, context),
+                tuple([useJavaScript("Present", [owner], context)]),
+              )
+            : ifExpression(
+                useJavaScript("IsArray", [heap, owner], context),
+                translateMethodElements(method, owner, "ArrayLike", node, scope, context),
+                tuple([owner]),
+              ),
         ),
         apply("Assert", [
           boolean(false),

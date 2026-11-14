@@ -4737,6 +4737,20 @@ describe("calls", () => {
     expect((await checkModel(getSource(6))).failure?.message).toContain("lengthened");
   });
 
+  it("keeps the holes of an array that concat copies, where no prototype fills them", async () => {
+    const getSource = (expected: string) => `
+      const a = [1, 2];
+      a.length = 4;
+      // @ts-ignore
+      Object.prototype[3] = "p";
+      const b = a.concat([5]);
+      const log = [b.length, b.hasOwnProperty("2"), b.hasOwnProperty("3"), b[3], b[4]].join();
+      if (log !== "${expected}") throw new Error(log);
+    `;
+    expect((await checkModel(getSource("5,false,true,p,5"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("5,true,true,p,5"))).failure?.message).toContain("5,false");
+  });
+
   it("stops where a model lengthens an array, which can't hold holes", async () => {
     const result = await checkModel(`
       let values: number[] = [3];
