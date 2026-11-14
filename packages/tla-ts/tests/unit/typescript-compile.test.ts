@@ -5112,6 +5112,27 @@ describe("errors", () => {
     });
   });
 
+  describe("reads a length that a String, Number, or Boolean object holds", () => {
+    const getSource = (expected: string) => `
+      const obj: { [key: string]: unknown } = { 0: "a", 1: "b", 2: "c", length: new Number(2) };
+      const popped = Array.prototype.pop.call(obj);
+      const other: { [key: string]: unknown } = { 0: "x", 1: "y", length: new String("1") };
+      const joined = Array.prototype.join.call(other, "-");
+      const seen = [popped, obj.length, joined, Array.prototype.join.call(obj)];
+      if (seen.join(";") !== "${expected}") throw new Error(seen.join(";"));
+    `;
+
+    it("converts it to what it holds", async () => {
+      const result = await checkModel(getSource("b;1;x;a"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkModel(getSource("b;2;x;a"));
+      expect(result.failure?.message).toContain("b;1;x;a");
+    });
+  });
+
   describe("skips to the next element after a hole where a callback runs as statements", () => {
     const getSource = (expected: string) => `
       const visited: number[] = [];

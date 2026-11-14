@@ -2425,11 +2425,7 @@ export const translateCallStatement = (
         ? bindOnce(
             path,
             lengthName,
-            useJavaScript(
-              "ToLength",
-              [useJavaScript("Get", [heap, ref, string("length")], context)],
-              context,
-            ),
+            useJavaScript("LengthOf", [heap, ref], context),
             ifThenElse(
               apply("=", [length, number(0)]),
               removeFrom(path, getUndefined(context)),

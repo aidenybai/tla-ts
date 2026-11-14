@@ -1617,66 +1617,6 @@ ToLength(value) ==
     [] value = <<>> -> 0
     [] OTHER -> Assert(FALSE, "tla-ts can't convert " \\o ToString(value) \\o " to a length")
 
-RECURSIVE KeyCount(_, _)
-KeyCount(heap, ref) ==
-  LET object == Lookup(heap, ref)
-  IN Len(object.keys) + IF object.prototype = Null THEN 0 ELSE KeyCount(heap, object.prototype)
-
-\\* The elements of an array-like object, which has an element at each index below its length.
-ArrayLike(heap, ref) ==
-  LET length == ToLength(Get(heap, ref, "length"))
-  IN IF \\/ length > KeyCount(heap, ref)
-        \\/ \\E position \\in 0..(length - 1) : ~Has(heap, ref, ToString(position))
-     THEN Assert(FALSE, "tla-ts can't read an array-like object with holes")
-     ELSE Read([position \\in 1..length |-> Get(heap, ref, ToString(position - 1))])
-
-\\* An iterator of an array's keys, values, or entries, which reads the array as next steps it, so
-\\* that it sees what the script changes in the array meanwhile.
-ArrayIterator(heap, array, kind, prototype) ==
-  LET allocated == Allocate(heap, [EmptyObject EXCEPT !.prototype = prototype]
-                                    @@ [iterated |-> array, index |-> 0, kind |-> kind])
-  IN [heap |-> allocated, value |-> Allocated(allocated), isThrown |-> FALSE]
-
-\\* The values of an array-like object at each index below its length, which Get reads, so that a
-\\* hole gives what a prototype holds there, or undefined.
-ArrayLikeValues(heap, ref) ==
-  LET length == ToLength(Get(heap, ref, "length"))
-  IN IF length > KeyCount(heap, ref)
-     THEN Assert(FALSE, "tla-ts can't read an array-like object this long")
-     ELSE Read([position \\in 1..length |-> Get(heap, ref, ToString(position - 1))])
-
-RECURSIVE IndexKeys(_, _)
-IndexKeys(heap, ref) ==
-  LET object == Lookup(heap, ref)
-  IN {key \\in DOMAIN object.values : IsIndex(key)}
-       \\cup IF object.prototype = Null THEN {} ELSE IndexKeys(heap, object.prototype)
-
-\\* The position that a loop over an array-like object visits after a hole, in its order: the next
-\\* index that the object or a prototype holds, as no other has a property. A typed array, a proxy,
-\\* or an object that tla-ts follows may have others.
-NextElementPosition(heap, ref, position, length, isReversed) ==
-  IF ~IsHeap(ref) \\/ IsTypedArray(heap, ref) \\/ IsProxy(heap, ref) \\/ heap.objects[ref[Ref]].isOpaque
-  THEN IF isReversed THEN position - 1 ELSE position + 1
-  ELSE LET held == {ToIndex(key) + 1 : key \\in IndexKeys(heap, ref)}
-           later == {other \\in held :
-                       IF isReversed THEN other < position ELSE other > position /\\ other <= length}
-       IN CASE later = {} -> IF isReversed THEN 0 ELSE length + 1
-            [] isReversed -> CHOOSE other \\in later : \\A more \\in later : more <= other
-            [] OTHER -> CHOOSE other \\in later : \\A more \\in later : other <= more
-
-\\* The elements that an array-like object or its prototypes hold below its length, in order, with
-\\* their indices. The array methods that skip holes visit these. A record holds the length, so TLC
-\\* reads it even when no element is present.
-PresentElements(heap, ref) ==
-  LET length == ToLength(Get(heap, ref, "length"))
-      present == {position \\in {ToIndex(key) : key \\in IndexKeys(heap, ref)} : position < length}
-      indices == [position \\in 1..Cardinality(present) |->
-                   CHOOSE element \\in present :
-                     Cardinality({other \\in present : other < element}) = position - 1]
-  IN [length |-> length,
-      indices |-> indices,
-      values |-> Read([position \\in DOMAIN indices |-> Get(heap, ref, ToString(indices[position]))])]
-
 \\* The accessor that a write to a key calls, which the object or a prototype holds, or Undefined
 \\* where the write makes or changes a data property.
 RECURSIVE AccessorOf(_, _, _)
@@ -1914,6 +1854,82 @@ SequenceHasOwn(sequence, key) ==
 
 \\* Whether an object still holds a built-in function, which tla-ts runs as it compiles.
 HoldsBuiltIn(heap, ref, key, path) == SameValue(Get(heap, ref, key), Ref :> path)
+
+\\* ToLength of an object's length, where a String, Number, or Boolean object converts to what it
+\\* holds while its valueOf is still the built-in one and nothing gives it @@toPrimitive. A statement
+\\* converts any other object first.
+LengthOf(heap, ref) ==
+  LET value == Get(heap, ref, "length")
+      kind == CASE TypeOf(Lookup(heap, value).primitive) = "boolean" -> "Boolean"
+                [] TypeOf(Lookup(heap, value).primitive) = "number" -> "Number"
+                [] OTHER -> "String"
+  IN IF /\\ IsHeap(value)
+        /\\ "primitive" \\in DOMAIN Lookup(heap, value)
+        /\\ HoldsBuiltIn(heap, value, "valueOf", kind \\o ".prototype.valueOf")
+        /\\ Get(heap, value, WellKnownSymbol("toPrimitive")) = Undefined
+     THEN ToLength(Lookup(heap, value).primitive)
+     ELSE ToLength(value)
+
+RECURSIVE KeyCount(_, _)
+KeyCount(heap, ref) ==
+  LET object == Lookup(heap, ref)
+  IN Len(object.keys) + IF object.prototype = Null THEN 0 ELSE KeyCount(heap, object.prototype)
+
+\\* The elements of an array-like object, which has an element at each index below its length.
+ArrayLike(heap, ref) ==
+  LET length == LengthOf(heap, ref)
+  IN IF \\/ length > KeyCount(heap, ref)
+        \\/ \\E position \\in 0..(length - 1) : ~Has(heap, ref, ToString(position))
+     THEN Assert(FALSE, "tla-ts can't read an array-like object with holes")
+     ELSE Read([position \\in 1..length |-> Get(heap, ref, ToString(position - 1))])
+
+\\* An iterator of an array's keys, values, or entries, which reads the array as next steps it, so
+\\* that it sees what the script changes in the array meanwhile.
+ArrayIterator(heap, array, kind, prototype) ==
+  LET allocated == Allocate(heap, [EmptyObject EXCEPT !.prototype = prototype]
+                                    @@ [iterated |-> array, index |-> 0, kind |-> kind])
+  IN [heap |-> allocated, value |-> Allocated(allocated), isThrown |-> FALSE]
+
+\\* The values of an array-like object at each index below its length, which Get reads, so that a
+\\* hole gives what a prototype holds there, or undefined.
+ArrayLikeValues(heap, ref) ==
+  LET length == LengthOf(heap, ref)
+  IN IF length > KeyCount(heap, ref)
+     THEN Assert(FALSE, "tla-ts can't read an array-like object this long")
+     ELSE Read([position \\in 1..length |-> Get(heap, ref, ToString(position - 1))])
+
+RECURSIVE IndexKeys(_, _)
+IndexKeys(heap, ref) ==
+  LET object == Lookup(heap, ref)
+  IN {key \\in DOMAIN object.values : IsIndex(key)}
+       \\cup IF object.prototype = Null THEN {} ELSE IndexKeys(heap, object.prototype)
+
+\\* The position that a loop over an array-like object visits after a hole, in its order: the next
+\\* index that the object or a prototype holds, as no other has a property. A typed array, a proxy,
+\\* or an object that tla-ts follows may have others.
+NextElementPosition(heap, ref, position, length, isReversed) ==
+  IF ~IsHeap(ref) \\/ IsTypedArray(heap, ref) \\/ IsProxy(heap, ref) \\/ heap.objects[ref[Ref]].isOpaque
+  THEN IF isReversed THEN position - 1 ELSE position + 1
+  ELSE LET held == {ToIndex(key) + 1 : key \\in IndexKeys(heap, ref)}
+           later == {other \\in held :
+                       IF isReversed THEN other < position ELSE other > position /\\ other <= length}
+       IN CASE later = {} -> IF isReversed THEN 0 ELSE length + 1
+            [] isReversed -> CHOOSE other \\in later : \\A more \\in later : more <= other
+            [] OTHER -> CHOOSE other \\in later : \\A more \\in later : other <= more
+
+\\* The elements that an array-like object or its prototypes hold below its length, in order, with
+\\* their indices. The array methods that skip holes visit these. A record holds the length, so TLC
+\\* reads it even when no element is present.
+PresentElements(heap, ref) ==
+  LET length == LengthOf(heap, ref)
+      present == {position \\in {ToIndex(key) : key \\in IndexKeys(heap, ref)} : position < length}
+      indices == [position \\in 1..Cardinality(present) |->
+                   CHOOSE element \\in present :
+                     Cardinality({other \\in present : other < element}) = position - 1]
+  IN [length |-> length,
+      indices |-> indices,
+      values |-> Read([position \\in DOMAIN indices |-> Get(heap, ref, ToString(indices[position]))])]
+
 
 \\* Whether instanceof runs OrdinaryHasInstance on a function, as it does where the function's
 \\* @@hasInstance is Function.prototype's, or where it has none.
@@ -4626,7 +4642,7 @@ ArrayChangeFrom(heap, ref, method, items, length, first) ==
            isThrown |-> state.isThrown]
 
 ArrayChange(heap, ref, method, items) ==
-  LET length == ToLength(Get(heap, ref, "length"))
+  LET length == LengthOf(heap, ref)
   IN ArrayChangeFrom(heap, ref, method, items, length,
                      Get(heap, ref, ToString(IF method = "pop" THEN length - 1 ELSE 0)))
 
@@ -4635,7 +4651,7 @@ ArrayChange(heap, ref, method, items) ==
 \\* indices that the object or its prototypes hold, and those that copy over them, change. The
 \\* indices are the numbers that its arguments give, and end is Undefined where it takes the length.
 ArrayLikeCopyWithin(heap, ref, target, start, end) ==
-  LET length == ToLength(Get(heap, ref, "length"))
+  LET length == LengthOf(heap, ref)
       to == ClampedIndex(target, length)
       from == ClampedIndex(start, length)
       final == IF end = Undefined THEN length ELSE ClampedIndex(end, length)
@@ -4679,7 +4695,7 @@ ArrayLikeSwaps(state, ref, lowers, length) ==
 \\* reverse() on an array-like object that the heap holds, as the spec runs it index by index, where
 \\* only the indices that the object or its prototypes hold, and those they swap with, change.
 ArrayLikeReverse(heap, ref) ==
-  LET length == ToLength(Get(heap, ref, "length"))
+  LET length == LengthOf(heap, ref)
       indices == {ToIndex(key) : key \\in IndexKeys(heap, ref)}
       lowers == {index \\in indices \\cup {length - index - 1 : index \\in indices} :
                    index >= 0 /\\ index < length \\div 2}
