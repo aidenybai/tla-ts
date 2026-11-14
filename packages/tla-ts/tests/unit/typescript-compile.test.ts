@@ -7810,6 +7810,27 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain('"caught"');
   });
 
+  it("runs the getter that a call's argument reads before the call throws the TypeError of its callee", async () => {
+    const getSource = (expected: string) => `
+      const o: { [key: string]: unknown } = {};
+      Object.defineProperty(o, "bar", {
+        get: function (this: { [key: string]: unknown }) {
+          this.barGetter = true;
+          return 42;
+        },
+      });
+      let caught = "";
+      try {
+        (o.foo as (...args: unknown[]) => unknown)(o.bar);
+      } catch (error) {
+        caught = error instanceof TypeError ? "TypeError" : "other";
+      }
+      if (caught !== "TypeError" || o.barGetter !== ${expected}) throw new Error("order");
+    `;
+    expect((await checkModel(getSource("true"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("undefined"))).failure?.message).toContain("order");
+  });
+
   it("throws the TypeError of calling undefined through a function value", async () => {
     const source = `
       const holder = { seen: 0 };

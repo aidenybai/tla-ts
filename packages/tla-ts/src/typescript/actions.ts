@@ -11953,7 +11953,10 @@ const isPlainCallee = (
   ts.isFunctionExpression(getCast(node)) ||
   ts.isArrowFunction(getCast(node)) ||
   (results?.has(node) ?? false) ||
-  (ts.isNonNullExpression(node) && isPlainCallee(node.expression, context, results)) ||
+  ((ts.isNonNullExpression(node) ||
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node)) &&
+    isPlainCallee(node.expression, context, results)) ||
   (ts.isPropertyAccessExpression(node) &&
     !ts.isPrivateIdentifier(node.name) &&
     getObjectGetter(node, context) === undefined &&
