@@ -1137,6 +1137,34 @@ describe("values", () => {
     ).rejects.toThrow("tla-ts can't represent");
   });
 
+  describe("writes the doubles that literals give as Node does", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const texts = [String(Number.MAX_VALUE), String(-Number.MAX_VALUE), String(1e21), \`\${-1e21}\`];
+      if (texts.join() !== "${expected}" || box.size !== 0) throw new Error(texts.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource("1.7976931348623157e+308,-1.7976931348623157e+308,1e+21,-1e+21"),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects 1e21 written without its sign", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource("1.7976931348623157e+308,-1.7976931348623157e+308,1e21,-1e+21"),
+          )
+        ).failure?.message,
+      ).toContain("1e+21");
+    });
+  });
+
   describe("compares and scales exact doubles as Node does", () => {
     const getSource = (expected: string) => `
       const box = { size: 0 };

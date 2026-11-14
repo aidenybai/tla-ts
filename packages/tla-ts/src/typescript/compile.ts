@@ -596,6 +596,18 @@ export const compile = (
         ),
       ),
       define(
+        "UsedDoubles",
+        [],
+        tuple(
+          [...context.doubles].map((value) =>
+            record("Record", [
+              { name: "binary", value: getBinary(value) },
+              { name: "text", value: string(String(value)) },
+            ]),
+          ),
+        ),
+      ),
+      define(
         "UsedCases",
         [],
         tuple(

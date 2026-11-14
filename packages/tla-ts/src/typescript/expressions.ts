@@ -1965,6 +1965,8 @@ export const getNumberValue = (value: number, context: Context) => {
     return translateWideInteger(value, context);
   }
   if (special === undefined && (Number.isInteger(value) || Math.abs(value) >= 2 ** 31 - 1)) {
+    context.doubles.add(value);
+    context.doubles.add(-value);
     return useJavaScript(":>", [identifier("Double"), getBinary(value)], context);
   }
   context.prelude.add("JavaScript");

@@ -37,6 +37,7 @@ export const JAVASCRIPT_MODULE = `------------------------------ MODULE JavaScri
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
 CONSTANTS Undefined, Null, Ref, Big, Wide, Double, BuiltIns, ConstantFunctions, Symbols, Fractions,
+          Doubles,
           Characters, Cases, NaN, Infinity, NegativeInfinity, NegativeZero
 
 LOCAL Digits == {"-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
@@ -2058,6 +2059,9 @@ StringOf(value) ==
     [] value = NegativeZero -> "0"
     [] IsFraction(value) -> Fractions[FractionPosition(value)].text
     [] IsWide(value) -> WideText(value)
+    \\* Doubles holds the text of each Double that a literal gives.
+    [] IsDouble(value) /\\ \\E position \\in DOMAIN Doubles : Doubles[position].binary = value[Double] ->
+         Doubles[CHOOSE position \\in DOMAIN Doubles : Doubles[position].binary = value[Double]].text
     [] IsDouble(value) -> Assert(FALSE, "tla-ts can't write this number")
     [] TypeOf(value) = "number" -> ToString(value)
     [] IsBigInt(value) -> ToString(value[Big])

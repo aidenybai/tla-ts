@@ -293,6 +293,7 @@ export const emit = (
                 "  ConstantFunctions <- UsedConstantFunctions",
                 "  Symbols <- UsedSymbols",
                 "  Fractions <- UsedFractions",
+                "  Doubles <- UsedDoubles",
                 "  Characters <- UsedCharacters",
                 "  Cases <- UsedCases",
               ]
