@@ -95,6 +95,10 @@ export class Enode {
     return this.args.length;
   }
 
+  get isCommutativeTable() {
+    return this.isCommutative;
+  }
+
   getArg(index: number) {
     return this.args[index];
   }
@@ -232,7 +236,7 @@ interface ToMerge {
 }
 
 // func_decl_info::is_commutative, which the decl plugins set by family and kind.
-const isCommutativeDecl = (manager: AstManager, decl: number): boolean => {
+export const isCommutativeDecl = (manager: AstManager, decl: number): boolean => {
   const funcDecl = manager.funcDecls[decl];
   switch (funcDecl.op) {
     case OP_EQ:
