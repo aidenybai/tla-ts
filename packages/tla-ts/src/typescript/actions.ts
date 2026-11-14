@@ -13357,11 +13357,13 @@ const SHORT_CIRCUITS = new Set([
 ]);
 
 // A name, or a property or a key of a name or this, whose key is a name or a literal.
-const isPlainTarget = (node: ts.Expression) =>
+const isPlainTarget = (node: ts.Expression, results: Scope["results"]) =>
   ts.isIdentifier(node) ||
   ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
     node.questionDotToken === undefined &&
-    (ts.isIdentifier(node.expression) || node.expression.kind === ts.SyntaxKind.ThisKeyword) &&
+    (ts.isIdentifier(node.expression) ||
+      node.expression.kind === ts.SyntaxKind.ThisKeyword ||
+      results.has(node.expression)) &&
     (ts.isPropertyAccessExpression(node) ||
       ts.isIdentifier(node.argumentExpression) ||
       ts.isLiteralExpression(node.argumentExpression)));
@@ -13515,9 +13517,21 @@ const getLeadingAssignment = (
   // An assignment of a property that its value, which makes no call, nests runs first, as in
   // a.x = b.y = v, where the target evaluates to the same object and key after it.
   if (inner !== undefined) return isUnmoved(node.left, inner, results, context) ? inner : undefined;
-  return isPlainTarget(node.left) && (results.has(node.right) || !hasCall(node.right, context))
+  return (isPlainTarget(node.left, results) || isMadeTarget(node.left, results)) &&
+    (results.has(node.right) || !hasCall(node.right, context))
     ? node
     : undefined;
+};
+
+// A property of what new makes of names and literals, whose constructor runs where it runs first.
+const isMadeTarget = (target: ts.Expression, results: Scope["results"]) => {
+  const made = ts.isPropertyAccessExpression(target) ? skipCasts(target.expression) : undefined;
+  return (
+    made !== undefined &&
+    ts.isNewExpression(made) &&
+    ts.isIdentifier(made.expression) &&
+    (made.arguments ?? []).every((argument) => isPlainOperand(argument, results))
+  );
 };
 
 // Whether a property's target evaluates to the same object and key after an assignment of another
@@ -13528,7 +13542,7 @@ const isUnmoved = (
   results: ReadonlyMap<ts.Expression, Expression>,
   context: Context,
 ) => {
-  if (!isPlainTarget(target) || isIncrement(assignment)) return false;
+  if (!isPlainTarget(target, results) || isIncrement(assignment)) return false;
   const parts = ts.isElementAccessExpression(target)
     ? [target.expression, target.argumentExpression]
     : ts.isPropertyAccessExpression(target)
@@ -13537,6 +13551,7 @@ const isUnmoved = (
   return (
     parts.every((part) => !ts.isIdentifier(part) || getImmutable(part, context) !== undefined) ||
     (getPropertySetters(assignment.left, context).length === 0 &&
+      !isMadeTarget(assignment.left, results) &&
       isPlainOperand(assignment.right, results))
   );
 };
@@ -13820,7 +13835,7 @@ const findLeadingCall = (
     // runs only sometimes.
     if (
       LOGICAL_OPERATORS.has(kind) &&
-      isPlainTarget(node.left) &&
+      isPlainTarget(node.left, path.scope.results) &&
       isPlainOperand(node.left) &&
       isBranchRun(node.right)
     ) {

@@ -1615,6 +1615,28 @@ describe("values", () => {
     expect((await checkModel(getSource(44, 44))).failure?.message).toContain("bytes");
   });
 
+  it("runs first an assignment to a setter of what new or a call that ran makes", async () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      class C {
+        name = "c";
+        set x(value: number) { log.push("set " + value + this.name); }
+      }
+      const make = () => { log.push("make"); return new C(); };
+      const take = (first: number, second: number) => { log.push("take " + first + second); return first; };
+      const taken = take(new C().x = 1, 2);
+      const made = take(make().x = 3, 4);
+      const result = [taken, made, log.join()].join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect(
+      (await checkModel(getSource("1;3;set 1c,take 12,make,set 3c,take 34"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("1;3;take 12,set 1c,make,set 3c,take 34"))).failure?.message,
+    ).toContain("1;3;set 1c,take 12,make,set 3c,take 34");
+  });
+
   it("runs an assignment in a switch's expression first", async () => {
     const getSource = (expected: number) => `
       let count = 0;
