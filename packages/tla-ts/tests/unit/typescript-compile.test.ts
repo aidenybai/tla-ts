@@ -4989,6 +4989,35 @@ describe("errors", () => {
     });
   });
 
+  describe("passes a heap array with holes to the array parameter of its methods' callbacks", () => {
+    const getSource = (expected: string) => `
+      let isSame = true;
+      let calls = 0;
+      function check(value: unknown, index: number, array: unknown[]) {
+        calls++;
+        if (array[index] !== value) isSame = false;
+        return true;
+      }
+      const values: unknown[] = [0, "one"];
+      values[5] = 5;
+      const isEvery = values.every(check);
+      values.forEach(check);
+      const lengths = values.map((value: unknown, index: number, array: unknown[]) => array.length);
+      const seen = [isSame, calls, isEvery, lengths.length, lengths[5], 2 in lengths];
+      if (seen.join() !== "${expected}") throw new Error(seen.join());
+    `;
+
+    it("visits only the elements it has", async () => {
+      const result = await checkModel(getSource("true,6,true,6,6,false"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkModel(getSource("true,12,true,6,6,false"));
+      expect(result.failure?.message).toContain("true,6,true,6,6,false");
+    });
+  });
+
   describe("holds an array that a script writes at a key it computes on the heap", () => {
     const getSource = (expected: string) => `
       const cache: number[][] = [];

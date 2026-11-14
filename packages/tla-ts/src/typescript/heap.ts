@@ -3509,6 +3509,60 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         ? []
         : [own, ...(contextual === undefined ? [] : getFields(contextual, own.name))];
     };
+    // The array parameter of a callback that a method of one of the group's arrays calls, which
+    // takes that array. A function that a declaration names must go only to that array's methods.
+    const addCallbackArray = (call: ts.CallExpression, method: string, receiver: ts.Expression) => {
+      const argument = call.arguments.at(0);
+      const named = argument === undefined ? undefined : skipCasts(argument);
+      const declaration =
+        named !== undefined && ts.isIdentifier(named)
+          ? getSymbol(named, checker)?.valueDeclaration
+          : undefined;
+      const callback =
+        declaration !== undefined && ts.isVariableDeclaration(declaration)
+          ? declaration.initializer
+          : (declaration ?? named);
+      const parameter =
+        callback !== undefined &&
+        (ts.isArrowFunction(callback) ||
+          ts.isFunctionExpression(callback) ||
+          ts.isFunctionDeclaration(callback))
+          ? callback.parameters.at(method.startsWith("reduce") ? 3 : 2)
+          : undefined;
+      if (parameter === undefined) return true;
+      const receiverSymbol = ts.isIdentifier(receiver) ? getSymbol(receiver, checker) : undefined;
+      const isOnlyCallback =
+        declaration === undefined ||
+        getReferences(declaration)
+          .filter((reference) => reference !== ts.getNameOfDeclaration(declaration))
+          .every((reference) => {
+            const passed = ts.findAncestor(
+              reference,
+              (ancestor) =>
+                !ts.isAsExpression(ancestor.parent) &&
+                !ts.isParenthesizedExpression(ancestor.parent),
+            );
+            const outer = passed?.parent;
+            return (
+              outer !== undefined &&
+              ts.isCallExpression(outer) &&
+              outer.arguments[0] === passed &&
+              ts.isPropertyAccessExpression(outer.expression) &&
+              ts.isIdentifier(outer.expression.expression) &&
+              getSymbol(outer.expression.expression, checker) === receiverSymbol
+            );
+          });
+      const symbol =
+        ts.isIdentifier(parameter.name) &&
+        parameter.initializer === undefined &&
+        parameter.dotDotDotToken === undefined
+          ? getSymbol(parameter.name, checker)
+          : undefined;
+      if (symbol === undefined || receiverSymbol === undefined || !isOnlyCallback) return false;
+      elementParameters.add(parameter);
+      pending.push(symbol);
+      return true;
+    };
     const isUse = (use: ts.Expression): boolean => {
       const parent = use.parent;
       if (ts.isParenthesizedExpression(parent)) return isUse(parent);
@@ -3563,14 +3617,17 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       }
       if (ts.isPropertyAccessExpression(parent)) {
         const call = parent.parent;
+        const method = parent.name.text;
         return (
-          parent.name.text === "length" ||
+          method === "length" ||
           (ts.isCallExpression(call) && isUnheldSplice(call, context)) ||
-          ((IN_PLACE_METHODS.has(parent.name.text) || ARRAY_LIKE_METHODS.has(parent.name.text)) &&
+          ((IN_PLACE_METHODS.has(method) ||
+            ARRAY_LIKE_METHODS.has(method) ||
+            method === "forEach") &&
             ts.isCallExpression(call) &&
             call.expression === parent &&
-            (["push", "unshift"].includes(parent.name.text) ||
-              !call.arguments.some(ts.isSpreadElement)))
+            (["push", "unshift"].includes(method) || !call.arguments.some(ts.isSpreadElement)) &&
+            addCallbackArray(call, method, use))
         );
       }
       // A key that isn't a number reads or writes a property, as x["NaN"] does.
