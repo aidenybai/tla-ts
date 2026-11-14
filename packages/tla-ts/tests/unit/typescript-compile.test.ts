@@ -575,6 +575,111 @@ describe("top-level statements", () => {
     });
   });
 
+  describe("searches an array from an object index that valueOf or toString converts", () => {
+    const source = `
+      const seen: unknown[] = [];
+      function same(actual: unknown, expected: unknown, label: string) {
+        if (!Object.is(actual, expected)) throw new Error(label);
+      }
+      const byString = {
+        toString: function () {
+          return "1";
+        },
+      };
+      const byValue = {
+        valueOf: function () {
+          seen.push("valueOf");
+          return 2;
+        },
+        toString: function () {
+          seen.push("toString");
+          return "0";
+        },
+      };
+      const neither = {
+        toString: function () {
+          seen.push("neither");
+          return {};
+        },
+        valueOf: function () {
+          seen.push("neither");
+          return {};
+        },
+      };
+      const found = [
+        // @ts-ignore
+        [0, true].indexOf(true, byString),
+        // @ts-ignore
+        [1, 1, 1, 1].lastIndexOf(1, byValue),
+        // @ts-ignore
+        [1, 1, 1].indexOf(1, new Number(2)),
+        // @ts-ignore
+        [].lastIndexOf(1, byValue),
+      ];
+      same(found.join(), "1,2,2,-1", "found");
+      try {
+        // @ts-ignore
+        [0, true].includes(true, neither);
+      } catch (thrown) {
+        seen.push(thrown instanceof TypeError);
+      }
+      same(seen.join(), "valueOf,neither,neither,true", "seen");
+      const list: unknown[] = [];
+      list.length = 30;
+      const target = function () {};
+      const added = {
+        valueOf: function () {
+          list[4] = target;
+          return 3;
+        },
+      };
+      // @ts-ignore
+      same(list.indexOf(target, added), 4, "added");
+      const held: unknown[] = [];
+      held[10] = "10";
+      held.length = 20;
+      const removed = {
+        valueOf: function () {
+          delete held[10];
+          return 3;
+        },
+      };
+      // @ts-ignore
+      same(held.indexOf("10", removed), -1, "removed");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["found", '"1,2,2,-1", "found"', '"1,2,1,-1", "found"'],
+      ["seen", '"valueOf,neither,neither,true"', '"valueOf,neither,true"'],
+      ["added", 'added), 4, "added"', 'added), -1, "added"'],
+      ["removed", 'removed), -1, "removed"', 'removed), 10, "removed"'],
+    ])("rejects a wrong %s", async (label, expected, wrong) => {
+      expect((await checkModel(source.replace(expected, wrong))).failure?.message).toContain(
+        `"${label}"`,
+      );
+    });
+
+    it("stops where converting the index changes an array that the heap doesn't hold", async () => {
+      expect(() =>
+        compile(`
+          let list = [0, 1, 2];
+          const swap = {
+            valueOf: function () {
+              list = [5, 5, 5];
+              return 0;
+            },
+          };
+          // @ts-ignore
+          if (list.indexOf(5, swap) !== -1) throw new Error("swap");
+        `),
+      ).toThrow("tla-ts can't search an array that converting its fromIndex changes");
+    });
+  });
+
   describe("makes a typed array from arguments that its constructor's signatures don't take", () => {
     const source = `
       const seen: unknown[] = [];

@@ -7382,18 +7382,22 @@ const getRemovedGetters = (node: ts.Node, context: Context) => {
 // that map and filter make their array through, and each element.
 const getLoopGetters = (node: ts.Node, context: Context) => {
   const target = getLoopTarget(node, context);
-  return target?.isArrayLike === true
+  if (target === undefined) return [];
+  const conversions =
+    (target.isArrayLike && isObjectLength(target.receiver, context)) ||
+    isObjectIndex(target.method, target.callbackArguments.at(1), context)
+      ? getConversionFunctions(target.receiver, context)
+      : [];
+  return target.isArrayLike
     ? [
         ...new Set([
           ...(getElementGetters(target.receiver, context) ?? []),
           ...getDefinedGetters(target.receiver, "length", context),
           ...getSpeciesGetters(target.method, target.receiver, context),
-          ...(isObjectLength(target.receiver, context)
-            ? getConversionFunctions(target.receiver, context)
-            : []),
+          ...conversions,
         ]),
       ]
-    : [];
+    : conversions;
 };
 
 // The valueOf and toString methods that push, pop, shift, or unshift may run as it converts a
@@ -7404,6 +7408,13 @@ const getStoredLengthConversions = (node: ts.Node, context: Context) => {
     ? getConversionFunctions(call.receiver, context)
     : [];
 };
+
+// Whether a search's fromIndex may be an object, which it converts to a primitive after it reads
+// the length, running the object's valueOf and toString methods.
+const isObjectIndex = (method: string, from: ts.Expression | undefined, context: Context) =>
+  ["includes", "indexOf", "lastIndexOf"].includes(method) &&
+  from !== undefined &&
+  !isPrimitiveIndex(from, context);
 
 // Whether an array-like object's length may be an object, which the method converts to a primitive
 // before it reads the elements, running the object's valueOf and toString methods.
@@ -7481,7 +7492,9 @@ const getLoopCall = (node: ts.Expression, path: Path, context: Context): LoopCal
   const isLengthConverted =
     target.isArrayLike && !target.isTyped && isObjectLength(target.receiver, context);
   if (UNCALLED_METHODS.has(target.method) || (target.method === "toSorted" && target.isArrayLike)) {
-    return (getLoopGetters(node, context).length > 0 || isLengthConverted) &&
+    return (getLoopGetters(node, context).length > 0 ||
+      isLengthConverted ||
+      isObjectIndex(target.method, target.callbackArguments.at(1), context)) &&
       !target.callbackArguments.some(ts.isSpreadElement)
       ? {
           method: target.method,
@@ -7564,6 +7577,9 @@ const translateLoopCall = (
   const lengthGetters = isObject ? getDefinedGetters(receiver, "length", context) : [];
   const speciesGetters = isObject ? getSpeciesGetters(method, receiver, context) : [];
   const isLengthConverted = isObject && isObjectLength(receiver, context);
+  // A search's fromIndex converts after the method reads the length, running an object's valueOf
+  // and toString, so an array-like object's method reads each element as it visits it.
+  const isObjectFrom = isObjectIndex(method, loop.initial, context);
   // A length that's an array reads its valueOf and toString from Array.prototype.
   if (isLengthConverted) context.builtIns.add("Array.prototype");
   // The array that map makes, where the heap holds it, gathers its elements and its holes.
@@ -7574,6 +7590,7 @@ const translateLoopCall = (
       ? (getElementGetters(receiver, context) ??
         (lengthGetters.length + speciesGetters.length > 0 ||
         isLengthConverted ||
+        isObjectFrom ||
         isHeapMap ||
         (callback !== undefined &&
           getChanged(callback, path, context).some((symbol) => symbol === context.heap))
@@ -7617,6 +7634,14 @@ const translateLoopCall = (
     throw new TlaTypeScriptError(
       "Unsupported call: tla-ts can't call forEach on a set or a map while its callback changes objects and the script deletes keys",
       site,
+    );
+  }
+  // A search reads the array that it took before it converts fromIndex, which can't tell an element
+  // that the conversion writes from a new array that it assigns.
+  if (isObjectFrom && !loop.isArrayLike && isReceiverChanged(receiver)) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't search an array that converting its fromIndex changes",
+      receiver,
     );
   }
   if (!loop.isArrayLike && !loop.isOrdered && (isSort || !isLive) && isReceiverChanged(receiver)) {
@@ -8046,9 +8071,10 @@ const translateLoopCall = (
     isRecursive: true,
   };
   const from = callback === undefined && !isCopy ? loop.initial : undefined;
-  if (from !== undefined && !isPrimitiveIndex(from, context)) {
+  if (isObjectFrom && context.heap === undefined) {
     throw new TlaTypeScriptError("Pass a primitive as the index to search from", from);
   }
+  const fromName = context.names.getFresh("from");
   // The value that a search looks for, or that with gives at the index that it replaces.
   const searched =
     callback !== undefined || isSpliced ? undefined : isCopy ? loop.initial : loop.argument;
@@ -8059,25 +8085,10 @@ const translateLoopCall = (
   // A search starts from the position after the index that fromIndex gives, from the end where
   // it's negative: lastIndexOf from no later than the last element, and the others from no earlier
   // than the first.
-  const relative =
-    from === undefined
-      ? undefined
-      : useJavaScript(
-          "RelativeIndex",
-          [
-            isNumberLike(from, context)
-              ? translateExpression(from, path.scope, context)
-              : useJavaScript(
-                  "ToNumber",
-                  [translateExpression(from, path.scope, context)],
-                  context,
-                ),
-            length,
-          ],
-          context,
-        );
-  const start =
-    relative === undefined
+  const getStart = (index: Expression | undefined) => {
+    const relative =
+      index === undefined ? undefined : useJavaScript("RelativeIndex", [index, length], context);
+    return relative === undefined
       ? isReversed
         ? length
         : number(1)
@@ -8091,6 +8102,7 @@ const translateLoopCall = (
             : ifExpression(apply(">", [relative, number(0)]), relative, number(0)),
           number(1),
         ]);
+  };
   const result = context.names.getFresh("loop");
   const runLoop = (current: Path, first: Expression, seed: Expression) => {
     const after = {
@@ -8190,7 +8202,7 @@ const translateLoopCall = (
   };
   // A reduce without an initial value starts from the first element it visits, and throws a
   // TypeError for an empty array.
-  const getSeeded = (current: Path) =>
+  const getSeeded = (current: Path, start: Expression) =>
     !isReduce
       ? runLoop(
           current,
@@ -8216,6 +8228,57 @@ const translateLoopCall = (
                 index(sequence, [start]),
               ),
             );
+  // A search of an empty array finds nothing before it converts fromIndex, and otherwise converts an
+  // object to a primitive, which throws a TypeError for a symbol or a BigInt, as ToNumber does.
+  const getConverted = (current: Path) =>
+    from === undefined
+      ? getSeeded(current, getStart(undefined))
+      : !isObjectFrom
+        ? getSeeded(
+            current,
+            getStart(
+              isNumberLike(from, context)
+                ? translateExpression(from, path.scope, context)
+                : useJavaScript(
+                    "ToNumber",
+                    [translateExpression(from, path.scope, context)],
+                    context,
+                  ),
+            ),
+          )
+        : ifThenElse(
+            apply("=", [length, number(0)]),
+            getSeeded(current, getStart(undefined)),
+            runToPrimitive(
+              expression,
+              identifier(fromName),
+              "number",
+              current,
+              context,
+              frame,
+              (after, primitive) =>
+                ifThenElse(
+                  junction("Or", [
+                    useJavaScript("IsSymbol", [primitive], context),
+                    useJavaScript("IsBigInt", [primitive], context),
+                  ]),
+                  throwTypeError(after, expression, context, frame),
+                  getSeeded(after, getStart(useJavaScript("ToNumber", [primitive], context))),
+                ),
+            ),
+          );
+  // The value that a search looks for and its fromIndex, which evaluate before the method runs.
+  const searchedDefinition = define(
+    searchName,
+    [],
+    searched === undefined
+      ? getUndefined(context)
+      : translateExpression(searched, path.scope, context),
+  );
+  const fromDefinitions =
+    from !== undefined && isObjectFrom
+      ? [define(fromName, [], translateExpression(from, path.scope, context))]
+      : [];
   if (getters !== undefined) {
     // A typed array's method, where the receiver holds the built-in one, throws a TypeError for a
     // receiver that isn't a typed array or is out of bounds.
@@ -8261,13 +8324,8 @@ const translateLoopCall = (
     return letIn(
       [
         define(ownerName, [], translateExpression(receiver, path.scope, context)),
-        define(
-          searchName,
-          [],
-          searched === undefined
-            ? getUndefined(context)
-            : translateExpression(searched, path.scope, context),
-        ),
+        searchedDefinition,
+        ...fromDefinitions,
         ...(isSpliced
           ? [
               define(
@@ -8330,13 +8388,13 @@ const translateLoopCall = (
                     ]),
               ],
               replaced === undefined
-                ? getSeeded(current)
+                ? getConverted(current)
                 : ifThenElse(
                     junction("And", [
                       apply(">=", [identifier(replacedName), number(0)]),
                       apply("<", [identifier(replacedName), length]),
                     ]),
-                    getSeeded(current),
+                    getConverted(current),
                     throwError("RangeError", current, expression, context, frame),
                   ),
             );
@@ -8458,8 +8516,9 @@ const translateLoopCall = (
                 context,
               ),
       ),
+      ...(isObjectFrom ? [searchedDefinition, ...fromDefinitions] : []),
     ],
-    getSeeded(path),
+    getConverted(path),
   );
 };
 
