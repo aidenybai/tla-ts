@@ -19926,6 +19926,33 @@ describe("errors", () => {
     ).toThrow("Unsupported call: Day.bind");
   });
 
+  it("keeps an array, a set, or a map that instanceof reads in the heap", async () => {
+    const getSource = (expected: string) => `
+      const list = [1];
+      const alias = list;
+      alias.push(2);
+      const set = new Set<number>([1]);
+      const other = set;
+      other.add(2);
+      class Box {}
+      const result = [
+        list instanceof Array,
+        list instanceof Object,
+        list.length,
+        set instanceof Set,
+        set instanceof Map,
+        set instanceof Box,
+        set.size,
+      ].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "true,true,2,true,false,false,2";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("true,true,2,true,true,false,2"))).failure?.message,
+    ).toContain(expected);
+  });
+
   it("extends an empty class that the extends clause makes", async () => {
     const result = await check(
       compile(

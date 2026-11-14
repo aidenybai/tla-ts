@@ -3999,7 +3999,8 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         return (
           kind === ts.SyntaxKind.EqualsEqualsEqualsToken ||
           kind === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
-          (kind === ts.SyntaxKind.InKeyword && parent.right === use)
+          (kind === ts.SyntaxKind.InKeyword && parent.right === use) ||
+          (kind === ts.SyntaxKind.InstanceOfKeyword && parent.left === use)
         );
       }
       // An element of the array that an outer holder starts with.
