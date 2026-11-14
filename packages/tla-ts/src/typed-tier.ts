@@ -678,6 +678,8 @@ interface Plains {
   // Whether a function with an empty domain may be a sparse function, not only a sequence.
   isSparse: boolean;
   isTupled: boolean;
+  // Whether a function whose type no use reveals in time is taken to map keys.
+  isGuessed: boolean;
 }
 
 const getAtom = (plains: Plains, value: Value) => {
@@ -960,6 +962,7 @@ interface Program {
   names: { count: number };
   inlining: Definition[];
   recursions: Map<Definition, Recursion>;
+  isGuessing: boolean;
 }
 
 // The function a RECURSIVE operator compiles to, which its applications in its own body call.
@@ -1648,6 +1651,10 @@ const compileBound = (
     const keys = compileKeys(target);
     if (keys) return getSetBound(program, keys);
     const type = resolveType(target.type);
+    if (type.kind === "Var") {
+      guessFunction(program, type);
+      return compileBound(program, setExpression, frame);
+    }
     if (type.kind !== "Seq" && type.kind !== "Fn") return unsupported();
     return {
       element: type.kind === "Seq" ? createInt(true) : type.key,
@@ -2041,6 +2048,12 @@ const compileMembership = (
             `((${name}) => ${name} >= 1 && ${name} <= (${readSequence(program, target.type, target.emit())}).length)(${index.emit()})`,
         };
       }
+      // A record's domain holds strings, so a domain that holds another value may be a function's.
+      const known = resolveType(element.type);
+      if (type.kind === "Var" && (known.kind !== "Str" || !known.hasString)) {
+        guessFunction(program, type);
+        return compileMembership(program, element, setExpression, frame);
+      }
       expectRecord(type);
       const atom = createStr();
       unify(element.type, atom);
@@ -2293,6 +2306,14 @@ const getFieldName = (type: Type, args: Expression[]) => {
     : undefined;
 };
 
+// A function whose type is still unknown waits for a later disjunct to reveal it, unless each
+// waiting disjunct waits on another, or no disjunct follows. Then it's taken to map keys, which any
+// function can.
+const guessFunction = (program: Program, type: Type) => {
+  if (!program.isGuessing) throw UNKNOWN;
+  unify(type, createMap());
+};
+
 const compileApplication = (
   program: Program,
   functionCode: Compiled,
@@ -2339,7 +2360,10 @@ const compileApplication = (
       emit: () => getLookupCode(program, map, functionCode.emit(), argument.emit()),
     };
   }
-  if (type.kind === "Var") throw UNKNOWN;
+  if (type.kind === "Var") {
+    guessFunction(program, type);
+    return compileApplication(program, functionCode, argument);
+  }
   return unsupported();
 };
 
@@ -2429,9 +2453,11 @@ const compileExcept = (
         return getFieldType(record, field);
       }
       if (step.kind === "Field") return unsupported();
+      if (resolved.kind === "Var") guessFunction(program, type);
       const argument = compileValue(program, getArgument(step.args, expression.location), frame);
-      if (resolved.kind === "Fn" || resolved.kind === "Map") {
-        unify(argument.type, resolved.kind === "Fn" ? resolved.key : resolved.keys.element);
+      const known = resolveType(type);
+      if (known.kind === "Fn" || known.kind === "Map") {
+        unify(argument.type, known.kind === "Fn" ? known.key : known.keys.element);
         steps.push((container) => {
           const map = getMap(type);
           if (map) {
@@ -2440,14 +2466,14 @@ const compileExcept = (
               isSparse: true,
             };
           }
-          return resolved.kind === "Fn"
-            ? { index: getIndexCode(program, resolved, argument.emit()), isSparse: false }
+          return known.kind === "Fn"
+            ? { index: getIndexCode(program, known, argument.emit()), isSparse: false }
             : unsupported();
         });
-        return resolved.kind === "Fn" ? resolved.range : resolved.values.element;
+        return known.kind === "Fn" ? known.range : known.values.element;
       }
       unify(argument.type, createInt());
-      if (resolved.kind === "Seq") {
+      if (known.kind === "Seq") {
         steps.push((container) => {
           const map = getMap(type);
           return map
@@ -2457,7 +2483,7 @@ const compileExcept = (
               }
             : { index: `(${argument.emit()}) - 1`, isSparse: false };
         });
-        return resolved.element;
+        return known.element;
       }
       return unsupported();
     }, base.type);
@@ -3692,7 +3718,16 @@ const compileStep = (
         );
         const waiting = compiled.filter((branch) => branch === undefined).length;
         if (waiting === 0) return compiled.filter((branch) => branch !== undefined);
-        if (waiting === branches.filter((branch) => branch === undefined).length) throw UNKNOWN;
+        if (waiting === branches.filter((branch) => branch === undefined).length) {
+          if (program.isGuessing) throw UNKNOWN;
+          const index = compiled.indexOf(undefined);
+          program.isGuessing = true;
+          try {
+            compiled[index] = continueWith(first.scope, [expression.operands[index]]);
+          } finally {
+            program.isGuessing = false;
+          }
+        }
         return compileBranches(compiled);
       };
       const branches = compileBranches(expression.operands.map(() => undefined));
@@ -5206,19 +5241,28 @@ export const runTypedSearch = (
   environment: Environment,
   check: TypedCheck,
 ): TypedResult | undefined => {
-  const run = (isMaskUsed: boolean, isSparse: boolean, isTupled: boolean): TypedResult => {
+  const run = (plains: Plains): TypedResult => {
     try {
-      const plains = { ids: new Map(), values: [], isMaskUsed, isSparse, isTupled };
       return search(environment, check, plains);
     } catch (error) {
-      if (error === WIDE && isMaskUsed) return run(false, isSparse, isTupled);
-      if (error === SPARSE && !isSparse) return run(isMaskUsed, true, isTupled);
-      if (error === TUPLED && !isTupled) return run(isMaskUsed, isSparse, true);
+      const retry = (flags: Partial<Plains>) =>
+        run({ ...plains, ids: new Map(), values: [], ...flags });
+      if (error === WIDE && plains.isMaskUsed) return retry({ isMaskUsed: false });
+      if (error === SPARSE && !plains.isSparse) return retry({ isSparse: true });
+      if (error === TUPLED && !plains.isTupled) return retry({ isTupled: true });
+      if (error === UNKNOWN && !plains.isGuessed) return retry({ isGuessed: true });
       throw error;
     }
   };
   try {
-    return run(true, false, false);
+    return run({
+      ids: new Map(),
+      values: [],
+      isMaskUsed: true,
+      isSparse: false,
+      isTupled: false,
+      isGuessed: false,
+    });
   } catch (error) {
     // The interpreter reports these errors when it reruns the search.
     if (
@@ -5253,6 +5297,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     names: { count: 0 },
     inlining: [],
     recursions: new Map(),
+    isGuessing: plains.isGuessed,
   };
   // Every variable of such a spec is assigned before TLC branches on the next-state relation.
   if (environment.variables.length === 0) return unsupported();
