@@ -600,7 +600,10 @@ export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
   if (changed.size === 0 && changedFields.size === 0) return;
   const visit = (node: ts.Node) => {
     if (ts.isTypeNode(node)) return;
-    const isName = ts.getNameOfDeclaration(node.parent as ts.Declaration) === node;
+    // A shorthand property's name also reads the variable that it names.
+    const isName =
+      ts.getNameOfDeclaration(node.parent as ts.Declaration) === node &&
+      !ts.isShorthandPropertyAssignment(node.parent);
     const isHeapRead =
       (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
       getKind(node.expression, context) === "object";

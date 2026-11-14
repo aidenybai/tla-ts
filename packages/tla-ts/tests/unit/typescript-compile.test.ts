@@ -5069,13 +5069,41 @@ describe("errors", () => {
     [
       "an array that a heap object holds, changes through it, and goes to JSON",
       "const run = () => {\n  const items: number[] = [];\n  const wrapped = { inner: items };\n  const text = JSON.stringify(wrapped);\n  wrapped.inner.push(1);\n  return items.length + text.length;\n};\nlet size = run();",
+      "items",
     ],
     [
       "an array that a function puts in a heap object that goes to JSON",
       "const wrap = (inner: number[]) => ({ inner });\nconst run = () => {\n  const items: number[] = [];\n  const wrapped = wrap(items);\n  const text = JSON.stringify(wrapped);\n  wrapped.inner.push(1);\n  return items.length + text.length;\n};\nlet size = run();",
+      "inner",
     ],
-  ])("rejects %s, as changing it would show through the other name", (_, source) => {
-    expect(() => compile(source)).toThrow("items would share an object that changes in place");
+  ])("rejects %s, as changing it would show through the other name", (_, source, name) => {
+    expect(() => compile(source)).toThrow(`${name} would share an object that changes in place`);
+  });
+
+  it("rejects an array that a shorthand property shares and that changes through the field", async () => {
+    const shared = "source would share an object that changes in place";
+    const source = (used: string) => `
+      class Box {
+        items: number[];
+        constructor(items: number[]) {
+          this.items = items;
+        }
+      }
+      const source = [1, 2];
+      const holder = { source };
+      holder.source.push(3);
+      ${used}
+    `;
+    expect(() =>
+      compile(source('if (JSON.stringify(source) !== "[1,2,3]") throw new Error("json");')),
+    ).toThrow(shared);
+    expect(() =>
+      compile(source('if (new Box(source).items.length !== 3) throw new Error("box");')),
+    ).toThrow(shared);
+    const result = await checkModel(
+      source('if (source.length !== 3 || holder.source !== source) throw new Error("same");'),
+    );
+    expect(result.failure).toBeUndefined();
   });
 
   it("shares a heap object's field while another field changes in place", async () => {
