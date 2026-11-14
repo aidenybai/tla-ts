@@ -1083,6 +1083,14 @@ export class Solver {
       this.reasonUnknown = "sat.canceled";
       return true;
     }
+    if (this.config.restartMax <= this.restarts) {
+      this.reasonUnknown = "sat.max.restarts";
+      return true;
+    }
+    if (this.config.inprocessMax <= this.simplifications) {
+      this.reasonUnknown = "sat.max.inprocess";
+      return true;
+    }
     return this.reachedMaxConflicts();
   }
 
@@ -1845,7 +1853,10 @@ export class Solver {
     this.ext?.userPop?.(numScopes);
     this.gcVars(maxVar);
     this.qhead = 0;
+    const wasSuspended = this.limit.isSuspended;
+    this.limit.isSuspended = true;
     this.propagate(false);
+    this.limit.isSuspended = wasSuspended;
   }
 
   // gc_vars: drop the variables from maxVar on, with their watches and clauses.

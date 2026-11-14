@@ -96,6 +96,8 @@ export const getSatConfig = (params: SatParams) => ({
   searchUnsatConflicts: getNumber(params, "search.unsat.conflicts", 400),
   restartInitial: getNumber(params, "restart.initial", 2),
   restartFactor: getNumber(params, "restart.factor", 1.5),
+  restartMax: getNumber(params, "restart.max", UINT_MAX),
+  inprocessMax: getNumber(params, "inprocess.max", UINT_MAX),
   randomFreq: getNumber(params, "random_freq", 0.01),
   randomSeed: getNumber(params, "random_seed", 0),
   burstSearch: getNumber(params, "burst_search", 100),
