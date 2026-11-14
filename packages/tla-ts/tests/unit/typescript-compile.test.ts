@@ -1444,6 +1444,29 @@ describe("values", () => {
     });
   });
 
+  describe("skips holes of array-like objects whose length is Infinity or beyond 32 bits", () => {
+    const getSource = (expected: string) => `
+      const like = { 0: 12, 1: 9, length: Infinity };
+      const wide = { 0: 1, 2: 3, length: 2 ** 40 };
+      const read = [
+        Array.prototype.every.call(like, (value: unknown) => (value as number) > 10),
+        Array.prototype.some.call(like, (value: unknown) => value === 9),
+        Array.prototype.indexOf.call(wide, 3),
+      ].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("false,true,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects an index past the length as missing", async () => {
+      expect((await checkModel(getSource("false,true,-1"))).failure?.message).toContain(
+        "false,true,2",
+      );
+    });
+  });
+
   describe("converts lengths and indices beyond 32 bits as Node does", () => {
     const getSource = (expected: string) => `
       const like = { 0: 12, length: -4294967294 };

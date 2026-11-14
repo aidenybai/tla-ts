@@ -2117,8 +2117,14 @@ NextElementPosition(heap, ref, position, length, isReversed) ==
 \\* their indices. The array methods that skip holes visit these. A record holds the length, so TLC
 \\* reads it even when no element is present.
 PresentElements(heap, ref) ==
-  LET length == ToLength(Get(heap, ref, "length"))
-      present == {position \\in {ToIndex(key) : key \\in IndexKeys(heap, ref)} : position < length}
+  LET raw == Get(heap, ref, "length")
+      \\* A length of Infinity, or an integer past 2^31, lies above every index that an object holds.
+      isBeyond == \\/ raw = Infinity
+                  \\/ IsWide(raw) /\\ ~IsNegative(raw)
+                  \\/ IsDouble(raw) /\\ ~IsNegative(raw) /\\ raw[Double][2] >= 0
+      length == IF isBeyond THEN raw ELSE ToLength(raw)
+      present == {position \\in {ToIndex(key) : key \\in IndexKeys(heap, ref)} :
+                    isBeyond \\/ position < length}
       indices == [position \\in 1..Cardinality(present) |->
                    CHOOSE element \\in present :
                      Cardinality({other \\in present : other < element}) = position - 1]
