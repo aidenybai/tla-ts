@@ -1093,6 +1093,43 @@ describe("top-level statements", () => {
 });
 
 describe("values", () => {
+  describe("throws the errors of toFixed, toExponential, and toPrecision", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const box = { size: 0 };
+      const toFixed = Number.prototype.toFixed;
+      const fix = () => (3).toFixed(101);
+      const precise = () => (3).toPrecision(0);
+      let caught = "";
+      try {
+        fix();
+      } catch (error) {
+        caught += error instanceof RangeError ? "range," : "other,";
+      }
+      try {
+        precise();
+      } catch (error) {
+        caught += error instanceof RangeError ? "range," : "other,";
+      }
+      try {
+        toFixed.call("3", 1);
+      } catch (error) {
+        caught += error instanceof TypeError ? "type" : "other";
+      }
+      if (caught !== "${expected}" || box.size !== 0) throw new Error(caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("range,range,type"))).failure).toBeUndefined();
+    });
+
+    it("rejects a string receiver as a number", async () => {
+      expect((await checkModel(getSource("range,range,other"))).failure?.message).toContain(
+        "range,range,type",
+      );
+    });
+  });
+
   describe("writes the exact digits of doubles with toFixed, toExponential, and toPrecision", () => {
     const getSource = (expected: string) => `
       const box = { size: 0 };

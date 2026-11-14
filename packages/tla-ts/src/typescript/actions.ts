@@ -3480,6 +3480,45 @@ export const translateCallStatement = (
       ),
     );
   }
+  // A Number.prototype method that a value holds, which call runs on a receiver that isn't a number
+  // or a Number object, throws a TypeError, as thisNumberValue does.
+  const calledMethod = getCast(expression.expression);
+  if (
+    callee === undefined &&
+    context.heap !== undefined &&
+    ts.isPropertyAccessExpression(calledMethod) &&
+    calledMethod.name.text === "call" &&
+    ts.isIdentifier(skipCasts(calledMethod.expression)) &&
+    expression.arguments.length > 0 &&
+    expression.arguments.every(
+      (argument) =>
+        isInertValue(argument) ||
+        (ts.isCallExpression(argument) &&
+          getBuiltIn(argument.expression, context) === "Symbol" &&
+          argument.arguments.every(ts.isStringLiteral)),
+    )
+  ) {
+    return allocate(expression, path, context, (inner) =>
+      ifThenElse(
+        useJavaScript(
+          "ThrowsOnNumberThis",
+          [
+            getHeap(inner.scope, expression, context),
+            translateExpression(calledMethod.expression, inner.scope, context),
+            translateExpression(expression.arguments[0], inner.scope, context),
+          ],
+          context,
+        ),
+        throwTypeError(inner, expression, context, frame),
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't tell which function this call runs"),
+          ]),
+        ),
+      ),
+    );
+  }
   if (callee?.body === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
   }
@@ -8614,6 +8653,47 @@ const getMisreceivedCall = (node: ts.CallExpression, context: Context) => {
       cast.name.text === "prototype" &&
       getBuiltIn(cast.expression, context) !== undefined);
   return collection !== undefined && isOther ? { collection, method: method.name.text } : undefined;
+};
+
+// The Number.prototype methods whose digits argument throws a RangeError outside its range.
+const RANGED_NUMBER_METHODS = new Set(["toFixed", "toExponential", "toPrecision"]);
+
+// A call of toFixed, toExponential, or toPrecision on a number throws the RangeError of a digits
+// argument outside its range, and otherwise goes on as read.
+const throwRangeError = (
+  expression: ts.Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  read: Formula,
+) => {
+  const call = skipCasts(expression);
+  if (
+    !ts.isCallExpression(call) ||
+    !ts.isPropertyAccessExpression(call.expression) ||
+    !RANGED_NUMBER_METHODS.has(call.expression.name.text) ||
+    !isNumberLike(call.expression.expression, context) ||
+    call.arguments.length > 1 ||
+    !call.arguments.every((argument) => isNumberLike(argument, context))
+  ) {
+    return read;
+  }
+  const argument = call.arguments.at(0);
+  return ifThenElse(
+    useJavaScript(
+      "NumberMethodThrows",
+      [
+        string(call.expression.name.text),
+        translateExpression(call.expression.expression, path.scope, context),
+        argument === undefined
+          ? getUndefined(context)
+          : translateExpression(argument, path.scope, context),
+      ],
+      context,
+    ),
+    throwError("RangeError", path, expression, context, frame),
+    read,
+  );
 };
 
 // A read of an object's property throws a TypeError where it runs %ThrowTypeError%, or a buffer's or
@@ -14311,7 +14391,13 @@ export const translateStatements = (
         inner,
         context,
         frame,
-        frame.exit(inner, translateExpression(returned, inner.scope, context)),
+        throwRangeError(
+          returned,
+          inner,
+          context,
+          frame,
+          frame.exit(inner, translateExpression(returned, inner.scope, context)),
+        ),
       );
     });
   }

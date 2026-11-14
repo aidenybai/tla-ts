@@ -3076,6 +3076,28 @@ LOCAL Mantissa(digits) ==
 LOCAL ExponentText(exponent) ==
   IF exponent >= 0 THEN "e+" \\o ToString(exponent) ELSE "e-" \\o ToString(-exponent)
 
+\\* Whether a value is a Number.prototype method that throws a TypeError on a receiver, which isn't a
+\\* number or a Number object.
+ThrowsOnNumberThis(heap, method, receiver) ==
+  /\\ IsRef(method)
+  /\\ TypeOf(method[Ref]) = "string"
+  /\\ method[Ref] \\in {"Number.prototype." \\o name :
+                     name \\in {"toExponential", "toFixed", "toPrecision", "toString", "toLocaleString",
+                              "valueOf"}}
+  /\\ TypeOf(receiver) # "number"
+  /\\ ~(IsHeap(receiver) /\\ "primitive" \\in DOMAIN Lookup(heap, receiver)
+        /\\ TypeOf(Lookup(heap, receiver).primitive) = "number")
+
+\\* Whether toFixed, toExponential, or toPrecision throws the RangeError of its digits argument,
+\\* which toExponential and toPrecision check only for a finite number, and toPrecision only where
+\\* the argument isn't undefined.
+NumberMethodThrows(method, value, argument) ==
+  LET count == IntegerOf(argument)
+      isOutside(least) == count \\in Infinities \\/ count < least \\/ count > 100
+  IN CASE method = "toFixed" -> isOutside(0)
+       [] method = "toExponential" -> IsFinite(value) /\\ isOutside(0)
+       [] OTHER -> argument # Undefined /\\ IsFinite(value) /\\ isOutside(1)
+
 \\* Number.prototype.toFixed, which writes a number with digits digits after the point.
 NumberToFixed(value, digits) ==
   LET count == IntegerOf(digits)

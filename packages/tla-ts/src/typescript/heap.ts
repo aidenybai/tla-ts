@@ -4660,6 +4660,24 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
     return ["TypeError", "RangeError"];
   }
   if (isUnresolved(node, context)) return ["ReferenceError"];
+  // toFixed, toExponential, and toPrecision throw a RangeError for digits outside their range, and
+  // a Number.prototype method that a value holds a TypeError where call gives it another receiver.
+  if (
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    ["toFixed", "toExponential", "toPrecision"].includes(node.expression.name.text) &&
+    isNumberLike(node.expression.expression, context)
+  ) {
+    return ["RangeError"];
+  }
+  if (
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    node.expression.name.text === "call" &&
+    ts.isIdentifier(skipCasts(node.expression.expression))
+  ) {
+    return ["TypeError"];
+  }
   // A let or a const that a function reads, or that a read comes before, may be read before its
   // declaration runs.
   const declaration = ts.isIdentifier(node)
