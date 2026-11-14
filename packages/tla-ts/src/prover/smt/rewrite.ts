@@ -1093,6 +1093,7 @@ export const encode = (
       return wrapIdv(tla(`StrLit_${expression.value}`), getTypedOnly(encoder, STRING));
     case "Num":
       if (expression.fraction !== "") throw new TlaUnsupportedError("a real number");
+      // Deviation from tlapm: its int_of_string fails the obligation for a literal above 2^62 - 1.
       // Type.Synthesize gives a number no type when arithmetic is off.
       if (!encoder.encoding.isArithmetic)
         return wrapIdv(tla(`IntLit_${BigInt(expression.integer)}`));

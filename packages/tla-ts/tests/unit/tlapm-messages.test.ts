@@ -340,3 +340,27 @@ describe("tlapm ends the messages p_parser.ml ends with a newline", () => {
     );
   });
 });
+
+// tlapm fails this obligation with reason:int_of_string, an overflow of OCaml's 63-bit integers.
+describe("a literal above OCaml's largest integer", () => {
+  const directory = writeModule(
+    "Literal",
+    `---- MODULE Literal ----
+EXTENDS Integers, TLAPS
+THEOREM 4611686018427387904 # 4611686018427387905
+  BY SMT
+====
+`,
+  );
+
+  it.each([
+    ["with arithmetic", []],
+    ["without arithmetic", ["--debug", "disable_arithmetic"]],
+  ])("is proved %s", (_name, args) => {
+    const result = runTlapm(directory, ["--threads", "1", "--nofp", ...args, "Literal.tla"]);
+    expect(result.stderr).toBe(
+      'File "./Literal.tla", line 1, character 1 to line 5, character 4:\n[INFO]: All 2 obligations proved.\n',
+    );
+    expect(result.status).toBe(0);
+  });
+});
