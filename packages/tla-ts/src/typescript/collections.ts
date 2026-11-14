@@ -1673,8 +1673,8 @@ const NEW_ARRAY_METHODS = new Set([
 // doesn't.
 export const SEQUENCE_UPDATES = new Set([...REORDER_METHODS, "splice"]);
 
-// A fresh array, from a literal or a method that makes a new one, that a method reorders in place
-// is the array that the call gives, as nothing else holds it.
+// A fresh array, from a literal or a method that makes a new one of an array's elements, that a
+// method reorders in place is the array that the call gives, as nothing else holds it.
 export const isFreshReorder = (node: MethodCall, context: Context) => {
   const fresh = skipCasts(node.expression.expression);
   return (
@@ -1683,7 +1683,10 @@ export const isFreshReorder = (node: MethodCall, context: Context) => {
     (ts.isArrayLiteralExpression(fresh) ||
       (isMethodCall(fresh) &&
         NEW_ARRAY_METHODS.has(fresh.expression.name.text) &&
-        getKind(fresh.expression.expression, context) === "sequence"))
+        (getKind(fresh.expression.expression, context) === "sequence" ||
+          context.checker.isArrayType(
+            context.checker.getTypeAtLocation(fresh.expression.expression),
+          ))))
   );
 };
 

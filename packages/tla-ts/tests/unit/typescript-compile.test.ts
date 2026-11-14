@@ -3864,6 +3864,29 @@ describe("values", () => {
     await expect(checkModel(getSource("2,4"))).rejects.toThrow("4,2");
   });
 
+  it("reorders in place the new array that a heap array's method gives", async () => {
+    const getSource = (expected: string) => `
+      interface Entry {
+        name: string;
+      }
+      interface State {
+        messages: Entry[];
+      }
+      const describe = (state: State) =>
+        state.messages
+          .slice(-2)
+          .reverse()
+          .map((entry) => entry.name)
+          .join(",");
+      const state: State = { messages: [] };
+      state.messages.push({ name: "a" }, { name: "b" }, { name: "c" });
+      const result = \`\${describe(state)};\${state.messages.map((entry) => entry.name).join("")}\`;
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("c,b;abc"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("c,b;cba"))).failure?.message).toContain("c,b;abc");
+  });
+
   it("makes a map from entries that calls give and spread, where a later entry of a key wins", async () => {
     const getSource = (expected: string) => `
       interface Operator {
