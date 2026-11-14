@@ -133,24 +133,34 @@ export type FunctionNode =
 
 export type HelperDeclaration = ts.FunctionDeclaration | ts.VariableDeclaration;
 
-// TypeScript narrows a variable at a read from what the read's function assigns before it, and keeps
-// that across a call, though a function that the call runs may assign the variable a value of
-// another type. A read of a variable that another function assigns has its declared type.
+// TypeScript narrows a variable or a property at a read from what the read's function assigns
+// before it, and keeps that across a call, though a function that the call runs may assign it a
+// value of another type. A read of one that another function assigns has its declared type. A
+// computed key, as in o[key] = value, may assign any property.
+const anyProperty = Symbol("any property");
+
 const withDeclaredReads = (checker: ts.TypeChecker): ts.TypeChecker => {
   const getFunction = (node: ts.Node) =>
     ts.findAncestor(node.parent, ts.isFunctionLike) ?? node.getSourceFile();
-  const writers = new Map<ts.SourceFile, Map<ts.Symbol, Set<ts.Node>>>();
+  const getWrittenKey = (name: ts.Expression) => {
+    if (ts.isIdentifier(name)) return getSymbol(name, checker);
+    if (ts.isPropertyAccessExpression(name)) return name.name.text;
+    if (!ts.isElementAccessExpression(name)) return undefined;
+    const key = name.argumentExpression;
+    return ts.isStringLiteralLike(key) || ts.isNumericLiteral(key) ? key.text : anyProperty;
+  };
+  const writers = new Map<ts.SourceFile, Map<ts.Symbol | string | symbol, Set<ts.Node>>>();
   const getWriters = (file: ts.SourceFile) => {
     const known = writers.get(file);
     if (known !== undefined) return known;
-    const found = new Map<ts.Symbol, Set<ts.Node>>();
+    const found = new Map<ts.Symbol | string | symbol, Set<ts.Node>>();
     findNodes(file, (inner): inner is ts.Node => getAssignedTarget(inner) !== undefined).forEach(
       (assignment) => {
         const target = getAssignedTarget(assignment);
         (target === undefined ? [] : getWrittenNames(target)).forEach((name) => {
-          const symbol = getSymbol(name, checker);
-          if (symbol !== undefined) {
-            found.set(symbol, new Set([...(found.get(symbol) ?? []), getFunction(assignment)]));
+          const key = getWrittenKey(name);
+          if (key !== undefined) {
+            found.set(key, new Set([...(found.get(key) ?? []), getFunction(assignment)]));
           }
         });
       },
@@ -158,20 +168,35 @@ const withDeclaredReads = (checker: ts.TypeChecker): ts.TypeChecker => {
     writers.set(file, found);
     return found;
   };
+  const isWrittenElsewhere = (key: ts.Symbol | string | symbol, node: ts.Node) =>
+    [...(getWriters(node.getSourceFile()).get(key) ?? [])].some(
+      (writer) => writer !== getFunction(node),
+    );
+  const getDeclaredType = (node: ts.Node) => {
+    const symbol = ts.isIdentifier(node)
+      ? getSymbol(node, checker)
+      : ts.isPropertyAccessExpression(node)
+        ? checker.getSymbolAtLocation(node.name)
+        : ts.isElementAccessExpression(node) &&
+            (ts.isStringLiteralLike(node.argumentExpression) ||
+              ts.isNumericLiteral(node.argumentExpression))
+          ? checker.getSymbolAtLocation(node.argumentExpression)
+          : undefined;
+    const declaration = symbol?.valueDeclaration;
+    if (symbol === undefined || declaration === undefined) return undefined;
+    if (ts.isIdentifier(node)) {
+      return (ts.isVariableDeclaration(declaration) || ts.isParameter(declaration)) &&
+        isWrittenElsewhere(symbol, node)
+        ? checker.getTypeOfSymbol(symbol)
+        : undefined;
+    }
+    return isWrittenElsewhere(symbol.name, node) || isWrittenElsewhere(anyProperty, node)
+      ? checker.getTypeOfSymbol(symbol)
+      : undefined;
+  };
   return {
     ...checker,
-    getTypeAtLocation: (node) => {
-      const symbol = ts.isIdentifier(node) ? getSymbol(node, checker) : undefined;
-      const declaration = symbol?.valueDeclaration;
-      const isWrittenElsewhere =
-        symbol !== undefined &&
-        declaration !== undefined &&
-        (ts.isVariableDeclaration(declaration) || ts.isParameter(declaration)) &&
-        [...(getWriters(node.getSourceFile()).get(symbol) ?? [])].some(
-          (writer) => writer !== getFunction(node),
-        );
-      return isWrittenElsewhere ? checker.getTypeOfSymbol(symbol) : checker.getTypeAtLocation(node);
-    },
+    getTypeAtLocation: (node) => getDeclaredType(node) ?? checker.getTypeAtLocation(node),
   };
 };
 
@@ -768,9 +793,15 @@ export const isStatic = (node: ts.Node) =>
   ts.canHaveModifiers(node) &&
   (ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword);
 
-// The names that an assignment's target writes, alone or in a pattern.
-const getWrittenNames = (target: ts.Node): ts.Identifier[] => {
-  if (ts.isIdentifier(target)) return [target];
+// The names and properties that an assignment's target writes, alone or in a pattern.
+const getWrittenNames = (target: ts.Node): ts.Expression[] => {
+  if (
+    ts.isIdentifier(target) ||
+    ts.isPropertyAccessExpression(target) ||
+    ts.isElementAccessExpression(target)
+  ) {
+    return [target];
+  }
   if (ts.isParenthesizedExpression(target) || ts.isSpreadElement(target)) {
     return getWrittenNames(target.expression);
   }
@@ -784,7 +815,9 @@ const getWrittenNames = (target: ts.Node): ts.Identifier[] => {
 
 // Whether an assignment's target writes a name, alone or in a pattern.
 const isWrittenBy = (target: ts.Node, symbol: ts.Symbol, context: Context) =>
-  getWrittenNames(target).some((name) => getSymbol(name, context.checker) === symbol);
+  getWrittenNames(target).some(
+    (name) => ts.isIdentifier(name) && getSymbol(name, context.checker) === symbol,
+  );
 
 // What a property of an object pattern assigns.
 const getPropertyTarget = (property: ts.ObjectLiteralElementLike) =>

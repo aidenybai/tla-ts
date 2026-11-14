@@ -5434,6 +5434,48 @@ describe("errors", () => {
     });
   });
 
+  describe("read a property that another function assigns with its declared type", () => {
+    const getSource = (expected: string, write: string) => `
+      const box: { x: number | string } = { x: 0 };
+      const key = "x";
+      const setText = () => {
+        ${write} = "a";
+      };
+      box.x = 1;
+      setText();
+      if (typeof box.x !== "${expected}") throw new Error(typeof box.x);
+    `;
+
+    it("tells its type as it runs", async () => {
+      expect((await checkModel(getSource("string", "box.x"))).failure).toBeUndefined();
+    });
+
+    it("doesn't keep the type that its own function narrowed it to", async () => {
+      expect((await checkModel(getSource("number", "box.x"))).failure?.message).toContain("string");
+    });
+
+    it("tells its type where the other function assigns it through a computed key", async () => {
+      expect((await checkModel(getSource("string", "box[key]"))).failure).toBeUndefined();
+      expect((await checkModel(getSource("number", "box[key]"))).failure?.message).toContain(
+        "string",
+      );
+    });
+
+    it("rejects arithmetic on it where the declared type isn't a number", () => {
+      expect(() =>
+        compile(`
+          const box: { x: number | string } = { x: 0 };
+          const setText = () => {
+            box.x = "2";
+          };
+          box.x = 1;
+          setText();
+          const product = box.x * 3;
+        `),
+      ).toThrow("* needs numbers");
+    });
+  });
+
   it("runs a call in typeof's operand, which may throw", async () => {
     const getSource = (count: number) => `
       const count: number = ${count};
