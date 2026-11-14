@@ -914,7 +914,7 @@ class PredTransformer {
     trans = context.simplify(mkAndOf(manager, side));
     const inflation = context.params.getUint("spacer.blast_term_ite_inflation", 3);
     if (inflation > 0) trans = context.simplify(blastTermIte(manager, trans, inflation));
-    if (rule.uninterpretedSize > 0 && !manager.isGround(trans))
+    if (rule.uninterpretedSize > 0 && !manager.isGroundApp(trans))
       throw new SmtTacticError("spacer: quantifier in a recursive rule");
     if (manager.isFalse(trans)) return;
     if (!this.ptRules.has(rule)) this.ptRules.set(rule, { rule, trans, auxs: auxVars, tag: -1 });

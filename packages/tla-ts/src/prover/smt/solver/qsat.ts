@@ -61,18 +61,6 @@ const hasQuantifiedUninterpreted = (manager: AstManager, expr: number) => {
   return false;
 };
 
-const isGround = (manager: AstManager, expr: number) => {
-  const visited = new Set<number>();
-  const todo = [expr];
-  for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
-    if (visited.has(current)) continue;
-    visited.add(current);
-    if (manager.kinds[current] !== KIND_APP) return false;
-    manager.pushArgs(current, todo);
-  }
-  return true;
-};
-
 // pred_abs::get_free_vars: the uninterpreted constants of a formula.
 export const getFreeVars = (manager: AstManager, formula: number, vars: RefVector) => {
   const marked = new Set<number>();
@@ -764,7 +752,7 @@ class Qsat {
 
   private assertFormula(formula: number) {
     const manager = this.manager;
-    if (!isGround(manager, formula)) throw new SmtTacticError("formula is not hoistable");
+    if (!manager.isGroundApp(formula)) throw new SmtTacticError("formula is not hoistable");
     const defs = new RefVector(manager);
     this.predAbs.abstractAtoms(formula, mkLevel(), defs);
     const abstracted = this.predAbs.mkAbstract(formula);

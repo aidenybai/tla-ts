@@ -177,7 +177,7 @@ export class UnusedVarsEliminator {
         manager.kinds[expr] === KIND_QUANTIFIER && !manager.isLambda(expr)
           ? manager.getQuantifier(expr)
           : null;
-      const kept = data === null ? expr : manager.isGround(data.body) ? data.body : -1;
+      const kept = data === null ? expr : manager.isGroundApp(data.body) ? data.body : -1;
       if (kept !== -1 || data === null) {
         manager.incRef(kept);
         return kept;
