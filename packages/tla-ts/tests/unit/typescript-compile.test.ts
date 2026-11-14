@@ -24211,6 +24211,36 @@ describe("errors", () => {
     expect(wrong.failure).toBeDefined();
   });
 
+  it("follows the DisposableStack that a callback calls in a helper that takes callbacks", async () => {
+    const source = (expected: string) => `
+      const seen: string[] = [];
+      const record = (run: () => void) => {
+        try {
+          run();
+        } catch (error) {
+          seen.push(error instanceof ReferenceError ? "ReferenceError" : "other");
+          return;
+        }
+        seen.push("none");
+      };
+      const stack = new DisposableStack();
+      record(() => {
+        stack.move();
+      });
+      const moved = new AsyncDisposableStack();
+      moved.disposeAsync();
+      record(() => {
+        moved.move();
+      });
+      seen.push(String(stack.disposed));
+      if (seen.join() !== "${expected}") throw new Error(seen.join());
+    `;
+    const result = await checkModel(source("none,ReferenceError,true"));
+    expect(result.failure).toBeUndefined();
+    const wrong = await checkModel(source("none,ReferenceError,false"));
+    expect(wrong.failure?.message).toContain("none,ReferenceError,true");
+  });
+
   describe("awaits what an await using declaration disposes, as Node does", () => {
     const source = (expected: string) => `
       declare function setTimeout(callback: () => void): void;

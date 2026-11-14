@@ -31,6 +31,7 @@ import { forceHeap } from "./functions";
 import { type Formula, ifThenElse, leaf, letIn, render } from "./formula";
 import { link } from "./regions";
 import { type Bound, bindValues, createStateScope, type Receiver } from "./scope";
+import { getStackCall, isStackConstruction } from "./stacks";
 import {
   apply,
   boolean,
@@ -127,12 +128,13 @@ export const getThrownMessage = (thrown: Thrown, node: ts.Node) =>
 
 // What one function or class tells of the helpers that run it: the functions and classes that it
 // names, the names of values that it reads, with their declarations, every name that it names,
-// whether it names a built-in that queues jobs, and whether its code runs as an operator's would.
+// whether it names a built-in that queues jobs or makes or calls a DisposableStack, which only the
+// path that runs it follows, and whether its code runs as an operator's would.
 interface Unit {
   runs: Set<ts.Node>;
   read: Map<ts.Symbol, ts.Node>;
   names: Set<ts.Symbol>;
-  isTaskNamed: boolean;
+  isTasked: boolean;
   isOwn: boolean;
 }
 
@@ -174,7 +176,12 @@ const getUnit = (unit: ts.Node, context: Context): Unit => {
     runs,
     read,
     names,
-    isTaskNamed: isTaskNamed.value,
+    isTasked:
+      isTaskNamed.value ||
+      findNodes(unit, ts.isNewExpression).some((node) => isStackConstruction(node, context)) ||
+      findNodes(unit, ts.isCallExpression).some(
+        (node) => getStackCall(node, context) !== undefined,
+      ),
     isOwn:
       (!ts.isFunctionLike(unit) || isPlain(unit as FunctionNode)) &&
       (ts.isClassLike(unit) ||
@@ -312,7 +319,7 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
         ) === undefined,
     );
     if (
-      reachedUnits.some((unit) => unit.isTaskNamed || !unit.isOwn) ||
+      reachedUnits.some((unit) => unit.isTasked || !unit.isOwn) ||
       outside.some(
         (entry) =>
           context.checker.getTypeOfSymbolAtLocation(entry[0], entry[1]).getCallSignatures().length >
