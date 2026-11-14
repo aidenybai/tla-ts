@@ -1451,7 +1451,10 @@ const getExpansion = (
       definition,
       scope: bindArguments(program, definition, expression.args, frame, names),
     };
-  return program.environment.definitions.has(expression.operator) ? unsupported() : undefined;
+  return program.environment.definitions.has(expression.operator) &&
+    !program.environment.substitutions.has(expression.operator)
+    ? unsupported()
+    : undefined;
 };
 
 const compileIdentifier = (program: Program, name: string, frame: Frame): Compiled => {
@@ -2563,6 +2566,11 @@ const compileBuiltin = (
 ): Compiled => {
   const operator = expression.operator;
   const args = expression.args;
+  // TLC takes an operator the model overrides with a value as that value, without its arguments.
+  const global = program.environment.substitutions.has(operator)
+    ? findGlobalName(operator, program.environment)
+    : undefined;
+  if (global?.kind === "Value") return compileConstant(program, global.value);
   if (args.length === 2 && (operator === "\\in" || operator === "\\notin")) {
     const test = compileMembership(program, compileValue(program, args[0], frame), args[1], frame);
     return operator === "\\in" ? test : { type: createBool(), emit: () => `!(${test.emit()})` };
