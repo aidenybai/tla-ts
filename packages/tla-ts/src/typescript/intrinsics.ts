@@ -6,6 +6,7 @@ import {
   getSymbol,
   getUndefined,
   isAssigned,
+  isInertValue,
   isUnresolved,
   isWrittenBy,
   share,
@@ -19,10 +20,10 @@ import {
 } from "./collections";
 import { getVarNames } from "./early-errors";
 import { getConstructor, getErrorClass, NATIVE_ERRORS } from "./exceptions";
-import { getNumberValue, getRawString, translateExpression } from "./expressions";
+import { getNumberValue, getRawString, isGlobalObject, translateExpression } from "./expressions";
 import { getHeap, isFunctionValue, translateFunctionObject } from "./heap";
 import { useJavaScript, WELL_KNOWN_SYMBOLS } from "./javascript";
-import type { Scope } from "./scope";
+import { getThisOwner, type Scope } from "./scope";
 import type { Expression } from "../ast";
 import { BUILT_INS, HOST_GLOBAL_KEYS } from "./built-ins";
 import {
@@ -54,6 +55,90 @@ export const getBuiltIn = (node: ts.Expression, context: Pick<Context, "checker"
   return ts.isIdentifier(node) && isGlobal(node.text) && symbol !== undefined && isLibrary(symbol)
     ? node.text
     : undefined;
+};
+
+// The reads of the global object's built-ins that a statement at a script's top checks before it
+// runs, where the script uses the global object as a value, which may change them: those that the
+// statement evaluates once, before anything in it that could run code. A change of a built-in
+// that any other read reads stops, as no statement checks that read.
+export const findCheckedGlobals = (sourceFile: ts.SourceFile, context: Context) => {
+  const isGlobalValue =
+    findNodes(
+      sourceFile,
+      (node): node is ts.Node =>
+        (ts.isIdentifier(node) && isGlobalObject(node, context)) ||
+        (node.kind === ts.SyntaxKind.ThisKeyword && getThisOwner(node) === undefined),
+    ).length > 0;
+  const keys = new Set(BUILT_INS.globalThis[3].map((property) => property[0]));
+  // A namespace's function, as assert.sameValue, which tla-ts calls as a definition rather than
+  // reading it as a property, is inert too.
+  const isInert = (node: ts.Node) => {
+    const declaration =
+      ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression)
+        ? getSymbol(node, context.checker)?.valueDeclaration
+        : undefined;
+    return (
+      node.kind <= ts.SyntaxKind.LastToken ||
+      (declaration !== undefined &&
+        ts.isFunctionDeclaration(declaration) &&
+        ts.isModuleBlock(declaration.parent)) ||
+      ts.isTypeNode(node) ||
+      (ts.isExpression(node) && isInertValue(node)) ||
+      (ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        (node.initializer === undefined || isInertValue(node.initializer)))
+    );
+  };
+  const isChecked = (node: ts.Node): boolean => {
+    const parent = node.parent;
+    if (ts.isStatement(parent)) {
+      return ts.isForStatement(parent)
+        ? node === parent.initializer
+        : !ts.isWhileStatement(parent) &&
+            !ts.isDoStatement(parent) &&
+            !(
+              (ts.isForInStatement(parent) || ts.isForOfStatement(parent)) &&
+              node === parent.initializer
+            );
+    }
+    const children: ts.Node[] = [];
+    ts.forEachChild(parent, (child) => {
+      children.push(child);
+    });
+    // A default runs after what the pattern destructures.
+    const isDefault =
+      ts.isParameter(parent) ||
+      ts.isBindingElement(parent) ||
+      ts.isShorthandPropertyAssignment(parent) ||
+      (ts.isBinaryExpression(parent) &&
+        parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        (ts.isArrayLiteralExpression(parent.parent) || ts.isPropertyAssignment(parent.parent)));
+    return (
+      !isDefault &&
+      !ts.isFunctionLike(parent) &&
+      !ts.isClassLike(parent) &&
+      !ts.isClassElement(parent) &&
+      children.slice(0, children.indexOf(node)).every(isInert) &&
+      isChecked(parent)
+    );
+  };
+  return new Set(
+    isGlobalValue
+      ? findNodes(
+          sourceFile,
+          (node): node is ts.Identifier =>
+            ts.isIdentifier(node) &&
+            getBuiltIn(node, context) !== undefined &&
+            keys.has(node.text) &&
+            ts.findAncestor(
+              node,
+              (ancestor) =>
+                ts.isTypeNode(ancestor) || ts.isFunctionLike(ancestor) || ts.isClassLike(ancestor),
+            ) === undefined &&
+            isChecked(node),
+        )
+      : [],
+  );
 };
 
 // The type of a built-in object that a global holds, such as Math's, which no other value has.
@@ -960,7 +1045,10 @@ export const translateBuiltIns = (node: ts.SourceFile, context: Context) => {
     findNodes(
       node,
       (child): child is ts.Identifier =>
-        ts.isIdentifier(child) && getBuiltIn(child, context) !== undefined,
+        ts.isIdentifier(child) &&
+        getBuiltIn(child, context) !== undefined &&
+        ts.findAncestor(child, ts.isTypeNode) === undefined &&
+        !context.checkedGlobals.has(child),
     ).map((global) => global.text),
   );
   const isHidden = (name: string, property: string[]) =>

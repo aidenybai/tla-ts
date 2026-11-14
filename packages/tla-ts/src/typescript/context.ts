@@ -127,6 +127,9 @@ export interface Context {
   // The array literals, new sets and maps, and the rest elements, variables, parameters, fields,
   // and functions that hold them, which the heap holds.
   heapCollections: Set<ts.Node>;
+  // The reads of the global object's built-ins that their statements check, as a script that uses
+  // the global object as a value may change them.
+  checkedGlobals: ReadonlySet<ts.Identifier>;
   // The generator functions that a script declares at its top, or that a variable there holds,
   // whose prototype objects the heap holds from the start, by the place on the heap of each.
   generatorPrototypes: Map<ts.FunctionDeclaration | ts.FunctionExpression, number>;
@@ -483,6 +486,7 @@ export const createContext = (
     symbols: [],
     fractions: new Map(),
     heapCollections: new Set(),
+    checkedGlobals: new Set(),
     generatorPrototypes: new Map(),
     hasInheritedElements: false,
     characters: new Set(),

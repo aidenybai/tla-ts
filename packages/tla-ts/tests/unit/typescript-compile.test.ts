@@ -14527,6 +14527,44 @@ describe("errors", () => {
     });
   });
 
+  it("changes a global that the script names only before it changes it", async () => {
+    const getSource = (expected: number) => `
+      const held: unknown = Symbol;
+      const global = globalThis as unknown as Record<string, unknown>;
+      global.Symbol = 1;
+      if (global.Symbol !== ${expected}) throw new Error("unexpected");
+      delete global.Symbol;
+      if ("Symbol" in globalThis || typeof held !== "function") throw new Error("delete");
+    `;
+    expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    expect((await checkModel(getSource(2))).failure?.message).toContain("unexpected");
+  });
+
+  it.each([
+    [
+      "reads a global after it changes it",
+      "tla-ts can't read a built-in that the script changed on the global object",
+      "const made = Symbol('late');",
+    ],
+    [
+      "calls a function that reads the global",
+      "tla-ts can't change a global that the script names",
+      "const read = () => typeof Symbol; read();",
+    ],
+    [
+      "reads the global in a loop's condition",
+      "tla-ts can't change a global that the script names",
+      "let count = 0; while (count < 1 && typeof Symbol === 'function') { count += 1; }",
+    ],
+  ])("stops where a script %s", async (_, message, after) => {
+    const result = await checkModel(`
+      const global = globalThis as unknown as Record<string, unknown>;
+      delete global.Symbol;
+      ${after}
+    `);
+    expect(result.failure?.message).toContain(message);
+  });
+
   describe("stops at a change of a global that the script names", () => {
     it("stops where the script replaces a global that it calls", async () => {
       expect(

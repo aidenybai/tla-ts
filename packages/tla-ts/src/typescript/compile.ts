@@ -25,7 +25,13 @@ import {
   rejectRegExpIndicesUses,
   translateConstantFunctions,
 } from "./heap";
-import { findGeneratorPrototypes, getBuiltIn, getCodePoint, translateBuiltIns } from "./intrinsics";
+import {
+  findCheckedGlobals,
+  findGeneratorPrototypes,
+  getBuiltIn,
+  getCodePoint,
+  translateBuiltIns,
+} from "./intrinsics";
 import { WELL_KNOWN_SYMBOLS } from "./javascript";
 import { type Exported, isDeclaration, type Model, readModel, type Variable } from "./model";
 import { createProgram } from "./program";
@@ -533,6 +539,7 @@ export const compile = (
       ].forEach((name) => context.builtIns.add(name));
     }
     context.heapCollections = findHeapArrays(roots, changedArrays, context);
+    context.checkedGlobals = findCheckedGlobals(sourceFile, context);
     context.generatorPrototypes = findGeneratorPrototypes(sourceFile, context);
     const prototypes = new Set(["Array.prototype", "Object.prototype"]);
     const changesPrototype = (node: ts.Node): boolean =>

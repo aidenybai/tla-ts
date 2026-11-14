@@ -2208,7 +2208,7 @@ const isUnreachable = (statement: ts.Node) =>
 // A var that only declarations that never run initialize, and that nothing assigns, so that it
 // holds undefined wherever a script reads it.
 // globalThis, where a script makes objects on the heap.
-const isGlobalObject = (node: ts.Expression, context: Context) => {
+export const isGlobalObject = (node: ts.Expression, context: Context) => {
   const symbol = getSymbol(node, context.checker);
   return (
     ts.isIdentifier(node) &&

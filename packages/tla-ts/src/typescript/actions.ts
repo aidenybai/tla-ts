@@ -15014,8 +15014,48 @@ export const translateStatements = (
       frame,
     );
   }
+  if (path.scope.globalsChecked !== undefined && path.scope.globalsChecked !== statements[0]) {
+    return translateStatements(
+      statements,
+      { ...path, scope: { ...path.scope, globalsChecked: undefined } },
+      context,
+      frame,
+    );
+  }
   if (statements.length === 0) return frame.next(path);
   const statement = statements[0];
+  // A statement that reads a built-in that the script may change on the global object runs only
+  // where the global object still holds it.
+  const globals = new Set<string>();
+  const findGlobals = (node: ts.Node) => {
+    if (node !== statement && (ts.isStatement(node) || ts.isFunctionLike(node))) return;
+    if (ts.isIdentifier(node) && context.checkedGlobals.has(node)) globals.add(node.text);
+    ts.forEachChild(node, findGlobals);
+  };
+  if (context.checkedGlobals.size > 0 && path.scope.globalsChecked !== statement) {
+    findGlobals(statement);
+  }
+  if (globals.size > 0) {
+    return ifThenElse(
+      useJavaScript(
+        "GlobalHolds",
+        [getHeap(path.scope, statement, context), set([...globals].map((name) => string(name)))],
+        context,
+      ),
+      translateStatements(
+        statements,
+        { ...path, scope: { ...path.scope, globalsChecked: statement } },
+        context,
+        frame,
+      ),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't read a built-in that the script changed on the global object"),
+        ]),
+      ),
+    );
+  }
   // A block or a function body starts with its lets and consts uninitialized. A synthesized
   // statement, such as an arrow's returned expression, has no parent.
   const block = statement.parent;

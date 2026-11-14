@@ -816,6 +816,16 @@ LOCAL IteratorPrototypes ==
    "%StringIteratorPrototype%", "%MapIteratorPrototype%", "%SetIteratorPrototype%",
    "%RegExpStringIteratorPrototype%"}
 
+\\* Whether the global object still holds the built-in that a name reads under a key.
+LOCAL HoldsGlobal(global, key) ==
+  /\\ key \\in DOMAIN global.values
+  /\\ global.attributes[key].kind = "data"
+  /\\ ToString(global.values[key]) = ToString(BuiltIns[GlobalObject[Ref]].values[key])
+
+GlobalHolds(heap, keys) ==
+  \\/ GlobalObject[Ref] \\notin DOMAIN heap.changed
+  \\/ \\A key \\in keys : HoldsGlobal(heap.changed[GlobalObject[Ref]], key)
+
 Update(heap, ref, object) ==
   CASE IsHeap(ref) ->
          LET held == IF IsProxy(heap, ref) THEN ProxiedObject(heap, ref) ELSE ref
@@ -828,10 +838,7 @@ Update(heap, ref, object) ==
          Assert(FALSE,
                 "tla-ts can't close an iterator whose prototypes a script may give a return")
     [] /\\ BuiltInKey(ref) = GlobalObject[Ref]
-       /\\ \\E key \\in BuiltIns[GlobalObject[Ref]].named :
-            \\/ key \\notin DOMAIN object.values
-            \\/ object.attributes[key].kind # "data"
-            \\/ ToString(object.values[key]) # ToString(BuiltIns[GlobalObject[Ref]].values[key]) ->
+       /\\ \\E key \\in BuiltIns[GlobalObject[Ref]].named : ~HoldsGlobal(object, key) ->
          Assert(FALSE, "tla-ts can't change a global that the script names")
     [] OTHER -> [heap EXCEPT !.changed = (BuiltInKey(ref) :> object) @@ @]
 

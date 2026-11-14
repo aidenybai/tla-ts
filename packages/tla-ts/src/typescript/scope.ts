@@ -68,6 +68,8 @@ export interface Scope {
   // The statement that runs where the object it first uses has the private name it uses, which
   // translating it again doesn't check again.
   brandChecked?: ts.Statement;
+  // The statement that runs where the global object holds the built-ins it reads.
+  globalsChecked?: ts.Statement;
   // The environment of the call of each async function whose body runs, which tells the closures
   // that read its locals which call made them.
   activations?: ReadonlyMap<ts.Node, Expression>;
