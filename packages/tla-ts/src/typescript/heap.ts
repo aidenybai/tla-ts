@@ -137,6 +137,7 @@ import {
   type BufferName,
   isBufferName,
   isCollectionName,
+  isArrayConstruction,
   isHoleyNewArray,
   isNewArrayOfElements,
   getArraySource,
@@ -1635,7 +1636,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   if (ts.isCallExpression(node) && isParsedObject(node, context)) {
     return translateParsedObjects(node, heap, context);
   }
-  if (isHoleyNewArray(node)) {
+  if (isHoleyNewArray(node, context)) {
     const length = Number(node.arguments?.[0]?.getText());
     const positions = Array.from({ length }, (_, offset) => number(offset + 1));
     return useJavaScript(
@@ -1655,7 +1656,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
       context,
     );
   }
-  if (isNewArrayOfElements(node) && context.heapCollections.has(node)) {
+  if (isNewArrayOfElements(node, context) && context.heapCollections.has(node)) {
     const elements = tuple(
       (node.arguments ?? []).map((element) => translateExpression(element, scope, context)),
     );
@@ -3156,7 +3157,7 @@ export const isMade = (node: ts.Node, context: Context, isSometimes = false): bo
       !isArrayFromLength(node, context)) ||
     // map makes its array as it runs, after it visits each element.
     ((ts.isArrayLiteralExpression(node) ||
-      isHoleyNewArray(node) ||
+      isHoleyNewArray(node, context) ||
       (ts.isCallExpression(node) && getMapCall(node, context) === undefined) ||
       ts.isNewExpression(node)) &&
       context.heapCollections.has(node)) ||
@@ -3268,9 +3269,9 @@ const isArrayObjectUse = (node: ts.Expression, context: Context): boolean => {
 // An array literal with holes, which a sequence can't hold, where a variable that only reads it as
 // an object holds it, or a method reads it.
 // An array that a script makes the prototype of a function's instances, which they share.
-export const isPrototypeArray = (node: ts.Node) =>
+export const isPrototypeArray = (node: ts.Node, context: Context) =>
   ((ts.isArrayLiteralExpression(node) && !node.elements.some(ts.isSpreadElement)) ||
-    isNewArrayOfElements(node)) &&
+    isNewArrayOfElements(node, context)) &&
   ts.isBinaryExpression(node.parent) &&
   node.parent.right === node &&
   node.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
@@ -3279,7 +3280,7 @@ export const isPrototypeArray = (node: ts.Node) =>
 
 // Whether a script makes an array a prototype, whose methods an object may then inherit.
 export const hasPrototypeArray = (context: Context) =>
-  [...context.heapCollections].some(isPrototypeArray);
+  [...context.heapCollections].some((inner) => isPrototypeArray(inner, context));
 
 // An array that a throw makes, which keeps its identity, as an object does, so that what catches it
 // sees the same array.
@@ -3288,7 +3289,7 @@ export const isThrownArray = (node: ts.Node) =>
   ts.isThrowStatement(node.parent) &&
   !node.elements.some(ts.isSpreadElement);
 
-export const isHoleyArray = (node: ts.Node) => {
+export const isHoleyArray = (node: ts.Node, context: Context) => {
   const isHeld =
     node.parent !== undefined &&
     ts.isVariableDeclaration(node.parent) &&
@@ -3296,7 +3297,7 @@ export const isHoleyArray = (node: ts.Node) => {
     ts.isIdentifier(node.parent.name);
   // new Array(length) that a method reads at once, as in new Array(2).fill(0), stays a sequence.
   return (
-    (isHoleyNewArray(node) && isHeld) ||
+    (isHoleyNewArray(node, context) && isHeld) ||
     (ts.isArrayLiteralExpression(node) &&
       node.elements.some(ts.isOmittedExpression) &&
       !node.elements.some(ts.isSpreadElement) &&
@@ -3479,13 +3480,13 @@ const getConstantKey = (node: ts.Expression): number | undefined => {
 
 // The length of the array that an expression makes, where it's new: a literal, or new Array of no
 // elements or several.
-const getFreshLength = (node: ts.Expression | undefined) => {
+const getFreshLength = (node: ts.Expression | undefined, context: Context) => {
   const array = node === undefined ? undefined : skipCasts(node);
   if (array === undefined) return undefined;
   if (ts.isArrayLiteralExpression(array) && !array.elements.some(ts.isSpreadElement)) {
     return array.elements.length;
   }
-  return isNewArrayOfElements(array) ? (array.arguments ?? []).length : undefined;
+  return isNewArrayOfElements(array, context) ? (array.arguments ?? []).length : undefined;
 };
 
 // Whether a key is below the length of the array that a name holds, or at it: its length, less a
@@ -3550,20 +3551,20 @@ const isWithinLength = (key: ts.Expression, array: ts.Identifier, checker: ts.Ty
 // the array that it holds, or a key that isn't an index, as x = []; x[1] = 1 does, which leaves a
 // hole that only the heap holds. A use that may change the length some other way ends what it
 // knows.
-const writesHole = (uses: readonly ts.Identifier[], checker: ts.TypeChecker) =>
+const writesHole = (uses: readonly ts.Identifier[], context: Context) =>
   uses.reduce<{ length: number | undefined; isHole: boolean }>(
     (state, use) => {
       const parent = use.parent;
       if (state.isHole) return state;
       if (ts.isVariableDeclaration(parent) && parent.name === use) {
-        return { ...state, length: getFreshLength(parent.initializer) };
+        return { ...state, length: getFreshLength(parent.initializer, context) };
       }
       if (
         ts.isBinaryExpression(parent) &&
         parent.left === use &&
         parent.operatorToken.kind === ts.SyntaxKind.EqualsToken
       ) {
-        return { ...state, length: getFreshLength(parent.right) };
+        return { ...state, length: getFreshLength(parent.right, context) };
       }
       const isElementWrite =
         ts.isElementAccessExpression(parent) &&
@@ -3575,7 +3576,7 @@ const writesHole = (uses: readonly ts.Identifier[], checker: ts.TypeChecker) =>
       if (
         isElementWrite &&
         key === undefined &&
-        !isWithinLength(parent.argumentExpression, use, checker)
+        !isWithinLength(parent.argumentExpression, use, context.checker)
       ) {
         return { ...state, isHole: true };
       }
@@ -3689,7 +3690,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       return declaration !== undefined &&
         ts.isVariableDeclaration(declaration) &&
         ts.findAncestor(declaration, (ancestor) => isReached.has(ancestor)) !== undefined &&
-        writesHole(entry[1], checker)
+        writesHole(entry[1], context)
         ? [entry[0]]
         : [];
     }),
@@ -3804,7 +3805,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       );
     };
     const addSource = (node: ts.Expression): boolean => {
-      if (isFreshCollection(node, context) || isNewArrayOfElements(node)) {
+      if (isFreshCollection(node, context) || isNewArrayOfElements(node, context)) {
         nodes.push(node);
         return true;
       }
@@ -4595,8 +4596,8 @@ export const findHeapArrays = (
     ) {
       arrays.add(literal);
     }
-    if (isHoleyArray(node)) arrays.add(node);
-    if (isPrototypeArray(node)) arrays.add(node);
+    if (isHoleyArray(node, context)) arrays.add(node);
+    if (isPrototypeArray(node, context)) arrays.add(node);
     if (isThrownArray(node)) arrays.add(node);
     ts.forEachChild(node, find);
   };
@@ -4686,13 +4687,13 @@ export const findHeapArrays = (
       ts.isVariableDeclaration(declaration) &&
       declaration.initializer !== undefined &&
       (ts.isArrayLiteralExpression(declaration.initializer) ||
-        isNewArrayOfElements(declaration.initializer))
+        isNewArrayOfElements(declaration.initializer, context))
         ? declaration.initializer
         : undefined;
     const reads = uses.filter((use) => use.parent !== declaration);
     if (
       literal !== undefined &&
-      (ts.isNewExpression(literal) ? (literal.arguments ?? []) : literal.elements).every(
+      (ts.isArrayLiteralExpression(literal) ? literal.elements : (literal.arguments ?? [])).every(
         (element) => !ts.isSpreadElement(element) && !ts.isOmittedExpression(element),
       ) &&
       reads.some(
@@ -5060,9 +5061,7 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
   if (getGetterCall(node, context) !== undefined) return ["TypeError"];
   if (getIntlMethodCall(node, context) !== undefined) return ["TypeError"];
   if (isInvalidRegExp(node, context)) return ["SyntaxError"];
-  if (ts.isNewExpression(node) && getBuiltIn(node.expression, context) === "Array") {
-    return ["TypeError", "RangeError"];
-  }
+  if (isArrayConstruction(node, context)) return ["TypeError", "RangeError"];
   const created = getNewClass(node, context);
   if (created !== undefined && ts.isClassLike(created) && isNullBased(created)) {
     return ["ReferenceError"];

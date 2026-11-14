@@ -11,7 +11,7 @@ import {
   isMethodCall,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
-import { getKind, isHeapArray, isHeapSetOrMap, isHeapType } from "./types";
+import { getKind, isArrayConstruction, isHeapArray, isHeapSetOrMap, isHeapType } from "./types";
 
 const COPYING_METHODS = new Set([
   "slice",
@@ -48,7 +48,7 @@ const CALLBACK_METHODS = new Set([
   "join",
 ]);
 
-const COPYING_CONSTRUCTORS = new Set(["Set", "Map", "Array"]);
+const COPYING_CONSTRUCTORS = new Set(["Set", "Map"]);
 
 // A place that may keep an object after a read: the variable, or undefined when tla-ts can't
 // tell. The read object sits `source` levels below the top of the variable it came from, and
@@ -404,6 +404,9 @@ const getEscapes = (
       ...getFrom(call, COPYING_METHODS.has(method) ? getCopy(depths) : getPart(depths)),
     ];
   }
+  if (isArrayConstruction(parent, context) && parent.arguments?.includes(node)) {
+    return getFrom(parent, getCopy(depths));
+  }
   if (ts.isCallExpression(parent) && parent.arguments.includes(node)) {
     if (isMethodCall(parent)) {
       const method = parent.expression.name.text;
@@ -481,9 +484,10 @@ export const getReached = (roots: readonly ts.Node[], context: Context) => {
 export const isMakingObjects = (node: ts.Node, context: Context) =>
   getReached([node], context).some(hasObjectLiteral);
 
-// Whether a call gives a new object each time: its callee returns only object literals, which
-// nothing else can name, though the objects inside them may still be shared.
+// Whether a call gives a new object each time: Array(...), or a callee that returns only object
+// literals, which nothing else can name, though the objects inside them may still be shared.
 const isFreshCall = (node: ts.Node, context: Context) => {
+  if (isArrayConstruction(node, context)) return true;
   const callee = ts.isCallExpression(node) ? getCallee(node.expression, context) : undefined;
   if (callee?.body === undefined || callee.asteriskToken !== undefined) return false;
   const body = callee.body;

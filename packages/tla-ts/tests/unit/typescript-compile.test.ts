@@ -4523,6 +4523,44 @@ describe("values", () => {
       ).toContain(expected);
     });
   });
+
+  describe("makes an array with Array as new Array does", () => {
+    it("makes the same array without new", async () => {
+      const getSource = (expected: string) => `
+        const log: string[] = [];
+        const listed = Array(1, 2, 3);
+        log.push(String(Array().length), listed.join("-"), String(Array(0).length));
+        log.push(Array(undefined, 1, null, 3).join(), Array(3).fill(7).join(""));
+        log.push(typeof Array(), String(Array(4, 5) instanceof Array));
+        const grown = Array(1, 2);
+        grown[2] = 3;
+        grown.push(4);
+        log.push(grown.join(""));
+        const holes = Array(3);
+        holes[1] = 5;
+        log.push(String(holes.length), String(0 in holes), String(1 in holes));
+        if (log.join() !== "${expected}") throw new Error(log.join());
+      `;
+      const expected = "0,1-2-3,0,,1,,3,777,object,true,1234,3,false,true";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+      expect(
+        (await checkModel(getSource(expected.replace("1234", "123")))).failure?.message,
+      ).toContain(expected);
+    });
+
+    it("calls a local function that a script names Array", async () => {
+      const getSource = (expected: number) => `
+        const make = () => {
+          const Array = (count: number) => [count];
+          return Array(5);
+        };
+        const made = make();
+        if (made.length !== 1 || made[0] !== ${expected}) throw new Error(made.join());
+      `;
+      expect((await checkModel(getSource(5))).failure).toBeUndefined();
+      await expect(checkModel(getSource(0))).rejects.toThrow('"5"');
+    });
+  });
 });
 
 describe("bounds", () => {

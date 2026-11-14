@@ -82,6 +82,7 @@ import {
   isBigIntLike,
   isHeapSetOrMap,
   isBooleanLike,
+  isArrayConstruction,
   isNumberLike,
   type Kind,
   translateUnknown,
@@ -769,14 +770,9 @@ export const translateArrayConstructor = (node: MethodCall, scope: Scope, contex
     return getFrom(Array.isArray(values) ? tuple(values) : values);
   }
   if (method !== "fill" || node.arguments.length !== 1) return undefined;
-  const array =
-    ts.isNewExpression(receiver) || ts.isCallExpression(receiver) ? receiver : undefined;
   const length =
-    array !== undefined &&
-    ts.isIdentifier(array.expression) &&
-    array.expression.text === "Array" &&
-    array.arguments?.length === 1
-      ? array.arguments[0]
+    isArrayConstruction(receiver, context) && receiver.arguments?.length === 1
+      ? receiver.arguments[0]
       : undefined;
   if (length === undefined) return undefined;
   const position = context.names.getFresh("index");
@@ -3254,24 +3250,33 @@ const getKeyKinds = (node: ts.NewExpression, context: Context) => {
 // The methods of a Set or a Map that take a key.
 const KEY_METHODS = new Set(["add", "has", "delete", "set", "get"]);
 
+// new Array(length) or Array(length) makes an array of holes, which a sequence can't hold, and
+// either with any other arguments makes an array of them.
+export const translateArrayConstruction = (
+  node: ts.NewExpression | ts.CallExpression,
+  scope: Scope,
+  context: Context,
+) => {
+  const argument = node.arguments?.[0];
+  const elements = (node.arguments ?? []).map((element) =>
+    translateExpression(element, scope, context),
+  );
+  if (argument === undefined || elements.length > 1 || !isNumberLike(argument, context)) {
+    return tuple(elements);
+  }
+  return ifExpression(
+    apply("=", [elements[0], number(0)]),
+    tuple([]),
+    apply("Assert", [boolean(false), string("TLA+ sequences can't have holes")]),
+  );
+};
+
 export const translateNew = (node: ts.NewExpression, scope: Scope, context: Context) => {
+  if (isArrayConstruction(node, context) && node.arguments?.some(ts.isSpreadElement) !== true) {
+    return translateArrayConstruction(node, scope, context);
+  }
   const constructor = getNewName(node, context);
   const argument = node.arguments?.[0];
-  // new Array(length) makes an array of holes, which a sequence can't hold, and new Array with
-  // any other arguments makes an array of them.
-  if (constructor === "Array" && node.arguments?.some(ts.isSpreadElement) !== true) {
-    const elements = (node.arguments ?? []).map((element) =>
-      translateExpression(element, scope, context),
-    );
-    if (argument === undefined || elements.length > 1 || !isNumberLike(argument, context)) {
-      return tuple(elements);
-    }
-    return ifExpression(
-      apply("=", [elements[0], number(0)]),
-      tuple([]),
-      apply("Assert", [boolean(false), string("TLA+ sequences can't have holes")]),
-    );
-  }
   const kind = constructor === "WeakSet" ? "Set" : constructor === "WeakMap" ? "Map" : constructor;
   const made = translateNewCollection(node, kind, scope, context);
   if (kind === constructor || argument === undefined) return made;

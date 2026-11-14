@@ -379,7 +379,7 @@ export const compile = (
       ].includes(node.text)) ||
     (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) ||
     node.kind === ts.SyntaxKind.AsyncKeyword ||
-    isHoleyArray(node) ||
+    isHoleyArray(node, context) ||
     isThrownArray(node) ||
     // A function that a script holds as a value, such as an array's element or an operand, which
     // only a model value on the heap can be.
@@ -390,7 +390,7 @@ export const compile = (
         ts.isConditionalExpression(node.parent) ||
         (ts.isVariableDeclaration(node.parent) && node.parent.initializer === node)) &&
       getFunction(getTopLevelDeclaration(getSymbol(node, context.checker))) !== undefined) ||
-    isPrototypeArray(node) ||
+    isPrototypeArray(node, context) ||
     getKeptIterator(node, context) !== undefined ||
     getWrappedThis(node, context) !== undefined ||
     // An array that a script gives a named property, which only an object can hold.

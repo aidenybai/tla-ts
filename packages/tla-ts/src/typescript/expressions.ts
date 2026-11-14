@@ -7,6 +7,7 @@ import {
   translateHeapElements,
   translateArrayIteration,
   translateMethod,
+  translateArrayConstruction,
   translateNew,
   translateRegExpCall,
   translateSet,
@@ -187,6 +188,7 @@ import {
   isSequenceType,
   mayBeSequenceType,
   translateUnknown,
+  isArrayConstruction,
   isHoleyNewArray,
   isNewArrayOfElements,
 } from "./types";
@@ -757,6 +759,9 @@ export const translateCall = (
     translateJsonCall(node, scope, context) ??
     (isMethodCall(node) ? undefined : translateRegExpCall(node, scope, context));
   if (converted !== undefined) return converted;
+  if (isArrayConstruction(node, context) && !node.arguments.some(ts.isSpreadElement)) {
+    return translateArrayConstruction(node, scope, context);
+  }
   // decodeURI and decodeURIComponent may throw, so only a statement runs them.
   const uriCall = getURICall(node, context);
   if (uriCall !== undefined && !uriCall.isDecode) {
@@ -3602,7 +3607,9 @@ const translateNode = (
       : undefined;
   if (errorClass !== undefined) return getConstructor(errorClass, context);
   const isHeapObject =
-    ((ts.isArrayLiteralExpression(node) || isHoleyNewArray(node) || isNewArrayOfElements(node)) &&
+    ((ts.isArrayLiteralExpression(node) ||
+      isHoleyNewArray(node, context) ||
+      isNewArrayOfElements(node, context)) &&
       context.heapCollections.has(node)) ||
     (ts.isClassExpression(node) && isHeapClass(node, context)) ||
     isHeapFunction(node, context) ||

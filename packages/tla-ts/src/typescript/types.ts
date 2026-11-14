@@ -335,13 +335,22 @@ export const rejectAnyReceiver = (node: ts.Expression, context: Context) => {
   }
 };
 
-// The array literal that an expression is, or that the variable it names holds.
+// new Array(...) or Array(...), which make the same fresh array.
+export const isArrayConstruction = (
+  node: ts.Node,
+  context: Context,
+): node is ts.NewExpression | ts.CallExpression =>
+  (ts.isNewExpression(node) || ts.isCallExpression(node)) &&
+  getBuiltIn(node.expression, context) === "Array";
+
 // new Array(length), which makes an array of holes, for a length short enough to list them.
-export const isHoleyNewArray = (node: ts.Node): node is ts.NewExpression => {
-  const length = ts.isNewExpression(node) ? node.arguments?.at(0) : undefined;
+export const isHoleyNewArray = (
+  node: ts.Node,
+  context: Context,
+): node is ts.NewExpression | ts.CallExpression => {
+  const length = isArrayConstruction(node, context) ? node.arguments?.at(0) : undefined;
   return (
-    ts.isNewExpression(node) &&
-    node.expression.getText() === "Array" &&
+    isArrayConstruction(node, context) &&
     node.arguments?.length === 1 &&
     length !== undefined &&
     ts.isNumericLiteral(length) &&
@@ -353,9 +362,11 @@ export const isHoleyNewArray = (node: ts.Node): node is ts.NewExpression => {
 
 // new Array of no elements, or of two or more, which makes an array of them, as new Array(1, 2, 3)
 // does. One argument is a length instead.
-export const isNewArrayOfElements = (node: ts.Node): node is ts.NewExpression =>
-  ts.isNewExpression(node) &&
-  node.expression.getText() === "Array" &&
+export const isNewArrayOfElements = (
+  node: ts.Node,
+  context: Context,
+): node is ts.NewExpression | ts.CallExpression =>
+  isArrayConstruction(node, context) &&
   (node.arguments?.length ?? 0) !== 1 &&
   node.arguments?.some(ts.isSpreadElement) === false;
 
@@ -370,8 +381,8 @@ export const getArraySource = (node: ts.Expression, context: Context) => {
       : undefined;
   return (
     getArrayLiteral(node, context) ??
-    (isHoleyNewArray(node) ? node : undefined) ??
-    (initializer !== undefined && isHoleyNewArray(initializer) ? initializer : undefined)
+    (isHoleyNewArray(node, context) ? node : undefined) ??
+    (initializer !== undefined && isHoleyNewArray(initializer, context) ? initializer : undefined)
   );
 };
 
