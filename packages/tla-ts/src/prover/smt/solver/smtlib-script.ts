@@ -617,6 +617,10 @@ export const runSmtlibScript = (
       isEuf && !isFdSolver && parameters.get("sat.smt") !== "true"
         ? new IncSatSolver(state.manager, getSatParams(parameters), true, mkThSolver)
         : undefined;
+    for (let index = 0; index < state.scopes.length; index++) {
+      state.kernel?.push();
+      useEufSolver((solver) => solver.push());
+    }
   };
   // The parts of sat.euf that are not ported leave its answers to the smt kernel.
   const useEufSolver = <Result>(action: (solver: IncSatSolver) => Result) => {
@@ -1108,13 +1112,7 @@ export const runSmtlibScript = (
       resetOptimizer();
       releaseObjectives(0, 0);
       state.scopes = state.scopes.map(() => ({ assertions: 0, objectives: 0, softTrail: 0 }));
-      if (state.isProofsEnabled !== undefined) {
-        resetKernel();
-        for (let index = 0; index < state.scopes.length; index++) {
-          state.kernel?.push();
-          useEufSolver((solver) => solver.push());
-        }
-      }
+      if (state.isProofsEnabled !== undefined) resetKernel();
       state.isIncremental = state.scopes.length > 0;
       state.hasChecked = false;
     },
@@ -1538,6 +1536,8 @@ export const runSmtlibScript = (
         state.reader = createSmtlibReader(state.manager, logic.text, settings.parserOptions);
       else {
         state.reader.restrictSorts(logic.text);
+        // Deviation from Z3: its new solver starts without the open scopes, so it ignores their pop
+        // and keeps what they asserted.
         resetKernel();
       }
       if (settings.isPrintingSuccess) print("success");

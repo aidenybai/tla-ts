@@ -509,4 +509,44 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       ")",
     ]);
   });
+
+  // set-logic makes a new solver; the scopes that are open stay open in it.
+  it("sets the logic inside a scope", () => {
+    expect(
+      run([
+        "(push)",
+        "(set-logic QF_LIA)",
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(check-sat)",
+        "(pop)",
+        "(check-sat)",
+        "(push 2)",
+        "(assert (< x 0))",
+        "(check-sat)",
+        "(pop 2)",
+        "(check-sat)",
+      ]),
+    ).toEqual(["sat", "sat", '(error "line 9 column 11: unknown constant x")', "sat", "sat"]);
+  });
+
+  // Deviation from Z3: its new solver ignores the pop of a scope opened before set-logic and keeps
+  // p, so it prints sat, unsat, unsat here.
+  it("pops the assertions of a scope opened before set-logic", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(push)",
+        "(push)",
+        "(set-logic QF_UF)",
+        "(assert p)",
+        "(pop)",
+        "(check-sat)",
+        "(assert (not p))",
+        "(check-sat)",
+        "(pop)",
+        "(check-sat)",
+      ]),
+    ).toEqual(["sat", "sat", "sat"]);
+  });
 });
