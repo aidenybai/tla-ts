@@ -640,8 +640,7 @@ export class Derive {
     if (isFullSeq(manager, first) || isFullSeq(manager, second)) return mkFullSeq(manager, sort);
     const elements: number[] = [];
     const todo = [second, first];
-    while (todo.length > 0) {
-      const expr = todo.pop()!;
+    for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
       if (isReBinary(manager, expr, OP_RE_UNION)) {
         todo.push(manager.getArg(expr, 1), manager.getArg(expr, 0));
         continue;
@@ -1273,8 +1272,7 @@ export class Derive {
     for (let pair = 0; pair < brzozowski.size; pair += 2) {
       const guard = brzozowski.items[pair];
       const pending = [brzozowski.items[pair + 1]];
-      while (pending.length > 0) {
-        const target = pending.pop()!;
+      for (let target = pending.pop(); target !== undefined; target = pending.pop()) {
         if (isReBinary(manager, target, OP_RE_UNION)) {
           pending.push(manager.getArg(target, 1), manager.getArg(target, 0));
           continue;
@@ -1288,8 +1286,7 @@ export class Derive {
         }
         const tail = manager.getArg(target, 1);
         const heads = [manager.getArg(target, 0)];
-        while (heads.length > 0) {
-          const current = heads.pop()!;
+        for (let current = heads.pop(); current !== undefined; current = heads.pop()) {
           if (isReBinary(manager, current, OP_RE_UNION))
             heads.push(manager.getArg(current, 1), manager.getArg(current, 0));
           else add(guard, this.re.mkReAppend(current, tail));

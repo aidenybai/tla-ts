@@ -360,11 +360,11 @@ export abstract class TheorySeqSolve extends TheorySeqState {
       this.propagateEq(deps, front, ls[0], rs[0], true);
       return true;
     }
-    const back = this.reduceLength(ls.at(-1)!, rs.at(-1)!);
+    const back = this.reduceLength(ls[ls.length - 1], rs[rs.length - 1]);
     if (back !== undefined) {
       const deps = this.mkJoinLiterals(inputDeps, back);
       this.eqs.push(this.mkDepEq(this.eqId++, ls.slice(0, -1), rs.slice(0, -1), deps));
-      this.propagateEq(deps, back, ls.at(-1)!, rs.at(-1)!, true);
+      this.propagateEq(deps, back, ls[ls.length - 1], rs[rs.length - 1], true);
       return true;
     }
     const getLength = (expr: number) => this.getLengthValue(expr);
@@ -404,7 +404,7 @@ export abstract class TheorySeqSolve extends TheorySeqState {
     const sumBack = (first: number, others: readonly number[], isStrict: boolean) => {
       const firstLength = getLength(first);
       if (firstLength === undefined) return undefined;
-      let total = getLength(others.at(-1)!);
+      let total = getLength(others[others.length - 1]);
       if (total === undefined) return undefined;
       if (isStrict ? firstLength.compare(total) <= 0 : firstLength.compare(total) < 0)
         return undefined;
@@ -417,7 +417,7 @@ export abstract class TheorySeqSolve extends TheorySeqState {
       return firstLength.equals(total) && index > 0 ? index : undefined;
     };
     if (ls.length > 1) {
-      const index = sumBack(ls.at(-1)!, rs, false);
+      const index = sumBack(ls[ls.length - 1], rs, false);
       if (
         index !== undefined &&
         index < rs.length &&
@@ -426,7 +426,7 @@ export abstract class TheorySeqSolve extends TheorySeqState {
         return true;
     }
     if (rs.length > 1) {
-      const index = sumBack(rs.at(-1)!, ls, true);
+      const index = sumBack(rs[rs.length - 1], ls, true);
       if (
         index !== undefined &&
         index < ls.length &&

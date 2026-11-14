@@ -599,8 +599,7 @@ export abstract class TheorySeqState extends Theory {
     const manager = this.manager;
     let value = Rational.zero;
     const todo = [input];
-    while (todo.length > 0) {
-      const expr = todo.pop()!;
+    for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
       const op = manager.getOp(expr);
       const chars = manager.getString(expr);
       if (this.isConcat(expr)) todo.push(manager.getArg(expr, 0), manager.getArg(expr, 1));
