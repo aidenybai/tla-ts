@@ -6205,6 +6205,40 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  describe("converts the undefined that a Date's fields may be to NaN", () => {
+    const source = `
+      const getDate = (year: number, month: number, date?: number, hours?: number, ms?: number) =>
+        new Date(year, month, date, hours, 0, 0, ms);
+      if (!Number.isNaN(getDate(1999, 11).valueOf())) throw new Error("missing");
+      const fields = getDate(1999, 11, 31, 23, 1);
+      if (fields.getUTCDate() !== 31 || fields.getUTCHours() !== 23 || fields.getUTCMilliseconds() !== 1) {
+        throw new Error("fields");
+      }
+      if (!Number.isNaN(getDate(1999, 11, 31, undefined, 1).valueOf())) throw new Error("hours");
+      const getUTC = (date?: number) => Date.UTC(2000, 0, date);
+      if (!Number.isNaN(getUTC(undefined))) throw new Error("utc");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["missing", "!Number.isNaN(getDate(1999, 11)", "Number.isNaN(getDate(1999, 11)"],
+      ["fields", "!== 23 ||", "!== 22 ||"],
+      [
+        "hours",
+        "!Number.isNaN(getDate(1999, 11, 31, undefined",
+        "Number.isNaN(getDate(1999, 11, 31, undefined",
+      ],
+      ["utc", "!Number.isNaN(getUTC", "Number.isNaN(getUTC"],
+    ])("rejects a wrong %s", async (label, expected, wrong) => {
+      expect((await checkModel(source.replace(expected, wrong))).failure?.message).toContain(
+        `"${label}"`,
+      );
+    });
+  });
+
   it("stops where a cast from unknown gives a value that isn't a primitive that primitive's type", async () => {
     const stops = async (source: string) => (await checkModel(source)).failure?.message;
     const lying = (primitive: string) =>

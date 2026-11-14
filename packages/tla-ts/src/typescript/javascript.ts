@@ -5858,6 +5858,9 @@ export const translateToNumber = (
   // ToNumber stops at an object, whose valueOf and toString an expression can't call.
   if (
     kind === "string" ||
+    (names !== undefined &&
+      names.length > 0 &&
+      names.every((name) => ["number", "boolean", "null", "undefined"].includes(name))) ||
     (context.heap !== undefined &&
       (context.checker.getTypeAtLocation(argument).flags &
         (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==

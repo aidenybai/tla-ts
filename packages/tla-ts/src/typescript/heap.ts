@@ -2507,7 +2507,11 @@ export const getDateSetter = (
 // Whether ToNumber of a value runs no code and reads no string as a date.
 const isNumeric = (argument: ts.Expression, context: Context) => {
   const names = getTypeNames(context.checker.getTypeAtLocation(argument), context.checker);
-  return names?.length === 1 && ["number", "boolean", "null"].includes(names[0]);
+  return (
+    names !== undefined &&
+    names.length > 0 &&
+    names.every((name) => ["number", "boolean", "null", "undefined"].includes(name))
+  );
 };
 
 // Whether the arguments of Date.UTC, or of new Date with a year and a month, convert to numbers
