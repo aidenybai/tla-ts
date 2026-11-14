@@ -1,7 +1,1 @@
-{
-  "tlapm/imported/fast/basic/cvc3_false_test": "text-mismatch",
-  "tlapm/imported/zenon/test/test13.znn": "text-mismatch",
-  "tlapm/imported/zenon/test/test14.znn": "text-mismatch",
-  "tlapm/imported/zenon/test/test21.znn": "text-mismatch",
-  "tlapm/imported/zenon/test/test73.znn": "text-mismatch"
-}
+{}

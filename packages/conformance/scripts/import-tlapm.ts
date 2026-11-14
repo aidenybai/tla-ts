@@ -267,7 +267,7 @@ const getIsabelleTest = (path: string) =>
 
 const files = listFiles(testDirectory).filter((path) => !path.includes(".tlaps/"));
 const skipped: string[] = [];
-const pendingTests: PendingTest[] = [
+const candidates: PendingTest[] = [
   ...files
     .filter((path) => path.endsWith("_test.tla"))
     .flatMap((path) => {
@@ -292,6 +292,22 @@ const pendingTests: PendingTest[] = [
       .map(getIsabelleTest),
   ),
 ];
+
+// Their output depends on the machine rather than the input: on when OCaml's GC frees a lambda
+// from Zenon's weak expression table, or on whether cvc4 is installed.
+const MACHINE_DEPENDENT = [
+  "zenon/test/test13.znn",
+  "zenon/test/test14.znn",
+  "zenon/test/test21.znn",
+  "zenon/test/test73.znn",
+  "test/fast/basic/cvc3_false_test.tla",
+];
+const pendingTests = candidates.filter((pending) => {
+  const ref = pending.metadata.ref ?? "";
+  if (!MACHINE_DEPENDENT.includes(ref)) return true;
+  skipped.push(`${ref}: depends on the machine running tlapm`);
+  return false;
+});
 
 const getTestPath = (pending: PendingTest) =>
   join(IMPORT_DIRECTORY, pending.directory, pending.fileName);
