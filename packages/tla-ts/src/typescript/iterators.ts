@@ -191,10 +191,11 @@ const isPlainPattern = (
   );
   const isHidden = tries.every((tryStatement) =>
     symbols.every((symbol) => {
-      const declaration = symbol.valueDeclaration;
+      const declaration =
+        symbol.valueDeclaration &&
+        ts.findAncestor(symbol.valueDeclaration, ts.isVariableDeclaration);
       return (
         declaration !== undefined &&
-        ts.isVariableDeclaration(declaration) &&
         (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.BlockScoped) !== 0 &&
         isInside(declaration, tryStatement.tryBlock)
       );
