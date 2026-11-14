@@ -384,6 +384,44 @@ export const getHoleChecks = (
   });
 };
 
+// The values that iterating an array or a string gives, as a spread or Array.from does: a sequence,
+// or the code points of a string literal.
+export const translateIterated = (
+  iterated: ts.Expression,
+  node: ts.Node,
+  scope: Scope,
+  context: Context,
+): Expression | Expression[] => {
+  if (isHeapArray(iterated, context)) return translateHeapElements(iterated, scope, context);
+  // A string gives its code points.
+  if (ts.isStringLiteralLike(iterated)) {
+    return [...iterated.text].map((character) => translateString(character, context));
+  }
+  if (isEvery(context.checker.getTypeAtLocation(iterated), ts.TypeFlags.StringLike)) {
+    return useJavaScript(
+      "StringCharacters",
+      [translateExpression(iterated, scope, context)],
+      context,
+    );
+  }
+  if (
+    (isGeneratorType(iterated, context) || isBuiltInIteratorType(iterated, context)) &&
+    !isArrayIteration(iterated, context)
+  ) {
+    throw new TlaTypeScriptError("tla-ts can't step an iterator in this spread", node);
+  }
+  if (getKind(iterated, context) !== "sequence" && !isArrayIteration(iterated, context)) {
+    throw new TlaTypeScriptError(
+      "Sets have no order, so spread one only into every(), some(), filter(), map(), or find()",
+      node,
+    );
+  }
+  const value = translateExpression(iterated, scope, context);
+  return context.heap !== undefined && !isArrayIteration(iterated, context)
+    ? translateArrayIteration(value, getHeap(scope, node, context), node, context)
+    : value;
+};
+
 // The elements that an array literal or a call's arguments list, where runs of plain elements become
 // tuples, and each spread array stays a sequence of its own. A hole of a literal that only an
 // iterator reads gives what Array.prototype holds at its index.
@@ -415,52 +453,9 @@ export const translateElements = (
         ? [...result.slice(0, -1), [...last, value]]
         : [...result, [value]];
     }
-    if (isHeapArray(element.expression, context)) {
-      return [...result, translateHeapElements(element.expression, scope, context)];
-    }
-    // A string spreads its code points.
-    if (ts.isStringLiteralLike(element.expression)) {
-      return [
-        ...result,
-        [...element.expression.text].map((character) => translateString(character, context)),
-      ];
-    }
-    if (isEvery(context.checker.getTypeAtLocation(element.expression), ts.TypeFlags.StringLike)) {
-      return [
-        ...result,
-        useJavaScript(
-          "StringCharacters",
-          [translateExpression(element.expression, scope, context)],
-          context,
-        ),
-      ];
-    }
     // A spread of an iterator that the statement stepped first takes the values it gathered.
     const gathered = scope.results.get(element);
-    if (gathered !== undefined) return [...result, gathered];
-    if (
-      (isGeneratorType(element.expression, context) ||
-        isBuiltInIteratorType(element.expression, context)) &&
-      !isArrayIteration(element.expression, context)
-    ) {
-      throw new TlaTypeScriptError("tla-ts can't step an iterator in this spread", element);
-    }
-    if (
-      getKind(element.expression, context) !== "sequence" &&
-      !isArrayIteration(element.expression, context)
-    ) {
-      throw new TlaTypeScriptError(
-        "Sets have no order, so spread one only into every(), some(), filter(), map(), or find()",
-        element,
-      );
-    }
-    const value = translateExpression(element.expression, scope, context);
-    return [
-      ...result,
-      context.heap !== undefined && !isArrayIteration(element.expression, context)
-        ? translateArrayIteration(value, getHeap(scope, element, context), element, context)
-        : value,
-    ];
+    return [...result, gathered ?? translateIterated(element.expression, element, scope, context)];
   }, []);
   if (parts.length === 0) return tuple([]);
   return concatenate(parts.map((part) => (Array.isArray(part) ? tuple(part) : part)));

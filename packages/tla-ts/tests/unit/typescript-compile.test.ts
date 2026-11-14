@@ -15693,6 +15693,44 @@ describe("errors", () => {
     expect((await checkModel(getSource("0,1,2"))).failure?.message).toContain('"1,2,3"');
   });
 
+  it("makes an array with Array.from of an array, a string, or an object of only a length", async () => {
+    const getSource = (expected: string) => `
+      const holder = { tag: 1 };
+      const length = 3;
+      const holes = [0, "foo", , 4];
+      const copy = Array.from(holes);
+      copy[0] = 9;
+      const plain = Array.from([1, 2]);
+      plain.push(3);
+      const empty = Array.from({ length });
+      const mapped = Array.from({ length }).map(() => holder.tag);
+      const result = [
+        copy.length,
+        copy[0],
+        holes[0],
+        2 in copy,
+        copy[2],
+        plain.join("-"),
+        Array.from("a😀b").join("-"),
+        empty.length,
+        empty[1],
+        mapped.join("-"),
+      ].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "4,9,0,true,,1-2-3,a-😀-b,3,,1-1-1";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("4,9,0,false,,1-2-3,a-😀-b,3,,1-1-1"))).failure?.message,
+    ).toContain(expected);
+  });
+
+  it("stops at Array.from of an object with more than its length, without a callback", () => {
+    expect(() =>
+      compile(`const made = Array.from({ length: 2, 0: "a" });\nconst joined = made.join("-");`),
+    ).toThrow("Unsupported call: Array.from");
+  });
+
   it("gathers a generator into an array with Array.from", async () => {
     const result = await checkModel(`
       function* g(): Generator<number> {

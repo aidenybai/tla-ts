@@ -20,6 +20,7 @@ import { TlaTypeScriptError } from "../errors";
 import {
   translateElements,
   translateExpression,
+  translateIterated,
   translateSetKey,
   translateToString,
 } from "./expressions";
@@ -88,6 +89,8 @@ import {
   getCollectionType,
   mayBeSequenceType,
   getArrayMethodCall,
+  isBuiltInIteratorType,
+  isGeneratorType,
 } from "./types";
 
 interface Unordered {
@@ -729,7 +732,7 @@ export const translateArrayConstructor = (node: MethodCall, scope: Scope, contex
     ts.isIdentifier(receiver) &&
     receiver.text === "Array" &&
     method === "from" &&
-    node.arguments.length === 2 &&
+    (node.arguments.length === 1 || node.arguments.length === 2) &&
     ts.isObjectLiteralExpression(options)
   ) {
     const property = options.properties.find((inner) => inner.name?.getText() === "length");
@@ -741,13 +744,29 @@ export const translateArrayConstructor = (node: MethodCall, scope: Scope, contex
           : undefined;
     if (length === undefined) throw new TlaTypeScriptError("Array.from needs { length: n }", node);
     const position = context.names.getFresh("index");
+    const indices = bound(position, getIndices(length, "ToLength"));
+    // Without a callback, each element is the object's, which has none where it holds only its length.
+    if (callback === undefined && options.properties.length === 1) {
+      return getFrom(functionOf([indices], getUndefined(context)));
+    }
+    if (callback === undefined) throw new TlaTypeScriptError("Unsupported call: Array.from", node);
     const inner = bindIndexed(callback, undefined, identifier(position), scope, context);
-    return getFrom(
-      functionOf(
-        [bound(position, getIndices(length, "ToLength"))],
-        translateCallback(callback, inner, context),
-      ),
-    );
+    return getFrom(functionOf([indices], translateCallback(callback, inner, context)));
+  }
+  // Array.from of an array or a string gives what iterating it gives, as a spread does.
+  if (
+    getBuiltIn(receiver, context) === "Array" &&
+    method === "from" &&
+    node.arguments.length === 1 &&
+    !ts.isSpreadElement(options) &&
+    (isHeapArray(options, context) ||
+      isEvery(context.checker.getTypeAtLocation(options), ts.TypeFlags.StringLike) ||
+      (getKind(options, context) === "sequence" &&
+        !isGeneratorType(options, context) &&
+        !isBuiltInIteratorType(options, context)))
+  ) {
+    const values = translateIterated(options, node, scope, context);
+    return getFrom(Array.isArray(values) ? tuple(values) : values);
   }
   if (method !== "fill" || node.arguments.length !== 1) return undefined;
   const array =
