@@ -2490,6 +2490,24 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.trace.map((step) => step.state.x)).toEqual([0]);
   });
 
+  it("evaluates a deep recursion whose calls are in the tail of the body", async () => {
+    const getResult = (definitions: string, value: string) =>
+      check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${definitions}\nInit == x = ${value}\nNext == UNCHANGED x\nInv == x = 100000\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      });
+    const global = await getResult(
+      "RECURSIVE Count(_)\nCount(n) == IF n < 100000 THEN LET m == n + 1 IN Count(m) ELSE n",
+      "Count(0)",
+    );
+    const local = await getResult(
+      "",
+      "LET RECURSIVE Count(_)\n        Count(n) == IF n = 99999 THEN n ELSE Count(n + 1)\n    IN  Count(0)",
+    );
+    expect([global.status, global.distinctStates]).toEqual(["success", 1]);
+    expect(local.status).toBe("invariant-violation");
+  });
+
   it("reports a successor the next-state relation leaves incomplete like TLC", async () => {
     const getResult = (next: string) =>
       check({

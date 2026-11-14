@@ -1091,7 +1091,108 @@ export const bindOperatorArguments = (
 interface CalledBody {
   body: Expression;
   evaluator: Evaluator;
+  tail: TailStep | undefined;
 }
+
+// TLC calls an operator in its own body as a nested Java call. A call in the tail of the body runs
+// here as the next turn of a loop instead, so that a deep recursion, such as a loop that tla-ts
+// compiles from TypeScript, needn't fit on the stack. A recursion past this many turns overflows,
+// as it would in TLC.
+const TAIL_CALL_LIMIT = 1 << 20;
+
+// The IFs and LETs that lead from a body to the calls in its tail, compiled once.
+type TailStep =
+  | {
+      kind: "If";
+      expression: Expression;
+      condition: Evaluator;
+      consequent: TailStep;
+      alternative: TailStep;
+    }
+  | { kind: "Let"; definitions: Definition[]; body: TailStep }
+  | {
+      kind: "Call";
+      expression: Expression & { kind: "Apply" };
+      binders: ArgumentBinder[];
+      evaluator: Evaluator;
+    }
+  | { kind: "Other"; evaluator: Evaluator };
+
+const callsInTail = (expression: Expression, name: string): boolean => {
+  if (expression.kind === "If") {
+    return callsInTail(expression.consequent, name) || callsInTail(expression.alternative, name);
+  }
+  if (expression.kind === "Let") {
+    return (
+      expression.definitions.every((definition) => definition.name !== name) &&
+      callsInTail(expression.body, name)
+    );
+  }
+  return expression.kind === "Apply" && expression.operator === name;
+};
+
+const compileTailStep = (
+  expression: Expression,
+  name: string,
+  environment: Environment,
+): TailStep => {
+  if (expression.kind === "If" && callsInTail(expression, name)) {
+    return {
+      kind: "If",
+      expression,
+      condition: getEntryEvaluator(expression.condition, environment),
+      consequent: compileTailStep(expression.consequent, name, environment),
+      alternative: compileTailStep(expression.alternative, name, environment),
+    };
+  }
+  if (expression.kind === "Let" && callsInTail(expression, name)) {
+    return {
+      kind: "Let",
+      definitions: expression.definitions,
+      body: compileTailStep(expression.body, name, environment),
+    };
+  }
+  if (expression.kind === "Apply" && expression.operator === name) {
+    return {
+      kind: "Call",
+      expression,
+      binders: expression.args.map((arg) => getArgumentBinder(arg, environment)),
+      evaluator: getEntryEvaluator(expression, environment),
+    };
+  }
+  return { kind: "Other", evaluator: getEntryEvaluator(expression, environment) };
+};
+
+// The body of a closure that calls itself in its tail, or undefined for any other body.
+const compileTailCalls = (closure: Closure, environment: Environment) =>
+  environment.callStack || !callsInTail(closure.body, closure.name)
+    ? undefined
+    : compileTailStep(closure.body, closure.name, environment);
+
+const evaluateTailCalls = (closure: Closure, body: TailStep, bodyContext: Context): Value => {
+  let context = bodyContext;
+  let step = body;
+  for (let turn = 0; turn < TAIL_CALL_LIMIT;) {
+    if (step.kind === "If") {
+      const value = step.condition(context);
+      if (typeof value !== "boolean") throw createConditionError(step.expression, value);
+      step = value ? step.consequent : step.alternative;
+    } else if (step.kind === "Let") {
+      context = withScope(context, bindDefinitions(step.definitions, context));
+      step = step.body;
+    } else if (step.kind === "Call" && resolveApplyOperator(step.expression, context) === closure) {
+      context = withScope(
+        context,
+        bindOperatorArguments(closure, step.expression.args, context, step.binders),
+      );
+      step = body;
+      turn++;
+    } else {
+      return step.evaluator(context);
+    }
+  }
+  throw new RangeError("Maximum call stack size exceeded");
+};
 
 const callOperator = (
   operator: Operator,
@@ -1109,8 +1210,11 @@ const callOperator = (
         : (called.entry = {
             body: operator.body,
             evaluator: getEntryEvaluator(operator.body, context.environment),
+            tail: compileTailCalls(operator, context.environment),
           });
-    return entry.evaluator(bodyContext);
+    return entry.tail
+      ? evaluateTailCalls(operator, entry.tail, bodyContext)
+      : entry.evaluator(bodyContext);
   }
   if (operator.kind === "Operator") return operator.call(args.map((arg) => evaluate(arg, context)));
   if (operator.isLazy) return operator.evaluate(getLazyArguments(args, context), context);
@@ -1905,7 +2009,12 @@ const compileClosureCall = (
   const bindArguments = compileArgumentScope(closure, args, environment);
   const compiled = { body: undefined as Evaluator | undefined };
   const evaluateBody = (scope: Scope | undefined, context: Context) => {
-    compiled.body ??= getEntryEvaluator(closure.body, environment);
+    if (compiled.body === undefined) {
+      const tail = compileTailCalls(closure, environment);
+      compiled.body = tail
+        ? (bodyContext) => evaluateTailCalls(closure, tail, bodyContext)
+        : getEntryEvaluator(closure.body, environment);
+    }
     return compiled.body({
       environment,
       scope,
