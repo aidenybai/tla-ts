@@ -904,6 +904,9 @@ const CONVERTED_ARGUMENT_ERRORS = new Set([2345, 2769]);
 // where a test's reducer returns a type that the method's signatures don't take. Each needs a unit
 // test of such a call, since tla-ts reads a value by its declared type.
 const REDUCING_METHODS = new Set(["reduce", "reduceRight"]);
+// The array methods that tla-ts searches by value for any value, from an index that ToNumber
+// converts from a primitive. Each needs a unit test of such a call.
+const SEARCHING_METHODS = new Set(["includes", "indexOf", "lastIndexOf"]);
 // A call of a value of type unknown, which tla-ts runs where a key stores a String.prototype method.
 const UNKNOWN_CALLEE_ERROR = 2571;
 
@@ -1297,17 +1300,14 @@ const ignoreSoundErrors = () => {
       )
     );
   };
-  // A call of an array's method that REDUCING_METHODS lists, whose reducer is a function that the
-  // test writes and that takes each value it gets: the initial value, an element, or what it
-  // returns as the accumulator, then an element, an index, and the array. The call's result, which
-  // may be what the reducer returns, is discarded or taken as unknown. The error is the call's, at
-  // an argument, a function expression's name or keyword, or the method's name.
-  const isReducingCall = (diagnostic: ts.Diagnostic) => {
+  // The call that an error is at: at an argument, a function expression's name or keyword, or the
+  // method's name.
+  const getErroredCall = (diagnostic: ts.Diagnostic) => {
     const start = diagnostic.start ?? 0;
     const end = start + (diagnostic.length ?? 0);
     const isSpan = (inner: ts.Node | undefined) =>
       inner !== undefined && inner.getStart() === start && inner.getEnd() === end;
-    const call = ts.findAncestor(
+    return ts.findAncestor(
       getNode(start),
       (ancestor): ancestor is ts.CallExpression =>
         ts.isCallExpression(ancestor) &&
@@ -1324,6 +1324,38 @@ const ignoreSoundErrors = () => {
                 )),
           )),
     );
+  };
+  // A call of an array's method that SEARCHING_METHODS lists, of any value to search for and a
+  // primitive index to search from, which tla-ts converts with ToNumber.
+  const isSearchingCall = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
+    return (
+      call !== undefined &&
+      ts.isPropertyAccessExpression(call.expression) &&
+      SEARCHING_METHODS.has(call.expression.name.text) &&
+      checker.isArrayType(checker.getTypeAtLocation(call.expression.expression)) &&
+      call.arguments.length <= 2 &&
+      !call.arguments.some(ts.isSpreadElement) &&
+      call.arguments
+        .slice(1)
+        .every((value) =>
+          isEveryType(
+            value,
+            ts.TypeFlags.NumberLike |
+              ts.TypeFlags.StringLike |
+              ts.TypeFlags.BooleanLike |
+              ts.TypeFlags.Null |
+              ts.TypeFlags.Undefined,
+          ),
+        )
+    );
+  };
+  // A call of an array's method that REDUCING_METHODS lists, whose reducer is a function that the
+  // test writes and that takes each value it gets: the initial value, an element, or what it
+  // returns as the accumulator, then an element, an index, and the array. The call's result, which
+  // may be what the reducer returns, is discarded or taken as unknown.
+  const isReducingCall = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
     if (
       call === undefined ||
       !ts.isPropertyAccessExpression(call.expression) ||
@@ -1438,7 +1470,9 @@ const ignoreSoundErrors = () => {
       (diagnostic.code === NOT_ITERABLE_ERROR && isCaughtArrayPattern(node)) ||
       (UNASSIGNABLE_ERRORS.has(diagnostic.code) && isPatternArgument(node)) ||
       (CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) &&
-        (isConvertedCall(diagnostic) || isReducingCall(diagnostic))) ||
+        (isConvertedCall(diagnostic) ||
+          isReducingCall(diagnostic) ||
+          isSearchingCall(diagnostic))) ||
       (diagnostic.code === UNKNOWN_CALLEE_ERROR && isStoredStringCall(node)) ||
       diagnostic.code === UNUSED_OPERAND_ERROR ||
       (diagnostic.code === UNINTENDED_COMPARISON_ERROR && isUnnarrowed(node, diagnostic)) ||
