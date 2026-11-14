@@ -46,6 +46,15 @@ describe("set-logic after the first declaration, as Z3 5.3.2 prints it", () => {
     ).toEqual(["1", "(+ 1 x)"]);
   });
 
+  it("reports a second logic, and one after an assertion, at the name of the logic", () => {
+    expect(run(["(set-logic QF_LIA)", "(set-logic QF_LRA  )"])).toEqual([
+      '(error "line 2 column 11: the logic has already been set")',
+    ]);
+    expect(run(["(declare-const p Bool)", "(assert p)", "(set-logic QF_LRA  )"])).toEqual([
+      '(error "line 3 column 11: logic must be set before initialization")',
+    ]);
+  });
+
   it("keeps the declared functions in decideSmt", () => {
     expect(
       decideSmt(

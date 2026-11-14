@@ -1446,9 +1446,9 @@ export const runSmtlibScript = (
       if (!isSymbol(logic))
         throw new SmtParseError("invalid logic name, symbol expected", logic ?? list.end);
       if (state.logic !== undefined)
-        throw new SmtParseError("the logic has already been set", list.end);
+        throw new SmtParseError("the logic has already been set", logic);
       if (state.assertions.length > 0)
-        throw new SmtParseError("logic must be set before initialization", list.end);
+        throw new SmtParseError("logic must be set before initialization", logic);
       if (!isSupportedLogic(logic.text)) {
         print("unsupported");
         printDiagnostic(

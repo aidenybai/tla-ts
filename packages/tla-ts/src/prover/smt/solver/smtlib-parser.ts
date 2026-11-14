@@ -2686,9 +2686,9 @@ export const parseSmtlib = (
     if (name === "set-logic") {
       if (!isSymbol(option))
         throw new SmtParseError("invalid logic name, symbol expected", option ?? list.end);
-      if (state.logic !== "") throw new SmtParseError("the logic has already been set", list.end);
+      if (state.logic !== "") throw new SmtParseError("the logic has already been set", option);
       if (assertions.length > 0)
-        throw new SmtParseError("logic must be set before initialization", list.end);
+        throw new SmtParseError("logic must be set before initialization", option);
       if (!isSupportedLogic(option.text)) return;
       state.logic = option.text;
       if (state.isInUse) state.reader.restrictSorts(option.text);
