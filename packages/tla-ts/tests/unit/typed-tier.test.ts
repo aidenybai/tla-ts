@@ -116,6 +116,7 @@ describe("typed tier matches TLC", () => {
     ["SparseSuffix", "error", undefined],
     ["TupleLengths", "error", undefined],
     ["TupleWidening", "error", undefined],
+    ["UnassignedSubscript", "error", undefined],
     ["OperatorDomains", "error", undefined],
     ["SubSeqRanges", "error", undefined],
     ["MissingFields", "error", undefined],
@@ -145,6 +146,8 @@ describe("typed tier matches TLC", () => {
     "LiveDeadlock",
     "LiveDeadlockMissed",
     "LiveDeadlockViolated",
+    "PartialEnabled",
+    "PartialEnabledStarved",
   ])("checks %s as the interpreter does", async (name) => {
     const [typed, interpreted] = await Promise.all([
       checkFixture(name, true),

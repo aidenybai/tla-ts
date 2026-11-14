@@ -3292,6 +3292,7 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
         program,
         [{ expression: expression.expression, scope: frame.scope, inlining: [] }],
         frame.primed,
+        true,
       );
       return { type: createBool(), emit: () => getEnabledCode(step) };
     }
@@ -3303,9 +3304,6 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
 const getEnabledCode = (step: () => string) =>
   `(() => { let isFound = false; const emit = () => { isFound = true; }; ${step()} return isFound; })()`;
 
-// TLC evaluates UNCHANGED e outside an action's conjuncts as e' = e, which for a tuple holds when
-// each element is unchanged.
-// Binds the definitions of a LET, each compiled where the LET is.
 const createLambda = (): LambdaType => ({
   kind: "Lambda",
   argument: createVar(),
@@ -3341,6 +3339,7 @@ const compileLambda = (
   };
 };
 
+// Binds the definitions of a LET, each compiled where the LET is.
 const bindLet = (program: Program, expression: LetExpression, frame: Frame) => {
   const names: LazyDefinition[] = [];
   const scope = expression.definitions.reduce<TierScope>((current, definition) => {
@@ -3374,6 +3373,8 @@ const bindLet = (program: Program, expression: LetExpression, frame: Frame) => {
   return { names, scope };
 };
 
+// TLC evaluates UNCHANGED e outside an action's conjuncts as e' = e, which for a tuple evaluates
+// every element and holds when each is unchanged.
 const compileUnchanged = (program: Program, expression: Expression, frame: Frame): Compiled => {
   const body = getDefinitionBody(program, expression, frame);
   if (body?.kind === "Tuple" || body?.kind === "Let")
@@ -3396,7 +3397,7 @@ const compileUnchanged = (program: Program, expression: Expression, frame: Frame
       emit: () =>
         elements.length === 0
           ? "true"
-          : elements.map((element) => `(${element.emit()})`).join(" && "),
+          : `![${elements.map((element) => element.emit()).join(", ")}].includes(false)`,
     };
   }
   const current = compileValue(program, expression, frame);
@@ -3583,15 +3584,17 @@ interface Pending {
   inlining: Definition[];
 }
 
+// TLC finds an action enabled where its conjuncts hold, whatever variables it leaves unassigned.
 const compileStep = (
   program: Program,
   pending: Pending[],
   primed: (string | undefined)[],
+  isEnabled: boolean,
 ): (() => string) => {
   if (pending.length === 0) {
     // TLC fails on a step that leaves a variable unassigned only where it reaches the step.
-    if (primed.some((code) => code === undefined)) return () => "H.deopt();";
-    return () => `emit([${primed.join(", ")}]);`;
+    if (!isEnabled && primed.some((code) => code === undefined)) return () => "H.deopt();";
+    return () => `emit([${primed.map((code) => code ?? "undefined").join(", ")}]);`;
   }
   // With warnings on, TLC evaluates what is left once every variable is assigned, without branching.
   if (program.environment.runtime.isWarningEnabled && primed.every((code) => code !== undefined)) {
@@ -3624,6 +3627,7 @@ const compileStep = (
       program,
       [...expressions.map((inner) => ({ expression: inner, scope, inlining })), ...rest],
       primed,
+      isEnabled,
     );
   const continueInto = (definition: Definition, body: Expression, scope: TierScope) =>
     first.inlining.includes(definition)
@@ -3726,7 +3730,7 @@ const compileStep = (
       if (!isBranching(program, expression.body, frame.scope)) break;
       // TLC conjoins the body for each element, so it goes on once for each way the conjunction holds.
       const ways = compileWays(program, expression, frame);
-      const tail = compileStep(program, rest, primed);
+      const tail = compileStep(program, rest, primed, isEnabled);
       return () => {
         const count = getName(program, "w");
         return `for (let ${count} = ${ways.emit()}; ${count} > 0; ${count}--) { ${tail()} }`;
@@ -3745,13 +3749,13 @@ const compileStep = (
       ) {
         const condition = expectBool(compileValue(program, args[0], frame));
         const consequent = continueWith(first.scope, [args[1]]);
-        const alternative = compileStep(program, rest, primed);
+        const alternative = compileStep(program, rest, primed, isEnabled);
         return () => `if (${condition.emit()}) { ${consequent()} } else { ${alternative()} }`;
       }
       if (args.length === 2 && (expression.operator === "=" || expression.operator === "\\in")) {
         const index = getPrimedVariable(program, args[0], first.scope);
         if (index !== undefined && primed[index] === undefined) {
-          return compileAssignment(program, expression, index, frame, rest);
+          return compileAssignment(program, expression, index, frame, rest, isEnabled);
         }
       }
       break;
@@ -3761,7 +3765,7 @@ const compileStep = (
       const assigned = primed.map((code, index) =>
         indexes.includes(index) && code === undefined ? `v${index}` : code,
       );
-      const tail = compileStep(program, rest, assigned);
+      const tail = compileStep(program, rest, assigned, isEnabled);
       const checks = indexes
         .filter((index) => primed[index] !== undefined)
         .map((index) => `H.same(${primed[index]}, v${index})`);
@@ -3771,7 +3775,7 @@ const compileStep = (
       break;
   }
   const guard = expectBool(compileValue(program, expression, frame));
-  const tail = compileStep(program, rest, primed);
+  const tail = compileStep(program, rest, primed, isEnabled);
   return () => `if (${guard.emit()}) { ${tail()} }`;
 };
 
@@ -3797,10 +3801,11 @@ const compileAssignment = (
   index: number,
   frame: Frame,
   rest: Pending[],
+  isEnabled: boolean,
 ): (() => string) => {
   const name = getName(program, "n");
   const assigned = frame.primed.map((code, position) => (position === index ? name : code));
-  const tail = compileStep(program, rest, assigned);
+  const tail = compileStep(program, rest, assigned, isEnabled);
   const type = program.variableTypes[index];
   if (expression.operator === "=") {
     const value = expectType(compileValue(program, expression.args[1], frame), type);
@@ -4853,6 +4858,7 @@ const compileSpec = (
     program,
     [{ expression: check.next, scope: new Map(), inlining: [] }],
     unprimed,
+    false,
   );
   const compilePredicate = (expression: Expression) =>
     expectBool(
@@ -4887,8 +4893,16 @@ const compileSpec = (
       // A fairness condition's step is <<A>>_v, whose successors are those of A that change v.
       const angle = atom.step.kind === "AngleAction" ? atom.step : undefined;
       const action = angle?.action ?? atom.step;
-      const step = compileStep(program, [{ expression: action, scope, inlining: [] }], unprimed);
-      const unchanged = angle && compileUnchanged(program, angle.subscript, frame);
+      const step = compileStep(
+        program,
+        [{ expression: action, scope, inlining: [] }],
+        unprimed,
+        true,
+      );
+      // TLC fails to evaluate a subscript that reads a variable the step leaves unassigned.
+      const assigned = successor.map((name) => `(${name} ?? H.deopt())`);
+      const unchanged =
+        angle && compileUnchanged(program, angle.subscript, { ...frame, primed: assigned });
       return () =>
         unchanged
           ? `(() => { let isFound = false; const emit = ([${successor.join(", ")}]) => { if (!(${unchanged.emit()})) isFound = true; }; ${step()} return isFound; })()`
