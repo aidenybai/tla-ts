@@ -13893,18 +13893,18 @@ describe("errors", () => {
       expect((await checkModel(getSource(2))).failure?.message).toContain('"hoisted"');
     });
 
-    it("stops where a script assigns the var before its declaration", () => {
-      expect(() =>
-        compile(`
-          function outer() {
-            // @ts-ignore
-            if (x === undefined) x = 3;
-            return x;
-            var x = 1;
-          }
-          if (outer() !== 3) throw new Error("assigned");
-        `),
-      ).toThrow("Unknown name: x");
+    it("reads what a script assigns the var before its declaration", async () => {
+      const getSource = (expected: number) => `
+        function outer() {
+          // @ts-ignore
+          if (x === undefined) x = 3;
+          return x;
+          var x = 1;
+        }
+        if (outer() !== ${expected}) throw new Error("assigned " + outer());
+      `;
+      expect((await checkModel(getSource(3))).failure).toBeUndefined();
+      await expect(checkModel(getSource(1))).rejects.toThrow("assigned 3");
     });
   });
 
