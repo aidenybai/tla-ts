@@ -2957,7 +2957,7 @@ const isArrayObjectUse = (node: ts.Expression, context: Context): boolean => {
   const callee = parent.expression.getText();
   const parameter = context.checker.getContextualType(node);
   return (
-    /^Object\.\w+$/.test(callee) ||
+    /^(Object|Reflect)\.\w+$/.test(callee) ||
     callee === "Array.isArray" ||
     /^Array\.prototype\.\w+\.call$/.test(callee) ||
     (parameter !== undefined &&
@@ -4247,8 +4247,8 @@ export const findHeapArrays = (
       callee !== undefined &&
       ts.isPropertyAccessExpression(callee) &&
       ts.isIdentifier(callee.expression) &&
-      callee.expression.text === "Object" &&
-      ARRAY_OBJECT_USES.has(callee.name.text) &&
+      ((callee.expression.text === "Object" && ARRAY_OBJECT_USES.has(callee.name.text)) ||
+        (callee.expression.text === "Reflect" && callee.name.text === "set")) &&
       literal.elements.every(
         (element) => !ts.isSpreadElement(element) && !ts.isOmittedExpression(element),
       )
@@ -4475,6 +4475,10 @@ export const isReflectDefinition = (node: MethodCall) =>
   node.expression.expression.getText() === "Reflect" &&
   node.expression.name.text === "defineProperty";
 
+// Reflect.set, which gives whether it set the key rather than throwing where it can't.
+export const isReflectSet = (node: MethodCall) =>
+  node.expression.expression.getText() === "Reflect" && node.expression.name.text === "set";
+
 // Object.create runs as a change only where nothing reads the object it makes, so that it can
 // throw.
 export const isObjectChange = (node: ts.Node, context: Context): node is MethodCall =>
@@ -4486,7 +4490,7 @@ export const isObjectChange = (node: ts.Node, context: Context): node is MethodC
       isDescriptorsRead(node, context)) &&
     !isProxyOperation(node, context)) ||
     (isConstruct(node) && getNewClass(node, context) === undefined) ||
-    (isReflectDefinition(node) && !isProxyOperation(node, context)));
+    ((isReflectDefinition(node) || isReflectSet(node)) && !isProxyOperation(node, context)));
 
 // The Object functions that convert their first argument to an object, which throws a TypeError for
 // null and undefined, and those that give a primitive back, or test it, without converting it.

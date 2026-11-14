@@ -8416,6 +8416,82 @@ describe("errors", () => {
     });
   });
 
+  describe("gives whether Reflect.set set a key", () => {
+    const getSource = (isExpected: boolean) => `
+      const object: { p?: number } = {};
+      if (!Reflect.set(object, "p", 1) || object.p !== 1) throw new Error("set");
+      Object.defineProperty(object, "p", { writable: false });
+      const getter = { get p() { return 1; } };
+      const isSet = Reflect.set(object, "p", 2) || Reflect.set(getter, "p", 2);
+      if (isSet !== ${isExpected} || object.p !== 1) throw new Error("unexpected");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(false))).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(getSource(true))).failure?.message).toContain("unexpected");
+    });
+  });
+
+  describe("sets an array's elements through Reflect.set", () => {
+    const getSource = (expected: string) => `
+      const array = [1, 2, 3];
+      if (!Reflect.set(array, "length", 1) || !Reflect.set(array, 2, 9)) throw new Error("array");
+      if (array.join() !== "${expected}") throw new Error("elements");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,,9"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 1,2,9", async () => {
+      expect((await checkModel(getSource("1,2,9"))).failure?.message).toContain("elements");
+    });
+  });
+
+  describe("runs the setter that Reflect.set finds with its receiver", () => {
+    const getSource = (isExpected: boolean) => `
+      let seen: unknown;
+      const proto = {
+        set p(value: number) {
+          seen = this;
+        },
+      };
+      const object: { p?: number } = Object.create(proto);
+      const receiver = {};
+      const isSet = Reflect.set(object, "p", 1, receiver);
+      const isRefused = !Reflect.set({}, "q", 3, Object.preventExtensions({}));
+      if (!isSet || !isRefused || (seen === receiver) !== ${isExpected}) throw new Error("receiver");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(true))).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(getSource(false))).failure?.message).toContain("receiver");
+    });
+  });
+
+  describe("sets a typed array's element through Reflect.set where it's the receiver", () => {
+    const getSource = (expected: string) => `
+      const typed = new Int8Array(2);
+      const receiver: Record<string, number> = {};
+      const isSet = Reflect.set(typed, 0, 5) && Reflect.set(typed, 5, 5) && Reflect.set(typed, 1, 7, receiver);
+      if (!isSet || typed.join() !== "${expected}" || receiver[1] !== 7) throw new Error("typed");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("5,0"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation 5,7", async () => {
+      expect((await checkModel(getSource("5,7"))).failure?.message).toContain("typed");
+    });
+  });
+
   describe("runs the getters of the descriptor that Reflect.defineProperty reads", () => {
     const getSource = (expected: string) => `
       let reads = "";

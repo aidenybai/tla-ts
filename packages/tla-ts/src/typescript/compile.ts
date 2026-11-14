@@ -354,6 +354,7 @@ export const compile = (
     (ts.isIdentifier(node) &&
       [
         "arguments",
+        "Reflect",
         "Symbol",
         "Promise",
         "setTimeout",

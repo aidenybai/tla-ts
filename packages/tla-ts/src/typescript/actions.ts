@@ -212,6 +212,7 @@ import {
   getPrimitiveObjectCall,
   isObjectChange,
   isReflectDefinition,
+  isReflectSet,
   isUnreachableChange,
   getDateCall,
   getDateSetter,
@@ -280,6 +281,7 @@ import {
   readPatternGetters,
   readRestGetters,
   readWith,
+  callValue,
   writeWith,
   withHeap,
   runGetterRead,
@@ -1398,6 +1400,91 @@ const assignPatternWith = (
     isNullish(value, context),
     throwTypeError(path, target, context, frame),
     assigned,
+  );
+};
+
+// Reflect.set, which runs a setter that the script writes with the receiver as this, and gives
+// true, or sets the key as OrdinarySet does and gives whether it did.
+const translateReflectSet = (
+  expression: MethodCall,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  const [target, key, assigned, receiver] = expression.arguments;
+  if (
+    target === undefined ||
+    key === undefined ||
+    expression.arguments.length > 4 ||
+    expression.arguments.some(ts.isSpreadElement) ||
+    !(getKind(target, context) === "object" || isBuiltInObject(target, context))
+  ) {
+    throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
+  }
+  const object = translateObjectValue(target, path.scope, context);
+  const property = translatePropertyKey(key, path.scope, context);
+  const value =
+    assigned === undefined
+      ? getUndefined(context)
+      : translateExpression(assigned, path.scope, context);
+  const receiverValue =
+    receiver === undefined
+      ? object
+      : getKind(receiver, context) === "object"
+        ? translateObjectValue(receiver, path.scope, context)
+        : translateExpression(receiver, path.scope, context);
+  const set = (current: Path, next: (path: Path, value?: Expression) => Formula) => {
+    const name = context.names.getFresh("change");
+    const after = withHeap(current, field(identifier(name), "heap"), context);
+    return bindOnce(
+      current,
+      name,
+      useJavaScript(
+        "ReflectSet",
+        [getHeap(current.scope, expression, context), object, property, value, receiverValue],
+        context,
+      ),
+      ifThenElse(
+        field(identifier(name), "isDone"),
+        next(after, field(identifier(name), "value")),
+        ifThenElse(
+          field(identifier(name), "isRangeError"),
+          throwError("RangeError", after, expression, context, frame),
+          throwTypeError(after, expression, context, frame),
+        ),
+      ),
+    );
+  };
+  const setters = getSetters(expression, context).filter((setter) => !frame.inlining.has(setter));
+  if (setters.length === 0) return set(path, continueWith);
+  // A setter gives Reflect.set true whatever it returns.
+  return bind(
+    path,
+    "setter",
+    useJavaScript(
+      "ReflectSetter",
+      [getHeap(path.scope, expression, context), object, property],
+      context,
+    ),
+    context,
+    (bound, setter) =>
+      ifThenElse(
+        apply("=", [setter, getUndefined(context)]),
+        set(bound, continueWith),
+        callValue(
+          expression,
+          setters,
+          setter,
+          receiverValue,
+          [value],
+          bound,
+          context,
+          frame,
+          (next) => set(bound, next),
+          (after) => continueWith(after, boolean(true)),
+        ),
+      ),
   );
 };
 
@@ -2835,6 +2922,9 @@ export const translateCallStatement = (
   }
   if (isOwnValuesRead(expression, context)) {
     return readOwnValues(expression, path, context, frame, continueWith);
+  }
+  if (isObjectChange(expression, context) && isReflectSet(expression) && heapSymbol !== undefined) {
+    return translateReflectSet(expression, path, context, frame, continueWith);
   }
   if (isObjectChange(expression, context) && heapSymbol !== undefined) {
     const translated = translateObjectChange(expression, path.scope, context);
@@ -9656,6 +9746,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     (isObjectChange(node, context) &&
       node.expression.name.text !== "construct" &&
       (isReflectDefinition(node) ||
+        isReflectSet(node) ||
         isHeapType(context.checker.getTypeAtLocation(node), context) ||
         // A change of an object gives the object, though TypeScript types what it gives as any.
         (node.arguments.length > 0 &&
@@ -10511,6 +10602,7 @@ const getEffects = (
           )
         : []),
       ...(isStackCall || isUsing ? getStackFunctions(node, context) : []),
+      ...(isObjectChange(node, context) && isReflectSet(node) ? getSetters(node, context) : []),
       ...(isIteratorDispose ? getWrittenFunctions(node, "return", context) : []),
       ...(isIteratorDispose ? getMethods(node, "return", context, true) : []),
       ...callees.flatMap((callee) => getFunctionNode(callee) ?? []),

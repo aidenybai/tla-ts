@@ -4677,6 +4677,58 @@ ReflectDefineProperty(heap, ref, key, descriptor) ==
   THEN ReflectDefineConverted(heap, ref, key, ToDescriptor(heap, descriptor))
   ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE, value |-> FALSE]
 
+\\* The setter that Reflect.set calls, where a typed array's element calls none.
+ReflectSetter(heap, ref, key) ==
+  IF IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
+  THEN Undefined
+  ELSE SetterOf(heap, ref, key)
+
+LOCAL ReflectSetGives(heap, value) ==
+  [heap |-> heap, isDone |-> TRUE, isRangeError |-> FALSE, value |-> value]
+
+\\* OrdinarySet's write of a data property, which the receiver defines on itself: a write to its own
+\\* writable data property changes the value, and a new key makes a writable one where it can.
+LOCAL ReceiverSet(heap, key, value, receiver) ==
+  CASE ~IsObjectIn(heap, receiver) -> ReflectSetGives(heap, FALSE)
+    [] \\/ ~IsHeap(receiver)
+       \\/ IsProxy(heap, receiver)
+       \\/ IsTypedArray(heap, receiver) /\\ TypedKey(key) # "property" ->
+         Assert(FALSE, "tla-ts can't set a property on this receiver")
+    [] OTHER ->
+         LET object == Lookup(heap, receiver)
+             defined == DefineOwn(object, key, WriteDescriptor(object, key, value))
+         IN CASE /\\ key \\in DOMAIN object.values
+                 /\\ \\/ object.attributes[key].kind = "accessor"
+                    \\/ ~object.attributes[key].writable ->
+                   ReflectSetGives(heap, FALSE)
+              [] defined.isRangeError ->
+                   [heap |-> heap, isDone |-> FALSE, isRangeError |-> TRUE, value |-> FALSE]
+              [] defined.isDone -> ReflectSetGives(Update(heap, receiver, defined.object), TRUE)
+              [] OTHER -> ReflectSetGives(heap, FALSE)
+
+\\* Reflect.set where no setter that the script writes runs: the heap after it, and whether it set
+\\* the key, as OrdinarySet does with a receiver. A typed array writes its own elements, and an index
+\\* past its end, or a number that is no index, sets nothing. It throws a TypeError where the target
+\\* isn't an object.
+ReflectSet(heap, ref, key, value, receiver) ==
+  LET accessor == AccessorOf(heap, ref, key)
+  IN CASE ~IsObjectIn(heap, ref) ->
+            [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE, value |-> FALSE]
+       [] ~IsHeap(ref) \\/ IsProxy(heap, ref) ->
+            Assert(FALSE, "tla-ts can't set a property of this object through Reflect.set")
+       [] IsTypedArray(heap, ref) /\\ TypedKey(key) # "property" ->
+            CASE SameValue(ref, receiver) -> ReflectSetGives(TypedSet(heap, ref, key, value), TRUE)
+              [] \\/ TypedKey(key) # "index"
+                 \\/ ToIndex(key) >= ViewLength(heap, heap.objects[ref[Ref]]) ->
+                   ReflectSetGives(heap, TRUE)
+              [] OTHER -> ReceiverSet(heap, key, value, receiver)
+       [] accessor # Undefined ->
+            CASE accessor.set = Undefined -> ReflectSetGives(heap, FALSE)
+              [] accessor.set \\in DOMAIN ConstantFunctions -> ReflectSetGives(heap, TRUE)
+              [] OTHER -> Assert(FALSE, "tla-ts can't call setters")
+       [] ~IsWritable(heap, ref, key) -> ReflectSetGives(heap, FALSE)
+       [] OTHER -> ReceiverSet(heap, key, value, receiver)
+
 DefineProperties(heap, ref, properties) ==
   LET source == Lookup(heap, properties)
       keys == EnumerableOwnKeys(source)
