@@ -42,11 +42,14 @@ import {
   SUBSET_EQ,
   TAIL,
   tla,
-  TRIG_EQ,
   TT_IDV,
   UNION,
 } from "./format";
+import { getUntypedSpec } from "./arithmetic";
 import { axiom, type Axiom } from "./table";
+import { getTypeKey, getTypeName, IDV, type Type } from "./types";
+
+const SET_OF_IDV: Type = { kind: "Set", element: IDV };
 
 export interface SymbolSpec {
   declaration: string | undefined;
@@ -55,8 +58,12 @@ export interface SymbolSpec {
 }
 
 export interface CollectState {
+  isArithmetic: boolean;
+  isSetExtensional: boolean;
   recordFields: Map<string, string[]>;
+  setTypes: Map<string, Type>;
   strings: string[];
+  integers: number[];
   isFunConstr: boolean;
   isFunSet: boolean;
   isExcept: boolean;
@@ -64,6 +71,12 @@ export interface CollectState {
   records: string[][];
   anonymous: Map<string, number>;
 }
+
+const getOmittedDeclaration = (name: string) =>
+  `; omitted declaration of 'TLA__${name}' (second-order)`;
+
+const getLiteralNames = (count: number) =>
+  Array.from({ length: count }, (_value, index) => `IntLit_${index + 1}`);
 
 const SEQUENCE_DEPS = ["Mem", "Seq", "Len", "FunApp", "NatSet", "Cast_Int", "Proj_Int"];
 
@@ -97,46 +110,11 @@ const STATIC_SPECS = new Map(
         axiom(
           "IntExpTyping",
           [],
-          `(forall ((x Idv) (y Idv)) (! (=> (and (${MEM} x ${INT_SET}) (${MEM} y ${INT_SET}) (or (distinct x (${CAST_INT} 0)) (${INT_LTEQ} (${CAST_INT} 1) y))) (${MEM} (${INT_EXP} x y) ${INT_SET})) :pattern ((${INT_EXP} x y))))`,
+          `(forall ((x Idv) (y Idv)) (! (=> (and (${MEM} x ${INT_SET}) (${MEM} y ${INT_SET}) (${INT_LTEQ} (${CAST_INT} 0) y) (or (distinct x (${CAST_INT} 0)) (${INT_LTEQ} (${CAST_INT} 1) y))) (${MEM} (${INT_EXP} x y) ${INT_SET})) :pattern ((${INT_EXP} x y))))`,
         ),
       ],
     ),
-    SelectSeq: createSpec(
-      undefined,
-      [
-        "Mem",
-        "Seq",
-        "Len",
-        "Append",
-        "FunApp",
-        "FunDom",
-        "IntSet",
-        "NatSet",
-        "Tuple_0",
-        "Proj_Int",
-      ],
-      [
-        axiom("SeqSelectseqTyping", [], undefined),
-        axiom("SeqSelectseqLen", [], undefined),
-        axiom("SeqSelectseqNil", [], undefined),
-        axiom("SeqSelectseqApp", [], undefined),
-        axiom("SeqSelectseqAppend", [], undefined),
-      ],
-    ),
-    Choose: createSpec(undefined, [], [axiom("ChooseDef", [], undefined)]),
-    Mem: declareSpec(
-      "Mem",
-      2,
-      ["SetExtTrigger"],
-      [
-        axiom(
-          "SetExt",
-          [],
-          `(forall ((x Idv) (y Idv)) (! (=> (forall ((z Idv)) (= (${MEM} z x) (${MEM} z y))) (= x y)) :pattern ((${SET_EXT_TRIGGER} x y))))`,
-        ),
-      ],
-      "Bool",
-    ),
+    Choose: createSpec(getOmittedDeclaration("Choose"), [], [axiom("ChooseDef", [], undefined)]),
     SubsetEq: declareSpec(
       "SubsetEq",
       2,
@@ -190,29 +168,11 @@ const STATIC_SPECS = new Map(
       ["Mem"],
       [getSetOperationDef("Cup", `(or (${MEM} x a) (${MEM} x b))`)],
     ),
-    Cap: declareSpec(
-      "Cap",
-      2,
-      ["Mem", "SetEnum_0", "SetExtTrigger"],
-      [
-        getSetOperationDef("Cap", `(and (${MEM} x a) (${MEM} x b))`),
-        axiom(
-          "DisjointTrigger",
-          [],
-          `(forall ((x Idv) (y Idv)) (! (${SET_EXT_TRIGGER} (${CAP} x y) ${tla("SetEnum_0")}) :pattern ((${CAP} x y))))`,
-        ),
-      ],
-    ),
     SetMinus: declareSpec(
       "SetMinus",
       2,
       ["Mem"],
       [getSetOperationDef("SetMinus", `(and (${MEM} x a) (not (${MEM} x b)))`)],
-    ),
-    SetSt: createSpec(
-      undefined,
-      ["Mem", "SetEnum_0", "SetExtTrigger"],
-      [axiom("SetStDef", [], undefined), axiom("EmptyComprehensionTrigger", [], undefined)],
     ),
     NatSet: declareSpec(
       "NatSet",
@@ -440,24 +400,6 @@ const STATIC_SPECS = new Map(
       ],
     ),
     Proj_Int: createSpec(declare(tla("Proj_Int"), 1, "Int"), [], []),
-    TrigEq_Set$Idv$: declareSpec(
-      "TrigEq_Set$Idv$",
-      2,
-      ["SetExtTrigger"],
-      [
-        axiom(
-          "ExtTrigEqDef",
-          ["Set$Idv$"],
-          `(forall ((x Idv) (y Idv)) (! (= (${TRIG_EQ} x y) (= x y)) :pattern ((${TRIG_EQ} x y))))`,
-        ),
-        axiom(
-          "ExtTrigEqTrigger",
-          ["Idv"],
-          `(forall ((x Idv) (y Idv)) (! (${SET_EXT_TRIGGER} x y) :pattern ((${TRIG_EQ} x y))))`,
-        ),
-      ],
-      "Bool",
-    ),
     SetExtTrigger: declareSpec("SetExtTrigger", 2, [], [], "Bool"),
     IsSetOf: declareSpec("IsSetOf", 1, [], [], "Bool"),
     BoolSet: declareSpec("BoolSet", 0, [], []),
@@ -465,6 +407,13 @@ const STATIC_SPECS = new Map(
     IntSet: declareSpec("IntSet", 0, [], []),
     Tt_Idv: declareSpec("Tt_Idv", 0, [], []),
     TIntLteq: createSpec(undefined, ["IntLteq"], [getTyping("IntLteq")]),
+    TIntLt: createSpec(undefined, ["IntLteq"], [getTyping("IntLteq")]),
+    TIntGteq: createSpec(undefined, ["IntLteq"], [getTyping("IntLteq")]),
+    TIntGt: createSpec(undefined, ["IntLteq"], [getTyping("IntLteq")]),
+    TIntPlus: createSpec(undefined, ["IntPlus"], []),
+    TIntMinus: createSpec(undefined, ["IntMinus"], []),
+    TIntTimes: createSpec(undefined, ["IntTimes"], []),
+    TIntUminus: createSpec(undefined, ["IntUminus"], []),
   }),
 );
 
@@ -481,12 +430,16 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
   const setOf = /^SetOf_(\d+)$/.exec(name);
   if (setOf) {
     const count = Number(setOf[1]);
+    const axioms = [
+      axiom("SetOfIntro", [count], undefined),
+      axiom("SetOfElim", [count], undefined),
+    ];
+    if (!state.isSetExtensional) return createSpec(getOmittedDeclaration(name), ["Mem"], axioms);
     return createSpec(
-      undefined,
+      getOmittedDeclaration(name),
       ["Mem", "IsSetOf"],
       [
-        axiom("SetOfIntro", [count], undefined),
-        axiom("SetOfElim", [count], undefined),
+        ...axioms,
         axiom("AssertIsSetOf", [count], undefined),
         axiom(
           "CompareSetOfTrigger",
@@ -511,15 +464,58 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
       [axiom("StrLitIsstr", [value], `(${MEM} ${symbol} ${STR_SET})`), ...distinct],
     );
   }
+  const integer = /^IntLit_(\d+)$/.exec(name);
+  if (integer) {
+    const value = Number(integer[1]);
+    const distinct = state.integers.map((other) =>
+      axiom("IntLitDistinct", [other, value], `(distinct ${tla(`IntLit_${other}`)} ${symbol})`),
+    );
+    state.integers.push(value);
+    const zero = tla("IntLit_0");
+    const isPositivityNeeded = value === 0 && !state.isArithmetic;
+    return declareSpec(
+      name,
+      0,
+      ["Mem", "IntSet", "IntLit_0", "IntLteq", ...(isPositivityNeeded ? ["IntLit_1"] : [])],
+      [
+        axiom("IntLitIsint", [value], `(${MEM} ${symbol} ${INT_SET})`),
+        axiom(
+          "IntLitZeroCmp",
+          [value],
+          value === 0 ? `(${INT_LTEQ} ${symbol} ${zero})` : `(${INT_LTEQ} ${zero} ${symbol})`,
+        ),
+        ...distinct,
+        ...(isPositivityNeeded
+          ? [
+              axiom(
+                "NonNegIsPos",
+                [],
+                `(forall ((x Idv)) (! (=> (and (${INT_LTEQ} ${zero} x) (distinct ${zero} x)) (${INT_LTEQ} ${tla("IntLit_1")} x)) :pattern ((${INT_LTEQ} ${zero} x))))`,
+              ),
+            ]
+          : []),
+      ],
+    );
+  }
   const tuple = /^Tuple_(\d+)$/.exec(name);
   if (tuple) {
     const count = Number(tuple[1]);
     state.tuples.push(count);
+    const indexes = state.isArithmetic
+      ? ["Cast_Int"]
+      : count === 0
+        ? ["IntLit_0"]
+        : getLiteralNames(count);
     const deps =
       count === 0
-        ? ["FunIsafcn", "Cast_Int", "Seq", "Len"]
-        : ["FunIsafcn", "FunDom", "FunApp", `SetEnum_${count}`, "Cast_Int", "Mem", "Seq", "Len"];
-    return declareSpec(name, count, deps, getTupleAxioms(count, state.isExcept));
+        ? ["FunIsafcn", ...indexes, "Seq", "Len"]
+        : ["FunIsafcn", "FunDom", "FunApp", `SetEnum_${count}`, ...indexes, "Mem", "Seq", "Len"];
+    return declareSpec(
+      name,
+      count,
+      deps,
+      getTupleAxioms(count, state.isExcept, state.isArithmetic),
+    );
   }
   const product = /^Product_(\d+)$/.exec(name);
   if (product) {
@@ -527,8 +523,44 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
     return declareSpec(
       name,
       count,
-      ["Mem", `Tuple_${count}`, "FunApp", "Cast_Int", "Proj_Int"],
-      getComponentSet("Product", [count], symbol, tla(`Tuple_${count}`), getIntegers(count), "t"),
+      [
+        "Mem",
+        `Tuple_${count}`,
+        "FunApp",
+        ...(state.isArithmetic ? ["Cast_Int", "Proj_Int"] : getLiteralNames(count)),
+      ],
+      getComponentSet(
+        "Product",
+        [count],
+        symbol,
+        tla(`Tuple_${count}`),
+        getIntegers(count, state.isArithmetic),
+        "t",
+      ),
+    );
+  }
+  if (name.startsWith("TrigEq_")) {
+    const type = state.setTypes.get(name) ?? SET_OF_IDV;
+    const element = type.kind === "Set" ? type.element : IDV;
+    return declareSpec(
+      name,
+      2,
+      ["SetExtTrigger"],
+      [
+        axiom(
+          "ExtTrigEqDef",
+          [getTypeKey(type)],
+          `(forall ((x Idv) (y Idv)) (! (= (${symbol} x y) (= x y)) :pattern ((${symbol} x y))))`,
+          `ExtTrigEqDef ${getTypeName(type)}`,
+        ),
+        axiom(
+          "ExtTrigEqTrigger",
+          [getTypeKey(element)],
+          `(forall ((x Idv) (y Idv)) (! (${SET_EXT_TRIGGER} x y) :pattern ((${symbol} x y))))`,
+          `ExtTrigEqTrigger ${getTypeName(element)}`,
+        ),
+      ],
+      "Bool",
     );
   }
   const fields = state.recordFields.get(name);
@@ -558,6 +590,8 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
   }
   const anonymous = state.anonymous.get(name);
   if (anonymous !== undefined) return declareSpec(name, anonymous, [], []);
+  const untyped = state.isArithmetic ? undefined : getUntypedSpec(name);
+  if (untyped) return untyped;
   const known = STATIC_SPECS.get(name);
   if (known) return known;
   const typed = TYPED_OPERATORS[name];
@@ -570,6 +604,73 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
       name === "IntLteq" ? "Bool" : "Idv",
     );
   switch (name) {
+    case "SelectSeq":
+      return createSpec(
+        getOmittedDeclaration(name),
+        [
+          "Mem",
+          "Seq",
+          "Len",
+          "Append",
+          "FunApp",
+          "FunDom",
+          "IntSet",
+          "NatSet",
+          "Tuple_0",
+          state.isArithmetic ? "Proj_Int" : "IntLteq",
+        ],
+        [
+          axiom("SeqSelectseqTyping", [], undefined),
+          axiom("SeqSelectseqLen", [], undefined),
+          axiom("SeqSelectseqNil", [], undefined),
+          axiom("SeqSelectseqApp", [], undefined),
+          axiom("SeqSelectseqAppend", [], undefined),
+        ],
+      );
+    case "Mem":
+      if (!state.isSetExtensional) return declareSpec(name, 2, [], [], "Bool");
+      return declareSpec(
+        "Mem",
+        2,
+        ["SetExtTrigger"],
+        [
+          axiom(
+            "SetExt",
+            [],
+            `(forall ((x Idv) (y Idv)) (! (=> (forall ((z Idv)) (= (${MEM} z x) (${MEM} z y))) (= x y)) :pattern ((${SET_EXT_TRIGGER} x y))))`,
+          ),
+        ],
+        "Bool",
+      );
+    case "Cap":
+      if (!state.isSetExtensional)
+        return declareSpec(
+          name,
+          2,
+          ["Mem"],
+          [getSetOperationDef("Cap", `(and (${MEM} x a) (${MEM} x b))`)],
+        );
+      return declareSpec(
+        "Cap",
+        2,
+        ["Mem", "SetEnum_0", "SetExtTrigger"],
+        [
+          getSetOperationDef("Cap", `(and (${MEM} x a) (${MEM} x b))`),
+          axiom(
+            "DisjointTrigger",
+            [],
+            `(forall ((x Idv) (y Idv)) (! (${SET_EXT_TRIGGER} (${CAP} x y) ${tla("SetEnum_0")}) :pattern ((${CAP} x y))))`,
+          ),
+        ],
+      );
+    case "SetSt":
+      if (!state.isSetExtensional)
+        return createSpec(getOmittedDeclaration(name), ["Mem"], [axiom("SetStDef", [], undefined)]);
+      return createSpec(
+        getOmittedDeclaration(name),
+        ["Mem", "SetEnum_0", "SetExtTrigger"],
+        [axiom("SetStDef", [], undefined), axiom("EmptyComprehensionTrigger", [], undefined)],
+      );
     case "FunSet":
       state.isFunSet = true;
       return declareSpec(
@@ -598,7 +699,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
     case "FunFcn":
       state.isFunConstr = true;
       return createSpec(
-        undefined,
+        getOmittedDeclaration(name),
         ["FunIsafcn"],
         [
           axiom("FunConstrIsafcn", [], undefined),
@@ -633,7 +734,7 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
             [],
             `(forall ((f Idv) (x Idv) (y Idv) (z Idv)) (! (=> (${MEM} z (${FUN_DOM} f)) (and (=> (= z x) (= (${FUN_APP} ${updated} z) y)) (=> (distinct z x) (= (${FUN_APP} ${updated} z) (${FUN_APP} f z))))) :pattern ((${FUN_APP} ${updated} z)) :pattern (${updated} (${FUN_APP} f z))))`,
           ),
-          ...state.tuples.flatMap(getTupleExcepts),
+          ...state.tuples.flatMap((count) => getTupleExcepts(count, state.isArithmetic)),
           ...state.records.flatMap(getRecordExcepts),
         ],
       );

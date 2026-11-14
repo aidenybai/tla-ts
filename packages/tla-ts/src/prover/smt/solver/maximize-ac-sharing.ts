@@ -1,5 +1,5 @@
 // Ported from Z3 (src/ast/rewriter/maximize_ac_sharing.cpp), MIT license, see z3-license.txt.
-import { OP_ADD, OP_OR } from "./ast";
+import { OP_ADD, OP_BADD, OP_BAND, OP_BMUL, OP_BOR, OP_OR } from "./ast";
 import { RewriterTpl } from "./rewriter-tpl";
 import { shrink } from "./array";
 
@@ -11,6 +11,9 @@ interface SharingEntry {
 
 const MAX_NUM_ARGS_FOR_OPT = 128;
 
+// Z3 compares kinds without the family, and bvmul's kind is also that of or and +.
+const SHARED_OPS = new Set([OP_BADD, OP_BMUL, OP_BOR, OP_BAND, OP_OR, OP_ADD]);
+
 export class MaxBvSharing extends RewriterTpl {
   // Z3 compares the kind without the family, and bvmul has the kind of or and of +, so those are shared.
   private isInit = false;
@@ -21,9 +24,10 @@ export class MaxBvSharing extends RewriterTpl {
   reduceApp(decl: number, args: number[], sort: number) {
     const manager = this.manager;
     const op = manager.funcDecls[decl].op;
-    if (!this.isInit || (op !== OP_OR && op !== OP_ADD) || args.length <= 2) return -1;
+    if (!this.isInit || !SHARED_OPS.has(op) || args.length <= 2) return -1;
     return manager.withTemporaries(() => {
-      const pending = [...args];
+      const numeral = manager.isBvNumeral(args[0]) ? args[0] : -1;
+      const pending = numeral === -1 ? [...args] : args.slice(1);
       for (let merged = 0; pending.length > 1 && pending.length < MAX_NUM_ARGS_FOR_OPT;) {
         let pairFirst = -1;
         let pairSecond = -1;
@@ -55,7 +59,7 @@ export class MaxBvSharing extends RewriterTpl {
         }
         pending.splice(0, pending.length, ...next);
       }
-      return pending[0];
+      return numeral === -1 ? pending[0] : manager.mkApp(decl, [numeral, pending[0]], sort);
     });
   }
 

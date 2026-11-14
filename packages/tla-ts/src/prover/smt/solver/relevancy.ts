@@ -30,7 +30,7 @@ export class RelevancyPropagator {
 
   constructor(
     private context: RelevancyContext,
-    readonly isEnabled: boolean,
+    public isEnabled: boolean,
   ) {}
 
   isRelevant(expr: number) {

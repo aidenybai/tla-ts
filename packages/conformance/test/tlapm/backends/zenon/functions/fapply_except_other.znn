@@ -1,0 +1,49 @@
+(*---
+description: >-
+  Zenon proves an EXCEPT leaves another point of the domain unchanged, the second branch of
+  fapplyexcept.
+ref: zenon/ext_tla.ml#rewrites
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (/\ (TLA.in a_CONSTANTunde_zunde_a
+(TLA.DOMAIN a_CONSTANTunde_funde_a)) (-. (= a_CONSTANTunde_zunde_a
+a_CONSTANTunde_xunde_a)))
+(= (TLA.fapply (TLA.except a_CONSTANTunde_funde_a a_CONSTANTunde_xunde_a a_CONSTANTunde_yunde_a) a_CONSTANTunde_zunde_a)
+(TLA.fapply a_CONSTANTunde_funde_a a_CONSTANTunde_zunde_a)))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~(((a_CONSTANTunde_zunde_a \\in DOMAIN(a_CONSTANTunde_funde_a))&(a_CONSTANTunde_zunde_a~=a_CONSTANTunde_xunde_a))=>((except(a_CONSTANTunde_funde_a, a_CONSTANTunde_xunde_a, a_CONSTANTunde_yunde_a)[a_CONSTANTunde_zunde_a])=(a_CONSTANTunde_funde_a[a_CONSTANTunde_zunde_a]))))" (is "~(?z_hc=>?z_hj)")
+     have z_Hc: "?z_hc" (is "?z_hd&?z_hh")
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Ho: "((except(a_CONSTANTunde_funde_a, a_CONSTANTunde_xunde_a, a_CONSTANTunde_yunde_a)[a_CONSTANTunde_zunde_a])~=(a_CONSTANTunde_funde_a[a_CONSTANTunde_zunde_a]))" (is "?z_hk~=?z_hn")
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hd: "?z_hd"
+     by (rule zenon_and_0 [OF z_Hc])
+     have z_Hh: "?z_hh"
+     by (rule zenon_and_1 [OF z_Hc])
+     show FALSE
+     proof (rule zenon_fapplyexcept [of "(\<lambda>zenon_Vg. (zenon_Vg~=?z_hn))" "a_CONSTANTunde_funde_a" "a_CONSTANTunde_xunde_a" "a_CONSTANTunde_yunde_a" "a_CONSTANTunde_zunde_a", OF z_Ho])
+      assume z_Hd:"?z_hd"
+      assume z_Hs:"(a_CONSTANTunde_xunde_a=a_CONSTANTunde_zunde_a)"
+      assume z_Ht:"(a_CONSTANTunde_yunde_a~=?z_hn)"
+      show FALSE
+      by (rule zenon_eqsym [OF z_Hs z_Hh])
+     next
+      assume z_Hd:"?z_hd"
+      assume z_Hu:"(a_CONSTANTunde_xunde_a~=a_CONSTANTunde_zunde_a)"
+      assume z_Hv:"(?z_hn~=?z_hn)"
+      show FALSE
+      by (rule zenon_noteq [OF z_Hv])
+     next
+      assume z_Hw:"(~?z_hd)"
+      show FALSE
+      by (rule notE [OF z_Hw z_Hd])
+     qed
+    qed
+---*)

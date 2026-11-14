@@ -42,12 +42,14 @@ export const resolveTriggers = (text: string, isTriggered: boolean): string => {
 export const getEquality = (
   left: string,
   right: string,
-  polarity: Polarity,
+  polarity: Polarity | undefined,
   isNegated: boolean,
+  setTrigger?: string,
 ) => {
-  const triggered = `(${TRIG_EQ} ${left} ${right})`;
+  const triggered = `(${setTrigger ?? TRIG_EQ} ${left} ${right})`;
   const kept = isNegated ? `(distinct ${left} ${right})` : `(= ${left} ${right})`;
-  if (!isSetTerm(left) && !isSetTerm(right)) return kept;
+  if (polarity === undefined || (setTrigger === undefined && !isSetTerm(left) && !isSetTerm(right)))
+    return kept;
   const text = isNegated ? `(not ${triggered})` : triggered;
   return polarity === (isNegated ? "Positive" : "Negative")
     ? `(${UNRESOLVED_TRIGGER} ${text} ${kept})`

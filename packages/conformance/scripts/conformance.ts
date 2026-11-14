@@ -18,7 +18,9 @@ import {
   getRecording,
   getShard,
   type Recording,
+  type SuiteTest,
 } from "./test-file";
+import { getBackend, getTlapmStatuses } from "./tlapm";
 import { getMessageCodes } from "./transcript";
 
 type Verdict =
@@ -65,13 +67,22 @@ const baseline: Record<string, Verdict> = existsSync(baselinePath)
   ? JSON.parse(readFileSync(baselinePath, "utf8"))
   : {};
 
-const getVerdict = (expected: Recording | undefined, actual: HostResult): Verdict => {
+const getMessages = (test: SuiteTest, transcript: string) => {
+  if (test.suite === "tlc") return getMessageCodes(transcript);
+  return getBackend(test.path) ? transcript.split("\n")[0] : getTlapmStatuses(transcript);
+};
+
+const getVerdict = (
+  test: SuiteTest,
+  expected: Recording | undefined,
+  actual: HostResult,
+): Verdict => {
   if (!expected) return "unrecorded";
   if (actual.exceeded) return `${actual.exceeded}-limit`;
   if (actual.exit === CRASH_EXIT) return "crash";
   if (actual.exit !== expected.exit) return "exit-mismatch";
   const expectedTranscript = expected.transcript ?? "";
-  if (getMessageCodes(actual.transcript) !== getMessageCodes(expectedTranscript))
+  if (getMessages(test, actual.transcript) !== getMessages(test, expectedTranscript))
     return "message-mismatch";
   return actual.transcript === expectedTranscript ? "pass" : "text-mismatch";
 };
@@ -92,7 +103,7 @@ await runPool(tests, WORKERS, async (test) => {
       getRecording(test, context.name);
     results.push({
       id: context.name === "model" ? test.id : `${test.id}#${context.name}`,
-      verdict: getVerdict(expected, actual),
+      verdict: getVerdict(test, expected, actual),
       expected,
       actual,
     });

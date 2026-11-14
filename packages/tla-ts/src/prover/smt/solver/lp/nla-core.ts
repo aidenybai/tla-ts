@@ -22,6 +22,7 @@ import { MonomialBounds } from "./nla-monomial-bounds";
 import { Monotone } from "./nla-monotone";
 import { Order } from "./nla-order";
 import { Patcher } from "./nla-patcher";
+import { checkPower } from "./nla-powers";
 import { Tangents } from "./nla-tangents";
 import { NlaThrottle } from "./nla-throttle";
 import {
@@ -32,6 +33,7 @@ import {
   mkIneq,
   negateKind,
 } from "./nla-types";
+import { NlaTranscendentals } from "./nla-transcendentals";
 import { NraSolver } from "./nra-solver";
 import { getSignedVarVar, isSignedVarNegated, mkSignedVar, VarEqs } from "./nla-var-eqs";
 
@@ -143,6 +145,7 @@ export class NlaCore {
   private readonly horner: Horner;
   readonly grobner: Grobner;
   readonly nra = new NraSolver(this);
+  readonly transcendentals = new NlaTranscendentals(this);
   isUsingNraModel = false;
   private nlsatBackoff: Backoff;
   private checkAssignmentFailCount = 0;
@@ -349,6 +352,7 @@ export class NlaCore {
   }
 
   hasRelevantMonomial() {
+    if (!this.transcendentals.isEmpty) return true;
     return this.emons.monics.some((monic) => this.isRelevant(monic.variable));
   }
 
@@ -555,6 +559,12 @@ export class NlaCore {
     return this.lra.settings.isCanceled();
   }
 
+  checkPower(result: number, base: number, exponent: number) {
+    this.clear();
+    if (this.lra.isFeasible()) this.lra.getRidOfInfEps();
+    return checkPower(this, result, base, exponent);
+  }
+
   checkBoundedDivisions() {
     this.clear();
     this.divisions.checkBoundedDivisions();
@@ -657,7 +667,29 @@ export class NlaCore {
 
   private onToRefineEmpty() {
     this.squeezeSchedule.onNothingToRefine();
-    return L_TRUE;
+    return this.checkTranscendentalsAndFinish();
+  }
+
+  // The applications of transcendental functions still need checking when the monomials hold. A
+  // failure of the check needs nlsat, and a model of nlsat that is not tight enough is unknown.
+  private checkTranscendentalsAndFinish() {
+    const transcendentals = this.transcendentals;
+    if (transcendentals.isEmpty) return L_TRUE;
+    const numFailures = transcendentals.numFailures;
+    transcendentals.check();
+    if (this.lemmas.length > 0 || this.literals.length > 0) return L_FALSE;
+    const isFailed = transcendentals.numFailures > numFailures;
+    let isRunningNlsat = this.shouldRunBoundedNlsat() && transcendentals.numFailures > 0;
+    if (isFailed && !isRunningNlsat) {
+      if (!NLA_PARAMS.nra) return L_UNDEF;
+      isRunningNlsat = true;
+    }
+    if (!isRunningNlsat) return L_TRUE;
+    const result = this.boundedNlsat();
+    if (result === L_FALSE) return L_FALSE;
+    if (result === L_TRUE && transcendentals.isNraModelValid()) return L_TRUE;
+    if (result === L_TRUE) this.setUseNraModel(false);
+    return L_UNDEF;
   }
 
   check(level: number) {
@@ -719,7 +751,8 @@ export class NlaCore {
     );
     if (this.isCanceled()) return L_UNDEF;
     if (this.lemmas.length > 0 || this.literals.length > 0 || this.isCheckFeasible) return L_FALSE;
-    if (this.isNlaSatisfied) return L_TRUE;
+    if (this.isNlaSatisfied) return this.checkTranscendentalsAndFinish();
+    if (hasNoEffect() && !this.transcendentals.isEmpty) this.transcendentals.check();
     if (
       hasNoEffect() &&
       NLA_PARAMS.nraCheckAssignment &&
@@ -728,8 +761,7 @@ export class NlaCore {
       result = this.nra.checkAssignment();
       if (result !== L_TRUE) this.checkAssignmentFailCount++;
     }
-    if (hasNoEffect() && NLA_PARAMS.nra && this.nlsatBackoff.shouldRun())
-      result = this.boundedNlsat();
+    if (hasNoEffect() && this.shouldRunBoundedNlsat()) result = this.boundedNlsat();
     if (hasNoEffect()) this.basics.basicLemma(true);
     if (hasNoEffect() && isDelayingBounds) this.basics.basicLemma(false);
     if (hasNoEffect() && isDelayingBounds) this.addBounds();
@@ -752,6 +784,10 @@ export class NlaCore {
     if (result === L_UNDEF && !hasNoEffect()) result = L_FALSE;
     stats.nlaLemmas += this.lemmas.length;
     return result;
+  }
+
+  private shouldRunBoundedNlsat() {
+    return NLA_PARAMS.nra && this.nlsatBackoff.shouldRun();
   }
 
   private boundedNlsat() {

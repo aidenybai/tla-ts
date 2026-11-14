@@ -10,14 +10,20 @@ const USED = 2;
 export const getIdentityHash = (key: number) => key;
 
 export class ObjMap<V> {
-  private capacity = INITIAL_CAPACITY;
-  private states = new Uint8Array(INITIAL_CAPACITY);
+  private capacity: number;
+  private states: Uint8Array;
   private slotKeys: number[] = [];
-  private values: V[] = [];
+  private slotValues: V[] = [];
   private numDeleted = 0;
   size = 0;
 
-  constructor(private getHash: (key: number) => number) {}
+  constructor(
+    private getHash: (key: number) => number,
+    initialCapacity = INITIAL_CAPACITY,
+  ) {
+    this.capacity = initialCapacity;
+    this.states = new Uint8Array(initialCapacity);
+  }
 
   private findSlot(key: number) {
     const mask = this.capacity - 1;
@@ -33,11 +39,11 @@ export class ObjMap<V> {
   private moveTable(capacity: number) {
     const states = this.states;
     const keys = this.slotKeys;
-    const values = this.values;
+    const values = this.slotValues;
     this.capacity = capacity;
     this.states = new Uint8Array(capacity);
     this.slotKeys = [];
-    this.values = [];
+    this.slotValues = [];
     this.numDeleted = 0;
     const mask = capacity - 1;
     for (let slot = 0; slot < states.length; slot++) {
@@ -46,7 +52,7 @@ export class ObjMap<V> {
       while (this.states[target] !== FREE) target = (target + 1) & mask;
       this.states[target] = USED;
       this.slotKeys[target] = keys[slot];
-      this.values[target] = values[slot];
+      this.slotValues[target] = values[slot];
     }
   }
 
@@ -56,12 +62,12 @@ export class ObjMap<V> {
 
   get(key: number) {
     const slot = this.findSlot(key);
-    return slot === -1 ? undefined : this.values[slot];
+    return slot === -1 ? undefined : this.slotValues[slot];
   }
 
   replace(key: number, value: V) {
     const slot = this.findSlot(key);
-    if (slot !== -1) this.values[slot] = value;
+    if (slot !== -1) this.slotValues[slot] = value;
   }
 
   set(key: number, value: V) {
@@ -73,7 +79,7 @@ export class ObjMap<V> {
       const slot = (begin + offset) & mask;
       if (this.states[slot] === USED) {
         if (this.slotKeys[slot] === key) {
-          this.values[slot] = value;
+          this.slotValues[slot] = value;
           return;
         }
       } else if (this.states[slot] === FREE) {
@@ -81,7 +87,7 @@ export class ObjMap<V> {
         if (deletedSlot !== -1) this.numDeleted--;
         this.states[target] = USED;
         this.slotKeys[target] = key;
-        this.values[target] = value;
+        this.slotValues[target] = value;
         this.size++;
         return;
       } else deletedSlot = slot;
@@ -110,14 +116,19 @@ export class ObjMap<V> {
     if (this.capacity > 16 && overhead << 2 > this.capacity * 3) this.capacity >>= 1;
     this.states = new Uint8Array(this.capacity);
     this.slotKeys = [];
-    this.values = [];
+    this.slotValues = [];
     this.size = 0;
     this.numDeleted = 0;
   }
 
   *entries(): IterableIterator<[number, V]> {
     for (let slot = 0; slot < this.capacity; slot++)
-      if (this.states[slot] === USED) yield [this.slotKeys[slot], this.values[slot]];
+      if (this.states[slot] === USED) yield [this.slotKeys[slot], this.slotValues[slot]];
+  }
+
+  *values(): IterableIterator<V> {
+    for (let slot = 0; slot < this.capacity; slot++)
+      if (this.states[slot] === USED) yield this.slotValues[slot];
   }
 
   *keys(): IterableIterator<number> {
@@ -133,8 +144,8 @@ export class ObjMap<V> {
 export class ObjHashtable {
   private map: ObjMap<true>;
 
-  constructor(getHash: (key: number) => number) {
-    this.map = new ObjMap(getHash);
+  constructor(getHash: (key: number) => number, initialCapacity = INITIAL_CAPACITY) {
+    this.map = new ObjMap(getHash, initialCapacity);
   }
 
   get size() {
@@ -147,6 +158,10 @@ export class ObjHashtable {
 
   add(key: number) {
     this.map.set(key, true);
+  }
+
+  delete(key: number) {
+    this.map.delete(key);
   }
 
   [Symbol.iterator]() {

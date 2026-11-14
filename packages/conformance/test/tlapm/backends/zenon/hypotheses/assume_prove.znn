@@ -1,0 +1,45 @@
+(*---
+description: Zenon proves an ASSUME/PROVE goal, which tlapm writes as $hyp lines before the $goal.
+ref: src/backend/zenon.ml
+outcome: unsat
+---*)
+;; obligation #1
+$hyp "a_CONSTANTunde_xunde_a_in" (TLA.in a_CONSTANTunde_xunde_a a_CONSTANTunde_Sunde_a)
+$hyp "v'7" (TLA.subseteq a_CONSTANTunde_Sunde_a
+a_CONSTANTunde_Tunde_a)
+$goal (TLA.in a_CONSTANTunde_xunde_a
+a_CONSTANTunde_Tunde_a)
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     have z_Hb:"(a_CONSTANTunde_Sunde_a \\subseteq a_CONSTANTunde_Tunde_a)" (is "?z_hb")
+     using v'7 by blast
+     have z_Ha:"(a_CONSTANTunde_xunde_a \\in a_CONSTANTunde_Sunde_a)" (is "?z_ha")
+     using a_CONSTANTunde_xunde_a_in by blast
+     assume z_Hc:"(~(a_CONSTANTunde_xunde_a \\in a_CONSTANTunde_Tunde_a))" (is "~?z_hg")
+     have z_Hh_z_Hb: "bAll(a_CONSTANTunde_Sunde_a, (\<lambda>x. (x \\in a_CONSTANTunde_Tunde_a))) == ?z_hb" (is "?z_hh == _")
+     by (unfold subset_def)
+     have z_Hh: "?z_hh"
+     by (unfold z_Hh_z_Hb, fact z_Hb)
+     have z_Hl_z_Hh: "(\\A x:((x \\in a_CONSTANTunde_Sunde_a)=>(x \\in a_CONSTANTunde_Tunde_a))) == ?z_hh" (is "?z_hl == _")
+     by (unfold bAll_def)
+     have z_Hl: "?z_hl" (is "\\A x : ?z_ho(x)")
+     by (unfold z_Hl_z_Hh, fact z_Hh)
+     have z_Hp: "?z_ho(a_CONSTANTunde_xunde_a)"
+     by (rule zenon_all_0 [of "?z_ho" "a_CONSTANTunde_xunde_a", OF z_Hl])
+     show FALSE
+     proof (rule zenon_imply [OF z_Hp])
+      assume z_Hq:"(~?z_ha)"
+      show FALSE
+      by (rule notE [OF z_Hq z_Ha])
+     next
+      assume z_Hg:"?z_hg"
+      show FALSE
+      by (rule notE [OF z_Hc z_Hg])
+     qed
+    qed
+---*)

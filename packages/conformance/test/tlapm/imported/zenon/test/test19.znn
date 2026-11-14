@@ -1,0 +1,177 @@
+(*---
+description: Zenon's own test zenon/test/test19.znn, which Zenon must prove.
+ref: zenon/test/test19.znn
+features:
+  - zenon-test
+outcome: unsat
+---*)
+;  Copyright 2006 INRIA
+;  $Id: test19.znn,v 1.3 2006-03-01 14:39:03 doligez Exp $
+
+# trivial (Pierre Weis)
+$goal (=> (/\ (/\ (=> A B) (=> B C)) (=> C A))
+          (/\ (/\ (<=> A B) (<=> B C)) (<=> A C)))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~((((A=>B)&(B=>C))&(C=>A))=>(((A<=>B)&(B<=>C))&(A<=>C))))" (is "~(?z_hc=>?z_hk)")
+     have z_Hc: "?z_hc" (is "?z_hd&?z_hj")
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hp: "(~?z_hk)" (is "~(?z_hl&?z_ho)")
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hd: "?z_hd" (is "?z_he&?z_hh")
+     by (rule zenon_and_0 [OF z_Hc])
+     have z_Hj: "?z_hj"
+     by (rule zenon_and_1 [OF z_Hc])
+     have z_He: "?z_he"
+     by (rule zenon_and_0 [OF z_Hd])
+     have z_Hh: "?z_hh"
+     by (rule zenon_and_1 [OF z_Hd])
+     show FALSE
+     proof (rule zenon_imply [OF z_He])
+      assume z_Hq:"(~A)"
+      show FALSE
+      proof (rule zenon_imply [OF z_Hh])
+       assume z_Hr:"(~B)"
+       show FALSE
+       proof (rule zenon_imply [OF z_Hj])
+        assume z_Hs:"(~C)"
+        show FALSE
+        proof (rule zenon_notand [OF z_Hp])
+         assume z_Ht:"(~?z_hl)" (is "~(?z_hm&?z_hn)")
+         show FALSE
+         proof (rule zenon_notand [OF z_Ht])
+          assume z_Hu:"(~?z_hm)"
+          show FALSE
+          proof (rule zenon_notequiv [OF z_Hu])
+           assume z_Hq:"(~A)"
+           assume z_Hg:"B"
+           show FALSE
+           by (rule notE [OF z_Hr z_Hg])
+          next
+           assume z_Hf:"A"
+           assume z_Hr:"(~B)"
+           show FALSE
+           by (rule notE [OF z_Hq z_Hf])
+          qed
+         next
+          assume z_Hv:"(~?z_hn)"
+          show FALSE
+          proof (rule zenon_notequiv [OF z_Hv])
+           assume z_Hr:"(~B)"
+           assume z_Hi:"C"
+           show FALSE
+           by (rule notE [OF z_Hs z_Hi])
+          next
+           assume z_Hg:"B"
+           assume z_Hs:"(~C)"
+           show FALSE
+           by (rule notE [OF z_Hr z_Hg])
+          qed
+         qed
+        next
+         assume z_Hw:"(~?z_ho)"
+         show FALSE
+         proof (rule zenon_notequiv [OF z_Hw])
+          assume z_Hq:"(~A)"
+          assume z_Hi:"C"
+          show FALSE
+          by (rule notE [OF z_Hs z_Hi])
+         next
+          assume z_Hf:"A"
+          assume z_Hs:"(~C)"
+          show FALSE
+          by (rule notE [OF z_Hq z_Hf])
+         qed
+        qed
+       next
+        assume z_Hf:"A"
+        show FALSE
+        by (rule notE [OF z_Hq z_Hf])
+       qed
+      next
+       assume z_Hi:"C"
+       show FALSE
+       proof (rule zenon_imply [OF z_Hj])
+        assume z_Hs:"(~C)"
+        show FALSE
+        by (rule notE [OF z_Hs z_Hi])
+       next
+        assume z_Hf:"A"
+        show FALSE
+        by (rule notE [OF z_Hq z_Hf])
+       qed
+      qed
+     next
+      assume z_Hg:"B"
+      show FALSE
+      proof (rule zenon_imply [OF z_Hh])
+       assume z_Hr:"(~B)"
+       show FALSE
+       by (rule notE [OF z_Hr z_Hg])
+      next
+       assume z_Hi:"C"
+       show FALSE
+       proof (rule zenon_imply [OF z_Hj])
+        assume z_Hs:"(~C)"
+        show FALSE
+        by (rule notE [OF z_Hs z_Hi])
+       next
+        assume z_Hf:"A"
+        show FALSE
+        proof (rule zenon_notand [OF z_Hp])
+         assume z_Ht:"(~?z_hl)" (is "~(?z_hm&?z_hn)")
+         show FALSE
+         proof (rule zenon_notand [OF z_Ht])
+          assume z_Hu:"(~?z_hm)"
+          show FALSE
+          proof (rule zenon_notequiv [OF z_Hu])
+           assume z_Hq:"(~A)"
+           assume z_Hg:"B"
+           show FALSE
+           by (rule notE [OF z_Hq z_Hf])
+          next
+           assume z_Hf:"A"
+           assume z_Hr:"(~B)"
+           show FALSE
+           by (rule notE [OF z_Hr z_Hg])
+          qed
+         next
+          assume z_Hv:"(~?z_hn)"
+          show FALSE
+          proof (rule zenon_notequiv [OF z_Hv])
+           assume z_Hr:"(~B)"
+           assume z_Hi:"C"
+           show FALSE
+           by (rule notE [OF z_Hr z_Hg])
+          next
+           assume z_Hg:"B"
+           assume z_Hs:"(~C)"
+           show FALSE
+           by (rule notE [OF z_Hs z_Hi])
+          qed
+         qed
+        next
+         assume z_Hw:"(~?z_ho)"
+         show FALSE
+         proof (rule zenon_notequiv [OF z_Hw])
+          assume z_Hq:"(~A)"
+          assume z_Hi:"C"
+          show FALSE
+          by (rule notE [OF z_Hq z_Hf])
+         next
+          assume z_Hf:"A"
+          assume z_Hs:"(~C)"
+          show FALSE
+          by (rule notE [OF z_Hs z_Hi])
+         qed
+        qed
+       qed
+      qed
+     qed
+    qed
+---*)

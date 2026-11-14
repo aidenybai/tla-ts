@@ -1,0 +1,14 @@
+(*---
+description: Zenon finds no proof of x = y for distinct constants.
+ref: zenon/prove.ml#prove
+outcome: unknown
+---*)
+;; obligation #1
+$goal (= a_CONSTANTunde_xunde_a
+a_CONSTANTunde_yunde_a)
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unknown
+---*)

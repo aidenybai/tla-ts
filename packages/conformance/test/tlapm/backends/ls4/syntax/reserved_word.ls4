@@ -1,0 +1,12 @@
+(*---
+description: ptl_to_trp rejects the reserved word skolem, so LS4 reaches no verdict.
+ref: translate/folex.mll#lexer
+outcome: unknown
+---*)
+skolem & ~skolem
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unknown
+---*)

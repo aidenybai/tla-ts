@@ -5,11 +5,18 @@ import { astArrayHash, bytesHash, combineHash, getCompositeHash, mkMix, stringHa
 import { ObjMap } from "./hashtable";
 import { Rational } from "./rational";
 import { grow, shrink } from "./array";
+import type { DatatypeDef } from "./datatype-decl-plugin";
+import { AlgebraicManager, Anum } from "./nlsat/algebraic";
+import type { Mpf } from "./mpf";
 import type { ResourceLimit } from "./rlimit";
 
 export const KIND_APP = 0;
 export const KIND_VAR = 1;
 export const KIND_QUANTIFIER = 2;
+
+export const QUANTIFIER_FORALL = 0;
+export const QUANTIFIER_EXISTS = 1;
+export const QUANTIFIER_LAMBDA = 2;
 
 export const SORT_BOOL = 0;
 export const SORT_INT = 1;
@@ -19,6 +26,17 @@ export const FAMILY_BASIC = 0;
 export const FAMILY_ARITH = 1;
 export const FAMILY_USER = 2;
 export const FAMILY_MODEL_VALUE = 3;
+export const FAMILY_FINITE_SET = 4;
+export const FAMILY_BV = 5;
+export const FAMILY_ARRAY = 6;
+export const FAMILY_DATATYPE = 7;
+export const FAMILY_FPA = 8;
+export const FAMILY_CHAR = 9;
+export const FAMILY_SEQ = 10;
+export const FAMILY_LABEL = 11;
+export const FAMILY_PB = 12;
+export const FAMILY_RECFUN = 13;
+export const FAMILY_POLY = 14;
 
 export const OP_TRUE = 0;
 export const OP_FALSE = 1;
@@ -50,12 +68,278 @@ export const OP_IS_INT = 26;
 export const OP_DIV0 = 27;
 export const OP_IDIV0 = 28;
 export const OP_MOD0 = 29;
-export const OP_UNINTERPRETED = 30;
-const OP_MODEL_VALUE = 31;
+export const OP_POWER = 30;
+export const OP_POWER0 = 31;
+export const OP_SIN = 32;
+export const OP_COS = 33;
+export const OP_TAN = 34;
+export const OP_ASIN = 35;
+export const OP_ACOS = 36;
+export const OP_ATAN = 37;
+export const OP_SINH = 38;
+export const OP_COSH = 39;
+export const OP_TANH = 40;
+export const OP_ASINH = 41;
+export const OP_ACOSH = 42;
+export const OP_ATANH = 43;
+export const OP_EXP = 44;
+export const OP_ATAN2 = 45;
+export const OP_LOG = 46;
+export const OP_PI = 47;
+export const OP_E = 48;
+export const OP_ALGEBRAIC_NUM = 49;
+export const OP_REM = 50;
+export const OP_NEG_ROOT = 51;
+export const OP_U_ASIN = 52;
+export const OP_U_ACOS = 53;
+export const OP_UNINTERPRETED = 60;
+const OP_MODEL_VALUE = 61;
+
+const BV_OP_BASE = 100;
+export const OP_BV_NUM = BV_OP_BASE;
+export const OP_BNEG = BV_OP_BASE + 3;
+export const OP_BADD = BV_OP_BASE + 4;
+export const OP_BSUB = BV_OP_BASE + 5;
+export const OP_BMUL = BV_OP_BASE + 6;
+export const OP_BSDIV = BV_OP_BASE + 7;
+export const OP_BUDIV = BV_OP_BASE + 8;
+export const OP_BSREM = BV_OP_BASE + 9;
+export const OP_BUREM = BV_OP_BASE + 10;
+export const OP_BSMOD = BV_OP_BASE + 11;
+export const OP_BSDIV0 = BV_OP_BASE + 12;
+export const OP_BUDIV0 = BV_OP_BASE + 13;
+export const OP_BSREM0 = BV_OP_BASE + 14;
+export const OP_BUREM0 = BV_OP_BASE + 15;
+export const OP_BSMOD0 = BV_OP_BASE + 16;
+export const OP_BSDIV_I = BV_OP_BASE + 17;
+export const OP_BUDIV_I = BV_OP_BASE + 18;
+export const OP_BSREM_I = BV_OP_BASE + 19;
+export const OP_BUREM_I = BV_OP_BASE + 20;
+export const OP_BSMOD_I = BV_OP_BASE + 21;
+export const OP_ULEQ = BV_OP_BASE + 22;
+export const OP_SLEQ = BV_OP_BASE + 23;
+export const OP_UGEQ = BV_OP_BASE + 24;
+export const OP_SGEQ = BV_OP_BASE + 25;
+export const OP_ULT = BV_OP_BASE + 26;
+export const OP_SLT = BV_OP_BASE + 27;
+export const OP_UGT = BV_OP_BASE + 28;
+export const OP_SGT = BV_OP_BASE + 29;
+export const OP_BAND = BV_OP_BASE + 30;
+export const OP_BOR = BV_OP_BASE + 31;
+export const OP_BNOT = BV_OP_BASE + 32;
+export const OP_BXOR = BV_OP_BASE + 33;
+export const OP_BNAND = BV_OP_BASE + 34;
+export const OP_BNOR = BV_OP_BASE + 35;
+export const OP_BXNOR = BV_OP_BASE + 36;
+export const OP_CONCAT = BV_OP_BASE + 37;
+export const OP_SIGN_EXT = BV_OP_BASE + 38;
+export const OP_ZERO_EXT = BV_OP_BASE + 39;
+export const OP_EXTRACT = BV_OP_BASE + 40;
+export const OP_REPEAT = BV_OP_BASE + 41;
+export const OP_BREDOR = BV_OP_BASE + 42;
+export const OP_BREDAND = BV_OP_BASE + 43;
+export const OP_BCOMP = BV_OP_BASE + 44;
+export const OP_BSHL = BV_OP_BASE + 45;
+export const OP_BLSHR = BV_OP_BASE + 46;
+export const OP_BASHR = BV_OP_BASE + 47;
+export const OP_ROTATE_LEFT = BV_OP_BASE + 48;
+export const OP_ROTATE_RIGHT = BV_OP_BASE + 49;
+export const OP_EXT_ROTATE_LEFT = BV_OP_BASE + 50;
+export const OP_EXT_ROTATE_RIGHT = BV_OP_BASE + 51;
+export const OP_BUMUL_NO_OVFL = BV_OP_BASE + 52;
+export const OP_BSMUL_NO_OVFL = BV_OP_BASE + 53;
+export const OP_BSMUL_NO_UDFL = BV_OP_BASE + 54;
+export const OP_BUMUL_OVFL = BV_OP_BASE + 55;
+export const OP_BSMUL_OVFL = BV_OP_BASE + 56;
+export const OP_BSDIV_OVFL = BV_OP_BASE + 57;
+export const OP_BNEG_OVFL = BV_OP_BASE + 58;
+export const OP_BUADD_OVFL = BV_OP_BASE + 59;
+export const OP_BSADD_OVFL = BV_OP_BASE + 60;
+export const OP_BUSUB_OVFL = BV_OP_BASE + 61;
+export const OP_BSSUB_OVFL = BV_OP_BASE + 62;
+export const OP_BIT2BOOL = BV_OP_BASE + 63;
+export const OP_MKBV = BV_OP_BASE + 64;
+export const OP_INT2BV = BV_OP_BASE + 65;
+export const OP_UBV2INT = BV_OP_BASE + 66;
+export const OP_SBV2INT = BV_OP_BASE + 67;
+export const OP_CARRY = BV_OP_BASE + 68;
+export const OP_XOR3 = BV_OP_BASE + 69;
+
+const ARRAY_OP_BASE = 200;
+export const OP_STORE = ARRAY_OP_BASE;
+export const OP_SELECT = ARRAY_OP_BASE + 1;
+export const OP_CONST_ARRAY = ARRAY_OP_BASE + 2;
+export const OP_ARRAY_EXT = ARRAY_OP_BASE + 3;
+export const OP_ARRAY_DEFAULT = ARRAY_OP_BASE + 4;
+export const OP_ARRAY_MAP = ARRAY_OP_BASE + 5;
+export const OP_AS_ARRAY = ARRAY_OP_BASE + 11;
+const DATATYPE_OP_BASE = 300;
+export const OP_DT_CONSTRUCTOR = DATATYPE_OP_BASE;
+export const OP_DT_RECOGNISER = DATATYPE_OP_BASE + 1;
+export const OP_DT_IS = DATATYPE_OP_BASE + 2;
+export const OP_DT_ACCESSOR = DATATYPE_OP_BASE + 3;
+export const OP_DT_UPDATE_FIELD = DATATYPE_OP_BASE + 4;
+const FPA_OP_BASE = 400;
+export const OP_FPA_RM_NEAREST_TIES_TO_EVEN = FPA_OP_BASE;
+export const OP_FPA_RM_NEAREST_TIES_TO_AWAY = FPA_OP_BASE + 1;
+export const OP_FPA_RM_TOWARD_POSITIVE = FPA_OP_BASE + 2;
+export const OP_FPA_RM_TOWARD_NEGATIVE = FPA_OP_BASE + 3;
+export const OP_FPA_RM_TOWARD_ZERO = FPA_OP_BASE + 4;
+export const OP_FPA_NUM = FPA_OP_BASE + 5;
+export const OP_FPA_PLUS_INF = FPA_OP_BASE + 6;
+export const OP_FPA_MINUS_INF = FPA_OP_BASE + 7;
+export const OP_FPA_NAN = FPA_OP_BASE + 8;
+export const OP_FPA_PLUS_ZERO = FPA_OP_BASE + 9;
+export const OP_FPA_MINUS_ZERO = FPA_OP_BASE + 10;
+export const OP_FPA_ADD = FPA_OP_BASE + 11;
+export const OP_FPA_SUB = FPA_OP_BASE + 12;
+export const OP_FPA_NEG = FPA_OP_BASE + 13;
+export const OP_FPA_MUL = FPA_OP_BASE + 14;
+export const OP_FPA_DIV = FPA_OP_BASE + 15;
+export const OP_FPA_REM = FPA_OP_BASE + 16;
+export const OP_FPA_ABS = FPA_OP_BASE + 17;
+export const OP_FPA_MIN = FPA_OP_BASE + 18;
+export const OP_FPA_MAX = FPA_OP_BASE + 19;
+export const OP_FPA_MIN_I = FPA_OP_BASE + 20;
+export const OP_FPA_MAX_I = FPA_OP_BASE + 21;
+export const OP_FPA_FMA = FPA_OP_BASE + 22;
+export const OP_FPA_SQRT = FPA_OP_BASE + 23;
+export const OP_FPA_ROUND_TO_INTEGRAL = FPA_OP_BASE + 24;
+export const OP_FPA_EQ = FPA_OP_BASE + 25;
+export const OP_FPA_LT = FPA_OP_BASE + 26;
+export const OP_FPA_GT = FPA_OP_BASE + 27;
+export const OP_FPA_LE = FPA_OP_BASE + 28;
+export const OP_FPA_GE = FPA_OP_BASE + 29;
+export const OP_FPA_IS_NAN = FPA_OP_BASE + 30;
+export const OP_FPA_IS_INF = FPA_OP_BASE + 31;
+export const OP_FPA_IS_ZERO = FPA_OP_BASE + 32;
+export const OP_FPA_IS_NORMAL = FPA_OP_BASE + 33;
+export const OP_FPA_IS_SUBNORMAL = FPA_OP_BASE + 34;
+export const OP_FPA_IS_NEGATIVE = FPA_OP_BASE + 35;
+export const OP_FPA_IS_POSITIVE = FPA_OP_BASE + 36;
+export const OP_FPA_FP = FPA_OP_BASE + 37;
+export const OP_FPA_TO_FP = FPA_OP_BASE + 38;
+export const OP_FPA_TO_FP_UNSIGNED = FPA_OP_BASE + 39;
+export const OP_FPA_TO_UBV = FPA_OP_BASE + 40;
+export const OP_FPA_TO_SBV = FPA_OP_BASE + 41;
+export const OP_FPA_TO_REAL = FPA_OP_BASE + 42;
+export const OP_FPA_TO_REAL_I = FPA_OP_BASE + 43;
+export const OP_FPA_TO_SBV_I = FPA_OP_BASE + 44;
+export const OP_FPA_TO_UBV_I = FPA_OP_BASE + 45;
+export const OP_FPA_TO_IEEE_BV = FPA_OP_BASE + 46;
+export const OP_FPA_TO_IEEE_BV_I = FPA_OP_BASE + 47;
+export const OP_FPA_BVWRAP = FPA_OP_BASE + 48;
+export const OP_FPA_BV2RM = FPA_OP_BASE + 49;
+const SEQ_OP_BASE = 500;
+export const OP_SEQ_UNIT = SEQ_OP_BASE;
+export const OP_SEQ_EMPTY = SEQ_OP_BASE + 1;
+export const OP_SEQ_CONCAT = SEQ_OP_BASE + 2;
+export const OP_SEQ_PREFIX = SEQ_OP_BASE + 3;
+export const OP_SEQ_SUFFIX = SEQ_OP_BASE + 4;
+export const OP_SEQ_CONTAINS = SEQ_OP_BASE + 5;
+export const OP_SEQ_EXTRACT = SEQ_OP_BASE + 6;
+export const OP_SEQ_REPLACE = SEQ_OP_BASE + 7;
+export const OP_SEQ_AT = SEQ_OP_BASE + 8;
+export const OP_SEQ_NTH = SEQ_OP_BASE + 9;
+export const OP_SEQ_NTH_I = SEQ_OP_BASE + 10;
+export const OP_SEQ_NTH_U = SEQ_OP_BASE + 11;
+export const OP_SEQ_LENGTH = SEQ_OP_BASE + 12;
+export const OP_SEQ_INDEX = SEQ_OP_BASE + 13;
+export const OP_SEQ_LAST_INDEX = SEQ_OP_BASE + 14;
+export const OP_SEQ_TO_RE = SEQ_OP_BASE + 15;
+export const OP_SEQ_IN_RE = SEQ_OP_BASE + 16;
+export const OP_SEQ_REPLACE_RE_ALL = SEQ_OP_BASE + 17;
+export const OP_SEQ_REPLACE_RE = SEQ_OP_BASE + 18;
+export const OP_SEQ_REPLACE_ALL = SEQ_OP_BASE + 19;
+export const OP_SEQ_MAP = SEQ_OP_BASE + 20;
+export const OP_SEQ_MAPI = SEQ_OP_BASE + 21;
+export const OP_SEQ_FOLDL = SEQ_OP_BASE + 22;
+export const OP_SEQ_FOLDLI = SEQ_OP_BASE + 23;
+export const OP_SEQ_POWER = SEQ_OP_BASE + 24;
+export const OP_RE_PLUS = SEQ_OP_BASE + 25;
+export const OP_RE_STAR = SEQ_OP_BASE + 26;
+export const OP_RE_OPTION = SEQ_OP_BASE + 27;
+export const OP_RE_RANGE = SEQ_OP_BASE + 28;
+export const OP_RE_CONCAT = SEQ_OP_BASE + 29;
+export const OP_RE_UNION = SEQ_OP_BASE + 30;
+export const OP_RE_DIFF = SEQ_OP_BASE + 31;
+export const OP_RE_INTERSECT = SEQ_OP_BASE + 32;
+export const OP_RE_XOR = SEQ_OP_BASE + 33;
+export const OP_RE_LOOP = SEQ_OP_BASE + 34;
+export const OP_RE_POWER = SEQ_OP_BASE + 35;
+export const OP_RE_COMPLEMENT = SEQ_OP_BASE + 36;
+export const OP_RE_EMPTY_SET = SEQ_OP_BASE + 37;
+export const OP_RE_FULL_SEQ_SET = SEQ_OP_BASE + 38;
+export const OP_RE_FULL_CHAR_SET = SEQ_OP_BASE + 39;
+export const OP_RE_OF_PRED = SEQ_OP_BASE + 40;
+export const OP_RE_REVERSE = SEQ_OP_BASE + 41;
+export const OP_RE_DERIVATIVE = SEQ_OP_BASE + 42;
+export const OP_STRING_CONST = SEQ_OP_BASE + 43;
+export const OP_STRING_ITOS = SEQ_OP_BASE + 44;
+export const OP_STRING_STOI = SEQ_OP_BASE + 45;
+export const OP_STRING_UBVTOS = SEQ_OP_BASE + 46;
+export const OP_STRING_SBVTOS = SEQ_OP_BASE + 47;
+export const OP_STRING_LT = SEQ_OP_BASE + 48;
+export const OP_STRING_LE = SEQ_OP_BASE + 49;
+export const OP_STRING_IS_DIGIT = SEQ_OP_BASE + 50;
+export const OP_STRING_TO_CODE = SEQ_OP_BASE + 51;
+export const OP_STRING_FROM_CODE = SEQ_OP_BASE + 52;
+export const OP_INTERNAL_STRING_FROM_CHAR = SEQ_OP_BASE + 53;
+export const OP_INTERNAL_STRING_STRREPL = SEQ_OP_BASE + 54;
+export const OP_INTERNAL_STRING_CONCAT = SEQ_OP_BASE + 55;
+export const OP_INTERNAL_STRING_LENGTH = SEQ_OP_BASE + 56;
+export const OP_INTERNAL_STRING_STRCTN = SEQ_OP_BASE + 57;
+export const OP_INTERNAL_STRING_PREFIX = SEQ_OP_BASE + 58;
+export const OP_INTERNAL_STRING_SUFFIX = SEQ_OP_BASE + 59;
+export const OP_INTERNAL_STRING_IN_REGEXP = SEQ_OP_BASE + 60;
+export const OP_INTERNAL_STRING_TO_REGEXP = SEQ_OP_BASE + 61;
+export const OP_INTERNAL_STRING_CHARAT = SEQ_OP_BASE + 62;
+export const OP_INTERNAL_STRING_SUBSTR = SEQ_OP_BASE + 63;
+export const OP_INTERNAL_STRING_STRIDOF = SEQ_OP_BASE + 64;
+export const OP_INTERNAL_STRING_POWER = SEQ_OP_BASE + 65;
+export const OP_INTERNAL_REGEXP_EMPTY = SEQ_OP_BASE + 66;
+export const OP_INTERNAL_REGEXP_FULL_CHAR = SEQ_OP_BASE + 67;
+export const OP_RE_IS_NULLABLE = SEQ_OP_BASE + 68;
+export const OP_SEQ_SKOLEM = SEQ_OP_BASE + 69;
+const CHAR_OP_BASE = 600;
+export const OP_CHAR_CONST = CHAR_OP_BASE;
+export const OP_CHAR_LE = CHAR_OP_BASE + 1;
+export const OP_CHAR_TO_INT = CHAR_OP_BASE + 2;
+export const OP_CHAR_TO_BV = CHAR_OP_BASE + 3;
+export const OP_CHAR_FROM_BV = CHAR_OP_BASE + 4;
+export const OP_CHAR_IS_DIGIT = CHAR_OP_BASE + 5;
+const LABEL_OP_BASE = 700;
+export const OP_LABEL = LABEL_OP_BASE;
+export const OP_LABEL_LIT = LABEL_OP_BASE + 1;
+const PB_OP_BASE = 800;
+export const OP_AT_MOST_K = PB_OP_BASE;
+export const OP_AT_LEAST_K = PB_OP_BASE + 1;
+export const OP_PB_LE = PB_OP_BASE + 2;
+export const OP_PB_GE = PB_OP_BASE + 3;
+export const OP_PB_EQ = PB_OP_BASE + 4;
+const RECFUN_OP_BASE = 900;
+export const OP_FUN_DEFINED = RECFUN_OP_BASE;
+export const OP_FUN_CASE_PRED = RECFUN_OP_BASE + 1;
+export const OP_NUM_ROUNDS = RECFUN_OP_BASE + 2;
+
+// The number of elements of a sort, with -1 for an infinite sort and -2 for a very big one.
+export const SORT_SIZE_INFINITE = -1n;
+export const SORT_SIZE_VERY_BIG = -2n;
+
+const UNCACHED_BV_OPS: ReadonlySet<number> = new Set([
+  OP_CONCAT,
+  OP_SIGN_EXT,
+  OP_ZERO_EXT,
+  OP_EXTRACT,
+  OP_REPEAT,
+  OP_ROTATE_LEFT,
+  OP_ROTATE_RIGHT,
+]);
 
 export type SmtSymbol = string | number;
 
-const getSymbolName = (symbol: SmtSymbol) => (typeof symbol === "number" ? `k!${symbol}` : symbol);
+export const getSymbolName = (symbol: SmtSymbol) =>
+  typeof symbol === "number" ? `k!${symbol}` : symbol;
 
 export interface FuncDecl {
   name: SmtSymbol;
@@ -65,16 +349,35 @@ export interface FuncDecl {
   range: number;
   isSkolem: boolean;
   smallId: number;
+  parameters: number[];
+}
+
+// The rhs of a definition is -1 until its body is parsed.
+export interface RecFunDef {
+  decl: number;
+  rhs: number;
+  isMacro: boolean;
+  cases: RecFunCase[];
+}
+
+export interface RecFunCase {
+  pred: number;
+  guards: number[];
+  rhs: number;
+  isImmediate: boolean;
+  def: RecFunDef;
 }
 
 interface QuantifierData {
-  isForall: boolean;
+  kind: number;
   sorts: number[];
   names: SmtSymbol[];
   body: number;
   patterns: number[];
+  noPatterns: number[];
   weight: number;
   qid: string;
+  skid?: string;
 }
 
 const BUILTIN_DECLS: [string, number, number, number][] = [
@@ -108,14 +411,50 @@ const BUILTIN_DECLS: [string, number, number, number][] = [
   ["/0", FAMILY_ARITH, OP_DIV0, SORT_REAL],
   ["div0", FAMILY_ARITH, OP_IDIV0, SORT_INT],
   ["mod0", FAMILY_ARITH, OP_MOD0, SORT_INT],
+  ["^", FAMILY_ARITH, OP_POWER, SORT_REAL],
+  ["^0", FAMILY_ARITH, OP_POWER0, SORT_REAL],
+  ["sin", FAMILY_ARITH, OP_SIN, SORT_REAL],
+  ["cos", FAMILY_ARITH, OP_COS, SORT_REAL],
+  ["tan", FAMILY_ARITH, OP_TAN, SORT_REAL],
+  ["asin", FAMILY_ARITH, OP_ASIN, SORT_REAL],
+  ["acos", FAMILY_ARITH, OP_ACOS, SORT_REAL],
+  ["atan", FAMILY_ARITH, OP_ATAN, SORT_REAL],
+  ["sinh", FAMILY_ARITH, OP_SINH, SORT_REAL],
+  ["cosh", FAMILY_ARITH, OP_COSH, SORT_REAL],
+  ["tanh", FAMILY_ARITH, OP_TANH, SORT_REAL],
+  ["asinh", FAMILY_ARITH, OP_ASINH, SORT_REAL],
+  ["acosh", FAMILY_ARITH, OP_ACOSH, SORT_REAL],
+  ["atanh", FAMILY_ARITH, OP_ATANH, SORT_REAL],
+  ["exp", FAMILY_ARITH, OP_EXP, SORT_REAL],
+  ["atan2", FAMILY_ARITH, OP_ATAN2, SORT_REAL],
+  ["log", FAMILY_ARITH, OP_LOG, SORT_REAL],
+  ["pi", FAMILY_ARITH, OP_PI, SORT_REAL],
+  ["euler", FAMILY_ARITH, OP_E, SORT_REAL],
+  ["RootObject", FAMILY_ARITH, OP_ALGEBRAIC_NUM, SORT_REAL],
+  ["rem", FAMILY_ARITH, OP_REM, SORT_INT],
+  ["neg-root", FAMILY_ARITH, OP_NEG_ROOT, SORT_REAL],
+  ["asin-u", FAMILY_ARITH, OP_U_ASIN, SORT_REAL],
+  ["acos-u", FAMILY_ARITH, OP_U_ACOS, SORT_REAL],
 ];
 
 const Z3_BASIC_FAMILY = 0;
+const Z3_LABEL_FAMILY = 1;
 const Z3_PATTERN_FAMILY = 2;
 const Z3_MODEL_VALUE_FAMILY = 3;
 const Z3_USER_SORT_FAMILY = 4;
 const Z3_ARITH_FAMILY = 5;
+const Z3_BV_FAMILY = 8;
+const Z3_ARRAY_FAMILY = 9;
+const Z3_DATATYPE_FAMILY = 7;
 const Z3_RECFUN_FAMILY = 10;
+const Z3_CHAR_FAMILY = 11;
+const Z3_SEQ_FAMILY = 12;
+const Z3_PB_FAMILY = 13;
+const Z3_FPA_FAMILY = 14;
+const Z3_SEQ_SORT = 0;
+const Z3_RE_SORT = 1;
+const Z3_FLOATING_POINT_SORT = 0;
+const Z3_ROUNDING_MODE_SORT = 1;
 const Z3_NULL = 0xffffffff;
 const Z3_BUILTINS = new Map<number, [string, number, number]>([
   [OP_TRUE, ["true", 0, 0]],
@@ -138,6 +477,7 @@ const Z3_BUILTINS = new Map<number, [string, number, number]>([
   [OP_MUL, ["*", 9, 2]],
   [OP_IDIV, ["div", 11, 2]],
   [OP_MOD, ["mod", 16, 2]],
+  [OP_REM, ["rem", 15, 2]],
   [OP_ABS, ["abs", 21, 1]],
   [OP_PATTERN, ["pattern", 0, -1]],
   [OP_DIV, ["/", 10, 2]],
@@ -147,6 +487,28 @@ const Z3_BUILTINS = new Map<number, [string, number, number]>([
   [OP_DIV0, ["/0", 12, 2]],
   [OP_IDIV0, ["div0", 13, 2]],
   [OP_MOD0, ["mod0", 17, 2]],
+  [OP_POWER, ["^", 22, 2]],
+  [OP_POWER0, ["^0", 23, 2]],
+  [OP_SIN, ["sin", 24, 1]],
+  [OP_COS, ["cos", 25, 1]],
+  [OP_TAN, ["tan", 26, 1]],
+  [OP_ASIN, ["asin", 27, 1]],
+  [OP_ACOS, ["acos", 28, 1]],
+  [OP_ATAN, ["atan", 29, 1]],
+  [OP_SINH, ["sinh", 30, 1]],
+  [OP_COSH, ["cosh", 31, 1]],
+  [OP_TANH, ["tanh", 32, 1]],
+  [OP_ASINH, ["asinh", 33, 1]],
+  [OP_ACOSH, ["acosh", 34, 1]],
+  [OP_ATANH, ["atanh", 35, 1]],
+  [OP_EXP, ["exp", 36, 1]],
+  [OP_ATAN2, ["atan2", 37, 2]],
+  [OP_LOG, ["log", 38, 1]],
+  [OP_PI, ["pi", 43, 0]],
+  [OP_E, ["euler", 44, 0]],
+  [OP_NEG_ROOT, ["neg-root", 45, 2]],
+  [OP_U_ASIN, ["asin-u", 46, 1]],
+  [OP_U_ACOS, ["acos-u", 47, 1]],
 ]);
 
 const Z3_SMALL_IDS = new Map([
@@ -165,6 +527,7 @@ const Z3_SMALL_IDS = new Map([
   [OP_SUB, 37],
   [OP_MUL, 38],
   [OP_IDIV, 39],
+  [OP_REM, 40],
   [OP_MOD, 41],
   [OP_UMINUS, 42],
   [OP_ABS, 50],
@@ -172,6 +535,27 @@ const Z3_SMALL_IDS = new Map([
   [OP_TO_REAL, 43],
   [OP_TO_INT, 45],
   [OP_IS_INT, 47],
+  [OP_POWER, 48],
+  [OP_SIN, 52],
+  [OP_COS, 53],
+  [OP_TAN, 54],
+  [OP_ASIN, 55],
+  [OP_ACOS, 56],
+  [OP_ATAN, 57],
+  [OP_SINH, 58],
+  [OP_COSH, 59],
+  [OP_TANH, 60],
+  [OP_ASINH, 61],
+  [OP_ACOSH, 62],
+  [OP_ATANH, 63],
+  [OP_EXP, 64],
+  [OP_ATAN2, 65],
+  [OP_LOG, 66],
+  [OP_PI, 67],
+  [OP_E, 68],
+  [OP_NEG_ROOT, 69],
+  [OP_U_ASIN, 70],
+  [OP_U_ACOS, 71],
 ]);
 
 const FIRST_DECLARED_SMALL_ID = 143;
@@ -180,7 +564,9 @@ const FIRST_FREE_ID = 22;
 const MAX_SMALL_NUM_TO_CACHE = 16;
 const NUM_FINITE_SET_PLUGIN_SORTS = 7;
 
-const getSymbolHash = (symbol: SmtSymbol) =>
+const PB_OP_NAMES = ["at-most", "at-least", "pble", "pbge", "pbeq"];
+
+export const getSymbolHash = (symbol: SmtSymbol) =>
   typeof symbol === "number" ? symbol : stringHash(symbol, 17);
 
 export const isArithSort = (sort: number) => sort === SORT_INT || sort === SORT_REAL;
@@ -201,11 +587,32 @@ const SIGNATURE_ITE = 1;
 const SIGNATURE_DIV0 = 2;
 const SIGNATURE_MODEL_VALUE = 3;
 const SIGNATURE_NUMERAL = 4;
+const SIGNATURE_ALGEBRAIC = 5;
+
+interface AlgebraicNumeral {
+  value: Anum;
+  id: number;
+}
 
 interface SignatureDecl {
   smallId: number;
   refCount: number;
 }
+
+const hasOwnDeclHash = (family: number) =>
+  family === FAMILY_USER ||
+  family === FAMILY_BV ||
+  family === FAMILY_ARRAY ||
+  family === FAMILY_DATATYPE ||
+  family === FAMILY_FPA ||
+  family === FAMILY_CHAR ||
+  family === FAMILY_SEQ ||
+  family === FAMILY_LABEL ||
+  family === FAMILY_PB ||
+  family === FAMILY_RECFUN;
+
+// The declarations that Z3 makes once and counts references to, rather than on each use.
+const isDeclaredFamily = (family: number) => family === FAMILY_USER || family === FAMILY_RECFUN;
 
 export class AstManager {
   private numNodes = 0;
@@ -216,15 +623,62 @@ export class AstManager {
   sorts = new Int32Array(1024);
   values = new Int32Array(1024);
   private numeralValues: Rational[] = [];
+  // An irrational numeral is never shared: each takes a fresh id, which its deletion frees.
+  private algebraicNumerals: AlgebraicNumeral[] = [];
+  private freeAlgebraicIds: number[] = [];
+  private nextAlgebraicId = 0;
+  private algebraicManager: AlgebraicManager | undefined;
   private intNumerals = new Map<bigint, number>();
   freeVarBounds = new Int32Array(1024);
   hasQuantifierFlags = new Uint8Array(1024);
+  hasLabelFlags = new Uint8Array(1024);
   depths = new Int32Array(1024);
   hashes = new Uint32Array(1024);
   quantifiers = new Map<number, QuantifierData>();
   readonly flatLiterals = new FlatLiterals(this);
   funcDecls: FuncDecl[] = [];
   sortNames: string[] = ["Bool", "Int", "Real"];
+  private sortFamilies: number[] = [FAMILY_BASIC, FAMILY_ARITH, FAMILY_ARITH];
+  private sortWidths: number[] = [0, 0, 0];
+  private sortSbits: number[] = [0, 0, 0];
+  private sortParameters: number[][] = [[], [], []];
+  private sortSizes: bigint[] = [2n, SORT_SIZE_INFINITE, SORT_SIZE_INFINITE];
+  private arraySorts = new Map<string, number>();
+  private arrayDecls = new Map<string, number>();
+  readonly datatypeDefs = new Map<string, DatatypeDef>();
+  hasNestedRecDatatype = false;
+  datatypeConstructors: number[][] = [];
+  constructorAccessors: number[][] = [];
+  constructorRecognizers: number[] = [];
+  nonRecConstructors: number[] = [];
+  nonRecDepths: number[] = [];
+  private parametricSorts = new Map<string, number>();
+  private datatypeDecls = new Map<string, number>();
+  private userSortKinds = new Map<SmtSymbol, number>();
+  private sortSmallIds: number[] = [];
+  private typeParameters: number[] = [];
+  private numUserSorts = 0;
+  private bvSorts = new Map<number, number>();
+  private bvDecls = new Map<string, number>();
+  private fpSorts = new Map<string, number>();
+  private rmSort = -1;
+  private fpaDecls = new Map<string, number>();
+  private labelDecls = new Map<string, number>();
+  private pbDecls = new Map<string, number>();
+  // The parameters of a pseudo-Boolean declaration: its bound, then a coefficient per argument.
+  private pbParameters = new Map<number, Rational[]>();
+  // The names of the labels, which the parameters of a label declaration index.
+  private labelNames: string[] = [];
+  private labelNameIds = new Map<string, number>();
+  private fpValues: Mpf[] = [];
+  private fpValueIds = new Map<string, number>();
+  private charSort = -1;
+  private stringSort = -1;
+  private reglanSort = -1;
+  private seqSorts = new Map<string, number>();
+  private seqDecls = new Map<string, number>();
+  private stringValues: number[][] = [];
+  private stringValueIds = new Map<string, number>();
   private sortHashes = [
     combineHash(getSymbolHash("Bool"), getInfoHash(Z3_BASIC_FAMILY, 0, [])),
     combineHash(getSymbolHash("Int"), getInfoHash(Z3_ARITH_FAMILY, 1, [])),
@@ -245,6 +699,11 @@ export class AstManager {
   private signatureDecls = new Map<number | string, SignatureDecl>();
   private declRefCounts: number[] = [];
   readonly macros = new ObjMap<number>((decl) => this.declHashes[decl]);
+  // The recfun plugin's definitions by declaration, and their cases by case predicate.
+  readonly recFunDefs = new ObjMap<RecFunDef>((decl) => this.declHashes[decl]);
+  readonly recFunCases = new Map<number, RecFunCase>();
+  hasRecDefs = false;
+  private numRoundsDecls = new Map<number, number>();
   private deletedDecls = new Set<number>();
   private freshId = 0;
   ids = new Int32Array(1024);
@@ -257,9 +716,17 @@ export class AstManager {
   private argBuffer: number[] = [];
   private smallInts: number[] = [];
   private smallReals: number[] = [];
-  private isFiniteSetPluginInitialized = false;
+  // The finite set plugin makes the only type variables, so this is set once it is initialized.
+  hasTypeVars = false;
   readonly trueExpr: number;
   readonly falseExpr: number;
+  readonly piExpr: number;
+  readonly eulerExpr: number;
+  isHiDiv0 = true;
+  maxChar = 196607;
+  charBits = 18;
+  isSeqUsed = false;
+  isReUsed = false;
 
   constructor(readonly limit: ResourceLimit) {
     for (const builtin of BUILTIN_DECLS)
@@ -271,11 +738,16 @@ export class AstManager {
         range: builtin[3],
         isSkolem: false,
         smallId: Z3_SMALL_IDS.get(builtin[2]) ?? -1,
+        parameters: [],
       });
     this.trueExpr = this.mkApp(OP_TRUE, [], SORT_BOOL);
     this.falseExpr = this.mkApp(OP_FALSE, [], SORT_BOOL);
     this.incRef(this.trueExpr);
     this.incRef(this.falseExpr);
+    this.piExpr = this.mkApp(OP_PI, [], SORT_REAL);
+    this.eulerExpr = this.mkApp(OP_E, [], SORT_REAL);
+    this.incRef(this.piExpr);
+    this.incRef(this.eulerExpr);
     this.nextId = FIRST_FREE_ID;
   }
 
@@ -284,7 +756,7 @@ export class AstManager {
   }
 
   getNumAsts() {
-    return this.numLive + FIRST_FREE_ID - 2 + this.numDecls;
+    return this.numLive + FIRST_FREE_ID - 4 + this.numDecls;
   }
 
   private getSignatureDecl(key: number | string) {
@@ -300,8 +772,8 @@ export class AstManager {
   }
 
   initFiniteSetPlugin() {
-    if (this.isFiniteSetPluginInitialized) return;
-    this.isFiniteSetPluginInitialized = true;
+    if (this.hasTypeVars) return;
+    this.hasTypeVars = true;
     for (let index = 0; index < NUM_FINITE_SET_PLUGIN_SORTS; index++) this.mkSmallId();
     this.freeSmallIds.push(this.mkSmallId());
     this.numDecls--;
@@ -323,21 +795,90 @@ export class AstManager {
       range: this.sorts[expr],
       isSkolem: false,
       smallId: this.mkSmallId(),
+      parameters: [],
     });
     this.declRefCounts[decl] = 1;
     this.mkSmallId();
     this.macros.set(decl, expr);
   }
 
+  // recfun::def: the declaration of a defined function, which the definition holds.
+  mkRecFuncDecl(name: SmtSymbol, domain: number[], range: number) {
+    const decl = this.mkRecFunDecl(OP_FUN_DEFINED, name, [0], domain, range);
+    this.declRefCounts[decl] = 1;
+    this.recFunDefs.set(decl, { decl, rhs: -1, isMacro: false, cases: [] });
+    return decl;
+  }
+
+  // case_def: the predicate of a case, which the case holds.
+  mkRecFunCasePredDecl(def: number, index: number) {
+    const decl = this.mkRecFunDecl(
+      OP_FUN_CASE_PRED,
+      "case-def",
+      [index, def],
+      this.funcDecls[def].domain,
+      SORT_BOOL,
+    );
+    this.declRefCounts[decl] = 1;
+    return decl;
+  }
+
+  // mk_num_rounds_pred: Z3 makes the declaration again once its last application is deleted.
+  mkNumRoundsPred(round: number) {
+    let decl = this.numRoundsDecls.get(round);
+    if (decl === undefined) {
+      decl = this.mkRecFunDecl(OP_NUM_ROUNDS, "recfun-num-rounds", [round], [], SORT_BOOL);
+      this.declRefCounts[decl] = 0;
+      this.numRoundsDecls.set(round, decl);
+    }
+    return this.mkApp(decl, [], SORT_BOOL);
+  }
+
+  private mkRecFunDecl(
+    op: number,
+    name: SmtSymbol,
+    parameters: number[],
+    domain: number[],
+    range: number,
+  ) {
+    const decl = this.funcDecls.length;
+    this.declHashes[decl] = this.getFuncDeclHash(
+      name,
+      domain,
+      range,
+      getInfoHash(
+        Z3_RECFUN_FAMILY,
+        op - RECFUN_OP_BASE,
+        op === OP_FUN_CASE_PRED ? [parameters[0], this.declHashes[parameters[1]]] : parameters,
+      ),
+    );
+    this.funcDecls.push({
+      name,
+      family: FAMILY_RECFUN,
+      op,
+      domain,
+      range,
+      isSkolem: false,
+      smallId: this.mkSmallId(),
+      parameters,
+    });
+    return decl;
+  }
+
   private getSignature(expr: number) {
     const decl = this.decls[expr];
-    if (decl === OP_NUM) return 8 * this.values[expr] + SIGNATURE_NUMERAL;
+    if (decl === OP_NUM || this.funcDecls[decl].op === OP_BV_NUM)
+      return 8 * this.values[expr] + SIGNATURE_NUMERAL;
     if (decl === OP_EQ) return 8 * this.sorts[this.getArg(expr, 0)] + SIGNATURE_EQ;
     if (decl === OP_ITE) return 8 * this.sorts[expr] + SIGNATURE_ITE;
     if (decl === OP_DIV0 || decl === OP_IDIV0 || decl === OP_MOD0) return 8 * decl + SIGNATURE_DIV0;
+    if (decl === OP_POWER0)
+      return 8 * (decl + 64 * this.sorts[this.getArg(expr, 0)]) + SIGNATURE_DIV0;
+    if (decl === OP_ALGEBRAIC_NUM) return 8 * this.getAlgebraicId(expr) + SIGNATURE_ALGEBRAIC;
     if (decl === OP_DISTINCT || decl === OP_PATTERN)
       return `${decl}:${this.mapArgs(expr, (arg) => this.sorts[arg]).join(",")}`;
     if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) return 8 * decl + SIGNATURE_MODEL_VALUE;
+    if (UNCACHED_BV_OPS.has(this.funcDecls[decl].op)) return `bv${decl}`;
     return null;
   }
 
@@ -350,7 +891,7 @@ export class AstManager {
 
   private holdDecl(expr: number) {
     const decl = this.decls[expr];
-    if (this.funcDecls[decl].family === FAMILY_USER) {
+    if (isDeclaredFamily(this.funcDecls[decl].family)) {
       this.incDeclRef(decl);
       return;
     }
@@ -369,7 +910,7 @@ export class AstManager {
 
   private releaseDecl(expr: number) {
     const decl = this.decls[expr];
-    if (this.funcDecls[decl].family === FAMILY_USER) {
+    if (isDeclaredFamily(this.funcDecls[decl].family)) {
       this.declRefCounts[decl]--;
       if (this.declRefCounts[decl] > 0) return -1;
       this.deletedDecls.add(decl);
@@ -476,6 +1017,8 @@ export class AstManager {
       this.deleteNode(node);
       if (this.kinds[node] === KIND_APP) {
         const smallId = this.releaseDecl(node);
+        if (this.decls[node] === OP_ALGEBRAIC_NUM)
+          this.freeAlgebraicIds.push(this.getAlgebraicId(node));
         if (smallId !== -1) worklist.push(-1 - smallId);
       }
       if (this.kinds[node] !== KIND_QUANTIFIER) {
@@ -487,6 +1030,7 @@ export class AstManager {
       const data = this.getQuantifier(node);
       this.releaseChild(data.body, worklist);
       for (const pattern of data.patterns) this.releaseChild(pattern, worklist);
+      for (const noPattern of data.noPatterns) this.releaseChild(noPattern, worklist);
     }
   }
 
@@ -513,6 +1057,7 @@ export class AstManager {
       const data = this.getQuantifier(expr);
       this.incRef(this.revive(data.body));
       for (const pattern of data.patterns) this.incRef(this.revive(pattern));
+      for (const noPattern of data.noPatterns) this.incRef(this.revive(noPattern));
     }
     if (this.kinds[expr] === KIND_APP) this.holdDecl(expr);
     if (this.temporariesMark === -1) return;
@@ -559,20 +1104,653 @@ export class AstManager {
   }
 
   private revive(expr: number) {
-    if (this.ids[expr] === -1) this.registerNode(expr);
+    if (this.ids[expr] !== -1) return expr;
+    if (this.decls[expr] === OP_ALGEBRAIC_NUM)
+      this.algebraicNumerals[this.values[expr]].id = this.mkAlgebraicId();
+    this.registerNode(expr);
     return expr;
   }
 
-  mkSort(name: string) {
+  mkSort(name: SmtSymbol) {
     this.sortHashes.push(
       combineHash(
         getSymbolHash(name),
-        getInfoHash(Z3_USER_SORT_FAMILY, this.sortNames.length - 3, []),
+        getInfoHash(Z3_USER_SORT_FAMILY, this.getUserSortKind(name), []),
       ),
     );
-    this.sortNames.push(name);
+    this.sortNames.push(getSymbolName(name));
+    this.sortFamilies.push(FAMILY_USER);
+    this.sortWidths.push(0);
+    this.sortSbits.push(0);
+    this.sortParameters.push([]);
+    this.sortSizes.push(SORT_SIZE_INFINITE);
     this.mkSmallId();
     return this.sortNames.length - 1;
+  }
+
+  mkBvSort(width: number) {
+    const existing = this.bvSorts.get(width);
+    if (existing !== undefined) return existing;
+    this.sortHashes.push(combineHash(getSymbolHash("bv"), getInfoHash(Z3_BV_FAMILY, 0, [width])));
+    this.sortNames.push("bv");
+    this.sortFamilies.push(FAMILY_BV);
+    this.sortWidths.push(width);
+    this.sortSbits.push(0);
+    this.sortParameters.push([]);
+    this.sortSizes.push(width < 64 ? 1n << BigInt(width) : SORT_SIZE_VERY_BIG);
+    // bv_decl_plugin makes the sorts up to 64 bits when Z3 starts.
+    if (width > 64) this.mkSmallId();
+    const sort = this.sortNames.length - 1;
+    this.bvSorts.set(width, sort);
+    return sort;
+  }
+
+  mkFpSort(ebits: number, sbits: number) {
+    const key = `${ebits}:${sbits}`;
+    const existing = this.fpSorts.get(key);
+    if (existing !== undefined) return existing;
+    this.sortHashes.push(
+      combineHash(
+        getSymbolHash("FloatingPoint"),
+        getInfoHash(Z3_FPA_FAMILY, Z3_FLOATING_POINT_SORT, [ebits, sbits]),
+      ),
+    );
+    this.sortNames.push("FloatingPoint");
+    this.sortFamilies.push(FAMILY_FPA);
+    this.sortWidths.push(ebits);
+    this.sortSbits.push(sbits);
+    this.sortParameters.push([]);
+    this.sortSizes.push(SORT_SIZE_VERY_BIG);
+    this.mkSmallId();
+    const sort = this.sortNames.length - 1;
+    this.fpSorts.set(key, sort);
+    return sort;
+  }
+
+  mkRmSort() {
+    if (this.rmSort !== -1) return this.rmSort;
+    this.sortHashes.push(
+      combineHash(
+        getSymbolHash("RoundingMode"),
+        getInfoHash(Z3_FPA_FAMILY, Z3_ROUNDING_MODE_SORT, []),
+      ),
+    );
+    this.sortNames.push("RoundingMode");
+    this.sortFamilies.push(FAMILY_FPA);
+    this.sortWidths.push(0);
+    this.sortSbits.push(0);
+    this.sortParameters.push([]);
+    this.sortSizes.push(SORT_SIZE_INFINITE);
+    this.mkSmallId();
+    this.rmSort = this.sortNames.length - 1;
+    return this.rmSort;
+  }
+
+  isFpSort(sort: number) {
+    return this.sortFamilies[sort] === FAMILY_FPA && sort !== this.rmSort;
+  }
+
+  isRmSort(sort: number) {
+    return sort === this.rmSort;
+  }
+
+  getEbits(sort: number) {
+    return this.sortWidths[sort];
+  }
+
+  getSbits(sort: number) {
+    return this.sortSbits[sort];
+  }
+
+  mkFpaDecl(op: number, name: string, parameters: number[], domain: number[], range: number) {
+    const key = `${op}:${name}:${parameters.join(",")}:${domain.join(",")}:${range}`;
+    const existing = this.fpaDecls.get(key);
+    if (existing !== undefined) return existing;
+    const decl = this.funcDecls.length;
+    this.declHashes[decl] = this.getFuncDeclHash(
+      name,
+      domain,
+      range,
+      getInfoHash(Z3_FPA_FAMILY, op - FPA_OP_BASE, parameters),
+    );
+    this.funcDecls.push({
+      name,
+      family: FAMILY_FPA,
+      op,
+      domain,
+      range,
+      isSkolem: false,
+      smallId: this.mkSmallId(),
+      parameters,
+    });
+    this.fpaDecls.set(key, decl);
+    return decl;
+  }
+
+  // pb_decl_plugin::mk_func_decl: a parameter that fits in 32 bits is an integer, else a rational.
+  mkPbDecl(op: number, parameters: Rational[], domain: number[]) {
+    const key = `${op}:${parameters.join(",")}:${domain.join(",")}`;
+    const existing = this.pbDecls.get(key);
+    if (existing !== undefined) return existing;
+    const decl = this.funcDecls.length;
+    const name = PB_OP_NAMES[op - PB_OP_BASE];
+    this.declHashes[decl] = this.getFuncDeclHash(
+      name,
+      domain,
+      SORT_BOOL,
+      getInfoHash(
+        Z3_PB_FAMILY,
+        op - PB_OP_BASE,
+        parameters.map((parameter) =>
+          parameter.isInt() && parameter.num >= -(2n ** 31n) && parameter.num < 2n ** 31n
+            ? Number(BigInt.asUintN(32, parameter.num))
+            : (getIntegerHash(parameter.num) + 3 * getIntegerHash(parameter.den)) >>> 0,
+        ),
+      ),
+    );
+    this.funcDecls.push({
+      name,
+      family: FAMILY_PB,
+      op,
+      domain,
+      range: SORT_BOOL,
+      isSkolem: false,
+      smallId: this.mkSmallId(),
+      parameters: [],
+    });
+    this.pbParameters.set(decl, parameters);
+    this.pbDecls.set(key, decl);
+    return decl;
+  }
+
+  getPbParameters(decl: number) {
+    return this.pbParameters.get(decl) as Rational[];
+  }
+
+  mkFpValueId(value: Mpf) {
+    const key = `${value.ebits}:${value.sbits}:${value.sign}:${value.exponent}:${value.significand}`;
+    const existing = this.fpValueIds.get(key);
+    if (existing !== undefined) return existing;
+    this.fpValues.push({ ...value });
+    this.fpValueIds.set(key, this.fpValues.length - 1);
+    return this.fpValues.length - 1;
+  }
+
+  getFpValue(id: number): Readonly<Mpf> {
+    return this.fpValues[id];
+  }
+
+  private addSort(name: string, family: number, parameters: number[], hash: number) {
+    this.sortHashes.push(hash);
+    this.sortNames.push(name);
+    this.sortFamilies.push(family);
+    this.sortWidths.push(0);
+    this.sortSbits.push(0);
+    this.sortParameters.push(parameters);
+    this.sortSizes.push(SORT_SIZE_INFINITE);
+    return this.sortNames.length - 1;
+  }
+
+  // Z3 makes the Char, String and RegLan sorts at startup, so they take no small id.
+  mkCharSort() {
+    if (this.charSort === -1)
+      this.charSort = this.addSort(
+        "Unicode",
+        FAMILY_CHAR,
+        [],
+        combineHash(getSymbolHash("Unicode"), getInfoHash(Z3_CHAR_FAMILY, 0, [])),
+      );
+    return this.charSort;
+  }
+
+  // String keeps its element out of its parameters, since it prints as a plain name.
+  mkStringSort() {
+    if (this.stringSort !== -1) return this.stringSort;
+    const charHash = this.sortHashes[this.mkCharSort()];
+    this.stringSort = this.addSort(
+      "String",
+      FAMILY_SEQ,
+      [],
+      combineHash(getSymbolHash("String"), getInfoHash(Z3_SEQ_FAMILY, Z3_SEQ_SORT, [charHash])),
+    );
+    return this.stringSort;
+  }
+
+  mkSeqSort(element: number) {
+    if (element === this.mkCharSort()) return this.mkStringSort();
+    const key = `s${element}`;
+    const existing = this.seqSorts.get(key);
+    if (existing !== undefined) return existing;
+    const sort = this.addSort(
+      "Seq",
+      FAMILY_SEQ,
+      [element],
+      combineHash(
+        getSymbolHash("Seq"),
+        getInfoHash(Z3_SEQ_FAMILY, Z3_SEQ_SORT, [this.sortHashes[element]]),
+      ),
+    );
+    this.mkSmallId();
+    this.seqSorts.set(key, sort);
+    return sort;
+  }
+
+  mkReSort(seq: number) {
+    const isReglan = seq === this.mkStringSort();
+    if (isReglan && this.reglanSort !== -1) return this.reglanSort;
+    const key = `r${seq}`;
+    const existing = this.seqSorts.get(key);
+    if (existing !== undefined) return existing;
+    const sort = this.addSort(
+      "RegEx",
+      FAMILY_SEQ,
+      [seq],
+      combineHash(
+        getSymbolHash("RegEx"),
+        getInfoHash(Z3_SEQ_FAMILY, Z3_RE_SORT, [this.sortHashes[seq]]),
+      ),
+    );
+    if (isReglan) this.reglanSort = sort;
+    else {
+      this.mkSmallId();
+      this.seqSorts.set(key, sort);
+    }
+    return sort;
+  }
+
+  isCharSort(sort: number) {
+    return sort === this.charSort;
+  }
+
+  isStringSort(sort: number) {
+    return sort === this.stringSort;
+  }
+
+  isSeqSort(sort: number) {
+    return this.sortFamilies[sort] === FAMILY_SEQ && this.sortNames[sort] !== "RegEx";
+  }
+
+  isReSort(sort: number) {
+    return this.sortFamilies[sort] === FAMILY_SEQ && this.sortNames[sort] === "RegEx";
+  }
+
+  getSeqElementSort(sort: number) {
+    return sort === this.stringSort ? this.charSort : this.sortParameters[sort][0];
+  }
+
+  getReSeqSort(sort: number) {
+    return this.sortParameters[sort][0];
+  }
+
+  mkSeqDecl(
+    op: number,
+    name: string,
+    parameters: number[],
+    parameterHashes: number[],
+    domain: number[],
+    range: number,
+  ) {
+    const key = `${op}:${name}:${parameters.join(",")}:${domain.join(",")}:${range}`;
+    const existing = this.seqDecls.get(key);
+    if (existing !== undefined) return existing;
+    const isChar = op >= CHAR_OP_BASE;
+    const decl = this.funcDecls.length;
+    this.declHashes[decl] = this.getFuncDeclHash(
+      name,
+      domain,
+      range,
+      getInfoHash(
+        isChar ? Z3_CHAR_FAMILY : Z3_SEQ_FAMILY,
+        op - (isChar ? CHAR_OP_BASE : SEQ_OP_BASE),
+        parameterHashes,
+      ),
+    );
+    this.funcDecls.push({
+      name,
+      family: isChar ? FAMILY_CHAR : FAMILY_SEQ,
+      op,
+      domain,
+      range,
+      isSkolem: false,
+      smallId: this.mkSmallId(),
+      parameters,
+    });
+    this.seqDecls.set(key, decl);
+    return decl;
+  }
+
+  mkStringValueId(chars: readonly number[]) {
+    const key = chars.join(",");
+    const existing = this.stringValueIds.get(key);
+    if (existing !== undefined) return existing;
+    this.stringValues.push([...chars]);
+    this.stringValueIds.set(key, this.stringValues.length - 1);
+    return this.stringValues.length - 1;
+  }
+
+  getStringHash(id: number) {
+    return bytesHash(new Uint8Array(Uint32Array.from(this.stringValues[id]).buffer), 23);
+  }
+
+  getSortHash(sort: number) {
+    return this.sortHashes[sort];
+  }
+
+  mkString(chars: readonly number[]) {
+    const id = this.mkStringValueId(chars);
+    const sort = this.mkStringSort();
+    const decl = this.mkSeqDecl(
+      OP_STRING_CONST,
+      "String",
+      [id],
+      [this.getStringHash(id)],
+      [],
+      sort,
+    );
+    return this.mkApp(decl, [], sort);
+  }
+
+  getString(expr: number): readonly number[] | undefined {
+    if (this.getOp(expr) !== OP_STRING_CONST) return undefined;
+    return this.stringValues[this.funcDecls[this.decls[expr]].parameters[0]];
+  }
+
+  mkChar(code: number) {
+    const sort = this.mkCharSort();
+    return this.mkApp(this.mkSeqDecl(OP_CHAR_CONST, "Char", [code], [code], [], sort), [], sort);
+  }
+
+  getChar(expr: number) {
+    return this.getOp(expr) === OP_CHAR_CONST ? this.funcDecls[this.decls[expr]].parameters[0] : -1;
+  }
+
+  mkArraySort(parameters: number[]) {
+    const key = parameters.join(",");
+    const existing = this.arraySorts.get(key);
+    if (existing !== undefined) return existing;
+    this.sortHashes.push(
+      combineHash(
+        getSymbolHash("Array"),
+        getInfoHash(
+          Z3_ARRAY_FAMILY,
+          0,
+          parameters.map((parameter) => this.sortHashes[parameter]),
+        ),
+      ),
+    );
+    this.sortNames.push("Array");
+    this.sortFamilies.push(FAMILY_ARRAY);
+    this.sortWidths.push(0);
+    this.sortSbits.push(0);
+    this.sortParameters.push(parameters);
+    this.sortSizes.push(this.getArraySortSize(parameters));
+    this.mkSmallId();
+    const sort = this.sortNames.length - 1;
+    this.arraySorts.set(key, sort);
+    return sort;
+  }
+
+  private getArraySortSize(parameters: number[]) {
+    const sizes = parameters.map((parameter) => this.sortSizes[parameter]);
+    if (sizes[sizes.length - 1] === 1n) return 1n;
+    if (sizes.includes(SORT_SIZE_INFINITE)) return SORT_SIZE_INFINITE;
+    if (sizes.includes(SORT_SIZE_VERY_BIG)) return SORT_SIZE_VERY_BIG;
+    const domainSize = sizes.slice(0, -1).reduce((product, size) => product * size, 1n);
+    if (domainSize > 128n) return SORT_SIZE_VERY_BIG;
+    const size = sizes[sizes.length - 1] ** domainSize;
+    return size >= 1n << 64n ? SORT_SIZE_VERY_BIG : size;
+  }
+
+  isArraySort(sort: number) {
+    return this.sortFamilies[sort] === FAMILY_ARRAY;
+  }
+
+  getSortParameters(sort: number): readonly number[] {
+    return this.sortParameters[sort];
+  }
+
+  getArrayArity(sort: number) {
+    return this.sortParameters[sort].length - 1;
+  }
+
+  getArrayRange(sort: number) {
+    const parameters = this.sortParameters[sort];
+    return parameters[parameters.length - 1];
+  }
+
+  getSortName(sort: number): string {
+    if (this.isBvSort(sort)) return `(_ BitVec ${this.getBvSize(sort)})`;
+    if (this.isFpSort(sort))
+      return `(_ FloatingPoint ${this.getEbits(sort)} ${this.getSbits(sort)})`;
+    const parameters = this.sortParameters[sort].map((parameter) => this.getSortName(parameter));
+    if (parameters.length === 0) return this.sortNames[sort];
+    return `(${this.sortNames[sort]} ${parameters.join(" ")})`;
+  }
+
+  getSortSize(sort: number) {
+    return this.sortSizes[sort];
+  }
+
+  mkArrayDecl(op: number, name: string, parameters: number[], domain: number[], range: number) {
+    const key = `${op}:${parameters.join(",")}:${domain.join(",")}`;
+    const existing = this.arrayDecls.get(key);
+    if (existing !== undefined) return existing;
+    const decl = this.funcDecls.length;
+    const parameterHashes = parameters.map((parameter) =>
+      op === OP_CONST_ARRAY
+        ? this.sortHashes[parameter]
+        : op === OP_ARRAY_MAP || op === OP_AS_ARRAY
+          ? // A builtin declaration hashes by the signature of each application, which a map lacks.
+            (this.getDeclHash(parameter) ?? 0)
+          : parameter,
+    );
+    this.declHashes[decl] = this.getFuncDeclHash(
+      name,
+      domain,
+      range,
+      getInfoHash(Z3_ARRAY_FAMILY, op - ARRAY_OP_BASE, parameterHashes),
+    );
+    this.funcDecls.push({
+      name,
+      family: FAMILY_ARRAY,
+      op,
+      domain,
+      range,
+      isSkolem: false,
+      smallId: this.mkSmallId(),
+      parameters,
+    });
+    this.arrayDecls.set(key, decl);
+    return decl;
+  }
+
+  private mkParametricSort(
+    family: number,
+    name: SmtSymbol,
+    parameters: number[],
+    infoHash: number,
+  ) {
+    const key = `${family}:${typeof name}:${name}:${parameters.join(",")}`;
+    const existing = this.parametricSorts.get(key);
+    if (existing !== undefined) return existing;
+    this.sortHashes.push(combineHash(getSymbolHash(name), infoHash));
+    this.sortNames.push(getSymbolName(name));
+    this.sortFamilies.push(family);
+    this.sortWidths.push(0);
+    this.sortSbits.push(0);
+    this.sortParameters.push(parameters);
+    this.sortSizes.push(SORT_SIZE_INFINITE);
+    const sort = this.sortNames.length - 1;
+    this.sortSmallIds[sort] = this.mkSmallId();
+    this.parametricSorts.set(key, sort);
+    return sort;
+  }
+
+  private getUserSortKind(name: SmtSymbol) {
+    const existing = this.userSortKinds.get(name);
+    if (existing !== undefined) return existing;
+    this.userSortKinds.set(name, this.numUserSorts);
+    return this.numUserSorts++;
+  }
+
+  mkUninterpretedSort(name: SmtSymbol, parameters: number[]) {
+    return this.mkParametricSort(
+      FAMILY_USER,
+      name,
+      parameters,
+      getInfoHash(
+        Z3_USER_SORT_FAMILY,
+        this.getUserSortKind(name),
+        parameters.map((parameter) => this.sortHashes[parameter]),
+      ),
+    );
+  }
+
+  mkDatatypeSort(name: string, parameters: number[]) {
+    return this.mkParametricSort(
+      FAMILY_DATATYPE,
+      name,
+      parameters,
+      getInfoHash(Z3_DATATYPE_FAMILY, 0, [
+        getSymbolHash(name),
+        ...parameters.map((parameter) => this.sortHashes[parameter]),
+      ]),
+    );
+  }
+
+  setSortSize(sort: number, size: bigint) {
+    this.sortSizes[sort] = size;
+  }
+
+  // The sort named by the number index, which stands for a parameter of a datatype declaration.
+  mkTypeParameter(index: number) {
+    const sort = this.mkUninterpretedSort(index, []);
+    this.typeParameters[index] = sort;
+    return sort;
+  }
+
+  getTypeParameterIndex(sort: number) {
+    return this.typeParameters.indexOf(sort);
+  }
+
+  getSortSmallId(sort: number) {
+    return this.sortSmallIds[sort];
+  }
+
+  isDatatypeSort(sort: number) {
+    return this.sortFamilies[sort] === FAMILY_DATATYPE;
+  }
+
+  // The parameters are those of the port, and parameterHashes hash Z3's.
+  mkDatatypeDecl(
+    op: number,
+    name: string,
+    parameters: number[],
+    parameterHashes: number[],
+    domain: number[],
+    range: number,
+  ) {
+    const key = `${op}:${name}:${parameters.join(",")}:${domain.join(",")}:${range}`;
+    const existing = this.datatypeDecls.get(key);
+    if (existing !== undefined) return existing;
+    const decl = this.funcDecls.length;
+    this.declHashes[decl] = this.getFuncDeclHash(
+      name,
+      domain,
+      range,
+      getInfoHash(Z3_DATATYPE_FAMILY, op - DATATYPE_OP_BASE, parameterHashes),
+    );
+    this.funcDecls.push({
+      name,
+      family: FAMILY_DATATYPE,
+      op,
+      domain,
+      range,
+      isSkolem: false,
+      smallId: this.mkSmallId(),
+      parameters,
+    });
+    this.datatypeDecls.set(key, decl);
+    return decl;
+  }
+
+  getBvSize(sort: number) {
+    return this.sortWidths[sort];
+  }
+
+  isBvSort(sort: number) {
+    return this.sortFamilies[sort] === FAMILY_BV;
+  }
+
+  mkBvDecl(op: number, name: string, parameters: number[], domain: number[], range: number) {
+    const key = `${op}:${parameters.join(",")}:${domain.join(",")}`;
+    const existing = this.bvDecls.get(key);
+    if (existing !== undefined) return existing;
+    const decl = this.funcDecls.length;
+    this.declHashes[decl] = this.getFuncDeclHash(
+      name,
+      domain,
+      range,
+      getInfoHash(Z3_BV_FAMILY, op - BV_OP_BASE, parameters),
+    );
+    this.funcDecls.push({
+      name,
+      family: FAMILY_BV,
+      op,
+      domain,
+      range,
+      isSkolem: false,
+      smallId: UNCACHED_BV_OPS.has(op) ? -1 : this.mkSmallId(),
+      parameters,
+    });
+    this.bvDecls.set(key, decl);
+    return decl;
+  }
+
+  mkBvNumeral(value: bigint, width: number) {
+    const modulus = 1n << BigInt(width);
+    const normalized = ((value % modulus) + modulus) % modulus;
+    const sort = this.mkBvSort(width);
+    const key = `b${width}:${normalized}`;
+    const existing = this.table.get(key);
+    if (existing !== undefined) return this.revive(existing);
+    let decl = this.bvDecls.get(`n${width}`);
+    if (decl === undefined) {
+      decl = this.funcDecls.length;
+      this.funcDecls.push({
+        name: "bv",
+        family: FAMILY_BV,
+        op: OP_BV_NUM,
+        domain: [],
+        range: sort,
+        isSkolem: false,
+        smallId: -1,
+        parameters: [width],
+      });
+      this.bvDecls.set(`n${width}`, decl);
+    }
+    this.numeralValues.push(Rational.of(normalized));
+    const numeralDecl = decl;
+    return this.intern(key, KIND_APP, numeralDecl, [], sort, this.numeralValues.length - 1, () =>
+      this.getFuncDeclHash(
+        "bv",
+        [],
+        sort,
+        getInfoHash(Z3_BV_FAMILY, 0, [(getIntegerHash(normalized) + 3) >>> 0, width]),
+      ),
+    );
+  }
+
+  isBvNumeral(expr: number) {
+    return this.getOp(expr) === OP_BV_NUM;
+  }
+
+  getBvNumeralValue(expr: number) {
+    return this.numeralValues[this.values[expr]].num;
+  }
+
+  getSortFamily(sort: number) {
+    return this.sortFamilies[sort];
   }
 
   private getFuncDeclHash(name: SmtSymbol, domain: number[], range: number, infoHash: number) {
@@ -682,6 +1860,16 @@ export class AstManager {
     return this.declHashes[decl];
   }
 
+  getAppDeclHash(app: number) {
+    const decl = this.decls[app];
+    const funcDecl = this.funcDecls[decl];
+    if (hasOwnDeclHash(funcDecl.family)) return this.declHashes[decl];
+    const args = this.getArgs(app);
+    return funcDecl.op === OP_PATTERN
+      ? this.getPatternHash(args, this.sorts[app])
+      : this.builtinHashes[this.getBuiltinSlot(funcDecl.op, args, this.sorts[app])];
+  }
+
   mkFuncDecl(name: SmtSymbol, domain: number[], range: number, isSkolem = false) {
     this.declHashes[this.funcDecls.length] = this.getFuncDeclHash(
       name,
@@ -697,13 +1885,23 @@ export class AstManager {
       range,
       isSkolem,
       smallId: this.mkSmallId(),
+      parameters: [],
     });
     this.declRefCounts[this.funcDecls.length - 1] = 1;
     return this.funcDecls.length - 1;
   }
 
-  mkFreshFuncDecl(prefix: SmtSymbol | null, domain: number[], range: number, isSkolem = true) {
-    const name = prefix === null ? this.freshId : `${getSymbolName(prefix)}!${this.freshId}`;
+  mkFreshFuncDecl(
+    prefix: SmtSymbol | null,
+    domain: number[],
+    range: number,
+    isSkolem = true,
+    suffix = "",
+  ) {
+    const name =
+      prefix === null && suffix === ""
+        ? this.freshId
+        : `${prefix === null ? "sk" : getSymbolName(prefix)}!${suffix === "" ? "" : `${suffix}!`}${this.freshId}`;
     this.freshId++;
     const decl = this.mkFuncDecl(name, domain, range, isSkolem);
     this.declRefCounts[decl] = 0;
@@ -711,9 +1909,11 @@ export class AstManager {
   }
 
   mkFreshVarName(prefix: string | null) {
-    const name = `${prefix ?? "var"}!${this.freshId}`;
-    this.freshId++;
-    return name;
+    return `${prefix ?? "var"}!${this.mkFreshId()}`;
+  }
+
+  mkFreshId() {
+    return this.freshId++;
   }
 
   private intern(
@@ -749,6 +1949,7 @@ export class AstManager {
       this.values = grow(this.values);
       this.freeVarBounds = grow(this.freeVarBounds);
       this.hasQuantifierFlags = grow(this.hasQuantifierFlags);
+      this.hasLabelFlags = grow(this.hasLabelFlags);
       this.depths = grow(this.depths);
       this.hashes = grow(this.hashes);
       this.ids = grow(this.ids);
@@ -775,22 +1976,30 @@ export class AstManager {
     this.values[id] = value;
     let freeVarBound = kind === KIND_VAR ? value + 1 : 0;
     let hasQuantifier = kind === KIND_QUANTIFIER;
+    let hasLabel = kind === KIND_APP && this.funcDecls[decl].op === OP_LABEL;
     let depth = 1;
     for (let index = 0; index < args.length; index++) {
       const arg = args[index];
       if (this.freeVarBounds[arg] > freeVarBound) freeVarBound = this.freeVarBounds[arg];
       if (this.hasQuantifierFlags[arg]) hasQuantifier = true;
+      if (this.hasLabelFlags[arg]) hasLabel = true;
       if (this.depths[arg] + 1 > depth) depth = this.depths[arg] + 1;
     }
     this.freeVarBounds[id] = freeVarBound;
     this.hasQuantifierFlags[id] = hasQuantifier ? 1 : 0;
+    this.hasLabelFlags[id] = hasLabel ? 1 : 0;
     this.depths[id] = depth;
     return id;
   }
 
   mkApp(decl: number, args: number[], sort: number, start = 0) {
     const funcDecl = this.funcDecls[decl];
-    if (decl === OP_NUM || funcDecl.family === FAMILY_MODEL_VALUE)
+    if (
+      decl === OP_NUM ||
+      decl === OP_ALGEBRAIC_NUM ||
+      funcDecl.family === FAMILY_MODEL_VALUE ||
+      funcDecl.op === OP_BV_NUM
+    )
       throw new SmtInvariantError(`${funcDecl.name} needs a value`);
     let hash = decl;
     for (let index = start; index < args.length; index++)
@@ -813,16 +2022,16 @@ export class AstManager {
       for (let index = start; index < args.length; index++) this.argBuffer.push(args[index]);
     }
     const nodeArgs = start > 0 ? this.argBuffer : args;
+    const hasOwnHash = hasOwnDeclHash(funcDecl.family);
     const builtinSlot =
-      funcDecl.family === FAMILY_USER || funcDecl.op === OP_PATTERN
+      hasOwnHash || funcDecl.op === OP_PATTERN
         ? -1
         : this.getBuiltinSlot(funcDecl.op, nodeArgs, sort);
-    const declHash =
-      funcDecl.family === FAMILY_USER
-        ? this.declHashes[decl]
-        : builtinSlot === -1
-          ? this.getPatternHash(nodeArgs, sort)
-          : this.builtinHashes[builtinSlot];
+    const declHash = hasOwnHash
+      ? this.declHashes[decl]
+      : builtinSlot === -1
+        ? this.getPatternHash(nodeArgs, sort)
+        : this.builtinHashes[builtinSlot];
     const id = this.create(
       KIND_APP,
       decl,
@@ -876,6 +2085,60 @@ export class AstManager {
     );
   }
 
+  get am() {
+    this.algebraicManager ??= new AlgebraicManager();
+    return this.algebraicManager;
+  }
+
+  mkAlgebraicNumeral(value: Anum, sort = SORT_REAL) {
+    if (this.am.isRational(value)) return this.mkNumeralOfSort(this.am.toRational(value), sort);
+    if (sort === SORT_INT)
+      throw new SmtInvariantError("invalid irrational value passed as an integer");
+    const id = this.mkAlgebraicId();
+    this.algebraicNumerals.push({ value: this.am.copy(value), id });
+    const expr = this.create(
+      KIND_APP,
+      OP_ALGEBRAIC_NUM,
+      [],
+      SORT_REAL,
+      this.algebraicNumerals.length - 1,
+      this.getFuncDeclHash("RootObject", [], SORT_REAL, getInfoHash(Z3_ARITH_FAMILY, 1, [id])),
+    );
+    this.registerNode(expr);
+    return expr;
+  }
+
+  private mkAlgebraicId() {
+    return this.freeAlgebraicIds.pop() ?? this.nextAlgebraicId++;
+  }
+
+  isAlgebraicNumeral(expr: number) {
+    return this.getOp(expr) === OP_ALGEBRAIC_NUM;
+  }
+
+  getAlgebraicValue(expr: number) {
+    return this.algebraicNumerals[this.values[expr]].value;
+  }
+
+  private getAnumOrNumeral(expr: number) {
+    if (this.isAlgebraicNumeral(expr)) return this.getAlgebraicValue(expr);
+    return this.isNumeral(expr) ? new Anum(this.getRationalValue(expr)) : undefined;
+  }
+
+  compareArithValues(first: number, second: number) {
+    if (this.isNumeral(first) && this.isNumeral(second))
+      return this.getRationalValue(first).compare(this.getRationalValue(second));
+    const firstValue = this.getAnumOrNumeral(first);
+    const secondValue = this.getAnumOrNumeral(second);
+    if (firstValue === undefined || secondValue === undefined)
+      throw new SmtInvariantError("arith_value_order compares numerals");
+    return this.am.compare(firstValue, secondValue);
+  }
+
+  getAlgebraicId(expr: number) {
+    return this.algebraicNumerals[this.values[expr]].id;
+  }
+
   mkRealNumeral(value: Rational) {
     const numeral = this.internNumeral(`r${value}`, value, SORT_REAL);
     return value.isInt() ? this.holdSmallNumeral(numeral, value.num, this.smallReals) : numeral;
@@ -915,6 +2178,7 @@ export class AstManager {
       range: sort,
       isSkolem: false,
       smallId: -1,
+      parameters: [],
     });
     const decl = this.funcDecls.length - 1;
     this.declHashes[decl] = this.getFuncDeclHash(
@@ -939,19 +2203,30 @@ export class AstManager {
   mkQuantifier(data: QuantifierData) {
     if (data.names.length !== data.sorts.length)
       throw new SmtInvariantError("a quantifier needs a name for each variable");
-    const key = `q${data.isForall ? 1 : 0}:${data.sorts.join(",")}:${JSON.stringify(data.names)}:${
+    // Z3 keeps no-patterns only on a quantifier without patterns.
+    const noPatterns = data.patterns.length > 0 ? [] : data.noPatterns;
+    const key = `q${data.kind}:${data.sorts.join(",")}:${JSON.stringify(data.names)}:${
       data.body
-    }:${data.patterns.join(",")}:${data.weight}`;
+    }:${data.patterns.join(",")}:${noPatterns.join(",")}:${data.weight}`;
     const existing = this.table.get(key);
-    if (existing !== undefined) return this.revive(existing);
+    if (existing !== undefined) {
+      // A dead quantifier comes back as the new one Z3 makes, with its skolem id.
+      if (this.ids[existing] === -1) {
+        const old = this.getQuantifier(existing);
+        this.quantifiers.set(existing, { ...old, skid: data.skid });
+      }
+      return this.revive(existing);
+    }
     const id = this.create(
       KIND_QUANTIFIER,
       -1,
       [data.body],
-      SORT_BOOL,
+      data.kind === QUANTIFIER_LAMBDA
+        ? this.mkArraySort([...data.sorts, this.sorts[data.body]])
+        : SORT_BOOL,
       0,
       mkMix(
-        astArrayHash(data.sorts, this.sortHashes, data.isForall ? 31 : 19),
+        astArrayHash(data.sorts, this.sortHashes, data.kind === QUANTIFIER_FORALL ? 31 : 19),
         data.patterns.length,
         this.hashes[data.body],
       ),
@@ -964,9 +2239,71 @@ export class AstManager {
       sorts: [...data.sorts],
       names: [...data.names],
       patterns: [...data.patterns],
+      noPatterns: [...noPatterns],
     });
     this.registerNode(id);
     return id;
+  }
+
+  // A label takes its polarity and names as the parameters of its declaration, and a label literal
+  // takes its names.
+  mkLabel(isPositive: boolean, names: string[], expr: number) {
+    return this.mkApp(this.mkLabelDecl(OP_LABEL, isPositive, names), [expr], SORT_BOOL);
+  }
+
+  mkLabelLit(names: string[]) {
+    return this.mkApp(this.mkLabelDecl(OP_LABEL_LIT, true, names), [], SORT_BOOL);
+  }
+
+  private mkLabelDecl(op: number, isPositive: boolean, names: string[]) {
+    const nameIds = names.map((name) => {
+      const existing = this.labelNameIds.get(name);
+      if (existing !== undefined) return existing;
+      this.labelNames.push(name);
+      this.labelNameIds.set(name, this.labelNames.length - 1);
+      return this.labelNames.length - 1;
+    });
+    const parameters = op === OP_LABEL ? [isPositive ? 1 : 0, ...nameIds] : nameIds;
+    const key = `${op}:${parameters.join(",")}`;
+    const existing = this.labelDecls.get(key);
+    if (existing !== undefined) return existing;
+    const name = op === OP_LABEL_LIT ? "lbl-lit" : isPositive ? "lblpos" : "lblneg";
+    const domain = op === OP_LABEL ? [SORT_BOOL] : [];
+    const parameterHashes = names.map(getSymbolHash);
+    const decl = this.funcDecls.length;
+    this.declHashes[decl] = this.getFuncDeclHash(
+      name,
+      domain,
+      SORT_BOOL,
+      getInfoHash(
+        Z3_LABEL_FAMILY,
+        op - LABEL_OP_BASE,
+        op === OP_LABEL ? [isPositive ? 1 : 0, ...parameterHashes] : parameterHashes,
+      ),
+    );
+    this.funcDecls.push({
+      name,
+      family: FAMILY_LABEL,
+      op,
+      domain,
+      range: SORT_BOOL,
+      isSkolem: false,
+      smallId: this.mkSmallId(),
+      parameters,
+    });
+    this.labelDecls.set(key, decl);
+    return decl;
+  }
+
+  isLabelPositive(decl: number) {
+    return this.funcDecls[decl].parameters[0] === 1;
+  }
+
+  getLabelNames(decl: number) {
+    const funcDecl = this.funcDecls[decl];
+    return funcDecl.parameters
+      .slice(funcDecl.op === OP_LABEL ? 1 : 0)
+      .map((nameId) => this.labelNames[nameId]);
   }
 
   mkPattern(terms: number[]) {
@@ -977,6 +2314,16 @@ export class AstManager {
     const data = this.quantifiers.get(expr);
     if (data === undefined) throw new SmtInvariantError("the expression is not a quantifier");
     return data;
+  }
+
+  isLambda(expr: number) {
+    return (
+      this.kinds[expr] === KIND_QUANTIFIER && this.getQuantifier(expr).kind === QUANTIFIER_LAMBDA
+    );
+  }
+
+  isApp(expr: number) {
+    return this.kinds[expr] === KIND_APP;
   }
 
   isVar(expr: number) {
@@ -1054,19 +2401,100 @@ export class AstManager {
     return this.numeralValues[this.values[expr]];
   }
 
-  isUniqueValue(expr: number) {
+  isUniqueValue(expr: number): boolean {
     const op = this.getOp(expr);
-    return op === OP_NUM || op === OP_TRUE || op === OP_FALSE || op === OP_MODEL_VALUE;
+    return (
+      op === OP_NUM ||
+      op === OP_PI ||
+      op === OP_E ||
+      op === OP_TRUE ||
+      op === OP_FALSE ||
+      op === OP_MODEL_VALUE ||
+      op === OP_BV_NUM ||
+      op === OP_CHAR_CONST ||
+      (op >= OP_FPA_RM_NEAREST_TIES_TO_EVEN && op <= OP_FPA_RM_TOWARD_ZERO) ||
+      (op === OP_CONST_ARRAY && this.isUniqueValue(this.getArg(expr, 0))) ||
+      (op === OP_DT_CONSTRUCTOR &&
+        this.mapArgs(expr, (arg) => this.isUniqueValue(arg)).every((isUnique) => isUnique)) ||
+      (op === OP_FPA_FP && this.isUniqueFp(expr))
+    );
   }
 
-  areDistinct(first: number, second: number) {
+  private isUniqueFp(expr: number) {
+    if (!this.mapArgs(expr, (arg) => this.isValue(arg)).every((isValue) => isValue)) return false;
+    const exponent = this.getArg(expr, 1);
+    const value = this.getBvNumeralValue(exponent);
+    return value !== 0n && value !== (1n << BigInt(this.getBvSize(this.sorts[exponent]))) - 1n;
+  }
+
+  isValue(expr: number): boolean {
+    let current = expr;
+    while (this.getOp(current) === OP_STORE) {
+      for (let index = 1; index < this.getNumArgs(current); index++)
+        if (!this.isValue(this.getArg(current, index))) return false;
+      current = this.getArg(current, 0);
+    }
+    if (this.getOp(current) === OP_CONST_ARRAY) return this.isValue(this.getArg(current, 0));
+    if (this.getOp(current) === OP_DT_CONSTRUCTOR || this.getOp(current) === OP_FPA_FP)
+      return this.mapArgs(current, (arg) => this.isValue(arg)).every((isValue) => isValue);
+    if (this.getOp(current) >= OP_FPA_NUM && this.getOp(current) <= OP_FPA_MINUS_ZERO) return true;
+    if (this.getOp(current) === OP_ALGEBRAIC_NUM) return true;
+    if (this.getFamily(current) === FAMILY_SEQ) return this.isSeqValue(current);
+    return current === expr && this.isUniqueValue(expr);
+  }
+
+  private isSeqValue(expr: number) {
+    const todo = [expr];
+    for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
+      const op = this.getOp(current);
+      if (op === OP_SEQ_EMPTY || op === OP_STRING_CONST) continue;
+      if (op === OP_SEQ_UNIT && this.isValue(this.getArg(current, 0))) continue;
+      if (op !== OP_SEQ_CONCAT || !this.everyArg(current, (arg) => this.isApp(arg))) return false;
+      this.pushArgs(current, todo);
+    }
+    return true;
+  }
+
+  private areSeqsDistinct(first: number, second: number): boolean {
+    const firstOp = this.getOp(first);
+    const secondOp = this.getOp(second);
+    if (first === second) return false;
+    if (firstOp === OP_STRING_CONST && secondOp === OP_STRING_CONST) return true;
+    if (firstOp === OP_SEQ_UNIT && secondOp === OP_SEQ_UNIT)
+      return this.areDistinct(this.getArg(first, 0), this.getArg(second, 0));
+    return (
+      (firstOp === OP_SEQ_EMPTY && secondOp === OP_SEQ_UNIT) ||
+      (firstOp === OP_SEQ_UNIT && secondOp === OP_SEQ_EMPTY)
+    );
+  }
+
+  areDistinct(first: number, second: number): boolean {
     if (this.kinds[first] !== KIND_APP || this.kinds[second] !== KIND_APP) return false;
+    const pluginFamily =
+      this.getFamily(first) === FAMILY_USER ? this.getFamily(second) : this.getFamily(first);
+    if (pluginFamily === FAMILY_SEQ) return this.areSeqsDistinct(first, second);
     if (first !== second && this.isUniqueValue(first) && this.isUniqueValue(second)) return true;
     const family = this.funcDecls[this.decls[first]].family;
+    if (family === FAMILY_DATATYPE) {
+      if (this.getOp(first) !== OP_DT_CONSTRUCTOR || this.getOp(second) !== OP_DT_CONSTRUCTOR)
+        return false;
+      if (this.decls[first] !== this.decls[second]) return true;
+      for (let index = this.getNumArgs(first) - 1; index >= 0; index--)
+        if (this.areDistinct(this.getArg(first, index), this.getArg(second, index))) return true;
+      return false;
+    }
     if (
       (family === FAMILY_USER ? this.funcDecls[this.decls[second]].family : family) !== FAMILY_ARITH
     )
       return false;
+    const firstValue = this.getAnumOrNumeral(first);
+    const secondValue = this.getAnumOrNumeral(second);
+    if (
+      firstValue !== undefined &&
+      secondValue !== undefined &&
+      (this.isAlgebraicNumeral(first) || this.isAlgebraicNumeral(second))
+    )
+      return this.am.compare(firstValue, secondValue) !== 0;
     const isOffsetOf = (sum: number, term: number) => {
       if (this.getOp(sum) !== OP_ADD || this.getNumArgs(sum) !== 2) return false;
       const first = this.getArg(sum, 0);
@@ -1083,7 +2511,7 @@ export class AstManager {
   }
 
   isUninterpretedSort(sort: number) {
-    return sort > SORT_REAL;
+    return this.sortFamilies[sort] === FAMILY_USER;
   }
 
   isUninterpretedConst(expr: number) {
@@ -1147,5 +2575,29 @@ export class AstManager {
     if (args.length === 0) return this.trueExpr;
     if (args.length === 1) return args[0];
     return this.mkApp(OP_AND, args, SORT_BOOL);
+  }
+
+  getDeclName(expr: number) {
+    return getSymbolName(this.funcDecls[this.decls[expr]].name);
+  }
+
+  toString(expr: number): string {
+    const kind = this.kinds[expr];
+    if (kind === KIND_VAR) return `(:var ${this.values[expr]})`;
+    if (kind === KIND_QUANTIFIER) {
+      const data = this.getQuantifier(expr);
+      return `(${["forall", "exists", "lambda"][data.kind]} (${data.sorts.length}) ${this.toString(data.body)})`;
+    }
+    if (this.getOp(expr) === OP_BV_NUM)
+      return `(_ bv${this.getBvNumeralValue(expr)} ${this.getBvSize(this.sorts[expr])})`;
+    if (this.getOp(expr) === OP_NUM) {
+      const value = this.getRationalValue(expr);
+      if (this.sorts[expr] === SORT_INT) return String(value.num);
+      return value.isInt() ? `${value.num}.0` : `(/ ${value.num}.0 ${value.den}.0)`;
+    }
+    const name = this.getDeclName(expr);
+    return this.getNumArgs(expr) === 0
+      ? name
+      : `(${name} ${this.mapArgs(expr, (innerArg) => this.toString(innerArg)).join(" ")})`;
   }
 }

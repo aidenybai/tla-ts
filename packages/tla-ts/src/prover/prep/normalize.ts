@@ -1,4 +1,4 @@
-import { TlapmBugError, TlaProofError } from "../../errors";
+import { TlapmBugError, TlaProofError, TlaProverError } from "../../errors";
 import { expandActionOperators, lambdify } from "../../obligations/action";
 import { createAnonymizer } from "../../obligations/anonymize";
 import { isEqualExpr } from "../../obligations/equality";
@@ -14,7 +14,9 @@ import {
   type ExceptPoint,
   type Expr,
   type Hyp,
+  type Locus,
   type Sequent,
+  type Warn,
 } from "../../obligations/expression";
 import {
   bumpBy,
@@ -178,15 +180,26 @@ export const normalizeSequent = (sequent: Sequent): Sequent => {
     : { context: inlined.context, active };
 };
 
-const expandEnabledCdot = (sequent: Sequent, frontends: Set<string>): Sequent => {
+// Only the first frontend the methods cite, in tlapm's order, transforms the obligation.
+const expandEnabledCdot = (
+  sequent: Sequent,
+  locus: Locus | undefined,
+  isEnabledAxiomsSound: boolean | undefined,
+  frontends: Set<string>,
+  onWarning: Warn,
+): Sequent => {
   const isEnabled = frontends.has("expandenabled");
   const isCdot = frontends.has("expandcdot");
   const isAutoUse = frontends.has("autouse");
   const isLambdify = frontends.has("lambdify");
   if (!isEnabled && !isCdot && !isLambdify) {
     if (frontends.has("levelcomparison")) return checkLevelChange(sequent);
-    if (frontends.has("enabledaxioms")) return implicationToEnabled(sequent);
-    return sequent;
+    if (!frontends.has("enabledaxioms")) return sequent;
+    if (isEnabledAxiomsSound !== undefined)
+      onWarning({ text: "expr has ENABLEDaxioms property ===", channel: "stdout" });
+    if (isEnabledAxiomsSound === false)
+      throw new TlaProverError("ENABLEDaxioms depends on assumptions of level > 1 \n\n");
+    return implicationToEnabled(sequent, locus, onWarning);
   }
   const anonymizer = createAnonymizer(
     { value: 0 },
@@ -198,12 +211,12 @@ const expandEnabledCdot = (sequent: Sequent, frontends: Set<string>): Sequent =>
   const expression: Expr = { kind: "Sequent", sequent };
   const result =
     isEnabled || isCdot
-      ? expandActionOperators(anonymizer, () => {}, undefined, expression, {
+      ? expandActionOperators(anonymizer, onWarning, undefined, expression, {
           isEnabled,
           isCdot,
           isAutoUse,
         })
-      : lambdify(anonymizer, () => {}, undefined, expression, {
+      : lambdify(anonymizer, onWarning, undefined, expression, {
           isEnabled: true,
           isCdot: true,
           isAutoUse,
@@ -213,9 +226,22 @@ const expandEnabledCdot = (sequent: Sequent, frontends: Set<string>): Sequent =>
 };
 
 export const normalizeExpand = (
-  obligation: { sequent: Sequent; method?: OldMethod },
+  obligation: {
+    sequent: Sequent;
+    method?: OldMethod;
+    locus?: Locus;
+    isEnabledAxiomsSound?: boolean;
+  },
   methods = findMethods(obligation),
-) => expandEnabledCdot(normalizeSequent(expandDefs(obligation.sequent)), methods.frontends);
+  onWarning: Warn = () => {},
+) =>
+  expandEnabledCdot(
+    normalizeSequent(expandDefs(obligation.sequent)),
+    obligation.locus,
+    obligation.isEnabledAxiomsSound,
+    methods.frontends,
+    onWarning,
+  );
 
 export const isTrivial = (sequent: Sequent) =>
   (sequent.active.kind === "Internal" && sequent.active.builtin === "TRUE") ||

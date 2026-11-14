@@ -1,0 +1,29 @@
+(*---
+description: z3test's regression regressions/smt2/3527.smt2.
+ref: regressions/smt2/3527.smt2
+features:
+  - z3test
+outcome: sat
+---*)
+(set-option :sat.local_search true) 
+(define-fun s1 () Int 67) 
+(define-fun s3 () Int 5) 
+(define-fun s5 () Int 6) 
+(declare-fun s0 () Int) 
+(declare-fun s13 () Int) 
+(define-fun s2 () Bool (<= s0 s1)) 
+(define-fun s4 () Bool (>= s0 s3 )) 
+(define-fun s6 () Bool (distinct s0 s5)) 
+(define-fun s9 () Bool s6) 
+(define-fun s10 () Bool (and s4 s9)) 
+(define-fun s11 () Bool ( and s2 s10)) 
+(assert s11) 
+(assert (= s0 s13)) 
+(maximize s13) 
+(check-sat)
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: sat
+---*)

@@ -125,6 +125,17 @@ class RewriterCore {
   protected releaseCaches() {
     for (const cache of this.caches) cache.reset();
   }
+
+  protected cleanupCore() {
+    this.releaseCaches();
+    this.shrinkResults(0);
+    this.caches = [new ActCache(this.manager, this.manager.getNumAsts())];
+    this.frames = [];
+    this.numFrames = 0;
+    this.scopes = [];
+    this.root = -1;
+    this.numQvars = 0;
+  }
 }
 
 abstract class VarShifterCore extends RewriterCore {
@@ -176,17 +187,19 @@ abstract class VarShifterCore extends RewriterCore {
       this.numQvars += data.sorts.length;
       this.root = data.body;
     }
-    const children = [data.body, ...data.patterns];
+    const children = [data.body, ...data.patterns, ...data.noPatterns];
     while (frame.childIndex < children.length) {
       const child = children[frame.childIndex];
       frame.childIndex++;
       if (!this.visit(child)) return;
     }
+    // A rewritten no-pattern is not a pattern, so Z3 drops it.
     const result = frame.hasNewChild
       ? manager.mkQuantifier({
           ...data,
           body: this.resultStack[frame.spos],
-          patterns: this.resultStack.slice(frame.spos + 1),
+          patterns: this.resultStack.slice(frame.spos + 1, frame.spos + 1 + data.patterns.length),
+          noPatterns: [],
         })
       : expr;
     this.finish(expr, frame, result);
@@ -226,6 +239,10 @@ abstract class VarShifterCore extends RewriterCore {
 
   reset() {
     this.resetCore();
+  }
+
+  cleanup() {
+    this.cleanupCore();
   }
 
   release() {
@@ -324,6 +341,9 @@ class RewriterEngine extends SubstCore {
   blocked = new Set<number>();
   private isSubstituting: boolean;
   private isExpandingMacros: boolean;
+  private isCheckingSteps: boolean;
+  private isPreVisiting: boolean;
+  private isReducingVars: boolean;
   // HACK: the hooks are read once, since a call through config at each site goes megamorphic in V8.
   private reduceAppHook: RewriterTpl["reduceApp"];
   private isFlatAssocHook: RewriterTpl["isFlatAssoc"];
@@ -337,6 +357,9 @@ class RewriterEngine extends SubstCore {
     super(manager);
     this.isSubstituting = config.getSubst !== RewriterTpl.prototype.getSubst;
     this.isExpandingMacros = config.getMacro !== RewriterTpl.prototype.getMacro;
+    this.isCheckingSteps = config.checkMaxSteps !== RewriterTpl.prototype.checkMaxSteps;
+    this.isPreVisiting = config.preVisit !== RewriterTpl.prototype.preVisit;
+    this.isReducingVars = config.reduceVar !== RewriterTpl.prototype.reduceVar;
     this.reduceAppHook = config.reduceApp;
     this.isFlatAssocHook = config.isFlatAssoc;
     this.getMacroHook = config.getMacro;
@@ -351,6 +374,14 @@ class RewriterEngine extends SubstCore {
     shrink(this.shifts, 0);
     this.shifter.reset();
     this.invShifter.reset();
+  }
+
+  cleanup() {
+    this.cleanupCore();
+    this.bindings = [];
+    this.shifter.cleanup();
+    this.invShifter.cleanup();
+    this.shifts = [];
   }
 
   release() {
@@ -374,6 +405,7 @@ class RewriterEngine extends SubstCore {
       if (!this.visit(expr, Infinity))
         while (this.numFrames > 0) {
           manager.limit.checkpoint();
+          if (this.isCheckingSteps) this.config.checkMaxSteps();
           const frame = this.frames[this.numFrames - 1];
           const curr = frame.curr;
           if (frame.childIndex === 0 && frame.state === PROCESS_CHILDREN && frame.isCaching) {
@@ -429,6 +461,10 @@ class RewriterEngine extends SubstCore {
         this.setNewChildFlag(expr, cached);
         return true;
       }
+    }
+    if (this.isPreVisiting && !this.config.preVisit(expr)) {
+      this.pushResult(expr);
+      return true;
     }
     const kind = manager.kinds[expr];
     if (kind === KIND_VAR) {
@@ -500,6 +536,13 @@ class RewriterEngine extends SubstCore {
 
   private processVar(variable: number) {
     const manager = this.manager;
+    const reduced = this.isReducingVars ? this.config.reduceVar(variable) : -1;
+    if (reduced !== -1) {
+      this.pushResult(reduced);
+      manager.decRef(reduced);
+      this.setNewChildFlag(variable, -1);
+      return;
+    }
     const index = manager.values[variable];
     const position = this.bindings.length - index - 1;
     const binding = index < this.bindings.length ? this.bindings[position] : -1;
@@ -676,19 +719,24 @@ class RewriterEngine extends SubstCore {
       this.numQvars += numDecls;
     }
     const isRewritingPatterns = this.config.isRewritingPatterns();
-    const children = isRewritingPatterns ? [data.body, ...data.patterns] : [data.body];
+    const children = isRewritingPatterns
+      ? [data.body, ...data.patterns, ...data.noPatterns]
+      : [data.body];
     while (frame.childIndex < children.length) {
       const child = children[frame.childIndex];
       frame.childIndex++;
       if (!this.visit(child, frame.maxDepth)) return;
     }
     const body = this.resultStack[frame.spos];
-    const patterns = isRewritingPatterns ? this.resultStack.slice(frame.spos + 1) : data.patterns;
+    const patterns = isRewritingPatterns
+      ? this.resultStack.slice(frame.spos + 1, frame.spos + 1 + data.patterns.length)
+      : data.patterns;
     for (const pattern of patterns) manager.incRef(pattern);
     const reduced = this.config.reduceQuantifier(expr, body, patterns);
+    const noPatterns = isRewritingPatterns ? [] : data.noPatterns;
     if (reduced === -1)
       this.setLastResult(
-        frame.hasNewChild ? manager.mkQuantifier({ ...data, body, patterns }) : expr,
+        frame.hasNewChild ? manager.mkQuantifier({ ...data, body, patterns, noPatterns }) : expr,
       );
     else {
       this.setLastResult(reduced);
@@ -727,9 +775,16 @@ export class RewriterTpl {
     return undefined;
   }
 
+  preVisit(_expr: number) {
+    return true;
+  }
+
   reduceApp(_decl: number, _args: number[], _sort: number): number | Rewrite {
     return -1;
   }
+
+  // check_max_steps: Z3 asks the config at each step, which may count a step of the resource limit.
+  checkMaxSteps() {}
 
   getMacro(_decl: number) {
     return -1;
@@ -743,12 +798,20 @@ export class RewriterTpl {
     return -1;
   }
 
+  reduceVar(_variable: number) {
+    return -1;
+  }
+
   mkNested(): RewriterTpl {
     return new RewriterTpl(this.manager);
   }
 
   reset() {
     this.engine.reset();
+  }
+
+  cleanup() {
+    this.engine.cleanup();
   }
 
   release() {
@@ -986,18 +1049,19 @@ export class BetaReducer extends SubstCore {
       }
       this.numQvars += numDecls;
     }
-    while (this.frameChildIndexes[top] <= data.patterns.length) {
+    const children = [data.body, ...data.patterns, ...data.noPatterns];
+    while (this.frameChildIndexes[top] < children.length) {
       const childIndex = this.frameChildIndexes[top];
       this.frameChildIndexes[top] = childIndex + 1;
-      if (!this.visit(childIndex === 0 ? data.body : data.patterns[childIndex - 1])) return;
+      if (!this.visit(children[childIndex])) return;
     }
     const spos = this.frameStarts[top];
     const body = this.resultStack[spos];
-    const patterns = this.resultStack.slice(spos + 1);
+    const patterns = this.resultStack.slice(spos + 1, spos + 1 + data.patterns.length);
     for (const pattern of patterns) manager.incRef(pattern);
     this.setLastResult(
       this.frameFlags[top] & FRAME_NEW_CHILD
-        ? manager.mkQuantifier({ ...data, body, patterns })
+        ? manager.mkQuantifier({ ...data, body, patterns, noPatterns: [] })
         : expr,
     );
     const result = this.lastResult;

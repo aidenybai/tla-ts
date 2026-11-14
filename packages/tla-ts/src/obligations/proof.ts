@@ -29,6 +29,7 @@ export interface Obligation {
   location: Locus | undefined;
   kind: ObligationKind;
   method?: OldMethod;
+  isEnabledAxiomsSound?: boolean;
 }
 
 interface ProofProps {
@@ -37,6 +38,8 @@ interface ProofProps {
   obligations?: Obligation[];
   method?: OldMethod;
   useLocation?: Locus;
+  isSuppressed?: boolean;
+  isEnabledAxiomsSound?: boolean;
 }
 
 export type Proof = ProofCore & ProofProps;

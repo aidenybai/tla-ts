@@ -21,7 +21,7 @@ import {
 } from "./ocaml-marshal";
 import { getBudget } from "../prep/methods";
 import { getFailureReason, isProvedAttempt, type ProofAttempt } from "../prove";
-import { BACKENDS, type Backend } from "../verdict";
+import { BACKENDS } from "../verdict";
 
 export type FingerprintTable = Map<string, OcamlValue[]>;
 
@@ -29,12 +29,31 @@ const MAGIC_NUMBER = 20210223;
 
 const RECORD_SIZE = 23;
 
-const PROVERS: Record<Backend, { field: number; tag: number }> = {
+const STORED_PROVERS = [
+  ...BACKENDS,
+  "cooper",
+  "expandenabled",
+  "expandcdot",
+  "lambdify",
+  "enabledaxioms",
+  "levelcomparison",
+] as const;
+
+type StoredProver = (typeof STORED_PROVERS)[number];
+
+// A constant constructor's tag is the value itself.
+const PROVERS: Record<StoredProver, { field: number; tag: number; isConstant?: boolean }> = {
   zenon: { field: 1, tag: 1 },
   isabelle: { field: 2, tag: 0 },
+  cooper: { field: 4, tag: 3, isConstant: true },
   smt: { field: 10, tag: 8 },
   z3: { field: 11, tag: 9 },
   ls4: { field: 17, tag: 16 },
+  expandenabled: { field: 18, tag: 6, isConstant: true },
+  expandcdot: { field: 19, tag: 8, isConstant: true },
+  lambdify: { field: 20, tag: 9, isConstant: true },
+  enabledaxioms: { field: 21, tag: 10, isConstant: true },
+  levelcomparison: { field: 22, tag: 11, isConstant: true },
 };
 
 const FAIL_METHOD = 5;
@@ -105,7 +124,7 @@ export const loadFingerprints = (table: FingerprintTable, path: string, isSafe: 
 };
 
 const decodeResult = (
-  prover: Backend,
+  prover: StoredProver,
   result: OcamlValue | undefined,
 ): ProofAttempt | undefined => {
   const status = getField(result, 0);
@@ -129,8 +148,8 @@ const decodeResult = (
   };
 };
 
-// Fpfile.fp_writes, whose date counts months from 0.
-const encodeResult = (prover: Backend, attempt: ProofAttempt) => {
+// Fpfile.fp_writes counts the date's months from 0.
+const encodeResult = (prover: StoredProver, attempt: ProofAttempt) => {
   const now = new Date();
   const method = attempt.method;
   const timeout = { float: getBudget(method) };
@@ -153,7 +172,9 @@ const encodeResult = (prover: Backend, attempt: ProofAttempt) => {
       createBlock(
         0,
         isProvedAttempt(attempt) ? 0 : createBlock(0, reason),
-        createBlock(PROVERS[prover].tag, argument),
+        PROVERS[prover].isConstant
+          ? PROVERS[prover].tag
+          : createBlock(PROVERS[prover].tag, argument),
       ),
       createBlock(
         0,
@@ -207,7 +228,7 @@ export const getKnownResults = (table: FingerprintTable) => {
   const results = new Map(
     [...table].map(([fingerprint, record]) => {
       const attempts = new Map(
-        BACKENDS.flatMap((prover) => {
+        STORED_PROVERS.flatMap((prover) => {
           const stored = record[PROVERS[prover].field];
           const result = decodeResult(prover, getField(stored, 0));
           if (!result) return [];
@@ -223,7 +244,7 @@ export const getKnownResults = (table: FingerprintTable) => {
     table.clear();
     results.forEach((attempts, fingerprint) => {
       const record = [...(storedRecords.get(attempts) ?? Array<OcamlValue>(RECORD_SIZE).fill(0))];
-      BACKENDS.forEach((prover) => {
+      STORED_PROVERS.forEach((prover) => {
         const attempt = attempts.get(prover);
         if (attempt)
           record[PROVERS[prover].field] =

@@ -6,6 +6,8 @@ const TLA_TYPE = mkType("PredicateLogic.c");
 export type Ast =
   | { readonly kind: "name"; readonly name: string }
   | { readonly kind: "const"; readonly name: string }
+  | { readonly kind: "var"; readonly name: string; readonly index: number }
+  | { readonly kind: "dummy" }
   | { readonly kind: "app"; readonly fun: Ast; readonly arg: Ast }
   | {
       readonly kind: "abs";
@@ -19,7 +21,23 @@ type Token =
   | { readonly kind: "id"; readonly text: string }
   | { readonly kind: "delimiter"; readonly text: string }
   | { readonly kind: "string"; readonly text: string }
+  | { readonly kind: "var"; readonly text: string }
   | { readonly kind: "end" };
+
+// The ASCII notations of the Isabelle/TLA+ theories, as the symbols they share a constant with.
+const ASCII_DELIMITERS = new Map([
+  ["\\subseteq", "\\<subseteq>"],
+  ["\\notin", "\\<notin>"],
+  ["\\inter", "\\<inter>"],
+  ["\\union", "\\<union>"],
+  ["\\cup", "\\cup"],
+  ["\\in", "\\<in>"],
+  ["\\A", "\\<forall>"],
+  ["\\E", "\\<exists>"],
+  ["<=>", "\\<Leftrightarrow>"],
+  ["==", "\\<equiv>"],
+  ["~=", "~="],
+]);
 
 const DELIMITERS = [
   "::",
@@ -47,7 +65,7 @@ const DELIMITERS = [
   "0",
 ];
 
-const KEYWORDS = new Set(["EXCEPT", "DOMAIN", "SUBSET", "UNION", "PROP"]);
+const KEYWORDS = new Set(["EXCEPT", "DOMAIN", "SUBSET", "UNION", "PROP", "CHOOSE"]);
 
 const isLetter = (char: string) => /[A-Za-z]/.test(char);
 const isIdChar = (char: string) => /[A-Za-z0-9_']/.test(char);
@@ -79,6 +97,26 @@ const tokenize = (text: string): Token[] => {
       position = end + 1;
       continue;
     }
+    if (char === "?" && isLetter(text[position + 1] ?? "")) {
+      let end = position + 2;
+      while (end < text.length && isIdChar(text[end])) end += 1;
+      tokens.push({ kind: "var", text: text.slice(position + 1, end) });
+      position = end;
+      continue;
+    }
+    if (char === "_" && !isIdChar(text[position + 1] ?? "")) {
+      tokens.push({ kind: "delimiter", text: "_" });
+      position += 1;
+      continue;
+    }
+    const ascii = [...ASCII_DELIMITERS.keys()].find((candidate) =>
+      text.startsWith(candidate, position),
+    );
+    if (ascii !== undefined) {
+      tokens.push({ kind: "delimiter", text: ASCII_DELIMITERS.get(ascii) ?? ascii });
+      position += ascii.length;
+      continue;
+    }
     if (isLetter(char)) {
       let end = position + 1;
       while (
@@ -104,6 +142,12 @@ const tokenize = (text: string): Token[] => {
   }
   tokens.push({ kind: "end" });
   return tokens;
+};
+
+// Lexicon.read_indexname: trailing digits are the index.
+const readIndexname = (text: string) => {
+  const digits = /\d*$/.exec(text)?.[0] ?? "";
+  return { name: text.slice(0, text.length - digits.length), index: Number(digits || 0) };
 };
 
 const toConstant = (name: string): Ast => ({ kind: "const", name });
@@ -156,6 +200,7 @@ const INFIXES = new Map<string, Infix>([
   ["\\<Rightarrow>", infixr("PredicateLogic.imp", 25)],
   ["=>", infixr("PredicateLogic.imp", 25)],
   ["\\<Leftrightarrow>", infixr("PredicateLogic.iff", 25)],
+  ["~=", { constant: "PredicateLogic.not_equal", left: 51, right: 51, priority: 50 }],
   ["\\<or>", infixr("PredicateLogic.disj", 30)],
   ["|", infixr("PredicateLogic.disj", 30)],
   ["\\<and>", infixr("PredicateLogic.conj", 35)],
@@ -166,7 +211,9 @@ const INFIXES = new Map<string, Infix>([
   ["\\<notin>", infixl("SetTheory.notin", 50)],
   ["\\<subseteq>", infixl("SetTheory.subset", 50)],
   ["\\<union>", infixl("SetTheory.union", 65)],
+  ["\\cup", infixl("Zenon.cup", 65)],
   ["\\", infixl("SetTheory.setminus", 65)],
+  ["\\<setminus>", infixl("SetTheory.setminus", 65)],
   ["\\<inter>", infixl("SetTheory.inter", 70)],
   ["@@", infixl("Functions.extend", 70)],
   [":>", infixl("Functions.oneArg", 75)],
@@ -336,6 +383,17 @@ class Parser {
         };
         continue;
       }
+      if (token.text === "\\<equiv>") {
+        if (minimum > 2 || left.priority < 3) return left;
+        this.position += 1;
+        const right = this.parseExpression(3);
+        left = {
+          ast: apply(toConstant("Pure.eq"), left.ast, right.ast),
+          priority: 2,
+          isProp: true,
+        };
+        continue;
+      }
       if (left.isProp) return left;
       if (token.text === "::") {
         if (minimum > 3 || left.priority < 4) return left;
@@ -391,6 +449,7 @@ class Parser {
       throw this.syntaxError();
     }
     if (token.kind === "id") return toTerm({ kind: "name", name: token.text });
+    if (token.kind === "var") return toTerm({ kind: "var", ...readIndexname(token.text) });
     if (token.kind === "string") return toTerm(toStringTerm(token.text));
     switch (token.text) {
       case "(": {
@@ -400,17 +459,102 @@ class Parser {
       }
       case "0":
         return toTerm(toConstant("Integers.zero"));
-      case "{":
+      case "_":
+        return toTerm({ kind: "dummy" });
+      case "PROP": {
+        if (minimum > 1000) throw this.syntaxError();
+        const next = this.next();
+        if (next.kind === "id")
+          return { ast: { kind: "name", name: next.text }, priority: 1000, isProp: true };
+        if (next.kind === "var")
+          return {
+            ast: { kind: "var", ...readIndexname(next.text) },
+            priority: 1000,
+            isProp: true,
+          };
+        this.position -= 1;
+        throw this.syntaxError();
+      }
+      case "CHOOSE": {
+        if (minimum > 10) throw this.syntaxError();
+        const name = this.parseIdentifier();
+        if (this.isDelimiter("\\<in>")) {
+          this.position += 1;
+          const domain = this.parseLogic(0);
+          this.expect(":");
+          const body = this.parseLogic(0);
+          return toTerm(
+            apply(toConstant("SetTheory.bChoose"), domain, {
+              kind: "abs",
+              name,
+              type: undefined,
+              body,
+            }),
+            10,
+          );
+        }
+        this.expect(":");
+        const body = this.parseLogic(10);
+        return toTerm(
+          apply(toConstant("PredicateLogic.Choice"), { kind: "abs", name, type: undefined, body }),
+          10,
+        );
+      }
+      case "{": {
         if (this.isDelimiter("}")) {
           this.position += 1;
           return toTerm(toConstant("SetTheory.emptyset"), 100);
         }
+        // SetTheory's {x \<in> S : P} and {e : x \<in> S}, then an enumeration.
+        if (this.peek().kind === "id" && this.isDelimiter("\\<in>", 1)) {
+          const start = this.position;
+          const name = this.parseIdentifier();
+          this.position += 1;
+          const set = this.parseLogic(0);
+          if (this.isDelimiter(":")) {
+            this.position += 1;
+            const body = this.parseLogic(0);
+            this.expect("}");
+            return toTerm(
+              apply(toConstant("SetTheory.subsetOf"), set, {
+                kind: "abs",
+                name,
+                type: undefined,
+                body,
+              }),
+            );
+          }
+          this.position = start;
+        }
+        const first = this.parseLogic(0);
+        if (this.isDelimiter(":")) {
+          this.position += 1;
+          const name = this.parseIdentifier();
+          this.expect("\\<in>");
+          const set = this.parseLogic(0);
+          this.expect("}");
+          return toTerm(
+            apply(toConstant("SetTheory.setOfAll"), set, {
+              kind: "abs",
+              name,
+              type: undefined,
+              body: first,
+            }),
+          );
+        }
+        const elements = [first];
+        while (this.isDelimiter(",")) {
+          this.position += 1;
+          elements.push(this.parseLogic(0));
+        }
+        this.expect("}");
         return toTerm(
-          this.parseCommaList("}").reduceRight(
+          elements.reduceRight(
             (set, element) => apply(toConstant("SetTheory.addElt"), element, set),
             toConstant("SetTheory.emptyset"),
           ),
         );
+      }
       case "<<":
         return toTerm(toTuple(this.parseCommaList(">>")));
       case "\\<langle>":
@@ -574,5 +718,7 @@ const parseWith = <Result>(text: string, parse: (parser: Parser) => Result): Res
 };
 
 export const parseProp = (text: string) => parseWith(text, (parser) => parser.parseProp(0));
+
+export const parseTerm = (text: string) => parseWith(text, (parser) => parser.parseLogic(0));
 
 export const parseType = (text: string) => parseWith(text, (parser) => parser.parseType());

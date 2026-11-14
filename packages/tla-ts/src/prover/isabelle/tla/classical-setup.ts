@@ -85,6 +85,7 @@ export const getClaset = (logic: TlaLogic, limits: Limits): Claset => {
     safep: toNetPair(logic.claset.safep),
     unsafe: toNetPair(logic.claset.unsafe),
     dup: toNetPair(logic.claset.dup),
+    extra: toNetPair(logic.claset.extra),
   };
   return addbefore(
     claset,

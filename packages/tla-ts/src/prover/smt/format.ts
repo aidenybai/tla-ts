@@ -61,6 +61,8 @@ export const NAT_SET = tla("NatSet");
 export const CAST_INT = tla("Cast_Int");
 export const PROJ_INT = tla("Proj_Int");
 export const INT_LTEQ = tla("IntLteq");
+export const INT_PLUS = tla("IntPlus");
+export const INT_MINUS = tla("IntMinus");
 export const INT_RANGE = tla("IntRange");
 export const FUN_APP = tla("FunApp");
 export const FUN_DOM = tla("FunDom");
@@ -78,6 +80,19 @@ export const TAIL = tla("Tail");
 export const SUB_SEQ = tla("SubSeq");
 export const TUPLE_0 = tla("Tuple_0");
 
+export const NATIVE_OPERATORS = new Map(
+  [
+    ["TIntPlus", "+"],
+    ["TIntMinus", "-"],
+    ["TIntTimes", "*"],
+    ["TIntUminus", "-"],
+    ["TIntLteq", "<="],
+    ["TIntLt", "<"],
+    ["TIntGteq", ">="],
+    ["TIntGt", ">"],
+  ].map((entry) => [tla(entry[0]), entry[1]]),
+);
+
 export const BUILTIN_SYMBOLS: Partial<Record<Builtin, string>> = {
   Cup: CUP,
   Cap: CAP,
@@ -85,8 +100,8 @@ export const BUILTIN_SYMBOLS: Partial<Record<Builtin, string>> = {
   SUBSET,
   UNION,
   DOMAIN: FUN_DOM,
-  Plus: tla("IntPlus"),
-  Minus: tla("IntMinus"),
+  Plus: INT_PLUS,
+  Minus: INT_MINUS,
   Times: tla("IntTimes"),
   Exp: tla("IntExp"),
   Quotient: tla("IntQuotient"),
@@ -106,8 +121,14 @@ export const BUILTIN_SYMBOLS: Partial<Record<Builtin, string>> = {
 export const getNames = (prefix: string, count: number) =>
   Array.from({ length: count }, (_value, index) => `${prefix}${index + 1}`);
 
+// A bound variable is name#depth, or name:Sort#depth when Type.Synthesize sorts it Int or Bool.
+export const getVariable = (name: string, depth: number, sort = "Idv") =>
+  `${name}${sort === "Idv" ? "" : `:${sort}`}#${depth}`;
+
+export const getVariableSort = (variable: string) => /:(\w+)#\d+$/.exec(variable)?.[1];
+
 export const getBinders = (variables: string[], sort = "Idv") =>
-  variables.map((variable) => `(${variable} ${sort})`).join(" ");
+  variables.map((variable) => `(${variable} ${getVariableSort(variable) ?? sort})`).join(" ");
 
 export const forall = (
   variables: string[],
@@ -145,5 +166,8 @@ export const getClosing = (text: string, from: number) => {
   return text.length;
 };
 
+export const replaceTokens = (text: string, replacements: Map<string, string>) =>
+  text.replace(/[^\s()]+/g, (found) => replacements.get(found) ?? found);
+
 export const replaceToken = (text: string, token: string, replacement: string) =>
-  text.replace(/[^\s()]+/g, (found) => (found === token ? replacement : found));
+  replaceTokens(text, new Map([[token, replacement]]));

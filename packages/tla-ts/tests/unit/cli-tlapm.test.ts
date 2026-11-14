@@ -100,7 +100,7 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     const result = runTlapm("obligations", ["-N", "--line", "3", "Omit.tla"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(
-      /^\n\\\* TLAPM version 9ed0376\n\\\* launched at \d{4}-\d\d-\d\d \d\d:\d\d:\d\d with command line:\n\\\* tla-ts tlapm -N --line 3 Omit\.tla\n\n$/,
+      /^\n\\\* TLAPM version b91fb6c\n\\\* launched at \d{4}-\d\d-\d\d \d\d:\d\d:\d\d with command line:\n\\\* tla-ts tlapm -N --line 3 Omit\.tla\n\n$/,
     );
   });
 
@@ -147,9 +147,6 @@ describe("tlapm -N prints obligations as tlapm does", () => {
 
 const readRecording = (name: string) => readFileSync(join(FIXTURES, "tlapm-cli", name), "utf8");
 
-// Deviation from tlapm: tlapm copies to stdout what Zenon writes to stderr, which tla-ts's Zenon doesn't write.
-const stripZenonOutput = (output: string) => output.replaceAll(/^Zenon error: .*\n/gm, "");
-
 describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () => {
   const stripTimeUsed = (output: string) =>
     output.replaceAll(/time-used: [\d.]+ \(\d+%\)/g, "time-used: <time>");
@@ -164,7 +161,7 @@ describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () =
   it("prints the obligations it couldn't prove and ends abnormally", () => {
     const result = runTlapm("tlapm-cli", ["Failures.tla"]);
     expect(result.status).toBe(3);
-    expect(result.stdout).toBe(stripZenonOutput(readRecording("Failures.stdout")));
+    expect(result.stdout).toBe(readRecording("Failures.stdout"));
     expect(result.stderr).toBe(readRecording("Failures.stderr"));
   });
 
@@ -178,7 +175,7 @@ describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () =
     const result = runTlapm("tlapm-cli", ["--threads", "1", "--toolbox", "0", "0", "Failures.tla"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(
-      /^\n\\\* TLAPM version 9ed0376\n\\\* launched at [\d-]+ [\d:]+ with command line:\n\\\* tla-ts tlapm --threads 1 --toolbox 0 0 Failures\.tla\n\n\(\* created new "\.tlacache\/Failures\.tlaps\/Failures\.thy" \*\)\n\(\* fingerprints written in "\.tlacache\/Failures\.tlaps\/fingerprints" \*\)\n$/,
+      /^\n\\\* TLAPM version b91fb6c\n\\\* launched at [\d-]+ [\d:]+ with command line:\n\\\* tla-ts tlapm --threads 1 --toolbox 0 0 Failures\.tla\n\n(Zenon error: exhausted search space without finding a proof\n){2}\(\* created new "\.tlacache\/Failures\.tlaps\/Failures\.thy" \*\)\n\(\* fingerprints written in "\.tlacache\/Failures\.tlaps\/fingerprints" \*\)\n$/,
     );
     expect(stripTimeUsed(result.stderr)).toBe(stripTimeUsed(readRecording("Failures.toolbox")));
   });
@@ -250,7 +247,7 @@ describe("tlapm shares its cache with tlapm", () => {
   it.each(["--nofp", "--cleanfp"])("proves again under %s", (option) => {
     const result = runTlapmIn(copyWithCache(), [option, "Failures.tla"]);
     expect(result.status).toBe(3);
-    expect(result.stdout).toBe(stripZenonOutput(readRecording(`Failures.${option.slice(2)}`)));
+    expect(result.stdout).toBe(readRecording(`Failures.${option.slice(2)}`));
     expect(result.stderr).toBe(readRecording("Failures.stderr"));
   });
 

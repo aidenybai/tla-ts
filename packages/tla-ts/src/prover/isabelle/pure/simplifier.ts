@@ -1,8 +1,9 @@
 // Ported from Isabelle2025's Pure/simplifier.ML and Pure/goal.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
-import { genAll, isNormHhf, normHhfEq } from "./drule";
+import { genAll, isNormHhf, normHhfEq, protectCong } from "./drule";
 import { preferGoal } from "./goal";
-import { makeSimpContext, type SimpContext, type Solver } from "./raw-simplifier";
+import { congKey, makeSimpContext, type SimpContext, type Solver } from "./raw-simplifier";
+import { updateTable } from "./table";
 import { fconvRule } from "./conv";
 import {
   genericRewriteGoalTac,
@@ -80,9 +81,24 @@ const simpThm = (mode: RewriteMode, context: SimpContext, thm: Thm): Thm => {
 export const simplify = (context: SimpContext, thm: Thm) =>
   simpThm({ simprem: false, useprem: false, mutsimp: false }, context, thm);
 
-export const normHhf = (limits: Limits, thm: Thm): Thm => {
-  if (isNormHhf(false, thm.prop)) return genAll(thm);
-  const context = makeSimpContext(limits, [normHhfEq]);
+// Drule.sort_constraint_eq, the other rule of hhf_ss, never applies: tlapm's terms carry no sort
+// constraints.
+const genNormHhf = (isProtecting: boolean, limits: Limits, thm: Thm): Thm => {
+  if (isNormHhf(isProtecting, thm.prop)) return genAll(thm);
+  const hhfContext = makeSimpContext(limits, [normHhfEq]);
+  const context = isProtecting
+    ? {
+        ...hhfContext,
+        simpset: {
+          ...hhfContext.simpset,
+          congs: updateTable(
+            hhfContext.simpset.congs,
+            congKey({ isConst: true, name: "Pure.prop" }),
+            protectCong,
+          ),
+        },
+      }
+    : hhfContext;
   return genAll(
     fconvRule(
       (term) =>
@@ -96,3 +112,8 @@ export const normHhf = (limits: Limits, thm: Thm): Thm => {
     ),
   );
 };
+
+export const normHhf = (limits: Limits, thm: Thm) => genNormHhf(false, limits, thm);
+
+// Raw_Simplifier.norm_hhf_protect leaves protected propositions alone.
+export const normHhfProtect = (limits: Limits, thm: Thm) => genNormHhf(true, limits, thm);

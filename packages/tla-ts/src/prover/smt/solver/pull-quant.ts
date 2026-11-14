@@ -1,5 +1,15 @@
 // Ported from Z3 (src/ast/normal_forms/pull_quant.cpp), MIT license, see z3-license.txt.
-import { KIND_QUANTIFIER, OP_AND, OP_NOT, OP_OR, type AstManager, type SmtSymbol } from "./ast";
+import {
+  KIND_QUANTIFIER,
+  OP_AND,
+  OP_NOT,
+  OP_OR,
+  QUANTIFIER_EXISTS,
+  QUANTIFIER_FORALL,
+  QUANTIFIER_LAMBDA,
+  type AstManager,
+  type SmtSymbol,
+} from "./ast";
 import { mkNot } from "./ast-util";
 import { type Rewrite, RewriterTpl, VarShifter } from "./rewriter-tpl";
 
@@ -19,13 +29,13 @@ export class PullQuant extends RewriterTpl {
       const data = manager.getQuantifier(child);
       const result = manager.mkQuantifier({
         ...data,
-        isForall: !data.isForall,
+        kind: data.kind === QUANTIFIER_FORALL ? QUANTIFIER_EXISTS : QUANTIFIER_FORALL,
         body: mkNot(manager, data.body),
       });
       manager.incRef(result);
       return result;
     }
-    let isForall: boolean | undefined;
+    let kind: number | undefined;
     const sorts: number[] = [];
     const names: SmtSymbol[] = [];
     let weight = Number.POSITIVE_INFINITY;
@@ -33,8 +43,8 @@ export class PullQuant extends RewriterTpl {
     for (const child of args) {
       if (manager.kinds[child] !== KIND_QUANTIFIER) continue;
       const data = manager.getQuantifier(child);
-      if (isForall === undefined) isForall = data.isForall;
-      else if (isForall !== data.isForall) return -1;
+      if (kind === undefined) kind = data.kind;
+      else if (kind !== data.kind) return -1;
       if (sorts.length === 0) qid = data.qid;
       weight = Math.min(weight, data.weight);
       for (let index = data.sorts.length - 1; index >= 0; index--) {
@@ -47,7 +57,7 @@ export class PullQuant extends RewriterTpl {
         );
       }
     }
-    if (isForall === undefined) return -1;
+    if (kind === undefined) return -1;
     const numDecls = sorts.length;
     let shiftAmount = 0;
     const adjusted = args.map((child) => {
@@ -64,11 +74,12 @@ export class PullQuant extends RewriterTpl {
       return shifted;
     });
     const result = manager.mkQuantifier({
-      isForall,
+      kind,
       sorts: sorts.reverse(),
       names: names.reverse(),
       body: manager.mkApp(decl, adjusted, sort),
       patterns: [],
+      noPatterns: [],
       weight,
       qid,
     });
@@ -92,21 +103,27 @@ export class PullQuant extends RewriterTpl {
   reduceQuantifier(expr: number, body: number) {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
-    if (!data.isForall) {
+    if (data.kind === QUANTIFIER_LAMBDA) return -1;
+    if (data.kind === QUANTIFIER_EXISTS) {
       const result = manager.mkNot(
-        manager.mkQuantifier({ ...data, isForall: true, body: mkNot(manager, body) }),
+        manager.mkQuantifier({ ...data, kind: QUANTIFIER_FORALL, body: mkNot(manager, body) }),
       );
       manager.incRef(result);
       return result;
     }
-    if (manager.kinds[body] !== KIND_QUANTIFIER || !manager.getQuantifier(body).isForall) return -1;
+    if (
+      manager.kinds[body] !== KIND_QUANTIFIER ||
+      manager.getQuantifier(body).kind !== QUANTIFIER_FORALL
+    )
+      return -1;
     const nested = manager.getQuantifier(body);
     const result = manager.mkQuantifier({
-      isForall: true,
+      kind: QUANTIFIER_FORALL,
       sorts: [...data.sorts, ...nested.sorts],
       names: [...data.names, ...nested.names],
       body: nested.body,
       patterns: [],
+      noPatterns: [],
       weight: Math.min(data.weight, nested.weight),
       qid: data.qid,
     });

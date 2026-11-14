@@ -127,8 +127,12 @@ interface SearchStatistics {
 
 export type SearchFailure = "exhausted" | "time limit" | "memory limit" | "aborted";
 
-// Deviation from Zenon, which gives up at a 1 GB heap: its heap passes that with 1.9 million queued nodes.
-const MAX_QUEUED_NODES = 1_900_000;
+// Zenon gives up once its heap passes 1 GB. Modeled as a 2M-word formula table, 20 words per formula
+// created and 1.1 per word of queued nodes, the heap is within 8% of Zenon's past 600 MB on the corpus.
+const getHeapWords = (context: SearchContext, queue: Queue) =>
+  2_000_000 + 20 * context.exprs.getCreatedCount() + 1.1 * queue.nodeWords;
+
+const MAX_HEAP_WORDS = 1_000_000_000 / 8;
 
 export const search = (
   context: SearchContext,
@@ -221,7 +225,7 @@ export const search = (
   for (;;) {
     const limitFailure = getLimitFailure(limits);
     if (limitFailure !== undefined) return limitFailure;
-    if (queue.insertedCount > MAX_QUEUED_NODES) return "memory limit";
+    if (getHeapWords(context, queue) > MAX_HEAP_WORDS) return "memory limit";
     if (formIndex < forms.length) {
       const entry = forms[formIndex++];
       const formula = entry[0];

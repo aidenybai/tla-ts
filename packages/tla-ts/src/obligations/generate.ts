@@ -13,6 +13,7 @@ import {
   getTrue,
   isBuiltinApply,
   mapAccumulate,
+  type Defn,
   type Expr,
   type Hyp,
   type Locus,
@@ -45,7 +46,7 @@ const getAssumedFacts = (offset: number, sequent: Sequent) =>
       : [],
   );
 
-const getStepDefinition = (step: Step, body: Expr, time: Time): Hyp => {
+export const getStepDefinition = (step: Step, body: Expr, time: Time): Hyp => {
   if (!step.step) throw new TlapmBugError();
   return getDefinitionHyp(
     { kind: "Operator", name: getStepName(step.step), body, location: step.location },
@@ -55,6 +56,11 @@ const getStepDefinition = (step: Step, body: Expr, time: Time): Hyp => {
     step.location,
   );
 };
+
+export const getDefineHyp = (definition: Defn): Hyp => ({
+  ...getLocalDefn(definition),
+  location: definition.location,
+});
 
 export const proveAssertion = (context: Hyp[], sequent: Sequent, step: Step, time: Time) => {
   const visibility: Visibility = isAnonymous(step.step) ? "Visible" : "Hidden";
@@ -101,10 +107,10 @@ const getFactTime = (context: Hyp[], fact: Expr, time: Time): Time => {
   if (hyp?.kind === "Fact") return hyp.time;
   return hyp?.kind === "Defn" && typeof hyp.whereDefined === "object"
     ? hyp.whereDefined.time
-    : "Always";
+    : time;
 };
 
-const setDefinition = (visibility: Visibility, context: Hyp[], def: UseDef): Hyp[] => {
+export const setDefinition = (visibility: Visibility, context: Hyp[], def: UseDef): Hyp[] => {
   if (def.kind !== "Dx") throw new TlaProofError(`Unknown definition ${def.name}`);
   const index = context.length - def.index;
   const hyp = context[index];
@@ -119,7 +125,7 @@ const isDomainMatch = (fact: Expr, domain: Expr) =>
   fact.args[0].index === 0 &&
   isEqualExpr(domain, fact.args[1]);
 
-const setExpression = (
+export const setExpression = (
   onWarning: Warn,
   visibility: Visibility,
   fact: Expr,
@@ -156,9 +162,15 @@ export interface LineRange {
 
 const obligate = (
   sequent: Sequent,
-  from: { location?: Locus; method?: OldMethod },
+  from: { location?: Locus; method?: OldMethod; isEnabledAxiomsSound?: boolean },
   kind: ObligationKind,
-): Obligation => ({ sequent, location: from.location, kind, method: from.method });
+): Obligation => ({
+  sequent,
+  location: from.location,
+  kind,
+  method: from.method,
+  isEnabledAxiomsSound: from.isEnabledAxiomsSound,
+});
 
 interface ProofSummary {
   total: number;
@@ -302,13 +314,7 @@ export const createGenerator = (inputFiles: Set<string>, lines: LineRange, onWar
       case "Define":
         return {
           sequent: {
-            context: [
-              ...sequent.context,
-              ...step.definitions.map((definition): Hyp => ({
-                ...getLocalDefn(definition),
-                location: definition.location,
-              })),
-            ],
+            context: [...sequent.context, ...step.definitions.map(getDefineHyp)],
             active: shiftExpr(step.definitions.length, sequent.active),
           },
           step,
@@ -391,10 +397,11 @@ export const createGenerator = (inputFiles: Set<string>, lines: LineRange, onWar
         item.steps.forEach(visitStep);
         return;
       }
-      if (item.obligations) obligations.push(...item.obligations);
+      if (item.obligations && !item.isSuppressed) obligations.push(...item.obligations);
     };
     const visitStep = (step: Step) => {
-      if (step.kind === "Use" && step.obligations) obligations.push(...step.obligations);
+      if (step.kind === "Use" && step.obligations && !step.isSuppressed)
+        obligations.push(...step.obligations);
       if ("proof" in step) visitProof(step.proof);
     };
     visitProof(proof);

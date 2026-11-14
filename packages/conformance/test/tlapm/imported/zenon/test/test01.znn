@@ -1,0 +1,50 @@
+(*---
+description: Zenon's own test zenon/test/test01.znn, which Zenon must prove.
+ref: zenon/test/test01.znn
+features:
+  - zenon-test
+outcome: unsat
+---*)
+;  Copyright 2006 INRIA
+;  $Id: test01.znn,v 1.6 2011-12-28 16:43:33 doligez Exp $
+
+$sig P ("nat") "Prop"
+$sig Q ("nat") "Prop"
+
+$hyp "h1" (A. ((x "nat") (P x)))
+$hyp "h2" (A. ((x "nat") (Q x)))
+$goal (-. (\/ (A. ((x "nat") (-. (Q x)))) (A. ((x "nat") (-. (P x))))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     have z_Ha:"(\\A x:Q(x))" (is "\\A x : ?z_hf(x)")
+     using h2 by blast
+     have z_Hb:"(\\A x:P(x))" (is "\\A x : ?z_hh(x)")
+     using h1 by blast
+     assume z_Hc:"(~(~((\\A x:(~Q(x)))|(\\A x:(~P(x))))))" (is "~~?z_hj")
+     have z_Hj: "?z_hj" (is "?z_hk|?z_hm")
+     by (rule zenon_notnot_0 [OF z_Hc])
+     show FALSE
+     proof (rule zenon_or [OF z_Hj])
+      assume z_Hk:"?z_hk" (is "\\A x : ?z_ho(x)")
+      have z_Hp: "?z_hf((CHOOSE x : TRUE))" (is "?z_hp")
+      by (rule zenon_all_0 [of "?z_hf" "(CHOOSE x : TRUE)", OF z_Ha])
+      have z_Hr: "?z_ho((CHOOSE x : TRUE))"
+      by (rule zenon_all_0 [of "?z_ho" "(CHOOSE x : TRUE)", OF z_Hk])
+      show FALSE
+      by (rule notE [OF z_Hr z_Hp])
+     next
+      assume z_Hm:"?z_hm" (is "\\A x : ?z_hs(x)")
+      have z_Ht: "?z_hh((CHOOSE x : TRUE))" (is "?z_ht")
+      by (rule zenon_all_0 [of "?z_hh" "(CHOOSE x : TRUE)", OF z_Hb])
+      have z_Hv: "?z_hs((CHOOSE x : TRUE))"
+      by (rule zenon_all_0 [of "?z_hs" "(CHOOSE x : TRUE)", OF z_Hm])
+      show FALSE
+      by (rule notE [OF z_Hv z_Ht])
+     qed
+    qed
+---*)

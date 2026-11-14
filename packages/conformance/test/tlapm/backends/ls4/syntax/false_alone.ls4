@@ -1,0 +1,12 @@
+(*---
+description: A top-level False becomes the empty clause or([]), which LS4 refutes at once.
+ref: translate/fofunctions.ml#clausify
+outcome: unsat
+---*)
+False
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unsat
+---*)

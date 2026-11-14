@@ -16,6 +16,7 @@ import { TlaProofError, TlaUnsupportedError } from "../errors";
 import {
   at,
   getFact,
+  mapChildren,
   type Bound,
   type Builtin,
   type Defn,
@@ -27,7 +28,7 @@ import {
   type Sequent,
 } from "./expression";
 import type { ModuleUnit, Mule } from "./module";
-import { findPragma, readNewMethod, readOldMethod } from "./pragma";
+import { findPragma, findSuppressPragma, readNewMethod, readOldMethod } from "./pragma";
 import {
   expandChoose,
   expandFcn,
@@ -103,6 +104,7 @@ const mergeLoci = (left: Locus | undefined, right: Locus | undefined): Locus | u
 };
 
 const TUPLY_FAILURE = "use instead the class`E_visit.iter_concrete`";
+const STEP_TUPLY_FAILURE = "use instead the class `P_visit.map_concrete`";
 
 const isDitto = (bounds: QuantifierExpression["bounds"], index: number) =>
   index > 0 && bounds[index - 1].set === bounds[index].set;
@@ -135,6 +137,11 @@ export const createModuleConverter = (
 
   const getMethod = (range: SourceRange | undefined) =>
     range && readOldMethod(lines, { line: range.end.line - 1, column: range.end.column });
+
+  const getSuppressPragma = (keyword: SourceRange) =>
+    findSuppressPragma(lines, { line: keyword.start.line - 1, column: keyword.start.column - 1 });
+
+  const isSuppressed = (keyword: SourceRange) => getSuppressPragma(keyword) !== undefined;
 
   const withMethod = (range: SourceRange) => {
     const method = getMethod(range);
@@ -211,12 +218,14 @@ export const createModuleConverter = (
     bounds.map((bound, index) => {
       if (bound.pattern.kind === "Tuple")
         throw new TlaProofError("Unexpected tuple declaration", { failure: TUPLY_FAILURE });
+      const range = bound.pattern.ranges?.[0];
       return {
         name: bound.pattern.name,
         level: "Constant",
         domain: isDitto(bounds, index)
           ? { kind: "Ditto" }
           : { kind: "Domain", expression: convertExpression(bound.set, isExcept) },
+        ...(range && { location: getRangeLocus(range) }),
       };
     });
 
@@ -234,6 +243,13 @@ export const createModuleConverter = (
         domain: isDitto(bounds, index) ? { kind: "Ditto" } : { kind: "Domain", expression: domain },
       };
     });
+
+  // P_visit.map fails on the tuples a TAKE or PICK declares before the expression visitors do.
+  const convertStepBounds = (body: { names: string[]; bounds: QuantifierExpression["bounds"] }) => {
+    if (body.bounds.some((bound) => bound.pattern.kind === "Tuple"))
+      throw new TlaProofError("Unexpected tuple declaration", { failure: STEP_TUPLY_FAILURE });
+    return body.names.length > 0 ? getUnbounded(body.names) : convertBounds(body.bounds, false);
+  };
 
   const expandTuples = (expanded: Expr, location: Locus) => {
     if (!isExpandingTuples)
@@ -295,9 +311,18 @@ export const createModuleConverter = (
         const args = expression.args.map(recurse);
         const operator = lookupOperator(expression.operator);
         if (operator.fixity !== "Nonfix") {
+          const operatorLocus = getPointLocus(expression.location, 1);
+          const first = args[0]?.location;
+          const isNonfix =
+            args.length === 2 &&
+            first !== undefined &&
+            (operatorLocus.startLine < first.startLine ||
+              (operatorLocus.startLine === first.startLine &&
+                operatorLocus.startColumn < first.startColumn));
+          const operands = getOperatorLocus(args, operator.fixity);
           return at(
             { kind: "Apply", operator: convertOperator(expression.operator, undefined), args },
-            { location: getOperatorLocus(args, operator.fixity) },
+            { location: isNonfix ? mergeLoci(operatorLocus, operands) : operands },
           );
         }
         return convertName(expression.operator, args, location, expression.argumentCounts);
@@ -582,22 +607,39 @@ export const createModuleConverter = (
           { location },
         );
       case "WeakFairness":
-      case "StrongFairness":
+      case "StrongFairness": {
+        // tlapm lexes WF_vars as WF_ and vars, both located at the whole word.
+        const isGlued = /\w/.test(lines[location.startLine - 1]?.[location.startColumn + 2] ?? "");
+        const moveGluedStart = (inner: Expr): Expr =>
+          isGlued &&
+          inner.location?.startLine === location.startLine &&
+          inner.location.startColumn === location.startColumn + 3
+            ? mapChildren(
+                { ...inner, location: { ...inner.location, startColumn: location.startColumn } },
+                moveGluedStart,
+              )
+            : inner;
         return at(
           {
             kind: "Fair",
             fairness: expression.kind === "WeakFairness" ? "Weak" : "Strong",
-            subscript: recurse(expression.subscript),
+            subscript: moveGluedStart(recurse(expression.subscript)),
             action: recurse(expression.action),
           },
           { location },
         );
+      }
       case "Label":
         return at(
           {
             kind: "Parens",
             expression: recurse(expression.body),
-            form: { kind: "Nlabel", label: expression.name, names: expression.params },
+            form: {
+              kind: "Nlabel",
+              label: expression.name,
+              names: expression.params,
+              location: expression.head && getRangeLocus(expression.head),
+            },
           },
           { location },
         );
@@ -642,11 +684,13 @@ export const createModuleConverter = (
 
   const convertInstance = (instance: Instance): InstanceDefinition => ({
     location: getRangeLocus(instance.definitionRange ?? instance.instanceRange),
+    instanceLocation: getRangeLocus(instance.instanceRange),
     args: instance.params.map((param) => param.name),
     module: instance.module,
     substitutions: instance.substitutions.map((substitution) => ({
       name: getCanonicalName(substitution.name),
       expression: convertExpression(substitution.expression, false),
+      location: getRangeLocus(substitution.nameRange),
     })),
   });
 
@@ -697,7 +741,7 @@ export const createModuleConverter = (
             { location },
           );
     const end = definition.location.range?.end;
-    const methods = end && readNewMethod(lines, { line: end.line - 1, column: end.column });
+    const methods = end && readNewMethod(lines, { line: end.line - 1, column: end.column }, file);
     return methods
       ? { kind: "Bpragma", name, body: operatorBody, methods, location }
       : { kind: "Operator", name, body: operatorBody, location };
@@ -788,7 +832,11 @@ export const createModuleConverter = (
     if (!proof) return { kind: "Omitted", omission: "Implicit", location: enclosing };
     switch (proof.kind) {
       case "Obvious":
-        return { kind: "Obvious", ...withMethod(proof.keyword) };
+        return {
+          kind: "Obvious",
+          ...withMethod(proof.keyword),
+          isSuppressed: isSuppressed(proof.keyword),
+        };
       case "Omitted":
         return {
           kind: "Omitted",
@@ -803,6 +851,7 @@ export const createModuleConverter = (
           location: getRangeLocus(proof.keyword),
           step: { kind: "Unnamed", level, id: 0 },
           method: getMethod(proof.location.range),
+          isSuppressed: isSuppressed(proof.keyword),
         };
       case "Steps": {
         const tokens = proof.steps.map((step) => STEP_PATTERN.exec(step.token));
@@ -844,6 +893,7 @@ export const createModuleConverter = (
       ...converted,
       ...withMethod(step.head),
       step: number,
+      isSuppressed: isSuppressed(step.statement),
     });
     switch (body.kind) {
       case "Use":
@@ -861,6 +911,7 @@ export const createModuleConverter = (
               location,
               step: number,
               method: getMethod(body.location.range),
+              isSuppressed: isSuppressed(body.keyword),
             }
           : { kind: "Hide", usable, location, step: number };
       }
@@ -879,19 +930,14 @@ export const createModuleConverter = (
           expression: convertExpression(body.expression, false),
         });
       case "Take":
-        return withStepMethod({
-          kind: "Take",
-          bounds:
-            body.names.length > 0 ? getUnbounded(body.names) : convertBounds(body.bounds, false),
-        });
+        return withStepMethod({ kind: "Take", bounds: convertStepBounds(body) });
       case "Witness":
         return withStepMethod({
           kind: "Witness",
           expressions: body.expressions.map((expression) => convertExpression(expression, false)),
         });
       case "Pick": {
-        const bounds =
-          body.names.length > 0 ? getUnbounded(body.names) : convertBounds(body.bounds, false);
+        const bounds = convertStepBounds(body);
         const expression = convertExpression(body.body, false);
         return withProof((proof) => ({ kind: "Pick", bounds, expression, proof }));
       }
@@ -928,7 +974,9 @@ export const createModuleConverter = (
               name: getCanonicalName(declaration.name),
               shape: declaration.arity,
             })),
-            location: getLocus(unit.declarations[0].location),
+            location: getLocus(
+              unit.kind === "Constants" ? unit.declarations[0].location : unit.location,
+            ),
           };
         case "Variables":
           return {
@@ -995,13 +1043,19 @@ export const createModuleConverter = (
             location,
           };
         }
-        case "Use":
+        case "Use": {
+          // A module unit's locus takes in the suppress pragma that tlapm reads as its first tokens.
+          const pragma = getSuppressPragma(unit.use.keyword);
           return {
             kind: "Mutate",
             mode: unit.use.kind,
             usable: convertUsable(unit.use),
-            location: getUseLocus(unit.use),
+            location: mergeLoci(
+              pragma && getPointLocus({ line: pragma.line + 1, column: pragma.column + 1 }, 0),
+              getUseLocus(unit.use),
+            ),
           };
+        }
         case "Module":
           return { kind: "Submod", module: { ...convertModule(unit.module), isImportant: true } };
       }

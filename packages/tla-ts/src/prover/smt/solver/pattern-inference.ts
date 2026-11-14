@@ -9,6 +9,7 @@ import {
   OP_FALSE,
   OP_IDIV,
   OP_MOD,
+  OP_REM,
   OP_MUL,
   OP_TRUE,
 } from "./ast";
@@ -41,6 +42,7 @@ export class PatternInference {
   private candidates: RefVector;
   private candidateInfos = new Map<number, CandidateInfo>();
   private numBindings = 0;
+  private noPatterns: number[] = [];
   private isArithForbidden = true;
   private isNestedArithOnly = true;
   private isBlockingLoopPatterns = true;
@@ -92,7 +94,7 @@ export class PatternInference {
           const decl = manager.funcDecls[manager.decls[expr]];
           const isArithCandidate =
             !this.isNestedArithOnly &&
-            (decl.op === OP_IDIV || decl.op === OP_MOD || decl.op === OP_MUL);
+            (decl.op === OP_IDIV || decl.op === OP_MOD || decl.op === OP_REM || decl.op === OP_MUL);
           if (
             freeVars.size > 0 &&
             boundVars.size === 0 &&
@@ -124,7 +126,7 @@ export class PatternInference {
   }
 
   private addCandidate(expr: number, freeVars: Set<number>, size: number) {
-    if (this.candidateInfos.has(expr)) return;
+    if (this.noPatterns.includes(expr) || this.candidateInfos.has(expr)) return;
     this.candidateInfos.set(expr, { freeVars, boundVars: new Set(), size });
     this.candidates.push(expr);
   }
@@ -268,8 +270,9 @@ export class PatternInference {
     }
   }
 
-  private mkPatterns(numBindings: number, body: number) {
+  private mkPatterns(numBindings: number, body: number, noPatterns: number[]) {
     this.numBindings = numBindings;
+    this.noPatterns = noPatterns;
     this.collect(body);
     const result: number[] = [];
     if (this.candidates.size > 0) {
@@ -305,19 +308,25 @@ export class PatternInference {
     return result;
   }
 
-  infer(numBindings: number, body: number, weight: number): InferredPatterns {
+  // Arithmetic, then looping and non-nested arithmetic patterns, are allowed when no pattern is
+  // found without them. The no-patterns are ignored only when they leave no other pattern.
+  infer(numBindings: number, body: number, weight: number, noPatterns: number[]): InferredPatterns {
     this.isArithForbidden = true;
     this.isNestedArithOnly = true;
     this.isBlockingLoopPatterns = true;
-    const patterns = this.mkPatterns(numBindings, body);
+    const patterns = this.mkPatterns(numBindings, body, noPatterns);
     if (patterns.length > 0) return { patterns, weight };
+    if (noPatterns.length > 0) {
+      const ignoringPatterns = this.mkPatterns(numBindings, body, []);
+      if (ignoringPatterns.length > 0) return { patterns: ignoringPatterns, weight };
+    }
     this.isArithForbidden = false;
     this.isBlockingLoopPatterns = false;
-    const arithPatterns = this.mkPatterns(numBindings, body);
+    const arithPatterns = this.mkPatterns(numBindings, body, noPatterns);
     if (arithPatterns.length > 0)
       return { patterns: arithPatterns, weight: Math.max(weight, PI_ARITH_WEIGHT) };
     this.isNestedArithOnly = false;
-    const nonNestedPatterns = this.mkPatterns(numBindings, body);
+    const nonNestedPatterns = this.mkPatterns(numBindings, body, noPatterns);
     return {
       patterns: nonNestedPatterns,
       weight: nonNestedPatterns.length > 0 ? Math.max(weight, PI_NON_NESTED_ARITH_WEIGHT) : weight,
@@ -328,7 +337,7 @@ export class PatternInference {
     this.isArithForbidden = false;
     this.isNestedArithOnly = true;
     this.isBlockingLoopPatterns = true;
-    return this.mkPatterns(numBindings, body);
+    return this.mkPatterns(numBindings, body, []);
   }
 }
 

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { prove, type ProofObligation, type ProveOptions, TlaUnsupportedError } from "../../src";
 import { getObligations } from "../../src/obligations";
 import { encodeForBackend } from "../../src/prover/prove";
-import { TLAPS_MODULE } from "../../src/prover/tlaps-module";
+import { TLAPM_LIBRARY } from "../../src/prover/tlapm-library";
 import { getModuleLoader } from "./check-harness";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/prove");
@@ -27,7 +27,7 @@ const encodeFixture = (name: string, obligationId: number) => {
   const obligation = getObligations(
     [{ file: `${name}.tla`, source: loadModule(name) ?? "" }],
     (moduleName) => {
-      const source = loadModule(moduleName) ?? (moduleName === "TLAPS" ? TLAPS_MODULE : undefined);
+      const source = loadModule(moduleName) ?? TLAPM_LIBRARY.get(moduleName);
       return source === undefined ? undefined : { file: `${moduleName}.tla`, source };
     },
   )

@@ -47,3 +47,51 @@ jobs:
         with:
           name: tlc-results-${{ matrix.shard }}
           path: packages/conformance/.results/tlc.json
+
+  tlapm:
+    name: recordings match tlapm ${{ matrix.shard }}/2
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "pnpm"
+      - run: |
+          curl -fsSL --retry 5 --retry-all-errors -o z3.zip https://github.com/Z3Prover/z3/releases/download/z3-5.3.2/z3-5.3.2-x64-glibc-2.39.zip
+          unzip -q z3.zip -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/z3-5.3.2-x64-glibc-2.39/bin" >> "$GITHUB_PATH"
+      - run: pnpm install --frozen-lockfile
+      - id: tlapm-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: packages/conformance/.oracles/tlapm
+          key: tlapm-${{ hashFiles('packages/conformance/scripts/fetch-tlapm.ts') }}
+      - if: steps.tlapm-cache.outputs.cache-hit != 'true'
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.5.2"
+          opam-disable-sandboxing: true
+      - run: pnpm --filter @tla-ts/conformance fetch-tlapm
+        env:
+          OPAMSWITCH: ${{ github.workspace }}
+      - if: steps.tlapm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: packages/conformance/.oracles/tlapm
+          key: ${{ steps.tlapm-cache.outputs.cache-primary-key }}
+      - run: pnpm --filter @tla-ts/conformance conformance --host tlapm --time-limit 300 --memory-limit 4096 --shard ${{ matrix.shard }}/2
+        env:
+          CONFORMANCE_WORKERS: 3
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tlapm-results-${{ matrix.shard }}
+          path: packages/conformance/.results/tlapm.json

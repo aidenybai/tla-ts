@@ -467,9 +467,11 @@ const BASED_NUMBER_DIGITS = new Map([
   ["h", HEX_DIGIT],
 ]);
 
-export const matchBasedNumber = (source: string, index: number) => {
+// tlapm's lexer reads only \b, \o and \h, and SANY's their capitals too.
+export const matchBasedNumber = (source: string, index: number, isTlapm = false) => {
   if (source.charCodeAt(index) !== CODE_BACKSLASH) return 0;
-  const digits = BASED_NUMBER_DIGITS.get(source.charAt(index + 1).toLowerCase());
+  const base = source.charAt(index + 1);
+  const digits = BASED_NUMBER_DIGITS.get(isTlapm ? base : base.toLowerCase());
   if (digits === undefined) return 0;
   const end = skipClass(source, index + 2, digits);
   return end === index + 2 ? 0 : end - index;
@@ -605,7 +607,7 @@ export const tokenize = (source: string, isTlapm = false): Token[] => {
       });
       continue;
     }
-    const basedLength = matchBasedNumber(source, index);
+    const basedLength = matchBasedNumber(source, index, isTlapm);
     if (basedLength > 0) {
       pushToken("Number", source.slice(index, index + basedLength), basedLength);
       continue;

@@ -4,6 +4,7 @@ import { TlaProofError } from "../errors";
 import { isEqualExpr } from "./equality";
 import {
   AT_NOWHERE,
+  adjoinAll,
   applyBuiltin,
   at,
   getDefinitionHyp,
@@ -18,6 +19,7 @@ import {
   type Builtin,
   type Expr,
   type Hyp,
+  type Locus,
   type Sequent,
   type Time,
 } from "./expression";
@@ -33,14 +35,19 @@ import {
   substituteBounds,
   substituteExpr,
 } from "./substitution";
+import { getTime } from "./temporal";
 
 const getProps = (from: Step) => ({
   location: from.location,
   step: from.step,
   method: from.method,
+  isSuppressed: from.isSuppressed,
 });
 
 const getLevel = (step: StepNumber | undefined) => step?.level ?? 0;
+
+const getVisibleFact = (context: Hyp[], expression: Expr, location: Locus | undefined) =>
+  getFact(expression, "Visible", getTime(adjoinAll(undefined, context), expression), location);
 
 const isBinary = (
   expression: Expr,
@@ -88,7 +95,7 @@ const getRemainingBounds = (first: Bound, rest: Bound[]): Bound[] => {
 };
 
 const getWitnessProof = (step: Step, sideFacts: Expr[]): Proof => {
-  if (sideFacts.length === 0) return { kind: "Obvious", ...getProps(step) };
+  if (sideFacts.length === 0 || step.isSuppressed) return { kind: "Obvious", ...getProps(step) };
   const steps = sideFacts.map((item, index): Step => {
     const active = shiftExpr(2 * index + 2, item);
     return {
@@ -255,6 +262,7 @@ export const createSimplifier = (counter: Counter) => {
           isOnly: false,
           location: fact.location,
           useLocation: proof.location,
+          isSuppressed: proof.isSuppressed,
         }));
         const forget: Step[] = proof.isOnly
           ? [{ kind: "Forget", count: usable.facts.length, location: proof.location }]
@@ -269,6 +277,7 @@ export const createSimplifier = (counter: Counter) => {
           location: proof.location,
           step: getAnonymous(level),
           method: proof.method,
+          isSuppressed: proof.isSuppressed,
         };
         return {
           kind: "Steps",
@@ -324,6 +333,7 @@ export const createSimplifier = (counter: Counter) => {
           location: step.location,
           step: step.step,
           method: step.method,
+          isSuppressed: step.isSuppressed,
         };
         const simplified = simplify(context, goal, byProof, time);
         if (simplified.kind !== "Steps")
@@ -371,7 +381,7 @@ export const createSimplifier = (counter: Counter) => {
         const connective = exposeConnective(context, goal);
         const isImplication = isBinary(connective, "Implies");
         const sequent: Sequent = {
-          context: [getFact(step.expression, "Visible", time, step.location)],
+          context: [getVisibleFact(context, step.expression, step.location)],
           active: isImplication ? shiftExpr(1, connective.args[1]) : connective,
         };
         const proof: Proof = isImplication
@@ -418,7 +428,7 @@ export const createSimplifier = (counter: Counter) => {
         const assertion: Step = {
           kind: "Assert",
           sequent: {
-            context: [getFact(step.expression, "Visible", time, step.location)],
+            context: [getVisibleFact(context, step.expression, step.location)],
             active: shiftExpr(1, goal),
           },
           proof: step.proof,
@@ -446,9 +456,10 @@ export const createSimplifier = (counter: Counter) => {
         );
         const shifted = shiftExpr(2, existential);
         if (shifted.kind !== "Quant") throw new TlaProofError("Proof.Simplify.simplify_step/PICK");
+        const boundHyps = getBoundHyps(shifted.bounds);
         const hyps = [
-          ...getBoundHyps(shifted.bounds),
-          getFact(shifted.body, "Visible", asserted.time, shifted.body.location),
+          ...boundHyps,
+          getVisibleFact([...asserted.context, ...boundHyps], shifted.body, shifted.body.location),
         ];
         const sufficed = simplifyStep(
           asserted.context,
@@ -529,6 +540,7 @@ export const createSimplifier = (counter: Counter) => {
                 kind: "Apply",
                 operator: { kind: "Internal", builtin: "Subseteq" },
                 args: [goalDomain.expression, domain.expression],
+                location: bound.location,
               } satisfies Expr,
               ...sideFacts,
             ]

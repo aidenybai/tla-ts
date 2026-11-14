@@ -1,0 +1,33 @@
+(*---
+description: 'Zenon unfolds r \in [a : S, b : T] with in_recordset.'
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (TLA.in a_CONSTANTunde_runde_a
+(TLA.recordset "a" a_CONSTANTunde_Sunde_a "b" a_CONSTANTunde_Tunde_a))
+(TLA.in (TLA.fapply a_CONSTANTunde_runde_a "a")
+a_CONSTANTunde_Sunde_a))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~((a_CONSTANTunde_runde_a \\in [''a'' : (a_CONSTANTunde_Sunde_a), ''b'' : (a_CONSTANTunde_Tunde_a)])=>((a_CONSTANTunde_runde_a[''a'']) \\in a_CONSTANTunde_Sunde_a)))" (is "~(?z_hc=>?z_hj)")
+     have z_Hc: "?z_hc"
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hl: "(~?z_hj)"
+     by (rule zenon_notimply_1 [OF z_Ha])
+     let ?z_hm = "<<''a'', ''b''>>"
+     let ?z_hn = "<<a_CONSTANTunde_Sunde_a, a_CONSTANTunde_Tunde_a>>"
+     have z_Ho: "(1 \\in DOMAIN(?z_hm))" by auto
+     have z_Hr: "((a_CONSTANTunde_runde_a[(?z_hm[1])]) \\in (?z_hn[1]))" (is "?z_hr")
+     by (rule zenon_in_recordset_field [OF z_Hc z_Ho])
+     have z_Hj: "?z_hj"
+     using z_Hr by auto
+     show FALSE
+     by (rule notE [OF z_Hl z_Hj])
+    qed
+---*)

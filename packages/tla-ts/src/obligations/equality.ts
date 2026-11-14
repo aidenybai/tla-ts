@@ -93,7 +93,7 @@ export const isEqualHyp = (left: Hyp, right: Hyp): boolean => {
 const isEqualSequent = (left: Sequent, right: Sequent) =>
   isEqualList(left.context, right.context, isEqualHyp) && isEqualExpr(left.active, right.active);
 
-// Alpha-equivalence, including E_eq's quirk of comparing only the first CASE arm.
+// Includes E_eq's quirk of comparing only the first CASE arm.
 export const isEqualExpr = (left: Expr, right: Expr): boolean => {
   if (left.kind === "Parens") return isEqualExpr(left.expression, right);
   if (right.kind === "Parens") return isEqualExpr(left, right.expression);

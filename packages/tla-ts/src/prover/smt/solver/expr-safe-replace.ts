@@ -80,6 +80,7 @@ export class ExprSafeReplace {
     const manager = this.manager;
     const data = manager.getQuantifier(quantifier);
     const patterns = new RefVector(manager);
+    const noPatterns = new RefVector(manager);
     let body = -1;
     const isAllGround =
       this.sources.items.every((source) => manager.isGroundApp(source)) &&
@@ -103,8 +104,18 @@ export class ExprSafeReplace {
         todo.push(pattern);
         hasAllData = false;
       }
+      for (const noPattern of data.noPatterns) {
+        const replaced = hasAllData ? this.cache.get(noPattern) : undefined;
+        if (replaced !== undefined) {
+          noPatterns.push(replaced);
+          continue;
+        }
+        todo.push(noPattern);
+        hasAllData = false;
+      }
       if (!hasAllData) {
         patterns.reset();
+        noPatterns.reset();
         if (body !== -1) manager.decRef(body);
         return;
       }
@@ -130,6 +141,7 @@ export class ExprSafeReplace {
         pattern = replaced;
         patterns.push(pattern);
       }
+      for (const original of data.noPatterns) noPatterns.pushOwned(replace.apply(original));
       const isAllVars = replace.sources.items.every(
         (replaced) => manager.kinds[replaced] === KIND_VAR,
       );
@@ -150,12 +162,25 @@ export class ExprSafeReplace {
       shifter.release();
       replace.release();
     }
-    const result = manager.mkQuantifier({ ...data, body, patterns: patterns.items });
+    const result = manager.mkQuantifier({
+      ...data,
+      body,
+      patterns: patterns.items,
+      noPatterns: noPatterns.items,
+    });
     this.refs.push(result);
     this.cache.set(quantifier, result);
     todo.pop();
     patterns.reset();
+    noPatterns.reset();
     manager.decRef(body);
+  }
+
+  reset() {
+    this.sources.reset();
+    this.targets.reset();
+    this.refs.reset();
+    this.cache.clear();
   }
 
   release() {

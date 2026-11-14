@@ -46,7 +46,7 @@ export class Fm {
   private counter = 0;
   private isInconsistent = false;
   private subTodo: Constraint[] = [];
-  numVars = 0;
+  isVariableIndex: (index: number) => boolean = () => false;
 
   constructor(private manager: AstManager) {
     this.bvar2expr = new RefVector(manager);
@@ -114,7 +114,7 @@ export class Fm {
 
   private isVariable(expr: number) {
     const manager = this.manager;
-    return manager.kinds[expr] === KIND_VAR && manager.values[expr] < this.numVars;
+    return manager.kinds[expr] === KIND_VAR && this.isVariableIndex(manager.values[expr]);
   }
 
   private isLiteral(expr: number) {
@@ -191,7 +191,7 @@ export class Fm {
             this.forbiddenSet.add(manager.values[expr]);
         } else if (kind === KIND_QUANTIFIER) {
           const data = manager.getQuantifier(expr);
-          todo.push(data.body, ...data.patterns);
+          todo.push(data.body, ...data.patterns, ...data.noPatterns);
         } else manager.pushArgs(expr, todo);
       }
     }

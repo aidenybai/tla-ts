@@ -4,7 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { TlaProverError } from "../../src/errors";
 import { getObligations } from "../../src/obligations";
 import { encodeForBackend } from "../../src/prover/prove";
-import { TLAPS_MODULE } from "../../src/prover/tlaps-module";
+import { TLAPM_LIBRARY } from "../../src/prover/tlapm-library";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures/isabelle-encoder");
 
@@ -17,12 +17,18 @@ const normalize = (text: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
-const readModule = (name: string) =>
-  name === "TLAPS" ? TLAPS_MODULE : readFileSync(join(FIXTURES, `${name}.tla`), "utf8");
-
 const getObligation = (name: string, obligationId: number) => {
-  const obligation = getObligations([{ file: `${name}.tla`, source: readModule(name) }], (used) =>
-    used === "TLAPS" ? { file: "TLAPS.tla", source: TLAPS_MODULE } : undefined,
+  const obligation = getObligations(
+    [
+      {
+        file: `${name}.tla`,
+        source: TLAPM_LIBRARY.get(name) ?? readFileSync(join(FIXTURES, `${name}.tla`), "utf8"),
+      },
+    ],
+    (used) => {
+      const source = TLAPM_LIBRARY.get(used);
+      return source === undefined ? undefined : { file: `${used}.tla`, source };
+    },
   )
     .flatMap((result) => result.obligations)
     .find((innerObligation) => innerObligation.id === obligationId);

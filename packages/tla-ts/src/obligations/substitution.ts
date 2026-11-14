@@ -94,7 +94,7 @@ export const substituteDefn = (substitution: Substitution, definition: Defn): De
         instance: {
           ...definition.instance,
           substitutions: definition.instance.substitutions.map((entry) => ({
-            name: entry.name,
+            ...entry,
             expression: substituteExpr(inner, entry.expression),
           })),
         },

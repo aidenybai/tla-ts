@@ -15,6 +15,7 @@ import {
   type Bound,
   type Builtin,
   type Expr,
+  type Hyp,
   type Level,
   type Scope,
 } from "./expression";
@@ -160,9 +161,12 @@ const getBoundsLevel = (scope: Scope | undefined, bounds: Bound[], body: Expr) =
   ]);
 };
 
-const applyOperator = (operator: LevelInfo, args: LevelInfo[]): LevelInfo => {
+const applyOperator = (operator: LevelInfo, args: LevelInfo[], from: Expr): LevelInfo => {
   if (operator.weights.length !== args.length) {
-    throw new TlaProofError("Invalid number of arguments");
+    throw new TlaProofError("Invalid number of arguments", {
+      failure: "Expr.Levels: ARITY",
+      locus: from.location,
+    });
   }
   const weighted = args.filter((_arg, index) => operator.weights[index]);
   return {
@@ -170,6 +174,14 @@ const applyOperator = (operator: LevelInfo, args: LevelInfo[]): LevelInfo => {
     weights: [],
     params: getUnion([operator.params, ...weighted.map((arg) => arg.params)]),
   };
+};
+
+export const getContextLevel = (scope: Scope | undefined, hyps: Hyp[]) => {
+  const [inner, levels] = mapAccumulate(scope, hyps, (current, hyp) => {
+    const next = adjoin(current, hyp);
+    return [next, getHypLevel(next).level];
+  });
+  return { scope: inner, level: Math.max(0, ...levels) };
 };
 
 export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelInfo => {
@@ -207,7 +219,11 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
         return recurse({ ...expression, operator: operator.args[0] });
       }
       if (operator.kind === "Opaque") {
-        return applyOperator(getInfo(0, expression.args.length), expression.args.map(recurse));
+        return applyOperator(
+          getInfo(0, expression.args.length),
+          expression.args.map(recurse),
+          expression,
+        );
       }
       if (operator.kind === "Internal" && expression.args.length === 1) {
         const arg = expression.args[0];
@@ -236,14 +252,13 @@ export const getLevelInfo = (scope: Scope | undefined, expression: Expr): LevelI
         expression.args.forEach(recurse);
         return getInfo(3, 2);
       }
-      return applyOperator(recurse(operator), expression.args.map(recurse));
+      return applyOperator(recurse(operator), expression.args.map(recurse), expression);
     }
     case "Sequent": {
-      const [inner, levels] = mapAccumulate(scope, expression.sequent.context, (current, hyp) => {
-        const next = adjoin(current, hyp);
-        return [next, getHypLevel(next).level];
-      });
-      return getInfo(Math.max(0, ...levels, getLevelInfo(inner, expression.sequent.active).level));
+      const context = getContextLevel(scope, expression.sequent.context);
+      return getInfo(
+        Math.max(context.level, getLevelInfo(context.scope, expression.sequent.active).level),
+      );
     }
     case "With":
     case "Dot":

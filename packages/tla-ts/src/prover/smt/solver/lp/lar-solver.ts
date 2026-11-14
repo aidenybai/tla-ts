@@ -131,6 +131,18 @@ export class LarSolver {
     return this.localIsInt[column];
   }
 
+  getLowerBoundOf(column: number) {
+    return column < this.columns.length && this.columns[column].lowerWitness !== null
+      ? this.core.lowerBounds[column]
+      : undefined;
+  }
+
+  getUpperBoundOf(column: number) {
+    return column < this.columns.length && this.columns[column].upperWitness !== null
+      ? this.core.upperBounds[column]
+      : undefined;
+  }
+
   isBase(column: number) {
     return this.core.isBase(column);
   }
@@ -227,6 +239,15 @@ export class LarSolver {
       for (const entry of other.coeffs) if (this.hasTerm(entry[0])) seen.add(entry[0]);
       term.substByTerm(other, column);
     }
+  }
+
+  areEqual(first: number, second: number) {
+    const term = new LarTerm([
+      [first, Rational.one],
+      [second, Rational.minusOne],
+    ]);
+    this.substKnownTerms(term);
+    return term.size === 0;
   }
 
   addTerm(coeffs: [number, Rational][], external: number) {
@@ -352,9 +373,10 @@ export class LarSolver {
     return { kind, bound };
   }
 
-  mkVarBound(column: number, kind: ConstraintKind, rhs: Rational) {
+  // A non-zero eps makes the bound rhs + eps*delta.
+  mkVarBound(column: number, kind: ConstraintKind, rhs: Rational, eps = Rational.zero) {
     const adjusted = this.adjustBoundForInt(column, kind, rhs);
-    return this.constraints.add(column, adjusted.kind, new Impq(adjusted.bound));
+    return this.constraints.add(column, adjusted.kind, new Impq(adjusted.bound, eps));
   }
 
   constraintIsRedundant(index: number) {
@@ -530,7 +552,7 @@ export class LarSolver {
     for (const column of toRemove) this.fixedBaseVarSet.delete(column);
   }
 
-  private removeFromBasis(column: number) {
+  removeFromBasis(column: number) {
     const core = this.core;
     for (const cell of core.matrix.rows[core.heading[column]]) {
       if (cell.column === column || this.isFixed(cell.column)) continue;
@@ -603,6 +625,21 @@ export class LarSolver {
         this.setValueForNbasicColumn(column, new Impq(value.floor()));
         return true;
     }
+  }
+
+  hasIntVar() {
+    return this.localIsInt.some((isInt) => isInt);
+  }
+
+  // Columns added after the backup get basic values from their rows, as the tableau requires.
+  restoreX() {
+    const core = this.core;
+    const isGrown = core.getBackupSize() < core.getColumnCount();
+    core.restoreX();
+    if (!isGrown) return;
+    for (let rowIndex = 0; rowIndex < this.getRowCount(); rowIndex++)
+      core.x[core.basis[rowIndex]] = this.getBasicVarValueFromRow(rowIndex);
+    this.moveNonBasicColumnsToBounds();
   }
 
   hasInfInt() {

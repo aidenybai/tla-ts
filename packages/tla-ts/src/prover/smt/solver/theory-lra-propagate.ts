@@ -1,7 +1,6 @@
 // Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt.
 import { OP_ITE, OP_SUB, SORT_BOOL } from "./ast";
 import { TheoryJustification } from "./enode";
-import { getIdentityHash, ObjMap } from "./hashtable";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { Literal, negate } from "./literal";
 import { Rational } from "./rational";
@@ -10,8 +9,8 @@ import { type ConstraintKind, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./lp/co
 import { LP_INFEASIBLE } from "./lp/core-solver";
 import { Dependency, linearize, mkJoin, mkLeaf } from "./lp/dependency";
 import { Explanation } from "./lp/explanation";
-import type { LarTerm } from "./lp/lar-term";
 import { getAtomLiteral, TheoryLraBounds } from "./theory-lra-bounds";
+import { getTermCoeffs } from "./arith-terms";
 import type { ApiBound } from "./theory-lra-internalize";
 
 const NULL_THEORY_VAR = -1;
@@ -39,6 +38,7 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
   private lowerTerms: (TermBound | undefined)[] = [];
   private upperTerms: (TermBound | undefined)[] = [];
   protected isModelInitialized = false;
+  private activeInfEpsConstraints: number[] = [];
 
   canPropagate() {
     return (
@@ -121,6 +121,10 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     const constraint = isTrue ? bound.constraintTrue : bound.constraintFalse;
     if (solver.constraintIsRedundant(constraint)) return solver.status !== LP_INFEASIBLE;
     solver.activate(constraint);
+    if (isTrue && !bound.eps.isZero()) {
+      this.context.pushTrail(() => this.activeInfEpsConstraints.pop());
+      this.activeInfEpsConstraints.push(constraint);
+    }
     if (solver.status === LP_INFEASIBLE) return false;
     const kind = this.getBoundKind(bound, isTrue);
     const value = isTrue
@@ -128,7 +132,8 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
       : bound.isLower
         ? bound.value.sub(Rational.one)
         : bound.value.add(Rational.one);
-    if (bound.isInt || isTrue) this.propagateEqs(bound.column, constraint, kind, bound, value);
+    if (isTrue ? bound.eps.isZero() : bound.isInt)
+      this.propagateEqs(bound.column, constraint, kind, bound, value);
     return true;
   }
 
@@ -231,7 +236,7 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
 
   private propagateOffsetEq(column: number, dep: Dependency, value: Rational) {
     if (!value.isZero() || !this.solver.hasTerm(column)) return false;
-    const coeffs = this.getTermCoeffs(this.solver.getTerm(column));
+    const coeffs = getTermCoeffs(this.solver, this.solver.getTerm(column));
     if (coeffs.length !== 2) return false;
     const first = coeffs[0];
     const second = coeffs[1];
@@ -244,28 +249,10 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     return true;
   }
 
-  protected getTermCoeffs(term: LarTerm) {
-    const coeffs = new ObjMap<Rational>(getIdentityHash);
-    const visit = (current: LarTerm, coeff: Rational) => {
-      for (const entry of current.coeffs) {
-        if (this.solver.hasTerm(entry[0])) {
-          visit(this.solver.getTerm(entry[0]), coeff.mul(entry[1]));
-          continue;
-        }
-        const thVar = this.solver.getExternal(entry[0]);
-        const sum = (coeffs.get(thVar) ?? Rational.zero).add(entry[1].mul(coeff));
-        if (coeffs.has(thVar)) coeffs.replace(thVar, sum);
-        else coeffs.set(thVar, sum);
-      }
-    };
-    visit(term, Rational.one);
-    return [...coeffs];
-  }
-
   private assignEq(first: number, second: number) {
     this.context.pushEq(this.getEnode(first), this.getEnode(second), {
       kind: "justification",
-      justification: new TheoryJustification(this.coreLiterals, []),
+      justification: new TheoryJustification(this.id, this.coreLiterals, []),
     });
   }
 
@@ -326,7 +313,19 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     }
   }
 
+  // An implied bound keeps only a rational and a strict bit, so one explained by a bound with an
+  // infinitesimal could strengthen x >= r - eps into x > r.
   private propagateLpSolverBound(implied: ImpliedBound) {
+    const epsConstraints = this.activeInfEpsConstraints;
+    if (
+      epsConstraints.length > 0 &&
+      implied
+        .explain()
+        .some((entry) =>
+          linearize([entry[1]]).some((constraint) => epsConstraints.includes(constraint)),
+        )
+    )
+      return;
     const thVar = this.solver.getExternal(implied.column);
     if (thVar === NULL_THEORY_VAR || this.unassignedBounds[thVar] === 0) return;
     const context = this.context;
@@ -346,7 +345,7 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
             this.explanation.addPair(constraint, entry[0]);
           }
       }
-      context.assign(literal, new TheoryJustification(this.coreLiterals, []));
+      context.assign(literal, new TheoryJustification(this.id, this.coreLiterals, []));
     }
   }
 
@@ -386,6 +385,6 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     this.resetEvidence();
     this.numConflicts++;
     for (const constraint of this.explanation) this.setEvidence(constraint);
-    this.context.setConflict(new TheoryJustification(this.coreLiterals, []), null);
+    this.context.setConflict(new TheoryJustification(this.id, this.coreLiterals, []), null);
   }
 }

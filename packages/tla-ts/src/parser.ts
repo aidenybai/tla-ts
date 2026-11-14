@@ -35,6 +35,24 @@ interface InfixOperator extends Precedence {
   isAssociative: boolean;
 }
 
+interface TlapmOperand {
+  start: number;
+  end: number;
+  expression: Expression;
+  joinedBy?: string;
+}
+
+interface TlapmOperator extends Precedence {
+  start: number;
+  end: number;
+  fixity: "Prefix" | "Infix" | "Postfix";
+  isLeft: boolean;
+  joins?: string;
+  apply: (operands: TlapmOperand[]) => Expression;
+}
+
+type TlapmItem = TlapmOperand | TlapmOperator;
+
 const POSTFIX_PRECEDENCE = { low: 15, high: 15 };
 const FUNCTION_PRECEDENCE = { low: 16, high: 16 };
 
@@ -143,6 +161,49 @@ const INFIX_OPERATORS = new Map<string, InfixOperator>([
 ]);
 
 const NEGATION_PRECEDENCE = 12;
+
+// tlapm's Optable has SANY's infix precedences, groups % and \X to the left with the operators
+// SANY takes as associative, and has these prefix precedences. A function application and a field
+// bind above every operator.
+const isTlapmLeft = (text: string, infix: InfixOperator) =>
+  infix.isAssociative || text === "%" || text === "\\X";
+
+const TLAPM_PREFIX_OPERATORS = new Map<string, Precedence>([
+  ["~", { low: 4, high: 4 }],
+  ["[]", { low: 4, high: 15 }],
+  ["<>", { low: 4, high: 15 }],
+  ["ENABLED", { low: 4, high: 15 }],
+  ["UNCHANGED", { low: 4, high: 15 }],
+  ["SUBSET", { low: 8, high: 8 }],
+  ["UNION", { low: 8, high: 8 }],
+  ["DOMAIN", { low: 9, high: 9 }],
+  ["-", { low: 12, high: 12 }],
+  ["-.", { low: 12, high: 12 }],
+]);
+
+const TLAPM_SELECTION_PRECEDENCE = { low: 17, high: 17 };
+
+const TLAPM_ATOM_STARTS = new Set([
+  "(",
+  "[",
+  "{",
+  "<<",
+  "@",
+  "\\A",
+  "\\E",
+  "\\AA",
+  "\\EE",
+  "IF",
+  "CASE",
+  "LET",
+  "CHOOSE",
+  "LAMBDA",
+  "WF_",
+  "SF_",
+]);
+
+// The brackets whose contents tlapm reads without committing, so a failure in them backtracks.
+const TLAPM_OPEN_BRACKETS = new Set(["(", "{", "<<"]);
 
 const POSTFIX_OPERATORS = new Set(["^+", "^*", "^#"]);
 
@@ -426,6 +487,11 @@ const parse = (
   const factNames = new Set<string>();
   const proofScopes: Set<string>[] = [];
   const openModules: Module[] = [];
+  // Pco's backtracking: a failure not past a commit rewinds to its attempt's frame.
+  let attemptFrame: number | undefined;
+  let attemptCount = 0;
+  const restorePoints: number[] = [];
+  const backtracks = new WeakMap<TlaSyntaxError, number>();
 
   const isRecursiveName = (name: string) => recursiveScopes[recursiveScopes.length - 1].has(name);
 
@@ -473,15 +539,6 @@ const parse = (
   const describeToken = (token: Token) =>
     token.kind === "End" ? "end of input" : JSON.stringify(token.text);
 
-  let unitStart = 0;
-
-  const getDefinitionEnd = (fallback: Point) => {
-    const equals = tokens
-      .slice(unitStart, cursor)
-      .find((token) => token.text === "==" && token.kind !== "String");
-    return equals ? { line: equals.line, column: equals.endColumn + 1 } : fallback;
-  };
-
   const isTlapmKeyword = (token: Token) =>
     isTlapm && (token.kind === "Keyword" || BUILTIN_CONSTANTS.has(token.text));
 
@@ -496,6 +553,7 @@ const parse = (
   };
 
   const getTlapmName = (token: Token) => {
+    if (token.kind === "End") return "EOF";
     if (/^-{4,}$/.test(token.text)) return "----";
     if (/^={4,}$/.test(token.text)) return "====";
     if (TLAPM_PUNCTUATION.has(token.text) || token.kind === "Number" || token.kind === "Decimal")
@@ -509,35 +567,74 @@ const parse = (
   const createError = (message: string, token: Point = peekRaw(), unexpected?: Token) => {
     const end = tokens[tokens.length - 1];
     const isEnd = token.line === end.line && token.column === end.column;
-    return new TlaSyntaxError(
+    const error = new TlaSyntaxError(
       `${message} at line ${token.line}, column ${token.column}`,
       undefined,
       getFailure(message, token, isEnd, unexpected),
     );
+    if (attemptFrame !== undefined) backtracks.set(error, attemptFrame);
+    return error;
   };
 
+  // tlapm reports a failure after the last token it read before the outermost attempt around it.
   const getFailure = (
     message: string,
     token: Point,
     isEnd: boolean,
     unexpected: Token | undefined,
   ) => {
-    if (isTlapm && isEnd) {
-      const end = tokens[tokens.length - 1];
-      return { reason: "Unexpected EOF", ...getDefinitionEnd(getPreviousEnd(end)), isEnd };
-    }
-    if (isTlapm && unexpected) {
-      return {
-        reason: `Unexpected ${getTlapmName(unexpected)}`,
-        ...getPreviousEnd(unexpected),
-        isEnd,
-      };
-    }
-    return { reason: message, line: token.line, column: token.column, isEnd };
+    if (!isTlapm) return { reason: message, line: token.line, column: token.column, isEnd };
+    const restored = tokens[restorePoints[0] - 1];
+    const reason = unexpected ? `Unexpected ${getTlapmName(unexpected)}` : message;
+    if (restored) return { reason, line: restored.line, column: restored.endColumn + 1, isEnd };
+    const position = unexpected ? getPreviousEnd(unexpected) : token;
+    return { reason, line: position.line, column: position.column, isEnd };
   };
 
   const createUnexpected = (message: string, token: Token = peekRaw()) =>
     createError(message, token, token);
+
+  // Pco.attempt: a failure that backtracks to it leaves the input as it was, and gives undefined.
+  const attempt = <Result>(parse: () => Result): Result | undefined => {
+    const saved = {
+      cursor,
+      frame: attemptFrame,
+      restorePoints: restorePoints.length,
+      offsideColumns: offsideColumns.length,
+      recursiveScopes: recursiveScopes.length,
+    };
+    const frame = ++attemptCount;
+    attemptFrame = frame;
+    try {
+      const result = parse();
+      attemptFrame = saved.frame;
+      return result;
+    } catch (error) {
+      if (!(error instanceof TlaSyntaxError) || backtracks.get(error) !== frame) throw error;
+      cursor = saved.cursor;
+      attemptFrame = saved.frame;
+      restorePoints.length = saved.restorePoints;
+      offsideColumns.length = saved.offsideColumns;
+      recursiveScopes.length = saved.recursiveScopes;
+      return undefined;
+    }
+  };
+
+  // Pco.commit: a failure in parse no longer backtracks.
+  const commit = <Result>(parse: () => Result) => {
+    const frame = attemptFrame;
+    attemptFrame = undefined;
+    const result = parse();
+    attemptFrame = frame;
+    return result;
+  };
+
+  const withRestorePoint = <Result>(parse: () => Result) => {
+    restorePoints.push(cursor);
+    const result = parse();
+    restorePoints.pop();
+    return result;
+  };
 
   const isFieldName = (token: Token) =>
     (token.kind === "Identifier" ||
@@ -552,7 +649,7 @@ const parse = (
 
   const advance = () => {
     const token = peek();
-    if (token.kind === "End") throw createError("Unexpected end of expression");
+    if (token.kind === "End") throw createUnexpected("Unexpected end of expression");
     cursor++;
     return token;
   };
@@ -622,13 +719,13 @@ const parse = (
     return items;
   };
 
-  const isBoundAhead = () => {
-    if (isAt("<<")) {
-      let offset = 1;
+  const isBoundAhead = (start = 0) => {
+    if (isAt("<<", start)) {
+      let offset = start + 1;
       while (peek(offset).kind === "Identifier" || isAt(",", offset)) offset++;
       return isAt(">>", offset) && isAt("\\in", offset + 1);
     }
-    let offset = 0;
+    let offset = start;
     while (peek(offset).kind === "Identifier") {
       if (isAt("\\in", offset + 1)) return true;
       if (!isAt(",", offset + 1)) return false;
@@ -655,13 +752,21 @@ const parse = (
     return { kind: "Tuple", names: names.names, ranges: names.ranges };
   };
 
-  const parseBounds = () =>
-    parseSeparated(() => {
+  // tlapm's func_boundeds reads another bound only where names and \in follow the comma.
+  const parseBounds = () => {
+    const parseBound = () => {
       const patterns = parseSeparated(parsePattern);
       expect("\\in");
-      const set = parseExpression();
+      const set = commit(parseExpression);
       return patterns.map((pattern) => ({ pattern, set }));
-    }).flat();
+    };
+    const bounds = [parseBound()];
+    while (isAt(",") && (!isTlapm || isBoundAhead(1))) {
+      advance();
+      bounds.push(parseBound());
+    }
+    return bounds.flat();
+  };
 
   const parseSubscript = (): { subscript: Expression; lastArgs: Expression[] } => {
     const token = peek();
@@ -823,7 +928,11 @@ const parse = (
         start,
       );
     }
-    return parseExpression();
+    if (!isTlapm) return parseExpression();
+    // tlapm's oparg reads an operator where an expression doesn't start, and fails otherwise.
+    const argument = attempt(parseExpression);
+    if (argument) return argument;
+    throw createUnexpected(`Unexpected ${describeToken(peek())}`);
   };
 
   let lastArgumentsRange: SourceRange | undefined;
@@ -940,7 +1049,7 @@ const parse = (
     const element = withRange(parsePrefix(), start);
     const location = getLocation(advance());
     return withRange(
-      { kind: "Apply", operator: "\\in", args: [element, parseExpression()], location },
+      { kind: "Apply", operator: "\\in", args: [element, commit(parseExpression)], location },
       start,
     );
   };
@@ -953,9 +1062,9 @@ const parse = (
         const checkpoint = cursor;
         const pattern = parsePattern();
         expect("\\in");
-        const set = parseExpression();
+        const set = commit(parseExpression);
         if (accept(":")) {
-          const predicate = parseExpression();
+          const predicate = commit(parseExpression);
           expect("}");
           return { kind: "SetFilter", bound: { pattern, set }, predicate, location };
         }
@@ -985,7 +1094,7 @@ const parse = (
       return {
         kind: "AngleAction",
         action: elements[0],
-        subscript: parseSubscript().subscript,
+        subscript: commit(parseSubscript).subscript,
         location,
       };
     }
@@ -1079,10 +1188,8 @@ const parse = (
       expect(":");
       return { kind: "Lambda", params, body: parseExpression(), location };
     }
-    if (token.kind === "Number") {
-      if (isTlapm && /^\\[BOH]/.test(token.text)) throw createError("incomplete expression", token);
+    if (token.kind === "Number")
       return { kind: "Number", value: getNumeralValue(token.text), text: token.text, location };
-    }
     if (token.kind === "Decimal") return { kind: "Decimal", text: token.text, location };
     if (token.kind === "String") return { kind: "String", value: token.text, location };
     const isStep = token.kind === "Step" && isStepReference(token);
@@ -1207,8 +1314,7 @@ const parse = (
         const instances: Instance[] = [];
         recursiveScopes.push(new Set());
         while (!accept("IN")) {
-          if (isTlapm && isAt("RECURSIVE"))
-            throw createError("Unexpected keyword RECURSIVE", getDefinitionEnd(peekRaw()));
+          if (isTlapm && isAt("RECURSIVE")) throw createUnexpected("Unexpected keyword RECURSIVE");
           if (accept("RECURSIVE")) {
             declareRecursive();
             continue;
@@ -1254,14 +1360,12 @@ const parse = (
 
   const parsePrefixOperand = (operator: Token, low: number, high: number) => {
     lastOperator = precedingOperator = { low, high };
-    const operand = parseExpression(
-      isTlapm ? Math.min(high + 1, POSTFIX_PRECEDENCE.low) : high + 1,
-    );
+    const operand = parseExpression(high + 1);
     const next = peek();
     const nextHigh = DEFINABLE_POSTFIX_OPERATORS.has(next.text)
       ? POSTFIX_PRECEDENCE.high
       : INFIX_OPERATORS.get(next.text)?.high;
-    if (!isTlapm && next.kind === "Operator" && nextHigh !== undefined && nextHigh >= low) {
+    if (next.kind === "Operator" && nextHigh !== undefined && nextHigh >= low) {
       throw createError(`Precedence conflict between ${operator.text} and ${next.text}`, next);
     }
     return operand;
@@ -1275,26 +1379,6 @@ const parse = (
     if (token.kind === "Operator" && isBullet(token)) {
       return parseJunctionList();
     }
-    if (isTlapm && INFIX_OPERATORS.has(token.text) && isAt("(", 1)) {
-      const start = cursor;
-      const nonfix = withBracketLayout(() => {
-        advance();
-        advance();
-        const left = parseExpression();
-        if (!accept(",")) return undefined;
-        const right = parseExpression();
-        expect(")");
-        const apply: Expression = {
-          kind: "Apply",
-          operator: token.text,
-          args: [left, right],
-          location,
-        };
-        return withRange(apply, start);
-      });
-      if (nonfix !== undefined) return nonfix;
-      cursor = start;
-    }
     if (token.kind === "Operator" || token.kind === "Keyword") {
       switch (token.text) {
         case "~":
@@ -1306,8 +1390,6 @@ const parse = (
             location,
           };
         case "-":
-        case "-.":
-          if (token.text === "-." && !isTlapm) break;
           advance();
           return {
             kind: "Apply",
@@ -1328,7 +1410,7 @@ const parse = (
           return {
             kind: "Apply",
             operator: token.text,
-            args: [isTlapm ? parseExpression(9) : parsePrefixOperand(token, 10, 13)],
+            args: [parsePrefixOperand(token, 10, 13)],
             location,
           };
       }
@@ -1336,7 +1418,57 @@ const parse = (
     return parsePrimary(preceding);
   };
 
-  const parseExpression = (minimumPrecedence = 0): Expression => {
+  const getInfixApplication = (
+    token: Token,
+    left: Expression,
+    right: Expression,
+    isChained: boolean,
+    prefixEnd: Point,
+  ): Expression => {
+    const location = getLocation(token);
+    if (token.text === "/\\" || token.text === "\\/") {
+      const kind = token.text === "/\\" ? "And" : "Or";
+      return left.kind === kind && isChained
+        ? {
+            ...left,
+            operands: [...left.operands, right],
+            prefixEnds: [...(left.prefixEnds ?? []), prefixEnd],
+          }
+        : { kind, operands: [left, right], prefixEnds: [prefixEnd], location };
+    }
+    if (token.text === "\\X") {
+      return left.kind === "Product" && isChained
+        ? { ...left, factors: [...left.factors, right] }
+        : { kind: "Product", factors: [left, right], location };
+    }
+    return {
+      kind: "Apply",
+      operator: token.text,
+      spelling: token.spelling,
+      args: [left, right],
+      location,
+    };
+  };
+
+  const getPostfixApplication = (token: Token, operand: Expression): Expression =>
+    token.text === "'"
+      ? { kind: "Prime", expression: operand, location: getLocation(token) }
+      : {
+          kind: "Apply",
+          operator: token.text,
+          spelling: token.spelling,
+          args: [operand],
+          location: getLocation(token),
+        };
+
+  const parseFunctionArguments = () => {
+    advance();
+    const args = withBracketLayout(() => parseSeparated(() => parseExpression()));
+    withBracketLayout(() => expect("]"));
+    return args;
+  };
+
+  const parseSanyExpression = (minimumPrecedence: number): Expression => {
     const start = cursor;
     const prefix = parsePrefix();
     let left = prefix.location.range ? prefix : withRange(prefix, start);
@@ -1345,31 +1477,14 @@ const parse = (
       const token = peek();
       if (token.kind !== "Operator") break;
       const location = getLocation(token);
-      if (token.text === "'" && minimumPrecedence <= 15) {
+      if (DEFINABLE_POSTFIX_OPERATORS.has(token.text) && minimumPrecedence <= 15) {
         advance();
         lastOperator = POSTFIX_PRECEDENCE;
-        left = withRange({ kind: "Prime", expression: left, location }, start);
-        continue;
-      }
-      if (POSTFIX_OPERATORS.has(token.text) && minimumPrecedence <= 15) {
-        advance();
-        lastOperator = POSTFIX_PRECEDENCE;
-        left = withRange(
-          {
-            kind: "Apply",
-            operator: token.text,
-            spelling: token.spelling,
-            args: [left],
-            location,
-          },
-          start,
-        );
+        left = withRange(getPostfixApplication(token, left), start);
         continue;
       }
       if (token.text === "[") {
-        advance();
-        const args = withBracketLayout(() => parseSeparated(() => parseExpression()));
-        withBracketLayout(() => expect("]"));
+        const args = parseFunctionArguments();
         lastOperator = FUNCTION_PRECEDENCE;
         left = withRange({ kind: "FunctionApplication", function: left, args, location }, start);
         continue;
@@ -1393,41 +1508,206 @@ const parse = (
         }
       }
       advance();
-      if (!isTlapm && infix.low > NEGATION_PRECEDENCE && isAt("-")) {
+      if (infix.low > NEGATION_PRECEDENCE && isAt("-")) {
         throw createError(`Precedence conflict between ${token.text} and -`, peek());
       }
       lastOperator = precedingOperator = infix;
       const right = parseExpression(infix.high + 1);
-      if (token.text === "/\\" || token.text === "\\/") {
-        const kind = token.text === "/\\" ? "And" : "Or";
-        const prefixEnds = [getRange(start).end];
-        left =
-          left.kind === kind && previous?.text === token.text
-            ? {
-                ...left,
-                operands: [...left.operands, right],
-                prefixEnds: [...(left.prefixEnds ?? []), ...prefixEnds],
-              }
-            : { kind, operands: [left, right], prefixEnds, location };
-      } else if (token.text === "\\X") {
-        left =
-          left.kind === "Product" && previous?.text === "\\X"
-            ? { ...left, factors: [...left.factors, right] }
-            : { kind: "Product", factors: [left, right], location };
-      } else {
-        left = {
-          kind: "Apply",
-          operator: token.text,
-          spelling: token.spelling,
-          args: [left, right],
-          location,
-        };
-      }
-      left = withRange(left, start);
+      const isChained = previous?.text === token.text;
+      left = withRange(
+        getInfixApplication(token, left, right, isChained, getRange(start).end),
+        start,
+      );
       previous = { ...infix, text: token.text };
     }
     return left;
   };
+
+  const isTlapmAtomStart = (token: Token) =>
+    token.kind === "Number" ||
+    token.kind === "Decimal" ||
+    token.kind === "String" ||
+    token.kind === "Identifier" ||
+    (token.kind === "Step" && isStepReference(token) && /^<\d/.test(token.text)) ||
+    ((token.kind === "Operator" || token.kind === "Keyword") && TLAPM_ATOM_STARTS.has(token.text));
+
+  const getTlapmOperand = (expression: Expression, start: number): TlapmOperand => ({
+    start,
+    end: cursor - 1,
+    expression: expression.location.range ? expression : withRange(expression, start),
+  });
+
+  const getTlapmOperator = (
+    start: number,
+    fixity: TlapmOperator["fixity"],
+    precedence: Precedence,
+    apply: TlapmOperator["apply"],
+  ): TlapmOperator => ({
+    ...precedence,
+    start,
+    end: cursor - 1,
+    fixity,
+    isLeft: false,
+    apply,
+  });
+
+  const parseTlapmItem = (isStart: boolean): TlapmItem | undefined => {
+    const start = cursor;
+    const token = peek();
+    const location = getLocation(token);
+    const isOperator = token.kind === "Operator" || token.kind === "Keyword";
+    const infix = isOperator ? INFIX_OPERATORS.get(token.text) : undefined;
+    if (!isStart) {
+      if (isAt("[")) {
+        const args = parseFunctionArguments();
+        return getTlapmOperator(start, "Postfix", TLAPM_SELECTION_PRECEDENCE, (operands) => ({
+          kind: "FunctionApplication",
+          function: operands[0].expression,
+          args,
+          location,
+        }));
+      }
+      if (isAt(".") && isFieldName(peek(1))) {
+        advance();
+        const field = advance().text;
+        return getTlapmOperator(start, "Postfix", TLAPM_SELECTION_PRECEDENCE, (operands) => ({
+          kind: "FieldAccess",
+          record: operands[0].expression,
+          field,
+          location,
+        }));
+      }
+      if (infix) {
+        advance();
+        return {
+          ...getTlapmOperator(start, "Infix", infix, (operands) =>
+            getInfixApplication(
+              token,
+              operands[0].expression,
+              operands[1].expression,
+              operands[0].joinedBy === token.text,
+              getRange(operands[0].start, operands[1].end).end,
+            ),
+          ),
+          isLeft: isTlapmLeft(token.text, infix),
+          joins: token.text,
+        };
+      }
+      if (token.kind !== "Operator" || !DEFINABLE_POSTFIX_OPERATORS.has(token.text))
+        return undefined;
+      advance();
+      return getTlapmOperator(start, "Postfix", POSTFIX_PRECEDENCE, (operands) =>
+        getPostfixApplication(token, operands[0].expression),
+      );
+    }
+    if (token.kind === "Operator" && isBullet(token))
+      return getTlapmOperand(commit(parseJunctionList), start);
+    const nonfix =
+      infix && isAt("(", 1)
+        ? attempt(() =>
+            withBracketLayout((): Expression => {
+              advance();
+              advance();
+              const left = parseExpression();
+              expect(",");
+              const right = parseExpression();
+              expect(")");
+              return { kind: "Apply", operator: token.text, args: [left, right], location };
+            }),
+          )
+        : undefined;
+    if (nonfix) return getTlapmOperand(nonfix, start);
+    const prefix = isOperator ? TLAPM_PREFIX_OPERATORS.get(token.text) : undefined;
+    if (prefix) {
+      advance();
+      return getTlapmOperator(start, "Prefix", prefix, (operands) =>
+        getOperatorApplication(
+          token.text === "-" ? "-." : token.text,
+          operands[0].expression,
+          location,
+        ),
+      );
+    }
+    if (!isTlapmAtomStart(token)) return undefined;
+    const isTransparent = token.kind === "Operator" && TLAPM_OPEN_BRACKETS.has(token.text);
+    return getTlapmOperand(isTransparent ? parsePrimary() : commit(parsePrimary), start);
+  };
+
+  const isTlapmOperator = (item: TlapmItem | undefined): item is TlapmOperator =>
+    item !== undefined && "fixity" in item;
+
+  const isTlapmOperand = (item: TlapmItem | undefined): item is TlapmOperand =>
+    item !== undefined && !("fixity" in item);
+
+  const applyTlapmOperator = (operator: TlapmOperator, operands: TlapmOperand[]) => {
+    const start = Math.min(operator.start, operands[0].start);
+    const end = Math.max(operator.end, operands[operands.length - 1].end);
+    const expression = operator.apply(operands);
+    expression.location.range = getRange(start, end);
+    return { start, end, expression, joinedBy: operator.joins };
+  };
+
+  const reduceTlapmItems = (stack: TlapmItem[]) => {
+    const right = stack.pop();
+    const operator = stack.pop();
+    if (!isTlapmOperand(right) || !isTlapmOperator(operator)) {
+      throw createError("incomplete expression");
+    }
+    const left = operator.fixity === "Infix" ? stack.pop() : undefined;
+    stack.push(applyTlapmOperator(operator, isTlapmOperand(left) ? [left, right] : [right]));
+  };
+
+  const getPreviousOperator = (stack: TlapmItem[]) => {
+    const previous = stack[stack.length - 2];
+    return isTlapmOperator(previous) ? previous : undefined;
+  };
+
+  const isBelow = (left: Precedence, right: Precedence | undefined) =>
+    right !== undefined && left.high < right.low;
+
+  // Port of Pco.resolve. A failure after the first item backtracks no further than its attempt.
+  const parseTlapmExpression = (): Expression =>
+    withRestorePoint(() => {
+      const first = attempt(() => parseTlapmItem(true));
+      if (first === undefined) {
+        const token = peekRaw();
+        throw token.kind === "End"
+          ? createUnexpected("Unexpected end of expression", token)
+          : createError(`required expressions(s) missing before '${getTlapmName(token)}'`, token);
+      }
+      return commit(() => {
+        const stack = [first];
+        while (true) {
+          const item = attempt(() => parseTlapmItem(isTlapmOperator(stack[stack.length - 1])));
+          if (item === undefined) break;
+          if (isTlapmOperand(item) || item.fixity === "Prefix") {
+            stack.push(item);
+            continue;
+          }
+          while (isBelow(item, getPreviousOperator(stack))) reduceTlapmItems(stack);
+          const operand = stack[stack.length - 1];
+          if (item.fixity === "Postfix" && isTlapmOperand(operand)) {
+            stack.splice(-1, 1, applyTlapmOperator(item, [operand]));
+            continue;
+          }
+          const previous = getPreviousOperator(stack);
+          const isLeftChain =
+            previous?.fixity === "Infix" &&
+            previous.isLeft &&
+            item.isLeft &&
+            !isBelow(previous, item);
+          if (isLeftChain) reduceTlapmItems(stack);
+          stack.push(item);
+        }
+        while (stack.length > 1) reduceTlapmItems(stack);
+        const result = stack[0];
+        if (!isTlapmOperand(result)) throw createError("incomplete expression");
+        return result.expression;
+      });
+    });
+
+  const parseExpression = (minimumPrecedence = 0) =>
+    isTlapm ? parseTlapmExpression() : parseSanyExpression(minimumPrecedence);
 
   const parseParams = () => {
     if (!accept("(")) return [];
@@ -1777,8 +2057,26 @@ const parse = (
     return defs;
   };
 
+  // tlapm's usebody reads facts while an expression starts after the comma.
+  const parseTlapmFacts = (): Fact[] => {
+    const first = attempt(parseExpression);
+    if (!first) return [];
+    const facts = [first];
+    withRestorePoint(() => {
+      while (isAt(",")) {
+        const fact = attempt(() => {
+          advance();
+          return parseExpression();
+        });
+        if (!fact) return;
+        facts.push(fact);
+      }
+    });
+    return facts;
+  };
+
   const parseFacts = () => {
-    const facts = isFactAhead() ? parseSeparated(parseFact) : [];
+    const facts = isTlapm ? parseTlapmFacts() : isFactAhead() ? parseSeparated(parseFact) : [];
     const isDef = accept("DEF") || accept("DEFS");
     if (isTlapm && facts.length === 0 && !isDef) throw createUnexpected("Expected a fact");
     return { facts, defs: isDef ? parseDefs() : [] };
@@ -1897,7 +2195,7 @@ const parse = (
   const parseStepBody = (): StepBody => {
     const token = peek();
     if (isAt("USE") || isAt("HIDE")) return parseUseOrHide();
-    if (isAt("INSTANCE")) {
+    if (!isTlapm && isAt("INSTANCE")) {
       const start = cursor;
       return withRange(parseInstance(undefined, [], false, getLocation(token)), start);
     }
@@ -2186,12 +2484,21 @@ const parse = (
     return name;
   };
 
+  // A theorem whose statement fails to start backtracks in tlapm, whose module ends there.
+  const parseTheoremExpression = () => {
+    if (!isTlapm) return parseExpression();
+    const token = peekRaw();
+    const statement = attempt(parseExpression);
+    if (statement) return statement;
+    throw createUnexpected(`Expected "====" but found ${describeToken(token)}`, token);
+  };
+
   const parseTheorem = (module: Module) => {
     const start = cursor;
     const keyword = advance();
     const name = parseFactName();
     const parsed = withProofScope(() => {
-      const statement = isAt("ASSUME") ? parseAssumeProve() : parseExpression();
+      const statement = isAt("ASSUME") ? parseAssumeProve() : parseTheoremExpression();
       if (isTlapm) return { statement, proof: parseTlapmProof() };
       return { statement, proof: isProofStart(peek()) ? parseProof() : undefined };
     });
@@ -2252,7 +2559,6 @@ const parse = (
     }
     while (true) {
       const tokenIndex = cursor;
-      unitStart = tokenIndex;
       const token = peek();
       if (token.kind === "ModuleEnd") {
         location.range = {

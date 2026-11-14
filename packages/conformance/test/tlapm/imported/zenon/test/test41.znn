@@ -1,0 +1,127 @@
+(*---
+description: Zenon's own test zenon/test/test41.znn, which Zenon must prove.
+ref: zenon/test/test41.znn
+features:
+  - zenon-test
+outcome: unsat
+---*)
+;  Copyright 2006 INRIA
+;  $Id: test41.znn,v 1.6 2011-12-28 16:43:33 doligez Exp $
+
+; file: species_general_set.foc
+; species: lattice
+; property: order_inf_is_transitive / __lemma_1_1
+
+;     (* to be proved *)
+; (Is_true ((abst_equal x (abst_inf x (abst_inf y z ) ) ))
+; )
+; By
+;   abst_equal_transitive: (x: abst_T) (y: abst_T) (z: abst_T)
+;   ((Is_true ((abst_equal  x y)) ))-> 
+;     ((Is_true ((abst_equal  y z)) ))-> 
+;       (Is_true ((abst_equal  x z)) )
+;   abst_inf_congruence: (x: abst_T) (y: abst_T) (z: abst_T)
+;   ((Is_true ((abst_equal  x y)) ))-> 
+;     (and (Is_true ((abst_equal  (abst_inf  x z) (abst_inf  y z))) ) (Is_true
+;     ((abst_equal  (abst_inf  z x) (abst_inf  z y))) ))
+;   H2_1_1: (Is_true ((abst_order_inf y z )) ) H1_1_1: (Is_true
+;   ((abst_order_inf x y )) )
+; By def abst_order_inf:= [x: abst_T][y: abst_T](abst_equal  x (abst_inf  x y))
+; (* Qed *).
+
+$sig abst_T () "Type"
+$sig abst_equal ("abst_T" "abst_T") "bool"
+$sig abst_inf ("abst_T" "abst_T") "abst_T"
+
+$def "d" (abst_order_inf x y) (abst_equal x (abst_inf x y))
+
+$hyp "abst_equal_transitive"
+(A. ((x "abst_T") (A. ((y "abst_T") (A. ((z "abst_T")
+  (=> (Is_true (abst_equal x y))
+      (=> (Is_true (abst_equal y z))
+          (Is_true (abst_equal x z))))))))))
+
+$hyp "abst_inf_congruence"
+(A. ((x "abst_T") (A. ((y "abst_T") (A. ((z "abst_T")
+  (=> (Is_true (abst_equal x y))
+      (/\ (Is_true (abst_equal (abst_inf x z) (abst_inf y z)))
+          (Is_true (abst_equal (abst_inf z x) (abst_inf z y)))))))))))
+
+$sig x () "abst_T"
+$sig y () "abst_T"
+$sig z () "abst_T"
+
+$hyp "H2_1_1"
+(Is_true (abst_order_inf y z))
+
+$hyp "H1_1_1"
+(Is_true (abst_order_inf x y))
+
+$goal
+(Is_true (abst_equal x (abst_inf x (abst_inf y z))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     have z_Hc:"Is_true(abst_order_inf(y, z))" (is "?z_hc")
+     using H2_1_1 by blast
+     have z_Ha:"(\\A x:(\\A y:(\\A z:(Is_true(abst_equal(x, y))=>(Is_true(abst_equal(y, z))=>Is_true(abst_equal(x, z)))))))" (is "\\A x : ?z_ht(x)")
+     using abst_equal_transitive by blast
+     have z_Hb:"(\\A x:(\\A y:(\\A z:(Is_true(abst_equal(x, y))=>(Is_true(abst_equal(abst_inf(x, z), abst_inf(y, z)))&Is_true(abst_equal(abst_inf(z, x), abst_inf(z, y))))))))" (is "\\A x : ?z_hbg(x)")
+     using abst_inf_congruence by blast
+     have z_Hd:"Is_true(abst_order_inf(x, y))" (is "?z_hd")
+     using H1_1_1 by blast
+     assume z_He:"(~Is_true(abst_equal(x, abst_inf(x, abst_inf(y, z)))))" (is "~?z_hbi")
+     have z_Hbl_z_Hc: "Is_true(abst_equal(y, abst_inf(y, z))) == ?z_hc" (is "?z_hbl == _")
+     by (unfold d)
+     have z_Hbl: "?z_hbl"
+     by (unfold z_Hbl_z_Hc, fact z_Hc)
+     have z_Hbn_z_Hd: "Is_true(abst_equal(x, abst_inf(x, y))) == ?z_hd" (is "?z_hbn == _")
+     by (unfold d)
+     have z_Hbn: "?z_hbn"
+     by (unfold z_Hbn_z_Hd, fact z_Hd)
+     have z_Hi: "?z_ht(x)" (is "\\A x : ?z_hbq(x)")
+     by (rule zenon_all_0 [of "?z_ht" "x", OF z_Ha])
+     have z_Hbr: "?z_hbq(abst_inf(x, y))" (is "\\A x : ?z_hbs(x)")
+     by (rule zenon_all_0 [of "?z_hbq" "abst_inf(x, y)", OF z_Hi])
+     have z_Hbt: "?z_hbs(abst_inf(x, abst_inf(y, z)))" (is "_=>?z_hbu")
+     by (rule zenon_all_0 [of "?z_hbs" "abst_inf(x, abst_inf(y, z))", OF z_Hbr])
+     show FALSE
+     proof (rule zenon_imply [OF z_Hbt])
+      assume z_Hbv:"(~?z_hbn)"
+      show FALSE
+      by (rule notE [OF z_Hbv z_Hbn])
+     next
+      assume z_Hbu:"?z_hbu" (is "?z_hbw=>_")
+      show FALSE
+      proof (rule zenon_imply [OF z_Hbu])
+       assume z_Hbx:"(~?z_hbw)"
+       have z_Hby: "?z_hbg(y)" (is "\\A x : ?z_hbz(x)")
+       by (rule zenon_all_0 [of "?z_hbg" "y", OF z_Hb])
+       have z_Hca: "?z_hbz(abst_inf(y, z))" (is "\\A x : ?z_hcb(x)")
+       by (rule zenon_all_0 [of "?z_hbz" "abst_inf(y, z)", OF z_Hby])
+       have z_Hcc: "?z_hcb(x)" (is "_=>?z_hcd")
+       by (rule zenon_all_0 [of "?z_hcb" "x", OF z_Hca])
+       show FALSE
+       proof (rule zenon_imply [OF z_Hcc])
+        assume z_Hce:"(~?z_hbl)"
+        show FALSE
+        by (rule notE [OF z_Hce z_Hbl])
+       next
+        assume z_Hcd:"?z_hcd" (is "?z_hcf&_")
+        have z_Hbw: "?z_hbw"
+        by (rule zenon_and_1 [OF z_Hcd])
+        show FALSE
+        by (rule notE [OF z_Hbx z_Hbw])
+       qed
+      next
+       assume z_Hbi:"?z_hbi"
+       show FALSE
+       by (rule notE [OF z_He z_Hbi])
+      qed
+     qed
+    qed
+---*)

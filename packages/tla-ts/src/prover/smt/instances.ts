@@ -9,6 +9,7 @@ import {
   FUN_SET,
   getBinders,
   getNames,
+  INT_LTEQ,
   IS_SET_OF,
   LEN,
   MEM,
@@ -127,6 +128,7 @@ export const getSelectSeqAxioms = (
   free: string[],
   body: string,
   variable: string,
+  isArithmetic: boolean,
 ) => {
   const select = (sequence: string) => call(name, [sequence, ...free]);
   const test = (term: string) => replaceToken(body, variable, term);
@@ -144,7 +146,11 @@ export const getSelectSeqAxioms = (
       [],
       forall(
         [...free, "s"],
-        `(=> (${MEM} (${LEN} s) ${NAT_SET}) (<= (${PROJ_INT} (${LEN} ${select("s")})) (${PROJ_INT} (${LEN} s))))`,
+        `(=> (${MEM} (${LEN} s) ${NAT_SET}) ${
+          isArithmetic
+            ? `(<= (${PROJ_INT} (${LEN} ${select("s")})) (${PROJ_INT} (${LEN} s)))`
+            : `(${INT_LTEQ} (${LEN} ${select("s")}) (${LEN} s))`
+        })`,
         [[select("s")]],
       ),
     ),

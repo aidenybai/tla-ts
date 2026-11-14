@@ -1,0 +1,26 @@
+(*---
+description: >-
+  Zenon rewrites the DOMAIN of a record with record_domain, which lltoisar prints as an auto step
+  followed by a substitution.
+ref: zenon/ext_tla.ml#rewrites
+outcome: unsat
+---*)
+;; obligation #1
+$goal (= (TLA.DOMAIN (TLA.record "a" a_CONSTANTunde_xunde_a "b" a_CONSTANTunde_yunde_a))
+(TLA.set "a" "b"))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(DOMAIN((''a'' :> (a_CONSTANTunde_xunde_a) @@ ''b'' :> (a_CONSTANTunde_yunde_a)))~={''a'', ''b''})" (is "?z_hb~=?z_hh")
+     have z_Hi: "(?z_hb=?z_hh)"
+     by auto
+     have z_Hj: "(?z_hh~=?z_hh)"
+     by (rule subst [where P="(\<lambda>zenon_Vf. (zenon_Vf~=?z_hh))", OF z_Hi z_Ha])
+     show FALSE
+     by (rule zenon_noteq [OF z_Hj])
+    qed
+---*)

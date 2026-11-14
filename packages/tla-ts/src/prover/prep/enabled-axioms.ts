@@ -6,10 +6,13 @@ import {
   adjoinAll,
   getScopeAt,
   mapScoped,
+  getAtPrefix,
   type Builtin,
   type Expr,
+  type Locus,
   type Scope,
   type Sequent,
+  type Warn,
 } from "../../obligations/expression";
 import { getLevelInfo } from "../../obligations/levels";
 
@@ -129,7 +132,12 @@ const getRule = (scope: Scope | undefined, goal: Expr): Rule | undefined => {
   return implication && { name: "implies", left: implication[0], right: implication[1] };
 };
 
-export const implicationToEnabled = (sequent: Sequent): Sequent => {
+// When no rule applies, tlapm records the obligation as not tried.
+export const implicationToEnabled = (
+  sequent: Sequent,
+  locus: Locus | undefined,
+  onWarning: Warn,
+): Sequent => {
   const goalScope = adjoinAll(undefined, sequent.context);
   const rule = getRule(goalScope, sequent.active);
   let isPremise = false;
@@ -175,8 +183,9 @@ export const implicationToEnabled = (sequent: Sequent): Sequent => {
       isPremise = true;
     }
   });
-  if (!isPremise || !isLeftBoolean || !isRightBoolean) {
+  if (!rule || !isPremise || !isLeftBoolean || !isRightBoolean) {
     throw new TlaProverError("ENABLEDaxioms proof directive did not succeed.\n");
   }
+  onWarning({ text: `${getAtPrefix(locus)}[INFO]\nProved ${rule.name}\n`, channel: "stdout" });
   return { ...sequent, active: TRUE };
 };

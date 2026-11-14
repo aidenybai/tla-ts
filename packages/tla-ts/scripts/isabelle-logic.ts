@@ -35,6 +35,7 @@ type RawTerm =
 type RawItem = [number, boolean, number, string];
 type RawExtraItem = [number, number, boolean, number, string];
 type RawRule = [number, number, number[], number, number[]];
+type RawTags = [string, string][];
 
 interface RawLogic {
   types: RawType[];
@@ -62,7 +63,13 @@ interface RawLogic {
     dup: [RawItem[], RawItem[]];
     extra: [RawExtraItem[], RawExtraItem[]];
   };
-  contextRules: { bang: [RawExtraItem[], RawExtraItem[]]; plain: [RawExtraItem[], RawExtraItem[]] };
+  contextRules: {
+    bang: [RawExtraItem[], RawExtraItem[]];
+    plain: [RawExtraItem[], RawExtraItem[]];
+    query: [number[], number[]];
+  };
+  factTags: [string, number, RawTags][];
+  casesRules: { type: [string, number, RawTags][]; pred: [string, number, RawTags][] };
   thms: RawTerm[];
 }
 
@@ -238,7 +245,10 @@ const data = {
   contextRules: {
     bang: getExtraItems(raw.contextRules.bang),
     plain: getExtraItems(raw.contextRules.plain),
+    query: raw.contextRules.query,
   },
+  factTags: raw.factTags,
+  casesRules: raw.casesRules,
 };
 
 writeFileSync(

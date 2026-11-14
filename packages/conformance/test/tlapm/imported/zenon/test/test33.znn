@@ -1,0 +1,155 @@
+(*---
+description: Zenon's own test zenon/test/test33.znn, which Zenon must prove.
+ref: zenon/test/test33.znn
+features:
+  - zenon-test
+outcome: unsat
+---*)
+;  Copyright 2006 INRIA
+;  $Id: test33.znn,v 1.6 2011-12-28 16:43:33 doligez Exp $
+
+# file: species_general_set.foc
+# species: lattice
+# property: order_inf_is_antisymmetric
+
+#    (* to be proved *)
+#(x: abst_T) (y: abst_T)
+#((Is_true ((abst_order_inf  x y)) ))-> 
+#  ((Is_true ((abst_order_inf  y x)) ))-> 
+#    (Is_true ((abst_equal  x y)) )
+#By
+#  abst_equal_transitive: (x: abst_T) (y: abst_T) (z: abst_T)
+#  ((Is_true ((abst_equal  x y)) ))-> 
+#    ((Is_true ((abst_equal  y z)) ))-> 
+#      (Is_true ((abst_equal  x z)) )
+#  abst_equal_symmetric: (x: abst_T) (y: abst_T)
+#  ((Is_true ((abst_equal  x y)) ))-> 
+#    (Is_true ((abst_equal  y x)) )
+#abst_inf_commutes: (x: abst_T) (y: abst_T)
+#  (Is_true ((abst_equal  (abst_inf  x y) (abst_inf  y x))) )
+#By def abst_order_inf:= [x: abst_T][y: abst_T](abst_equal  x (abst_inf  x y))
+#(* Qed *).
+
+$sig abst_T () "Type"
+$sig abst_equal ("abst_T" "abst_T") "bool"
+$sig abst_inf ("abst_T" "abst_T") "abst_T"
+
+$def "d" (abst_order_inf x y) (abst_equal x (abst_inf x y))
+
+$hyp "h1" (A. ((x "abst_T") (A. ((y "abst_T") (A. ((z "abst_T")
+     (=> (Is_true (abst_equal x y))
+         (=> (Is_true (abst_equal y z))
+             (Is_true (abst_equal x z))))))))))
+
+$hyp "h2" (A. ((x "abst_T") (A. ((y "abst_T")
+     (=> (Is_true (abst_equal x y)) (Is_true (abst_equal y x)))))))
+
+$hyp "abst_inf_commutes"
+(A. ((x "abst_T") (A. ((y "abst_T")
+     (Is_true (abst_equal (abst_inf x y) (abst_inf y x)))))))
+
+$goal
+  (A. ((x "abst_T") (A. ((y "abst_T")
+    (=> (Is_true (abst_order_inf x y))
+        (=> (Is_true (abst_order_inf y x))
+            (Is_true (abst_equal x y))))))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     have z_Hb:"(\\A x:(\\A y:(Is_true(abst_equal(x, y))=>Is_true(abst_equal(y, x)))))" (is "\\A x : ?z_hm(x)")
+     using h2 by blast
+     have z_Hc:"(\\A x:(\\A y:Is_true(abst_equal(abst_inf(x, y), abst_inf(y, x)))))" (is "\\A x : ?z_hs(x)")
+     using abst_inf_commutes by blast
+     have z_Ha:"(\\A x:(\\A y:(\\A z:(Is_true(abst_equal(x, y))=>(Is_true(abst_equal(y, z))=>Is_true(abst_equal(x, z)))))))" (is "\\A x : ?z_hbc(x)")
+     using h1 by blast
+     assume z_Hd:"(~(\\A x:(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))" (is "~(\\A x : ?z_hbl(x))")
+     have z_Hbm: "(\\E x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))" (is "\\E x : ?z_hbo(x)")
+     by (rule zenon_notallex_0 [of "?z_hbl", OF z_Hd])
+     have z_Hbp: "?z_hbo((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))))" (is "~(\\A x : ?z_hbr(x))")
+     by (rule zenon_ex_choose_0 [of "?z_hbo", OF z_Hbm])
+     have z_Hbs: "(\\E y:(~(Is_true(abst_order_inf((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))=>(Is_true(abst_order_inf(y, (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))))=>Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))))))" (is "\\E x : ?z_hcc(x)")
+     by (rule zenon_notallex_0 [of "?z_hbr", OF z_Hbp])
+     have z_Hcd: "?z_hcc((CHOOSE y:(~(Is_true(abst_order_inf((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))=>(Is_true(abst_order_inf(y, (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))))=>Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y)))))))" (is "~(?z_hcf=>?z_hcg)")
+     by (rule zenon_ex_choose_0 [of "?z_hcc", OF z_Hbs])
+     have z_Hcf: "?z_hcf"
+     by (rule zenon_notimply_0 [OF z_Hcd])
+     have z_Hch: "(~?z_hcg)" (is "~(?z_hci=>?z_hcj)")
+     by (rule zenon_notimply_1 [OF z_Hcd])
+     have z_Hci: "?z_hci"
+     by (rule zenon_notimply_0 [OF z_Hch])
+     have z_Hck: "(~?z_hcj)"
+     by (rule zenon_notimply_1 [OF z_Hch])
+     have z_Hcl_z_Hcf: "Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), abst_inf((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), (CHOOSE y:(~(Is_true(abst_order_inf((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))=>(Is_true(abst_order_inf(y, (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))))=>Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))))))))) == ?z_hcf" (is "?z_hcl == _")
+     by (unfold d)
+     have z_Hcl: "?z_hcl"
+     by (unfold z_Hcl_z_Hcf, fact z_Hcf)
+     have z_Hco_z_Hci: "Is_true(abst_equal((CHOOSE y:(~(Is_true(abst_order_inf((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))=>(Is_true(abst_order_inf(y, (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))))=>Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y)))))), abst_inf((CHOOSE y:(~(Is_true(abst_order_inf((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))=>(Is_true(abst_order_inf(y, (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))))=>Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y)))))), (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))))) == ?z_hci" (is "?z_hco == _")
+     by (unfold d)
+     have z_Hco: "?z_hco"
+     by (unfold z_Hco_z_Hci, fact z_Hci)
+     have z_Hcr: "?z_hm((CHOOSE y:(~(Is_true(abst_order_inf((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))=>(Is_true(abst_order_inf(y, (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))))=>Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y)))))))" (is "\\A x : ?z_hcs(x)")
+     by (rule zenon_all_0 [of "?z_hm" "(CHOOSE y:(~(Is_true(abst_order_inf((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))=>(Is_true(abst_order_inf(y, (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))))=>Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))))))", OF z_Hb])
+     have z_Hct: "?z_hbc((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))))" (is "\\A x : ?z_hcu(x)")
+     by (rule zenon_all_0 [of "?z_hbc" "(CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))", OF z_Ha])
+     have z_Hcv: "?z_hcu(abst_inf((CHOOSE y:(~(Is_true(abst_order_inf((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))=>(Is_true(abst_order_inf(y, (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))))=>Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y)))))), (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))))" (is "\\A x : ?z_hcw(x)")
+     by (rule zenon_all_0 [of "?z_hcu" "abst_inf((CHOOSE y:(~(Is_true(abst_order_inf((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))=>(Is_true(abst_order_inf(y, (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))))=>Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y)))))), (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))))", OF z_Hct])
+     have z_Hcx: "?z_hcw((CHOOSE y:(~(Is_true(abst_order_inf((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))=>(Is_true(abst_order_inf(y, (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))))=>Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y)))))))" (is "?z_hcy=>?z_hcz")
+     by (rule zenon_all_0 [of "?z_hcw" "(CHOOSE y:(~(Is_true(abst_order_inf((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))=>(Is_true(abst_order_inf(y, (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))))=>Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))))))", OF z_Hcv])
+     show FALSE
+     proof (rule zenon_imply [OF z_Hcx])
+      assume z_Hda:"(~?z_hcy)"
+      have z_Hdb: "?z_hs((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))))" (is "\\A x : ?z_hdc(x)")
+      by (rule zenon_all_0 [of "?z_hs" "(CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))", OF z_Hc])
+      have z_Hdd: "?z_hdc((CHOOSE y:(~(Is_true(abst_order_inf((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))=>(Is_true(abst_order_inf(y, (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))))=>Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y)))))))" (is "?z_hdd")
+      by (rule zenon_all_0 [of "?z_hdc" "(CHOOSE y:(~(Is_true(abst_order_inf((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))=>(Is_true(abst_order_inf(y, (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))))=>Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))))))", OF z_Hdb])
+      have z_Hde: "?z_hcu(abst_inf((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), (CHOOSE y:(~(Is_true(abst_order_inf((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))=>(Is_true(abst_order_inf(y, (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))))=>Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))))))))" (is "\\A x : ?z_hdf(x)")
+      by (rule zenon_all_0 [of "?z_hcu" "abst_inf((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), (CHOOSE y:(~(Is_true(abst_order_inf((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))=>(Is_true(abst_order_inf(y, (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))))=>Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y)))))))", OF z_Hct])
+      have z_Hdg: "?z_hdf(abst_inf((CHOOSE y:(~(Is_true(abst_order_inf((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))=>(Is_true(abst_order_inf(y, (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))))=>Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y)))))), (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))))" (is "_=>?z_hdh")
+      by (rule zenon_all_0 [of "?z_hdf" "abst_inf((CHOOSE y:(~(Is_true(abst_order_inf((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))=>(Is_true(abst_order_inf(y, (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))))=>Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y)))))), (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))))", OF z_Hde])
+      show FALSE
+      proof (rule zenon_imply [OF z_Hdg])
+       assume z_Hdi:"(~?z_hcl)"
+       show FALSE
+       by (rule notE [OF z_Hdi z_Hcl])
+      next
+       assume z_Hdh:"?z_hdh"
+       show FALSE
+       proof (rule zenon_imply [OF z_Hdh])
+        assume z_Hdj:"(~?z_hdd)"
+        show FALSE
+        by (rule notE [OF z_Hdj z_Hdd])
+       next
+        assume z_Hcy:"?z_hcy"
+        show FALSE
+        by (rule notE [OF z_Hda z_Hcy])
+       qed
+      qed
+     next
+      assume z_Hcz:"?z_hcz" (is "?z_hdk=>_")
+      show FALSE
+      proof (rule zenon_imply [OF z_Hcz])
+       assume z_Hdl:"(~?z_hdk)"
+       have z_Hdm: "?z_hcs(abst_inf((CHOOSE y:(~(Is_true(abst_order_inf((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))=>(Is_true(abst_order_inf(y, (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))))=>Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y)))))), (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))))"
+       by (rule zenon_all_0 [of "?z_hcs" "abst_inf((CHOOSE y:(~(Is_true(abst_order_inf((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y))=>(Is_true(abst_order_inf(y, (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y)))))))))=>Is_true(abst_equal((CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))), y)))))), (CHOOSE x:(~(\\A y:(Is_true(abst_order_inf(x, y))=>(Is_true(abst_order_inf(y, x))=>Is_true(abst_equal(x, y))))))))", OF z_Hcr])
+       show FALSE
+       proof (rule zenon_imply [OF z_Hdm])
+        assume z_Hdn:"(~?z_hco)"
+        show FALSE
+        by (rule notE [OF z_Hdn z_Hco])
+       next
+        assume z_Hdk:"?z_hdk"
+        show FALSE
+        by (rule notE [OF z_Hdl z_Hdk])
+       qed
+      next
+       assume z_Hcj:"?z_hcj"
+       show FALSE
+       by (rule notE [OF z_Hck z_Hcj])
+      qed
+     qed
+    qed
+---*)

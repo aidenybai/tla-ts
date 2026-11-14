@@ -1,16 +1,20 @@
 import type { Verdict } from "../verdict";
 import { createSolver } from "./sat";
 
+export type BinaryKind = "And" | "Or" | "Implies" | "Equiv" | "Until" | "Unless";
+
 export type PtlFormula =
   | { kind: "Atom"; name: string }
+  | { kind: "Constant"; value: boolean }
   | { kind: "Not" | "Next" | "Always" | "Eventually"; body: PtlFormula }
-  | { kind: "And" | "Or" | "Implies" | "Equiv"; left: PtlFormula; right: PtlFormula };
+  | { kind: BinaryKind; left: PtlFormula; right: PtlFormula };
 
 type Normal =
   | { kind: "Constant"; value: boolean }
   | { kind: "Literal"; atom: string; isPositive: boolean }
   | { kind: "And" | "Or"; children: number[] }
-  | { kind: "Next" | "Always" | "Eventually"; body: number };
+  | { kind: "Next" | "Always" | "Eventually"; body: number }
+  | { kind: "Until" | "Unless"; left: number; right: number };
 
 interface Step {
   next: number[];
@@ -55,6 +59,8 @@ const createTable = () => {
     if (normal.kind === "Constant" || (kind !== "Next" && normal.kind === kind)) return body;
     return intern(`${kind}(${body})`, { kind, body });
   };
+  const getUntil = (kind: "Until" | "Unless", left: number, right: number) =>
+    intern(`${kind}(${left},${right})`, { kind, left, right });
   const memo = [new WeakMap<PtlFormula, number>(), new WeakMap<PtlFormula, number>()];
   const normalize = (formula: PtlFormula, isNegated: boolean): number => {
     const cache = memo[isNegated ? 1 : 0];
@@ -68,6 +74,8 @@ const createTable = () => {
             atom: formula.name,
             isPositive: !isNegated,
           });
+        case "Constant":
+          return getConstant(formula.value !== isNegated);
         case "Not":
           return normalize(formula.body, !isNegated);
         case "Next":
@@ -100,6 +108,15 @@ const createTable = () => {
               normalize(formula.right, !isNegated),
             ]),
           ]);
+        case "Until":
+        case "Unless": {
+          // translate/fofunctions.ml#negate: ~(f until g) is ~g unless (~f & ~g), and dually.
+          const kind = (formula.kind === "Until") === isNegated ? "Unless" : "Until";
+          const right = normalize(formula.right, isNegated);
+          return isNegated
+            ? getUntil(kind, right, getJunction("And", [normalize(formula.left, true), right]))
+            : getUntil(kind, normalize(formula.left, false), right);
+        }
       }
     })();
     cache.set(formula, result);
@@ -164,6 +181,15 @@ const getSteps = (
           const body = encode(normal.body);
           const next = getVariable(nexts, formula);
           clauses.push([-variable, body, next], [-next, body, getVariable(pendings, formula)]);
+          return variable;
+        }
+        case "Until":
+        case "Unless": {
+          const variable = createVariable();
+          const right = encode(normal.right);
+          const next = getVariable(nexts, formula);
+          clauses.push([-variable, right, encode(normal.left)], [-variable, right, next]);
+          if (normal.kind === "Until") clauses.push([-next, right, getVariable(pendings, formula)]);
           return variable;
         }
       }

@@ -1,7 +1,20 @@
 // Ported from Z3 (src/solver/assertions/asserted_formulas.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
-import { AstManager, KIND_APP, OP_AND, OP_EQ, OP_ITE, OP_NOT, OP_OR, SORT_BOOL } from "./ast";
+import {
+  AstManager,
+  KIND_APP,
+  KIND_QUANTIFIER,
+  OP_AND,
+  OP_EQ,
+  OP_ITE,
+  OP_NOT,
+  OP_OR,
+  SORT_BOOL,
+  QUANTIFIER_FORALL,
+} from "./ast";
 import { mkNot } from "./ast-util";
+import { simplifyInjAxiom } from "./inj-axiom";
+import { MacroManager } from "./macro-finder";
 import { DefinedNames, Nnf } from "./nnf";
 import { PatternInference } from "./pattern-inference";
 import { MaxBvSharing } from "./maximize-ac-sharing";
@@ -9,8 +22,9 @@ import { PullQuant } from "./pull-quant";
 import { RefVector } from "./ref-vector";
 import { KERNEL_REWRITER_OPTIONS, Rewriter } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
+import type { SmtConfig } from "./smt-setup";
 
-class PatternInferenceRw extends RewriterTpl {
+export class PatternInferenceRw extends RewriterTpl {
   constructor(
     manager: AstManager,
     private inference: PatternInference,
@@ -21,9 +35,9 @@ class PatternInferenceRw extends RewriterTpl {
   reduceQuantifier(expr: number, body: number) {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
-    if (!data.isForall || data.patterns.length > 0) return -1;
+    if (data.kind !== QUANTIFIER_FORALL || data.patterns.length > 0) return -1;
     const quantifier = manager.withTemporaries(() => {
-      const inferred = this.inference.infer(data.sorts.length, body, data.weight);
+      const inferred = this.inference.infer(data.sorts.length, body, data.weight, data.noPatterns);
       const withPatterns = manager.mkQuantifier({ ...data, body, patterns: inferred.patterns });
       return inferred.weight === data.weight
         ? withPatterns
@@ -57,8 +71,8 @@ class PatternInferenceRw extends RewriterTpl {
 
 const isGreater = (manager: AstManager, left: number, right: number): boolean => {
   if (left === right) return false;
-  const isLeftValue = manager.isUniqueValue(left);
-  const isRightValue = manager.isUniqueValue(right);
+  const isLeftValue = manager.isValue(left);
+  const isRightValue = manager.isValue(right);
   if (!isLeftValue && isRightValue) return true;
   if (isLeftValue && !isRightValue) return false;
   if (manager.depths[left] !== manager.depths[right])
@@ -133,6 +147,7 @@ interface AssertedScope {
   isInconsistent: boolean;
 }
 
+// Like Z3, it holds its formulas, so that expressions are deleted in Z3's order.
 export class AssertedFormulas {
   private formulas: RefVector;
   private qhead = 0;
@@ -140,18 +155,28 @@ export class AssertedFormulas {
   private rewriter: Rewriter;
   private isEliminatingAnd = false;
   private isReducePending = true;
+  private isNnfCnf = true;
+  private isEq2Ineq = false;
   private names: DefinedNames;
   private patternInference: PatternInferenceRw;
   private bvSharing: MaxBvSharing;
-  private hasQuantifiers = false;
+  hasQuantifiers = false;
+  readonly macros: MacroManager;
   isInconsistent = false;
+  isPreprocessing = true;
   private numLazyScopes = 0;
   private scopes: AssertedScope[] = [];
 
-  constructor(private manager: AstManager) {
+  constructor(
+    private manager: AstManager,
+    private isFindingMacros = false,
+  ) {
     this.formulas = new RefVector(manager);
+    this.macros = new MacroManager(manager);
     this.substitution = new Substitution(manager);
-    this.rewriter = new Rewriter(manager, KERNEL_REWRITER_OPTIONS);
+    // set_eliminate_and turns coalesce_chars off when smt.string_solver is seq, its default, so
+    // string literals reach the seq theory as concatenations of units.
+    this.rewriter = new Rewriter(manager, { ...KERNEL_REWRITER_OPTIONS, isCoalescingChars: false });
     this.names = new DefinedNames(manager);
     this.patternInference = new PatternInferenceRw(manager, new PatternInference(manager));
     this.bvSharing = new MaxBvSharing(manager);
@@ -170,6 +195,7 @@ export class AssertedFormulas {
     this.scopes.pop();
     this.isInconsistent = scope.isInconsistent;
     this.bvSharing.popScope();
+    this.macros.popScope();
     this.names.pop();
     this.substitution.pop();
     this.formulas.shrink(scope.numFormulas);
@@ -182,6 +208,7 @@ export class AssertedFormulas {
       this.substitution.push();
       this.scopes.push({ numFormulas: this.formulas.size, isInconsistent: this.isInconsistent });
       this.names.push();
+      this.macros.pushScope();
       this.bvSharing.pushScope();
     }
   }
@@ -190,37 +217,64 @@ export class AssertedFormulas {
     this.forcePush();
     const manager = this.manager;
     if (this.isInconsistent || manager.isTrue(expr)) return;
+    if (manager.hasQuantifierFlags[expr]) this.hasQuantifiers = true;
+    this.isReducePending = true;
+    if (!this.isPreprocessing) {
+      this.pushAssertion(expr, this.formulas);
+      return;
+    }
     this.setEliminateAnd(false);
     const rewritten = this.rewriter.rewrite(expr);
-    if (manager.hasQuantifierFlags[expr]) this.hasQuantifiers = true;
     this.pushAssertion(rewritten, this.formulas);
     manager.decRef(rewritten);
-    this.isReducePending = true;
+  }
+
+  // The setup's parameters, which set_eliminate_and gives the rewriter.
+  setup(config: SmtConfig) {
+    this.isNnfCnf = config.isNnfCnf;
+    this.isEq2Ineq = config.isEq2Ineq;
+    this.isFindingMacros ||= config.isFindingMacros;
   }
 
   getNumFormulas() {
     return this.formulas.size;
   }
 
+  getFormulas() {
+    return this.formulas.items;
+  }
+
+  // Like internalize_assertions, nothing is committed once the formulas are inconsistent.
   reduce() {
     if (this.qhead === this.formulas.size) return [];
-    if (!this.isInconsistent) this.reduceCore();
+    if (!this.isInconsistent && (this.hasQuantifiers || this.isPreprocessing)) this.reduceCore();
     if (this.isInconsistent) return [];
     const result = this.formulas.items.slice(this.qhead);
+    if (this.isFindingMacros) this.macros.markForbidden(result);
     for (const formula of result) this.substitution.update(formula);
     this.qhead = this.formulas.size;
     return result;
   }
 
   private reduceCore() {
+    if (this.macros.hasMacros()) this.findMacros();
     this.setEliminateAnd(false);
     this.propagateValues();
     if (this.isInconsistent) return;
-    this.isReducePending = true;
-    this.nnfCnf();
+    this.findMacros();
     if (this.isInconsistent) return;
+    if (this.isNnfCnf || this.hasQuantifiers) {
+      this.isReducePending = true;
+      this.nnfCnf();
+      if (this.isInconsistent) return;
+    }
     this.setEliminateAnd(true);
     this.reduceAsserted();
+    if (this.isInconsistent) return;
+    if (this.hasQuantifiers && this.simplifyFormulas((formula) => this.refineInjAxiom(formula)))
+      this.isReducePending = true;
+    if (this.isInconsistent) return;
+    this.findMacros();
     if (this.isInconsistent) return;
     if (
       this.hasQuantifiers &&
@@ -268,6 +322,23 @@ export class AssertedFormulas {
     result.push(expr);
   }
 
+  private refineInjAxiom(formula: number) {
+    const manager = this.manager;
+    const refined =
+      manager.kinds[formula] === KIND_QUANTIFIER ? simplifyInjAxiom(manager, formula) : undefined;
+    if (refined !== undefined) return refined;
+    manager.incRef(formula);
+    return formula;
+  }
+
+  private findMacros() {
+    if (!this.isFindingMacros || !this.hasQuantifiers) return;
+    this.isReducePending = true;
+    this.swapFormulas(this.macros.find(this.formulas.items.slice(this.qhead)));
+    this.flushCache();
+    this.reduceAsserted();
+  }
+
   private flushCache() {
     this.rewriter.setSubstitution(this.substitution.map);
   }
@@ -277,6 +348,7 @@ export class AssertedFormulas {
     this.isEliminatingAnd = isEliminatingAnd;
     this.isReducePending = true;
     this.rewriter.setEliminatingAnd(isEliminatingAnd);
+    this.rewriter.setEq2Ineq(this.isEq2Ineq);
     this.flushCache();
   }
 

@@ -10,7 +10,17 @@ import {
 } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { SuiteTest, TestContext } from "./test-file";
+import { getBackendInput, type SuiteTest, type TestContext } from "./test-file";
+import {
+  getBackend,
+  getBackendOracleCommand,
+  getBackendVerdict,
+  getEncodings,
+  getTlapmArguments,
+  isSmtScript,
+  normalizeTlapmTranscript,
+  TLAPM_BINARY,
+} from "./tlapm";
 import { normalizeTranscript } from "./transcript";
 
 const PACKAGE_DIRECTORY = join(import.meta.dirname, "..");
@@ -42,7 +52,11 @@ const TLA_TS = [
 
 export interface Host {
   tlc?: string[];
+  tlapm?: string[];
+  backend?: string[];
 }
+
+const BACKEND_ORACLE = ["oracle"];
 
 export const HOSTS: Record<string, Host> = {
   tlc: {
@@ -59,7 +73,12 @@ export const HOSTS: Record<string, Host> = {
       "tlc2.TLC",
     ],
   },
-  "tla-ts": { tlc: TLA_TS },
+  tlapm: { tlapm: [TLAPM_BINARY], backend: BACKEND_ORACLE },
+  "tla-ts": {
+    tlc: TLA_TS,
+    tlapm: [...TLA_TS, "tlapm"],
+    backend: ["node", join(PACKAGE_DIRECTORY, ".scripts/tla-ts-backend.js")],
+  },
 };
 
 const QUOTED = /"([^"]*)"|'([^']*)'/g;
@@ -67,17 +86,25 @@ const ARGUMENT = /(?:"[^"]*"|'[^']*'|[^\s"'])+/g;
 
 export const getHost = (name: string): Host => {
   const host = HOSTS[name];
-  if (!host)
-    return { tlc: (name.match(ARGUMENT) ?? []).map((part) => part.replace(QUOTED, "$1$2")) };
-  if (host.tlc === HOSTS.tlc.tlc && !existsSync(TLC_JAR)) {
-    console.error("Run `pnpm fetch-tlc` first");
+  if (!host) {
+    const command = (name.match(ARGUMENT) ?? []).map((part) => part.replace(QUOTED, "$1$2"));
+    return { tlc: command, tlapm: command, backend: command };
+  }
+  const missing = [
+    ...(host.tlc === HOSTS.tlc.tlc && !existsSync(TLC_JAR) ? ["`pnpm fetch-tlc`"] : []),
+    ...(host.tlapm && host.tlapm === HOSTS.tlapm.tlapm && !existsSync(TLAPM_BINARY)
+      ? ["`pnpm fetch-tlapm`"]
+      : []),
+  ];
+  if (missing.length > 0) {
+    console.error(`Run ${missing.join(" and ")} first`);
     process.exit(1);
   }
   return host;
 };
 
 export const getSuiteCommand = (host: Host, test: SuiteTest) =>
-  test.suite === "tlc" ? host.tlc : undefined;
+  test.suite === "tlapm" ? (getBackend(test.path) ? host.backend : host.tlapm) : host.tlc;
 
 export const CRASH_EXIT = -1;
 
@@ -203,6 +230,59 @@ const runTlc = async (
   };
 };
 
+const runTlapm = async (command: string[], test: SuiteTest, directory: string, limits: Limits) => {
+  const cacheDirectory = join(directory, ".tlacache");
+  const mode = test.metadata.mode ?? "proof";
+  writeFileSync(join(directory, test.fileName), test.source);
+  const result = await spawnRun({
+    command: [
+      ...command,
+      ...getTlapmArguments(mode, cacheDirectory),
+      ...(test.metadata.args ?? []),
+      test.fileName,
+    ],
+    directory,
+    limits,
+  });
+  const transcript = normalizeTlapmTranscript(`${result.stdout}\n${result.stderr}`, directory);
+  const encodings =
+    mode === "encoding" && existsSync(join(cacheDirectory, `${test.moduleName}.tlaps`))
+      ? getEncodings(cacheDirectory, test.moduleName)
+      : "";
+  return {
+    exit: result.exit,
+    exceeded: result.exceeded,
+    transcript: encodings ? `${transcript}\n\n${encodings}` : transcript,
+  };
+};
+
+const runBackend = async (
+  command: string[],
+  test: SuiteTest,
+  directory: string,
+  limits: Limits,
+) => {
+  const backend = getBackend(test.path);
+  writeFileSync(join(directory, test.fileName), getBackendInput(test));
+  const isOracle = command === HOSTS.tlapm.backend;
+  const result = await spawnRun({
+    command: isOracle
+      ? getBackendOracleCommand(backend, join(directory, test.fileName))
+      : [...command, backend, test.fileName],
+    directory,
+    limits,
+  });
+  return {
+    exit: result.exceeded ? CRASH_EXIT : 0,
+    exceeded: result.exceeded,
+    transcript: !isOracle
+      ? result.stdout.trimEnd()
+      : isSmtScript(test.path)
+        ? `${result.stdout}${result.stderr}`.trimEnd()
+        : getBackendVerdict(backend, `${result.stdout}${result.stderr}`, result.exit),
+  };
+};
+
 export const runTest = async (
   host: Host,
   test: SuiteTest,
@@ -213,7 +293,12 @@ export const runTest = async (
   if (!command) throw new Error(`The host has no command for ${test.id}`);
   const directory = realpathSync(mkdtempSync(join(tmpdir(), "conformance-")));
   copyIncludes(test, directory);
-  const result = await runTlc(command, test, context, directory, limits);
+  const result =
+    test.suite === "tlc"
+      ? await runTlc(command, test, context, directory, limits)
+      : getBackend(test.path)
+        ? await runBackend(command, test, directory, limits)
+        : await runTlapm(command, test, directory, limits);
   rmSync(directory, { recursive: true, force: true });
   return result;
 };

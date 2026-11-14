@@ -1,0 +1,63 @@
+(*---
+description: >-
+  Zenon proves P(TRUE) /\ P(FALSE) => P(b) for b \in BOOLEAN, reading BOOLEAN as {TRUE, FALSE} and
+  splitting it with in_addElt.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (/\ (/\ (TLA.in a_CONSTANTunde_bunde_a (TLA.set T. F.))
+(a_CONSTANTunde_Punde_a T.)) (a_CONSTANTunde_Punde_a F.))
+(a_CONSTANTunde_Punde_a a_CONSTANTunde_bunde_a))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~((((a_CONSTANTunde_bunde_a \\in {TRUE, FALSE})&a_CONSTANTunde_Punde_a(TRUE))&a_CONSTANTunde_Punde_a(FALSE))=>a_CONSTANTunde_Punde_a(a_CONSTANTunde_bunde_a)))" (is "~(?z_hc=>?z_hl)")
+     have z_Hc: "?z_hc" (is "?z_hd&?z_hk")
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hm: "(~?z_hl)"
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hd: "?z_hd" (is "?z_he&?z_hj")
+     by (rule zenon_and_0 [OF z_Hc])
+     have z_Hk: "?z_hk"
+     by (rule zenon_and_1 [OF z_Hc])
+     have z_He: "?z_he"
+     by (rule zenon_and_0 [OF z_Hd])
+     have z_Hj: "?z_hj"
+     by (rule zenon_and_1 [OF z_Hd])
+     show FALSE
+     proof (rule zenon_in_addElt [of "a_CONSTANTunde_bunde_a" "TRUE" "{FALSE}", OF z_He])
+      assume z_Ho:"(a_CONSTANTunde_bunde_a=TRUE)" (is "_=?z_hh")
+      show FALSE
+      proof (rule notE [OF z_Hm])
+       have z_Hp: "(?z_hh=a_CONSTANTunde_bunde_a)"
+       by (rule sym [OF z_Ho])
+       have z_Hl: "?z_hl"
+       by (rule subst [where P="(\<lambda>zenon_Vh. a_CONSTANTunde_Punde_a(zenon_Vh))", OF z_Hp], fact z_Hj)
+       thus "?z_hl" .
+      qed
+     next
+      assume z_Ht:"(a_CONSTANTunde_bunde_a \\in {FALSE})" (is "?z_ht")
+      show FALSE
+      proof (rule zenon_in_addElt [of "a_CONSTANTunde_bunde_a" "FALSE" "{}", OF z_Ht])
+       assume z_Hv:"(a_CONSTANTunde_bunde_a=FALSE)" (is "_=?z_hi")
+       show FALSE
+       proof (rule notE [OF z_Hm])
+        have z_Hw: "(?z_hi=a_CONSTANTunde_bunde_a)"
+        by (rule sym [OF z_Hv])
+        have z_Hl: "?z_hl"
+        by (rule subst [where P="(\<lambda>zenon_Vh. a_CONSTANTunde_Punde_a(zenon_Vh))", OF z_Hw], fact z_Hk)
+        thus "?z_hl" .
+       qed
+      next
+       assume z_Hx:"(a_CONSTANTunde_bunde_a \\in {})" (is "?z_hx")
+       show FALSE
+       by (rule zenon_in_emptyset [of "a_CONSTANTunde_bunde_a", OF z_Hx])
+      qed
+     qed
+    qed
+---*)

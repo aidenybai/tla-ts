@@ -1,7 +1,16 @@
 // Ported from Z3 (src/ast/rewriter/der.cpp), MIT license, see z3-license.txt.
-import { KIND_QUANTIFIER, KIND_VAR, OP_EQ, SORT_BOOL, type AstManager } from "./ast";
+import {
+  KIND_QUANTIFIER,
+  KIND_VAR,
+  OP_EQ,
+  SORT_BOOL,
+  type AstManager,
+  QUANTIFIER_FORALL,
+  QUANTIFIER_LAMBDA,
+} from "./ast";
 import { flattenAndVector, flattenOrVector } from "./ast-util";
 import { RefVector } from "./ref-vector";
+import { RewriterTpl } from "./rewriter-tpl";
 import { collectUsedVars, elimUnusedVars, VarSubst } from "./var-subst";
 
 interface VarDefinition {
@@ -132,18 +141,19 @@ export class Der {
   private reduce(expr: number) {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
+    if (data.kind === QUANTIFIER_LAMBDA) return expr;
     const count = data.sorts.length;
-    const single = getVarDefinition(manager, data.body, count, data.isForall);
+    const single = getVarDefinition(manager, data.body, count, data.kind === QUANTIFIER_FORALL);
     if (
       single !== undefined &&
       !manager.hasQuantifierFlags[single.definition] &&
       !isOccurring(manager, single.index, single.definition)
     )
-      return data.isForall ? manager.falseExpr : manager.trueExpr;
+      return data.kind === QUANTIFIER_FORALL ? manager.falseExpr : manager.trueExpr;
     const vector = new RefVector(manager);
     manager.withoutTemporaries(() => {
       vector.push(data.body);
-      if (data.isForall) flattenOrVector(manager, vector);
+      if (data.kind === QUANTIFIER_FORALL) flattenOrVector(manager, vector);
       else flattenAndVector(manager, vector);
     });
     const result = this.reduceLiterals(expr, vector.items);
@@ -158,7 +168,7 @@ export class Der {
     const map = this.map;
     map.reset();
     const positions = literals.map((literal) => {
-      const found = getVarDefinition(manager, literal, count, data.isForall);
+      const found = getVarDefinition(manager, literal, count, data.kind === QUANTIFIER_FORALL);
       if (found === undefined || (map.items[found.index] ?? -1) !== -1) return -1;
       if (map.size <= found.index) map.resize(found.index + 1);
       map.set(found.index, found.definition);
@@ -183,23 +193,42 @@ export class Der {
       if (index === -1 || map.items[index] === -1) this.newArgs.push(literal);
     });
     const kept = this.newArgs.items;
-    const empty = data.isForall ? manager.falseExpr : manager.trueExpr;
+    const empty = data.kind === QUANTIFIER_FORALL ? manager.falseExpr : manager.trueExpr;
     const combined = manager.withoutTemporaries(() =>
       kept.length === 0
         ? empty
         : kept.length === 1
           ? kept[0]
-          : data.isForall
+          : data.kind === QUANTIFIER_FORALL
             ? manager.mkOr(kept)
             : manager.mkAnd(kept),
     );
     manager.incRef(combined);
     const body = this.subst.apply(combined, substMap.items);
     const patterns = data.patterns.map((pattern) => this.subst.apply(pattern, substMap.items));
-    const result = manager.mkQuantifier({ ...data, body, patterns });
-    for (const pattern of patterns) manager.releaseLater(pattern);
+    const noPatterns = data.noPatterns.map((noPattern) =>
+      this.subst.apply(noPattern, substMap.items),
+    );
+    const result = manager.mkQuantifier({ ...data, body, patterns, noPatterns });
+    for (const pattern of [...patterns, ...noPatterns]) manager.releaseLater(pattern);
     manager.releaseLater(body);
     manager.decRef(combined);
     return result;
+  }
+}
+
+export class DerRewriter extends RewriterTpl {
+  readonly der: Der;
+
+  constructor(manager: AstManager) {
+    super(manager);
+    this.der = new Der(manager);
+  }
+
+  reduceQuantifier(expr: number, body: number, patterns: number[]) {
+    const manager = this.manager;
+    return manager.withTemporaries(() =>
+      this.der.apply(manager.mkQuantifier({ ...manager.getQuantifier(expr), body, patterns })),
+    );
   }
 }

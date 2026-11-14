@@ -1,10 +1,27 @@
 // Ported from Z3 (src/ast/ast_lt.cpp, src/util/symbol.cpp), MIT license, see z3-license.txt.
 import {
+  FAMILY_ARRAY,
+  FAMILY_BV,
+  FAMILY_CHAR,
+  FAMILY_DATATYPE,
+  FAMILY_FPA,
+  FAMILY_LABEL,
   FAMILY_MODEL_VALUE,
+  FAMILY_RECFUN,
+  FAMILY_SEQ,
   FAMILY_USER,
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
+  OP_ALGEBRAIC_NUM,
+  OP_BV_NUM,
+  OP_DT_ACCESSOR,
+  OP_DT_CONSTRUCTOR,
+  OP_DT_RECOGNISER,
+  OP_SEQ_SKOLEM,
+  OP_FPA_NUM,
+  OP_FUN_CASE_PRED,
+  OP_LABEL,
   OP_ITE,
   OP_NUM,
   OP_PATTERN,
@@ -12,27 +29,37 @@ import {
   type AstManager,
   type SmtSymbol,
 } from "./ast";
+import { getAccessorConstructor } from "./datatype-decl-plugin";
 import { Rational } from "./rational";
 
 interface DeclKey {
   name: SmtSymbol;
-  parameters: (number | Rational)[];
+  parameters: (number | Rational | SmtSymbol)[];
   domain: number[];
   range: number;
 }
 
 const PARAM_INT = 0;
+const PARAM_AST = 1;
+const PARAM_SYMBOL = 2;
+const PARAM_ZSTRING = 3;
 const PARAM_RATIONAL = 3;
+const PARAM_EXTERNAL = 6;
 
 const compareValues = (first: number, second: number) =>
   first === second ? 0 : first < second ? -1 : 1;
 
-const compareParameters = (first: number | Rational, second: number | Rational) =>
+const compareParameters = (
+  first: number | Rational | SmtSymbol,
+  second: number | Rational | SmtSymbol,
+) =>
   first instanceof Rational && second instanceof Rational
     ? first.compare(second)
     : typeof first === "number" && typeof second === "number"
       ? compareValues(first, second)
-      : 0;
+      : typeof first === "string" && typeof second === "string"
+        ? compareNames(first, second)
+        : 0;
 
 const compareNames = (first: SmtSymbol, second: SmtSymbol) => {
   if (first === second) return 0;
@@ -40,6 +67,31 @@ const compareNames = (first: SmtSymbol, second: SmtSymbol) => {
     return typeof second === "number" ? compareValues(first, second) : -1;
   if (typeof second === "number") return 1;
   return first < second ? -1 : 1;
+};
+
+const getSeqParameters = (manager: AstManager, expr: number) => {
+  const decl = manager.funcDecls[manager.decls[expr]];
+  const chars = manager.getString(expr);
+  if (chars !== undefined) return [PARAM_ZSTRING, String.fromCodePoint(...chars)];
+  const numbers = decl.parameters.flatMap((parameter) => [PARAM_INT, parameter]);
+  return decl.op === OP_SEQ_SKOLEM ? [PARAM_SYMBOL, decl.name, ...numbers] : numbers;
+};
+
+const getDatatypeParameters = (manager: AstManager, decl: number) => {
+  const funcDecl = manager.funcDecls[decl];
+  const name = funcDecl.name;
+  if (funcDecl.op === OP_DT_CONSTRUCTOR) return [PARAM_SYMBOL, name];
+  if (funcDecl.op === OP_DT_ACCESSOR)
+    return [
+      PARAM_SYMBOL,
+      name,
+      PARAM_SYMBOL,
+      manager.funcDecls[getAccessorConstructor(manager, decl)].name,
+    ];
+  const target = manager.funcDecls[funcDecl.parameters[0]].name;
+  return funcDecl.op === OP_DT_RECOGNISER
+    ? [PARAM_AST, target, PARAM_SYMBOL, name]
+    : [PARAM_AST, target];
 };
 
 const getDeclKey = (manager: AstManager, expr: number): DeclKey => {
@@ -58,18 +110,118 @@ const getDeclKey = (manager: AstManager, expr: number): DeclKey => {
   }
   if (decl.family === FAMILY_MODEL_VALUE)
     return { name: decl.name, parameters: [PARAM_INT, manager.values[expr]], domain: [], range };
+  if (decl.op === OP_ALGEBRAIC_NUM)
+    return {
+      name: decl.name,
+      parameters: [PARAM_EXTERNAL, manager.getAlgebraicId(expr)],
+      domain: [],
+      range,
+    };
+  if (decl.op === OP_BV_NUM)
+    return {
+      name: decl.name,
+      parameters: [
+        PARAM_RATIONAL,
+        Rational.of(manager.getBvNumeralValue(expr)),
+        PARAM_INT,
+        manager.getBvSize(range),
+      ],
+      domain: [],
+      range,
+    };
+  if (decl.family === FAMILY_ARRAY)
+    return { name: decl.name, parameters: [], domain: decl.domain, range };
+  // A case predicate has the parameters (index, definition), and the others an integer.
+  if (decl.family === FAMILY_RECFUN)
+    return {
+      name: decl.name,
+      parameters:
+        decl.op === OP_FUN_CASE_PRED
+          ? [PARAM_INT, decl.parameters[0], PARAM_AST, manager.funcDecls[decl.parameters[1]].name]
+          : [PARAM_INT, decl.parameters[0]],
+      domain: decl.domain,
+      range,
+    };
+  if (decl.family === FAMILY_DATATYPE)
+    return {
+      name: decl.name,
+      parameters: getDatatypeParameters(manager, manager.decls[expr]),
+      domain: decl.domain,
+      range,
+    };
+  if (decl.family === FAMILY_BV || decl.family === FAMILY_FPA)
+    return {
+      name: decl.name,
+      parameters: decl.parameters.flatMap((parameter) => [
+        decl.op === OP_FPA_NUM ? PARAM_EXTERNAL : PARAM_INT,
+        parameter,
+      ]),
+      domain: decl.domain,
+      range,
+    };
+  if (decl.family === FAMILY_SEQ || decl.family === FAMILY_CHAR)
+    return {
+      name: decl.name,
+      parameters: getSeqParameters(manager, expr),
+      domain: decl.domain,
+      range,
+    };
+  if (decl.family === FAMILY_LABEL) {
+    const names = manager
+      .getLabelNames(manager.decls[expr])
+      .flatMap((name) => [PARAM_SYMBOL, name]);
+    return {
+      name: decl.name,
+      parameters:
+        decl.op === OP_LABEL
+          ? [PARAM_INT, manager.isLabelPositive(manager.decls[expr]) ? 1 : 0, ...names]
+          : names,
+      domain: decl.domain,
+      range,
+    };
+  }
   const builtin = manager.getBuiltinSignature(decl.op, manager.getArgs(expr));
   return { name: builtin.name, parameters: [], domain: builtin.domain, range };
 };
 
-const compareSorts = (manager: AstManager, first: number, second: number) =>
-  first === second ? 0 : compareNames(manager.sortNames[first], manager.sortNames[second]);
+const compareSorts = (manager: AstManager, first: number, second: number): number => {
+  if (first === second) return 0;
+  const byName =
+    compareNames(manager.sortNames[first], manager.sortNames[second]) ||
+    compareValues(manager.getBvSize(first), manager.getBvSize(second)) ||
+    compareValues(manager.getSbits(first), manager.getSbits(second));
+  if (byName !== 0) return byName;
+  const firstParameters = manager.getSortParameters(first);
+  const secondParameters = manager.getSortParameters(second);
+  const byCount = compareValues(firstParameters.length, secondParameters.length);
+  if (byCount !== 0) return byCount;
+  for (let index = 0; index < firstParameters.length; index++) {
+    const byParameter = compareSorts(manager, firstParameters[index], secondParameters[index]);
+    if (byParameter !== 0) return byParameter;
+  }
+  return 0;
+};
 
 const isSameDeclKey = (manager: AstManager, first: number, second: number) => {
   const decl = manager.funcDecls[manager.decls[first]];
   if (decl.family === FAMILY_USER) return true;
-  if (decl.op === OP_NUM || decl.op === OP_PATTERN || decl.family === FAMILY_MODEL_VALUE)
+  if (
+    decl.op === OP_NUM ||
+    decl.op === OP_BV_NUM ||
+    decl.op === OP_PATTERN ||
+    decl.family === FAMILY_MODEL_VALUE
+  )
     return false;
+  if (
+    decl.family === FAMILY_BV ||
+    decl.family === FAMILY_ARRAY ||
+    decl.family === FAMILY_DATATYPE ||
+    decl.family === FAMILY_FPA ||
+    decl.family === FAMILY_SEQ ||
+    decl.family === FAMILY_CHAR ||
+    decl.family === FAMILY_RECFUN
+  )
+    return true;
   const index = decl.op === OP_ITE ? 1 : 0;
   return (
     manager.sorts[first] === manager.sorts[second] &&
@@ -99,7 +251,7 @@ const compareDecls = (manager: AstManager, first: number, second: number) => {
   return compareSorts(manager, firstKey.range, secondKey.range);
 };
 
-const compareAsts = (manager: AstManager, first: number, second: number): number => {
+export const compareAsts = (manager: AstManager, first: number, second: number): number => {
   if (first === second) return 0;
   const byKind = compareValues(manager.kinds[first], manager.kinds[second]);
   if (byKind !== 0) return byKind;
@@ -113,9 +265,10 @@ const compareAsts = (manager: AstManager, first: number, second: number): number
     const firstData = manager.getQuantifier(first);
     const secondData = manager.getQuantifier(second);
     const byHeader =
-      compareValues(firstData.isForall ? 0 : 1, secondData.isForall ? 0 : 1) ||
+      compareValues(firstData.kind, secondData.kind) ||
       compareValues(firstData.sorts.length, secondData.sorts.length) ||
       compareValues(firstData.patterns.length, secondData.patterns.length) ||
+      compareValues(firstData.noPatterns.length, secondData.noPatterns.length) ||
       compareValues(firstData.weight, secondData.weight);
     if (byHeader !== 0) return byHeader;
     for (let index = 0; index < firstData.sorts.length; index++) {
@@ -124,8 +277,10 @@ const compareAsts = (manager: AstManager, first: number, second: number): number
         compareSorts(manager, firstData.sorts[index], secondData.sorts[index]);
       if (byDecl !== 0) return byDecl;
     }
-    for (let index = 0; index < firstData.patterns.length; index++) {
-      const byPattern = compareAsts(manager, firstData.patterns[index], secondData.patterns[index]);
+    const children = [...firstData.patterns, ...firstData.noPatterns];
+    const otherChildren = [...secondData.patterns, ...secondData.noPatterns];
+    for (let index = 0; index < children.length; index++) {
+      const byPattern = compareAsts(manager, children[index], otherChildren[index]);
       if (byPattern !== 0) return byPattern;
     }
     return compareAsts(manager, firstData.body, secondData.body);

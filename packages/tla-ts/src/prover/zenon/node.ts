@@ -95,7 +95,9 @@ export interface Queue {
   instSize: List<[number, Heap]>;
   instFront: List<Node>;
   instBack: List<Node>;
-  insertedCount: number;
+  // The OCaml words of the nodes inserted so far. Removed nodes still count, because the queues of
+  // the branches above keep them.
+  nodeWords: number;
 }
 
 const SMALL_INSTANCES = 16;
@@ -116,7 +118,7 @@ export const EMPTY_QUEUE: Queue = {
   instSize: undefined,
   instFront: undefined,
   instBack: undefined,
-  insertedCount: 0,
+  nodeWords: 0,
 };
 
 const insertByGoalness = (list: List<[number, Heap]>, entry: Entry): List<[number, Heap]> => {
@@ -155,8 +157,22 @@ const canInstantiate = (meta: Expr, expression: Expr): boolean => {
   }
 };
 
+// A list cell and a node record take 3 and 6 words, and each block has a header word.
+const getNodeWords = (node: Node) =>
+  node.branches.reduce(
+    (words, branch) => words + 3 * branch.length,
+    3 +
+      6 +
+      3 * node.conclusions.length +
+      1 +
+      node.rule.args.length +
+      (typeof node.priority === "object" ? 2 : 0) +
+      1 +
+      node.branches.length,
+  );
+
 export const insertNode = (previous: Queue, node: Node): Queue => {
-  const queue = { ...previous, insertedCount: previous.insertedCount + 1 };
+  const queue = { ...previous, nodeWords: previous.nodeWords + getNodeWords(node) };
   const priority = node.priority;
   if (priority === "prop")
     return node.branches.length < 2

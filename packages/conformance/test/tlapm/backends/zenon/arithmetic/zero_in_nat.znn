@@ -1,0 +1,20 @@
+(*---
+description: Zenon proves 0 \in Nat.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unsat
+---*)
+;; obligation #1
+$goal (TLA.in 0
+arith.N)
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~(0 \\in Nat))" (is "~?z_hb")
+     show FALSE
+     by (rule zenon_in_nat_0 [of , OF z_Ha])
+    qed
+---*)

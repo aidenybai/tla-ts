@@ -15,6 +15,7 @@ import {
   LP_OPTIMAL,
   LP_UNBOUNDED,
 } from "./core-solver";
+import { type Dependency, mkJoin } from "./dependency";
 import type { LarSolver } from "./lar-solver";
 import { LarTerm } from "./lar-term";
 import { Impq } from "./numeric-pair";
@@ -304,19 +305,70 @@ const maximizeTermOnFeasibleRSolver = (solver: LarSolver, term: LarTerm) => {
   core.reducedCosts = undefined;
   const status = core.status;
   core.status = LP_OPTIMAL;
-  return status === LP_UNBOUNDED || status === LP_CANCELLED ? undefined : term.apply(core.x);
+  return status === LP_UNBOUNDED || status === LP_CANCELLED
+    ? undefined
+    : { value: term.apply(core.x), reducedCosts };
 };
 
-export const maximizeTerm = (solver: LarSolver, column: number) => {
+// Every column with a positive reduced cost sits at its upper bound, and every column with a
+// negative one at its lower bound, so those bounds prove the maximum.
+const getDependenciesOfMaximum = (solver: LarSolver, reducedCosts: readonly Rational[]) => {
+  let dependency: Dependency = null;
+  for (const [column, reducedCost] of reducedCosts.entries()) {
+    if (reducedCost.isZero()) continue;
+    dependency = mkJoin(
+      dependency,
+      reducedCost.isPositive() ? solver.getUpperWitness(column) : solver.getLowerWitness(column),
+    );
+  }
+  return dependency;
+};
+
+// Integer columns that maximization left fractional move out of the basis, if they can.
+const adjustIntegerColumns = (solver: LarSolver, term: LarTerm, previous: Impq, maximum: Impq) => {
+  const core = solver.core;
+  const restore = () => {
+    core.restoreX();
+    return { status: LP_FEASIBLE, value: previous };
+  };
+  let isChanged = false;
+  for (let column = 0; column < core.x.length; column++) {
+    if (!solver.isInt(column) || core.x[column].isInt()) continue;
+    if (solver.isBase(column) && !solver.removeFromBasis(column)) return restore();
+    if (!core.x[column].isInt()) return restore();
+    isChanged = true;
+  }
+  const changed = isChanged ? term.apply(core.x) : maximum;
+  const isWorse = changed.compare(previous) < 0;
+  if (isWorse) core.restoreX();
+  const value = isWorse ? previous : changed;
+  if (!value.equals(maximum)) return { status: LP_FEASIBLE, value };
+  solver.status = LP_OPTIMAL;
+  return { status: LP_OPTIMAL, value };
+};
+
+export const maximizeTerm = (
+  solver: LarSolver,
+  column: number,
+  isFixingIntCols = false,
+  isComputingDependencies = false,
+) => {
   const term = solver.hasTerm(column)
     ? solver.getTerm(column)
     : new LarTerm([[column, Rational.one]]);
-  const backup = solver.core.x.slice();
+  solver.core.backupX();
+  const previous = term.apply(solver.core.x);
   const maximum = maximizeTermOnFeasibleRSolver(solver, term);
   if (maximum === undefined) {
-    solver.core.x.splice(0, backup.length, ...backup);
-    return undefined;
+    solver.core.restoreX();
+    return { status: LP_UNBOUNDED, value: Impq.zero, dependency: null };
   }
-  solver.status = LP_OPTIMAL;
-  return maximum;
+  const dependency = isComputingDependencies
+    ? getDependenciesOfMaximum(solver, maximum.reducedCosts)
+    : null;
+  if (!isFixingIntCols) {
+    solver.status = LP_OPTIMAL;
+    return { status: LP_OPTIMAL, value: maximum.value, dependency };
+  }
+  return { ...adjustIntegerColumns(solver, term, previous, maximum.value), dependency };
 };

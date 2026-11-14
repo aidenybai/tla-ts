@@ -1,0 +1,124 @@
+(*---
+description: Zenon's own test zenon/test/test06.znn, which Zenon must prove.
+ref: zenon/test/test06.znn
+features:
+  - zenon-test
+outcome: unsat
+---*)
+;  Copyright 2006 INRIA
+;  $Id: test06.znn,v 1.5 2011-12-28 16:43:33 doligez Exp $
+
+# TPTP syn054+1
+
+$hyp "h1" (-. (E. ((X) (/\ (S X) (Q X)))))
+$hyp "h2" (A. ((X) (=> (P X) (\/ (Q X) (R X)))))
+$hyp "h3" (=> (-. (E. ((X) (P X)))) (E. ((Y) (Q Y))))
+$hyp "h4" (A. ((X) (=> (\/ (Q X) (R X)) (S X))))
+
+$goal (E. ((X) (/\ (P X) (R X))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     have z_Hc:"((~(\\E X:P(X)))=>(\\E Y:Q(Y)))" (is "?z_hf=>?z_hj")
+     using h3 by blast
+     have z_Hd:"(\\A X:((Q(X)|R(X))=>S(X)))" (is "\\A x : ?z_hr(x)")
+     using h4 by blast
+     have z_Ha:"(~(\\E X:(S(X)&Q(X))))" (is "~(\\E x : ?z_hu(x))")
+     using h1 by blast
+     have z_Hb:"(\\A X:(P(X)=>(Q(X)|R(X))))" (is "\\A x : ?z_hw(x)")
+     using h2 by blast
+     assume z_He:"(~(\\E X:(P(X)&R(X))))" (is "~(\\E x : ?z_hz(x))")
+     show FALSE
+     proof (rule zenon_imply [OF z_Hc])
+      assume z_Hba:"(~?z_hf)" (is "~~?z_hg")
+      have z_Hg: "?z_hg" (is "\\E x : ?z_hbb(x)")
+      by (rule zenon_notnot_0 [OF z_Hba])
+      have z_Hbc: "?z_hbb((CHOOSE X:P(X)))" (is "?z_hbc")
+      by (rule zenon_ex_choose_0 [of "?z_hbb", OF z_Hg])
+      have z_Hbe: "?z_hw((CHOOSE X:P(X)))" (is "_=>?z_hbf")
+      by (rule zenon_all_0 [of "?z_hw" "(CHOOSE X:P(X))", OF z_Hb])
+      show FALSE
+      proof (rule zenon_imply [OF z_Hbe])
+       assume z_Hbg:"(~?z_hbc)"
+       show FALSE
+       by (rule notE [OF z_Hbg z_Hbc])
+      next
+       assume z_Hbf:"?z_hbf" (is "?z_hbh|?z_hbi")
+       show FALSE
+       proof (rule zenon_or [OF z_Hbf])
+        assume z_Hbh:"?z_hbh"
+        have z_Hbj: "~?z_hu((CHOOSE X:P(X)))" (is "~(?z_hbk&_)")
+        by (rule zenon_notex_0 [of "?z_hu" "(CHOOSE X:P(X))", OF z_Ha])
+        show FALSE
+        proof (rule zenon_notand [OF z_Hbj])
+         assume z_Hbl:"(~?z_hbk)"
+         have z_Hbm: "?z_hr((CHOOSE X:P(X)))"
+         by (rule zenon_all_0 [of "?z_hr" "(CHOOSE X:P(X))", OF z_Hd])
+         show FALSE
+         proof (rule zenon_imply [OF z_Hbm])
+          assume z_Hbn:"(~?z_hbf)"
+          have z_Hbo: "(~?z_hbh)"
+          by (rule zenon_notor_0 [OF z_Hbn])
+          show FALSE
+          by (rule notE [OF z_Hbo z_Hbh])
+         next
+          assume z_Hbk:"?z_hbk"
+          show FALSE
+          by (rule notE [OF z_Hbl z_Hbk])
+         qed
+        next
+         assume z_Hbo:"(~?z_hbh)"
+         show FALSE
+         by (rule notE [OF z_Hbo z_Hbh])
+        qed
+       next
+        assume z_Hbi:"?z_hbi"
+        have z_Hbp: "~?z_hz((CHOOSE X:P(X)))"
+        by (rule zenon_notex_0 [of "?z_hz" "(CHOOSE X:P(X))", OF z_He])
+        show FALSE
+        proof (rule zenon_notand [OF z_Hbp])
+         assume z_Hbg:"(~?z_hbc)"
+         show FALSE
+         by (rule notE [OF z_Hbg z_Hbc])
+        next
+         assume z_Hbq:"(~?z_hbi)"
+         show FALSE
+         by (rule notE [OF z_Hbq z_Hbi])
+        qed
+       qed
+      qed
+     next
+      assume z_Hj:"?z_hj" (is "\\E x : ?z_hbr(x)")
+      have z_Hbs: "?z_hbr((CHOOSE Y:Q(Y)))" (is "?z_hbs")
+      by (rule zenon_ex_choose_0 [of "?z_hbr", OF z_Hj])
+      have z_Hbu: "~?z_hu((CHOOSE Y:Q(Y)))" (is "~(?z_hbv&_)")
+      by (rule zenon_notex_0 [of "?z_hu" "(CHOOSE Y:Q(Y))", OF z_Ha])
+      show FALSE
+      proof (rule zenon_notand [OF z_Hbu])
+       assume z_Hbw:"(~?z_hbv)"
+       have z_Hbx: "?z_hr((CHOOSE Y:Q(Y)))" (is "?z_hby=>_")
+       by (rule zenon_all_0 [of "?z_hr" "(CHOOSE Y:Q(Y))", OF z_Hd])
+       show FALSE
+       proof (rule zenon_imply [OF z_Hbx])
+        assume z_Hbz:"(~?z_hby)" (is "~(_|?z_hca)")
+        have z_Hcb: "(~?z_hbs)"
+        by (rule zenon_notor_0 [OF z_Hbz])
+        show FALSE
+        by (rule notE [OF z_Hcb z_Hbs])
+       next
+        assume z_Hbv:"?z_hbv"
+        show FALSE
+        by (rule notE [OF z_Hbw z_Hbv])
+       qed
+      next
+       assume z_Hcb:"(~?z_hbs)"
+       show FALSE
+       by (rule notE [OF z_Hcb z_Hbs])
+      qed
+     qed
+    qed
+---*)

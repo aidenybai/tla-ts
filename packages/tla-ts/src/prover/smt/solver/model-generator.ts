@@ -1,34 +1,29 @@
 // Ported from Z3 (src/smt/smt_model_generator.cpp), MIT license, see z3-license.txt.
-import {
-  FAMILY_MODEL_VALUE,
-  FAMILY_USER,
-  type FuncDecl,
-  OP_DIV0,
-  OP_IDIV0,
-  OP_MOD0,
-  SORT_BOOL,
-  isArithSort,
-} from "./ast";
+import { FAMILY_BASIC, FAMILY_USER, SORT_BOOL } from "./ast";
 import type { Context } from "./context";
-import type { Enode } from "./enode";
+import { Enode } from "./enode";
 import { FuncInterp, ProtoModel } from "./proto-model";
+import type { DependentValue } from "./theory";
 
 export interface GeneratedModel {
   model: ProtoModel;
   root2value: Map<Enode, number>;
 }
 
-const isIncludedFuncInterp = (decl: FuncDecl) =>
-  decl.family === FAMILY_USER ||
-  decl.family === FAMILY_MODEL_VALUE ||
-  decl.op === OP_DIV0 ||
-  decl.op === OP_IDIV0 ||
-  decl.op === OP_MOD0;
+// include_func_interp: the model interprets uninterpreted functions, the decls that their theory
+// asks for, such as theory_lra's divisions by zero, and the decls of a family without a theory, such
+// as model values, which stand for themselves.
+const isIncludedFuncInterp = (context: Context, decl: number) => {
+  const family = context.manager.funcDecls[decl].family;
+  if (family === FAMILY_USER) return true;
+  if (family === FAMILY_BASIC) return false;
+  return context.getTheory(family)?.includeFuncInterp(decl) ?? true;
+};
 
 export const mkModel = (context: Context): GeneratedModel => {
   const manager = context.manager;
   const model = new ProtoModel(manager);
-  context.theory?.initModel(model);
+  for (const theory of context.theories) theory.initModel(model);
   for (const node of context.enodes)
     if (node.root === node && context.isRelevant(node.owner) && manager.isModelValue(node.owner))
       model.registerValue(node.owner);
@@ -42,25 +37,56 @@ export const mkModel = (context: Context): GeneratedModel => {
   }
   const root2value = new Map<Enode, number>();
   const freshRoots: Enode[] = [];
+  const dependentValues = new Map<Enode, DependentValue>();
   for (const node of context.enodes) {
     if (node.root !== node) continue;
     const expr = node.owner;
-    if (!context.isRelevant(expr) && !manager.isUniqueValue(expr)) continue;
+    if (!context.isRelevant(expr) && !manager.isValue(expr)) continue;
     const sort = manager.sorts[expr];
+    const theory = context.getTheory(manager.getSortFamily(sort));
     if (sort === SORT_BOOL)
       root2value.set(node, context.findAssignment(expr) > 0 ? manager.trueExpr : manager.falseExpr);
-    else if (manager.isUniqueValue(expr) && !isArithSort(sort)) root2value.set(node, expr);
-    else if (isArithSort(sort)) {
-      const value = context.theory?.mkValue(node);
+    else if (manager.isModelValue(expr)) root2value.set(node, expr);
+    else if (theory !== undefined && theory.buildModels()) {
+      const value = node.getThVar(theory.id) < 0 ? undefined : theory.mkValue(node);
       if (value === undefined) freshRoots.push(node);
-      else root2value.set(node, value);
-    } else root2value.set(node, model.getFreshValue(sort) ?? model.getSomeValue(sort));
+      else if (typeof value === "number")
+        root2value.set(node, manager.isValue(expr) ? expr : value);
+      else dependentValues.set(node, value);
+    } else {
+      const value = model.getFreshValue(sort) ?? model.getSomeValue(sort);
+      root2value.set(node, manager.isValue(expr) ? expr : value);
+    }
   }
   for (const value of root2value.values()) model.registerValue(value);
-  for (const node of freshRoots) {
+  // A value that depends on others comes after them, and before the fresh values of its sort.
+  const getFreshValue = (node: Enode) => {
     const sort = manager.sorts[node.owner];
-    root2value.set(node, model.getFreshValue(sort) ?? model.getSomeValue(sort));
-  }
+    const freshValue = model.getFreshValue(sort) ?? model.getSomeValue(sort);
+    const value = manager.isValue(node.owner) ? node.owner : freshValue;
+    root2value.set(node, value);
+    return value;
+  };
+  const getDependentValue = (node: Enode): number => {
+    const existing = root2value.get(node);
+    if (existing !== undefined) return existing;
+    const dependent = dependentValues.get(node);
+    if (dependent === undefined) return getFreshValue(node);
+    dependentValues.delete(node);
+    const values = dependent.dependencies.map((dependency) => {
+      if (dependency instanceof Enode) return getDependentValue(dependency.root);
+      dependency.value ??=
+        model.getFreshValue(dependency.sort) ?? model.getSomeValue(dependency.sort);
+      return dependency.value;
+    });
+    // A class whose root is a value, such as a constant array, takes it after its dependencies.
+    const value = manager.isValue(node.owner) ? node.owner : dependent.mkValue(values);
+    model.registerValue(value);
+    root2value.set(node, value);
+    return value;
+  };
+  for (const node of dependentValues.keys()) getDependentValue(node);
+  for (const node of freshRoots) if (!root2value.has(node)) getFreshValue(node);
   const getValue = (node: Enode) =>
     root2value.get(node.root) ?? model.getSomeValue(manager.sorts[node.owner]);
   for (const node of context.enodes)
@@ -68,7 +94,7 @@ export const mkModel = (context: Context): GeneratedModel => {
       model.registerConst(manager.decls[node.owner], getValue(node));
   for (const node of context.enodes) {
     const expr = node.owner;
-    if (!context.isRelevant(expr) || !isIncludedFuncInterp(manager.funcDecls[node.decl])) continue;
+    if (!context.isRelevant(expr) || !isIncludedFuncInterp(context, node.decl)) continue;
     if (node.numArgs === 0) {
       model.registerConst(node.decl, getValue(node));
       continue;
@@ -82,5 +108,7 @@ export const mkModel = (context: Context): GeneratedModel => {
     const args = Array.from({ length: node.numArgs }, (_, index) => getValue(node.getArg(index)));
     if (interp.getEntry(args) === undefined) interp.insertNewEntry(args, getValue(node));
   }
+  for (const theory of context.theories) theory.finalizeModel();
+  context.macros?.registerInterpretations(model);
   return { model, root2value };
 };

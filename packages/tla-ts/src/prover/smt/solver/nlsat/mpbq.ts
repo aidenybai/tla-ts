@@ -14,6 +14,24 @@ const getPowerOfTwoMultiple = (value: bigint) => {
 
 export const getLog2 = (value: bigint) => (value < 0n ? -value : value).toString(2).length - 1;
 
+// The exact n-th root, or else the ceiling of the real root.
+const getIntegerRoot = (value: bigint, n: number) => {
+  if (value === 0n || n === 1) return { value, isExact: true };
+  const exponent = BigInt(n);
+  const magnitude = value < 0n ? -value : value;
+  let low = 0n;
+  let high = 1n;
+  while (high ** exponent <= magnitude) high *= 2n;
+  while (high - low > 1n) {
+    const middle = (low + high) / 2n;
+    if (middle ** exponent <= magnitude) low = middle;
+    else high = middle;
+  }
+  const isExact = low ** exponent === magnitude;
+  if (value > 0n) return { value: isExact ? low : low + 1n, isExact };
+  return { value: -low, isExact };
+};
+
 export class Mpbq {
   private constructor(
     readonly num: bigint,
@@ -120,6 +138,33 @@ export class Mpbq {
 
   ceil() {
     return this.isInt ? this.num : (this.num >> BigInt(this.k)) + 1n;
+  }
+
+  rootLower(n: number) {
+    const root = getIntegerRoot(this.num, n);
+    const num = root.isExact ? root.value : root.value - 1n;
+    const k = Math.floor(this.k / n);
+    return Mpbq.of(num, this.k % n === 0 || num < 0n ? k : k + 1);
+  }
+
+  rootUpper(n: number) {
+    const root = getIntegerRoot(this.num, n);
+    const k = Math.floor(this.k / n);
+    return Mpbq.of(root.value, this.k % n === 0 || root.value >= 0n ? k : k + 1);
+  }
+
+  toDecimal(precision: number) {
+    if (this.isInt) return `${this.num}`;
+    const scale = 1n << BigInt(this.k);
+    const magnitude = this.num < 0n ? -this.num : this.num;
+    const digits: string[] = [];
+    let remainder = magnitude % scale;
+    for (let index = 0; index < precision && remainder !== 0n; index++) {
+      digits.push(`${(remainder * 10n) / scale}`);
+      remainder = (remainder * 10n) % scale;
+    }
+    const sign = this.num < 0n ? "-" : "";
+    return `${sign}${magnitude / scale}.${digits.join("")}${remainder === 0n ? "" : "?"}`;
   }
 
   toString() {

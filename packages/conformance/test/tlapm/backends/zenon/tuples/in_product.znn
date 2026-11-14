@@ -1,0 +1,37 @@
+(*---
+description: Zenon unfolds p \in S \X T with in_product.
+ref: zenon/ext_tla.ml#newnodes_prop
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (TLA.in a_CONSTANTunde_punde_a
+(TLA.prod a_CONSTANTunde_Sunde_a a_CONSTANTunde_Tunde_a))
+(TLA.in (TLA.fapply a_CONSTANTunde_punde_a (TLA.fapply TLA.Succ 0))
+a_CONSTANTunde_Sunde_a))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~((a_CONSTANTunde_punde_a \\in prod(a_CONSTANTunde_Sunde_a, a_CONSTANTunde_Tunde_a))=>((a_CONSTANTunde_punde_a[1]) \\in a_CONSTANTunde_Sunde_a)))" (is "~(?z_hc=>?z_hh)")
+     have z_Hc: "?z_hc"
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hk: "(~?z_hh)"
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hl_z_Hc: "(a_CONSTANTunde_punde_a \\in Product(<<a_CONSTANTunde_Sunde_a, a_CONSTANTunde_Tunde_a>>)) == ?z_hc" (is "?z_hl == _")
+     by (unfold prod_def)
+     have z_Hl: "?z_hl"
+     by (unfold z_Hl_z_Hc, fact z_Hc)
+     let ?z_hn = "<<a_CONSTANTunde_Sunde_a, a_CONSTANTunde_Tunde_a>>"
+     have z_Ho: "isASeq(?z_hn)" by auto
+     have z_Hp: "(1 \\in (1..Len(?z_hn)))" by auto
+     have z_Hs: "((a_CONSTANTunde_punde_a[1]) \\in (?z_hn[1]))" (is "?z_hs")
+     by (rule zenon_in_product_i [OF z_Hl z_Ho z_Hp])
+     have z_Hh: "?z_hh"
+     using z_Hs by auto
+     show FALSE
+     by (rule notE [OF z_Hk z_Hh])
+    qed
+---*)

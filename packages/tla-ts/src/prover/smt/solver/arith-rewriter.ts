@@ -1,13 +1,30 @@
 // Ported from Z3 (src/ast/rewriter/arith_rewriter.cpp), MIT license, see z3-license.txt.
 import {
+  FAMILY_ARITH,
+  KIND_APP,
+  OP_ACOS,
+  OP_ACOSH,
   OP_ADD,
+  OP_ASIN,
+  OP_ASINH,
+  OP_ATAN,
+  OP_ATANH,
+  OP_COS,
+  OP_COSH,
+  OP_DIV,
   OP_GE,
+  OP_PI,
+  OP_POWER,
+  OP_SIN,
+  OP_SINH,
+  OP_TAN,
   OP_IDIV,
   OP_ITE,
   OP_LE,
   OP_LT,
   OP_MOD,
   OP_MUL,
+  OP_SEQ_LENGTH,
   OP_SUB,
   OP_TO_INT,
   OP_TO_REAL,
@@ -20,12 +37,17 @@ import { getEuclideanDiv, getEuclideanMod, getGcd, Rational } from "./rational";
 import { type ArithRewriterOptions, PolyRewriter } from "./poly-rewriter";
 import type { Rewrite } from "./rewriter-tpl";
 import { shrink } from "./array";
+import { Anum } from "./nlsat/algebraic";
 
 export const KERNEL_ARITH_OPTIONS: ArithRewriterOptions = {
   isSom: true,
   isSortSums: true,
   isArithIneqLhs: true,
   isGcdRounding: true,
+  isAnumSimp: true,
+  isExpandPower: false,
+  isExpandTan: false,
+  maxDegree: 64,
 };
 
 export const TACTIC_ARITH_OPTIONS: ArithRewriterOptions = {
@@ -33,6 +55,18 @@ export const TACTIC_ARITH_OPTIONS: ArithRewriterOptions = {
   isSortSums: false,
   isArithIneqLhs: false,
   isGcdRounding: false,
+  isAnumSimp: true,
+  isExpandPower: false,
+  isExpandTan: false,
+  maxDegree: 64,
+};
+
+const HALF = Rational.of(1n, 2n);
+const TWO = Rational.of(2n);
+
+const getHalfTurns = (k: Rational) => {
+  const floor = k.floor();
+  return Rational.of(getEuclideanMod(floor.num, 2n)).add(k).sub(floor);
 };
 
 const getCeilDiv = (dividend: bigint, divisor: bigint) => -getEuclideanDiv(-dividend, divisor);
@@ -57,6 +91,7 @@ const getInverse = (kind: number) =>
 
 export class ArithRewriter extends PolyRewriter {
   private factors: number[] = [];
+  isEq2Ineq = false;
 
   mkLe(left: number, right: number) {
     return this.mkLeGeEq(left, right, KIND_LE);
@@ -75,6 +110,15 @@ export class ArithRewriter extends PolyRewriter {
   }
 
   mkEq(left: number, right: number) {
+    const manager = this.manager;
+    if (this.isEq2Ineq)
+      return this.reduce(
+        manager.mkAnd([
+          manager.mkApp(OP_LE, [left, right], SORT_BOOL),
+          manager.mkApp(OP_GE, [left, right], SORT_BOOL),
+        ]),
+        2,
+      );
     if (!this.isArithTerm(left) && !this.isArithTerm(right)) return undefined;
     return this.mkLeGeEq(left, right, KIND_EQ);
   }
@@ -219,6 +263,31 @@ export class ArithRewriter extends PolyRewriter {
     );
   }
 
+  mkRem(left: number, right: number) {
+    const manager = this.manager;
+    this.currSort = SORT_INT;
+    const dividend = manager.getNumeral(left);
+    const divisor = manager.getNumeral(right);
+    if (dividend !== undefined && divisor !== undefined && divisor !== 0n) {
+      const remainder = getEuclideanMod(dividend, divisor);
+      return manager.mkNumeral(divisor < 0n ? -remainder : remainder);
+    }
+    if (divisor === 1n) return manager.mkNumeral(0n);
+    if (divisor !== undefined && divisor !== 0n) {
+      if (this.isAdd(left) || this.isMul(left)) return undefined;
+      return divisor < 0n
+        ? this.reduce(manager.mkApp(OP_UMINUS, [this.mkModApp(left, right)], SORT_INT), 2)
+        : this.reduce(this.mkModApp(left, right), 1);
+    }
+    if (!this.options.isElimRem) return undefined;
+    const mod = this.mkModApp(left, right);
+    const isNonnegative = manager.mkApp(OP_GE, [right, manager.mkNumeral(0n)], SORT_BOOL);
+    return this.reduce(
+      this.mkIntIte(isNonnegative, mod, manager.mkApp(OP_UMINUS, [mod], SORT_INT)),
+      3,
+    );
+  }
+
   mkMod(left: number, right: number) {
     const manager = this.manager;
     this.currSort = SORT_INT;
@@ -349,8 +418,467 @@ export class ArithRewriter extends PolyRewriter {
     );
   }
 
+  override mkAddCore(args: number[]) {
+    if (!this.isAnumSimpTarget(args)) return super.mkAddCore(args);
+    const folded = this.foldAnums(args, true);
+    if (typeof folded === "number") return folded;
+    return super.mkAddCore(folded) ?? this.manager.mkApp(OP_ADD, folded, SORT_REAL);
+  }
+
+  override mkMul(args: number[]) {
+    if (!this.isAnumSimpTarget(args)) return super.mkMul(args);
+    const folded = this.foldAnums(args, false);
+    if (typeof folded === "number") return folded;
+    return super.mkMul(folded) ?? this.manager.mkApp(OP_MUL, folded, SORT_REAL);
+  }
+
+  private isSimpAlgebraic(expr: number) {
+    const manager = this.manager;
+    return (
+      manager.isAlgebraicNumeral(expr) &&
+      manager.am.degree(manager.getAlgebraicValue(expr)) <= this.options.maxDegree
+    );
+  }
+
+  private isAnumSimpTarget(args: number[]) {
+    if (!this.options.isAnumSimp) return false;
+    let numIrrational = 0;
+    let numRational = 0;
+    for (const arg of args) {
+      if (this.manager.isNumeral(arg)) {
+        numRational++;
+        if (numIrrational > 0) return true;
+      }
+      if (this.isSimpAlgebraic(arg)) {
+        numIrrational++;
+        if (numIrrational > 1 || numRational > 0) return true;
+      }
+    }
+    return false;
+  }
+
+  private foldAnums(args: number[], isAdd: boolean) {
+    const manager = this.manager;
+    const am = manager.am;
+    const identity = isAdd ? Rational.zero : Rational.one;
+    const combine = (first: Anum, second: Anum) =>
+      isAdd ? am.add(first, second) : am.mul(first, second);
+    let result = new Anum(identity);
+    const newArgs: number[] = [];
+    for (const arg of args) {
+      const degree = am.degree(result);
+      if (degree > 1 && degree > this.options.maxDegree) {
+        newArgs.push(manager.mkAlgebraicNumeral(result));
+        result = new Anum(identity);
+      }
+      if (manager.isNumeral(arg)) result = combine(result, new Anum(this.getValue(arg)));
+      else if (this.isSimpAlgebraic(arg)) result = combine(result, manager.getAlgebraicValue(arg));
+      else newArgs.push(arg);
+    }
+    if (newArgs.length === 0) return manager.mkAlgebraicNumeral(result);
+    newArgs.push(manager.mkAlgebraicNumeral(result));
+    return newArgs;
+  }
+
+  private getAlgebraicValue(expr: number): Anum | undefined {
+    const manager = this.manager;
+    const am = manager.am;
+    if (manager.isNumeral(expr)) return new Anum(this.getValue(expr));
+    if (manager.isAlgebraicNumeral(expr)) return am.copy(manager.getAlgebraicValue(expr));
+    const op = manager.getOp(expr);
+    if ((op !== OP_ADD && op !== OP_MUL) || manager.getNumArgs(expr) !== 2) return undefined;
+    const first = this.getAlgebraicValue(manager.getArg(expr, 0));
+    const second = first && this.getAlgebraicValue(manager.getArg(expr, 1));
+    if (first === undefined || second === undefined) return undefined;
+    return op === OP_ADD ? am.add(first, second) : am.mul(first, second);
+  }
+
+  private mkAnumDiv(left: number, right: number) {
+    const manager = this.manager;
+    const am = manager.am;
+    const isLeftAlgebraic = manager.isAlgebraicNumeral(left);
+    const isRightAlgebraic = manager.isAlgebraicNumeral(right);
+    if (isLeftAlgebraic && manager.isNumeral(right)) {
+      if (this.getValue(right).isZero()) return undefined;
+      return manager.mkAlgebraicNumeral(
+        am.div(manager.getAlgebraicValue(left), new Anum(this.getValue(right))),
+      );
+    }
+    if (isLeftAlgebraic && isRightAlgebraic) {
+      if (!this.isSimpAlgebraic(left) || !this.isSimpAlgebraic(right)) return undefined;
+      return manager.mkAlgebraicNumeral(
+        am.div(manager.getAlgebraicValue(left), manager.getAlgebraicValue(right)),
+      );
+    }
+    return manager.mkAlgebraicNumeral(
+      am.div(new Anum(this.getValue(left)), manager.getAlgebraicValue(right)),
+    );
+  }
+
+  private ensureReal(expr: number) {
+    const manager = this.manager;
+    return manager.isInt(expr) ? manager.mkApp(OP_TO_REAL, [expr], SORT_REAL) : expr;
+  }
+
+  private mkPowerApp(base: number, exponent: number) {
+    return this.manager.mkApp(OP_POWER, [base, exponent], SORT_REAL);
+  }
+
+  mkPower(base: number, exponent: number): number | Rewrite | undefined {
+    const manager = this.manager;
+    const maxDegree = this.options.maxDegree;
+    const x = manager.isNumeral(base) ? this.getValue(base) : undefined;
+    const y = manager.isNumeral(exponent) ? this.getValue(exponent) : undefined;
+    const isSmall = (value: Rational) =>
+      value.isInt() && value.num >= 0n && value.num <= BigInt(maxDegree);
+    if (x?.equals(Rational.one)) return manager.mkRealNumeral(x);
+    if (y?.equals(Rational.one)) return this.reduce(this.ensureReal(base), 1);
+    if (x !== undefined && y !== undefined) {
+      if (x.isZero() && y.isZero()) return undefined;
+      if (y.isZero()) return manager.mkRealNumeral(Rational.one);
+      if (x.isZero()) return manager.mkRealNumeral(x);
+      if (isSmall(y)) return manager.mkRealNumeral(x.pow(Number(y.num)));
+      if (isSmall(y.neg())) return manager.mkRealNumeral(Rational.one.div(x).pow(Number(-y.num)));
+      if (y.equals(Rational.minusOne)) return manager.mkRealNumeral(Rational.one.div(x));
+    }
+    if (manager.getOp(base) === OP_POWER && y !== undefined && y.isInt() && !y.isZero()) {
+      const innerExponent = manager.getArg(base, 1);
+      const inner = manager.isNumeral(innerExponent) ? this.getValue(innerExponent) : undefined;
+      if (inner !== undefined && inner.isInt() && inner.isPositive())
+        return this.reduce(
+          this.mkPowerApp(
+            this.ensureReal(manager.getArg(base, 0)),
+            manager.mkRealNumeral(y.mul(inner)),
+          ),
+          2,
+        );
+    }
+    const mkZeroIte = (otherwise: number) =>
+      manager.mkApp(
+        OP_ITE,
+        [
+          manager.mkEq(base, manager.mkNumeralOfSort(Rational.zero, manager.sorts[base])),
+          manager.mkRealNumeral(Rational.zero),
+          otherwise,
+        ],
+        SORT_REAL,
+      );
+    if (y?.equals(Rational.minusOne)) {
+      const one = manager.mkRealNumeral(Rational.one);
+      const quotient = manager.mkApp(OP_DIV, [one, this.ensureReal(base)], SORT_REAL);
+      return this.reduce(mkZeroIte(quotient), 2);
+    }
+    if (y?.isNegative()) {
+      const one = manager.mkRealNumeral(Rational.one);
+      const quotient = manager.mkApp(OP_DIV, [one, this.ensureReal(base)], SORT_REAL);
+      return this.reduce(mkZeroIte(this.mkPowerApp(quotient, manager.mkRealNumeral(y.neg()))), 3);
+    }
+    if (y !== undefined && !y.isInt() && y.num !== 1n) {
+      const root = this.mkPowerApp(
+        this.ensureReal(base),
+        manager.mkRealNumeral(Rational.of(1n, y.den)),
+      );
+      return this.reduce(this.mkPowerApp(root, manager.mkRealNumeral(Rational.of(y.num))), 3);
+    }
+    const isArithBase =
+      manager.kinds[base] === KIND_APP &&
+      manager.funcDecls[manager.decls[base]].family === FAMILY_ARITH;
+    if (
+      (this.options.isExpandPower || (this.options.isSom && isArithBase)) &&
+      y !== undefined &&
+      isSmall(y) &&
+      y.num > 1n
+    ) {
+      const factors = Array.from({ length: Number(y.num) }, () => base);
+      return this.reduce(this.ensureReal(manager.mkApp(OP_MUL, factors, manager.sorts[base])), 2);
+    }
+    if (y === undefined || y.isZero()) return undefined;
+    const isIrrationalBase = manager.isAlgebraicNumeral(base);
+    if (x === undefined && !isIrrationalBase) return undefined;
+    const isNegativeExponent = y.isNegative();
+    const numerator = isNegativeExponent ? -y.num : y.num;
+    if (numerator > BigInt(maxDegree) || y.den > BigInt(maxDegree)) return undefined;
+    const am = manager.am;
+    const finish = (value: Anum) => {
+      if (isNegativeExponent) am.inv(value);
+      return manager.mkAlgebraicNumeral(value);
+    };
+    if (x !== undefined) {
+      const power = x.pow(Number(numerator));
+      if (power.isNegative() && y.den % 2n === 0n) return undefined;
+      const exact = power.root(Number(y.den));
+      if (exact !== undefined)
+        return manager.mkRealNumeral(isNegativeExponent ? Rational.one.div(exact) : exact);
+      if (!this.options.isAnumSimp) return undefined;
+      return finish(am.root(new Anum(power), Number(y.den)));
+    }
+    const value = manager.getAlgebraicValue(base);
+    if (!this.options.isAnumSimp || am.degree(value) > maxDegree) return undefined;
+    return finish(am.root(am.power(value, Number(numerator)), Number(y.den)));
+  }
+
+  private isPi(expr: number) {
+    return this.manager.getOp(expr) === OP_PI;
+  }
+
+  private isBinary(expr: number, op: number) {
+    const manager = this.manager;
+    return manager.getOp(expr) === op && manager.getNumArgs(expr) === 2;
+  }
+
+  private getPiMultiple(expr: number) {
+    const manager = this.manager;
+    if (this.isPi(expr)) return Rational.one;
+    if (!this.isBinary(expr, OP_MUL) || !this.isPi(manager.getArg(expr, 1))) return undefined;
+    const coefficient = manager.getArg(expr, 0);
+    return manager.isNumeral(coefficient) ? this.getValue(coefficient) : undefined;
+  }
+
+  private getPiOffset(expr: number) {
+    const manager = this.manager;
+    if (manager.getOp(expr) !== OP_ADD) return undefined;
+    for (let index = 0; index < manager.getNumArgs(expr); index++) {
+      const term = manager.getArg(expr, index);
+      const k = this.getPiMultiple(term);
+      if (k !== undefined) return { k, term };
+    }
+    return undefined;
+  }
+
+  private isPiTimesToReal(first: number, second: number) {
+    const manager = this.manager;
+    return (
+      (this.isPi(first) && manager.getOp(second) === OP_TO_REAL) ||
+      (manager.getOp(first) === OP_TO_REAL && this.isPi(second))
+    );
+  }
+
+  private isTwoPiInteger(expr: number) {
+    const manager = this.manager;
+    if (!this.isBinary(expr, OP_MUL)) return false;
+    const coefficient = manager.getArg(expr, 0);
+    const product = manager.getArg(expr, 1);
+    if (!manager.isNumeral(coefficient)) return false;
+    const k = this.getValue(coefficient);
+    return (
+      k.isInt() &&
+      getEuclideanMod(k.num, 2n) === 0n &&
+      this.isBinary(product, OP_MUL) &&
+      this.isPiTimesToReal(manager.getArg(product, 0), manager.getArg(product, 1))
+    );
+  }
+
+  private isPiInteger(expr: number) {
+    const manager = this.manager;
+    if (!this.isBinary(expr, OP_MUL)) return false;
+    const first = manager.getArg(expr, 0);
+    const second = manager.getArg(expr, 1);
+    if (!manager.isNumeral(first)) return this.isPiTimesToReal(first, second);
+    if (!this.getValue(first).isInt() || !this.isBinary(second, OP_MUL)) return false;
+    return this.isPiTimesToReal(manager.getArg(second, 0), manager.getArg(second, 1));
+  }
+
+  private findSummand(expr: number, isMatching: (term: number) => boolean) {
+    const manager = this.manager;
+    if (manager.getOp(expr) !== OP_ADD) return undefined;
+    for (let index = 0; index < manager.getNumArgs(expr); index++)
+      if (isMatching(manager.getArg(expr, index))) return manager.getArg(expr, index);
+    return undefined;
+  }
+
+  private mkReal(value: Rational) {
+    return this.manager.mkRealNumeral(value);
+  }
+
+  private mkRealApp(op: number, args: number[]) {
+    return this.manager.mkApp(op, args, SORT_REAL);
+  }
+
+  private mkSqrt(value: Rational) {
+    return this.mkPowerApp(this.mkReal(value), this.mkReal(HALF));
+  }
+
+  private mkSinValue(k: Rational) {
+    const turns = getHalfTurns(k);
+    const isNegative = turns.compare(Rational.one) >= 0;
+    const kPrime = isNegative ? turns.sub(Rational.one) : turns;
+    const mkSigned = (expr: number) => (isNegative ? this.mkRealApp(OP_UMINUS, [expr]) : expr);
+    const is = (num: bigint, den: bigint) => kPrime.equals(Rational.of(num, den));
+    if (kPrime.isZero() || kPrime.equals(Rational.one)) return this.mkReal(Rational.zero);
+    if (is(1n, 2n)) return this.mkReal(isNegative ? Rational.minusOne : Rational.one);
+    if (is(1n, 6n) || is(5n, 6n)) return this.mkReal(Rational.of(isNegative ? -1n : 1n, 2n));
+    if (is(1n, 4n) || is(3n, 4n)) return mkSigned(this.mkSqrt(HALF));
+    if (is(1n, 3n) || is(2n, 3n))
+      return mkSigned(this.mkRealApp(OP_DIV, [this.mkSqrt(Rational.of(3n)), this.mkReal(TWO)]));
+    const isLow = is(1n, 12n) || is(11n, 12n);
+    if (isLow || is(5n, 12n) || is(7n, 12n)) {
+      const six = this.mkSqrt(Rational.of(6n));
+      const two = this.mkSqrt(TWO);
+      const sum = this.mkRealApp(isLow ? OP_SUB : OP_ADD, [six, two]);
+      return mkSigned(this.mkRealApp(OP_DIV, [sum, this.mkReal(Rational.of(4n))]));
+    }
+    return undefined;
+  }
+
+  private mkWithoutTerm(op: number, arg: number, term: number, isNegated: boolean) {
+    const app = this.mkRealApp(op, [this.mkRealApp(OP_SUB, [arg, term])]);
+    return isNegated ? this.reduce(this.mkRealApp(OP_UMINUS, [app]), 3) : this.reduce(app, 2);
+  }
+
+  private mkSinCos(arg: number, isSin: boolean): number | Rewrite | undefined {
+    const manager = this.manager;
+    const op = manager.getOp(arg);
+    const inverse = manager.getNumArgs(arg) === 1 ? manager.getArg(arg, 0) : -1;
+    if (op === (isSin ? OP_ASIN : OP_ACOS)) return inverse;
+    if (isSin && op === OP_ACOS) {
+      const square = this.mkRealApp(OP_MUL, [inverse, inverse]);
+      const difference = this.mkRealApp(OP_SUB, [this.mkReal(Rational.one), square]);
+      return this.reduce(this.mkPowerApp(difference, this.mkReal(HALF)), Infinity);
+    }
+    if (manager.isNumeral(arg) && this.getValue(arg).isZero())
+      return isSin ? arg : this.mkReal(Rational.one);
+    const multiple = this.getPiMultiple(arg);
+    const value =
+      multiple === undefined ? undefined : this.mkSinValue(isSin ? multiple : multiple.add(HALF));
+    if (value !== undefined) return this.reduce(value, Infinity);
+    const offset = this.getPiOffset(arg);
+    if (offset !== undefined) {
+      const turns = getHalfTurns(offset.k);
+      const quarter = turns.isZero()
+        ? 0
+        : turns.equals(HALF)
+          ? 1
+          : turns.equals(Rational.one)
+            ? 2
+            : turns.equals(Rational.of(3n, 2n))
+              ? 3
+              : -1;
+      if (quarter !== -1) {
+        // sin(x + q pi/2) is sin, cos, -sin, -cos, and cos(x + q pi/2) is cos, -sin, -cos, sin.
+        const shifted = isSin ? quarter : quarter + 1;
+        return this.mkWithoutTerm(
+          shifted % 2 === 0 ? OP_SIN : OP_COS,
+          arg,
+          offset.term,
+          shifted % 4 >= 2,
+        );
+      }
+    }
+    const term = this.findSummand(arg, (summand) => this.isTwoPiInteger(summand));
+    if (term !== undefined) return this.mkWithoutTerm(isSin ? OP_SIN : OP_COS, arg, term, false);
+    return undefined;
+  }
+
+  mkSin(arg: number) {
+    return this.mkSinCos(arg, true);
+  }
+
+  mkCos(arg: number) {
+    return this.mkSinCos(arg, false);
+  }
+
+  mkTan(arg: number): number | Rewrite | undefined {
+    const manager = this.manager;
+    if (manager.getOp(arg) === OP_ATAN) return manager.getArg(arg, 0);
+    if (manager.isNumeral(arg) && this.getValue(arg).isZero()) return arg;
+    const expanded = this.mkTanCore(arg);
+    if (expanded !== undefined || !this.options.isExpandTan) return expanded;
+    return this.reduce(
+      this.mkRealApp(OP_DIV, [this.mkRealApp(OP_SIN, [arg]), this.mkRealApp(OP_COS, [arg])]),
+      2,
+    );
+  }
+
+  private mkTanCore(arg: number) {
+    const multiple = this.getPiMultiple(arg);
+    if (multiple !== undefined) {
+      const sine = this.mkSinValue(multiple);
+      if (sine === undefined) return undefined;
+      if (this.isZero(sine)) return sine;
+      const cosine = this.mkSinValue(multiple.add(HALF));
+      if (cosine === undefined || this.isZero(cosine)) return undefined;
+      return this.reduce(this.mkRealApp(OP_DIV, [sine, cosine]), Infinity);
+    }
+    const offset = this.getPiOffset(arg);
+    if (offset !== undefined && offset.k.isInt())
+      return this.mkWithoutTerm(OP_TAN, arg, offset.term, false);
+    const term = this.findSummand(arg, (summand) => this.isPiInteger(summand));
+    if (term !== undefined) return this.mkWithoutTerm(OP_TAN, arg, term, false);
+    return undefined;
+  }
+
+  private mkPiMultiple(num: bigint, den: bigint) {
+    return this.reduce(
+      this.mkRealApp(OP_MUL, [this.mkReal(Rational.of(num, den)), this.manager.piExpr]),
+      2,
+    );
+  }
+
+  // Like Z3, asin(-x) = -asin(x) even outside [-1, 1].
+  private mkNegated(op: number, arg: number) {
+    return this.reduce(this.mkRealApp(OP_UMINUS, [this.mkRealApp(op, [arg])]), 2);
+  }
+
+  mkAsin(arg: number) {
+    const manager = this.manager;
+    if (manager.isNumeral(arg)) {
+      const k = this.getValue(arg);
+      if (k.isZero()) return arg;
+      if (k.compare(Rational.minusOne) < 0) return this.mkNegated(OP_ASIN, this.mkReal(k.neg()));
+      if (k.compare(Rational.one) > 0) return undefined;
+      const sign = k.isNegative() ? -1n : 1n;
+      const magnitude = k.abs();
+      if (magnitude.equals(Rational.one)) return this.mkPiMultiple(sign, 2n);
+      if (magnitude.equals(HALF)) return this.mkPiMultiple(sign, 6n);
+    }
+    const negated = manager.getTimesMinusOneArg(arg);
+    return negated === undefined ? undefined : this.mkNegated(OP_ASIN, negated);
+  }
+
+  mkAcos(arg: number) {
+    const manager = this.manager;
+    if (!manager.isNumeral(arg)) return undefined;
+    const k = this.getValue(arg);
+    if (k.isZero()) return this.mkPiMultiple(1n, 2n);
+    if (k.equals(Rational.one)) return this.mkReal(Rational.zero);
+    if (k.equals(Rational.minusOne)) return manager.piExpr;
+    if (k.equals(HALF)) return this.mkPiMultiple(1n, 3n);
+    if (k.equals(HALF.neg())) return this.mkPiMultiple(2n, 3n);
+    return undefined;
+  }
+
+  mkAtan(arg: number) {
+    const manager = this.manager;
+    if (manager.isNumeral(arg)) {
+      const k = this.getValue(arg);
+      if (k.isZero()) return arg;
+      if (k.equals(Rational.one)) return this.mkPiMultiple(1n, 4n);
+      if (k.equals(Rational.minusOne)) return this.mkPiMultiple(-1n, 4n);
+      if (k.compare(Rational.minusOne) < 0) return this.mkNegated(OP_ATAN, this.mkReal(k.neg()));
+      return undefined;
+    }
+    const negated = manager.getTimesMinusOneArg(arg);
+    return negated === undefined ? undefined : this.mkNegated(OP_ATAN, negated);
+  }
+
+  mkHyperbolic(op: number, arg: number) {
+    const manager = this.manager;
+    const inverse = op === OP_SINH ? OP_ASINH : op === OP_COSH ? OP_ACOSH : OP_ATANH;
+    if (manager.getOp(arg) === inverse) return manager.getArg(arg, 0);
+    const negated = manager.getTimesMinusOneArg(arg);
+    if (negated === undefined) return undefined;
+    return op === OP_COSH ? this.mkRealApp(OP_COSH, [negated]) : this.mkNegated(op, negated);
+  }
+
   mkDiv(left: number, right: number) {
     const manager = this.manager;
+    if (
+      this.options.isAnumSimp &&
+      ((manager.isAlgebraicNumeral(left) &&
+        (manager.isNumeral(right) || manager.isAlgebraicNumeral(right))) ||
+        (manager.isAlgebraicNumeral(right) && manager.isNumeral(left)))
+    )
+      return this.mkAnumDiv(left, right);
     this.currSort = manager.sorts[left];
     if (!manager.isNumeral(right) || this.getValue(right).isZero()) return undefined;
     const divisor = this.getValue(right);
@@ -448,6 +976,7 @@ export class ArithRewriter extends PolyRewriter {
   }
 
   private isNonNegative(expr: number) {
+    if (this.isNonNegativeFactor(expr)) return true;
     if (!this.isMul(expr)) return false;
     const factors = this.factors;
     shrink(factors, 0);
@@ -455,6 +984,7 @@ export class ArithRewriter extends PolyRewriter {
     let isNegative = false;
     let numFactors = 0;
     for (const arg of factors) {
+      if (this.isNonNegativeFactor(arg)) continue;
       if (!this.manager.isNumeral(arg)) factors[numFactors++] = arg;
       else if (this.getValue(arg).isNegative()) isNegative = !isNegative;
     }
@@ -476,6 +1006,21 @@ export class ArithRewriter extends PolyRewriter {
     if (numOdd === 0) return true;
     if (numOdd !== 2 || !this.manager.isInt(expr)) return false;
     return this.isSuccessor(firstOdd, secondOdd) || this.isSuccessor(secondOdd, firstOdd);
+  }
+
+  private isNonNegativeFactor(expr: number) {
+    const manager = this.manager;
+    const op = manager.getOp(expr);
+    if (op === OP_SEQ_LENGTH) return true;
+    if (op !== OP_POWER) return false;
+    const base = manager.getArg(expr, 0);
+    const exponent = manager.getArg(expr, 1);
+    if (manager.isNumeral(exponent)) {
+      const value = this.getValue(exponent);
+      if (value.isInt() && value.num >= 0n && value.num < 2n ** 32n && value.num % 2n === 0n)
+        return true;
+    }
+    return manager.isNumeral(base) && this.getValue(base).isPositive();
   }
 
   private isSuccessor(base: number, sum: number) {
@@ -699,6 +1244,18 @@ export class ArithRewriter extends PolyRewriter {
   ): number | Rewrite | undefined {
     const manager = this.manager;
     this.currSort = manager.sorts[originalLeft];
+    if (
+      (this.isZero(originalLeft) && this.isReducePowerTarget(originalRight, kind === KIND_EQ)) ||
+      (this.isZero(originalRight) && this.isReducePowerTarget(originalLeft, kind === KIND_EQ))
+    )
+      return this.reduce(
+        this.mkAtom(
+          this.reducePower(originalLeft, kind === KIND_EQ),
+          this.reducePower(originalRight, kind === KIND_EQ),
+          kind,
+        ),
+        1,
+      );
     const setSide = (index: number, expr: number) => {
       manager.incRef(expr);
       if (index < sides.length) manager.decRef(sides[index]);
@@ -716,6 +1273,14 @@ export class ArithRewriter extends PolyRewriter {
       return this.isHolding(this.getValue(left), this.getValue(right), kind)
         ? manager.trueExpr
         : manager.falseExpr;
+    const leftValue = this.options.isAnumSimp ? this.getAlgebraicValue(left) : undefined;
+    const rightValue = leftValue && this.getAlgebraicValue(right);
+    if (leftValue !== undefined && rightValue !== undefined) {
+      const comparison = manager.am.compare(leftValue, rightValue);
+      const isHolding =
+        kind === KIND_LE ? comparison <= 0 : kind === KIND_GE ? comparison >= 0 : comparison === 0;
+      return isHolding ? manager.trueExpr : manager.falseExpr;
+    }
     const separated = this.getSeparated(left, right, kind);
     if (separated !== undefined) return separated;
     const bound = this.getBound(left, right, kind) ?? this.getBound(right, left, getInverse(kind));
@@ -774,6 +1339,17 @@ export class ArithRewriter extends PolyRewriter {
         );
       }
     }
+    if (manager.getOp(left) === OP_ITE && manager.getRefCount(left) === 1) {
+      const thenAtom = this.mkAtom(manager.getArg(left, 1), right, kind);
+      return this.reduce(
+        manager.mkApp(
+          OP_ITE,
+          [manager.getArg(left, 0), thenAtom, this.mkAtom(manager.getArg(left, 2), right, kind)],
+          SORT_BOOL,
+        ),
+        2,
+      );
+    }
     const isToIntRight = manager.getOp(right) === OP_TO_INT && manager.isNumeral(left);
     const toIntArg =
       manager.getOp(isToIntRight ? right : left) === OP_TO_INT
@@ -805,6 +1381,40 @@ export class ArithRewriter extends PolyRewriter {
     if (isChanged && left === originalLeft && right === originalRight) return undefined;
     if (isChanged) return this.mkAtom(left, right, kind);
     return this.factorLeGeEq(left, right, kind);
+  }
+
+  private getReducedPowerBase(expr: number, isEq: boolean) {
+    const manager = this.manager;
+    if (manager.getOp(expr) !== OP_POWER) return undefined;
+    const exponent = manager.getArg(expr, 1);
+    if (!manager.isNumeral(exponent)) return undefined;
+    const k = this.getValue(exponent);
+    return k.isInt() && k.compare(Rational.of(isEq ? 1n : 2n)) > 0 ? k : undefined;
+  }
+
+  private getFactors(expr: number) {
+    return this.isMul(expr) ? this.manager.getArgs(expr) : [expr];
+  }
+
+  private isReducePowerTarget(expr: number, isEq: boolean) {
+    return this.getFactors(expr).some(
+      (factor) => this.getReducedPowerBase(factor, isEq) !== undefined,
+    );
+  }
+
+  // x^k = 0 has the roots of x, and x^k <= 0 those of x or of x^2 by the parity of k.
+  private reducePower(expr: number, isEq: boolean) {
+    const manager = this.manager;
+    if (this.isZero(expr)) return expr;
+    const factors = this.getFactors(expr).map((factor) => {
+      const k = this.getReducedPowerBase(factor, isEq);
+      if (k === undefined) return factor;
+      const base = manager.getArg(factor, 0);
+      return isEq || getEuclideanMod(k.num, 2n) === 1n
+        ? this.ensureReal(base)
+        : this.mkPowerApp(this.ensureReal(base), manager.mkRealNumeral(TWO));
+    });
+    return factors.length === 1 ? factors[0] : manager.mkApp(OP_MUL, factors, SORT_REAL);
   }
 
   private factorLeGeEq(left: number, right: number, kind: number) {

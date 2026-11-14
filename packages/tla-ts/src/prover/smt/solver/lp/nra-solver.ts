@@ -20,7 +20,7 @@ import {
   type LarConstraint,
 } from "./constraints";
 import { Explanation } from "./explanation";
-import type { LarSolver } from "./lar-solver";
+import { type LarSolver, NULL_LPVAR } from "./lar-solver";
 import { LarTerm } from "./lar-term";
 import type { NlaCore } from "./nla-core";
 import { LemmaBuilder, mkIneq } from "./nla-types";
@@ -50,7 +50,12 @@ const getConeOfInfluence = (core: NlaCore) => {
     for (const lpVar of monic.vars) getOccurrences(lpVar).monics.push(monic.variable);
   for (const term of lra.terms)
     for (const entry of term.coeffs) getOccurrences(entry[0]).terms.push(term.column);
-  const todo = [...core.toRefine.elems];
+  // The applications of transcendental functions are neither monomials nor terms.
+  const todo = [
+    ...core.transcendentals.apps.flatMap((app) => [app.arg, app.val]),
+    ...core.transcendentals.atan2Apps.flatMap((app) => [app.y, app.x, app.val]),
+    ...core.toRefine.elems,
+  ];
   const vars = new Set<number>();
   const constraints = new Set<number>();
   const monics = new Set<number>();
@@ -187,6 +192,22 @@ export class NraSolver {
     return literal;
   }
 
+  private getNlVar(lpVar: number) {
+    const variable = this.lp2nl.get(lpVar) ?? this.solver.mkVar(this.core.lra.isInt(lpVar));
+    this.lp2nl.set(lpVar, variable);
+    return variable;
+  }
+
+  private registerTranscendentals() {
+    const transcendentals = this.core.transcendentals;
+    const solver = this.solver.transcendentals;
+    for (const app of transcendentals.apps)
+      solver.add(app.op, this.getNlVar(app.arg), this.getNlVar(app.val));
+    for (const app of transcendentals.atan2Apps)
+      solver.addAtan2(this.getNlVar(app.y), this.getNlVar(app.x), this.getNlVar(app.val));
+    if (transcendentals.piVar !== NULL_LPVAR) solver.addPi(this.getNlVar(transcendentals.piVar));
+  }
+
   check(maxConflicts: number, budget: number) {
     const core = this.core;
     const lra = core.lra;
@@ -204,6 +225,7 @@ export class NraSolver {
       }
       this.addConstraint(constraintIndex, definitions.definitions, definitions.denominators);
     }
+    this.registerTranscendentals();
     const result = (() => {
       try {
         return this.solver.check();
@@ -317,6 +339,7 @@ export class NraSolver {
       );
       literalConstraints.set(literal, constraintIndex);
     }
+    this.registerTranscendentals();
     const result = this.solver.checkAssignment(values);
     if (result.result !== L_FALSE) return null;
     return { clause: result.clause, literalConstraints };

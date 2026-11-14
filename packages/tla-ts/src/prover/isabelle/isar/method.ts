@@ -1,15 +1,33 @@
 // Ported from Isabelle2025's Pure/Isar/method.ML and Pure/goal.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 
 import { TlaIsabelleError } from "../../../errors";
-import { asmRl, isNormHhf, normHhfEq, reflexiveThm, termI } from "../pure/drule";
-import { isEquals, isImplies, stripImpPrems, stripAssumsConcl } from "../pure/logic";
-import { makeSimpContext, type Simpset } from "../pure/raw-simplifier";
-import { genericRewriteGoalTac } from "../pure/rewriter";
-import { filterSeq, mapsSeq, singleSeq, type Seq } from "../pure/seq";
+import {
+  absDef,
+  asmRl,
+  equalsCong,
+  isNormHhf,
+  multiResolves,
+  normHhfEq,
+  reflexiveThm,
+  termI,
+} from "../pure/drule";
+import { isEquals, isImplies, listImplies, stripImpPrems, stripAssumsConcl } from "../pure/logic";
+import { addSimps, congKey, makeSimpContext, type Simpset } from "../pure/raw-simplifier";
+import { updateTable } from "../pure/table";
+import { genericRewriteGoalTac, rewriteCterm, simpleProver } from "../pure/rewriter";
+import { appendSeq, emptySeq, mapSeq, mapsSeq, ofCell, singleSeq, type Seq } from "../pure/seq";
+import { fconvRule, premsConv } from "../pure/conv";
 import { atomizePremsTac } from "../pure/object-logic";
-import { normHhf } from "../pure/simplifier";
+import { asmFullSimpTac, normHhf } from "../pure/simplifier";
 import type { Limits } from "../pure/interrupt";
-import { assumeTac, eresolveTac, flexflexTac, matchTac, resolveTac } from "../pure/tactic";
+import {
+  assumeTac,
+  eresolveTac,
+  flexflexTac,
+  matchTac,
+  resolveTac,
+  type NetPair,
+} from "../pure/tactic";
 import {
   allGoals,
   allTac,
@@ -17,56 +35,68 @@ import {
   changedProp,
   noTac,
   orElse,
+  primitive,
+  primSeq,
   repeatAllNew,
   subgoal,
   thenAllNew,
   thenGoal,
   thenTac,
-  tryTac,
   type GoalTactic,
   type Tactic,
 } from "../pure/tactical";
 import {
   addFreeNames,
+  addVars,
+  funTs,
+  listComb,
+  mapAtyps,
   maxidxOfTerm,
+  mkTVar,
   mkVar,
   stripAllBody,
   stripAllVars,
+  stripComb,
   substBounds,
+  aconv,
   type Term,
+  type Var,
 } from "../pure/term";
-import { nprems, trivial, type Thm } from "../pure/thm";
-import { variantList } from "../pure/name";
+import {
+  assume,
+  bicompose,
+  conclOf,
+  forallIntr,
+  impliesElim,
+  impliesIntr,
+  incrIndexesThm,
+  instantiate,
+  nprems,
+  premsOf,
+  trivial,
+  type Thm,
+} from "../pure/thm";
+import { cleanName, variantList } from "../pure/name";
 import { autoTac, clarsimpTac, forceTac, type ClasimpContext } from "../provers/clasimp";
 import {
   addUnsafeDest,
   addUnsafeIntro,
+  clarifyTac,
+  fastTac,
   withClaset,
   type ClassicalContext,
 } from "../provers/classical";
-import { proverTac, type IntuitionisticContext } from "../tools/intuitionistic";
+import {
+  findRulesNetpair,
+  proverTac,
+  type ContextRule,
+  type IntuitionisticContext,
+} from "../tools/intuitionistic";
+import { getThms, parseFactReferences } from "./attrib";
+import type { IsarContext } from "./context";
+import { casesMethod, type InductData } from "./induct";
 import { insertTac } from "./proof";
-import { syntaxError, type OuterToken } from "./theory";
-
-interface Modifier {
-  readonly kind: "intro" | "dest";
-  readonly facts: readonly string[];
-}
-
-type MethodText =
-  | {
-      readonly kind: "auto" | "blast" | "force" | "clarsimp";
-      readonly modifiers: readonly Modifier[];
-    }
-  | { readonly kind: "iprover" }
-  | { readonly kind: "intro"; readonly facts: readonly string[] }
-  | { readonly kind: "then"; readonly methods: readonly MethodText[] }
-  | { readonly kind: "try"; readonly method: MethodText };
-
-interface ProofText {
-  readonly initial: MethodText;
-  readonly terminal: MethodText | undefined;
-}
+import { syntaxError, type MethodText, type OuterToken } from "./theory";
 
 export interface ProofContext {
   readonly limits: Limits;
@@ -74,104 +104,102 @@ export interface ProofContext {
   readonly classical: ClassicalContext;
   readonly intuitionistic: IntuitionisticContext;
   readonly atomizeRules: readonly Thm[];
+  // PredicateLogic.thy's [symmetric, defn] rules, which Local_Defs.meta_rewrite_rule uses.
+  readonly defnRules: readonly Thm[];
+  readonly rulifyRules: readonly Thm[];
   readonly blastDepthTac: (context: ClassicalContext, limit: number) => GoalTactic;
   readonly blastTac: (context: ClassicalContext) => GoalTactic;
-  readonly getFact: (name: string) => readonly Thm[];
+  // Context_Rules' netpairs: of the rules declared with "!", without a mark and with "?".
+  readonly contextRules: readonly NetPair<ContextRule>[];
+  readonly induct: InductData;
 }
 
-export const parseProofText = (tokens: readonly OuterToken[]): ProofText => {
-  let position = 0;
-  const peek = () => tokens[position];
-  const isSymbol = (symbol: string, offset = 0) =>
-    tokens[position + offset]?.kind === "symbol" && tokens[position + offset].text === symbol;
-  const expectSymbol = (symbol: string) => {
-    if (!isSymbol(symbol)) throw syntaxError(peek());
-    position += 1;
-  };
-  const isWord = () => peek()?.kind === "word";
-  const readWord = () => {
-    const token = peek();
-    if (token?.kind !== "word") throw syntaxError(token);
-    position += 1;
-    return token.text;
-  };
-  const isSectionStart = () => isWord() && isSymbol(":", 1);
-  const readFacts = () => {
-    const names: string[] = [];
-    while (isWord() && !isSectionStart()) names.push(readWord());
-    return names;
-  };
-  const readModifiers = (): Modifier[] => {
-    const result: Modifier[] = [];
-    while (isSectionStart()) {
-      const kind = readWord();
-      position += 1;
-      if (kind !== "intro" && kind !== "dest")
-        throw new TlaIsabelleError("ERROR", `Unsupported method modifier: ${kind}`);
-      result.push({ kind, facts: readFacts() });
-    }
-    return result;
-  };
-  const readMethod = (name: string, hasArgs: boolean): MethodText => {
-    switch (name) {
-      case "auto":
-      case "blast":
-      case "force":
-      case "clarsimp":
-        return { kind: name, modifiers: hasArgs ? readModifiers() : [] };
-      case "iprover":
-        return { kind: "iprover" };
-      case "intro":
-        return { kind: "intro", facts: hasArgs ? readFacts() : [] };
-      default:
-        throw new TlaIsabelleError("ERROR", `Undefined method: ${name}`);
-    }
-  };
-  const readSuffixed = (text: MethodText): MethodText => {
-    if (!isSymbol("?")) return text;
-    position += 1;
-    return readSuffixed({ kind: "try", method: text });
-  };
-  const readParenthesized = (): MethodText => {
-    expectSymbol("(");
-    const elements = [readElement(true)];
-    while (isSymbol(",")) {
-      position += 1;
-      elements.push(readElement(true));
-    }
-    expectSymbol(")");
-    return elements.length === 1 ? elements[0] : { kind: "then", methods: elements };
-  };
-  const readElement = (hasArgs: boolean) =>
-    readSuffixed(isSymbol("(") ? readParenthesized() : readMethod(readWord(), hasArgs));
-  const initial = readElement(false);
-  const terminal = position < tokens.length ? readElement(false) : undefined;
-  if (position !== tokens.length) throw syntaxError(peek());
-  return { initial, terminal };
-};
+// A method refines the goal in the context of its proof block, which its cases extend.
+export interface GoalState {
+  readonly context: IsarContext;
+  readonly goal: Thm;
+}
 
-const getFacts = (context: ProofContext, names: readonly string[]) =>
-  names.flatMap((name) => context.getFact(name));
+export type ContextTactic = (state: GoalState) => Seq<GoalState>;
+
+export type Method = (facts: readonly Thm[]) => ContextTactic;
+
+// Method.METHOD: a tactic that leaves the context as it is.
+const toMethod =
+  (method: (facts: readonly Thm[]) => Tactic): Method =>
+  (facts) =>
+  (state) =>
+    mapSeq((goal: Thm) => ({ context: state.context, goal }), method(facts)(state.goal));
+
+interface Modifier {
+  readonly kind: "intro" | "dest" | "simp";
+  readonly facts: readonly Thm[];
+}
+
+// Method.sections: each modifier, such as "simp add:", takes the facts up to the next one.
+const parseModifiers = (isar: IsarContext, args: readonly OuterToken[]): Modifier[] => {
+  const headerLength = (position: number) => {
+    for (let length = 1; length <= 2; length += 1)
+      if (args[position + length]?.kind === "symbol" && args[position + length].text === ":")
+        return length;
+    return 0;
+  };
+  const modifiers: Modifier[] = [];
+  let position = 0;
+  while (position < args.length) {
+    const length = headerLength(position);
+    if (length === 0) throw syntaxError(args[position]);
+    const header = args
+      .slice(position, position + length)
+      .map((token) => token.text)
+      .join(" ");
+    position += length + 1;
+    const start = position;
+    while (position < args.length && headerLength(position) === 0) position += 1;
+    const facts = getThms(isar, parseFactReferences(args.slice(start, position)));
+    const kind =
+      header === "intro"
+        ? "intro"
+        : header === "dest"
+          ? "dest"
+          : header === "simp" || header === "simp add" || header === "add"
+            ? "simp"
+            : undefined;
+    if (kind === undefined)
+      throw new TlaIsabelleError("ERROR", `Unsupported method modifier: ${header}`);
+    modifiers.push({ kind, facts });
+  }
+  return modifiers;
+};
 
 const withModifiers = (context: ProofContext, modifiers: readonly Modifier[]): ClassicalContext =>
   modifiers.reduce(
     (classical, modifier) =>
-      getFacts(context, modifier.facts).reduce(
-        (current, fact) =>
-          withClaset(
-            current,
-            modifier.kind === "intro"
-              ? addUnsafeIntro(current, fact)
-              : addUnsafeDest(current, fact),
+      modifier.kind === "simp"
+        ? classical
+        : modifier.facts.reduce(
+            (current, fact) =>
+              withClaset(
+                current,
+                modifier.kind === "intro"
+                  ? addUnsafeIntro(current, fact, context.atomizeRules)
+                  : addUnsafeDest(current, fact, context.atomizeRules),
+              ),
+            classical,
           ),
-        classical,
-      ),
     context.classical,
   );
 
-const getClasimp = (context: ProofContext, classical: ClassicalContext): ClasimpContext => ({
-  classical,
-  simp: { limits: context.limits, simpset: context.simpset, bounds: 0 },
+const withSimps = (context: ProofContext, modifiers: readonly Modifier[]): Simpset => {
+  const simps = modifiers.flatMap((modifier) => (modifier.kind === "simp" ? modifier.facts : []));
+  return simps.length === 0
+    ? context.simpset
+    : addSimps({ limits: context.limits, simpset: context.simpset, bounds: 0 }, simps);
+};
+
+const getClasimp = (context: ProofContext, modifiers: readonly Modifier[]): ClasimpContext => ({
+  classical: withModifiers(context, modifiers),
+  simp: { limits: context.limits, simpset: withSimps(context, modifiers), bounds: 0 },
   blastDepthTac: context.blastDepthTac,
 });
 
@@ -181,69 +209,7 @@ const insertAllTac = (context: ProofContext, facts: readonly Thm[]) =>
 const simpleMethodHead = (context: ProofContext, facts: readonly Thm[], tactic: GoalTactic) =>
   thenGoal((index) => insertTac(context.limits, facts, index), tactic)(1);
 
-type Method = (facts: readonly Thm[]) => Tactic;
-
-const evaluate = (context: ProofContext, text: MethodText): Method => {
-  switch (text.kind) {
-    case "auto":
-      return (facts) =>
-        thenTac(
-          insertAllTac(context, facts),
-          changedProp(autoTac(getClasimp(context, withModifiers(context, text.modifiers)))),
-        );
-    case "clarsimp":
-      return (facts) =>
-        simpleMethodHead(context, facts, (index) =>
-          changedProp(
-            clarsimpTac(getClasimp(context, withModifiers(context, text.modifiers)))(index),
-          ),
-        );
-    case "force":
-      return (facts) =>
-        simpleMethodHead(
-          context,
-          facts,
-          forceTac(
-            getClasimp(context, withModifiers(context, text.modifiers)),
-            context.atomizeRules,
-          ),
-        );
-    case "blast":
-      return (facts) =>
-        simpleMethodHead(context, facts, context.blastTac(withModifiers(context, text.modifiers)));
-    case "iprover":
-      return (facts) =>
-        simpleMethodHead(
-          context,
-          facts,
-          thenGoal(
-            atomizePremsTac(context.limits, context.atomizeRules),
-            proverTac(context.intuitionistic),
-          ),
-        );
-    case "intro":
-      return (facts) => {
-        const rules = getFacts(context, text.facts);
-        return simpleMethodHead(context, facts, (index) =>
-          changedProp(repeatAllNew(matchTac(context.limits, rules))(index)),
-        );
-      };
-    case "then": {
-      const methods = text.methods.map((method) => evaluate(context, method));
-      return (facts) => (state) =>
-        methods.reduce<Seq<Thm>>(
-          (results, method) => mapsSeq(method(facts), results),
-          singleSeq(state),
-        );
-    }
-    case "try": {
-      const method = evaluate(context, text.method);
-      return (facts) => tryTac(method(facts));
-    }
-  }
-};
-
-const normHhfTac = (limits: Limits): GoalTactic => {
+export const normHhfTac = (limits: Limits): GoalTactic => {
   const context = makeSimpContext(limits, [normHhfEq]);
   return thenGoal(
     resolveTac(limits, [asmRl]),
@@ -259,6 +225,200 @@ const normHhfTac = (limits: Limits): GoalTactic => {
     ),
   );
 };
+
+// Method.rule_tac: with facts, the rules first resolve against them.
+const ruleTac = (limits: Limits, rules: readonly Thm[], facts: readonly Thm[]): GoalTactic =>
+  thenAllNew(
+    (index) => (state) =>
+      facts.length === 0
+        ? resolveTac(limits, rules)(index)(state)
+        : mapsSeq(
+            (rule) => resolveTac(limits, [rule])(index)(state),
+            multiResolves(limits, facts, rules),
+          ),
+    normHhfTac(limits),
+  );
+
+// Classical.some_rule_tac: the rules of the context and the claset's extra rules that fit the
+// goal, or the first fact as an elimination rule.
+const someRuleTac = (context: ProofContext, facts: readonly Thm[]): GoalTactic =>
+  thenAllNew(
+    subgoal((goal, index) => {
+      const [bang, plain, query] = context.contextRules.map((netpair) =>
+        findRulesNetpair(false, facts, goal, netpair),
+      );
+      const extra = findRulesNetpair(true, facts, goal, context.classical.claset.extra);
+      return (state) =>
+        mapsSeq(
+          (rule) => resolveTac(context.limits, [rule])(index)(state),
+          multiResolves(context.limits, facts, [...bang, ...plain, ...extra, ...query]),
+        );
+    }),
+    normHhfTac(context.limits),
+  );
+
+// Tactic.distinct_subgoals_tac: a subgoal that occurs again is solved by its first occurrence.
+const distinctSubgoalsTac: Tactic = (state) => {
+  const prems = premsOf(state);
+  const distinct = prems.filter(
+    (prem, index) => prems.findIndex((other) => aconv(other, prem)) === index,
+  );
+  if (distinct.length === prems.length) return singleSeq(state);
+  const template = listImplies(prems, conclOf(state));
+  const rule = impliesIntr(
+    template,
+    distinct.reduceRight(
+      (result, prem) => impliesIntr(prem, result),
+      prems.reduce((result, prem) => impliesElim(result, assume(prem)), assume(template)),
+    ),
+  );
+  return singleSeq(impliesElim(rule, state));
+};
+
+// Class.standard_intro_classes_tac: without facts, intro_classes_tac, whose rules conclude
+// OFCLASS, so they resolve with no TLA+ goal unless its conclusion is a variable.
+const standardIntroClassesTac =
+  (facts: readonly Thm[]): Tactic =>
+  (state) => {
+    if (facts.length > 0 || nprems(state) === 0) return emptySeq;
+    if (premsOf(state).some((prem) => stripComb(stripAssumsConcl(prem))[0].kind === "Var"))
+      throw new TlaIsabelleError("ERROR", "Unsupported intro_classes on a flexible goal");
+    return distinctSubgoalsTac(state);
+  };
+
+// Proof_Context.fact_tac: a fact closes the goal by composition, lifted over its parameters.
+const factTac = (limits: Limits, facts: readonly Thm[]): GoalTactic =>
+  thenGoal(normHhfTac(limits), (index) =>
+    facts.reduceRight<Tactic>(
+      (rest, fact) => (state) =>
+        appendSeq(
+          primSeq((current: Thm) =>
+            bicompose(
+              limits,
+              { flatten: true, match: false, incremented: true },
+              {
+                isElim: false,
+                rule: liftAll(index, current, incrIndexesThm(current.maxidx + 1, fact)),
+                subgoals: 0,
+              },
+              index,
+              current,
+            ),
+          )(state),
+          rest(state),
+        ),
+      noTac,
+    ),
+  );
+
+// Drule.lift_all: the fact's variables become functions of the goal's parameters.
+const liftAll = (index: number, state: Thm, fact: Thm): Thm => {
+  const vars = stripAllVars(stripImpPrems(state.prop)[index - 1]);
+  const names = variantList(
+    [],
+    vars.map((variable) => cleanName(variable.name)),
+  );
+  const params = vars.map((variable, position) =>
+    mkVar(
+      names[position],
+      fact.maxidx + 1,
+      mapAtyps(
+        (atom) =>
+          atom.kind === "TVar" ? mkTVar(atom.name, atom.index + fact.maxidx + 1, atom.sort) : atom,
+        variable.type,
+      ),
+    ),
+  );
+  const factVars = [fact.prop, ...fact.tpairs.flat()].reduceRight<Var[]>(
+    (found, term) => addVars(term, found),
+    [],
+  );
+  return params.reduceRight(
+    (result, param) => forallIntr(param, result),
+    instantiate(
+      factVars.map((variable) => ({
+        variable,
+        term: listComb(
+          mkVar(
+            variable.name,
+            variable.index,
+            funTs(
+              params.map((param) => param.type),
+              variable.type,
+            ),
+          ),
+          params,
+        ),
+      })),
+      fact,
+    ),
+  );
+};
+
+// Local_Defs.meta_rewrite_conv: object-level equations and implications become meta-level ones,
+// and Drule.equals_cong leaves meta-level equations alone.
+export const metaRewriteConv = (context: ProofContext, term: Term): Thm => {
+  const defnContext = makeSimpContext(context.limits, context.defnRules);
+  return rewriteCterm(
+    { simprem: false, useprem: false, mutsimp: false },
+    () => undefined,
+    {
+      ...defnContext,
+      simpset: {
+        ...defnContext.simpset,
+        congs: updateTable(
+          defnContext.simpset.congs,
+          congKey({ isConst: true, name: "Pure.eq" }),
+          equalsCong,
+        ),
+      },
+    },
+    term,
+  );
+};
+
+const metaRewriteRule = (context: ProofContext, thm: Thm): Thm =>
+  fconvRule((term) => metaRewriteConv(context, term), thm);
+
+export const rewriteRule = (limits: Limits, rules: readonly Thm[], thm: Thm): Thm =>
+  rules.length === 0
+    ? thm
+    : fconvRule(
+        (term) =>
+          rewriteCterm(
+            { simprem: true, useprem: false, mutsimp: false },
+            simpleProver,
+            makeSimpContext(limits, rules),
+            term,
+          ),
+        thm,
+      );
+
+const rewriteGoalsRule = (limits: Limits, rules: readonly Thm[], state: Thm): Thm =>
+  fconvRule(
+    premsConv((term) =>
+      rewriteCterm(
+        { simprem: true, useprem: true, mutsimp: true },
+        simpleProver,
+        makeSimpContext(limits, rules),
+        term,
+      ),
+    ),
+    state,
+  );
+
+// Local_Defs.gen_unfold: the rules rewrite, then again as abstractions, which unfold the constants
+// they define where they are unapplied.
+const genUnfold =
+  (rewrite: (limits: Limits, rules: readonly Thm[], thm: Thm) => Thm) =>
+  (context: ProofContext, rules: readonly Thm[], thm: Thm): Thm => {
+    const metaRules = rules.map((rule) => metaRewriteRule(context, rule));
+    const absRules = metaRules.map((rule) => (isEquals(rule.prop) ? absDef(rule) : rule));
+    return rewrite(context.limits, absRules, rewrite(context.limits, metaRules, thm));
+  };
+
+export const unfoldRule = genUnfold(rewriteRule);
+export const unfoldGoals = genUnfold(rewriteGoalsRule);
 
 const assumeRuleTac = (limits: Limits): GoalTactic =>
   thenGoal(
@@ -322,22 +482,174 @@ const allAssmTac =
           allAssmTac(limits)(index + 1),
         )(state);
 
-export const terminalProof = (
+// Method.finish: qed's closing step, which assumptions finish when the proof is immediate.
+export const finishTac = (limits: Limits, isImmediate: boolean): Tactic =>
+  isImmediate
+    ? (state) => mapsSeq(flexflexTac(limits), allAssmTac(limits)(1)(state))
+    : flexflexTac(limits);
+
+// Seq.REPEAT, depth first.
+const repeat =
+  (tactic: ContextTactic): ContextTactic =>
+  (state) => {
+    const results = tactic(state);
+    const cell = results.pull();
+    return cell === undefined
+      ? singleSeq(state)
+      : appendSeq(repeat(tactic)(cell[0]), mapsSeq(repeat(tactic), cell[1]));
+  };
+
+const orElseContext =
+  (first: ContextTactic, second: ContextTactic): ContextTactic =>
+  (state) => {
+    const cell = first(state).pull();
+    return cell === undefined ? second(state) : ofCell(cell);
+  };
+
+const methodSource = (
   context: ProofContext,
-  text: ProofText,
-  facts: readonly Thm[],
-  state: Thm,
-): Seq<Thm> => {
-  const initial = evaluate(context, text.initial);
-  const terminal = text.terminal === undefined ? undefined : evaluate(context, text.terminal);
-  const finish: Tactic = (result) =>
-    mapsSeq(flexflexTac(context.limits), allAssmTac(context.limits)(1)(result));
-  return filterSeq(
-    (result) => nprems(result) === 0,
-    mapsSeq(
-      (result) =>
-        mapsSeq(finish, terminal === undefined ? singleSeq(result) : terminal([])(result)),
-      initial(facts)(state),
-    ),
-  );
+  isar: IsarContext,
+  name: string,
+  args: readonly OuterToken[],
+): ((facts: readonly Thm[]) => Tactic) => {
+  const thms = () => getThms(isar, parseFactReferences(args));
+  const noArgs = () => {
+    if (args.length > 0) throw syntaxError(args[0]);
+  };
+  switch (name) {
+    case "auto": {
+      const modifiers = parseModifiers(isar, args);
+      return (facts) =>
+        thenTac(insertAllTac(context, facts), changedProp(autoTac(getClasimp(context, modifiers))));
+    }
+    case "clarsimp": {
+      const modifiers = parseModifiers(isar, args);
+      return (facts) =>
+        simpleMethodHead(context, facts, (index) =>
+          changedProp(clarsimpTac(getClasimp(context, modifiers))(index)),
+        );
+    }
+    case "force": {
+      const modifiers = parseModifiers(isar, args);
+      return (facts) =>
+        simpleMethodHead(
+          context,
+          facts,
+          forceTac(getClasimp(context, modifiers), context.atomizeRules),
+        );
+    }
+    case "blast": {
+      const modifiers = parseModifiers(isar, args);
+      return (facts) =>
+        simpleMethodHead(context, facts, context.blastTac(withModifiers(context, modifiers)));
+    }
+    case "fast": {
+      const modifiers = parseModifiers(isar, args);
+      return (facts) =>
+        simpleMethodHead(
+          context,
+          facts,
+          fastTac(withModifiers(context, modifiers), context.atomizeRules),
+        );
+    }
+    case "clarify": {
+      const modifiers = parseModifiers(isar, args);
+      return (facts) =>
+        simpleMethodHead(context, facts, (index) =>
+          changedProp(clarifyTac(withModifiers(context, modifiers))(index)),
+        );
+    }
+    case "simp": {
+      const modifiers = parseModifiers(isar, args);
+      if (modifiers.some((modifier) => modifier.kind !== "simp"))
+        throw new TlaIsabelleError("ERROR", "Unsupported method modifier for simp");
+      const simpset = withSimps(context, modifiers);
+      return (facts) =>
+        simpleMethodHead(context, facts, (index) =>
+          changedProp(asmFullSimpTac({ limits: context.limits, simpset, bounds: 0 })(index)),
+        );
+    }
+    case "iprover":
+      noArgs();
+      return (facts) =>
+        simpleMethodHead(
+          context,
+          facts,
+          thenGoal(
+            atomizePremsTac(context.limits, context.atomizeRules),
+            proverTac(context.intuitionistic),
+          ),
+        );
+    case "intro": {
+      const rules = thms();
+      return (facts) =>
+        simpleMethodHead(context, facts, (index) =>
+          changedProp(repeatAllNew(matchTac(context.limits, rules))(index)),
+        );
+    }
+    case "rule": {
+      const rules = thms();
+      return (facts) =>
+        rules.length === 0
+          ? someRuleTac(context, facts)(1)
+          : ruleTac(context.limits, rules, facts)(1);
+    }
+    case "standard":
+      noArgs();
+      return (facts) => orElse(someRuleTac(context, facts)(1), standardIntroClassesTac(facts));
+    case "fact": {
+      const rules = thms();
+      if (rules.length === 0) throw new TlaIsabelleError("ERROR", "Unsupported method: fact");
+      return (facts) => simpleMethodHead(context, facts, factTac(context.limits, rules));
+    }
+    case "unfold": {
+      const rules = thms();
+      return (facts) =>
+        thenTac(
+          insertAllTac(context, facts),
+          changedProp(primitive((state) => unfoldGoals(context, rules, state))),
+        );
+    }
+    case "-":
+      noArgs();
+      return (facts) => insertAllTac(context, facts);
+    default:
+      throw new TlaIsabelleError("ERROR", `Undefined method: ${name}`);
+  }
+};
+
+export const evaluate = (isar: IsarContext, text: MethodText): Method => {
+  const context = isar.tactics;
+  switch (text.kind) {
+    case "source":
+      return text.name === "cases"
+        ? casesMethod(isar, text.args)
+        : toMethod(methodSource(context, isar, text.name, text.args));
+    case "then": {
+      const methods = text.texts.map((inner) => evaluate(isar, inner));
+      return (facts) => (state) =>
+        methods.reduce<Seq<GoalState>>(
+          (results, method) => mapsSeq(method(facts), results),
+          singleSeq(state),
+        );
+    }
+    case "orelse": {
+      const methods = text.texts.map((inner) => evaluate(isar, inner));
+      return (facts) =>
+        methods.reduceRight<ContextTactic>(
+          (rest, method) => orElseContext(method(facts), rest),
+          () => emptySeq,
+        );
+    }
+    case "try": {
+      const method = evaluate(isar, text.texts[0]);
+      return (facts) => orElseContext(method(facts), (state) => singleSeq(state));
+    }
+    case "repeat1": {
+      const method = evaluate(isar, text.texts[0]);
+      return (facts) => (state) => mapsSeq(repeat(method(facts)), method(facts)(state));
+    }
+    default:
+      throw new TlaIsabelleError("ERROR", `Unsupported method combinator: ${text.kind}`);
+  }
 };

@@ -1,0 +1,12 @@
+(*---
+description: LS4 refutes the negation of []p => <>p.
+ref: src/backend/ls4.ml#visitor
+outcome: unsat
+---*)
+not (((always (cc | ~ cc)) -> ((always hd71cd) -> (sometime hd71cd))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unsat
+---*)

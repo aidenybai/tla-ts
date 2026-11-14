@@ -18,6 +18,7 @@ export class ConflictResolution {
   newScopeLevel = 0;
   lemmaIscopeLevel = 0;
   private unmark: BoolVar[] = [];
+  unsatCore: Literal[] = [];
   private levelSet = 0;
   private minimizationStack: BoolVar[] = [];
 
@@ -117,18 +118,28 @@ export class ConflictResolution {
     this.processedEqs.clear();
   }
 
-  private justificationToLiteralsCore(justification: Justification) {
+  private collectLiterals(mark: () => void) {
     const saved = this.antecedents;
     this.antecedents = [];
-    this.markJustification(justification);
+    mark();
     this.processJustifications();
     const result = this.antecedents;
     this.antecedents = saved;
     return result;
   }
 
+  private justificationToLiteralsCore(justification: Justification) {
+    return this.collectLiterals(() => this.markJustification(justification));
+  }
+
   justificationToLiterals(justification: Justification) {
     const result = this.justificationToLiteralsCore(justification);
+    this.unmarkJustifications(0);
+    return result;
+  }
+
+  eqToLiterals(first: Enode, second: Enode) {
+    const result = this.collectLiterals(() => this.markEq(first, second));
     this.unmarkJustifications(0);
     return result;
   }
@@ -192,7 +203,10 @@ export class ConflictResolution {
     let justification = conflict;
     let consequent = notLiteral !== null ? negate(notLiteral) : context.falseLiteral;
     this.conflictLevel = this.getMaxLevel(consequent, justification);
-    if (this.conflictLevel <= context.searchLevel) return false;
+    if (this.conflictLevel <= context.searchLevel) {
+      if (context.isTrackingAssumptions()) this.mkUnsatCore(conflict, notLiteral);
+      return false;
+    }
     const assigned = context.assignedLiterals;
     let index = assigned.length - 1;
     while (index > 0 && context.getAssignLevel(assigned[index]) > this.conflictLevel) index--;
@@ -234,6 +248,68 @@ export class ConflictResolution {
     this.lemmaAtoms.set(0, context.boolVar2Expr[getVar(consequent)]);
     this.finalizeResolve();
     return true;
+  }
+
+  private processAntecedentForUnsatCore(antecedent: Literal) {
+    const context = this.context;
+    const boolVar = getVar(antecedent);
+    if (!context.isMarked(boolVar)) {
+      context.setMark(boolVar, true);
+      this.unmark.push(boolVar);
+    }
+    if (context.isAssumption(boolVar)) this.unsatCore.push(antecedent);
+  }
+
+  private mkUnsatCore(conflict: BJustification, notLiteral: Literal | null) {
+    const context = this.context;
+    this.unsatCore = [];
+    this.unmark = [];
+    const searchLevel = context.searchLevel;
+    const assigned = context.assignedLiterals;
+    let justification = conflict;
+    let consequent = notLiteral !== null ? negate(notLiteral) : context.falseLiteral;
+    let index = assigned.length - 1;
+    while (index > 0 && context.getAssignLevel(assigned[index]) > this.conflictLevel) index--;
+    if (notLiteral !== null) this.processAntecedentForUnsatCore(consequent);
+    while (assigned.length > 0) {
+      if (justification instanceof Justification)
+        for (const literal of this.justificationToLiteralsCore(justification))
+          this.processAntecedentForUnsatCore(literal);
+      else if (justification instanceof BinJustification)
+        this.processAntecedentForUnsatCore(justification.literal);
+      else if (justification !== null && justification !== "axiom") {
+        const clauses = context.clauses;
+        const numLiterals = clauses.getNumLiterals(justification);
+        let start = 0;
+        if (consequent !== context.falseLiteral) {
+          if (clauses.getLiteral(justification, 0) === consequent) start = 1;
+          else {
+            this.processAntecedentForUnsatCore(negate(clauses.getLiteral(justification, 0)));
+            start = 2;
+          }
+        }
+        for (let literalIndex = start; literalIndex < numLiterals; literalIndex++)
+          this.processAntecedentForUnsatCore(
+            negate(clauses.getLiteral(justification, literalIndex)),
+          );
+        const clauseJustification = clauses.getJustification(justification);
+        if (clauseJustification !== null)
+          for (const literal of this.justificationToLiteralsCore(clauseJustification))
+            this.processAntecedentForUnsatCore(literal);
+      }
+      if (context.isAssumption(getVar(consequent))) this.unsatCore.push(consequent);
+      while (
+        index >= 0 &&
+        context.getAssignLevel(assigned[index]) >= searchLevel &&
+        !context.isMarked(getVar(assigned[index]))
+      )
+        index--;
+      if (index < 0 || context.getAssignLevel(assigned[index]) < searchLevel) break;
+      consequent = assigned[index];
+      justification = context.justifications[getVar(consequent)];
+      index--;
+    }
+    this.resetUnmark(0, 0);
   }
 
   private finalizeResolve() {

@@ -7,13 +7,14 @@ import { aconv, sizeOfTerm, type Term } from "../pure/term";
 import { stripAssumsConcl, stripAssumsHyp } from "../pure/logic";
 import { listOfSeq, seqHead } from "../pure/seq";
 import { trade } from "../pure/variable";
-import { atomizePremsTac } from "../pure/object-logic";
+import { atomizePremsTac, flatRule } from "../pure/object-logic";
 import { bestFirst } from "../pure/search";
 import {
   allGoals,
   allTac,
   appendGoal,
   condTac,
+  depthSolve,
   firstGoal,
   firstGoalTac,
   hasFewerPrems,
@@ -53,6 +54,7 @@ import {
   type BiresRule,
   type Thm,
 } from "../pure/thm";
+import type { ContextRule } from "../tools/intuitionistic";
 
 export interface ClassicalRule {
   readonly rule: Thm;
@@ -78,6 +80,7 @@ export interface Claset {
   readonly safep: NetPair<TaggedRule>;
   readonly unsafe: NetPair<TaggedRule>;
   readonly dup: NetPair<TaggedRule>;
+  readonly extra: NetPair<ContextRule>;
 }
 
 export interface ClassicalData {
@@ -167,25 +170,29 @@ const insertRules = (
     ...intros.map((rule) => ({ isElim: false, rule })),
   ]).reduceRight((result, tagged) => insertTaggedBrl(tagged, result), netpair);
 
+// insert' with the default weight of an unsafe rule.
+const insertExtra = (
+  counts: readonly [number, number],
+  isElim: boolean,
+  rule: Thm,
+  netpair: NetPair<ContextRule>,
+) => insertTaggedBrl({ weight: 1, tag: -(counts[0] + counts[1]), isElim, rule }, netpair);
+
 const isMember = (rules: readonly ClassicalRule[], rule: ClassicalRule) =>
   rules.some((other) => aconv(other.rule.prop, rule.rule.prop));
 
-export const addUnsafeIntro = (context: ClassicalContext, rule: Thm): Claset => {
+export const addUnsafeIntro = (
+  context: ClassicalContext,
+  rule: Thm,
+  atomizeRules: readonly Thm[],
+): Claset => {
   const claset = context.claset;
-  if (
-    premsOf(rule).some(
-      (premise) =>
-        premise.kind === "App" &&
-        premise.fun.kind === "Const" &&
-        premise.fun.name.startsWith("Pure."),
-    )
-  )
-    throw new TlaIsabelleError("ERROR", "Rules with meta-level premises are not supported");
-  const dup = dupIntr(context.data, rule);
+  const flat = flatRule(context.limits, atomizeRules, rule);
+  const dup = dupIntr(context.data, flat);
   const entry: ClassicalRule = {
     rule,
-    internal: rule,
-    swapped: swapify(context.data, [rule]),
+    internal: flat,
+    swapped: swapify(context.data, [flat]),
     dup,
     dupSwapped: swapify(context.data, [dup]),
   };
@@ -196,13 +203,22 @@ export const addUnsafeIntro = (context: ClassicalContext, rule: Thm): Claset => 
     unsafeIs: [entry, ...claset.unsafeIs],
     unsafe: insertRules(counts, [entry.internal], entry.swapped, claset.unsafe),
     dup: insertRules(counts, [entry.dup], entry.dupSwapped, claset.dup),
+    extra: insertExtra(counts, false, rule, claset.extra),
   };
 };
 
-const addUnsafeElim = (context: ClassicalContext, rule: Thm): Claset => {
+const addUnsafeElim = (
+  context: ClassicalContext,
+  rule: Thm,
+  atomizeRules: readonly Thm[],
+): Claset => {
   const claset = context.claset;
   if (nprems(rule) < 1) throw new TlaIsabelleError("ERROR", "Ill-formed elimination rule");
-  const internal = classicalRule(context.data, rule, context.limits);
+  const internal = classicalRule(
+    context.data,
+    flatRule(context.limits, atomizeRules, rule),
+    context.limits,
+  );
   const entry: ClassicalRule = {
     rule,
     internal,
@@ -217,12 +233,17 @@ const addUnsafeElim = (context: ClassicalContext, rule: Thm): Claset => {
     unsafeEs: [entry, ...claset.unsafeEs],
     unsafe: insertRules(counts, [], [entry.internal], claset.unsafe),
     dup: insertRules(counts, [], [entry.dup], claset.dup),
+    extra: insertExtra(counts, true, rule, claset.extra),
   };
 };
 
-export const addUnsafeDest = (context: ClassicalContext, rule: Thm): Claset => {
+export const addUnsafeDest = (
+  context: ClassicalContext,
+  rule: Thm,
+  atomizeRules: readonly Thm[],
+): Claset => {
   if (nprems(rule) < 1) throw new TlaIsabelleError("ERROR", "Ill-formed destruction rule");
-  return addUnsafeElim(context, makeElim(rule));
+  return addUnsafeElim(context, makeElim(rule), atomizeRules);
 };
 
 const updateWrappers = (wrappers: readonly Wrapper[], wrapper: Wrapper) =>
@@ -347,6 +368,12 @@ const stepTac =
       safeTac(context),
       appWrappers(context, orElseGoal(instStepTac(context), unsafeStepTac(context)))(index),
     );
+
+export const fastTac = (context: ClassicalContext, atomizeRules: readonly Thm[]): GoalTactic =>
+  thenGoal(
+    atomizePremsTac(context.limits, atomizeRules),
+    selectGoal(depthSolve(stepTac(context)(1))),
+  );
 
 const sizeOfThm = (thm: Thm) =>
   thm.tpairs.reduce(

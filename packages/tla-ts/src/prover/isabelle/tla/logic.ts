@@ -16,6 +16,8 @@ import {
   type Typ,
 } from "../pure/term";
 import { typargsOf, type TypargPosition } from "../pure/consts";
+import type { NamedCasesRule } from "../isar/induct";
+import type { Tags } from "../isar/rule-cases";
 import { LOGIC_DATA } from "./logic-data";
 
 type TypeNode = [0, number, ...number[]] | [1, number] | [2, number, number];
@@ -29,6 +31,7 @@ type TermNode =
 type NetItem = [number, 0 | 1, number];
 type ExtraNetItem = [number, number, 0 | 1, number];
 type RawRule = [number, number, number[], number, number[]];
+type RawCasesRule = [string, number, [string, string][]];
 
 interface LogicJson {
   strings: string[];
@@ -52,8 +55,15 @@ interface LogicJson {
     safep: [NetItem[], NetItem[]];
     unsafe: [NetItem[], NetItem[]];
     dup: [NetItem[], NetItem[]];
+    extra: [ExtraNetItem[], ExtraNetItem[]];
   };
-  contextRules: { bang: [ExtraNetItem[], ExtraNetItem[]]; plain: [ExtraNetItem[], ExtraNetItem[]] };
+  contextRules: {
+    bang: [ExtraNetItem[], ExtraNetItem[]];
+    plain: [ExtraNetItem[], ExtraNetItem[]];
+    query: [number[], number[]];
+  };
+  factTags: [string, number, [string, string][]][];
+  casesRules: { type: RawCasesRule[]; pred: RawCasesRule[] };
 }
 
 export interface ConstInfo {
@@ -89,10 +99,19 @@ export interface TlaLogic {
     readonly safep: LogicNetPair<TaggedRule>;
     readonly unsafe: LogicNetPair<TaggedRule>;
     readonly dup: LogicNetPair<TaggedRule>;
+    readonly extra: LogicNetPair<ContextRule>;
   };
   readonly contextRules: {
     readonly bang: LogicNetPair<ContextRule>;
     readonly plain: LogicNetPair<ContextRule>;
+    readonly query: LogicNetPair<ContextRule>;
+  };
+  // The Rule_Cases tags of the facts that have them, by name and position.
+  readonly factTags: ReadonlyMap<string, ReadonlyMap<number, Tags>>;
+  // Induct's cases rules for types and for predicates or sets, newest first.
+  readonly casesRules: {
+    readonly type: readonly NamedCasesRule[];
+    readonly pred: readonly NamedCasesRule[];
   };
 }
 
@@ -157,6 +176,19 @@ const parseLogic = (): TlaLogic => {
     );
     return { intro, elim };
   };
+  // Isabelle hides the weights of the rules declared with "?", so their order stands in for their
+  // tags, which is all their unweighted retrieval reads.
+  const toOrderedItems = (pair: [number[], number[]]): LogicNetPair<ContextRule> => {
+    const [intro, elim] = pair.map((side, isElim) =>
+      side.map((id, tag) => ({ weight: 0, tag, isElim: isElim === 1, rule: thms[id] })),
+    );
+    return { intro, elim };
+  };
+  const toCasesRules = (rules: RawCasesRule[]) =>
+    rules.map((entry) => ({ name: entry[0], rule: { rule: thms[entry[1]], tags: entry[2] } }));
+  const factTags = new Map<string, Map<number, Tags>>();
+  for (const entry of data.factTags)
+    factTags.set(entry[0], new Map([...(factTags.get(entry[0]) ?? []), [entry[1], entry[2]]]));
   return {
     consts: new Map(
       data.consts.map((entry) => [
@@ -184,10 +216,17 @@ const parseLogic = (): TlaLogic => {
       safep: toItems(data.claset.safep),
       unsafe: toItems(data.claset.unsafe),
       dup: toItems(data.claset.dup),
+      extra: toExtraItems(data.claset.extra),
     },
     contextRules: {
       bang: toExtraItems(data.contextRules.bang),
       plain: toExtraItems(data.contextRules.plain),
+      query: toOrderedItems(data.contextRules.query),
+    },
+    factTags,
+    casesRules: {
+      type: toCasesRules(data.casesRules.type),
+      pred: toCasesRules(data.casesRules.pred),
     },
   };
 };

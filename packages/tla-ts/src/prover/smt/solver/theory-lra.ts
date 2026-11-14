@@ -1,8 +1,201 @@
 // Ported from Z3 (src/smt/theory_lra.cpp, src/smt/arith_eq_adapter.cpp, src/math/lp/lp_api.h), MIT license, see z3-license.txt.
 import { shrink } from "./array";
+import { coeffsToApp, getTermCoeffs } from "./arith-terms";
+import { OP_GE, OP_GT, OP_LE, SORT_BOOL, SORT_INT, SORT_REAL } from "./ast";
+import type { Enode } from "./enode";
+import { InfEps } from "./inf-eps";
+import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
+import type { BoolVar } from "./literal";
+import { LP_FEASIBLE, LP_OPTIMAL, LP_UNBOUNDED } from "./lp/core-solver";
+import { type Dependency, linearize } from "./lp/dependency";
+import { NULL_LPVAR } from "./lp/lar-solver";
+import { maximizeTerm } from "./lp/maximize-term";
+import { Impq } from "./lp/numeric-pair";
+import { Rational } from "./rational";
+import { FC_CONTINUE, FC_DONE, FC_GIVEUP } from "./theory";
 import { TheoryLraFinalCheck } from "./theory-lra-final-check";
 
+export interface ArithBound {
+  value: Rational;
+  isStrict: boolean;
+}
+
 export class TheoryLra extends TheoryLraFinalCheck {
+  private getColumnOf(node: Enode) {
+    const thVar = node.getThVar(this.id);
+    return thVar < 0 ? NULL_LPVAR : this.solver.externalToLocalColumn(thVar);
+  }
+
+  getLower(node: Enode): ArithBound | undefined {
+    const column = this.getColumnOf(node);
+    const bound = column === NULL_LPVAR ? undefined : this.solver.getLowerBoundOf(column);
+    return bound === undefined ? undefined : { value: bound.x, isStrict: bound.y.isPositive() };
+  }
+
+  getUpper(node: Enode): ArithBound | undefined {
+    const column = this.getColumnOf(node);
+    const bound = column === NULL_LPVAR ? undefined : this.solver.getUpperBoundOf(column);
+    return bound === undefined ? undefined : { value: bound.x, isStrict: bound.y.isNegative() };
+  }
+
+  getValueOf(node: Enode) {
+    const column = this.getColumnOf(node);
+    const value = column === NULL_LPVAR ? undefined : this.solver.getExactValue(column);
+    if (value === undefined) return undefined;
+    return this.isIntVar(node.getThVar(this.id)) && !value.isInt() ? undefined : value;
+  }
+
+  // The phase that holds in the current assignment, so that the decision takes no pivot.
+  getPhase(boolVar: BoolVar) {
+    const bound = this.boolVarToBound[boolVar];
+    if (bound === undefined) return L_UNDEF;
+    const comparison = this.solver
+      .getValue(this.registerVar(bound.thVar))
+      .compare(new Impq(bound.value, Rational.zero));
+    return (bound.isLower ? comparison >= 0 : comparison <= 0) ? L_TRUE : L_FALSE;
+  }
+
+  addObjective(term: number) {
+    const thVar = this.internalizeDef(term);
+    this.registerVar(thVar);
+    return thVar;
+  }
+
+  getObjectiveValue(thVar: number) {
+    const value = this.solver.getValue(this.solver.externalToLocalColumn(thVar));
+    return InfEps.of(value.x, value.y);
+  }
+
+  // With isComputingUpper, the maximum of the linear relaxation is also an upper bound of the
+  // objective when the bounds that prove it hold; it holds globally when they hold at the base
+  // level.
+  maximize(thVar: number, isComputingUpper = false) {
+    const solver = this.solver;
+    if (solver.hasIntVar()) solver.core.backupX();
+    const column = solver.externalToLocalColumn(thVar);
+    if (column === NULL_LPVAR || !this.manager.limit.inc())
+      return { ...this.getMaxResult(thVar, LP_UNBOUNDED, Impq.zero), upper: null };
+    const maximum = this.maximizeWithLp(column, isComputingUpper);
+    const result =
+      this.nla !== undefined && (maximum.status === LP_OPTIMAL || maximum.status === LP_UNBOUNDED)
+        ? this.maximizeWithNla(thVar, column, maximum.value)
+        : this.getMaxResult(thVar, maximum.status, maximum.value);
+    return { ...result, upper: maximum.upper };
+  }
+
+  private maximizeWithLp(column: number, isComputingUpper: boolean) {
+    const solver = this.solver;
+    if (!solver.isFeasible() || solver.columnsWithChangedBounds.size > 0) this.makeFeasible();
+    const isDual = isComputingUpper && this.nla !== undefined;
+    const maximum = maximizeTerm(solver, column, true, isDual);
+    const premises =
+      isDual && maximum.status === LP_OPTIMAL && !this.manager.limit.isExhausted()
+        ? this.getBoundPremises(maximum.dependency)
+        : null;
+    const upper =
+      premises === null ? null : { value: maximum.value.x, isGlobal: premises.isGlobal };
+    if (!solver.hasIntVar() || !solver.hasInfInt()) return { ...maximum, upper };
+    solver.restoreX();
+    return { status: LP_FEASIBLE, value: maximum.value, upper };
+  }
+
+  private getBoundPremises(dependency: Dependency) {
+    const context = this.context;
+    let isGlobal = true;
+    for (const constraint of linearize([dependency])) {
+      const literal = this.constraintSources[constraint];
+      if (literal === undefined) return null;
+      if (literal === null) continue;
+      if (context.getAssignment(literal) !== L_TRUE) return null;
+      isGlobal &&= context.getAssignLevel(literal) <= context.baseLevel;
+    }
+    return { isGlobal };
+  }
+
+  // The optimum of the linear relaxation is only a hint here, and its epsilon comes from the
+  // linearization, so it is dropped.
+  private maximizeWithNla(thVar: number, column: number, value: Impq) {
+    const solver = this.solver;
+    const relaxed = solver.getValue(column);
+    const nlaStatus = this.checkNla(2);
+    if (nlaStatus === FC_GIVEUP) {
+      solver.restoreX();
+      return this.getMaxResult(thVar, LP_UNBOUNDED, value);
+    }
+    if (nlaStatus === FC_CONTINUE) solver.restoreX();
+    return {
+      value: InfEps.of(relaxed.x),
+      blocker: this.mkGt(thVar, nlaStatus === FC_DONE ? solver.getValue(column) : relaxed),
+    };
+  }
+
+  private getMaxResult(thVar: number, status: number, value: Impq) {
+    if (status === LP_UNBOUNDED) return { value: InfEps.infinity, blocker: this.manager.falseExpr };
+    if (status === LP_OPTIMAL) this.initVariableValues();
+    return { value: InfEps.of(value.x, value.y), blocker: this.mkGt(thVar, value) };
+  }
+
+  private mkGt(thVar: number, value: Impq) {
+    const manager = this.manager;
+    const term = this.getExpr(thVar);
+    if (manager.isInt(term)) {
+      const bound = value.x.isInt() ? value.x.add(Rational.one) : value.x.ceil();
+      return manager.mkApp(OP_GE, [term, manager.mkNumeralOfSort(bound, SORT_INT)], SORT_BOOL);
+    }
+    const bound = manager.mkNumeralOfSort(value.x, SORT_REAL);
+    return manager.mkApp(value.y.isNegative() ? OP_GE : OP_GT, [term, bound], SORT_BOOL);
+  }
+
+  // The objective as a sum over the variables of its term, so the bound reads as the objective.
+  private mkObjective(thVar: number) {
+    const column = this.solver.externalToLocalColumn(thVar);
+    const term = this.getExpr(thVar);
+    if (!this.solver.hasTerm(column)) return term;
+    return coeffsToApp(
+      this.manager,
+      getTermCoeffs(this.solver, this.solver.getTerm(column)),
+      this.manager.isInt(term),
+      (other) => this.getExpr(other),
+    );
+  }
+
+  // A negative infinitesimal is the lower bound r - delta that validates a strict supremum r. No
+  // atom states it, and the atom v >= r may already hold the problem's own bound, so the bound gets
+  // a predicate of its own.
+  mkGe(thVar: number, bound: InfEps) {
+    const manager = this.manager;
+    const isStrict = bound.epsilon.isPositive();
+    const isLowerEps = bound.epsilon.isNegative();
+    const expr = this.getExpr(thVar);
+    const isInt = manager.isInt(expr);
+    const atom = isLowerEps
+      ? manager.mkApp(
+          manager.mkFuncDecl(
+            `${bound.value.toString()} + ${bound.epsilon.toString()}*eps <= ${manager.toString(expr)} (opt)`,
+            [],
+            SORT_BOOL,
+          ),
+          [],
+          SORT_BOOL,
+        )
+      : manager.mkApp(
+          isStrict ? OP_LE : OP_GE,
+          [
+            this.mkObjective(thVar),
+            manager.mkNumeralOfSort(bound.value, isInt ? SORT_INT : SORT_REAL),
+          ],
+          SORT_BOOL,
+        );
+    this.mkObjectiveBound(
+      atom,
+      thVar,
+      !isStrict,
+      bound.value,
+      isLowerEps ? bound.epsilon : Rational.zero,
+    );
+    return isStrict ? manager.mkNot(atom) : atom;
+  }
+
   pushScopeEh() {
     this.scopes.push({
       boundsLimit: this.boundsTrail.length,

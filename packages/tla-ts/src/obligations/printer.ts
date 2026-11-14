@@ -145,11 +145,21 @@ const isWith = (expression: Expr): boolean => {
   return expression.kind === "With";
 };
 
-const isElided = (hyp: Hyp) => {
+export interface PrinterOptions {
+  isShowingHidden?: boolean;
+  isShowingAllDefinitions?: boolean;
+  isTemporal?: boolean;
+}
+
+const isElided = (hyp: Hyp, options: PrinterOptions) => {
+  if (options.isShowingHidden) return false;
   if (hyp.kind === "Defn") {
     const definition = hyp.definition;
     const hasWith = definition.kind === "Operator" && isWith(definition.body);
-    return hyp.visibility === "Hidden" || hasWith || hyp.whereDefined !== "User";
+    return (
+      !options.isShowingAllDefinitions &&
+      (hyp.visibility === "Hidden" || hasWith || hyp.whereDefined !== "User")
+    );
   }
   if (hyp.kind === "Fact") return hyp.visibility === "Hidden" || isWith(hyp.expression);
   return false;
@@ -176,7 +186,7 @@ const LEVEL_NAMES = {
   Unknown: "UNKNOWN",
 };
 
-const createPrinter = (hyps: Hyp[] = []) => {
+const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
   const context = createContext();
   const printExpr = (expression: Expr): Doc => printMinimal(formatExpr(expression));
 
@@ -686,10 +696,24 @@ const createPrinter = (hyps: Hyp[] = []) => {
       }
       case "Flex":
         return format("NEW VARIABLE %s", pushName(context, hyp.name));
-      case "Defn":
-        return printDefinition(hyp.definition);
+      case "Defn": {
+        const origin =
+          hyp.whereDefined === "Builtin"
+            ? "(* builtin *)@\n"
+            : typeof hyp.whereDefined === "object"
+              ? "(* from proof *)@\n"
+              : "";
+        return [
+          options.isShowingAllDefinitions ? format(origin) : [],
+          printDefinition(hyp.definition),
+        ];
+      }
       case "Fact": {
-        const doc = format("@[<h>%a @]", printExpr(hyp.expression));
+        const doc = format(
+          "@[<h>%a %s@]",
+          printExpr(hyp.expression),
+          options.isTemporal && hyp.time === "Now" ? "(* non-[] *)" : "",
+        );
         pushName(context, "");
         return doc;
       }
@@ -700,8 +724,15 @@ const createPrinter = (hyps: Hyp[] = []) => {
     if (sequent.context.length === 0) return printExpr(sequent.active);
     const hypDocs: Doc[] = [];
     for (const hyp of sequent.context) {
-      if (isElided(hyp)) pushName(context, getHypName(hyp) ?? "");
-      else hypDocs.push(printHyp(hyp));
+      if (isElided(hyp, options)) {
+        pushName(context, getHypName(hyp) ?? "");
+        continue;
+      }
+      const isHidden = (hyp.kind === "Defn" || hyp.kind === "Fact") && hyp.visibility === "Hidden";
+      hypDocs.push([
+        options.isShowingHidden && isHidden ? format("(* hidden *)@\n") : [],
+        printHyp(hyp),
+      ]);
     }
     const activeDoc = printExpr(sequent.active);
     popNames(context, sequent.context.length);
@@ -719,7 +750,8 @@ const createPrinter = (hyps: Hyp[] = []) => {
 export const printExpression = (hyps: Hyp[], expression: Expr) =>
   createPrinter(hyps).printExpr(expression);
 
-export const printSequent = (sequent: Sequent) => createPrinter().printSequent(sequent);
+export const printSequent = (sequent: Sequent, options: PrinterOptions = {}) =>
+  createPrinter([], options).printSequent(sequent);
 
-export const formatObligation = (sequent: Sequent) =>
-  renderDoc(format("@[<b0>%a@]", printSequent(sequent))).trimEnd();
+export const formatObligation = (sequent: Sequent, options: PrinterOptions = {}) =>
+  renderDoc(format("@[<b0>%a@]", printSequent(sequent, options))).trimEnd();

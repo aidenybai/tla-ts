@@ -25,7 +25,7 @@ export abstract class TheoryLraBounds extends TheoryLraInternalize {
     const op = manager.getOp(expr);
     const boolVar = context.mkBoolVar(expr);
     this.boolVarToBound[boolVar] = undefined;
-    context.setVarTheory(boolVar);
+    context.setVarTheory(boolVar, this.id);
     if (op === OP_IS_INT) {
       this.mkEnode(expr);
       if (!context.relevancy.isEnabled) this.mkIsIntAxiom(expr);
@@ -58,6 +58,27 @@ export abstract class TheoryLraBounds extends TheoryLraInternalize {
     return true;
   }
 
+  // mk_ge of theory_lra: the atom of an objective bound, without the enode of its term.
+  protected mkObjectiveBound(
+    atom: number,
+    thVar: number,
+    isLower: boolean,
+    value: Rational,
+    eps: Rational,
+  ) {
+    const context = this.context;
+    if (context.isBInternalized(atom)) return;
+    const boolVar = context.mkBoolVar(atom);
+    this.boolVarToBound[boolVar] = undefined;
+    context.setVarTheory(boolVar, this.id);
+    const apiBound = this.mkVarBound(boolVar, thVar, isLower, value, eps);
+    this.mkBoundAxioms(apiBound);
+    this.updateUnassignedBounds(thVar, 1);
+    this.bounds[thVar].push(apiBound);
+    this.boundsTrail.push(thVar);
+    this.boolVarToBound[boolVar] = apiBound;
+  }
+
   private updateUnassignedBounds(thVar: number, increment: number) {
     const saved = this.unassignedBounds[thVar];
     this.context.pushTrail(() => {
@@ -71,14 +92,20 @@ export abstract class TheoryLraBounds extends TheoryLraInternalize {
     return isTrue ? KIND_LE : bound.isInt ? KIND_GE : KIND_GT;
   }
 
-  private mkVarBound(boolVar: BoolVar, thVar: number, isLower: boolean, value: Rational) {
+  private mkVarBound(
+    boolVar: BoolVar,
+    thVar: number,
+    isLower: boolean,
+    value: Rational,
+    eps = Rational.zero,
+  ) {
     this.pushInternalizeState();
     this.internalizeHead--;
     const column = this.registerVar(thVar);
     const isInt = this.isIntVar(thVar);
     const kindTrue = isLower ? KIND_GE : KIND_LE;
     const kindFalse = isLower ? (isInt ? KIND_LE : KIND_LT) : isInt ? KIND_GE : KIND_GT;
-    const constraintTrue = this.solver.mkVarBound(column, kindTrue, value);
+    const constraintTrue = this.solver.mkVarBound(column, kindTrue, value, eps);
     const falseValue = isInt
       ? isLower
         ? value.sub(Rational.one)
@@ -87,7 +114,7 @@ export abstract class TheoryLraBounds extends TheoryLraInternalize {
     const constraintFalse = this.solver.mkVarBound(column, kindFalse, falseValue);
     this.constraintSources[constraintTrue] = mkLiteral(boolVar);
     this.constraintSources[constraintFalse] = mkLiteral(boolVar, true);
-    return { boolVar, thVar, column, value, constraintTrue, constraintFalse, isLower, isInt };
+    return { boolVar, thVar, column, value, eps, constraintTrue, constraintFalse, isLower, isInt };
   }
 
   private mkBoundAxioms(bound: ApiBound) {

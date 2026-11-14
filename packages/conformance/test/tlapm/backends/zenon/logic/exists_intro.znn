@@ -1,0 +1,26 @@
+(*---
+description: Zenon proves an existential from an instance.
+ref: zenon/prove.ml#newnodes_gamma
+outcome: unsat
+---*)
+;; obligation #1
+$goal (=> (a_CONSTANTunde_Punde_a a_CONSTANTunde_xunde_a)
+(E. ((a_CONSTANTunde_aunde_a) (a_CONSTANTunde_Punde_a a_CONSTANTunde_aunde_a))))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: |-
+    unsat
+    proof (rule zenon_nnpp)
+     assume z_Ha:"(~(a_CONSTANTunde_Punde_a(a_CONSTANTunde_xunde_a)=>(\\E a_CONSTANTunde_aunde_a:a_CONSTANTunde_Punde_a(a_CONSTANTunde_aunde_a))))" (is "~(?z_hc=>?z_he)")
+     have z_Hc: "?z_hc"
+     by (rule zenon_notimply_0 [OF z_Ha])
+     have z_Hh: "(~?z_he)" (is "~(\\E x : ?z_hi(x))")
+     by (rule zenon_notimply_1 [OF z_Ha])
+     have z_Hj: "~?z_hi(a_CONSTANTunde_xunde_a)"
+     by (rule zenon_notex_0 [of "?z_hi" "a_CONSTANTunde_xunde_a", OF z_Hh])
+     show FALSE
+     by (rule notE [OF z_Hj z_Hc])
+    qed
+---*)

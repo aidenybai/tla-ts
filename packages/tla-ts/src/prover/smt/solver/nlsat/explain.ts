@@ -23,6 +23,9 @@ interface ExplainContext {
   sample: (Anum | undefined)[];
   getValue: (literal: number) => number;
   var2eq: (IneqAtom | null)[];
+  getNumVars: () => number;
+  reorder: (permutation: readonly number[]) => void;
+  restoreOrder: () => void;
 }
 
 class AddAllCoeffsRestart {}
@@ -68,6 +71,7 @@ export class Explain {
   private isAddAllCoeffs = false;
 
   isFullDimensional = false;
+  isFactoring = true;
 
   constructor(
     private pm: PolynomialManager,
@@ -171,6 +175,10 @@ export class Explain {
     if (this.pm.isConst(polynomial)) return polynomial;
     const p = this.elimVanishing(polynomial);
     if (this.pm.isConst(p)) return p;
+    if (!this.isFactoring) {
+      this.todo.insert(p);
+      return p;
+    }
     for (const factor of this.cache.factor(p)) {
       const reduced = this.elimVanishing(factor);
       if (!this.pm.isConst(reduced)) this.todo.insert(reduced);
@@ -532,6 +540,49 @@ export class Explain {
     } finally {
       this.isAddAllCoeffs = savedAddAllCoeffs;
     }
+  }
+
+  projectVariable(variable: number, literals: readonly number[], result: ScopedLiterals) {
+    const base = result.size;
+    while (true) {
+      let isReordered = false;
+      this.result = result;
+      try {
+        const kept: number[] = [];
+        for (const literal of literals) {
+          const atom = this.context.atoms.getAtom(literal);
+          const polynomials =
+            atom === null ? [] : isIneqAtom(atom) ? atom.polynomials : [atom.polynomial];
+          const isContaining =
+            (atom !== null && !isIneqAtom(atom) && atom.maxVar === variable) ||
+            polynomials.some((polynomial) => this.pm.getVars(polynomial).includes(variable));
+          if (isContaining) kept.push(literal);
+          else this.addLiteral(literal ^ 1);
+        }
+        const polynomials = this.collectPolys(kept);
+        if (polynomials.length > 0) {
+          const maxVar = this.pm.getMaxVarOfPolys(polynomials);
+          if (maxVar !== variable) {
+            const renaming = Array.from({ length: this.context.getNumVars() }, (_value, index) =>
+              index === variable ? maxVar : index === maxVar ? variable : index,
+            );
+            this.context.reorder(renaming);
+            isReordered = true;
+          }
+          this.project(this.elimVanishingAll(polynomials), maxVar);
+          this.resetResult();
+          if (isReordered) this.context.restoreOrder();
+        }
+        break;
+      } catch (error) {
+        if (!(error instanceof AddAllCoeffsRestart)) throw error;
+        if (isReordered) this.context.restoreOrder();
+        result.shrink(base);
+      } finally {
+        this.resetResult();
+      }
+    }
+    for (let index = 0; index < result.size; index++) result.set(index, result.literals[index] ^ 1);
   }
 
   computeLinearExplanation(literals: readonly number[], result: ScopedLiterals) {

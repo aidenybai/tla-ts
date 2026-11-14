@@ -2,9 +2,10 @@ import { TlaProofError, TlaSyntaxError, type SyntaxFailure } from "../errors";
 import { createAnonymizer } from "./anonymize";
 import {
   getAtPrefix,
-  getErrorNote,
+  getErrorSetting,
   getLocusPosition,
   getLocusPrefix,
+  warnError,
   type Locus,
   type Warn,
   type Sequent,
@@ -17,7 +18,7 @@ import {
 } from "./generate";
 import { compareNames, flatten, getDependencies, STANDARD_MODULES, type Mule } from "./module";
 import { expandInstance, normalize, type Pipeline } from "./normalize";
-import { formatObligation } from "./printer";
+import { formatObligation, type PrinterOptions } from "./printer";
 import type { Counter, ObligationKind } from "./proof";
 import type { OldMethod } from "./pragma";
 import { createSimplifier } from "./simplify";
@@ -39,6 +40,7 @@ export interface PrintedObligation {
   kind: ObligationKind;
   sequent: Sequent;
   method?: OldMethod;
+  isEnabledAxiomsSound?: boolean;
 }
 
 export interface ModuleObligations {
@@ -53,6 +55,7 @@ export const WHOLE_MODULE: LineRange = { start: 0, end: Infinity };
 interface ObligationOptions {
   lines?: LineRange;
   onWarning?: Warn;
+  printing?: PrinterOptions;
 }
 
 const MODULE_HEADER = /-{4,} *MODULE/;
@@ -63,7 +66,7 @@ const formatLocus = (locus: Locus | undefined) =>
   locus ? `${locus.startLine}:${locus.startColumn}:${locus.endLine}:${locus.endColumn}` : "";
 
 const findTab = (source: string) => {
-  const tokens = tokenize(source);
+  const tokens = tokenize(source, true);
   const lines = source.split("\n");
   const endLine = tokens.at(-1)?.line ?? lines.length;
   const moduleEnd =
@@ -127,11 +130,35 @@ const loadMule = (
 ): Mule => {
   if (!MODULE_HEADER.test(input.source)) throw new TlaProofError("No tokens in file");
   const parsed = parseSource(input.source);
+  const proofFailure = Array.isArray(parsed) ? parsed[0].proof : undefined;
+  if (Array.isArray(parsed) && proofFailure) {
+    const locus = {
+      file: input.file,
+      startLine: parsed[0].line,
+      startColumn: parsed[0].column,
+      endLine: proofFailure.stop.line,
+      endColumn: proofFailure.stop.column,
+    };
+    warnError(onWarning, locus, parsed[0].reason);
+    throw new TlaProofError(parsed[0].reason, { failure: proofFailure.exception });
+  }
   if (Array.isArray(parsed)) {
     parsed.forEach((failure) => {
       const text = `File ${JSON.stringify(input.file)}, line ${failure.line}, character ${failure.column}\n${failure.reason}`;
       onWarning({ text, channel: "stderr" });
       onWarning({ text: `${text}\n`, channel: "toolboxOnly" });
+      onWarning(
+        getErrorSetting(
+          {
+            file: input.file,
+            startLine: failure.line,
+            startColumn: failure.column,
+            endLine: failure.line,
+            endColumn: failure.column + 1,
+          },
+          `${failure.reason}\n`,
+        ),
+      );
     });
     const message = `Could not parse ${JSON.stringify(input.file)} successfully.`;
     onWarning({ text: `${errorPrefix}Error: ${message}`, channel: "stderr" });
@@ -261,9 +288,10 @@ export const getObligations = (
     }
   }
   const missing = [...requested.keys()].filter((name) => !found.has(name)).sort(compareNames);
-  missing.forEach((name) =>
-    onWarning(getErrorNote(requested.get(name), `Unknown module ${JSON.stringify(name)}`)),
-  );
+  missing.forEach((name) => {
+    const message = `Unknown module ${JSON.stringify(name)}`;
+    warnError(onWarning, requested.get(name), message);
+  });
   if (missing.length > 0)
     throw new TlaProofError(`Unknown module ${JSON.stringify(missing[0])}`, {
       failure: "Module.Parser.load_module",
@@ -299,7 +327,7 @@ export const getObligations = (
       const text =
         obligation.kind.kind === "Error"
           ? obligation.kind.message
-          : `${formatObligation(obligation.sequent)}\n`;
+          : `${formatObligation(obligation.sequent, options.printing)}\n`;
       return [
         {
           id: index + 1,
@@ -309,6 +337,7 @@ export const getObligations = (
           kind: obligation.kind,
           sequent: obligation.sequent,
           method: obligation.method,
+          isEnabledAxiomsSound: obligation.isEnabledAxiomsSound,
         },
       ];
     });

@@ -1,8 +1,7 @@
 // Ported from Z3 (src/smt/smt_context.h, src/smt/smt_internalizer.cpp), MIT license, see z3-license.txt.
-import { SmtInvariantError } from "../../../errors";
+import { SmtInvariantError, SmtUnsupportedError } from "../../../errors";
 import {
   AstManager,
-  FAMILY_ARITH,
   FAMILY_BASIC,
   FAMILY_USER,
   KIND_APP,
@@ -15,7 +14,6 @@ import {
   OP_OR,
   OP_XOR,
   SORT_BOOL,
-  isArithSort,
 } from "./ast";
 import { CaseSplitQueue } from "./case-split-queue";
 import { CgTable, getCongruenceJustification, isCongruent } from "./cg-table";
@@ -55,8 +53,9 @@ import type { DefaultQuantifierManager } from "./quantifier-manager";
 import { RelevancyPropagator } from "./relevancy";
 import { KERNEL_REWRITER_OPTIONS, Rewriter } from "./rewriter";
 import { sortNumbers } from "./sort";
-import type { TheoryLra } from "./theory-lra";
+import type { Theory } from "./theory";
 import { setAt, shrink } from "./array";
+import { DEFAULT_CONFIG, IA_RANDOM, IA_RANDOM_WHEN_SEARCHING } from "./smt-setup";
 import { StickyGenerations } from "./sticky-generations";
 
 const DEEP_EXPR_THRESHOLD = 1024;
@@ -104,12 +103,13 @@ export abstract class Internalizer {
   readonly caseSplitQueue: CaseSplitQueue;
   readonly cgTable = new CgTable();
   private stickyGenerations = new StickyGenerations();
-  abstract readonly theory: TheoryLra;
+  abstract getTheory(family: number): Theory | undefined;
   abstract readonly qmanager: DefaultQuantifierManager;
 
   numBoolVars = 0;
   boolVar2Expr: number[] = [];
   private boolVarData = new Int32Array(2048);
+  private boolVarTheories: number[] = [];
   justifications: BJustification[] = [];
   activity: number[] = [];
   protected assignment: number[] = [];
@@ -146,6 +146,7 @@ export abstract class Internalizer {
   protected cachedGeneration = new Map<number, number>();
   private randomSeed = 0;
   isSearching = false;
+  config = DEFAULT_CONFIG;
 
   constructor(
     readonly manager: AstManager,
@@ -308,9 +309,9 @@ export abstract class Internalizer {
     return this.cgTable.findFor(decl, args, decl === OP_EQ);
   }
 
-  isDiseq(first: Enode, second: Enode) {
+  isDiseq(first: Enode, second: Enode, isCheckingValues = true) {
     const manager = this.manager;
-    if (manager.areDistinct(first.root.owner, second.root.owner)) return true;
+    if (isCheckingValues && manager.areDistinct(first.root.owner, second.root.owner)) return true;
     const tmp = this.isDiseqTmp;
     if (tmp === -1 || manager.sorts[manager.getArg(tmp, 0)] !== manager.sorts[first.owner]) {
       if (tmp !== -1) manager.decRef(tmp);
@@ -350,8 +351,8 @@ export abstract class Internalizer {
       if (arg === manager.trueExpr) return L_FALSE;
       return L_UNDEF;
     }
-    if (this.isBInternalized(expr)) return this.getAssignmentOfExpr(expr);
     if (expr === manager.falseExpr) return L_FALSE;
+    if (this.isBInternalized(expr)) return this.getAssignmentOfExpr(expr);
     if (expr === manager.trueExpr) return L_TRUE;
     return L_UNDEF;
   }
@@ -444,7 +445,12 @@ export abstract class Internalizer {
     this.boolVarData[2 * boolVar] = 0;
     this.boolVarData[2 * boolVar + 1] = this.scopeLevel;
     this.justifications[boolVar] = null;
-    this.activity[boolVar] = this.isSearching ? -((this.getRandomValue() % 1000) / 1000) : 0;
+    const initialActivity = this.config.randomInitialActivity;
+    this.activity[boolVar] =
+      initialActivity === IA_RANDOM ||
+      (initialActivity === IA_RANDOM_WHEN_SEARCHING && this.isSearching)
+        ? -((this.getRandomValue() % 1000) / 1000)
+        : 0;
     this.assignment[literal] = L_UNDEF;
     this.assignment[literal + 1] = L_UNDEF;
     this.resetWatches(literal);
@@ -510,12 +516,23 @@ export abstract class Internalizer {
     return this.hasBoolVarFlag(boolVar, BV_EQ | BV_ENODE | BV_THEORY | BV_QUANTIFIER);
   }
 
-  setVarTheory(boolVar: BoolVar) {
+  getBoolVarTheory(boolVar: BoolVar) {
+    return this.hasBoolVarFlag(boolVar, BV_THEORY) ? this.boolVarTheories[boolVar] : -1;
+  }
+
+  setVarTheory(boolVar: BoolVar, thId: number) {
+    setAt(this.boolVarTheories, boolVar, thId);
     if (this.scopeLevel > this.getInternLevel(boolVar)) {
       this.trailInts.push(boolVar);
       this.trailKinds.push(UNDO_VAR_THEORY);
     }
     this.setBoolVarFlag(boolVar, BV_THEORY, true);
+  }
+
+  forcePhase(literal: Literal) {
+    const boolVar = getVar(literal);
+    this.setBoolVarFlag(boolVar, BV_PHASE_AVAILABLE, true);
+    this.setBoolVarFlag(boolVar, BV_PHASE, !isNegated(literal));
   }
 
   setTrueFirstFlag(boolVar: BoolVar) {
@@ -647,18 +664,20 @@ export abstract class Internalizer {
     return family === FAMILY_BASIC || family === FAMILY_USER;
   }
 
-  private internalizeDeep(expr: number) {
-    if (
-      this.isEInternalized(expr) ||
-      this.manager.depths[expr] <= DEEP_EXPR_THRESHOLD ||
-      !this.shouldInternalizeRec(expr)
-    )
-      return;
+  // Internalizes bottom up in topological order, so the recursion of internalizeRec stays shallow.
+  private internalizeDeep(exprs: readonly number[]) {
     const manager = this.manager;
+    const isDeep = (expr: number) =>
+      !this.isEInternalized(expr) &&
+      manager.depths[expr] > DEEP_EXPR_THRESHOLD &&
+      this.shouldInternalizeRec(expr);
+    if (!exprs.some(isDeep)) return;
     const colors = new Map<number, number>();
     const getColor = (current: number, isGate: boolean) =>
       colors.get(current * 2 + (isGate ? 1 : 0)) ?? WHITE;
-    const todo: [number, boolean][] = [[expr, true]];
+    const todo: [number, boolean][] = exprs
+      .filter(isDeep)
+      .map((innerExpr): [number, boolean] => [innerExpr, true]);
     const sorted: [number, boolean][] = [];
     const visitChild = (child: number, isGate: boolean) => {
       if (getColor(child, isGate) === WHITE) todo.push([child, isGate]);
@@ -689,7 +708,7 @@ export abstract class Internalizer {
         visitChildren(top[0]);
       } else {
         colors.set(top[0] * 2 + (top[1] ? 1 : 0), BLACK);
-        if (top[0] !== expr && !manager.isNot(top[0]) && this.shouldInternalizeRec(top[0]))
+        if (!exprs.includes(top[0]) && !manager.isNot(top[0]) && this.shouldInternalizeRec(top[0]))
           sorted.push(top);
       }
     }
@@ -699,7 +718,7 @@ export abstract class Internalizer {
   internalizeAssertion(expr: number, generation: number) {
     const savedGeneration = this.generation;
     this.generation = generation;
-    this.internalizeDeep(expr);
+    this.internalizeDeep([expr]);
     const manager = this.manager;
     if (this.isGate(expr)) {
       switch (manager.getOp(expr)) {
@@ -763,13 +782,19 @@ export abstract class Internalizer {
   internalize(expr: number, isGateContext: boolean, generation = this.generation) {
     const savedGeneration = this.generation;
     this.generation = generation;
-    this.internalizeDeep(expr);
+    this.internalizeDeep([expr]);
     this.internalizeRec(expr, isGateContext);
     this.generation = savedGeneration;
   }
 
+  internalizeAll(exprs: readonly number[], isGateContext: boolean) {
+    this.internalizeDeep(exprs);
+    for (const expr of exprs) this.internalizeRec(expr, isGateContext);
+  }
+
   private internalizeRec(expr: number, isGateContext: boolean) {
     const manager = this.manager;
+    if (manager.isLambda(expr)) throw new SmtUnsupportedError("lambdas in the array theory");
     if (manager.sorts[expr] === SORT_BOOL) this.internalizeFormula(expr, isGateContext);
     else this.internalizeTerm(expr);
   }
@@ -808,13 +833,16 @@ export abstract class Internalizer {
     this.internalizeFormulaCore(expr, isGateContext);
     const boolVar = this.getBoolVar(expr);
     this.setBoolVarFlag(boolVar, BV_EQ, true);
-    const sort = this.manager.sorts[this.manager.getArg(expr, 0)];
-    if (sort !== SORT_BOOL && isArithSort(sort)) this.theory.internalizeEqEh(expr);
+    const manager = this.manager;
+    this.getTheory(manager.getSortFamily(manager.sorts[manager.getArg(expr, 0)]))?.internalizeEqEh(
+      expr,
+      boolVar,
+    );
   }
 
   private internalizeTheoryAtom(expr: number, isGateContext: boolean) {
-    if (this.manager.getFamily(expr) !== FAMILY_ARITH || !this.theory.internalizeAtom(expr))
-      return false;
+    const theory = this.getTheory(this.manager.getFamily(expr));
+    if (theory === undefined || !theory.internalizeAtom(expr, isGateContext)) return false;
     const boolVar = this.getBoolVar(expr);
     if (!isGateContext) {
       const node = this.exprToEnode[expr];
@@ -939,21 +967,28 @@ export abstract class Internalizer {
     const existing = this.exprToEnode[expr];
     if (existing !== undefined) {
       this.updateGeneration(existing);
-      if (manager.getFamily(expr) === FAMILY_ARITH && !this.theory.isAttachedToVar(existing))
-        this.theory.internalizeTerm(expr);
+      const theory = this.getTheory(manager.getFamily(expr));
+      if (theory !== undefined && !theory.isAttachedToVar(existing)) theory.internalizeTerm(expr);
       return;
     }
     if (manager.getOp(expr) === OP_ITE) {
       this.internalizeIteTerm(expr);
       return;
     }
-    if (manager.getFamily(expr) === FAMILY_ARITH && this.theory.internalizeTerm(expr)) return;
-    for (let index = 0; index < manager.getNumArgs(expr); index++) {
-      const arg = manager.getArg(expr, index);
-      this.internalizeRec(arg, false);
+    if (!this.getTheory(manager.getFamily(expr))?.internalizeTerm(expr)) {
+      for (let index = 0; index < manager.getNumArgs(expr); index++) {
+        const arg = manager.getArg(expr, index);
+        this.internalizeRec(arg, false);
+      }
+      if (this.exprToEnode[expr] === undefined) this.mkEnode(expr, false, false, true);
     }
-    if (this.exprToEnode[expr] !== undefined) return;
-    this.mkEnode(expr, false, false, true);
+    const node = this.exprToEnode[expr];
+    if (node !== undefined) this.applySortCnstr(expr, node);
+  }
+
+  private applySortCnstr(expr: number, node: Enode) {
+    const sort = this.manager.sorts[expr];
+    this.getTheory(this.manager.getSortFamily(sort))?.applySortCnstr(node, sort);
   }
 
   mkEqAtom(lhs: number, rhs: number) {

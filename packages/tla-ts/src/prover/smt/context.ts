@@ -5,6 +5,26 @@ interface QuantifierScope {
   exits: (() => void)[];
 }
 
+interface LetScope {
+  depth: number;
+  names: number[];
+}
+
+// The index of each name a LET binds, and of the parenthesis that closes its definitions.
+const getLetNames = (tokens: RegExpMatchArray[], start: number) => {
+  const names: number[] = [];
+  let position = start;
+  let depth = 0;
+  do {
+    const token = tokens[position][0];
+    if (token === "(") depth++;
+    if (token === ")") depth--;
+    if (token === "(" && depth === 2) names.push(position + 1);
+    position++;
+  } while (depth > 0);
+  return { names, end: position - 1 };
+};
+
 export interface Identifier {
   base: string;
   salt: number;
@@ -52,10 +72,15 @@ export const createPrinter = (declared: Map<string, Identifier>) => {
     const replacements = new Map<number, string>();
     const renames = new Map<string, string[]>();
     const scopes: QuantifierScope[] = [];
+    const lets = new Map<number, LetScope>();
     let position = 0;
     let depth = 0;
     while (position < tokens.length) {
       const token = tokens[position][0];
+      if (token === "(" && tokens[position + 1]?.[0] === "let") {
+        const found = getLetNames(tokens, position + 2);
+        lets.set(found.end, { depth: depth + 1, names: found.names });
+      }
       const isQuantifier =
         token === "(" &&
         (tokens[position + 1]?.[0] === "forall" || tokens[position + 1]?.[0] === "exists") &&
@@ -67,7 +92,7 @@ export const createPrinter = (declared: Map<string, Identifier>) => {
         position += 3;
         while (tokens[position]?.[0] === "(") {
           const raw = tokens[position + 1][0];
-          const identifier = context.adjoin(raw.replace(/#\d+$/, ""));
+          const identifier = context.adjoin(raw.replace(/(:\w+)?#\d+$/, ""));
           const stack = renames.get(raw) ?? [];
           renames.set(raw, [...stack, identifier.name]);
           scope.exits.push(context.enter(identifier), () => renames.set(raw, stack));
@@ -88,6 +113,21 @@ export const createPrinter = (declared: Map<string, Identifier>) => {
       }
       const name = renames.get(token)?.at(-1);
       if (name !== undefined) replacements.set(position, name);
+      // Smtlib names a LET's definitions in order, though it prints them last first, and only its
+      // body sees them.
+      const letScope = lets.get(position);
+      if (letScope !== undefined) {
+        const scope: QuantifierScope = { depth: letScope.depth, exits: [] };
+        letScope.names.toReversed().forEach((index) => {
+          const raw = tokens[index][0];
+          const identifier = context.adjoin(raw.replace(/(:\w+)?#\d+$/, ""));
+          const stack = renames.get(raw) ?? [];
+          renames.set(raw, [...stack, identifier.name]);
+          scope.exits.push(context.enter(identifier), () => renames.set(raw, stack));
+          replacements.set(index, identifier.name);
+        });
+        scopes.push(scope);
+      }
       position++;
     }
     return tokens

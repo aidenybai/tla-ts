@@ -1,4 +1,4 @@
-import { TlapmBugError, TlaProverError } from "../../errors";
+import { TlaMethodError, TlapmBugError, TlaProverError } from "../../errors";
 import type { Expr, Locus, Sequent } from "../../obligations/expression";
 import type { OldMethod, PragmaSetting } from "../../obligations/pragma";
 import type { Backend } from "../verdict";
@@ -6,7 +6,7 @@ import type { Backend } from "../verdict";
 type Prover =
   | Backend
   | "yices"
-  | "cvc3"
+  | "cvc4"
   | "cooper"
   | "fail"
   | "verit"
@@ -30,7 +30,7 @@ export interface Method {
 
 export const getBudget = (method: Method) => method.rlimit ?? method.timeLimitMs / 1000;
 
-const FRONTENDS = new Set<Prover>([
+export const FRONTENDS = new Set<Prover>([
   "expandenabled",
   "expandcdot",
   "autouse",
@@ -60,14 +60,14 @@ const PROVERS: Record<string, { prover: Prover; seconds: number; isBudgeted?: bo
   ls4: { prover: "ls4", seconds: LS4_SECONDS },
   z3: { prover: "z3", seconds: SMT_SECONDS, isBudgeted: true },
   smt: { prover: "smt", seconds: SMT_SECONDS, isBudgeted: true },
-  cvc3: { prover: "cvc3", seconds: SMT_SECONDS },
-  cooper: { prover: "cooper", seconds: 0 },
-  fail: { prover: "fail", seconds: 0 },
+  cvc3: { prover: "cvc4", seconds: SMT_SECONDS },
+  cooper: { prover: "cooper", seconds: Infinity },
+  fail: { prover: "fail", seconds: Infinity },
   smt2lib: { prover: "smt", seconds: SMT_SECONDS, isBudgeted: true },
   smt2z3: { prover: "z3", seconds: SMT_SECONDS, isBudgeted: true },
   smt3: { prover: "smt", seconds: SMT_SECONDS, isBudgeted: true },
   z33: { prover: "z3", seconds: SMT_SECONDS, isBudgeted: true },
-  cvc33: { prover: "cvc3", seconds: SMT_SECONDS },
+  cvc33: { prover: "cvc4", seconds: SMT_SECONDS },
   yices3: { prover: "yices", seconds: SMT_SECONDS },
   verit: { prover: "verit", seconds: SMT_SECONDS },
   zipper: { prover: "zipper", seconds: 30 },
@@ -85,10 +85,6 @@ const getProverMethod = (
 ): Method => {
   const known = PROVERS[name];
   if (!known) throw new TlaProverError(`Unknown prover: ${name}`);
-  if (rlimit !== undefined && !known.isBudgeted)
-    throw new TlaProverError(
-      'A Z3 rlimit budget ("rN") is only supported by the SMT and Z3 backends.',
-    );
   return {
     prover: known.prover,
     timeLimitMs: rlimit === undefined ? (timeout ?? known.seconds) * 1000 : Infinity,
@@ -97,57 +93,89 @@ const getProverMethod = (
   };
 };
 
-const getRlimit = (budget: string) => {
-  const count = Number.parseFloat(budget.slice(1));
+const BUDGET_FORMS =
+  'a number of seconds (wall-clock timeout), or a deterministic Z3 rlimit budget of the form "rN" (e.g. "r5")';
+
+const getRlimit = (budget: string, locus: Locus | undefined) => {
+  const count = Number(budget.slice(1));
   if (!/^[rR]./.test(budget) || !Number.isFinite(count) || count <= 0)
-    throw new TlaProverError(`Invalid SMT budget "${budget}"`);
+    throw new TlaMethodError(
+      `Invalid SMT budget ${JSON.stringify(budget)}: expected ${BUDGET_FORMS}.`,
+      locus,
+    );
   return Math.max(1, Math.trunc(Math.min(count * RLIMIT_BASE, MAX_RLIMIT)));
 };
 
-const computeMethod = (settings: PragmaSetting[], args: Expr[]): Method => {
-  const values = settings.reduce<{
-    args: Expr[];
-    prover?: string;
-    timeout?: number;
-    rlimit?: number;
-    tactic?: string;
-  }>(
+interface MethodValues {
+  args: Expr[];
+  prover?: string;
+  proverLocus?: Locus;
+  timeout?: number;
+  rlimit?: number;
+  tactic?: string;
+}
+
+// Each @ takes the next argument the pragma is applied to at the use.
+const computeMethod = (settings: PragmaSetting[], args: Expr[], use: Locus | undefined): Method => {
+  const values = settings.reduce<MethodValues>(
     (state, setting) => {
       const value = setting.value;
       const argument = value.kind === "Default" ? state.args[0] : undefined;
       const rest = value.kind === "Default" ? state.args.slice(1) : state.args;
+      if (setting.hint !== "prover" && setting.hint !== "tactic" && setting.hint !== "timeout")
+        throw new TlaMethodError(
+          `Unknown keyword in proof method definition: ${setting.hint}`,
+          setting.location,
+        );
       if (value.kind === "Default" && !argument)
-        throw new TlaProverError("Some arguments are missing");
+        throw new TlaMethodError("Some arguments are missing", use);
+      if (setting.hint === "timeout") {
+        if (value.kind === "Float") return { ...state, timeout: value.value };
+        if (value.kind === "String")
+          return { ...state, rlimit: getRlimit(value.value, setting.location) };
+        if (argument?.kind === "Num")
+          return {
+            ...state,
+            args: rest,
+            timeout: Number(`${argument.integer}.${argument.fraction}`),
+          };
+        if (argument?.kind === "String")
+          return { ...state, args: rest, rlimit: getRlimit(argument.value, argument.location) };
+        throw new TlaMethodError(`This argument should be ${BUDGET_FORMS}`, argument?.location);
+      }
+      if (value.kind === "Float")
+        throw new TlaMethodError("Argument should be a string or @", setting.location);
       const text =
         value.kind === "String"
           ? value.value
           : argument?.kind === "String"
             ? argument.value
             : undefined;
-      switch (setting.hint) {
-        case "prover":
-        case "tactic":
-          if (text === undefined) throw new TlaProverError(`This argument should be a string`);
-          return { ...state, args: rest, [setting.hint]: text };
-        case "timeout": {
-          if (value.kind === "Float") return { ...state, args: rest, timeout: value.value };
-          if (text !== undefined) return { ...state, args: rest, rlimit: getRlimit(text) };
-          if (argument?.kind !== "Num")
-            throw new TlaProverError("This argument should be a number of seconds");
-          return {
-            ...state,
-            args: rest,
-            timeout: Number(`${argument.integer}.${argument.fraction}`),
-          };
-        }
-        default:
-          throw new TlaProverError(`Unknown keyword in proof method definition: ${setting.hint}`);
-      }
+      if (text === undefined)
+        throw new TlaMethodError(
+          `This argument should be a string (${setting.hint === "prover" ? "prover name" : "proof tactic"})`,
+          argument?.location,
+        );
+      if (setting.hint === "tactic") return { ...state, args: rest, tactic: text };
+      return {
+        ...state,
+        args: rest,
+        prover: text,
+        proverLocus: value.kind === "Default" ? use : setting.location,
+      };
     },
     { args },
   );
-  if (values.args.length > 0) throw new TlaProverError("Too many arguments");
-  if (values.prover === undefined) throw new TlaProverError("Missing prover name");
+  if (values.args.length > 0) throw new TlaMethodError("Too many arguments", use);
+  if (values.prover === undefined)
+    throw new TlaMethodError("Missing prover name", settings[0].location);
+  const known = PROVERS[values.prover];
+  if (!known) throw new TlaMethodError(`Unknown prover: ${values.prover}`, values.proverLocus);
+  if (values.rlimit !== undefined && !known.isBudgeted)
+    throw new TlaMethodError(
+      'A Z3 rlimit budget ("rN") is only supported by the SMT and Z3 backends.',
+      use,
+    );
   return getProverMethod(values.prover, values.timeout, values.rlimit, values.tactic);
 };
 
@@ -190,7 +218,7 @@ const getCitedMethods = (sequent: Sequent) => {
         useLocation = hyp.useLocation;
       }
       const args = expression.kind === "Apply" ? expression.args : [];
-      methods.push(...entry.groups.map((group) => computeMethod(group, args)));
+      methods.push(...entry.groups.map((group) => computeMethod(group, args, expression.location)));
       return;
     }
     if (entry?.kind !== "Meth") return;
@@ -200,7 +228,10 @@ const getCitedMethods = (sequent: Sequent) => {
   return methods;
 };
 
-export const findMethods = (obligation: { sequent: Sequent; method?: OldMethod }) => {
+export const findMethods = (
+  obligation: { sequent: Sequent; method?: OldMethod },
+  defaultMethods = DEFAULT_METHODS,
+) => {
   const methods =
     obligation.method === undefined
       ? getCitedMethods(obligation.sequent)
@@ -210,6 +241,35 @@ export const findMethods = (obligation: { sequent: Sequent; method?: OldMethod }
     frontends: new Set(
       methods.flatMap((method) => (FRONTENDS.has(method.prover) ? [method.prover] : [])),
     ),
-    provers: provers.length > 0 ? provers : DEFAULT_METHODS,
+    provers: provers.length > 0 ? provers : defaultMethods,
   };
 };
+
+const DEFAULT_METHOD_NAMES: Record<string, string> = {
+  zenon: "zenon",
+  smt: "smt",
+  z3: "z3",
+  cvc4: "cvc33",
+  yices: "yices3",
+  verit: "verit",
+  zipper: "zipper",
+  spass: "spass",
+  tptp: "tptp",
+  ls4: "ls4",
+};
+
+export const parseDefaultMethods = (text: string) =>
+  text.split(",").map((entry): Method => {
+    const separator = entry.indexOf(":");
+    const name = separator === -1 ? entry : entry.slice(0, separator);
+    const seconds = separator === -1 ? undefined : Number.parseFloat(entry.slice(separator + 1));
+    if (Number.isNaN(seconds))
+      throw new TlaProverError("--method: bad timeout specification: not a number");
+    if (name === "auto" || name === "blast" || name === "force")
+      return getProverMethod("isabelle", seconds, undefined, name);
+    if (name === "fail") return { prover: "fail", timeLimitMs: Infinity };
+    const known = DEFAULT_METHOD_NAMES[name];
+    if (known === undefined)
+      throw new TlaProverError(`--method: unknown method ${JSON.stringify(name)}`);
+    return getProverMethod(known, seconds, undefined, undefined);
+  });

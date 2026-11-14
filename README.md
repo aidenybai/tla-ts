@@ -161,10 +161,11 @@ pnpm --filter tla-ts conformance:fetch
 pnpm --filter tla-ts conformance
 ```
 
-Run the TLC conformance suite in `packages/conformance`:
+Run the TLC and tlapm conformance suites in `packages/conformance`:
 
 ```shell
 pnpm --filter @tla-ts/conformance fetch-tlc
+pnpm --filter @tla-ts/conformance fetch-tlapm
 pnpm --filter @tla-ts/conformance conformance
 ```
 

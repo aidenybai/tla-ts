@@ -8,21 +8,26 @@ import {
 } from "../../obligations/expression";
 import { compareStrings } from "../ocaml";
 import { createPrinter } from "./context";
+import { simplifySets } from "./simplify";
+import { layOutCommand } from "./layout";
 import { getSymbolSpec, type CollectState, type SymbolSpec } from "./data";
 import type { Entry } from "./flatten";
-import { declare, getTlaName, MEM } from "./format";
+import { declare, getTlaName, NATIVE_OPERATORS, replaceTokens } from "./format";
+import { getSort } from "./types";
 import {
   createEncoder,
+  declareConstant,
   encodeBool,
-  encodeIdv,
   getEntries,
   getUniqueName,
   push,
+  searchDeclarationType,
   type Binding,
   type Encoder,
   type EncodingSession,
   type Env,
   type Mode,
+  type SmtEncoding,
 } from "./rewrite";
 import { compareAxioms, getAxiomKey, type Axiom } from "./table";
 
@@ -77,8 +82,12 @@ const sortRecordFields = (expression: Expr): Expr =>
 
 const collectSymbols = (entries: Entry[], encoder: Encoder) => {
   const state: CollectState = {
+    isArithmetic: encoder.encoding.isArithmetic,
+    isSetExtensional: encoder.encoding.isSetExtensional,
     recordFields: encoder.recordFields,
+    setTypes: encoder.setTypes,
     strings: [],
+    integers: [],
     isFunConstr: false,
     isFunSet: false,
     isExcept: false,
@@ -143,32 +152,56 @@ interface EncodedContext {
   entries: Entry[];
 }
 
-const encodeContext = (context: Hyp[], encoder: Encoder) =>
-  context.reduce<EncodedContext>(
-    (state, hyp) => {
+const encodeContext = (sequent: Sequent, encoder: Encoder) =>
+  sequent.context.reduce<EncodedContext>(
+    (state, hyp, index) => {
       const extend = (binding: Binding, entries: Entry[] = []) => ({
         env: push(state.env, binding),
         entries: [...state.entries, ...entries],
       });
+      const rest: Expr = {
+        kind: "Sequent",
+        sequent: { context: sequent.context.slice(index + 1), active: sequent.active },
+      };
       switch (hyp.kind) {
         case "Fresh": {
           const symbol = getUniqueName(encoder, hyp.name);
-          const binding: Binding =
-            hyp.shape === 0
-              ? { kind: "constant", symbol }
-              : { kind: "operator", symbol, arity: hyp.shape };
-          const declaration = declare(symbol, hyp.shape);
-          if (!hyp.domain || hyp.domainVisibility === "Hidden")
-            return extend(binding, [declaration]);
-          const fact = `(assert (${MEM} ${symbol} ${encodeIdv(encoder, hyp.domain, state.env, HYPOTHESIS)}))`;
-          return extend(binding, [declaration, ...getEntries(encoder, fact)]);
+          if (hyp.shape > 0)
+            return extend({ kind: "operator", symbol, arity: hyp.shape }, [
+              declare(symbol, hyp.shape),
+            ]);
+          const declared = declareConstant(
+            encoder,
+            hyp,
+            hyp.domainVisibility === "Visible" ? hyp.domain : undefined,
+            rest.sequent,
+            state.env,
+            HYPOTHESIS,
+          );
+          const binding: Binding = { kind: "constant", symbol, type: declared.type };
+          const declaration = declare(symbol, 0, getSort(declared.type));
+          const guard = declared.getGuard(symbol);
+          if (guard === undefined) return extend(binding, [declaration]);
+          return extend(binding, [declaration, ...getEntries(encoder, `(assert ${guard})`)]);
         }
+        // Rewrite.elim_flex declares a variable and then its primed copy, so the hypotheses after
+        // it type both.
         case "Flex": {
           const symbol = getUniqueName(encoder, hyp.name);
           const primed = getUniqueName(encoder, `${hyp.name}_prime`);
-          return extend({ kind: "variable", name: hyp.name, symbol, primed }, [
-            declare(symbol, 0),
-            declare(primed, 0),
+          const type = searchDeclarationType(encoder, rest, true, state.env, HYPOTHESIS);
+          const variable: Binding = { kind: "variable", name: hyp.name, symbol, primed, type };
+          const primedType = searchDeclarationType(
+            encoder,
+            rest,
+            true,
+            push(state.env, variable),
+            HYPOTHESIS,
+            `${hyp.name}#prime`,
+          );
+          return extend({ ...variable, primedType }, [
+            declare(symbol, 0, getSort(type)),
+            declare(primed, 0, getSort(primedType)),
           ]);
         }
         case "Defn": {
@@ -176,7 +209,9 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
           if (isExpanded(hyp))
             return extend({ kind: "unsupported", reason: "an expanded definition" });
           if (definition.kind === "Instance")
-            return extend({ kind: "unsupported", reason: "an instance" });
+            return extend({ kind: "unsupported", reason: "an instance" }, [
+              `; omitted declaration of '${definition.name}' (missing type)`,
+            ]);
           if (definition.kind === "Recursive") {
             const symbol = getUniqueName(encoder, `CONSTANT_${definition.name}_`);
             return extend({ kind: "operator", symbol, arity: definition.shape }, [
@@ -188,19 +223,29 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
           const body = definition.body;
           const params = body.kind === "Lambda" ? body.params : [];
           if (params.some((param) => param.shape > 0))
-            return extend({
-              kind: "secondOrder",
-              name: definition.name,
-              shapes: params.map((param) => param.shape),
-            });
+            return extend(
+              {
+                kind: "secondOrder",
+                name: definition.name,
+                shapes: params.map((param) => param.shape),
+              },
+              [`; omitted declaration of '${definition.name}' (second-order)`],
+            );
           const symbol = getUniqueName(encoder, definition.name);
+          // Type.Synthesize types a hidden constant definition as it types a NEW constant.
+          const type =
+            hyp.visibility === "Hidden" && body.kind !== "Lambda"
+              ? searchDeclarationType(encoder, rest, true, state.env, HYPOTHESIS)
+              : undefined;
+          if (type !== undefined)
+            return extend({ kind: "constant", symbol, type }, [declare(symbol, 0, getSort(type))]);
           return extend({ kind: "operator", symbol, arity: params.length }, [
             declare(symbol, params.length),
           ]);
         }
         case "Fact": {
           const binding: Binding = { kind: "unsupported", reason: "a reference to a fact" };
-          if (hyp.visibility === "Hidden") return extend(binding);
+          if (hyp.visibility === "Hidden") return extend(binding, ["; hidden fact"]);
           const isOmitted = isSecondOrder(hyp.expression);
           const entries = getEntries(
             encoder,
@@ -209,7 +254,12 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
           return extend(
             binding,
             isOmitted
-              ? entries.map((entry) => (typeof entry === "string" ? { omitted: entry } : entry))
+              ? [
+                  ...entries.map((entry) =>
+                    typeof entry === "string" ? { omitted: entry } : entry,
+                  ),
+                  "; omitted fact (second-order)",
+                ]
               : entries,
           );
         }
@@ -218,39 +268,54 @@ const encodeContext = (context: Hyp[], encoder: Encoder) =>
     { env: undefined, entries: [] },
   );
 
-export const encodeSmt = (prepared: Sequent, session: EncodingSession) => {
+interface SmtHeader {
+  version: string;
+  id: number;
+  location: string;
+  logic: string;
+}
+
+export const encodeSmt = (
+  prepared: Sequent,
+  session: EncodingSession,
+  header: SmtHeader,
+  encoding: SmtEncoding,
+) => {
   const simplified = sortRecordFields(
     simplifyRecordEqualities({ kind: "Sequent", sequent: prepared }),
   );
-  const sequent = simplified.kind === "Sequent" ? simplified.sequent : prepared;
-  const encoder = createEncoder(session);
-  const context = encodeContext(sequent.context, encoder);
+  const sequent = simplifySets(
+    simplified.kind === "Sequent" ? simplified.sequent : prepared,
+    encoding.rewriteLevel,
+  );
+  const encoder = createEncoder(session, encoding);
+  const context = encodeContext(sequent, encoder);
   const goal = isSecondOrder(sequent.active)
     ? []
     : getEntries(
         encoder,
         `(assert (! (not ${encodeBool(encoder, sequent.active, context.env, { ...HYPOTHESIS, polarity: "Positive" })}) :named |Goal|))`,
       );
-  const entries = [...context.entries, ...goal];
   const resolve = createPrinter(encoder.declared);
-  const collected = collectSymbols(entries, encoder);
+  const collected = collectSymbols([...context.entries, ...goal], encoder);
   const declarations = [...collected.symbols]
     .toSorted((left, right) => compareStrings(left[0], right[0]))
     .flatMap((symbol) => (symbol[1].declaration === undefined ? [] : [symbol[1].declaration]));
   const axioms = [...collected.axioms.values()]
     .toSorted(compareAxioms)
-    .flatMap((entry) =>
-      entry.formula === undefined ? [] : [`(assert (! ${entry.formula} :named |${entry.label}|))`],
+    .map((entry) =>
+      entry.formula === undefined
+        ? "; omitted fact (second-order)"
+        : `(assert (! ${entry.formula} :named |${entry.label}|))`,
     );
   const keys = new Set(collected.axioms.keys());
-  const lines = [
-    ...declarations,
-    ...axioms,
-    ...entries.flatMap((entry) => {
+  const getLines = (entries: Entry[]) =>
+    entries.flatMap((entry) => {
       if (typeof entry === "string") return [entry];
       return "omitted" in entry ? [] : entry.getLines(keys);
-    }),
-  ];
+    });
+  const hypotheses = [...declarations, ...axioms, ...getLines(context.entries)];
+  const lines = [...hypotheses, ...getLines(goal)];
   const isIdvUsed =
     lines.some((line) => /\bIdv\b/.test(line)) ||
     sequent.context.some(
@@ -259,8 +324,23 @@ export const encodeSmt = (prepared: Sequent, session: EncodingSession) => {
         (hyp.definition.kind === "Operator" || hyp.definition.kind === "Recursive") &&
         !isExpanded(hyp),
     );
-  return ["(set-logic UFNIA)", ...(isIdvUsed ? ["(declare-sort Idv 0)"] : []), ...lines]
-    .map(resolve)
-    .concat("(check-sat)", "(exit)")
-    .join("\n");
+  const printCommand = (line: string) => {
+    if (line.startsWith(";")) return line;
+    const command = layOutCommand(replaceTokens(resolve(line), NATIVE_OPERATORS));
+    const name = /:named \|([^|]*)\|\)\)$/.exec(line)?.[1];
+    if (name === undefined) return command;
+    return `;; ${name === "Goal" ? name : `Axiom: ${name}`}\n${command}`;
+  };
+  return [
+    `;; TLA+ Proof Manager ${header.version}\n`,
+    `;; Proof obligation #${header.id}\n`,
+    `;; Generated from ${header.location}\n\n`,
+    `(set-logic ${header.logic})\n\n`,
+    ";; Sorts\n\n",
+    isIdvUsed ? "(declare-sort Idv 0)\n" : "",
+    "\n;; Hypotheses\n\n",
+    hypotheses.length === 0 ? "\n" : "",
+    ...lines.map((line) => `${printCommand(line)}\n\n`),
+    "(check-sat)\n(exit)\n",
+  ].join("");
 };

@@ -13,7 +13,6 @@ fun esc s =
       else if c = "\n" then "\\n" else c;
   in "\"" ^ String.concat (map e (Symbol.explode s)) ^ "\"" end;
 
-(* types, interned *)
 val type_tab : (typ * int) list Unsynchronized.ref = Unsynchronized.ref [];
 val type_out : string list Unsynchronized.ref = Unsynchronized.ref [];
 fun sort_json S = "[" ^ commas (map esc S) ^ "]";
@@ -39,7 +38,7 @@ fun term_json (Const (a, T)) = "[\"C\"," ^ esc a ^ "," ^ jint (typ_id T) ^ "]"
       "[\"A\"," ^ esc a ^ "," ^ jint (typ_id T) ^ "," ^ term_json t ^ "]"
   | term_json (t $ u) = "[\"$\"," ^ term_json t ^ "," ^ term_json u ^ "]";
 
-(* theorems, interned by full proposition (with names) *)
+(* interned by full proposition, with names *)
 val thm_tab : (term * int) list Unsynchronized.ref = Unsynchronized.ref [];
 val thm_out : string list Unsynchronized.ref = Unsynchronized.ref [];
 fun thm_id th =
@@ -68,24 +67,20 @@ fun key_json ks = esc (space_implode " " ks);
 
 fun name_json (a, i) = "[" ^ esc a ^ "," ^ jint i ^ "]";
 
-(* constants *)
 val {constants, ...} = Consts.dest (Sign.consts_of thy);
 val consts_json = "[" ^ commas (map (fn (c, (T, rhs)) =>
   "[" ^ esc c ^ "," ^ jint (typ_id T) ^
   (case rhs of NONE => "" | SOME t => "," ^ term_json t) ^ "]") constants) ^ "]";
 
-(* the constant each base name resolves to *)
 val names_json = "[" ^ commas (map (fn base => "[" ^ esc base ^ "," ^ esc (Sign.intern_const thy base) ^ "]")
   (distinct (op =) (map (Long_Name.base_name o #1) constants))) ^ "]";
 
-(* facts *)
 val facts = Facts.dest_static true [] (Global_Theory.facts_of thy);
 val fact_names_json = "[" ^ commas (map (fn base => "[" ^ esc base ^ "," ^ esc (Global_Theory.intern_fact thy base) ^ "]")
   (distinct (op =) (map (Long_Name.base_name o #1) facts))) ^ "]";
 val facts_json = "[" ^ commas (map (fn (a, ths) =>
   "[" ^ esc a ^ ",[" ^ commas (map (jint o thm_id) ths) ^ "]]") facts) ^ "]";
 
-(* simpset *)
 val ss = simpset_of ctxt;
 val {simps, simprocs, congs, weak_congs, loopers, unsafe_solvers, safe_solvers, ...} =
   Raw_Simplifier.dest_ss ss;
@@ -102,7 +97,6 @@ val simprocs_json = "[" ^ commas (map (fn (a, lhss) =>
   "[" ^ esc a ^ ",[" ^ commas (map term_json lhss) ^ "]]") simprocs) ^ "]";
 fun strings_json xs = "[" ^ commas (map esc xs) ^ "]";
 
-(* claset *)
 val cs = Classical.rep_cs (Classical.claset_of ctxt);
 fun brl_key (eres, th) =
   if eres then my_keys (Thm.major_prem_of th) else my_keys (Thm.concl_of th);
@@ -135,9 +129,39 @@ val claset_json =
   ",\"dup\":" ^ netpair_json (#dup_netpair cs) ^
   ",\"extra\":" ^ ctx_netpair_json (#extra_netpair cs) ^ "}";
 
+(* Context_Rules hides its third netpair, of the rules declared with "?". A goal and a fact whose
+   conclusions are variables retrieve every rule of each netpair in the order the unweighted
+   retrieval uses, the elimination rules first. *)
+val var_prop = Var (("P", 0), propT);
+val all_intros = Context_Rules.find_rules ctxt false [] var_prop;
+val all_rules =
+  Context_Rules.find_rules ctxt false [Thm.trivial (Thm.cterm_of ctxt var_prop)] var_prop;
+val query_intros = nth all_intros 2;
+val query_elims = take (length (nth all_rules 2) - length query_intros) (nth all_rules 2);
+fun ids_json ths = "[" ^ commas (map (jint o thm_id) ths) ^ "]";
+
 val context_rules_json =
   "{\"bang\":" ^ ctx_netpair_json (Context_Rules.netpair_bang ctxt) ^
-  ",\"plain\":" ^ ctx_netpair_json (Context_Rules.netpair ctxt) ^ "}";
+  ",\"plain\":" ^ ctx_netpair_json (Context_Rules.netpair ctxt) ^
+  ",\"query\":[" ^ ids_json query_intros ^ "," ^ ids_json query_elims ^ "]}";
+
+(* The tags of Rule_Cases, which the cases method reads off its rule. *)
+val case_tag_names =
+  ["consumes", "constraints", "case_names", "cases_hyp_names", "case_conclusion", "inner_rule",
+    "cases_open"];
+fun case_tags th = filter (fn (a, _) => member (op =) case_tag_names a) (Thm.get_tags th);
+fun tags_json th =
+  "[" ^ commas (map (fn (a, b) => "[" ^ esc a ^ "," ^ esc b ^ "]") (case_tags th)) ^ "]";
+val fact_tags_json = "[" ^ commas (maps (fn (a, ths) =>
+  map_filter (fn (i, th) =>
+    if null (case_tags th) then NONE
+    else SOME ("[" ^ esc a ^ "," ^ jint i ^ "," ^ tags_json th ^ "]")) (map_index I ths))
+  facts) ^ "]";
+fun cases_json rules = "[" ^ commas (map (fn (a, th) =>
+  "[" ^ esc a ^ "," ^ jint (thm_id th) ^ "," ^ tags_json th ^ "]") rules) ^ "]";
+val {type_cases, pred_cases, ...} = Induct.dest_rules ctxt;
+val cases_rules_json =
+  "{\"type\":" ^ cases_json type_cases ^ ",\"pred\":" ^ cases_json pred_cases ^ "}";
 
 val json =
   "{\"types\":[" ^ commas (! type_out) ^ "]" ^
@@ -154,6 +178,8 @@ val json =
   ",\"safeSolvers\":" ^ strings_json safe_solvers ^
   ",\"claset\":" ^ claset_json ^
   ",\"contextRules\":" ^ context_rules_json ^
+  ",\"factTags\":" ^ fact_tags_json ^
+  ",\"casesRules\":" ^ cases_rules_json ^
   ",\"thms\":[" ^ commas (! thm_out) ^ "]}";
 
 val _ = File.write (Path.explode out_path) json;

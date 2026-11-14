@@ -17,10 +17,12 @@ import {
   type IndexKey,
 } from "./table";
 import { TlaIsabelleError } from "../../../errors";
-import { allConst, isProtected, mkEquals, mkImplies, mkTerm, protect } from "./logic";
-import { listOfSeq } from "./seq";
+import { allConst, destEquals, isProtected, mkEquals, mkImplies, mkTerm, protect } from "./logic";
+import type { Limits } from "./interrupt";
+import { emptySeq, listOfSeq, mapsSeq, seqOfList, singleSeq, type Seq } from "./seq";
 import { distinctThms } from "./tactical";
 import {
+  aconv,
   foldVars,
   foldAtyps,
   foldTypes,
@@ -38,14 +40,21 @@ import {
 } from "./term";
 import { normType, type TyEnv } from "./type";
 import {
+  abstractRule,
   axiomThm,
+  betaConversion,
   bicompose,
+  biresolution,
+  etaConversion,
   forallElim,
   forallIntr,
   incrIndexesThm,
   instantiate,
   instantiateTypes,
+  nprems,
   rs,
+  symmetric,
+  transitive,
   type Instantiation,
   type Thm,
 } from "./thm";
@@ -62,6 +71,13 @@ export const remdupsRl = axiomThm(
 );
 export const protectI = axiomThm(mkImplies(propVar("A"), protect(propVar("A"))));
 export const protectD = axiomThm(mkImplies(protect(propVar("A")), propVar("A")));
+export const protectCong = axiomThm(mkEquals(protect(propVar("A")), protect(propVar("A"))));
+export const equalsCong = axiomThm(
+  mkEquals(
+    mkEquals(mkVar("x", 0, mkTVar("'a", 0)), mkVar("y", 0, mkTVar("'a", 0))),
+    mkEquals(mkVar("x", 0, mkTVar("'a", 0)), mkVar("y", 0, mkTVar("'a", 0))),
+  ),
+);
 export const reflexiveThm = axiomThm(
   mkEquals(mkVar("x", 0, mkTVar("'a", 0)), mkVar("x", 0, mkTVar("'a", 0))),
 );
@@ -235,6 +251,30 @@ const compose = (tha: Thm, index: number, thb: Thm): Thm => {
   return results[0];
 };
 
+export const betaEtaConversion = (term: Term) => {
+  const beta = betaConversion(true, term);
+  return transitive(beta, etaConversion(destEquals(beta.prop)[1]));
+};
+
+// f ?x1 ... ?xn == u becomes f == %x1 ... xn. u.
+export const absDef = (thm: Thm): Thm => {
+  const contractLhs = (current: Thm) =>
+    transitive(symmetric(betaEtaConversion(destEquals(current.prop)[0])), current);
+  const varArgs = (term: Term): Term[] => {
+    if (term.kind !== "App" || term.arg.kind !== "Var") return [];
+    const variable = term.arg;
+    return [variable, ...varArgs(term.fun).filter((other) => !aconv(other, variable))];
+  };
+  const contracted = contractLhs(thm);
+  return contractLhs(
+    varArgs(destEquals(contracted.prop)[0]).reduce(
+      (current, variable) =>
+        abstractRule(variable.kind === "Var" ? variable.name : "", variable, current),
+      contracted,
+    ),
+  );
+};
+
 export const compIncr = (tha: Thm, thb: Thm) =>
   compose(tha, 1, incrIndexesThm(tha.maxidx + 1, thb));
 
@@ -253,3 +293,24 @@ export const compNoFlatten = (thm: Thm, count: number, index: number, rule: Thm)
   if (results.length !== 1) throw new TlaIsabelleError("THM", `comp_no_flatten ${index}`);
   return results[0];
 };
+
+export const multiResolves = (
+  limits: Limits,
+  facts: readonly Thm[],
+  rules: readonly Thm[],
+): Seq<Thm> =>
+  mapsSeq(
+    (rule) =>
+      facts.reduceRight<Seq<Thm>>(
+        (results, fact, index) =>
+          mapsSeq(
+            (thm) =>
+              index + 1 > nprems(thm)
+                ? emptySeq
+                : biresolution(limits, false, [{ isElim: false, rule: fact }], index + 1, thm),
+            results,
+          ),
+        singleSeq(rule),
+      ),
+    seqOfList(rules),
+  );

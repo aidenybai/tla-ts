@@ -9,6 +9,8 @@ export const isBackend = (prover: string): prover is Backend =>
 
 export interface Decision {
   verdict: Verdict;
+  output?: string;
+  errorOutput?: string;
   timeUsedMs: number;
 }
 

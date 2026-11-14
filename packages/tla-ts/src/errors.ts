@@ -258,6 +258,16 @@ export class TlaProverError extends TlaError {
   }
 }
 
+export class TlaMethodError extends TlaProverError {
+  readonly locus: Locus | undefined;
+
+  constructor(message: string, locus: Locus | undefined) {
+    super(message);
+    this.name = "TlaMethodError";
+    this.locus = locus;
+  }
+}
+
 export class TlaZenonError extends TlaError {
   constructor(message: string, cause?: unknown) {
     super(message, cause);
@@ -303,6 +313,13 @@ export class SmtCanceledError extends TlaError {
   }
 }
 
+export class SmtTacticError extends TlaError {
+  constructor(message: string) {
+    super(message);
+    this.name = "SmtTacticError";
+  }
+}
+
 export class SmtInvariantError extends TlaError {
   constructor(message: string) {
     super(message);
@@ -324,10 +341,20 @@ export class PddMemoryOutError extends TlaError {
   }
 }
 
+export interface SmtPosition {
+  line: number;
+  column: number;
+}
+
 export class SmtParseError extends TlaError {
-  constructor(message: string, cause?: unknown) {
-    super(message, cause);
+  line: number;
+  column: number;
+
+  constructor(message: string, position: SmtPosition) {
+    super(message);
     this.name = "SmtParseError";
+    this.line = position.line;
+    this.column = position.column;
   }
 }
 

@@ -2,6 +2,7 @@
 
 import { remdupsRl } from "../pure/drule";
 import { selectGoal } from "../pure/goal";
+import { unifyTermNet } from "../pure/net";
 import { deepen } from "../pure/search";
 import { stripAssumsConcl, stripAssumsHyp } from "../pure/logic";
 import type { Limits } from "../pure/interrupt";
@@ -45,19 +46,36 @@ interface Visited {
   readonly concl: Term;
 }
 
-const orderRules = (rules: ContextRule[]): BiresRule[] => {
+// orderlist_no_weight sorts by tag alone.
+const orderContextRules = (rules: readonly ContextRule[], isWeighted: boolean) => {
   const sorted = [...rules].sort(
-    (left, right) => left.weight - right.weight || left.tag - right.tag,
+    (left, right) => (isWeighted ? left.weight - right.weight : 0) || left.tag - right.tag,
   );
-  return sorted
-    .filter(
-      (rule, index) =>
-        index + 1 >= sorted.length ||
-        sorted[index + 1].weight !== rule.weight ||
-        sorted[index + 1].tag !== rule.tag,
-    )
-    .map((rule) => ({ isElim: rule.isElim, rule: rule.rule }));
+  return sorted.filter(
+    (rule, index) =>
+      index + 1 >= sorted.length ||
+      sorted[index + 1].weight !== rule.weight ||
+      sorted[index + 1].tag !== rule.tag,
+  );
 };
+
+const orderRules = (rules: ContextRule[]): BiresRule[] =>
+  orderContextRules(rules, true).map((rule) => ({ isElim: rule.isElim, rule: rule.rule }));
+
+// Context_Rules.find_rules_netpair: the elimination rules for the first fact, then the
+// introduction rules for the goal.
+export const findRulesNetpair = (
+  isWeighted: boolean,
+  facts: readonly Thm[],
+  goal: Term,
+  netpair: NetPair<ContextRule>,
+): Thm[] =>
+  [
+    ...(facts.length === 0
+      ? []
+      : orderContextRules(unifyTermNet(netpair.elim, stripAssumsConcl(facts[0].prop)), isWeighted)),
+    ...orderContextRules(unifyTermNet(netpair.intro, stripAssumsConcl(goal)), isWeighted),
+  ].map((rule) => rule.rule);
 
 const countDistinct = (terms: readonly Term[]) =>
   terms.reduce<Term[]>(

@@ -10,9 +10,10 @@ export interface Locus {
   endColumn: number;
 }
 
-interface ObligationWarning {
+export interface ObligationWarning {
   text: string;
-  channel: "toolbox" | "toolboxOnly" | "stderr" | "stdout";
+  channel: "toolbox" | "toolboxOnly" | "stderr" | "stdout" | "error";
+  locus?: Locus;
 }
 
 export type Warn = (warning: ObligationWarning) => void;
@@ -38,6 +39,17 @@ export const getErrorNote = (locus: Locus | undefined, message: string): Obligat
   text: `${getAtPrefix(locus)}Error: ${message}`,
   channel: "stderr",
 });
+
+export const getErrorSetting = (locus: Locus | undefined, message: string): ObligationWarning => ({
+  text: message,
+  channel: "error",
+  locus,
+});
+
+export const warnError = (onWarning: Warn, locus: Locus | undefined, message: string) => {
+  onWarning(getErrorNote(locus, message));
+  onWarning(getErrorSetting(locus, message));
+};
 
 export const getLocusPrefix = (locus: Locus | undefined) =>
   locus ? `${getLocusText(locus)} :\n` : "";
@@ -129,6 +141,7 @@ export interface Bound {
   name: string;
   level: Level;
   domain: BoundDomain;
+  location?: Locus;
 }
 
 export type Selector =
@@ -149,7 +162,7 @@ interface ExceptSpec {
 
 export type ParenForm =
   | { kind: "Syntax" }
-  | { kind: "Nlabel"; label: string; names: string[] }
+  | { kind: "Nlabel"; label: string; names: string[]; location?: Locus }
   | { kind: "Xlabel"; label: string; indices: { name: string; index: number }[] };
 
 export interface Param {
@@ -209,8 +222,9 @@ export interface Field {
 export interface InstanceDefinition {
   args: string[];
   module: string;
-  substitutions: { name: string; expression: Expr }[];
+  substitutions: { name: string; expression: Expr; location?: Locus }[];
   location?: Locus;
+  instanceLocation?: Locus;
 }
 
 export type Defn = DefnCore & { location?: Locus };

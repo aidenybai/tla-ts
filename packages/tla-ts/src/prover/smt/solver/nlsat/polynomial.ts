@@ -504,7 +504,7 @@ export class PolynomialManager {
     return key;
   }
 
-  private addmul(firstCoeff: bigint, first: Polynomial, secondCoeff: bigint, second: Polynomial) {
+  addmul(firstCoeff: bigint, first: Polynomial, secondCoeff: bigint, second: Polynomial) {
     this.som.reset();
     this.som.addmul(firstCoeff, this.unit, first);
     this.som.addmul(secondCoeff, this.unit, second);

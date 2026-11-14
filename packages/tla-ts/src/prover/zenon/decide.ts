@@ -87,9 +87,16 @@ export const runZenon = (text: string, options: DecideOptions): ZenonRun => {
   };
 };
 
-type ZenonDecision = { verdict: "unsat"; proof: string } | { verdict: "unknown" };
+type ZenonDecision = { verdict: "unsat"; proof: string } | { verdict: "unknown"; error?: string };
+
+const FAILURE_ERRORS: Partial<Record<SearchFailure | "zenon error", string>> = {
+  exhausted: "Zenon error: exhausted search space without finding a proof\n",
+  "memory limit": "Zenon error: could not find a proof within the memory size limit\n",
+};
 
 export const decideZenon = (text: string, options: DecideOptions): ZenonDecision => {
-  const isar = runZenon(text, options).isar;
-  return isar === undefined ? { verdict: "unknown" } : { verdict: "unsat", proof: isar };
+  const run = runZenon(text, options);
+  if (run.isar !== undefined) return { verdict: "unsat", proof: run.isar };
+  const error = run.failure && FAILURE_ERRORS[run.failure];
+  return { verdict: "unknown", ...(error !== undefined && { error }) };
 };

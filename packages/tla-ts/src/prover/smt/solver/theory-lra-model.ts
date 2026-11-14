@@ -1,16 +1,5 @@
 // Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt.
-import {
-  FAMILY_ARITH,
-  FAMILY_BASIC,
-  OP_DIV,
-  OP_DIV0,
-  OP_IDIV,
-  OP_IDIV0,
-  OP_ITE,
-  OP_MOD,
-  OP_MOD0,
-} from "./ast";
-import { SmtUnsupportedError } from "../../../errors";
+import { OP_DIV, OP_DIV0, OP_IDIV, OP_IDIV0, OP_MOD, OP_MOD0, OP_POWER0, OP_REM } from "./ast";
 import type { Enode } from "./enode";
 import type { ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
@@ -35,7 +24,7 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
   }
 
   private isRelevantAndShared(node: Enode) {
-    return this.context.isRelevant(node.owner) && this.isShared(node);
+    return this.context.isRelevant(node.owner) && this.context.isShared(node);
   }
 
   private randomUpdate() {
@@ -137,19 +126,21 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
   }
 
   mkValue(node: Enode) {
-    if (node.thVar < 0) return undefined;
+    const thVar = this.getThVar(node);
+    if (thVar < 0) return undefined;
     const nla = this.nla;
     if (
       nla === undefined ||
       !nla.isUsingNraModel ||
-      this.solver.externalToLocalColumn(node.thVar) === NULL_LPVAR
+      this.solver.externalToLocalColumn(thVar) === NULL_LPVAR
     )
-      return this.getValueExpr(node.thVar);
-    const value = this.getNlValue(nla, node.thVar).value;
-    if (this.isIntVar(node.thVar))
-      return this.manager.mkNumeral(value instanceof Rational && value.isInt() ? value.num : 0n);
-    if (!(value instanceof Rational)) throw new SmtUnsupportedError("an irrational model value");
-    return this.manager.mkRealNumeral(value);
+      return this.getValueExpr(thVar);
+    const value = this.getNlValue(nla, thVar);
+    if (this.isIntVar(thVar))
+      return this.manager.mkNumeral(
+        value.value instanceof Rational && value.value.isInt() ? value.value.num : 0n,
+      );
+    return this.manager.mkAlgebraicNumeral(value);
   }
 
   private isEq(first: number, second: number) {
@@ -191,22 +182,11 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
       : this.manager.mkRealNumeral(value);
   }
 
-  private isShared(node: Enode) {
-    const root = node.root;
-    if (this.manager.getOp(root.owner) === OP_ITE) return true;
-    if (root.thVar < 0) return false;
-    if (this.context.qmanager.isShared(root)) return true;
-    for (const parent of root.parents) {
-      const family = this.manager.getFamily(parent.owner);
-      if (family !== FAMILY_ARITH && family !== FAMILY_BASIC) return true;
-    }
-    return this.isSharedWithUnderspecified(root);
-  }
-
-  private isSharedWithUnderspecified(root: Enode) {
+  override isShared(thVar: number) {
     const manager = this.manager;
     const count = this.underspecifiedTerms.length;
     if (count === 0) return false;
+    const root = this.getEnode(thVar).root;
     if (root.parents.length > 2 * count)
       return this.underspecifiedTerms.some((term) =>
         manager.someArg(term, (arg) => this.context.getEnode(arg)?.root === root),
@@ -214,11 +194,17 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     return root.parents.some((parent) => this.isUnderspecified(parent.owner));
   }
 
+  override includeFuncInterp(decl: number) {
+    const op = this.manager.funcDecls[decl].op;
+    return op === OP_DIV0 || op === OP_IDIV0 || op === OP_POWER0 || op === OP_MOD0;
+  }
+
   private isUnderspecified(expr: number) {
     const op = this.manager.getOp(expr);
     return (
       op === OP_DIV ||
       op === OP_IDIV ||
+      op === OP_REM ||
       op === OP_MOD ||
       op === OP_DIV0 ||
       op === OP_IDIV0 ||

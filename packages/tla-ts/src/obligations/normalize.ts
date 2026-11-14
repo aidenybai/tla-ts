@@ -3,6 +3,7 @@
 import { TlaProofError, TlapmBugError } from "../errors";
 import { lambdify } from "./action";
 import type { Anonymizer } from "./anonymize";
+import { checkEnabledAxioms } from "./enabled-axioms";
 import { isEqualHyp } from "./equality";
 import {
   adjoinAll,
@@ -323,9 +324,13 @@ const instantiate = (
   const parameters = getParameters(module);
   for (const substitution of instance.substitutions) {
     if (!parameters.has(substitution.name)) {
-      throw new TlaProofError(
-        `Parameter ${substitution.name} occurs in the statement \`INSTANCE ${instance.module} WITH\`, and is not declared in the module ${instance.module}`,
-      );
+      pipeline.onWarning({
+        text: `${getLocusPrefix(substitution.location)}Parameter ${substitution.name} occurs in the statement \`INSTANCE ${instance.module} WITH\`, and is not declared in the module ${instance.module}\n`,
+        channel: "toolbox",
+      });
+      throw new TlaProofError("Module.Elab.instance_substitutes_declared_identifiers", {
+        failure: "Module.Elab.instance_substitutes_declared_identifiers",
+      });
     }
   }
   const instanceScope = adjoinAll(
@@ -338,9 +343,12 @@ const instantiate = (
   for (const name of [...parameters].sort(compareNames)) {
     if (substitutes.has(name)) continue;
     if (!findNamed(instanceScope, name)) {
-      throw new TlaProofError(
-        `Required parameter ${name} for module ${instance.module} could not be inferred.`,
-      );
+      const message = `Required parameter ${name} for module ${instance.module} could not be inferred.`;
+      pipeline.onWarning({
+        text: `${getLocusPrefix(instance.instanceLocation)}${message}\n`,
+        channel: "toolbox",
+      });
+      throw new TlaProofError(message, { failure: "Module.Elab.complete_with_statement_params" });
     }
     substitutes.set(name, at({ kind: "Opaque", name }, { location }));
   }
@@ -510,12 +518,17 @@ export const normalize = (
           binding.sequent.context,
         );
         const anonymized = pipeline.anonymizer.proof(proofScope, proof);
+        const proofContext = getScopeHyps(proofScope);
         const simplified = module.isImportant
-          ? pipeline.simplify(
-              getScopeHyps(proofScope),
-              binding.sequent.active,
-              anonymized,
-              getScopeTime(binding.sequent.context, "Always"),
+          ? checkEnabledAxioms(
+              proofContext,
+              pipeline.simplify(
+                proofContext,
+                binding.sequent.active,
+                anonymized,
+                getScopeTime(binding.sequent.context, "Always"),
+              ),
+              pipeline.onWarning,
             )
           : anonymized;
         emit({ ...unit, name, sequent, proof: simplified });

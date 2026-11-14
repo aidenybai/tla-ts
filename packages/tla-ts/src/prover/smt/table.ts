@@ -130,7 +130,7 @@ export const TYPED_SYMBOLS = [
   "TIntLteq",
 ];
 
-export type AxiomArgument = number | string | string[];
+export type AxiomArgument = number | string | AxiomArgument[];
 
 export interface Axiom {
   name: string;

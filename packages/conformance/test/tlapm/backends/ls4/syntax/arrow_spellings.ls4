@@ -1,0 +1,12 @@
+(*---
+description: ptl_to_trp reads => and -> alike; LS4 refutes the negation of (p => q) <-> (p -> q).
+ref: translate/folex.mll#lexer
+outcome: unsat
+---*)
+not ((p => q) <-> (p -> q))
+
+(*--- recorded
+all:
+  exit: 0
+  transcript: unsat
+---*)

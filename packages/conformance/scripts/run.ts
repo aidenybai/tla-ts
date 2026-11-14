@@ -10,6 +10,7 @@ const build = spawnSync(
   [
     "build",
     `scripts/${name}.ts`,
+    "scripts/tla-ts-backend.ts",
     "--target=node",
     "--packages=external",
     "--outdir",

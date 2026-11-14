@@ -45,11 +45,29 @@ export class CoreSolver {
   infeasibleSumSign = 0;
   infeasibleCombination: [Rational, number][] = [];
   reducedCosts: Rational[] | undefined;
+  private backup: Impq[] = [];
   private isBlandMode = false;
   private leftBasis = new IndexedUintSet();
   private leftBasisRepeated = 0;
 
   constructor(readonly settings: LpSettings) {}
+
+  getColumnCount() {
+    return this.matrix.getColumnCount();
+  }
+
+  backupX() {
+    this.backup = this.x.slice();
+  }
+
+  restoreX() {
+    const count = Math.min(this.backup.length, this.getColumnCount());
+    for (let column = 0; column < count; column++) this.x[column] = this.backup[column];
+  }
+
+  getBackupSize() {
+    return this.backup.length;
+  }
 
   addColumn(isBasic: boolean) {
     const column = this.matrix.getColumnCount();

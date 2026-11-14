@@ -1,12 +1,23 @@
-// Ported from Z3 (src/smt/smt_cg_table.h, src/smt/smt_cg_table.cpp), MIT license, see z3-license.txt.
+// Ported from Z3 (src/smt/smt_cg_table.h, src/smt/smt_cg_table.cpp, src/ast/euf/euf_etable.h,
+// src/ast/euf/euf_etable.cpp), MIT license, see z3-license.txt.
 import { CONGRUENCE_JUSTIFICATIONS, type Enode } from "./enode";
+
+// The smt enode and the euf enode share the congruence table.
+export interface CgNode {
+  readonly owner: number;
+  readonly decl: number;
+  readonly numArgs: number;
+  readonly isEq: boolean;
+  readonly root: CgNode;
+  getArg(index: number): CgNode;
+}
 
 const getEqHash = (decl: number, first: number, second: number) =>
   first < second
     ? (Math.imul(Math.imul(decl, 0x9e3779b1) + first, 0x85ebca6b) + second) | 0
     : (Math.imul(Math.imul(decl, 0x9e3779b1) + second, 0x85ebca6b) + first) | 0;
 
-const getHash = (decl: number, args: Enode[], isEq: boolean) => {
+const getHash = (decl: number, args: readonly CgNode[], isEq: boolean) => {
   if (isEq) return getEqHash(decl, args[0].root.owner, args[1].root.owner);
   let hash = decl;
   for (let index = 0; index < args.length; index++)
@@ -14,7 +25,7 @@ const getHash = (decl: number, args: Enode[], isEq: boolean) => {
   return hash;
 };
 
-const getNodeHash = (node: Enode) => {
+const getNodeHash = (node: CgNode) => {
   if (node.isEq) return getEqHash(node.decl, node.getArg(0).root.owner, node.getArg(1).root.owner);
   let hash = node.decl;
   for (let index = 0; index < node.numArgs; index++)
@@ -22,7 +33,7 @@ const getNodeHash = (node: Enode) => {
   return hash;
 };
 
-const isPairCongruentTo = (node: Enode, first: Enode, second: Enode, isEq: boolean) => {
+const isPairCongruentTo = (node: CgNode, first: CgNode, second: CgNode, isEq: boolean) => {
   const nodeFirst = node.getArg(0).root;
   const nodeSecond = node.getArg(1).root;
   return (
@@ -31,7 +42,7 @@ const isPairCongruentTo = (node: Enode, first: Enode, second: Enode, isEq: boole
   );
 };
 
-const isCongruentTo = (node: Enode, decl: number, args: Enode[], isEq: boolean) => {
+const isCongruentTo = (node: CgNode, decl: number, args: readonly CgNode[], isEq: boolean) => {
   if (node.decl !== decl || node.numArgs !== args.length) return false;
   if (isEq) return isPairCongruentTo(node, args[0], args[1], true);
   for (let index = 0; index < args.length; index++)
@@ -39,7 +50,7 @@ const isCongruentTo = (node: Enode, decl: number, args: Enode[], isEq: boolean) 
   return true;
 };
 
-export const isCongruent = (first: Enode, second: Enode) => {
+export const isCongruent = (first: CgNode, second: CgNode) => {
   if (first.decl !== second.decl || first.numArgs !== second.numArgs) return false;
   if (first.numArgs === 2)
     return isPairCongruentTo(first, second.getArg(0), second.getArg(1), first.isEq);
@@ -55,14 +66,14 @@ const EMPTY = 0;
 const FULL = 1;
 const DELETED = 2;
 
-export class CgTable {
-  private nodes = Array<Enode | null>(1024).fill(null);
+export class CgTable<Node extends CgNode = Enode> {
+  private nodes = Array<Node | null>(1024).fill(null);
   private hashes = new Int32Array(1024);
   private states = new Uint8Array(1024);
   private numFull = 0;
   private numDeleted = 0;
 
-  private find(decl: number, args: Enode[], isEq: boolean, hash: number) {
+  private find(decl: number, args: readonly CgNode[], isEq: boolean, hash: number) {
     const mask = this.states.length - 1;
     for (let slot = hash & mask; this.states[slot] !== EMPTY; slot = (slot + 1) & mask) {
       const node = this.nodes[slot];
@@ -77,7 +88,7 @@ export class CgTable {
     return undefined;
   }
 
-  private findNode(node: Enode, hash: number) {
+  private findNode(node: CgNode, hash: number) {
     const mask = this.states.length - 1;
     for (let slot = hash & mask; this.states[slot] !== EMPTY; slot = (slot + 1) & mask) {
       const candidate = this.nodes[slot];
@@ -92,7 +103,7 @@ export class CgTable {
     return undefined;
   }
 
-  insert(node: Enode) {
+  insert(node: Node) {
     const hash = getNodeHash(node);
     const existing = this.findNode(node, hash);
     if (existing !== undefined) return existing;
@@ -105,7 +116,7 @@ export class CgTable {
     return node;
   }
 
-  private place(slot: number, node: Enode, hash: number) {
+  private place(slot: number, node: Node, hash: number) {
     this.nodes[slot] = node;
     this.hashes[slot] = hash;
     this.states[slot] = FULL;
@@ -117,7 +128,7 @@ export class CgTable {
     const hashes = this.hashes;
     const states = this.states;
     const size = 4 * this.numFull > states.length ? 2 * states.length : states.length;
-    this.nodes = Array<Enode | null>(size).fill(null);
+    this.nodes = Array<Node | null>(size).fill(null);
     this.hashes = new Int32Array(size);
     this.states = new Uint8Array(size);
     this.numFull = 0;
@@ -132,22 +143,22 @@ export class CgTable {
     }
   }
 
-  findFor(decl: number, args: Enode[], isEq: boolean) {
+  findFor(decl: number, args: readonly CgNode[], isEq: boolean) {
     return this.find(decl, args, isEq, getHash(decl, args, isEq));
   }
 
-  findCongruent(node: Enode) {
+  findCongruent(node: CgNode) {
     return this.findNode(node, getNodeHash(node));
   }
 
-  private getSlot(node: Enode) {
+  private getSlot(node: CgNode) {
     const mask = this.states.length - 1;
     for (let slot = getNodeHash(node) & mask; this.states[slot] !== EMPTY; slot = (slot + 1) & mask)
       if (this.nodes[slot] === node) return slot;
     return -1;
   }
 
-  erase(node: Enode) {
+  erase(node: CgNode) {
     const slot = this.getSlot(node);
     if (slot === -1) return;
     this.nodes[slot] = null;

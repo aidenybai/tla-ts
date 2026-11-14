@@ -4,7 +4,10 @@ import { SmtCanceledError } from "../../../errors";
 
 export class ResourceLimit {
   count = 0;
+  isSuspended = false;
   private isCanceled = false;
+  private limit = Infinity;
+  private limits: number[] = [];
   private profiler: GCProfiler | null = null;
 
   constructor(
@@ -22,7 +25,28 @@ export class ResourceLimit {
       this.isCanceled = true;
       this.release();
     }
-    return !this.isCanceled;
+    return this.isSuspended || (!this.isCanceled && this.count <= this.limit);
+  }
+
+  isExhausted() {
+    return !this.isSuspended && (this.isCanceled || this.count > this.limit);
+  }
+
+  push(delta: number) {
+    this.limits.push(this.limit);
+    this.limit = Math.min(delta === 0 ? Infinity : this.count + delta, this.limit);
+    this.isCanceled = false;
+  }
+
+  pop() {
+    this.count = Math.min(this.count, this.limit);
+    this.limit = this.limits.pop() ?? Infinity;
+    this.isCanceled = false;
+  }
+
+  restart(deadline: number) {
+    this.deadline = deadline;
+    this.isCanceled = false;
   }
 
   checkpoint() {

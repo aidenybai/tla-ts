@@ -11,8 +11,10 @@ import {
   at,
   exprifySequent,
   findNamed,
+  getScopeHyps,
   getBoundFresh,
   getErrorNote,
+  getErrorSetting,
   getFresh,
   getLocalDefn,
   getLocusPrefix,
@@ -22,6 +24,7 @@ import {
   mapBoundDomains,
   mapScoped,
   mapSelectorArgs,
+  warnError,
   type Bound,
   type Defn,
   type ExceptPoint,
@@ -35,6 +38,8 @@ import {
   type Sequent,
   type WhereDefined,
 } from "./expression";
+import { renderDoc } from "./format";
+import { printExpression } from "./printer";
 import { resolveSubexpression } from "./subexpression";
 import { getTime } from "./temporal";
 import {
@@ -139,7 +144,7 @@ export const createAnonymizer = (
     const found = findNamed(context.scope, name);
     if (!found) {
       const message = `Operator "${name}" not found`;
-      onWarning(getErrorNote(from.location, message));
+      warnError(onWarning, from.location, message);
       throw new TlaProofError(message, { failure: "Expr.Anon: 4" });
     }
     const index = found.depth + 1;
@@ -150,15 +155,20 @@ export const createAnonymizer = (
         if (definition.kind === "Operator") {
           return createStandardForm(index, hyp.whereDefined, definition.body, args, from);
         }
-        if (definition.kind === "Recursive")
-          throw new TlaProofError("Recursive operators not supported by TLAPS", {
-            failure: "Expr.Anon: Recursive",
-          });
+        if (definition.kind === "Recursive") {
+          const message = "Recursive operators not supported by TLAPS";
+          onWarning(getErrorSetting(hyp.location, message));
+          throw new TlaProofError(message, { failure: "Expr.Anon: Recursive" });
+        }
         return createAnonApply(index, args, from);
       }
       case "Fresh":
         return createAnonApply(index, args, from);
       case "Flex":
+        if (args.length > 0)
+          throw new TlapmBugError(
+            'File "src/expr/e_anon.ml", line 224, characters 24-30: Assertion failed',
+          );
         return at({ kind: "Ix", index }, from);
       case "Fact":
         throw new TlapmBugError(
@@ -191,6 +201,7 @@ export const createAnonymizer = (
       }
       const message = `Operator "${prefix}" not found`;
       if (selector) onWarning(getErrorNote(from.location, message));
+      onWarning(getErrorSetting(from.location, message));
       throw new TlaProofError(message, {
         failure: `Expr.Anon: ${selector ? ANON_SELECTOR_FAILURES[selector.kind] : "1EMPTY"}`,
       });
@@ -200,7 +211,14 @@ export const createAnonymizer = (
       hyp.kind !== "Defn" ||
       (hyp.definition.kind !== "Operator" && hyp.definition.kind !== "Bpragma")
     ) {
-      throw new TlaProofError("invalid subexpression reference");
+      onWarning(
+        getErrorNote(
+          from.location,
+          `invalid subexpression reference in:  ${renderDoc(printExpression([], from))}`,
+        ),
+      );
+      onWarning(getErrorSetting(from.location, "invalid subexpression reference"));
+      throw new TlaProofError("invalid subexpression reference", { failure: "Expr.Anon: 3" });
     }
     const index = found.depth + 1;
     if (selectors.length === 0 && isInstance) {
@@ -209,7 +227,8 @@ export const createAnonymizer = (
         : createStandardForm(index, hyp.whereDefined, hyp.definition.body, args, from);
     }
     const body = withLocus(shiftExpr(index, hyp.definition.body), from);
-    return withLocus(resolveSubexpression(onWarning, body, args, selectors), from);
+    const hyps = getScopeHyps(context.scope);
+    return withLocus(resolveSubexpression(onWarning, hyps, body, args, selectors), from);
   };
 
   const anonymizeCore = (context: AnonContext, expression: Expr): Expr => {
@@ -266,7 +285,11 @@ export const createAnonymizer = (
       label: form.label,
       indices: form.names.map((name) => {
         const found = findNamed(context.scope, name);
-        if (!found) throw new TlaProofError(`Identifier "${name}" in label parameters not found`);
+        if (!found) {
+          const message = `Identifier "${name}" in label parameters not found`;
+          warnError(onWarning, form.location, message);
+          throw new TlaProofError(message, { failure: "Expr.Anon" });
+        }
         return { name, index: found.depth + 1 };
       }),
     };
