@@ -1,7 +1,6 @@
 import { TlaProverError, TlaUnsupportedError } from "../../errors";
 
 // Loaded at runtime so browser bundles leave them out. prove loads this module only in Node and Bun.
-const childProcess = process.getBuiltinModule("node:child_process");
 const fileSystem = process.getBuiltinModule("node:fs");
 const operatingSystem = process.getBuiltinModule("node:os");
 const path = process.getBuiltinModule("node:path");
@@ -64,11 +63,14 @@ export const proveWithTlapm = async (
     fileSystem.writeFileSync(path.join(directory, `${moduleName}.tla`), source),
   );
   const results = new Map<number, TlapmResult>();
-  const child = childProcess.spawn(
-    tlapm,
-    ["--toolbox", "0", "0", "--cache-dir", path.join(directory, ".tlacache"), `${name}.tla`],
-    { cwd: directory, stdio: ["ignore", "ignore", "pipe"] },
-  );
+  // Loaded on use, since the CLI's shared chunk holds this module and child_process is slow to load.
+  const child = process
+    .getBuiltinModule("node:child_process")
+    .spawn(
+      tlapm,
+      ["--toolbox", "0", "0", "--cache-dir", path.join(directory, ".tlacache"), `${name}.tla`],
+      { cwd: directory, stdio: ["ignore", "ignore", "pipe"] },
+    );
   const kill = () => child.kill();
   options.signal?.addEventListener("abort", kill);
   let unparsed = "";
