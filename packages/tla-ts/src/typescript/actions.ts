@@ -1769,6 +1769,32 @@ const getUpdate = (expression: ts.BinaryExpression, path: Path, context: Context
 const getRootCall = (node: ts.Expression | undefined): ts.Expression | undefined =>
   node !== undefined && ts.isPropertyAccessExpression(node) ? getRootCall(node.expression) : node;
 
+// Whether Array.prototype.map.call on an object that isn't an array, with a callback, throws the
+// RangeError of making an array of the object's length, from 2^32.
+const getMapCreateThrows = (expression: ts.Expression, path: Path, context: Context) => {
+  if (!ts.isCallExpression(expression)) return undefined;
+  const mappedArgument = expression.arguments.at(0);
+  const mapperArgument = expression.arguments.at(1);
+  const mapped = mappedArgument === undefined ? undefined : skipCasts(mappedArgument);
+  const mapper = mapperArgument === undefined ? undefined : skipCasts(mapperArgument);
+  return context.heap !== undefined &&
+    getArrayMethodCall(expression, context) === "map" &&
+    mapped !== undefined &&
+    mapper !== undefined &&
+    ts.isIdentifier(mapped) &&
+    ts.isIdentifier(mapper)
+    ? useJavaScript(
+        "MapCreateThrows",
+        [
+          getHeap(path.scope, expression, context),
+          translateExpression(mapped, path.scope, context),
+          translateExpression(mapper, path.scope, context),
+        ],
+        context,
+      )
+    : undefined;
+};
+
 export const translateCallStatement = (
   expression: ts.CallExpression,
   path: Path,
@@ -1779,6 +1805,24 @@ export const translateCallStatement = (
   if (expression.expression.kind === ts.SyntaxKind.SuperKeyword) {
     return translateSuperCall(expression, path, context, frame, continueWith);
   }
+  const mapThrows = getMapCreateThrows(expression, path, context);
+  if (mapThrows !== undefined) {
+    return ifThenElse(
+      mapThrows,
+      throwError("RangeError", path, expression, context, frame),
+      translateCallStatementBody(expression, path, context, frame, continueWith),
+    );
+  }
+  return translateCallStatementBody(expression, path, context, frame, continueWith);
+};
+
+const translateCallStatementBody = (
+  expression: ts.CallExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
   const loop = getLoopCall(expression, path, context);
   // A receiver or a later argument that only statements can run runs first, where what evaluates
   // before it doesn't read what it changes.
@@ -10171,6 +10215,27 @@ export const translateDeclarations = (
   if (declarations.length === 0) return continueWith(path);
   const declaration = declarations[0];
   rejectCatchRedeclaration(declaration);
+  const initializer = declaration.initializer;
+  const mapThrows =
+    initializer === undefined ? undefined : getMapCreateThrows(initializer, path, context);
+  if (initializer !== undefined && mapThrows !== undefined) {
+    return ifThenElse(
+      mapThrows,
+      throwError("RangeError", path, initializer, context, frame),
+      translateCheckedDeclarations(declarations, path, context, frame, continueWith),
+    );
+  }
+  return translateCheckedDeclarations(declarations, path, context, frame, continueWith);
+};
+
+const translateCheckedDeclarations = (
+  declarations: readonly ts.VariableDeclaration[],
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const declaration = declarations[0];
   const initializer = declaration.initializer;
   // An assignment that a later declaration's initializer evaluates first runs after the
   // declarations before it.

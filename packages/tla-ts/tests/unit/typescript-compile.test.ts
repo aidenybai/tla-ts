@@ -1467,6 +1467,40 @@ describe("values", () => {
     });
   });
 
+  describe("throws the RangeError of mapping an object whose length is from 2^32", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const like = { 0: 9, length: Infinity };
+      const wide = { 0: 1, length: 2 ** 32 };
+      const small = { 0: 5, length: 1 };
+      const double = (value: unknown): unknown => (value as number) * 2;
+      let caught = "";
+      try {
+        Array.prototype.map.call(like, double);
+      } catch (error) {
+        caught += error instanceof RangeError ? "range," : "other,";
+      }
+      try {
+        const made = Array.prototype.map.call(wide, double);
+        caught += String(made.length);
+      } catch (error) {
+        caught += error instanceof RangeError ? "range," : "other,";
+      }
+      const mapped = Array.prototype.map.call(small, double);
+      if (\`\${caught}\${mapped[0]}\` !== "${expected}") throw new Error(caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("range,range,10"))).failure).toBeUndefined();
+    });
+
+    it("rejects the second map as another error", async () => {
+      expect((await checkModel(getSource("range,other,10"))).failure?.message).toContain(
+        "range,range,",
+      );
+    });
+  });
+
   describe("pops and pushes on array-like objects whose length is near 2^53", () => {
     const getSource = (expected: string) => `
       const like: { [key: string]: unknown } = { "9007199254740990": "last", length: 2 ** 53 - 1 };

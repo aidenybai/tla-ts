@@ -132,6 +132,7 @@ import {
   getKeptIterator,
   isBigIntLike,
   getWrappedThis,
+  getArrayMethodCall,
 } from "./types";
 
 const SHORT_CIRCUITS = new Set([
@@ -4649,6 +4650,10 @@ export const isUnreachableChange = (node: ts.Node, context: Context) =>
 // malformed URI.
 export const getEngineErrors = (node: ts.Node, context: Context) => [
   ...getNumberMethodErrors(node, context),
+  // Array.prototype.map makes an array of an object's length, which throws a RangeError from 2^32.
+  ...(ts.isCallExpression(node) && getArrayMethodCall(node, context) === "map"
+    ? ["RangeError"]
+    : []),
   ...getOwnEngineErrors(node, context),
 ];
 
