@@ -13378,6 +13378,24 @@ describe("errors", () => {
     });
   });
 
+  describe("converts an array to a string through Array.prototype's methods", () => {
+    const getSource = (expected: string) => `
+      const holder = { seen: 0 };
+      const value: unknown = [1, 2];
+      if (String.prototype.trim.call([1, 2]) !== "${expected}") throw new Error("literal");
+      if (String.prototype.trim.call(value) !== "${expected}") throw new Error("unknown");
+      holder.seen = 1;
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("1"))).failure?.message).toContain('"literal"');
+    });
+  });
+
   describe("names an anonymous function by a comma, a static field, or a shorthand default", () => {
     const getSource = (expected: string) => `
       const holder = { seen: 0 };

@@ -19,7 +19,7 @@ import { getBuiltIn } from "./intrinsics";
 import { useJavaScript } from "./javascript";
 import { bind, callValue, getMethods, getWrittenFunctions, isNullish, read } from "./protocols";
 import { apply, boolean, not, string, tuple } from "./tla";
-import { getKind, isEvery } from "./types";
+import { getKind, isEvery, mayBeSequenceType } from "./types";
 
 // The hint that ToPrimitive takes, which decides whether it calls valueOf or toString first.
 type Hint = "default" | "number" | "string";
@@ -659,6 +659,14 @@ export const runConversion = (
     if (position === undefined) {
       const primitives = values.map((_, inner) => converted[order.indexOf(inner)]);
       return bind(current, "converted", conversion.combine(primitives), context, continueWith);
+    }
+    // An array that a sequence holds reads its methods from Array.prototype.
+    const type = context.checker.getTypeAtLocation(conversion.operands[position]);
+    if (
+      (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+      mayBeSequenceType(type, context.checker)
+    ) {
+      context.builtIns.add("Array.prototype");
     }
     return runToPrimitive(
       node,
