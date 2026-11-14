@@ -6941,7 +6941,26 @@ const translateLoopCall = (
           : ifThenElse(
               useJavaScript("Has", [getHeap(inner.scope, receiver, context), owner, key], context),
               read,
-              method === "map" ? keepHole() : repeat(inner, kept),
+              method === "map"
+                ? keepHole()
+                : leaf(
+                    call(name, [
+                      useJavaScript(
+                        "NextElementPosition",
+                        [
+                          getHeap(inner.scope, receiver, context),
+                          owner,
+                          identifier(position),
+                          identifier(lengthName),
+                          boolean(isReversed),
+                        ],
+                        context,
+                      ),
+                      kept,
+                      ...seeded,
+                      ...getValues(inner),
+                    ]),
+                  ),
             );
   };
   // Reads the element at a position of the array as the callback left it, where the array still

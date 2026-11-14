@@ -5018,6 +5018,35 @@ describe("errors", () => {
     });
   });
 
+  describe("skips to the next element after a hole where a callback runs as statements", () => {
+    const getSource = (expected: string) => `
+      const visited: number[] = [];
+      function visit(value: unknown, index: number, array: unknown[]) {
+        if (arguments.length === 3) visited.push(index);
+        return true;
+      }
+      const values: unknown[] = [0, 1];
+      values[999999] = 2;
+      const isEvery = values.every(visit);
+      values.reduceRight(function (sum: number, value: unknown, index: number) {
+        if (arguments.length === 4) visited.push(index);
+        return sum;
+      }, 0);
+      const seen = [isEvery, visited.join()];
+      if (seen.join(";") !== "${expected}") throw new Error(seen.join(";"));
+    `;
+
+    it("visits the elements of a long sparse array", async () => {
+      const result = await checkModel(getSource("true;0,1,999999,999999,1,0"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkModel(getSource("true;0,1,999999,999999,0,1"));
+      expect(result.failure?.message).toContain("true;0,1,999999,999999,1,0");
+    });
+  });
+
   describe("runs a call in new's arguments before a method of what new makes", () => {
     const getSource = (expected: string) => `
       function doubled(values: number[]): any {

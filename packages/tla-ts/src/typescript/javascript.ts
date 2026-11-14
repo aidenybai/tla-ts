@@ -1588,6 +1588,19 @@ IndexKeys(heap, ref) ==
   IN {key \\in DOMAIN object.values : IsIndex(key)}
        \\cup IF object.prototype = Null THEN {} ELSE IndexKeys(heap, object.prototype)
 
+\\* The position that a loop over an array-like object visits after a hole, in its order: the next
+\\* index that the object or a prototype holds, as no other has a property. A typed array, a proxy,
+\\* or an object that tla-ts follows may have others.
+NextElementPosition(heap, ref, position, length, isReversed) ==
+  IF ~IsHeap(ref) \\/ IsTypedArray(heap, ref) \\/ IsProxy(heap, ref) \\/ heap.objects[ref[Ref]].isOpaque
+  THEN IF isReversed THEN position - 1 ELSE position + 1
+  ELSE LET held == {ToIndex(key) + 1 : key \\in IndexKeys(heap, ref)}
+           later == {other \\in held :
+                       IF isReversed THEN other < position ELSE other > position /\\ other <= length}
+       IN CASE later = {} -> IF isReversed THEN 0 ELSE length + 1
+            [] isReversed -> CHOOSE other \\in later : \\A more \\in later : more <= other
+            [] OTHER -> CHOOSE other \\in later : \\A more \\in later : other <= more
+
 \\* The elements that an array-like object or its prototypes hold below its length, in order, with
 \\* their indices. The array methods that skip holes visit these. A record holds the length, so TLC
 \\* reads it even when no element is present.
