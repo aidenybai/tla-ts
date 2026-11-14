@@ -154,14 +154,17 @@ const parseWhere = (args: readonly OuterToken[]) => {
   const insts: { name: string; index: number; text: string }[] = [];
   let position = 0;
   while (position < args.length) {
-    if (args[position].kind === "symbol" && args[position].text === "?") position += 1;
     const variable = args[position];
-    if (variable?.kind !== "word" || variable.text.startsWith("'")) throw syntaxError(variable);
+    if ((variable.kind !== "word" && variable.kind !== "var") || variable.text.startsWith("'"))
+      throw syntaxError(variable);
     const digits = /\d*$/.exec(variable.text)?.[0] ?? "";
     if (args[position + 1]?.text !== "=" || !isInnerToken(args[position + 2]))
       throw syntaxError(args[position + 1]);
     insts.push({
-      name: variable.text.slice(0, variable.text.length - digits.length),
+      name: variable.text.slice(
+        variable.kind === "var" ? 1 : 0,
+        variable.text.length - digits.length,
+      ),
       index: Number(digits || 0),
       text: innerText(args[position + 2]),
     });
