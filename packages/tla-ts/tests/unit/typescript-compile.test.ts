@@ -5402,6 +5402,39 @@ describe("calls", () => {
     ).toContain("UNION b {c}}|6");
   });
 
+  it.each([
+    ["nothing is around the call", 'const run = () => expect("a", "a") + expect("c", "d");'],
+    [
+      "a finally is around the call",
+      'const run = () => {\n  let total = 0;\n  try {\n    total = expect("a", "a") + expect("c", "d");\n  } finally {\n    cursor.index += 10;\n  }\n  return total;\n};',
+    ],
+  ])(
+    "stops where a helper's operator throws what nothing catches, where %s",
+    async (_name, run) => {
+      const source = [
+        "const cursor = { index: 0 };",
+        "const fail = (wanted: string) => {",
+        "  throw new Error(`Expected ${wanted} at ${cursor.index}`);",
+        "};",
+        "const expect = (text: string, wanted: string) => {",
+        "  if (text !== wanted) fail(wanted);",
+        "  cursor.index++;",
+        "  return text.length;",
+        "};",
+        run,
+        "const total = run();",
+      ].join("\n");
+      expect(printModule(compile(source).source)).toMatch(/^fail\(/m);
+      const failure = (await checkModel(source)).failure;
+      expect(failure?.message).toContain('"Expected d at 1"');
+      expect(failure?.callStack?.at(-1)?.location).toMatchObject({
+        line: 3,
+        column: 3,
+        range: { end: { line: 3, column: 59 } },
+      });
+    },
+  );
+
   it("runs nothing after a helper's operator that only throws, as a pattern's default calls it", async () => {
     const getSource = (expected: string) => `
       let initCount = 0;
