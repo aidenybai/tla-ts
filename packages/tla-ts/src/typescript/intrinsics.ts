@@ -171,7 +171,8 @@ const getFunctionPrototype = (type: ts.Type) => {
         !(
           ts.isArrowFunction(declaration) ||
           ts.isFunctionExpression(declaration) ||
-          ts.isFunctionDeclaration(declaration)
+          ts.isFunctionDeclaration(declaration) ||
+          ts.isMethodDeclaration(declaration)
         )
       ) {
         return undefined;
@@ -388,10 +389,18 @@ export const getGeneratorPrototypeRef = (node: ts.Node | undefined, context: Con
 // calls and asks for its prototype and for the prototype of that object, so that the object is the
 // one the function starts with, which inherits from the built-in one.
 const getGeneratorObjectPrototype = (node: ts.Expression, context: Context) => {
-  if (!ts.isPropertyAccessExpression(node) || node.name.text !== "prototype") return undefined;
-  const owner = ts.isParenthesizedExpression(node.expression)
-    ? node.expression.expression
-    : node.expression;
+  // A generator object that a call of a function expression makes inherits from the function's
+  // prototype property, which nothing can have changed yet.
+  const made = isPrototypeCall(node, context) ? skipCasts(node.arguments[0]) : undefined;
+  const callee =
+    made !== undefined && ts.isCallExpression(made) ? skipCasts(made.expression) : undefined;
+  const owner =
+    callee !== undefined && ts.isFunctionExpression(callee)
+      ? callee
+      : ts.isPropertyAccessExpression(node) && node.name.text === "prototype"
+        ? skipCasts(node.expression)
+        : undefined;
+  if (owner === undefined) return undefined;
   const checker = context.checker;
   const prototype = getFunctionPrototype(checker.getTypeAtLocation(owner));
   const symbol = ts.isIdentifier(owner) ? getSymbol(owner, checker) : undefined;
@@ -440,6 +449,7 @@ const getPrototype = (node: ts.Expression, context: Context): string | undefined
   if (type.flags & ts.TypeFlags.StringLike) return "String.prototype";
   if (type.flags & ts.TypeFlags.BooleanLike) return "Boolean.prototype";
   if (type.flags & ts.TypeFlags.BigIntLike) return "BigInt.prototype";
+  if (type.flags & ts.TypeFlags.ESSymbolLike) return "Symbol.prototype";
   // Iterator.from's iterator is wrapped where its prototype no longer inherits from
   // Iterator.prototype, and getIteratorCall reads a string's.
   const arrayIteratorCall = getArrayIteratorCall(node, context);
@@ -1205,14 +1215,25 @@ export const translateBuiltIns = (node: ts.SourceFile, context: Context) => {
 };
 
 // Evaluates the value whose prototype a call asks for, which mustn't call anything that could
-// throw, since only its type decides the result.
+// throw, since only its type decides the result. A generator function that takes nothing only makes
+// its generator object, and Symbol only converts a description that a literal gives.
 const evaluate = (node: ts.Expression, scope: Scope, context: Context) => {
   const visit = (child: ts.Node) => {
     if (ts.isFunctionLike(child)) return;
     const isBuiltInNew =
       ts.isNewExpression(child) && getBuiltIn(child.expression, context) !== undefined;
+    const callee = ts.isCallExpression(child) ? skipCasts(child.expression) : undefined;
+    const isInertCall =
+      ts.isCallExpression(child) &&
+      callee !== undefined &&
+      ((ts.isFunctionExpression(callee) &&
+        callee.asteriskToken !== undefined &&
+        callee.parameters.length === 0 &&
+        child.arguments.length === 0) ||
+        (getBuiltIn(callee, context) === "Symbol" && child.arguments.every(ts.isStringLiteral)));
     if (
       (ts.isCallExpression(child) &&
+        !isInertCall &&
         !isPrototypeCall(child, context) &&
         getIteratorCall(child, context) === undefined) ||
       (ts.isNewExpression(child) && !isBuiltInNew)

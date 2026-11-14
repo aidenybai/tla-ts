@@ -2994,6 +2994,35 @@ describe("values", () => {
     );
   });
 
+  it("reads the prototypes of a symbol, a generator method, and a generator object that a call makes", async () => {
+    const getSource = (expected: string) => `
+      const generatorPrototype = Object.getPrototypeOf(Object.getPrototypeOf((function* () {})()));
+      const asyncPrototype = Object.getPrototypeOf(Object.getPrototypeOf(async function* () {}()));
+      const method = { *method() {} }.method;
+      const result = [
+        String(generatorPrototype[Symbol.toStringTag]),
+        String(asyncPrototype[Symbol.toStringTag]),
+        Object.getPrototypeOf(Symbol("tag")) === Symbol.prototype,
+        Object.getPrototypeOf(Symbol()) === Object.prototype,
+        Object.getPrototypeOf(method.prototype) === Object.getPrototypeOf(function* () {}).prototype,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "Generator|AsyncGenerator|true|false|true";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("Generator|AsyncGenerator|true|true|true"))).failure?.message,
+    ).toContain(expected);
+    expect(() =>
+      compile(`
+        const make = function* (start: number) {
+          yield start;
+        };
+        const prototype = Object.getPrototypeOf(Object.getPrototypeOf(make(1)));
+      `),
+    ).toThrow("getPrototypeOf needs a value whose type tells");
+  });
+
   it("gives an error a message only where its message isn't undefined", async () => {
     const getSource = (expected: string) => `
       class Err extends Error {}
