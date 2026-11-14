@@ -112,4 +112,18 @@ describe("a quantifier keeps what Z3 5.3.2 keeps", () => {
       ")",
     ]);
   });
+
+  it("frees the last result of a rewriter with the rewriter", () => {
+    expect(
+      run([
+        "(declare-const x Real)",
+        "(declare-const y Real)",
+        "(simplify (<= (* x y) 0.0))",
+        "(simplify (>= (* x y) 0.0))",
+      ]),
+    ).toEqual([
+      "(or (not (= (>= x 0.0) (>= y 0.0))) (= x 0.0) (= y 0.0))",
+      "(or (= (>= x 0.0) (>= y 0.0)) (= x 0.0) (= y 0.0))",
+    ]);
+  });
 });

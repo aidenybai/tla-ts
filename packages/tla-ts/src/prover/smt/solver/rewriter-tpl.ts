@@ -387,6 +387,7 @@ class RewriterEngine extends SubstCore {
   }
 
   release() {
+    this.setLastResult(-1);
     this.invShifter.release();
     this.shifter.release();
     this.releaseCaches();
@@ -857,6 +858,7 @@ export class BetaReducer extends SubstCore {
   }
 
   release() {
+    this.setLastResult(-1);
     this.shifter.release();
     this.releaseCaches();
   }
