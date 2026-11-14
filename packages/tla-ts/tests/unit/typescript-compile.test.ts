@@ -24232,6 +24232,28 @@ describe("calls through values", () => {
     });
   });
 
+  describe("names a function that parentheses hold and not one that a comma gives", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const xCover = (box.size, function () {});
+      const cover = (function () {});
+      const arrow = ((() => 0));
+      box.size = 1;
+      const read = [xCover.name, cover.name, arrow.name].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(",cover,arrow"))).failure).toBeUndefined();
+    });
+
+    it("rejects the comma's function as named", async () => {
+      expect((await checkModel(getSource("xCover,cover,arrow"))).failure?.message).toContain(
+        ",cover,arrow",
+      );
+    });
+  });
+
   describe("throws the TypeError of a built-in next on an object that isn't its iterator", () => {
     const getSource = (expected: string) => `
       "use strict";

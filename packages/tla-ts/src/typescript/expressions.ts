@@ -2385,7 +2385,13 @@ const translatePropertyAccess = (
       }
       if (name === "length") return number(getFunctionLength(getParameters(candidate)));
       if (name !== "name") return undefined;
-      const parent = candidate.parent;
+      // Parentheses keep the name that a declaration gives a function, and a comma drops it.
+      const outer = ts.findAncestor(
+        candidate,
+        (ancestor) => !ts.isParenthesizedExpression(ancestor.parent),
+      );
+      const parent = outer?.parent;
+      const isAnonymous = ts.isArrowFunction(candidate) || ts.isFunctionExpression(candidate);
       const given =
         (ts.isFunctionDeclaration(candidate) || ts.isFunctionExpression(candidate)) &&
         candidate.name !== undefined
@@ -2395,13 +2401,22 @@ const translatePropertyAccess = (
                 ts.isPrivateIdentifier(candidate.name) ||
                 ts.isStringLiteral(candidate.name))
             ? candidate.name
-            : (ts.isArrowFunction(candidate) || ts.isFunctionExpression(candidate)) &&
+            : isAnonymous &&
+                parent !== undefined &&
                 ts.isVariableDeclaration(parent) &&
-                parent.initializer === candidate &&
+                parent.initializer === outer &&
                 ts.isIdentifier(parent.name)
               ? parent.name
               : undefined;
-      return given === undefined ? undefined : string(given.text);
+      return given !== undefined
+        ? string(given.text)
+        : isAnonymous &&
+            parent !== undefined &&
+            ts.isBinaryExpression(parent) &&
+            parent.operatorToken.kind === ts.SyntaxKind.CommaToken &&
+            parent.right === outer
+          ? string("")
+          : undefined;
     };
     const heldProperty = held === undefined ? undefined : getProperty(held);
     if (heldProperty !== undefined) return heldProperty;
