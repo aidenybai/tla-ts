@@ -416,7 +416,7 @@ export class Solver {
         this.mkBinClause(lits[0], lits[1], isRedundant);
         return -1;
       default:
-        return this.mkNaryClause(lits, isRedundant);
+        return this.mkNaryClause(lits, isRedundant, isTheory);
     }
   }
 
@@ -487,9 +487,9 @@ export class Solver {
     this.clausesToReinit.push(first, second);
   }
 
-  private mkNaryClause(lits: number[], isRedundant: boolean) {
+  private mkNaryClause(lits: number[], isRedundant: boolean, isTheory: boolean) {
     const clause = this.arena.mkClause(lits, lits.length, isRedundant);
-    const isReinit = this.attachNaryClause(clause, isRedundant);
+    const isReinit = this.attachNaryClause(clause, isRedundant && !isTheory);
     if (isReinit || this.hasVariablesToReinit(clause)) this.pushReinitStack(clause);
     if (isRedundant) this.learned.push(clause);
     else this.clauses.push(clause);
