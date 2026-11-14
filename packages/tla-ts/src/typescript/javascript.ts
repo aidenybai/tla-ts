@@ -4641,10 +4641,11 @@ ArrayChangeFrom(heap, ref, method, items, length, first) ==
                        [] OTHER -> first,
            isThrown |-> state.isThrown]
 
-ArrayChange(heap, ref, method, items) ==
-  LET length == LengthOf(heap, ref)
-  IN ArrayChangeFrom(heap, ref, method, items, length,
-                     Get(heap, ref, ToString(IF method = "pop" THEN length - 1 ELSE 0)))
+ArrayChangeOf(heap, ref, method, items, length) ==
+  ArrayChangeFrom(heap, ref, method, items, length,
+                  Get(heap, ref, ToString(IF method = "pop" THEN length - 1 ELSE 0)))
+
+ArrayChange(heap, ref, method, items) == ArrayChangeOf(heap, ref, method, items, LengthOf(heap, ref))
 
 \\* copyWithin() on an array-like object that the heap holds, as the spec runs it index by index,
 \\* backward where the indices it copies to overlap the end of those it copies from, where only the

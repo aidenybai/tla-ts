@@ -3062,7 +3062,8 @@ export const isStoredStatement = (node: ts.Node, context: Context) => {
 
 // What a call of a key under which a script stores built-in methods does where the value that it
 // calls is one of them: the heap after, the value that it gives, and whether it throws a TypeError.
-// An expression, rather than a statement, runs none that changes the receiver.
+// An expression, rather than a statement, runs none that changes the receiver. A statement that
+// converted the receiver's length to a primitive passes it.
 export const translateStoredCall = (
   call: StoredCall,
   value: Expression,
@@ -3070,6 +3071,7 @@ export const translateStoredCall = (
   isStatement: boolean,
   scope: Scope,
   context: Context,
+  length?: Expression,
 ) => {
   const node = call.node;
   const heap = getHeap(scope, node, context);
@@ -3087,11 +3089,14 @@ export const translateStoredCall = (
     }
     if (method === "reverse") return useJavaScript("ArrayLikeReverse", [heap, ref], context);
     if (STORED_ARRAY_CHANGES.has(method)) {
-      return useJavaScript(
-        "ArrayChange",
-        [heap, ref, string(method), translateElements(node.arguments, scope, context)],
-        context,
-      );
+      const items = translateElements(node.arguments, scope, context);
+      return length === undefined
+        ? useJavaScript("ArrayChange", [heap, ref, string(method), items], context)
+        : useJavaScript(
+            "ArrayChangeOf",
+            [heap, ref, string(method), items, useJavaScript("ToLength", [length], context)],
+            context,
+          );
     }
     const read = giving(
       translateArrayLikeCall(node, scope, context, {

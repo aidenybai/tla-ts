@@ -5133,6 +5133,31 @@ describe("errors", () => {
     });
   });
 
+  describe("converts the length of an object that a key's push or pop changes", () => {
+    const getSource = (expected: string) => `
+      const obj: { [key: string]: unknown } = { 0: "a", 1: "b" };
+      obj.pop = Array.prototype.pop;
+      obj.push = Array.prototype.push;
+      let conversions = 0;
+      obj.length = { valueOf() { conversions++; return 2; } };
+      const popped = (obj.pop as () => unknown)();
+      obj.length = { valueOf() { conversions++; return 1; }, toString() { return "0"; } };
+      const pushed = (obj.push as (...items: unknown[]) => unknown)("c");
+      const seen = [popped, pushed, obj.length, obj[1], conversions];
+      if (seen.join(";") !== "${expected}") throw new Error(seen.join(";"));
+    `;
+
+    it("runs valueOf before it changes the elements", async () => {
+      const result = await checkModel(getSource("b;2;2;c;2"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkModel(getSource("b;2;2;c;1"));
+      expect(result.failure?.message).toContain("b;2;2;c;2");
+    });
+  });
+
   describe("skips to the next element after a hole where a callback runs as statements", () => {
     const getSource = (expected: string) => `
       const visited: number[] = [];

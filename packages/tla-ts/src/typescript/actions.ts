@@ -2274,31 +2274,91 @@ export const translateCallStatement = (
     : undefined;
   if (storedCall !== undefined) {
     const objectName = context.names.getFresh("object");
+    const object = identifier(objectName);
+    const calleeName = context.names.getFresh("callee");
+    const callee = identifier(calleeName);
     const changeName = context.names.getFresh("change");
     const change = identifier(changeName);
+    const changeWith = (
+      current: Path,
+      next: (path: Path, value: Expression) => Formula,
+      length?: Expression,
+    ) => {
+      const after = (heap: Expression): Path =>
+        heapSymbol === undefined
+          ? current
+          : {
+              ...current,
+              scope: {
+                ...current.scope,
+                bindings: new Map([...current.scope.bindings, [heapSymbol, heap]]),
+              },
+            };
+      return bindOnce(
+        current,
+        changeName,
+        translateStoredCall(storedCall, callee, object, true, current.scope, context, length),
+        ifThenElse(
+          field(change, "isThrown"),
+          throwTypeError(after(field(change, "heap")), expression, context, frame),
+          next(after(field(change, "heap")), field(change, "value")),
+        ),
+      );
+    };
+    // push, pop, shift, and unshift convert a length that's an object to a primitive, running its
+    // valueOf and toString methods, before they read the elements.
+    const converting = isObjectLength(storedCall.receiver, context)
+      ? storedCall.builtIns.filter((builtIn) =>
+          ["push", "pop", "shift", "unshift"].some(
+            (method) => builtIn === `Array.prototype.${method}`,
+          ),
+        )
+      : [];
+    if (converting.length > 0) context.builtIns.add("Array.prototype");
     return bindOnce(
       path,
       objectName,
       translateExpression(storedCall.receiver, path.scope, context),
       ifThenElse(
-        apply("\\in", [identifier(objectName), set([getUndefined(context), identifier("Null")])]),
+        apply("\\in", [object, set([getUndefined(context), identifier("Null")])]),
         throwTypeError(path, expression, context, frame),
         bindOnce(
           path,
-          changeName,
-          translateStoredCall(
-            storedCall,
-            translateExpression(expression.expression, path.scope, context),
-            identifier(objectName),
-            true,
-            path.scope,
-            context,
-          ),
-          ifThenElse(
-            field(change, "isThrown"),
-            throwTypeError(withHeap(field(change, "heap")), expression, context, frame),
-            continueWith(withHeap(field(change, "heap")), field(change, "value")),
-          ),
+          calleeName,
+          translateExpression(expression.expression, path.scope, context),
+          converting.length === 0
+            ? changeWith(path, continueWith)
+            : translateJoined(
+                expression,
+                path,
+                context,
+                (joined, value) => continueWith(joined, value ?? getUndefined(context)),
+                (next) =>
+                  ifThenElse(
+                    apply("\\in", [
+                      callee,
+                      set(
+                        converting.map((builtIn) =>
+                          translateBuiltInValue(builtIn, expression, context),
+                        ),
+                      ),
+                    ]),
+                    runToPrimitive(
+                      expression,
+                      useJavaScript(
+                        "Get",
+                        [getHeap(path.scope, expression, context), object, string("length")],
+                        context,
+                      ),
+                      "number",
+                      path,
+                      context,
+                      frame,
+                      (converted, primitive) => changeWith(converted, next, primitive),
+                    ),
+                    changeWith(path, next),
+                  ),
+              ),
         ),
       ),
     );
@@ -6739,6 +6799,15 @@ const getLoopGetters = (node: ts.Node, context: Context) => {
     : [];
 };
 
+// The valueOf and toString methods that push, pop, shift, or unshift may run as it converts a
+// length that's an object, where a key holds it.
+const getStoredLengthConversions = (node: ts.Node, context: Context) => {
+  const call = isStoredStatement(node, context) ? getStoredCall(node, context) : undefined;
+  return call !== undefined && isObjectLength(call.receiver, context)
+    ? getConversionFunctions(call.receiver, context)
+    : [];
+};
+
 // Whether an array-like object's length may be an object, which the method converts to a primitive
 // before it reads the elements, running the object's valueOf and toString methods.
 const isObjectLength = (receiver: ts.Node, context: Context) => {
@@ -10803,6 +10872,7 @@ const getEffects = (
     ...getReadFunctions(node, context),
     ...getLoopGetters(node, context),
     ...getRemovedGetters(node, context),
+    ...getStoredLengthConversions(node, context),
     ...(written === undefined ? [] : getRestCopyGetters(written, context)),
   ];
   // A pattern that destructures an object, or a for-of, a spread, or a yield* that iterates one,
