@@ -176,13 +176,8 @@ class Enum2BvRewriter extends RewriterTpl {
         : data.kind === QUANTIFIER_FORALL
           ? manager.mkApp(OP_IMPLIES, [manager.mkAnd(bounds.items), body], SORT_BOOL)
           : manager.mkAnd(bounds.items);
-    const result = manager.mkQuantifier({
-      ...data,
-      sorts,
-      body: newBody,
-      patterns,
-      noPatterns: [],
-    });
+    // Z3 reads the no-patterns from a vector its rewriter has shrunk: they are the quantifier's own.
+    const result = manager.mkQuantifier({ ...data, sorts, body: newBody, patterns });
     manager.incRef(result);
     bounds.reset();
     return result;

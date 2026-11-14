@@ -2207,7 +2207,7 @@ export class AstManager {
     const noPatterns = data.patterns.length > 0 ? [] : data.noPatterns;
     const key = `q${data.kind}:${data.sorts.join(",")}:${JSON.stringify(data.names)}:${
       data.body
-    }:${data.patterns.join(",")}:${noPatterns.join(",")}:${data.weight}`;
+    }:${data.patterns.join(",")}:${noPatterns.join(",")}:${data.weight}:${data.qid}`;
     const existing = this.table.get(key);
     if (existing !== undefined) {
       // A dead quantifier comes back as the new one Z3 makes, with its skolem id.
