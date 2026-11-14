@@ -10702,6 +10702,24 @@ const isTakingFromGenerators = (loop: ts.ForOfStatement, context: Context) => {
   );
 };
 
+// The path where an unrolled iteration of a loop starts. What an iteration before it evaluated or
+// made of the loop's own code belongs to that iteration, not to this one, which calls anew.
+const startIteration = (loop: ts.ForOfStatement, path: Path): Path => {
+  const isOwn = (entry: [ts.Node, Expression]) =>
+    ts.findAncestor(
+      entry[0],
+      (ancestor) => ancestor === loop.statement || ancestor === loop.initializer,
+    ) !== undefined;
+  return {
+    ...path,
+    scope: {
+      ...path.scope,
+      results: new Map([...path.scope.results].filter((entry) => !isOwn(entry))),
+      allocated: new Map([...path.scope.allocated].filter((entry) => !isOwn(entry))),
+    },
+  };
+};
+
 // A for-of that isTakingFromGenerators allows, which runs its body for each element in turn, and
 // binds a generator element's pattern to what the pattern takes through the generator's next.
 const translateForOfTaken = (
@@ -10716,8 +10734,9 @@ const translateForOfTaken = (
   if (!ts.isArrayLiteralExpression(iterated)) {
     throw new TlaTypeScriptError("Unsupported for-of", loop);
   }
-  const iterate = (current: Path, position: number): Formula => {
-    if (position === iterated.elements.length) return continueWith(current);
+  const iterate = (previous: Path, position: number): Formula => {
+    if (position === iterated.elements.length) return continueWith(previous);
+    const current = startIteration(loop, previous);
     const element = iterated.elements[position];
     const bodyFrame: Frame = {
       ...guardYields(frame),
@@ -10921,10 +10940,11 @@ const translateForAwait = (
   // which the array then doesn't hold.
   const isTaken = (element: ts.Expression) =>
     pattern !== undefined && !ts.isOmittedExpression(element) && isGeneratorType(element, context);
-  const iterate = (current: Path, position: number): Formula => {
+  const iterate = (previous: Path, position: number): Formula => {
     if (position === literal.elements.length) {
-      return tick(current, (resumed) => tick(resumed, continueWith));
+      return tick(previous, (resumed) => tick(resumed, continueWith));
     }
+    const current = startIteration(loop, previous);
     const element = literal.elements[position];
     const bodyFrame: Frame = {
       ...guardYields(frame),

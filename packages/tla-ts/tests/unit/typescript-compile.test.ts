@@ -18739,6 +18739,33 @@ describe("errors", () => {
     });
   });
 
+  describe("make a generator anew in each iteration of a for await over a literal", () => {
+    const getSource = (expected: number) => `
+      let count = 0;
+      function* start(amount: number) {
+        try {
+          count += amount;
+          yield;
+          count += 100;
+        } finally {
+          count += 1000;
+        }
+      }
+      (async function () {
+        for await (const item of [1, 2]) start(item).next();
+        if (count !== ${expected}) throw new Error(String(count));
+      })();
+    `;
+
+    it("starts each generator", async () => {
+      expect((await checkModel(getSource(3))).failure).toBeUndefined();
+    });
+
+    it("doesn't resume the generator of the iteration before", async () => {
+      expect((await checkModel(getSource(1103))).failure).toBeDefined();
+    });
+  });
+
   describe("await each element of an array that a variable holds in a for await", () => {
     const getSource = (expected: string) => `
       declare function setTimeout(callback: () => void): void;
