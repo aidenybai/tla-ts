@@ -58,6 +58,14 @@ const getCanonicalTla = (value: Value, heap?: Value): string => {
       ? undefined
       : getEntry(objects, (key) => key === reference);
   const values = object === undefined ? undefined : getEntry(object, (key) => key === "values");
+  // A set or a map that the heap holds keeps its elements or entries in its data.
+  const data = object === undefined ? undefined : getEntry(object, (key) => key === "data");
+  const isCollection =
+    typeof values === "object" &&
+    values.kind === "Function" &&
+    values.domain.length === 0 &&
+    data !== undefined;
+  if (isCollection) return getInner(data);
   if (values !== undefined) return getInner(values);
   if (value.kind === "Interval") {
     return formatSet(
