@@ -1327,8 +1327,11 @@ const compileRecursion = (
   };
 };
 
+// Only a recursive definition can reach itself, so another nested in its own inlining is a new use.
 const inline = <Result>(program: Program, definition: Definition, compile: () => Result) => {
-  if (program.inlining.includes(definition)) return unsupported();
+  const isRecursive =
+    definition.isRecursive || (definition.kind === "Function" && definition.isSelfReferential);
+  if (isRecursive && program.inlining.includes(definition)) return unsupported();
   program.inlining.push(definition);
   const result = compile();
   program.inlining.pop();
@@ -1370,7 +1373,7 @@ const bindArguments = (
   definition.params.reduce<TierScope>((scope, param, index) => {
     const arg = args[index];
     if (param.arity > 0)
-      return withBinding(scope, param.name, getOperatorArgument(program, arg, frame));
+      return withBinding(scope, param.name, getOperatorArgument(program, arg, frame, param.arity));
     const source: OperatorBinding = {
       kind: "Operator",
       definition: {
@@ -1401,7 +1404,34 @@ const bindArguments = (
   }, new Map());
 
 // TLC applies an operator argument by name, in the scope of the caller.
-const getOperatorArgument = (program: Program, arg: Expression, frame: Frame): OperatorBinding => {
+const getOperatorArgument = (
+  program: Program,
+  arg: Expression,
+  frame: Frame,
+  arity: number,
+): OperatorBinding => {
+  // An operator such as \cap applies as an expression that applies it, so a builtin compiles as one.
+  if (arg.kind === "OperatorReference") {
+    const names = Array.from({ length: arity }, (_, index) => `#${index}`);
+    return {
+      kind: "Operator",
+      definition: {
+        kind: "Operator",
+        name: arg.operator,
+        params: names.map((name) => ({ name, arity: 0 })),
+        body: {
+          kind: "Apply",
+          operator: arg.operator,
+          args: names.map((name) => ({ kind: "Identifier", name, location: arg.location })),
+          location: arg.location,
+        },
+        isLocal: true,
+        isRecursive: false,
+        location: arg.location,
+      },
+      scope: new Map(),
+    };
+  }
   if (arg.kind === "Lambda") {
     return {
       kind: "Operator",
@@ -2703,7 +2733,7 @@ const compileBuiltin = (
     const sequence = compileValue(program, args[0], frame);
     const element: Type = createVar();
     unify(sequence.type, { kind: "Seq", element });
-    const binding = getOperatorArgument(program, args[1], frame);
+    const binding = getOperatorArgument(program, args[1], frame, 1);
     if (binding.definition.params.length !== 1) return unsupported();
     const name = getName(program, "e");
     const scope = bindCode(binding.scope, binding.definition.params[0].name, element, name);
@@ -2724,7 +2754,7 @@ const compileBuiltin = (
     const sequence = compileValue(program, args[0], frame);
     const element: Type = createVar();
     unify(sequence.type, { kind: "Seq", element });
-    const binding = getOperatorArgument(program, args[1], frame);
+    const binding = getOperatorArgument(program, args[1], frame, 2);
     const params = binding.definition.params;
     if (params.length !== 2) return unsupported();
     const left = getName(program, "e");
