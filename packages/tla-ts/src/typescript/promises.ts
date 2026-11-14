@@ -276,16 +276,21 @@ export const dispatchFollowed = (
   context: Context,
   onPromise: (name: string, ref: Expression) => Formula,
   otherwise: Formula,
-): Formula =>
-  [...getTasks(path, node).promises].reduceRight(
-    (rest, entry) =>
-      ifThenElse(
-        useJavaScript("SameValue", [value, entry[1].ref], context),
-        onPromise(entry[0], entry[1].ref),
-        rest,
-      ),
-    otherwise,
-  );
+): Formula => {
+  // A value that names a followed promise's ref is that promise, as no two of them are the same.
+  const found = findPromise(path, node, value);
+  return found !== undefined
+    ? onPromise(found, value)
+    : [...getTasks(path, node).promises].reduceRight(
+        (rest, entry) =>
+          ifThenElse(
+            useJavaScript("SameValue", [value, entry[1].ref], context),
+            onPromise(entry[0], entry[1].ref),
+            rest,
+          ),
+        otherwise,
+      );
+};
 
 // Resolves a promise with a value: a promise that tla-ts follows, which the promise then follows
 // a job later, or a value that it fulfills the promise with. tla-ts doesn't call the then of an

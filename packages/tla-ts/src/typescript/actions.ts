@@ -7681,10 +7681,11 @@ const translateDelegatedYield = (
       ? next(current)
       : awaitTo(current, getUndefined(context), undefined, next, next);
   const finish = (current: Path) => tick(current, (resumed) => tick(resumed, continueWith));
-  const step = (current: Path, position: number): Formula => {
+  // values holds the elements of a sequence that the path knows, such as one that a literal gave.
+  const step = (current: Path, position: number, values?: readonly Expression[]): Formula => {
     const element = elements?.[position];
-    const value = index(identifier(sequence), [number(position + 1)]);
-    const next = (after: Path) => delegate(after, position + 1);
+    const value = values?.[position] ?? index(identifier(sequence), [number(position + 1)]);
+    const next = (after: Path) => delegate(after, position + 1, values);
     const mode = { isDelegated: true, isGuarded: true };
     if (awaitTo === undefined) return yieldTo(current, value, next, throwWith, mode);
     const awaitWith = (awaited: Expression) =>
@@ -7708,9 +7709,10 @@ const translateDelegatedYield = (
         )
       : awaitWith(value);
   };
-  const delegate = (current: Path, position: number): Formula => {
-    if (elements !== undefined) {
-      return position === elements.length ? finish(current) : step(current, position);
+  const delegate = (current: Path, position: number, values?: readonly Expression[]): Formula => {
+    const length = elements?.length ?? values?.length;
+    if (length !== undefined) {
+      return position === length ? finish(current) : step(current, position, values);
     }
     return ifThenElse(
       apply("=", [apply("Len", [identifier(sequence)]), number(position)]),
@@ -7729,12 +7731,13 @@ const translateDelegatedYield = (
   // iterates it.
   const makeGenerators = (current: Path, position: number): Formula => {
     if (elements === undefined || position === elements.length) {
-      return allocate(iterated, current, context, (inner) =>
-        letIn(
-          [define(sequence, [], translateExpression(iterated, inner.scope, context))],
-          delegate(inner, 0),
-        ),
-      );
+      return allocate(iterated, current, context, (inner) => {
+        const translated = translateExpression(iterated, inner.scope, context);
+        return letIn(
+          [define(sequence, [], translated)],
+          delegate(inner, 0, translated.kind === "Tuple" ? translated.elements : undefined),
+        );
+      });
     }
     const call = getCast(elements[position]);
     const created =

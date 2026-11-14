@@ -19682,43 +19682,80 @@ ${call}
     expect(result.failure?.message).toContain("tla-ts can't follow more than 3 values of a yield*");
   });
 
-  it("awaits the promises of an array that a variable holds, which an async yield* takes", async () => {
-    const source = (expected: string) => `
-      declare function setTimeout(callback: () => void): void;
-      let values: (number | Promise<number>)[] = [];
-      values = [Promise.resolve(1), 2];
-      const order: string[] = [];
-      async function* gen() {
-        yield* values;
-        order.push("end");
-      }
-      const iterator = gen();
-      iterator.next().then((first) => {
-        order.push(\`a\${first.value}\`);
-        iterator.next().then((second) => {
-          order.push(\`b\${second.value}\`);
-          iterator.next().then((third) => order.push(\`c\${third.done}\`));
-        });
-      });
-      Promise.resolve()
-        .then(() => order.push("t1"))
-        .then(() => order.push("t2"))
-        .then(() => order.push("t3"))
-        .then(() => order.push("t4"))
-        .then(() => order.push("t5"))
-        .then(() => order.push("t6"))
-        .then(() => order.push("t7"))
-        .then(() => order.push("t8"));
-      setTimeout(() => {
-        if (order.join() !== "${expected}") throw new Error(order.join());
-      });
-    `;
+  const getYieldedSource = (count: number, expected: string) => `
+    declare function setTimeout(callback: () => void): void;
+    let values: (number | Promise<number>)[] = [];
+    values = [${Array.from({ length: count }, (_, position) => (position % 2 === 0 ? `Promise.resolve(${position})` : `${position}`)).join(", ")}];
+    const order: string[] = [];
+    async function* gen() {
+      yield* values;
+    }
+    const iterator = gen();
+    ${Array.from({ length: count + 1 }, () => "iterator.next().then((step) => order.push(String(step.value)));").join("\n")}
+    setTimeout(() => {
+      if (order.join() !== "${expected}") throw new Error(order.join());
+    });
+  `;
+
+  it("takes the length and the promises of an array that a literal gives a variable where an async yield* takes it, so that each element adds less to the module", () => {
+    const getSize = (count: number) =>
+      printModule(compile(getYieldedSource(count, ""), "spec.ts").source).length;
+    expect(getSize(3)).toBeLessThan(1.5 * getSize(2));
+  });
+
+  it("yields each element of an array that a literal gives a variable, which an async yield* takes", async () => {
+    expect((await checkModel(getYieldedSource(2, "0,1,undefined"))).failure).toBeUndefined();
+  });
+
+  it("doesn't yield the promises of an array that an async yield* takes", async () => {
     expect(
-      (await checkModel(source("t1,t2,a1,t3,t4,t5,b2,t6,t7,end,t8,ctrue"))).failure,
-    ).toBeUndefined();
-    expect(
-      (await checkModel(source("t1,a1,t2,t3,t4,t5,b2,t6,t7,end,t8,ctrue"))).failure,
+      (await checkModel(getYieldedSource(2, "[object Promise],1,undefined"))).failure,
     ).toBeDefined();
+  });
+
+  describe("await the promises of an array that a variable holds, which an async yield* takes", () => {
+    const source = (expected: string) => `
+        declare function setTimeout(callback: () => void): void;
+        let values: (number | Promise<number>)[] = [];
+        values = [Promise.resolve(1), 2];
+        const order: string[] = [];
+        async function* gen() {
+          yield* values;
+          order.push("end");
+        }
+        const iterator = gen();
+        iterator.next().then((first) => {
+          order.push(\`a\${first.value}\`);
+          iterator.next().then((second) => {
+            order.push(\`b\${second.value}\`);
+            iterator.next().then((third) => order.push(\`c\${third.done}\`));
+          });
+        });
+        Promise.resolve()
+          .then(() => order.push("t1"))
+          .then(() => order.push("t2"))
+          .then(() => order.push("t3"))
+          .then(() => order.push("t4"))
+          .then(() => order.push("t5"))
+          .then(() => order.push("t6"))
+          .then(() => order.push("t7"))
+          .then(() => order.push("t8"));
+        setTimeout(() => {
+          if (order.join() !== "${expected}") throw new Error(order.join());
+        });
+      `;
+
+    it("runs the jobs in order", async () => {
+      expect(
+        (await checkModel(source("t1,t2,a1,t3,t4,t5,b2,t6,t7,end,t8,ctrue"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("doesn't run the first step before the second job", async () => {
+      expect(
+        (await checkModel(source("t1,a1,t2,t3,t4,t5,b2,t6,t7,end,t8,ctrue"))).failure,
+      ).toBeDefined();
+    });
   });
 
   it("throws the rejection of a promise that an array a variable holds gives an async yield*", async () => {
