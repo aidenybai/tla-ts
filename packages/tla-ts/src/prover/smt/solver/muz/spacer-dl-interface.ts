@@ -31,7 +31,7 @@ export class SpacerDlInterface implements Engine {
     context.reopen();
     context.replaceRules(oldRules);
     context.manager.limit.checkpoint();
-    const spacer = new SpacerContext(context, params, context.manager);
+    const spacer = new SpacerContext(context);
     spacer.setQuery(queryPred);
     spacer.updateRules(spacerRules);
     if (spacerRules.rules.length === 0) return L_FALSE;

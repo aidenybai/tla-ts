@@ -1,6 +1,7 @@
 // Ported from Z3 (src/muz/spacer/spacer_context.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError, SmtUnsupportedError } from "../../../../errors";
 import { type AstManager, getSymbolName, KIND_VAR, OP_AND, OP_IMPLIES, SORT_BOOL } from "../ast";
+import { compareAsts } from "../ast-lt";
 import { pushNotOwned } from "../ast-util";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import type { ProtoModel } from "../proto-model";
@@ -127,8 +128,7 @@ export class Lemma {
 const isLemmaLess = (manager: AstManager, first: Lemma, second: Lemma) =>
   first.level !== second.level
     ? first.level < second.level
-    : sortByAstLt(manager, [second.getExpr(), first.getExpr()])[0] === first.getExpr() &&
-      first.getExpr() !== second.getExpr();
+    : compareAsts(manager, second.getExpr(), first.getExpr()) > 0;
 
 export class Pob {
   readonly id: number;
@@ -202,6 +202,8 @@ const isPobLess = (manager: AstManager, first: Pob, second: Pob) => {
   return firstHead !== secondHead ? firstHead < secondHead : first.id < second.id;
 };
 
+// A binary heap by isPobLess, which orders the proof obligations totally and reads nothing that
+// changes while they are queued.
 class PobQueue {
   root: Pob | undefined;
   maxLevel = 0;
@@ -210,25 +212,31 @@ class PobQueue {
 
   constructor(private manager: AstManager) {}
 
-  private getMinIndex() {
-    let best = 0;
-    for (let index = 1; index < this.data.length; index++)
-      if (isPobLess(this.manager, this.data[index], this.data[best])) best = index;
-    return best;
-  }
-
   top() {
     if (this.data.length === 0) return undefined;
-    const top = this.data[this.getMinIndex()];
+    const top = this.data[0];
     if (top.level > this.maxLevel) return undefined;
     if (top.level === this.maxLevel && top.depth > this.minDepth) return undefined;
     return top;
   }
 
   pop() {
-    const index = this.getMinIndex();
-    this.data[index].isInQueue = false;
-    this.data.splice(index, 1);
+    const data = this.data;
+    data[0].isInQueue = false;
+    const moved = data[data.length - 1];
+    data.pop();
+    if (data.length === 0) return;
+    let index = 0;
+    for (let left = 1; left < data.length; left = 2 * index + 1) {
+      const child =
+        left + 1 < data.length && isPobLess(this.manager, data[left + 1], data[left])
+          ? left + 1
+          : left;
+      if (!isPobLess(this.manager, data[child], moved)) break;
+      data[index] = data[child];
+      index = child;
+    }
+    data[index] = moved;
   }
 
   setRoot(root: Pob) {
@@ -249,7 +257,16 @@ class PobQueue {
   push(pob: Pob) {
     if (pob.isInQueue) return;
     pob.isInQueue = true;
-    this.data.push(pob);
+    const data = this.data;
+    let index = data.length;
+    data.push(pob);
+    while (index > 0) {
+      const parent = (index - 1) >> 1;
+      if (!isPobLess(this.manager, pob, data[parent])) break;
+      data[index] = data[parent];
+      index = parent;
+    }
+    data[index] = pob;
   }
 
   incLevel() {
@@ -1028,11 +1045,14 @@ export class SpacerContext {
   readonly maxLevel: number;
   readonly isPdrBfs: boolean;
 
-  constructor(
-    readonly datalogContext: DatalogContext,
-    readonly params: FpParams,
-    readonly manager: AstManager,
-  ) {
+  readonly params: FpParams;
+  readonly manager: AstManager;
+
+  constructor(readonly datalogContext: DatalogContext) {
+    const params = datalogContext.params;
+    const manager = datalogContext.manager;
+    this.params = params;
+    this.manager = manager;
     this.spacerManager = new SpacerManager(manager);
     this.normalizer = new SpacerNormalizer(manager);
     this.zkConsts = new ZkConsts(manager);
