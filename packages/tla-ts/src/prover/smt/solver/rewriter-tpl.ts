@@ -193,13 +193,15 @@ abstract class VarShifterCore extends RewriterCore {
       frame.childIndex++;
       if (!this.visit(child)) return;
     }
-    // A rewritten no-pattern is not a pattern, so Z3 drops it.
     const result = frame.hasNewChild
       ? manager.mkQuantifier({
           ...data,
           body: this.resultStack[frame.spos],
           patterns: this.resultStack.slice(frame.spos + 1, frame.spos + 1 + data.patterns.length),
-          noPatterns: [],
+          noPatterns: this.resultStack.slice(
+            frame.spos + 1 + data.patterns.length,
+            frame.spos + children.length,
+          ),
         })
       : expr;
     this.finish(expr, frame, result);

@@ -118,7 +118,7 @@ export const replaceFreeVars = (
               ...data,
               body: children[0],
               patterns: children.slice(1, 1 + data.patterns.length),
-              noPatterns: [],
+              noPatterns: children.slice(1 + data.patterns.length),
             });
     frames.pop();
     cache.set(frame.shift * numNodes + current, result);

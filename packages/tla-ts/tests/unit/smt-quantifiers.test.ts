@@ -7,6 +7,8 @@ const run = (lines: string[]) => {
   return output.join("\n").split("\n");
 };
 
+const PREDICATES = ["(declare-fun p (Int Int) Bool)", "(declare-fun q (Int) Bool)"];
+
 describe("a quantifier keeps what Z3 5.3.2 keeps", () => {
   it("tells two quantifiers apart by their :qid", () => {
     expect(
@@ -31,6 +33,83 @@ describe("a quantifier keeps what Z3 5.3.2 keeps", () => {
     ).toEqual([
       "(forall ((x Int)) (not (<= (f x) 0)))",
       "(forall ((x Int)) (! (not (<= (f x) 0)) :qid qa))",
+    ]);
+  });
+
+  it("substitutes a macro's argument into a no-pattern", () => {
+    expect(
+      run([
+        ...PREDICATES,
+        "(define-fun h ((a Int)) Bool (forall ((z Int)) (! (p z a) :no-pattern (p z a))))",
+        "(simplify (h 3))",
+      ]),
+    ).toEqual(["(forall ((z Int)) (! (p z 3) :no-pattern (p z 3)))"]);
+  });
+
+  it("shifts the no-pattern of a macro argument that moves under a binder", () => {
+    expect(
+      run([
+        ...PREDICATES,
+        "(define-fun g ((b Bool)) Bool (forall ((w Int)) (or b (q w))))",
+        "(simplify (forall ((y Int)) (g (forall ((z Int)) (! (p z y) :no-pattern (p z y))))))",
+      ]),
+    ).toEqual([
+      "(forall ((y Int) (w Int))",
+      "  (or (q w) (forall ((z Int)) (! (p z y) :no-pattern (p z y)))))",
+    ]);
+  });
+
+  it("shifts the no-pattern of a let binding used under a binder", () => {
+    expect(
+      run([
+        ...PREDICATES,
+        "(simplify (forall ((y Int)) (let ((a (forall ((z Int)) (! (p z y) :no-pattern (p z y))))) (forall ((w Int)) (or a (q w))))))",
+      ]),
+    ).toEqual([
+      "(forall ((y Int) (w Int))",
+      "  (or (forall ((z Int)) (! (p z y) :no-pattern (p z y))) (q w)))",
+    ]);
+  });
+
+  it("shifts the no-pattern of a term a beta reduction moves under a binder", () => {
+    expect(
+      run([
+        ...PREDICATES,
+        "(simplify (forall ((y Int)) (select (lambda ((b Bool)) (forall ((w Int)) (or b (q w)))) (forall ((z Int)) (! (p z y) :no-pattern (p z y))))))",
+      ]),
+    ).toEqual([
+      "(forall ((y Int) (w Int))",
+      "  (or (q w) (forall ((z Int)) (! (p z y) :no-pattern (p z y)))))",
+    ]);
+  });
+
+  // Z3's enum2bv rewriter reads the no-patterns from a vector it has already shrunk, so it gets
+  // the ones the quantifier had before the rewrite.
+  it("leaves the no-patterns of a quantifier over an enumeration as they were under dt2bv", () => {
+    expect(
+      run([
+        "(declare-datatypes ((Color 0)) (((red) (green) (blue))))",
+        "(declare-fun q (Int) Bool)",
+        "(declare-const c Color)",
+        "(assert (forall ((x Color) (z Int)) (! (or (q z) (= c x)) :no-pattern (= c x))))",
+        "(assert (forall ((z Int)) (! (or (q z) (= c red)) :no-pattern (= c red))))",
+        "(assert (exists ((x Color) (z Int)) (! (or (q z) (= c x)) :no-pattern (= c x) :no-pattern (q z) :qid foo)))",
+        "(apply dt2bv)",
+      ]),
+    ).toEqual([
+      "(goals",
+      "(goal",
+      "  (forall ((x (_ BitVec 2)) (z Int))",
+      "    (! (=> (bvule x #b10) (or (q z) (= c!0 x))) :no-pattern (= c x)))",
+      "  (forall ((z Int)) (or (q z) (= c!0 #b00)))",
+      "  (exists ((x (_ BitVec 2)) (z Int))",
+      "    (! (and (bvule x #b10) (or (q z) (= c!0 x)))",
+      "       :no-pattern (= c x)",
+      "       :no-pattern (q z)",
+      "       :qid foo))",
+      "  (bvule c!0 #b10)",
+      "  :precision precise :depth 1)",
+      ")",
     ]);
   });
 });
