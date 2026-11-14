@@ -1,6 +1,8 @@
-import { useEffectEvent, useLayoutEffect, useRef, type RefObject } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, type RefObject } from "react";
 
 const MORPH_DURATION_MS = 600;
+const RESIZE_DURATION_MS = 300;
+const RESIZE_EASING = "cubic-bezier(0.25, 1, 0.5, 1)";
 const HIGHLIGHT_DURATION_MS = 1400;
 const FADE_DURATION_MS = 300;
 const ENTER_DELAY_MS = 150;
@@ -17,6 +19,7 @@ interface CodeSnapshot {
   code: string;
   tokens: TokenSnapshot[];
   height: number;
+  width: number;
 }
 
 const getTokenSnapshots = (container: HTMLElement): TokenSnapshot[] => {
@@ -86,13 +89,42 @@ export const useTokenMorph = (
   const snapshotRef = useRef<CodeSnapshot | undefined>(undefined);
   const finish = useEffectEvent(() => onFinish?.());
 
+  useEffect(() => {
+    const container = containerRef.current;
+    if (container === null) return;
+    const observer = new ResizeObserver(() => {
+      const snapshot = snapshotRef.current;
+      if (snapshot === undefined || container.getAnimations().length > 0) return;
+      const height = container.offsetHeight;
+      const width = container.offsetWidth;
+      snapshotRef.current = {
+        code: snapshot.code,
+        tokens: getTokenSnapshots(container),
+        height,
+        width,
+      };
+      // States come and go without a change of code, so the morph below never sees them.
+      if (
+        height !== snapshot.height &&
+        width === snapshot.width &&
+        !matchMedia("(prefers-reduced-motion: reduce)").matches
+      )
+        container.animate([{ height: `${snapshot.height}px` }, { height: `${height}px` }], {
+          duration: RESIZE_DURATION_MS,
+          easing: RESIZE_EASING,
+        });
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [containerRef]);
+
   useLayoutEffect(() => {
     const container = containerRef.current;
     if (container === null) return;
     const before = snapshotRef.current;
     const tokens = getTokenSnapshots(container);
     const height = container.offsetHeight;
-    snapshotRef.current = { code, tokens, height };
+    snapshotRef.current = { code, tokens, height, width: container.offsetWidth };
     if (before === undefined || before.code === code) return;
 
     const isReduced = matchMedia("(prefers-reduced-motion: reduce)").matches;

@@ -2,11 +2,14 @@ import { useRef, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import type { LineNote } from "../run-worker";
+import type { Search } from "../search";
 import type { Source } from "../site-data";
+import { useIsHydrated } from "../use-is-hydrated";
 import { useTokenMorph } from "../use-token-morph";
 import { CodeLine } from "./code-line";
 import { CopyIcon } from "./copy-icon";
 import { RunIcon } from "./run-icon";
+import { SearchCell, useSearchPath } from "./search-cell";
 import { Button } from "./ui/button";
 
 const COPIED_MS = 1500;
@@ -18,6 +21,7 @@ interface CodeState {
   isWrapped: boolean;
   activeLine: number | undefined;
   notes: LineNote[];
+  search: Search | undefined;
   highlights: Record<string, string>;
   onMorphEnd: (() => void) | undefined;
 }
@@ -28,6 +32,7 @@ interface RootProps {
   source: Source;
   activeLine?: number;
   notes?: LineNote[];
+  search?: Search;
   highlights?: Record<string, string>;
   isWrapped?: boolean;
   onMorphEnd?: () => void;
@@ -44,6 +49,7 @@ export const CodeRoot = (props: RootProps) => {
         isWrapped: props.isWrapped ?? true,
         activeLine: props.activeLine,
         notes: props.notes ?? [],
+        search: props.search,
         highlights: props.highlights ?? NO_HIGHLIGHTS,
         onMorphEnd: props.onMorphEnd,
       }}
@@ -63,6 +69,8 @@ export const CodeRoot = (props: RootProps) => {
 export const CodeContent = () => {
   const code = codeContext.useParts();
   const contentRef = useRef<HTMLElement>(null);
+  const path = useSearchPath(code.search);
+  const activeLine = path.states.at(0)?.line ?? code.activeLine;
   useTokenMorph(contentRef, code.source.code, code.highlights, code.onMorphEnd);
   if (!code.isMultiline)
     return (
@@ -74,7 +82,7 @@ export const CodeContent = () => {
     <code
       ref={contentRef}
       className={cn(
-        "relative w-full min-w-0 font-mono text-[13px]/[1.7] text-foreground",
+        "@container relative w-full min-w-0 font-mono text-[13px]/[1.7] text-foreground",
         !code.isWrapped && "overflow-x-auto",
       )}
     >
@@ -85,8 +93,21 @@ export const CodeContent = () => {
             key={line.number}
             tokens={line.tokens}
             note={code.notes.find((note) => note.line === line.number)}
-            isActive={code.activeLine === line.number}
+            isActive={activeLine === line.number}
+            isDimmed={
+              path.states.length > 0 && path.states.every((state) => state.line !== line.number)
+            }
             isWrapped={code.isWrapped}
+            aside={
+              code.search && (
+                <SearchCell
+                  search={code.search}
+                  line={line.number}
+                  path={path.states}
+                  onHover={path.hover}
+                />
+              )
+            }
             className={cn(
               code.isWrapped ? "-mr-4 -ml-4 pr-4 pl-4" : "w-max min-w-full",
               line.number === 1 && "pr-14",
@@ -131,17 +152,20 @@ interface RunProps {
   onRun: () => void;
 }
 
-export const CodeRun = (props: RunProps) => (
-  <Button
-    variant={props.isDone || props.isRunning ? "outline" : "success"}
-    size="icon"
-    aria-label={props.isRunning ? "Running" : props.isDone ? "Run again" : "Run"}
-    disabled={props.isRunning}
-    onClick={props.onRun}
-  >
-    <RunIcon isRunning={props.isRunning} isDone={props.isDone} />
-  </Button>
-);
+export const CodeRun = (props: RunProps) => {
+  const isHydrated = useIsHydrated();
+  return (
+    <Button
+      variant={props.isDone || props.isRunning ? "outline" : "success"}
+      size="icon"
+      aria-label={props.isRunning ? "Running" : props.isDone ? "Run again" : "Run"}
+      disabled={props.isRunning || !isHydrated}
+      onClick={props.onRun}
+    >
+      <RunIcon isRunning={props.isRunning} isDone={props.isDone} />
+    </Button>
+  );
+};
 
 export const CodeCopy = () => {
   const code = codeContext.useParts();
