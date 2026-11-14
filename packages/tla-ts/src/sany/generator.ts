@@ -208,7 +208,10 @@ export const generateSanySpecification = (
   getId();
   const builtinsByName = new Map(builtins.map((builtin) => [builtin.name, builtin]));
   const externalModules = new Map<string, ModuleNode>();
-  const sources = new Map<string, { file: SourceFile; module: Module }>();
+  const sources = new Map<
+    string,
+    { file: SourceFile; module: Module; dependencies: ReturnType<typeof getDependencies> }
+  >();
 
   const parseSource = (name: string, text: string) => {
     const file = (name === options.rootFileName && options.rootFilePath) || `${name}.tla`;
@@ -226,6 +229,17 @@ export const generateSanySpecification = (
     }
   };
 
+  const rootName = options.rootFileName ?? parseSource("", rootSource).name;
+  const getModuleDependencies = (name: string, module: Module) => {
+    const dependencies = getDependencies(module);
+    if (name !== rootName || options.rootExtendees === undefined) return dependencies;
+    dependencies.extendees.splice(module.extends.length, 0, ...options.rootExtendees);
+    options.rootExtendees.forEach((extendee) => {
+      if (!dependencies.importers.has(extendee)) dependencies.importers.set(extendee, name);
+    });
+    return dependencies;
+  };
+
   const getSource = (name: string, text: string | undefined, importer?: string) => {
     const cached = sources.get(name);
     if (cached) return cached;
@@ -240,7 +254,11 @@ export const generateSanySpecification = (
         undefined,
       );
     }
-    const entry = { file: createSourceFile(module.name, text), module };
+    const entry = {
+      file: createSourceFile(module.name, text),
+      module,
+      dependencies: getModuleDependencies(name, module),
+    };
     sources.set(name, entry);
     return entry;
   };
@@ -259,7 +277,7 @@ export const generateSanySpecification = (
     if (visiting.has(name)) return;
     visiting.add(name);
     path.push(name);
-    const dependencies = getModuleDependencies(name, getSource(name, text, importer).module);
+    const dependencies = getSource(name, text, importer).dependencies;
     [...dependencies.extendees, ...dependencies.instancees].forEach((dependency) =>
       calculateDependencies(dependency, loadModule(dependency), name),
     );
@@ -276,7 +294,7 @@ export const generateSanySpecification = (
     const entry = sources.get(name);
     if (!entry || visited.has(name)) return undefined;
     visited.add(name);
-    const dependencies = getModuleDependencies(name, entry.module);
+    const dependencies = entry.dependencies;
     const unresolved = dependencies[kind].find((dependency) => !isResolved(name, dependency));
     if (unresolved !== undefined) {
       const namingModule = dependencies.importers.get(unresolved) ?? name;
@@ -301,16 +319,6 @@ export const generateSanySpecification = (
       }
       resolutions.add(`${next.importer} ${next.name}`);
     }
-  };
-  const rootName = options.rootFileName ?? parseSource("", rootSource).name;
-  const getModuleDependencies = (name: string, module: Module) => {
-    const dependencies = getDependencies(module);
-    if (name !== rootName || options.rootExtendees === undefined) return dependencies;
-    dependencies.extendees.splice(module.extends.length, 0, ...options.rootExtendees);
-    options.rootExtendees.forEach((extendee) => {
-      if (!dependencies.importers.has(extendee)) dependencies.importers.set(extendee, name);
-    });
-    return dependencies;
   };
   loadSpecification(rootName);
   calculateDependencies(rootName, rootSource);
