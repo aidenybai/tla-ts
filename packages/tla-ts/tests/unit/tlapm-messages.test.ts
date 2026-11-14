@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
@@ -143,5 +143,31 @@ describe("tlapm rejects an argument as OCaml's Arg does", () => {
     const result = runTlapm(directory, ["--version", "--bogus"]);
     expect(result.stdout).toBe("b91fb6c\n");
     expect(result.status).toBe(0);
+  });
+});
+
+describe("tlapm reads TLAPM_FLATTEN as params.ml does", () => {
+  const getAssumptions = (env: Record<string, string>) => {
+    const directory = writeModule(
+      "Flatten",
+      `---- MODULE Flatten ----
+EXTENDS TLAPS
+THEOREM ASSUME NEW P, NEW Q, NEW R, (P /\\ Q) /\\ R PROVE (R /\\ Q) /\\ P
+  BY Zenon
+====
+`,
+    );
+    runTlapm(directory, ["--toolbox", "0", "0", "--threads", "1", "Flatten.tla"], env);
+    return readFileSync(join(directory, ".tlacache/Flatten.tlaps/Flatten.thy"), "utf8")
+      .split("\n")
+      .filter((line) => line.startsWith("assumes ")).length;
+  };
+
+  it.each(["yes", "true"])("flattens obligations when it is %s", (value) => {
+    expect(getAssumptions({ TLAPM_FLATTEN: value })).toBe(1);
+  });
+
+  it.each(["no", "", "TRUE", "1"])("doesn't flatten obligations when it is %j", (value) => {
+    expect(getAssumptions({ TLAPM_FLATTEN: value })).toBe(2);
   });
 });

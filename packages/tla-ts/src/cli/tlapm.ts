@@ -621,7 +621,9 @@ export const runTlapm = async (args: string[]) => {
     backends: {
       defaultMethods: methods === undefined ? undefined : parseDefaultMethods(methods),
       stretch: parseOcamlFloat(parsed.get("--stretch")?.[0] ?? "1") ?? 1,
-      isFlattened: !parsed.has("--noflatten"),
+      isFlattened:
+        !parsed.has("--noflatten") &&
+        ["yes", "true", undefined].includes(process.env.TLAPM_FLATTEN),
       smtLogic: debugFlags.has("disable_arithmetic")
         ? "UF"
         : (parsed.get("--smt-logic")?.[0] ?? "UFNIA"),
