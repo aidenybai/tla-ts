@@ -1810,10 +1810,21 @@ IsIdentical(left, right) ==
   /\\ left = right
   /\\ Assert(HasIdentity(left), "tla-ts can't tell whether two equal objects are the same object")
 
+\\* Whether two values are surely not the same value. Two arrays outside the heap whose lengths or
+\\* elements differ are two arrays, while two that are equal may still be two.
+RECURSIVE Differs(_, _)
+Differs(left, right) ==
+  CASE TypeOf(left) # TypeOf(right) -> TRUE
+    [] IsRef(left) \\/ IsRef(right) -> ToString(left) # ToString(right)
+    [] HasIdentity(left) \\/ HasIdentity(right) -> left # right
+    [] IsSequenceValue(left) /\\ IsSequenceValue(right) ->
+         \\/ Len(left) # Len(right)
+         \\/ \\E position \\in DOMAIN left : Differs(left[position], right[position])
+    [] OTHER -> FALSE
+
 SameValue(left, right) ==
-  /\\ TypeOf(left) = TypeOf(right)
+  /\\ ~Differs(left, right)
   /\\ Assert(HasIdentity(left) \\/ HasIdentity(right), "tla-ts can't compare objects by identity")
-  /\\ IF IsRef(left) \\/ IsRef(right) THEN ToString(left) = ToString(right) ELSE left = right
 
 \\* JavaScript's ===, where NaN differs from itself and -0 equals 0.
 StrictEquals(left, right) ==

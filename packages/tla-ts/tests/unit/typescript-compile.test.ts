@@ -5688,6 +5688,49 @@ describe("errors", () => {
     );
   });
 
+  describe("tells two arrays outside the heap apart where their elements differ", () => {
+    const source = `
+      const isSame = (left: unknown, right: unknown) => Object.is(left, right);
+      const check = (actual: unknown, expected: unknown, label: string) => {
+        if (!Object.is(actual, expected)) throw new Error(label);
+      };
+      const array = [0, 1, 2];
+      check(isSame(array.toReversed(), array), false, "reversed");
+      check(isSame(array.with(0, 5), array), false, "with");
+      check(isSame([1, "a"], [1, "b"]), false, "element");
+      check(isSame([[1]], [[2]]), false, "nested");
+      check(isSame([1], [1, 2]), false, "length");
+      check(isSame([NaN], [0]), false, "NaN");
+      check(isSame([-0], [0]), false, "zero");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["reversed", 'array), false, "reversed"', 'array), true, "reversed"'],
+      ["with", "0, 5), array), false", "0, 5), array), true"],
+      ["element", '[1, "b"]), false', '[1, "b"]), true'],
+      ["nested", "[[2]]), false", "[[2]]), true"],
+      ["length", "[1, 2]), false", "[1, 2]), true"],
+      ["NaN", '[0]), false, "NaN"', '[0]), true, "NaN"'],
+      ["zero", '[0]), false, "zero"', '[0]), true, "zero"'],
+    ])("rejects a wrong %s", async (label, expected, wrong) => {
+      expect((await checkModel(source.replace(expected, wrong))).failure?.message).toContain(
+        `"${label}"`,
+      );
+    });
+
+    it("stops where two equal arrays may be one", async () => {
+      const result = await checkModel(`
+        const isSame = (left: unknown, right: unknown) => Object.is(left, right);
+        if (isSame([1], [1])) throw new Error("same");
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't compare objects by identity");
+    });
+  });
+
   it.each([
     ["a malformed regular expression", "const pattern = /[$$]/v;"],
     [
