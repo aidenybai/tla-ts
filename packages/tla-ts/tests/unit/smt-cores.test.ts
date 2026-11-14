@@ -112,4 +112,72 @@ describe("runSmtlibScript orders cores and terms as Z3 does", () => {
       ")",
     ]);
   });
+
+  // propagate_values_tactic::run only eliminates redundancies under proofs.
+  it("leaves the goal to propagate-values as it is when proofs are on", () => {
+    expect(
+      run([
+        "(set-option :produce-proofs true)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const p Bool)",
+        "(assert (= x 3))",
+        "(assert (> (+ x y) 5))",
+        "(assert p)",
+        "(assert (or p (> y 0)))",
+        "(assert p)",
+        "(apply propagate-values)",
+        "(apply (then simplify propagate-values))",
+      ]),
+    ).toEqual([
+      "(goals",
+      "(goal",
+      "  (= x 3)",
+      "  (> (+ x y) 5)",
+      "  p",
+      "  (or p (> y 0))",
+      "  :precision precise :depth 1)",
+      ")",
+      "(goals",
+      "(goal",
+      "  (= x 3)",
+      "  (not (<= (+ x y) 5))",
+      "  p",
+      "  (or p (not (<= y 0)))",
+      "  :precision precise :depth 2)",
+      ")",
+    ]);
+  });
+
+  it("propagates values when proofs are off", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const p Bool)",
+        "(assert (= x 3))",
+        "(assert (> (+ x y) 5))",
+        "(assert p)",
+        "(assert (or p (> y 0)))",
+        "(assert p)",
+        "(apply propagate-values)",
+        "(apply (then simplify propagate-values))",
+      ]),
+    ).toEqual([
+      "(goals",
+      "(goal",
+      "  (= x 3)",
+      "  (not (<= y 2))",
+      "  p",
+      "  :precision precise :depth 1)",
+      ")",
+      "(goals",
+      "(goal",
+      "  (= x 3)",
+      "  (not (<= y 2))",
+      "  p",
+      "  :precision precise :depth 2)",
+      ")",
+    ]);
+  });
 });

@@ -23,6 +23,10 @@ const getSharedOccs = (manager: AstManager, forms: number[]) => {
 export const propagateValues = (manager: AstManager, goal: Goal, maxRounds = 4) => {
   goal.depth++;
   if (goal.isInconsistent) return;
+  if (goal.isProofsEnabled) {
+    goal.elimRedundancies();
+    return;
+  }
   const rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
   const substitution = new Map<number, number>();
   const dependencies = new Map<number, Dependency | undefined>();
