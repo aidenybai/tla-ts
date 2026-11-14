@@ -16206,6 +16206,39 @@ describe("errors", () => {
     });
   });
 
+  it("converts an object key of __defineGetter__ and __lookupGetter__ through its toString", async () => {
+    const getSource = (expected: number) => `
+      type Method = (...args: unknown[]) => unknown;
+      const subject: { [key: string]: unknown } = {};
+      let calls = 0;
+      const key = {
+        toString: () => {
+          calls += 1;
+          return "size";
+        },
+      };
+      const getter = () => 7;
+      (subject.__defineGetter__ as Method)(key, getter);
+      if ((subject.__lookupGetter__ as Method)(key) !== getter || subject.size !== 7) {
+        throw new Error("defined");
+      }
+      const failing = {
+        toString: () => {
+          throw new RangeError("key");
+        },
+      };
+      let caught = "";
+      try {
+        (subject.__defineSetter__ as Method)(failing, () => {});
+      } catch (error) {
+        caught = error instanceof RangeError ? "range" : "other";
+      }
+      if (caught !== "range" || calls !== ${expected}) throw new Error("unexpected");
+    `;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(3))).failure?.message).toContain("unexpected");
+  });
+
   describe("look up an accessor through Object.prototype.__lookupGetter__ or __lookupSetter__", () => {
     const getSource = (expected: string) => `
       type Method = (...args: unknown[]) => unknown;

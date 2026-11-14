@@ -2109,14 +2109,14 @@ export const translateCallStatement = (
   const translateArguments = (argumentNodes: readonly ts.Expression[]) =>
     argumentNodes.map((argument) => translateExpression(argument, path.scope, context));
   const heapSymbol = context.heap;
-  const withHeap = (heap: Expression) =>
+  const withHeap = (heap: Expression, base = path) =>
     heapSymbol === undefined
-      ? path
+      ? base
       : {
-          ...path,
+          ...base,
           scope: {
-            ...path.scope,
-            bindings: new Map([...path.scope.bindings, [heapSymbol, heap]]),
+            ...base.scope,
+            bindings: new Map([...base.scope.bindings, [heapSymbol, heap]]),
           },
         };
   const dateCall = getDateCall(expression, context);
@@ -3503,65 +3503,77 @@ export const translateCallStatement = (
     // Object.prototype's legacy accessor methods, where a script calls one through a key that it
     // may hold.
     const translateAccessor = (method: string, half: string, key: ts.Expression) => {
-      const heap = getHeap(path.scope, expression, context);
-      const unconverted = leaf(
-        apply("Assert", [
-          boolean(false),
-          string("tla-ts can't convert an object to a property key here"),
-        ]),
-      );
       const isKey =
         getTypeNames(context.checker.getTypeAtLocation(key), context.checker)?.every((name) =>
           ["string", "number", "symbol"].includes(name),
         ) ?? false;
-      if (method === "lookup") {
-        return isKey
-          ? continueWith(
+      // ToPropertyKey, which runs an object's toString or valueOf.
+      const withKey = (then: (after: Path, converted: Expression) => Formula) =>
+        isKey
+          ? then(path, translatePropertyKey(key, path.scope, context))
+          : runToPrimitive(
+              expression,
+              translateExpression(key, path.scope, context),
+              "string",
               path,
-              useJavaScript(
-                "AccessorFieldOf",
-                [heap, receiver, translatePropertyKey(key, path.scope, context), string(half)],
-                context,
-              ),
-            )
-          : unconverted;
+              context,
+              frame,
+              (after, primitive) => then(after, useJavaScript("PropertyKey", [primitive], context)),
+            );
+      if (method === "lookup") {
+        return withKey((after, converted) =>
+          continueWith(
+            after,
+            useJavaScript(
+              "AccessorFieldOf",
+              [getHeap(after.scope, expression, context), receiver, converted, string(half)],
+              context,
+            ),
+          ),
+        );
       }
       const functionNode = expression.arguments.at(1);
       const translatedFunction =
         functionNode === undefined
           ? getUndefined(context)
           : translateExpression(functionNode, path.scope, context);
-      // The definition throws where the function isn't callable before it converts the key.
-      if (!isKey) {
-        return ifThenElse(
-          apply("=", [
-            useJavaScript("TypeOfIn", [heap, translatedFunction], context),
-            string("function"),
-          ]),
-          unconverted,
-          throwTypeError(path, expression, context, frame),
-        );
-      }
       const change = context.names.getFresh("change");
-      return bindOnce(
-        path,
-        change,
-        useJavaScript(
-          "DefineLegacyAccessor",
-          [
-            heap,
-            receiver,
-            translatePropertyKey(key, path.scope, context),
-            string(half),
-            translatedFunction,
-          ],
-          context,
+      // The definition throws where the function isn't callable before it converts the key.
+      return ifThenElse(
+        apply("=", [
+          useJavaScript(
+            "TypeOfIn",
+            [getHeap(path.scope, expression, context), translatedFunction],
+            context,
+          ),
+          string("function"),
+        ]),
+        withKey((after, converted) =>
+          bindOnce(
+            after,
+            change,
+            useJavaScript(
+              "DefineLegacyAccessor",
+              [
+                getHeap(after.scope, expression, context),
+                receiver,
+                converted,
+                string(half),
+                translatedFunction,
+              ],
+              context,
+            ),
+            ifThenElse(
+              field(identifier(change), "isDone"),
+              continueWith(
+                withHeap(field(identifier(change), "heap"), after),
+                getUndefined(context),
+              ),
+              throwTypeError(after, expression, context, frame),
+            ),
+          ),
         ),
-        ifThenElse(
-          field(identifier(change), "isDone"),
-          continueWith(withHeap(field(identifier(change), "heap")), getUndefined(context)),
-          throwTypeError(path, expression, context, frame),
-        ),
+        throwTypeError(path, expression, context, frame),
       );
     };
     // An Iterator.prototype method of an object that tla-ts doesn't follow as an iterator, which
