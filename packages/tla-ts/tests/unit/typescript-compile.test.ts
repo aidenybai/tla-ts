@@ -1925,6 +1925,99 @@ describe("values", () => {
     });
   });
 
+  describe("gives an increment's value where an expression evaluates it", () => {
+    const getSource = (expected: string) => `
+      let x = 1;
+      const log: number[] = [];
+      const add = (first: number, second: number, third: number) => {
+        log.push(first, second, third);
+      };
+      add(x, x++, ++x);
+      const counts = { k: 1 };
+      const list = [10, 20];
+      const made = { first: counts.k++, second: ++list[1], third: [list[0]--, list[0]] };
+      let text: string | number = "5";
+      // @ts-ignore
+      const converted = text++;
+      const result = [
+        log.join(","),
+        x,
+        made.first,
+        made.second,
+        made.third.join(","),
+        counts.k,
+        converted,
+        typeof converted,
+        text,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "1,1,3|3|1|21|10,9|2|5|number|6";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong expectation", async () => {
+      expect(
+        (await checkModel(getSource("1,2,3|3|1|21|10,9|2|5|number|6"))).failure?.message,
+      ).toContain(expected);
+    });
+  });
+
+  describe("runs an increment that a pattern's default, an await, or a yield evaluates", () => {
+    const getSource = (expected: string) => `
+      let count = 0;
+      const source: { a?: number; b?: number; c?: number } = { b: 5 };
+      const { a = ++count, b = count++, c = count++ } = source;
+      const items: { d?: number }[] = [{}, { d: 4 }, {}];
+      const seen: number[] = [];
+      for (const { d = ++count } of items) seen.push(d);
+      let order = 0;
+      function* make(): Generator<number, void, unknown> {
+        yield ++order;
+        yield order++;
+      }
+      const made = make();
+      const yielded = [made.next().value, made.next().value, order];
+      let awaited = 0;
+      const run = async () => {
+        awaited = await order++;
+      };
+      run();
+      const result = [a, b, c, seen.join(","), count, yielded.join(","), awaited, order].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "1|5|1|3,4,4|4|1,1,2|0|3";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a wrong expectation", async () => {
+      expect((await checkModel(getSource("1|5|2|3,4,4|4|1,1,2|0|3"))).failure?.message).toContain(
+        expected,
+      );
+    });
+
+    it("stops at a default that increments a property or what an earlier default reads", () => {
+      expect(() =>
+        compile(`
+          const counts = { k: 0 };
+          const source: { a?: number } = {};
+          const { a = counts.k++ } = source;
+        `),
+      ).toThrow("tla-ts can't run a default that writes a property");
+      expect(() =>
+        compile(`
+          let count = 0;
+          const source: { a?: number; b?: number } = {};
+          const { a = count, b = ++count } = source;
+        `),
+      ).toThrow("tla-ts can't run this before what reads what it changes");
+    });
+  });
+
   it("runs an assignment in a unary operator's operand first", async () => {
     const getSource = (negated: number, voided: number) => `
       let x = 0;
@@ -13946,12 +14039,15 @@ describe("errors", () => {
       }
     `);
     expect(result.failure).toBeUndefined();
-    expect(() =>
-      checkModel(`
-        const box = { i: 0, slots: {} as Record<number, number> };
-        box.slots[box.i] = box.i++;
-      `),
-    ).toThrow("Unsupported expression: box.i++");
+    // An assignment evaluates its target's key before the increment in its value.
+    const getBoxed = (expected: string) => `
+      const box = { i: 0, slots: {} as Record<number, number> };
+      box.slots[box.i] = box.i++;
+      const boxed = [box.slots[0], box.slots[1], box.i].join(",");
+      if (boxed !== "${expected}") throw new Error(boxed);
+    `;
+    expect((await checkModel(getBoxed("0,,1"))).failure).toBeUndefined();
+    expect((await checkModel(getBoxed("1,,1"))).failure?.message).toContain("0,,1");
   });
 
   it("assigns a parameter as a local binding", async () => {

@@ -9949,6 +9949,15 @@ const translateExpressionStatement = (
           throwTo === undefined ? leaf(uncaught) : throwTo(rejected, { value: thrown, uncaught }),
         { isDelegated: false, isGuarded: false, returnRest: frame.exit },
       );
+    // A yield of an increment yields what it gives.
+    if (
+      called !== undefined &&
+      isIncrement(called) &&
+      isPlainIncrement(called, context) &&
+      !path.scope.results.has(called)
+    ) {
+      return runAssignment(called, path, context, frame, yieldWith);
+    }
     // A yield of a call yields what the call gives.
     if (isCalled && ts.isCallExpression(called)) {
       return translateCallStatement(called, path, context, frame, (after, value) =>
@@ -11660,6 +11669,100 @@ export const translateDeclarations = (
   });
 };
 
+// Runs the first default in a pattern that assigns, as a statement where the value that its
+// binding takes is undefined, which binding the pattern with the defaults skipped gives, and then
+// binds the pattern again with its value.
+const runAssigningDefault = (
+  name: ts.BindingName,
+  value: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula | undefined => {
+  const elements = findNodes(name, ts.isBindingElement);
+  const pending = elements.flatMap((element) => {
+    const assignment = element.initializer && skipCasts(element.initializer);
+    return assignment !== undefined &&
+      isAssignment(assignment) &&
+      !path.scope.results.has(assignment)
+      ? [{ element, assignment }]
+      : [];
+  });
+  const assigning = pending.at(0)?.element;
+  const assignment = pending.at(0)?.assignment;
+  if (assigning === undefined || assignment === undefined) return undefined;
+  if (!ts.isIdentifier(skipCasts(getWritten(assignment) ?? assignment))) {
+    throw new TlaTypeScriptError("tla-ts can't run a default that writes a property", assignment);
+  }
+  const symbol = ts.isIdentifier(assigning.name)
+    ? getSymbol(assigning.name, context.checker)
+    : undefined;
+  const bound = new Set(
+    elements.flatMap((element) =>
+      ts.isIdentifier(element.name) ? (getSymbol(element.name, context.checker) ?? []) : [],
+    ),
+  );
+  if (getSymbols(assignment, context).some((inner) => bound.has(inner))) {
+    throw new TlaTypeScriptError("tla-ts can't run this default before what it binds", assignment);
+  }
+  // The defaults before it take what they read as the pattern binds, after it runs.
+  rejectEarlyRun(
+    assignment,
+    [assignment],
+    elements
+      .slice(0, elements.indexOf(assigning))
+      .flatMap((element) => element.initializer ?? [])
+      .filter((initializer) => !path.scope.results.has(skipCasts(initializer))),
+    path,
+    context,
+  );
+  // The getters that the pattern reads run before it binds, so none may follow the default.
+  if (
+    elements.slice(elements.indexOf(assigning) + 1).some((element) => path.scope.read?.has(element))
+  ) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't run a default that assigns before the getters that follow it",
+      assignment,
+    );
+  }
+  const skipped = bindPattern(
+    name,
+    value,
+    {
+      ...path.scope,
+      results: new Map([
+        ...path.scope.results,
+        ...pending.map((entry): [ts.Expression, Expression] => [
+          entry.assignment,
+          getUndefined(context),
+        ]),
+      ]),
+    },
+    context,
+  );
+  const part = symbol && skipped.scope.bindings.get(symbol);
+  if (part === undefined) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't run a default that assigns where a nested pattern takes its value",
+      assignment,
+    );
+  }
+  const withDefault = (after: Path, result: Expression) =>
+    continueWith({
+      ...after,
+      scope: { ...after.scope, results: new Map([...after.scope.results, [assignment, result]]) },
+    });
+  return letIn(
+    skipped.definitions,
+    ifThenElse(
+      apply("=", [part, getUndefined(context)]),
+      runAssignment(assignment, path, context, frame, withDefault),
+      withDefault(path, getUndefined(context)),
+    ),
+  );
+};
+
 const bindDeclaration = (
   declarations: readonly ts.VariableDeclaration[],
   value: Expression,
@@ -11696,6 +11799,10 @@ const bindDeclaration = (
       bindDeclaration(declarations, values, after, context, frame, continueWith),
     );
   if (taken) return taken;
+  const defaulted = runAssigningDefault(declaration.name, value, path, context, frame, (after) =>
+    bindDeclaration(declarations, value, after, context, frame, continueWith),
+  );
+  if (defaulted !== undefined) return defaulted;
   // A reference to an object that the statement made binds without a definition, so that code
   // that follows the object by its reference, such as a promise's, finds it.
   const isReference =
@@ -12410,6 +12517,10 @@ const bindElement = (
       bindElement(declared, values, source, after, context, frame, continueWith),
     );
   if (taken) return taken;
+  const assigned = runAssigningDefault(name, element, path, context, frame, (after) =>
+    bindElement(declared, element, source, after, context, frame, continueWith),
+  );
+  if (assigned !== undefined) return assigned;
   // A default that calls a function runs only where its element or property is undefined, before
   // the pattern binds. A call that changes objects would change the properties that the pattern
   // read before it.
@@ -14189,8 +14300,8 @@ const getIncremented = (operand: ts.Expression, value: Expression, context: Cont
 const isAssignment = (node: ts.Node): node is ts.BinaryExpression | Increment =>
   isIncrement(node) || (ts.isBinaryExpression(node) && getWritten(node) !== undefined);
 
-// A variable, or a property of an object that a name holds, whose key no getter has, which reads
-// and writes a number without running code.
+// A variable, or a property or an element of an object that a name holds, whose key no getter has
+// and is a name or a literal, which reads and writes a number without running code.
 // The boolean type keeps TypeScript from narrowing the increment as a proxy's operation.
 const isPlainIncrement = (node: Increment, context: Context): boolean => {
   const operand = skipCasts(node.operand);
@@ -14198,6 +14309,13 @@ const isPlainIncrement = (node: Increment, context: Context): boolean => {
   const isNumeric =
     (names !== undefined && names.every((name) => name === "number" || name === "bigint")) ||
     isConvertedOperand(operand, context);
+  // A literal key that no getter has, or a name's key where the script defines no getter.
+  const isPlainKey = (element: ts.ElementAccessExpression) => {
+    const key = getAccessKey(element);
+    return ts.isIdentifier(element.argumentExpression)
+      ? getGetterKeys(element).size === 0
+      : key !== undefined && !getGetterKeys(element).has(key);
+  };
   const isPlainObject = (object: ts.Expression): boolean =>
     ts.isIdentifier(object) ||
     object.kind === ts.SyntaxKind.ThisKeyword ||
@@ -14211,6 +14329,10 @@ const isPlainIncrement = (node: Increment, context: Context): boolean => {
       (ts.isPropertyAccessExpression(operand) &&
         operand.questionDotToken === undefined &&
         !getGetterKeys(operand).has(operand.name.text) &&
+        isPlainObject(operand.expression)) ||
+      (ts.isElementAccessExpression(operand) &&
+        operand.questionDotToken === undefined &&
+        isPlainKey(operand) &&
         isPlainObject(operand.expression)))
   );
 };
@@ -14598,6 +14720,9 @@ const translateAwait = (
       settleWith(after, value ?? getUndefined(context)),
     );
   }
+  if (isIncrement(operand) && isPlainIncrement(operand, context)) {
+    return runAssignment(operand, path, context, frame, settleWith);
+  }
   if (hasCall(operand, context)) throw new TlaTypeScriptError("Unsupported await", node);
   return allocate(operand, path, context, (inner) =>
     settleWith(inner, translateExpression(operand, inner.scope, context)),
@@ -14627,6 +14752,8 @@ interface LeadingCall {
   branch?: ts.BinaryExpression | ts.ConditionalExpression;
   // A spread of a generator object or an iterator, which the statement steps to its end first.
   spread?: ts.SpreadElement;
+  // An increment, which only a statement can run, so nothing after it can run before it.
+  increment?: Increment;
 }
 
 // The first call in a node's evaluation order that only statements can run, with the nodes that
@@ -14700,11 +14827,11 @@ const findLeadingCall = (
       ? { call: undefined, isBlocked: true, read: node }
       : evaluate(node);
   }
+  if (isIncrement(node)) {
+    return isPlainIncrement(node, context) ? { ...blocked, increment: node } : blocked;
+  }
   if (ts.isPrefixUnaryExpression(node)) {
-    return node.operator === ts.SyntaxKind.PlusPlusToken ||
-      node.operator === ts.SyntaxKind.MinusMinusToken
-      ? blocked
-      : thenConverted(findLeadingCall(node.operand, before, path, context));
+    return thenConverted(findLeadingCall(node.operand, before, path, context));
   }
   if (
     isProxyOperation(node, context) &&
@@ -15261,6 +15388,22 @@ const getHoistedRead = (statement: ts.Statement, path: Path, context: Context) =
     context,
   );
   return node;
+};
+
+// The increment that a statement's expression evaluates first, which runs as its own statement,
+// and the names and properties that the statement reads before it that it changes.
+const getHoistedIncrement = (statement: ts.Statement, path: Path, context: Context) => {
+  const evaluated = getEvaluated(statement);
+  if (evaluated === undefined) return undefined;
+  const before: ts.Node[] = [];
+  const node = findLeadingCall(evaluated, before, path, context).increment;
+  if (node === undefined) return undefined;
+  const reads = getEarlyReads([node], before, path, context);
+  const kept = reads.filter(isKeptRead);
+  if (kept.length < reads.length || kept.some((inner) => mayThrow(inner, context))) {
+    throw new TlaTypeScriptError("tla-ts can't run this before what reads what it changes", node);
+  }
+  return { node, reads: kept };
 };
 
 // The spread that a statement's expression evaluates first of a generator object or an iterator,
@@ -15898,6 +16041,28 @@ export const translateStatements = (
           scope: {
             ...after.scope,
             results: new Map([...after.scope.results, ...earlier, [hoisted, value]]),
+          },
+        },
+        context,
+        frame,
+      ),
+    );
+  }
+  // An increment runs first, where what the statement reads before it keeps its value from then.
+  const increment = getHoistedIncrement(statement, path, context);
+  if (increment !== undefined) {
+    const kept = increment.reads.map((read): [ts.Expression, Expression] => [
+      read,
+      translateExpression(read, path.scope, context),
+    ]);
+    return runAssignment(increment.node, path, context, frame, (after, value) =>
+      translateStatements(
+        statements,
+        {
+          ...after,
+          scope: {
+            ...after.scope,
+            results: new Map([...after.scope.results, ...kept, [increment.node, value]]),
           },
         },
         context,
