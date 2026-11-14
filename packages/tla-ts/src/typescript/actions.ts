@@ -767,7 +767,8 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
         !ts.isNonNullExpression(ancestor.parent) &&
         !ts.isAsExpression(ancestor.parent),
     );
-    // A parameter's object may be the caller's too, which a change in place would miss.
+    // A parameter's object may be the caller's too, which a change in place would miss, though a
+    // rest parameter's array is the call's own.
     const isReceiver =
       whole !== undefined &&
       (ts.isPropertyAccessExpression(whole.parent) || ts.isElementAccessExpression(whole.parent)) &&
@@ -778,6 +779,7 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
     const isChangedInPlace =
       symbol?.valueDeclaration !== undefined &&
       ts.isParameter(symbol.valueDeclaration) &&
+      symbol.valueDeclaration.dotDotDotToken === undefined &&
       isReceiver;
     if (
       symbol === undefined ||

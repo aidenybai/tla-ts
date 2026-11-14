@@ -5128,6 +5128,49 @@ describe("calls", () => {
     expect((await checkModel(getSource("a-b-c;;x;3"))).failure?.message).toContain("a-b-c;;x;4");
   });
 
+  it("changes in place the rest parameter of a helper that runs as an operator", async () => {
+    const getSource = (expected: string) => `
+      const run = () => {
+        const made = { count: 0 };
+        const join = (separator: string, ...parts: string[]) => {
+          made.count += parts.length;
+          parts.push("!");
+          parts[0] = parts[0].toUpperCase();
+          return parts.join(separator);
+        };
+        const first = join("-", "a", "b", "c");
+        const second = join("+");
+        const third = join(",", "x");
+        return \`\${first};\${second};\${third};\${made.count}\`;
+      };
+      const text = run();
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect(printModule(compile(getSource("A-b-c-!;!;X,!;4")).source)).toMatch(/^join\(/m);
+    expect((await checkModel(getSource("A-b-c-!;!;X,!;4"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("A-b-c-!;!;X,!;3"))).failure?.message).toContain(
+      "A-b-c-!;!;X,!;4",
+    );
+  });
+
+  it("stops where an object holds a rest parameter that changes in place", () => {
+    expect(() =>
+      compile(`
+        interface Holder {
+          items: string[];
+        }
+        const holder: Holder = { items: [] };
+        const keep = (...parts: string[]) => {
+          holder.items = parts;
+          parts.push("!");
+          return parts.length;
+        };
+        const count = keep("a", "b");
+        if (count !== 3) throw new Error(String(count));
+      `),
+    ).toThrow("parts would share an object that changes in place, so copy it");
+  });
+
   it("runs a helper that passes its callback's call back into itself as a recursive operator", async () => {
     const getSource = (expected: string) => `
       interface Tree {
