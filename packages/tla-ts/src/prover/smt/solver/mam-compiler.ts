@@ -258,7 +258,7 @@ export class Compiler<E extends MamEnode<E> = Enode> {
     let numUnboundVars = 0;
     const visit = (term: number) => {
       size++;
-      if (manager.isGround(term)) return;
+      if (manager.isGroundApp(term)) return;
       for (let index = 0; index < manager.getNumArgs(term); index++) {
         const arg = manager.getArg(term, index);
         if (manager.kinds[arg] === KIND_VAR) {
@@ -287,7 +287,7 @@ export class Compiler<E extends MamEnode<E> = Enode> {
         else this.vars[varIndex] = reg;
         continue;
       }
-      if (manager.isGround(pattern)) {
+      if (manager.isGroundApp(pattern)) {
         this.seq.push(mkCheck(reg, hasher.getGroundEnode(pattern, this.quantifier)));
         this.setMark(reg, NOT_CHECKED);
         continue;
@@ -364,7 +364,7 @@ export class Compiler<E extends MamEnode<E> = Enode> {
     let count = 0;
     let hasUnboundVars = false;
     const visit = (term: number) => {
-      if (manager.isGround(term)) return;
+      if (manager.isGroundApp(term)) return;
       for (let index = 0; index < manager.getNumArgs(term); index++) {
         const arg = manager.getArg(term, index);
         if (manager.kinds[arg] !== KIND_VAR) visit(arg);
@@ -378,7 +378,7 @@ export class Compiler<E extends MamEnode<E> = Enode> {
 
   private genMpFilter(expr: number): number {
     const manager = this.manager;
-    if (manager.isGround(expr)) {
+    if (manager.isGroundApp(expr)) {
       const oreg = this.tree.numRegs;
       this.tree.numRegs += 1;
       const instr = mkInstruction<E>(OP_GET_ENODE);
@@ -441,7 +441,7 @@ export class Compiler<E extends MamEnode<E> = Enode> {
         this.todo.push(oreg + index);
         if (
           (manager.kinds[arg] === KIND_VAR && this.vars[manager.values[arg]] >= 0) ||
-          (manager.kinds[arg] !== KIND_VAR && manager.isGround(arg))
+          manager.isGroundApp(arg)
         )
           hasDepth1Joint = true;
       }
@@ -451,7 +451,7 @@ export class Compiler<E extends MamEnode<E> = Enode> {
             const reg = this.vars[manager.values[arg]];
             return reg >= 0 ? { ...mkNullJoint<E>(), kind: JOINT_VAR, reg } : mkNullJoint<E>();
           }
-          if (manager.isGround(arg))
+          if (manager.isGroundApp(arg))
             return {
               ...mkNullJoint<E>(),
               kind: JOINT_GROUND,
@@ -543,7 +543,7 @@ export class Compiler<E extends MamEnode<E> = Enode> {
     const expr = this.getRegister(instr.reg);
     return (
       this.isApp(expr) &&
-      !manager.isGround(expr) &&
+      !manager.isGroundApp(expr) &&
       manager.decls[expr] === instr.label &&
       manager.getNumArgs(expr) === instr.numArgs
     );
@@ -556,14 +556,14 @@ export class Compiler<E extends MamEnode<E> = Enode> {
 
   private isCheckCompatible(instr: Instruction<E>) {
     const expr = this.getRegister(instr.reg);
-    if (!this.isApp(expr) || !this.manager.isGround(expr)) return false;
+    if (!this.manager.isGroundApp(expr)) return false;
     const node = this.hasher.getGroundEnode(expr, this.quantifier);
     return instr.enode !== null && node !== null && instr.enode.root === node.root;
   }
 
   private getPatLblHash(reg: number) {
     const expr = this.registers[reg];
-    if (this.manager.isGround(expr)) {
+    if (this.manager.isGroundApp(expr)) {
       const node = this.hasher.getGroundEnode(expr, this.quantifier);
       return node === null ? -1 : this.hasher.getLblHash(node);
     }
@@ -576,7 +576,7 @@ export class Compiler<E extends MamEnode<E> = Enode> {
     return (
       expr !== -1 &&
       this.getMark(instr.reg) === NOT_CHECKED &&
-      this.manager.isGround(expr) &&
+      this.manager.isGroundApp(expr) &&
       instr.enode !== null &&
       this.getPatLblHash(instr.reg) === instr.enode.lblHash
     );
@@ -586,7 +586,7 @@ export class Compiler<E extends MamEnode<E> = Enode> {
     const expr = this.getRegister(instr.reg);
     return (
       this.isApp(expr) &&
-      !this.manager.isGround(expr) &&
+      !this.manager.isGroundApp(expr) &&
       hasHash(instr.lblLow, instr.lblHigh, this.getPatLblHash(instr.reg))
     );
   }
@@ -595,7 +595,7 @@ export class Compiler<E extends MamEnode<E> = Enode> {
     const expr = this.getRegister(instr.reg);
     return (
       expr !== -1 &&
-      this.manager.isGround(expr) &&
+      this.manager.isGroundApp(expr) &&
       hasHash(instr.lblLow, instr.lblHigh, this.getPatLblHash(instr.reg))
     );
   }
@@ -603,7 +603,7 @@ export class Compiler<E extends MamEnode<E> = Enode> {
   private isFilterSemiCompatible(instr: Instruction<E>) {
     const expr = this.getRegister(instr.reg);
     return (
-      this.getMark(instr.reg) === NOT_CHECKED && this.isApp(expr) && !this.manager.isGround(expr)
+      this.getMark(instr.reg) === NOT_CHECKED && this.isApp(expr) && !this.manager.isGroundApp(expr)
     );
   }
 

@@ -97,7 +97,7 @@ export const mkRecFunApp = (
       args.some(
         (arg, position) =>
           manager.getOp(arg) === OP_DT_CONSTRUCTOR &&
-          isDecreasingArg(manager, decl, position, manager.isGround(arg)),
+          isDecreasingArg(manager, decl, position, manager.isGroundApp(arg)),
       ));
   if (!isSafe) return undefined;
   const subst = new VarSubst(manager, true);

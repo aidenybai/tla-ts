@@ -24,7 +24,7 @@ interface QuasiMacro {
 }
 
 const isNonGroundUninterp = (manager: AstManager, expr: number) =>
-  !manager.isGround(expr) &&
+  !manager.isGroundApp(expr) &&
   manager.kinds[expr] === KIND_APP &&
   manager.funcDecls[manager.decls[expr]].family === FAMILY_USER;
 
@@ -145,7 +145,7 @@ class QuasiMacros {
     let numSeen = 0;
     for (const [index, arg] of manager.getArgs(macro.head).entries()) {
       const isVar = manager.kinds[arg] === KIND_VAR;
-      if (!isVar && !manager.isGround(arg)) return -1;
+      if (!isVar && !manager.isGroundApp(arg)) return -1;
       if (isVar && !isSeen[manager.values[arg]]) {
         this.newVars.push(arg);
         isSeen[manager.values[arg]] = true;

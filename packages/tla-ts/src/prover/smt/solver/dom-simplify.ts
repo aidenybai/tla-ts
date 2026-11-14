@@ -199,7 +199,7 @@ class ExprSubstitutionSimplifier {
 
   private updateSubstitution(expr: number) {
     const manager = this.manager;
-    if (manager.isGround(expr) && manager.getOp(expr) === OP_EQ) {
+    if (manager.isGroundApp(expr) && manager.getOp(expr) === OP_EQ) {
       const lhs = manager.getArg(expr, 0);
       const rhs = manager.getArg(expr, 1);
       this.computeDepth(lhs);

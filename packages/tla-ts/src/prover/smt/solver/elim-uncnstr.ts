@@ -502,7 +502,7 @@ class UncnstrRewriter extends RewriterTpl {
 
   reduceApp(decl: number, args: number[], sort: number) {
     const manager = this.manager;
-    if (args.length === 0 || !args.every((arg) => manager.isGround(arg))) return -1;
+    if (args.length === 0 || !args.every((arg) => manager.isGroundApp(arg))) return -1;
     const info = manager.funcDecls[decl];
     const result =
       info.family === FAMILY_BASIC

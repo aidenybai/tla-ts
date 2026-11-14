@@ -110,7 +110,7 @@ class PurifyState {
   private initCannotPurify() {
     const manager = this.manager;
     this.forEachApp((expr) => {
-      if (manager.getArgs(expr).some((arg) => !manager.isGround(arg)))
+      if (manager.getArgs(expr).some((arg) => !manager.isGroundApp(arg)))
         this.cannotPurify.add(manager.decls[expr]);
     });
   }

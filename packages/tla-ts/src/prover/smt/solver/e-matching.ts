@@ -310,7 +310,7 @@ export class Mam implements LabelHasher {
     const numArgs = manager.getNumArgs(pattern);
     let groundArgIndex = -1;
     for (let index = 0; index < numArgs && groundArgIndex === -1; index++)
-      if (manager.isGround(manager.getArg(pattern, index))) groundArgIndex = index;
+      if (manager.isGroundApp(manager.getArg(pattern, index))) groundArgIndex = index;
     const groundArg =
       groundArgIndex === -1
         ? null
@@ -344,7 +344,7 @@ export class Mam implements LabelHasher {
         if (!isFound) paths.push(path);
         continue;
       }
-      if (manager.isGround(child)) {
+      if (manager.isGroundApp(child)) {
         const node = this.getGroundEnode(child, mp.quantifier);
         if (node === null) continue;
         this.updatePlbls(label);
@@ -361,7 +361,7 @@ export class Mam implements LabelHasher {
 
   addPattern(quantifier: number, patterns: number[]) {
     const manager = this.manager;
-    if (patterns.every((pattern) => manager.isGround(pattern))) return;
+    if (patterns.every((pattern) => manager.isGroundApp(pattern))) return;
     if (patterns.some((pattern) => manager.hasQuantifierFlags[pattern])) return;
     const mp = { quantifier, patterns };
     const numDecls = manager.getQuantifier(quantifier).sorts.length;
@@ -370,7 +370,7 @@ export class Mam implements LabelHasher {
     this.collectGroundExprs(quantifier, patterns);
     this.newPatterns.push(mp);
     patterns.forEach((pattern, firstIndex) => {
-      if (manager.isGround(pattern)) return;
+      if (manager.isGroundApp(pattern)) return;
       const label = manager.decls[pattern];
       const tree = this.trees.get(label);
       if (tree !== undefined) {
@@ -387,7 +387,7 @@ export class Mam implements LabelHasher {
     const manager = this.manager;
     const todo: number[] = [];
     for (const pattern of patterns) {
-      if (!manager.isGround(pattern)) {
+      if (!manager.isGroundApp(pattern)) {
         todo.push(pattern);
         continue;
       }
@@ -397,7 +397,7 @@ export class Mam implements LabelHasher {
       this.addSharedEnode(node);
     }
     for (let term = todo.pop(); term !== undefined; term = todo.pop()) {
-      if (manager.isGround(term)) {
+      if (manager.isGroundApp(term)) {
         const node = this.getGroundEnode(term, quantifier);
         if (node !== null) this.addSharedEnode(node);
       } else

@@ -117,7 +117,7 @@ const getHintHeadVars = (manager: AstManager, expr: number) => {
 const isVarsOfSubset = (manager: AstManager, expr: number, vars: number[]) => {
   const visited = new Set<number>();
   const visit = (current: number): boolean => {
-    if (manager.isGround(current) || visited.has(current)) return true;
+    if (manager.isGroundApp(current) || visited.has(current)) return true;
     visited.add(current);
     const kind = manager.kinds[current];
     if (kind === KIND_VAR) return vars.includes(current);
@@ -555,7 +555,7 @@ const collectNgFuncDecls = (manager: AstManager, expr: number) => {
       visit(manager.getArg(current, index));
     if (
       manager.getNumArgs(current) > 0 &&
-      !manager.isGround(current) &&
+      !manager.isGroundApp(current) &&
       isUserApp(manager, current)
     )
       decls.add(manager.decls[current]);
@@ -592,7 +592,7 @@ const nonAufMacroSolver = (manager: AstManager, model: ProtoModel, getInfo: GetI
     const isBetterMacro = (first: CondMacro, second: CondMacro | null) => {
       if (second === null || !first.isHint) return true;
       if (!second.isHint) return false;
-      return manager.isGround(first.def) && !manager.isGround(second.def);
+      return manager.isGroundApp(first.def) && !manager.isGroundApp(second.def);
     };
     const getMacroFor = (decl: number, quantifier: number) => {
       let result: CondMacro | null = null;

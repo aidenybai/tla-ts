@@ -124,7 +124,7 @@ export class ModelEvaluator extends RewriterTpl {
       if (interp === undefined) return -1;
       if (interp.isPartial()) interp.setElse(model.getSomeValue(sort));
       const result = this.substitute(interp.getInterp() as number, args);
-      return manager.isGround(result) ? { expr: result, depth: Infinity } : result;
+      return manager.isGroundApp(result) ? { expr: result, depth: Infinity } : result;
     }
     const rewritten = this.rewriter.reduceAppCore(decl, args);
     const reduced =
@@ -192,7 +192,7 @@ export class ModelEvaluator extends RewriterTpl {
         model.registerFunc(decl, created);
         return value;
       }
-      if (!manager.isGround(args[0])) return manager.mkApp(decl, args, sort);
+      if (!manager.isGroundApp(args[0])) return manager.mkApp(decl, args, sort);
     }
     if (op === OP_DT_CONSTRUCTOR) return manager.mkApp(decl, args, sort);
     if (interp === undefined) return -1;
@@ -221,11 +221,11 @@ export class ModelEvaluator extends RewriterTpl {
     );
     const elseExpr = interp?.elseExpr ?? null;
     if (interp === undefined || elseExpr === null) return undefined;
-    let isGround = manager.isGround(elseExpr);
+    let isGround = manager.isGroundApp(elseExpr);
     for (const entry of interp.entries) {
       if (entry.result === elseExpr) continue;
       const store = [...entry.args, entry.result];
-      isGround &&= store.every((arg) => manager.isGround(arg));
+      isGround &&= store.every((arg) => manager.isGroundApp(arg));
       stores.push(store);
     }
     return isGround ? { stores, elseExpr, areUnique } : undefined;

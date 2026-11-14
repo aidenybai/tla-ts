@@ -379,8 +379,8 @@ class MatchSubstitution {
       if (manager.kinds[right] === KIND_VAR) return false;
       if (manager.kinds[left] === KIND_QUANTIFIER || manager.kinds[right] === KIND_QUANTIFIER)
         return false;
-      if (manager.isGround(left) && !manager.isGround(right)) return false;
-      if (left === right && manager.isGround(left)) {
+      if (manager.isGroundApp(left) && !manager.isGroundApp(right)) return false;
+      if (left === right && manager.isGroundApp(left)) {
         this.todo.pop();
         continue;
       }

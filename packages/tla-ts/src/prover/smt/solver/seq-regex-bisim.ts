@@ -59,7 +59,7 @@ export class RegexBisim {
     return (
       manager.isReSort(manager.sorts[regex]) &&
       this.info.getInfo(regex).isKnown &&
-      manager.isGround(regex)
+      manager.isGroundApp(regex)
     );
   }
 

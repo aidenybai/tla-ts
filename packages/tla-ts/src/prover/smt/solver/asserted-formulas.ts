@@ -125,7 +125,7 @@ class Substitution {
 
   update(expr: number) {
     const manager = this.manager;
-    if (manager.isGround(expr) && manager.getOp(expr) === OP_EQ) {
+    if (manager.isGroundApp(expr) && manager.getOp(expr) === OP_EQ) {
       const left = manager.getArg(expr, 0);
       const right = manager.getArg(expr, 1);
       if (isGreater(manager, left, right)) {

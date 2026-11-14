@@ -828,7 +828,7 @@ export class Mam implements LabelHasher<Enode> {
     let groundArgIndex = 0;
     let groundArg: Enode | null = null;
     for (let index = 0; index < numArgs; index++)
-      if (manager.isGround(manager.getArg(pattern, index))) {
+      if (manager.isGroundApp(manager.getArg(pattern, index))) {
         groundArgIndex = index;
         groundArg = this.getGroundEnode(manager.getArg(pattern, index));
         break;
@@ -864,7 +864,7 @@ export class Mam implements LabelHasher<Enode> {
         if (!isFound) paths.push(path);
         continue;
       }
-      if (manager.isGround(child)) {
+      if (manager.isGroundApp(child)) {
         const node = this.getGroundEnode(child);
         if (node === null) continue;
         this.updatePlbls(label);
@@ -882,7 +882,7 @@ export class Mam implements LabelHasher<Enode> {
   addPattern(quantifier: number, pattern: number) {
     const manager = this.manager;
     const patterns = manager.getArgs(pattern);
-    if (patterns.every((arg) => manager.isGround(arg))) return;
+    if (patterns.every((arg) => manager.isGroundApp(arg))) return;
     if (patterns.some((arg) => manager.hasQuantifierFlags[arg])) return;
     const mp: MultiPattern = { quantifier, pattern, patterns };
     const numDecls = manager.getQuantifier(quantifier).sorts.length;
@@ -891,7 +891,7 @@ export class Mam implements LabelHasher<Enode> {
     this.newPatterns.push(mp);
     this.pushTrail(() => this.newPatterns.pop());
     patterns.forEach((arg, firstIndex) => {
-      if (manager.isGround(arg)) return;
+      if (manager.isGroundApp(arg)) return;
       const label = manager.decls[arg];
       const tree = this.trees.get(label);
       if (tree !== undefined) {

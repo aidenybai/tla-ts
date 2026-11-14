@@ -270,7 +270,7 @@ export class Rewriter extends RewriterTpl {
       !isLambda &&
       data.patterns.length + data.noPatterns.length === 0 &&
       nested.patterns.length + nested.noPatterns.length === 0;
-    if (!isMerging && isLambda && manager.isGround(body))
+    if (!isMerging && isLambda && manager.isGroundApp(body))
       return mkArrayApp(manager, OP_CONST_ARRAY, [body], [manager.sorts[expr]]);
     if (!isMerging && isLambda) {
       const reduced = this.array.mkLambdaCore(expr, body);
