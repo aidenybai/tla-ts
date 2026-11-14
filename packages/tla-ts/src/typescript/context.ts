@@ -622,6 +622,43 @@ export const getSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
     : symbol;
 };
 
+// A declaration that a script's declare, or a function's signature without a body, gives, of a
+// value that the host defines.
+const isHostDeclaration = (declaration: ts.Declaration) =>
+  (ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Ambient) !== 0 ||
+  (ts.isFunctionDeclaration(declaration) && declaration.body === undefined);
+
+// setTimeout(callback), which runs the callback once the jobs before it finish.
+export const isTimerCall = (node: ts.CallExpression, context: Context) => {
+  const declarations = getSymbol(node.expression, context.checker)?.declarations ?? [];
+  return (
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "setTimeout" &&
+    declarations.every(
+      (declaration) =>
+        declaration.getSourceFile().isDeclarationFile || isHostDeclaration(declaration),
+    )
+  );
+};
+
+// A call of a function that only a script's declarations give, other than setTimeout, runs code
+// that tla-ts has no model of.
+export const rejectDeclaredCall = (node: ts.CallExpression, context: Context) => {
+  const declarations = ts.isIdentifier(node.expression)
+    ? (getSymbol(node.expression, context.checker)?.declarations ?? [])
+    : [];
+  if (
+    declarations.length > 0 &&
+    declarations.every(
+      (declaration) =>
+        !declaration.getSourceFile().isDeclarationFile && isHostDeclaration(declaration),
+    ) &&
+    !isTimerCall(node, context)
+  ) {
+    throw new TlaTypeScriptError(`tla-ts can't call ${node.expression.getText()}`, node);
+  }
+};
+
 export const isMethodCall = (node: ts.Node): node is MethodCall =>
   ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression);
 

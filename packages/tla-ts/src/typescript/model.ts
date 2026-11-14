@@ -169,7 +169,13 @@ const getDeclarations = (statement: ts.Statement): Declared[] => {
     if (statement.name === undefined) throw new TlaTypeScriptError("Name this function", statement);
     return [{ name: statement.name.text, declaration: statement, identifier: statement.name }];
   }
-  if (!ts.isVariableStatement(statement)) return [];
+  // A declare's variable is the host's, which no code here gives.
+  if (
+    !ts.isVariableStatement(statement) ||
+    statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword)
+  ) {
+    return [];
+  }
   return statement.declarationList.declarations.flatMap((declaration) =>
     getBoundNames(declaration.name).map((identifier) => ({
       name: identifier.text,

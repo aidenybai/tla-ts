@@ -40,6 +40,7 @@ import {
   isAssigned,
   isAsyncFunction,
   isAsyncGenerator,
+  isTimerCall,
   skipCasts,
   translateString,
 } from "./context";
@@ -1587,20 +1588,6 @@ const getPromiseMethod = (node: ts.CallExpression, context: Context) => {
     isPromiseType(callee.expression, context)
     ? { method: callee.name.text, receiver: getCast(callee.expression) }
     : undefined;
-};
-
-// setTimeout(callback), which runs the callback once the jobs before it finish.
-const isTimerCall = (node: ts.CallExpression, context: Context) => {
-  const symbol = getSymbol(node.expression, context.checker);
-  return (
-    ts.isIdentifier(node.expression) &&
-    node.expression.text === "setTimeout" &&
-    (symbol?.declarations ?? []).every(
-      (declaration) =>
-        declaration.getSourceFile().isDeclarationFile ||
-        (ts.isFunctionDeclaration(declaration) && declaration.body === undefined),
-    )
-  );
 };
 
 export const isPromiseConstruction = (

@@ -121,6 +121,7 @@ import {
   getDeferredSuperCalls,
   getSuperCall,
   isNullBased,
+  rejectDeclaredCall,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { UNSETTLED_AWAIT_WARNING } from "../exit-codes";
@@ -14465,7 +14466,15 @@ const getHoistedAssignment = (statement: ts.Statement, path: Path, context: Cont
 const getVarScoped = (node: ts.Node): (ts.VariableDeclarationList | ts.FunctionDeclaration)[] => {
   if (ts.isFunctionDeclaration(node)) return [node];
   if (ts.isFunctionLike(node) || ts.isClassLike(node)) return [];
-  if (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.BlockScoped) === 0) {
+  // A declare's variable is the host's, which nothing here binds.
+  if (
+    ts.isVariableDeclarationList(node) &&
+    (node.flags & ts.NodeFlags.BlockScoped) === 0 &&
+    !(
+      ts.isVariableStatement(node.parent) &&
+      node.parent.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword)
+    )
+  ) {
     return [node];
   }
   const found: (ts.VariableDeclarationList | ts.FunctionDeclaration)[] = [];
@@ -14741,6 +14750,16 @@ export const translateStatements = (
   }
   if (ts.isEmptyStatement(statement)) return continueWith(path);
   const evaluated = getEvaluated(statement);
+  // The calls that the statement runs, apart from those of the statements and functions in it.
+  const getCalls = (node: ts.Node): ts.CallExpression[] => {
+    if (ts.isFunctionLike(node) || (node !== statement && ts.isStatement(node))) return [];
+    const calls = ts.isCallExpression(node) ? [node] : [];
+    ts.forEachChild(node, (child) => {
+      calls.push(...getCalls(child));
+    });
+    return calls;
+  };
+  getCalls(statement).forEach((call) => rejectDeclaredCall(call, context));
   const invalidRegExp = evaluated === undefined ? undefined : getInvalidRegExp(evaluated, context);
   if (invalidRegExp !== undefined) {
     return throwError("SyntaxError", path, invalidRegExp, context, frame);

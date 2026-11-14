@@ -55,6 +55,7 @@ import {
   translateString,
   isNestedFunction,
   isClosure,
+  rejectDeclaredCall,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateJsonCall } from "./json";
@@ -725,6 +726,7 @@ export const translateCall = (
   context: Context,
   isDefined: boolean,
 ) => {
+  rejectDeclaredCall(node, context);
   const keyFor = node.expression;
   if (
     ts.isPropertyAccessExpression(keyFor) &&

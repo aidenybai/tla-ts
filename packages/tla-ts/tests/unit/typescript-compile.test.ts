@@ -5315,6 +5315,38 @@ describe("calls", () => {
 });
 
 describe("calls tla-ts can't compile", () => {
+  it("stop at a call of a function that only a declare gives", () => {
+    expect(() =>
+      compile(`
+        declare function queueTask(callback: () => void): void;
+        queueTask(() => {});
+      `),
+    ).toThrow("tla-ts can't call queueTask");
+    expect(() =>
+      compile(`
+        declare var setInterval: (callback: () => void, delay: number) => number;
+        const run = () => setInterval(() => {}, 1);
+        run();
+      `),
+    ).toThrow("tla-ts can't call setInterval");
+  });
+
+  it("runs the timer of a setTimeout that a declared var gives", async () => {
+    const getSource = (expected: string) => `
+      declare var setTimeout: (callback: () => void, delay: number) => number;
+      const log: string[] = [];
+      setTimeout(() => {
+        log.push("timer");
+        if (log.join() !== "${expected}") throw new Error(log.join());
+      }, 0);
+      log.push("script");
+    `;
+    expect((await checkModel(getSource("script,timer"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("timer,script"))).failure?.message).toContain(
+      "A timer threw an exception",
+    );
+  });
+
   it("chooses any value of the call's type in an action", async () => {
     const result = await checkModel(`
       let roll = 0;
