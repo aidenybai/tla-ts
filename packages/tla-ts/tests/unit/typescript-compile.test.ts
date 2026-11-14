@@ -25306,6 +25306,41 @@ describe("buffers", () => {
     });
   });
 
+  describe("throws the RangeError of a typed array's set at an infinite offset", () => {
+    const source = `
+      const sample = new Int8Array(4);
+      const thrown = (offset: number) => {
+        try {
+          sample.set([1], offset);
+        } catch (error) {
+          return error instanceof RangeError ? "RangeError" : "other";
+        }
+        return "";
+      };
+      if (thrown(-Infinity) !== "RangeError") throw new Error("negative infinity");
+      if (thrown(-1.5) !== "RangeError") throw new Error("negative");
+      if (thrown(Infinity) !== "RangeError") throw new Error("infinity");
+      if (thrown(-0.5) !== "") throw new Error("negative fraction");
+    `;
+    const negative = source.replace(
+      'thrown(-Infinity) !== "RangeError"',
+      'thrown(-Infinity) !== ""',
+    );
+    const positive = source.replace('thrown(Infinity) !== "RangeError"', 'thrown(Infinity) !== ""');
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(negative)).failure?.message).toContain('"negative infinity"');
+    });
+
+    it("rejects wrong expectation 2", async () => {
+      expect((await checkModel(positive)).failure?.message).toContain('"infinity"');
+    });
+  });
+
   it("throws a TypeError where a typed array's method runs through call on another value", async () => {
     const result = await checkModel(`
       function throws(expected: Function, func: () => unknown, message: string) {

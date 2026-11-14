@@ -4309,7 +4309,7 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
                     CASE isTyped -> TypedElement(heap, source, position - 1)
                       [] IsSequenceValue(source) -> ToNumber(source[position])
                       [] OTHER -> ToNumber(Get(heap, source, ToString(position - 1)))]
-            IN CASE offset < 0 -> Thrown(heap, "RangeError")
+            IN CASE offset = NegativeInfinity \\/ (offset # Infinity /\\ offset < 0) -> Thrown(heap, "RangeError")
                  [] IsOutOfBounds(heap, view) \\/ source \\in {Undefined, Null} -> Thrown(heap, "TypeError")
                  [] ~IsSequenceValue(source) /\\ ~IsHeap(source) ->
                       Assert(FALSE, "tla-ts can't set a typed array's elements from a primitive")
