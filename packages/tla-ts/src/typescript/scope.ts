@@ -76,6 +76,14 @@ export interface Scope {
   initialReads?: ReadonlyMap<ts.Expression, Expression>;
 }
 
+// The names that a binding pattern binds.
+export const getBoundNames = (name: ts.BindingName): ts.Identifier[] =>
+  ts.isIdentifier(name)
+    ? [name]
+    : name.elements.flatMap((element) =>
+        ts.isOmittedExpression(element) ? [] : getBoundNames(element.name),
+      );
+
 export interface Destructured {
   pattern: ts.BindingPattern;
   value: Expression;

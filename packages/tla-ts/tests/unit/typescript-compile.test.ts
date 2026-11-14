@@ -4175,6 +4175,195 @@ describe("values", () => {
     expect((await checkModel(getSource("a,≈,𝔸,h,i;5"))).failure).toBeUndefined();
     await expect(checkModel(getSource("a,≈,𝔸,h,i;6"))).rejects.toThrow("a,≈,𝔸,h,i;5");
   });
+  describe("binds each var to undefined where its function or its script starts", () => {
+    it("keeps a var's value where its declaration without a value runs again, and through loops", async () => {
+      const getSource = (expected: string) => `
+      const log: string[] = [];
+      var a: number | undefined;
+      a = 1;
+      var a: number | undefined;
+      log.push(String(a));
+      const run = (first: boolean) => {
+        var x: number | undefined;
+        log.push(String(x));
+        if (first) x = 5;
+        var x: number | undefined;
+        log.push(String(x));
+      };
+      run(true);
+      run(false);
+      const read = () => {
+        const before = b;
+        var b: number | undefined = 2;
+        return String(before) + b;
+      };
+      log.push(read());
+      var d: number | undefined;
+      for (let i = 0; i < 2; i++) {
+        var d: number | undefined;
+        d = (d ?? 0) + 1;
+      }
+      log.push(String(d));
+      for (var i = 0; i < 3; i++) {}
+      for (var element of [4, 5]) {}
+      // @ts-ignore
+      log.push(String(i), String(element));
+      if (log.join() !== "${expected}") throw new Error(log.join());
+      `;
+      const expected = "1,undefined,5,undefined,undefined,undefined2,2,3,5";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+      expect(
+        (await checkModel(getSource("1,undefined,5,undefined,undefined,undefined2,1,3,5"))).failure
+          ?.message,
+      ).toContain(expected);
+    });
+
+    it("reads a function's vars from its blocks, loops, and catch before or without their declarations", async () => {
+      const getSource = (expected: string) => `
+      const run = (flag: boolean, a: number) => {
+        var a: number;
+        if (flag) {
+          var inner: number | undefined = 1;
+        }
+        try {
+          var tried: number | undefined = 2;
+        } catch {
+          var caught: number | undefined = 3;
+        }
+        switch (a) {
+          case 7:
+            var seven: number | undefined = 7;
+            break;
+          default:
+            var other: number | undefined = 0;
+        }
+        for (var i = 0; i < 3; i++) {}
+        for (var x of [4, 5]) {}
+        const object = { p: 1, q: 2 };
+        for (var key in object) {}
+        const get = () => late;
+        const early = get();
+        var late: number | undefined = 6;
+        // @ts-ignore
+        return [inner, tried, caught, seven, other, i, x, key, a, early, get()].map((value) => String(value)).join();
+      };
+      const result = [run(false, 7), run(true, 1)].join(";");
+      if (result !== "${expected}") throw new Error(result);
+      `;
+      const expected =
+        "undefined,2,undefined,7,undefined,3,5,q,7,undefined,6;1,2,undefined,undefined,0,3,5,q,1,undefined,6";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "undefined,2,undefined,7,undefined,3,5,q,undefined,undefined,6;1,2,undefined,undefined,0,3,5,q,1,undefined,6",
+            ),
+          )
+        ).failure?.message,
+      ).toContain(expected);
+    });
+
+    it("binds a var to undefined again at each call, in a recursion, and in a static block", async () => {
+      const getSource = (expected: string) => `
+      let total = 0;
+      const add = (n: number) => {
+        const before = seen;
+        var seen: number | undefined;
+        seen = n;
+        total += n;
+        return String(before) + seen;
+      };
+      const results = [add(1), add(2)];
+      for (let i = 0; i < 2; i++) results.push(add(i));
+      const count = (n: number): string => {
+        var r: string | undefined;
+        if (n > 0) r = count(n - 1);
+        return String(r) + n;
+      };
+      results.push(count(2));
+      class Box {
+        static first = "";
+        static {
+          var s: number | undefined;
+          Box.first = String(s);
+          s = 1;
+        }
+        read(flag: boolean) {
+          if (flag) {
+            var inner: number | undefined = 2;
+          }
+          return String(inner);
+        }
+      }
+      results.push(Box.first, new Box().read(false), new Box().read(true));
+      const result = [results.join(), total].join(";");
+      if (result !== "${expected}") throw new Error(result);
+      `;
+      const expected =
+        "undefined1,undefined2,undefined0,undefined1,undefined012,undefined,undefined,2;4";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "undefined1,1undefined2,undefined0,undefined1,undefined012,undefined,undefined,2;4",
+            ),
+          )
+        ).failure?.message,
+      ).toContain(expected);
+    });
+
+    it("stops at a var that a function declaration also declares", () => {
+      expect(() =>
+        compile(`
+          const run = () => {
+            // @ts-ignore
+            function g() {
+              return 1;
+            }
+            // @ts-ignore
+            var g = 2;
+            return typeof g;
+          };
+          run();
+        `),
+      ).toThrow("tla-ts can't declare a var that a function declaration also declares");
+    });
+
+    it("stops at a read of a var that names a function before its declaration runs", () => {
+      expect(() =>
+        compile(`
+          const run = () => {
+            // @ts-ignore
+            const before = typeof f;
+            var f = () => 1;
+            return before + f();
+          };
+          run();
+        `),
+      ).toThrow("tla-ts can't read a var that names a function before its declaration runs");
+    });
+
+    it("stops at a function that a block declares outside strict mode where code outside names it", () => {
+      expect(() =>
+        compile(`
+          const run = () => {
+            {
+              function h() {
+                return 1;
+              }
+            }
+            // @ts-ignore
+            return typeof h;
+          };
+          run();
+        `),
+      ).toThrow(
+        "tla-ts can't name a function that a block declares outside the block outside strict mode",
+      );
+    });
+  });
 });
 
 describe("bounds", () => {

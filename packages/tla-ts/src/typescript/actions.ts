@@ -321,6 +321,7 @@ import {
   translateArgumentValues,
   createStateScope,
   getArrowReceivers,
+  getBoundNames,
   getDefaulted,
   getOptionalField,
   getThisOwner,
@@ -10600,6 +10601,23 @@ export const translateDeclarations = (
   const declaration = declarations[0];
   rejectCatchRedeclaration(declaration);
   const initializer = declaration.initializer;
+  // A var holds undefined, or what its parameter binds, from where its function or its script
+  // starts, so its declaration without a value runs nothing, unless it's a state variable whose
+  // value the script hasn't yet given.
+  const varSymbol =
+    initializer === undefined &&
+    ts.isIdentifier(declaration.name) &&
+    ts.isVariableDeclarationList(declaration.parent) &&
+    (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0
+      ? getSymbol(declaration.name, context.checker)
+      : undefined;
+  if (
+    varSymbol !== undefined &&
+    (path.scope.bindings.get(varSymbol) !== context.variables.get(varSymbol) ||
+      (varSymbol.declarations ?? []).some(ts.isParameter))
+  ) {
+    return translateDeclarations(declarations.slice(1), path, context, frame, continueWith);
+  }
   // An assignment that a later declaration's initializer evaluates first runs after the
   // declarations before it.
   const hoisted =
@@ -11011,6 +11029,16 @@ const getEffects = (
             getKind(root, context) === "object";
           return symbol !== undefined && !isProperty ? [symbol] : [];
         });
+  // A var's declaration that gives it a value, or that a for-in or a for-of binds, writes it.
+  const declared =
+    ts.isVariableDeclaration(node) &&
+    ts.isVariableDeclarationList(node.parent) &&
+    (node.parent.flags & ts.NodeFlags.BlockScoped) === 0 &&
+    (node.initializer !== undefined ||
+      ts.isForInStatement(node.parent.parent) ||
+      ts.isForOfStatement(node.parent.parent))
+      ? getBoundNames(node.name).flatMap((name) => getSymbol(name, context.checker) ?? [])
+      : [];
   const isObjectMade = isMade(node, context);
   const isErrorMade = isObjectMade && isNewError(node, context);
   // An operation that converts an object runs its valueOf and toString methods, as does a definition
@@ -11099,7 +11127,11 @@ const getEffects = (
     isUsing;
   const callees = ts.isCallExpression(node) ? [node.expression, ...node.arguments] : [];
   return {
-    changed: [...assigned, ...(context.heap !== undefined && isHeapChanged ? [context.heap] : [])],
+    changed: [
+      ...assigned,
+      ...declared,
+      ...(context.heap !== undefined && isHeapChanged ? [context.heap] : []),
+    ],
     isErrorMade: context.heap !== undefined && isErrorMade,
     called: [
       ...(conversions ?? []),
@@ -14382,12 +14414,141 @@ const getHoistedAssignment = (statement: ts.Statement, path: Path, context: Cont
   return evaluated === undefined ? undefined : getLeadingAssignment(evaluated, results, context);
 };
 
+// The var declarations and function declarations of a function's body or a script, outside the
+// functions and classes that it makes.
+const getVarScoped = (node: ts.Node): (ts.VariableDeclarationList | ts.FunctionDeclaration)[] => {
+  if (ts.isFunctionDeclaration(node)) return [node];
+  if (ts.isFunctionLike(node) || ts.isClassLike(node)) return [];
+  if (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.BlockScoped) === 0) {
+    return [node];
+  }
+  const found: (ts.VariableDeclarationList | ts.FunctionDeclaration)[] = [];
+  ts.forEachChild(node, (child) => {
+    found.push(...getVarScoped(child));
+  });
+  return found;
+};
+
+// The vars that a function's body or a script binds to undefined as it starts, wherever in it they
+// are declared, apart from those that a parameter also declares, which hold what it binds, and
+// those that name a function that calls inline, which no binding holds.
+const getHoistedVars = (statements: readonly ts.Statement[], context: Context) => {
+  const scoped = statements.flatMap(getVarScoped);
+  const names = scoped.flatMap((declared) =>
+    ts.isVariableDeclarationList(declared)
+      ? declared.declarations.flatMap((declaration) => getBoundNames(declaration.name))
+      : [],
+  );
+  scoped.forEach((declared) => {
+    if (!ts.isFunctionDeclaration(declared) || declared.name === undefined) return;
+    const name = declared.name.text;
+    const parent = declared.parent;
+    const isBlockLevel =
+      ts.isCaseClause(parent) ||
+      ts.isDefaultClause(parent) ||
+      (ts.isBlock(parent) &&
+        !ts.isFunctionLike(parent.parent) &&
+        !ts.isClassStaticBlockDeclaration(parent.parent));
+    const shared = names.find((other) => other.text === name);
+    if (!isBlockLevel && shared !== undefined) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't declare a var that a function declaration also declares",
+        shared,
+      );
+    }
+    // Outside strict mode, a function that a block declares also binds its name around the block.
+    if (
+      isBlockLevel &&
+      !isStrictCode(declared) &&
+      statements.some(
+        (statement) =>
+          findNodes(
+            statement,
+            (inner): inner is ts.Identifier =>
+              ts.isIdentifier(inner) &&
+              inner.text === name &&
+              ts.findAncestor(inner, (ancestor) => ancestor === parent) === undefined,
+          ).length > 0,
+      )
+    ) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't name a function that a block declares outside the block outside strict mode",
+        declared,
+      );
+    }
+  });
+  const symbols = [...new Set(names.flatMap((name) => getSymbol(name, context.checker) ?? []))];
+  const inlined = symbols.filter((symbol) =>
+    (symbol.declarations ?? []).some(
+      (declaration) =>
+        ts.isVariableDeclaration(declaration) && isInlined(declaration.initializer, context),
+    ),
+  );
+  // Such a var holds undefined until its declaration runs, which a read before it can't give.
+  const getEarlyRead = (node: ts.Node): ts.Identifier | undefined => {
+    if (ts.isFunctionLike(node)) return undefined;
+    const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
+    const declaration = symbol?.valueDeclaration;
+    return ts.isIdentifier(node) &&
+      symbol !== undefined &&
+      declaration !== undefined &&
+      inlined.includes(symbol) &&
+      node.getStart() < declaration.getStart()
+      ? node
+      : ts.forEachChild(node, getEarlyRead);
+  };
+  const early = inlined.length === 0 ? undefined : statements.map(getEarlyRead).find(Boolean);
+  if (early !== undefined) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't read a var that names a function before its declaration runs",
+      early,
+    );
+  }
+  return symbols.filter(
+    (symbol) => !inlined.includes(symbol) && !(symbol.declarations ?? []).some(ts.isParameter),
+  );
+};
+
+// A function's body starts with its vars bound to undefined, unless a statement that ran in part
+// runs again from where it left off.
+const hoistVars = (statements: readonly ts.Statement[], path: Path, context: Context): Path => {
+  const first = statements.at(0);
+  const body = first?.parent;
+  if (
+    first === undefined ||
+    body === undefined ||
+    !ts.isBlock(body) ||
+    body.statements !== statements ||
+    !(ts.isFunctionLike(body.parent) || ts.isClassStaticBlockDeclaration(body.parent)) ||
+    [...path.scope.results.keys()].some(
+      (node) => ts.findAncestor(node, (ancestor) => ancestor === first) !== undefined,
+    )
+  ) {
+    return path;
+  }
+  const hoisted = getHoistedVars(statements, context);
+  return hoisted.length === 0
+    ? path
+    : {
+        ...path,
+        scope: {
+          ...path.scope,
+          bindings: new Map([
+            ...path.scope.bindings,
+            ...hoisted.map((symbol): [ts.Symbol, Expression] => [symbol, getUndefined(context)]),
+          ]),
+        },
+        mutable: new Set([...path.mutable, ...hoisted]),
+      };
+};
+
 export const translateStatements = (
   statements: readonly ts.Statement[],
-  path: Path,
+  entered: Path,
   context: Context,
   frame: Frame,
 ): Formula => {
+  const path = hoistVars(statements, entered, context);
   if ((path.scope.destructured ?? []).length > 0) {
     const checked = { ...path, scope: { ...path.scope, destructured: undefined } };
     return throwOnDestructured(
@@ -15228,9 +15389,16 @@ export const translateScript = (
       (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0
     );
   });
+  // So do the vars that its blocks and loops declare, which aren't state variables.
+  const locals = getHoistedVars(statements, context).filter(
+    (symbol) => !context.variables.has(symbol),
+  );
   const bindings = new Map([
     ...scope.bindings,
-    ...hoisted.map((symbol): [ts.Symbol, Expression] => [symbol, getUndefined(context)]),
+    ...[...hoisted, ...locals].map((symbol): [ts.Symbol, Expression] => [
+      symbol,
+      getUndefined(context),
+    ]),
   ]);
   return translateStatements(
     statements,
@@ -15271,7 +15439,7 @@ export const translateScript = (
               ]),
         uninitialized: new Set(declared),
       },
-      mutable: new Set(context.variables.keys()),
+      mutable: new Set([...context.variables.keys(), ...locals]),
       isAssigned: false,
       isLast,
       isLooping: false,

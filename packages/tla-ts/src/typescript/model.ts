@@ -17,6 +17,7 @@ import { isMakingObjects } from "./aliasing";
 import { TlaTypeScriptError } from "../errors";
 import { getAllocated } from "./heap";
 import { VALUE_TAGS } from "./properties";
+import { getBoundNames } from "./scope";
 import { getLocation, identifier, set } from "./tla";
 import { getKind } from "./types";
 
@@ -177,13 +178,6 @@ const getDeclarations = (statement: ts.Statement): Declared[] => {
     })),
   );
 };
-
-const getBoundNames = (name: ts.BindingName): ts.Identifier[] =>
-  ts.isIdentifier(name)
-    ? [name]
-    : name.elements.flatMap((element) =>
-        ts.isOmittedExpression(element) ? [] : getBoundNames(element.name),
-      );
 
 // Reads a model's state variables, exported functions, and tags, and names them in TLA+.
 // Imported holds the statements of the files that the model imports, which run first.
