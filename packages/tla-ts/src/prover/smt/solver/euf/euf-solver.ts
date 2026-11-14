@@ -183,7 +183,8 @@ export class EufSolver implements SatExtension {
   }
 
   private addSolver(solver: ThSolver) {
-    for (let index = 0; index < this.s.scopeLvl; index++) solver.push();
+    const numScopes = this.s.scopeLvl + this.s.numUserScopes;
+    for (let index = 0; index < numScopes; index++) solver.push();
     this.solvers.push(solver);
     this.id2solver.set(solver.id, solver);
     if (solver.useDiseqs()) this.egraph.setThPropagatesDiseqs(solver.id);

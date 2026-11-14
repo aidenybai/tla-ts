@@ -382,6 +382,10 @@ export class Solver {
     return this.ext !== null && (!this.isProbing || this.atBaseLvl());
   }
 
+  get numUserScopes() {
+    return this.userScopeLiterals.length;
+  }
+
   mkClause(lits: number[], isLearned = false, isTheory = false) {
     this.isModelCurrent = false;
     return this.mkClauseCore(
