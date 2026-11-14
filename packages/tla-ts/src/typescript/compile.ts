@@ -401,8 +401,9 @@ export const compile = (
   ) {
     context.heap = heap;
     context.variables.set(heap, identifier(context.names.getFresh("heap")));
+    // A name, or a string that keys a property by it, as in Object.getOwnPropertyDescriptor.
     const usesSpecialNumbers = (node: ts.Node): boolean =>
-      (ts.isIdentifier(node) &&
+      ((ts.isIdentifier(node) || ts.isStringLiteral(node)) &&
         [
           "NaN",
           "isNaN",

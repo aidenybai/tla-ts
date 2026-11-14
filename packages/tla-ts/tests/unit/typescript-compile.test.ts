@@ -7973,6 +7973,20 @@ describe("errors", () => {
     expect((await checkModel(wrong)).failure?.message).toContain('"pi"');
   });
 
+  it("reads a fraction that Math holds under a key that a string names", async () => {
+    const source = `
+      const holder = { seen: 0 };
+      const constants = Math as unknown as { [key: string]: number };
+      const described = Object.getOwnPropertyDescriptor(Math, "SQRT2")!;
+      if (!(constants["PI"] > 3) || described.writable !== false || described.value !== constants["SQRT2"]) {
+        throw new Error("read");
+      }
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = source.replace('constants["PI"] > 3', 'constants["PI"] < 3');
+    expect((await checkModel(wrong)).failure?.message).toContain('"read"');
+  });
+
   it("reads a negative number as a constant argument", async () => {
     const source = `
       Object.getOwnPropertyDescriptor(-2, "foo");
