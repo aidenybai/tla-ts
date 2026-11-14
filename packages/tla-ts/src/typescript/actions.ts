@@ -2000,6 +2000,53 @@ export const translateCallStatement = (
       ),
     );
   }
+  // A ?. before the method that the call reads, as in frames.at(-1)?.heirs.push(node), ends the
+  // whole call where its base is undefined or null, before any argument runs.
+  const getLinks = (link: ts.Expression): ts.Expression[] =>
+    ts.isOptionalChain(link) ? [link, ...getLinks(link.expression)] : [];
+  const method = expression.expression;
+  const optional = (
+    ts.isPropertyAccessExpression(method) || ts.isElementAccessExpression(method)
+      ? getLinks(method.expression)
+      : []
+  )
+    .filter(
+      (link): link is ts.PropertyAccessExpression | ts.ElementAccessExpression =>
+        (ts.isPropertyAccessExpression(link) || ts.isElementAccessExpression(link)) &&
+        link.questionDotToken !== undefined &&
+        path.scope.checked?.has(link) !== true,
+    )
+    .at(-1);
+  if (optional !== undefined) {
+    const base = optional.expression;
+    const name = context.names.getFresh("base");
+    context.prelude.add("Null");
+    return bindOnce(
+      path,
+      name,
+      translateExpression(base, path.scope, context),
+      translateJoined(expression, path, context, continueWith, (next) =>
+        ifThenElse(
+          apply("\\in", [identifier(name), set([getUndefined(context), identifier("Null")])]),
+          next(path, getUndefined(context)),
+          translateCallStatement(
+            expression,
+            {
+              ...path,
+              scope: {
+                ...path.scope,
+                results: new Map([...path.scope.results, [base, identifier(name)]]),
+                checked: new Set([...(path.scope.checked ?? []), optional]),
+              },
+            },
+            context,
+            frame,
+            next,
+          ),
+        ),
+      ),
+    );
+  }
   const first = getRootCall(expression.arguments.at(0));
   if (
     first !== undefined &&

@@ -20202,6 +20202,31 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("ends a call where a ?. before its method finds undefined, before its arguments run", async () => {
+    const getSource = (expected: string) => `
+      interface Frame {
+        heirs: number[];
+      }
+      const frames: Frame[] = [];
+      let count = 0;
+      const getNext = () => {
+        count += 1;
+        return count * 10;
+      };
+      const add = () => {
+        frames.at(-1)?.heirs.push(getNext());
+      };
+      add();
+      frames.push({ heirs: [] });
+      add();
+      add();
+      const text = \`\${frames.length}:\${frames[0].heirs.join(",")}:\${count}\`;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect((await checkModel(getSource("1:10,20:2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1:20,30:3"))).failure?.message).toContain("1:10,20:2");
+  });
+
   it("evaluates a declaration that nothing reads where it runs", async () => {
     await expect(
       checkModel(`
