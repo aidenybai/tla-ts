@@ -12770,7 +12770,13 @@ const runBranch = (
     if (isAssignment(run) && (!isIncrement(run) || isPlainIncrement(run, context))) {
       return runAssignment(run, next, context, frame, withOperand);
     }
-    if (ts.isCallExpression(run) && !next.scope.results.has(run)) {
+    // A call that only a statement can run runs as one, where one that an expression can run, such
+    // as a set's has, gives its value as the rest of the operand does.
+    if (
+      ts.isCallExpression(run) &&
+      !next.scope.results.has(run) &&
+      getLeadingCall(run, () => true, next, context)?.call === run
+    ) {
       return allocate(run, next, context, (allocated) =>
         translateCallStatement(run, allocated, context, frame, (after, value) =>
           withOperand(after, value ?? getUndefined(context)),

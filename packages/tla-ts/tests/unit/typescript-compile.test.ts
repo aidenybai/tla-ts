@@ -2267,6 +2267,24 @@ describe("values", () => {
     expect(wrong.failure?.message).toContain("result 2,3,4,9");
   });
 
+  it("tests a set in a short-circuit whose other operand runs a call as a statement", async () => {
+    const getSource = (expected: string) => `
+      const SET = new Set(["a"]);
+      const state = { count: 0 };
+      const bump = () => {
+        state.count++;
+        return { value: state.count };
+      };
+      const check = (text: string) => SET.has(text) && bump().value > 0;
+      const results = [check("a"), check("b"), check("a")];
+      const result = [...results, state.count].join(",");
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+    expect((await checkModel(getSource("true,false,true,2"))).failure).toBeUndefined();
+    const wrong = await checkModel(getSource("true,false,true,3"));
+    expect(wrong.failure?.message).toContain("result true,false,true,2");
+  });
+
   it("runs a switch's expression in order where a call in it changes what it reads", async () => {
     const getSource = (expected: string) => `
       const box = { v: 1 };
