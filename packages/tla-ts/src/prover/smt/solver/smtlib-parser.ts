@@ -147,6 +147,7 @@ export interface SmtList {
   offset: number;
   // Z3 reports an error in making an application at its closing parenthesis.
   end: SmtToken;
+  // The token after a root-obj or an indexed identifier, where Z3 reports an error in making it.
   follower?: SmtToken;
 }
 
@@ -599,6 +600,9 @@ const BUILTIN_NAMES = new Set([
   ...CHAR_OP_NAMES.keys(),
 ]);
 
+// rational::is_unsigned of a numeral token.
+const isUnsigned = (numeral: string) => BigInt(numeral) >= 0n && BigInt(numeral) <= 0xffffffffn;
+
 const SYMBOL_CHARACTER = /[A-Za-z0-9~!@$%^&*_\-+=<>.?/,]/;
 
 const createScanner = (text: string) => {
@@ -741,13 +745,13 @@ export const createCommandReader = (text: string) => {
       offset: open.offset,
       end: open,
     };
-    let rootObject: SmtList | undefined;
+    let followed: SmtList | undefined;
     for (let current = root; ;) {
       const token = take();
       if (token === undefined)
         throw new SmtParseError("unexpected end of file", scanner.getPosition());
-      if (rootObject !== undefined) rootObject.follower = token;
-      rootObject = undefined;
+      if (followed !== undefined) followed.follower = token;
+      followed = undefined;
       if (token.kind === "(") {
         const list: SmtList = {
           kind: "list",
@@ -768,7 +772,8 @@ export const createCommandReader = (text: string) => {
         continue;
       }
       current.end = token;
-      if (isSymbol(current.items[0], "root-obj")) rootObject = current;
+      if (isSymbol(current.items[0], "root-obj") || isSymbol(current.items[0], "_"))
+        followed = current;
       state.depth--;
       const parent = stack.pop();
       if (parent === undefined) return root;
@@ -1303,7 +1308,7 @@ export const createSmtlibReader = (
       if (attribute.keyword.text === ":weight") {
         if (value.kind !== "numeral")
           throw new SmtParseError("invalid weight attribute, integer expected", value);
-        if (BigInt(value.text) < 0n || BigInt(value.text) > 0xffffffffn)
+        if (!isUnsigned(value.text))
           throw new SmtParseError(
             "invalid indexed identifier, index is too big to fit in an unsigned machine integer",
             value,
@@ -1562,6 +1567,8 @@ export const createSmtlibReader = (
   const parseBvNumeral = (list: SmtList) => {
     const name = list.items[1];
     const indices = list.items.slice(2);
+    // parse_qualified_name makes the term once it has read past the closing parenthesis.
+    const at = list.follower ?? list.end;
     if (
       isSymbol(name) &&
       isSeqOpName(name.text) &&
@@ -1571,7 +1578,7 @@ export const createSmtlibReader = (
         name.text,
         [],
         indices.map((index) => (index.kind === "list" ? 0 : Number(index.text))),
-        list.end,
+        at,
       );
     if (
       isSymbol(name) &&
@@ -1584,17 +1591,16 @@ export const createSmtlibReader = (
         indices.map((index) => (index.kind === "list" ? 0 : Number(index.text))),
         [],
       );
-      if (typeof signature === "string")
-        throw new SmtParseError(signature, { line: list.end.line, column: list.end.column + 1 });
+      if (typeof signature === "string") throw new SmtParseError(signature, at);
       return mkFpaAppOf(manager, signature, []);
     }
     const value = isSymbol(name) ? /^bv([0-9]+)$/.exec(name.text) : null;
     if (value === null) throw new SmtUnsupportedError("indexed identifiers");
     const width = list.items[2];
-    if (list.items.length !== 3 || width.kind !== "numeral")
-      throw new SmtParseError("invalid bit-vector constant, index expected", list.end);
+    if (list.items.length !== 3 || width.kind !== "numeral" || !isUnsigned(width.text))
+      throw new SmtParseError("invalid bit-vector constant, index expected", at);
     if (BigInt(width.text) === 0n)
-      throw new SmtParseError("bit-vector size must be greater than zero", list.end);
+      throw new SmtParseError("bit-vector size must be greater than zero", at);
     return manager.mkBvNumeral(BigInt(value[1]), Number(width.text));
   };
 
@@ -1958,8 +1964,12 @@ export const createSmtlibReader = (
       }
       const head = current.items[0];
       if (head === undefined)
-        throw new SmtParseError("invalid expression, unexpected ')'", current.end);
+        throw new SmtParseError("invalid expression, '(' or symbol expected", current.end);
       if (head.kind === "list") {
+        // push_app_frame: the head of an application may be a term, which Z3 starts to read.
+        const first = head.items[0] ?? head.end;
+        if (first.kind !== "symbol" && first.kind !== "list")
+          throw new SmtParseError("invalid expression, '(' or symbol expected", first);
         const name = head.items[1];
         const indices = head.items.slice(2);
         if (
@@ -2071,7 +2081,7 @@ export const createSmtlibReader = (
         return;
       }
       if (head.kind !== "symbol")
-        throw new SmtParseError("invalid function application, symbol expected", head);
+        throw new SmtParseError("invalid expression, '(' or symbol expected", head);
       if (head.text === "_") {
         results.push(parseBvNumeral(current));
         return;

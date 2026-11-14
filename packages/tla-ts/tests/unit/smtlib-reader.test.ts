@@ -187,3 +187,44 @@ describe("a backslash in a quoted symbol, as Z3 5.3.2 reports it", () => {
     ]);
   });
 });
+
+describe("a malformed application or indexed constant, as Z3 5.3.2 reports it", () => {
+  it("reports a head that is no symbol where it stands, and goes on", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(simplify (-5))",
+        "(simplify (1 2))",
+        '(simplify ("a" 2))',
+        "(simplify ())",
+        "(simplify (()))",
+        "(simplify (+ x 1))",
+      ]),
+    ).toEqual([
+      "(error \"line 2 column 11: invalid expression, '(' or symbol expected\")",
+      "(error \"line 3 column 11: invalid expression, '(' or symbol expected\")",
+      "(error \"line 4 column 11: invalid expression, '(' or symbol expected\")",
+      "(error \"line 5 column 11: invalid expression, '(' or symbol expected\")",
+      "(error \"line 6 column 12: invalid expression, '(' or symbol expected\")",
+      "(+ 1 x)",
+    ]);
+  });
+
+  it("reports an indexed constant at the token after it", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(simplify (_ bv5 0)   )",
+        "(simplify (_ bv5)",
+        ")",
+        "(simplify (_ bv5 -3) )",
+        "(simplify (_ +oo 0 5)  )",
+      ]),
+    ).toEqual([
+      '(error "line 2 column 22: bit-vector size must be greater than zero")',
+      '(error "line 4 column 0: invalid bit-vector constant, index expected")',
+      '(error "line 5 column 21: invalid bit-vector constant, index expected")',
+      '(error "line 6 column 23: minimum number of exponent bits is 2")',
+    ]);
+  });
+});
