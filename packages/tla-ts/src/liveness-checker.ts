@@ -259,11 +259,14 @@ export const createLivenessChecker = (
       isShared ? getStateCache(state) : new Map(),
     );
   const checkState = (behavior: BehaviorGraph, source: number, state: Value[]) =>
-    evaluateFrom(source, () =>
-      Uint8Array.from(behavior.solution.stateChecks, (predicate) =>
-        evaluateState(predicate, state) ? 1 : 0,
-      ),
-    );
+    evaluateFrom(source, () => {
+      const predicates = behavior.solution.stateChecks;
+      const results = new Uint8Array(predicates.length);
+      for (let position = 0; position < predicates.length; position++) {
+        if (evaluateState(predicates[position], state)) results[position] = 1;
+      }
+      return results;
+    });
   const checkAction = (
     behavior: BehaviorGraph,
     source: number,
@@ -272,17 +275,23 @@ export const createLivenessChecker = (
   ) =>
     evaluateFrom(source, () => {
       const predicates = behavior.solution.actionChecks;
+      const results = new Uint8Array(predicates.length);
       if (!isShared) {
-        return Uint8Array.from(predicates, (predicate) =>
-          evaluateLive(predicate, state, successor, evaluationEnvironment, new Map()) ? 1 : 0,
-        );
+        for (let position = 0; position < predicates.length; position++) {
+          if (
+            evaluateLive(predicates[position], state, successor, evaluationEnvironment, new Map())
+          )
+            results[position] = 1;
+        }
+        return results;
       }
       const stateCache = getStateCache(state);
-      const results = sharedActions.get(state) ?? new Map<Value[], Int8Array>();
-      sharedActions.set(state, results);
-      const known = results.get(successor) ?? new Int8Array(actionIds.size).fill(-1);
-      results.set(successor, known);
-      return Uint8Array.from(behavior.actionIds, (actionId, position) => {
+      const sharedResults = sharedActions.get(state) ?? new Map<Value[], Int8Array>();
+      sharedActions.set(state, sharedResults);
+      const known = sharedResults.get(successor) ?? new Int8Array(actionIds.size).fill(-1);
+      sharedResults.set(successor, known);
+      for (let position = 0; position < predicates.length; position++) {
+        const actionId = behavior.actionIds[position];
         if (known[actionId] === -1) {
           known[actionId] = evaluateLive(
             predicates[position],
@@ -294,8 +303,9 @@ export const createLivenessChecker = (
             ? 1
             : 0;
         }
-        return known[actionId];
-      });
+        results[position] = known[actionId];
+      }
+      return results;
     });
   const isConsistent = (
     tableau: Tableau,
@@ -369,37 +379,40 @@ export const createLivenessChecker = (
 
   // TLC iterates a state's successors and the state itself in the slot order of a SetOfStates, a hash set whose capacity grows with every set that outgrows it.
   const getSuccessorSet = (index: number, state: Value[], successors: LiveSuccessor[]) => {
-    let successorSlots = Array.from<LiveSuccessor | undefined>({
-      length: SUCCESSOR_CAPACITY * capacityMultiplier,
-    });
+    const source = { index, state };
+    // Slots hold positions in successors, where successors.length stands for the source state.
+    const getEntry = (position: number) =>
+      position === successors.length ? source : successors[position];
+    let successorSlots = new Int32Array(SUCCESSOR_CAPACITY * capacityMultiplier).fill(-1);
     let successorCount = 0;
-    const insertSuccessor = (slots: (LiveSuccessor | undefined)[], successor: LiveSuccessor) => {
+    const insertSuccessor = (slots: Int32Array, position: number) => {
+      const successor = getEntry(position);
       for (
         let slot = (search.getFingerprint(successor) & 0x7fffffff) % slots.length;
         ;
         slot = (slot + 1) % slots.length
       ) {
-        const entry = slots[slot];
-        if (entry === undefined) {
-          slots[slot] = successor;
+        if (slots[slot] === -1) {
+          slots[slot] = position;
           return true;
         }
+        const entry = getEntry(slots[slot]);
         if (entry.index === successor.index && isSameState(entry.state, successor.state))
           return false;
       }
     };
-    const addSuccessor = (successor: LiveSuccessor) => {
+    for (let position = 0; position <= successors.length; position++) {
       if (successorCount >= successorSlots.length >> 1) {
         const old = successorSlots;
-        successorSlots = Array.from<LiveSuccessor | undefined>({ length: 2 * old.length + 1 });
-        for (const entry of old) if (entry) insertSuccessor(successorSlots, entry);
+        successorSlots = new Int32Array(2 * old.length + 1).fill(-1);
+        for (const entry of old) if (entry !== -1) insertSuccessor(successorSlots, entry);
       }
-      if (insertSuccessor(successorSlots, successor)) successorCount++;
-    };
-    successors.forEach(addSuccessor);
-    addSuccessor({ index, state });
+      if (insertSuccessor(successorSlots, position)) successorCount++;
+    }
     if (successorSlots.length > SUCCESSOR_CAPACITY * capacityMultiplier) capacityMultiplier++;
-    return successorSlots.filter((entry): entry is LiveSuccessor => entry !== undefined);
+    const set: LiveSuccessor[] = [];
+    for (const entry of successorSlots) if (entry !== -1) set.push(getEntry(entry));
+    return set;
   };
 
   const expandLate = (
