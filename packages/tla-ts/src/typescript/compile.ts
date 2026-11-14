@@ -50,6 +50,16 @@ import { isEsModule, NATIVE_ERRORS } from "./exceptions";
 import { getDomain, getKeptIterator, getWrappedThis, TYPED_ARRAYS } from "./types";
 
 // A state variable starts at its initializer, or at every value of its type without one.
+// The fewest digits that give a number back, without its sign, and the power of 10 of the first,
+// as Number::toString finds them, which toExponential writes where a call gives no digits.
+const getShortestFields = (value: number) => {
+  const shortest = /^(\d)(?:\.(\d+))?e([+-]\d+)$/.exec(Math.abs(value).toExponential());
+  return [
+    { name: "shortest", value: string(`${shortest?.[1]}${shortest?.[2] ?? ""}`) },
+    { name: "shortestExponent", value: number(Number(shortest?.[3])) },
+  ];
+};
+
 const translateInitial = (variable: Variable, context: Context) => {
   const declaration = variable.declaration;
   const name = context.variables.get(variable.symbol);
@@ -593,6 +603,7 @@ export const compile = (
                 { name: "text", value: string(String(fraction[0])) },
                 { name: "floor", value: number(Math.floor(fraction[0])) },
                 { name: "binary", value: getBinary(fraction[0]) },
+                ...getShortestFields(fraction[0]),
                 {
                   name: "round",
                   value: Object.is(Math.round(fraction[0]), -0)
@@ -611,6 +622,7 @@ export const compile = (
             record("Record", [
               { name: "binary", value: getBinary(value) },
               { name: "text", value: string(String(value)) },
+              ...getShortestFields(value),
             ]),
           ),
         ),

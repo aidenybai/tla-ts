@@ -1093,6 +1093,84 @@ describe("top-level statements", () => {
 });
 
 describe("values", () => {
+  describe("writes the exact digits of doubles with toFixed, toExponential, and toPrecision", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const M = Number.MAX_VALUE;
+      const written = [
+        (0.1).toFixed(20), (1e21).toFixed(2), (123.456).toExponential(20), (M / 2).toPrecision(5),
+        (5e-324).toExponential(3), (2 ** 60).toFixed(0), (1 / 3).toFixed(18),
+        (9007199254740993).toPrecision(17), (-1e-7).toExponential(),
+      ];
+      if (written.join(" | ") !== "${expected}" || box.size !== 0) throw new Error(written.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "0.10000000000000000555 | 1e+21 | 1.23456000000000003070e+2 | 8.9885e+307 | 4.941e-324 | 1152921504606846976 | 0.333333333333333315 | 9007199254740992.0 | -1e-7",
+            ),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects half of the largest number rounded down", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "0.10000000000000000555 | 1e+21 | 1.23456000000000003070e+2 | 8.9884e+307 | 4.941e-324 | 1152921504606846976 | 0.333333333333333315 | 9007199254740992.0 | -1e-7",
+            ),
+          )
+        ).failure?.message,
+      ).toContain("8.9885e+307");
+    });
+  });
+
+  describe("writes numbers with toFixed, toExponential, and toPrecision as Node does", () => {
+    const getSource = (expected: string) => `
+      const half = 0.5;
+      const tiny = 0.0001;
+      const fifth = 0.05;
+      const written = [
+        (123.456).toFixed(2), (-0.0000001).toFixed(2), fifth.toFixed(1), (1.005).toFixed(2),
+        (995).toFixed(0), tiny.toFixed(), (123.456).toExponential(20), (0.9999).toExponential(2),
+        (-25).toExponential(0), (100).toExponential(), (1.1e-32).toExponential(),
+        (0).toExponential(2), (0.000001).toPrecision(2), (1e-7).toPrecision(1),
+        (99.99).toPrecision(3), (-7).toPrecision(21), (123).toPrecision(2), (0).toPrecision(3),
+        half.toPrecision(), (NaN).toFixed(2), new Number(-1.5).toFixed(0),
+      ];
+      if (written.join() !== "${expected}") throw new Error(written.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "123.46,-0.00,0.1,1.00,995,0,1.23456000000000003070e+2,1.00e+0,-3e+1,1e+2,1.1e-32,0.00e+0,0.0000010,1e-7,100,-7.00000000000000000000,1.2e+2,0.00,0.5,NaN,-2",
+            ),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects 1.01 for (1.005).toFixed(2)", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource(
+              "123.46,-0.00,0.1,1.01,995,0,1.23456000000000003070e+2,1.00e+0,-3e+1,1e+2,1.1e-32,0.00e+0,0.0000010,1e-7,100,-7.00000000000000000000,1.2e+2,0.00,0.5,NaN,-2",
+            ),
+          )
+        ).failure?.message,
+      ).toContain("1.00");
+    });
+  });
+
   describe("multiplies and raises integers beyond 32 bits as Node does", () => {
     const getSource = (expected: string) => `
       const box = { size: 0 };
