@@ -5185,10 +5185,49 @@ ArrayChangeFrom(heap, ref, method, items, length, first) ==
                        [] OTHER -> first,
            isThrown |-> state.isThrown]
 
+\\* 2^53 - 1, the greatest length.
+LOCAL MaxLength == Wide :> <<4194303, 2147483647>>
+
+\\* Whether a length is Infinity or an integer past 2^31, which ToLength clamps to 2^53 - 1.
+LOCAL IsLong(length) ==
+  \\/ length = Infinity
+  \\/ IsWide(length) /\\ ~IsNegative(length)
+  \\/ IsDouble(length) /\\ ~IsNegative(length) /\\ length[Double][2] >= 0
+
+LOCAL LongLength(length) ==
+  IF IsWide(length) /\\ length[Wide] # <<4194304, 0>> THEN length ELSE MaxLength
+
+\\* Writes items to an array-like object from an index that may be past 2^31.
+RECURSIVE LongSets(_, _, _, _)
+LongSets(state, ref, from, items) ==
+  IF state.isThrown \\/ items = <<>>
+  THEN state
+  ELSE LongSets(AndThen(state, LAMBDA heap : ArraySet(heap, ref, StringOf(from), Head(items))),
+                ref, Add(from, 1), Tail(items))
+
+\\* pop or push on an array-like object whose length is past 2^31, which moves no element: pop
+\\* reads and deletes the last index, and push throws a TypeError past 2^53 - 1.
+LOCAL LongChange(heap, ref, method, items, length) ==
+  IF method = "pop"
+  THEN LET last == Add(length, -1)
+           value == Get(heap, ref, StringOf(last))
+           state == AndThen(ArrayDelete(heap, ref, StringOf(last)),
+                            LAMBDA after : ArraySet(after, ref, "length", last))
+       IN [heap |-> state.heap, value |-> value, isThrown |-> state.isThrown]
+  ELSE LET total == Add(length, Len(items))
+           state == AndThen(LongSets([heap |-> heap, isThrown |-> FALSE], ref, length, items),
+                            LAMBDA after : ArraySet(after, ref, "length", total))
+       IN IF LessThan(MaxLength, total)
+          THEN [heap |-> heap, value |-> Undefined, isThrown |-> TRUE]
+          ELSE [heap |-> state.heap, value |-> total, isThrown |-> state.isThrown]
+
 ArrayChange(heap, ref, method, items) ==
-  LET length == ToLength(Get(heap, ref, "length"))
-  IN ArrayChangeFrom(heap, ref, method, items, length,
-                     Get(heap, ref, ToString(IF method = "pop" THEN length - 1 ELSE 0)))
+  LET raw == Get(heap, ref, "length")
+      length == ToLength(raw)
+  IN IF method \\in {"pop", "push"} /\\ IsLong(raw)
+     THEN LongChange(heap, ref, method, items, LongLength(raw))
+     ELSE ArrayChangeFrom(heap, ref, method, items, length,
+                          Get(heap, ref, ToString(IF method = "pop" THEN length - 1 ELSE 0)))
 
 \\* copyWithin() on an array-like object that the heap holds, as the spec runs it index by index,
 \\* backward where the indices it copies to overlap the end of those it copies from, where only the

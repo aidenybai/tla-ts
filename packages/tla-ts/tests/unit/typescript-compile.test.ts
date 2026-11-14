@@ -1444,6 +1444,35 @@ describe("values", () => {
     });
   });
 
+  describe("pops and pushes on array-like objects whose length is near 2^53", () => {
+    const getSource = (expected: string) => `
+      const like: { [key: string]: unknown } = { "9007199254740990": "last", length: 2 ** 53 - 1 };
+      const popped = Array.prototype.pop.call(like);
+      const pushed = Array.prototype.push.call(like, "new");
+      let caught = "none";
+      try {
+        Array.prototype.push.call(like, "a", "b");
+      } catch (error) {
+        caught = error instanceof TypeError ? "type" : "other";
+      }
+      const read = [popped, pushed, like.length, like["9007199254740990"], caught].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("last,9007199254740991,9007199254740991,new,type"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a push past 2^53 - 1 as allowed", async () => {
+      expect(
+        (await checkModel(getSource("last,9007199254740991,9007199254740991,new,none"))).failure
+          ?.message,
+      ).toContain("new,type");
+    });
+  });
+
   describe("skips holes of array-like objects whose length is Infinity or beyond 32 bits", () => {
     const getSource = (expected: string) => `
       const like = { 0: 12, 1: 9, length: Infinity };
