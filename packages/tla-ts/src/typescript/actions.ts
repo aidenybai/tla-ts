@@ -3218,6 +3218,12 @@ export const translateCallStatement = (
     const accessor = ts.isPropertyAccessExpression(target)
       ? /^__(define|lookup)([GS])etter__$/.exec(target.name.text)
       : null;
+    const calledKey = ts.isPropertyAccessExpression(target)
+      ? target.name.text
+      : ts.isElementAccessExpression(target) && ts.isStringLiteral(target.argumentExpression)
+        ? target.argumentExpression.text
+        : undefined;
+    const regExpKey = calledKey === "exec" || calledKey === "test" ? calledKey : undefined;
     const keyNode = expression.arguments.at(0);
     // Object.prototype's legacy accessor methods, where a script calls one through a key that it
     // may hold.
@@ -3425,55 +3431,65 @@ export const translateCallStatement = (
         );
       },
       // Calling undefined or null throws a TypeError, as does calling a built-in method that needs
-      // a receiver without one.
+      // a receiver without one, or RegExp.prototype.exec or test on one that isn't a RegExp.
       ifThenElse(
         apply("\\in", [value, set([getUndefined(context), identifier("Null")])]),
         throwTypeError(path, expression, context, frame),
-        !ts.isPropertyAccessExpression(target) || expression.arguments.some(ts.isSpreadElement)
-          ? ts.isIdentifier(skipCasts(target)) && expression.arguments.every(isInertValue)
-            ? ifThenElse(
-                useJavaScript("ThrowsWithoutReceiver", [value], context),
-                throwTypeError(path, expression, context, frame),
-                ifThenElse(
-                  useJavaScript("HasReceiverlessValue", [value], context),
-                  continueWith(path, useJavaScript("ReceiverlessValue", [value], context)),
-                  stop,
-                ),
-              )
-            : stop
-          : target.name.text === "next" && expression.arguments.length === 0
-            ? ifThenElse(
-                useJavaScript("IsBuiltInIteratorNext", [value], context),
-                translateBuiltInNext(path, value, receiver),
-                stop,
-              )
-            : ITERATOR_CALLBACK_METHODS.has(target.name.text)
+        regExpKey !== undefined && expression.arguments.every(isInertValue)
+          ? ifThenElse(
+              useJavaScript(
+                "ThrowsOnRegExpReceiver",
+                [getHeap(path.scope, expression, context), value, receiver],
+                context,
+              ),
+              throwTypeError(path, expression, context, frame),
+              stop,
+            )
+          : !ts.isPropertyAccessExpression(target) || expression.arguments.some(ts.isSpreadElement)
+            ? ts.isIdentifier(skipCasts(target)) && expression.arguments.every(isInertValue)
               ? ifThenElse(
-                  apply("=", [
-                    value,
-                    translateBuiltInValue(
-                      `Iterator.prototype.${target.name.text}`,
-                      expression,
-                      context,
-                    ),
-                  ]),
-                  rejectCallback(target.name.text),
+                  useJavaScript("ThrowsWithoutReceiver", [value], context),
+                  throwTypeError(path, expression, context, frame),
+                  ifThenElse(
+                    useJavaScript("HasReceiverlessValue", [value], context),
+                    continueWith(path, useJavaScript("ReceiverlessValue", [value], context)),
+                    stop,
+                  ),
+                )
+              : stop
+            : target.name.text === "next" && expression.arguments.length === 0
+              ? ifThenElse(
+                  useJavaScript("IsBuiltInIteratorNext", [value], context),
+                  translateBuiltInNext(path, value, receiver),
                   stop,
                 )
-              : accessor === null || keyNode === undefined
-                ? stop
-                : ifThenElse(
+              : ITERATOR_CALLBACK_METHODS.has(target.name.text)
+                ? ifThenElse(
                     apply("=", [
                       value,
                       translateBuiltInValue(
-                        `Object.prototype.${target.name.text}`,
+                        `Iterator.prototype.${target.name.text}`,
                         expression,
                         context,
                       ),
                     ]),
-                    translateAccessor(accessor[1], accessor[2] === "G" ? "get" : "set", keyNode),
+                    rejectCallback(target.name.text),
                     stop,
-                  ),
+                  )
+                : accessor === null || keyNode === undefined
+                  ? stop
+                  : ifThenElse(
+                      apply("=", [
+                        value,
+                        translateBuiltInValue(
+                          `Object.prototype.${target.name.text}`,
+                          expression,
+                          context,
+                        ),
+                      ]),
+                      translateAccessor(accessor[1], accessor[2] === "G" ? "get" : "set", keyNode),
+                      stop,
+                    ),
       ),
     );
   }

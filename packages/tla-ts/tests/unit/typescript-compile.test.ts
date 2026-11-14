@@ -24128,6 +24128,36 @@ describe("regular expressions", () => {
 });
 
 describe("calls through values", () => {
+  describe("throws the TypeError of RegExp.prototype.exec and test on an object that isn't a RegExp", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const holder: { [key: string | symbol]: unknown } = {};
+      holder.exec = RegExp.prototype.exec;
+      holder.test = RegExp.prototype.test;
+      const count = (...args: unknown[]): unknown => args.length;
+      let caught = "";
+      try {
+        (holder.exec as (...args: unknown[]) => unknown)("text");
+      } catch (error) {
+        caught += error instanceof TypeError ? "exec" : "other";
+      }
+      try {
+        (holder.test as (...args: unknown[]) => unknown)("text");
+      } catch (error) {
+        caught += error instanceof TypeError ? "test" : "other";
+      }
+      if (\`\${caught},\${count(1)}\` !== "${expected}") throw new Error(caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("exectest,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects test as allowed", async () => {
+      expect((await checkModel(getSource("exec,1"))).failure?.message).toContain("exectest");
+    });
+  });
+
   describe("throws the TypeError of a built-in next on an object that isn't its iterator", () => {
     const getSource = (expected: string) => `
       "use strict";

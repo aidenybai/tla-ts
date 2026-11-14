@@ -2519,6 +2519,20 @@ BuiltInIteratorNext(heap, ref, isString) ==
        IN [heap |-> allocated, value |-> Allocated(allocated), isThrown |-> FALSE]
   ELSE Assert(FALSE, "tla-ts can't step an iterator that isn't an array's or a string's with its next")
 
+\\* Whether RegExp.prototype.exec or test, which a script stores under a key, throws a TypeError on a
+\\* receiver: exec where the receiver isn't a RegExp, and test where it isn't an object, or isn't a
+\\* RegExp and reads no exec of its own, as RegExpExec then runs the built-in one.
+ThrowsOnRegExpReceiver(heap, value, receiver) ==
+  /\\ IsRef(value)
+  /\\ TypeOf(value[Ref]) = "string"
+  /\\ CASE value[Ref] = "RegExp.prototype.exec" -> ~IsRegExp(heap, receiver)
+       [] value[Ref] = "RegExp.prototype.test" ->
+            \\/ ~IsObjectIn(heap, receiver)
+            \\/ /\\ ~IsRegExp(heap, receiver)
+               /\\ \\/ TypeOfIn(heap, Get(heap, receiver, "exec")) # "function"
+                  \\/ HoldsBuiltIn(heap, receiver, "exec", "RegExp.prototype.exec")
+       [] OTHER -> FALSE
+
 \\* Whether a value is %ArrayIteratorPrototype%.next or %StringIteratorPrototype%.next.
 IsBuiltInIteratorNext(value) ==
   /\\ IsRef(value)
