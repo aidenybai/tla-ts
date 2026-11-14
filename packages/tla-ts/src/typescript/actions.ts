@@ -10520,6 +10520,28 @@ const isHeapCall = (
   return callee?.body !== undefined && usesHeap(callee, context, new Set());
 };
 
+// The functions that a call of what a call gives may run, where each return of the function it
+// calls gives a function that it makes, as isNextKind("BY")(state) runs the one that isNextKind
+// makes rather than any that its type allows.
+const getMadeFunctions = (callee: ts.Expression, context: Context) => {
+  const maker = ts.isCallExpression(callee) ? getCallee(callee.expression, context) : undefined;
+  if (maker?.body === undefined || isAnyGenerator(maker) || isAsyncFunction(maker))
+    return undefined;
+  const body = maker.body;
+  const returned = ts.isBlock(body)
+    ? findNodes(body, ts.isReturnStatement)
+        .filter((statement) => ts.findAncestor(statement.parent, ts.isFunctionLike) === maker)
+        .map((statement) => statement.expression)
+    : [body];
+  const made = returned.flatMap((expression) => {
+    const inner = expression && skipCasts(expression);
+    return inner !== undefined && (ts.isArrowFunction(inner) || ts.isFunctionExpression(inner))
+      ? [inner]
+      : [];
+  });
+  return made.length > 0 && made.length === returned.length ? made : undefined;
+};
+
 // The functions that a call through a value may run, where tla-ts can't tell which one it names:
 // those that no other function encloses, whose type TypeScript lets the callee hold. The call
 // branches on its callee's value between them.
@@ -10548,7 +10570,10 @@ const getDispatched = (
   ) {
     return undefined;
   }
-  const dispatched = [...getFunctionCandidates(callee, context), ...getClosures(callee, context)];
+  const dispatched = getMadeFunctions(callee, context) ?? [
+    ...getFunctionCandidates(callee, context),
+    ...getClosures(callee, context),
+  ];
   return dispatched.length > 0 ? dispatched : undefined;
 };
 

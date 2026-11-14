@@ -10544,6 +10544,38 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("tla-ts can't tell which function this call runs");
   });
 
+  it("calls only the function that a call's callee makes where each of its returns makes one", async () => {
+    const getSource = (expected: string) => `
+      interface Reader {
+        position: number;
+        kinds: string[];
+      }
+      const reader: Reader = { position: 0, kinds: ["a", "b", "c"] };
+      const isNextKind =
+        (...names: string[]) =>
+        (state: Reader) =>
+          names.includes(state.kinds[state.position]);
+      const isLast = (state: Reader) => state.position === state.kinds.length - 1;
+      const isBeforeLast = (state: Reader) => isNextKind("b")(state) && !isLast(state);
+      const step = (state: Reader) => {
+        state.position += 1;
+        return true;
+      };
+      const first = isNextKind("a")(reader);
+      step(reader);
+      const second = isNextKind("a", "c")(reader);
+      const third = isBeforeLast(reader);
+      const text = \`\${first};\${second};\${third}\`;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const printed = printModule(compile(getSource("true;false;true")).source);
+    expect(printed.match(/CodeOf/g)).toHaveLength(3);
+    expect((await checkModel(getSource("true;false;true"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("true;true;true"))).failure?.message).toContain(
+      "true;false;true",
+    );
+  });
+
   const getUncallableSource = (expected: string) => `
       const holder = { seen: 0 };
       const GeneratorFunctionPrototype = Object.getPrototypeOf(function* () {});
