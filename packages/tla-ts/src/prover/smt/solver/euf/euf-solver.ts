@@ -925,7 +925,7 @@ export class EufSolver implements SatExtension {
     this.values = [];
     this.values2rootMap = null;
     const userSorts = new UserSortValues(this.manager);
-    const deps = new EnodeTopSort();
+    const deps = new EnodeTopSort(this.manager);
     this.collectDependencies(userSorts, deps);
     deps.sort();
     this.dependencies2values(userSorts, deps, model);
@@ -1129,6 +1129,8 @@ class EnodeTopSort {
   private stackS: Enode[] = [];
   private stackP: Enode[] = [];
 
+  constructor(private manager: AstManager) {}
+
   insert(node: Enode, deps: Enode[] | null) {
     this.deps.set(node, deps);
   }
@@ -1155,7 +1157,7 @@ class EnodeTopSort {
     this.stackP.push(node);
     const deps = this.deps.get(node);
     if (deps !== null && deps !== undefined)
-      for (const dep of sortByExprId(deps)) this.traverse(dep);
+      for (const dep of sortByExprId(this.manager, deps)) this.traverse(dep);
     if (node !== this.stackP.at(-1)) return;
     const partition = this.sorted.length;
     for (let top = this.stackS.pop(); top !== undefined; top = this.stackS.pop()) {
@@ -1168,8 +1170,8 @@ class EnodeTopSort {
 }
 
 // An obj_hashtable<enode> iterates its nodes by hash, which is the id of their expression.
-const sortByExprId = (nodes: readonly Enode[]) => {
-  const table = new ObjHashtable((id) => id);
+const sortByExprId = (manager: AstManager, nodes: readonly Enode[]) => {
+  const table = new ObjHashtable((expr) => manager.ids[expr]);
   const byId = new Map<number, Enode>();
   for (const node of nodes) {
     table.add(node.owner);

@@ -844,6 +844,25 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("orders sat.euf model dependencies by expression id", () => {
+    expect(
+      run([
+        "(set-logic ALL)",
+        "(set-option :sat.euf true)",
+        "(set-option :tactic.default_tactic smt)",
+        "(declare-sort U 0)",
+        "(declare-const a (Array U U))",
+        "(declare-const x U)",
+        "(declare-const y U)",
+        "(assert (= (select a x) y))",
+        "(assert (= (select a y) x))",
+        "(assert (not (= x y)))",
+        "(check-sat)",
+        "(get-value (x y (select a x)))",
+      ]),
+    ).toEqual(["sat", "((x U!val!1)\n (y U!val!0)\n ((select a x) U!val!0))"]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),
