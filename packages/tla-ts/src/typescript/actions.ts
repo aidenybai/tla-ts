@@ -214,7 +214,7 @@ import {
   isRevoke,
   getPrimitiveObjectCall,
   isObjectChange,
-  isReflectDefinition,
+  isReflectChange,
   isReflectSet,
   isUnreachableChange,
   getDateCall,
@@ -2934,13 +2934,13 @@ export const translateCallStatement = (
   if (isObjectChange(expression, context) && heapSymbol !== undefined) {
     const translated = translateObjectChange(expression, path.scope, context);
     const name = context.names.getFresh(translated.isFallible ? "change" : "heap");
-    // Each change gives the object it changes, but Reflect.construct, and Reflect.defineProperty,
-    // which gives whether it defined the key.
+    // Each change gives the object it changes, but Reflect.construct, and Reflect.defineProperty and
+    // Reflect.setPrototypeOf, which give whether they made the change.
     const target = expression.arguments.at(0);
     const value =
       expression.expression.name.text === "construct" || target === undefined
         ? undefined
-        : isReflectDefinition(expression)
+        : isReflectChange(expression)
           ? field(identifier(name), "value")
           : translateObjectValue(target, path.scope, context);
     if (isDescriptorRead(expression, context) && "values" in translated) {
@@ -3033,7 +3033,7 @@ export const translateCallStatement = (
                       next(
                         again,
                         useJavaScript(
-                          isReflectDefinition(expression) ? "ReflectDefineLength" : "DefineLength",
+                          isReflectChange(expression) ? "ReflectDefineLength" : "DefineLength",
                           [
                             getHeap(again.scope, expression, context),
                             values[0],
@@ -9880,7 +9880,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     isRevoke(node, context) ||
     (isObjectChange(node, context) &&
       node.expression.name.text !== "construct" &&
-      (isReflectDefinition(node) ||
+      (isReflectChange(node) ||
         isReflectSet(node) ||
         isHeapType(context.checker.getTypeAtLocation(node), context) ||
         // A change of an object gives the object, though TypeScript types what it gives as any.

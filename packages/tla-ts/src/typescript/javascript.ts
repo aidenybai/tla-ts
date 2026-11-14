@@ -4902,6 +4902,14 @@ SetPrototypeOf(heap, ref, prototype) ==
        [] ChainHas(heap, prototype, ref) -> result(FALSE, FALSE)
        [] OTHER -> result(TRUE, TRUE)
 
+\\* Reflect.setPrototypeOf, which gives whether it set the prototype, and throws a TypeError where the
+\\* target isn't an object or the prototype is neither an object nor null.
+ReflectSetPrototypeOf(heap, ref, prototype) ==
+  IF IsObjectArgument(ref) /\\ (prototype = Null \\/ IsObjectArgument(prototype))
+  THEN LET set == SetPrototypeOf(heap, ref, prototype)
+       IN [heap |-> set.heap, isDone |-> TRUE, isRangeError |-> FALSE, value |-> set.isDone]
+  ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE, value |-> FALSE]
+
 \\* The heap after the __proto__ setter of Object.prototype sets a receiver's prototype, which it
 \\* leaves where the value isn't an object or null or the receiver isn't an object, and the error
 \\* that it throws where the receiver refuses, or "".

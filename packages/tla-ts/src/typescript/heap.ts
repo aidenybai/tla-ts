@@ -4469,11 +4469,11 @@ const FALLIBLE_CHANGES = new Set([
 const isConstruct = (node: MethodCall) =>
   node.expression.expression.getText() === "Reflect" && node.expression.name.text === "construct";
 
-// Reflect.defineProperty, which gives whether it defined the key rather than throwing where it
-// can't.
-export const isReflectDefinition = (node: MethodCall) =>
+// Reflect.defineProperty and Reflect.setPrototypeOf, which give whether they made the change rather
+// than throwing where they can't.
+export const isReflectChange = (node: MethodCall) =>
   node.expression.expression.getText() === "Reflect" &&
-  node.expression.name.text === "defineProperty";
+  ["defineProperty", "setPrototypeOf"].includes(node.expression.name.text);
 
 // Reflect.set, which gives whether it set the key rather than throwing where it can't.
 export const isReflectSet = (node: MethodCall) =>
@@ -4490,7 +4490,7 @@ export const isObjectChange = (node: ts.Node, context: Context): node is MethodC
       isDescriptorsRead(node, context)) &&
     !isProxyOperation(node, context)) ||
     (isConstruct(node) && getNewClass(node, context) === undefined) ||
-    ((isReflectDefinition(node) || isReflectSet(node)) && !isProxyOperation(node, context)));
+    ((isReflectChange(node) || isReflectSet(node)) && !isProxyOperation(node, context)));
 
 // The Object functions that convert their first argument to an object, which throws a TypeError for
 // null and undefined, and those that give a primitive back, or test it, without converting it.
@@ -4803,7 +4803,7 @@ export const translateObjectChange = (node: MethodCall, scope: Scope, context: C
   );
   return {
     change: useJavaScript(
-      isReflectDefinition(node) ? "ReflectDefineProperty" : change.operator,
+      isReflectChange(node) ? `Reflect${change.operator}` : change.operator,
       [
         getHeap(scope, node, context),
         ...(isAssign ? [values[0], tuple(values.slice(1))] : values),

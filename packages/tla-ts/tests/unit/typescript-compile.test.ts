@@ -8563,6 +8563,62 @@ describe("errors", () => {
     });
   });
 
+  describe("gives whether Reflect.setPrototypeOf set the prototype", () => {
+    const getSource = (expected: string) => `
+      const same = {};
+      const sealed = Object.preventExtensions({});
+      const target = {};
+      const child: object = Object.create(target);
+      const proto = {};
+      const results = [
+        Reflect.setPrototypeOf(same, same),
+        Reflect.setPrototypeOf(sealed, {}),
+        Reflect.setPrototypeOf(sealed, Object.prototype),
+        Reflect.setPrototypeOf(target, child),
+        Reflect.setPrototypeOf(proto, null),
+      ];
+      if (results.join() !== "${expected}" || Object.getPrototypeOf(proto) !== null) {
+        throw new Error("set");
+      }
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("false,false,true,false,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation false,false,false,false,true", async () => {
+      expect(
+        (await checkModel(getSource("false,false,false,false,true"))).failure?.message,
+      ).toContain("set");
+    });
+  });
+
+  describe("throws the TypeError of Reflect.setPrototypeOf with a primitive prototype", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+          return "none";
+        } catch (error) {
+          return error instanceof TypeError ? "type" : "other";
+        }
+      };
+      const results = [
+        thrown(() => Reflect.setPrototypeOf({}, 1 as unknown as object)),
+        thrown(() => Reflect.setPrototypeOf({}, null)),
+      ];
+      if (results.join() !== "${expected}") throw new Error("thrown");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("type,none"))).failure).toBeUndefined();
+    });
+
+    it("rejects the expectation none,none", async () => {
+      expect((await checkModel(getSource("none,none"))).failure?.message).toContain("thrown");
+    });
+  });
+
   describe("runs the getters of the descriptor that Reflect.defineProperty reads", () => {
     const getSource = (expected: string) => `
       let reads = "";
