@@ -823,6 +823,12 @@ Update(heap, ref, object) ==
           \\/ ToString(object.prototype) # ToString(BuiltIns[BuiltInKey(ref)].prototype) ->
          Assert(FALSE,
                 "tla-ts can't close an iterator whose prototypes a script may give a return")
+    [] /\\ BuiltInKey(ref) = GlobalObject[Ref]
+       /\\ \\E key \\in BuiltIns[GlobalObject[Ref]].named :
+            \\/ key \\notin DOMAIN object.values
+            \\/ object.attributes[key].kind # "data"
+            \\/ ToString(object.values[key]) # ToString(BuiltIns[GlobalObject[Ref]].values[key]) ->
+         Assert(FALSE, "tla-ts can't change a global that the script names")
     [] OTHER -> [heap EXCEPT !.changed = (BuiltInKey(ref) :> object) @@ @]
 
 \\* Whether new can call a value.

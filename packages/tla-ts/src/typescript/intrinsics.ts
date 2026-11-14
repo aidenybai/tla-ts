@@ -896,6 +896,13 @@ export const translateBuiltIns = (node: ts.SourceFile, context: Context) => {
         : [],
     ),
   ]);
+  const named = new Set(
+    findNodes(
+      node,
+      (child): child is ts.Identifier =>
+        ts.isIdentifier(child) && getBuiltIn(child, context) !== undefined,
+    ).map((global) => global.text),
+  );
   const isHidden = (name: string, property: string[]) =>
     name === "globalThis" && hidden.has(property[0]);
   const included = new Set<string>();
@@ -1004,6 +1011,19 @@ export const translateBuiltIns = (node: ts.SourceFile, context: Context) => {
         { name: "isCallable", value: boolean(entry[1]) },
         { name: "isConstructor", value: boolean(entry[4]) },
         { name: "isOpaque", value: boolean(false) },
+        // The globals that the script names, which tla-ts runs as the built-ins they start as.
+        ...(name === "globalThis"
+          ? [
+              {
+                name: "named",
+                value: set(
+                  [...named]
+                    .filter((global) => properties.some((property) => property[0] === global))
+                    .map((global) => string(global)),
+                ),
+              },
+            ]
+          : []),
       ]);
       return [getKey(name), object];
     }),

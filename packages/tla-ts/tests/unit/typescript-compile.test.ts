@@ -14222,6 +14222,38 @@ describe("errors", () => {
     });
   });
 
+  describe("stops at a change of a global that the script names", () => {
+    it("stops where the script replaces a global that it calls", async () => {
+      expect(
+        (
+          await checkModel(`
+            const holder = { seen: "" };
+            (globalThis as unknown as Record<string, unknown>).parseInt = () => 5;
+            holder.seen = String(parseInt("1"));
+          `)
+        ).failure?.message,
+      ).toContain("tla-ts can't change a global that the script names");
+    });
+
+    const getSource = (expected: string) => `
+      const holder = { seen: "" };
+      const global = globalThis as unknown as Record<string, unknown>;
+      const before = global.WeakRef;
+      global.WeakRef = 1;
+      holder.seen = String(global.WeakRef);
+      global.WeakRef = before;
+      if (holder.seen !== "${expected}") throw new Error("seen");
+    `;
+
+    it("changes a global that the script doesn't name, as Node does", async () => {
+      expect((await checkModel(getSource("1"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("undefined"))).failure?.message).toContain('"seen"');
+    });
+  });
+
   describe("tells that the global object and an object the heap holds aren't arrays", () => {
     const getSource = (expected: string) => `
       const holder = { seen: 0 };
