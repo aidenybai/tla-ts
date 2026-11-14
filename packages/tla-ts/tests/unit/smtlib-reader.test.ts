@@ -228,3 +228,28 @@ describe("a malformed application or indexed constant, as Z3 5.3.2 reports it", 
     ]);
   });
 });
+
+describe("a finite-field literal, as Z3 5.3.2 reports it", () => {
+  it("rejects one without a value and a modulus, and any in a logic without finite fields", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const a (_ BitVec 12))",
+        "(assert (= a #f12))",
+        "(simplify #f1m)",
+        "(simplify #f-1m7m)",
+        "(simplify #f12m13)",
+        "(assert (= a #xF0a))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 13: invalid finite-field literal, expected #f<integer>m<prime>")',
+      '(error "line 4 column 10: invalid finite-field literal, expected #f<integer>m<prime>")',
+      '(error "line 5 column 10: invalid finite-field literal, expected #f<integer>m<prime>")',
+      '(error "line 6 column 10: logic does not support finite fields")',
+      "sat",
+      "(\n  (define-fun a () (_ BitVec 12)\n    #xf0a)\n)",
+    ]);
+  });
+});

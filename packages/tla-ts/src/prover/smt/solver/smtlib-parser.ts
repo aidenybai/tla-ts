@@ -600,6 +600,9 @@ const BUILTIN_NAMES = new Set([
   ...CHAR_OP_NAMES.keys(),
 ]);
 
+const FF_LITERAL = /^#f-?[0-9]+m[0-9]+$/;
+const FF_LOGICS = new Set(["QF_FF", "QF_FFA", "ALL", "HO_ALL"]);
+
 // rational::is_unsigned of a numeral token.
 const isUnsigned = (numeral: string) => BigInt(numeral) >= 0n && BigInt(numeral) <= 0xffffffffn;
 
@@ -863,6 +866,7 @@ export const createSmtlibReader = (
   const restricted = {
     isNumeralAsReal: logic !== undefined && logicHasRealsOnly(logic),
     hasSetSort: hasArrayExtensions,
+    hasFf: logic === undefined || FF_LOGICS.has(logic),
   };
 
   const getFirstFunc = (name: string) => funcs.get(name)?.[0];
@@ -1846,6 +1850,13 @@ export const createSmtlibReader = (
     const decls = funcs.get(name);
     const declared = decls === undefined ? undefined : mkDeclaredApp(name, decls, args, range, at);
     if (declared !== undefined) return declared;
+    // cmd_context::mk_app: a constant that starts with #f is a finite-field literal.
+    if (args.length === 0 && name.startsWith("#f")) {
+      if (!FF_LITERAL.test(name))
+        throw new SmtParseError("invalid finite-field literal, expected #f<integer>m<prime>", at);
+      if (!restricted.hasFf) throw new SmtParseError("logic does not support finite fields", at);
+      throw new SmtUnsupportedError("finite-field literals");
+    }
     if (isSeqOpName(name)) return mkSeqTerm(name, args, indices, at, range);
     if (range !== undefined)
       throw new SmtParseError(getUnknownConstantMessage(name, args, range), at);
@@ -2737,6 +2748,7 @@ export const createSmtlibReader = (
     if (logicHasRealsOnly(name)) restricted.isNumeralAsReal = true;
     if (!ARRAY_EXTENSION_LOGICS.has(name)) restricted.hasSetSort = false;
     if (INT_FREE_LOGICS.has(name)) sortDecls.delete("Int");
+    restricted.hasFf = FF_LOGICS.has(name);
   };
 
   const isUsed = (name: string) => funcs.has(name) || BUILTIN_NAMES.has(name);
