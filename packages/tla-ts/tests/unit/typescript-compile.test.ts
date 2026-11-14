@@ -4425,6 +4425,39 @@ describe("values", () => {
       );
     });
   });
+
+  describe("iterates the keys of an array that changes in place with a for-in", () => {
+    it("reads the array as it is", async () => {
+      const getSource = (expected: string) => `
+        const names: string[] = [];
+        names[0] = "a";
+        names[1] = "b";
+        const seen: string[] = [];
+        for (const key in names) {
+          seen.push(key + names[Number(key)]);
+        }
+        if (seen.join() !== "${expected}") throw new Error(seen.join());
+      `;
+      expect((await checkModel(getSource("0a,1b"))).failure).toBeUndefined();
+      expect((await checkModel(getSource("0a"))).failure?.message).toContain("0a,1b");
+    });
+
+    it("stops where the loop changes the array", () => {
+      expect(() =>
+        compile(`
+          const names: string[] = [];
+          names[0] = "a";
+          names[1] = "b";
+          const drop = () => {
+            names.pop();
+          };
+          for (const key in names) {
+            drop();
+          }
+        `),
+      ).toThrow("Don't change an array while a for-of iterates it");
+    });
+  });
 });
 
 describe("bounds", () => {

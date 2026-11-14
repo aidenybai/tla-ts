@@ -361,6 +361,8 @@ const getEscapes = (
       ts.isIdentifier(parent.name) ? depths : getPart(depths),
     );
   }
+  // A for-in reads only the keys of what it iterates.
+  if (ts.isForInStatement(parent)) return [];
   if (ts.isForOfStatement(parent)) {
     if (parent.expression !== node) return [];
     const initializer = parent.initializer;
