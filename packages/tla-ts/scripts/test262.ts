@@ -1309,10 +1309,10 @@ const ignoreSoundErrors = () => {
       inner !== undefined && inner.getStart() === start && inner.getEnd() === end;
     return ts.findAncestor(
       getNode(start),
-      (ancestor): ancestor is ts.CallExpression =>
-        ts.isCallExpression(ancestor) &&
+      (ancestor): ancestor is ts.CallExpression | ts.NewExpression =>
+        (ts.isCallExpression(ancestor) || ts.isNewExpression(ancestor)) &&
         ((ts.isPropertyAccessExpression(ancestor.expression) && isSpan(ancestor.expression.name)) ||
-          ancestor.arguments.some(
+          (ancestor.arguments ?? []).some(
             (value) =>
               isSpan(value) ||
               (ts.isFunctionExpression(value) &&
@@ -1325,12 +1325,30 @@ const ignoreSoundErrors = () => {
           )),
     );
   };
+  // A new of a typed array's constructor, which tla-ts runs on its arguments' values: it converts
+  // a length, an offset, and an object's elements as the constructor does, reads a
+  // SharedArrayBuffer as an ArrayBuffer, and stops where it can't.
+  const isTypedArrayNew = (diagnostic: ts.Diagnostic) => {
+    const call = getErroredCall(diagnostic);
+    if (call === undefined || !ts.isNewExpression(call)) return false;
+    const type = checker.getTypeAtLocation(call.expression);
+    return (
+      (call.arguments ?? []).length <= 3 &&
+      !(call.arguments ?? []).some(ts.isSpreadElement) &&
+      (type.isUnion() ? type.types : [type]).every((member) =>
+        /^(Big)?(Int|Uint|Float)\d+(Clamped)?ArrayConstructor$/.test(
+          member.getSymbol()?.getName() ?? "",
+        ),
+      )
+    );
+  };
   // A call of an array's method that SEARCHING_METHODS lists, of any value to search for and a
   // primitive index to search from, which tla-ts converts with ToNumber.
   const isSearchingCall = (diagnostic: ts.Diagnostic) => {
     const call = getErroredCall(diagnostic);
     return (
       call !== undefined &&
+      ts.isCallExpression(call) &&
       ts.isPropertyAccessExpression(call.expression) &&
       SEARCHING_METHODS.has(call.expression.name.text) &&
       checker.isArrayType(checker.getTypeAtLocation(call.expression.expression)) &&
@@ -1358,6 +1376,7 @@ const ignoreSoundErrors = () => {
     const call = getErroredCall(diagnostic);
     if (
       call === undefined ||
+      !ts.isCallExpression(call) ||
       !ts.isPropertyAccessExpression(call.expression) ||
       !REDUCING_METHODS.has(call.expression.name.text) ||
       call.arguments.length < 1 ||
@@ -1472,7 +1491,8 @@ const ignoreSoundErrors = () => {
       (CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) &&
         (isConvertedCall(diagnostic) ||
           isReducingCall(diagnostic) ||
-          isSearchingCall(diagnostic))) ||
+          isSearchingCall(diagnostic) ||
+          isTypedArrayNew(diagnostic))) ||
       (diagnostic.code === UNKNOWN_CALLEE_ERROR && isStoredStringCall(node)) ||
       diagnostic.code === UNUSED_OPERAND_ERROR ||
       (diagnostic.code === UNINTENDED_COMPARISON_ERROR && isUnnarrowed(node, diagnostic)) ||

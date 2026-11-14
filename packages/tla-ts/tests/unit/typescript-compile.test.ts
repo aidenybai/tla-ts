@@ -575,6 +575,53 @@ describe("top-level statements", () => {
     });
   });
 
+  describe("makes a typed array from arguments that its constructor's signatures don't take", () => {
+    const source = `
+      const seen: unknown[] = [];
+      function same(actual: unknown, expected: unknown, label: string) {
+        if (!Object.is(actual, expected)) throw new Error(label);
+      }
+      const constructors = [Int8Array, Float64Array];
+      for (const TA of constructors) {
+        const shared = new SharedArrayBuffer(TA.BYTES_PER_ELEMENT * 4);
+        // @ts-ignore
+        const whole = new TA(shared);
+        // @ts-ignore
+        const part = new TA(shared, TA.BYTES_PER_ELEMENT, 2);
+        part[0] = 7;
+        // @ts-ignore
+        const shifted = new TA(new ArrayBuffer(TA.BYTES_PER_ELEMENT * 2), false);
+        // @ts-ignore
+        const empty = new TA(null);
+        // @ts-ignore
+        const filled = new TA({ length: 2, 0: null, 1: "3" });
+        try {
+          // @ts-ignore
+          new TA(new BigInt64Array(1));
+        } catch (thrown) {
+          seen.push(thrown instanceof TypeError);
+        }
+        seen.push(whole.length, whole[1], part.length, shifted.length, empty.length, filled.join("-"));
+      }
+      same(seen.join(), "true,4,7,2,2,0,0-3,true,4,7,2,2,0,0-3", "seen");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each([
+      "true,4,7,2,2,0,0-3,true,4,0,2,2,0,0-3",
+      "true,4,7,2,2,0,-3,true,4,7,2,2,0,-3",
+      "false,4,7,2,2,0,0-3,false,4,7,2,2,0,0-3",
+    ])("rejects %s", async (wrong) => {
+      expect(
+        (await checkModel(source.replace("true,4,7,2,2,0,0-3,true,4,7,2,2,0,0-3", wrong))).failure
+          ?.message,
+      ).toContain('"seen"');
+    });
+  });
+
   it("throw a TypeError where a reduce without an initial value finds no element", async () => {
     const result = await checkModel(`
       const empty: number[] & { tag?: string } = [];
