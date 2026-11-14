@@ -27938,7 +27938,7 @@ describe("regular expressions", () => {
     const result = await checkModel(`
       const holder: { tag?: string } = {};
       holder.tag = "made";
-      RegExp.prototype.test = () => false;
+      RegExp.prototype.exec = () => null;
       const found = holder.tag === "made" && /a/.test("a");
     `);
     expect(result.failure?.message).toContain("tla-ts can't call a regexp's method");
