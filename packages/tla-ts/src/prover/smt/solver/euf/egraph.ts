@@ -488,6 +488,7 @@ export class Egraph {
     this.forcePush();
     const old = node.getThVar(id);
     const root = node.root;
+    // Deviation from Z3: the undo restores the variable of the node; Z3 records that of the root.
     if (old === NULL_THEORY_VAR) {
       node.addThVar(thVar, id);
       this.push(U_ADD_TH_VAR, node, null, id);
@@ -597,7 +598,7 @@ export class Egraph {
           this.toggleCgcEnabled(r1, true);
           break;
         case U_TOGGLE_MERGE_TF:
-          r1.isMergeTfEnabled = !r1.isMergeTfEnabled;
+          r1.isMergeTfEnabled = !r1.mergeTf;
           break;
         case U_SET_PARENT:
           this.undoEq(r1, record.n1 as Enode, record.num);
