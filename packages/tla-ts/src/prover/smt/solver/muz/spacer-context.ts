@@ -1,7 +1,6 @@
 // Ported from Z3 (src/muz/spacer/spacer_context.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError, SmtUnsupportedError } from "../../../../errors";
 import { type AstManager, getSymbolName, KIND_VAR, OP_AND, OP_IMPLIES, SORT_BOOL } from "../ast";
-import { compareAsts } from "../ast-lt";
 import { pushNotOwned } from "../ast-util";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import type { ProtoModel } from "../proto-model";
@@ -128,7 +127,7 @@ export class Lemma {
 const isLemmaLess = (manager: AstManager, first: Lemma, second: Lemma) =>
   first.level !== second.level
     ? first.level < second.level
-    : compareAsts(manager, second.getExpr(), first.getExpr()) > 0;
+    : manager.ids[first.getExpr()] < manager.ids[second.getExpr()];
 
 export class Pob {
   readonly id: number;
