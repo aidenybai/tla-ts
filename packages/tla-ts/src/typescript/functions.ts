@@ -609,6 +609,12 @@ export const translateHelperCall = (
     }
     return inlineCall(helper, node.arguments, helperScope, context);
   }
+  if (ts.isFunctionDeclaration(declaration) && declaration.asteriskToken !== undefined) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't call a generator inside an expression",
+      node ?? declaration,
+    );
+  }
   const definition = getDefinition(declaration, context);
   const argumentNodes = node?.arguments ?? [];
   if (definition.readsState && isStateModified(scope, context)) {

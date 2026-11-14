@@ -933,6 +933,17 @@ describe("top-level statements", () => {
     ).toThrow("Throw an error or a primitive");
   });
 
+  it("reject a generator call inside an expression", () => {
+    expect(() => compile("function* g() {\n  yield 1;\n}\nconst values = [g()];")).toThrow(
+      "tla-ts can't call a generator inside an expression",
+    );
+    expect(() =>
+      compile(
+        "function* g() {\n  yield 1;\n}\nconst holder: (number[] | undefined)[] = [];\nconst [[first] = g()] = holder;",
+      ),
+    ).toThrow("tla-ts can't call a generator inside an expression");
+  });
+
   it("stop the check at a setter it can't call, before what follows", async () => {
     const result = await checkModel(`
       let count = 0;
