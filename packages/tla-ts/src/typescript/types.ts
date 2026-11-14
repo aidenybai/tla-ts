@@ -468,8 +468,15 @@ export const isHeapSetOrMap = (node: ts.Expression, context: Context) => {
 };
 
 export const isHeapArray = (node: ts.Expression, context: Context) => {
-  if (context.heapCollections.size === 0) return false;
   const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(node));
+  // The heap holds the arrays that a match gives, with their indices.
+  if (
+    context.heap !== undefined &&
+    (isRegExpArray(type) || getRegExpIndicesPart(node, context) === "pair")
+  ) {
+    return true;
+  }
+  if (context.heapCollections.size === 0) return false;
   return !isSetType(type) && !isMapType(type) && isHeld(node, context);
 };
 
@@ -593,7 +600,9 @@ export const getCollection = (node: ts.Expression, context: Context) => {
 // The array that a RegExp's exec or a string's match gives, which is an object on the heap, or
 // without objects a function from its keys rather than a sequence.
 export const isRegExpArray = (type: ts.Type) =>
-  ["RegExpExecArray", "RegExpMatchArray"].includes(type.getSymbol()?.name ?? "");
+  ["RegExpExecArray", "RegExpMatchArray", "RegExpIndicesArray"].includes(
+    type.getSymbol()?.name ?? "",
+  );
 
 // The groups of the array that exec or match gives.
 const isRegExpGroups = (node: ts.Expression, context: Context): boolean => {
@@ -606,6 +615,46 @@ const isRegExpGroups = (node: ts.Expression, context: Context): boolean => {
         isRegExpArray(
           context.checker.getNonNullableType(context.checker.getTypeAtLocation(node.expression)),
         );
+};
+
+// The part of the indices of a match that an expression gives, which the heap holds: the array of
+// them, the object of their groups, or a pair of a start and an end. TypeScript types a pair as
+// any pair of numbers, so a pair is an element of the indices, a group of them, or a constant that
+// holds one.
+export const getRegExpIndicesPart = (
+  node: ts.Expression,
+  context: Context,
+): "indices" | "groups" | "pair" | undefined => {
+  const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(node));
+  if (type.getSymbol()?.name === "RegExpIndicesArray") return "indices";
+  const member = type.getSymbol()?.declarations?.at(0)?.parent;
+  if (
+    member !== undefined &&
+    ts.isPropertySignature(member) &&
+    ts.isInterfaceDeclaration(member.parent) &&
+    member.parent.name.text === "RegExpIndicesArray"
+  ) {
+    return "groups";
+  }
+  if (ts.isNonNullExpression(node) || ts.isParenthesizedExpression(node)) {
+    return getRegExpIndicesPart(node.expression, context) === "pair" ? "pair" : undefined;
+  }
+  const declaration = ts.isIdentifier(node)
+    ? getSymbol(node, context.checker)?.valueDeclaration
+    : undefined;
+  const owner =
+    ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)
+      ? getRegExpIndicesPart(node.expression, context)
+      : undefined;
+  return (declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer !== undefined &&
+    (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0 &&
+    getRegExpIndicesPart(declaration.initializer, context) === "pair") ||
+    (owner === "indices" && ts.isElementAccessExpression(node)) ||
+    owner === "groups"
+    ? "pair"
+    : undefined;
 };
 
 export const ITERATOR_METHODS = ["keys", "values", "entries"];
@@ -837,7 +886,9 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
   if (isRegExpArray(type)) return context.heap === undefined ? "other" : "object";
   if (
     context.heap !== undefined &&
-    (type.getSymbol()?.name === "RegExp" || isRegExpGroups(node, context))
+    (type.getSymbol()?.name === "RegExp" ||
+      isRegExpGroups(node, context) ||
+      getRegExpIndicesPart(node, context) !== undefined)
   ) {
     return "object";
   }

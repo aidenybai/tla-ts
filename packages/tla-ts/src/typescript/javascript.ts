@@ -3941,8 +3941,37 @@ LOCAL RegExpRun(heap, ref, regexp, text) ==
        match |-> found,
        isThrown |-> isUpdating /\\ IsLastIndexFixed(heap, ref)]
 
+\\* The heap once MakeMatchIndicesIndexPairArray makes the indices of a match for a regexp with
+\\* the d flag: an array of the start and end of the match and of each capture that took part, the
+\\* object of those of the named groups where the regexp has them, and last the array of them all.
+LOCAL RegExpIndices(heap, prototype, regexp, match) ==
+  LET pairOf(position) ==
+        IF position = 1 THEN <<match.start, match.end>> ELSE match.captures[position - 1]
+      positions == 1..(regexp.captures + 1)
+      matched == SelectSeq([position \\in positions |-> position], LAMBDA position :
+                   pairOf(position) # <<>>)
+      refOf(position) ==
+        IF pairOf(position) = <<>>
+        THEN Undefined
+        ELSE NextRef(heap, Cardinality({other \\in 1..position : pairOf(other) # <<>>}))
+      hasGroups == regexp.groupNames # <<>>
+      groups == [EmptyObject EXCEPT
+                   !.prototype = Null,
+                   !.keys = regexp.groupNames,
+                   !.values = [name \\in DOMAIN regexp.names |-> refOf(regexp.names[name] + 1)],
+                   !.attributes = [name \\in DOMAIN regexp.names |-> Writable]]
+      array == ArrayObject(prototype, [position \\in positions |-> refOf(position)])
+      added == "groups" :> IF hasGroups THEN NextRef(heap, Len(matched) + 1) ELSE Undefined
+  IN  AllocateEach(heap, [offset \\in DOMAIN matched |-> ArrayObject(prototype, pairOf(matched[offset]))]
+                         \\o (IF hasGroups THEN <<groups>> ELSE <<>>)
+                         \\o <<[array EXCEPT
+                                !.keys = @ \\o <<"groups">>,
+                                !.values = @ @@ added,
+                                !.attributes = @ @@ ("groups" :> Writable)]>>)
+
 \\* The heap once RegExpBuiltinExec makes the array of a match, which is the last object it holds,
-\\* after the object of the match's named groups where the regexp has them.
+\\* after the object of the match's named groups where the regexp has them, and its indices where
+\\* it has the d flag.
 LOCAL RegExpResult(heap, prototype, regexp, text, match) ==
   LET groups == RegExpGroups(regexp, text, match)
       hasGroups == regexp.groupNames # <<>>
@@ -3954,12 +3983,15 @@ LOCAL RegExpResult(heap, prototype, regexp, text, match) ==
                                !.values = groups,
                                !.attributes = [name \\in DOMAIN groups |-> Writable]])
         ELSE heap
+      indexed == IF regexp.hasIndices THEN RegExpIndices(grouped, prototype, regexp, match) ELSE grouped
       array == ArrayObject(prototype, [position \\in 1..(regexp.captures + 1) |->
                                          RegExpCapture(text, match, position - 1)])
       added == ("index" :> match.start) @@ ("input" :> text)
                  @@ ("groups" :> IF hasGroups THEN Allocated(grouped) ELSE Undefined)
-  IN  Allocate(grouped, [array EXCEPT
-                           !.keys = @ \\o <<"index", "input", "groups">>,
+                 @@ (IF regexp.hasIndices THEN "indices" :> Allocated(indexed) ELSE <<>>)
+  IN  Allocate(indexed, [array EXCEPT
+                           !.keys = @ \\o <<"index", "input", "groups">>
+                                      \\o (IF regexp.hasIndices THEN <<"indices">> ELSE <<>>),
                            !.values = @ @@ added,
                            !.attributes = @ @@ [key \\in DOMAIN added |-> Writable]])
 

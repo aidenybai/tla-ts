@@ -132,6 +132,7 @@ import {
   getElementTypeNode,
   getHolders,
   getKind,
+  getRegExpIndicesPart,
   isEvery,
   hasHeapType,
   isHeapType,
@@ -3362,6 +3363,128 @@ const isArrayObjectUse = (node: ts.Expression, context: Context): boolean => {
       (parameter.flags & ts.TypeFlags.Any) === 0 &&
       !isSequenceType(context.checker.getNonNullableType(parameter), context.checker))
   );
+};
+
+// The Object functions that read an object's keys or prototype but none of its values.
+const KEY_READS = new Set([
+  "Object.keys",
+  "Object.getOwnPropertyNames",
+  "Object.getPrototypeOf",
+  "Object.hasOwn",
+  "Object.isExtensible",
+  "Object.isFrozen",
+  "Object.isSealed",
+  "Array.isArray",
+]);
+
+// The indices of a match hold pairs that the heap holds as arrays, which TypeScript types as any
+// pair of numbers. A pair reaches only the places that read it as an object, and the indices and
+// their groups only places that keep their type or read no pair, so that no sequence holds a pair.
+export const rejectRegExpIndicesUses = (roots: readonly ts.Node[], context: Context) => {
+  const isKept = (node: ts.Node, part: string) =>
+    ts.isExpression(node) && getRegExpIndicesPart(node, context) === part;
+  const isUsed = (node: ts.Expression, part: "indices" | "groups" | "pair"): boolean => {
+    const parent = node.parent;
+    if (ts.isParenthesizedExpression(parent) || ts.isNonNullExpression(parent)) {
+      return isUsed(parent, part);
+    }
+    if (ts.isExpressionStatement(parent) || ts.isTypeOfExpression(parent)) return true;
+    if (ts.isVariableDeclaration(parent)) {
+      const name = parent.name;
+      // A pattern takes the groups of the indices, or their length.
+      const isPatternKept =
+        part === "indices" &&
+        ts.isObjectBindingPattern(name) &&
+        name.elements.every(
+          (element) =>
+            element.dotDotDotToken === undefined &&
+            ts.isIdentifier(element.name) &&
+            (isKept(element.name, "groups") || isNumberLike(element.name, context)),
+        );
+      return part === "pair"
+        ? ts.isArrayBindingPattern(name) || isKept(name, part)
+        : isPatternKept || (ts.isIdentifier(name) && isKept(name, part));
+    }
+    if (
+      ts.isBinaryExpression(parent) &&
+      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      parent.right === node
+    ) {
+      return part !== "pair" && isKept(parent.left, part);
+    }
+    if (part === "pair") return isArrayObjectUse(node, context);
+    if (ts.isPropertyAccessExpression(parent) && parent.expression === node) {
+      return part === "groups" || ["length", "groups"].includes(parent.name.text);
+    }
+    if (ts.isElementAccessExpression(parent) && parent.expression === node) {
+      return part === "groups" || isNumberLike(parent.argumentExpression, context);
+    }
+    if (ts.isBinaryExpression(parent)) {
+      return (
+        [
+          ts.SyntaxKind.EqualsEqualsEqualsToken,
+          ts.SyntaxKind.ExclamationEqualsEqualsToken,
+          ts.SyntaxKind.EqualsEqualsToken,
+          ts.SyntaxKind.ExclamationEqualsToken,
+        ].includes(parent.operatorToken.kind) ||
+        (parent.operatorToken.kind === ts.SyntaxKind.InKeyword && parent.right === node)
+      );
+    }
+    if (!ts.isCallExpression(parent) || !parent.arguments.some((argument) => argument === node)) {
+      return false;
+    }
+    // A function of the script that takes an object reads no pair as a sequence.
+    const callee = parent.expression.getText();
+    const parameter = context.checker.getContextualType(node);
+    return (
+      KEY_READS.has(callee) ||
+      (!/^(Object|Reflect|Array)\./.test(callee) &&
+        parameter !== undefined &&
+        (parameter.flags & ts.TypeFlags.Any) === 0 &&
+        !isSequenceType(context.checker.getNonNullableType(parameter), context.checker))
+    );
+  };
+  const visit = (node: ts.Node) => {
+    const parent = node.parent;
+    const isName =
+      ts.isIdentifier(node) &&
+      ((ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+        ((ts.isVariableDeclaration(parent) ||
+          ts.isBindingElement(parent) ||
+          ts.isParameter(parent) ||
+          ts.isPropertyAssignment(parent)) &&
+          parent.name === node) ||
+        (ts.isBinaryExpression(parent) &&
+          parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          parent.left === node));
+    const expression =
+      (ts.isIdentifier(node) ||
+        ts.isPropertyAccessExpression(node) ||
+        ts.isElementAccessExpression(node) ||
+        ts.isCallExpression(node) ||
+        ts.isParenthesizedExpression(node) ||
+        ts.isNonNullExpression(node)) &&
+      !isName &&
+      !ts.isParenthesizedExpression(parent) &&
+      !ts.isNonNullExpression(parent)
+        ? node
+        : undefined;
+    const part = expression === undefined ? undefined : getRegExpIndicesPart(expression, context);
+    if (
+      expression !== undefined &&
+      part !== undefined &&
+      (context.heap === undefined || !isUsed(expression, part))
+    ) {
+      throw new TlaTypeScriptError(
+        context.heap === undefined
+          ? "tla-ts can't read the indices of a match in a script without objects"
+          : "tla-ts can't read the indices of a match here, where a sequence may hold a pair of them",
+        expression,
+      );
+    }
+    ts.forEachChild(node, visit);
+  };
+  roots.forEach(visit);
 };
 
 // The array literals that a script passes to the Object functions that treat arrays as objects.

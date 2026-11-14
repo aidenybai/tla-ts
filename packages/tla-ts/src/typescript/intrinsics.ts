@@ -1782,11 +1782,8 @@ const translateRegExp = (
   node: ts.Node,
   context: Context,
 ) => {
-  if (/[dv]/.test(flags)) {
-    throw new TlaTypeScriptError(
-      "tla-ts can't match a regular expression with the d or v flag",
-      node,
-    );
+  if (flags.includes("v")) {
+    throw new TlaTypeScriptError("tla-ts can't match a regular expression with the v flag", node);
   }
   const parsed = parsePattern(pattern, flags, node);
   context.prelude.add("JavaScript");

@@ -27748,6 +27748,41 @@ describe("regular expressions", () => {
     await expect(checkModel(getSource("!"))).rejects.toThrow("class");
   });
 
+  it("make the indices of a match for a regexp with the d flag", async () => {
+    const getSource = (end: number, keys: string) => `
+      const match = /b(c)?(?<x>d)?|(?<y>q)/d.exec("abcd")!;
+      const indices = match.indices!;
+      const whole = indices[0]!;
+      const [start] = whole;
+      if (indices.length !== 4 || start !== 1 || whole[1] !== ${end} || !Array.isArray(whole)) {
+        throw new Error("whole");
+      }
+      if (indices[1]![0] !== 2 || indices[2]![1] !== 4 || indices[3] !== undefined) throw new Error("captures");
+      const groups = indices.groups!;
+      if (groups.x !== indices[2] || groups.y !== undefined || Object.getPrototypeOf(groups) !== null) {
+        throw new Error("groups");
+      }
+      if (Object.keys(match).join() !== "${keys}") throw new Error("keys");
+      const flags = /a/dg.flags;
+      const hasIndices = /a/d.hasIndices;
+      const unindexed = /a/.exec("a")!.indices;
+      if (flags !== "dg" || !hasIndices || unindexed !== undefined) throw new Error("flags");
+    `;
+    expect(
+      (await checkModel(getSource(4, "0,1,2,3,index,input,groups,indices"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource(3, "0,1,2,3,index,input,groups,indices"))).failure?.message,
+    ).toContain("whole");
+    expect(() =>
+      compile(`
+        const box = { size: 0 };
+        const sum = (pair: [number, number]) => pair[0] + pair[1];
+        const total = sum(/a/d.exec("a")!.indices![0]!);
+      `),
+    ).toThrow("tla-ts can't read the indices of a match here");
+  });
+
   it("keep a regexp's lastIndex on the heap as exec and string methods set it", async () => {
     const result = await checkModel(`
       const holder: { tag?: string } = {};

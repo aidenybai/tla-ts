@@ -22,6 +22,7 @@ import {
   isHoleyArray,
   isThrownArray,
   isPrototypeArray,
+  rejectRegExpIndicesUses,
   translateConstantFunctions,
 } from "./heap";
 import { findGeneratorPrototypes, getBuiltIn, getCodePoint, translateBuiltIns } from "./intrinsics";
@@ -55,6 +56,7 @@ import {
   getWrappedThis,
   isCollectionName,
   isFractionKey,
+  isRegExpArray,
   TYPED_ARRAYS,
 } from "./types";
 
@@ -382,6 +384,12 @@ export const compile = (
     node.kind === ts.SyntaxKind.AsyncKeyword ||
     isHoleyArray(node, context) ||
     isThrownArray(node) ||
+    // The indices of a match, which are arrays inside an array.
+    (ts.isPropertyAccessExpression(node) &&
+      node.name.text === "indices" &&
+      isRegExpArray(
+        context.checker.getNonNullableType(context.checker.getTypeAtLocation(node.expression)),
+      )) ||
     // A function that a script holds as a value, such as an array's element or an operand, which
     // only a model value on the heap can be.
     (ts.isIdentifier(node) &&
@@ -549,6 +557,7 @@ export const compile = (
       ? { sourceFile, isEsModule: isEsModule(sourceFile) }
       : undefined;
   rejectSharing(roots, context);
+  rejectRegExpIndicesUses(roots, context);
   classifySharedHelpers(reached, context);
   // A using declaration disposes nothing where it holds only null or undefined.
   const isNothing = (node: ts.Expression | undefined) =>
