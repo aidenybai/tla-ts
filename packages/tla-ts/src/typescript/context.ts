@@ -2053,6 +2053,25 @@ export const getAccessorFunctions = (node: ts.Node, field: "get" | "set", contex
   return found.get(field) ?? [];
 };
 
+const computedGetters = new WeakMap<ts.SourceFile, ts.GetAccessorDeclaration[]>();
+
+// The getters of object literals whose keys computed names give, which no type names, so that a
+// read runs the one it finds.
+const getComputedGetters = (node: ts.Node) => {
+  const file = node.getSourceFile();
+  const known = computedGetters.get(file);
+  if (known !== undefined) return known;
+  const found = findNodes(
+    file,
+    (inner): inner is ts.GetAccessorDeclaration =>
+      ts.isGetAccessorDeclaration(inner) &&
+      ts.isObjectLiteralExpression(inner.parent) &&
+      ts.isComputedPropertyName(inner.name),
+  );
+  computedGetters.set(file, found);
+  return found;
+};
+
 const setAccessors = new WeakMap<ts.SourceFile, ts.SetAccessorDeclaration[]>();
 
 // The setters that a script writes in object literals and classes under a key it names, of those
@@ -2201,6 +2220,7 @@ export const getGetters = (node: ts.Node, context: Context) =>
   [
     ...getAccessorFunctions(node, "get", context),
     ...getReturnedFunctions(node, context),
+    ...getComputedGetters(node),
     ...((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
     node.expression.kind === ts.SyntaxKind.SuperKeyword
       ? (getSymbol(

@@ -25360,4 +25360,30 @@ describe("BigInts", () => {
     `);
     expect(division.failure?.message).toContain("tla-ts can't throw the RangeError");
   });
+  describe("runs an object literal's getter whose key a computed symbol gives", () => {
+    const getSource = (expected: string) => `
+      let s = Symbol();
+      const A = {
+        get ["a"]() {
+          return "A";
+        },
+        get [1]() {
+          return 1;
+        },
+        get [s]() {
+          return s;
+        },
+      };
+      const read = [A.a, A[1], A[s] === s].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("A,1,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects the symbol's getter as giving another value", async () => {
+      expect((await checkModel(getSource("A,1,false"))).failure?.message).toContain("A,1,true");
+    });
+  });
 });
