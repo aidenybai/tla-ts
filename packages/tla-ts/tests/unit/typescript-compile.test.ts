@@ -26038,6 +26038,49 @@ describe("buffers", () => {
     });
   });
 
+  describe("reads an accessor that a script defines on a typed array's prototype", () => {
+    const source = `
+      const check = (actual: unknown, expected: unknown, label: string) => {
+        if (!Object.is(actual, expected)) throw new Error(label);
+      };
+      const proto = Object.getPrototypeOf(Int8Array.prototype);
+      let calls = 0;
+      Object.defineProperty(proto, "length", {
+        get() {
+          calls++;
+          return 5;
+        },
+      });
+      const sample = new Int8Array([1, 2]);
+      check(sample.length, 5, "length");
+      check(sample.join(), "1,2", "join");
+      sample.fill(3);
+      check(sample.reverse().join(), "3,3", "reverse");
+      check(calls, 1, "calls");
+      Object.defineProperty(Uint8Array.prototype, "extra", { get: () => "extra" });
+      const bytes: Uint8Array & { extra?: string } = new Uint8Array(1);
+      check(bytes.extra, "extra", "extra");
+      const other: Int8Array & { extra?: string } = sample;
+      check(other.extra, undefined, "other type");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["length", '(sample.length, 5, "length")', '(sample.length, 2, "length")'],
+      ["join", '"1,2", "join"', '"", "join"'],
+      ["calls", '(calls, 1, "calls")', '(calls, 3, "calls")'],
+      ["extra", '"extra", "extra"', 'undefined, "extra"'],
+      ["other type", 'undefined, "other type"', '"extra", "other type"'],
+    ])("rejects a wrong %s", async (label, expected, wrong) => {
+      expect((await checkModel(source.replace(expected, wrong))).failure?.message).toContain(
+        `"${label}"`,
+      );
+    });
+  });
+
   it("throws a TypeError where a typed array's method runs through call on another value", async () => {
     const result = await checkModel(`
       function throws(expected: Function, func: () => unknown, message: string) {

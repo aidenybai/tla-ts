@@ -4804,16 +4804,15 @@ IsObjectArgument(value) ==
 \\* that inherits from Object.prototype, and only functions that the heap holds read it. A primitive
 \\* reads only the built-in keys of its prototype as tla-ts compiles, and stops at any other key, so a
 \\* script may define an accessor under a string key that is neither of those nor an index. A typed
-\\* array, which the heap holds, never reads its prototypes under a key that is a number.
+\\* array, which the heap holds, reads its prototypes' accessors as any object on the heap does.
 LOCAL CanDefineOn(ref, key, descriptor) ==
   Assert(\\/ IsHeap(ref)
          \\/ ~descriptor.isAccessor
          \\/ BuiltInKey(ref) \\in {"Array.prototype", "Object.prototype"}
-         \\/ /\\ BuiltInKey(ref) \\in {"%Int8Array.prototype.[[Prototype]]%"} \\cup
-                {type \\o "Array.prototype" :
-                   type \\in {"Int8", "Uint8", "Uint8Clamped", "Int16", "Uint16", "Float16", "Int32",
-                            "Uint32", "Float32", "Float64", "BigInt64", "BigUint64"}}
-            /\\ TypedKey(key) # "property"
+         \\/ BuiltInKey(ref) \\in {"%Int8Array.prototype.[[Prototype]]%"} \\cup
+              {type \\o "Array.prototype" :
+                 type \\in {"Int8", "Uint8", "Uint8Clamped", "Int16", "Uint16", "Float16", "Int32",
+                          "Uint32", "Float32", "Float64", "BigInt64", "BigUint64"}}
          \\/ /\\ BuiltInKey(ref) \\in {"Boolean.prototype", "Number.prototype", "String.prototype"}
             /\\ ~IsSymbol(key)
             /\\ TypedKey(key) = "property"
