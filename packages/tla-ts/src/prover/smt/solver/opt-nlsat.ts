@@ -34,30 +34,43 @@ const PREPROCESSOR =
   "(using-params simplify :elim_and true :blast_distinct true) tseitin-cnf-core " +
   "(using-params simplify :elim_and true :blast_distinct true))";
 
-export interface NlsatOptResult {
-  value: Anum | null;
+interface NlsatSupremum {
+  value: Anum;
   lower: Rational;
   upper: Rational;
-  isAttained: boolean;
-  isUnbounded: boolean;
-  hasSup: boolean;
   isOpen: boolean;
-  sup: Anum | null;
-  supLower: Rational;
-  supUpper: Rational;
-  model: ProtoModel | null;
+}
+
+interface NlsatNoModel {
+  hasModel: false;
+}
+
+interface NlsatOptimum {
+  hasModel: true;
+  model: ProtoModel;
+  value: Anum;
+  lower: Rational;
+  upper: Rational;
+  isUnbounded: boolean;
+  sup: NlsatSupremum | null;
 }
 
 interface NlsatOptOutcome {
   status: number;
-  result: NlsatOptResult;
+  result: NlsatNoModel | NlsatOptimum;
 }
 
-interface Preprocessed {
-  status: number;
-  goal: Goal | null;
+interface PreprocessedGoal {
+  status: typeof L_TRUE;
+  goal: Goal;
   objective: number;
 }
+
+interface PreprocessedNothing {
+  status: typeof L_FALSE | typeof L_UNDEF;
+}
+
+const NO_MODEL: NlsatNoModel = { hasModel: false };
 
 interface Loaded {
   solver: NlsatSolver;
@@ -175,7 +188,7 @@ export class NlsatOpt {
     objective: number,
     lower: Rational,
     upper: Rational | null,
-  ): Preprocessed {
+  ): PreprocessedGoal | PreprocessedNothing {
     const manager = this.manager;
     const pinned = new RefVector(manager);
     const pin = (expr: number) => {
@@ -199,10 +212,11 @@ export class NlsatOpt {
     })();
     pinned.reset();
     const result = goals?.length === 1 ? goals[0] : null;
-    if (result?.isInconsistent === true) return { status: L_FALSE, goal: null, objective: target };
-    const isKept =
-      result !== null && result.forms.items.some((form) => isOccurring(manager, target, form));
-    return { status: isKept ? L_TRUE : L_UNDEF, goal: isKept ? result : null, objective: target };
+    if (result === null) return { status: L_UNDEF };
+    if (result.isInconsistent) return { status: L_FALSE };
+    return result.forms.items.some((form) => isOccurring(manager, target, form))
+      ? { status: L_TRUE, goal: result, objective: target }
+      : { status: L_UNDEF };
   }
 
   // The objective is nlsat's first variable and its maximization target.
@@ -270,23 +284,22 @@ export class NlsatOpt {
   proveUnbounded(hard: readonly number[], objective: number, lower: Rational) {
     if (!isInNraFragment(this.manager, [...hard, objective])) return L_UNDEF;
     const preprocessed = this.preprocess(hard, objective, lower, null);
-    if (preprocessed.status === L_FALSE) return L_FALSE;
-    if (preprocessed.goal === null) return L_UNDEF;
+    if (preprocessed.status !== L_TRUE) return preprocessed.status;
     return this.checkLimit(preprocessed.goal, preprocessed.objective, null);
   }
 
   // Refuting T >= sup, at a model below an open candidate supremum, proves a strict upper bound,
   // but not that feasible values approach it.
-  private proveStrictUpperBound(loaded: Loaded, sup: Anum, best: Anum, result: NlsatOptResult) {
+  private proveStrictUpperBound(loaded: Loaded, sup: Anum, best: Anum): NlsatSupremum | null {
     const solver = loaded.solver;
-    if (solver.am.compare(sup, best) <= 0) return;
+    if (solver.am.compare(sup, best) <= 0) return null;
     const literal = mkLowerBound(solver, loaded.variable, sup, false);
-    if (literal === null) return;
+    if (literal === null) return null;
     solver.mkExternalClause([literal], null);
-    if (solver.check() !== L_FALSE) return;
-    result.sup = solver.am.copy(sup);
-    [result.supLower, result.supUpper] = getBracket(solver, result.sup);
-    result.hasSup = true;
+    if (solver.check() !== L_FALSE) return null;
+    const value = solver.am.copy(sup);
+    const bracket = getBracket(solver, value);
+    return { value, lower: bracket[0], upper: bracket[1], isOpen: false };
   }
 
   maximize(
@@ -297,30 +310,20 @@ export class NlsatOpt {
     maxRounds: number,
     supremumRlimit: number,
   ): NlsatOptOutcome {
-    const result: NlsatOptResult = {
-      value: null,
-      lower: Rational.zero,
-      upper: Rational.zero,
-      isAttained: false,
-      isUnbounded: false,
-      hasSup: false,
-      isOpen: false,
-      sup: null,
-      supLower: Rational.zero,
-      supUpper: Rational.zero,
-      model: null,
-    };
-    if (!isInNraFragment(this.manager, [...hard, objective])) return { status: L_UNDEF, result };
+    if (!isInNraFragment(this.manager, [...hard, objective]))
+      return { status: L_UNDEF, result: NO_MODEL };
     const preprocessed = this.preprocess(hard, objective, lower, upper);
+    if (preprocessed.status !== L_TRUE) return { status: preprocessed.status, result: NO_MODEL };
     const goal = preprocessed.goal;
-    if (goal === null) return { status: preprocessed.status, result };
     const loaded = this.load(goal, preprocessed.objective);
-    if (loaded === null) return { status: L_UNDEF, result };
+    if (loaded === null) return { status: L_UNDEF, result: NO_MODEL };
     const solver = loaded.solver;
     const am = solver.am;
     let status = L_UNDEF;
     let best: Anum | null = null;
     let sup: Anum | null = null;
+    let model: ProtoModel | null = null;
+    let isUnbounded = false;
     let unboundedRounds = 0;
     // A round without a candidate supremum is inconclusive, since bounds through later variables
     // reach the objective only through conflicts, so five in a row probe for a feasible ray.
@@ -330,13 +333,13 @@ export class NlsatOpt {
       best = am.copy(solver.getValue(loaded.variable));
       const found = solver.getMaxVarSup();
       sup = found === null ? null : found.sup;
-      result.model?.decRef();
-      result.model = this.extractModel(loaded, goal, preprocessed.objective);
-      result.model.incRef();
+      model?.decRef();
+      model = this.extractModel(loaded, goal, preprocessed.objective);
+      model.incRef();
       if (sup === null) {
         if (++unboundedRounds > 4) {
           if (upper === null && this.checkLimit(goal, preprocessed.objective, null) === L_TRUE)
-            result.isUnbounded = true;
+            isUnbounded = true;
           break;
         }
       } else unboundedRounds = 0;
@@ -347,20 +350,27 @@ export class NlsatOpt {
       }
       solver.mkExternalClause([literal], null);
     }
-    if (best === null) return { status: status === L_FALSE ? L_FALSE : L_UNDEF, result };
-    result.value = best;
-    [result.lower, result.upper] = getBracket(solver, best);
-    result.isAttained = status === L_FALSE;
-    if (status === L_TRUE && sup !== null) this.proveStrictUpperBound(loaded, sup, best, result);
-    const certifiedSup = result.sup;
-    if (certifiedSup !== null)
-      result.isOpen =
+    if (best === null || model === null)
+      return { status: status === L_FALSE ? L_FALSE : L_UNDEF, result: NO_MODEL };
+    const bracket = getBracket(solver, best);
+    const certified =
+      status === L_TRUE && sup !== null ? this.proveStrictUpperBound(loaded, sup, best) : null;
+    if (certified !== null)
+      certified.isOpen =
         this.getBoundedLimit(supremumRlimit, () =>
-          this.checkLimit(goal, preprocessed.objective, certifiedSup),
+          this.checkLimit(goal, preprocessed.objective, certified.value),
         ) === L_TRUE;
     return {
-      status: result.isAttained || result.isUnbounded || result.isOpen ? L_TRUE : L_UNDEF,
-      result,
+      status: status === L_FALSE || isUnbounded || certified?.isOpen === true ? L_TRUE : L_UNDEF,
+      result: {
+        hasModel: true,
+        model,
+        value: best,
+        lower: bracket[0],
+        upper: bracket[1],
+        isUnbounded,
+        sup: certified,
+      },
     };
   }
 }

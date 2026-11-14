@@ -200,15 +200,7 @@ export const runBv1Blast = (manager: AstManager) => (goal: Goal) => {
     const rewriter = new Bv1BlasterRewriter(manager);
     return {
       reduce: () => {
-        let rewritten = -1;
-        state.forEachIndex((index) => {
-          const form = state.get(index);
-          const next = rewriter.rewrite(form);
-          if (rewritten !== -1) manager.decRef(rewritten);
-          rewritten = next;
-          if (rewritten !== form) goal.update(index, rewritten);
-        });
-        if (rewritten !== -1) manager.decRef(rewritten);
+        state.rewriteEach((form) => rewriter.rewrite(form));
         if (rewriter.newbits.length === 0) return;
         const definitions: Definition[] = rewriter.newbits.map((decl) => ({ decl, def: -1 }));
         for (const [decl, bits] of rewriter.const2bits) definitions.push({ decl, def: bits });

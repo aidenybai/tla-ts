@@ -24,6 +24,7 @@ import { type Dependency, type Goal, joinDependencies } from "./goal";
 import type { ProtoModel } from "./proto-model";
 import { getGcd, getLcm, Rational } from "./rational";
 import { RefVector } from "./ref-vector";
+import { UINT_MAX } from "./sat/clause";
 
 export interface FmOptions {
   isRealOnly: boolean;
@@ -46,8 +47,6 @@ interface Constraint {
   isDead: boolean;
   dependency: Dependency | undefined;
 }
-
-const UINT_MAX = 4294967295;
 
 class ConstraintSet {
   private id2pos: number[] = [];
