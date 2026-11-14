@@ -2581,7 +2581,7 @@ const OWN_PROPERTY_FUNCTIONS = new Set([
 // access, in a comparison, typeof, or instanceof, or as the argument of a script's function whose
 // parameter takes an object that isn't an error. The heap holds such an error as an object, with
 // the slot that marks it as one. An error that a script throws, or keeps elsewhere, stays a record.
-// A SuppressedError has own properties.
+// A SuppressedError takes its message after the error and the error that it suppressed.
 // It assumes that the errors it is already deciding are held, so two of them can be compared.
 export const isHeldError = (
   node: ts.Node,
@@ -2591,12 +2591,12 @@ export const isHeldError = (
   if (context.heap === undefined || !ts.isNewExpression(node)) return false;
   const name = getBuiltIn(node.expression, context);
   const holder = node.parent;
-  const message = node.arguments?.at(0);
+  const isSuppressed = name === "SuppressedError";
+  const message = node.arguments?.at(isSuppressed ? 2 : 0);
   if (
     name === undefined ||
     !NATIVE_ERRORS.has(name) ||
-    name === "SuppressedError" ||
-    (node.arguments ?? []).length > 1 ||
+    (node.arguments ?? []).length > (isSuppressed ? 3 : 1) ||
     (message !== undefined &&
       getTypeNames(context.checker.getTypeAtLocation(message), context.checker)?.join() !==
         "string") ||

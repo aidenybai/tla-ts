@@ -13080,6 +13080,41 @@ describe("errors", () => {
     });
   });
 
+  describe("holds a SuppressedError with its own error, suppressed error and message", () => {
+    const getSource = (expected: string) => `
+      const holder = { seen: 0 };
+      const suppressed = new SuppressedError(1, "two", "three");
+      const keys = Object.getOwnPropertyNames(suppressed)
+        .filter((key) => key !== "stack")
+        .join();
+      const message = Object.getOwnPropertyDescriptor(suppressed, "message")!;
+      const error = Object.getOwnPropertyDescriptor(suppressed, "error")!;
+      const described = [
+        keys,
+        message.value,
+        message.enumerable,
+        error.value,
+        error.writable,
+        suppressed.suppressed,
+      ].join();
+      if (described !== "${expected}") throw new Error("described");
+      holder.seen = 1;
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("message,error,suppressed,three,false,1,true,two"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect(
+        (await checkModel(getSource("error,suppressed,message,three,false,1,true,two"))).failure
+          ?.message,
+      ).toContain('"described"');
+    });
+  });
+
   describe("names an anonymous function by a comma, a static field, or a shorthand default", () => {
     const getSource = (expected: string) => `
       const holder = { seen: 0 };

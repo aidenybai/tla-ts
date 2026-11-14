@@ -1535,7 +1535,8 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   if (ts.isClassLike(node) || isHeapFunction(node, context)) {
     return translateClass(node, heap, scope, context);
   }
-  // A message is an own property that isn't enumerable.
+  // A message, and a SuppressedError's error and the error that it suppressed, are own properties
+  // that aren't enumerable.
   if (isHeldError(node, context)) {
     // The prototype's properties, which the error inherits.
     context.builtIns.add(`${node.expression.getText()}.prototype`);
@@ -1550,25 +1551,35 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
       ],
       context,
     );
-    const message = node.arguments?.at(0);
+    const define = (object: Expression, key: string, value: Expression) =>
+      useJavaScript(
+        "Define",
+        [object, string(key), value, boolean(true), boolean(false), boolean(true)],
+        context,
+      );
+    const parts = node.arguments ?? [];
+    const isSuppressed = getBuiltIn(node.expression, context) === "SuppressedError";
+    const message = parts.at(isSuppressed ? 2 : 0);
+    const described =
+      message === undefined
+        ? error
+        : define(error, "message", translateExpression(message, scope, context));
     return useJavaScript(
       "Allocate",
       [
         heap,
-        message === undefined
-          ? error
-          : useJavaScript(
-              "Define",
-              [
-                error,
-                string("message"),
-                translateExpression(message, scope, context),
-                boolean(true),
-                boolean(false),
-                boolean(true),
-              ],
-              context,
-            ),
+        isSuppressed
+          ? ["error", "suppressed"].reduce((object, key, position) => {
+              const part = parts.at(position);
+              return define(
+                object,
+                key,
+                part === undefined
+                  ? getUndefined(context)
+                  : translateExpression(part, scope, context),
+              );
+            }, described)
+          : described,
       ],
       context,
     );
