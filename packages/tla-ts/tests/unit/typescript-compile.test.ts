@@ -9853,6 +9853,53 @@ describe("errors", () => {
     });
   });
 
+  describe("defines a property of a typed array under a key that Number::toString can't write", () => {
+    const source = `
+      const keys = ["1.0", "+1", "1000000000000000000000", "0.0000001", ".5", "01", "2."];
+      for (const key of keys) {
+        const sample = new Uint8Array([42, 43]);
+        if (Object.getOwnPropertyDescriptor(sample, key) !== undefined) throw new Error("absent");
+        Object.defineProperty(sample, key, { value: "bar" });
+        const described = Object.getOwnPropertyDescriptor(sample, key);
+        if (described === undefined || described.value !== "bar") throw new Error("defined");
+      }
+      const sample = new Uint8Array([42, 43]);
+      let thrown = "";
+      try {
+        Object.defineProperty(sample, "1.5", { value: 1 });
+      } catch (error) {
+        thrown = error instanceof TypeError ? "TypeError" : "other";
+      }
+      if (thrown !== "TypeError") throw new Error("number");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["defined", 'described.value !== "bar"', 'described.value !== "baz"'],
+      [
+        "absent",
+        "if (Object.getOwnPropertyDescriptor(sample, key) !== undefined)",
+        "if (Object.getOwnPropertyDescriptor(sample, key) === undefined)",
+      ],
+      ["number", 'if (thrown !== "TypeError")', 'if (thrown === "TypeError")'],
+    ])("rejects a wrong %s", async (label, expected, wrong) => {
+      expect((await checkModel(source.replace(expected, wrong))).failure?.message).toContain(
+        `"${label}"`,
+      );
+    });
+
+    it("stops at a key of 21 digits, which may or may not be one that it writes", async () => {
+      const result = await checkModel(`
+        const sample = new Uint8Array(1);
+        Object.defineProperty(sample, "100000000000000000000", { value: 1 });
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't tell whether this key is a number");
+    });
+  });
+
   describe("skips the accessors of a typed array's prototype under a key that is a number", () => {
     const getSource = (expected: string) => `
       let reads = 0;

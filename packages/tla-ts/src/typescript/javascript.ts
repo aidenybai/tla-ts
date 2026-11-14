@@ -1204,13 +1204,23 @@ NumberOfBytes(type, bytes) ==
        [] isNegative -> (unsigned - 2^(8 * Len(bytes) - 2)) - 2^(8 * Len(bytes) - 2)
        [] OTHER -> unsigned
 
-\\* How a typed array reads a key: as an index, as a number that is no index, or as a property.
+\\* How a typed array reads a key: as an index, as a number that is no index, or as a property. A
+\\* key that Number::toString can't write is a property: one that starts with "+", ".", a 0 before
+\\* another digit, or "0.000000", which it writes with an exponent, one whose fraction ends in 0 or
+\\* is empty, and 22 digits or more, which it writes with an exponent.
 TypedKey(key) ==
-  CASE IsSymbol(key) -> "property"
+  LET has(character) == \\E position \\in 1..Len(key) : SubSeq(key, position, position) = character
+  IN CASE IsSymbol(key) -> "property"
     [] IsIndex(key) -> "index"
     [] key \\in {"-0", "Infinity", "-Infinity", "NaN"} -> "number"
     [] Len(key) > 1 /\\ SubSeq(key, 1, 1) = "-" /\\ IsIndex(SubSeq(key, 2, Len(key))) -> "number"
     [] \\E position \\in DOMAIN Fractions : Fractions[position].text = key -> "number"
+    [] \\/ SubSeq(key, 1, 1) \\in {"+", "."}
+       \\/ Len(key) > 1 /\\ SubSeq(key, 1, 1) = "0" /\\ SubSeq(key, 2, 2) \\in Digits
+       \\/ Len(key) >= 8 /\\ SubSeq(key, 1, 8) = "0.000000"
+       \\/ has(".") /\\ ~has("e") /\\ SubSeq(key, Len(key), Len(key)) \\in {".", "0"}
+       \\/ Len(key) >= 22 /\\ \\A position \\in 1..Len(key) : SubSeq(key, position, position) \\in Digits ->
+         "property"
     [] /\\ Len(key) > 0
        /\\ \\A position \\in 1..Len(key) : SubSeq(key, position, position) \\in Digits \\cup {".", "e", "+"} ->
          Assert(FALSE, "tla-ts can't tell whether this key is a number")
