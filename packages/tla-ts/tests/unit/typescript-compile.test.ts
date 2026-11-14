@@ -22870,6 +22870,34 @@ export const step = () => {
 });
 
 describe("proxies", () => {
+  describe("reads a property through a proxy without a get trap from its target", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      class Counter {
+        static #count = 1;
+        static read() {
+          return this.#count;
+        }
+      }
+      const proxy = new Proxy(Counter, {});
+      let caught = "none";
+      try {
+        proxy.read();
+      } catch (error) {
+        caught = error instanceof TypeError ? "type" : "other";
+      }
+      if (\`\${caught},\${Counter.read()}\` !== "${expected}") throw new Error(caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("type,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects a call through the proxy that reads the private field", async () => {
+      expect((await checkModel(getSource("none,1"))).failure?.message).toContain("type");
+    });
+  });
+
   it("runs a proxy's get and has traps with the target, the key, and the proxy", async () => {
     const result = await checkModel(`
       const target: { attr: number; other?: number } = { attr: 1 };

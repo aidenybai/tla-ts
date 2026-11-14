@@ -1319,6 +1319,7 @@ LOCAL RegExpGet(heap, path, receiver) ==
 \\* A read of a key from an object or its prototypes, where a getter that reads a buffer's or a view's
 \\* internal slots reads the receiver's. An array outside the heap, which a value typed only as
 \\* array-like may hold, holds its elements and its length, and reads the rest from its prototype.
+RECURSIVE ForwardTarget(_, _, _)
 RECURSIVE GetFrom(_, _, _, _)
 GetFrom(heap, ref, key, receiver) ==
   CASE IsSequenceValue(ref) ->
@@ -1327,6 +1328,8 @@ GetFrom(heap, ref, key, receiver) ==
             [] OTHER -> GetFrom(heap, Ref :> "Array.prototype", key, receiver))
     [] IsTypedArray(heap, ref) /\\ TypedKey(key) # "property" ->
          IF TypedKey(key) = "index" THEN TypedElement(heap, ref, ToIndex(key)) ELSE Undefined
+    \\* A proxy without a get trap reads its target, with the proxy as the receiver.
+    [] IsProxy(heap, ref) -> GetFrom(heap, ForwardTarget(heap, ref, {"get"}), key, receiver)
     [] OTHER ->
          LET object == ReadPropertiesOf(heap, ref, key)
              path == GetterPath(object.values[key].get)
@@ -3089,7 +3092,6 @@ LOCAL Tagged(heap, ref, kind) ==
 
 \\* The object that a proxy's internal methods read where the handler has none of their traps, which
 \\* goes on through each proxy target whose handler has none either.
-RECURSIVE ForwardTarget(_, _, _)
 ForwardTarget(heap, ref, traps) ==
   CASE ~IsProxy(heap, ref) -> ref
     [] ProxyHandler(heap, ref) = Null ->
