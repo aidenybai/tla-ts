@@ -53,10 +53,9 @@ const TLA_TS = [
 export interface Host {
   tlc?: string[];
   tlapm?: string[];
-  backend?: string[];
+  // The oracle of a backend is that backend's own command.
+  backend?: string[] | "oracle";
 }
-
-const BACKEND_ORACLE = ["oracle"];
 
 export const HOSTS: Record<string, Host> = {
   tlc: {
@@ -73,7 +72,7 @@ export const HOSTS: Record<string, Host> = {
       "tlc2.TLC",
     ],
   },
-  tlapm: { tlapm: [TLAPM_BINARY], backend: BACKEND_ORACLE },
+  tlapm: { tlapm: [TLAPM_BINARY], backend: "oracle" },
   "tla-ts": {
     tlc: TLA_TS,
     tlapm: [...TLA_TS, "tlapm"],
@@ -103,8 +102,7 @@ export const getHost = (name: string): Host => {
   return host;
 };
 
-export const getSuiteCommand = (host: Host, test: SuiteTest) =>
-  test.suite === "tlapm" ? (getBackend(test.path) ? host.backend : host.tlapm) : host.tlc;
+export const getSuiteCommand = (host: Host, test: SuiteTest) => host[test.kind];
 
 export const CRASH_EXIT = -1;
 
@@ -257,29 +255,31 @@ const runTlapm = async (command: string[], test: SuiteTest, directory: string, l
 };
 
 const runBackend = async (
-  command: string[],
+  command: string[] | "oracle",
   test: SuiteTest,
   directory: string,
   limits: Limits,
 ) => {
   const backend = getBackend(test.path);
   writeFileSync(join(directory, test.fileName), getBackendInput(test));
-  const isOracle = command === HOSTS.tlapm.backend;
   const result = await spawnRun({
-    command: isOracle
-      ? getBackendOracleCommand(backend, join(directory, test.fileName))
-      : [...command, backend, test.fileName],
+    command:
+      command === "oracle"
+        ? getBackendOracleCommand(backend, join(directory, test.fileName))
+        : [...command, backend, test.fileName],
     directory,
     limits,
   });
   return {
-    exit: result.exceeded ? CRASH_EXIT : 0,
+    // The verdict that the oracle's transcript gives covers its exit status.
+    exit: result.exceeded ? CRASH_EXIT : command === "oracle" ? 0 : result.exit,
     exceeded: result.exceeded,
-    transcript: !isOracle
-      ? result.stdout.trimEnd()
-      : isSmtScript(test.path)
-        ? `${result.stdout}${result.stderr}`.trimEnd()
-        : getBackendVerdict(backend, `${result.stdout}${result.stderr}`, result.exit),
+    transcript:
+      command !== "oracle"
+        ? result.stdout.trimEnd()
+        : isSmtScript(test.path)
+          ? `${result.stdout}${result.stderr}`.trimEnd()
+          : getBackendVerdict(backend, `${result.stdout}${result.stderr}`, result.exit),
   };
 };
 
@@ -294,10 +294,10 @@ export const runTest = async (
   const directory = realpathSync(mkdtempSync(join(tmpdir(), "conformance-")));
   copyIncludes(test, directory);
   const result =
-    test.suite === "tlc"
-      ? await runTlc(command, test, context, directory, limits)
-      : getBackend(test.path)
-        ? await runBackend(command, test, directory, limits)
+    test.kind === "backend" || command === "oracle"
+      ? await runBackend(command, test, directory, limits)
+      : test.kind === "tlc"
+        ? await runTlc(command, test, context, directory, limits)
         : await runTlapm(command, test, directory, limits);
   rmSync(directory, { recursive: true, force: true });
   return result;

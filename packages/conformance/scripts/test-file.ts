@@ -48,6 +48,8 @@ export interface Recording {
 export interface SuiteTest {
   id: string;
   suite: string;
+  // A tlapm test whose file is the input of one backend runs that backend alone.
+  kind: "tlc" | "tlapm" | "backend";
   path: string;
   fileName: string;
   moduleName: string;
@@ -97,9 +99,11 @@ export const parseTest = (path: string, text: string): SuiteTest | undefined => 
   if (!header) return undefined;
   const recording = RECORDING.exec(text);
   const id = relative(SUITE_DIRECTORY, path).replace(/\.tla$/, "");
+  const suite = id.split("/")[0];
   return {
     id,
-    suite: id.split("/")[0],
+    suite,
+    kind: suite !== "tlapm" ? "tlc" : getBackend(path) ? "backend" : "tlapm",
     path,
     fileName: basename(path),
     moduleName: basename(path, extname(path)),
@@ -125,7 +129,7 @@ export const findTests = (filters: string[]) =>
 export const getBackendInput = (test: SuiteTest) => test.source.replace(HEADER, "");
 
 export const isDeclaredOutcome = (test: SuiteTest, result: Recording) => {
-  if (test.suite === "tlapm" && getBackend(test.path)) {
+  if (test.kind === "backend") {
     if (test.metadata.outcome === "any") return true;
     if (!BACKEND_VERDICTS.includes(test.metadata.outcome)) return undefined;
     return result.transcript?.split("\n")[0] === test.metadata.outcome;

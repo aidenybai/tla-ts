@@ -27,11 +27,11 @@ if (isSmtScript(process.argv[3])) {
   );
 } else if (backend === "z3") {
   console.log(decideSmt(text, options, () => {}));
+} else if (backend === "isabelle") {
+  console.log(decideIsabelle(text, options));
+} else if (backend === "ls4") {
+  console.log(decidePtl(text, options));
 } else {
-  const decide = { isabelle: decideIsabelle, ls4: decidePtl }[backend];
-  if (!decide) {
-    console.error(`Unknown backend ${backend}`);
-    process.exit(1);
-  }
-  console.log(decide(text, options));
+  console.error(`Unknown backend ${backend}`);
+  process.exit(1);
 }

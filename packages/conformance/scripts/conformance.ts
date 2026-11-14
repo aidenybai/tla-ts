@@ -20,7 +20,7 @@ import {
   type Recording,
   type SuiteTest,
 } from "./test-file";
-import { getBackend, getTlapmStatuses } from "./tlapm";
+import { getTlapmStatuses } from "./tlapm";
 import { getMessageCodes } from "./transcript";
 
 type Verdict =
@@ -68,8 +68,8 @@ const baseline: Record<string, Verdict> = existsSync(baselinePath)
   : {};
 
 const getMessages = (test: SuiteTest, transcript: string) => {
-  if (test.suite === "tlc") return getMessageCodes(transcript);
-  return getBackend(test.path) ? transcript.split("\n")[0] : getTlapmStatuses(transcript);
+  if (test.kind === "tlc") return getMessageCodes(transcript);
+  return test.kind === "backend" ? transcript.split("\n")[0] : getTlapmStatuses(transcript);
 };
 
 const getVerdict = (
