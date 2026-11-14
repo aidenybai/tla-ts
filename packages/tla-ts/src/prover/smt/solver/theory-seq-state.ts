@@ -348,7 +348,6 @@ export abstract class TheorySeqState extends Theory {
   protected intStrings: number[] = [];
   protected hasLengthSet = new Set<number>();
   protected lengths: number[] = [];
-  protected lengthLimitMap = new Map<number, number>();
   protected lengthLimits: number[] = [];
   protected replay: (() => void)[] = [];
   protected strRewriter: Rewriter;

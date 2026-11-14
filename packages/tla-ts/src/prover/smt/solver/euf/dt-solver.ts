@@ -39,7 +39,7 @@ const ENTER = 0;
 const EXIT = 1;
 
 interface VarData {
-  constructor: Enode | null;
+  constructorNode: Enode | null;
   readonly recognizers: (Enode | null)[];
 }
 
@@ -187,12 +187,12 @@ export class DtSolver extends ThSolver {
     const manager = this.manager;
     const thVar = super.mkVar(node);
     this.find.mkVar();
-    const data: VarData = { constructor: null, recognizers: [] };
+    const data: VarData = { constructorNode: null, recognizers: [] };
     this.varData.push(data);
     this.ctx.egraph.addThVar(node, thVar, this.id);
     const expr = node.owner;
     if (this.isConstructor(expr)) {
-      data.constructor = node;
+      data.constructorNode = node;
       this.assertAccessorAxioms(node);
     } else if (this.isUpdateField(expr)) this.assertUpdateFieldAxioms(node);
     else if (!this.isRecognizer(expr)) {
@@ -283,11 +283,11 @@ export class DtSolver extends ThSolver {
     const data = this.varData[thVar];
     const constructor = getRecognizerConstructor(manager, node.decl);
     if ((lit & 1) === 0) {
-      if (data.constructor !== null && data.constructor.decl === constructor) return;
+      if (data.constructorNode !== null && data.constructorNode.decl === constructor) return;
       this.assertIsConstructorAxiom(arg, constructor, lit);
-    } else if (data.constructor === null) this.propagateRecognizer(thVar, node);
-    else if (data.constructor.decl === constructor)
-      this.signRecognizerConflict(data.constructor, node);
+    } else if (data.constructorNode === null) this.propagateRecognizer(thVar, node);
+    else if (data.constructorNode.decl === constructor)
+      this.signRecognizerConflict(data.constructorNode, node);
   }
 
   private addRecognizer(inputVar: number, recognizer: Enode) {
@@ -303,9 +303,9 @@ export class DtSolver extends ThSolver {
     if (data.recognizers[index] !== null) return;
     const value = this.value(recognizer);
     if (value === L_TRUE) return;
-    if (value === L_FALSE && data.constructor !== null) {
-      if (data.constructor.decl === constructor)
-        this.signRecognizerConflict(data.constructor, recognizer);
+    if (value === L_FALSE && data.constructorNode !== null) {
+      if (data.constructorNode.decl === constructor)
+        this.signRecognizerConflict(data.constructorNode, recognizer);
       return;
     }
     this.ctx.trail.push(() => {
@@ -365,8 +365,8 @@ export class DtSolver extends ThSolver {
     const manager = this.manager;
     const firstData = this.varData[first];
     const secondData = this.varData[second];
-    const firstConstructor = firstData.constructor;
-    const secondConstructor = secondData.constructor;
+    const firstConstructor = firstData.constructorNode;
+    const secondConstructor = secondData.constructorNode;
     if (
       firstConstructor !== null &&
       secondConstructor !== null &&
@@ -375,7 +375,7 @@ export class DtSolver extends ThSolver {
       this.setConflict([], [[firstConstructor, secondConstructor]]);
     else if (secondConstructor !== null && firstConstructor === null) {
       this.ctx.trail.push(() => {
-        firstData.constructor = null;
+        firstData.constructorNode = null;
       });
       if (firstData.recognizers.length > 0) {
         const recognizer =
@@ -385,7 +385,7 @@ export class DtSolver extends ThSolver {
           return;
         }
       }
-      firstData.constructor = secondConstructor;
+      firstData.constructorNode = secondConstructor;
     }
     for (const recognizer of secondData.recognizers)
       if (recognizer !== null) this.addRecognizer(first, recognizer);
@@ -404,7 +404,7 @@ export class DtSolver extends ThSolver {
   private ocGetConstructor(app: Enode) {
     const thVar = app.root.getThVar(this.id);
     if (thVar === NULL_THEORY_VAR) return null;
-    return this.varData[this.find.find(thVar)].constructor;
+    return this.varData[this.find.find(thVar)].constructorNode;
   }
 
   private explainIsChild(parent: Enode, child: Enode) {
@@ -439,7 +439,7 @@ export class DtSolver extends ThSolver {
     const app = inputApp.root;
     const thVar = app.getThVar(this.id);
     if (thVar === NULL_THEORY_VAR) return false;
-    const parent = this.varData[this.find.find(thVar)].constructor;
+    const parent = this.varData[this.find.find(thVar)].constructorNode;
     if (parent === null) return false;
     this.ocMarkOnStack(parent);
     const processArg = (arg: Enode) => {
@@ -510,7 +510,7 @@ export class DtSolver extends ThSolver {
         this.clearMark();
         return CR_CONTINUE;
       }
-      if (this.varData[thVar].constructor !== null) continue;
+      if (this.varData[thVar].constructorNode !== null) continue;
       this.clearMark();
       this.mkSplit(thVar);
       result = CR_CONTINUE;
@@ -530,7 +530,7 @@ export class DtSolver extends ThSolver {
       values[node.root.owner] = model.getFreshValue(this.manager.sorts[node.owner]) ?? undefined;
       return;
     }
-    const constructor = this.varData[this.find.find(thVar)].constructor as Enode;
+    const constructor = this.varData[this.find.find(thVar)].constructorNode as Enode;
     values[node.root.owner] = this.mkApp(
       constructor.decl,
       constructor.args.map((arg) => values[arg.root.owner] as number),
@@ -541,7 +541,7 @@ export class DtSolver extends ThSolver {
     if (!this.isDatatype(node.owner)) return false;
     const thVar = node.getThVar(this.id);
     if (thVar === NULL_THEORY_VAR) return false;
-    const constructor = this.varData[this.find.find(thVar)].constructor as Enode;
+    const constructor = this.varData[this.find.find(thVar)].constructorNode as Enode;
     if (constructor.numArgs === 0) deps.set(node, null);
     for (const arg of constructor.args) addDependency(deps, node, arg.root);
     return true;

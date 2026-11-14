@@ -27,35 +27,28 @@ export const NULL_BOOL_VAR = -1;
 const J_AXIOM = 0;
 export const J_CONGRUENCE = 1;
 export const J_EXTERNAL = 2;
-export const J_EQUALITY = 3;
 
 export interface Justification {
   readonly kind: number;
   readonly isCommutative: boolean;
   readonly external: number;
-  readonly lhs: Enode | null;
-  readonly rhs: Enode | null;
 }
 
 export const AXIOM: Justification = {
   kind: J_AXIOM,
   isCommutative: false,
   external: 0,
-  lhs: null,
-  rhs: null,
 };
 
 const CONGRUENCES: readonly Justification[] = [
-  { kind: J_CONGRUENCE, isCommutative: false, external: 0, lhs: null, rhs: null },
-  { kind: J_CONGRUENCE, isCommutative: true, external: 0, lhs: null, rhs: null },
+  { kind: J_CONGRUENCE, isCommutative: false, external: 0 },
+  { kind: J_CONGRUENCE, isCommutative: true, external: 0 },
 ];
 
 export const mkExternal = (external: number): Justification => ({
   kind: J_EXTERNAL,
   isCommutative: false,
   external,
-  lhs: null,
-  rhs: null,
 });
 
 interface ThVar {
@@ -230,7 +223,14 @@ interface UpdateRecord {
 
 const TO_MERGE_PLAIN = 0;
 const TO_MERGE_COMM = 1;
-const TO_JUSTIFIED = 2;
+const TO_ADD_LITERAL = 2;
+
+interface ToMerge {
+  a: Enode;
+  b: Enode | null;
+  kind: number;
+}
+
 // func_decl_info::is_commutative, which the decl plugins set by family and kind.
 const isCommutativeDecl = (manager: AstManager, decl: number): boolean => {
   const funcDecl = manager.funcDecls[decl];
@@ -256,15 +256,6 @@ const isCommutativeDecl = (manager: AstManager, decl: number): boolean => {
       return false;
   }
 };
-
-const TO_ADD_LITERAL = 3;
-
-interface ToMerge {
-  a: Enode;
-  b: Enode | null;
-  kind: number;
-  justification: Justification;
-}
 
 export class Egraph {
   readonly nodes: Enode[] = [];
@@ -396,7 +387,7 @@ export class Egraph {
 
   private queueLiteral(node: Enode, ante: Enode | null) {
     if (this.onPropagateLiteral !== null)
-      this.toMerge.push({ a: node, b: ante, kind: TO_ADD_LITERAL, justification: AXIOM });
+      this.toMerge.push({ a: node, b: ante, kind: TO_ADD_LITERAL });
   }
 
   private updateChildren(node: Enode) {
@@ -405,12 +396,7 @@ export class Egraph {
   }
 
   private pushMerge(a: Enode, b: Enode, isComm: boolean) {
-    this.toMerge.push({
-      a,
-      b,
-      kind: isComm ? TO_MERGE_COMM : TO_MERGE_PLAIN,
-      justification: AXIOM,
-    });
+    this.toMerge.push({ a, b, kind: isComm ? TO_MERGE_COMM : TO_MERGE_PLAIN });
   }
 
   pushScope() {
@@ -488,7 +474,6 @@ export class Egraph {
     this.forcePush();
     const old = node.getThVar(id);
     const root = node.root;
-    // Deviation from Z3: the undo restores the variable of the node; Z3 records that of the root.
     if (old === NULL_THEORY_VAR) {
       node.addThVar(thVar, id);
       this.push(U_ADD_TH_VAR, node, null, id);
@@ -503,6 +488,7 @@ export class Egraph {
     }
     const rootVar = root.getThVar(id);
     node.replaceThVar(thVar, id);
+    // Deviation from Z3: the undo restores the variable of the node; Z3 records that of the root.
     this.updates.push({
       tag: U_REPLACE_TH_VAR,
       r1: node,
@@ -764,9 +750,6 @@ export class Egraph {
         case TO_MERGE_COMM:
           this.mergeWith(item.a, item.b as Enode, CONGRUENCES[item.kind]);
           break;
-        case TO_JUSTIFIED:
-          this.mergeWith(item.a, item.b as Enode, item.justification);
-          break;
         case TO_ADD_LITERAL:
           this.addLiteral(item.a, item.b);
           break;
@@ -881,8 +864,6 @@ export class Egraph {
     if (justification.kind === J_EXTERNAL) justifications.push(justification.external);
     else if (justification.kind === J_CONGRUENCE)
       this.pushCongruence(a, b, justification.isCommutative);
-    else if (justification.kind === J_EQUALITY)
-      this.explainEq(justifications, justification.lhs as Enode, justification.rhs as Enode);
   }
 
   explainEq(justifications: number[], a: Enode, b: Enode) {

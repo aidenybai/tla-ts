@@ -11,7 +11,6 @@ import {
   OP_LE,
   OP_MOD,
   OP_MUL,
-  OP_NUM,
   OP_SUB,
   OP_UMINUS,
   SORT_BOOL,
@@ -20,6 +19,7 @@ import {
 } from "../ast";
 import { isAppOf, mkNot } from "../ast-util";
 import { Rational } from "../rational";
+import { getBinaryArgs, getNumeral } from "./mbp-plugin";
 
 export interface SolvePlugin {
   readonly family: number;
@@ -32,14 +32,6 @@ interface SignedExpr {
   isPositive: boolean;
   expr: number;
 }
-
-const getBinaryArgs = (manager: AstManager, expr: number, op: number) =>
-  isAppOf(manager, expr, op) && manager.getNumArgs(expr) === 2
-    ? [manager.getArg(expr, 0), manager.getArg(expr, 1)]
-    : undefined;
-
-const getNumeral = (manager: AstManager, expr: number) =>
-  isAppOf(manager, expr, OP_NUM) ? manager.getRationalValue(expr) : undefined;
 
 const isZero = (manager: AstManager, expr: number) => getNumeral(manager, expr)?.isZero() === true;
 
