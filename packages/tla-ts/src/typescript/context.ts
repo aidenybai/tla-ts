@@ -121,6 +121,10 @@ export interface Context {
   characters: Set<number>;
   // The argument that an inlined call passed, by the name that binds the parameter that took it.
   passed: Map<string, Passed>;
+  // The names that each file's code assigns, and that its calls pass as objects, which tla-ts
+  // finds once before it compiles the code.
+  assignedNames: Map<ts.SourceFile, Set<ts.Symbol>>;
+  objectArguments: Map<ts.SourceFile, Set<ts.Symbol>>;
   // What each function that a statement runs changes, with the functions that it runs in turn, by
   // the functions that the paths bind to the parameters that they call.
   changeSummaries: Map<string, Map<ts.Node, ChangeSummary>>;
@@ -232,7 +236,10 @@ const withDeclaredReads = (checker: ts.TypeChecker): ts.TypeChecker => {
   };
 };
 
-export const createContext = (checker: ts.TypeChecker): Context => ({
+export const createContext = (
+  checker: ts.TypeChecker,
+  files: readonly ts.SourceFile[],
+): Context => ({
   checker: withDeclaredReads(checker),
   names: createNames(JAVASCRIPT_OPERATORS),
   variables: new Map(),
@@ -264,6 +271,32 @@ export const createContext = (checker: ts.TypeChecker): Context => ({
   characters: new Set(),
   passed: new Map(),
   changeSummaries: new Map(),
+  assignedNames: new Map(
+    files.map((file) => [
+      file,
+      new Set(
+        findNodes(file, (node): node is ts.Node => getAssignedTarget(node) !== undefined).flatMap(
+          (node) =>
+            getWrittenNames(getAssignedTarget(node) ?? node).flatMap((name) =>
+              ts.isIdentifier(name) ? (getSymbol(name, checker) ?? []) : [],
+            ),
+        ),
+      ),
+    ]),
+  ),
+  objectArguments: new Map(
+    files.map((file) => [
+      file,
+      new Set(
+        findNodes(file, ts.isCallExpression).flatMap((call) =>
+          call.arguments.flatMap((argument) => {
+            const symbol = getSymbol(skipCasts(argument), checker);
+            return symbol !== undefined && isObjectArgument(argument, checker) ? [symbol] : [];
+          }),
+        ),
+      ),
+    ]),
+  ),
 });
 
 // Whether a node writes an object or a regexp literal, each of which makes an object.
@@ -990,8 +1023,9 @@ export const getAssignedTarget = (node: ts.Node) =>
         ? node.initializer
         : undefined;
 
-// Whether a script assigns to a name anywhere.
+// Whether a script assigns to a name anywhere in a node, which for a whole file its index tells.
 export const isAssigned = (symbol: ts.Symbol, node: ts.Node, context: Context): boolean => {
+  if (ts.isSourceFile(node)) return context.assignedNames.get(node)?.has(symbol) ?? false;
   const target = getAssignedTarget(node);
   return (
     (target !== undefined && isWrittenBy(target, symbol, context)) ||
@@ -1761,7 +1795,7 @@ const isPassedFunction = (node: ts.Node, context: Context) => {
   if ((!ts.isArrowFunction(node) && !ts.isFunctionExpression(node)) || !isOnce(node.parent)) {
     return false;
   }
-  if (isObjectArgument(node, context)) return true;
+  if (isObjectArgument(node, context.checker)) return true;
   const declaration = node.parent;
   if (
     (ts.isFunctionExpression(node) && node.asteriskToken === undefined) ||
@@ -2553,8 +2587,8 @@ export const getHasInstanceReceiver = (node: ts.CallExpression, context: Context
 
 // Whether a call's argument is where its parameter's type is an object's, so the callee may read,
 // write or delete the properties of a function that it passes.
-const isObjectArgument = (argument: ts.Expression, context: Context) => {
-  const type = context.checker.getContextualType(argument);
+const isObjectArgument = (argument: ts.Expression, checker: ts.TypeChecker) => {
+  const type = checker.getContextualType(argument);
   return (
     ts.isCallExpression(argument.parent) &&
     argument.parent.arguments.includes(argument) &&
@@ -2567,13 +2601,7 @@ const isObjectArgument = (argument: ts.Expression, context: Context) => {
 
 // Whether a call passes what a name holds as an object.
 const isPassedAsObject = (symbol: ts.Symbol, sourceFile: ts.SourceFile, context: Context) =>
-  findNodes(sourceFile, ts.isCallExpression).some((call) =>
-    call.arguments.some(
-      (argument) =>
-        getSymbol(skipCasts(argument), context.checker) === symbol &&
-        isObjectArgument(argument, context),
-    ),
-  );
+  context.objectArguments.get(sourceFile)?.has(symbol) ?? false;
 
 export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFunction => {
   if (context.heap === undefined) return false;

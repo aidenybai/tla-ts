@@ -162,5 +162,9 @@ export const createProgram = (
   rejectEarlyErrors(sourceFile);
   const diagnostics = ts.getPreEmitDiagnostics(program);
   if (diagnostics.length > 0) throw new TlaTypeScriptError(ts.formatDiagnostics(diagnostics, host));
-  return { sourceFile, checker: program.getTypeChecker() };
+  return {
+    sourceFile,
+    checker: program.getTypeChecker(),
+    files: program.getSourceFiles().filter((file) => !file.isDeclarationFile),
+  };
 };

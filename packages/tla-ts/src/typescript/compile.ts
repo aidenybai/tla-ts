@@ -114,7 +114,7 @@ export const compile = (
 ): CompiledSpec => {
   const path = fileName.replaceAll("\\", "/");
   const program = createProgram(source, path, libraries);
-  const context = createContext(program.checker);
+  const context = createContext(program.checker, program.files);
   const sourceFile = program.sourceFile;
   // The files that the model imports, each after the files it imports, as they run.
   const visited = new Set([sourceFile]);
