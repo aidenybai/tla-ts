@@ -5300,14 +5300,17 @@ LOCAL LongChange(heap, ref, method, items, length) ==
           THEN [heap |-> heap, value |-> Undefined, isThrown |-> TRUE]
           ELSE [heap |-> state.heap, value |-> total, isThrown |-> state.isThrown]
 
-\\* Moves the elements of an array-like object at keys below 2^53 by an offset, from the highest
-\\* key, where a hole deletes the key it moves to.
-RECURSIVE LongMoves(_, _, _, _)
-LongMoves(state, ref, froms, offset) ==
+\\* Moves the elements of an array-like object at keys below 2^53 by an offset, from the lowest key
+\\* or from the highest, where a hole deletes the key it moves to.
+RECURSIVE LongMoves(_, _, _, _, _)
+LongMoves(state, ref, froms, offset, isAscending) ==
   IF state.isThrown \\/ froms = {}
   THEN state
   ELSE LET from == CHOOSE key \\in froms :
-                     \\A other \\in froms : ~LessThan(DecimalOf(key), DecimalOf(other))
+                     \\A other \\in froms :
+                       IF isAscending
+                       THEN ~LessThan(DecimalOf(other), DecimalOf(key))
+                       ELSE ~LessThan(DecimalOf(key), DecimalOf(other))
            key == StringOf(Add(DecimalOf(from), offset))
            value == Get(state.heap, ref, from)
        IN LongMoves(
@@ -5315,7 +5318,7 @@ LongMoves(state, ref, froms, offset) ==
               \\* HACK: TLC reads a value only where it needs it, and Get runs before a write that
               \\* fails, so comparing the value reads it first.
               [] value = value -> ArraySet(state.heap, ref, key, value),
-            ref, froms \\ {from}, offset)
+            ref, froms \\ {from}, offset, isAscending)
 
 \\* unshift on an array-like object whose length is past 2^31, which throws a TypeError where the
 \\* length it gives passes 2^53 - 1, and moves only the keys that the object or its prototypes
@@ -5330,7 +5333,7 @@ LOCAL LongUnshift(heap, ref, items, length) ==
                ELSE {key \\in LongKeys(heap, ref) : isMoved(DecimalOf(key))}
                       \\cup {StringOf(Add(DecimalOf(key), -count)) :
                             key \\in {key \\in own : isMoved(Add(DecimalOf(key), -count))}}
-      state == AndThen(ArraySets(LongMoves([heap |-> heap, isThrown |-> FALSE], ref, froms, count),
+      state == AndThen(ArraySets(LongMoves([heap |-> heap, isThrown |-> FALSE], ref, froms, count, FALSE),
                                  ref, 0, items),
                        LAMBDA after : ArraySet(after, ref, "length", total))
   IN CASE ~IsHeap(ref) \\/ IsProxy(heap, ref) \\/ IsTypedArray(heap, ref) \\/ heap.objects[ref[Ref]].isOpaque ->
@@ -5349,11 +5352,44 @@ ArrayChange(heap, ref, method, items) ==
             ArrayChangeFrom(heap, ref, method, items, length,
                             Get(heap, ref, ToString(IF method = "pop" THEN length - 1 ELSE 0)))
 
+\\* The index that a relative index argument gives for an array-like object's length.
+LOCAL LongIndex(value, length) ==
+  CASE value \\in {Undefined, NegativeZero, NegativeInfinity} -> 0
+    [] value = Infinity -> length
+    [] IsWide(value) \\/ IsInteger(value) ->
+         CASE ~IsNegative(value) -> IF LessThan(length, value) THEN length ELSE value
+           [] LessThan(Add(length, value), 0) -> 0
+           [] OTHER -> Add(length, value)
+    [] OTHER -> Assert(FALSE, "tla-ts can't copy within an array-like object from this index")
+
+\\* copyWithin on an array-like object whose length is past 2^31, which moves only the keys that the
+\\* object or its prototypes hold, and those that copy over them.
+LOCAL LongCopyWithin(heap, ref, target, start, end) ==
+  LET length == LongLength(Get(heap, ref, "length"))
+      to == LongIndex(target, length)
+      from == LongIndex(start, length)
+      final == IF end = Undefined THEN length ELSE LongIndex(end, length)
+      count == IF LessThan(Subtract(final, from), Subtract(length, to))
+               THEN Subtract(final, from)
+               ELSE Subtract(length, to)
+      offset == Subtract(to, from)
+      isFrom(value) == ~LessThan(value, from) /\\ LessThan(value, Add(from, count))
+      keys == LongKeys(heap, ref)
+      froms == {key \\in keys : isFrom(DecimalOf(key))}
+                 \\cup {StringOf(Subtract(DecimalOf(key), offset)) :
+                       key \\in {key \\in keys : isFrom(Subtract(DecimalOf(key), offset))}}
+      state == LongMoves([heap |-> heap, isThrown |-> FALSE], ref, froms, offset,
+                         ~(LessThan(from, to) /\\ LessThan(to, Add(from, count))))
+  IN CASE IsProxy(heap, ref) \\/ IsTypedArray(heap, ref) \\/ heap.objects[ref[Ref]].isOpaque ->
+            Assert(FALSE, "tla-ts can't copy within this object")
+       [] ~LessThan(0, count) -> [heap |-> heap, value |-> ref, isThrown |-> FALSE]
+       [] OTHER -> [heap |-> state.heap, value |-> ref, isThrown |-> state.isThrown]
+
 \\* copyWithin() on an array-like object that the heap holds, as the spec runs it index by index,
 \\* backward where the indices it copies to overlap the end of those it copies from, where only the
 \\* indices that the object or its prototypes hold, and those that copy over them, change. The
 \\* indices are the numbers that its arguments give, and end is Undefined where it takes the length.
-ArrayLikeCopyWithin(heap, ref, target, start, end) ==
+LOCAL ShortCopyWithin(heap, ref, target, start, end) ==
   LET length == ToLength(Get(heap, ref, "length"))
       to == ClampedIndex(target, length)
       from == ClampedIndex(start, length)
@@ -5367,6 +5403,11 @@ ArrayLikeCopyWithin(heap, ref, target, start, end) ==
   IN IF count <= 0
      THEN [heap |-> heap, value |-> ref, isThrown |-> FALSE]
      ELSE [heap |-> state.heap, value |-> ref, isThrown |-> state.isThrown]
+
+ArrayLikeCopyWithin(heap, ref, target, start, end) ==
+  IF HasLongLength(heap, ref)
+  THEN LongCopyWithin(heap, ref, target, start, end)
+  ELSE ShortCopyWithin(heap, ref, target, start, end)
 
 \\* Swaps the elements of an array-like object at each index below the middle of its length and the
 \\* index as far from its end, from the lowest, where a hole deletes the index it swaps with.

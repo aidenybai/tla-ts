@@ -26033,4 +26033,30 @@ describe("BigInts", () => {
       ).toContain("true,true,1,1,true,true,true");
     });
   });
+
+  describe("copies within an array-like object whose length is past 2^31", () => {
+    const getSource = (expected: string) => `
+      const max = Number.MAX_SAFE_INTEGER;
+      const like: { [key: string]: unknown } = { 0: 0, 1: 1, 2: 2, length: max };
+      like[max - 3] = -3;
+      like[max - 1] = -1;
+      Array.prototype.copyWithin.call(like, 0, max - 3, max);
+      const shifted: { [key: string]: unknown } = { length: max };
+      shifted[max - 4] = "a";
+      shifted[max - 3] = "b";
+      Array.prototype.copyWithin.call(shifted, max - 3, max - 4, max - 2);
+      const read = [like[0], 1 in like, like[2], shifted[max - 4], shifted[max - 3], shifted[max - 2]].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("-3,false,-1,a,a,b"))).failure).toBeUndefined();
+    });
+
+    it("rejects an overlapping copy as forward", async () => {
+      expect((await checkModel(getSource("-3,false,-1,a,a,a"))).failure?.message).toContain(
+        "-3,false,-1,a,a,b",
+      );
+    });
+  });
 });
