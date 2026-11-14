@@ -485,6 +485,10 @@ const unify = (left: Type, right: Type): void => {
     unify(leftType.key, rightType.key);
     return unify(leftType.range, rightType.range);
   }
+  if (leftType.kind === "Lambda" && rightType.kind === "Lambda") {
+    unify(leftType.argument, rightType.argument);
+    return unify(leftType.result, rightType.result);
+  }
   if (leftType.kind === "Rec" && rightType.kind === "Rec") {
     rightType.target = leftType;
     rightType.shapes.forEach((shape) => {
@@ -501,6 +505,8 @@ const unify = (left: Type, right: Type): void => {
 // A type left open, such as the element of a set that is always empty, holds no values.
 const closeType = (type: Type): Type => {
   const resolved = resolveType(type);
+  // A function built lazily is only applied, never compared or stored.
+  if (resolved.kind === "Lambda") return unsupported();
   if (resolved.kind === "Var") {
     const integer = createInt();
     resolved.target = integer;
