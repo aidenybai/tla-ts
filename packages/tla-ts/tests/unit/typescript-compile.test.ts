@@ -16880,6 +16880,44 @@ describe("errors", () => {
     );
   });
 
+  describe("run a String.prototype method that a key stores where the call casts the key", () => {
+    const getSource = (expected: string) => `
+      type Method = (...args: unknown[]) => unknown;
+      const subject: { [key: string | symbol]: unknown } = {
+        toString: function () {
+          return "Ab";
+        },
+      };
+      subject.toUpperCase = String.prototype.toUpperCase;
+      subject.slice = String.prototype.slice;
+      const values: unknown[] = [];
+      values.push((subject.toUpperCase as Method)());
+      values.push((subject.slice as Method)(1));
+      const thrower: { [key: string | symbol]: unknown } = {
+        toString: function () {
+          throw "thrown";
+        },
+      };
+      thrower.toLowerCase = String.prototype.toLowerCase;
+      try {
+        (thrower.toLowerCase as Method)();
+      } catch (error) {
+        values.push(error);
+      }
+      if (values.join() !== "${expected}") throw new Error(values.join());
+    `;
+
+    it("converts the object through its toString", async () => {
+      expect((await checkModel(getSource("AB,b,thrown"))).failure).toBeUndefined();
+    });
+
+    it("doesn't slice from the start", async () => {
+      expect((await checkModel(getSource("AB,A,thrown"))).failure?.message).toContain(
+        "AB,b,thrown",
+      );
+    });
+  });
+
   it("converts a primitive that a string method takes as a number", async () => {
     const getSource = (expected: string) => `
       const outcomes = [

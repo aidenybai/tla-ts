@@ -2331,14 +2331,17 @@ const getPrimitiveCall = (node: MethodCall, kind: Kind, context: Context) => {
 // declaration gives the method, or of a key that stores it, on a value that a statement converts to
 // a string: undefined, null, and symbols throw a TypeError, and objects convert through ToPrimitive.
 export const getStringCall = (node: ts.Node, context: Context) => {
-  if (context.heap === undefined || !isMethodCall(node)) return undefined;
-  const isCall = node.expression.name.text === "call";
-  const callee = isCall ? node.expression.expression : node.expression;
+  if (context.heap === undefined || !ts.isCallExpression(node)) return undefined;
+  // A script may cast the key that it calls, whose type doesn't tell which function it holds.
+  const accessed = skipCasts(node.expression);
+  if (!ts.isPropertyAccessExpression(accessed)) return undefined;
+  const isCall = accessed.name.text === "call";
+  const callee = isCall ? accessed.expression : accessed;
   const method = isCall
     ? getPrototypeMethod(callee, "String", context)
-    : getStoredStringMethod(node.expression, context);
+    : getStoredStringMethod(accessed, context);
   const primitive = method === undefined ? undefined : STRING_METHODS.get(method);
-  const owner = isCall ? node.arguments.at(0) : node.expression.expression;
+  const owner = isCall ? node.arguments.at(0) : accessed.expression;
   const values = isCall ? node.arguments.slice(1) : node.arguments;
   if (
     method === undefined ||
