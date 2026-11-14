@@ -182,22 +182,27 @@ class PredAbs {
       return;
     }
     if (level === 0) return;
-    const evaluate = (pred: number) => {
+    const isFalseIn = (pred: number) => {
       const value = model.eval(pred, true);
       const isFalse = manager.isFalse(value);
       manager.decRef(value);
-      return isFalse ? this.pin(manager.mkNot(pred)) : pred;
+      return isFalse;
     };
     for (let index = 0; index <= level - 1; index++)
-      for (const pred of this.preds[index]) this.asms.push(evaluate(pred));
+      for (const pred of this.preds[index]) {
+        const isFalse = isFalseIn(pred);
+        if (!manager.limit.inc()) return;
+        this.asms.push(isFalse ? this.pin(manager.mkNot(pred)) : pred);
+      }
     for (const asm of this.asms.items) asms.push(asm);
     for (let index = level + 1; index < this.preds.length; index += 2)
       for (const pred of this.preds[index]) {
+        if (!manager.limit.inc()) return;
         const predLevel = this.elevel.get(pred) as MaxLevel;
         const isUsed =
           (predLevel.fa === index && (predLevel.ex === NO_LEVEL || predLevel.ex < level)) ||
           (predLevel.ex === index && (predLevel.fa === NO_LEVEL || predLevel.fa < level));
-        if (isUsed) asms.push(evaluate(pred));
+        if (isUsed) asms.push(isFalseIn(pred) ? this.pin(manager.mkNot(pred)) : pred);
       }
   }
 
@@ -430,22 +435,25 @@ class Qsat {
     for (;;) {
       manager.limit.checkpoint();
       const asms = new RefVector(manager);
-      for (const asm of this.asms.items) asms.push(asm);
-      this.predAbs.getAssumptions(this.model, asms);
-      const kernel = this.getKernel(this.level).solver;
-      const result = kernel.check(asms.items);
-      if (result === L_TRUE) {
-        this.setModel(kernel.context.getModel());
-        if (this.level === 0) this.setModelSave(this.model);
-        this.push();
-      } else if (result === L_FALSE) {
-        if (this.level === 0) return L_FALSE;
-        if (this.level === 1 && this.mode === QSAT_SAT) return L_TRUE;
-        if (this.model === undefined) this.pop(1);
-        else if (this.level === 1) this.projectQe(asms);
-        else if (!this.project(asms)) return L_UNDEF;
-      } else return result;
-      asms.reset();
+      try {
+        for (const asm of this.asms.items) asms.push(asm);
+        this.predAbs.getAssumptions(this.model, asms);
+        const kernel = this.getKernel(this.level).solver;
+        const result = kernel.check(asms.items);
+        if (result === L_TRUE) {
+          this.setModel(kernel.context.getModel());
+          if (this.level === 0) this.setModelSave(this.model);
+          this.push();
+        } else if (result === L_FALSE) {
+          if (this.level === 0) return L_FALSE;
+          if (this.level === 1 && this.mode === QSAT_SAT) return L_TRUE;
+          if (this.model === undefined) this.pop(1);
+          else if (this.level === 1) this.projectQe(asms);
+          else if (!this.project(asms)) return L_UNDEF;
+        } else return result;
+      } finally {
+        asms.reset();
+      }
     }
   }
 
@@ -506,28 +514,31 @@ class Qsat {
     const pullInto = (target: RefVector) => {
       result = this.pinOwned(hoister.pullQuantifier(isForall, result, target));
     };
-    if (this.mode !== QSAT_SAT) {
-      isForall = true;
-      const vars = new RefVector(manager);
-      pullInto(vars);
-      this.vars.push(vars);
-      this.filterVars(vars);
-    } else {
-      const vars = new RefVector(manager);
-      pullInto(vars);
-      for (const innerVar of vars.items) freeVars.push(innerVar);
-      this.filterVars(vars);
-      vars.reset();
+    try {
+      if (this.mode !== QSAT_SAT) {
+        isForall = true;
+        const vars = new RefVector(manager);
+        pullInto(vars);
+        this.vars.push(vars);
+        this.filterVars(vars);
+      } else {
+        const vars = new RefVector(manager);
+        pullInto(vars);
+        for (const innerVar of vars.items) freeVars.push(innerVar);
+        this.filterVars(vars);
+        vars.reset();
+      }
+      for (;;) {
+        isForall = !isForall;
+        const vars = new RefVector(manager);
+        pullInto(vars);
+        this.vars.push(vars);
+        this.filterVars(vars);
+        if (vars.size === 0) break;
+      }
+    } finally {
+      hoister.release();
     }
-    for (;;) {
-      isForall = !isForall;
-      const vars = new RefVector(manager);
-      pullInto(vars);
-      this.vars.push(vars);
-      this.filterVars(vars);
-      if (vars.size === 0) break;
-    }
-    hoister.release();
     this.initializeLevels();
     return result;
   }
