@@ -3548,7 +3548,7 @@ export const translateCallStatement = (
     context.heap !== undefined &&
     ts.isPropertyAccessExpression(calledMethod) &&
     calledMethod.name.text === "call" &&
-    ts.isIdentifier(skipCasts(calledMethod.expression)) &&
+    isNamePath(skipCasts(calledMethod.expression)) &&
     expression.arguments.length > 0 &&
     (isInertValue(expression.arguments[0]) ||
       (ts.isCallExpression(expression.arguments[0]) &&
@@ -14908,3 +14908,11 @@ export const writesState = (
     ts.forEachChild(node, (child) => writesState(child, context, visited) || undefined) ?? false
   );
 };
+
+// Whether an expression only names a value through identifiers and dots, as Map.prototype.get does.
+const isNamePath = (node: ts.Expression): boolean =>
+  ts.isIdentifier(node) ||
+  (ts.isPropertyAccessExpression(node) &&
+    ts.isIdentifier(node.name) &&
+    node.questionDotToken === undefined &&
+    isNamePath(node.expression));

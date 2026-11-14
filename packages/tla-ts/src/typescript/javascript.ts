@@ -1696,11 +1696,15 @@ ReceiverlessValue(value) ==
 \\* where it needs a receiver, and as one that needs an internal slot, or a primitive of its own
 \\* type, does on another primitive or on an ordinary object or array.
 ThrowsOnReceiver(heap, value, receiver) ==
-  /\\ ThrowsWithoutReceiver(value)
+  /\\ IsRef(value)
+  /\\ TypeOf(value[Ref]) = "string"
   /\\ LET path == value[Ref]
          isUnder(name) ==
-           \\E prefix \\in {name \\o ".prototype.", "get " \\o name \\o ".prototype."} :
+           \\E prefix \\in {name \\o ".", "get " \\o name \\o "."} :
              Len(path) > Len(prefix) /\\ SubSeq(path, 1, Len(prefix)) = prefix
+         isEnding(suffix) ==
+           Len(path) >= Len(suffix) /\\ SubSeq(path, Len(path) - Len(suffix) + 1, Len(path)) = suffix
+         isMethod == ~isEnding(".constructor") /\\ ~isEnding("@@toStringTag") /\\ ~isEnding("@@hasInstance")
          isPrimitive == ~IsRef(receiver) /\\ TypeOf(receiver) \\notin {"object", "function"}
          isOrdinary ==
            \\/ IsSequenceValue(receiver)
@@ -1709,15 +1713,18 @@ ThrowsOnReceiver(heap, value, receiver) ==
                  IN /\\ DOMAIN object \\ {"isArray", "isArguments"} = DOMAIN EmptyObject
                     /\\ ~object.isOpaque
                     /\\ ~object.isCallable
-     IN \\/ receiver \\in {Undefined, Null}
-        \\/ /\\ ~(Len(path) >= 12 /\\ SubSeq(path, Len(path) - 11, Len(path)) = ".constructor")
-           /\\ \\/ /\\ \\E name \\in {"Map", "Set", "WeakMap", "WeakSet", "WeakRef", "FinalizationRegistry"} :
-                    isUnder(name)
-                 /\\ isPrimitive \\/ isOrdinary
-              \\/ \\E pair \\in {<<"Symbol", "symbol">>, <<"BigInt", "bigint">>, <<"Number", "number">>,
-                              <<"Boolean", "boolean">>} :
-                   /\\ isUnder(pair[1])
-                   /\\ (isPrimitive /\\ TypeOf(receiver) # pair[2]) \\/ isOrdinary
+     IN \\/ receiver \\in {Undefined, Null} /\\ ThrowsWithoutReceiver(value)
+        \\/ /\\ isMethod
+           /\\ \\E name \\in {"Map.prototype", "Set.prototype", "WeakMap.prototype", "WeakSet.prototype",
+                          "WeakRef.prototype", "FinalizationRegistry.prototype", "Function.prototype",
+                          "%GeneratorFunction%.prototype.prototype"} :
+                isUnder(name)
+           /\\ receiver \\in {Undefined, Null} \\/ isPrimitive \\/ isOrdinary
+        \\/ /\\ isMethod
+           /\\ \\E pair \\in {<<"Symbol", "symbol">>, <<"BigInt", "bigint">>, <<"Number", "number">>,
+                          <<"Boolean", "boolean">>} :
+                /\\ isUnder(pair[1] \\o ".prototype")
+                /\\ (isPrimitive /\\ TypeOf(receiver) # pair[2]) \\/ isOrdinary
 
 \\* The TypeError that a read throws where it runs %ThrowTypeError% or a getter of a buffer or a view
 \\* on another kind of object, or "".

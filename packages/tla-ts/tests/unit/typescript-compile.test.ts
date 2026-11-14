@@ -24211,6 +24211,47 @@ describe("calls through values", () => {
     });
   });
 
+  describe("throws the TypeError of a built-in method that a property path holds on a bad receiver", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      function* generate() {}
+      const GeneratorPrototype = Object.getPrototypeOf(generate).prototype;
+      const read: string[] = [];
+      const record = (run: () => void) => {
+        try {
+          run();
+          read.push("none");
+        } catch (error) {
+          read.push(error instanceof TypeError ? "type" : "other");
+        }
+      };
+      record(() => {
+        Function.prototype.toString.call({});
+      });
+      record(() => {
+        GeneratorPrototype.next.call(undefined);
+      });
+      record(() => {
+        GeneratorPrototype.throw.call(1, 2);
+      });
+      record(() => {
+        Promise.prototype.finally.call(null);
+      });
+      box.size = read.length;
+      if (read.join() !== "${expected}") throw new Error(read.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("type,type,type,type"))).failure).toBeUndefined();
+    });
+
+    it("rejects toString of an object as allowed", async () => {
+      expect((await checkModel(getSource("none,type,type,type"))).failure?.message).toContain(
+        "type,type,type,type",
+      );
+    });
+  });
+
   describe("reads the name and length of a built-in getter that a descriptor holds", () => {
     const getSource = (expected: string) => `
       const box = { size: 0 };
