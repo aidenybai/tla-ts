@@ -12449,7 +12449,7 @@ const findLeadingCall = (
     return thenConverted(inOrder(node.templateSpans.map((span) => span.expression)));
   }
   // An operand that runs a call that only statements can run, an increment, an assignment to a
-  // name of a value that runs nothing, or a branch of these.
+  // name of a value that runs nothing, or a branch of these, which it may evaluate first.
   const isBranchRun = (operand: ts.Expression) => {
     const run = skipCasts(operand);
     const found = findLeadingCall(run, [], path, context);
@@ -12460,7 +12460,7 @@ const findLeadingCall = (
         isAssignment(run) &&
         ts.isIdentifier(run.left) &&
         isPlainOperand(run.right)) ||
-      found.branch === run
+      found.branch !== undefined
     );
   };
   // An operand that runs nothing, which the operation evaluates as a value.
@@ -12767,6 +12767,37 @@ const runBranch = (
     const inner = findLeadingCall(run, [], next, context).branch;
     if (inner !== undefined && inner === run)
       return runBranch(inner, next, context, frame, withOperand);
+    // A branch that the operand evaluates first, as (a && f()) && g() does, runs before the rest of
+    // the operand, which reads its value.
+    const first = inner === undefined ? undefined : getBranch(run, next, context);
+    if (first !== undefined) {
+      const kept = first.reads.map((read): [ts.Expression, Expression] => [
+        read,
+        translateExpression(read, next.scope, context),
+      ]);
+      return translateJoined(
+        first.node,
+        next,
+        context,
+        (after, value) =>
+          evaluate(
+            operand,
+            {
+              ...after,
+              scope: {
+                ...after.scope,
+                results: new Map([
+                  ...after.scope.results,
+                  ...kept,
+                  [first.node, value ?? getUndefined(context)],
+                ]),
+              },
+            },
+            withOperand,
+          ),
+        (join) => runBranch(first.node, next, context, frame, join),
+      );
+    }
     if (isAssignment(run) && (!isIncrement(run) || isPlainIncrement(run, context))) {
       return runAssignment(run, next, context, frame, withOperand);
     }

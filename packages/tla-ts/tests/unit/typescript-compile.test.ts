@@ -2285,6 +2285,53 @@ describe("values", () => {
     expect(wrong.failure?.message).toContain("result true,false,true,2");
   });
 
+  it("runs a short-circuit inside a short-circuit's operand first, where a call in it makes an object", async () => {
+    const getSource = (expected: string) => `
+      interface Token {
+        kind: "Identifier" | "Operator" | "End";
+        text: string;
+        column: number;
+      }
+      const tokens: Token[] = [
+        { kind: "Operator", text: "(", column: 2 },
+        { kind: "Operator", text: "+", column: 3 },
+        { kind: "Operator", text: ")", column: 4 },
+        { kind: "Operator", text: "-", column: 1 },
+        { kind: "Identifier", text: "x", column: 6 },
+      ];
+      const cursor = { index: 1, offside: 1, peeks: 0 };
+      const peek = (offset = 0) => {
+        cursor.peeks++;
+        const token = tokens[Math.min(Math.max(cursor.index + offset, 0), tokens.length - 1)];
+        return token.column <= cursor.offside ? { ...token, kind: "End" as const, text: "" } : token;
+      };
+      const CIRCLED = new Set(["+", "-"]);
+      const isIncomplete = (isOn: boolean) => {
+        const token = peek();
+        return (
+          isOn &&
+          token.kind !== "Identifier" &&
+          (token.text === "*" ||
+            (CIRCLED.has(token.text) &&
+              peek(-1).text === "(" &&
+              peek(-1).column + 1 === token.column &&
+              peek(1).text === ")" &&
+              peek(1).column === token.column + 1))
+        );
+      };
+      const results: boolean[] = [];
+      results.push(isIncomplete(true));
+      results.push(isIncomplete(false));
+      cursor.index = 3;
+      results.push(isIncomplete(true));
+      const result = [...results, cursor.peeks].join(",");
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+    expect((await checkModel(getSource("true,false,false,7"))).failure).toBeUndefined();
+    const wrong = await checkModel(getSource("true,false,false,9"));
+    expect(wrong.failure?.message).toContain("result true,false,false,7");
+  });
+
   it("runs a switch's expression in order where a call in it changes what it reads", async () => {
     const getSource = (expected: string) => `
       const box = { v: 1 };
