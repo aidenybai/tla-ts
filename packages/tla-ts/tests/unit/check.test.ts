@@ -826,6 +826,19 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it.each([
+    [
+      "TupleField",
+      'Attempted to apply function with integer domain to the non-integer argument "a"',
+    ],
+    ["MissingRecordField", 'Attempted to select nonexistent field "b" from the record'],
+    ["MissingFunctionField", 'to argument "b", which is not in the domain of the function.'],
+    ["NonRecordField", 'Attempted to select field "a" from a non-record value 5'],
+  ])("fails to select a field in %s like TLC", async (name, message) => {
+    const result = await checkFixture("codegen", name);
+    expect(result.failure?.message).toContain(message);
+  });
+
+  it.each([
     ["EqualStoredRecord", 'Attempted to compare an integer with non-integer:\n"a"'],
     ["EqualStoredNested", 'Attempted to compare an integer with non-integer:\n"a"'],
     ["EqualStoredSet", "Attempted to check equality of the set {1, 2} with the value:\n<<1, 2>>"],
