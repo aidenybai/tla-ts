@@ -51,12 +51,12 @@ import { BUILT_INS } from "./built-ins";
 import { isEsModule, NATIVE_ERRORS } from "./exceptions";
 import {
   getDomain,
-  getKind,
   getKeptIterator,
   getWrappedThis,
   isCollectionName,
   isFractionKey,
   isRegExpArray,
+  isSetOrMapType,
   TYPED_ARRAYS,
 } from "./types";
 
@@ -437,8 +437,7 @@ export const compile = (
               parent.expression.name.text === "from" &&
               getBuiltIn(parent.expression.expression, context) === "Array")));
     return (
-      (isIterated && ["set", "map"].includes(getKind(node, context))) ||
-      (ts.forEachChild(node, usesOrder) ?? false)
+      (isIterated && isSetOrMapType(node, context)) || (ts.forEachChild(node, usesOrder) ?? false)
     );
   };
   context.hasOrderedCollections = isScript(sourceFile) && reached.some(usesOrder);

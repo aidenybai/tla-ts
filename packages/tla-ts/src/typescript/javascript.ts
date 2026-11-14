@@ -5003,9 +5003,14 @@ OrderedCollectionObject(prototype, data, keys, isMap) ==
      THEN [order |-> order] @@ CollectionObject(prototype, data)
      ELSE Assert(FALSE, "tla-ts can't tell the order of this collection's keys")
 
+\\* Whether a set or a map knows the order of its keys, which one that a script made from a set
+\\* without an order doesn't.
+HasOrder(heap, ref) == "order" \\in DOMAIN heap.objects[ref[Ref]]
+
 \\* WithCollectionData of an ordered set or map, which drops the keys that a change removes and adds
 \\* the key that it adds last.
 WithOrderedCollectionData(heap, ref, data, isMap) ==
+  IF ~HasOrder(heap, ref) THEN WithCollectionData(heap, ref, data) ELSE
   LET keys == CollectionKeys(data, isMap)
       kept == SelectSeq(heap.objects[ref[Ref]].order, LAMBDA key : key \\in keys)
       added == keys \\ {kept[position] : position \\in DOMAIN kept}
@@ -5029,9 +5034,19 @@ OrderedValues(heap, ref, isMap, method) ==
   LET object == heap.objects[ref[Ref]]
       order == object.order
       ValueAt(key) == IF isMap THEN object.data[key] ELSE key
-  IN CASE method = "keys" -> order
-       [] method = "values" -> [position \\in DOMAIN order |-> ValueAt(order[position])]
-       [] OTHER -> [position \\in DOMAIN order |-> <<order[position], ValueAt(order[position])>>]
+  IN IF ~HasOrder(heap, ref)
+     THEN Assert(FALSE, "tla-ts can't tell the order of this collection's keys")
+     ELSE CASE method = "keys" -> order
+            [] method = "values" -> [position \\in DOMAIN order |-> ValueAt(order[position])]
+            [] OTHER -> [position \\in DOMAIN order |-> <<order[position], ValueAt(order[position])>>]
+
+\\* The set that a set method gives, which keeps its order where the set that it runs on and the
+\\* other collection keep theirs.
+SetMethodObject(heap, prototype, data, method, ref, other, otherKeys) ==
+  IF HasOrder(heap, ref) /\\ HasOrder(heap, other)
+  THEN OrderedCollectionObject(
+         prototype, data, SetMethodOrder(method, OrderedValues(heap, ref, FALSE, "keys"), otherKeys), FALSE)
+  ELSE CollectionObject(prototype, data)
 
 \\* The elements of a set in an order that TLC picks, which only a loop that ends the same in any
 \\* order visits, as a set that TLC holds keeps no insertion order.

@@ -3823,7 +3823,9 @@ describe("values", () => {
       if (result !== "${expected}") throw new Error(result);
     `;
     expect((await checkModel(getSource("4,true,false"))).failure).toBeUndefined();
-    await expect(checkModel(getSource("3,true,false"))).rejects.toThrow("4,true,false");
+    expect((await checkModel(getSource("3,true,false"))).failure?.message).toContain(
+      "4,true,false",
+    );
   });
 
   it("makes a set of the prefixes that Array.from gives for each of a map's keys", async () => {
@@ -3962,7 +3964,7 @@ describe("values", () => {
       if (result !== "${expected}") throw new Error(result);
     `;
     expect((await checkModel(getSource("4,10,20"))).failure).toBeUndefined();
-    await expect(checkModel(getSource("4,10,10"))).rejects.toThrow("4,10,20");
+    expect((await checkModel(getSource("4,10,10"))).failure?.message).toContain("4,10,20");
   });
 
   it("makes a set of what an iterable parameter takes, from a set or an array", async () => {
@@ -4003,7 +4005,9 @@ describe("values", () => {
       if (result !== "${expected}") throw new Error(result);
     `;
     expect((await checkModel(getSource("3,true,false"))).failure).toBeUndefined();
-    await expect(checkModel(getSource("4,true,false"))).rejects.toThrow("3,true,false");
+    expect((await checkModel(getSource("4,true,false"))).failure?.message).toContain(
+      "3,true,false",
+    );
   });
 
   it("makes a set of an array literal that spreads a map's keys", async () => {
@@ -4017,7 +4021,7 @@ describe("values", () => {
       if (result !== "${expected}") throw new Error(result);
     `;
     expect((await checkModel(getSource("3,true,false"))).failure).toBeUndefined();
-    await expect(checkModel(getSource("3,true,true"))).rejects.toThrow("3,true,false");
+    expect((await checkModel(getSource("3,true,true"))).failure?.message).toContain("3,true,false");
   });
 
   it("makes a set that the heap holds of an array literal that spreads a set", async () => {
@@ -4046,12 +4050,6 @@ describe("values", () => {
     `;
     expect((await checkModel(getSource("3,true,true"))).failure).toBeUndefined();
     expect((await checkModel(getSource("4,true,true"))).failure?.message).toContain("3,true,true");
-    expect(() =>
-      compile(`
-        const kinds = new Set([1, 2]);
-        const listed = [...kinds, 3];
-      `),
-    ).toThrow("Sets have no order");
   });
 
   it("passes a rest parameter the arguments and the arrays that a call spreads into it", async () => {
@@ -14027,30 +14025,33 @@ describe("errors", () => {
       if (box.names.size !== 3 || seen.size !== 3 || !seen.has("c")) throw new Error("each");
     `);
     expect(result.failure).toBeUndefined();
-    expect(() =>
-      checkModel(`
-        const out: string[] = [];
-        const source = new Set(["b", "a"]);
-        source.forEach((name) => {
-          out.push(name);
-        });
-      `),
-    ).toThrow("Unsupported statement");
-    expect(() =>
-      checkModel(`
-        const sets = [new Set<string>(), new Set<string>()];
-        const source = new Set(["b", "a"]);
-        const counted = new Set<string>();
-        for (const name of source) sets[counted.size].add(name);
-      `),
-    ).toThrow("Only arrays have an order to iterate in");
-    expect(() =>
-      checkModel(`
-        const source = new Set(["b", "a"]);
-        const kept = new Set<string>();
-        source.forEach((name, again) => kept.add(again));
-      `),
-    ).toThrow("Unsupported statement");
+  });
+
+  it("visits a set in order where a forEach pushes, or a loop picks the set that it adds to", async () => {
+    const getSource = (expected: string) => `
+      const out: string[] = [];
+      const source = new Set(["b", "a"]);
+      source.forEach((name) => {
+        out.push(name);
+      });
+      const sets = [new Set<string>(), new Set<string>()];
+      const counted = new Set<string>();
+      for (const name of source) sets[counted.size].add(name);
+      const kept = new Set<string>();
+      source.forEach((name, again) => kept.add(again));
+      const listed = [...new Set([1, 2]), 3];
+      const result = [
+        out.join("-"),
+        sets[0].size,
+        sets[1].size,
+        [...kept].join("-"),
+        listed.join("-"),
+      ].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "b-a,2,0,b-a,1-2-3";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect((await checkModel(getSource("a-b,2,0,a-b,1-2-3"))).failure?.message).toContain(expected);
   });
 
   it("keeps the identity of a set that a field holds and changes in place", async () => {
@@ -21775,22 +21776,36 @@ describe("errors", () => {
     );
   });
 
+  it("iterates a collection's subclass, and gives a plain set from its union", async () => {
+    const getSource = (expected: string) => `
+      class Names extends Set<string> {}
+      const names = new Names(["a", "b"]);
+      const seen: string[] = [];
+      for (const name of names) seen.push(name);
+      names.add("c");
+      const all = names.union(new Set(["d"]));
+      const result = [
+        seen.join("-"),
+        [...names].join("-"),
+        all instanceof Names,
+        all instanceof Set,
+        [...all].join("-"),
+      ].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "a-b,a-b-c,false,true,a-b-c-d";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect((await checkModel(getSource("a-b,a-b-c,true,true,a-b-c-d"))).failure?.message).toContain(
+      expected,
+    );
+  });
+
   it("stops where a script uses a collection's subclass in a way the heap can't follow", () => {
     expect(() =>
       compile(
         `class Names extends Set<string> {}\nconst names = new Names(["a"]);\nif (names.constructor !== Names) throw new Error("x");`,
       ),
     ).toThrow("tla-ts can't follow every use of a collection's subclass in the heap");
-    expect(() =>
-      compile(
-        `class Names extends Set<string> {}\nconst names = new Names(["a"]);\nconst all = names.union(new Set(["b"]));\nif (all instanceof Names) throw new Error("x");`,
-      ),
-    ).toThrow("tla-ts can't follow every use of a collection's subclass in the heap");
-    expect(() =>
-      compile(
-        `class Names extends Set<string> {}\nconst names = new Names(["a", "b"]);\nconst seen: string[] = [];\nfor (const name of names) seen.push(name);\nif (seen.join() !== "a,b") throw new Error("x");`,
-      ),
-    ).toThrow("Only arrays have an order to iterate in");
     expect(() =>
       compile(
         `class Names extends Set<string> {\n  has(name: string) {\n    return name === "z";\n  }\n}\nconst names = new Names(["a"]);\nif (names.has("a")) throw new Error("x");`,

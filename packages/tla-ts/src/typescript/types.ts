@@ -546,10 +546,19 @@ const isHeld = (node: ts.Expression, context: Context): boolean => {
   );
 };
 
+// Whether a value's type is a set's or a map's, rather than a weak one's or an iterable's.
+export const isSetOrMapType = (node: ts.Expression, context: Context) => {
+  const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(node));
+  return (
+    ["Set", "Map"].includes(getCollection(node, context) ?? "") &&
+    (isSetType(type) || isMapType(type))
+  );
+};
+
 // Whether a set or a map keeps the order of its keys, as a script that iterates one needs. A weak
 // one has no order to keep.
 export const isOrderedCollection = (node: ts.Expression, context: Context) =>
-  context.hasOrderedCollections && ["Set", "Map"].includes(getCollection(node, context) ?? "");
+  context.hasOrderedCollections && isSetOrMapType(node, context);
 
 export interface OrderedIteration {
   receiver: ts.Expression;

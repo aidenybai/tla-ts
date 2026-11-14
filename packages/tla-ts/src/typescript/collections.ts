@@ -766,12 +766,7 @@ export const translateArrayConstructor = (node: MethodCall, scope: Scope, contex
     method === "from" &&
     node.arguments.length === 1 &&
     !ts.isSpreadElement(options) &&
-    (isHeapArray(options, context) ||
-      getOrderedIteration(options, context) !== undefined ||
-      isEvery(context.checker.getTypeAtLocation(options), ts.TypeFlags.StringLike) ||
-      (getKind(options, context) === "sequence" &&
-        !isGeneratorType(options, context) &&
-        !isBuiltInIteratorType(options, context)))
+    isOrderedIterable(options, context)
   ) {
     return getFrom(translateIteratedSequence(options, node, scope, context));
   }
@@ -3332,12 +3327,30 @@ export const translateNew = (node: ts.NewExpression, scope: Scope, context: Cont
   );
 };
 
+// Whether iterating a value gives elements in an order that tla-ts knows: an array, a string, or a
+// set or a map that keeps its order.
+const isOrderedIterable = (node: ts.Expression, context: Context): boolean =>
+  isHeapArray(node, context) ||
+  getOrderedIteration(node, context) !== undefined ||
+  isEvery(context.checker.getTypeAtLocation(node), ts.TypeFlags.StringLike) ||
+  (getKind(node, context) === "sequence" &&
+    !isGeneratorType(node, context) &&
+    !isBuiltInIteratorType(node, context) &&
+    !(
+      ts.isArrayLiteralExpression(node) &&
+      node.elements.some(
+        (element) => ts.isSpreadElement(element) && !isOrderedIterable(element.expression, context),
+      )
+    ));
+
 // The keys that new Set or new Map adds, in the order that it adds them, which an ordered set or map
-// keeps: the elements that iterating its argument gives, or the keys of those entries.
+// keeps: the elements that iterating its argument gives, or the keys of those entries. It's
+// undefined where tla-ts doesn't know the order of what the argument gives.
 export const translateNewKeys = (node: ts.NewExpression, scope: Scope, context: Context) => {
   const argument = node.arguments?.[0];
   const isMap = getCollection(node, context) === "Map";
   if (argument === undefined) return tuple([]);
+  if (!isOrderedIterable(argument, context)) return undefined;
   if (ts.isArrayLiteralExpression(argument) && !argument.elements.some(ts.isSpreadElement)) {
     return tuple(
       argument.elements.map((element) =>

@@ -1601,13 +1601,15 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     context.heapCollections.has(node) &&
     isFreshCollection(node, context)
   ) {
-    const isOrdered = isOrderedCollection(node, context);
+    const keys = isOrderedCollection(node, context)
+      ? translateNewKeys(node, scope, context)
+      : undefined;
     return useJavaScript(
       "Allocate",
       [
         heap,
         useJavaScript(
-          isOrdered ? "OrderedCollectionObject" : "CollectionObject",
+          keys === undefined ? "CollectionObject" : "OrderedCollectionObject",
           [
             isNewSubclassCollection(node, context)
               ? useJavaScript(
@@ -1623,12 +1625,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
                   context,
                 ),
             translateNew(node, scope, context),
-            ...(isOrdered
-              ? [
-                  translateNewKeys(node, scope, context),
-                  boolean(getCollection(node, context) === "Map"),
-                ]
-              : []),
+            ...(keys === undefined ? [] : [keys, boolean(getCollection(node, context) === "Map")]),
           ],
           context,
         ),
@@ -1688,35 +1685,22 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     : undefined;
   if (ts.isCallExpression(node) && setMethod !== undefined) {
     const other = setMethod.other;
-    if (!isHeapSetOrMap(setMethod.receiver, context) || !isHeapSetOrMap(other, context)) {
-      throw new TlaTypeScriptError(
-        "tla-ts can't tell the order of what this set method gives",
-        node,
-      );
-    }
+    const prototype = translateBuiltInValue("Set.prototype", node, context);
+    const made = translateCall(node, scope, context, false);
     return useJavaScript(
       "Allocate",
       [
         heap,
-        useJavaScript(
-          "OrderedCollectionObject",
-          [
-            translateBuiltInValue("Set.prototype", node, context),
-            translateCall(node, scope, context, false),
-            useJavaScript(
-              "SetMethodOrder",
+        isHeapSetOrMap(setMethod.receiver, context) && isHeapSetOrMap(other, context)
+          ? useJavaScript(
+              "SetMethodObject",
               [
+                heap,
+                prototype,
+                made,
                 string(setMethod.method),
-                useJavaScript(
-                  "OrderedValues",
-                  [
-                    heap,
-                    translateNode(setMethod.receiver, scope, context, false),
-                    boolean(false),
-                    string("keys"),
-                  ],
-                  context,
-                ),
+                translateNode(setMethod.receiver, scope, context, false),
+                translateNode(other, scope, context, false),
                 translateOrderedValues(
                   { receiver: other, method: "keys" },
                   heap,
@@ -1725,11 +1709,8 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
                 ),
               ],
               context,
-            ),
-            boolean(false),
-          ],
-          context,
-        ),
+            )
+          : useJavaScript("CollectionObject", [prototype, made], context),
       ],
       context,
     );
