@@ -6528,6 +6528,85 @@ describe("errors", () => {
     });
   });
 
+  describe("keep what a guard narrows a property to where nothing between runs another function", () => {
+    it.each(["{}", "Object.create(null)"])(
+      "narrows where the guard comes after a call, with ranks made by %s",
+      async (ranks) => {
+        const getSource = (expected: number) => `
+        interface Interval {
+          low: number | undefined;
+          size: number;
+        }
+        const bounds = { low: 0, high: 4 };
+        const ranks: Record<string, number> = ${ranks};
+        const change = (key: string) => {
+          bounds.low = 1;
+          ranks[key] = 2;
+        };
+        const compare = (left: Interval, right: Interval) => {
+          change("a");
+          const compareSizes = () => left.size - right.size;
+          if (left.low !== undefined && right.low !== undefined) {
+            return left.low === right.low ? compareSizes() : left.low - right.low;
+          }
+          return 0;
+        };
+        const result = compare({ low: 5, size: 1 }, { low: 3, size: 1 });
+        if (result !== ${expected}) throw new Error(String(result));
+      `;
+        expect((await checkModel(getSource(2))).failure).toBeUndefined();
+        expect((await checkModel(getSource(3))).failure?.message).toContain("2");
+      },
+    );
+
+    it.each([
+      ["a call in the guard", "", 'typeof box.x === "number" && setText()', ""],
+      [
+        "a getter",
+        "const holder = { get value() { return setText(); } };",
+        'typeof box.x === "number"',
+        "const seen = holder.value;",
+      ],
+      [
+        "a toString that a template runs",
+        'class Text { toString() { setText(); return "t"; } }\nconst text = new Text();',
+        'typeof box.x === "number"',
+        "const shown = `${text}`;",
+      ],
+      [
+        "a constructor",
+        "class Maker { constructor() { setText(); } }",
+        'typeof box.x === "number"',
+        "const made = new Maker();",
+      ],
+      [
+        "a call later in a loop",
+        "",
+        'typeof box.x === "number"',
+        "let total = 0;\nfor (let index = 0; index < 2; index++) { total = total + box.x * 2; setText(); }",
+      ],
+    ])("keeps the declared type where %s may run between", (_name, before, guard, between) => {
+      expect(() =>
+        compile(`
+          const box: { x: number | string } = { x: 0 };
+          const setText = () => {
+            box.x = "2";
+            return true;
+          };
+          ${before}
+          const run = () => {
+            if (${guard}) {
+              ${between}
+              return box.x * 3;
+            }
+            return 0;
+          };
+          run();
+        `),
+      ).toThrow("* needs numbers");
+    });
+  });
+
   describe("read a variable that a function called where it's written assigns", () => {
     it("tells the type that the function's assignment narrows it to", async () => {
       const getSource = (expected: string) => `

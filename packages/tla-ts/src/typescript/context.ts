@@ -13,6 +13,7 @@ import {
 } from "./types";
 import { TlaTypeScriptError } from "../errors";
 import { createNames, type Names } from "./names";
+import { getKeptReads } from "./narrowing";
 import type { Link } from "./regions";
 import { apply, define, identifier, ifExpression, index, letExpression, string } from "./tla";
 
@@ -141,6 +142,9 @@ export interface Context {
   objectArguments: Map<ts.SourceFile, Set<ts.Symbol>>;
   // The names whose values each file's functions return or put in object literals.
   escapedNames: Map<ts.SourceFile, Set<ts.Symbol>>;
+  // Whether each read of a name or a property that another function assigns keeps what TypeScript
+  // narrowed it to, which tla-ts finds once before it compiles the code.
+  keptReads: ReadonlyMap<ts.Node, boolean>;
   // What each function that a statement runs changes, with the functions that it runs in turn, by
   // the functions that the paths bind to the parameters that they call.
   changeSummaries: Map<string, Map<ts.Node, ChangeSummary>>;
@@ -187,56 +191,98 @@ export type HelperDeclaration = ts.FunctionDeclaration | ts.VariableDeclaration;
 
 // TypeScript narrows a variable or a property at a read from what the read's function assigns
 // before it, and keeps that across a call, though a function that the call runs may assign it a
-// value of another type. A read of one that another function assigns has its declared type. A
-// computed key, as in o[key] = value, may assign any property.
+// value of another type. A read of one that another function assigns has its declared type, unless
+// nothing that may run another function's code comes between it and what narrowed it. A computed
+// key, as in o[key] = value, may assign any property, or any index of an array.
 const anyProperty = Symbol("any property");
+const anyIndex = Symbol("any index");
 
-const withDeclaredReads = (checker: ts.TypeChecker): ts.TypeChecker => {
+const PRIMITIVE_FLAGS =
+  ts.TypeFlags.StringLike |
+  ts.TypeFlags.NumberLike |
+  ts.TypeFlags.BigIntLike |
+  ts.TypeFlags.BooleanLike |
+  ts.TypeFlags.EnumLike |
+  ts.TypeFlags.ESSymbolLike |
+  ts.TypeFlags.Null |
+  ts.TypeFlags.Undefined |
+  ts.TypeFlags.Void |
+  ts.TypeFlags.Never;
+
+const ACCESSOR_CALLS = new Set([
+  "defineProperty",
+  "defineProperties",
+  "setPrototypeOf",
+  "create",
+  "__defineGetter__",
+  "__defineSetter__",
+]);
+
+const CONVERSION_NAMES = new Set(["valueOf", "toString", "toPrimitive"]);
+
+// What tla-ts finds before it compiles about the reads that another function may assign: the type
+// each read's declaration gives it, and whether each read keeps TypeScript's narrowing.
+interface DeclaredReads {
+  getDeclaredType: (node: ts.Node) => ts.Type | undefined;
+  keptReads: ReadonlyMap<ts.Node, boolean>;
+}
+
+const getDeclaredReads = (
+  checker: ts.TypeChecker,
+  files: readonly ts.SourceFile[],
+): DeclaredReads => {
   // TypeScript's control flow runs through a function that a call runs where it's written, unless
   // it's async or a generator, so it narrows what that function assigns. Where the function names
   // itself, a later call may run it again.
-  const getFunction = (node: ts.Node): ts.Node => {
-    const found = ts.findAncestor(node.parent, ts.isFunctionLike) ?? node.getSourceFile();
-    const name = ts.isFunctionExpression(found) ? found.name : undefined;
-    const isInlined =
-      (ts.isFunctionExpression(found) || ts.isArrowFunction(found)) &&
-      isCalledInPlace(found) &&
-      isPlain(found) &&
+  const isInlined = (node: ts.Node) => {
+    const name = ts.isFunctionExpression(node) ? node.name : undefined;
+    return (
+      (ts.isFunctionExpression(node) || ts.isArrowFunction(node)) &&
+      isCalledInPlace(node) &&
+      isPlain(node) &&
       (name === undefined ||
         findNodes(
-          found.body,
+          node.body,
           (inner): inner is ts.Identifier => ts.isIdentifier(inner) && inner.text === name.text,
-        ).length === 0);
-    return isInlined ? getFunction(found) : found;
+        ).length === 0)
+    );
+  };
+  const getFunction = (node: ts.Node): ts.Node => {
+    const found = ts.findAncestor(node.parent, ts.isFunctionLike) ?? node.getSourceFile();
+    return isInlined(found) ? getFunction(found) : found;
   };
   const getWrittenKey = (name: ts.Expression) => {
     if (ts.isIdentifier(name)) return getSymbol(name, checker);
     if (ts.isPropertyAccessExpression(name)) return name.name.text;
     if (!ts.isElementAccessExpression(name)) return undefined;
     const key = name.argumentExpression;
-    return ts.isStringLiteralLike(key) || ts.isNumericLiteral(key) ? key.text : anyProperty;
+    const receiver = checker.getNonNullableType(checker.getTypeAtLocation(name.expression));
+    return ts.isStringLiteralLike(key) || ts.isNumericLiteral(key)
+      ? key.text
+      : checker.isArrayType(receiver) || checker.isTupleType(receiver)
+        ? anyIndex
+        : anyProperty;
   };
-  const writers = new Map<ts.SourceFile, Map<ts.Symbol | string | symbol, Set<ts.Node>>>();
-  const getWriters = (file: ts.SourceFile) => {
-    const known = writers.get(file);
-    if (known !== undefined) return known;
-    const found = new Map<ts.Symbol | string | symbol, Set<ts.Node>>();
-    findNodes(file, (inner): inner is ts.Node => getAssignedTarget(inner) !== undefined).forEach(
-      (assignment) => {
-        const target = getAssignedTarget(assignment);
-        (target === undefined ? [] : getWrittenNames(target)).forEach((name) => {
-          const key = getWrittenKey(name);
-          if (key !== undefined) {
-            found.set(key, new Set([...(found.get(key) ?? []), getFunction(assignment)]));
-          }
-        });
-      },
-    );
-    writers.set(file, found);
-    return found;
-  };
+  // The functions that write each name or key, in each file.
+  const writers = new Map(
+    files.map((file) => {
+      const found = new Map<ts.Symbol | string | symbol, Set<ts.Node>>();
+      findNodes(file, (inner): inner is ts.Node => getAssignedTarget(inner) !== undefined).forEach(
+        (assignment) => {
+          const target = getAssignedTarget(assignment);
+          (target === undefined ? [] : getWrittenNames(target)).forEach((name) => {
+            const key = getWrittenKey(name);
+            if (key !== undefined) {
+              found.set(key, new Set([...(found.get(key) ?? []), getFunction(assignment)]));
+            }
+          });
+        },
+      );
+      return [file, found];
+    }),
+  );
   const isWrittenElsewhere = (key: ts.Symbol | string | symbol, node: ts.Node) =>
-    [...(getWriters(node.getSourceFile()).get(key) ?? [])].some(
+    [...(writers.get(node.getSourceFile())?.get(key) ?? [])].some(
       (writer) => writer !== getFunction(node),
     );
   const getDeclaredType = (node: ts.Node) => {
@@ -257,99 +303,232 @@ const withDeclaredReads = (checker: ts.TypeChecker): ts.TypeChecker => {
         ? checker.getTypeOfSymbol(symbol)
         : undefined;
     }
-    return isWrittenElsewhere(symbol.name, node) || isWrittenElsewhere(anyProperty, node)
+    const isIndex = symbol.name === "length" || String(Number(symbol.name)) === symbol.name;
+    return isWrittenElsewhere(symbol.name, node) ||
+      isWrittenElsewhere(anyProperty, node) ||
+      (isIndex && isWrittenElsewhere(anyIndex, node))
       ? checker.getTypeOfSymbol(symbol)
       : undefined;
   };
+  const sources = files.filter((file) => !file.isDeclarationFile);
+  // The types of the objects that a getter, a setter, or a proxy's trap may run for.
+  const accessorTypes = sources.flatMap((file) =>
+    findNodes(file, (inner): inner is ts.Node => inner !== undefined).flatMap((node) => {
+      const hasAccessor =
+        (ts.isObjectLiteralExpression(node) || ts.isClassLike(node)) &&
+        (ts.isObjectLiteralExpression(node) ? node.properties : node.members).some(
+          (member) => ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member),
+        );
+      const symbol = ts.isClassLike(node)
+        ? checker.getSymbolAtLocation(node.name ?? node)
+        : undefined;
+      if (hasAccessor && symbol !== undefined) {
+        return [checker.getDeclaredTypeOfSymbol(symbol), checker.getTypeOfSymbol(symbol)];
+      }
+      if (hasAccessor) return [checker.getTypeAtLocation(node)];
+      if (
+        ts.isNewExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === "Proxy"
+      ) {
+        return [checker.getTypeAtLocation(node)];
+      }
+      if (
+        !ts.isCallExpression(node) ||
+        !ts.isPropertyAccessExpression(node.expression) ||
+        !ACCESSOR_CALLS.has(node.expression.name.text)
+      ) {
+        return [];
+      }
+      const method = node.expression.name.text;
+      // A null prototype without descriptors gives an object nothing to inherit an accessor from.
+      const prototype = node.arguments[method === "setPrototypeOf" ? 1 : 0];
+      const isBare =
+        (method === "create" || method === "setPrototypeOf") &&
+        node.arguments.length === (method === "create" ? 1 : 2) &&
+        prototype?.kind === ts.SyntaxKind.NullKeyword;
+      const changed = isBare
+        ? undefined
+        : method === "create"
+          ? node
+          : method.startsWith("__")
+            ? node.expression.expression
+            : node.arguments[0];
+      return changed === undefined ? [] : [checker.getTypeAtLocation(changed)];
+    }),
+  );
+  const isAccessed = (receiver: ts.Expression) => {
+    if (accessorTypes.length === 0) return false;
+    const type = checker.getTypeAtLocation(receiver);
+    return (
+      (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+      accessorTypes.some(
+        (accessor) =>
+          checker.isTypeAssignableTo(accessor, type) || checker.isTypeAssignableTo(type, accessor),
+      )
+    );
+  };
+  // Whether a script gives an object its own valueOf, toString, or Symbol.toPrimitive.
+  const isConverting = sources.some(
+    (file) =>
+      findNodes(
+        file,
+        (inner): inner is ts.Identifier | ts.StringLiteral =>
+          (ts.isIdentifier(inner) || ts.isStringLiteral(inner)) &&
+          CONVERSION_NAMES.has(inner.text) &&
+          (ts.isStringLiteral(inner) ||
+            inner.text === "toPrimitive" ||
+            ts.getNameOfDeclaration(inner.parent as ts.Declaration) === inner ||
+            (ts.isPropertyAccessExpression(inner.parent) &&
+              getAssignedTarget(inner.parent.parent) === inner.parent)),
+      ).length > 0,
+  );
+  const isConverted = (operand: ts.Expression) => {
+    const type = checker.getTypeAtLocation(operand);
+    return (
+      isConverting &&
+      (type.isUnion() ? type.types : [type]).some(
+        (member) => (member.flags & PRIMITIVE_FLAGS) === 0,
+      )
+    );
+  };
+  const symbolIds = new Map<ts.Symbol, number>();
+  const getReference = (node: ts.Expression): string | undefined => {
+    const inner = skipCasts(node);
+    const symbol = ts.isIdentifier(inner) ? getSymbol(inner, checker) : undefined;
+    if (symbol !== undefined && !symbolIds.has(symbol)) symbolIds.set(symbol, symbolIds.size);
+    if (symbol !== undefined) return String(symbolIds.get(symbol));
+    if (inner.kind === ts.SyntaxKind.ThisKeyword) return "this";
+    const name = ts.isPropertyAccessExpression(inner)
+      ? inner.name.text
+      : ts.isElementAccessExpression(inner) &&
+          (ts.isStringLiteralLike(inner.argumentExpression) ||
+            ts.isNumericLiteral(inner.argumentExpression))
+        ? inner.argumentExpression.text
+        : undefined;
+    const base =
+      name !== undefined &&
+      (ts.isPropertyAccessExpression(inner) || ts.isElementAccessExpression(inner))
+        ? getReference(inner.expression)
+        : undefined;
+    return base === undefined ? undefined : `${base}.${name}`;
+  };
+  const queries = {
+    checker,
+    getDeclared: getDeclaredType,
+    getReference,
+    isInlined,
+    isAccessed,
+    isConverted,
+  };
+  // Each function's walk, over every function that a call doesn't run where it's written.
+  const roots = sources.flatMap((file) => [
+    file,
+    ...findNodes(file, ts.isFunctionLike).filter((node) => !isInlined(node)),
+  ]);
   return {
-    ...checker,
-    getTypeAtLocation: (node) => getDeclaredType(node) ?? checker.getTypeAtLocation(node),
+    getDeclaredType,
+    keptReads: new Map(roots.flatMap((root) => [...getKeptReads(root, queries)])),
   };
 };
+
+const withDeclaredReads = (checker: ts.TypeChecker, reads: DeclaredReads): ts.TypeChecker => ({
+  ...checker,
+  getTypeAtLocation: (node) => {
+    const declared = reads.getDeclaredType(node);
+    return declared === undefined || reads.keptReads.get(node) === true
+      ? checker.getTypeAtLocation(node)
+      : declared;
+  },
+});
 
 export const createContext = (
   checker: ts.TypeChecker,
   files: readonly ts.SourceFile[],
-): Context => ({
-  checker: withDeclaredReads(checker),
-  names: createNames(JAVASCRIPT_OPERATORS),
-  variables: new Map(),
-  definitions: new Map(),
-  stateCalls: new Map(),
-  inProgress: new Set(),
-  recursive: new Set(),
-  selfCalls: new Map(),
-  sharedHelpers: new Map(),
-  sharedCallbacks: new Map(),
-  sharedCalls: new Map(),
-  throwPlaces: [],
-  thrownName: undefined,
-  output: [],
-  links: [],
-  modelValues: new Map(),
-  constructors: new Map(),
-  prelude: new Set(),
-  unknowns: undefined,
-  heap: undefined,
-  builtIns: new Set(),
-  constantFunctions: new Map(),
-  functionObjects: new Map(),
-  hasSpecialNumbers: false,
-  script: undefined,
-  reached: undefined,
-  symbols: [],
-  fractions: new Map(),
-  heapCollections: new Set(),
-  generatorPrototypes: new Map(),
-  hasInheritedElements: false,
-  characters: new Set(),
-  passed: new Map(),
-  changeSummaries: new Map(),
-  assignedNames: new Map(
-    files.map((file) => [
-      file,
-      new Set(
-        findNodes(file, (node): node is ts.Node => getAssignedTarget(node) !== undefined).flatMap(
-          (node) =>
-            getWrittenNames(getAssignedTarget(node) ?? node).flatMap((name) =>
-              ts.isIdentifier(name) ? (getSymbol(name, checker) ?? []) : [],
-            ),
+): Context => {
+  const reads = getDeclaredReads(checker, files);
+  return {
+    checker: withDeclaredReads(checker, reads),
+    keptReads: reads.keptReads,
+    names: createNames(JAVASCRIPT_OPERATORS),
+    variables: new Map(),
+    definitions: new Map(),
+    stateCalls: new Map(),
+    inProgress: new Set(),
+    recursive: new Set(),
+    selfCalls: new Map(),
+    sharedHelpers: new Map(),
+    sharedCallbacks: new Map(),
+    sharedCalls: new Map(),
+    throwPlaces: [],
+    thrownName: undefined,
+    output: [],
+    links: [],
+    modelValues: new Map(),
+    constructors: new Map(),
+    prelude: new Set(),
+    unknowns: undefined,
+    heap: undefined,
+    builtIns: new Set(),
+    constantFunctions: new Map(),
+    functionObjects: new Map(),
+    hasSpecialNumbers: false,
+    script: undefined,
+    reached: undefined,
+    symbols: [],
+    fractions: new Map(),
+    heapCollections: new Set(),
+    generatorPrototypes: new Map(),
+    hasInheritedElements: false,
+    characters: new Set(),
+    passed: new Map(),
+    changeSummaries: new Map(),
+    assignedNames: new Map(
+      files.map((file) => [
+        file,
+        new Set(
+          findNodes(file, (node): node is ts.Node => getAssignedTarget(node) !== undefined).flatMap(
+            (node) =>
+              getWrittenNames(getAssignedTarget(node) ?? node).flatMap((name) =>
+                ts.isIdentifier(name) ? (getSymbol(name, checker) ?? []) : [],
+              ),
+          ),
         ),
-      ),
-    ]),
-  ),
-  objectArguments: new Map(
-    files.map((file) => [
-      file,
-      new Set(
-        findNodes(file, ts.isCallExpression).flatMap((call) =>
-          call.arguments.flatMap((argument) => {
-            const symbol = getSymbol(skipCasts(argument), checker);
-            return symbol !== undefined && isObjectArgument(argument, checker) ? [symbol] : [];
-          }),
+      ]),
+    ),
+    objectArguments: new Map(
+      files.map((file) => [
+        file,
+        new Set(
+          findNodes(file, ts.isCallExpression).flatMap((call) =>
+            call.arguments.flatMap((argument) => {
+              const symbol = getSymbol(skipCasts(argument), checker);
+              return symbol !== undefined && isObjectArgument(argument, checker) ? [symbol] : [];
+            }),
+          ),
         ),
-      ),
-    ]),
-  ),
-  escapedNames: new Map(
-    files.map((file) => [
-      file,
-      new Set(
-        findNodes(file, ts.isIdentifier).flatMap((name) =>
-          ts.isShorthandPropertyAssignment(name.parent)
-            ? (checker.getShorthandAssignmentValueSymbol(name.parent) ?? [])
-            : (ts.isReturnStatement(name.parent) && name.parent.expression === name) ||
-                (ts.isArrowFunction(name.parent) && name.parent.body === name) ||
-                (ts.isPropertyAssignment(name.parent) &&
-                  name.parent.initializer === name &&
-                  ts.isObjectLiteralExpression(name.parent.parent))
-              ? (getSymbol(name, checker) ?? [])
-              : [],
+      ]),
+    ),
+    escapedNames: new Map(
+      files.map((file) => [
+        file,
+        new Set(
+          findNodes(file, ts.isIdentifier).flatMap((name) =>
+            ts.isShorthandPropertyAssignment(name.parent)
+              ? (checker.getShorthandAssignmentValueSymbol(name.parent) ?? [])
+              : (ts.isReturnStatement(name.parent) && name.parent.expression === name) ||
+                  (ts.isArrowFunction(name.parent) && name.parent.body === name) ||
+                  (ts.isPropertyAssignment(name.parent) &&
+                    name.parent.initializer === name &&
+                    ts.isObjectLiteralExpression(name.parent.parent))
+                ? (getSymbol(name, checker) ?? [])
+                : [],
+          ),
         ),
-      ),
-    ]),
-  ),
-});
+      ]),
+    ),
+  };
+};
 
 // Whether a node writes an object or a regexp literal, each of which makes an object.
 export const hasObjectLiteral = (node: ts.Node): boolean =>
