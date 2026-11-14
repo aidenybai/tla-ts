@@ -526,6 +526,40 @@ export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
       return false;
     }
     const owner = ts.findAncestor(declaration, ts.isFunctionLike) ?? declaration.getSourceFile();
+    const getOwnerFunction = (reference: ts.Node) =>
+      ts.findAncestor(reference.parent, ts.isFunctionLike) ?? reference.getSourceFile();
+    // A return ends its function's call, unless a finally block runs after it, so only the rest
+    // of the return and the functions that the call makes run after it with the same variable. A
+    // call of the function itself, as in a recursive descent, binds a new one.
+    const returned = ts.findAncestor(node, (inner) =>
+      ts.isFunctionLike(inner) ? "quit" : ts.isReturnStatement(inner),
+    );
+    if (
+      returned !== undefined &&
+      getOwnerFunction(returned) === owner &&
+      ts.findAncestor(returned, (inner) =>
+        inner === owner ? "quit" : ts.isTryStatement(inner) && inner.finallyBlock !== undefined,
+      ) === undefined
+    ) {
+      // The two branches of a conditional in the return never both run.
+      const isOtherBranch = (reference: ts.Node) =>
+        ts.findAncestor(node, (inner) => {
+          if (inner === returned) return "quit";
+          const parent = inner.parent;
+          if (!ts.isConditionalExpression(parent) || inner === parent.condition) return false;
+          const other = inner === parent.whenTrue ? parent.whenFalse : parent.whenTrue;
+          return ts.findAncestor(reference, (outer) => outer === other) !== undefined;
+        }) !== undefined;
+      return (getReferences(declaration.getSourceFile()).get(symbol) ?? []).every(
+        (reference) =>
+          reference === declaration.name ||
+          reference === node ||
+          (getOwnerFunction(reference) === owner &&
+            (reference.end <= node.getStart() ||
+              isOtherBranch(reference) ||
+              ts.findAncestor(reference, (inner) => inner === returned) === undefined)),
+      );
+    }
     const isRepeated =
       ts.findAncestor(node, (inner) =>
         inner === owner
@@ -540,9 +574,7 @@ export const rejectSharing = (roots: readonly ts.Node[], context: Context) => {
         (reference) =>
           reference === declaration.name ||
           reference === node ||
-          (reference.end <= node.getStart() &&
-            (ts.findAncestor(reference.parent, ts.isFunctionLike) ?? reference.getSourceFile()) ===
-              owner),
+          (reference.end <= node.getStart() && getOwnerFunction(reference) === owner),
       )
     );
   };

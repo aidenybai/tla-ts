@@ -11749,6 +11749,49 @@ describe("errors", () => {
     ).toThrow("items would share an object that changes in place, so copy it");
   });
 
+  it("shares an array that a return gives where only a recursive call changes its own", async () => {
+    const getSource = (expected: number) => `
+      interface Tree {
+        arms: Tree[];
+        rest: number;
+      }
+      const tokens = [1, 1, 0, 2, 0, 3];
+      let position = 0;
+      const parse = (): Tree => {
+        const arms: Tree[] = [];
+        do {
+          const token = tokens[position];
+          position += 1;
+          if (token === 0) return { arms, rest: parse().arms.length };
+          arms.push({ arms: [], rest: token });
+        } while (position < tokens.length);
+        return { arms, rest: -1 };
+      };
+      const group = (count: number) => {
+        const items: number[] = [];
+        while (items.length < count) items.push(items.length);
+        return count > 1 ? { items, isMany: true } : { items, isMany: false };
+      };
+      const tree = parse();
+      const pair = group(2);
+      if (tree.arms.length !== 2 || tree.rest !== ${expected} || pair.items[1] !== 1 || !pair.isMany) {
+        throw new Error("returned");
+      }
+    `;
+    expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    expect((await checkModel(getSource(2))).failure?.message).toContain("returned");
+    expect(() =>
+      checkModel(`
+        const make = () => {
+          const items: number[] = [];
+          const add = () => items.push(1);
+          return { items, count: add() };
+        };
+        if (make().items.length !== 1) throw new Error("closure");
+      `),
+    ).toThrow("items would share an object that changes in place, so copy it");
+  });
+
   it("shares the arrays inside an array that a field holds", async () => {
     const result = await checkModel(`
       interface Item { value: number }
