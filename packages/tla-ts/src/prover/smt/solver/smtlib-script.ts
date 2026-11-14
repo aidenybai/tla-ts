@@ -511,6 +511,11 @@ export const runSmtlibScript = (
     isFindingMacros: settings.isFindingMacros,
     setup: getSetup(),
   });
+  // mk_special_solver_for_logic gives these logics the finite-domain solver, incremental or not.
+  const isUsingFdSolver = () =>
+    (script.state.logic === "QF_FD" || script.state.logic === "SAT") &&
+    !settings.isProducingProofs &&
+    !settings.parameters.has("tactic.default_tactic");
   const checkSat = (extra: number[]) => {
     const state = script.state;
     state.manager.limit.restart(Date.now() + options.timeLimitMs);
@@ -527,14 +532,9 @@ export const runSmtlibScript = (
       const isAssuming = isNamed || extra.length > 0;
       if (isAssuming) state.isIncremental = true;
       if (!isOptimizing) state.hasChecked = true;
-      // mk_special_solver_for_logic gives these logics the finite-domain solver, incremental or not.
-      const isFd =
-        (state.logic === "QF_FD" || state.logic === "SAT") &&
-        !settings.isProducingProofs &&
-        !settings.parameters.has("tactic.default_tactic");
       const assumptions = isNamed ? [...names, ...extra] : extra;
       const kernel =
-        isAssuming || (state.isIncremental && !isOptimizing && !isFd)
+        isAssuming || (state.isIncremental && !isOptimizing && !isUsingFdSolver())
           ? checkKernel(assumptions)
           : undefined;
       // Z3 retries a quantifier-free problem with its tactic when the incremental kernel gives up.
@@ -989,12 +989,8 @@ export const runSmtlibScript = (
       manager.limit.restart(Date.now() + options.timeLimitMs);
       manager.limit.push(settings.rlimit);
       const names = state.names.filter((name) => name !== -1);
-      const isFd =
-        (state.logic === "QF_FD" || state.logic === "SAT") &&
-        !settings.isProducingProofs &&
-        !settings.parameters.has("tactic.default_tactic");
       try {
-        if (isFd) {
+        if (isUsingFdSolver()) {
           if (names.length > 0)
             throw new SmtUnsupportedError("the named assertions of the finite-domain solver");
           const found = getFdConsequences(manager, new Map(), state.assertions, assumptions, vars);
