@@ -746,8 +746,41 @@ IsDataView(heap, value) ==
 
 IsTypedArray(heap, value) == IsHeap(value) /\\ "elementType" \\in DOMAIN heap.objects[value[Ref]]
 
+\\* The traps that a proxy's handler may hold.
+LOCAL ProxyTraps ==
+  {"getPrototypeOf", "setPrototypeOf", "isExtensible", "preventExtensions", "getOwnPropertyDescriptor",
+   "defineProperty", "has", "get", "set", "deleteProperty", "ownKeys", "apply", "construct"}
+
+\\* Whether a handler holds none of the traps, nor inherits any: an ordinary object that a script
+\\* makes, whose prototype is null or Object.prototype.
+LOCAL HasNoTraps(heap, handler) ==
+  LET object == heap.objects[handler[Ref]]
+      inherited == IF "Object.prototype" \\in DOMAIN heap.changed
+                   THEN heap.changed["Object.prototype"]
+                   ELSE BuiltIns["Object.prototype"]
+  IN /\\ IsHeap(handler)
+     /\\ DOMAIN object = DOMAIN EmptyObject
+     /\\ ProxyTraps \\cap DOMAIN object.values = {}
+     /\\ \\/ object.prototype = Null
+        \\/ object.prototype = ObjectPrototype /\\ ProxyTraps \\cap DOMAIN inherited.values = {}
+
+\\* The object that a proxy runs its internal methods on where its handler holds none of the traps,
+\\* and neither does any proxy's on the way, as each then runs its target's. tla-ts runs them only
+\\* on an ordinary object that a script makes, and stops at any other.
+RECURSIVE ProxiedObject(_, _)
+ProxiedObject(heap, ref) ==
+  LET target == ProxyTarget(heap, ref)
+  IN CASE ProxyHandler(heap, ref) = Null \\/ ~HasNoTraps(heap, ProxyHandler(heap, ref)) ->
+            Assert(FALSE, "tla-ts can't run a proxy's internal method here")
+       [] IsProxy(heap, target) -> ProxiedObject(heap, target)
+       [] /\\ IsHeap(target)
+          /\\ DOMAIN heap.objects[target[Ref]] = DOMAIN EmptyObject
+          /\\ ~heap.objects[target[Ref]].isOpaque ->
+            target
+       [] OTHER -> Assert(FALSE, "tla-ts can't run a proxy's internal method here")
+
 LOCAL LookupFor(heap, ref, isGlobalKey) ==
-  CASE IsProxy(heap, ref) -> Assert(FALSE, "tla-ts can't run a proxy's internal method here")
+  CASE IsProxy(heap, ref) -> heap.objects[ProxiedObject(heap, ref)[Ref]]
     [] IsTypedArray(heap, ref) -> Assert(FALSE, "tla-ts can't run a typed array's internal method here")
     [] ref \\in {Undefined, Null} ->
          Assert(FALSE, "tla-ts can't throw the TypeError of reading a property of " \\o ToString(ref))
@@ -772,7 +805,8 @@ LookupKey(heap, ref, key) ==
 
 Update(heap, ref, object) ==
   IF IsHeap(ref)
-  THEN [heap EXCEPT !.objects[ref[Ref]] = object]
+  THEN LET held == IF IsProxy(heap, ref) THEN ProxiedObject(heap, ref) ELSE ref
+       IN [heap EXCEPT !.objects[held[Ref]] = object]
   ELSE [heap EXCEPT !.changed = (BuiltInKey(ref) :> object) @@ @]
 
 \\* Whether new can call a value.

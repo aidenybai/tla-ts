@@ -24542,12 +24542,120 @@ describe("proxies", () => {
     );
   });
 
-  it("stops the check where something else reads a proxy", async () => {
+  it("stops the check where something else reads a proxy whose handler has a trap", async () => {
     const result = await checkModel(`
-      const proxy = new Proxy({ attr: { value: 1 } }, {});
+      const proxy = new Proxy({ attr: { value: 1 } }, { has: () => true });
       Object.create({}, proxy);
     `);
     expect(result.failure?.message).toContain("tla-ts can't run a proxy's internal method here");
+  });
+
+  describe("runs the internal methods of a proxy whose handler has no traps on its target", () => {
+    const source = `
+      const check = (actual: unknown, expected: unknown, label: string) => {
+        if (!Object.is(actual, expected)) throw new Error(label);
+      };
+      class Counter {
+        #count = 1;
+        static #made = 0;
+        label = "counter";
+        read() {
+          return this.#count;
+        }
+        static made() {
+          return Counter.#made;
+        }
+        static own() {
+          return this.#made;
+        }
+      }
+      const counter = new Counter();
+      const proxy = new Proxy(counter, {});
+      check(counter.read(), 1, "direct");
+      let caught = "";
+      try {
+        proxy.read();
+      } catch (error) {
+        caught = error instanceof TypeError ? "TypeError" : "other";
+      }
+      check(caught, "TypeError", "private");
+      const Proxied = new Proxy(Counter, {});
+      check(Proxied.made(), 0, "static");
+      caught = "";
+      try {
+        Proxied.own();
+      } catch (error) {
+        caught = error instanceof TypeError ? "TypeError" : "other";
+      }
+      check(caught, "TypeError", "static private");
+      const describe = (value: object) => {
+        const record = value as Record<string, unknown>;
+        record.added = 2;
+        delete record.label;
+        const keys: string[] = [];
+        for (const key in value) keys.push(key);
+        return \`\${Object.keys(value).join()}|\${Reflect.ownKeys(value).join()}|\${keys.join()}\`;
+      };
+      const target = { first: 1, label: "x" };
+      check(describe(new Proxy(new Proxy(target, {}), {})), "first,added|first,added|first,added", "keys");
+      check(Object.keys(target).join(), "first,added", "target");
+      const frozen = (value: object) => {
+        Object.preventExtensions(value);
+        return Object.isExtensible(value);
+      };
+      const plain = { value: 1 };
+      check(frozen(new Proxy(plain, {})), false, "inextensible");
+      check(Object.isExtensible(plain), false, "target inextensible");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["private", '(caught, "TypeError", "private")', '(caught, "", "private")'],
+      ["static", '(Proxied.made(), 0, "static")', '(Proxied.made(), 1, "static")'],
+      [
+        "static private",
+        '(caught, "TypeError", "static private")',
+        '(caught, "", "static private")',
+      ],
+      [
+        "keys",
+        '"first,added|first,added|first,added", "keys"',
+        '"first,label,added|first,added|first,added", "keys"',
+      ],
+      ["target", '"first,added", "target"', '"first,label", "target"'],
+      ["inextensible", '{})), false, "inextensible"', '{})), true, "inextensible"'],
+      [
+        "target inextensible",
+        '(plain), false, "target inextensible"',
+        '(plain), true, "target inextensible"',
+      ],
+    ])("rejects a wrong %s", async (label, expected, wrong) => {
+      expect((await checkModel(source.replace(expected, wrong))).failure?.message).toContain(
+        `"${label}"`,
+      );
+    });
+
+    it.each([
+      [
+        "reads a proxy of an array",
+        "const keysOf = (value: object) => Object.keys(value).join(); keysOf(new Proxy([1], {}));",
+      ],
+      [
+        "reads a revoked proxy",
+        "const keysOf = (value: object) => Object.keys(value).join(); const made = Proxy.revocable({ a: 1 }, {}); made.revoke(); keysOf(made.proxy);",
+      ],
+      [
+        "reads a proxy of a proxy whose handler has a trap",
+        "const keysOf = (value: object) => Object.keys(value).join(); keysOf(new Proxy(new Proxy({ a: 1 }, { has: () => true }), {}));",
+      ],
+    ])("stops where a script %s", async (_, source) => {
+      expect((await checkModel(source)).failure?.message).toContain(
+        "tla-ts can't run a proxy's internal method here",
+      );
+    });
   });
 });
 
