@@ -21935,6 +21935,26 @@ describe("errors", () => {
     ).toContain(expected);
   });
 
+  it("throws the TypeError of calling an upsert method that Node lacks", async () => {
+    const getSource = (expected: number) => `
+      let thrown = 0;
+      const map = new WeakMap<object, number>();
+      try {
+        WeakMap.prototype.getOrInsert.call([], {}, 1);
+      } catch (error) {
+        if (error instanceof TypeError) thrown += 1;
+      }
+      try {
+        map.getOrInsertComputed({}, () => 1);
+      } catch (error) {
+        if (error instanceof TypeError) thrown += 1;
+      }
+      if (thrown !== ${expected}) throw new Error("thrown");
+    `;
+    expect((await checkModel(getSource(2))).failure).toBeUndefined();
+    expect((await checkModel(getSource(1))).failure?.message).toContain("thrown");
+  });
+
   it("throws the TypeError of a weak collection's subclass on a registered symbol", async () => {
     const getSource = (expected: string) => `
       class Tags extends WeakMap<symbol, number> {}

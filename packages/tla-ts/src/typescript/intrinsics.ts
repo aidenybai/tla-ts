@@ -698,6 +698,43 @@ const getDeclaringPrototype = (symbol: ts.Symbol) =>
     )
     .find((prototype) => Object.hasOwn(BUILT_INS, prototype));
 
+// The built-in object that should hold a library method that the engine tla-ts follows lacks, as one
+// that TypeScript declares before Node ships it, where a read finds it undefined unless a script
+// defines it.
+export const getMissingMethod = (node: ts.Expression, context: Context) => {
+  const symbol = ts.isPropertyAccessExpression(node) ? getSymbol(node, context.checker) : undefined;
+  if (!ts.isPropertyAccessExpression(node) || symbol === undefined || !isLibrary(symbol)) {
+    return undefined;
+  }
+  const owner = getName(node.expression, context) ?? getDeclaringPrototype(symbol);
+  const key = node.name.text;
+  const isLacked = (name: string): boolean => {
+    const entry = BUILT_INS[name];
+    return (
+      entry !== undefined &&
+      !entry[3].some((property) => property[0] === key) &&
+      (entry[0] === null || isLacked(entry[0]))
+    );
+  };
+  return owner !== undefined && isLacked(owner) ? owner : undefined;
+};
+
+// The read of a method that getMissingMethod finds lacking, from the object that should hold it.
+export const translateMissingMethod = (
+  owner: string,
+  key: string,
+  node: ts.Node,
+  scope: Scope,
+  context: Context,
+) => {
+  context.builtIns.add(owner);
+  return useJavaScript(
+    "Get",
+    [getHeap(scope, node, context), getBuiltInValue(owner, node, context), string(key)],
+    context,
+  );
+};
+
 // Whether a call that tla-ts runs as a built-in function still calls it, as the object that the call
 // reads the function from holds it, or undefined where the call isn't of a built-in function.
 export const translateHoldsCallee = (node: ts.CallExpression, scope: Scope, context: Context) => {

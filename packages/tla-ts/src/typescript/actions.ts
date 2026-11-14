@@ -1,4 +1,5 @@
 import ts from "@typescript/typescript6";
+import { BUILT_INS } from "./built-ins";
 import type { ExceptPathStep, Expression, OperatorDefinition } from "../ast";
 import {
   checkElement,
@@ -250,7 +251,9 @@ import {
 import {
   COLLECTIONS,
   getBuiltIn,
+  getMissingMethod,
   isBuiltInObject,
+  translateMissingMethod,
   getMadeRegExp,
   getStoredBuiltIn,
   isInvalidRegExp,
@@ -1860,6 +1863,28 @@ export const translateCallStatement = (
   }
   if (loop !== undefined) {
     return translateLoopCall(expression, loop, path, context, frame, continueWith);
+  }
+  const missing = getMissingCall(expression, context);
+  if (missing !== undefined) {
+    const read = translateMissingMethod(
+      missing.owner,
+      missing.method.name.text,
+      expression,
+      path.scope,
+      context,
+    );
+    return ifThenElse(
+      useJavaScript("SameValue", [read, getUndefined(context)], context),
+      throwTypeError(path, expression, context, frame),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string(
+            `tla-ts can't call ${missing.owner}.${missing.method.name.text} where a script defined it`,
+          ),
+        ]),
+      ),
+    );
   }
   const first = getRootCall(expression.arguments.at(0));
   if (
@@ -9180,6 +9205,42 @@ const delegateToAsyncIterator = (
 
 // A call of a collection's method through call, such as Set.prototype.add.call({}), on a receiver
 // that isn't that kind of collection, which the method rejects with a TypeError.
+// A call of a library method that the engine lacks, directly or through call or apply, whose
+// receiver and arguments run nothing that a script sees, which throws a TypeError where the method
+// is undefined. The
+// built-in object that should hold it holds it for its instances too, as tla-ts stops where a
+// script gives a collection its own method.
+const getMissingCall = (node: ts.CallExpression, context: Context) => {
+  const callee = node.expression;
+  const method =
+    ts.isPropertyAccessExpression(callee) &&
+    ["call", "apply"].includes(callee.name.text) &&
+    ts.isPropertyAccessExpression(callee.expression) &&
+    getMissingMethod(callee.expression, context) !== undefined
+      ? callee.expression
+      : callee;
+  const owner = getMissingMethod(method, context);
+  return context.heap !== undefined &&
+    owner !== undefined &&
+    ts.isPropertyAccessExpression(method) &&
+    (ts.isIdentifier(method.expression) || isBuiltInObject(method.expression, context)) &&
+    node.arguments.every(
+      (argument) =>
+        isInertValue(argument) ||
+        isBuiltInObject(argument, context) ||
+        (ts.isNewExpression(argument) &&
+          (argument.arguments ?? []).length === 0 &&
+          COLLECTIONS.some(
+            (collection) => collection === getBuiltIn(argument.expression, context),
+          )) ||
+        (ts.isCallExpression(argument) &&
+          getBuiltIn(argument.expression, context) === "Symbol" &&
+          argument.arguments.every(ts.isStringLiteral)),
+    )
+    ? { method, owner }
+    : undefined;
+};
+
 const getMisreceivedCall = (node: ts.CallExpression, context: Context) => {
   const callee = node.expression;
   const receiver = node.arguments.at(0);
@@ -9217,7 +9278,12 @@ const getMisreceivedCall = (node: ts.CallExpression, context: Context) => {
     (ts.isPropertyAccessExpression(cast) &&
       cast.name.text === "prototype" &&
       getBuiltIn(cast.expression, context) !== undefined);
-  return collection !== undefined && isOther ? { collection, method: method.name.text } : undefined;
+  // A method that the engine lacks, which the script reads as undefined.
+  return collection !== undefined &&
+    isOther &&
+    BUILT_INS[`${collection}.prototype.${method.name.text}`] !== undefined
+    ? { collection, method: method.name.text }
+    : undefined;
 };
 
 // A read of an object's property throws a TypeError where it runs %ThrowTypeError%, or a buffer's or
