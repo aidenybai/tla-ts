@@ -332,6 +332,10 @@ export const getSatParams = (parameters: ReadonlyMap<string, string>) =>
       }),
   );
 
+// sat_params reads what using-params leaves unset from the sat module's global parameters.
+const getSatTacticParams = (environment: TacticEnvironment, params: TacticParams) =>
+  new Map([...getSatParams(environment.parameters), ...params]);
+
 const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: Goal) => {
   const manager = environment.manager;
   // mk_smt_tactic: with sat.euf, the smt tactic is the sat tactic.
@@ -526,6 +530,8 @@ const SAT_DESCRS = getDescrs("sat", [
   ["search.sat.conflicts", PARAM_UINT, 400, true],
   ["search.unsat.conflicts", PARAM_UINT, 400, true],
   ["restart.initial", PARAM_UINT, 2, true],
+  ["restart.max", PARAM_UINT, UINT_MAX, true],
+  ["inprocess.max", PARAM_UINT, UINT_MAX, true],
   ["random_seed", PARAM_UINT, 0, true],
   ["burst_search", PARAM_UINT, 100, true],
   ["enable_pre_simplify", PARAM_BOOL, false, true],
@@ -1293,7 +1299,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: SAT_DESCRS,
       isRejectingUnknown: false,
-      build: (environment, params) => createSatTactic(environment.manager, params),
+      build: (environment, params) =>
+        createSatTactic(environment.manager, getSatTacticParams(environment, params)),
     },
   ],
   [
@@ -1301,7 +1308,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: SAT_DESCRS,
       isRejectingUnknown: false,
-      build: (environment, params) => createFdTactic(environment.manager, params),
+      build: (environment, params) =>
+        createFdTactic(environment.manager, getSatTacticParams(environment, params)),
     },
   ],
   [
@@ -1309,7 +1317,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: SAT_DESCRS,
       isRejectingUnknown: false,
-      build: (environment, params) => createSatTactic(environment.manager, params),
+      build: (environment, params) =>
+        createSatTactic(environment.manager, getSatTacticParams(environment, params)),
     },
   ],
   [
