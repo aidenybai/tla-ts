@@ -1882,6 +1882,26 @@ const compileMembership = (
         `((${name}) => ${tests.length === 0 ? "false" : tests.map((test) => test.emit()).join(" || ")})(${element.emit()})`,
     };
   }
+  // TLC tests membership in an infinite set less another in the first set, then in the other.
+  if (
+    setExpression.kind === "Apply" &&
+    setExpression.args.length === 2 &&
+    isBuiltin(program, frame, setExpression.operator, "\\") &&
+    isConstantExpression(program, setExpression.args[0], frame.scope)
+  ) {
+    const [kept, removed] = setExpression.args;
+    const value = evaluateConstant(program, kept);
+    if (typeof value === "object" && value.kind === "InfiniteSet") {
+      const name = getName(program, "e");
+      const named = { type: element.type, emit: () => name };
+      const isKept = compileMembership(program, named, kept, frame);
+      const isRemoved = compileMembership(program, named, removed, frame);
+      return {
+        type: createBool(),
+        emit: () => `((${name}) => ${isKept.emit()} && !${isRemoved.emit()})(${element.emit()})`,
+      };
+    }
+  }
   // TLC tests membership in a set of records field by field, without enumerating it.
   if (setExpression.kind === "RecordSet") {
     const fields = [...setExpression.fields].sort((left, right) =>
