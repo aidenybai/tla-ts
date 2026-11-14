@@ -1353,6 +1353,35 @@ describe("values", () => {
     });
   });
 
+  describe("keeps the low bits of numbers beyond 32 bits in bytes, codes, and ToInt32", () => {
+    const getSource = (expected: string) => `
+      const view = new DataView(new ArrayBuffer(4));
+      view.setInt16(0, 4294967296 + 513);
+      view.setInt16(2, -4294967296 - 1);
+      const clamped = new Uint8ClampedArray(2);
+      clamped[0] = 2 ** 40;
+      clamped[1] = -(2 ** 40);
+      const kept = [
+        view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3), clamped[0],
+        clamped[1], String.fromCharCode(4294967296 + 65, 2 ** 53 + 66), (2 ** 53 + 66) | 0,
+        (-(2 ** 60) + 3) | 0, (2 ** 63) | 0, (-(2 ** 53) - 4) | 0, (2 ** 53 + 2 ** 31) | 0,
+      ];
+      if (kept.join() !== "${expected}") throw new Error(kept.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("2,1,255,255,255,0,AB,66,0,0,-4,-2147483648"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects 2^31 past 2^53 as 2^31", async () => {
+      expect(
+        (await checkModel(getSource("2,1,255,255,255,0,AB,66,0,0,-4,2147483648"))).failure?.message,
+      ).toContain("-2147483648");
+    });
+  });
+
   describe("converts lengths and indices beyond 32 bits as Node does", () => {
     const getSource = (expected: string) => `
       const like = { 0: 12, length: -4294967294 };

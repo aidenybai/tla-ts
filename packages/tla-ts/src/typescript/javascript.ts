@@ -798,9 +798,13 @@ LOCAL Int32(value) ==
     [] IsFraction(value) -> Truncate(value)
     [] IsWide(value) ->
          IF value[Wide][1] % 2 = 1 THEN value[Wide][2] - MaxInteger - 1 ELSE value[Wide][2]
-    \\* A Double from 2^32 is a multiple of 2^32.
-    [] IsDouble(value) ->
-         IF value[Double][2] >= 32 THEN 0 ELSE Assert(FALSE, "tla-ts can't convert this number to 32 bits")
+    \\* A Double that is an integer keeps the low 32 bits of its magnitude, negated with it.
+    [] IsDouble(value) /\\ value[Double][2] >= 0 ->
+         LET magnitude == NatShiftLeft(Significand(value[Double]), value[Double][2])
+             low == NatHalves(NatSubtract(magnitude, NatShiftLeft(NatShiftRight(magnitude, 32), 32)))
+             signed == IF low[1] = 1 THEN low[2] - MaxInteger - 1 ELSE low[2]
+         IN IF ~value[Double][1] \\/ signed = -MaxInteger - 1 THEN signed ELSE -signed
+    [] IsDouble(value) -> Assert(FALSE, "tla-ts can't convert this number to 32 bits")
     [] OTHER -> value
 
 \\* The count that a shift takes: ToUint32 of its right operand, modulo 32.
@@ -2605,6 +2609,7 @@ FromCharCodes(codes, isCodePoint) ==
            point == CASE code \\in {NaN, Infinity, NegativeInfinity, NegativeZero} -> 0
                       [] isCodePoint /\\ IsBig(code) -> BeyondInteger
                       [] isCodePoint -> code
+                      [] IsBig(code) -> Int32(code) % 65536
                       [] OTHER -> IntegerOf(code) % 65536
        IN  CASE isCodePoint /\\ (code \\in {NaN, Infinity, NegativeInfinity} \\/ IsFraction(code) \\/ point < 0 \\/ point > 1114111) ->
                   Assert(FALSE, "tla-ts can't throw the RangeError of String.fromCodePoint")
@@ -4505,6 +4510,14 @@ LOCAL FloatBytes(value, type) ==
 \\* The little-endian bytes that an element of a type holds for a number.
 NumberBytes(type, value) ==
   CASE type \\in {"Float16", "Float32", "Float64"} -> FloatBytes(value, type)
+    \\* An integer type keeps the low bits, which a Wide integer's ToInt32 holds, and a Double from 2^32
+    \\* has none set.
+    [] IsWide(value) /\\ type = "Uint8Clamped" -> <<IF IsNegative(value) THEN 0 ELSE 255>>
+    [] IsWide(value) -> [position \\in 1..ElementSize(type) |-> (Int32(value) \\div 2^(8 * (position - 1))) % 256]
+    [] IsDouble(value) /\\ value[Double][2] >= 32 ->
+         IF type = "Uint8Clamped"
+         THEN <<IF IsNegative(value) THEN 0 ELSE 255>>
+         ELSE [position \\in 1..ElementSize(type) |-> 0]
     [] IsBig(value) -> BeyondInteger
     [] IsFraction(value) /\\ type = "Uint8Clamped" ->
          Assert(FALSE, "tla-ts can't round a fraction to a byte")
