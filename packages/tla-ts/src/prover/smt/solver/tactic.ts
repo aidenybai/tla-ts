@@ -1956,13 +1956,12 @@ export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
     }
   })();
   if (typeof goals === "string") return { ...undecided, reasonUnknown: goals };
-  if (goals !== undefined && isDecidedSat(goals))
-    return {
-      status: L_TRUE,
-      model: convertModel(goals[0], goals[0].model ?? new ProtoModel(goal.manager)),
-      core: undefined,
-      reasonUnknown: "",
-    };
+  if (goals !== undefined && isDecidedSat(goals)) {
+    const model = convertModel(goals[0], goals[0].model ?? new ProtoModel(goal.manager));
+    return goal.manager.limit.inc()
+      ? { status: L_TRUE, model, core: undefined, reasonUnknown: "" }
+      : { ...undecided, model, reasonUnknown: "canceled" };
+  }
   if (goals !== undefined && isDecidedUnsat(goals))
     return {
       status: L_FALSE,

@@ -1509,6 +1509,10 @@ export const runSmtlibScript = (
         print(`(:reason-unknown "${reasonUnknown.replaceAll('"', '\\"')}")`);
         return;
       }
+      if (info.text === ":rlimit") {
+        print(`(:rlimit ${script.state.manager.limit.count})`);
+        return;
+      }
       if (info.text !== ":error-behavior")
         throw new SmtUnsupportedError(`the information ${info.text}`);
       print(

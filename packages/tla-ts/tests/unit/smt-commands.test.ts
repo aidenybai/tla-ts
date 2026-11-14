@@ -549,4 +549,48 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       ]),
     ).toEqual(["sat", "sat", "sat"]);
   });
+
+  // check_sat counts one resource unit once the model of a decided goal is converted, and answers unknown when that exceeds the limit.
+  it("counts the resource units of check-sat-using as Z3 does", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(get-info :rlimit)",
+        "(check-sat-using skip)",
+        "(get-info :rlimit)",
+        "(check-sat-using sat)",
+        "(get-info :rlimit)",
+        "(apply sat)",
+        "(get-info :rlimit)",
+        "(check-sat-using (then simplify sat))",
+        "(get-info :rlimit)",
+        "(set-option :rlimit 1)",
+        "(check-sat-using sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+        "(check-sat-using skip)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "(:rlimit 1)",
+      "sat",
+      "(:rlimit 2)",
+      "sat",
+      "(:rlimit 7)",
+      "(goals",
+      "(goal",
+      "  :precision precise :depth 1)",
+      ")",
+      "(:rlimit 11)",
+      "sat",
+      "(:rlimit 12)",
+      "unknown",
+      '(:reason-unknown "canceled")',
+      "(:rlimit 13)",
+      "sat",
+      '(:reason-unknown "")',
+      "(:rlimit 14)",
+    ]);
+  });
 });
