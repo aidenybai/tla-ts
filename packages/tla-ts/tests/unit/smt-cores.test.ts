@@ -43,4 +43,73 @@ describe("runSmtlibScript orders cores and terms as Z3 does", () => {
       "((not p) a1 a2)",
     ]);
   });
+
+  // pb_rewriter's compare: q is parsed before p here, and p has the smaller id.
+  it("orders the arguments of a pseudo-Boolean constraint by ast id", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(simplify q)",
+        "(assert p)",
+        "(simplify ((_ pbge 2 1 1 1) q p r))",
+        "(simplify ((_ pbeq 3 1 2 3) q r p))",
+        "(simplify ((_ pble 3 1 2 3) q p r))",
+      ]),
+    ).toEqual([
+      "q",
+      "((_ at-least 2) p q r)",
+      "((_ pbeq 3 3 1 2) p q r)",
+      "(or (not r) (and (not p) (not q)))",
+    ]);
+  });
+
+  // arith_qe_util::normalize_sum sorts by mul_lt, which compares ids.
+  it("orders the terms of an equality that qe solves by ast id", () => {
+    expect(
+      run([
+        "(declare-const u Int)",
+        "(declare-const v Int)",
+        "(declare-const w Int)",
+        "(simplify (+ w v))",
+        "(assert (> u 0))",
+        "(assert (exists ((x Int)) (and (<= (+ (* 3 w) (* 2 v) u x) 0) (>= (+ x u (* 2 v) (* 3 w)) 0) (> x v))))",
+        "(apply qe)",
+      ]),
+    ).toEqual([
+      "(+ w v)",
+      "(goals",
+      "(goal",
+      "  (> u 0)",
+      "  (<= (+ (* 3 v) u (* 3 w)) (- 1))",
+      "  :precision precise :depth 1)",
+      ")",
+    ]);
+  });
+
+  // tseitin_cnf_tactic's swap_if_gt compares ids.
+  it("orders the atoms of an or of three ands by ast id", () => {
+    expect(
+      run([
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const c Bool)",
+        "(simplify (and c b))",
+        "(assert (or a b))",
+        "(assert (or (not (or c a)) (not (or b a)) (not (or c b))))",
+        "(apply tseitin-cnf)",
+      ]),
+    ).toEqual([
+      "(and c b)",
+      "(goals",
+      "(goal",
+      "  (or a b)",
+      "  (or (not a) (not c))",
+      "  (or (not a) (not b))",
+      "  (or (not c) (not b))",
+      "  :precision precise :depth 1)",
+      ")",
+    ]);
+  });
 });

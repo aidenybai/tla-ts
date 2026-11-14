@@ -237,7 +237,7 @@ export class ModelFixer {
       isLess: (first, second) =>
         manager.isBvNumeral(first) && manager.isBvNumeral(second)
           ? manager.getBvNumeralValue(first) < manager.getBvNumeralValue(second)
-          : first < second,
+          : manager.ids[first] < manager.ids[second],
       mkLt: (first, second) =>
         manager.mkApp(OP_NOT, [mkBvApp(manager, OP_ULEQ, [second, first])], SORT_BOOL),
     };

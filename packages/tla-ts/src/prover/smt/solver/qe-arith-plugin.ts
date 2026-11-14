@@ -364,8 +364,9 @@ class ArithQeUtil {
         ? manager.getArg(expr, 1)
         : expr;
     };
+    const ids = manager.ids;
     const args = [...manager.getArgs(simplified)].sort(
-      (first, second) => strip(first) - strip(second),
+      (first, second) => ids[strip(first)] - ids[strip(second)],
     );
     return this.mkAddN(args);
   }
