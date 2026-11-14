@@ -727,10 +727,12 @@ export const isLiftable = (callee: FunctionNode, context: Context, isStateTaken 
 // A local function that a call reaches again while tla-ts inlines it, compiled once as a definition
 // beside the top-level ones. It takes the names it reads from the functions around it as
 // parameters, which a call passes as they are then, as JavaScript reads them then. It may change
-// none of them. One that reads state, or the heap, takes the state as the call reads it too.
-export const translateLiftedCall = (
+// none of them. One that reads state, or the heap, takes the state as the call reads it too. A call
+// passes the values of its parameters, as a call's arguments or an array method's elements give.
+export const callLifted = (
   callee: FunctionNode,
-  node: ts.CallExpression,
+  node: ts.Node,
+  values: readonly Expression[],
   scope: Scope,
   context: Context,
 ) => {
@@ -798,22 +800,26 @@ export const translateLiftedCall = (
     }
     return binding;
   });
+  return call(definition.name, [
+    ...callee.parameters.map((_, position) => values[position] ?? getUndefined(context)),
+    ...capturedValues,
+    ...variables.map((entry) => scope.bindings.get(entry[0]) ?? entry[1]),
+  ]);
+};
+
+export const translateLiftedCall = (
+  callee: FunctionNode,
+  node: ts.CallExpression,
+  scope: Scope,
+  context: Context,
+) => {
   const values = shareArguments(
     node.arguments.map((argument) => translateExpression(argument, scope, context)),
     context,
   );
-  const operands = callee.parameters.map(
-    (_, position) => values.shared[position] ?? getUndefined(context),
-  );
   return render(
     values.evaluate(
-      leaf(
-        call(definition.name, [
-          ...operands,
-          ...capturedValues,
-          ...variables.map((entry) => scope.bindings.get(entry[0]) ?? entry[1]),
-        ]),
-      ),
+      leaf(callLifted(callee, node, values.shared, scope, context)),
       leaf(getUndefined(context)),
     ),
   );

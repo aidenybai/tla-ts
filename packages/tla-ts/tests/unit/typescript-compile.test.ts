@@ -5400,6 +5400,35 @@ describe("calls", () => {
     await expect(checkModel(getSource(5))).rejects.toThrow('"step"');
   });
 
+  it("runs a local function that an array method calls from inside itself as one definition", async () => {
+    const getSource = (expected: string) => `
+      interface Tree {
+        first: number;
+        children: Tree[];
+      }
+      const showText = (text: string, root: Tree | undefined) => {
+        const show = (tree: Tree | undefined): string =>
+          tree === undefined
+            ? "?"
+            : tree.children.length === 0
+              ? text[tree.first]
+              : \`[\${tree.children.map(show).join("")}]\`;
+        return show(root);
+      };
+      const tree: Tree = {
+        first: 0,
+        children: [{ first: 1, children: [] }, { first: 2, children: [{ first: 0, children: [] }] }],
+      };
+      const result = \`\${showText("abc", tree)};\${showText("xyz", tree.children[1])};\${showText("abc", undefined)}\`;
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect(printModule(compile(getSource("[b[a]];[x];?")).source)).toMatch(/^RECURSIVE show/m);
+    expect((await checkModel(getSource("[b[a]];[x];?"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("[b[a]];[z];?"))).failure?.message).toContain(
+      "[b[a]];[x];?",
+    );
+  });
+
   it("runs a local function that calls itself as one operator, which reads the locals around it", async () => {
     const getSource = (cases: number, expected: string) => {
       const kinds = Array.from({ length: cases }, (_, position) => `K${position}`);

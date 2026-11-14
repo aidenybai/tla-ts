@@ -24,7 +24,13 @@ import {
   translateSetKey,
   translateToString,
 } from "./expressions";
-import { callStateOperator, mayThrow, translateBody, translateLocalCall } from "./functions";
+import {
+  callLifted,
+  callStateOperator,
+  mayThrow,
+  translateBody,
+  translateLocalCall,
+} from "./functions";
 import {
   DATE_FIELDS,
   getHeap,
@@ -200,11 +206,7 @@ const translateCallback = (callback: ts.Expression, scope: Scope, context: Conte
       : ts.isVariableDeclaration(callee.parent)
         ? callee.parent
         : undefined;
-  if (
-    callee === undefined ||
-    declaration === undefined ||
-    ts.findAncestor(declaration.parent, ts.isFunctionLike) !== undefined
-  ) {
+  if (callee === undefined || declaration === undefined) {
     return translateBody(found.body, scope, context);
   }
   if (!context.inProgress.has(callee)) {
@@ -213,8 +215,9 @@ const translateCallback = (callback: ts.Expression, scope: Scope, context: Conte
     context.inProgress.delete(callee);
     return value;
   }
-  // A top-level function that runs from inside itself as a callback calls itself, as a call in its
-  // body would.
+  // A function that runs from inside itself as a callback calls itself, as a call in its body
+  // would: a top-level one as its operator, and a local one as the definition that takes the names
+  // it reads from the functions around it.
   const values = found.parameters.map((parameter) =>
     ts.isIdentifier(parameter.name) &&
     context.checker.getTypeAtLocation(parameter.name).getCallSignatures().length === 0
@@ -227,13 +230,10 @@ const translateCallback = (callback: ts.Expression, scope: Scope, context: Conte
       callback,
     );
   }
-  return callStateOperator(
-    declaration,
-    callee,
-    values.flatMap((value) => value ?? []),
-    scope,
-    context,
-  );
+  const passed = values.flatMap((value) => value ?? []);
+  return ts.findAncestor(declaration.parent, ts.isFunctionLike) === undefined
+    ? callStateOperator(declaration, callee, passed, scope, context)
+    : callLifted(callee, callback, passed, scope, context);
 };
 
 const translateTest = (callback: ts.Expression, scope: Scope, context: Context) => {
