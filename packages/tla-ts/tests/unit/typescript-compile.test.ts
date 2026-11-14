@@ -20868,6 +20868,19 @@ describe("errors", () => {
     expect(negative.failure?.message).toContain("tla-ts can't throw the RangeError of repeat");
   });
 
+  it("tells and fixes lone surrogates with isWellFormed and toWellFormed", async () => {
+    const getSource = (expected: string) => `
+      const leading = "\\uD83D";
+      const trailing = "\\uDCA9";
+      const whole = leading + trailing;
+      const checks = [("a" + leading).isWellFormed(), (trailing + leading).isWellFormed(), whole.isWellFormed()];
+      if (checks.join() !== "false,false,true") throw new Error("is " + checks.join());
+      if ((trailing + leading + "c" + whole).toWellFormed() !== "${expected}") throw new Error("to");
+    `;
+    expect((await checkModel(getSource("\\uFFFD\\uFFFDc\\uD83D\\uDCA9"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("\\uFFFDc\\uD83D\\uDCA9"))).rejects.toThrow("to");
+  });
+
   it("splits and replaces at a string", async () => {
     const result = await checkModel(`
       const text: string = "one two  three";

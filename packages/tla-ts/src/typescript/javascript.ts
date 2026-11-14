@@ -2455,17 +2455,37 @@ StringConcat(value, first, second, third) ==
 
 LOCAL IsAscii(text) == \\A character \\in CharactersOf(text) : character \\in DOMAIN AsciiCodes
 
-\\* String.prototype.isWellFormed, where a string of ASCII holds no lone surrogate.
-IsWellFormed(value) ==
-  IF IsAscii(Text(value))
-  THEN TRUE
-  ELSE Assert(FALSE, "tla-ts can't tell the surrogates of a character outside ASCII")
+LOCAL HighSurrogates == {SubSeq(SurrogatePairs, 2 * offset + 1, 2 * offset + 1) : offset \\in 0..1023}
 
-\\* String.prototype.toWellFormed, which leaves a string of ASCII as it is.
+LOCAL LowSurrogates == {SubSeq(SurrogatePairs, 2 * offset + 2, 2 * offset + 2) : offset \\in 0..1023}
+
+\\* Whether the code unit at a position is a surrogate without its other half beside it.
+LOCAL IsLoneSurrogateAt(text, position) ==
+  LET character == SubSeq(text, position, position)
+  IN  \\/ /\\ character \\in HighSurrogates
+         /\\ (position = Len(text) \\/ SubSeq(text, position + 1, position + 1) \\notin LowSurrogates)
+      \\/ /\\ character \\in LowSurrogates
+         /\\ (position = 1 \\/ SubSeq(text, position - 1, position - 1) \\notin HighSurrogates)
+
+\\* String.prototype.isWellFormed, which tells whether a string holds no lone surrogate.
+IsWellFormed(value) ==
+  LET text == Text(value)
+  IN  IsAscii(text) \\/ \\A position \\in 1..Len(text) : ~IsLoneSurrogateAt(text, position)
+
+\\* The code units from position first to last, with U+FFFD for each lone surrogate, joined as halves.
+RECURSIVE WellFormedBetween(_, _, _)
+LOCAL WellFormedBetween(text, first, last) ==
+  CASE first > last -> ""
+    [] first = last ->
+         IF IsLoneSurrogateAt(text, first) THEN CodeUnit(65533) ELSE SubSeq(text, first, first)
+    [] OTHER ->
+         LET middle == (first + last) \\div 2
+         IN  WellFormedBetween(text, first, middle) \\o WellFormedBetween(text, middle + 1, last)
+
+\\* String.prototype.toWellFormed, which writes U+FFFD for each lone surrogate.
 ToWellFormed(value) ==
-  IF IsAscii(Text(value))
-  THEN Text(value)
-  ELSE Assert(FALSE, "tla-ts can't tell the surrogates of a character outside ASCII")
+  LET text == Text(value)
+  IN  IF IsWellFormed(text) THEN text ELSE WellFormedBetween(text, 1, Len(text))
 
 \\* String.prototype.normalize, which leaves a string of ASCII as it is in every form, and throws a
 \\* RangeError for any other form.
