@@ -3405,7 +3405,8 @@ const compileStep = (
   primed: (string | undefined)[],
 ): (() => string) => {
   if (pending.length === 0) {
-    if (primed.some((code) => code === undefined)) return unsupported();
+    // TLC fails on a step that leaves a variable unassigned only where it reaches the step.
+    if (primed.some((code) => code === undefined)) return () => "H.deopt();";
     return () => `emit([${primed.join(", ")}]);`;
   }
   // With warnings on, TLC evaluates what is left once every variable is assigned, without branching.
