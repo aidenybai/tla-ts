@@ -422,6 +422,7 @@ export class RuleManager {
     names.reverse();
     const queryPredicate = this.context.mkFreshHeadPredicate("query", "", domain);
     rules.setOutputPredicate(queryPredicate);
+    this.context.addGenericModelConverter([{ decl: queryPredicate, def: -1 }]);
     const head = manager.mkApp(
       queryPredicate,
       domain.map((sort, index) => manager.mkVar(domain.length - index - 1, sort)),

@@ -1,6 +1,9 @@
 // Ported from Z3 (src/muz/transforms/dl_mk_coi_filter.cpp, src/muz/dataflow/dataflow.h,
 // src/muz/dataflow/reachability.h), MIT license, see z3-license.txt.
+import { ObjHashtable, ObjMap } from "../hashtable";
 import type { DatalogContext } from "./dl-context";
+import type { Rule } from "./dl-rule";
+import { HornSubsumeModelConverter } from "./horn-subsume-model-converter";
 import { RuleSet } from "./dl-rule-set";
 import type { RuleTransformerPlugin } from "./dl-rule-transformer";
 
@@ -15,30 +18,50 @@ export class MkCoiFilter implements RuleTransformerPlugin {
     return this.bottomUp(topDown ?? source) ?? topDown;
   }
 
-  // The predicates whose rules can derive a fact: a rule fires once its positive predicates can.
-  private getBottomUpReachable(source: RuleSet) {
+  // dataflow_engine<reachability_info>::run_bottom_up: whether the rules of a predicate can
+  // derive a fact, for the predicates the engine reached.
+  private runBottomUp(source: RuleSet) {
     const manager = this.context.manager;
-    const reachable = new Set<number>();
-    let isChanged = true;
-    while (isChanged) {
-      isChanged = false;
-      for (const rule of source.rules) {
-        const head = rule.getDecl(manager);
-        if (reachable.has(head)) continue;
-        let isFiring = true;
-        for (let index = 0; isFiring && index < rule.positiveSize; index++)
-          isFiring = reachable.has(rule.getTailDecl(manager, index));
-        if (!isFiring) continue;
-        reachable.add(head);
-        isChanged = true;
+    const getHash = (decl: number) => manager.getDeclHash(decl);
+    const facts = new ObjMap<boolean>(getHash);
+    const body2rules = new Map<number, Rule[]>();
+    const todos = [new ObjHashtable(getHash), new ObjHashtable(getHash)];
+    let todoIndex = 0;
+    for (const rule of source.rules) {
+      for (let index = 0; index < rule.uninterpretedSize; index++) {
+        const decl = rule.getTailDecl(manager, index);
+        const users = body2rules.get(decl);
+        if (users === undefined) body2rules.set(decl, [rule]);
+        else users.push(rule);
       }
+      const head = rule.getDecl(manager);
+      if (rule.positiveSize !== 0 || facts.get(head) === true) continue;
+      facts.set(head, true);
+      todos[todoIndex].add(head);
     }
-    return reachable;
+    while (todos[todoIndex].size > 0) {
+      for (const decl of todos[todoIndex])
+        for (const rule of body2rules.get(decl) ?? []) {
+          const head = rule.getDecl(manager);
+          if (!facts.has(head)) facts.set(head, false);
+          if (facts.get(head) === true) continue;
+          let isFiring = true;
+          for (let index = 0; isFiring && index < rule.positiveSize; index++)
+            isFiring = facts.get(rule.getTailDecl(manager, index)) === true;
+          if (!isFiring) continue;
+          facts.set(head, true);
+          todos[1 - todoIndex].add(head);
+        }
+      todos[todoIndex] = new ObjHashtable(getHash);
+      todoIndex = 1 - todoIndex;
+    }
+    return facts;
   }
 
   private bottomUp(source: RuleSet) {
     const manager = this.context.manager;
-    const reachable = this.getBottomUpReachable(source);
+    const facts = this.runBottomUp(source);
+    const unreachable = new ObjHashtable((decl) => manager.getDeclHash(decl));
     const result = new RuleSet(this.context);
     result.inheritPredicates(source);
     for (const rule of source.rules) {
@@ -46,7 +69,8 @@ export class MkCoiFilter implements RuleTransformerPlugin {
       let newTail: number[] | undefined;
       let newNegated: boolean[] = [];
       for (let index = 0; index < rule.uninterpretedSize; index++) {
-        const isReachable = reachable.has(rule.getTailDecl(manager, index));
+        const isReachable = facts.get(rule.getTailDecl(manager, index)) === true;
+        if (!isReachable) unreachable.add(rule.getTailDecl(manager, index));
         if (rule.isNegated[index]) {
           if (!isReachable && newTail === undefined) {
             newTail = rule.tail.slice(0, index);
@@ -73,6 +97,12 @@ export class MkCoiFilter implements RuleTransformerPlugin {
     }
     if (result.rules.length === source.rules.length) return undefined;
     result.close();
+    if (this.context.modelConverters !== undefined) {
+      for (const [decl, isReachable] of facts) if (!isReachable) unreachable.add(decl);
+      this.context.addGenericModelConverter(
+        [...unreachable].map((decl) => ({ decl, def: manager.falseExpr })),
+      );
+    }
     return result;
   }
 
@@ -103,6 +133,7 @@ export class MkCoiFilter implements RuleTransformerPlugin {
     const result = new RuleSet(this.context);
     result.inheritPredicates(source);
     const seen = new Set<number>();
+    const prunedPreds = new ObjHashtable((decl) => manager.getDeclHash(decl));
     for (const rule of source.rules) {
       const predicate = rule.getDecl(manager);
       if (seen.has(predicate)) continue;
@@ -111,11 +142,28 @@ export class MkCoiFilter implements RuleTransformerPlugin {
         for (const kept of source.getPredicateRules(predicate)) result.addRule(kept);
         continue;
       }
-      if (!this.context.hasModelConverter) continue;
+      if (this.context.modelConverters === undefined) continue;
       for (const pruned of source.getPredicateRules(predicate))
         for (let index = 0; index < pruned.uninterpretedSize; index++)
           if (pruned.getTailDecl(manager, index) !== predicate) return undefined;
+      prunedPreds.add(predicate);
     }
-    return result.rules.length === source.rules.length ? undefined : result;
+    if (result.rules.length === source.rules.length) return undefined;
+    if (this.context.modelConverters !== undefined && prunedPreds.size > 0) {
+      const horn = new HornSubsumeModelConverter(this.context);
+      this.context.addGenericModelConverter(
+        [...prunedPreds].map((decl) => ({
+          decl,
+          def: manager.mkOr(
+            source
+              .getPredicateRules(decl)
+              .map((rule) =>
+                horn.mkHorn(rule.head, manager.mkAnd(rule.tail.slice(rule.uninterpretedSize))),
+              ),
+          ),
+        })),
+      );
+    }
+    return result;
   }
 }

@@ -174,11 +174,21 @@ class HornTactic {
       }
       queries.length = 0;
       queries.push(query);
+      goal.addConverter(manager.decls[query]);
     }
     const reachable = context.query(queries[0]);
     goal.depth++;
     if (reachable === L_TRUE && context.isMonotone()) goal.assert(manager.falseExpr);
-    if (reachable === L_FALSE) goal.reset();
+    if (reachable === L_FALSE) {
+      goal.reset();
+      // model2model_converter: the interpretations go to the goal's model in table order.
+      const found = context.getModel();
+      goal.addModelConversion((model) => {
+        for (const [decl, value] of found.constInterps) model.registerConst(decl, value);
+        for (const [decl, interp] of found.funcInterps) model.registerFunc(decl, interp.copy());
+        return model;
+      });
+    }
     return [goal];
   }
 }

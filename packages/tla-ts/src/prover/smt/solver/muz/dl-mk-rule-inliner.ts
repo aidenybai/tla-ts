@@ -1,10 +1,12 @@
 // Ported from Z3 (src/muz/transforms/dl_mk_rule_inliner.cpp), MIT license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../../errors";
+import { L_FALSE, L_UNDEF } from "../lbool";
 import type { DatalogContext } from "./dl-context";
 import { MkInterpTailSimplifier } from "./dl-mk-interp-tail-simplifier";
 import { getRuleVars, type Rule } from "./dl-rule";
 import { RuleSet } from "./dl-rule-set";
 import { removeDuplicateTails, type RuleTransformerPlugin } from "./dl-rule-transformer";
+import { HornSubsumeModelConverter } from "./horn-subsume-model-converter";
 import { Substitution } from "./substitution";
 
 class RuleUnifier {
@@ -95,6 +97,7 @@ export class MkRuleInliner implements RuleTransformerPlugin {
   private tailVisitor = new Visitor();
   // Z3 throws has_new_quantifier when it would inline a rule that has a quantifier.
   private hasNewQuantifier = false;
+  private modelConverter: HornSubsumeModelConverter | undefined;
 
   constructor(
     private context: DatalogContext,
@@ -216,6 +219,7 @@ export class MkRuleInliner implements RuleTransformerPlugin {
         if (this.hasNewQuantifier)
           throw new SmtUnsupportedError("inlining a rule with a quantifier");
       }
+    for (const rule of this.inlinedRules.rules) this.modelConverter?.delRule(rule, L_UNDEF);
   }
 
   // Deviation from Z3: transform_rule keeps a rule that has a quantifier without inlining the rest
@@ -243,6 +247,7 @@ export class MkRuleInliner implements RuleTransformerPlugin {
         if (result !== undefined) todo.push(result);
       }
     }
+    if (isModified) this.modelConverter?.delRule(original, L_UNDEF);
     return isModified;
   }
 
@@ -257,6 +262,10 @@ export class MkRuleInliner implements RuleTransformerPlugin {
         isDone = true;
       if (this.hasNewQuantifier) break;
     }
+    if (isDone)
+      for (const rule of source.rules)
+        if (this.isInliningAllowed(source, rule.getDecl(manager)))
+          this.modelConverter?.delRule(rule, L_UNDEF);
     return isDone;
   }
 
@@ -301,9 +310,15 @@ export class MkRuleInliner implements RuleTransformerPlugin {
           candidate = predicateRule;
         }
       if (isAmbiguous) continue;
-      if (candidate === undefined) return null;
+      if (candidate === undefined) {
+        this.modelConverter?.delRule(rule, L_FALSE);
+        return null;
+      }
       if (!this.isOrientedRewriter(candidate, rules)) continue;
-      return this.tryToInlineRule(rule, candidate, index) ?? null;
+      const inlined = this.tryToInlineRule(rule, candidate, index);
+      if (inlined !== undefined) return inlined;
+      this.modelConverter?.delRule(rule, L_FALSE);
+      return null;
     }
     return undefined;
   }
@@ -388,6 +403,7 @@ export class MkRuleInliner implements RuleTransformerPlugin {
         canExpand[index] = canExpand[other];
         if (tailUnifiers.length === 1) {
           isValid[other] = false;
+          this.modelConverter?.delRule(otherRule, L_UNDEF);
           this.delRule(otherRule, other);
         }
       }
@@ -404,6 +420,11 @@ export class MkRuleInliner implements RuleTransformerPlugin {
     if (source.rules.some((rule) => this.context.ruleManager.hasQuantifiers(rule)))
       return undefined;
     this.hasNewQuantifier = false;
+    this.modelConverter =
+      this.context.modelConverters === undefined
+        ? undefined
+        : new HornSubsumeModelConverter(this.context);
+    const converter = this.modelConverter;
     let isDone = false;
     let result = new RuleSet(this.context);
     if (this.context.params.getBool("xform.inline_eager", true)) {
@@ -427,6 +448,9 @@ export class MkRuleInliner implements RuleTransformerPlugin {
       }
     }
     if (this.hasNewQuantifier) throw new SmtUnsupportedError("inlining a rule with a quantifier");
-    return isDone ? result : undefined;
+    if (!isDone) return undefined;
+    if (converter !== undefined)
+      this.context.modelConverters?.push((model) => converter.apply(model));
+    return result;
   }
 }

@@ -2,8 +2,9 @@
 import { getSymbolName, KIND_VAR, OP_EQ, OP_ITE, SORT_BOOL } from "../ast";
 import { flattenAndVector } from "../ast-util";
 import { ObjMap } from "../hashtable";
+import { FuncInterp, ProtoModel } from "../proto-model";
 import { RefVector } from "../ref-vector";
-import { getFreeVarSorts } from "../var-subst";
+import { getFreeVarSorts, VarSubst } from "../var-subst";
 import type { DatalogContext } from "./dl-context";
 import type { Rule } from "./dl-rule";
 import { RuleSet } from "./dl-rule-set";
@@ -17,9 +18,12 @@ export class MkSlice implements RuleTransformerPlugin {
   private isVarSliceable: boolean[] = [];
   private solvedVars: number[] = [];
   readonly predicates = new Map<number, number>();
+  // slice_model_converter::m_slice2old
+  private slice2old: ObjMap<number>;
 
   constructor(private context: DatalogContext) {
     this.sliceable = new ObjMap((decl) => context.manager.getDeclHash(decl));
+    this.slice2old = new ObjMap((decl) => context.manager.getDeclHash(decl));
   }
 
   private getPredicateSlice(predicate: number) {
@@ -219,6 +223,7 @@ export class MkSlice implements RuleTransformerPlugin {
         );
         this.predicates.set(predicate, sliced);
         target.inheritPredicate(source, predicate, sliced);
+        this.slice2old.set(sliced, predicate);
       } else if (source.isOutputPredicate(predicate)) {
         target.setOutputPredicate(predicate);
         hasOutput = true;
@@ -276,6 +281,61 @@ export class MkSlice implements RuleTransformerPlugin {
     this.declarePredicates(source, result);
     if (this.predicates.size === 0) return undefined;
     for (const rule of source.rules) this.updateRule(rule, result);
+    const slice2old = this.slice2old;
+    const sliceable = new Map([...this.sliceable].map((entry) => [entry[0], [...entry[1]]]));
+    this.context.modelConverters?.push((model) => this.convertModel(model, slice2old, sliceable));
     return result;
+  }
+
+  // slice_model_converter::operator(): the interpretation of a sliced predicate over the
+  // arguments of the predicate it was sliced from.
+  private convertModel(
+    model: ProtoModel,
+    slice2old: ObjMap<number>,
+    sliceable: ReadonlyMap<number, boolean[]>,
+  ) {
+    const manager = this.context.manager;
+    const oldModel = new ProtoModel(manager);
+    const varSubst = new VarSubst(manager, false);
+    for (const [sliced, predicate] of slice2old) {
+      // Z3 drops the interpretation of a predicate that has every argument sliced.
+      if (manager.funcDecls[sliced].domain.length === 0) continue;
+      const slice = sliceable.get(predicate) ?? [];
+      const domain = manager.funcDecls[predicate].domain;
+      const subst = domain
+        .map((sort, index) => manager.mkVar(index, sort))
+        .filter((_, index) => !slice[index]);
+      const interp = model.funcInterps.get(sliced);
+      if (interp === undefined) continue;
+      const oldInterp = new FuncInterp(manager, slice.length);
+      if (interp.elseExpr !== null) {
+        const elseExpr = varSubst.apply(interp.elseExpr, subst);
+        oldInterp.setElse(elseExpr);
+        manager.decRef(elseExpr);
+      }
+      for (const entry of interp.entries) {
+        let next = 0;
+        const args = domain.map((sort, index) =>
+          slice[index] ? manager.mkVar(index, sort) : varSubst.apply(entry.args[next++], subst),
+        );
+        const result = varSubst.apply(entry.result, subst);
+        oldInterp.insertEntry(args, result);
+        manager.decRef(result);
+        args.forEach((arg, index) => {
+          if (!slice[index]) manager.decRef(arg);
+        });
+      }
+      oldModel.registerFunc(predicate, oldInterp);
+    }
+    for (const decl of model.getConstDecls()) {
+      const value = model.constInterps.get(decl);
+      if (value !== undefined && !slice2old.has(decl)) oldModel.registerConst(decl, value);
+    }
+    for (const decl of model.getFuncDecls()) {
+      const interp = model.funcInterps.get(decl);
+      if (interp !== undefined && !slice2old.has(decl)) oldModel.registerFunc(decl, interp.copy());
+    }
+    varSubst.release();
+    return oldModel;
   }
 }
