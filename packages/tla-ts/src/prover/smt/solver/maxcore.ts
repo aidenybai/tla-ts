@@ -67,13 +67,6 @@ export class Maxcore extends MaxsmtSolverBase {
     this.trail.push(expr);
   }
 
-  private isTrueIn(model: ProtoModel, expr: number) {
-    const value = model.eval(expr, true);
-    const isTrue = value === this.manager.trueExpr;
-    this.manager.decRef(value);
-    return isTrue;
-  }
-
   private isFalseIn(model: ProtoModel, expr: number) {
     const value = model.eval(expr, true);
     const isFalse = value === this.manager.falseExpr;

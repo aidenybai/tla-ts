@@ -5,22 +5,18 @@ import {
   type AstManager,
   FAMILY_BASIC,
   KIND_APP,
-  OP_ADD,
   OP_AND,
   OP_ARRAY_MAP,
   OP_BADD,
   OP_EQ,
   OP_EXTRACT,
-  OP_MUL,
   OP_NOT,
   OP_OR,
-  OP_SEQ_CONCAT,
   OP_SLEQ,
   OP_ULEQ,
-  OP_XOR,
   SORT_BOOL,
 } from "./ast";
-import { isAssociativeBvOp } from "./bv-decl-plugin";
+import { isAssociativeOp } from "./ast-util";
 import { release } from "./expr-ref";
 import type { Goal } from "./goal";
 import { ObjMap } from "./hashtable";
@@ -29,8 +25,6 @@ import { RewriterTpl } from "./rewriter-tpl";
 const CONVERTED = 0;
 const UNSAT = 1;
 const UNDEF = 2;
-
-const ASSOCIATIVE_OPS = new Set([OP_AND, OP_OR, OP_XOR, OP_ADD, OP_MUL, OP_SEQ_CONCAT]);
 
 interface Interval {
   lo: bigint;
@@ -466,7 +460,7 @@ class BvBoundChkRewriter extends RewriterTpl {
     const funcDecl = this.manager.funcDecls[decl];
     return funcDecl.op === OP_ARRAY_MAP
       ? this.isFlatAssoc(funcDecl.parameters[0])
-      : ASSOCIATIVE_OPS.has(funcDecl.op) || isAssociativeBvOp(funcDecl.op);
+      : isAssociativeOp(funcDecl.op);
   }
 
   isRewritingPatterns() {

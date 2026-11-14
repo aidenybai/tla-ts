@@ -232,7 +232,7 @@ export class PolyRewriter {
   }
 
   mkAddCore(args: number[]): number | Rewrite | undefined {
-    if (args.length < 2) return undefined;
+    if (args.length < 2) return args.length === 1 ? args[0] : undefined;
     const manager = this.manager;
     if (
       this.options.isHoistIte === true &&
@@ -387,7 +387,7 @@ export class PolyRewriter {
   }
 
   mkMul(args: number[]): number | Rewrite | undefined {
-    if (args.length < 2) return undefined;
+    if (args.length < 2) return args.length === 1 ? args[0] : undefined;
     this.currSort = this.manager.sorts[args[0]];
     const isFlatMonomial =
       args.length === 2 &&

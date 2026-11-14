@@ -18,7 +18,7 @@ import {
   isArithSort,
 } from "./ast";
 import { BoundManager } from "./bound-manager";
-import type { Definition, Goal } from "./goal";
+import { type Definition, type Dependency, type Goal, joinDependencies } from "./goal";
 import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
 import { Rewriter, type RewriterOptions } from "./rewriter";
@@ -38,7 +38,8 @@ export const lia2pb = (manager: AstManager, goal: Goal, options: Lia2PbOptions) 
   if (goal.isProofsEnabled) throw new SmtTacticError("lia2pb does not support proof production");
   if (goal.isInconsistent) return;
   const bounds = new BoundManager(manager);
-  for (const form of goal.forms.items) bounds.add(form);
+  for (let index = 0; index < goal.forms.size; index++)
+    bounds.add(goal.forms.items[index], goal.getDependency(index));
   const getTargetUpper = (expr: number) => {
     if (!manager.isUninterpretedConst(expr)) return undefined;
     const lower = bounds.lowers.get(expr);
@@ -101,6 +102,7 @@ export const lia2pb = (manager: AstManager, goal: Goal, options: Lia2PbOptions) 
   const terms = new RefVector(manager);
   const definitions: Definition[] = [];
   const substitution = new Map<number, number>();
+  const substitutionDependencies = new Map<number, Dependency | undefined>();
   const zero = manager.mkNumeral(0n);
   const one = manager.mkNumeral(1n);
   terms.push(zero);
@@ -124,14 +126,26 @@ export const lia2pb = (manager: AstManager, goal: Goal, options: Lia2PbOptions) 
     const def = manager.mkApp(OP_ADD, args, SORT_INT);
     terms.push(def);
     substitution.set(variable, def);
+    substitutionDependencies.set(
+      variable,
+      joinDependencies(
+        bounds.lowerDependencies.get(variable),
+        bounds.upperDependencies.get(variable),
+      ),
+    );
     definitions.push({ decl: manager.decls[variable], def });
   }
   const rewriter = new Rewriter(manager, options.rewriter);
-  rewriter.setSubstitution(substitution);
+  rewriter.setSubstitution(substitution, substitutionDependencies);
   const size = goal.forms.size;
   for (let index = 0; !goal.isInconsistent && index < size; index++) {
     const rewritten = rewriter.rewrite(goal.forms.items[index]);
-    goal.update(index, rewritten);
+    goal.update(
+      index,
+      rewritten,
+      joinDependencies(rewriter.usedDependencies, goal.getDependency(index)),
+    );
+    rewriter.usedDependencies = undefined;
     manager.decRef(rewritten);
   }
   rewriter.release();

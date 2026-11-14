@@ -51,16 +51,7 @@ export const distributeForall = (manager: AstManager, goal: Goal) =>
     reduce: () => {
       if (!state.hasQuantifiers()) return;
       const rewriter = new DistributeForallRewriter(manager);
-      let rewritten = -1;
-      state.forEachIndex((index) => {
-        const form = state.get(index);
-        if (!manager.hasQuantifierFlags[form]) return;
-        const next = rewriter.rewrite(form);
-        if (rewritten !== -1) manager.decRef(rewritten);
-        rewritten = next;
-        if (rewritten !== form) goal.update(index, rewritten);
-      });
-      if (rewritten !== -1) manager.decRef(rewritten);
+      state.rewriteEach((form) => (manager.hasQuantifierFlags[form] ? rewriter.rewrite(form) : -1));
       rewriter.release();
     },
     release: () => {},

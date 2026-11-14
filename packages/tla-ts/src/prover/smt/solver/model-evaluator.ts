@@ -32,6 +32,7 @@ import {
   SORT_BOOL,
 } from "./ast";
 import type { AstManager } from "./ast";
+import { DEFAULT_BV_OPTIONS } from "./bv-rewriter";
 import { isConsideredUninterpreted } from "./fpa-decl-plugin";
 import { FuncInterp, getManagerSomeValue } from "./proto-model";
 import type { ProtoModel } from "./proto-model";
@@ -61,7 +62,10 @@ export class ModelEvaluator extends RewriterTpl {
     private model: ProtoModel,
   ) {
     super(manager);
-    this.rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
+    this.rewriter = new Rewriter(manager, {
+      ...TACTIC_REWRITER_OPTIONS,
+      bv: { ...DEFAULT_BV_OPTIONS, isHiDiv0: manager.isHiDiv0, isMkbv2num: true },
+    });
     this.rewriter.releaseResult = () => this.setLastResult(-1);
   }
 

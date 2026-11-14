@@ -10,6 +10,7 @@ import {
   OP_OR,
   OP_UMINUS,
 } from "./ast";
+import type { Dependency } from "./goal";
 import { Rational } from "./rational";
 
 interface Limit {
@@ -34,6 +35,8 @@ const NEGATED = new Map([
 export class BoundManager {
   readonly lowers = new Map<number, Limit>();
   readonly uppers = new Map<number, Limit>();
+  readonly lowerDependencies = new Map<number, Dependency>();
+  readonly upperDependencies = new Map<number, Dependency>();
   readonly boundedVars: number[] = [];
 
   constructor(readonly manager: AstManager) {}
@@ -48,9 +51,9 @@ export class BoundManager {
     return { value: manager.getRationalValue(expr), isInt: manager.isInt(expr) };
   }
 
-  add(form: number) {
+  add(form: number, dependency?: Dependency) {
     const manager = this.manager;
-    if (this.isDisjunctiveBound(form) || this.isEqualityBound(form)) return;
+    if (this.isDisjunctiveBound(form, dependency) || this.isEqualityBound(form, dependency)) return;
     let atom = form;
     let isPositive = true;
     while (manager.isNot(atom)) {
@@ -79,35 +82,43 @@ export class BoundManager {
           : { value: found.numeral.value, op };
     const isStrict = normalized.op === OP_LT || normalized.op === OP_GT;
     if (normalized.op === OP_GT || normalized.op === OP_GE)
-      this.insertLower(found.variable, isStrict, normalized.value);
-    else this.insertUpper(found.variable, isStrict, normalized.value);
+      this.insertLower(found.variable, isStrict, normalized.value, dependency);
+    else this.insertUpper(found.variable, isStrict, normalized.value, dependency);
   }
 
-  private insertUpper(variable: number, isStrict: boolean, value: Rational) {
+  private insertUpper(
+    variable: number,
+    isStrict: boolean,
+    value: Rational,
+    dependency: Dependency | undefined,
+  ) {
     const old = this.uppers.get(variable);
-    if (old === undefined) {
-      this.uppers.set(variable, { value, isStrict });
-      if (!this.lowers.has(variable)) this.boundedVars.push(variable);
-      return;
+    if (old !== undefined) {
+      const order = value.compare(old.value);
+      if (order > 0 || (order === 0 && (!isStrict || old.isStrict))) return;
     }
-    const order = value.compare(old.value);
-    if (order < 0 || (order === 0 && isStrict && !old.isStrict))
-      this.uppers.set(variable, { value, isStrict });
+    this.uppers.set(variable, { value, isStrict });
+    if (dependency !== undefined) this.upperDependencies.set(variable, dependency);
+    if (old === undefined && !this.lowers.has(variable)) this.boundedVars.push(variable);
   }
 
-  private insertLower(variable: number, isStrict: boolean, value: Rational) {
+  private insertLower(
+    variable: number,
+    isStrict: boolean,
+    value: Rational,
+    dependency: Dependency | undefined,
+  ) {
     const old = this.lowers.get(variable);
-    if (old === undefined) {
-      this.lowers.set(variable, { value, isStrict });
-      if (!this.uppers.has(variable)) this.boundedVars.push(variable);
-      return;
+    if (old !== undefined) {
+      const order = value.compare(old.value);
+      if (order < 0 || (order === 0 && (!isStrict || old.isStrict))) return;
     }
-    const order = value.compare(old.value);
-    if (order > 0 || (order === 0 && isStrict && !old.isStrict))
-      this.lowers.set(variable, { value, isStrict });
+    this.lowers.set(variable, { value, isStrict });
+    if (dependency !== undefined) this.lowerDependencies.set(variable, dependency);
+    if (old === undefined && !this.uppers.has(variable)) this.boundedVars.push(variable);
   }
 
-  private isEqualityBound(form: number) {
+  private isEqualityBound(form: number, dependency: Dependency | undefined) {
     const manager = this.manager;
     if (manager.getOp(form) !== OP_EQ) return false;
     const first = manager.getArg(form, 0);
@@ -117,19 +128,19 @@ export class BoundManager {
     const other = isSwapped ? first : second;
     const numeral = this.getNumeral(other);
     if (manager.isUninterpretedConst(variable) && numeral !== undefined) {
-      this.insertLower(variable, false, numeral.value);
-      this.insertUpper(variable, false, numeral.value);
+      this.insertLower(variable, false, numeral.value, dependency);
+      this.insertUpper(variable, false, numeral.value, dependency);
       return true;
     }
     if (manager.getOp(other) !== OP_MOD) return false;
     const modulus = this.getNumeral(manager.getArg(other, 1));
     if (modulus === undefined || !modulus.value.isPositive()) return false;
-    this.insertLower(variable, false, Rational.zero);
-    this.insertUpper(variable, false, modulus.value.sub(Rational.one));
+    this.insertLower(variable, false, Rational.zero, dependency);
+    this.insertUpper(variable, false, modulus.value.sub(Rational.one), dependency);
     return true;
   }
 
-  private isDisjunctiveBound(form: number) {
+  private isDisjunctiveBound(form: number, dependency: Dependency | undefined) {
     const manager = this.manager;
     if (manager.getOp(form) !== OP_OR || manager.getNumArgs(form) === 0) return false;
     let variable = -1;
@@ -160,8 +171,8 @@ export class BoundManager {
       if (found.value.compare(lower) < 0) lower = found.value;
       if (found.value.compare(upper) > 0) upper = found.value;
     }
-    this.insertLower(variable, false, lower);
-    this.insertUpper(variable, false, upper);
+    this.insertLower(variable, false, lower, dependency);
+    this.insertUpper(variable, false, upper, dependency);
     return true;
   }
 

@@ -905,12 +905,10 @@ export class ArithRewriter extends PolyRewriter {
       else if (manager.getOp(child) === OP_TO_REAL) intArgs.push(manager.getArg(child, 0));
       else realArgs.push(child);
     }
-    const mkSum = (args: number[], sort: number) =>
-      args.length === 1 ? args[0] : manager.mkApp(op, args, sort);
-    if (realArgs.length === 0) return this.reduce(mkSum(intArgs, SORT_INT), 1);
+    if (realArgs.length === 0) return this.reduce(manager.mkApp(op, intArgs, SORT_INT), 1);
     if (intArgs.length === 0 || op !== OP_ADD) return undefined;
-    const intSum = mkSum(intArgs, SORT_INT);
-    const realSum = mkSum(realArgs, SORT_REAL);
+    const intSum = manager.mkApp(OP_ADD, intArgs, SORT_INT);
+    const realSum = manager.mkApp(OP_ADD, realArgs, SORT_REAL);
     return this.reduce(
       manager.mkApp(OP_ADD, [intSum, manager.mkApp(OP_TO_INT, [realSum], SORT_INT)], SORT_INT),
       3,

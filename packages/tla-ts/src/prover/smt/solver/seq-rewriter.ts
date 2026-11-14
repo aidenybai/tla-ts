@@ -71,6 +71,7 @@ import {
 import { mkBvApp } from "./bv-decl-plugin";
 import { getCompositeHash } from "./hash";
 import { ObjMap } from "./hashtable";
+import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import type { Rewrite } from "./rewriter-tpl";
 import {
   getConcat,
@@ -98,10 +99,6 @@ const UNKNOWN_LENGTH = 3;
 const SIGN_ZERO = 0;
 const SIGN_POS = 1;
 const SIGN_NEG = 2;
-
-const L_FALSE = -1;
-const L_UNDEF = 0;
-const L_TRUE = 1;
 
 const NON_LIFTING_OPS = new Set([
   OP_SEQ_EMPTY,
