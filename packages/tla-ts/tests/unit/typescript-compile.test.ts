@@ -25959,6 +25959,85 @@ describe("buffers", () => {
     });
   });
 
+  describe("defines, describes, and restricts a typed array's own properties", () => {
+    const source = `
+      const check = (actual: unknown, expected: unknown, label: string) => {
+        if (!Object.is(actual, expected)) throw new Error(label);
+      };
+      const sample = new Int8Array([7, 8]);
+      check(Reflect.defineProperty(sample, "0", { value: 5 }), true, "define");
+      check(sample[0], 5, "defined");
+      check(Reflect.defineProperty(sample, "0", { value: 1, configurable: false }), false, "unconfigurable");
+      check(Reflect.defineProperty(sample, "0", { get: () => 1 }), false, "accessor");
+      check(Reflect.defineProperty(sample, "2", { value: 1 }), false, "past end");
+      check(Reflect.defineProperty(sample, "-0", { value: 1 }), false, "minus zero");
+      check(Reflect.defineProperty(sample, "foo", { value: "bar" }), true, "property");
+      const descriptor = Object.getOwnPropertyDescriptor(sample, "1");
+      if (descriptor === undefined) throw new Error("descriptor");
+      check(descriptor.value, 8, "descriptor value");
+      check(descriptor.writable && descriptor.enumerable && descriptor.configurable, true, "attributes");
+      check(Object.getOwnPropertyDescriptor(sample, "2"), undefined, "no descriptor");
+      check(Reflect.has(sample, "foo"), true, "has");
+      check(Reflect.ownKeys(sample).join(), "0,1,foo", "own keys");
+      check(Object.keys(sample).join(), "0,1", "keys");
+      Object.preventExtensions(sample);
+      check(Object.isExtensible(sample), false, "inextensible");
+      check(Reflect.defineProperty(sample, "bar", { value: 1 }), false, "new key");
+      check(Object.isFrozen(sample), false, "elements writable");
+      check(Object.isFrozen(Object.freeze(new Int8Array(0))), true, "frozen");
+      let thrown = "";
+      try {
+        Object.defineProperty(sample, "5", { value: 1 });
+      } catch (error) {
+        thrown = error instanceof TypeError ? "TypeError" : "other";
+      }
+      check(thrown, "TypeError", "throws");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["defined", '(sample[0], 5, "defined")', '(sample[0], 7, "defined")'],
+      ["unconfigurable", "configurable: false }), false", "configurable: false }), true"],
+      [
+        "descriptor value",
+        '(descriptor.value, 8, "descriptor value")',
+        '(descriptor.value, 7, "descriptor value")',
+      ],
+      ["own keys", '"0,1,foo", "own keys"', '"foo,0,1", "own keys"'],
+      ["keys", '"0,1", "keys"', '"0,1,foo", "keys"'],
+      ["new key", '{ value: 1 }), false, "new key"', '{ value: 1 }), true, "new key"'],
+      ["frozen", "new Int8Array(0))), true", "new Int8Array(0))), false"],
+      ["throws", '(thrown, "TypeError"', '(thrown, ""'],
+    ])("rejects a wrong %s", async (label, expected, wrong) => {
+      expect((await checkModel(source.replace(expected, wrong))).failure?.message).toContain(
+        `"${label}"`,
+      );
+    });
+
+    it.each([
+      [
+        "seals a typed array with elements",
+        "Object.seal(new Int8Array(2));",
+        "tla-ts can't throw the TypeError of sealing a typed array's elements",
+      ],
+      [
+        "makes a length-tracking typed array inextensible",
+        "Object.preventExtensions(new Int8Array(new ArrayBuffer(4, { maxByteLength: 8 })));",
+        "tla-ts can't throw the TypeError of making a typed array inextensible",
+      ],
+      [
+        "asks whether an inextensible typed array with elements is sealed",
+        'if (!Object.isSealed(Object.preventExtensions(new Int8Array(2)))) throw new Error("sealed");',
+        "tla-ts can't tell whether an inextensible typed array with elements is sealed",
+      ],
+    ])("stops where a script %s", async (_, source, message) => {
+      expect((await checkModel(source)).failure?.message).toContain(message);
+    });
+  });
+
   it("throws a TypeError where a typed array's method runs through call on another value", async () => {
     const result = await checkModel(`
       function throws(expected: Function, func: () => unknown, message: string) {
@@ -26374,15 +26453,6 @@ describe("buffers", () => {
       floats[0] = 16777217;
     `);
     expect(result.failure?.message).toContain("tla-ts can't round a number to a float");
-  });
-
-  it("stops where something else reads a typed array's properties", async () => {
-    const result = await checkModel(`
-      const bytes = new Uint8Array(2);
-      const keys = Object.keys(bytes);
-      if (keys.length !== 2) throw new Error("keys");
-    `);
-    expect(result.failure?.message).toContain("tla-ts can't");
   });
 });
 

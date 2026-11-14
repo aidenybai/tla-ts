@@ -1020,13 +1020,6 @@ ForInKeys(heap, ref) ==
   IN SelectSeq(OwnKeys(object), LAMBDA key : object.attributes[key].enumerable)
        \\o SelectSeq(inherited, LAMBDA key : key \\notin DOMAIN object.values)
 
-OwnPropertyNames(heap, ref) == OwnKeys(Lookup(heap, ref))
-
-OwnPropertySymbols(heap, ref) == SelectSeq(Lookup(heap, ref).keys, IsSymbol)
-
-\\* Reflect.ownKeys, which gives the strings that key an object's properties and then its symbols.
-OwnPropertyKeys(heap, ref) == OwnPropertyNames(heap, ref) \\o OwnPropertySymbols(heap, ref)
-
 RECURSIVE PutAll(_, _, _)
 PutAll(object, values, keys) ==
   IF keys = <<>>
@@ -1055,8 +1048,6 @@ LOCAL DescribeObject(object, key) ==
   IN CASE key \\notin DOMAIN object.values -> EmptyObject
        [] isAccessor -> described
        [] OTHER -> [described EXCEPT !.attributes["value"].kind = attributes.kind]
-
-Describe(heap, ref, key) == DescribeObject(LookupKey(heap, ref, key), key)
 
 \\* Object.getOwnPropertyDescriptors, which makes a description of each own property of an object,
 \\* and then the object that holds them under their keys, last, so that Allocated names it.
@@ -1099,6 +1090,23 @@ ViewLength(heap, view) ==
     [] view.viewLength = -1 ->
          (Len(ViewedBytes(heap, view)) - view.byteOffset) \\div ViewSize(view)
     [] OTHER -> view.viewLength
+
+\\* An object's own properties apart from a typed array's elements, which a typed array holds as an
+\\* ordinary object does.
+LOCAL OrdinaryOf(heap, ref) == IF IsTypedArray(heap, ref) THEN heap.objects[ref[Ref]] ELSE Lookup(heap, ref)
+
+\\* A typed array's element keys, which come before its other own keys.
+LOCAL ElementKeys(heap, ref) ==
+  IF IsTypedArray(heap, ref)
+  THEN [position \\in 1..ViewLength(heap, heap.objects[ref[Ref]]) |-> ToString(position - 1)]
+  ELSE <<>>
+
+OwnPropertyNames(heap, ref) == ElementKeys(heap, ref) \\o OwnKeys(OrdinaryOf(heap, ref))
+
+OwnPropertySymbols(heap, ref) == SelectSeq(OrdinaryOf(heap, ref).keys, IsSymbol)
+
+\\* Reflect.ownKeys, which gives the strings that key an object's properties and then its symbols.
+OwnPropertyKeys(heap, ref) == OwnPropertyNames(heap, ref) \\o OwnPropertySymbols(heap, ref)
 
 RECURSIVE BitsValue(_, _, _)
 BitsValue(bits, from, count) ==
@@ -1277,6 +1285,15 @@ Prototype(heap, ref) ==
 \\* Whether a typed array has an element at a key that is a number, which is an index before its end.
 LOCAL HasElement(heap, ref, key) ==
   TypedKey(key) = "index" /\\ ToIndex(key) < ViewLength(heap, heap.objects[ref[Ref]])
+
+\\* The description of an object's own property, where a typed array describes an element before its
+\\* end as a writable, enumerable, configurable data property.
+Describe(heap, ref, key) ==
+  CASE ~IsTypedArray(heap, ref) \\/ TypedKey(key) = "property" ->
+         DescribeObject(PropertiesOf(heap, ref, key), key)
+    [] HasElement(heap, ref, key) ->
+         DescribeObject(Put(EmptyObject, key, TypedElement(heap, ref, ToIndex(key))), key)
+    [] OTHER -> EmptyObject
 
 \\* Whether an object or one of its prototypes is a proxy, whose traps a walk up them runs.
 RECURSIVE ReachesProxy(_, _)
@@ -1476,7 +1493,7 @@ ReadKeys(heap, ref, keys) ==
 LOCAL Read(values) ==
   IF \\A position \\in DOMAIN values : values[position] = values[position] THEN values ELSE values
 
-ObjectKeys(heap, ref) == EnumerableKeys(Lookup(heap, ref))
+ObjectKeys(heap, ref) == ElementKeys(heap, ref) \\o EnumerableKeys(OrdinaryOf(heap, ref))
 
 ObjectValues(heap, ref) ==
   LET keys == ObjectKeys(heap, ref)
@@ -4807,14 +4824,30 @@ LOCAL CanDefineOn(ref, key, descriptor) ==
             /\\ BuiltIns[ref].prototype = Ref :> "Object.prototype",
          "tla-ts can't define accessors on built-in objects")
 
+\\* A typed array's [[DefineOwnProperty]] of a key that is a number, which defines nothing where the
+\\* key isn't an index before the end or the descriptor isn't of a writable, enumerable, configurable
+\\* data property, and otherwise writes the value, if any.
+LOCAL TypedDefine(heap, ref, key, descriptor) ==
+  LET has(field) == field \\in descriptor.fields
+      isDone == /\\ HasElement(heap, ref, key)
+                /\\ ~descriptor.isAccessor
+                /\\ \\A field \\in {"writable", "enumerable", "configurable"} : has(field) => descriptor[field]
+  IN [heap |-> IF isDone /\\ has("value") THEN TypedSet(heap, ref, key, descriptor.value) ELSE heap,
+      isDone |-> isDone, isRangeError |-> FALSE]
+
 \\* Defines each key with the descriptor that ToPropertyDescriptor gave it, in order.
 DefineConvertedAll(heap, ref, keys, descriptors) ==
-  LET applied == ApplyAll(Lookup(heap, ref), keys, descriptors)
-  IN IF \\A position \\in DOMAIN keys :
-          descriptors[position].isValid /\\ CanDefineOn(ref, keys[position], descriptors[position])
-     THEN [heap |-> Update(heap, ref, applied.object), isDone |-> applied.isDone,
-           isRangeError |-> applied.isRangeError]
-     ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE]
+  LET applied == ApplyAll(OrdinaryOf(heap, ref), keys, descriptors)
+  IN CASE \\E position \\in DOMAIN keys :
+            ~descriptors[position].isValid \\/ ~CanDefineOn(ref, keys[position], descriptors[position]) ->
+            [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE]
+       [] IsTypedArray(heap, ref) /\\ \\E position \\in DOMAIN keys : TypedKey(keys[position]) # "property" ->
+            IF Len(keys) = 1
+            THEN TypedDefine(heap, ref, keys[1], descriptors[1])
+            ELSE Assert(FALSE, "tla-ts can't define several keys of a typed array at once")
+       [] OTHER ->
+            [heap |-> Update(heap, ref, applied.object), isDone |-> applied.isDone,
+             isRangeError |-> applied.isRangeError]
 
 DefineConverted(heap, ref, key, converted) == DefineConvertedAll(heap, ref, <<key>>, <<converted>>)
 
@@ -5061,15 +5094,37 @@ ProtoSet(heap, ref, prototype) ==
   ELSE LET set == SetPrototypeOf(heap, ref, prototype)
        IN [heap |-> set.heap, error |-> IF set.isDone THEN "" ELSE "TypeError"]
 
+\\* Whether a typed array keeps its length, which it must to become inextensible: it has a length of
+\\* its own, and its buffer can't resize, unless it's shared, as a shared buffer only grows.
+LOCAL IsFixedLength(heap, ref) ==
+  LET view == heap.objects[ref[Ref]]
+      buffer == heap.objects[view.viewed[Ref]]
+  IN view.viewLength # -1 /\\ (buffer.maxLength = Undefined \\/ buffer.isShared)
+
+\\* Where Object.preventExtensions, seal, or freeze throws its TypeError for a typed array: one whose
+\\* length may change, and for seal and freeze one with elements, which can't become unconfigurable.
+LOCAL RestrictsTypedArray(heap, ref, isSealing) ==
+  CASE ~IsTypedArray(heap, ref) -> TRUE
+    [] ~IsFixedLength(heap, ref) ->
+         Assert(FALSE, "tla-ts can't throw the TypeError of making a typed array inextensible")
+    [] isSealing /\\ ViewLength(heap, heap.objects[ref[Ref]]) > 0 ->
+         Assert(FALSE, "tla-ts can't throw the TypeError of sealing a typed array's elements")
+    [] OTHER -> TRUE
+
 LOCAL Restrict(heap, ref, isFrozen) ==
-  LET object == Lookup(heap, ref)
+  LET object == OrdinaryOf(heap, ref)
       attributes ==
         [key \\in DOMAIN object.attributes |->
           [object.attributes[key] EXCEPT !.configurable = FALSE,
                                          !.writable = IF isFrozen THEN FALSE ELSE @]]
-  IN Update(heap, ref, [object EXCEPT !.extensible = FALSE, !.attributes = attributes])
+  IN IF RestrictsTypedArray(heap, ref, TRUE)
+     THEN Update(heap, ref, [object EXCEPT !.extensible = FALSE, !.attributes = attributes])
+     ELSE heap
 
-PreventExtensions(heap, ref) == Update(heap, ref, [Lookup(heap, ref) EXCEPT !.extensible = FALSE])
+PreventExtensions(heap, ref) ==
+  IF RestrictsTypedArray(heap, ref, FALSE)
+  THEN Update(heap, ref, [OrdinaryOf(heap, ref) EXCEPT !.extensible = FALSE])
+  ELSE heap
 
 Seal(heap, ref) == Restrict(heap, ref, FALSE)
 
@@ -5077,15 +5132,21 @@ Freeze(heap, ref) == Restrict(heap, ref, TRUE)
 
 \\* Nothing makes the global object inextensible, since tla-ts stops where a script would.
 IsExtensible(heap, ref) ==
-  IF IsRef(ref) /\\ ~IsHeap(ref) /\\ ref = GlobalObject THEN TRUE ELSE Lookup(heap, ref).extensible
+  IF IsRef(ref) /\\ ~IsHeap(ref) /\\ ref = GlobalObject THEN TRUE ELSE OrdinaryOf(heap, ref).extensible
 
+\\* A typed array's elements are configurable, so the spec never takes one with any as sealed, though
+\\* V8 does where it's inextensible. Neither takes it as frozen, as its elements are also writable.
 IsSealed(heap, ref) ==
-  LET object == Lookup(heap, ref)
-  IN ~IsExtensible(heap, ref) /\\ \\A key \\in DOMAIN object.attributes : ~object.attributes[key].configurable
+  LET object == OrdinaryOf(heap, ref)
+  IN /\\ ~IsExtensible(heap, ref)
+     /\\ ElementKeys(heap, ref) # <<>> =>
+          Assert(FALSE, "tla-ts can't tell whether an inextensible typed array with elements is sealed")
+     /\\ \\A key \\in DOMAIN object.attributes : ~object.attributes[key].configurable
 
 IsFrozen(heap, ref) ==
-  LET object == Lookup(heap, ref)
-  IN /\\ IsSealed(heap, ref)
+  LET object == OrdinaryOf(heap, ref)
+  IN /\\ ElementKeys(heap, ref) = <<>>
+     /\\ IsSealed(heap, ref)
      /\\ \\A key \\in DOMAIN object.attributes :
           object.attributes[key].kind # "data" \\/ ~object.attributes[key].writable
 
@@ -5151,8 +5212,14 @@ TrappedDescriptor(heap, result) ==
 
 \\* The completed descriptor of an object's own property, or Undefined where it has none.
 OwnDescriptor(heap, ref, key) ==
-  IF HasOwn(heap, ref, key)
-  THEN LET object == LookupKey(heap, ref, key)
+  CASE IsTypedArray(heap, ref) /\\ TypedKey(key) # "property" ->
+         IF HasElement(heap, ref, key)
+         THEN FieldsDescriptor(heap, {"value", "writable", "enumerable", "configurable"},
+                               [field \\in {"value", "writable", "enumerable", "configurable"} |->
+                                  IF field = "value" THEN TypedElement(heap, ref, ToIndex(key)) ELSE TRUE])
+         ELSE Undefined
+    [] HasOwn(heap, ref, key) ->
+       LET object == PropertiesOf(heap, ref, key)
            attributes == object.attributes[key]
            fields == IF attributes.kind = "accessor"
                      THEN {"get", "set", "enumerable", "configurable"}
@@ -5162,7 +5229,7 @@ OwnDescriptor(heap, ref, key) ==
                               CASE field = "value" -> object.values[key]
                                 [] field \\in {"get", "set"} -> object.values[key][field]
                                 [] OTHER -> attributes[field]])
-  ELSE Undefined
+    [] OTHER -> Undefined
 
 \\* Object.getOwnPropertyDescriptors of a proxy, which makes the object of each descriptor that it
 \\* gathered, and then the object that holds them under their keys, last, so that Allocated names it.
