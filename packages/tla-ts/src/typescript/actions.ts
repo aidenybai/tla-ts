@@ -295,7 +295,6 @@ import {
   isGetterRead,
   getGetterKeys,
   getRestCopyGetters,
-  getRestExcluded,
   getRestGetterKeys,
   getTrapFunctions,
   isProxyOperation,
@@ -1320,12 +1319,30 @@ const assignPattern = <Result>(
       (type.isUnion() ? type.types : [type]).every(
         (member) => (member.flags & (PRIMITIVE_TYPES | ts.TypeFlags.Never)) !== 0,
       );
-    // The heap after the pattern reads its properties, which the statement evaluates.
-    const keys = target.properties.flatMap((property) =>
-      property.name !== undefined && ts.isIdentifier(property.name)
-        ? [string(property.name.text)]
-        : [],
+    // A property's key: its name, or a computed key that reads only what the pattern doesn't
+    // assign, so it gives the same key wherever the pattern evaluates it.
+    const written = new Set(
+      findNodes(
+        target,
+        (inner): inner is ts.Identifier =>
+          ts.isIdentifier(inner) && ts.findAncestor(inner, ts.isComputedPropertyName) === undefined,
+      ).flatMap((inner) => getSymbol(inner, context.checker) ?? []),
     );
+    const getKey = (property: ts.ObjectLiteralElementLike) =>
+      property.name === undefined ||
+      ts.isPrivateIdentifier(property.name) ||
+      (ts.isComputedPropertyName(property.name) &&
+        !(
+          isInertValue(property.name.expression) &&
+          findNodes(property.name.expression, ts.isIdentifier).every((inner) => {
+            const symbol = getSymbol(inner, context.checker);
+            return symbol !== undefined && !written.has(symbol);
+          })
+        ))
+        ? undefined
+        : translateMemberKey(property.name, path.scope, context);
+    // The heap after the pattern reads its properties, which the statement evaluates.
+    const keys = target.properties.flatMap((property) => getKey(property) ?? []);
     const heapSymbol = context.heap;
     const assignFrom = (position: number, current: Path): Result => {
       if (position === target.properties.length) {
@@ -1359,7 +1376,9 @@ const assignPattern = <Result>(
         (isHeapObject || isPrimitiveRest) &&
         heapSymbol !== undefined
       ) {
-        const excluded = getRestExcluded(target);
+        const excluded = target.properties.flatMap((inner) =>
+          inner === property ? [] : (getKey(inner) ?? []),
+        );
         const copy = (after: Path, read: Expression) => {
           const heap = getHeap(after.scope, property, context);
           const allocated = useJavaScript(
@@ -1367,11 +1386,7 @@ const assignPattern = <Result>(
             [
               heap,
               isHeapObject
-                ? useJavaScript(
-                    "RestObject",
-                    [heap, value, set(excluded.map(string)), read],
-                    context,
-                  )
+                ? useJavaScript("RestObject", [heap, value, set(excluded), read], context)
                 : useJavaScript("RestPrimitive", [value], context),
             ],
             context,
@@ -1394,25 +1409,31 @@ const assignPattern = <Result>(
           ? copy(current, tuple([]))
           : statements.readRest(property, getterKeys, value, current, copy);
       }
+      const key = getKey(property);
       if (
         !(ts.isShorthandPropertyAssignment(property) || ts.isPropertyAssignment(property)) ||
-        !ts.isIdentifier(property.name)
+        key === undefined
       ) {
         throw new TlaTypeScriptError(`Can't assign to ${property.getText()}`, property);
       }
       const defaulted = ts.isShorthandPropertyAssignment(property)
         ? { target: property.name, initializer: property.objectAssignmentInitializer }
         : getDefaultedTarget(property.initializer);
-      const key = property.name.text;
+      // A value that the heap doesn't hold is a record, whose fields only a name gives.
+      const field =
+        ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)
+          ? property.name.text
+          : undefined;
       const part = isHeapObject
-        ? useJavaScript(
-            "Get",
-            [getHeap(current.scope, property, context), value, string(key)],
-            context,
-          )
-        : defaulted.initializer === undefined
-          ? getField(value, key)
-          : getOptionalField(value, key, context);
+        ? useJavaScript("Get", [getHeap(current.scope, property, context), value, key], context)
+        : field === undefined
+          ? undefined
+          : defaulted.initializer === undefined
+            ? getField(value, field)
+            : getOptionalField(value, field, context);
+      if (part === undefined) {
+        throw new TlaTypeScriptError(`Can't assign to ${property.getText()}`, property);
+      }
       return assignDefaulted(
         defaulted.target,
         undefined,

@@ -13728,6 +13728,21 @@ describe("errors", () => {
     expect((await checkModel(getSource(3))).failure?.message).toContain("rest");
   });
 
+  it("assigns an object pattern's computed and quoted keys, which its rest skips", async () => {
+    const getSource = (expected: string) => `
+      const a = 1.0;
+      let b: unknown;
+      let rest: { [key: string]: unknown } = {};
+      const vals: { [key: string]: unknown } = { [a]: "one", bar: 2, "q-r": 3 };
+      let c: unknown;
+      ({ [a]: b, "q-r": c, ...rest } = vals);
+      const keys = Object.keys(rest).join();
+      if (b !== "one" || c !== 3 || keys !== "${expected}") throw new Error("unexpected " + keys);
+    `;
+    expect((await checkModel(getSource("bar"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1,bar"))).failure?.message).toContain("unexpected bar");
+  });
+
   it("copies what a getter gives into an object rest", async () => {
     const result = await checkModel(`
       let count: number = 0;
