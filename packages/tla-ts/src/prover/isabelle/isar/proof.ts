@@ -163,7 +163,7 @@ const theResult = <Item>(seq: Seq<Item>, message: string): Item => {
 };
 
 // Proof.end_proof: the closing method, then the goal must have no subgoals.
-const endProof = (state: State, text: MethodText | undefined, isImmediate: boolean): Seq<State> => {
+const endProof = (state: State, text: MethodText | undefined): Seq<State> => {
   assertMode(state, ["forward"]);
   const closed = usingFacts(closeBlock(state), []);
   if (top(closed).goal === undefined) throw error("No goal in this block");
@@ -174,7 +174,7 @@ const endProof = (state: State, text: MethodText | undefined, isImmediate: boole
       (result: State) =>
         mapSeq(
           (thm: Thm) => provideGoal(result, thm),
-          finishTac(contextOf(result).tactics.limits, isImmediate)(findGoal(result)[2].goal),
+          finishTac(contextOf(result).tactics.limits)(findGoal(result)[2].goal),
         ),
       finish,
     ),
@@ -200,7 +200,7 @@ const genericQed = (state: State): State => {
 };
 
 export const qed = (state: State, text: MethodText | undefined): State =>
-  genericQed(theResult(endProof(state, text, true), "Failed to finish proof"));
+  genericQed(theResult(endProof(state, text), "Failed to finish proof"));
 
 // Proof.terminal_proof, as by: the first initial result that the terminal method finishes.
 export const terminalProof = (
@@ -210,7 +210,7 @@ export const terminalProof = (
 ): State =>
   genericQed(
     theResult(
-      mapsSeq((result: State) => endProof(result, terminal, true), proof(state, initial)),
+      mapsSeq((result: State) => endProof(result, terminal), proof(state, initial)),
       "Failed to finish proof",
     ),
   );

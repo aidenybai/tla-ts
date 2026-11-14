@@ -41,10 +41,9 @@ export type StatementElement =
 export type MethodText =
   | { readonly kind: "source"; readonly name: string; readonly args: readonly OuterToken[] }
   | {
-      readonly kind: "then" | "thenAllNew" | "orelse" | "try" | "repeat1";
+      readonly kind: "then" | "orelse" | "try" | "repeat1";
       readonly texts: readonly MethodText[];
-    }
-  | { readonly kind: "select"; readonly count: number; readonly text: MethodText };
+    };
 
 export type Command =
   | {
@@ -99,6 +98,11 @@ export const syntaxError = (token: OuterToken | undefined) =>
     "ERROR",
     `Outer syntax error at: ${token === undefined ? "end of input" : token.text}`,
   );
+
+export const innerText = (token: OuterToken) =>
+  token.kind === "cartouche"
+    ? token.text.slice("\\<open>".length, -"\\<close>".length)
+    : token.text;
 
 const isWordChar = (char: string) => /[A-Za-z0-9_'.]/.test(char);
 
@@ -294,13 +298,9 @@ export const parseTheory = (text: string): TheoryText => {
     peek()?.kind === "string" || peek()?.kind === "cartouche" || peek()?.kind === "var" || isName();
   const inner = () => {
     const token = peek();
-    if (token?.kind === "cartouche") {
+    if (token?.kind === "cartouche" || token?.kind === "var") {
       position += 1;
-      return token.text.slice("\\<open>".length, -"\\<close>".length);
-    }
-    if (token?.kind === "var") {
-      position += 1;
-      return token.text;
+      return innerText(token);
     }
     return token?.kind === "string" ? expectString() : expectName();
   };
@@ -432,12 +432,7 @@ export const parseTheory = (text: string): TheoryText => {
       position += 1;
       return { kind: "repeat1", texts: [text] };
     }
-    if (isSymbol("[")) {
-      position += 1;
-      const count = isSymbol("]") ? 1 : Number(expectName());
-      expectSymbol("]");
-      return { kind: "select", count, text };
-    }
+    if (isSymbol("[")) throw new TlaIsabelleError("ERROR", "Unsupported method combinator: [");
     return text;
   };
   const method3 = (): MethodText => {
@@ -453,7 +448,7 @@ export const parseTheory = (text: string): TheoryText => {
   };
   const enumeration = (
     separator: string,
-    kind: "then" | "thenAllNew" | "orelse",
+    kind: "then" | "orelse",
     read: () => MethodText,
   ): MethodText => {
     const texts = [read()];
@@ -464,7 +459,11 @@ export const parseTheory = (text: string): TheoryText => {
     return texts.length === 1 ? texts[0] : { kind, texts };
   };
   const method2 = () => enumeration(",", "then", method3);
-  const method1 = () => enumeration(";", "thenAllNew", method2);
+  const method1 = () => {
+    const text = method2();
+    if (isSymbol(";")) throw new TlaIsabelleError("ERROR", "Unsupported method combinator: ;");
+    return text;
+  };
   const method0 = (): MethodText => enumeration("|", "orelse", method1);
   const isMethodStart = () =>
     isSymbol("(") ||

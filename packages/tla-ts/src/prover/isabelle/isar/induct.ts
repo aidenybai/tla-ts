@@ -49,7 +49,7 @@ import {
   type CaseInfo,
   type CasesRule,
 } from "./rule-cases";
-import { syntaxError, type OuterToken } from "./theory";
+import { innerText, syntaxError, type OuterToken } from "./theory";
 
 export interface NamedCasesRule {
   readonly name: string;
@@ -203,10 +203,7 @@ const parseCasesArgs = (isar: IsarContext, tokens: readonly OuterToken[]): Cases
           isar,
           [
             {
-              text:
-                token.kind === "cartouche"
-                  ? token.text.slice("\\<open>".length, -"\\<close>".length)
-                  : token.text,
+              text: innerText(token),
               type: mkTVar("'a", 0),
             },
           ],

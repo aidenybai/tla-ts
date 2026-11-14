@@ -82,3 +82,14 @@ describe("a definition checks its equation against the declared type", () => {
     expect(decide(body)).toBe("unknown");
   });
 });
+
+describe("the method combinators the port lacks fail when the theory is read", () => {
+  it.each([
+    [";", "(rule refl; simp)"],
+    ["[", "((rule refl)[1])"],
+  ])("%s", (combinator, method) => {
+    expect(() => parseTheory(wrap(`lemma fixes x shows "x = x" by ${method}`))).toThrow(
+      `Unsupported method combinator: ${combinator}`,
+    );
+  });
+});

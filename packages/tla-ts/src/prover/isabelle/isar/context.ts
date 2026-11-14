@@ -201,7 +201,7 @@ export const readTerms = (
   );
   if (mode === "pattern") return checked;
   const expanded = checked.map((term) => expandBinds(context, term));
-  if (mode === "default" && expanded.some((term) => varsOf(term).length > 0))
+  if (mode === "default" && varsOf(expanded).length > 0)
     throw new TlaIsabelleError("ERROR", "Unbound schematic variable");
   return expanded;
 };
@@ -233,17 +233,22 @@ const decrIndexes = (term: Term, maxidx: number, offset: number): Term => {
   return decrVars(mapTypes(decrType, term));
 };
 
-const varsOf = (term: Term, found: Var[] = []): Var[] => {
-  if (
-    term.kind === "Var" &&
-    !found.some((other) => other.name === term.name && other.index === term.index)
-  )
-    found.push(term);
-  if (term.kind === "Abs") varsOf(term.body, found);
-  if (term.kind === "App") {
-    varsOf(term.fun, found);
-    varsOf(term.arg, found);
-  }
+// Vars.add_vars: the variables in the order they occur.
+export const varsOf = (terms: readonly Term[]): Var[] => {
+  const found: Var[] = [];
+  const visit = (term: Term) => {
+    if (
+      term.kind === "Var" &&
+      !found.some((other) => other.name === term.name && other.index === term.index)
+    )
+      found.push(term);
+    if (term.kind === "Abs") visit(term.body);
+    if (term.kind === "App") {
+      visit(term.fun);
+      visit(term.arg);
+    }
+  };
+  for (const term of terms) visit(term);
   return found;
 };
 
@@ -268,16 +273,14 @@ export const simultMatches = (
     ),
   );
   if (envir === undefined) throw new TlaIsabelleError("ERROR", "Pattern match failed!");
-  return pairs
-    .reduce<Var[]>((found, pair) => varsOf(pair[0], found), [])
-    .flatMap((variable): [string, number, Term][] => {
-      const normalized = normTerm(envir, variable);
-      return normalized.kind === "Var" &&
-        normalized.name === variable.name &&
-        normalized.index === variable.index
-        ? []
-        : [[variable.name, variable.index - offset, decrIndexes(normalized, maxidx, offset)]];
-    });
+  return varsOf(pairs.map((pair) => pair[0])).flatMap((variable): [string, number, Term][] => {
+    const normalized = normTerm(envir, variable);
+    return normalized.kind === "Var" &&
+      normalized.name === variable.name &&
+      normalized.index === variable.index
+      ? []
+      : [[variable.name, variable.index - offset, decrIndexes(normalized, maxidx, offset)]];
+  });
 };
 
 // Assumption.add_assms: each proposition becomes a hypothesis.
