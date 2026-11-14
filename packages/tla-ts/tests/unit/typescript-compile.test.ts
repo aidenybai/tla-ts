@@ -14045,6 +14045,47 @@ describe("errors", () => {
     });
   });
 
+  describe("closes a generator that a helper's for-of leaves early", () => {
+    const getSource = (expected: string) => `
+      const log = { text: "" };
+      const iter = (function* () {
+        yield;
+        yield;
+      })();
+      function fn() {
+        for (const [,] of [iter]) {
+          return;
+        }
+      }
+      fn();
+      const rest = (function* () {
+        yield 1;
+        yield 2;
+      })();
+      function take() {
+        for (const [...values] of [rest]) {
+          log.text += values.length;
+          return;
+        }
+      }
+      take();
+      const first = iter.next();
+      const second = rest.next();
+      log.text += "," + first.done + "," + second.done;
+      if (log.text !== "${expected}") throw new Error(log.text);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2,true,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("2,false,true"))).failure?.message).toContain(
+        "2,true,true",
+      );
+    });
+  });
+
   it("throws the ReferenceError of a name that an object literal spreads", async () => {
     const getSource = (expected: number) => `
       let caught = 0;

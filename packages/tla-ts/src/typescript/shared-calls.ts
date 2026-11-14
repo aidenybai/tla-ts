@@ -298,7 +298,10 @@ const getSharedCall = (callee: FunctionNode, path: Path, context: Context, frame
         ts.findAncestor(declaration.parent, ts.isFunctionLike) === undefined)
     );
   };
+  // The generators that the caller made live in its path, which an operator, compiled once, can't
+  // resume or close.
   if (
+    path.generators.size > 0 ||
     !helper.read.every(isReadable) ||
     !helper.changed.every((symbol) => context.variables.has(symbol) || captured.includes(symbol))
   ) {
