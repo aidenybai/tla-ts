@@ -24295,6 +24295,36 @@ describe("calls through values", () => {
     });
   });
 
+  describe("maps case without a locale as Node's default locale does", () => {
+    const getSource = (expected: string) => `
+      const text = "Hello, WoRlD! ß";
+      const holder: { [key: string]: unknown } = {
+        toString: function () {
+          return "AB";
+        },
+      };
+      holder.toLocaleLowerCase = String.prototype.toLocaleLowerCase;
+      const read = [
+        text.toLocaleLowerCase(),
+        text.toLocaleUpperCase(),
+        (holder.toLocaleLowerCase as () => string)(),
+      ].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("hello, world! ß,HELLO, WORLD! SS,ab"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects an uppercase sharp s as kept", async () => {
+      expect(
+        (await checkModel(getSource("hello, world! ß,HELLO, WORLD! ß,ab"))).failure?.message,
+      ).toContain("hello, world! ß,HELLO, WORLD! SS,ab");
+    });
+  });
+
   describe("throws the TypeError of a built-in next on an object that isn't its iterator", () => {
     const getSource = (expected: string) => `
       "use strict";

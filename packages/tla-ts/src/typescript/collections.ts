@@ -2461,6 +2461,9 @@ export const STRING_METHODS = new Map<string, PrimitiveMethod>([
   ["endsWith", { operator: "EndsWith", parameters: ["string", "number"] }],
   ["toLowerCase", { operator: "ToLowerCase", parameters: [] }],
   ["toUpperCase", { operator: "ToUpperCase", parameters: [] }],
+  // Without a locale, these map case as the root locale does, as Node's en-US does.
+  ["toLocaleLowerCase", { operator: "ToLowerCase", parameters: [] }],
+  ["toLocaleUpperCase", { operator: "ToUpperCase", parameters: [] }],
   ["padStart", { operator: "PadStart", parameters: ["number", "string"] }],
   ["padEnd", { operator: "PadEnd", parameters: ["number", "string"] }],
   ["trim", { operator: "StringTrim", parameters: [], trimmed: [true, true] }],
