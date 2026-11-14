@@ -24531,6 +24531,42 @@ describe("buffers", () => {
     });
   });
 
+  it("constructs a buffer, a DataView, or a typed array through Reflect.construct's newTarget", async () => {
+    const result = await checkModel(`
+      const buffer = new ArrayBuffer(8);
+      function newTarget() {}
+      const proto = {};
+      newTarget.prototype = proto;
+      const view: DataView = Reflect.construct(DataView, [buffer, 1], newTarget);
+      const typed: Int8Array = Reflect.construct(Int8Array, [3], newTarget);
+      function plain() {}
+      (plain as unknown as { prototype: unknown }).prototype = 1;
+      const made: ArrayBuffer = Reflect.construct(ArrayBuffer, [2], plain);
+      if (Object.getPrototypeOf(view) !== proto || Object.getPrototypeOf(typed) !== proto) throw new Error("proto");
+      if (Object.getPrototypeOf(made) !== ArrayBuffer.prototype) throw new Error("default");
+      if (DataView.prototype.getInt8.call(view, 0) !== 0 || Int8Array.prototype.at.call(typed, 2) !== 0) throw new Error("read");
+      let caught = "none";
+      try {
+        Reflect.construct(ArrayBuffer, [-1], newTarget);
+      } catch (error) {
+        caught = (error as Error).constructor.name;
+      }
+      if (caught !== "RangeError") throw new Error(caught);
+    `);
+    expect(result.failure).toBeUndefined();
+    const notConstructor = await checkModel(`
+      const target = { size: 1 } as unknown as new () => object;
+      let caught = "none";
+      try {
+        Reflect.construct(ArrayBuffer, [1], target);
+      } catch (error) {
+        caught = (error as Error).constructor.name;
+      }
+      if (caught !== "TypeError") throw new Error(caught);
+    `);
+    expect(notConstructor.failure).toBeUndefined();
+  });
+
   it("stops at a number a typed array's float can't hold exactly", async () => {
     const result = await checkModel(`
       const floats = new Float32Array(1);

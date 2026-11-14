@@ -1675,11 +1675,12 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
           context,
         );
   }
-  if (getNewBuffer(node, context) !== undefined && ts.isNewExpression(node)) {
+  const buffered = getNewBuffer(node, context) && getConstruction(node, context);
+  if (buffered !== undefined && ts.isExpression(node)) {
     const values = tuple(
-      (node.arguments ?? []).map((value) => translateExpression(value, scope, context)),
+      buffered.arguments.map((value) => translateExpression(value, scope, context)),
     );
-    return translateNewBufferOf(node, heap, values, scope, context);
+    return translateNewBufferOf(node, buffered, heap, values, scope, context);
   }
   if (isNewDate(node, context)) {
     const values = node.arguments ?? [];
@@ -2330,22 +2331,23 @@ export const translateDateFields = (
     context,
   );
 
-// new of an ArrayBuffer, a SharedArrayBuffer, a DataView, or a typed array, which a statement makes
-// on the heap, with the constructors that it may call. A callee that isn't the global may hold any
-// typed array constructor that its type allows.
+// new, or Reflect.construct, of an ArrayBuffer, a SharedArrayBuffer, a DataView, or a typed array,
+// which a statement makes on the heap, with the constructors that it may call. A callee that isn't
+// the global may hold any typed array constructor that its type allows.
 export const getNewBuffer = (node: ts.Node, context: Context) => {
+  const construction = getConstruction(node, context);
   if (
     context.heap === undefined ||
-    !ts.isNewExpression(node) ||
-    (node.arguments ?? []).some(ts.isSpreadElement)
+    construction === undefined ||
+    construction.arguments.some(ts.isSpreadElement)
   ) {
     return undefined;
   }
-  const name = getBuiltIn(node.expression, context);
+  const name = getBuiltIn(construction.callee, context);
   if (name !== undefined) return isBufferName(name) ? [name] : undefined;
   // A constructor typed only by what it makes, such as an array's constructor, may be the
   // constructor of each typed array that its instance's type allows.
-  const type = context.checker.getTypeAtLocation(node.expression);
+  const type = context.checker.getTypeAtLocation(construction.callee);
   const made =
     type.getSymbol()?.name === "__type" ? type.getConstructSignatures().at(0) : undefined;
   const instance =
@@ -2366,9 +2368,11 @@ export const getNewBuffer = (node: ts.Node, context: Context) => {
 
 // The heap after new of a buffer, a DataView, or a typed array, of the values of its arguments,
 // or with isError the error, if any, that it throws, which branches on the constructor that its
-// callee holds where it isn't the global.
+// callee holds where it isn't the global. Reflect.construct throws a TypeError where its newTarget
+// isn't a constructor, and otherwise gives the instance its newTarget's prototype.
 export const translateNewBufferOf = (
-  node: ts.NewExpression,
+  node: ts.Expression,
+  construction: Construction,
   heap: Expression,
   values: Expression,
   scope: Scope,
@@ -2376,37 +2380,54 @@ export const translateNewBufferOf = (
   isError = false,
 ) => {
   const buffers = getNewBuffer(node, context) ?? [];
-  const callee = translateExpression(node.expression, scope, context);
-  return getBuiltIn(node.expression, context) === undefined
-    ? buffers.reduceRight<Expression>(
-        (rest, buffer) =>
-          ifExpression(
-            useJavaScript(
-              "SameValue",
-              [callee, translateBuiltInValue(buffer, node, context)],
-              context,
+  const callee = translateExpression(construction.callee, scope, context);
+  const newTarget =
+    construction.newTarget === construction.callee
+      ? undefined
+      : translateExpression(construction.newTarget, scope, context);
+  const made =
+    getBuiltIn(construction.callee, context) === undefined
+      ? buffers.reduceRight<Expression>(
+          (rest, buffer) =>
+            ifExpression(
+              useJavaScript(
+                "SameValue",
+                [callee, translateBuiltInValue(buffer, node, context)],
+                context,
+              ),
+              translateNewBuffer(buffer, heap, values, newTarget, node, context, isError),
+              rest,
             ),
-            translateNewBuffer(buffer, heap, values, node, context, isError),
-            rest,
-          ),
-        isError
-          ? string("")
-          : apply("Assert", [boolean(false), string("tla-ts can't call this constructor")]),
-      )
-    : translateNewBuffer(buffers[0], heap, values, node, context, isError);
+          isError
+            ? string("")
+            : apply("Assert", [boolean(false), string("tla-ts can't call this constructor")]),
+        )
+      : translateNewBuffer(buffers[0], heap, values, newTarget, node, context, isError);
+  return newTarget === undefined || !isError
+    ? made
+    : ifExpression(
+        useJavaScript("IsConstructor", [heap, newTarget], context),
+        made,
+        string("TypeError"),
+      );
 };
 
 const translateNewBuffer = (
   buffer: BufferName,
   heap: Expression,
   values: Expression,
-  node: ts.NewExpression,
+  newTarget: Expression | undefined,
+  node: ts.Expression,
   context: Context,
   isError: boolean,
 ) => {
   // The constructor, which the prototype's constructor property holds.
   context.builtIns.add(buffer);
-  const prototype = translateBuiltInValue(`${buffer}.prototype`, node, context);
+  const fallback = translateBuiltInValue(`${buffer}.prototype`, node, context);
+  const prototype =
+    newTarget === undefined
+      ? fallback
+      : useJavaScript("PrototypeFromConstructor", [heap, newTarget, fallback], context);
   const type = TYPED_ARRAYS.get(buffer);
   const suffix = isError ? "Error" : "";
   return type !== undefined

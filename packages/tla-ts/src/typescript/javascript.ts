@@ -3991,6 +3991,12 @@ LOCAL TypedArrayMade(heap, type, prototype, bufferPrototype, arguments, isIterat
        [] offset + length * size > byteLength -> Failed("RangeError")
        [] OTHER -> view(heap, first, offset, length)
 
+\\* The prototype that an instance takes from the constructor that a construction names as its
+\\* newTarget, or the default where newTarget's prototype property isn't an object.
+PrototypeFromConstructor(heap, newTarget, default) ==
+  LET prototype == Get(heap, newTarget, "prototype")
+  IN IF IsObjectIn(heap, prototype) THEN prototype ELSE default
+
 \\* The heap after new of a buffer, a DataView, or a typed array, or the error, if any, that it throws.
 NewBuffer(heap, prototype, arguments, isShared) ==
   Made(BufferMade(heap, prototype, arguments, isShared))

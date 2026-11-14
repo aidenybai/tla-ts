@@ -73,6 +73,7 @@ import {
   getLocalCaptures,
   isPlain,
   getConstruction,
+  type Construction,
   getHeapClass,
   getNewClass,
   isInertValue,
@@ -9571,8 +9572,8 @@ const TYPED_ARRAY_TAKE_LIMIT = 8;
 
 // new of a typed array of a value whose type doesn't tell whether it's an object that a script's
 // iterator iterates, which only statements can run.
-const isIteratedTypedArray = (node: ts.Expression, context: Context): node is ts.NewExpression => {
-  const first = ts.isNewExpression(node) ? node.arguments?.at(0) : undefined;
+const isIteratedTypedArray = (node: ts.Expression, context: Context) => {
+  const first = getConstruction(node, context)?.arguments.at(0);
   return (
     first !== undefined &&
     (getNewBuffer(node, context) ?? []).some((buffer) => TYPED_ARRAYS.has(buffer)) &&
@@ -9582,15 +9583,17 @@ const isIteratedTypedArray = (node: ts.Expression, context: Context): node is ts
   );
 };
 
-// new of a buffer, a DataView, or a typed array, which a statement runs, as it may throw.
-const isNewBufferStatement = (node: ts.Expression, context: Context): node is ts.NewExpression =>
-  getNewBuffer(node, context) !== undefined;
+// new, or Reflect.construct, of a buffer, a DataView, or a typed array, which a statement runs, as
+// it may throw.
+const getBufferConstruction = (node: ts.Expression, context: Context) =>
+  getNewBuffer(node, context) && getConstruction(node, context);
 
 // Runs new of a buffer, a DataView, or a typed array, which throws the error its constructor does,
 // and makes a typed array of an object's iterator's values where a script's @@iterator method
 // gives them.
 const translateNewBufferStatement = (
-  node: ts.NewExpression,
+  node: ts.Expression,
+  construction: Construction,
   path: Path,
   context: Context,
   frame: Frame,
@@ -9603,7 +9606,7 @@ const translateNewBufferStatement = (
     path,
     context,
     (allocated) => {
-      const values = (node.arguments ?? []).map((value) =>
+      const values = construction.arguments.map((value) =>
         translateExpression(value, allocated.scope, context),
       );
       const make = (current: Path, madeArguments: Expression[]) => {
@@ -9626,13 +9629,28 @@ const translateNewBufferStatement = (
         return bindOnce(
           current,
           errorName,
-          translateNewBufferOf(node, heap, tuple(madeArguments), current.scope, context, true),
+          translateNewBufferOf(
+            node,
+            construction,
+            heap,
+            tuple(madeArguments),
+            current.scope,
+            context,
+            true,
+          ),
           ifThenElse(
             apply("=", [error, string("")]),
             bindOnce(
               current,
               madeName,
-              translateNewBufferOf(node, heap, tuple(madeArguments), current.scope, context),
+              translateNewBufferOf(
+                node,
+                construction,
+                heap,
+                tuple(madeArguments),
+                current.scope,
+                context,
+              ),
               continueWith(after, useJavaScript("Allocated", [made], context)),
             ),
             ifThenElse(
@@ -10013,8 +10031,9 @@ export const translateDeclarations = (
     );
   }
   const made = initializer && skipCasts(initializer);
-  if (made !== undefined && isNewBufferStatement(made, context)) {
-    return translateNewBufferStatement(made, path, context, frame, (after, value) =>
+  const madeBuffer = made && getBufferConstruction(made, context);
+  if (made !== undefined && madeBuffer !== undefined) {
+    return translateNewBufferStatement(made, madeBuffer, path, context, frame, (after, value) =>
       bindDeclaration(declarations, value, after, context, frame, continueWith),
     );
   }
@@ -14167,22 +14186,26 @@ export const translateStatements = (
       ? statement.expression
       : undefined;
   const assigned = assignment && skipCasts(assignment.right);
-  if (
-    assignment !== undefined &&
-    assigned !== undefined &&
-    isNewBufferStatement(assigned, context)
-  ) {
-    return translateNewBufferStatement(assigned, path, context, frame, (after, value) =>
-      shareHeap(
-        assign(assignment.left, after, context, () => value),
-        context,
-        continueWith,
-      ),
+  const assignedBuffer = assigned && getBufferConstruction(assigned, context);
+  if (assignment !== undefined && assigned !== undefined && assignedBuffer !== undefined) {
+    return translateNewBufferStatement(
+      assigned,
+      assignedBuffer,
+      path,
+      context,
+      frame,
+      (after, value) =>
+        shareHeap(
+          assign(assignment.left, after, context, () => value),
+          context,
+          continueWith,
+        ),
     );
   }
   const dropped = ts.isExpressionStatement(statement) ? skipCasts(statement.expression) : undefined;
-  if (dropped !== undefined && isNewBufferStatement(dropped, context)) {
-    return translateNewBufferStatement(dropped, path, context, frame, (after) =>
+  const droppedBuffer = dropped && getBufferConstruction(dropped, context);
+  if (dropped !== undefined && droppedBuffer !== undefined) {
+    return translateNewBufferStatement(dropped, droppedBuffer, path, context, frame, (after) =>
       shareHeap(after, context, continueWith),
     );
   }
