@@ -4962,6 +4962,50 @@ describe("calls", () => {
     expect((await checkModel(getSource(expected, 54))).failure?.message).toContain("too deep 53");
   });
 
+  it("runs a recursive helper that makes a function it only calls as an operator", async () => {
+    const getSource = (expected: string) => `
+      const run = () => {
+        const cursor = { index: 0 };
+        const tokens = ["[", "a", ",", "[", "b", ",", "c", "]", "]", "x"];
+        const log: string[] = [];
+        const wrap = (body: () => string) => {
+          log.push("w");
+          return body();
+        };
+        const parseItem = (): string => {
+          const token = tokens[cursor.index];
+          cursor.index++;
+          return token === "[" ? parseList() : token;
+        };
+        const parseList = (): string =>
+          wrap(() => {
+            const parts: string[] = [];
+            const take = () => {
+              parts.push(parseItem());
+              log.push(\`t\${parts.length}\`);
+            };
+            take();
+            while (tokens[cursor.index] === ",") {
+              cursor.index++;
+              take();
+            }
+            cursor.index++;
+            return \`(\${parts.join(" ")})\`;
+          });
+        const result = parseItem();
+        return \`\${result},\${cursor.index},\${log.join("|")}\`;
+      };
+      const text = run();
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected = "(a (b c)),9,w|t1|w|t1|t2|t2";
+    expect(printModule(compile(getSource(expected)).source)).toMatch(/^RECURSIVE parse/m);
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect((await checkModel(getSource("(a (b c)),9,w|t1|w|t1|t2|t1"))).failure?.message).toContain(
+      expected,
+    );
+  });
+
   it("runs helpers that call one that throws as operators, where the caller catches it", async () => {
     const getSource = (expected: string) => `
       const run = () => {

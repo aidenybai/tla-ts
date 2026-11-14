@@ -63,8 +63,9 @@ const getFixedFunction = (declaration: ts.Node) =>
 
 // Whether a node of a reached function runs only as that function's own code would inline: no
 // this, arguments, or new.target of a function around it, no yield, await, or using, and no
-// function that it makes but a callback that a call takes.
-const isOwnCode = (node: ts.Node): boolean => {
+// function that it makes but a callback that a call takes or a function that a const or a
+// declaration holds and that only calls run.
+const isOwnCode = (node: ts.Node, context: Context): boolean => {
   // A type runs nothing, though an instantiation expression, which TypeScript parses as one, runs.
   if (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) return true;
   if (
@@ -79,15 +80,35 @@ const isOwnCode = (node: ts.Node): boolean => {
     return false;
   }
   if (ts.isFunctionLike(node) || ts.isClassLike(node)) {
+    const name = ts.isFunctionDeclaration(node)
+      ? node.name
+      : ts.isVariableDeclaration(node.parent) && getFixedFunction(node.parent) === node
+        ? node.parent.name
+        : undefined;
+    const symbol = name === undefined ? undefined : getSymbol(name, context.checker);
+    const isCalledOnly = () =>
+      findNodes(
+        ts.findAncestor(node.parent, ts.isFunctionLike) ?? node.getSourceFile(),
+        ts.isIdentifier,
+      ).every(
+        (reference) =>
+          reference === name ||
+          getSymbol(reference, context.checker) !== symbol ||
+          (ts.isCallExpression(reference.parent) && reference.parent.expression === reference),
+      );
     return (
-      (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) &&
-      ts.isCallExpression(node.parent) &&
-      node.parent.arguments.includes(node) &&
+      (ts.isArrowFunction(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isFunctionDeclaration(node)) &&
+      ((!ts.isFunctionDeclaration(node) &&
+        ts.isCallExpression(node.parent) &&
+        node.parent.arguments.includes(node)) ||
+        (symbol !== undefined && !isClosure(node, context) && isCalledOnly())) &&
       isPlain(node) &&
-      ts.forEachChild(node, (child) => !isOwnCode(child) || undefined) === undefined
+      ts.forEachChild(node, (child) => !isOwnCode(child, context) || undefined) === undefined
     );
   }
-  return ts.forEachChild(node, (child) => !isOwnCode(child) || undefined) === undefined;
+  return ts.forEachChild(node, (child) => !isOwnCode(child, context) || undefined) === undefined;
 };
 
 // The message of a throw that nothing catches, which an operator gives on to its caller.
@@ -152,7 +173,7 @@ const getUnit = (unit: ts.Node, context: Context): Unit => {
     isOwn:
       (!ts.isFunctionLike(unit) || isPlain(unit as FunctionNode)) &&
       (ts.isClassLike(unit) ||
-        ts.forEachChild(unit, (child) => !isOwnCode(child) || undefined) === undefined),
+        ts.forEachChild(unit, (child) => !isOwnCode(child, context) || undefined) === undefined),
   };
 };
 
@@ -206,8 +227,17 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
     reached.forEach((unit) =>
       unit.read.forEach((declaration, symbol) => read.set(symbol, declaration)),
     );
+    // A name that a function around the helper declares comes from outside, though the helper runs
+    // that function again: the helper's call sees the name of the call that made it.
     const outside = [...read].filter(
-      (entry) => ts.findAncestor(entry[1], (ancestor) => reach.has(ancestor)) === undefined,
+      (entry) =>
+        ts.findAncestor(
+          entry[1],
+          (ancestor) =>
+            reach.has(ancestor) &&
+            (ancestor === callee ||
+              ts.findAncestor(callee, (inner) => inner === ancestor) === undefined),
+        ) === undefined,
     );
     if (
       reached.some((unit) => unit.isTaskNamed || !unit.isOwn) ||
