@@ -14489,6 +14489,44 @@ describe("errors", () => {
     });
   });
 
+  describe("runs a built-in override of an Object.prototype method that no script replaced", () => {
+    const getSource = (expected: string) => `
+      const holder = { seen: "" };
+      const error = new Error("m");
+      holder.seen = error.toString() + "|" + new Boolean(false).toString();
+      if (holder.seen !== "${expected}") throw new Error("seen");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("Error: m|false"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("Error: m|true"))).failure?.message).toContain('"seen"');
+    });
+
+    it.each([
+      [
+        "a built-in function",
+        'Object.defineProperty(Error.prototype, "toString", { value: Object.prototype.toString });\nconst value = new Error("m");',
+      ],
+      [
+        "a prototype",
+        'const value = { a: 1 };\nObject.setPrototypeOf(value, { toString: () => "mine" });',
+      ],
+    ])("stops where a script put %s in its place", async (_, setup) => {
+      expect(
+        (
+          await checkModel(`
+            const holder = { seen: "" };
+            ${setup}
+            holder.seen = value.toString();
+          `)
+        ).failure?.message,
+      ).toContain("tla-ts can't call Object.prototype.toString where a script replaced it");
+    });
+  });
+
   describe("stops at a change of a global that the script names", () => {
     it("stops where the script replaces a global that it calls", async () => {
       expect(
@@ -15408,7 +15446,7 @@ describe("errors", () => {
       if ([1].at(0) !== 5) throw new Error("replaced");
     `);
     expect(result.failure?.message).toContain(
-      "tla-ts can't call an array method that a script put",
+      "tla-ts can't call Array.prototype.at where a script replaced it",
     );
   });
 
@@ -22226,7 +22264,9 @@ describe("errors", () => {
       const found = text.indexOf("b");
       if (found !== 1) throw new Error("missed");
     `);
-    expect(shadowed.failure?.message).toContain("tla-ts can't call this method");
+    expect(shadowed.failure?.message).toContain(
+      "tla-ts can't call String.prototype.indexOf where a script replaced it",
+    );
   });
 
   it("gives the primitive of a wrapper object or a primitive prototype through valueOf and toString", async () => {

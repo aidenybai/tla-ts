@@ -733,16 +733,27 @@ export const translateHoldsCallee = (node: ts.CallExpression, scope: Scope, cont
       ? undefined
       : (prototype ?? owners.at(-1)));
   if (path === undefined) return undefined;
-  const read = useJavaScript(
-    "Get",
-    [
-      getHeap(scope, node, context),
-      base === undefined ? translateExpression(receiver, scope, context) : include(base),
-      string(key),
-    ],
-    context,
-  );
-  return { path, holds: useJavaScript("SameValue", [read, include(path)], context) };
+  const heap = getHeap(scope, node, context);
+  const object = base === undefined ? translateExpression(receiver, scope, context) : include(base);
+  // Object.prototype's interface declares the methods that other built-in objects override, such as
+  // Error.prototype.toString, so the receiver may reach any built-in function at the key.
+  const holds =
+    named === undefined && path.startsWith("Object.prototype.")
+      ? useJavaScript("HoldsOverriddenBuiltIn", [heap, object, string(key)], context)
+      : useJavaScript(
+          "SameValue",
+          [useJavaScript("Get", [heap, object, string(key)], context), include(path)],
+          context,
+        );
+  // A primitive receiver reaches its prototype's function, which tla-ts checks as it calls it, and
+  // null or undefined throws.
+  return {
+    path,
+    holds:
+      base === undefined
+        ? apply("\\/", [apply("~", [useJavaScript("IsObjectIn", [heap, object], context)]), holds])
+        : holds,
+  };
 };
 
 // A symbol's toString(), valueOf(), or description, which the heap's Symbol.prototype must still

@@ -1973,6 +1973,14 @@ SequenceHasOwn(sequence, key) ==
 \\* Whether an object still holds a built-in function, which tla-ts runs as it compiles.
 HoldsBuiltIn(heap, ref, key, path) == SameValue(Get(heap, ref, key), Ref :> path)
 
+\\* Whether an object reaches the built-in function at a key that it reaches where no script changed a
+\\* built-in object.
+HoldsOverriddenBuiltIn(heap, ref, key) ==
+  LET read == Get(heap, ref, key)
+  IN /\\ IsRef(read)
+     /\\ ~IsHeap(read)
+     /\\ SameValue(read, Get([heap EXCEPT !.changed = <<>>], ref, key))
+
 \\* ToLength of an object's length, where a String, Number, or Boolean object converts to what it
 \\* holds while its valueOf is still the built-in one and nothing gives it @@toPrimitive. A statement
 \\* converts any other object first.
