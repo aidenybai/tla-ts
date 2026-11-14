@@ -207,7 +207,7 @@ export const addUnsafeIntro = (
   };
 };
 
-const addUnsafeElim = (
+export const addUnsafeElim = (
   context: ClassicalContext,
   rule: Thm,
   atomizeRules: readonly Thm[],

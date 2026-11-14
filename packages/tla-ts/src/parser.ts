@@ -376,13 +376,30 @@ const getSpan = (range: SourceRange): Span => ({
   stop: { line: range.end.line, column: range.end.column + 1 },
 });
 
-const createProofError = (message: string, span: Span, exception = "Proof.Parser") =>
+interface ProofErrorEnds {
+  printed: string;
+  set: string;
+}
+
+const NO_NEWLINES: ProofErrorEnds = { printed: "", set: "" };
+
+const PRINTED_NEWLINE: ProofErrorEnds = { printed: "\n", set: "" };
+
+const NEWLINES: ProofErrorEnds = { printed: "\n", set: "\n" };
+
+// p_parser.ml ends some of the messages it prints, and of those it sets, with a newline.
+const createProofError = (
+  message: string,
+  span: Span,
+  ends: ProofErrorEnds,
+  exception = "Proof.Parser",
+) =>
   new TlaSyntaxError(message, undefined, {
-    reason: message,
+    reason: `${message}${ends.set}`,
     line: span.start.line,
     column: span.start.column,
     isEnd: false,
-    proof: { stop: span.stop, exception },
+    proof: { stop: span.stop, exception, printed: `${message}${ends.printed}` },
   });
 
 const FACT_KEYWORDS = new Set([
@@ -951,14 +968,19 @@ const parse = (
     const bullet = advance();
     offsideColumns.push(bullet.column);
     const operands = [parseExpression()];
-    while (
-      isBullet(peekRaw()) &&
-      peekRaw().text === bullet.text &&
-      peekRaw().column === bullet.column
-    ) {
-      cursor++;
-      operands.push(parseExpression());
-    }
+    const parseItems = () => {
+      while (
+        isBullet(peekRaw()) &&
+        peekRaw().text === bullet.text &&
+        peekRaw().column === bullet.column
+      ) {
+        cursor++;
+        operands.push(parseExpression());
+      }
+    };
+    // bulleted_list: a first item that fails leaves expr_or_op's other readings to fail after it.
+    if (isTlapm) commit(parseItems);
+    else parseItems();
     offsideColumns.pop();
     return {
       kind: bullet.text === "/\\" ? "And" : "Or",
@@ -1566,6 +1588,42 @@ const parse = (
         )
       : undefined;
 
+  // A comma directly inside the parentheses after the operator, without which non_test's
+  // attempt at `(e, f)` fails. A selector's << or >> isn't a bracket.
+  const hasNonfixComma = () => {
+    let depth = 0;
+    for (let index = cursor + 1; index < tokens.length; index++) {
+      const token = tokens[index];
+      if (token.kind !== "Operator") continue;
+      if (depth === 1 && token.text === ",") return true;
+      if (tokens[index - 1].text === "!") continue;
+      if (OPENING_BRACKETS.has(token.text)) depth++;
+      if (CLOSING_BRACKETS.has(token.text) && --depth === 0) return false;
+    }
+    return false;
+  };
+
+  // expr_or_op's non_test: an infix operator before two expressions in parentheses is an atom.
+  const parseTlapmNonfixInfix = (token: Token) =>
+    isAt("(", 1) && hasNonfixComma()
+      ? attempt(() =>
+          withBracketLayout((): Expression => {
+            advance();
+            advance();
+            const left = parseExpression();
+            expect(",");
+            const right = parseExpression();
+            expect(")");
+            return {
+              kind: "Apply",
+              operator: token.text,
+              args: [left, right],
+              location: getLocation(token),
+            };
+          }),
+        )
+      : undefined;
+
   const parseTlapmItem = (isStart: boolean): TlapmItem | undefined => {
     const start = cursor;
     const token = peek();
@@ -1593,6 +1651,11 @@ const parse = (
         }));
       }
       if (infix) {
+        // Pco.resolve has no operator to put before that atom, so the expression ends here.
+        if (parseTlapmNonfixInfix(token)) {
+          cursor = start;
+          return undefined;
+        }
         advance();
         return {
           ...getTlapmOperator(start, "Infix", infix, (operands) =>
@@ -1621,21 +1684,8 @@ const parse = (
       );
     }
     if (token.kind === "Operator" && isBullet(token))
-      return getTlapmOperand(commit(parseJunctionList), start);
-    const nonfix =
-      infix && isAt("(", 1)
-        ? attempt(() =>
-            withBracketLayout((): Expression => {
-              advance();
-              advance();
-              const left = parseExpression();
-              expect(",");
-              const right = parseExpression();
-              expect(")");
-              return { kind: "Apply", operator: token.text, args: [left, right], location };
-            }),
-          )
-        : undefined;
+      return getTlapmOperand(parseJunctionList(), start);
+    const nonfix = infix ? parseTlapmNonfixInfix(token) : undefined;
     if (nonfix) return getTlapmOperand(nonfix, start);
     const nonfixPostfix = parseTlapmNonfixPostfix(token);
     if (nonfixPostfix) {
@@ -2181,23 +2231,50 @@ const parse = (
     );
   };
 
+  const parseHypothesis = () => {
+    if (peek().kind === "Identifier" && isAt("::", 1) && isAt("ASSUME", 2)) {
+      advance();
+      advance();
+    }
+    if (isAt("ASSUME")) return withProofScope(parseAssumeProve);
+    if (peek().kind === "Keyword" && NEW_SYMBOL_STARTS.has(peek().text))
+      return isTlapm ? commit(parseNewSymbol) : parseNewSymbol();
+    if (!isTlapm) return parseExpression();
+    // expr_or_sequent: where no expression starts, the sequent's ASSUME fails last.
+    const expression = attempt(parseExpression);
+    if (expression === undefined) throw createUnexpected("Expected a hypothesis");
+    return expression;
+  };
+
+  // comma1 (hyp b): Pco.star attempts the hypotheses after the first, each inside the one before,
+  // so a failure that backtracks ends the list, and tlapm reports any other before the first comma.
+  const parseTlapmHypotheses = () => {
+    const assumptions = [parseHypothesis()];
+    withRestorePoint(() => {
+      while (true) {
+        const assumption = attempt(() => {
+          expect(",");
+          return parseHypothesis();
+        });
+        if (assumption === undefined) break;
+        assumptions.push(assumption);
+      }
+    });
+    return assumptions;
+  };
+
   const parseAssumeProve = (): AssumeProve => {
     const start = cursor;
     const location = getLocation(expect("ASSUME"));
-    const assumptions = parseSeparated(() => {
-      if (peek().kind === "Identifier" && isAt("::", 1) && isAt("ASSUME", 2)) {
-        advance();
-        advance();
-      }
-      if (isAt("ASSUME")) return withProofScope(parseAssumeProve);
-      if (peek().kind === "Keyword" && NEW_SYMBOL_STARTS.has(peek().text)) return parseNewSymbol();
-      return parseExpression();
-    });
-    expect("PROVE");
-    return withRange(
-      { kind: "AssumeProve", assumptions, conclusion: parseExpression(), location },
-      start,
-    );
+    const parseSequent = (): AssumeProve => {
+      const assumptions = isTlapm ? parseTlapmHypotheses() : parseSeparated(parseHypothesis);
+      expect("PROVE");
+      return withRange(
+        { kind: "AssumeProve", assumptions, conclusion: parseExpression(), location },
+        start,
+      );
+    };
+    return isTlapm ? commit(parseSequent) : parseSequent();
   };
 
   const isNameListAhead = (terminator: string) => {
@@ -2409,20 +2486,26 @@ const parse = (
       throw createProofError(
         `Unexpected end of (sub)proof at level ${level} before QED step`,
         levelSpan,
+        NEWLINES,
       );
     }
     if (item.kind === "Leaf") {
       throw createProofError(
         `Expecting a proof step but found a${LEAF_NAMES[item.proof.kind]} leaf proof`,
         item.span,
+        NEWLINES,
       );
     }
     if (!isFirst && item.isProof) {
-      throw createProofError("PROOF keyword found in step that does not begin subproof", item.span);
+      throw createProofError(
+        "PROOF keyword found in step that does not begin subproof",
+        item.span,
+        PRINTED_NEWLINE,
+      );
     }
     const implicit = item.token.text[1];
     if (implicit === "+" && !isFirst) {
-      throw createProofError("<+> used but no subproof expected", item.span);
+      throw createProofError("<+> used but no subproof expected", item.span, PRINTED_NEWLINE);
     }
     const stepLevel =
       implicit === "*"
@@ -2477,6 +2560,7 @@ const parse = (
       throw createProofError(
         "extra step(s) after finished proof",
         extra.span,
+        NO_NEWLINES,
         "Proof.Parser.toplevel",
       );
     }

@@ -29,10 +29,9 @@ import {
   transitive,
   type Thm,
 } from "../pure/thm";
-import { addUnsafeDest, withClaset } from "../provers/classical";
 import { getLogicFact, getProofContext } from "../tla/context";
 import type { ConstInfo, TlaLogic } from "../tla/logic";
-import { applyAttribute, applyAttributes, getThms } from "./attrib";
+import { applyAttributes, getThms } from "./attrib";
 import {
   addAssumptions,
   addFixes,
@@ -103,6 +102,11 @@ const addConst = (theory: Theory, base: string, type: Typ): Theory => {
   };
 };
 
+interface NamedFact {
+  readonly name: string;
+  readonly thms: readonly Thm[];
+}
+
 const putTheoryFacts = (theory: Theory, name: string, thms: readonly Thm[]): Theory => ({
   ...theory,
   facts: new Map([...theory.facts, [name, thms]]),
@@ -162,52 +166,29 @@ const define = (
     applied.maxidx + 1,
     applied,
   );
+  const [declared, thms] = applyAttributes(context, command.part.attributes, [
+    zeroVarIndexes(generalized),
+  ]);
   return putTheoryFacts(
-    addConst(theory, head.name, head.type),
+    { ...addConst(theory, head.name, head.type), tactics: declared.tactics },
     command.part.name ?? `${head.name}_def`,
-    applyAttributes(context, command.part.attributes, [zeroVarIndexes(generalized)]),
+    thms,
   );
 };
 
-// The dest attribute without ! or ? is Classical.unsafe_dest; the others transform the rule.
-const declare = (
-  tactics: ProofContext,
-  context: IsarContext,
-  references: readonly FactReference[],
-): ProofContext =>
+// Specification.theorems: the declarations of each fact's attributes, whose results it drops.
+const declare = (context: IsarContext, references: readonly FactReference[]): ProofContext =>
   references.reduce(
     (current, reference) =>
-      getFact(context, reference.name).reduce(
-        (inner, fact) =>
-          reference.attributes.reduce<[ProofContext, Thm]>(
-            ([declared, thm], attribute) => {
-              if (attribute.name !== "dest")
-                return [declared, applyAttribute(context, attribute, thm)];
-              if (attribute.args.length > 0) throw error("Unsupported dest attribute arguments");
-              const classical = declared.classical;
-              return [
-                {
-                  ...declared,
-                  classical: withClaset(
-                    classical,
-                    addUnsafeDest(classical, thm, declared.atomizeRules),
-                  ),
-                },
-                thm,
-              ];
-            },
-            [inner, fact],
-          )[0],
-        current,
-      ),
-    tactics,
-  );
+      applyAttributes(current, reference.attributes, getFact(current, reference.name))[0],
+    context,
+  ).tactics;
 
 // Specification.theorem: the statement's elements, then the goal whose results the theory keeps.
 const startTheorem = (
   outer: IsarContext,
   command: Extract<Command, { kind: "theorem" }>,
-  store: (name: string, thms: readonly Thm[]) => void,
+  store: (tactics: ProofContext, facts: readonly NamedFact[]) => void,
 ): State => {
   const fixed = command.elements.reduce((context, element) => {
     if (element.kind !== "fixes") return context;
@@ -232,13 +213,13 @@ const startTheorem = (
   );
   let offset = 0;
   const named = assumes.reduce((context, part, index) => {
-    const group = applyAttributes(
+    const [declared, group] = applyAttributes(
       context,
       part.attributes,
       prems.slice(offset, offset + assumeProps[index].length),
     );
     offset += assumeProps[index].length;
-    return part.name === undefined ? context : putFacts(context, part.name, group);
+    return part.name === undefined ? declared : putFacts(declared, part.name, group);
   }, assumed);
   const elementsContext =
     prems.length === 0 ? named : putFacts(named, command.isLong ? "assms" : "that", prems);
@@ -251,10 +232,12 @@ const startTheorem = (
       ),
     );
     const part = command.shows[0];
-    const noted = applyAttributes(outer, part.attributes, normalized);
-    if (part.name !== undefined) store(part.name, noted);
-    const named = applyAttributes(outer, command.attributes, noted);
-    if (command.name !== undefined) store(command.name, named);
+    const [notedContext, noted] = applyAttributes(outer, part.attributes, normalized);
+    const [namedContext, named] = applyAttributes(notedContext, command.attributes, noted);
+    store(namedContext.tactics, [
+      ...(part.name === undefined ? [] : [{ name: part.name, thms: noted }]),
+      ...(command.name === undefined ? [] : [{ name: command.name, thms: named }]),
+    ]);
   });
 };
 
@@ -334,14 +317,14 @@ export const runTheory = (logic: TlaLogic, text: TheoryText, limits: Limits) => 
         theory = define(theory, initContext(logic, theory), command);
         break;
       case "declare":
-        theory = {
-          ...theory,
-          tactics: declare(theory.tactics, initContext(logic, theory), command.facts),
-        };
+        theory = { ...theory, tactics: declare(initContext(logic, theory), command.facts) };
         break;
       case "theorem":
-        state = startTheorem(initContext(logic, theory), command, (name, thms) => {
-          theory = putTheoryFacts(theory, name, thms);
+        state = startTheorem(initContext(logic, theory), command, (tactics, facts) => {
+          theory = facts.reduce((current, fact) => putTheoryFacts(current, fact.name, fact.thms), {
+            ...theory,
+            tactics,
+          });
         });
         break;
       default:

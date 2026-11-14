@@ -297,9 +297,9 @@ const localResults = (
 ): State => {
   const noted: Thm[] = [];
   const named = parts.reduce((context, part, index) => {
-    const thms = applyAttributes(context, part.attributes, results[index]);
+    const [declared, thms] = applyAttributes(context, part.attributes, results[index]);
     noted.push(...thms);
-    return part.name === undefined ? context : putFacts(context, part.name, thms);
+    return part.name === undefined ? declared : putFacts(declared, part.name, thms);
   }, contextOf(state));
   return putFactsOf(
     mapContext(state, () => named),
@@ -436,14 +436,14 @@ const assumeProps = (
   const noted: Thm[] = [];
   const named = groups.reduce(
     (current, group) => {
-      const slice = applyAttributes(
+      const [declared, slice] = applyAttributes(
         current,
         group.attributes,
         thms.slice(offset, offset + group.props.length),
       );
       offset += group.props.length;
       noted.push(...slice);
-      return group.name === undefined ? current : putFacts(current, group.name, slice);
+      return group.name === undefined ? declared : putFacts(declared, group.name, slice);
     },
     props.reduce(declareTerm, context),
   );

@@ -75,10 +75,6 @@ export interface CollectState {
 const getOmittedDeclaration = (name: string) =>
   `; omitted declaration of 'TLA__${name}' (second-order)`;
 
-// tlapm orders the axioms of the literals by their values, which a longer numeral or, at the same
-// length, a later digit string has the greater of.
-const getLiteralOrder = (digits: string) => [digits.length, digits];
-
 const getLiteralNames = (count: number) =>
   Array.from({ length: count }, (_value, index) => `IntLit_${index + 1}`);
 
@@ -475,9 +471,8 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
     const distinct = state.integers.map((other) =>
       axiom(
         "IntLitDistinct",
-        [getLiteralOrder(other), getLiteralOrder(value)],
+        [BigInt(other), BigInt(value)],
         `(distinct ${tla(`IntLit_${other}`)} ${symbol})`,
-        `IntLitDistinct ${other} ${value}`,
       ),
     );
     state.integers.push(value);
@@ -488,17 +483,11 @@ export const getSymbolSpec = (name: string, state: CollectState): SymbolSpec => 
       0,
       ["Mem", "IntSet", "IntLit_0", "IntLteq", ...(isPositivityNeeded ? ["IntLit_1"] : [])],
       [
-        axiom(
-          "IntLitIsint",
-          [getLiteralOrder(value)],
-          `(${MEM} ${symbol} ${INT_SET})`,
-          `IntLitIsint ${value}`,
-        ),
+        axiom("IntLitIsint", [BigInt(value)], `(${MEM} ${symbol} ${INT_SET})`),
         axiom(
           "IntLitZeroCmp",
-          [getLiteralOrder(value)],
+          [BigInt(value)],
           value === "0" ? `(${INT_LTEQ} ${symbol} ${zero})` : `(${INT_LTEQ} ${zero} ${symbol})`,
-          `IntLitZeroCmp ${value}`,
         ),
         ...distinct,
         ...(isPositivityNeeded
