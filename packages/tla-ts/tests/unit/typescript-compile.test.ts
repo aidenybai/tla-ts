@@ -4400,6 +4400,41 @@ describe("calls", () => {
     );
   });
 
+  it("runs a local function that calls itself as one operator, which reads the locals around it", async () => {
+    const getSource = (cases: number, expected: string) => {
+      const kinds = Array.from({ length: cases }, (_, position) => `K${position}`);
+      return `
+        interface Precedence {
+          high: number;
+        }
+        type Term = { kind: "Leaf"; name: string } | ${kinds.map((kind) => `{ kind: "${kind}"; args: Term[] }`).join(" | ")};
+        const run = (prefix: string, units: Term[]) => {
+          const wrap = (term: Term, parent: Precedence): string[] => {
+            const lines = print(term);
+            return parent.high > 1 && term.kind !== "Leaf" ? ["(", ...lines, ")"] : lines;
+          };
+          const print = (term: Term): string[] => {
+            switch (term.kind) {
+              case "Leaf":
+                return [\`\${prefix}\${term.name}\`];
+              ${kinds.map((kind, position) => `case "${kind}": return ["${kind}", ...wrap(term.args[0], { high: ${position} })];`).join("\n")}
+            }
+          };
+          return ["M", ...units.flatMap((unit) => print(unit))].join(";");
+        };
+        const text = run("p", [{ kind: "${kinds.at(-1)}", args: [{ kind: "K0", args: [{ kind: "Leaf", name: "x" }] }] }]);
+        if (text !== "${expected}") throw new Error(text);
+      `;
+    };
+    const getSize = (cases: number) =>
+      printModule(compile(getSource(cases, ""), "spec.ts").source).length;
+    expect(getSize(8)).toBeLessThan(2 * getSize(4));
+    expect((await checkModel(getSource(4, "M;K3;(;K0;px;)"))).failure).toBeUndefined();
+    expect((await checkModel(getSource(4, "M;K3;(;K0;x;)"))).failure?.message).toContain(
+      "M;K3;(;K0;px;)",
+    );
+  });
+
   it("spreads a map whose callback reads the heap before a call of itself that changes it", async () => {
     const getSource = (expected: string) => `
       interface Box {

@@ -3981,14 +3981,42 @@ const isSelfCallable = (
   );
 };
 
-// Whether a top-level function may call itself, through the functions that it names. A local one
-// may read its call's locals, which only a copy of its body at each call has.
-const isCallingItself = (callee: FunctionNode, context: Context) => {
+// Whether a function may call itself, through the functions that it names. A local one may read the
+// locals of a function around it, which a call runs it with only where it binds them all.
+const isCallingItself = (callee: FunctionNode, path: Path, context: Context) => {
   const declaration = ts.isVariableDeclaration(callee.parent) ? callee.parent : callee;
+  if (callee.body === undefined) return false;
+  const reached = getReached([callee.body], context);
+  // A function declaration, or a const that holds a function, is the same function at each call.
+  const getFixedFunction = (node: ts.Node) =>
+    ts.isFunctionDeclaration(node)
+      ? node
+      : ts.isVariableDeclaration(node) && (ts.getCombinedNodeFlags(node) & ts.NodeFlags.Const) !== 0
+        ? getAnyFunction(node.initializer)
+        : undefined;
+  const functions = new Set<ts.Node>([
+    callee,
+    ...reached.flatMap((node) => getFixedFunction(node) ?? []),
+  ]);
+  const isBound = (node: ts.Node) => {
+    if (
+      !(ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isBindingElement(node)) ||
+      getFixedFunction(node) !== undefined ||
+      ts.findAncestor(node.parent, ts.isFunctionLike) === undefined ||
+      ts.findAncestor(node, (ancestor) => functions.has(ancestor)) !== undefined
+    ) {
+      return true;
+    }
+    const symbol = ts.isIdentifier(node.name) ? getSymbol(node.name, context.checker) : undefined;
+    return symbol !== undefined && path.scope.bindings.has(symbol);
+  };
+  // A local function that no name holds, such as one that a factory returns, may be a value that
+  // another call of its factory made.
   return (
-    callee.body !== undefined &&
-    ts.findAncestor(callee.parent, ts.isFunctionLike) === undefined &&
-    getReached([callee.body], context).includes(declaration)
+    reached.includes(declaration) &&
+    (ts.findAncestor(callee.parent, ts.isFunctionLike) === undefined ||
+      getFixedFunction(declaration) !== undefined) &&
+    reached.every(isBound)
   );
 };
 
@@ -4316,7 +4344,7 @@ export const inlineBody = (
       // calls, rather than as a copy of its body at each call.
       !isAction(callee, context) &&
         (frame.inlining.has(callee) ||
-          (isCallingItself(callee, context) &&
+          (isCallingItself(callee, path, context) &&
             isSelfCallable(
               callee,
               argumentNodes,
