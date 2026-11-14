@@ -1143,18 +1143,54 @@ const isSteady = (value: ts.Expression, node: ts.Node, context: Context) => {
   );
 };
 
+// The function or function expression that a name holds, where nothing assigns the name.
+const getNamedFunction = (node: ts.Expression, context: Context) => {
+  const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
+  const declaration = symbol?.valueDeclaration;
+  const made =
+    declaration !== undefined && ts.isVariableDeclaration(declaration)
+      ? declaration.initializer
+      : declaration;
+  return symbol !== undefined &&
+    made !== undefined &&
+    (ts.isFunctionExpression(made) || ts.isFunctionDeclaration(made)) &&
+    !isAssigned(symbol, node.getSourceFile(), context)
+    ? made
+    : undefined;
+};
+
+// A call of bind, as f.bind(x, ...) or Function.prototype.bind.call(f, x, ...), and the values that
+// it reads: the function, the receiver, and the arguments.
+const getBindCall = (node: ts.Node) => {
+  if (!isMethodCall(node)) return undefined;
+  const callee = node.expression;
+  const isCall =
+    callee.name.text === "call" && callee.expression.getText() === "Function.prototype.bind";
+  if (!isCall && callee.name.text !== "bind") return undefined;
+  return { isCall, values: isCall ? [...node.arguments] : [callee.expression, ...node.arguments] };
+};
+
 // A call of Function.prototype.bind on a function that a script evaluates once, as f.bind(x, ...)
 // or Function.prototype.bind.call(f, x, ...), or on a class's method, as c.method.bind(c). A call
 // of the bound function reads its receiver and arguments again, so it needs them steady, and an
 // empty object can only be bound.
 export const getBinding = (node: ts.Node, context: Context): Binding | undefined => {
-  if (context.heap === undefined || !isMethodCall(node)) return undefined;
-  const callee = node.expression;
-  const isCall =
-    callee.name.text === "call" && callee.expression.getText() === "Function.prototype.bind";
-  if (!isCall && callee.name.text !== "bind") return undefined;
-  const values = isCall ? [...node.arguments] : [callee.expression, ...node.arguments];
-  const bound = values[0] === undefined ? undefined : getFunctionValue(values[0], context);
+  const call = context.heap === undefined ? undefined : getBindCall(node);
+  if (call === undefined) return undefined;
+  const isCall = call.isCall;
+  const values = call.values;
+  // A function that the heap holds, as new constructs it, may be bound only for new, which reads
+  // it by its name.
+  const constructed = values[0] === undefined ? undefined : getNamedFunction(values[0], context);
+  const bound =
+    values[0] === undefined
+      ? undefined
+      : (getFunctionValue(values[0], context) ??
+        (constructed !== undefined && isHeapFunction(constructed, context)
+          ? constructed
+          : undefined));
+  const isConstructedOnly =
+    bound !== undefined && bound === constructed && isHeapFunction(bound, context);
   const called =
     bound !== undefined || values[0] === undefined
       ? undefined
@@ -1185,7 +1221,7 @@ export const getBinding = (node: ts.Node, context: Context): Binding | undefined
     method,
     receiver: values[1],
     arguments: values.slice(2),
-    isSteady: read.every((value) => isSteady(value, node, context)),
+    isSteady: !isConstructedOnly && read.every((value) => isSteady(value, node, context)),
     isCall,
   };
 };
@@ -2678,7 +2714,42 @@ const getConstructedBase = (callee: ts.Expression, context: Context) => {
     : undefined;
 };
 
+// The function that a name holds where a call of bind gives the name, and the arguments that it
+// binds, which new constructs the function with as it ignores the receiver. The name and what the
+// bind reads must hold their values by the time new runs.
+const getBoundConstruction = (node: ts.NewExpression, context: Context) => {
+  const name = skipCasts(node.expression);
+  const symbol = ts.isIdentifier(name) ? getSymbol(name, context.checker) : undefined;
+  const declaration = symbol?.valueDeclaration;
+  const initializer =
+    declaration !== undefined && ts.isVariableDeclaration(declaration)
+      ? declaration.initializer
+      : undefined;
+  const call = initializer === undefined ? undefined : getBindCall(skipCasts(initializer));
+  const target = call?.values[0];
+  const made = target === undefined ? undefined : getNamedFunction(target, context);
+  return symbol !== undefined &&
+    initializer !== undefined &&
+    call !== undefined &&
+    target !== undefined &&
+    made !== undefined &&
+    isSteady(name, node, context) &&
+    [target, ...call.values.slice(2)].every((value) => isSteady(value, initializer, context))
+    ? { callee: target, arguments: call.values.slice(2) }
+    : undefined;
+};
+
 export const getConstruction = (node: ts.Node, context: Context): Construction | undefined => {
+  // A bound function constructs its target with its bound arguments first, and with the target as
+  // new.target in place of itself.
+  const bound = ts.isNewExpression(node) ? getBoundConstruction(node, context) : undefined;
+  if (ts.isNewExpression(node) && bound !== undefined) {
+    return {
+      callee: bound.callee,
+      arguments: [...bound.arguments, ...(node.arguments ?? [])],
+      newTarget: bound.callee,
+    };
+  }
   if (ts.isNewExpression(node)) {
     return {
       callee: getConstructedBase(node.expression, context) ?? node.expression,

@@ -11062,6 +11062,52 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("replaced Function.prototype.bind");
   });
 
+  it("constructs a bound function's target with its bound arguments first", async () => {
+    const getSource = (expected: string) => `
+      const holder = { prop: "abc" };
+      function pair(x: number, y: number) {
+        return new Boolean(arguments.length === 2 && x === 1 && y === 2 && new.target === pair);
+      }
+      function empty(x: number) {
+        if (x > 5) return { big: true };
+      }
+      const BoundPair = Function.prototype.bind.call(pair, holder, 1);
+      const BoundEmpty = empty.bind(null, 1) as unknown as new (x: number) => { big?: boolean };
+      const made = new BoundPair(2);
+      const plain = new BoundEmpty(9);
+      const result = [made.valueOf(), plain instanceof empty, plain.big, holder.prop].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "true,true,,abc";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect((await checkModel(getSource("true,true,true,abc"))).failure?.message).toContain(
+      expected,
+    );
+  });
+
+  it("stops where a script constructs a bound function that tla-ts can't follow", () => {
+    expect(() =>
+      compile(
+        `const arrow = (x: number) => [x];\nconst Bound = arrow.bind(null, 1) as unknown as new () => number[];\nconst made = new Bound();`,
+      ),
+    ).toThrow("Unsupported call: arrow.bind");
+    expect(() =>
+      compile(
+        `async function later(x: number) {\n  return [x];\n}\nconst Bound = later.bind(null, 1) as unknown as new () => number[];\nconst made = new Bound();`,
+      ),
+    ).toThrow("Unsupported call: later.bind");
+    expect(() =>
+      compile(
+        `let make = function (x: number) {\n  return [x];\n};\nconst Bound = make.bind(null, 1) as unknown as new () => number[];\nmake = function (x: number) {\n  return [x + 1];\n};\nconst made = new Bound();`,
+      ),
+    ).toThrow("Unsupported call: make.bind");
+    expect(() =>
+      compile(
+        `function pair(x: number) {\n  return [x];\n}\nconst Bound = Function.prototype.bind.call(pair, null, 1);\nconst made = new Bound();\nconst called = Bound();`,
+      ),
+    ).toThrow("Unsupported call");
+  });
+
   describe("binds a class's method to a receiver", () => {
     const getSource = (doubled: number, name: string) => `
       class C {
