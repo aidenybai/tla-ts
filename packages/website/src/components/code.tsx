@@ -18,7 +18,6 @@ const NO_HIGHLIGHTS = {};
 interface CodeState {
   source: Source;
   isMultiline: boolean;
-  isWrapped: boolean;
   activeLine: number | undefined;
   notes: LineNote[];
   search: Search | undefined;
@@ -34,7 +33,6 @@ interface RootProps {
   notes?: LineNote[];
   search?: Search;
   highlights?: Record<string, string>;
-  isWrapped?: boolean;
   onMorphEnd?: () => void;
   children: ReactNode;
 }
@@ -46,7 +44,6 @@ export const CodeRoot = (props: RootProps) => {
       value={{
         source: props.source,
         isMultiline,
-        isWrapped: props.isWrapped ?? true,
         activeLine: props.activeLine,
         notes: props.notes ?? [],
         search: props.search,
@@ -81,10 +78,7 @@ export const CodeContent = () => {
   return (
     <code
       ref={contentRef}
-      className={cn(
-        "@container relative w-full min-w-0 font-mono text-[13px]/[1.7] text-foreground",
-        !code.isWrapped && "overflow-x-auto",
-      )}
+      className="@container relative w-full min-w-0 font-mono text-[13px]/[1.7] text-foreground"
     >
       {code.source.lines
         .map((tokens, index) => ({ tokens, number: index + 1 }))
@@ -97,7 +91,6 @@ export const CodeContent = () => {
             isDimmed={
               path.states.length > 0 && path.states.every((state) => state.line !== line.number)
             }
-            isWrapped={code.isWrapped}
             aside={
               code.search && (
                 <SearchCell
@@ -108,10 +101,7 @@ export const CodeContent = () => {
                 />
               )
             }
-            className={cn(
-              code.isWrapped ? "-mr-4 -ml-4 pr-4 pl-4" : "w-max min-w-full",
-              line.number === 1 && "pr-14",
-            )}
+            className={cn("-mr-4 -ml-4 pr-4 pl-4", line.number === 1 && "pr-14")}
           />
         ))}
     </code>

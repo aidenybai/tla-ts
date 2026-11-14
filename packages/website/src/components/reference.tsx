@@ -38,7 +38,7 @@ const Block = (props: BlockProps) => {
   }
   if (block.kind === "code") {
     return (
-      <CodeRoot source={block.source} isWrapped={false}>
+      <CodeRoot source={block.source}>
         <CodeContent />
         <CodeActions>
           <CodeCopy />
