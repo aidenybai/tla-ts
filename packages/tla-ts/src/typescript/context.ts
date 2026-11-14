@@ -36,8 +36,6 @@ export interface SelfCall {
 // body ended, its value or what it threw, the message and the place of a throw, and the state.
 export interface SharedCall {
   name: string;
-  // Whether a try catches what the call throws, which an expression's call inside may not throw.
-  isCatching: boolean;
   // Whether its body can end in a throw, which the operator gives its caller to catch or stop at.
   isThrowing: boolean;
   captured: ts.Symbol[];

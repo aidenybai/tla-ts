@@ -382,7 +382,6 @@ const getSharedCall = (
   const runs = [helper, ...passed.flatMap((callback) => callback ?? [])];
   const read = [...new Set(runs.flatMap((run) => run.read))];
   const changed = [...new Set(runs.flatMap((run) => run.changed))];
-  const isCatching = path.scope.isCatching;
   const captured = read.filter(
     (symbol) => !context.variables.has(symbol) && path.scope.bindings.has(symbol),
   );
@@ -407,7 +406,6 @@ const getSharedCall = (
   }
   const defined = (context.sharedCalls.get(callee) ?? []).find(
     (shared) =>
-      shared.isCatching === isCatching &&
       shared.captured.length === captured.length &&
       shared.captured.every((symbol) => captured.includes(symbol)) &&
       [...callbacks].every((entry) => shared.callbacks.get(entry[0]) === entry[1]),
@@ -420,7 +418,7 @@ const getSharedCall = (
   const state = [...context.variables.keys()].filter(
     (symbol) => symbol === context.heap || named.has(symbol) || changed.includes(symbol),
   );
-  return defineShared(callee, { changed, isCatching, captured, callbacks, state }, context);
+  return defineShared(callee, { changed, captured, callbacks, state }, context);
 };
 
 // The parameters that take values, not the functions that the operator calls.
@@ -480,7 +478,7 @@ export const defineThrown = (context: Context) =>
 // or what it threw, the message and the place of the throw, and the state that it changed.
 const defineShared = (
   callee: FunctionNode,
-  variant: Pick<SharedCall, "changed" | "isCatching" | "captured" | "callbacks" | "state">,
+  variant: Pick<SharedCall, "changed" | "captured" | "callbacks" | "state">,
   context: Context,
 ) => {
   const parameters = getParameters(callee);
@@ -510,7 +508,8 @@ const defineShared = (
   const base = createStateScope(context);
   const scope = {
     ...base,
-    isCatching: variant.isCatching,
+    // The body runs as inside a try, so that each caller catches or stops at what it throws.
+    isCatching: true,
     functions: new Map([...base.functions, ...variant.callbacks]),
     // A variable that the operator doesn't take has no binding, so its code can't read it stale.
     bindings: new Map(

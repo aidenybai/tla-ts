@@ -5937,6 +5937,33 @@ describe("calls", () => {
     },
   );
 
+  it("stops where a helper's operator throws from inside an expression that nothing catches", async () => {
+    const source = [
+      "const box = { count: 0 };",
+      "const fail = (wanted: string): number => {",
+      "  throw new Error(`Expected ${wanted}`);",
+      "};",
+      "const read = (text: string) => {",
+      "  box.count++;",
+      '  return text === "a" ? 1 : fail(text) + 1;',
+      "};",
+      "const run = () => {",
+      '  const first = read("a");',
+      '  const second = read("b");',
+      "  return first + second;",
+      "};",
+      "const total = run();",
+    ].join("\n");
+    expect(printModule(compile(source).source)).toMatch(/^read\(/m);
+    const failure = (await checkModel(source)).failure;
+    expect(failure?.message).toContain('"Expected b"');
+    expect(failure?.callStack?.at(-1)?.location).toMatchObject({
+      line: 3,
+      column: 3,
+      range: { end: { line: 3, column: 40 } },
+    });
+  });
+
   it("passes a helper's operator only the variables that it reads or changes, as the call sees them", async () => {
     const getSource = (expected: string) => `
       const box = { count: 0 };
