@@ -5201,12 +5201,22 @@ SetToSequence(set) ==
   ELSE LET element == CHOOSE element \\in set : TRUE
        IN <<element>> \\o SetToSequence(set \\ {element})
 
+\\* Deletes the indices of an array that the heap holds from one below an end down to a start.
+RECURSIVE ArrayDeletesDown(_, _, _, _)
+ArrayDeletesDown(state, ref, from, to) ==
+  IF state.isThrown \\/ to <= from
+  THEN state
+  ELSE ArrayDeletesDown(AndThen(state, LAMBDA heap : ArrayDelete(heap, ref, ToString(to - 1))),
+                        ref, from, to - 1)
+
 \\* What a splice does to an array that the heap holds, and the elements that it removes, where it
 \\* makes the array of them through the array's constructor, which tla-ts follows only for Array.
+\\* An array with holes changes index by index as the spec runs it, where a hole that a move reads
+\\* deletes the index it moves to.
 ArraySplice(heap, ref, start, hasCount, count, items, array) ==
   LET object == Lookup(heap, ref)
-      elements == DenseElements(heap, ref)
-      length == Len(elements)
+      own == {ToIndex(key) : key \\in {key \\in DOMAIN object.values : IsIndex(key)}}
+      length == object.values["length"]
       relative == ToIntegerOrInfinity(ToNumber(start))
       deleting == IF hasCount THEN ToIntegerOrInfinity(ToNumber(count)) ELSE length
   IN CASE ~(relative \\in Int /\\ deleting \\in Int) ->
@@ -5221,12 +5231,34 @@ ArraySplice(heap, ref, start, hasCount, count, items, array) ==
                 deleted == CASE deleting < 0 -> 0
                              [] deleting > length - first -> length - first
                              [] OTHER -> deleting
+                elements == DenseElements(heap, ref)
                 changed == SubSeq(elements, 1, first) \\o items
                              \\o SubSeq(elements, first + deleted + 1, length)
-            IN Species(Get(heap, ref, "constructor"), array,
-                       [heap |-> WithElements(heap, ref, changed, Len(changed)),
-                        value |-> SubSeq(elements, first + 1, first + deleted),
-                        isThrown |-> FALSE])
+                indices == {ToIndex(key) : key \\in IndexKeys(heap, ref)}
+                offset == Len(items) - deleted
+                begun == [heap |-> heap, isThrown |-> FALSE]
+                moved == IF offset = 0
+                         THEN begun
+                         ELSE ArrayMoves(begun, ref,
+                                {index \\in indices \\cup {index - offset : index \\in own} :
+                                   index >= first + deleted /\\ index < length}, offset, offset < 0)
+                state == AndThen(
+                           ArraySets(ArrayDeletesDown(moved, ref, length + offset, length),
+                                     ref, first, items),
+                           LAMBDA after : ArraySet(after, ref, "length", length + offset))
+            IN CASE own = 0..(length - 1) ->
+                      Species(Get(heap, ref, "constructor"), array,
+                              [heap |-> WithElements(heap, ref, changed, Len(changed)),
+                               value |-> SubSeq(elements, first + 1, first + deleted),
+                               isThrown |-> FALSE])
+                 [] \\E index \\in first..(first + deleted - 1) : index \\notin indices ->
+                      Assert(FALSE, "tla-ts can't splice out a hole")
+                 [] OTHER ->
+                      Species(Get(heap, ref, "constructor"), array,
+                              [heap |-> state.heap,
+                               value |-> [position \\in 1..deleted |->
+                                           Get(heap, ref, ToString(first + position - 1))],
+                               isThrown |-> state.isThrown])
 
 RECURSIVE ApplyAll(_, _, _)
 ApplyAll(object, keys, descriptors) ==

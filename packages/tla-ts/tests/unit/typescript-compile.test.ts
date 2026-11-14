@@ -14926,6 +14926,31 @@ describe("errors", () => {
     ).toThrow("Unsupported array method: splice");
   });
 
+  it("splices an array with holes, which move with its elements", async () => {
+    const getSource = (expected: string) => `
+      const a = [0, 1, 2, 3, 4, 5, , 7];
+      a.splice(2, 3);
+      const b = [0, , 2, 3];
+      b.splice(2, 1, 8, 9);
+      const c = [, 1, 2, , 4];
+      c.splice(1, 2);
+      const d = [0, 1, , 3];
+      d.splice(0, 0, 7);
+      let seen = "";
+      seen += a.length + ":" + a[2] + (3 in a) + a[4] + ";";
+      seen += b.length + ":" + (1 in b) + b[2] + b[3] + b[4] + ";";
+      seen += c.length + ":" + (0 in c) + (1 in c) + c[2] + ";";
+      seen += d.length + ":" + d[0] + d[2] + (3 in d) + d[4];
+      if (seen !== "${expected}") throw new Error(seen);
+    `;
+    const expected = "5:5false7;5:false893;3:falsefalse4;5:71false3";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("5:5true7;5:false893;3:falsefalse4;5:71false3"))).failure
+        ?.message,
+    ).toContain(expected);
+  });
+
   it("keeps a set's identity through an array, a pop, and its own name", async () => {
     const result = await checkModel(`
       const scopes: Set<string>[] = [];
