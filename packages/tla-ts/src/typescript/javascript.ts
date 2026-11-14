@@ -3750,10 +3750,13 @@ TimeOfDate(heap, value) ==
   THEN Known(Lookup(heap, value).time)
   ELSE Assert(FALSE, "tla-ts can't convert " \\o ToString(value) \\o " to a time value")
 
-\\* The time value of a Date that reads the built-in method from its prototype.
+\\* The time value of a Date that reads the built-in method from its prototype. getTimezoneOffset
+\\* gives 0 for any time but NaN, as tla-ts takes local time to be UTC, so it needn't read the clock.
 DateTime(heap, ref, method) ==
   IF IsDate(heap, ref) /\\ IsDateMethod(Get(heap, ref, method), method)
-  THEN Known(Lookup(heap, ref).time)
+  THEN IF method = "getTimezoneOffset"
+       THEN Lookup(heap, ref).time
+       ELSE Known(Lookup(heap, ref).time)
   ELSE Assert(FALSE, "tla-ts can't call this method on " \\o ToString(ref))
 
 \\* The heap after a Date setter, which takes the Date's time value, the method's name, and where it

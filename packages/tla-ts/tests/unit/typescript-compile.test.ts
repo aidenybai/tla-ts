@@ -7006,6 +7006,15 @@ describe("errors", () => {
     expect(result.failure?.message).toContain("tla-ts can't read the clock");
   });
 
+  it("gives the timezone offset of a Date that reads the clock", async () => {
+    const getSource = (expected: number) => `
+      const offsets = [new Date().getTimezoneOffset(), new Date(Date.now()).getTimezoneOffset()];
+      if (offsets.join() !== "${expected},${expected}") throw new Error(offsets.join());
+    `;
+    expect((await checkModel(getSource(0))).failure).toBeUndefined();
+    expect((await checkModel(getSource(60))).failure?.message).toContain("0,0");
+  });
+
   it("gives Date.UTC's time value where it fits TLC's integers", async () => {
     const result = await checkModel(`
       const same = (actual: unknown, expected: unknown) => {
