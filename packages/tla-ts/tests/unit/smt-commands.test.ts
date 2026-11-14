@@ -608,4 +608,25 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       ]),
     ).toEqual(["pb", "(and p p)p", "(forall ((x Int)) (> x 0))", "(not p)"]);
   });
+
+  // opt_solver reads optsmt_dual_bound_rlimit; 0 turns the probe of a strict bound off.
+  it("reads opt.optsmt_dual_bound_rlimit", () => {
+    expect(
+      run([
+        "(set-option :opt.optsmt_dual_bound_rlimit 0)",
+        "(declare-const x Real)",
+        "(declare-fun f (Real) Real)",
+        "(assert (<= (* x x) 2.0))",
+        "(assert (<= (f x) 5.0))",
+        "(maximize x)",
+        "(check-sat)",
+        "(get-objectives)",
+      ]),
+    ).toEqual([
+      "unknown",
+      "(objectives",
+      " (x  (interval (/ 3339217363285192246361.0 2361183241434822606848.0) (/ 6678434726570484986977.0 4722366482869645213696.0)))",
+      ")",
+    ]);
+  });
 });

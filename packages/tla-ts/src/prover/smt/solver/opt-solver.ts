@@ -9,10 +9,9 @@ import type { ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
 import { SmtKernel } from "./smt-kernel";
-import type { KernelParams } from "./solver";
+import type { TacticEnvironment } from "./tactic";
 
 const MODEL_BOUND_SCALE = Rational.of(10n ** 12n);
-const DUAL_BOUND_RLIMIT = 100;
 
 export interface MaximizeResult {
   // The no-model path accepts the hint without validating it.
@@ -53,12 +52,14 @@ export class OptSolver {
   private pinned: RefVector;
   private isFirst = true;
   private numScopes = 0;
+  private readonly dualBoundRlimit: number;
   wasUnknown = false;
 
   constructor(
     private readonly manager: AstManager,
-    params: KernelParams,
+    params: TacticEnvironment,
   ) {
+    this.dualBoundRlimit = Number(params.parameters.get("opt.optsmt_dual_bound_rlimit") ?? 100);
     // opt_solver turns relevancy off under the default case split strategy, so a decided bound,
     // such as one optsmt made for a lower bound, reaches the arithmetic solver.
     this.kernel = new SmtKernel(manager, {
@@ -202,7 +203,13 @@ export class OptSolver {
     if (bound !== undefined && InfEps.of(bound).compare(this.objectiveValues[index]) > 0)
       this.objectiveValues[index] = InfEps.of(bound);
     if (this.manager.limit.isExhausted()) return outcome;
-    if (isProbing && value.isFinite() && upper !== null && !upper.isGlobal) {
+    if (
+      isProbing &&
+      value.isFinite() &&
+      upper !== null &&
+      !upper.isGlobal &&
+      this.dualBoundRlimit !== 0
+    ) {
       if (this.checkUpperBound(index, upper.value) === L_FALSE) result.upperBound = upper.value;
       if (!this.manager.limit.inc() || !this.checkBound(index, value, result)) return outcome;
     } else if (value.isFinite()) {
@@ -226,7 +233,7 @@ export class OptSolver {
       if (!(error instanceof SmtCanceledError)) throw error;
       return L_UNDEF;
     }
-    limit.push(DUAL_BOUND_RLIMIT);
+    limit.push(this.dualBoundRlimit);
     const result = (() => {
       try {
         this.assertExpr(this.mkGe(index, InfEps.of(value, Rational.one)));
