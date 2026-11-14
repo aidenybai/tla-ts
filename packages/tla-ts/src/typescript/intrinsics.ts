@@ -652,6 +652,8 @@ export const translateBuiltInValue = (
     | "Promise"
     | "Promise.prototype"
     | "JSON"
+    | "Intl"
+    | `Intl.${string}.prototype`
     | `${Collection}.prototype${string}`,
   node: ts.Node,
   context: Context,
@@ -1905,7 +1907,7 @@ const getRegExpValues = (node: ts.Expression, context: Context, visited: Readonl
 
 // Whether an expression is undefined without effects: undefined itself, void of a literal, or the
 // call of a function that runs in place with an empty body.
-const isUndefinedValue = (node: ts.Expression, context: Context) => {
+export const isUndefinedValue = (node: ts.Expression, context: Context) => {
   const inner = skipCasts(node);
   const body = getCalledFunction(inner)?.body;
   return (

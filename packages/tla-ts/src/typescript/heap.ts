@@ -83,6 +83,7 @@ import {
   translateBuiltInValue,
   getMadeRegExp,
   isInvalidRegExp,
+  isUndefinedValue,
   translateRegExpValue,
 } from "./intrinsics";
 import {
@@ -95,6 +96,7 @@ import {
 import { isDescriptorsRead, isProxyOperation } from "./protocols";
 import { getReached } from "./aliasing";
 import { createStateScope, type Scope } from "./scope";
+import { BUILT_INS } from "./built-ins";
 import { getStackCall } from "./stacks";
 import { getIteratorDisposeCall } from "./disposal";
 import {
@@ -1691,6 +1693,38 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
       context,
     );
   }
+  const intl = getNewIntl(node, context);
+  if (intl !== undefined) {
+    // The constructor, which the prototype's constructor property holds.
+    context.builtIns.add(`Intl.${intl}`);
+    return ifExpression(
+      useJavaScript(
+        "HoldsBuiltIn",
+        [heap, translateBuiltInValue("Intl", node, context), string(intl), string(`Intl.${intl}`)],
+        context,
+      ),
+      useJavaScript(
+        "Allocate",
+        [
+          heap,
+          useJavaScript(
+            "SlotObject",
+            [
+              translateBuiltInValue(`Intl.${intl}.prototype`, node, context),
+              string("intl"),
+              string(intl),
+            ],
+            context,
+          ),
+        ],
+        context,
+      ),
+      apply("Assert", [
+        boolean(false),
+        string(`tla-ts can't construct Intl.${intl} where a script replaced it`),
+      ]),
+    );
+  }
   const wrapped = getWrappedThis(node, context);
   if (wrapped !== undefined && ts.isExpression(node)) {
     context.builtIns.add(wrapped);
@@ -1983,6 +2017,7 @@ export const isAllocation = (node: ts.Node, context: Context) =>
       isSymbolCall(node, context))) ||
   isNewObject(node, context) ||
   isNewDate(node, context) ||
+  getNewIntl(node, context) !== undefined ||
   isNewProxy(node, context) ||
   getNewBuffer(node, context) !== undefined ||
   isRevocable(node, context) ||
@@ -2069,6 +2104,36 @@ export const isNewDate = (node: ts.Node, context: Context): node is ts.NewExpres
   return values.length === 1
     ? isNumeric(values[0], context) || isDateType(values[0], context)
     : values.length !== 1 && areDateFields(values, context);
+};
+
+// The Intl constructors that make an object when a script calls them without new.
+const CALLABLE_INTL_CONSTRUCTORS = new Set(["Collator", "DateTimeFormat", "NumberFormat"]);
+
+// The Intl constructor whose new, or call where it may run without new, takes no locales and no
+// options, so that what it makes depends on no locale data until a method reads it. Locale and
+// DisplayNames need a tag and a type.
+export const getNewIntl = (node: ts.Node, context: Context) => {
+  if (
+    context.heap === undefined ||
+    !(ts.isNewExpression(node) || ts.isCallExpression(node)) ||
+    !ts.isPropertyAccessExpression(node.expression) ||
+    getBuiltIn(node.expression.expression, context) !== "Intl"
+  ) {
+    return undefined;
+  }
+  const name = node.expression.name.text;
+  const [locales, options, ...rest] = node.arguments ?? [];
+  return BUILT_INS[`Intl.${name}`]?.[4] === true &&
+    name !== "Locale" &&
+    name !== "DisplayNames" &&
+    (ts.isNewExpression(node) || CALLABLE_INTL_CONSTRUCTORS.has(name)) &&
+    (locales === undefined ||
+      isUndefinedValue(locales, context) ||
+      (ts.isArrayLiteralExpression(locales) && locales.elements.length === 0)) &&
+    (options === undefined || isUndefinedValue(options, context)) &&
+    rest.length === 0
+    ? name
+    : undefined;
 };
 
 // Whether new Date reads the clock, as new Date() and new Date(Date.now()) do.
@@ -2745,6 +2810,7 @@ export const isMade = (node: ts.Node, context: Context, isSometimes = false): bo
     getMadeRegExp(node, context) !== undefined ||
     isNewObject(node, context) ||
     isNewDate(node, context) ||
+    getNewIntl(node, context) !== undefined ||
     isNewProxy(node, context) ||
     getNewBuffer(node, context) !== undefined ||
     getNewWrapper(node, context) !== undefined ||

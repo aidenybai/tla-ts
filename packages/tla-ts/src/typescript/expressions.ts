@@ -94,6 +94,7 @@ import {
   isRevocable,
   getNewWrapper,
   isNewDate,
+  getNewIntl,
   areDateFields,
   translateDateFields,
   getMethodValue,
@@ -3376,7 +3377,8 @@ const translateNode = (
     ts.isCallExpression(node) &&
     !isObjectConversion(node, context) &&
     !(isValueOfCall(node, context) && getNewWrapper(node, context) !== undefined) &&
-    getNewClass(node, context) === undefined
+    getNewClass(node, context) === undefined &&
+    getNewIntl(node, context) === undefined
   ) {
     return translateCall(node, scope, context, isDefined);
   }
@@ -3410,6 +3412,7 @@ const translateNode = (
     isHeldError(node, context) ||
     isNewObject(node, context) ||
     isNewDate(node, context) ||
+    getNewIntl(node, context) !== undefined ||
     isNewProxy(node, context) ||
     getNewBuffer(node, context) !== undefined ||
     getNewWrapper(node, context) !== undefined;

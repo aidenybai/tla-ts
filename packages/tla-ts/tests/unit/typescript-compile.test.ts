@@ -13093,6 +13093,29 @@ describe("errors", () => {
     ).toContain("[object Intl]");
   });
 
+  it("constructs Intl's objects without locales or options", async () => {
+    const getSource = (expected: string) => `
+      const holder: { [key: string]: unknown } = {};
+      const collator = new Intl.Collator();
+      const format = Intl.NumberFormat(undefined, undefined);
+      const segmenter = new Intl.Segmenter([]);
+      const result = [
+        Object.getPrototypeOf(collator) === Intl.Collator.prototype,
+        Object.isExtensible(collator),
+        Object.prototype.toString.call(format),
+        Object.getPrototypeOf(segmenter) === Intl.Segmenter.prototype,
+        Object.keys(collator).length,
+      ].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect(
+      (await checkModel(getSource("true,true,[object Intl.NumberFormat],true,0"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("true,true,[object Object],true,0"))).failure?.message,
+    ).toContain("[object Intl.NumberFormat]");
+  });
+
   it("reads the prototypes of the iterators that strings, maps, sets, and regexps make", async () => {
     const result = await checkModel(`
       const holder: { [key: string]: unknown } = {};

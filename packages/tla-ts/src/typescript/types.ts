@@ -25,6 +25,7 @@ import {
 } from "./intrinsics";
 import { KEYWORDS } from "../lexer";
 import { TlaTypeScriptError } from "../errors";
+import { BUILT_INS } from "./built-ins";
 import {
   apply,
   bound,
@@ -175,6 +176,18 @@ const isPlainObject = (type: ts.Type, context: Context): boolean => {
     constructed !== undefined &&
     TYPED_ARRAYS.has(constructed) &&
     (symbol?.declarations ?? []).every((inner) => inner.getSourceFile().isDeclarationFile)
+  ) {
+    return true;
+  }
+  // An object that an Intl constructor makes.
+  if (
+    symbol !== undefined &&
+    BUILT_INS[`Intl.${symbol.name}`]?.[4] === true &&
+    (symbol.declarations ?? []).every(
+      (declaration) =>
+        declaration.getSourceFile().isDeclarationFile &&
+        ts.findAncestor(declaration, ts.isModuleDeclaration)?.name.getText() === "Intl",
+    )
   ) {
     return true;
   }
