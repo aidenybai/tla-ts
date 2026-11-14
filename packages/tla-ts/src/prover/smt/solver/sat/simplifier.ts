@@ -1103,17 +1103,21 @@ export class Simplifier {
     }
   }
 
+  // tmp_clause::set computes the approximation only when it allocates the clause, so every later
+  // binary is filtered with the approximation of the first one.
   private setDummy(first: number, second: number, isLearned: boolean) {
     const arena = this.solver.arena;
-    if (this.dummyArena !== arena) {
+    const previousArena = this.dummyArena;
+    if (previousArena !== arena) {
+      const previous = this.dummy;
       this.dummyArena = arena;
       this.dummy = arena.mkClause([first, second], 2, isLearned);
+      if (previousArena !== undefined) arena.approx[this.dummy] = previousArena.approx[previous];
       return this.dummy;
     }
     arena.set(this.dummy, 0, first);
     arena.set(this.dummy, 1, second);
     arena.setLearned(this.dummy, isLearned);
-    arena.updateApprox(this.dummy);
     return this.dummy;
   }
 
