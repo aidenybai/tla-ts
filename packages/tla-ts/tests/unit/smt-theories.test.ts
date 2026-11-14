@@ -82,3 +82,42 @@ describe("the e-graph of sat.euf", () => {
     expect(pair.first.root).not.toBe(pair.second.root);
   });
 });
+
+describe("the setup of the smt kernel", () => {
+  it("drops relevancy for bit-vectors without quantifiers when no logic fits", () => {
+    expect(
+      run([
+        "(declare-fun g ((_ BitVec 8) Int) Int)",
+        "(declare-const b (_ BitVec 8))",
+        "(declare-const c (_ BitVec 8))",
+        "(declare-const n Int)",
+        "(declare-const m Int)",
+        "(assert (or (= (g b n) 3) (= (g c m) 4) (bvule b c)))",
+        "(assert (or (not (= (g b n) 3)) (< n m) (= (bvor b c) #xf0)))",
+        "(assert (or (= n (+ m 1)) (= (g (bvadd b #x01) m) (g c n))))",
+        "(assert (not (= b c)))",
+        "(check-sat)",
+        "(get-model)",
+      ]).join("\n"),
+    ).toBe(
+      [
+        "sat",
+        "(",
+        "  (define-fun c () (_ BitVec 8)",
+        "    #x00)",
+        "  (define-fun n () Int",
+        "    0)",
+        "  (define-fun m () Int",
+        "    (- 1))",
+        "  (define-fun b () (_ BitVec 8)",
+        "    #xfd)",
+        "  (define-fun g ((x!0 (_ BitVec 8)) (x!1 Int)) Int",
+        "    (ite (and (= x!0 #x00) (= x!1 (- 1))) 4",
+        "    (ite (and (= x!0 #xfe) (= x!1 (- 1))) 7",
+        "    (ite (and (= x!0 #x00) (= x!1 0)) 8",
+        "      2))))",
+        ")",
+      ].join("\n"),
+    );
+  });
+});
