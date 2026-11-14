@@ -24128,6 +24128,39 @@ describe("regular expressions", () => {
 });
 
 describe("calls through values", () => {
+  describe("steps a typed array's iterator as an object", () => {
+    const getSource = (expected: string) => `
+      const array = new Int8Array([3, 1]);
+      const values = array[Symbol.iterator]();
+      const entries = array.entries();
+      const first = values.next();
+      const second = values.next();
+      const done = values.next();
+      const entry = entries.next();
+      const proto: Int8Array = Object.getPrototypeOf(Int8Array.prototype);
+      let caught = "none";
+      try {
+        proto.values();
+      } catch (error) {
+        caught = error instanceof TypeError ? "type" : "other";
+      }
+      const read = [
+        first.value, second.value, done.done, done.value, entry.value![0], entry.value![1], caught,
+      ].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("3,1,true,,0,3,type"))).failure).toBeUndefined();
+    });
+
+    it("rejects values() on %TypedArray%.prototype as allowed", async () => {
+      expect((await checkModel(getSource("3,1,true,,0,3,none"))).failure?.message).toContain(
+        "3,1,true,,0,3,type",
+      );
+    });
+  });
+
   describe("gives the values of built-ins that a call gives no receiver", () => {
     const getSource = (expected: string) => `
       "use strict";

@@ -2516,7 +2516,7 @@ export const translateCallStatement = (
               context,
             )
           : useJavaScript(
-              "ArrayIterator",
+              iteratorCall.path.startsWith("%Int8Array") ? "TypedArrayIterator" : "ArrayIterator",
               [
                 heap,
                 receiver,
@@ -2570,7 +2570,11 @@ export const translateCallStatement = (
                   ),
                 ),
               )
-            : continueWith(withHeap(field(change, "heap")), field(change, "value")),
+            : ifThenElse(
+                field(change, "isThrown"),
+                throwTypeError(path, expression, context, frame),
+                continueWith(withHeap(field(change, "heap")), field(change, "value")),
+              ),
         ),
         leaf(
           apply("Assert", [

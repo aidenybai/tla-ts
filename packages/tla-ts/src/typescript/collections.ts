@@ -86,6 +86,7 @@ import {
   isTypeReference,
   mayBeSequenceType,
   getArrayMethodCall,
+  TYPED_ARRAYS,
 } from "./types";
 
 interface Unordered {
@@ -1420,6 +1421,29 @@ export const getArrayIteratorCall = (node: ts.Node, context: Context) => {
     return name === "ArrayIterator" || name === "StringIterator"
       ? { kind: undefined, receiver, key: "next", path: `%${name}Prototype%.next` }
       : undefined;
+  }
+  // A typed array's keys(), values(), entries(), or [Symbol.iterator](), whose iterator reads the
+  // elements as it steps.
+  const isTyped = TYPED_ARRAYS.has(
+    context.checker.getTypeAtLocation(receiver).getSymbol()?.name ?? "",
+  );
+  const typedKind = ts.isPropertyAccessExpression(callee)
+    ? ITERATOR_METHODS.find((method) => method === callee.name.text)
+    : callee.argumentExpression.getText() === "Symbol.iterator"
+      ? "values"
+      : undefined;
+  if (
+    isTyped &&
+    typedKind !== undefined &&
+    !(ts.isForOfStatement(node.parent) && node.parent.expression === node) &&
+    !ts.isSpreadElement(node.parent)
+  ) {
+    return {
+      kind: typedKind,
+      receiver,
+      key: ts.isElementAccessExpression(callee) ? "@@iterator" : typedKind,
+      path: `%Int8Array.prototype.[[Prototype]]%.${typedKind}`,
+    };
   }
   const kind = getKeptIterator(node, context);
   return kind !== undefined &&

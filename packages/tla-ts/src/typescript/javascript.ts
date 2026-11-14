@@ -1586,6 +1586,13 @@ ArrayIterator(heap, array, kind, prototype) ==
                                     @@ [iterated |-> array, index |-> 0, kind |-> kind])
   IN [heap |-> allocated, value |-> Allocated(allocated), isThrown |-> FALSE]
 
+\\* A typed array's iterator, where a call on another value, or on a typed array out of bounds,
+\\* throws a TypeError, as ValidateTypedArray does.
+TypedArrayIterator(heap, ref, kind, prototype) ==
+  IF IsTypedArray(heap, ref) /\\ ~IsOutOfBounds(heap, heap.objects[ref[Ref]])
+  THEN ArrayIterator(heap, ref, kind, prototype)
+  ELSE [heap |-> heap, value |-> Undefined, isThrown |-> TRUE]
+
 \\* The values of an array-like object at each index below its length, which Get reads, so that a
 \\* hole gives what a prototype holds there, or undefined.
 ArrayLikeValues(heap, ref) ==
@@ -2480,9 +2487,12 @@ BuiltInIteratorStep(heap, ref) ==
       index == iterator.index
       isString == iterator.kind = "string"
       isDone == \\/ iterated = Undefined
-                \\/ index >= IF isString
-                            THEN Len(StringCharacters(iterated))
-                            ELSE ToLength(Get(heap, iterated, "length"))
+                \\/ index >= CASE isString -> Len(StringCharacters(iterated))
+                              [] IsTypedArray(heap, iterated) ->
+                                   IF IsOutOfBounds(heap, heap.objects[iterated[Ref]])
+                                   THEN Assert(FALSE, "tla-ts can't throw the TypeError of stepping a typed array out of bounds")
+                                   ELSE ViewLength(heap, heap.objects[iterated[Ref]])
+                              [] OTHER -> ToLength(Get(heap, iterated, "length"))
       element == IF isString THEN StringCharacters(iterated)[index + 1] ELSE Get(heap, iterated, ToString(index))
       value == CASE isDone -> Undefined
                  [] iterator.kind = "keys" -> index
