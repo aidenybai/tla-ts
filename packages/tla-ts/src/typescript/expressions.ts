@@ -1320,6 +1320,7 @@ export const translateCall = (
       type === undefined
         ? 0
         : (type.isUnion() ? type.types : [type]).reduce((all, inner) => all | inner.flags, 0);
+    if (collection !== undefined) context.builtIns.add(`${collection}.prototype`);
     for (const [flag, name] of new Map([
       [ts.TypeFlags.NumberLike, "Number"],
       [ts.TypeFlags.StringLike, "String"],

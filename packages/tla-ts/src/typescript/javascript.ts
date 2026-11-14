@@ -3057,7 +3057,8 @@ ForwardTarget(heap, ref, traps) ==
     [] OTHER -> Assert(FALSE, "tla-ts can't run the traps that this reads a proxy through")
 
 \\* Object.prototype.toString, which gives "[object Kind]". A value that isn't on the heap gives the
-\\* kind of object that holds it, such as Array for a sequence.
+\\* kind of object that holds it, such as Array for a sequence, or a collection the Symbol.toStringTag
+\\* of its prototype.
 ObjectToString(heap, value, kind) ==
   "[object "
     \\o (CASE value = Undefined -> "Undefined"
@@ -3083,6 +3084,8 @@ ObjectToString(heap, value, kind) ==
                     [] OTHER -> class
           [] IsHeap(value) \\/ IsBuiltIn(value) -> Tagged(heap, value, ClassOf(heap, value))
           [] TypeOf(value) = "function" -> "Function"
+          [] kind \\in {"Map", "Set", "WeakMap", "WeakSet"} ->
+               Tagged(heap, Ref :> (kind \\o ".prototype"), "Object")
           [] kind # "" -> kind
           [] OTHER -> Assert(FALSE, "tla-ts can't tell the kind of " \\o ToString(value)))
     \\o "]"
