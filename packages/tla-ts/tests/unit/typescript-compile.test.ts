@@ -6870,6 +6870,46 @@ describe("errors", () => {
     );
   });
 
+  describe("holds an array on the heap where a script compares it by identity", () => {
+    const source = `
+      const isSame = (left: unknown, right: unknown) => Object.is(left, right);
+      const check = (actual: unknown, expected: unknown, label: string) => {
+        if (!Object.is(actual, expected)) throw new Error(label);
+      };
+      var array = [2, 0, 1];
+      array.toSorted();
+      const spliced = array.toSpliced(1, 0);
+      check(isSame(array, spliced), false, "spliced");
+      check(isSame(array.toSorted(), array), false, "sorted");
+      check(array === array.with(0, 2), false, "with");
+      check(isSame(array, array), true, "self");
+      const keys = new Map<object, string>();
+      keys.set(array, "kept");
+      check(keys.get(array), "kept", "key");
+      var other = [2, 0, 1];
+      check(keys.has(other), false, "other key");
+      check(array.join(), spliced.join(), "copy");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["spliced", 'spliced), false, "spliced"', 'spliced), true, "spliced"'],
+      ["sorted", 'array), false, "sorted"', 'array), true, "sorted"'],
+      ["with", '2), false, "with"', '2), true, "with"'],
+      ["self", 'array), true, "self"', 'array), false, "self"'],
+      ["key", '"kept", "key"', '"lost", "key"'],
+      ["other key", 'false, "other key"', 'true, "other key"'],
+      ["copy", 'spliced.join(), "copy"', '"2,1,0", "copy"'],
+    ])("rejects a wrong %s", async (label, expected, wrong) => {
+      expect((await checkModel(source.replace(expected, wrong))).failure?.message).toContain(
+        `"${label}"`,
+      );
+    });
+  });
+
   it.each([
     ["a malformed regular expression", "const pattern = /[$$]/v;"],
     [

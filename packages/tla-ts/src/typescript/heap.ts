@@ -7,6 +7,7 @@ import {
   type Context,
   share,
   type FunctionNode,
+  findNodes,
   getConstruction,
   getCallee,
   getFunctionOfKind,
@@ -4922,6 +4923,52 @@ export const findHeapArrays = (
           isArrayObjectUse(reference, context)),
     );
   };
+  // A comparison by identity tells the array apart from an equal copy: ===, Object.is, a set's or a
+  // map's key, or a function that compares its parameter so.
+  const isIdentityUse = (use: ts.Expression, isOuter: boolean): boolean => {
+    const parent = use.parent;
+    if (
+      ts.isBinaryExpression(parent) &&
+      [
+        ts.SyntaxKind.EqualsEqualsEqualsToken,
+        ts.SyntaxKind.ExclamationEqualsEqualsToken,
+        ts.SyntaxKind.EqualsEqualsToken,
+        ts.SyntaxKind.ExclamationEqualsToken,
+      ].includes(parent.operatorToken.kind)
+    ) {
+      return true;
+    }
+    if (!ts.isCallExpression(parent) || !parent.arguments.includes(use)) return false;
+    const position = parent.arguments.indexOf(use);
+    const callee = parent.expression;
+    if (callee.getText() === "Object.is") return true;
+    if (
+      ts.isPropertyAccessExpression(callee) &&
+      ["set", "get", "has", "add", "delete"].includes(callee.name.text) &&
+      position === 0 &&
+      ["set", "map"].includes(getKind(callee.expression, context) ?? "")
+    ) {
+      return true;
+    }
+    if (!isOuter) return false;
+    const declaration = context.checker.getResolvedSignature(parent)?.getDeclaration();
+    const name =
+      declaration !== undefined && ts.isFunctionLike(declaration)
+        ? declaration.parameters.at(position)?.name
+        : undefined;
+    const parameter =
+      name !== undefined && ts.isIdentifier(name) ? getSymbol(name, context.checker) : undefined;
+    return (
+      declaration !== undefined &&
+      parameter !== undefined &&
+      findNodes(declaration, ts.isIdentifier).some(
+        (reference) =>
+          reference !== name &&
+          getSymbol(reference, context.checker) === parameter &&
+          isIdentityUse(reference, false),
+      )
+    );
+  };
   references.forEach((uses, symbol) => {
     const declaration = symbol.valueDeclaration;
     const literal =
@@ -4944,7 +4991,8 @@ export const findHeapArrays = (
           isElementDelete(use) ||
           isPatternResult(use) ||
           getKeptIterator(use.parent.parent, context) !== undefined ||
-          getIteratedArray(use.parent, context) === use,
+          getIteratedArray(use.parent, context) === use ||
+          isIdentityUse(use, true),
       ) &&
       reads.every((use) => isArrayObjectUse(use, context))
     ) {
