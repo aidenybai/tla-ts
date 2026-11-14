@@ -47,6 +47,12 @@ describe("INSTANCE matches TLC", () => {
     expect(prints).toEqual([1, 2, 2, 1, 3, 3, 2].map((value) => `<<"eval", ${value}>>  ${value}`));
   });
 
+  it("checks a refinement whose substitutions apply a recursive operator", async () => {
+    const result = await checkInstances("product.cfg", "product");
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([19, 19, 11]);
+  });
+
   it("reports violations through instantiated operators", async () => {
     const result = await checkInstances("Violation.cfg");
     expect(result.status).toBe("invariant-violation");

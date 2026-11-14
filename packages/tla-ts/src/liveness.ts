@@ -188,8 +188,9 @@ export const getLevel = (
       ) {
         return level;
       }
+      // A global operator resolves to a new closure each time, so its body marks it as visited.
       return getBodyLevel(
-        operator,
+        operator.body,
         operator.body,
         bindOperatorArguments(operator, expression.args, getConstantContext(environment, scope)),
       );
