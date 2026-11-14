@@ -9040,6 +9040,21 @@ describe("errors", () => {
       `);
       expect(result.failure).toBeUndefined();
     });
+
+    it("reads a descriptor that create takes from an array with a named property", async () => {
+      const getSource = (expected: string) => `
+        const described = [1, 2, 3];
+        // @ts-ignore
+        described.value = "named";
+        const made: { [key: string]: unknown } = Object.create(
+          {},
+          { prop: described as unknown as PropertyDescriptor },
+        );
+        if (made.prop !== "${expected}") throw new Error(String(made.prop));
+      `;
+      expect((await checkModel(getSource("named"))).failure).toBeUndefined();
+      expect((await checkModel(getSource("other"))).failure?.message).toContain("named");
+    });
   });
 
   it("sets an object's prototype, and throws a TypeError where the chain would loop", async () => {

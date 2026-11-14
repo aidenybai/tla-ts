@@ -3339,6 +3339,14 @@ const isArrayObjectUse = (node: ts.Expression, context: Context): boolean => {
       (kind === ts.SyntaxKind.InstanceOfKeyword && parent.left === node)
     );
   }
+  // A place whose type isn't a sequence reads the array as an object, such as a descriptor that
+  // Object.create takes from an object literal.
+  const parameter = context.checker.getContextualType(node);
+  const isObjectPlace =
+    parameter !== undefined &&
+    (parameter.flags & ts.TypeFlags.Any) === 0 &&
+    !isSequenceType(context.checker.getNonNullableType(parameter), context.checker);
+  if (ts.isPropertyAssignment(parent)) return parent.initializer === node && isObjectPlace;
   if (!ts.isCallExpression(parent) || !parent.arguments.some((argument) => argument === node)) {
     return false;
   }
@@ -3360,14 +3368,11 @@ const isArrayObjectUse = (node: ts.Expression, context: Context): boolean => {
     );
   }
   const callee = parent.expression.getText();
-  const parameter = context.checker.getContextualType(node);
   return (
     /^(Object|Reflect)\.\w+$/.test(callee) ||
     callee === "Array.isArray" ||
     /^Array\.prototype\.\w+\.call$/.test(callee) ||
-    (parameter !== undefined &&
-      (parameter.flags & ts.TypeFlags.Any) === 0 &&
-      !isSequenceType(context.checker.getNonNullableType(parameter), context.checker))
+    isObjectPlace
   );
 };
 
