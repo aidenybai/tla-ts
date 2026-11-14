@@ -405,7 +405,9 @@ export class NlsatSolver {
       this.checkpoint();
       if (this.value(literal) === L_FALSE) continue;
       if (this.value(literal) === L_TRUE) return true;
-      const atom = this.atoms.getAtom(literal)!;
+      const atom = this.atoms.getAtom(literal);
+      if (atom === null)
+        throw new SmtInvariantError("a literal of an arithmetic clause has no atom");
       const set = this.evaluator.infeasibleIntervals(atom, (literal & 1) === 1, clause);
       if (set === null) {
         this.propagate(literal, null);
