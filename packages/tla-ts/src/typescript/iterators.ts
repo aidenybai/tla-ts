@@ -7,6 +7,7 @@ import {
   getAccessorFunctions,
   getSymbol,
   getUndefined,
+  isAssigned,
   isInertValue,
   isUnresolved,
   skipCasts,
@@ -121,6 +122,29 @@ const getPlainName = (element: ts.Node) => {
   return target !== undefined && ts.isIdentifier(target) ? target : undefined;
 };
 
+// A rest element that writes a property of an object that a variable's initializer gives and
+// nothing assigns again. The rest takes every value before it writes, as JavaScript does once it
+// read the variable, so the iterator's functions can't tell that the read came later.
+const isFixedRestWrite = (element: ts.Node, context: Context) => {
+  const target = ts.isSpreadElement(element) ? skipCasts(element.expression) : undefined;
+  const object =
+    target !== undefined && ts.isPropertyAccessExpression(target)
+      ? skipCasts(target.expression)
+      : undefined;
+  const symbol =
+    object !== undefined && ts.isIdentifier(object)
+      ? getSymbol(object, context.checker)
+      : undefined;
+  const declaration = symbol?.valueDeclaration;
+  return (
+    symbol !== undefined &&
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer !== undefined &&
+    !isAssigned(symbol, declaration.getSourceFile(), context)
+  );
+};
+
 // A variable that an assignment can change, which a var, a let, or a parameter declares.
 const isWritable = (symbol: ts.Symbol) => {
   const declaration = symbol.valueDeclaration;
@@ -142,7 +166,9 @@ const isPlainPattern = (
 ) => {
   const owner = ts.findAncestor(pattern, ts.isFunctionLike);
   const elements: readonly ts.Node[] = pattern.elements;
-  const names = elements.filter((element) => !ts.isOmittedExpression(element)).map(getPlainName);
+  const names = elements
+    .filter((element) => !ts.isOmittedExpression(element) && !isFixedRestWrite(element, context))
+    .map(getPlainName);
   const symbols = names.flatMap((name) =>
     name === undefined ? [] : (getSymbol(name, context.checker) ?? []),
   );

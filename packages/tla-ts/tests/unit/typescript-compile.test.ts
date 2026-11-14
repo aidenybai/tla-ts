@@ -14242,6 +14242,54 @@ describe("errors", () => {
     });
   });
 
+  describe("writes a property that a rest element takes from an iterator", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const log = { text: "" };
+      const iterator = {
+        next() {
+          log.text += "next";
+          return { done: true, value: undefined };
+        },
+        return() {
+          log.text += "return";
+          return { done: true, value: undefined };
+        },
+      };
+      const iterable: { [key: string | symbol]: unknown } = {
+        [Symbol.iterator]() {
+          return iterator;
+        },
+      };
+      const obj: { poisoned?: unknown } = Object.defineProperty({}, "poisoned", {
+        set(value: unknown) {
+          log.text += "set";
+          throw new RangeError("set");
+        },
+      });
+      const run = () => {
+        // @ts-ignore
+        [...obj.poisoned] = iterable;
+      };
+      try {
+        run();
+      } catch (error) {
+        log.text += error instanceof RangeError ? ":range" : ":other";
+      }
+      if (log.text !== "${expected}") throw new Error(log.text);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("nextset:range"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("nextset:other"))).failure?.message).toContain(
+        "nextset:range",
+      );
+    });
+  });
+
   it("throws the ReferenceError of a name that an object literal spreads", async () => {
     const getSource = (expected: number) => `
       let caught = 0;
