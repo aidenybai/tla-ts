@@ -4234,7 +4234,8 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
                 addCallbackArray(call, method, use))) ||
               SET_METHODS.has(method) ||
               ["delete", "clear"].includes(method) ||
-              (["add", "set"].includes(method) && isDiscarded(call))))
+              // An add or a set gives the set or the map, which a chain of them changes again.
+              (["add", "set"].includes(method) && (isDiscarded(call) || isUse(call)))))
         );
       }
       if (ts.isPropertyAccessExpression(parent)) {

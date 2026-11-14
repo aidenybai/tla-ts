@@ -847,10 +847,23 @@ const getImmutable = (name: ts.Identifier, context: Context) => {
 };
 
 // The current value of an assignment target, and how to replace it.
+// A set's add or a map's set, which gives its receiver, so that a chain of them changes the first.
+const isChainedChange = (node: ts.Expression, context: Context): node is MethodCall =>
+  isMethodCall(node) &&
+  [
+    ["add", "set"],
+    ["set", "map"],
+  ].some(
+    (entry) =>
+      node.expression.name.text === entry[0] &&
+      getKind(node.expression.expression, context) === entry[1],
+  );
+
 const getTarget = (node: ts.Expression, path: Path, context: Context): Target => {
   if (ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node)) {
     return getTarget(node.expression, path, context);
   }
+  if (isChainedChange(node, context)) return getTarget(node.expression.expression, path, context);
   if (ts.isIdentifier(node)) {
     rejectBeforeDeclaration(node, path.scope, context);
     const symbol = getSymbol(node, context.checker);
@@ -2663,6 +2676,29 @@ export const translateCallStatement = (
                   ),
               ),
         ),
+      ),
+    );
+  }
+  // A chain of adds or sets runs the first before the next, which changes what the first gives.
+  const chained = isMethodCall(expression) ? getCast(expression.expression.expression) : undefined;
+  if (
+    chained !== undefined &&
+    isChainedChange(chained, context) &&
+    !path.scope.results.has(chained)
+  ) {
+    return translateCallStatement(chained, path, context, frame, (after, value) =>
+      translateCallStatement(
+        expression,
+        {
+          ...after,
+          scope: {
+            ...after.scope,
+            results: new Map([...after.scope.results, [chained, value ?? getUndefined(context)]]),
+          },
+        },
+        context,
+        frame,
+        continueWith,
       ),
     );
   }

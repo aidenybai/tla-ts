@@ -27493,6 +27493,37 @@ ${call}
     ).toThrow("tla-ts can't replace a collection's methods");
   });
 
+  describe("changes a set or a map again through what its add or set gives", () => {
+    it("keeps the order of a chain on the heap", async () => {
+      const getSource = (expected: string) => `
+        const m = new Map<string, number>();
+        m.set("a", 1).set("b", 2);
+        const s = new Set<number>();
+        s.add(1).add(2).add(3);
+        let seen = "";
+        for (const value of s) seen += value;
+        for (const [key, value] of m) seen += key + value;
+        if (seen !== "${expected}") throw new Error(seen);
+      `;
+      expect((await checkModel(getSource("123a1b2"))).failure).toBeUndefined();
+      expect((await checkModel(getSource("13a1"))).failure?.message).toContain("123a1b2");
+    });
+
+    it("adds every key of a chain to a value", async () => {
+      const getSource = (size: number) => `
+        const s = new Set<number>();
+        s.add(1).add(2);
+        const m = new Map<string, number>();
+        m.set("a", 1).set("b", 2);
+        if (!s.has(2) || s.size !== ${size} || m.get("b") !== 2 || m.size !== 2) {
+          throw new Error("chain");
+        }
+      `;
+      expect((await checkModel(getSource(2))).failure).toBeUndefined();
+      expect((await checkModel(getSource(1))).failure?.message).toContain("chain");
+    });
+  });
+
   it("replaces a set's add that nothing then calls, as union doesn't", async () => {
     const getSource = (expected: number) => `
       const box = { size: 0 };

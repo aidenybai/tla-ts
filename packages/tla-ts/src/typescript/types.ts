@@ -510,11 +510,14 @@ const isHeld = (node: ts.Expression, context: Context): boolean => {
   };
   if (ts.isCallExpression(node)) {
     const called = getCalledFunction(node, context.checker);
+    // A set's add and a map's set give the collection that they change.
     return called !== undefined
       ? context.heapCollections.has(called)
       : ts.isPropertyAccessExpression(node.expression) &&
-          node.expression.name.text === "at" &&
-          isElementHeld(node.expression.expression);
+          ((node.expression.name.text === "at" && isElementHeld(node.expression.expression)) ||
+            (["add", "set"].includes(node.expression.name.text) &&
+              isSetOrMapType(node.expression.expression, context) &&
+              isHeld(node.expression.expression, context)));
   }
   if (
     ts.isElementAccessExpression(node) &&
