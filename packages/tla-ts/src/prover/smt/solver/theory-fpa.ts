@@ -13,7 +13,6 @@ import {
   OP_FPA_TO_SBV,
   OP_FPA_TO_UBV,
   OP_IMPLIES,
-  OP_ITE,
   OP_ULEQ,
   SORT_BOOL,
 } from "./ast";
@@ -343,21 +342,6 @@ export class TheoryFpa extends Theory {
     this.trailLimits.length = newLevel;
     this.rewriter.reset();
     super.popScopeEh(numScopes);
-  }
-
-  private getIteValue(expr: number) {
-    const context = this.context;
-    const manager = this.manager;
-    let current = expr;
-    while (manager.getOp(current) === OP_ITE && context.isEInternalized(current)) {
-      const root = context.getEnode(current)?.root;
-      const thenExpr = manager.getArg(current, 1);
-      const elseExpr = manager.getArg(current, 2);
-      if (context.getEnode(thenExpr)?.root === root) current = thenExpr;
-      else if (context.getEnode(elseExpr)?.root === root) current = elseExpr;
-      else break;
-    }
-    return current;
   }
 
   override mkValue(node: Enode): number | DependentValue | undefined {

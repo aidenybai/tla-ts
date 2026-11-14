@@ -3,7 +3,6 @@ import { SmtUnsupportedError } from "../../../errors";
 import {
   FAMILY_SEQ,
   OP_EQ,
-  OP_ITE,
   OP_SEQ_AT,
   OP_SEQ_CONTAINS,
   OP_SEQ_EXTRACT,
@@ -855,21 +854,6 @@ export class TheorySeq extends TheorySeqRegex {
 
   finalizeModel() {
     this.rep.popScope(1);
-  }
-
-  private getIteValue(input: number) {
-    const context = this.context;
-    const manager = this.manager;
-    let expr = input;
-    while (this.isOp(expr, OP_ITE) && context.isEInternalized(expr)) {
-      const root = context.getEnode(expr)!.root;
-      const thenExpr = manager.getArg(expr, 1);
-      const elseExpr = manager.getArg(expr, 2);
-      if (context.getEnode(thenExpr)!.root === root) expr = thenExpr;
-      else if (context.getEnode(elseExpr)!.root === root) expr = elseExpr;
-      else break;
-    }
-    return expr;
   }
 
   mkValue(node: Enode): number | DependentValue {
