@@ -6040,6 +6040,30 @@ describe("calls", () => {
     ).toThrow("Inside try, call a function that throws as its own statement");
   });
 
+  it("catches what a function that a parameter holds throws where an assignment inside try calls it", async () => {
+    const getSource = (expected: string) => `
+      const run = (func: () => number) => {
+        let result = 0;
+        let seen = "";
+        try {
+          result = func();
+          seen = "ran" + result;
+        } catch (error) {
+          seen = "caught" + String(error);
+        }
+        return seen;
+      };
+      const fail = (): number => {
+        throw "boom";
+      };
+      let seen = "";
+      seen = run(fail) + run(() => 2);
+      if (seen !== "${expected}") throw new Error(seen);
+    `;
+    expect((await checkModel(getSource("caughtboomran2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("ran2ran2"))).failure?.message).toContain("caughtboomran2");
+  });
+
   it("catches what a function throws where a declaration or an assignment inside try calls it, nested or not", async () => {
     const getSource = (expected: string) => `
       function fail(): number {

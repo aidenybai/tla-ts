@@ -10871,10 +10871,13 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getDispatched(node, path.scope.functions, context) !== undefined ||
     // A call inside try of a function that may throw runs its body, so that catch takes what it
     // throws.
-    (path.scope.isCatching && isThrowingCall(node, context)));
+    (path.scope.isCatching && isThrowingCall(node, path, context)));
 
-const isThrowingCall = (node: ts.CallExpression, context: Context) => {
-  const callee = getCallee(node.expression, context);
+// A call of a function that may throw, which a parameter or a variable may hold.
+const isThrowingCall = (node: ts.CallExpression, path: Path, context: Context) => {
+  const symbol = getSymbol(node.expression, context.checker);
+  const callee =
+    (symbol && path.scope.functions.get(symbol)) ?? getCallee(node.expression, context);
   return callee !== undefined && mayThrow(callee, context);
 };
 
