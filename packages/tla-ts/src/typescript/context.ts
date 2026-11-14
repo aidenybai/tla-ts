@@ -40,8 +40,9 @@ export interface SharedCall {
   // than stopping there.
   isThrowing: boolean;
   captured: ts.Symbol[];
-  // Where each throw that the body may end with is, which reports it where nothing catches it.
-  throws: SourceLocation[];
+  parameters: OperatorParam[];
+  // Whether a call inside its own body, or a body that it runs, calls it.
+  isRecursive: boolean;
 }
 
 // A helper that can run as an operator: the names that it and the functions it runs read from
@@ -75,6 +76,10 @@ export interface Context {
   sharedHelpers: Map<ts.Node, SharedHelper>;
   // The operators of each helper, one for each kind of call.
   sharedCalls: Map<ts.Node, SharedCall[]>;
+  // Where each throw that an operator gives its caller is, by its place, and the operator that
+  // stops there where nothing catches it.
+  throwPlaces: SourceLocation[];
+  thrownName: string | undefined;
   output: OperatorDefinition[];
   // The TypeScript that each emitted definition or expression compiles from.
   links: Link[];
@@ -250,6 +255,8 @@ export const createContext = (
   selfCalls: new Map(),
   sharedHelpers: new Map(),
   sharedCalls: new Map(),
+  throwPlaces: [],
+  thrownName: undefined,
   output: [],
   links: [],
   modelValues: new Map(),

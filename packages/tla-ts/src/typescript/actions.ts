@@ -1,5 +1,5 @@
 import ts from "@typescript/typescript6";
-import type { ExceptPathStep, Expression, OperatorDefinition, SourceLocation } from "../ast";
+import type { ExceptPathStep, Expression, OperatorDefinition } from "../ast";
 import {
   checkElement,
   getCallbackReceiver,
@@ -330,7 +330,7 @@ import {
   type Receiver,
   type Scope,
 } from "./scope";
-import { getThrownMessage, translateSharedCall } from "./shared-calls";
+import { getThrownMessage, isSharedCall, translateSharedCall } from "./shared-calls";
 import {
   set,
   lambda,
@@ -524,9 +524,9 @@ interface Removed {
 export interface Thrown {
   value: Expression;
   uncaught: Expression;
-  // The message and the place of a throw that a shared helper's operator gave, with where each
-  // place is, which the operator of a helper that called it gives on.
-  shared?: { message: Expression; place: Expression; throws: readonly SourceLocation[] };
+  // The message and the place of a throw that a shared helper's operator gave, which the operator
+  // of a helper that called it gives on.
+  shared?: { message: Expression; place: Expression };
   // Whether the value is a generator object that tla-ts follows, from which a catch's array pattern
   // takes its values through the generator's next.
   isGenerator?: boolean;
@@ -4829,26 +4829,79 @@ export const inlineBody = (
   context: Context,
   frame: Frame,
   continueWith: (path: Path, value?: Expression) => Formula,
-): Formula =>
-  // A call that reaches a local function that it's already inside runs the function's definition.
-  (frame.inlining.has(callee) || context.inProgress.has(callee)) &&
-  ts.isCallExpression(node) &&
-  argumentNodes === node.arguments &&
-  isLiftable(callee, context)
-    ? continueWith(path, translateLiftedCall(callee, node, path.scope, context))
-    : // A function that calls itself runs as one recursive operator, which each call inside it
-      // calls, rather than as a copy of its body at each call.
-      !isAction(callee, context) &&
-        (frame.inlining.has(callee) ||
-          (isCallingItself(callee, path, context) &&
-            isSelfCallable(
-              callee,
-              argumentNodes,
-              getSelfCallFunctions(callee, argumentNodes, undefined, path, context),
+): Formula => {
+  // A function that calls itself runs as one recursive operator, which each call inside it calls,
+  // rather than as a copy of its body at each call.
+  const isSelfCall = () =>
+    !isAction(callee, context) &&
+    (frame.inlining.has(callee) ||
+      (isCallingItself(callee, path, context) &&
+        isSelfCallable(
+          callee,
+          argumentNodes,
+          getSelfCallFunctions(callee, argumentNodes, undefined, path, context),
+          context,
+        )));
+  const translateSelf = () =>
+    translateSelfCall(node, callee, argumentNodes, receiver, path, context, frame, continueWith);
+  const inlineCall = (bound: Bound, inner: Path) => {
+    // What the call evaluated or made of the function's own code, such as a default that it
+    // skipped or an object that a default made, belongs to that call, not to a later one.
+    const isOwn = (entry: [ts.Node, Expression]) =>
+      ts.findAncestor(entry[0], (ancestor) => ancestor === callee) !== undefined;
+    const getCaller = (current: Path): Path => ({
+      ...current,
+      scope: {
+        ...current.scope,
+        previous: inner.scope.previous,
+        entered: inner.scope.entered,
+        results: new Map([...current.scope.results].filter((entry) => !isOwn(entry))),
+        allocated: new Map([...current.scope.allocated].filter((entry) => !isOwn(entry))),
+      },
+    });
+    return translateJoined(node, getCaller(inner), context, continueWith, (next) => {
+      const afterCall = (after: Path, value?: Expression) => next(getCaller(after), value);
+      const bodyFrame = {
+        next: afterCall,
+        exit: afterCall,
+        breakTo: undefined,
+        continueTo: undefined,
+        throwTo: frame.throwTo,
+        yieldTo: undefined,
+        awaitTo: undefined,
+        inlining: new Set([...frame.inlining, callee]),
+      };
+      return letIn(
+        bound.definitions,
+        throwOnDestructured(
+          bound.scope,
+          inner,
+          context,
+          bodyFrame,
+          forceHeap(
+            inner.scope,
+            bound.scope,
+            translateStatements(
+              getBody(callee, bound.scope, context),
+              { ...inner, scope: { ...bound.scope, destructured: undefined } },
               context,
-            )))
-      ? translateSelfCall(node, callee, argumentNodes, receiver, path, context, frame, continueWith)
-      : translateSharedCall(
+              bodyFrame,
+            ),
+            leaf(boolean(false)),
+            context,
+          ),
+        ),
+      );
+    });
+  };
+  // A call that reaches a local function that it's already inside runs the function's definition.
+  return (frame.inlining.has(callee) || context.inProgress.has(callee)) &&
+    ts.isCallExpression(node) &&
+    argumentNodes === node.arguments &&
+    isLiftable(callee, context)
+    ? continueWith(path, translateLiftedCall(callee, node, path.scope, context))
+    : isSharedCall(node, callee, argumentNodes, receiver, context)
+      ? translateSharedCall(
           node,
           callee,
           argumentNodes,
@@ -4857,57 +4910,12 @@ export const inlineBody = (
           context,
           frame,
           continueWith,
-          (bound, inner) => {
-            // What the call evaluated or made of the function's own code, such as a default that it
-            // skipped or an object that a default made, belongs to that call, not to a later one.
-            const isOwn = (entry: [ts.Node, Expression]) =>
-              ts.findAncestor(entry[0], (ancestor) => ancestor === callee) !== undefined;
-            const getCaller = (current: Path): Path => ({
-              ...current,
-              scope: {
-                ...current.scope,
-                previous: inner.scope.previous,
-                entered: inner.scope.entered,
-                results: new Map([...current.scope.results].filter((entry) => !isOwn(entry))),
-                allocated: new Map([...current.scope.allocated].filter((entry) => !isOwn(entry))),
-              },
-            });
-            return translateJoined(node, getCaller(inner), context, continueWith, (next) => {
-              const afterCall = (after: Path, value?: Expression) => next(getCaller(after), value);
-              const bodyFrame = {
-                next: afterCall,
-                exit: afterCall,
-                breakTo: undefined,
-                continueTo: undefined,
-                throwTo: frame.throwTo,
-                yieldTo: undefined,
-                awaitTo: undefined,
-                inlining: new Set([...frame.inlining, callee]),
-              };
-              return letIn(
-                bound.definitions,
-                throwOnDestructured(
-                  bound.scope,
-                  inner,
-                  context,
-                  bodyFrame,
-                  forceHeap(
-                    inner.scope,
-                    bound.scope,
-                    translateStatements(
-                      getBody(callee, bound.scope, context),
-                      { ...inner, scope: { ...bound.scope, destructured: undefined } },
-                      context,
-                      bodyFrame,
-                    ),
-                    leaf(boolean(false)),
-                    context,
-                  ),
-                ),
-              );
-            });
-          },
-        );
+          (bound, inner) => (isSelfCall() ? translateSelf() : inlineCall(bound, inner)),
+        )
+      : isSelfCall()
+        ? translateSelf()
+        : bindCall(node, callee, argumentNodes, receiver, path, context, frame, inlineCall);
+};
 
 // The path of the code that resumed a function's body, with what the body changed outside itself.
 export const leaveBody = (

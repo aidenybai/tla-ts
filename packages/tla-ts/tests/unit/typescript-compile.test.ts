@@ -4917,6 +4917,51 @@ describe("calls", () => {
     );
   });
 
+  it("runs helpers that call each other as recursive operators that change the caller's names", async () => {
+    const getSource = (expected: string, deepest: number) => `
+      const run = () => {
+        const seen = { count: 0 };
+        const trail: string[] = [];
+        let depth = 0;
+        const isEven = (value: number): boolean => {
+          depth++;
+          trail.push(\`e\${value}\`);
+          seen.count++;
+          if (value === 0) return true;
+          return isOdd(value - 1);
+        };
+        const isOdd = (value: number): boolean => {
+          trail.push(\`o\${value}\`);
+          if (value === 0) return false;
+          if (value > 50) throw new Error(\`too deep \${value}\`);
+          return isEven(value - 1);
+        };
+        const first = isEven(4);
+        const second = isOdd(3);
+        let caught = "none";
+        try {
+          isEven(52);
+        } catch (error) {
+          caught = (error as Error).message;
+        }
+        isEven(${deepest});
+        return \`\${first},\${second},\${trail.length},\${trail.slice(0, 5).join("|")},\${depth},\${seen.count},\${caught}\`;
+      };
+      const text = run();
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected = "true,true,12,e4|o3|e2|o1|e0,7,7,too deep 51";
+    const printed = printModule(compile(getSource(expected, 0)).source);
+    expect(printed).toMatch(/^RECURSIVE isEven\(/m);
+    expect(printed).toMatch(/^isOdd\(/m);
+    expect((await checkModel(getSource(expected, 0))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("true,true,12,e4|o3|e2|o1|e0,6,7,too deep 51", 0))).failure
+        ?.message,
+    ).toContain(expected);
+    expect((await checkModel(getSource(expected, 54))).failure?.message).toContain("too deep 53");
+  });
+
   it("runs helpers that call one that throws as operators, where the caller catches it", async () => {
     const getSource = (expected: string) => `
       const run = () => {

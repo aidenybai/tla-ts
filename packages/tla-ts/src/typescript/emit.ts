@@ -28,6 +28,7 @@ import {
 import { getJavaScriptModule, SPECIAL_NUMBERS } from "./javascript";
 import { printModule } from "../printer";
 import { getRegions, type Region } from "./regions";
+import { defineThrown } from "./shared-calls";
 
 // The parts of a spec and its config, in the order that the model declares them.
 export interface Sections {
@@ -156,6 +157,7 @@ export const emit = (
       return definition;
     }),
     ...context.stateCalls.values(),
+    ...[...context.sharedCalls.values()].flat().filter((shared) => shared.isRecursive),
   ].map((definition): Declaration => ({
     name: definition.name,
     arity: definition.parameters.length,
@@ -190,6 +192,7 @@ export const emit = (
     defineHere("vars", tuple(variables.map((name) => identifier(name)))),
     ...(prelude.has("Rem") ? [getRem()] : []),
     ...(prelude.has("Quot") ? [getQuot()] : []),
+    ...defineThrown(context),
     ...context.output.map((definition) => ({
       ...definition,
       isRecursive: recursiveNames.has(definition.name),

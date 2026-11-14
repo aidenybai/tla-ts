@@ -30,6 +30,7 @@ import {
   apply,
   boolean,
   call,
+  define,
   defineAt,
   identifier,
   ifExpression,
@@ -38,7 +39,6 @@ import {
   number,
   string,
   tuple,
-  UNLOCATED,
 } from "./tla";
 
 // The built-ins that queue jobs or hold values weakly, which a helper's operator doesn't follow.
@@ -157,8 +157,9 @@ const getUnit = (unit: ts.Node, context: Context): Unit => {
 };
 
 // Finds, before the model's code compiles, each helper that can run as an operator: a function
-// that a const or a declaration holds, whose parameters are names of values, that makes no closure
-// and calls itself nowhere, and that reads no function from outside itself.
+// that a const or a declaration holds, whose parameters are names of values, that makes no closure,
+// and that reads no function from outside itself. One that calls itself, through itself or through
+// the functions it runs, calls its own operator.
 export const classifySharedHelpers = (reached: readonly ts.Node[], context: Context) => {
   if (context.heap === undefined) return;
   const found = reached.flatMap((node) =>
@@ -209,7 +210,7 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
       (entry) => ts.findAncestor(entry[1], (ancestor) => reach.has(ancestor)) === undefined,
     );
     if (
-      reached.some((unit) => unit.isTaskNamed || !unit.isOwn || unit.runs.has(callee)) ||
+      reached.some((unit) => unit.isTaskNamed || !unit.isOwn) ||
       outside.some(
         (entry) =>
           context.checker.getTypeOfSymbolAtLocation(entry[0], entry[1]).getCallSignatures().length >
@@ -228,30 +229,28 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
   });
 };
 
-// The shared call that a statement's call of a helper makes, where the helper runs as its inlined
-// body would: where the call binds each name that the helper reads from a function around it.
-const getSharedCall = (
+// Whether a statement's call of a helper may run as the helper's operator: a call by name with no
+// more arguments than the helper takes, none of which spreads.
+export const isSharedCall = (
   node: ts.Node,
   callee: FunctionNode,
   argumentNodes: readonly ts.Expression[],
   receiver: Receiver | undefined,
-  path: Path,
   context: Context,
-  frame: Frame,
-) => {
+) =>
+  context.sharedHelpers.has(callee) &&
+  receiver === undefined &&
+  ts.isCallExpression(node) &&
+  argumentNodes === node.arguments &&
+  !argumentNodes.some(ts.isSpreadElement) &&
+  argumentNodes.length <= getParameters(callee).length;
+
+// The operator that a call of a helper runs, where the helper runs as its inlined body would: where
+// the call binds each name that the helper reads from a function around it, and takes back each
+// one that it changes. A call inside the helper's own operator calls that operator.
+const getSharedCall = (callee: FunctionNode, path: Path, context: Context, frame: Frame) => {
   const helper = context.sharedHelpers.get(callee);
-  if (
-    helper === undefined ||
-    receiver !== undefined ||
-    !ts.isCallExpression(node) ||
-    argumentNodes !== node.arguments ||
-    argumentNodes.some(ts.isSpreadElement) ||
-    argumentNodes.length > getParameters(callee).length ||
-    frame.inlining.has(callee) ||
-    context.inProgress.has(callee)
-  ) {
-    return undefined;
-  }
+  if (helper === undefined) return undefined;
   const isCatching = path.scope.isCatching;
   const isThrowing = frame.throwTo !== undefined;
   const captured = helper.read.filter(
@@ -267,44 +266,77 @@ const getSharedCall = (
         ts.findAncestor(declaration.parent, ts.isFunctionLike) === undefined)
     );
   };
-  // A name from outside that the helper changes is one that the call binds and takes back.
   if (
     !helper.read.every(isReadable) ||
     !helper.changed.every((symbol) => context.variables.has(symbol) || captured.includes(symbol))
   ) {
     return undefined;
   }
-  const calls = context.sharedCalls.get(callee) ?? [];
-  const defined = calls.find(
+  const defined = (context.sharedCalls.get(callee) ?? []).find(
     (shared) =>
       shared.isCatching === isCatching &&
       shared.isThrowing === isThrowing &&
       shared.captured.length === captured.length &&
       shared.captured.every((symbol) => captured.includes(symbol)),
   );
-  if (defined !== undefined) return { helper, shared: defined };
-  const shared: SharedCall = {
-    name: context.names.getFresh(
-      ts.isVariableDeclaration(callee.parent) && ts.isIdentifier(callee.parent.name)
-        ? callee.parent.name.text
-        : (callee.name?.getText() ?? "helper"),
-    ),
-    isCatching,
-    isThrowing,
-    captured,
-    throws: [],
+  if (defined !== undefined && context.inProgress.has(callee)) defined.isRecursive = true;
+  return {
+    helper,
+    shared:
+      defined ?? defineShared(callee, helper.changed, isCatching, isThrowing, captured, context),
   };
-  defineShared(callee, helper.changed, shared, context);
-  context.sharedCalls.set(callee, [...calls, shared]);
-  return { helper, shared };
 };
+
+// The place of a throw that an operator gives its caller, among every operator's.
+const getPlace = (location: SourceLocation, context: Context) => {
+  const known = context.throwPlaces.findIndex(
+    (place) =>
+      place.line === location.line &&
+      place.column === location.column &&
+      place.range?.module === location.range?.module,
+  );
+  if (known !== -1) return number(known + 1);
+  context.throwPlaces.push(location);
+  return number(context.throwPlaces.length);
+};
+
+// The operator that stops where an operator's throw that nothing catches is, with its message.
+const getThrown = (place: Expression, message: Expression, context: Context) => {
+  if (context.thrownName === undefined) context.thrownName = context.names.getFresh("Thrown");
+  return call(context.thrownName, [place, message]);
+};
+
+// Defines the operator that stops at each place, before the operators that call it.
+export const defineThrown = (context: Context) =>
+  context.thrownName === undefined
+    ? []
+    : [
+        define(
+          context.thrownName,
+          [
+            { name: "place", arity: 0 },
+            { name: "message", arity: 0 },
+          ],
+          context.throwPlaces.reduceRight<Expression>(
+            (rest, location, position) =>
+              ifExpression(
+                apply("=", [identifier("place"), number(position + 1)]),
+                locate(apply("Assert", [boolean(false), identifier("message")]), location),
+                rest,
+              ),
+            apply("Assert", [boolean(false), identifier("message")]),
+          ),
+        ),
+      ];
 
 // Compiles a helper's body once, as an operator that gives how the body ended: its kind, its value
 // or what it threw, the message and the place of the throw, and the state that it changed.
 const defineShared = (
   callee: FunctionNode,
   changed: readonly ts.Symbol[],
-  shared: SharedCall,
+  isCatching: boolean,
+  isThrowing: boolean,
+  captured: ts.Symbol[],
   context: Context,
 ) => {
   const parameters = getParameters(callee);
@@ -314,13 +346,27 @@ const defineShared = (
       symbol: getSymbol(parameter.name, context.checker),
       name: context.names.getFresh(parameter.name.getText()),
     })),
-    ...shared.captured.map((symbol) => ({ symbol, name: context.names.getFresh(symbol.name) })),
+    ...captured.map((symbol) => ({ symbol, name: context.names.getFresh(symbol.name) })),
     ...state.map((symbol) => ({ symbol, name: context.names.getFresh(symbol.name) })),
   ];
+  const shared: SharedCall = {
+    name: context.names.getFresh(
+      ts.isVariableDeclaration(callee.parent) && ts.isIdentifier(callee.parent.name)
+        ? callee.parent.name.text
+        : (callee.name?.getText() ?? "helper"),
+    ),
+    isCatching,
+    isThrowing,
+    captured,
+    parameters: named.map((item) => ({ name: item.name, arity: 0 })),
+    isRecursive: false,
+  };
+  // A call inside the body that the operator runs calls the operator itself.
+  context.sharedCalls.set(callee, [...(context.sharedCalls.get(callee) ?? []), shared]);
   const base = createStateScope(context);
   const scope = {
     ...base,
-    isCatching: shared.isCatching,
+    isCatching,
     bindings: new Map([
       ...base.bindings,
       ...named.flatMap((item): [ts.Symbol, Expression][] =>
@@ -357,8 +403,11 @@ const defineShared = (
     generators: new Map(),
     tasks: undefined,
   };
-  const outer = context.inProgress;
-  context.inProgress = new Set([...outer, callee]);
+  // The operator is a top-level definition, which can't call the operators of a recursive
+  // function's call that it runs inside.
+  const outer = { inProgress: context.inProgress, selfCalls: context.selfCalls };
+  context.inProgress = new Set([...outer.inProgress, callee]);
+  context.selfCalls = new Map();
   const body = callee.body;
   const statements =
     body === undefined
@@ -375,62 +424,32 @@ const defineShared = (
     breakTo: undefined,
     continueTo: undefined,
     // Where nothing can catch what the body throws, it stops there, as the inlined body would.
-    throwTo: shared.isThrowing
-      ? (current, thrown) => {
-          // The place of a throw among the operator's, which it adds where it's new.
-          const getPlace = (location: SourceLocation) => {
-            const known = shared.throws.findIndex(
-              (place) => place.line === location.line && place.column === location.column,
-            );
-            if (known !== -1) return known + 1;
-            shared.throws.push(location);
-            return shared.throws.length;
-          };
-          const passed = thrown.shared;
-          return passed === undefined
-            ? end(
-                current,
-                "throw",
-                thrown.value,
-                getThrownMessage(thrown, callee),
-                number(getPlace(thrown.uncaught.location)),
-              )
-            : end(
-                current,
-                "throw",
-                thrown.value,
-                passed.message,
-                passed.throws.reduceRight<Expression>(
-                  (rest, location, position) =>
-                    ifExpression(
-                      apply("=", [passed.place, number(position + 1)]),
-                      number(getPlace(location)),
-                      rest,
-                    ),
-                  number(getPlace(UNLOCATED)),
-                ),
-              );
-        }
+    throwTo: isThrowing
+      ? (current, thrown) =>
+          end(
+            current,
+            "throw",
+            thrown.value,
+            getThrownMessage(thrown, callee),
+            thrown.shared?.place ?? getPlace(thrown.uncaught.location, context),
+          )
       : undefined,
     yieldTo: undefined,
     awaitTo: undefined,
     inlining: new Set([callee]),
   });
-  context.inProgress = outer;
+  context.inProgress = outer.inProgress;
+  context.selfCalls = outer.selfCalls;
   context.output.push(
     link(
       context,
       "definition",
       shared.name,
       callee,
-      defineAt(
-        callee,
-        shared.name,
-        named.map((item) => ({ name: item.name, arity: 0 })),
-        render(translated),
-      ),
+      defineAt(callee, shared.name, shared.parameters, render(translated)),
     ),
   );
+  return shared;
 };
 
 // A statement's call of a helper, which runs as the helper's shared operator where the call binds
@@ -446,15 +465,20 @@ export const translateSharedCall = (
   frame: Frame,
   continueWith: (path: Path, value?: Expression) => Formula,
   inlineCall: (bound: Bound, inner: Path) => Formula,
-): Formula =>
-  bindCall(node, callee, argumentNodes, receiver, path, context, frame, (bound, inner) => {
+): Formula => {
+  // A call inside the helper's own operator binds its arguments as any other call does.
+  const outside = {
+    ...frame,
+    inlining: new Set([...frame.inlining].filter((inlined) => inlined !== callee)),
+  };
+  return bindCall(node, callee, argumentNodes, receiver, path, context, outside, (bound, inner) => {
     const parameters = getParameters(callee);
     const found = parameters.some((parameter) => {
       const symbol = getSymbol(parameter.name, context.checker);
       return symbol === undefined || bound.scope.functions.has(symbol);
     })
       ? undefined
-      : getSharedCall(node, callee, argumentNodes, receiver, path, context, frame);
+      : getSharedCall(callee, path, context, frame);
     if (found === undefined) return inlineCall(bound, inner);
     const shared = found.shared;
     const changed = found.helper.changed;
@@ -491,16 +515,6 @@ export const translateSharedCall = (
       },
       isAssigned: caller.isAssigned || changed.some((symbol) => context.variables.has(symbol)),
     };
-    // The throw that nothing catches reports where the helper threw it.
-    const uncaught = shared.throws.reduceRight<Expression>(
-      (rest, location, position) =>
-        ifExpression(
-          apply("=", [place, number(position + 1)]),
-          locate(apply("Assert", [boolean(false), message]), location),
-          rest,
-        ),
-      apply("Assert", [boolean(false), message]),
-    );
     const throwTo = frame.throwTo;
     const returned = continueWith(
       after,
@@ -511,10 +525,11 @@ export const translateSharedCall = (
         ? returned
         : ifThenElse(
             apply("=", [kind, string("throw")]),
+            // The throw that nothing catches reports where the helper threw it.
             throwTo(after, {
               value,
-              uncaught,
-              shared: { message, place, throws: shared.throws },
+              uncaught: getThrown(place, message, context),
+              shared: { message, place },
             }),
             returned,
           );
@@ -548,3 +563,4 @@ export const translateSharedCall = (
       ),
     );
   });
+};
