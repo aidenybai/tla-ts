@@ -158,9 +158,9 @@ class ModelSearch {
   }
 }
 
-// Z3 closes a node that reaches its premises but never closes the parents it completes, so the
-// root of a reachable query stays open and gpdr answers unreachable. The parents that all their
-// children close are closed here, up to the root.
+// Deviation from Z3: gpdr_check_reachability closes only the node that reaches its premises
+// (set_closed), so the root of a reachable query stays open and Z3 answers unreachable
+// (spacer_pdr.cpp). The parents that all their children close are closed here, up to the root.
 const closeNode = (node: ModelNode, root: ModelNode) => {
   node.isClosed = true;
   for (let parent = node.parent; parent?.isOneClosed(); parent = parent.parent)
