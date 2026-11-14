@@ -255,7 +255,8 @@ export const CORE_OPERATORS: Builtin[] = [
     if (!isEnumeratedSet(outer) || sets.length !== written.length) {
       return markStreamedSet({ kind: "Union", base: outer });
     }
-    const added = sets.flatMap(getWrittenElements);
+    const added: Value[] = [];
+    for (const set of sets) for (const element of getWrittenElements(set)) added.push(element);
     const getUnionLikeTlc = () => {
       const union: MixedSetValue = { kind: "MixedSet", elements: [] };
       added.forEach((member) => {
