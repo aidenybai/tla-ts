@@ -1153,6 +1153,40 @@ describe("values", () => {
     });
   });
 
+  describe("rounds sums, products, quotients, and remainders as IEEE 754 does", () => {
+    const getSource = (third: string) => `
+      const box = { size: 0 };
+      const M = Number.MAX_VALUE;
+      const pairs: [number, number][] = [
+        [0.1 + 0.2, 0.30000000000000004],
+        [M * 1.1, Infinity],
+        [1 / 3, ${third}],
+        [2147483647 * 2147483647, 4611686014132420600],
+        [1e300 % 123.456, 90.98823479642961],
+        [1e-300 / 4294967296, 2.3283064365387e-310],
+        [-2147483648 % 7, -2],
+        [9007199254740991 + 2147483647, 9007201402224638],
+        [0.1 * 3, 0.30000000000000004],
+        [7 % -2.5, 2],
+        [5e-324 / 2, 0],
+        [-1e-7 % 5e-324, -0],
+      ];
+      pairs.forEach((pair, index) => {
+        if (!Object.is(pair[0], pair[1]) || box.size !== 0) throw new Error(\`pair \${index}\`);
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0.3333333333333333"))).failure).toBeUndefined();
+    });
+
+    it("rejects 1 / 3 rounded to 16 digits", async () => {
+      expect((await checkModel(getSource("0.3333333333333334"))).failure?.message).toContain(
+        "pair 2",
+      );
+    });
+  });
+
   describe("adds a double or a fraction to itself and to its negation exactly", () => {
     const getSource = (expected: string) => `
       const box = { size: 0 };
@@ -18420,9 +18454,9 @@ describe("errors", () => {
       const sum = await checkModel(`
       const object = {};
       const sum = 0.1 + 0.2;
-      if (sum === 0.3) throw new Error("missed");
+      if (sum !== 0.3) throw new Error("missed");
     `);
-      expect(sum.failure?.message).toContain("tla-ts can't add fractions");
+      expect(sum.failure?.message).toContain("missed");
     });
   });
 

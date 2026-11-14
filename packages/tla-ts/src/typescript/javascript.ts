@@ -175,19 +175,29 @@ LOCAL WideAdd(left, right) ==
   IN WideOf(<<augend[1] + addend[1] + (IF isCarried THEN 1 ELSE 0),
               IF isCarried THEN augend[2] - (MaxInteger - addend[2]) - 1 ELSE augend[2] + addend[2]>>)
 
-\\* An integer from 0 below 2^31 times 2^shift, for a shift from 1 to 30.
-LOCAL Shifted(value, shift) ==
-  WideOf(<<value \\div 2^(31 - shift), (value % 2^(31 - shift)) * 2^shift>>)
+\\* The halves of a sum of two integers from 0 that halves give, whose high half may pass 2^22.
+LOCAL RawAdd(augend, addend) ==
+  LET isCarried == augend[2] > MaxInteger - addend[2]
+  IN <<augend[1] + addend[1] + (IF isCarried THEN 1 ELSE 0),
+       IF isCarried THEN augend[2] - (MaxInteger - addend[2]) - 1 ELSE augend[2] + addend[2]>>
 
-\\* The product of two integers from 0 below 2^31, from the products of their 16-bit halves.
-LOCAL WideProduct(left, right) ==
+\\* The halves of an integer from 0 below 2^31 times 2^shift, for a shift from 1 to 30.
+LOCAL RawShifted(value, shift) ==
+  <<value \\div 2^(31 - shift), (value % 2^(31 - shift)) * 2^shift>>
+
+\\* The halves of the product of two integers from 0 below 2^31, from the products of their 16-bit
+\\* halves.
+LOCAL RawProduct(left, right) ==
   LET leftHigh == left \\div 65536
       leftLow == left % 65536
       rightHigh == right \\div 65536
       rightLow == right % 65536
-  IN WideAdd(WideAdd(WideOf(<<2 * leftHigh * rightHigh, 0>>), Shifted(leftHigh * rightLow, 16)),
-             WideAdd(WideAdd(Shifted(leftLow * rightHigh, 16), Shifted((leftLow \\div 256) * rightLow, 8)),
-                     (leftLow % 256) * rightLow))
+  IN RawAdd(RawAdd(<<2 * leftHigh * rightHigh, 0>>, RawShifted(leftHigh * rightLow, 16)),
+            RawAdd(RawAdd(RawShifted(leftLow * rightHigh, 16), RawShifted((leftLow \\div 256) * rightLow, 8)),
+                   <<0, (leftLow % 256) * rightLow>>))
+
+\\* Whether halves hold an integer up to 2^53.
+LOCAL FitsWide(halves) == halves[1] < 4194304 \\/ (halves[1] = 4194304 /\\ halves[2] = 0)
 
 \\* The decimal digits of high * 2^31 + low, from 0, each a division by 10 with 2^31 as
 \\* 10 * 214748364 + 8.
@@ -209,13 +219,6 @@ LOCAL BeyondInteger == Assert(FALSE, "tla-ts can't use an integer beyond 32 bits
 \\* An integer's magnitude, which is Wide for -2^31.
 LOCAL Unsigned(value) == IF IsNegative(value) THEN WideNegate(value) ELSE value
 
-\\* A Wide integer from 0 times an integer from 2 below 2^31, from its high half's product and its
-\\* low half's.
-LOCAL WideTimes(wide, factor) ==
-  IF wide[Wide][1] > 4194304 \\div factor
-  THEN Assert(FALSE, "tla-ts can't hold an integer beyond 2^53")
-  ELSE WideAdd(WideOf(<<wide[Wide][1] * factor, 0>>), WideProduct(wide[Wide][2], factor))
-
 \\* The bits that an integer from 0 below 2^31 takes.
 RECURSIVE BitLength(_)
 BitLength(value) == IF value = 0 THEN 0 ELSE 1 + BitLength(value \\div 2)
@@ -231,7 +234,10 @@ ShiftedLeft(halves, count) == IF count = 0 THEN halves ELSE ShiftedLeft(Doubled(
 
 \\* The halves of an integer other than 0 without its trailing zero bits, and how many it had.
 RECURSIVE OddPart(_, _)
-OddPart(halves, zeros) == IF halves[2] % 2 = 1 THEN <<halves, zeros>> ELSE OddPart(Halved(halves), zeros + 1)
+OddPart(halves, zeros) ==
+  CASE halves = <<0, 0>> -> Assert(FALSE, "tla-ts can't take the binary form of 0")
+    [] halves[2] % 2 = 1 -> <<halves, zeros>>
+    [] OTHER -> OddPart(Halved(halves), zeros + 1)
 
 \\* A finite number other than 0 as a Double holds it: its sign, the power of 2 of its odd
 \\* significand's last bit, and the significand's halves.
@@ -255,11 +261,6 @@ LOCAL FromBinary(binary) ==
        [] \\E position \\in DOMAIN Fractions : Fractions[position].binary = binary ->
             Fractions[CHOOSE position \\in DOMAIN Fractions : Fractions[position].binary = binary].value
        [] OTHER -> Double :> binary
-
-\\* A finite number other than 0 times 2^count, which is exact where it stays a number.
-LOCAL Scaled(value, count) ==
-  LET binary == Binary(value)
-  IN FromBinary(<<binary[1], binary[2] + count, binary[3], binary[4]>>)
 
 \\* The power of 2 that an integer other than 0 is, either way, or -1.
 LOCAL TwoPower(value) ==
@@ -292,6 +293,193 @@ LOCAL BinaryLessThan(left, right) ==
     [] IsNegative(left) -> MagnitudeBelow(Binary(right), Binary(left))
     [] OTHER -> MagnitudeBelow(Binary(left), Binary(right))
 
+
+\\* Exact arithmetic on naturals as sequences of 14-bit limbs, the least first, without a last 0, so
+\\* that a product of two limbs and a carry stays inside TLC's integers.
+LOCAL Limb == 16384
+
+RECURSIVE NatTrim(_)
+NatTrim(nat) == IF nat # <<>> /\\ nat[Len(nat)] = 0 THEN NatTrim(SubSeq(nat, 1, Len(nat) - 1)) ELSE nat
+
+LOCAL NatOf(value) == NatTrim(<<value % Limb, (value \\div Limb) % Limb, value \\div (Limb * Limb)>>)
+
+LOCAL LimbAt(nat, position) == IF position <= Len(nat) THEN nat[position] ELSE 0
+
+RECURSIVE NatSum(_, _, _, _)
+NatSum(left, right, position, carry) ==
+  IF position > Len(left) /\\ position > Len(right) /\\ carry = 0
+  THEN <<>>
+  ELSE LET total == LimbAt(left, position) + LimbAt(right, position) + carry
+       IN <<total % Limb>> \\o NatSum(left, right, position + 1, total \\div Limb)
+
+LOCAL NatAdd(left, right) == NatTrim(NatSum(left, right, 1, 0))
+
+\\* The limbs of left - right from a position on, where left isn't below right.
+RECURSIVE NatDifference(_, _, _, _)
+NatDifference(left, right, position, borrow) ==
+  IF position > Len(left)
+  THEN <<>>
+  ELSE LET total == LimbAt(left, position) - LimbAt(right, position) - borrow
+       IN <<IF total < 0 THEN total + Limb ELSE total>>
+            \\o NatDifference(left, right, position + 1, IF total < 0 THEN 1 ELSE 0)
+
+LOCAL NatSubtract(left, right) == NatTrim(NatDifference(left, right, 1, 0))
+
+RECURSIVE NatBelowFrom(_, _, _)
+NatBelowFrom(left, right, position) ==
+  /\\ position >= 1
+  /\\ \\/ left[position] < right[position]
+     \\/ left[position] = right[position] /\\ NatBelowFrom(left, right, position - 1)
+
+LOCAL NatBelow(left, right) ==
+  \\/ Len(left) < Len(right)
+  \\/ Len(left) = Len(right) /\\ NatBelowFrom(left, right, Len(left))
+
+\\* The limbs of a natural times a factor below Limb, from a position on.
+RECURSIVE NatTimesFrom(_, _, _, _)
+NatTimesFrom(nat, factor, position, carry) ==
+  IF position > Len(nat)
+  THEN NatOf(carry)
+  ELSE LET total == nat[position] * factor + carry
+       IN <<total % Limb>> \\o NatTimesFrom(nat, factor, position + 1, total \\div Limb)
+
+LOCAL NatTimes(nat, factor) == NatTrim(NatTimesFrom(nat, factor, 1, 0))
+
+LOCAL NatShiftLimbs(nat, count) == IF nat = <<>> THEN <<>> ELSE [position \\in 1..count |-> 0] \\o nat
+
+RECURSIVE NatProduct(_, _)
+NatProduct(left, right) ==
+  IF right = <<>>
+  THEN <<>>
+  ELSE NatAdd(NatTimes(left, Head(right)), NatShiftLimbs(NatProduct(left, Tail(right)), 1))
+
+LOCAL NatShiftLeft(nat, bits) == NatShiftLimbs(NatTimes(nat, 2^(bits % 14)), bits \\div 14)
+
+\\* The limbs of a natural's quotient by a divisor below Limb, the highest limbs divided first.
+RECURSIVE NatQuotientFrom(_, _, _, _)
+NatQuotientFrom(nat, divisor, position, remainder) ==
+  IF position = 0
+  THEN <<>>
+  ELSE LET current == remainder * Limb + nat[position]
+       IN NatQuotientFrom(nat, divisor, position - 1, current % divisor) \\o <<current \\div divisor>>
+
+\\* A natural divided by 2^bits, rounded down.
+LOCAL NatShiftRight(nat, bits) ==
+  LET kept == IF bits \\div 14 >= Len(nat) THEN <<>> ELSE SubSeq(nat, bits \\div 14 + 1, Len(nat))
+  IN NatTrim(NatQuotientFrom(kept, 2^(bits % 14), Len(kept), 0))
+
+LOCAL NatBits(nat) == IF nat = <<>> THEN 0 ELSE 14 * (Len(nat) - 1) + BitLength(nat[Len(nat)])
+
+LOCAL NatIsOdd(nat) == nat # <<>> /\\ nat[1] % 2 = 1
+
+LOCAL NatOfHalves(halves) == NatAdd(NatShiftLeft(NatOf(halves[1]), 31), NatOf(halves[2]))
+
+\\* The halves of a natural below 2^54, whose third limb straddles bit 31.
+LOCAL NatHalves(nat) ==
+  <<LimbAt(nat, 3) \\div 8 + LimbAt(nat, 4) * 2048,
+    LimbAt(nat, 1) + LimbAt(nat, 2) * Limb + (LimbAt(nat, 3) % 8) * 268435456>>
+
+\\* A natural's quotient and remainder by another, one bit at a time from the highest.
+RECURSIVE NatDivideFrom(_, _, _, _, _)
+NatDivideFrom(nat, divisor, bit, quotient, remainder) ==
+  IF bit < 0
+  THEN <<quotient, remainder>>
+  ELSE LET current == NatAdd(NatShiftLeft(remainder, 1),
+                             IF NatIsOdd(NatShiftRight(nat, bit)) THEN <<1>> ELSE <<>>)
+           fits == ~NatBelow(current, divisor)
+       IN NatDivideFrom(nat, divisor, bit - 1,
+                        NatAdd(NatShiftLeft(quotient, 1), IF fits THEN <<1>> ELSE <<>>),
+                        IF fits THEN NatSubtract(current, divisor) ELSE current)
+
+LOCAL NatDivide(nat, divisor) == NatDivideFrom(nat, divisor, NatBits(nat) - 1, <<>>, <<>>)
+
+\\* A natural other than 0 below 2^54 times 2^exponent as a number.
+LOCAL FromNat(isNegative, nat, exponent) ==
+  LET odd == OddPart(NatHalves(nat), 0)
+  IN FromBinary(<<isNegative, exponent + odd[2], odd[1][1], odd[1][2]>>)
+
+\\* A natural other than 0 times 2^exponent, rounded to the nearest number, an even significand where
+\\* two are as near, as IEEE 754 rounds: 53 bits, or fewer where the number is below 2^-1022.
+LOCAL Rounded(isNegative, nat, exponent) ==
+  LET bits == NatBits(nat)
+      shift == IF bits - 53 > -1074 - exponent THEN bits - 53 ELSE -1074 - exponent
+      kept == NatShiftRight(nat, shift)
+      rest == NatSubtract(nat, NatShiftLeft(kept, shift))
+      half == NatShiftLeft(<<1>>, shift - 1)
+      rounded == IF NatBelow(half, rest) \\/ (rest = half /\\ NatIsOdd(kept))
+                 THEN NatAdd(kept, <<1>>)
+                 ELSE kept
+  IN CASE shift <= 0 -> FromNat(isNegative, nat, exponent)
+       [] rounded = <<>> -> IF isNegative THEN NegativeZero ELSE 0
+       [] OTHER -> FromNat(isNegative, rounded, exponent + shift)
+
+LOCAL Significand(binary) == NatOfHalves(<<binary[3], binary[4]>>)
+
+\\* A finite number other than 0 times 2^count, which is exact unless it falls below 2^-1022, where it
+\\* may need rounding.
+LOCAL Scaled(value, count) ==
+  LET binary == Binary(value)
+  IN IF binary[2] + count < -1074
+     THEN Rounded(binary[1], Significand(binary), binary[2] + count)
+     ELSE FromBinary(<<binary[1], binary[2] + count, binary[3], binary[4]>>)
+
+\\* The sum of two finite numbers other than 0, rounded.
+LOCAL ExactSum(left, right) ==
+  LET a == Binary(left)
+      b == Binary(right)
+      low == IF a[2] < b[2] THEN a[2] ELSE b[2]
+      aligned(binary) == NatShiftLeft(Significand(binary), binary[2] - low)
+  IN CASE a[1] = b[1] -> Rounded(a[1], NatAdd(aligned(a), aligned(b)), low)
+       [] aligned(a) = aligned(b) -> 0
+       [] NatBelow(aligned(b), aligned(a)) -> Rounded(a[1], NatSubtract(aligned(a), aligned(b)), low)
+       [] OTHER -> Rounded(b[1], NatSubtract(aligned(b), aligned(a)), low)
+
+\\* The product of two finite numbers other than 0, rounded.
+LOCAL ExactProduct(left, right) ==
+  LET a == Binary(left)
+      b == Binary(right)
+  IN Rounded(a[1] # b[1], NatProduct(Significand(a), Significand(b)), a[2] + b[2])
+
+\\* The quotient of two finite numbers other than 0, rounded, from 55 bits of it or more and whether
+\\* any remain, which decide the rounding.
+LOCAL ExactQuotient(left, right) ==
+  LET a == Binary(left)
+      b == Binary(right)
+      spare == 55 + NatBits(Significand(b)) - NatBits(Significand(a))
+      shift == IF spare > 0 THEN spare ELSE 0
+      division == NatDivide(NatShiftLeft(Significand(a), shift), Significand(b))
+  IN Rounded(a[1] # b[1],
+             NatAdd(NatShiftLeft(division[1], 1), IF division[2] = <<>> THEN <<>> ELSE <<1>>),
+             a[2] - b[2] - shift - 1)
+
+LOCAL NatModulo(nat, modulus) == NatDivide(nat, modulus)[2]
+
+\\* 2^exponent modulo a natural, by squaring.
+RECURSIVE TwoPowerModulo(_, _)
+TwoPowerModulo(exponent, modulus) ==
+  IF exponent = 0
+  THEN NatModulo(<<1>>, modulus)
+  ELSE LET half == TwoPowerModulo(exponent \\div 2, modulus)
+           squared == NatModulo(NatProduct(half, half), modulus)
+       IN IF exponent % 2 = 1 THEN NatModulo(NatShiftLeft(squared, 1), modulus) ELSE squared
+
+\\* The remainder of two finite numbers other than 0, which is exact, with the dividend's sign. A
+\\* dividend below the divisor is the remainder, and the divisor's significand divides one that its
+\\* power of 2 shifts.
+LOCAL ExactRemainder(left, right) ==
+  LET a == Binary(left)
+      b == Binary(right)
+      remainder ==
+        IF a[2] >= b[2]
+        THEN NatModulo(NatProduct(NatModulo(Significand(a), Significand(b)),
+                                  TwoPowerModulo(a[2] - b[2], Significand(b))),
+                       Significand(b))
+        ELSE NatModulo(Significand(a), NatShiftLeft(Significand(b), b[2] - a[2]))
+      low == IF a[2] < b[2] THEN a[2] ELSE b[2]
+  IN CASE b[2] - a[2] >= 54 -> left
+       [] remainder = <<>> -> IF a[1] THEN NegativeZero ELSE 0
+       [] OTHER -> Rounded(a[1], remainder, low)
+
 \\* Number.isInteger.
 IsIntegral(value) ==
   IsFinite(value) /\\ ~IsFraction(value) /\\ ~(IsDouble(value) /\\ value[Double][2] < 0)
@@ -321,17 +509,22 @@ Add(left, right) ==
            [] IsDouble(left) /\\ IsDouble(right) /\\ left = right -> Scaled(left, 1)
            [] IsZero(left) -> right
            [] IsZero(right) -> left
-           [] OTHER -> Assert(FALSE, "tla-ts can't add this number exactly")
+           [] OTHER -> ExactSum(left, right)
+    \\* Wide integers below 2^52 either way add to one up to 2^53.
+    [] IsWide(left) /\\ IsZero(right) -> left
+    [] IsWide(right) /\\ IsZero(left) -> right
     [] IsWide(left) \\/ IsWide(right) ->
-         IF IsFraction(left) \\/ IsFraction(right)
-         THEN Assert(FALSE, "tla-ts can't add fractions")
-         ELSE WideAdd(left, right)
+         IF /\\ ~IsFraction(left) /\\ ~IsFraction(right)
+            /\\ ~IsWide(left) \\/ (left[Wide][1] >= -2097152 /\\ left[Wide][1] < 2097152)
+            /\\ ~IsWide(right) \\/ (right[Wide][1] >= -2097152 /\\ right[Wide][1] < 2097152)
+         THEN WideAdd(left, right)
+         ELSE ExactSum(left, right)
     [] left = 0 -> right
     [] right = 0 -> left
     \\* A number plus itself is twice it, and plus its negation 0, exactly.
     [] IsFraction(left) /\\ IsFraction(right) /\\ left = right -> Scaled(left, 1)
     [] IsFraction(left) /\\ IsFraction(right) /\\ left = Negate(right) -> 0
-    [] IsFraction(left) \\/ IsFraction(right) -> Assert(FALSE, "tla-ts can't add fractions")
+    [] IsFraction(left) \\/ IsFraction(right) -> ExactSum(left, right)
     [] \\/ right > 0 /\\ left > MaxInteger - right
        \\/ right < 0 /\\ left < -MaxInteger - 1 - right ->
          WideAdd(left, right)
@@ -351,30 +544,34 @@ Multiply(left, right) ==
             IF IsNegative(right) THEN Negate(Scaled(left, TwoPower(right))) ELSE Scaled(left, TwoPower(right))
        [] (IsDouble(right) \\/ IsFraction(right)) /\\ TwoPower(left) >= 0 ->
             IF IsNegative(left) THEN Negate(Scaled(right, TwoPower(left))) ELSE Scaled(right, TwoPower(left))
-       [] IsDouble(left) \\/ IsDouble(right) -> Assert(FALSE, "tla-ts can't multiply this number exactly")
+       [] IsDouble(left) \\/ IsDouble(right) -> ExactProduct(left, right)
        [] IsWide(left) \\/ IsWide(right) ->
             LET wide == Unsigned(IF IsWide(left) THEN left ELSE right)
                 factor == Unsigned(IF IsWide(left) THEN right ELSE left)
                 signed(product) == IF isNegative THEN WideNegate(product) ELSE product
-            IN CASE IsFraction(left) \\/ IsFraction(right) ->
-                      Assert(FALSE, "tla-ts can't multiply fractions")
-                 [] IsWide(factor) -> Assert(FALSE, "tla-ts can't hold an integer beyond 2^53")
+            IN CASE IsFraction(left) \\/ IsFraction(right) \\/ IsWide(factor) -> ExactProduct(left, right)
                  [] factor = 1 -> signed(wide)
-                 [] OTHER -> signed(WideTimes(wide, factor))
+                 [] wide[Wide][1] > 4194304 \\div factor -> ExactProduct(left, right)
+                 [] OTHER ->
+                      LET raw == RawAdd(<<wide[Wide][1] * factor, 0>>, RawProduct(wide[Wide][2], factor))
+                      IN IF FitsWide(raw) THEN signed(WideOf(raw)) ELSE ExactProduct(left, right)
        [] left = 1 -> right
        [] right = 1 -> left
        [] left = -1 -> Negate(right)
        [] right = -1 -> Negate(left)
-       [] IsFraction(left) \\/ IsFraction(right) -> Assert(FALSE, "tla-ts can't multiply fractions")
+       [] IsFraction(left) \\/ IsFraction(right) -> ExactProduct(left, right)
+       \\* -2^31 has no negation that TLC holds.
+       [] -2147483647 - 1 \\in {left, right} -> ExactProduct(left, right)
        [] Absolute(left) > MaxInteger \\div Absolute(right) ->
-            LET product == WideProduct(Absolute(left), Absolute(right))
-            IN IF isNegative THEN WideNegate(product) ELSE product
+            LET raw == RawProduct(Absolute(left), Absolute(right))
+            IN IF FitsWide(raw)
+               THEN IF isNegative THEN WideNegate(WideOf(raw)) ELSE WideOf(raw)
+               ELSE ExactProduct(left, right)
        [] OTHER ->
             LET product == Magnitude(left) * Magnitude(right)
             IN IF product = 0 /\\ isNegative THEN NegativeZero ELSE product
 
-\\* JavaScript's /, where tla-ts represents only a quotient that is an integer, an infinity, NaN,
-\\* or -0.
+\\* JavaScript's /, rounded as IEEE 754 rounds.
 Divide(left, right) ==
   LET isNegative == IsNegative(left) # IsNegative(right)
       signed(magnitude) == CASE magnitude = 0 /\\ isNegative -> NegativeZero
@@ -386,26 +583,26 @@ Divide(left, right) ==
        [] IsZero(right) /\\ IsZero(left) -> NaN
        [] IsZero(right) -> IF isNegative THEN NegativeInfinity ELSE Infinity
        [] IsZero(left) -> signed(0)
-       [] IsDouble(right) -> Assert(FALSE, "tla-ts can't divide by this number exactly")
+       [] IsDouble(right) -> ExactQuotient(left, right)
        [] TwoPower(right) >= 0 /\\ (IsDouble(left) \\/ IsFraction(left) \\/ IsBig(right) \\/ IsWide(left)) ->
             IF IsNegative(right) THEN Negate(Scaled(left, -TwoPower(right))) ELSE Scaled(left, -TwoPower(right))
-       [] IsBig(left) \\/ IsBig(right) -> Assert(FALSE, "tla-ts can't divide this number exactly")
+       [] IsBig(left) \\/ IsBig(right) -> ExactQuotient(left, right)
        [] right = 1 -> left
-       [] IsFraction(left) \\/ IsFraction(right) -> Assert(FALSE, "tla-ts can't divide fractions")
+       [] IsFraction(left) \\/ IsFraction(right) \\/ -2147483647 - 1 \\in {left, right} ->
+            ExactQuotient(left, right)
        [] Absolute(Magnitude(left)) % Absolute(Magnitude(right)) = 0 ->
             signed(Absolute(Magnitude(left)) \\div Absolute(Magnitude(right)))
        [] TwoPower(right) >= 0 ->
             IF IsNegative(right) THEN Negate(Scaled(left, -TwoPower(right))) ELSE Scaled(left, -TwoPower(right))
-       [] OTHER -> Assert(FALSE, "tla-ts can't represent the fraction " \\o ToString(left) \\o " / "
-                                 \\o ToString(right))
+       [] OTHER -> ExactQuotient(left, right)
 
 \\* JavaScript's %, whose result has the sign of the dividend.
 Remainder(left, right) ==
   CASE left = NaN \\/ right = NaN \\/ left \\in Infinities \\/ IsZero(right) -> NaN
     [] right \\in Infinities \\/ IsZero(left) -> left
-    [] IsFraction(left) \\/ IsFraction(right) ->
-         Assert(FALSE, "tla-ts can't compute the remainder of fractions")
-    [] IsBig(left) \\/ IsBig(right) -> BeyondInteger
+    [] IsFraction(left) \\/ IsFraction(right) \\/ IsBig(left) \\/ IsBig(right) ->
+         ExactRemainder(left, right)
+    [] -2147483647 - 1 \\in {left, right} -> ExactRemainder(left, right)
     [] OTHER ->
          LET remainder == Absolute(left) % Absolute(right)
          IN CASE left > 0 -> remainder
