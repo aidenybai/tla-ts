@@ -63,8 +63,8 @@ const getFixedFunction = (declaration: ts.Node) =>
 
 // Whether a node of a reached function runs only as that function's own code would inline: no
 // this, arguments, or new.target of a function around it, no yield, await, or using, and no
-// function that it makes but a callback that a call takes or a function that a const or a
-// declaration holds and that only calls run.
+// function that it makes but a callback that a call takes, a parameter's default, or a function
+// that a const or a declaration holds and that only calls run or take.
 const isOwnCode = (node: ts.Node, context: Context): boolean => {
   // A type runs nothing, though an instantiation expression, which TypeScript parses as one, runs.
   if (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) return true;
@@ -94,15 +94,17 @@ const isOwnCode = (node: ts.Node, context: Context): boolean => {
         (reference) =>
           reference === name ||
           getSymbol(reference, context.checker) !== symbol ||
-          (ts.isCallExpression(reference.parent) && reference.parent.expression === reference),
+          (ts.isCallExpression(reference.parent) &&
+            (reference.parent.expression === reference ||
+              reference.parent.arguments.includes(reference))),
       );
     return (
       (ts.isArrowFunction(node) ||
         ts.isFunctionExpression(node) ||
         ts.isFunctionDeclaration(node)) &&
       ((!ts.isFunctionDeclaration(node) &&
-        ts.isCallExpression(node.parent) &&
-        node.parent.arguments.includes(node)) ||
+        ((ts.isCallExpression(node.parent) && node.parent.arguments.includes(node)) ||
+          (ts.isParameter(node.parent) && node.parent.initializer === node))) ||
         (symbol !== undefined && !isClosure(node, context) && isCalledOnly())) &&
       isPlain(node) &&
       ts.forEachChild(node, (child) => !isOwnCode(child, context) || undefined) === undefined

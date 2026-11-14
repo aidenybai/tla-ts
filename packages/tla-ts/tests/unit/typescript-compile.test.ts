@@ -5006,6 +5006,48 @@ describe("calls", () => {
     );
   });
 
+  it("runs recursive helpers that pass a local function and take a default callback as operators", async () => {
+    const getSource = (expected: string) => `
+      interface Item {
+        kind: "leaf" | "set" | "union";
+        label: string;
+        items: Item[];
+      }
+      const run = () => {
+        const visits = { count: 0 };
+        const getElements = (item: Item, getItems = (inner: Item) => inner.items) => {
+          visits.count++;
+          return getItems(item);
+        };
+        const formatItem = (item: Item, isStrict: boolean): string => {
+          const format = (inner: Item) => formatItem(inner, isStrict);
+          if (item.kind === "leaf") return isStrict ? \`"\${item.label}"\` : item.label;
+          if (item.kind === "union") return formatUnion(item, isStrict);
+          return \`{\${getElements(item).map(format).join(", ")}}\`;
+        };
+        const formatUnion = (item: Item, isStrict: boolean): string => {
+          const parts = getElements(item, (inner) => inner.items.slice(1)).map((inner) =>
+            formatItem(inner, !isStrict),
+          );
+          return \`UNION \${parts.join(" ")}\`;
+        };
+        const leaf = (label: string): Item => ({ kind: "leaf", label, items: [] });
+        const nested: Item = { kind: "set", label: "", items: [leaf("c")] };
+        const union: Item = { kind: "union", label: "", items: [leaf("x"), leaf("b"), nested] };
+        const tree: Item = { kind: "set", label: "", items: [leaf("a"), union] };
+        return \`\${formatItem(tree, false)}|\${formatItem(tree, true)}|\${visits.count}\`;
+      };
+      const text = run();
+      if (text !== '${expected}') throw new Error(text);
+    `;
+    const expected = '{a, UNION "b" {"c"}}|{"a", UNION b {c}}|6';
+    expect(printModule(compile(getSource(expected)).source)).toMatch(/^RECURSIVE formatItem\(/m);
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource('{a, UNION "b" {"c"}}|{"a", UNION b {c}}|5'))).failure?.message,
+    ).toContain("UNION b {c}}|6");
+  });
+
   it("runs helpers that call one that throws as operators, where the caller catches it", async () => {
     const getSource = (expected: string) => `
       const run = () => {
