@@ -119,7 +119,8 @@ const unique = (manager: AstManager, args: PbArg[], bound: { k: Rational }) => {
     if (arg.expr === manager.trueExpr) bound.k = bound.k.sub(arg.coeff);
     return arg.expr !== manager.trueExpr && arg.expr !== manager.falseExpr;
   });
-  kept.sort((first, second) => first.expr - second.expr);
+  const ids = manager.ids;
+  kept.sort((first, second) => ids[first.expr] - ids[second.expr]);
   const coalesced: PbArg[] = [];
   for (const arg of kept) {
     const last = coalesced[coalesced.length - 1];

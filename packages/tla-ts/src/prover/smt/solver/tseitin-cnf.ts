@@ -47,8 +47,8 @@ const getSharedApps = (manager: AstManager, forms: readonly number[]) => {
   return shared;
 };
 
-const getOrderedById = (first: number, second: number) =>
-  first > second ? [second, first] : [first, second];
+const getOrderedById = (manager: AstManager, first: number, second: number) =>
+  manager.ids[first] > manager.ids[second] ? [second, first] : [first, second];
 
 const getProductNext = (sizes: readonly number[], iterator: number[]) => {
   for (let index = 0; index < sizes.length; index++) {
@@ -168,7 +168,7 @@ export const tseitinCnf = (manager: AstManager, goal: Goal) => {
       if (!manager.isNot(arg)) return null;
       const inner = manager.getArg(arg, 0);
       if (isShared(inner) || !isOrOf(inner, 2)) return null;
-      ors.push(getOrderedById(manager.getArg(inner, 0), manager.getArg(inner, 1)));
+      ors.push(getOrderedById(manager, manager.getArg(inner, 0), manager.getArg(inner, 1)));
     }
     const [[a1, a2], [b1, b2], [c1, c2]] = ors;
     if (
