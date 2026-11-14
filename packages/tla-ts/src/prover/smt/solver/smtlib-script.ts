@@ -373,18 +373,17 @@ export const runSmtlibScript = (
       eufSolver: undefined,
     };
   };
-  const script = { state: createState() };
+  let state = createState();
   const getPrintEnvironment = () => ({
     options: settings.printOptions,
-    isUsed: script.state.reader.isUsed,
-    isClashing: script.state.reader.isClashing,
+    isUsed: state.reader.isUsed,
+    isClashing: state.reader.isClashing,
   });
-  const format = (expr: number) => printExpr(script.state.manager, getPrintEnvironment(), expr);
+  const format = (expr: number) => printExpr(state.manager, getPrintEnvironment(), expr);
   const display = (expr: number) => print(format(expr));
   const report = (error: SmtParseError) =>
     print(`(error "line ${error.line} column ${error.column}: ${error.message}")`);
   const getNamedAssertions = () => {
-    const state = script.state;
     const manager = state.manager;
     const isNamed = hasNames();
     return state.assertions.map((assertion, index) =>
@@ -413,7 +412,6 @@ export const runSmtlibScript = (
     };
   };
   const optimize = (extra: number[]) => {
-    const state = script.state;
     const manager = state.manager;
     const objectives = state.objectives;
     const hard = [...getNamedAssertions(), ...state.names.filter((name) => name !== -1), ...extra];
@@ -431,7 +429,7 @@ export const runSmtlibScript = (
         setup: getSetup(),
         write: () => {},
         parameters: settings.parameters,
-        hasDefinitions: () => script.state.reader.hasDefinitions(),
+        hasDefinitions: () => state.reader.hasDefinitions(),
       },
       objectives,
     );
@@ -476,12 +474,11 @@ export const runSmtlibScript = (
     }
   };
   const resetOptimizer = () => {
-    script.state.optimizer?.release();
-    script.state.optimizer = undefined;
+    state.optimizer?.release();
+    state.optimizer = undefined;
   };
   // The port keeps answering with the smt kernel where it lacks a piece of the logic's strategy.
   const solveWithStrategy = () => {
-    const state = script.state;
     const goal = getGoal();
     const strategy =
       settings.parameters.get("tactic.default_tactic") ??
@@ -513,11 +510,10 @@ export const runSmtlibScript = (
   });
   // mk_special_solver_for_logic gives these logics the finite-domain solver, incremental or not.
   const isUsingFdSolver = () =>
-    (script.state.logic === "QF_FD" || script.state.logic === "SAT") &&
+    (state.logic === "QF_FD" || state.logic === "SAT") &&
     !settings.isProducingProofs &&
     !settings.parameters.has("tactic.default_tactic");
   const checkSat = (extra: number[]) => {
-    const state = script.state;
     state.manager.limit.restart(Date.now() + options.timeLimitMs);
     // opt::context::optimize answers as the search of the hard constraints does: once they are
     // satisfiable, optsmt and maxsmt only improve the model. The unported parts of optimization
@@ -563,26 +559,26 @@ export const runSmtlibScript = (
     }
   };
   const getModel = (list: SmtList) => {
-    const check = script.state.check;
+    const check = state.check;
     if (!settings.isProducingModels || check === undefined || check.status === L_FALSE)
       throw new SmtParseError("model is not available", list.end);
     if (check.model !== undefined) return check.model;
     if (check.isOptimizing) throw new SmtUnsupportedError("the models of optimization");
     if (check.context === undefined && check.status !== L_TRUE)
       throw new SmtUnsupportedError("the model of a canceled search");
-    const model = check.context?.getModel() ?? new ProtoModel(script.state.manager);
+    const model = check.context?.getModel() ?? new ProtoModel(state.manager);
     model.incRef();
     check.model = model;
     return model;
   };
   const clearCheck = () => {
-    script.state.check?.model?.decRef();
-    script.state.check = undefined;
+    state.check?.model?.decRef();
+    state.check = undefined;
   };
   // The check holds a reference to its model until clearCheck.
   const setCheck = (status: number, result: Partial<Omit<CheckResult, "status">> = {}) => {
     result.model?.incRef();
-    script.state.check = {
+    state.check = {
       status,
       context: undefined,
       isOptimizing: false,
@@ -595,7 +591,6 @@ export const runSmtlibScript = (
   // the logic, the default tactic or the sat parameters pick a sat solver. Under sat.euf that
   // solver is inc_sat_solver in euf mode; the other sat solvers only store their assertions.
   const resetKernel = () => {
-    const state = script.state;
     const logic = state.logic;
     const parameters = settings.parameters;
     const isProofsEnabled = settings.isProducingProofs || state.isProofsEnabled === true;
@@ -621,7 +616,6 @@ export const runSmtlibScript = (
   };
   // The parts of sat.euf that are not ported leave its answers to the smt kernel.
   const useEufSolver = <Result>(action: (solver: IncSatSolver) => Result) => {
-    const state = script.state;
     const solver = state.eufSolver;
     if (solver === undefined) return undefined;
     try {
@@ -635,7 +629,6 @@ export const runSmtlibScript = (
   };
   // solver_na2as asserts a named assertion as an implication from its name.
   const assertInKernel = (formula: number, name: number) => {
-    const state = script.state;
     const manager = state.manager;
     const asserted = name === -1 ? formula : manager.mkApp(OP_IMPLIES, [name, formula], SORT_BOOL);
     manager.incRef(asserted);
@@ -644,7 +637,6 @@ export const runSmtlibScript = (
     manager.decRef(asserted);
   };
   const checkKernel = (assumptions: number[]) => {
-    const state = script.state;
     const kernel = state.kernel;
     const found = useEufSolver((solver) => {
       const result = solver.check(assumptions);
@@ -677,23 +669,22 @@ export const runSmtlibScript = (
     pendingText += rest;
   };
   const getSetup = () => ({
-    logic: script.state.logic,
+    logic: state.logic,
     isAutoConfig:
       settings.parameters.get("auto_config") !== "false" &&
       settings.parameters.get("smt.auto_config") !== "false",
   });
   const getTacticEnvironment = () => ({
-    manager: script.state.manager,
+    manager: state.manager,
     isMbqi: settings.isMbqi,
     mbqiMaxIterations: settings.mbqiMaxIterations,
     isFindingMacros: settings.isFindingMacros,
     setup: getSetup(),
     write,
     parameters: settings.parameters,
-    hasDefinitions: () => script.state.reader.hasDefinitions(),
+    hasDefinitions: () => state.reader.hasDefinitions(),
   });
   const getDatalog = () => {
-    const state = script.state;
     state.datalog ??= createDatalogContext(
       state.manager,
       settings.parameters,
@@ -704,7 +695,6 @@ export const runSmtlibScript = (
   const getTactic = (sexpr: SExpr, end: SmtList["end"]) =>
     compileTactic(getTacticEnvironment(), sexpr, end);
   const getGoal = (isTrackingDependencies = false) => {
-    const state = script.state;
     const goal = new Goal(state.manager);
     goal.isProofsEnabled = settings.isProducingProofs || state.isProofsEnabled === true;
     goal.isCoresEnabled = settings.isProducingUnsatCores;
@@ -717,10 +707,9 @@ export const runSmtlibScript = (
       );
     return goal;
   };
-  const hasNames = () => script.state.names.some((name) => name !== -1);
+  const hasNames = () => state.names.some((name) => name !== -1);
   // parse_check_sat shrinks the expression stack once the check has run.
   const checkSatAssuming = (items: SmtList["items"]) => {
-    const state = script.state;
     const literals: number[] = [];
     try {
       for (const item of items) literals.push(state.reader.parseFormula(item));
@@ -730,7 +719,6 @@ export const runSmtlibScript = (
     }
   };
   const addObjective = (list: SmtList, isMax: boolean) => {
-    const state = script.state;
     const term = state.reader.parseTerm(list.items[1] ?? list.end);
     const sort = state.manager.sorts[term];
     if (sort !== SORT_INT && sort !== SORT_REAL && !state.manager.isBvSort(sort))
@@ -746,7 +734,6 @@ export const runSmtlibScript = (
     });
   };
   const releaseObjectives = (size: number, softSize: number) => {
-    const state = script.state;
     for (const index of state.softTrail.splice(softSize).reverse()) {
       const objective = state.objectives[index];
       state.manager.decRef(objective.terms.pop() as number);
@@ -756,13 +743,11 @@ export const runSmtlibScript = (
       if (objective.type !== O_MAXSMT) state.manager.decRef(objective.term);
   };
   const restoreAssertions = (size: number) => {
-    const state = script.state;
     for (const assertion of state.assertions.splice(size)) state.manager.decRef(assertion);
     for (const name of state.names.splice(size)) if (name !== -1) state.manager.decRef(name);
     state.assertionTexts.length = size;
   };
   const instantiate = (list: SmtList, isNested: boolean) => {
-    const state = script.state;
     const manager = state.manager;
     const outer = state.reader.parseTerm(list.items[1] ?? list.end);
     if (manager.kinds[outer] !== KIND_QUANTIFIER)
@@ -796,7 +781,6 @@ export const runSmtlibScript = (
   // parser::parse_func_decl_ref: a name, or a name with its signature. Z3 ends the message of an
   // unexpected token with the last identifier it read.
   const getFuncDeclRef = (reference: SExpr) => {
-    const state = script.state;
     if (isSymbol(reference)) {
       const decls = state.reader.getFuncs(reference.text);
       if (decls.length > 1)
@@ -850,7 +834,6 @@ export const runSmtlibScript = (
   };
   const runCommand: Record<string, (list: SmtList) => void> = {
     assert: (list) => {
-      const state = script.state;
       const term = list.items[1] ?? list.end;
       const assertion = state.reader.parseAssertion(term);
       const logicError = state.reader.getLogicError(assertion.formula);
@@ -880,7 +863,6 @@ export const runSmtlibScript = (
     },
     "check-sat": (list) => checkSatAssuming(list.items.slice(1)),
     "declare-rel": (list) => {
-      const state = script.state;
       const name = list.items[1];
       const domain = list.items[2];
       if (!isSymbol(name) || domain?.kind !== "list")
@@ -894,7 +876,6 @@ export const runSmtlibScript = (
       getDatalog().registerPredicate(decl);
     },
     "declare-var": (list) => {
-      const state = script.state;
       const name = list.items[1];
       const sort = list.items[2];
       if (!isSymbol(name) || sort === undefined)
@@ -909,10 +890,9 @@ export const runSmtlibScript = (
       const rule = list.items[1];
       if (rule === undefined) throw new SmtParseError("invalid rule, expected formula", list.end);
       const name = list.items[2];
-      getDatalog().addRule(script.state.reader.parseFormula(rule), isSymbol(name) ? name.text : "");
+      getDatalog().addRule(state.reader.parseFormula(rule), isSymbol(name) ? name.text : "");
     },
     query: (list) => {
-      const state = script.state;
       if (list.items[1] === undefined)
         throw new SmtParseError("invalid query command, argument expected", list.end);
       const relation = getFuncDeclRef(list.items[1]);
@@ -940,7 +920,6 @@ export const runSmtlibScript = (
       }
     },
     "check-sat-using": (list) => {
-      const state = script.state;
       const params = getCommandParams(list.items, CHECK_SAT_USING_PARAMETERS);
       if (list.items[1] === undefined)
         throw new SmtParseError("check-sat-using needs a tactic argument", list.end);
@@ -974,7 +953,6 @@ export const runSmtlibScript = (
       checkSatAssuming(literals.items);
     },
     "get-consequences": (list) => {
-      const state = script.state;
       const manager = state.manager;
       const [assumptions, vars] = [list.items[1], list.items[2]].map((terms) => {
         if (terms === undefined)
@@ -1017,7 +995,6 @@ export const runSmtlibScript = (
     minimize: (list) => addObjective(list, false),
     maximize: (list) => addObjective(list, true),
     "assert-soft": (list) => {
-      const state = script.state;
       const formula = state.reader.parseTerm(list.items[1] ?? list.end);
       if (state.manager.sorts[formula] !== SORT_BOOL)
         throw new SmtParseError("Invalid type for expression. Expected Boolean type.", list.end);
@@ -1042,7 +1019,6 @@ export const runSmtlibScript = (
       state.softTrail.push(index);
     },
     push: (list) => {
-      const state = script.state;
       clearCheck();
       for (let index = getScopeCount(list); index > 0; index--) {
         state.scopes.push({
@@ -1057,7 +1033,6 @@ export const runSmtlibScript = (
       }
     },
     pop: (list) => {
-      const state = script.state;
       const count = getScopeCount(list);
       if (count > state.scopes.length)
         throw new SmtParseError(
@@ -1079,10 +1054,9 @@ export const runSmtlibScript = (
     reset: () => {
       clearCheck();
       resetOptimizer();
-      script.state = createState();
+      state = createState();
     },
     "reset-assertions": () => {
-      const state = script.state;
       clearCheck();
       restoreAssertions(0);
       resetOptimizer();
@@ -1093,10 +1067,10 @@ export const runSmtlibScript = (
       state.hasChecked = false;
     },
     simplify: (list) => {
-      const manager = script.state.manager;
+      const manager = state.manager;
       if (list.items.length < 2)
         throw new SmtParseError("invalid simplify command, argument expected", list.end);
-      const term = script.state.reader.parseTerm(list.items[1]);
+      const term = state.reader.parseTerm(list.items[1]);
       manager.incRef(term);
       const rewriter = new Rewriter(
         manager,
@@ -1111,10 +1085,10 @@ export const runSmtlibScript = (
     },
     // The Boolean rewriter alone matches the simplifier only on Boolean structure over constants.
     "dbg-bool-flat-rewriter": (list) => {
-      const manager = script.state.manager;
+      const manager = state.manager;
       if (list.items.length !== 2)
         throw new SmtParseError("invalid command, one argument expected", list.end);
-      const term = script.state.reader.parseTerm(list.items[1]);
+      const term = state.reader.parseTerm(list.items[1]);
       manager.incRef(term);
       const visited = new Set<number>();
       const todo = [term];
@@ -1135,7 +1109,6 @@ export const runSmtlibScript = (
       manager.decRef(term);
     },
     apply: (list) => {
-      const state = script.state;
       const params = getCommandParams(list.items, APPLY_PARAMETERS);
       if (list.items[1] === undefined)
         throw new SmtParseError("apply needs a tactic argument", list.end);
@@ -1254,7 +1227,7 @@ export const runSmtlibScript = (
           "command is only available in interactive mode, use command (set-option :interactive-mode true)",
           list.end,
         );
-      print(`(${script.state.assertionTexts.join("\n ")})`);
+      print(`(${state.assertionTexts.join("\n ")})`);
     },
     "get-unsat-core": (list) => {
       if (!settings.isProducingUnsatCores)
@@ -1262,7 +1235,7 @@ export const runSmtlibScript = (
           "unsat core construction is not enabled, use command (set-option :produce-unsat-cores true)",
           list.end,
         );
-      const check = script.state.check;
+      const check = state.check;
       if (check === undefined || check.status !== L_FALSE)
         throw new SmtParseError("unsat core is not available", list.end);
       if (check.core === undefined)
@@ -1271,11 +1244,11 @@ export const runSmtlibScript = (
     },
     eval: (list) => {
       const target = list.items[1];
-      const term = target === undefined ? -1 : script.state.reader.parseTerm(target);
+      const term = target === undefined ? -1 : state.reader.parseTerm(target);
       if (list.items.length > 2) throw new SmtUnsupportedError("the parameters of eval");
       const model = getModel(list);
       if (term === -1) throw new SmtParseError("no arguments passed to eval", list.end);
-      const manager = script.state.manager;
+      const manager = state.manager;
       manager.incRef(term);
       const value = model.eval(term, false);
       display(value);
@@ -1286,8 +1259,8 @@ export const runSmtlibScript = (
       const terms = list.items[1];
       if (terms?.kind !== "list")
         throw new SmtParseError("invalid get-value command, '(' expected", terms ?? list.end);
-      const manager = script.state.manager;
-      const exprs = terms.items.map((item) => script.state.reader.parseTerm(item));
+      const manager = state.manager;
+      const exprs = terms.items.map((item) => state.reader.parseTerm(item));
       if (exprs.length === 0)
         throw new SmtParseError("invalid get-value command, empty list of terms", terms.end);
       if (list.items.length > 2) throw new SmtUnsupportedError("the parameters of get-value");
@@ -1309,17 +1282,17 @@ export const runSmtlibScript = (
       print(`(${lines.join("\n ")})`);
     },
     "get-objectives": () => {
-      const optimizer = script.state.optimizer;
-      if (optimizer === undefined || script.state.check === undefined)
+      const optimizer = state.optimizer;
+      if (optimizer === undefined || state.check === undefined)
         throw new SmtUnsupportedError("the command get-objectives");
       print(optimizer.getObjectives(format));
     },
     "get-model": (list) => {
       if (list.items.length > 1) throw new SmtUnsupportedError("the index of get-model");
-      const manager = script.state.manager;
+      const manager = state.manager;
       const model = getModel(list);
       model.compact();
-      for (const decl of script.state.reader.getDeclaredFuncs()) {
+      for (const decl of state.reader.getDeclaredFuncs()) {
         const funcDecl = manager.funcDecls[decl];
         if (
           funcDecl.family !== FAMILY_USER ||
@@ -1339,22 +1312,20 @@ export const runSmtlibScript = (
       model.addRecFuns();
       print(`(\n${printModel(manager, getPrintEnvironment(), model, 2)})`);
     },
-    display: (list) => display(script.state.reader.parseTerm(list.items[1] ?? list.end)),
+    display: (list) => display(state.reader.parseTerm(list.items[1] ?? list.end)),
     "dbg-lt": (list) => {
-      const state = script.state;
       const first = state.reader.parseTerm(list.items[1] ?? list.end);
       const second = state.reader.parseTerm(list.items[2] ?? list.end);
       print(String(isAstLess(state.manager, first, second)));
     },
     "dbg-some-value": (list) => {
-      const state = script.state;
       display(
         getManagerSomeValue(state.manager, state.reader.parseSort(list.items[1] ?? list.end)),
       );
     },
     "dbg-used-vars": (list) => {
-      const manager = script.state.manager;
-      const term = script.state.reader.parseTerm(list.items[1] ?? list.end);
+      const manager = state.manager;
+      const term = state.reader.parseTerm(list.items[1] ?? list.end);
       const body =
         manager.kinds[term] === KIND_QUANTIFIER ? manager.getQuantifier(term).body : term;
       const sorts = getFreeVarSorts(manager, body, manager.freeVarBounds[body]);
@@ -1365,8 +1336,8 @@ export const runSmtlibScript = (
       print(`(vars${lines.join("")})`);
     },
     "dbg-elim-unused-vars": (list) => {
-      const manager = script.state.manager;
-      const term = script.state.reader.parseTerm(list.items[1] ?? list.end);
+      const manager = state.manager;
+      const term = state.reader.parseTerm(list.items[1] ?? list.end);
       if (manager.kinds[term] !== KIND_QUANTIFIER) {
         write(format(term), false);
         return;
@@ -1421,12 +1392,12 @@ export const runSmtlibScript = (
         settings.rlimit = Number(value.text);
       if (optionName === ":rewriter.hi_div0") {
         settings.isHiDiv0 = isTrue;
-        script.state.manager.isHiDiv0 = isTrue;
+        state.manager.isHiDiv0 = isTrue;
       }
       if (optionName === ":encoding" && value !== undefined && value.kind !== "list") {
         settings.encoding = ENCODINGS.get(value.text) ?? UNICODE_ENCODING;
-        script.state.manager.maxChar = settings.encoding.maxChar;
-        script.state.manager.charBits = settings.encoding.charBits;
+        state.manager.maxChar = settings.encoding.maxChar;
+        state.manager.charBits = settings.encoding.charBits;
       }
       if (optionName === ":parser.ignore_bad_patterns")
         settings.parserOptions.isIgnoringBadPatterns = isTrue;
@@ -1466,8 +1437,8 @@ export const runSmtlibScript = (
       const info = list.items[1];
       if (info?.kind !== "keyword")
         throw new SmtParseError("invalid command argument, keyword expected", info ?? list.end);
-      const optimizer = script.state.optimizer;
-      const check = script.state.check;
+      const optimizer = state.optimizer;
+      const check = state.check;
       if (
         info.text === ":reason-unknown" &&
         check?.status === L_UNDEF &&
@@ -1486,7 +1457,7 @@ export const runSmtlibScript = (
         return;
       }
       if (info.text === ":rlimit") {
-        print(`(:rlimit ${script.state.manager.limit.count})`);
+        print(`(:rlimit ${state.manager.limit.count})`);
         return;
       }
       if (info.text !== ":error-behavior")
@@ -1496,7 +1467,6 @@ export const runSmtlibScript = (
       );
     },
     "set-logic": (list) => {
-      const state = script.state;
       const logic = list.items[1];
       if (!isSymbol(logic))
         throw new SmtParseError("invalid logic name, symbol expected", logic ?? list.end);
@@ -1529,13 +1499,13 @@ export const runSmtlibScript = (
     if (!isSymbol(head))
       throw new SmtParseError("invalid command, symbol expected", head ?? list.end);
     const command = DECLARATIONS.has(head.text)
-      ? (declaration: SmtList) => script.state.reader.declareCommand(declaration)
+      ? (declaration: SmtList) => state.reader.declareCommand(declaration)
       : Object.hasOwn(runCommand, head.text)
         ? runCommand[head.text]
         : undefined;
     if (command === undefined) throw new SmtUnsupportedError(`the command ${head.text}`);
-    if (!MANAGERLESS_COMMANDS.has(head.text) && script.state.isProofsEnabled === undefined) {
-      script.state.isProofsEnabled = settings.parameters.get("proof") === "true";
+    if (!MANAGERLESS_COMMANDS.has(head.text) && state.isProofsEnabled === undefined) {
+      state.isProofsEnabled = settings.parameters.get("proof") === "true";
       resetKernel();
     }
     command(list);
@@ -1550,7 +1520,7 @@ export const runSmtlibScript = (
       if (!(error instanceof SmtParseError)) throw error;
       report(error);
       if (settings.isExitingOnError) break;
-      script.state.reader.reset();
+      state.reader.reset();
       commands.skip(report);
     }
   }
