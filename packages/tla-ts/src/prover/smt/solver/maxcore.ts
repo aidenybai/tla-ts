@@ -171,9 +171,10 @@ export class Maxcore extends MaxsmtSolverBase {
         this.lower = this.upper;
         return L_TRUE;
       }
-      cores.push({ core: items, weight: this.getCoreWeight(items) });
+      const weight = this.getCoreWeight(items);
+      cores.push({ core: items, weight });
       this.removeSoft(items);
-      this.splitCore(items);
+      this.splitCore(items, weight);
       if (items.length >= this.context.params.maxCoreSize) break;
       status = this.checkSatHillClimb(this.asms.items);
     }
@@ -211,13 +212,11 @@ export class Maxcore extends MaxsmtSolverBase {
       .reduce((minimum, weight) => (weight.compare(minimum) < 0 ? weight : minimum));
   }
 
-  private splitCore(core: readonly number[]) {
-    const weight = this.getCoreWeight(core);
+  private splitCore(core: readonly number[], weight: Rational) {
     for (const expr of core) {
       const other = this.getWeight(expr);
       if (other.compare(weight) > 0) this.newAssumption(expr, other.sub(weight));
     }
-    return weight;
   }
 
   private updateModel(def: number, value: number) {

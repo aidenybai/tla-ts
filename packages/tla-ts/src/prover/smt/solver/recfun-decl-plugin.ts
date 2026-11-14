@@ -10,6 +10,7 @@ import {
   SORT_BOOL,
 } from "./ast";
 import { ExprSafeReplace } from "./expr-safe-replace";
+import { ObjMap } from "./hashtable";
 
 const getChildren = (manager: AstManager, expr: number, isUnderQuantifiers: boolean) =>
   manager.kinds[expr] === KIND_QUANTIFIER
@@ -168,7 +169,8 @@ const computeCases = (manager: AstManager, def: RecFunDef, isMacro: boolean, rhs
   }
 };
 
-// compute_scores: the number of ites on the paths from the root to each subterm.
+// compute_scores: the number of ites on the paths from the root to each subterm. The scores are in
+// an obj_map, whose order decides which of the ites with the highest score redirect_ite takes.
 const computeScores = (manager: AstManager, expr: number) => {
   const parents = new Map<number, number[]>([[expr, []]]);
   const byDepth = new Map<number, number[]>();
@@ -182,7 +184,8 @@ const computeScores = (manager: AstManager, expr: number) => {
     const depth = manager.depths[term];
     byDepth.set(depth, [...(byDepth.get(depth) ?? []), term]);
   }
-  const scores = new Map<number, number>([[expr, 0]]);
+  const scores = new ObjMap<number>((term) => manager.hashes[term]);
+  scores.set(expr, 0);
   for (let depth = manager.depths[expr]; depth > 0; depth--)
     for (const term of byDepth.get(depth) ?? []) {
       const score = (parents.get(term) ?? []).reduce(
@@ -211,8 +214,9 @@ const redirectIte = (manager: AstManager, def: RecFunDef, rhs: number) => {
         maxScore = score;
       }
     if (maxScore <= 4) break;
+    // mk_fresh_id gives the id after the increment.
     const decl = manager.mkRecFuncDecl(
-      `fold-rec-${manager.mkFreshId()}`,
+      `fold-rec-${manager.mkFreshId() + 1}`,
       domain,
       manager.sorts[maxExpr],
     );

@@ -162,8 +162,10 @@ export class Optsmt {
   }
 
   add(term: number) {
-    const rewritten = new Rewriter(this.manager, TACTIC_REWRITER_OPTIONS).rewrite(term);
+    const rewriter = new Rewriter(this.manager, TACTIC_REWRITER_OPTIONS);
+    const rewritten = rewriter.rewrite(term);
     this.objs.push(rewritten);
+    rewriter.release();
     this.manager.decRef(rewritten);
     this.lower.push(ObjectiveValue.minusInfinity);
     this.upper.push(ObjectiveValue.infinity);

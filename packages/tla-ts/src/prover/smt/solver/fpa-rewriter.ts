@@ -404,7 +404,9 @@ const mkIsInfOfInt = (
           ? mkCompare(OP_LE, -threshold)
           : manager.falseExpr;
   }
-  if (maxExp - sbits > 4294967295) return -1;
+  // Deviation from Z3: Z3 gives up from an exponent width of 34. From 31, MAX_FINITE is a numeral of
+  // 2^30 bits, more than a BigInt holds, so those widths give up too.
+  if (ebits > 30) return -1;
   const maxFinite = mpfToRational(mkMaxValue(ebits, sbits, false)).num;
   const halfUlp = 1n << BigInt(maxExp - sbits);
   return rm === MPF_ROUND_NEAREST_TEVEN || rm === MPF_ROUND_NEAREST_TAWAY

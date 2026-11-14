@@ -1,5 +1,5 @@
 // Ported from Z3 (src/opt/opt_solver.cpp, src/opt/opt_search.h), MIT license, see z3-license.txt.
-import { SmtCanceledError } from "../../../errors";
+import { SmtCanceledError, SmtInvariantError } from "../../../errors";
 import { type AstManager, FAMILY_ARITH, FAMILY_PB } from "./ast";
 import { InfEps } from "./inf-eps";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
@@ -84,7 +84,9 @@ export class OptSolver {
   private get arith() {
     const context = this.kernel.context;
     context.registerFamily(FAMILY_ARITH);
-    return context.arith!;
+    if (context.arith === undefined)
+      throw new SmtInvariantError("get_optimizer found no arithmetic theory");
+    return context.arith;
   }
 
   assertExpr(expr: number) {

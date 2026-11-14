@@ -221,13 +221,13 @@ export class Mbproj {
     filterRefVector(vars, (innerVar) => visited.has(innerVar));
     this.projectBools(context, vars, fmls);
     let isProgress = true;
-    while (isProgress && vars.size > 0 && fmls.size > 0) {
+    while (isProgress && vars.size > 0 && fmls.size > 0 && manager.limit.inc()) {
       const newVars = new RefVector(manager);
       isProgress = false;
       const remaining = [...vars.items];
       arith.project(remaining, fmls);
       filterRefVector(vars, (innerVar) => remaining.includes(innerVar));
-      while (vars.size > 0 && fmls.size > 0) {
+      while (vars.size > 0 && fmls.size > 0 && manager.limit.inc()) {
         const innerVar = vars.items[vars.size - 1];
         manager.incRef(innerVar);
         vars.pop();
@@ -236,7 +236,7 @@ export class Mbproj {
         else newVars.push(innerVar);
         manager.decRef(innerVar);
       }
-      if (!isProgress && newVars.size > 0 && fmls.size > 0 && isForceElim) {
+      if (!isProgress && newVars.size > 0 && fmls.size > 0 && isForceElim && manager.limit.inc()) {
         const innerVar = newVars.items[newVars.size - 1];
         const subst = new ExprSafeReplace(manager);
         subst.insert(innerVar, context.eval(innerVar));
@@ -251,6 +251,10 @@ export class Mbproj {
         fmls.shrink(kept);
         subst.release();
         isProgress = true;
+      }
+      if (!manager.limit.inc()) {
+        newVars.reset();
+        return;
       }
       for (const innerVar of newVars.items) vars.push(innerVar);
       newVars.reset();

@@ -799,6 +799,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "lia2card",
     {
+      isTrackingDependencies: true,
       descrs: getDescrs("", [["compile_equality", PARAM_BOOL, true, true]]),
       build: (environment, params) =>
         inPlace((goal) =>
@@ -906,6 +907,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "fm",
     {
+      isTrackingDependencies: true,
       descrs: new Map([
         ...REWRITER_DESCRS,
         ...getDescrs("", [
@@ -996,6 +998,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "fix-dl-var",
     {
+      isTrackingDependencies: true,
       descrs: REWRITER_DESCRS,
       build: (environment, params) =>
         inPlace((goal) =>
@@ -1006,6 +1009,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "factor",
     {
+      isTrackingDependencies: true,
       descrs: getDescrs("", [
         ["split_factors", PARAM_BOOL, true, true],
         ["max_search_size", PARAM_UINT, UINT_MAX],
@@ -1087,7 +1091,14 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       build: (environment) => inPlace((goal) => occf(environment.manager, goal)),
     },
   ],
-  ["fpa2bv", { descrs: new Map(), build: (environment) => runFpa2Bv(environment.manager) }],
+  [
+    "fpa2bv",
+    {
+      descrs: new Map(),
+      isTrackingDependencies: true,
+      build: (environment) => runFpa2Bv(environment.manager),
+    },
+  ],
   [
     "elim-small-bv",
     {
