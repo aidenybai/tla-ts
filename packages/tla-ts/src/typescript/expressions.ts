@@ -988,16 +988,18 @@ const translateBuiltInCall = (
   if (
     getBuiltIn(receiver, context) === "String" &&
     (method === "fromCharCode" || method === "fromCodePoint") &&
-    node.arguments.every(
-      (argument) => !ts.isSpreadElement(argument) && isNumberLike(argument, context),
-    )
+    node.arguments.every((argument) => {
+      if (!ts.isSpreadElement(argument)) return isNumberLike(argument, context);
+      const element = context.checker.getIndexTypeOfType(
+        context.checker.getTypeAtLocation(argument.expression),
+        ts.IndexKind.Number,
+      );
+      return element !== undefined && isEvery(element, ts.TypeFlags.NumberLike);
+    })
   ) {
     const made = useJavaScript(
       "FromCharCodes",
-      [
-        tuple(node.arguments.map((argument) => translateExpression(argument, scope, context))),
-        boolean(method === "fromCodePoint"),
-      ],
+      [translateElements(node.arguments, scope, context), boolean(method === "fromCodePoint")],
       context,
     );
     return context.heap === undefined

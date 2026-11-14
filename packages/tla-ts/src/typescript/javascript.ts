@@ -2302,20 +2302,28 @@ LOCAL CodeUnit(code) ==
 
 \\* String.fromCharCode, which takes each code modulo 2^16, or String.fromCodePoint, which throws a
 \\* RangeError for a number that isn't a code point and writes one past 2^16 as a surrogate pair.
-RECURSIVE FromCharCodes(_, _)
-FromCharCodes(codes, isCodePoint) ==
-  IF codes = <<>>
-  THEN ""
-  ELSE LET code == Head(codes)
-           point == CASE code \\in {NaN, Infinity, NegativeInfinity, NegativeZero} -> 0
-                      [] isCodePoint -> code
-                      [] OTHER -> IntegerOf(code) % 65536
-       IN  CASE isCodePoint /\\ (code \\in {NaN, Infinity, NegativeInfinity} \\/ IsFraction(code) \\/ point < 0 \\/ point > 1114111) ->
-                  Assert(FALSE, "tla-ts can't throw the RangeError of String.fromCodePoint")
-             [] point >= 65536 ->
-                  CodeUnit(55296 + (point - 65536) \\div 1024) \\o CodeUnit(56320 + ((point - 65536) % 1024))
-                    \\o FromCharCodes(Tail(codes), isCodePoint)
-             [] OTHER -> CodeUnit(point) \\o FromCharCodes(Tail(codes), isCodePoint)
+LOCAL FromCharCode(code, isCodePoint) ==
+  LET point == CASE code \\in {NaN, Infinity, NegativeInfinity, NegativeZero} -> 0
+                 [] isCodePoint -> code
+                 [] OTHER -> IntegerOf(code) % 65536
+  IN  CASE isCodePoint /\\ (code \\in {NaN, Infinity, NegativeInfinity} \\/ IsFraction(code) \\/ point < 0 \\/ point > 1114111) ->
+             Assert(FALSE, "tla-ts can't throw the RangeError of String.fromCodePoint")
+        [] point >= 65536 ->
+             CodeUnit(55296 + (point - 65536) \\div 1024) \\o CodeUnit(56320 + ((point - 65536) % 1024))
+        [] OTHER -> CodeUnit(point)
+
+\\* The codes from index first to last, joined as halves so that the recursion is only as deep as the
+\\* logarithm of their count, and the strings it makes are as long in all as that times the count.
+RECURSIVE FromCharCodesBetween(_, _, _, _)
+LOCAL FromCharCodesBetween(codes, isCodePoint, first, last) ==
+  CASE first > last -> ""
+    [] first = last -> FromCharCode(codes[first], isCodePoint)
+    [] OTHER ->
+         LET middle == (first + last) \\div 2
+         IN  FromCharCodesBetween(codes, isCodePoint, first, middle)
+               \\o FromCharCodesBetween(codes, isCodePoint, middle + 1, last)
+
+FromCharCodes(codes, isCodePoint) == FromCharCodesBetween(codes, isCodePoint, 1, Len(codes))
 
 \\* The code of a code unit, which charCodeAt reads.
 LOCAL CharacterCode(character) ==

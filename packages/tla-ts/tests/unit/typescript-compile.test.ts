@@ -9550,6 +9550,22 @@ describe("errors", () => {
     ).rejects.toThrow("units");
   });
 
+  it("spreads arrays of codes into fromCharCode and fromCodePoint", async () => {
+    const getSource = (count: number, expected: string) => `
+      const codes: number[] = new Array(${count}).fill(0x41);
+      codes[${count - 1}] = 0x42;
+      const text = String.fromCharCode(...codes);
+      if (text.length !== ${count} || text.slice(${count - 2}) !== "${expected}") {
+        throw new Error("text");
+      }
+      if (String.fromCodePoint(...[0x1f600, 0x61], 0x62) !== "\\u{1f600}ab") {
+        throw new Error("points");
+      }
+    `;
+    expect((await checkModel(getSource(4000, "AB"))).failure).toBeUndefined();
+    expect((await checkModel(getSource(3, "BA"))).failure?.message).toContain('"text"');
+  });
+
   it("makes any code unit from a code that the script doesn't write", async () => {
     const getSource = (escapes: string) => `
       let offset = 0;
