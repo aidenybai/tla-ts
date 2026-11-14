@@ -630,6 +630,7 @@ export const translateBuiltInValue = (
     | "String.prototype"
     | `String.prototype.${string}`
     | "Date"
+    | Collection
     | "Date.prototype"
     | "DisposableStack.prototype"
     | "AsyncDisposableStack.prototype"

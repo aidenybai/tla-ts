@@ -48,7 +48,14 @@ import {
 } from "./tla";
 import { BUILT_INS } from "./built-ins";
 import { isEsModule, NATIVE_ERRORS } from "./exceptions";
-import { getDomain, getKeptIterator, getWrappedThis, isFractionKey, TYPED_ARRAYS } from "./types";
+import {
+  getDomain,
+  getKeptIterator,
+  getWrappedThis,
+  isCollectionName,
+  isFractionKey,
+  TYPED_ARRAYS,
+} from "./types";
 
 // A state variable starts at its initializer, or at every value of its type without one.
 const translateInitial = (variable: Variable, context: Context) => {
@@ -333,7 +340,8 @@ export const compile = (
           (type) =>
             type.expression.kind === ts.SyntaxKind.NullKeyword ||
             (ts.isIdentifier(type.expression) &&
-              ["Object", "Boolean", "Number", "String", "Date"].includes(type.expression.text)),
+              (["Object", "Boolean", "Number", "String", "Date"].includes(type.expression.text) ||
+                isCollectionName(type.expression.text))),
         ),
       )) ||
     (ts.isPropertyAccessExpression(node) &&

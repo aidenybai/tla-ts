@@ -3,8 +3,14 @@ import type { Expression, OperatorDefinition, OperatorParam, SourceLocation } fr
 import { getTypeNames, JAVASCRIPT_OPERATORS } from "./javascript";
 import { BUILT_INS } from "./built-ins";
 import { getErrorClass, isNativeErrorName, isPrototypeRead, NATIVE_ERRORS } from "./exceptions";
-import { getBuiltIn, isHeldBuiltInObject } from "./intrinsics";
-import { type BufferName, isBufferName, isHeapArray, isHeapSetOrMap } from "./types";
+import { type Collection, getBuiltIn, isHeldBuiltInObject } from "./intrinsics";
+import {
+  type BufferName,
+  isBufferName,
+  isCollectionName,
+  isHeapArray,
+  isHeapSetOrMap,
+} from "./types";
 import { TlaTypeScriptError } from "../errors";
 import { createNames, type Names } from "./names";
 import type { Link } from "./regions";
@@ -1362,8 +1368,8 @@ const isNullSafe = (node: ts.ClassLikeDeclaration, context: Context) => {
 };
 
 // The built-ins whose new makes their object with new.target's prototype, as tla-ts follows it.
-const isNewTargetBase = (name: string): name is BufferName | "Date" =>
-  isBufferName(name) || name === "Date";
+const isNewTargetBase = (name: string): name is BufferName | "Date" | Collection =>
+  isBufferName(name) || name === "Date" || isCollectionName(name);
 
 // The built-in constructor that makes the instances of a class without a constructor, which
 // extends it or extends a class that does. Its default constructor passes new's arguments on. A
@@ -1382,6 +1388,7 @@ export const getBuiltInBase = (
   | `${string}Error`
   | BufferName
   | "Date"
+  | Collection
   | undefined => {
   const hasConstructor = node.members.some(ts.isConstructorDeclaration);
   const heritage = node.heritageClauses?.find(
@@ -1391,12 +1398,16 @@ export const getBuiltInBase = (
   if (name === "Object" || name === "Boolean" || name === "Number" || name === "String") {
     return hasConstructor ? undefined : name;
   }
+  // A collection's subclass may add only static members, as the heap reads its instances as the
+  // collection's.
   if (name !== undefined && isNewTargetBase(name)) {
-    return hasConstructor ||
-      node.members.some(
-        (member) =>
-          (ts.isPropertyDeclaration(member) && !isStatic(member)) || isPrivateMember(member),
-      )
+    return node.members.some((member) =>
+      isCollectionName(name)
+        ? !isStatic(member)
+        : ts.isConstructorDeclaration(member) ||
+          (ts.isPropertyDeclaration(member) && !isStatic(member)) ||
+          isPrivateMember(member),
+    )
       ? undefined
       : name;
   }
@@ -2648,8 +2659,8 @@ export interface Construction {
   newTarget: ts.Expression;
 }
 
-// The built-in that a class extends where the class is a buffer's, a typed array's, or Date's,
-// which makes the class's instance as super(...args) would, with the same new.target.
+// The built-in that a class extends where the class is a buffer's, a typed array's, Date's, or a
+// collection's, which makes the class's instance as super(...args) would, with the same new.target.
 const getConstructedBase = (callee: ts.Expression, context: Context) => {
   const declaration = getSymbol(skipCasts(callee), context.checker)?.valueDeclaration;
   const created =

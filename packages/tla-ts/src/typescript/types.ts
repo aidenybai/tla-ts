@@ -16,8 +16,10 @@ import {
   isHeldErrorName,
   isNestedFunction,
   isRestOnly,
+  isStatic,
 } from "./context";
 import {
+  type Collection,
   getBuiltIn,
   isBuiltInObject,
   isBuiltInObjectType,
@@ -67,10 +69,26 @@ export const isTypeReference = (type: ts.Type): type is ts.TypeReference =>
 
 const getTypeName = (type: ts.Type) => type.getSymbol()?.getName() ?? "";
 
-// A weak collection holds its keys as a collection does, as nothing can list or count them.
-const isSetType = (type: ts.Type) => ["Set", "ReadonlySet", "WeakSet"].includes(getTypeName(type));
+export const isCollectionName = (name: string): name is Collection =>
+  name === "Set" || name === "Map" || name === "WeakSet" || name === "WeakMap";
 
-const isMapType = (type: ts.Type) => ["Map", "ReadonlyMap", "WeakMap"].includes(getTypeName(type));
+// The collection's type of a class that extends one and adds only static members, whose instances
+// are the collection's, or the type itself.
+export const getCollectionType = (type: ts.Type) => {
+  const declaration = type.getSymbol()?.valueDeclaration;
+  const base =
+    declaration !== undefined && ts.isClassLike(declaration) && declaration.members.every(isStatic)
+      ? type.getBaseTypes()?.at(0)
+      : undefined;
+  return base !== undefined && isCollectionName(getTypeName(base)) ? base : type;
+};
+
+// A weak collection holds its keys as a collection does, as nothing can list or count them.
+const isSetType = (type: ts.Type) =>
+  ["Set", "ReadonlySet", "WeakSet"].includes(getTypeName(getCollectionType(type)));
+
+const isMapType = (type: ts.Type) =>
+  ["Map", "ReadonlyMap", "WeakMap"].includes(getTypeName(getCollectionType(type)));
 
 // Arrays, tuples, and unions of them, such as [] | [number] | [number, number].
 export const isSequenceType = (type: ts.Type, checker: ts.TypeChecker): boolean =>
@@ -175,7 +193,9 @@ const isPlainObject = (type: ts.Type, context: Context): boolean => {
   const declaration = symbol?.valueDeclaration;
   if (
     declaration !== undefined &&
-    ((ts.isClassLike(declaration) && isHeapClass(declaration, context)) ||
+    ((ts.isClassLike(declaration) &&
+      isHeapClass(declaration, context) &&
+      getCollectionType(type) === type) ||
       isHeapFunction(declaration, context) ||
       isFunctionObject(declaration, context) ||
       isNestedFunction(declaration, context))
@@ -506,7 +526,9 @@ const isHeld = (node: ts.Expression, context: Context): boolean => {
 // The built-in collection that a set or a map is, which a weak one's type names.
 export const getCollection = (node: ts.Expression, context: Context) => {
   const kind = getKind(node, context);
-  const isWeak = getTypeName(context.checker.getTypeAtLocation(node)).startsWith("Weak");
+  const isWeak = getTypeName(getCollectionType(context.checker.getTypeAtLocation(node))).startsWith(
+    "Weak",
+  );
   return kind === "set"
     ? isWeak
       ? "WeakSet"
@@ -1131,7 +1153,11 @@ export const findDomain = (type: ts.Type, context: Context): Expression | Infini
   if (literal !== undefined) return set([literal]);
   if (type.flags & ts.TypeFlags.Number) return getIntegers();
   if (type.flags & ts.TypeFlags.String) return getStrings();
-  if (isSetType(type) || isMapType(type) || checker.isTupleType(type)) {
+  // A subclass's instances are objects, which no domain lists.
+  if (
+    ((isSetType(type) || isMapType(type)) && getCollectionType(type) === type) ||
+    checker.isTupleType(type)
+  ) {
     const elements = findDomains(
       isTypeReference(type) ? checker.getTypeArguments(type) : [],
       context,

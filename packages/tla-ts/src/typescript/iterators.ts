@@ -15,6 +15,7 @@ import { getHeap } from "./heap";
 import { useJavaScript } from "./javascript";
 import { bind, callMethod, getWrittenFunctions, isNullish, read } from "./protocols";
 import { apply, boolean, string, tuple } from "./tla";
+import { getCollectionType } from "./types";
 
 // The values that patterns took from iterators, which they bind as they would an array's.
 const taken = new WeakSet<Expression>();
@@ -72,6 +73,7 @@ export const isSteppedPattern = (
 export const isIteratedValue = (node: ts.Expression, context: Context) =>
   isIteratedType(context.checker.getTypeAtLocation(node), context);
 
+// A collection's subclass iterates as the collection does.
 const isIteratedType = (type: ts.Type, context: Context) => {
   const declarations = type.getSymbol()?.declarations ?? [];
   return (
@@ -79,6 +81,7 @@ const isIteratedType = (type: ts.Type, context: Context) => {
     !type.isUnion() &&
     (type.flags & ts.TypeFlags.Object) !== 0 &&
     !context.checker.isArrayLikeType(type) &&
+    getCollectionType(type) === type &&
     declarations.length > 0 &&
     declarations.every((declaration) => !declaration.getSourceFile().isDeclarationFile)
   );

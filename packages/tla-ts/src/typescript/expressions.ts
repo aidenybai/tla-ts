@@ -91,6 +91,7 @@ import {
   isNewObject,
   isObjectConversion,
   isNewProxy,
+  isNewSubclassCollection,
   getNewBuffer,
   isRevocable,
   getNewWrapper,
@@ -3636,13 +3637,20 @@ const translateNode = (
   if (
     ts.isNewExpression(node) &&
     context.heapCollections.has(node) &&
-    ["Set", "Map"].includes(getBuiltIn(node.expression, context) ?? "")
+    (["Set", "Map"].includes(getBuiltIn(node.expression, context) ?? "") ||
+      isNewSubclassCollection(node, context))
   ) {
     const made = scope.allocated.get(node);
     if (made === undefined) {
       throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
     }
     return made;
+  }
+  if (isNewSubclassCollection(node, context)) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't follow every use of a collection's subclass in the heap",
+      node,
+    );
   }
   if (ts.isNewExpression(node)) {
     const classes = getErrorClass(getSymbol(node.expression, context.checker), context.checker);

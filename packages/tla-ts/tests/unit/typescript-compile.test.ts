@@ -19926,6 +19926,113 @@ describe("errors", () => {
     ).toThrow("Unsupported call: Day.bind");
   });
 
+  it("makes a set or a map of a class that extends one", async () => {
+    const getSource = (expected: string) => `
+      class Names extends Set<string> {
+        static kind = "names";
+      }
+      class Scores extends Map<string, number> {}
+      const Seen = class extends WeakSet<object> {};
+      class Tags extends WeakMap<object, string> {}
+      const names = new Names(["a", "b"]);
+      names.add("c");
+      names.delete("a");
+      const scores = new Scores([["x", 1]]);
+      scores.set("y", 2);
+      const seen = new Seen();
+      const key = {};
+      seen.add(key);
+      const tags = new Tags();
+      tags.set(key, "t");
+      const grow = (set: Set<string>) => {
+        set.add("d");
+      };
+      grow(names);
+      const result = [
+        names instanceof Names,
+        names instanceof Set,
+        names.size,
+        names.has("a"),
+        names.has("d"),
+        Names.kind,
+        scores instanceof Scores,
+        scores.size,
+        scores.get("y"),
+        seen instanceof Seen,
+        seen.has(key),
+        seen.has({}),
+        tags instanceof WeakMap,
+        tags.get(key),
+      ].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "true,true,3,false,true,names,true,2,2,true,true,false,true,t";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("true,true,4,false,true,names,true,2,2,true,true,false,true,t")))
+        .failure?.message,
+    ).toContain(expected);
+  });
+
+  it("throws the TypeError of a weak collection's subclass on a registered symbol", async () => {
+    const getSource = (expected: string) => `
+      class Tags extends WeakMap<symbol, number> {}
+      const tags = new Tags();
+      let caught = "none";
+      try {
+        tags.set(Symbol.for("key"), 1);
+      } catch (error) {
+        caught = error instanceof TypeError ? "type" : "other";
+      }
+      const own = Symbol("own");
+      tags.set(own, 2);
+      const result = [caught, tags.get(own), tags.has(Symbol.for("key"))].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("type,2,false"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("none,2,false"))).failure?.message).toContain(
+      "type,2,false",
+    );
+  });
+
+  it("stops where a script uses a collection's subclass in a way the heap can't follow", () => {
+    expect(() =>
+      compile(
+        `class Names extends Set<string> {}\nconst names = new Names(["a"]);\nif (names.constructor !== Names) throw new Error("x");`,
+      ),
+    ).toThrow("tla-ts can't follow every use of a collection's subclass in the heap");
+    expect(() =>
+      compile(
+        `class Names extends Set<string> {}\nconst names = new Names(["a"]);\nconst all = names.union(new Set(["b"]));\nif (all instanceof Names) throw new Error("x");`,
+      ),
+    ).toThrow("tla-ts can't follow every use of a collection's subclass in the heap");
+    expect(() =>
+      compile(
+        `class Names extends Set<string> {}\nconst names = new Names(["a", "b"]);\nconst seen: string[] = [];\nfor (const name of names) seen.push(name);\nif (seen.join() !== "a,b") throw new Error("x");`,
+      ),
+    ).toThrow("Only arrays have an order to iterate in");
+    expect(() =>
+      compile(
+        `class Names extends Set<string> {\n  has(name: string) {\n    return name === "z";\n  }\n}\nconst names = new Names(["a"]);\nif (names.has("a")) throw new Error("x");`,
+      ),
+    ).toThrow("Unsupported constructor: new Names");
+    expect(() =>
+      compile(
+        `class Names extends Set<string> {}\nclass More extends Names {}\nconst names = new More(["a"]);\nif (!names.has("a")) throw new Error("x");`,
+      ),
+    ).toThrow("Unsupported constructor: new More");
+    expect(() =>
+      compile(
+        `class Names extends Set<string> {}\nconst names: Set<string> = Reflect.construct(Names, [["a"]]);\nif (!names.has("a")) throw new Error("x");`,
+      ),
+    ).toThrow("Unsupported call: Reflect.construct");
+    expect(() =>
+      compile(
+        `class Names extends Set<string> {}\nconst names = new Names(["a"]);\nObject.defineProperty(Names.prototype, "has", { value: () => false });\nif (!names.has("a")) throw new Error("x");`,
+      ),
+    ).toThrow("Unsupported statement");
+  });
+
   it("keeps an array, a set, or a map that instanceof reads in the heap", async () => {
     const getSource = (expected: string) => `
       const list = [1];

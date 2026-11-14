@@ -2423,7 +2423,8 @@ export const translateCallStatement = (
     const data = useJavaScript("CollectionData", [heap, ref], context);
     const updated = getUpdatedValue(data, collectionChange.kind, expression, path.scope, context);
     const key = expression.arguments[0];
-    const builtIn = `${collectionChange.kind === "set" ? "Set" : "Map"}.prototype.${method}`;
+    const collection = getCollection(collectionChange.receiver, context);
+    const builtIn = `${collection}.prototype.${method}`;
     const value =
       method === "delete" && key !== undefined
         ? apply("\\in", [
@@ -2436,6 +2437,10 @@ export const translateCallStatement = (
     if (updated === undefined) {
       throw new TlaTypeScriptError(`Unsupported method: ${method}`, expression);
     }
+    const changed = continueWith(
+      withHeap(useJavaScript("WithCollectionData", [heap, ref, updated], context)),
+      value,
+    );
     // A holder that may hold undefined gives undefined to an optional chain, and throws otherwise.
     return bindOnce(
       path,
@@ -2448,10 +2453,20 @@ export const translateCallStatement = (
           : throwTypeError(path, expression, context, frame),
         ifThenElse(
           useJavaScript("HoldsBuiltIn", [heap, ref, string(method), string(builtIn)], context),
-          continueWith(
-            withHeap(useJavaScript("WithCollectionData", [heap, ref, updated], context)),
-            value,
-          ),
+          // A weak collection throws a TypeError on a symbol that Symbol.for registered.
+          collection?.startsWith("Weak") === true &&
+            (method === "add" || method === "set") &&
+            key !== undefined
+            ? ifThenElse(
+                useJavaScript(
+                  "IsRegisteredSymbol",
+                  [heap, translateExpression(key, path.scope, context)],
+                  context,
+                ),
+                throwTypeError(path, expression, context, frame),
+                changed,
+              )
+            : changed,
           leaf(
             apply("Assert", [
               boolean(false),

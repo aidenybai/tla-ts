@@ -136,6 +136,7 @@ import {
   TYPED_ARRAYS,
   type BufferName,
   isBufferName,
+  isCollectionName,
   isHoleyNewArray,
   isNewArrayOfElements,
   getArraySource,
@@ -1598,11 +1599,19 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
         useJavaScript(
           "CollectionObject",
           [
-            translateBuiltInValue(
-              getBuiltIn(node.expression, context) === "Map" ? "Map.prototype" : "Set.prototype",
-              node,
-              context,
-            ),
+            isNewSubclassCollection(node, context)
+              ? useJavaScript(
+                  "Get",
+                  [heap, translateExpression(node.expression, scope, context), string("prototype")],
+                  context,
+                )
+              : translateBuiltInValue(
+                  getBuiltIn(node.expression, context) === "Map"
+                    ? "Map.prototype"
+                    : "Set.prototype",
+                  node,
+                  context,
+                ),
             translateNew(node, scope, context),
           ],
           context,
@@ -3346,7 +3355,20 @@ const isFreshCollection = (node: ts.Node | undefined, context: Context) =>
   node !== undefined &&
   (ts.isArrayLiteralExpression(node) ||
     (ts.isNewExpression(node) &&
-      ["Set", "Map"].includes(getBuiltIn(node.expression, context) ?? "")));
+      ["Set", "Map"].includes(getBuiltIn(node.expression, context) ?? "")) ||
+    isNewSubclassCollection(node, context));
+
+// A new of a class that extends a collection, whose instance the heap always holds, as the class's
+// prototype tells it apart from the collection's.
+export const isNewSubclassCollection = (node: ts.Node, context: Context) => {
+  const callee = getConstruction(node, context)?.callee;
+  return (
+    ts.isNewExpression(node) &&
+    callee !== undefined &&
+    callee !== node.expression &&
+    isCollectionName(getBuiltIn(callee, context) ?? "")
+  );
+};
 
 // The built-in methods that give the array they change rather than a new one.
 const SELF_RETURNING_METHODS = new Set(["sort", "reverse", "fill", "copyWithin"]);
@@ -4478,6 +4500,9 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       ts.SyntaxKind.ExclamationEqualsToken,
     ].includes(node.operatorToken.kind);
   expressions.forEach((node) => {
+    if (isReachedNode(node) && !found.has(node) && isNewSubclassCollection(node, context)) {
+      grow([], [], [node]).forEach((inner) => found.add(inner));
+    }
     const key =
       ts.isCallExpression(node) &&
       ts.isPropertyAccessExpression(node.expression) &&

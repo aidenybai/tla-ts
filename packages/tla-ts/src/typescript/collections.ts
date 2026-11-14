@@ -5,6 +5,7 @@ import {
   type FunctionNode,
   getBuiltInBase,
   getCallee,
+  getConstruction,
   getParameters,
   getSymbol,
   getUndefined,
@@ -84,6 +85,7 @@ import {
   type Kind,
   translateUnknown,
   isTypeReference,
+  getCollectionType,
   mayBeSequenceType,
   getArrayMethodCall,
 } from "./types";
@@ -3136,6 +3138,11 @@ export const translateStoredCall = (
     );
 };
 
+// The constructor that a new runs, which is the collection that a class extends where the class
+// adds only static members.
+const getNewName = (node: ts.NewExpression, context: Context) =>
+  (getConstruction(node, context)?.callee ?? node.expression).getText();
+
 // The kinds of the keys that a new Set or Map holds, which TLC compares, so that they must agree:
 // TLC stops where it compares a number with a string. Model values, such as undefined, null, and
 // symbols, compare with any value. Where the Set or Map's type doesn't tell, this reads the keys
@@ -3151,7 +3158,7 @@ const getKeyKinds = (node: ts.NewExpression, context: Context) => {
         .map((name) => (name === "function" ? "object" : name))
     );
   };
-  const type = checker.getTypeAtLocation(node);
+  const type = getCollectionType(checker.getTypeAtLocation(node));
   const keyType = isTypeReference(type) ? checker.getTypeArguments(type).at(0) : undefined;
   const declared = keyType && getKinds(keyType);
   if (declared !== undefined) return new Set(declared);
@@ -3162,7 +3169,7 @@ const getKeyKinds = (node: ts.NewExpression, context: Context) => {
       ? holder.left
       : undefined;
   const symbol = name && ts.isIdentifier(name) ? getSymbol(name, checker) : undefined;
-  const isEntries = node.expression.getText() === "Map";
+  const isEntries = getNewName(node, context) === "Map";
   const given = node.arguments?.at(0);
   const initial =
     given === undefined
@@ -3203,7 +3210,7 @@ const getKeyKinds = (node: ts.NewExpression, context: Context) => {
 const KEY_METHODS = new Set(["add", "has", "delete", "set", "get"]);
 
 export const translateNew = (node: ts.NewExpression, scope: Scope, context: Context) => {
-  const constructor = node.expression.getText();
+  const constructor = getNewName(node, context);
   const argument = node.arguments?.[0];
   // new Array(length) makes an array of holes, which a sequence can't hold, and new Array with
   // any other arguments makes an array of them.
@@ -3253,7 +3260,7 @@ const translateNewCollection = (
   scope: Scope,
   context: Context,
 ) => {
-  const constructor = node.expression.getText();
+  const constructor = getNewName(node, context);
   const argument = node.arguments?.[0];
   if (constructor === "Set" || constructor === "Map") {
     const kinds = getKeyKinds(node, context);
@@ -3266,7 +3273,7 @@ const translateNewCollection = (
   }
   // The keys that an array gives are sequences, which lack the identity that a key needs. Entries
   // and keys come from unique keys, so no two of them are equal.
-  const type = context.checker.getTypeAtLocation(node);
+  const type = getCollectionType(context.checker.getTypeAtLocation(node));
   const keyType = isTypeReference(type) ? context.checker.getTypeArguments(type).at(0) : undefined;
   const source = argument === undefined ? undefined : skipCasts(argument);
   const isDistinct =
