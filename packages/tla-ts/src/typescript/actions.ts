@@ -1774,18 +1774,16 @@ const getUpdate = (expression: ts.BinaryExpression, path: Path, context: Context
 const getRootCall = (node: ts.Expression | undefined): ts.Expression | undefined =>
   node !== undefined && ts.isPropertyAccessExpression(node) ? getRootCall(node.expression) : node;
 
-// ArrayBuffer.prototype and the typed array constructors by their element types, through which a
-// typed array's method makes a typed array.
-const translateTypedConstructors = (site: ts.Node, context: Context) => [
-  translateBuiltInValue("ArrayBuffer.prototype", site, context),
+// The typed array constructors by their element types, through which a typed array's method makes a
+// typed array.
+const translateTypedConstructors = (site: ts.Node, context: Context) =>
   record(
     "Record",
     [...TYPED_ARRAYS.values()].map((type) => ({
       name: type,
       value: translateBuiltInValue(`${type}Array`, site, context),
     })),
-  ),
-];
+  );
 
 export const translateCallStatement = (
   expression: ts.CallExpression,
@@ -2692,7 +2690,8 @@ export const translateCallStatement = (
               tuple(
                 viewCall.values.map((value) => translateExpression(value, path.scope, context)),
               ),
-              ...translateTypedConstructors(expression, context),
+              translateBuiltInValue("ArrayBuffer.prototype", expression, context),
+              translateTypedConstructors(expression, context),
             ],
             context,
           )
@@ -6638,6 +6637,7 @@ const TYPED_LOOP_METHODS = new Set([
   "findLast",
   "findLastIndex",
   "filter",
+  "map",
 ]);
 
 // The array methods that gather what they read into the array that they give.
@@ -7002,7 +7002,7 @@ const translateLoopCall = (
   // A length that's an array reads its valueOf and toString from Array.prototype.
   if (isLengthConverted) context.builtIns.add("Array.prototype");
   // The array that map makes, where the heap holds it, gathers its elements and its holes.
-  const isHeapMap = method === "map" && context.heapCollections.has(expression);
+  const isHeapMap = method === "map" && !loop.isTyped && context.heapCollections.has(expression);
   const getters = loop.isTyped
     ? []
     : loop.isArrayLike
@@ -7131,6 +7131,25 @@ const translateLoopCall = (
       );
     }
     if (method === "forEach") return repeat(current, kept);
+    // A typed array's map writes each value to the typed array that it made, converting it first.
+    if (loop.isTyped && method === "map") {
+      return bind(
+        current,
+        "mapped",
+        useJavaScript(
+          "ToElementOf",
+          [getHeap(current.scope, expression, context), owner, result],
+          context,
+        ),
+        context,
+        (bound, mapped) =>
+          ifThenElse(
+            apply("=", [mapped, mapped]),
+            repeat(bound, apply("Append", [kept, mapped])),
+            leaf(boolean(false)),
+          ),
+      );
+    }
     if (method === "every")
       return ifThenElse(isTruthy, repeat(current, kept), done(current, boolean(false)));
     if (method === "some")
@@ -7500,14 +7519,15 @@ const translateLoopCall = (
           ],
           context,
         )
-      : loop.isTyped && method === "filter"
+      : loop.isTyped && GATHERING_METHODS.has(method)
         ? useJavaScript(
             "TypedArrayHolding",
             [
               getHeap(after.scope, expression, context),
               owner,
               value,
-              ...translateTypedConstructors(expression, context),
+              translateBuiltInValue("ArrayBuffer.prototype", expression, context),
+              translateTypedConstructors(expression, context),
             ],
             context,
           )
@@ -7713,7 +7733,22 @@ const translateLoopCall = (
             );
           // ArraySpeciesCreate reads an array's constructor, running its getter, where tla-ts
           // follows only Array.
-          return ["filter", "map"].includes(method) && !loop.isTyped
+          // A typed array's map makes its typed array before it visits the elements.
+          const species = useJavaScript(
+            "TypedArraySpecies",
+            [
+              getHeap(after.scope, receiver, context),
+              owner,
+              translateTypedConstructors(expression, context),
+            ],
+            context,
+          );
+          if (loop.isTyped) {
+            return method === "map"
+              ? ifThenElse(apply("=", [species, species]), seeded(after), leaf(boolean(false)))
+              : seeded(after);
+          }
+          return ["filter", "map"].includes(method)
             ? ifThenElse(
                 useJavaScript("IsArray", [getHeap(after.scope, receiver, context), owner], context),
                 readWith(

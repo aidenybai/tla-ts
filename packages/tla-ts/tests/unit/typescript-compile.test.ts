@@ -25886,6 +25886,79 @@ describe("buffers", () => {
     });
   });
 
+  describe("maps a typed array into a typed array of its type, converting each value as it goes", () => {
+    const source = `
+      const sample = new Int8Array([1, 2, 3]);
+      let calls = 0;
+      const doubled = sample.map((value, index) => {
+        calls++;
+        return value * 2 + index;
+      });
+      if (!(doubled instanceof Int8Array) || doubled === sample) throw new Error("made");
+      if (doubled.join() !== "2,5,8" || calls !== 3) throw new Error("map");
+      const wrapped = new Uint8Array([200, 100]).map((value) => value * 2);
+      if (wrapped.join() !== "144,200") throw new Error("wrapped");
+      const floats = new Float32Array([1, 2]).map(() => NaN);
+      if (!Number.isNaN(floats[1])) throw new Error("NaN");
+      const big = new BigInt64Array([1n, -2n]).map((value) => value * 3n);
+      if (big.join() !== "3,-6") throw new Error("big");
+      const buffer = new ArrayBuffer(3, { maxByteLength: 3 });
+      const shrinking = new Uint8Array(buffer);
+      shrinking.set([1, 2, 3]);
+      const seen: unknown[] = [];
+      const kept = shrinking.map((value: unknown) => {
+        seen.push(value);
+        if (seen.length === 1) buffer.resize(1);
+        return 7;
+      });
+      if (seen.join() !== "1,," || kept.join() !== "7,7,7") throw new Error("shrunk");
+    `;
+    const mapped = source.replace('"2,5,8"', '"2,4,6"');
+    const wrapped = source.replace('"144,200"', '"400,200"');
+    const big = source.replace('"3,-6"', '"3,6"');
+    const shrunk = source.replace('kept.join() !== "7,7,7"', 'kept.join() !== "7,0,0"');
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it("rejects wrong expectation 1", async () => {
+      expect((await checkModel(mapped)).failure?.message).toContain('"map"');
+    });
+
+    it("rejects wrong expectation 2", async () => {
+      expect((await checkModel(wrapped)).failure?.message).toContain('"wrapped"');
+    });
+
+    it("rejects wrong expectation 3", async () => {
+      expect((await checkModel(big)).failure?.message).toContain('"big"');
+    });
+
+    it("rejects wrong expectation 4", async () => {
+      expect((await checkModel(shrunk)).failure?.message).toContain('"shrunk"');
+    });
+
+    it("stops where a value it can't convert would throw before the next callback", async () => {
+      const result = await checkModel(`
+        const sample = new Int8Array(2);
+        const big: any = 1n;
+        let caught = "";
+        try {
+          sample.map((value, index) => {
+            if (index === 1) throw new RangeError("later");
+            return big;
+          });
+        } catch (error) {
+          caught = error instanceof TypeError ? "TypeError" : "other";
+        }
+        if (caught !== "TypeError") throw new Error("converted at once");
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't throw the TypeError of converting a BigInt to a number",
+      );
+    });
+  });
+
   it("throws a TypeError where a typed array's method runs through call on another value", async () => {
     const result = await checkModel(`
       function throws(expected: Function, func: () => unknown, message: string) {

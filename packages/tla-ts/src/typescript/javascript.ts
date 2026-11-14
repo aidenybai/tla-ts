@@ -4023,6 +4023,9 @@ ToElement(type, value) ==
             Assert(FALSE, "tla-ts can't throw the TypeError of converting a number to a BigInt")
        [] OTHER -> Assert(FALSE, "tla-ts can't convert this value to a BigInt")
 
+\\* What a typed array holds for a value that a script writes.
+ToElementOf(heap, ref, value) == ToElement(heap.objects[ref[Ref]].elementType, value)
+
 \\* A write to a typed array's element, which converts the value first, and does nothing at an
 \\* index past the end.
 TypedSet(heap, ref, key, value) ==
@@ -4275,7 +4278,7 @@ BufferSlice(heap, ref, start, end, isShared, constructor) ==
 
 \\* The constructor that a typed array's methods make a typed array of its element type through, of
 \\* those that constructors holds by their element types, where tla-ts follows only the built-in one.
-LOCAL TypedSpecies(heap, ref, constructors) ==
+TypedArraySpecies(heap, ref, constructors) ==
   LET constructor == Get(heap, ref, "constructor")
       own == constructors[heap.objects[ref[Ref]].elementType]
   IN IF /\\ constructor \\in {Undefined, own}
@@ -4284,14 +4287,14 @@ LOCAL TypedSpecies(heap, ref, constructors) ==
      THEN own
      ELSE Assert(FALSE, "tla-ts can't make a typed array through a constructor that a script gives")
 
-\\* The heap after a typed array's slice or filter makes a typed array of its element type that holds
-\\* values, through its constructor. filter converts each value, as it keeps undefined for an index
-\\* that a callback shrank the buffer past.
+\\* The heap after a typed array's slice, filter, or map makes a typed array of its element type that
+\\* holds values, through its constructor. filter converts each value, as it keeps undefined for an
+\\* index that a callback shrank the buffer past.
 TypedArrayHolding(heap, ref, values, bufferPrototype, constructors) ==
   LET type == heap.objects[ref[Ref]].elementType
       bytes == NumbersBytes(type, [position \\in DOMAIN values |-> ToElement(type, values[position])])
       allocated == Allocate(heap, BufferObject(bufferPrototype, bytes, Undefined, FALSE))
-      prototype == Get(allocated, TypedSpecies(heap, ref, constructors), "prototype")
+      prototype == Get(allocated, TypedArraySpecies(heap, ref, constructors), "prototype")
   IN Allocate(allocated, [elementType |-> type] @@ ViewObject(prototype, Allocated(allocated), 0, Len(values)))
 
 \\* A typed array's length, or -1 where a method that validates it throws a TypeError, as for a value
@@ -4338,7 +4341,7 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
         THEN current
         ELSE WithBytes(current, view, view.byteOffset + first * ElementSize(view.elementType),
                        NumbersBytes(view.elementType, values))
-      species == TypedSpecies(heap, ref, constructors)
+      species == TypedArraySpecies(heap, ref, constructors)
   IN CASE ~IsTypedArray(heap, ref) -> Thrown(heap, "TypeError")
        [] method \\notin {"at", "includes", "indexOf", "lastIndexOf", "join", "fill", "reverse", "slice",
                          "subarray", "set", "copyWithin"} ->
