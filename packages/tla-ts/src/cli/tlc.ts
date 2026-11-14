@@ -76,7 +76,7 @@ import {
   toLibraryPath,
   type JavaProperties,
 } from "./shared";
-import { compileTypeScriptFile, type CompiledInput } from "./typescript";
+import { compileTypeScriptFile, getNodeExit, type CompiledInput } from "./typescript";
 
 const EXIT_CODES: Record<CheckStatus, number> = {
   success: EXIT_STATUS.success,
@@ -607,7 +607,12 @@ const createFileDescriber = (
   return (name: string, origin: SanyModuleOrigin) => {
     const fileName = `${name}.tla`;
     if (origin === "file" && rootFile && name === basename(specPath, ".tla")) return rootFile;
-    if (origin === "file") return realpathSync(findModuleFile(directories, name) ?? specPath);
+    const file = origin === "file" ? findModuleFile(directories, name) : undefined;
+    if (file !== undefined) return realpathSync(file);
+    // A module that the compiler gives a TypeScript file, such as JavaScript, has no file, so
+    // SANY parses it as it would a standard module.
+    if (origin === "file" && rootFile) return join(libraryDirectory, fileName);
+    if (origin === "file") return realpathSync(specPath);
     // TLC 1.7.4 copies a standard module into the temporary directory itself.
     if (version === "1.7.4") return join(temporaryDirectory, fileName);
     // FileUtil.createTempFile copies a module from the root module's file into the -metadir.
@@ -737,6 +742,14 @@ const checkSpec = async (
       MESSAGE_LEVEL.error,
       "Parsing or semantic analysis failed.",
     );
+  // A script that fails as Node would run it exits as Node does.
+  const getScriptExit = (message: string) => {
+    const nodeExit = compiled?.isScript ? getNodeExit(message, compiled.path) : undefined;
+    if (nodeExit === undefined) return undefined;
+    process.stderr.write(nodeExit.stderr);
+    printFinished();
+    return nodeExit.code;
+  };
   // TLC prints how long it ran even when it stops at an error.
   const printFailure = (error: TlaError) => {
     if (error instanceof TlaSyntaxError) {
@@ -768,7 +781,8 @@ const checkSpec = async (
     return EXIT_STATUS.error;
   }
   if (config instanceof TlaConfigError) return printFailure(config);
-  if (args.has("-deadlock")) config.checkDeadlock = false;
+  // A script ends where Node's process would exit, rather than where it deadlocks.
+  if (args.has("-deadlock") || compiled?.isScript) config.checkDeadlock = false;
   const directory = dirname(specPath);
   const directories = [directory, ...java.libraries];
   const loadFile = createModuleLoader(directories);
@@ -859,11 +873,15 @@ const checkSpec = async (
         writeFileSync(path, content);
       },
     });
+    const nodeExit = result.failure && getScriptExit(result.failure.message);
+    if (nodeExit !== undefined) return nodeExit;
     printResult(result, printer, timing);
     printFinished();
     return result.failure?.exitCode ?? EXIT_CODES[result.status];
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
+    const nodeExit = getScriptExit(error.message);
+    if (nodeExit !== undefined) return nodeExit;
     if (error instanceof TlaSyntaxError) console.log(formatSanyErrors(error, fileName));
     if (!timing.isParsed) printCheckProgress(printer, { kind: "parsed" }, timing, directory);
     return printFailure(error);

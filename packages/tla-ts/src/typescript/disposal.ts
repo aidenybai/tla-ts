@@ -8,14 +8,17 @@ import {
   throwTypeError,
   translateDeclarations,
 } from "./actions";
-import { type Context, type FunctionNode, getUndefined } from "./context";
+import { type Context, type FunctionNode, getUndefined, skipCasts } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateSuppressedError } from "./exceptions";
 import { translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf } from "./formula";
 import { getHeap } from "./heap";
+import { translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
-import { callValue, getMethods, isNullish, read } from "./protocols";
+import { translateAsyncBuiltIn } from "./promises";
+import { callMethod, callValue, getMethods, isNullish, read } from "./protocols";
+import { disposeStack } from "./stacks";
 import { apply, boolean, set, string } from "./tla";
 
 export interface Resource {
@@ -32,6 +35,9 @@ export interface Resource {
   // Whether the method is Symbol.dispose that an await using declaration calls in place of
   // Symbol.asyncDispose, as a promise that settles once it returns or throws.
   isWrapped: boolean;
+  // Whether adopt or defer added the method, which tla-ts follows only as one of the candidates,
+  // not as a DisposableStack's dispose.
+  isCallback: boolean;
 }
 
 // The resources that a block's using declarations added, with the frame of the block and the path
@@ -111,6 +117,41 @@ export const disposeAll = (
   const succeed = (current: Path, hasAwaited: boolean) =>
     disposeAll(rest, { ...disposing, hasAwaited }, current, context, frame, resume);
   const uncaught = apply("Assert", [boolean(false), string("await using")]);
+  const callFrame: Frame = {
+    ...frame,
+    throwTo: (thrownPath, thrown) =>
+      resource.isWrapped
+        ? tick(thrownPath, (after) => fail(after, thrown, true))
+        : fail(thrownPath, thrown, disposing.hasAwaited),
+  };
+  const unknown = leaf(
+    apply("Assert", [boolean(false), string("tla-ts can't tell which function this calls")]),
+  );
+  // A DisposableStack's dispose, or an AsyncDisposableStack's disposeAsync, which a stack that the
+  // path made holds.
+  const disposeStacks = (next: (path: Path, value?: Expression) => Formula) =>
+    resource.isCallback || (path.tasks?.stacks.size ?? 0) === 0
+      ? unknown
+      : ifThenElse(
+          useJavaScript(
+            "SameValue",
+            [method, translateBuiltInValue("DisposableStack.prototype.dispose", site, context)],
+            context,
+          ),
+          disposeStack(site, resource.receiver, false, path, context, callFrame, next),
+          ifThenElse(
+            useJavaScript(
+              "SameValue",
+              [
+                method,
+                translateBuiltInValue("AsyncDisposableStack.prototype.disposeAsync", site, context),
+              ],
+              context,
+            ),
+            disposeStack(site, resource.receiver, true, path, context, callFrame, next),
+            unknown,
+          ),
+        );
   return callValue(
     site,
     resource.candidates,
@@ -119,17 +160,8 @@ export const disposeAll = (
     resource.values,
     path,
     context,
-    {
-      ...frame,
-      throwTo: (thrownPath, thrown) =>
-        resource.isWrapped
-          ? tick(thrownPath, (after) => fail(after, thrown, true))
-          : fail(thrownPath, thrown, disposing.hasAwaited),
-    },
-    () =>
-      leaf(
-        apply("Assert", [boolean(false), string("tla-ts can't tell which function this calls")]),
-      ),
+    callFrame,
+    disposeStacks,
     (after, result) => {
       if (!resource.isAsync) return succeed(after, disposing.hasAwaited);
       if (resource.isWrapped) return tick(after, (ticked) => succeed(ticked, true));
@@ -212,6 +244,7 @@ export const readResource = (
         : getMethods(site, "@@dispose", context),
     isAsync,
     isWrapped,
+    isCallback: false,
   });
   const readDispose = (inner: Path, isWrapped: boolean) =>
     read(site, value, "@@dispose", inner, context, frame, (got, method) =>
@@ -275,6 +308,7 @@ export const addResource = (
           candidates: [],
           isAsync,
           isWrapped: false,
+          isCallback: false,
         })
       : continueWith(path, frame),
     readResource(site, value, isAsync, path, context, frame, add),
@@ -311,6 +345,129 @@ export const translateUsing = (
       frame,
       (inner, innerFrame) =>
         translateUsing(block, list, declarations.slice(1), inner, context, innerFrame, run),
+    ),
+  );
+};
+
+// A call of %IteratorPrototype%[@@dispose] or %AsyncIteratorPrototype%[@@asyncDispose] that a
+// script reads from an iterator's prototype, whose type doesn't tell what it holds, as
+// prototype[Symbol.dispose]() or through Function.prototype.call with any value as this.
+export const getIteratorDisposeCall = (node: ts.Node, context: Context) => {
+  if (context.heap === undefined || !ts.isCallExpression(node)) return undefined;
+  const callee = skipCasts(node.expression);
+  const isCalledThrough = ts.isPropertyAccessExpression(callee) && callee.name.text === "call";
+  const method = isCalledThrough ? skipCasts(callee.expression) : callee;
+  if (!ts.isElementAccessExpression(method) || node.arguments.some(ts.isSpreadElement)) {
+    return undefined;
+  }
+  const key = method.argumentExpression.getText();
+  const flags = context.checker.getTypeAtLocation(method.expression).flags;
+  return (key === "Symbol.dispose" || key === "Symbol.asyncDispose") &&
+    (flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0
+    ? {
+        method,
+        isAsync: key === "Symbol.asyncDispose",
+        isCalledThrough,
+        receiver: isCalledThrough ? node.arguments.at(0) : method.expression,
+      }
+    : undefined;
+};
+
+// Runs %IteratorPrototype%[@@dispose], which calls this's return method where it has one, or
+// %AsyncIteratorPrototype%[@@asyncDispose], which also awaits what the method gives, as a built-in
+// async function whose promise rejects where the method or reading it throws.
+export const translateIteratorDisposeCall = (
+  node: ts.CallExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  const call = getIteratorDisposeCall(node, context);
+  if (call === undefined) throw new TlaTypeScriptError("Unsupported call", node);
+  const receiver =
+    call.receiver === undefined
+      ? getUndefined(context)
+      : translateExpression(call.receiver, path.scope, context);
+  const dispose = (start: Path, bodyFrame: Frame, finish: (path: Path) => Formula) =>
+    ifThenElse(
+      isNullish(receiver, context),
+      throwTypeError(start, node, context, bodyFrame),
+      ifThenElse(
+        apply("\\in", [
+          useJavaScript("TypeOfIn", [getHeap(start.scope, node, context), receiver], context),
+          set([string("object"), string("function")]),
+        ]),
+        read(node, receiver, "return", start, context, bodyFrame, (got, method) =>
+          ifThenElse(
+            isNullish(method, context),
+            finish(got),
+            callMethod(
+              node,
+              "return",
+              method,
+              receiver,
+              got,
+              context,
+              bodyFrame,
+              (thrown) => throwTypeError(thrown, node, context, bodyFrame),
+              (after, result) => {
+                if (!call.isAsync) return finish(after);
+                if (bodyFrame.awaitTo === undefined || bodyFrame.throwTo === undefined) {
+                  throw new TlaTypeScriptError("Unsupported async call", node);
+                }
+                const throwTo = bodyFrame.throwTo;
+                return bodyFrame.awaitTo(after, result, undefined, finish, (rejected, reason) =>
+                  throwTo(rejected, {
+                    value: reason,
+                    uncaught: apply("Assert", [boolean(false), string("asyncDispose")]),
+                  }),
+                );
+              },
+            ),
+          ),
+        ),
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't read the return method of a primitive"),
+          ]),
+        ),
+      ),
+    );
+  const builtIn = translateBuiltInValue(
+    call.isAsync ? "%AsyncIteratorPrototype%.@@asyncDispose" : "Iterator.prototype.@@dispose",
+    node,
+    context,
+  );
+  const isBuiltIn = useJavaScript(
+    "SameValue",
+    [translateExpression(call.method, path.scope, context), builtIn],
+    context,
+  );
+  return ifThenElse(
+    call.isCalledThrough
+      ? apply("/\\", [
+          isBuiltIn,
+          useJavaScript(
+            "HoldsBuiltIn",
+            [
+              getHeap(path.scope, node, context),
+              builtIn,
+              string("call"),
+              string("Function.prototype.call"),
+            ],
+            context,
+          ),
+        ])
+      : isBuiltIn,
+    call.isAsync
+      ? translateAsyncBuiltIn(node, path, context, frame, continueWith, (start, bodyFrame) =>
+          dispose(start, bodyFrame, (after) => bodyFrame.next(after)),
+        )
+      : dispose(path, frame, (after) => continueWith(after, getUndefined(context))),
+    leaf(
+      apply("Assert", [boolean(false), string("tla-ts can't tell which function this call runs")]),
     ),
   );
 };

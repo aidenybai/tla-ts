@@ -25,7 +25,8 @@ import {
   temporal,
   tuple,
 } from "./tla";
-import { JAVASCRIPT_MODULE, SPECIAL_NUMBERS } from "./javascript";
+import { getJavaScriptModule, SPECIAL_NUMBERS } from "./javascript";
+import { printModule } from "../printer";
 import { getRegions, type Region } from "./regions";
 
 // The parts of a spec and its config, in the order that the model declares them.
@@ -59,6 +60,9 @@ export interface CompiledSpec {
   loadModule: (name: string) => string | undefined;
   regions: Region[];
   variables: StateVariable[];
+  // A script without exported actions ends where Node's process would exit, so its last states
+  // are no deadlock.
+  isScript: boolean;
 }
 
 const getMagnitude = (value: Expression) =>
@@ -287,6 +291,8 @@ export const emit = (
                 "  ConstantFunctions <- UsedConstantFunctions",
                 "  Symbols <- UsedSymbols",
                 "  Fractions <- UsedFractions",
+                "  Characters <- UsedCharacters",
+                "  Cases <- UsedCases",
               ]
             : []),
         ]
@@ -304,8 +310,12 @@ export const emit = (
     name: moduleName,
     source,
     config,
-    loadModule: (name) => (isJavaScript && name === "JavaScript" ? JAVASCRIPT_MODULE : undefined),
+    loadModule: (name) =>
+      isJavaScript && name === "JavaScript"
+        ? getJavaScriptModule(`${printModule(source)}\n${config}`)
+        : undefined,
     regions: getRegions(source, sourceFile, model, context),
+    isScript: model.exported.length === 0,
     variables: model.variables.map((variable) => {
       const declaration = variable.declaration;
       const type = context.checker.getTypeAtLocation(declaration.name ?? declaration);

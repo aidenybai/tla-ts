@@ -328,6 +328,14 @@ const CASES: Record<string, Case[]> = {
       statements: "const isSmall = (value: number) => value < 3; if (isSmall(count)) count = 10;",
     },
   ],
+  generators: [
+    {
+      variables: "label = ''",
+      statements:
+        "const iterator = make(); label = `${iterator.next().value}${iterator.next().value}${iterator.next().done}`;",
+      setup: 'const make = function* () {\n  yield* "ab";\n};',
+    },
+  ],
   "missing keys": [
     {
       variables: "result: unknown = 0",

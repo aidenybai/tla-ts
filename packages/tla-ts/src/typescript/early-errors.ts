@@ -36,7 +36,7 @@ const getLexicalNames = (statements: readonly ts.Statement[], isFunctionBody: bo
 
 // The names that var declarations among statements declare, through nested blocks but not
 // nested functions.
-const getVarNames = (node: ts.Node): string[] => {
+export const getVarNames = (node: ts.Node): string[] => {
   if (ts.isFunctionLike(node) || ts.isClassLike(node)) return [];
   const own =
     ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.BlockScoped) === 0

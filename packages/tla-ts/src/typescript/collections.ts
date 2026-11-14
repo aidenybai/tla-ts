@@ -16,10 +16,25 @@ import {
 } from "./context";
 import type { Expression } from "../ast";
 import { TlaTypeScriptError } from "../errors";
-import { translateElements, translateExpression, translateSetKey } from "./expressions";
-import { callStateOperator, mayThrow, translateBody, translateLocalCall } from "./functions";
-import { DATE_FIELDS, getHeap, getPrototypeMethod, isDateType, TIME_METHODS } from "./heap";
 import {
+  translateElements,
+  translateExpression,
+  translateSetKey,
+  translateToString,
+} from "./expressions";
+import { callStateOperator, mayThrow, translateBody, translateLocalCall } from "./functions";
+import {
+  DATE_FIELDS,
+  getHeap,
+  getPrototypeMethod,
+  hasPrototypeArray,
+  isDateType,
+  TIME_METHODS,
+  isDescriptionOfAll,
+} from "./heap";
+import {
+  getBuiltIn,
+  getBuiltInKey,
   getStoredBuiltIn,
   isBuiltInObject,
   translateBuiltInValue,
@@ -28,6 +43,7 @@ import {
   translateSymbolProperty,
 } from "./intrinsics";
 import { getTypeNames, isComparableType, useJavaScript } from "./javascript";
+import { getWrittenFunctions } from "./protocols";
 import { bindNames, bindPatternInline, type Receiver, type Scope } from "./scope";
 import {
   apply,
@@ -55,6 +71,9 @@ import {
   getKind,
   isBooleanType,
   isEvery,
+  getIteratedArray,
+  getIteratedString,
+  getIteratorFromArgument,
   getKeptIterator,
   isHeapArray,
   ITERATOR_METHODS,
@@ -65,6 +84,8 @@ import {
   type Kind,
   translateUnknown,
   isTypeReference,
+  mayBeSequenceType,
+  getArrayMethodCall,
 } from "./types";
 
 interface Unordered {
@@ -346,6 +367,50 @@ const getEntries = (value: Expression, context: Context): Unordered => ({
 const getElements = (value: Expression, context: Context) =>
   mapKeys(value, "sequence", context, (shared, key) => index(shared, [key]));
 
+// The set of the elements of an array literal and of the collections it spreads, where nothing
+// reads its order.
+const translateElementSet = (
+  node: ts.ArrayLiteralExpression,
+  scope: Scope,
+  context: Context,
+): Expression =>
+  node.elements
+    .map((element) =>
+      ts.isSpreadElement(element)
+        ? translateSet(element.expression, scope, context)
+        : set([translateSetKey(element, scope, context)]),
+    )
+    .reduce((left, right) => apply("\\cup", [left, right]), set([]));
+
+// The set of the elements of an argument that a parameter which only makes a Set takes, where an
+// array literal gives those of its elements and of the collections it spreads, as nothing reads
+// its order.
+export const translateSetArgument = (
+  node: ts.Expression,
+  getValue: () => Expression,
+  scope: Scope,
+  context: Context,
+): Expression => {
+  if (ts.isArrayLiteralExpression(node)) return translateElementSet(node, scope, context);
+  const value = getValue();
+  if (isHeapArray(node, context)) {
+    return getElements(
+      getHeapElements(getHeap(scope, node, context), value, node, context),
+      context,
+    );
+  }
+  if (isHeapSetOrMap(node, context)) {
+    return useJavaScript("CollectionData", [getHeap(scope, node, context), value], context);
+  }
+  const kind = getKind(node, context);
+  if (kind === "set") return value;
+  if (kind === "sequence") return getElements(value, context);
+  throw new TlaTypeScriptError(
+    "tla-ts can't pass this to a parameter that only makes a Set of it",
+    node,
+  );
+};
+
 // Whether a value of a node's type may be an error, as any type that an Error is assignable to.
 const mayBeError = (node: ts.Expression, context: Context) => {
   const error = context.checker
@@ -395,6 +460,7 @@ const translateUnordered = (
     const kind = getKind(argument, context);
     if (
       isBuiltInObject(argument, context) ||
+      isDescriptionOfAll(argument, context) ||
       (context.heap !== undefined &&
         (kind === "object" || kind === "sequence" || kind === "string"))
     ) {
@@ -444,12 +510,33 @@ const translateUnordered = (
   if (kind === "map" && method === "values") return getValues(translate(receiver), context);
   if (kind === "map" && method === "entries") return getEntries(translate(receiver), context);
   if (method === "toArray") return translateUnordered(receiver, scope, context);
-  if (method !== "filter" && method !== "map") return undefined;
+  if (method !== "filter" && method !== "map" && method !== "flatMap") return undefined;
   const source = translateUnordered(receiver, scope, context);
   if (source === undefined) return undefined;
   const callback = node.arguments[0];
+  // flatMap of a callback that gives an array that the heap doesn't hold takes its elements.
+  const flattened =
+    ts.isArrowFunction(callback) && !ts.isBlock(callback.body) ? callback.body : undefined;
+  if (
+    method === "flatMap" &&
+    (flattened === undefined ||
+      getKind(flattened, context) !== "sequence" ||
+      isHeapArray(flattened, context))
+  ) {
+    return undefined;
+  }
   rejectIndex(callback, "Elements of a set have no index", scope, context);
   const element = bindElement(callback, scope, context);
+  if (method === "flatMap") {
+    return {
+      set: apply("UNION", [
+        map(getElements(translateCallback(callback, element.scope, context), context), [
+          bound(element.variable, source.set),
+        ]),
+      ]),
+      isMapped: true,
+    };
+  }
   return method === "filter"
     ? {
         set: filter(
@@ -467,7 +554,21 @@ const translateUnordered = (
 };
 
 // The elements of a set, an array, or an iterator over a collection, as a TLA+ set.
-export const translateSet = (node: ts.Expression, scope: Scope, context: Context) => {
+export const translateSet = (node: ts.Expression, scope: Scope, context: Context): Expression => {
+  // An array literal that spreads a set or an iterator over a map, which has no order, gives only
+  // its elements.
+  if (
+    ts.isArrayLiteralExpression(node) &&
+    node.elements.some(
+      (element) =>
+        ts.isSpreadElement(element) &&
+        getKind(element.expression, context) !== "sequence" &&
+        !isArrayIteration(element.expression, context) &&
+        !isEvery(context.checker.getTypeAtLocation(element.expression), ts.TypeFlags.StringLike),
+    )
+  ) {
+    return translateElementSet(node, scope, context);
+  }
   const unordered = translateUnordered(node, scope, context);
   if (unordered !== undefined) return unordered.set;
   if (isHeapArray(node, context)) {
@@ -575,6 +676,8 @@ export const translateFunctionConstructor = (
     ts.isIdentifier(pair.elements[0]) &&
     pair.elements[0].text === parameter.name.text;
   if (source === undefined || !isKeyedByParameter) {
+    // Entries that a map of a sequence gives otherwise build the map in their order.
+    if (getKind(node, context) === "sequence") return undefined;
     throw new TlaTypeScriptError(
       "Build a Map or record from a set with set.values().map((key) => [key, value])",
       node,
@@ -606,14 +709,18 @@ export const translateArrayConstructor = (node: MethodCall, scope: Scope, contex
     node.arguments.length === 2 &&
     ts.isObjectLiteralExpression(options)
   ) {
-    const length = options.properties.find((property) => property.name?.getText() === "length");
-    if (length === undefined || !ts.isPropertyAssignment(length)) {
-      throw new TlaTypeScriptError("Array.from needs { length: n }", node);
-    }
+    const property = options.properties.find((inner) => inner.name?.getText() === "length");
+    const length =
+      property !== undefined && ts.isPropertyAssignment(property)
+        ? property.initializer
+        : property !== undefined && ts.isShorthandPropertyAssignment(property)
+          ? property.name
+          : undefined;
+    if (length === undefined) throw new TlaTypeScriptError("Array.from needs { length: n }", node);
     const position = context.names.getFresh("index");
     const inner = bindIndexed(callback, undefined, identifier(position), scope, context);
     return functionOf(
-      [bound(position, getIndices(length.initializer, "ToLength"))],
+      [bound(position, getIndices(length, "ToLength"))],
       translateCallback(callback, inner, context),
     );
   }
@@ -732,8 +839,15 @@ const translateSequenceOperation = (
   const withSearch = (
     isLast: boolean,
     use: (isFound: (position: Expression) => Expression) => Expression,
-  ) =>
-    share(translate(argument), "value", context, (value) => {
+  ) => {
+    // A search compares by identity, which a sequence lacks.
+    if (getKind(argument, context) === "sequence") {
+      throw new TlaTypeScriptError(
+        "tla-ts can't tell whether two equal arrays are the same array",
+        argument,
+      );
+    }
+    return share(translate(argument), "value", context, (value) => {
       const checker = context.checker;
       const elementType = call.elementType;
       const isComparableElement =
@@ -776,6 +890,7 @@ const translateSequenceOperation = (
         ),
       );
     });
+  };
   const getSearchIndex = (isLast: boolean) => () =>
     withSearch(isLast, (isFound) => {
       const position = context.names.getFresh("index");
@@ -875,8 +990,18 @@ const translateSequenceOperation = (
       () =>
         [
           sequence,
+          // An object, such as an array that the heap holds, spreads as its
+          // @@isConcatSpreadable property or IsArray tells.
           ...call.arguments.map((inner) =>
-            getKind(inner, context) === "sequence" ? translate(inner) : tuple([translate(inner)]),
+            getKind(inner, context) === "sequence"
+              ? translate(inner)
+              : context.heap === undefined
+                ? tuple([translate(inner)])
+                : useJavaScript(
+                    "ConcatSpread",
+                    [getHeap(scope, inner, context), translate(inner)],
+                    context,
+                  ),
           ),
         ].reduce((left, right) => apply("\\o", [left, right])),
     ],
@@ -949,7 +1074,7 @@ const translateSequenceOperation = (
       () =>
         useJavaScript(
           "SortSequence",
-          [sequence, translateSortOrder(argument, scope, context)],
+          [sequence, ...translateSortArguments(argument, scope, context)],
           context,
         ),
     ],
@@ -974,23 +1099,13 @@ const translateSequenceOperation = (
     ],
     [
       "flatMap",
-      () => {
-        const callee = getCallbackFunction(argument, scope, context);
-        const returned =
-          callee === undefined
-            ? undefined
-            : context.checker.getSignatureFromDeclaration(callee)?.getReturnType();
-        if (returned === undefined) {
-          throw new TlaTypeScriptError("Give flatMap() a callback whose type tells", node);
-        }
-        return flattenTypes(
+      () =>
+        flattenReturned(
           translateEach((bounds, body) => functionOf(bounds, body))(),
-          [returned],
-          1,
+          getCallbackFunction(argument, scope, context),
           node,
           context,
-        );
-      },
+        ),
     ],
     ["every", translateEach((bounds, body) => quantify("Forall", bounds, body), translateTest)],
     ["some", translateEach((bounds, body) => quantify("Exists", bounds, body), translateTest)],
@@ -1168,6 +1283,23 @@ const translateMapMethod = (
 const removeLast = (current: Expression) =>
   apply("SubSeq", [current, number(1), apply("-", [apply("Len", [current]), number(1)])]);
 
+// The array that flatMap gives from the values that its callback returns.
+export const flattenReturned = (
+  mapped: Expression,
+  callee: FunctionNode | undefined,
+  node: ts.Node,
+  context: Context,
+) => {
+  const returned =
+    callee === undefined
+      ? undefined
+      : context.checker.getSignatureFromDeclaration(callee)?.getReturnType();
+  if (returned === undefined) {
+    throw new TlaTypeScriptError("Give flatMap() a callback whose type tells", node);
+  }
+  return flattenTypes(mapped, [returned], 1, node, context);
+};
+
 // Flattens a sequence by levels while its elements' types are all arrays, and stops at a level
 // whose types hold no array. A level that may hold both has elements that tla-ts can't tell apart.
 const flattenTypes = (
@@ -1226,6 +1358,49 @@ export const isArrayIteration = (node: ts.Node, context: Context) =>
 // next. The iterator reads an array that the heap holds as it steps, or a literal that nothing
 // else holds, which can't change.
 export const getArrayIteratorCall = (node: ts.Node, context: Context) => {
+  const iteratedString = getIteratedString(node, context);
+  if (context.heap !== undefined && iteratedString !== undefined) {
+    return {
+      kind: "string",
+      receiver: iteratedString,
+      key: "@@iterator",
+      path: "String.prototype.@@iterator",
+      isFrom: getIteratorFromArgument(node) !== undefined,
+    };
+  }
+  const iterated = getIteratedArray(node, context);
+  if (
+    context.heap !== undefined &&
+    iterated !== undefined &&
+    (isHeapArray(iterated, context) ||
+      (ts.isArrayLiteralExpression(iterated) && getKind(iterated, context) === "sequence"))
+  ) {
+    return {
+      kind: "values",
+      receiver: iterated,
+      key: "@@iterator",
+      path: "Array.prototype.values",
+      isFrom: true,
+    };
+  }
+  // Array.prototype.values.call(object) makes an iterator of any object, through its length.
+  const called = ts.isCallExpression(node) ? getArrayMethodCall(node, context) : undefined;
+  const calledObject = ts.isCallExpression(node) ? node.arguments.at(0) : undefined;
+  if (
+    context.heap !== undefined &&
+    called !== undefined &&
+    ITERATOR_METHODS.includes(called) &&
+    calledObject !== undefined &&
+    getKind(calledObject, context) === "object"
+  ) {
+    return {
+      kind: called,
+      receiver: calledObject,
+      key: called,
+      path: `Array.prototype.${called}`,
+      isCalled: true,
+    };
+  }
   if (
     context.heap === undefined ||
     !ts.isCallExpression(node) ||
@@ -1241,8 +1416,9 @@ export const getArrayIteratorCall = (node: ts.Node, context: Context) => {
   const callee = node.expression;
   const receiver = callee.expression;
   if (ts.isPropertyAccessExpression(callee) && callee.name.text === "next") {
-    return context.checker.getTypeAtLocation(receiver).getSymbol()?.name === "ArrayIterator"
-      ? { kind: undefined, receiver, key: "next", path: "%ArrayIteratorPrototype%.next" }
+    const name = context.checker.getTypeAtLocation(receiver).getSymbol()?.name;
+    return name === "ArrayIterator" || name === "StringIterator"
+      ? { kind: undefined, receiver, key: "next", path: `%${name}Prototype%.next` }
       : undefined;
   }
   const kind = getKeptIterator(node, context);
@@ -1264,6 +1440,12 @@ export const translateArrayIteratorPrototype = (node: ts.Node, context: Context)
   return translateBuiltInValue("%ArrayIteratorPrototype%", node, context);
 };
 
+// %StringIteratorPrototype%, with its next, whose own properties a script may read.
+export const translateStringIteratorPrototype = (node: ts.Node, context: Context) => {
+  context.builtIns.add("%StringIteratorPrototype%.next");
+  return translateBuiltInValue("%StringIteratorPrototype%", node, context);
+};
+
 // Whether the receiver of an array iterator call still reads the built-in method it calls.
 export const translateHoldsIteratorMethod = (
   call: NonNullable<ReturnType<typeof getArrayIteratorCall>>,
@@ -1271,13 +1453,21 @@ export const translateHoldsIteratorMethod = (
   receiver: Expression,
   context: Context,
 ) => {
-  // A sequence reads its methods from Array.prototype.
+  // A sequence reads its methods from Array.prototype, and a string from String.prototype.
   context.builtIns.add("Array.prototype");
   return useJavaScript(
     "HoldsBuiltIn",
     [
       heap,
-      receiver,
+      call.isCalled === true
+        ? translateBuiltInValue("Array.prototype", call.receiver, context)
+        : call.kind === "string"
+          ? ifExpression(
+              apply("=", [useJavaScript("TypeOf", [receiver], context), string("string")]),
+              translateBuiltInValue("String.prototype", call.receiver, context),
+              receiver,
+            )
+          : receiver,
       call.key === "@@iterator"
         ? useJavaScript("WellKnownSymbol", [string("iterator")], context)
         : string(call.key),
@@ -1288,7 +1478,7 @@ export const translateHoldsIteratorMethod = (
 };
 
 // An index argument as ClampedIndex counts it, or a fallback where it's missing or undefined.
-const translateClampedIndex = (
+export const translateClampedIndex = (
   argument: ts.Expression | undefined,
   fallback: Expression,
   length: Expression,
@@ -1313,6 +1503,29 @@ const translateClampedIndex = (
   );
 };
 
+// How many elements toSpliced() or splice() skips from where it starts, of those that remain there.
+export const translateSkipped = (
+  first: ts.Expression | undefined,
+  count: ts.Expression | undefined,
+  remaining: Expression,
+  scope: Scope,
+  context: Context,
+) =>
+  first === undefined
+    ? number(0)
+    : count === undefined
+      ? remaining
+      : useJavaScript(
+          "ClampedCount",
+          [
+            isNumberLike(count, context)
+              ? translateExpression(count, scope, context)
+              : useJavaScript("ToNumber", [translateExpression(count, scope, context)], context),
+            remaining,
+          ],
+          context,
+        );
+
 // What toSpliced() or splice() keeps of a sequence with the items it inserts, or what splice()
 // removes.
 export const translateSpliced = (
@@ -1330,27 +1543,10 @@ export const translateSpliced = (
     const length = apply("Len", [shared]);
     const start = translateClampedIndex(first, number(0), length, scope, context);
     return share(start, "start", context, (at) => {
-      const remaining = apply("-", [length, at]);
-      const skipped =
-        first === undefined
-          ? number(0)
-          : count === undefined
-            ? remaining
-            : useJavaScript(
-                "ClampedCount",
-                [
-                  isNumberLike(count, context)
-                    ? translateExpression(count, scope, context)
-                    : useJavaScript(
-                        "ToNumber",
-                        [translateExpression(count, scope, context)],
-                        context,
-                      ),
-                  remaining,
-                ],
-                context,
-              );
-      const end = apply("+", [at, skipped]);
+      const end = apply("+", [
+        at,
+        translateSkipped(first, count, apply("-", [length, at]), scope, context),
+      ]);
       return isRemoved
         ? apply("SubSeq", [shared, apply("+", [at, number(1)]), end])
         : apply("\\o", [
@@ -1378,9 +1574,10 @@ const reverseSequence = (sequence: Expression, context: Context) => {
   );
 };
 
-// The comparator that sort() orders by: whether its callback gives a number below 0, or else the
-// order of the elements' strings.
-export const translateSortOrder = (
+// The arguments that SortSequence takes for a comparator: the order that it sorts by, whether its
+// callback gives a number below 0, or else the order of the elements' strings, and whether the
+// callback may throw.
+export const translateSortArguments = (
   comparator: ts.Expression | undefined,
   scope: Scope,
   context: Context,
@@ -1389,12 +1586,16 @@ export const translateSortOrder = (
     comparator === undefined ||
     (context.checker.getTypeAtLocation(comparator).flags & ts.TypeFlags.Undefined) !== 0
   ) {
-    return identifier("DefaultSortBefore");
+    return [identifier("DefaultSortBefore"), boolean(false)];
   }
   const found = getCallback(comparator, scope, context);
-  // An order whose comparator throws would vanish where nothing reads the sorted array.
-  if (mayThrow(found.body, context)) {
-    throw new TlaTypeScriptError("Unsupported comparator: one that may throw", comparator);
+  const isThrowing = mayThrow(found.body, context);
+  // A throw that a try catches would vanish where nothing reads the sorted array.
+  if (isThrowing && scope.isCatching) {
+    throw new TlaTypeScriptError(
+      "Unsupported comparator: one that may throw inside try",
+      comparator,
+    );
   }
   const names = [context.names.getFresh("left"), context.names.getFresh("right")];
   const inner = found.parameters.reduce(
@@ -1411,20 +1612,37 @@ export const translateSortOrder = (
       ? undefined
       : context.checker.getSignatureFromDeclaration(callee)?.getReturnType();
   const isNumber = returned !== undefined && isEvery(returned, ts.TypeFlags.NumberLike);
-  return lambda(
-    names,
-    isNumber && !context.hasSpecialNumbers
-      ? apply("<", [result, number(0)])
-      : useJavaScript(
-          "LessThan",
-          [isNumber ? result : useJavaScript("ToNumber", [result], context), number(0)],
-          context,
-        ),
-  );
+  return [
+    lambda(
+      names,
+      isNumber && !context.hasSpecialNumbers
+        ? apply("<", [result, number(0)])
+        : useJavaScript(
+            "LessThan",
+            [isNumber ? result : useJavaScript("ToNumber", [result], context), number(0)],
+            context,
+          ),
+    ),
+    boolean(isThrowing),
+  ];
 };
 
 // The methods that reorder or overwrite an array in place, and give the array.
 const REORDER_METHODS = new Set(["sort", "reverse", "fill", "copyWithin"]);
+
+// The array methods that give a new array.
+const NEW_ARRAY_METHODS = new Set([
+  "map",
+  "filter",
+  "slice",
+  "concat",
+  "flat",
+  "flatMap",
+  "toReversed",
+  "toSorted",
+  "toSpliced",
+  "with",
+]);
 
 // The methods that change only an array value in place, which an object's method of the same name
 // doesn't.
@@ -1446,7 +1664,7 @@ const translateReorder = (
   if (method === "sort") {
     return useJavaScript(
       "SortSequence",
-      [sequence, translateSortOrder(first, scope, context)],
+      [sequence, ...translateSortArguments(first, scope, context)],
       context,
     );
   }
@@ -1613,11 +1831,16 @@ export const translateMethod = (
     ? getUpdatedValue(translateExpression(receiver, scope, context), kind, node, scope, context)
     : undefined;
   if (updated !== undefined) return updated;
-  // A fresh array literal that a method reorders in place is the array that the call gives.
+  // A fresh array, from a literal or a method that makes a new one, that a method reorders in place
+  // is the array that the call gives, as nothing else holds it.
+  const fresh = skipCasts(receiver);
   if (
     kind === "sequence" &&
     REORDER_METHODS.has(node.expression.name.text) &&
-    ts.isArrayLiteralExpression(skipCasts(receiver))
+    (ts.isArrayLiteralExpression(fresh) ||
+      (isMethodCall(fresh) &&
+        NEW_ARRAY_METHODS.has(fresh.expression.name.text) &&
+        getKind(fresh.expression.expression, context) === "sequence"))
   ) {
     return checkArrayMethod(
       translateReorder(translateExpression(receiver, scope, context), node, scope, context),
@@ -1659,6 +1882,24 @@ export const translateMethod = (
   }
   if (kind === "set") return translateSetMethod(node, scope, context);
   if (kind === "map") return translateMapMethod(node, scope, context, isDefined);
+  // Symbol.prototype.valueOf or BigInt.prototype.valueOf through call reads the primitive of a
+  // primitive or of the object that wraps it.
+  const valueOwner = ["Symbol", "BigInt"].find(
+    (owner) => getPrototypeMethod(receiver, owner, context) === "valueOf",
+  );
+  if (
+    context.heap !== undefined &&
+    node.expression.name.text === "call" &&
+    node.arguments.length === 1 &&
+    valueOwner !== undefined
+  ) {
+    context.builtIns.add(`${valueOwner}.prototype`);
+    return useJavaScript(
+      valueOwner === "Symbol" ? "ThisSymbol" : "ThisBigIntObject",
+      [getHeap(scope, node, context), translateExpression(node.arguments[0], scope, context)],
+      context,
+    );
+  }
   const symbolMethod = node.expression.name.text;
   const receiverNames = getTypeNames(context.checker.getTypeAtLocation(receiver), context.checker);
   if (
@@ -1734,11 +1975,10 @@ export const translateMethod = (
     primitiveCall !== undefined &&
     primitiveMethod !== undefined &&
     primitiveCall.methodArguments.length <= primitiveMethod.parameters.length &&
-    primitiveCall.methodArguments.every((argument, position) =>
-      primitiveMethod.parameters[position] === "number"
-        ? isNumberLike(argument, context) ||
-          isEvery(context.checker.getTypeAtLocation(argument), ts.TypeFlags.Undefined)
-        : isEvery(context.checker.getTypeAtLocation(argument), ts.TypeFlags.StringLike),
+    primitiveCall.methodArguments.every(
+      (argument, position) =>
+        getPrimitiveArgument(primitiveCall.method, primitiveMethod, position, argument, context) !==
+        undefined,
     );
   if (
     primitiveCall === undefined &&
@@ -1768,9 +2008,60 @@ export const translateMethod = (
       : primitiveCall.converter === undefined
         ? translateExpression(receiver, scope, context)
         : useJavaScript(primitiveCall.converter, [translateOptional(primitiveCall.owner)], context),
-    primitiveCall.methodArguments.map(translateOptional),
+    primitiveCall.methodArguments.map((argument, position) => {
+      if (
+        getPrimitiveArgument(primitiveCall.method, primitiveMethod, position, argument, context) !==
+        "converted"
+      ) {
+        return translateExpression(argument, scope, context);
+      }
+      if (primitiveMethod.parameters[position] === "string") {
+        return translateToString(argument, scope, context);
+      }
+      const converted = useJavaScript(
+        "ToNumber",
+        [translateExpression(argument, scope, context)],
+        context,
+      );
+      return context.hasSpecialNumbers
+        ? converted
+        : useJavaScript("PlainNumber", [converted], context);
+    }),
     context,
   );
+};
+
+// The string parameters that read undefined as their own default, rather than as "undefined".
+const UNDEFINED_DEFAULTS = new Set(["split 0", "padStart 1", "padEnd 1", "normalize 0"]);
+
+// How a primitive's method takes a primitive argument: a number for a number parameter as it is or
+// another primitive converted by ToNumber, and for a string parameter a string as it is or another
+// primitive converted by ToString. A parameter that reads undefined as its default takes it as it is.
+export const getPrimitiveArgument = (
+  method: string,
+  primitiveMethod: PrimitiveMethod,
+  position: number,
+  argument: ts.Expression,
+  context: Context,
+) => {
+  const type = context.checker.getTypeAtLocation(argument);
+  if (primitiveMethod.parameters[position] === "number") {
+    return isNumberLike(argument, context) || isEvery(type, ts.TypeFlags.Undefined)
+      ? "kept"
+      : isEvery(type, ts.TypeFlags.StringLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.Null)
+        ? "converted"
+        : undefined;
+  }
+  const isDefaulted = UNDEFINED_DEFAULTS.has(`${method} ${position}`);
+  const kept = isDefaulted
+    ? ts.TypeFlags.StringLike | ts.TypeFlags.Undefined
+    : ts.TypeFlags.StringLike;
+  const converted =
+    ts.TypeFlags.NumberLike |
+    ts.TypeFlags.BooleanLike |
+    ts.TypeFlags.Null |
+    (isDefaulted ? 0 : ts.TypeFlags.StringLike | ts.TypeFlags.Undefined);
+  return isEvery(type, kept) ? "kept" : isEvery(type, converted) ? "converted" : undefined;
 };
 
 // The JavaScript module's operators for each method that runs a regexp, without objects and with
@@ -1797,11 +2088,14 @@ interface RegExpCall {
   values: readonly ts.Expression[];
 }
 
-// A regexp's exec or test of a string, or a string's method that calls a regexp's.
+// A regexp's exec or test of a string, its method under Symbol.match, Symbol.replace,
+// Symbol.search, or Symbol.split, or a string's method that calls a regexp's.
 const getRegExpCall = (node: ts.Node, context: Context): RegExpCall | undefined => {
-  if (!isMethodCall(node)) return undefined;
-  const receiver = node.expression.expression;
-  const method = node.expression.name.text;
+  const key = ts.isCallExpression(node) ? getBuiltInKey(node.expression, context) : undefined;
+  if (!ts.isCallExpression(node) || key === undefined) return undefined;
+  const receiver = key.owner;
+  const isSymbol = key.name.startsWith("@@");
+  const method = isSymbol ? key.name.slice(2) : key.name;
   const values = node.arguments;
   const isRegExp = (value: ts.Expression | undefined) =>
     value !== undefined && context.checker.getTypeAtLocation(value).getSymbol()?.name === "RegExp";
@@ -1822,9 +2116,13 @@ const getRegExpCall = (node: ts.Node, context: Context): RegExpCall | undefined 
     isWrapped: text === receiver && isWrapped,
     values: rest,
   });
-  if (isRegExp(receiver) && (method === "exec" || method === "test")) {
-    return values.length === 1 && isText(values[0]) ? getCall(receiver, values[0], []) : undefined;
+  if (isRegExp(receiver) && (isSymbol || method === "exec" || method === "test")) {
+    const isKnown =
+      values.length === (method === "replace" ? 2 : 1) ||
+      (method === "split" && values.length === 2 && isNumberLike(values[1], context));
+    return isKnown && isText(values[0]) ? getCall(receiver, values[0], values.slice(1)) : undefined;
   }
+  if (isSymbol) return undefined;
   // search and match make a regexp of a string.
   const isMade =
     (method === "search" || method === "match") && getStringRegExp(values[0]) !== undefined;
@@ -1867,7 +2165,7 @@ export const getHeapRegExpCall = (node: ts.Node, context: Context) => {
 // an expression only one that reads a literal and gives no object, so that no one can observe the
 // object that the literal makes. tla-ts then follows the built-in methods only while a script
 // hasn't changed those that the call reads.
-const translateRegExpCall = (node: MethodCall, scope: Scope, context: Context) => {
+export const translateRegExpCall = (node: ts.CallExpression, scope: Scope, context: Context) => {
   const call = getRegExpCall(node, context);
   if (
     call === undefined ||
@@ -1889,12 +2187,12 @@ const translateRegExpCall = (node: MethodCall, scope: Scope, context: Context) =
     context.heap === undefined
       ? getStringRegExp(call.regexp) === undefined
         ? translate(call.regexp)
-        : translateRegExpValue(call.regexp, context)
+        : translateRegExpValue(call.regexp, scope, context)
       : useJavaScript(
           "RegExpFresh",
           [
             getHeap(scope, node, context),
-            translateRegExpValue(call.regexp, context),
+            translateRegExpValue(call.regexp, scope, context),
             set(changeable.map(string)),
           ],
           context,
@@ -2030,31 +2328,34 @@ const getPrimitiveCall = (node: MethodCall, kind: Kind, context: Context) => {
 };
 
 // A call of a String.prototype method through call, directly or through a variable that its
-// declaration gives the method, on a value that a statement converts to a string: undefined,
-// null, and symbols throw a TypeError, and objects convert through ToPrimitive.
+// declaration gives the method, or of a key that stores it, on a value that a statement converts to
+// a string: undefined, null, and symbols throw a TypeError, and objects convert through ToPrimitive.
 export const getStringCall = (node: ts.Node, context: Context) => {
-  if (context.heap === undefined || !isMethodCall(node) || node.expression.name.text !== "call") {
-    return undefined;
-  }
-  const callee = node.expression.expression;
-  const method = getPrototypeMethod(callee, "String", context);
+  if (context.heap === undefined || !ts.isCallExpression(node)) return undefined;
+  // A script may cast the key that it calls, whose type doesn't tell which function it holds.
+  const accessed = skipCasts(node.expression);
+  if (!ts.isPropertyAccessExpression(accessed)) return undefined;
+  const isCall = accessed.name.text === "call";
+  const callee = isCall ? accessed.expression : accessed;
+  const method = isCall
+    ? getPrototypeMethod(callee, "String", context)
+    : getStoredStringMethod(accessed, context);
   const primitive = method === undefined ? undefined : STRING_METHODS.get(method);
-  const owner = node.arguments.at(0);
-  const values = node.arguments.slice(1);
+  const owner = isCall ? node.arguments.at(0) : accessed.expression;
+  const values = isCall ? node.arguments.slice(1) : node.arguments;
   if (
     method === undefined ||
     primitive === undefined ||
     owner === undefined ||
     ts.isSpreadElement(owner) ||
-    values.length > primitive.parameters.length ||
-    !values.every((value, position) =>
-      primitive.parameters[position] === "number"
-        ? isNumberLike(value, context)
-        : isEvery(context.checker.getTypeAtLocation(value), ts.TypeFlags.StringLike),
-    )
+    values.length > primitive.parameters.length
   ) {
     return undefined;
   }
+  const kinds = values.map((value, position) =>
+    getPrimitiveArgument(method, primitive, position, value, context),
+  );
+  if (kinds.includes(undefined)) return undefined;
   // String.prototype.method.call of a primitive reads it as a string in an expression, and tla-ts
   // can't convert a function, whose source text it doesn't keep.
   const type = context.checker.getTypeAtLocation(owner);
@@ -2063,10 +2364,26 @@ export const getStringCall = (node: ts.Node, context: Context) => {
     type,
     ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike,
   );
-  return (isDirect && isPrimitive) ||
+  return (isCall && isDirect && isPrimitive) ||
     getTypeNames(type, context.checker)?.includes("function") === true
     ? undefined
-    : { method, primitive, callee, owner, values };
+    : { method, primitive, callee, owner, values, kinds, isCall };
+};
+
+// The String.prototype method that a key whose type doesn't tell which function it holds may hold,
+// where the script stores the method as a value, as obj.charAt = String.prototype.charAt does, and
+// writes no function of its own under the key.
+const getStoredStringMethod = (callee: ts.PropertyAccessExpression, context: Context) => {
+  const name = callee.name.text;
+  return (context.checker.getTypeAtLocation(callee).flags &
+    (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
+    0 &&
+    getWrittenFunctions(callee, name, context).length === 0 &&
+    findNodes(callee.getSourceFile(), ts.isPropertyAccessExpression).some(
+      (inner) => getStoredBuiltIn(inner, context) === `String.prototype.${name}`,
+    )
+    ? name
+    : undefined;
 };
 
 // The value of a primitive's method, given the primitive that it reads and its arguments.
@@ -2105,7 +2422,7 @@ interface PrimitiveMethod {
   isNaNable?: boolean;
 }
 
-const STRING_METHODS = new Map<string, PrimitiveMethod>([
+export const STRING_METHODS = new Map<string, PrimitiveMethod>([
   ["at", { operator: "StringAt", parameters: ["number"] }],
   ["charAt", { operator: "CharAt", parameters: ["number"] }],
   ["charCodeAt", { operator: "CharCodeAt", parameters: ["number"], isNaNable: true }],
@@ -2197,6 +2514,7 @@ export const ARRAY_LIKE_METHODS = new Set([
   "findLastIndex",
   "reduce",
   "reduceRight",
+  "flatMap",
 ]);
 
 // The array methods that make an array through ArraySpeciesCreate, which reads the constructor of
@@ -2263,6 +2581,7 @@ export const HOLE_SKIPPING_METHODS = new Set([
   "lastIndexOf",
   "reduce",
   "reduceRight",
+  "flatMap",
 ]);
 
 // The array methods that read each index below the length through Get, so that a hole reads as
@@ -2288,16 +2607,25 @@ export const getArrayLikeCall = (node: ts.CallExpression, context: Context) => {
   const callee = node.expression;
   if (!ts.isPropertyAccessExpression(callee)) return undefined;
   const target = callee.expression;
-  const isCall =
-    callee.name.text === "call" &&
-    ts.isPropertyAccessExpression(target) &&
-    target.expression.getText() === "Array.prototype";
-  const method = isCall ? target.name.text : callee.name.text;
+  const called = getArrayMethodCall(node, context);
+  const isCall = called !== undefined;
+  const method = called ?? callee.name.text;
   const object = isCall ? node.arguments.at(0) : isHeapArray(target, context) ? target : undefined;
-  return ARRAY_LIKE_METHODS.has(method) &&
-    object !== undefined &&
-    getKind(object, context) === "object"
-    ? { method, object, methodArguments: isCall ? node.arguments.slice(1) : node.arguments }
+  const methodArguments = isCall ? node.arguments.slice(1) : node.arguments;
+  // concat spreads only the arrays that it adds, so tla-ts adds no object that may be one.
+  const isConcat =
+    isCall &&
+    method === "concat" &&
+    methodArguments.every(
+      (argument) => !ts.isSpreadElement(argument) && getKind(argument, context) !== "object",
+    );
+  const kind = object === undefined ? undefined : getKind(object, context);
+  return object !== undefined &&
+    ((ARRAY_LIKE_METHODS.has(method) &&
+      (kind === "object" || (isCall && isBuiltInObject(object, context)))) ||
+      (isCall && method === "toString" && kind === "object") ||
+      (isConcat && (kind === "object" || kind === "sequence")))
+    ? { method, object, methodArguments }
     : undefined;
 };
 
@@ -2311,6 +2639,28 @@ export const IN_PLACE_METHODS = new Set([
   "copyWithin",
 ]);
 
+// The target, start, and end that copyWithin takes as numbers, where end is undefined to take the
+// length.
+export const translateCopyWithinArguments = (
+  items: readonly ts.Expression[],
+  scope: Scope,
+  context: Context,
+) => {
+  const translateNumber = (argument: ts.Expression) =>
+    isNumberLike(argument, context)
+      ? translateExpression(argument, scope, context)
+      : useJavaScript("ToNumber", [translateExpression(argument, scope, context)], context);
+  const [first, second, third] = items;
+  return [
+    first === undefined ? number(0) : translateNumber(first),
+    second === undefined ? number(0) : translateNumber(second),
+    third === undefined ||
+    (context.checker.getTypeAtLocation(third).flags & ts.TypeFlags.Undefined) !== 0
+      ? getUndefined(context)
+      : translateNumber(third),
+  ];
+};
+
 // What a method that changes an array that the heap holds does: the heap after, the value that it
 // gives, and whether it throws a TypeError.
 export const translateArrayChange = (
@@ -2321,33 +2671,20 @@ export const translateArrayChange = (
   scope: Scope,
   context: Context,
 ) => {
-  const translateNumber = (argument: ts.Expression) =>
-    isNumberLike(argument, context)
-      ? translateExpression(argument, scope, context)
-      : useJavaScript("ToNumber", [translateExpression(argument, scope, context)], context);
-  const [first, second, third] = items;
+  const [first] = items;
   const reordered =
     method === "reverse"
       ? useJavaScript("ArrayReverse", [heap, ref], context)
       : method === "sort"
         ? useJavaScript(
             "ArraySort",
-            [heap, ref, translateSortOrder(first, scope, context)],
+            [heap, ref, ...translateSortArguments(first, scope, context)],
             context,
           )
         : method === "copyWithin"
           ? useJavaScript(
               "ArrayCopyWithin",
-              [
-                heap,
-                ref,
-                first === undefined ? number(0) : translateNumber(first),
-                second === undefined ? number(0) : translateNumber(second),
-                third === undefined ||
-                (context.checker.getTypeAtLocation(third).flags & ts.TypeFlags.Undefined) !== 0
-                  ? getUndefined(context)
-                  : translateNumber(third),
-              ],
+              [heap, ref, ...translateCopyWithinArguments(items, scope, context)],
               context,
             )
           : undefined;
@@ -2364,11 +2701,15 @@ export const translateArrayChange = (
       ]);
 };
 
-// A splice whose result nothing reads, as tla-ts doesn't make the array of what it removes.
-export const isSpliceStatement = (node: ts.CallExpression, context: Context) =>
+// A splice whose result nothing holds, as a statement drops it and a for-of only iterates it, as
+// tla-ts makes no array of what it removes.
+export const isUnheldSplice = (node: ts.CallExpression, context: Context) =>
   ts.isPropertyAccessExpression(node.expression) &&
   node.expression.name.text === "splice" &&
-  ts.isExpressionStatement(node.parent) &&
+  (ts.isExpressionStatement(node.parent) ||
+    (ts.isForOfStatement(node.parent) &&
+      node.parent.expression === node &&
+      node.parent.awaitModifier === undefined)) &&
   node.arguments.length > 0 &&
   node.arguments.slice(0, 2).every((argument) => isNumberLike(argument, context));
 
@@ -2392,7 +2733,7 @@ export const getHeapSetOrMapChange = (node: ts.Node, context: Context) =>
 export const getHeapArrayChange = (node: ts.Node, context: Context) =>
   ts.isCallExpression(node) &&
   ts.isPropertyAccessExpression(node.expression) &&
-  (IN_PLACE_METHODS.has(node.expression.name.text) || isSpliceStatement(node, context)) &&
+  (IN_PLACE_METHODS.has(node.expression.name.text) || isUnheldSplice(node, context)) &&
   isHeapArray(node.expression.expression, context) &&
   (["push", "unshift"].includes(node.expression.name.text) ||
     !node.arguments.some(ts.isSpreadElement))
@@ -2436,27 +2777,58 @@ export const translateArrayIteration = (
   receiver = translateBuiltInValue("Array.prototype", node, context),
 ) =>
   ifExpression(
-    junction("And", [
-      useJavaScript(
-        "HoldsBuiltIn",
-        [
-          heap,
-          receiver,
-          useJavaScript("WellKnownSymbol", [string("iterator")], context),
-          string("Array.prototype.values"),
-        ],
-        context,
-      ),
-      holdsArrayIteratorNext(heap, node, context),
-    ]),
+    holdsArrayIteration(heap, node, context, receiver),
     value,
-    apply("Assert", [
-      boolean(false),
-      string("tla-ts can't iterate an array whose iterator a script replaced"),
-    ]),
+    apply("Assert", [boolean(false), string(ARRAY_ITERATOR_REPLACED)]),
   );
 
-const holdsArrayIteratorNext = (heap: Expression, node: ts.Node, context: Context) =>
+// The array that a pattern destructures through its iterator. A pattern whose type isn't an array's
+// may destructure an object, such as an iterator, whose indices don't hold its elements.
+export const translatePatternIteration = (
+  value: Expression,
+  heap: Expression,
+  pattern: ts.Node,
+  type: ts.Type,
+  context: Context,
+) => {
+  const iterated = translateArrayIteration(value, heap, pattern, context);
+  return context.checker.isArrayLikeType(type)
+    ? iterated
+    : ifExpression(
+        useJavaScript("IsRef", [value], context),
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't destructure an object through its iterator"),
+        ]),
+        iterated,
+      );
+};
+
+export const ARRAY_ITERATOR_REPLACED =
+  "tla-ts can't iterate an array whose iterator a script replaced";
+
+// Whether the receiver still holds the built-in iterator and array iterators the built-in next.
+export const holdsArrayIteration = (
+  heap: Expression,
+  node: ts.Node,
+  context: Context,
+  receiver = translateBuiltInValue("Array.prototype", node, context),
+) =>
+  junction("And", [
+    useJavaScript(
+      "HoldsBuiltIn",
+      [
+        heap,
+        receiver,
+        useJavaScript("WellKnownSymbol", [string("iterator")], context),
+        string("Array.prototype.values"),
+      ],
+      context,
+    ),
+    holdsArrayIteratorNext(heap, node, context),
+  ]);
+
+export const holdsArrayIteratorNext = (heap: Expression, node: ts.Node, context: Context) =>
   useJavaScript(
     "HoldsBuiltIn",
     [
@@ -2486,6 +2858,62 @@ export const translateArrayLikeCall = (
       context,
       false,
     );
+  // toString joins an object that has a join, and otherwise gives Object.prototype.toString's tag.
+  if (method === "toString") {
+    return share(translateExpression(object, scope, context), "object", context, (owner) => {
+      const heap = getHeap(scope, node, context);
+      return ifExpression(
+        apply("=", [
+          useJavaScript("Get", [heap, owner, string("join")], context),
+          getUndefined(context),
+        ]),
+        useJavaScript("ObjectToString", [heap, owner, string("")], context),
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't call the join that this object holds"),
+        ]),
+      );
+    });
+  }
+  // concat adds the object as one element, unless it's an array or Symbol.isConcatSpreadable
+  // marks it, as it is for its arguments.
+  if (method === "concat") {
+    return share(translateExpression(object, scope, context), "object", context, (owner) => {
+      if (getKind(object, context) === "sequence") {
+        return operate(
+          owner,
+          translateMethodElements(method, owner, undefined, node, scope, context),
+        );
+      }
+      const heap = getHeap(scope, node, context);
+      return ifExpression(
+        apply("=", [
+          useJavaScript(
+            "Get",
+            [
+              heap,
+              owner,
+              useJavaScript("WellKnownSymbol", [string("isConcatSpreadable")], context),
+            ],
+            context,
+          ),
+          getUndefined(context),
+        ]),
+        operate(
+          owner,
+          ifExpression(
+            useJavaScript("IsArray", [heap, owner], context),
+            translateMethodElements(method, owner, "ArrayLike", node, scope, context),
+            tuple([owner]),
+          ),
+        ),
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't concat an object that Symbol.isConcatSpreadable marks"),
+        ]),
+      );
+    });
+  }
   // A search from an index counts from the length, which the present elements don't have.
   const isSkippingHoles =
     HOLE_SKIPPING_METHODS.has(method) && (!method.endsWith("ndexOf") || methodArguments.length < 2);
@@ -2515,8 +2943,33 @@ export const translateArrayLikeCall = (
 
 // The array methods that read an array-like object, and those that change it in place, which a
 // call runs on an object where a script stores them under a key.
-const STORED_ARRAY_READS = new Set(["join", "slice", "indexOf", "lastIndexOf"]);
+const STORED_ARRAY_READS = new Set([
+  "join",
+  "slice",
+  "indexOf",
+  "lastIndexOf",
+  "every",
+  "some",
+  "reduce",
+  "reduceRight",
+]);
 const STORED_ARRAY_CHANGES = new Set(["push", "pop", "shift", "unshift", "reverse"]);
+
+// A call of Array.prototype's method that changes an object in place, which call runs on the object.
+export const getArrayLikeChange = (node: ts.CallExpression, context: Context) => {
+  const method = getArrayMethodCall(node, context);
+  const object = node.arguments.at(0);
+  // reverse and copyWithin give the object, whose type the call's says is an array, so only a
+  // statement drops it.
+  return method !== undefined &&
+    (STORED_ARRAY_CHANGES.has(method) || method === "copyWithin") &&
+    (!["reverse", "copyWithin"].includes(method) || ts.isExpressionStatement(node.parent)) &&
+    object !== undefined &&
+    getKind(object, context) === "object" &&
+    !node.arguments.some(ts.isSpreadElement)
+    ? { method, object, items: node.arguments.slice(1) }
+    : undefined;
+};
 
 type StoredBuiltIn = "Object.prototype.toString" | `Array.prototype.${string}`;
 
@@ -2552,10 +3005,15 @@ export const getStoredCall = (node: ts.Node, context: Context): StoredCall | und
             (STORED_ARRAY_READS.has(method) &&
               (!method.endsWith("ndexOf") || node.arguments.length > 0)));
   };
+  // An object whose prototype is an array that the script makes inherits the array's methods.
+  const inherited = hasPrototypeArray(context) ? [`Array.prototype.${callee.name.text}`] : [];
   const builtIns = new Set(
-    findNodes(node.getSourceFile(), ts.isPropertyAccessExpression)
-      .map((inner) => getStoredBuiltIn(inner, context))
-      .filter(isRunnable),
+    [
+      ...findNodes(node.getSourceFile(), ts.isPropertyAccessExpression).map((inner) =>
+        getStoredBuiltIn(inner, context),
+      ),
+      ...inherited,
+    ].filter(isRunnable),
   );
   return builtIns.size === 0
     ? undefined
@@ -2575,12 +3033,28 @@ const getUntypedStoredCall = (node: ts.Node, context: Context) =>
 export const isUntypedStoredCall = (node: ts.Node, context: Context) =>
   getUntypedStoredCall(node, context) !== undefined;
 
+// A reduce or a reduceRight without an initial value, which throws a TypeError where its receiver
+// has no element below its length.
+const isUnseededReduce = (call: StoredCall, builtIn: StoredBuiltIn) =>
+  ["reduce", "reduceRight"].includes(getStoredMethod(builtIn)) && call.node.arguments.length < 2;
+
 // Whether such a call may run a built-in method that changes its receiver in place, which only
 // statements can run.
 export const isStoredChange = (node: ts.Node, context: Context) =>
   getUntypedStoredCall(node, context)?.builtIns.some((builtIn) =>
     STORED_ARRAY_CHANGES.has(getStoredMethod(builtIn)),
   ) === true;
+
+// Whether such a call may change its receiver or throw, which only statements can run.
+export const isStoredStatement = (node: ts.Node, context: Context) => {
+  const call = getUntypedStoredCall(node, context);
+  return (
+    call?.builtIns.some(
+      (builtIn) =>
+        STORED_ARRAY_CHANGES.has(getStoredMethod(builtIn)) || isUnseededReduce(call, builtIn),
+    ) === true
+  );
+};
 
 // What a call of a key under which a script stores built-in methods does where the value that it
 // calls is one of them: the heap after, the value that it gives, and whether it throws a TypeError.
@@ -2615,12 +3089,27 @@ export const translateStoredCall = (
         context,
       );
     }
-    const read = translateArrayLikeCall(node, scope, context, {
-      method,
-      object: call.receiver,
-      methodArguments: node.arguments,
-    });
-    return giving(read ?? getUndefined(context));
+    const read = giving(
+      translateArrayLikeCall(node, scope, context, {
+        method,
+        object: call.receiver,
+        methodArguments: node.arguments,
+      }) ?? getUndefined(context),
+    );
+    return isStatement && isUnseededReduce(call, builtIn)
+      ? ifExpression(
+          apply("=", [
+            field(useJavaScript("PresentElements", [heap, ref], context), "values"),
+            tuple([]),
+          ]),
+          record("Record", [
+            { name: "heap", value: heap },
+            { name: "value", value: getUndefined(context) },
+            { name: "isThrown", value: boolean(true) },
+          ]),
+          read,
+        )
+      : read;
   };
   return call.builtIns
     .filter((builtIn) => isStatement || !STORED_ARRAY_CHANGES.has(getStoredMethod(builtIn)))
@@ -2763,6 +3252,32 @@ const translateNewCollection = (
       );
     }
   }
+  // The keys that an array gives are sequences, which lack the identity that a key needs. Entries
+  // and keys come from unique keys, so no two of them are equal.
+  const type = context.checker.getTypeAtLocation(node);
+  const keyType = isTypeReference(type) ? context.checker.getTypeArguments(type).at(0) : undefined;
+  const source = argument === undefined ? undefined : skipCasts(argument);
+  const isDistinct =
+    source !== undefined &&
+    ts.isCallExpression(source) &&
+    ts.isPropertyAccessExpression(source.expression) &&
+    (getBuiltIn(source.expression.expression, context) === "Object"
+      ? source.expression.name.text === "entries"
+      : ["entries", "keys"].includes(source.expression.name.text) &&
+        ["set", "map", "sequence"].includes(getKind(source.expression.expression, context)));
+  if (
+    argument !== undefined &&
+    !isDistinct &&
+    !ts.isArrayLiteralExpression(argument) &&
+    !["set", "map"].includes(getKind(argument, context)) &&
+    keyType !== undefined &&
+    mayBeSequenceType(keyType, context.checker)
+  ) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't tell whether two equal arrays are the same array",
+      argument,
+    );
+  }
   if (kind === "Set") {
     if (argument === undefined) return set([]);
     if (ts.isArrayLiteralExpression(argument) && !argument.elements.some(ts.isSpreadElement)) {
@@ -2774,11 +3289,24 @@ const translateNewCollection = (
     return translateUnknown(node, `Unsupported constructor: new ${constructor}`, context);
   }
   if (argument === undefined) return tuple([]);
+  const getMapOf = (entries: ts.Expression) =>
+    useJavaScript(
+      context.hasSpecialNumbers ? "KeyedMapOf" : "MapOf",
+      [translateExpression(entries, scope, context)],
+      context,
+    );
+  // Each entry, or map or array of entries that the array spreads, adds to those before it.
   if (ts.isArrayLiteralExpression(argument)) {
     if (argument.elements.length === 0) return tuple([]);
     return argument.elements
       .toReversed()
       .map((entry) => {
+        if (ts.isSpreadElement(entry) && getKind(entry.expression, context) === "map") {
+          return translateExpression(entry.expression, scope, context);
+        }
+        if (ts.isSpreadElement(entry) && getKind(entry.expression, context) === "sequence") {
+          return getMapOf(entry.expression);
+        }
         if (!ts.isArrayLiteralExpression(entry) || entry.elements.length !== 2) {
           throw new TlaTypeScriptError("Write each Map entry as [key, value]", entry);
         }
@@ -2791,7 +3319,9 @@ const translateNewCollection = (
   }
   if (getKind(argument, context) === "map") return translateExpression(argument, scope, context);
   const map = translateFunctionConstructor(argument, scope, context);
-  if (map === undefined)
+  if (map !== undefined) return map;
+  if (getKind(argument, context) !== "sequence") {
     throw new TlaTypeScriptError(`Unsupported constructor: new ${constructor}`, node);
-  return map;
+  }
+  return getMapOf(argument);
 };

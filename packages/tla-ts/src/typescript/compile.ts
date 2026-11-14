@@ -1,12 +1,14 @@
 import ts from "@typescript/typescript6";
 import { getWritten, getWrittenRoots, translateScript, writesState } from "./actions";
-import { getReached, rejectSharing } from "./aliasing";
+import { getReached, isMakingObjects, rejectSharing } from "./aliasing";
 import {
   type Context,
   createContext,
   findNodes,
   getCallee,
+  getFunction,
   getSymbol,
+  getTopLevelDeclaration,
   isInertValue,
   isScript,
 } from "./context";
@@ -17,9 +19,11 @@ import {
   findChangedArrays,
   findHeapArrays,
   isHoleyArray,
+  isThrownArray,
+  isPrototypeArray,
   translateConstantFunctions,
 } from "./heap";
-import { translateBuiltIns } from "./intrinsics";
+import { findGeneratorPrototypes, getCodePoint, translateBuiltIns } from "./intrinsics";
 import { WELL_KNOWN_SYMBOLS } from "./javascript";
 import { type Exported, isDeclaration, type Model, readModel, type Variable } from "./model";
 import { createProgram } from "./program";
@@ -41,7 +45,8 @@ import {
   tuple,
 } from "./tla";
 import { BUILT_INS } from "./built-ins";
-import { getDomain, getKeptIterator, TYPED_ARRAYS } from "./types";
+import { isEsModule, NATIVE_ERRORS } from "./exceptions";
+import { getDomain, getKeptIterator, getWrappedThis, TYPED_ARRAYS } from "./types";
 
 // A state variable starts at its initializer, or at every value of its type without one.
 const translateInitial = (variable: Variable, context: Context) => {
@@ -90,10 +95,13 @@ const translateExported = (
 // Compiles a TypeScript file into a TLA+ spec and the config that checks it. Imports resolve
 // relative to fileName, and the module takes its name, so die-hard.ts is the module DieHard.
 // Without a file system, as in a browser, libraries holds TypeScript's declaration files by name.
+// Where the CLI runs a script in Node's place, isNodeScript has the script report a throw or a
+// rejection that nothing handles with the text Node prints.
 export const compile = (
   source: string,
   fileName = "spec.ts",
   libraries?: ReadonlyMap<string, string>,
+  isNodeScript = false,
 ): CompiledSpec => {
   const path = fileName.replaceAll("\\", "/");
   const program = createProgram(source, path, libraries);
@@ -125,6 +133,99 @@ export const compile = (
       files.push(imported);
     });
   visitImports(sourceFile);
+  // The code units outside ASCII that the script's text holds, or that the escapes of its literals
+  // and names write, whose codes the module tells. A lone surrogate is half of a pair, as a
+  // module's text holds only whole characters.
+  const texts = [sourceFile, ...files].map((file) => file.text);
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isLiteralExpression(node) ||
+      ts.isTemplateLiteralToken(node) ||
+      ts.isIdentifier(node) ||
+      ts.isPrivateIdentifier(node)
+    ) {
+      texts.push(node.text);
+    }
+    // The characters that decodeURI, decodeURIComponent, and unescape may make of a string's
+    // escapes: each %uXXXX, each %XX, and the UTF-8 that a run of %XX encodes.
+    if (ts.isStringLiteralLike(node)) {
+      const runs = [...node.text.matchAll(/(?:%[0-9a-f]{2})+/gi)].map((match) =>
+        match[0]
+          .slice(1)
+          .split("%")
+          .map((byte) => Number.parseInt(byte, 16)),
+      );
+      texts.push(
+        ...[...node.text.matchAll(/%u([0-9a-f]{4})/gi)].map((match) =>
+          String.fromCharCode(Number.parseInt(match[1], 16)),
+        ),
+        ...runs.map((bytes) => String.fromCharCode(...bytes)),
+        ...runs.map((bytes) => new TextDecoder().decode(Uint8Array.from(bytes))),
+      );
+    }
+    // String.fromCharCode and String.fromCodePoint of numbers that the text writes make the code
+    // units of those numbers, where fromCodePoint throws no RangeError.
+    const method =
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.expression.getText() === "String"
+        ? node.expression.name.text
+        : undefined;
+    const numbers =
+      ts.isCallExpression(node) && node.arguments.length > 0
+        ? node.arguments.map((argument) =>
+            ts.isNumericLiteral(argument)
+              ? Number(argument.text)
+              : ts.isPrefixUnaryExpression(argument) &&
+                  argument.operator === ts.SyntaxKind.MinusToken &&
+                  ts.isNumericLiteral(argument.operand)
+                ? -Number(argument.operand.text)
+                : Number.NaN,
+          )
+        : [Number.NaN];
+    if (method === "fromCharCode" && numbers.every(Number.isFinite)) {
+      texts.push(String.fromCharCode(...numbers));
+    }
+    if (
+      method === "fromCodePoint" &&
+      numbers.every((value) => Number.isInteger(value) && value >= 0 && value <= 0x10ffff)
+    ) {
+      texts.push(String.fromCodePoint(...numbers));
+    }
+    ts.forEachChild(node, visit);
+  };
+  [sourceFile, ...files].forEach(visit);
+  const getCodes = (text: string) =>
+    Array.from({ length: text.length }, (_, position) => text.charCodeAt(position)).filter(
+      (code) => code >= 128,
+    );
+  // The code points that the code units make, where a high surrogate before a low one makes one.
+  const getPoints = (units: Set<number>) => {
+    const all = [...units];
+    const isHigh = (code: number) => code >= 0xd800 && code <= 0xdbff;
+    const isLow = (code: number) => code >= 0xdc00 && code <= 0xdfff;
+    return [
+      ...all
+        .filter((code) => !isHigh(code) && !isLow(code))
+        .map((code) => String.fromCharCode(code)),
+      ...all
+        .filter(isHigh)
+        .flatMap((high) => all.filter(isLow).map((low) => String.fromCharCode(high, low))),
+    ];
+  };
+  // The code units that the script's text holds, with those of each case of the code points they
+  // make, as a script may change the case of what it reads.
+  const getClosed = (units: Set<number>): Set<number> => {
+    const closed = new Set([
+      ...units,
+      ...getPoints(units).flatMap((point) => [
+        ...getCodes(point.toUpperCase()),
+        ...getCodes(point.toLowerCase()),
+      ]),
+    ]);
+    return closed.size === units.size ? units : getClosed(closed);
+  };
+  context.characters = getClosed(new Set(texts.flatMap(getCodes)));
   // An imported file's top-level statements that change what the model reads run before the
   // model's own, with the variables of imported files that the model reaches and that change.
   const hasEffect = (node: ts.Node): boolean =>
@@ -182,7 +283,12 @@ export const compile = (
           ]
         : [];
     });
-    const states = declared.some((state) => state.isChanged) || run.length > 0 ? declared : [];
+    // An object that a variable makes, itself or through a function that it calls, keeps its
+    // identity, so its file makes it once.
+    const states =
+      declared.some((state) => state.isChanged) || run.length > 0
+        ? declared
+        : declared.filter((state) => isMakingObjects(state.statement, context));
     // A class of an imported file that the model reaches, which its file makes where it declares it.
     const classes = getReached([sourceFile, ...run], context).filter(
       (node): node is ts.ClassDeclaration =>
@@ -214,25 +320,41 @@ export const compile = (
   const heap = program.checker
     .getSymbolsInScope(sourceFile, ts.SymbolFlags.TypeAlias)
     .find((symbol) => symbol.name === "PropertyKey");
+  // A class that the script declares, whose prototype only an object can hold.
+  const isScriptClass = (node: ts.Node | undefined) =>
+    node !== undefined && ts.isClassLike(node) && !node.getSourceFile().isDeclarationFile;
   const usesObjects = (node: ts.Node): boolean =>
     ts.isObjectLiteralExpression(node) ||
     (ts.isClassLike(node) &&
       (node.heritageClauses ?? []).every((clause) =>
         clause.types.every(
           (type) =>
-            ts.isIdentifier(type.expression) &&
-            ["Object", "Boolean", "Number", "String"].includes(type.expression.text),
+            type.expression.kind === ts.SyntaxKind.NullKeyword ||
+            (ts.isIdentifier(type.expression) &&
+              ["Object", "Boolean", "Number", "String"].includes(type.expression.text)),
         ),
       )) ||
     (ts.isPropertyAccessExpression(node) &&
       ((ts.isIdentifier(node.expression) && node.expression.text === "Object") ||
         node.name.text === "hasOwnProperty")) ||
+    (ts.isPropertyAccessExpression(node) &&
+      node.name.text === "prototype" &&
+      isScriptClass(getSymbol(node.expression, context.checker)?.valueDeclaration)) ||
+    // A class with members that extends a native error, whose errors only objects can be.
+    (ts.isClassLike(node) &&
+      node.members.length > 0 &&
+      (node.heritageClauses ?? []).some((clause) =>
+        clause.types.some(
+          (type) => ts.isIdentifier(type.expression) && NATIVE_ERRORS.has(type.expression.text),
+        ),
+      )) ||
     (ts.isNewExpression(node) &&
       ts.isIdentifier(node.expression) &&
       ["Boolean", "Number", "String", "Date"].includes(node.expression.text)) ||
     (ts.isIdentifier(node) &&
       [
         "arguments",
+        "Reflect",
         "Symbol",
         "Promise",
         "setTimeout",
@@ -248,7 +370,19 @@ export const compile = (
     (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) ||
     node.kind === ts.SyntaxKind.AsyncKeyword ||
     isHoleyArray(node) ||
+    isThrownArray(node) ||
+    // A function that a script holds as a value, such as an array's element or an operand, which
+    // only a model value on the heap can be.
+    (ts.isIdentifier(node) &&
+      (ts.isArrayLiteralExpression(node.parent) ||
+        ts.isBinaryExpression(node.parent) ||
+        ts.isPrefixUnaryExpression(node.parent) ||
+        ts.isConditionalExpression(node.parent) ||
+        (ts.isVariableDeclaration(node.parent) && node.parent.initializer === node)) &&
+      getFunction(getTopLevelDeclaration(getSymbol(node, context.checker))) !== undefined) ||
+    isPrototypeArray(node) ||
     getKeptIterator(node, context) !== undefined ||
+    getWrappedThis(node, context) !== undefined ||
     // An array that a script gives a named property, which only an object can hold.
     (ts.isBinaryExpression(node) &&
       node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
@@ -258,20 +392,22 @@ export const compile = (
         .flatMap((type) => (type.isIntersection() ? type.types : [type]))
         .some((type) => context.checker.isArrayType(type) || context.checker.isTupleType(type))) ||
     (ts.forEachChild(node, usesObjects) ?? false);
-  const changedArrays = isScript(sourceFile)
-    ? findChangedArrays(getReached(roots, context), context)
-    : [];
+  const reached = getReached(roots, context);
+  context.reached = new Set(reached);
+  const changedArrays = isScript(sourceFile) ? findChangedArrays(reached, context) : [];
   if (
     heap !== undefined &&
     isScript(sourceFile) &&
-    (changedArrays.length > 0 || roots.some(usesObjects))
+    (changedArrays.length > 0 || reached.some(usesObjects))
   ) {
     context.heap = heap;
     context.variables.set(heap, identifier(context.names.getFresh("heap")));
+    // A name, or a string that keys a property by it, as in Object.getOwnPropertyDescriptor.
     const usesSpecialNumbers = (node: ts.Node): boolean =>
-      (ts.isIdentifier(node) &&
+      ((ts.isIdentifier(node) || ts.isStringLiteral(node)) &&
         [
           "NaN",
+          "isNaN",
           "Infinity",
           "POSITIVE_INFINITY",
           "NEGATIVE_INFINITY",
@@ -323,6 +459,7 @@ export const compile = (
       ].forEach((name) => context.builtIns.add(name));
     }
     context.heapCollections = findHeapArrays(roots, changedArrays, context);
+    context.generatorPrototypes = findGeneratorPrototypes(sourceFile, context);
     const prototypes = new Set(["Array.prototype", "Object.prototype"]);
     const changesPrototype = (node: ts.Node): boolean =>
       (ts.isCallExpression(node) &&
@@ -358,6 +495,10 @@ export const compile = (
     );
   }
   const model = readModel(sourceFile, imported, context);
+  context.script =
+    isNodeScript && model.exported.length === 0
+      ? { sourceFile, isEsModule: isEsModule(sourceFile) }
+      : undefined;
   rejectSharing(roots, context);
   // A using declaration disposes nothing where it holds only null or undefined.
   const isNothing = (node: ts.Expression | undefined) =>
@@ -445,6 +586,36 @@ export const compile = (
                     ? identifier("NegativeZero")
                     : number(Math.round(fraction[0])),
                 },
+              ]),
+            ),
+        ),
+      ),
+      define(
+        "UsedCases",
+        [],
+        tuple(
+          getPoints(context.characters)
+            .filter((point) => point.toUpperCase() !== point || point.toLowerCase() !== point)
+            .sort()
+            .map((point) =>
+              record("Record", [
+                { name: "point", value: string(point) },
+                { name: "upper", value: string(point.toUpperCase()) },
+                { name: "lower", value: string(point.toLowerCase()) },
+              ]),
+            ),
+        ),
+      ),
+      define(
+        "UsedCharacters",
+        [],
+        tuple(
+          [...context.characters]
+            .sort((left, right) => left - right)
+            .map((code) =>
+              record("Record", [
+                { name: "code", value: number(code) },
+                { name: "character", value: getCodePoint(code) },
               ]),
             ),
         ),

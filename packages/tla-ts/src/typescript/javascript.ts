@@ -37,7 +37,7 @@ export const JAVASCRIPT_MODULE = `------------------------------ MODULE JavaScri
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
 CONSTANTS Undefined, Null, Ref, Big, BuiltIns, ConstantFunctions, Symbols, Fractions,
-          NaN, Infinity, NegativeInfinity, NegativeZero
+          Characters, Cases, NaN, Infinity, NegativeInfinity, NegativeZero
 
 LOCAL Digits == {"-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
 
@@ -196,13 +196,13 @@ Power(base, exponent) ==
     [] base = NegativeInfinity ->
          CASE ~IsNegative(exponent) /\\ IsOdd(exponent) -> NegativeInfinity
            [] ~IsNegative(exponent) -> Infinity
-           [] IsOdd(Negate(exponent)) -> NegativeZero
+           [] IsOdd(exponent) -> NegativeZero
            [] OTHER -> 0
     [] base = 0 -> IF IsNegative(exponent) THEN Infinity ELSE 0
     [] base = NegativeZero ->
          CASE ~IsNegative(exponent) /\\ IsOdd(exponent) -> NegativeZero
            [] ~IsNegative(exponent) -> 0
-           [] IsOdd(Negate(exponent)) -> NegativeInfinity
+           [] IsOdd(exponent) -> NegativeInfinity
            [] OTHER -> Infinity
     [] exponent \\in Infinities ->
          LET exceedsOne == IF IsFraction(base)
@@ -214,7 +214,9 @@ Power(base, exponent) ==
     [] IsFraction(base) \\/ IsFraction(exponent) ->
          Assert(FALSE, "tla-ts can't raise fractions to a power")
     [] exponent >= 0 -> base ^ exponent
-    [] Absolute(base) = 1 -> IF IsOdd(Negate(exponent)) THEN base ELSE 1
+    [] Absolute(base) = 1 -> IF IsOdd(exponent) THEN base ELSE 1
+    \\* 2 ** -1075 is half the least number above 0, so it and any power nearer 0 round to 0.
+    [] exponent <= -1075 -> IF IsNegative(base) /\\ IsOdd(exponent) THEN NegativeZero ELSE 0
     [] OTHER -> Assert(FALSE, "tla-ts can't represent this value")
 
 \\* The order of numbers, by their kind, then their floor, then their position in Fractions, where
@@ -377,6 +379,42 @@ Imul(left, right) ==
           + lowProduct(highOf(a), lowOf(b)) + lowProduct(lowOf(a), highOf(b))) % 65536
   IN (IF high >= 32768 THEN high - 65536 ELSE high) * 65536 + (bottom % 65536)
 
+\\* Math.clz32: the count of leading zero bits in a number's low 32 bits.
+Clz32(value) ==
+  LET int32 == Int32(value)
+  IN CASE int32 < 0 -> 0
+       [] int32 = 0 -> 32
+       [] OTHER -> 31 - (CHOOSE bit \\in 0..30 : int32 \\div 2 ^ bit = 1)
+
+RECURSIVE RootBetween(_, _, _)
+RootBetween(square, low, high) ==
+  IF low = high
+  THEN low
+  ELSE LET middle == (low + high + 1) \\div 2
+       IN IF middle * middle <= square
+          THEN RootBetween(square, middle, high)
+          ELSE RootBetween(square, low, middle - 1)
+
+RECURSIVE SquareSum(_)
+SquareSum(values) ==
+  IF values = <<>>
+  THEN 0
+  ELSE LET value == IF Head(values) = NegativeZero THEN 0 ELSE Head(values)
+       IN value * value + SquareSum(Tail(values))
+
+\\* Math.hypot of numbers, whose root tla-ts holds only where it's an integer. An infinity gives
+\\* Infinity even beside NaN.
+Hypot(values) ==
+  LET has(numbers) == \\E position \\in DOMAIN values : values[position] \\in numbers
+      square == SquareSum(values)
+      root == RootBetween(square, 0, IF square < 46340 THEN square ELSE 46340)
+  IN CASE has({Infinity, NegativeInfinity}) -> Infinity
+       [] has({NaN}) -> NaN
+       [] \\E position \\in DOMAIN values : IsFraction(values[position]) ->
+            Assert(FALSE, "tla-ts can't represent a fraction")
+       [] root * root # square -> Assert(FALSE, "tla-ts can't represent a fraction")
+       [] OTHER -> root
+
 \\* JavaScript's <<. The bit below the shifted bits becomes the sign bit.
 LeftShift(left, right) ==
   LET a == Int32(left)
@@ -459,6 +497,18 @@ ElementPosition(value) ==
 \\* The value that a Set or a Map keeps as a key, where -0 is 0.
 KeyOf(value) == IF value = NegativeZero THEN 0 ELSE value
 
+\\* The map that new Map makes from an array of entries, each a key and its value, where a later
+\\* entry of a key replaces an earlier one's value.
+MapOf(entries) ==
+  [key \\in {entries[index][1] : index \\in DOMAIN entries} |->
+     entries[CHOOSE index \\in DOMAIN entries :
+               /\\ entries[index][1] = key
+               /\\ \\A later \\in index + 1..Len(entries) : entries[later][1] # key][2]]
+
+\\* MapOf, where the keys may be -0, which a map keeps as 0.
+KeyedMapOf(entries) ==
+  MapOf([index \\in DOMAIN entries |-> <<KeyOf(entries[index][1]), entries[index][2]>>])
+
 \\* The length of new Array(length), which throws a RangeError unless length is an array index.
 ArrayLength(value) ==
   IF value = NegativeZero \\/ (IsInteger(value) /\\ value >= 0)
@@ -523,11 +573,84 @@ SortedPrefix(sequence, length, IsBefore(_, _)) ==
   THEN <<>>
   ELSE SortedInsert(SortedPrefix(sequence, length - 1, IsBefore), sequence[length], IsBefore)
 
-\\* sort() with a comparator that orders its elements consistently, which puts undefined last.
-SortSequence(sequence, IsBefore(_, _)) ==
+\\* sort() as V8 runs it on fewer than 64 elements, between the calls of its comparator: it takes the
+\\* run that starts the elements, reversed where it descends, and inserts each element after it by
+\\* binary search. The state holds the elements other than undefined, the run or the elements that it
+\\* sorted so far, and the pair that it compares next.
+SortState(sequence) ==
   LET defined == SelectSeq(sequence, LAMBDA value : value # Undefined)
-  IN SortedPrefix(defined, Len(defined), IsBefore)
-       \\o [position \\in 1..(Len(sequence) - Len(defined)) |-> Undefined]
+  IN [items |-> defined, trailing |-> Len(sequence) - Len(defined), sorted |-> defined,
+      stage |-> IF Len(defined) < 2 THEN "done" ELSE "first", isDescending |-> FALSE, at |-> 2,
+      left |-> 1, right |-> 1]
+
+\\* The state of sort() with a comparator that runs as statements.
+SortStart(sequence) ==
+  IF Len(SelectSeq(sequence, LAMBDA value : value # Undefined)) >= 64
+  THEN Assert(FALSE, "tla-ts can't sort 64 or more elements with a comparator that runs statements")
+  ELSE SortState(sequence)
+
+\\* Inserts the element at a position on, or ends where none is left.
+LOCAL SortInsertFrom(state, sorted, at) ==
+  IF at > Len(state.items)
+  THEN [state EXCEPT !.stage = "done", !.sorted = sorted]
+  ELSE [state EXCEPT !.stage = "insert", !.sorted = sorted, !.at = at, !.left = 1,
+          !.right = Len(sorted) + 1]
+
+\\* Ends the run before the element at the state's position, ascending.
+LOCAL SortRunEnd(state) ==
+  LET run == SubSeq(state.items, 1, state.at - 1)
+  IN SortInsertFrom(state,
+       IF state.isDescending THEN [position \\in DOMAIN run |-> run[Len(run) - position + 1]]
+       ELSE run,
+       state.at)
+
+\\* Ends the run where the elements end.
+LOCAL SortRun(state) == IF state.at <= Len(state.items) THEN state ELSE SortRunEnd(state)
+
+\\* The pair that sort() compares next.
+SortPair(state) ==
+  CASE state.stage = "first" -> <<state.items[2], state.items[1]>>
+    [] state.stage = "run" -> <<state.items[state.at], state.items[state.at - 1]>>
+    [] OTHER -> <<state.items[state.at], state.sorted[state.left + (state.right - state.left) \\div 2]>>
+
+\\* The state after the comparator tells whether the first of the pair comes before the second.
+SortNext(state, isBefore) ==
+  CASE state.stage = "first" ->
+         SortRun([state EXCEPT !.stage = "run", !.isDescending = isBefore, !.at = 3])
+    [] state.stage = "run" ->
+         IF isBefore = state.isDescending
+         THEN SortRun([state EXCEPT !.at = @ + 1])
+         ELSE SortRunEnd(state)
+    [] OTHER ->
+         LET middle == state.left + (state.right - state.left) \\div 2
+             next == IF isBefore THEN [state EXCEPT !.right = middle]
+                     ELSE [state EXCEPT !.left = middle + 1]
+         IN IF next.left < next.right
+            THEN next
+            ELSE SortInsertFrom(next,
+                   SubSeq(next.sorted, 1, next.left - 1) \\o <<next.items[next.at]>>
+                     \\o SubSeq(next.sorted, next.left, Len(next.sorted)),
+                   next.at + 1)
+
+\\* The array that sort() gives, with undefined last.
+SortResult(state) == state.sorted \\o [position \\in 1..state.trailing |-> Undefined]
+
+RECURSIVE SortedState(_, _)
+SortedState(state, IsBefore(_, _)) ==
+  IF state.stage = "done"
+  THEN state
+  ELSE LET pair == SortPair(state)
+       IN SortedState(SortNext(state, IsBefore(pair[1], pair[2])), IsBefore)
+
+\\* sort(). V8 merges runs of 64 or more elements, which only a comparator that can't throw and
+\\* orders them consistently sorts alike.
+SortSequence(sequence, IsBefore(_, _), mayThrow) ==
+  LET defined == SelectSeq(sequence, LAMBDA value : value # Undefined)
+  IN CASE Len(defined) < 64 -> SortResult(SortedState(SortState(sequence), IsBefore))
+       [] mayThrow ->
+            Assert(FALSE, "tla-ts can't sort 64 or more elements with a comparator that may throw")
+       [] OTHER -> SortedPrefix(defined, Len(defined), IsBefore)
+            \\o [position \\in 1..(Len(sequence) - Len(defined)) |-> Undefined]
 
 RECURSIVE Join(_, _)
 Join(sequence, separator) ==
@@ -565,8 +688,8 @@ LOCAL IsObject(value) == IsRef(value) \\/ TypeOf(value) = "function"
 
 LOCAL ObjectPrototype == Ref :> "Object.prototype"
 
-\\* The global object, which a script's this is at its top level, and whose properties tla-ts doesn't
-\\* read.
+\\* The global object, which a script's this is at its top level. A host gives it properties besides
+\\* the standard globals', such as Node's process, so tla-ts reads only the keys of those.
 GlobalObject == Ref :> "globalThis"
 
 LOCAL Writable == [writable |-> TRUE, enumerable |-> TRUE, configurable |-> TRUE, kind |-> "data"]
@@ -586,12 +709,22 @@ Allocated(heap) == Ref :> Len(heap.objects)
 \\* The ref that the object an offset past the last one on the heap will have.
 NextRef(heap, offset) == Ref :> (Len(heap.objects) + offset)
 
+\\* Allocates objects in turn, which may hold the refs that NextRef gives each.
+AllocateEach(heap, objects) == [heap EXCEPT !.objects = @ \\o objects]
+
+\\* Whether a heap holds what another does, and only adds objects after them.
+IsExtendedHeap(heap, before) == [heap EXCEPT !.objects = SubSeq(@, 1, Len(before.objects))] = before
+
 LOCAL BuiltInKey(ref) == IF IsRef(ref) THEN ref[Ref] ELSE ref
 
 LOCAL IsBuiltIn(ref) ==
   /\\ IsObject(ref)
   /\\ BuiltInKey(ref) \\in DOMAIN BuiltIns
   /\\ ~BuiltIns[BuiltInKey(ref)].isOpaque
+
+\\* Whether a value is an object that the heap or the built-in objects hold, as they hold the object of
+\\* a function that a model value stands for.
+IsHeldObject(value) == IsRef(value) \\/ IsBuiltIn(value)
 
 \\* A proxy, whose target and handler revoking it sets to null. Statements run its traps, and tla-ts
 \\* stops wherever anything else reads it.
@@ -613,7 +746,7 @@ IsDataView(heap, value) ==
 
 IsTypedArray(heap, value) == IsHeap(value) /\\ "elementType" \\in DOMAIN heap.objects[value[Ref]]
 
-Lookup(heap, ref) ==
+LOCAL LookupFor(heap, ref, isGlobalKey) ==
   CASE IsProxy(heap, ref) -> Assert(FALSE, "tla-ts can't run a proxy's internal method here")
     [] IsTypedArray(heap, ref) -> Assert(FALSE, "tla-ts can't run a typed array's internal method here")
     [] ref \\in {Undefined, Null} ->
@@ -621,9 +754,21 @@ Lookup(heap, ref) ==
     [] IsHeap(ref) /\\ heap.objects[ref[Ref]].isOpaque ->
          Assert(FALSE, "tla-ts can't read the properties of a generator or a promise")
     [] IsHeap(ref) -> heap.objects[ref[Ref]]
+    [] IsRef(ref) /\\ ref = GlobalObject /\\ ~isGlobalKey ->
+         Assert(FALSE, "tla-ts can't tell which properties the global object has")
     [] IsBuiltIn(ref) /\\ BuiltInKey(ref) \\in DOMAIN heap.changed -> heap.changed[BuiltInKey(ref)]
     [] IsBuiltIn(ref) -> BuiltIns[BuiltInKey(ref)]
     [] OTHER -> Assert(FALSE, "tla-ts can't read the properties of " \\o ToString(ref))
+
+Lookup(heap, ref) == LookupFor(heap, ref, FALSE)
+
+\\* An object's own properties, where what reads or writes them names a key, which is a standard
+\\* global's where the object is the global object, and not one that the script's own var or
+\\* function may hold.
+LookupKey(heap, ref, key) ==
+  LookupFor(heap, ref,
+            LET global == BuiltIns[GlobalObject[Ref]]
+            IN key \\in DOMAIN global.values /\\ global.attributes[key].kind # "hidden")
 
 Update(heap, ref, object) ==
   IF IsHeap(ref)
@@ -679,6 +824,12 @@ Put(object, key, value) ==
 \\* A generator object, whose properties tla-ts doesn't model, as only its methods' calls run.
 GeneratorObject == [EmptyObject EXCEPT !.isOpaque = TRUE]
 
+\\* A generator object that inherits from a prototype that tla-ts holds.
+GeneratorObjectOf(prototype) == [GeneratorObject EXCEPT !.prototype = prototype]
+
+\\* An iterator helper, which tla-ts follows as a generator, inherits from %IteratorHelperPrototype%.
+IteratorHelperObject == GeneratorObjectOf(Ref :> "%IteratorHelperPrototype%")
+
 IteratorResult(value, isDone) == Put(Put(EmptyObject, "value", value), "done", isDone)
 
 \\* A property that a class defines, with its attributes.
@@ -714,6 +865,36 @@ FunctionObject(functionPrototype, code) ==
 \\* A method that a function makes each time it runs, which can't construct.
 MethodObject(functionPrototype, code) ==
   [FunctionObject(functionPrototype, code) EXCEPT !.isConstructor = FALSE]
+
+\\* A function object that reads the locals of the call that made it, with the environment of that
+\\* call, which holds the locals that it reads once it outlives the call, by key.
+ClosureObject(function, environment) == [environment |-> environment] @@ function
+
+EnvironmentObject(bindings) == [bindings |-> bindings] @@ [EmptyObject EXCEPT !.isOpaque = TRUE]
+
+\\* A local that a closure reads from the call that made it.
+Captured(heap, closure, key) ==
+  heap.objects[heap.objects[closure[Ref]].environment[Ref]].bindings[key]
+
+\\* A heap where a closure's environment holds a new value of a local that the closure changed.
+SetCaptured(heap, closure, key, value) ==
+  [heap EXCEPT !.objects[heap.objects[closure[Ref]].environment[Ref]].bindings[key] = value]
+
+\\* A heap where an environment holds the values that the locals of its call have now.
+SetEnvironment(heap, environment, bindings) ==
+  [heap EXCEPT !.objects[environment[Ref]].bindings = bindings @@ @]
+
+\\* A local that an environment holds.
+EnvironmentValue(heap, environment, key) == heap.objects[environment[Ref]].bindings[key]
+
+\\* Whether an environment holds a local, which its call stores once the local's declaration runs.
+HasEnvironmentValue(heap, environment, key) == key \\in DOMAIN heap.objects[environment[Ref]].bindings
+
+\\* The environment of the call that made a closure, or Undefined for a function that isn't one.
+EnvironmentOf(heap, value) ==
+  IF IsHeap(value) /\\ "environment" \\in DOMAIN heap.objects[value[Ref]]
+  THEN heap.objects[value[Ref]].environment
+  ELSE Undefined
 
 \\* The code that a value runs where a script calls it.
 CodeOf(heap, value) ==
@@ -762,6 +943,16 @@ GeneratorFunctionObject(functionPrototype, name, length, prototype) ==
 
 GeneratorPrototypeObject(generatorPrototype) ==
   [EmptyObject EXCEPT !.prototype = generatorPrototype]
+
+\\* A generator object that inherits from its function's prototype property, or from the realm's
+\\* prototype of generator objects where that isn't an object.
+GeneratorObjectFrom(heap, function, generatorPrototype) ==
+  LET prototype == Lookup(heap, function).values["prototype"]
+  IN GeneratorObjectOf(IF IsObjectIn(heap, prototype) THEN prototype ELSE generatorPrototype)
+
+\\* A plain function, whose prototype property holds what the objects its new makes inherit from.
+PlainFunctionObject(functionPrototype, name, length, prototype) ==
+  [GeneratorFunctionObject(functionPrototype, name, length, prototype) EXCEPT !.isConstructor = TRUE]
 
 \\* Whether one string of digits is below another of the same length.
 RECURSIVE DigitsBelow(_, _)
@@ -865,7 +1056,7 @@ LOCAL DescribeObject(object, key) ==
        [] isAccessor -> described
        [] OTHER -> [described EXCEPT !.attributes["value"].kind = attributes.kind]
 
-Describe(heap, ref, key) == DescribeObject(Lookup(heap, ref), key)
+Describe(heap, ref, key) == DescribeObject(LookupKey(heap, ref, key), key)
 
 \\* Object.getOwnPropertyDescriptors, which makes a description of each own property of an object,
 \\* and then the object that holds them under their keys, last, so that Allocated names it.
@@ -878,10 +1069,8 @@ DescribeAll(heap, object) ==
                 Ref :> (first + CHOOSE position \\in DOMAIN keys : keys[position] = key)]
   IN Allocate(described, PutAll(EmptyObject, refs, keys))
 
-HasOwn(heap, ref, key) == key \\in DOMAIN Own(heap, ref)
-
 IsEnumerableOwn(heap, ref, key) ==
-  LET object == Lookup(heap, ref)
+  LET object == LookupKey(heap, ref, key)
   IN key \\in DOMAIN object.values /\\ object.attributes[key].enumerable
 
 ElementSize(type) ==
@@ -982,6 +1171,9 @@ StackObject(prototype, isAsync) ==
 
 IsStack(heap, value) == IsHeap(value) /\\ "isDisposed" \\in DOMAIN Lookup(heap, value)
 
+\\* A DisposableStack, or an AsyncDisposableStack where isAsync holds.
+IsStackOf(heap, value, isAsync) == IsStack(heap, value) /\\ Lookup(heap, value).isAsync = isAsync
+
 SetDisposed(heap, ref) == [heap EXCEPT !.objects[ref[Ref]].isDisposed = TRUE]
 
 \\* The paths of the getters that read a buffer's, a view's, or a DisposableStack's internal slots.
@@ -1029,7 +1221,9 @@ LOCAL ViewGet(heap, path, receiver) ==
                          ELSE name("get ArrayBuffer.prototype.")
             IN CASE field = "byteLength" -> Len(object.bytes)
                  [] field = "maxByteLength" ->
-                      IF object.maxLength = Undefined THEN Len(object.bytes) ELSE object.maxLength
+                      IF object.maxLength = Undefined \\/ object.isDetached
+                      THEN Len(object.bytes)
+                      ELSE object.maxLength
                  [] field \\in {"resizable", "growable"} -> object.maxLength # Undefined
                  [] OTHER -> object.isDetached
 
@@ -1048,7 +1242,17 @@ LOCAL ViewReceives(heap, path, receiver) ==
 LOCAL PropertiesOf(heap, ref, key) ==
   IF IsTypedArray(heap, ref) /\\ TypedKey(key) = "property"
   THEN heap.objects[ref[Ref]]
-  ELSE Lookup(heap, ref)
+  ELSE LookupKey(heap, ref, key)
+
+\\* The own properties that a read finds, where a promise that tla-ts follows has none, as a write to
+\\* one stops.
+LOCAL ReadPropertiesOf(heap, ref, key) ==
+  IF /\\ IsHeap(ref)
+     /\\ heap.objects[ref[Ref]].isOpaque
+     /\\ "code" \\notin DOMAIN heap.objects[ref[Ref]]
+     /\\ ToString(heap.objects[ref[Ref]].prototype) = ToString(Ref :> "Promise.prototype")
+  THEN heap.objects[ref[Ref]]
+  ELSE PropertiesOf(heap, ref, key)
 
 \\* A promise that tla-ts follows as it compiles, whose properties the heap doesn't hold.
 PromiseObject == [EmptyObject EXCEPT !.prototype = Ref :> "Promise.prototype", !.isOpaque = TRUE]
@@ -1062,12 +1266,22 @@ Prototype(heap, ref) ==
   THEN heap.objects[ref[Ref]].prototype
   ELSE Lookup(heap, ref).prototype
 
+\\* Whether a typed array has an element at a key that is a number, which is an index before its end.
+LOCAL HasElement(heap, ref, key) ==
+  TypedKey(key) = "index" /\\ ToIndex(key) < ViewLength(heap, heap.objects[ref[Ref]])
+
 RECURSIVE Has(_, _, _)
 Has(heap, ref, key) ==
   IF IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
-  THEN TypedKey(key) = "index" /\\ ToIndex(key) < ViewLength(heap, heap.objects[ref[Ref]])
-  ELSE \\/ key \\in DOMAIN PropertiesOf(heap, ref, key).values
-       \\/ LET prototype == Prototype(heap, ref) IN prototype # Null /\\ Has(heap, prototype, key)
+  THEN HasElement(heap, ref, key)
+  ELSE LET object == ReadPropertiesOf(heap, ref, key)
+       IN \\/ key \\in DOMAIN object.values
+          \\/ object.prototype # Null /\\ Has(heap, object.prototype, key)
+
+HasOwn(heap, ref, key) ==
+  IF IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
+  THEN HasElement(heap, ref, key)
+  ELSE key \\in DOMAIN PropertiesOf(heap, ref, key).values
 
 \\* An error is a record of its constructor, its message and its name, an AggregateError's also of its
 \\* errors, a SuppressedError's also of its error and the error it suppressed, and one that a script
@@ -1082,7 +1296,7 @@ IsError(value) ==
 \\* that JavaScript throws differs between engines, and tla-ts gives it none. A script can't read or
 \\* change the prototype of an error class that isn't an object tla-ts holds, so its constructor
 \\* property is still the class.
-LOCAL IsSequenceValue(value) ==
+IsSequenceValue(value) ==
   ~IsRef(value) /\\ TypeOf(value) = "object" /\\ SubSeq(ToString(value), 1, 2) = "<<"
 
 LOCAL IsRegExp(heap, value) == IsHeap(value) /\\ "regexp" \\in DOMAIN heap.objects[value[Ref]]
@@ -1114,7 +1328,7 @@ GetFrom(heap, ref, key, receiver) ==
     [] IsTypedArray(heap, ref) /\\ TypedKey(key) # "property" ->
          IF TypedKey(key) = "index" THEN TypedElement(heap, ref, ToIndex(key)) ELSE Undefined
     [] OTHER ->
-         LET object == PropertiesOf(heap, ref, key)
+         LET object == ReadPropertiesOf(heap, ref, key)
              path == GetterPath(object.values[key].get)
          IN CASE key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
                    /\\ path \\in ViewGetters -> ViewGet(heap, path, receiver)
@@ -1126,6 +1340,10 @@ GetFrom(heap, ref, key, receiver) ==
                      [] IsHeap(receiver) /\\ "symbol" \\in DOMAIN Lookup(heap, receiver) ->
                           SymbolDescription(heap, Lookup(heap, receiver).symbol)
                      [] OTHER -> Assert(FALSE, "tla-ts can't throw the TypeError of this getter")
+              [] key \\in DOMAIN object.values /\\ object.attributes[key].kind = "accessor"
+                   /\\ path = "get Object.prototype.__proto__" /\\ IsRef(receiver)
+                   /\\ ~IsProxy(heap, receiver) ->
+                   Prototype(heap, receiver)
               [] key \\in DOMAIN object.values -> Value(object, key)
               [] object.prototype = Null -> Undefined
               [] OTHER -> GetFrom(heap, object.prototype, key, receiver)
@@ -1161,11 +1379,16 @@ HasAnyThen(heap) ==
 \\* a getter that tla-ts can't call stops the check.
 \\* An object that tla-ts keeps outside the heap, such as an array, inherits from Array.prototype or
 \\* Object.prototype, which a script may give a then. A generator object's prototypes aren't on the
-\\* heap, so it may have a then only where some object does.
+\\* heap, so it may have a then only where some object does. A script can't give a function that a
+\\* function makes a property, so it has a then only where its prototypes do, which for an async
+\\* function are AsyncFunction.prototype, which a script can't reach, and Function.prototype.
 IsThenable(heap, value, arrayPrototype, objectPrototype) ==
   IF IsRef(value)
   THEN IF IsHeap(value) /\\ heap.objects[value[Ref]].isOpaque
-       THEN IF IsGeneratorObject(heap, value) THEN HasAnyThen(heap) ELSE TRUE
+       THEN CASE IsGeneratorObject(heap, value) -> HasAnyThen(heap)
+              [] "code" \\in DOMAIN heap.objects[value[Ref]] ->
+                   TypeOfIn(heap, Get(heap, heap.objects[value[Ref]].prototype, "then")) = "function"
+              [] OTHER -> TRUE
        ELSE TypeOfIn(heap, Get(heap, value, "then")) = "function"
   ELSE /\\ value # Null
        /\\ TypeOf(value) = "object"
@@ -1363,24 +1586,6 @@ ArrayIterator(heap, array, kind, prototype) ==
                                     @@ [iterated |-> array, index |-> 0, kind |-> kind])
   IN [heap |-> allocated, value |-> Allocated(allocated), isThrown |-> FALSE]
 
-\\* %ArrayIteratorPrototype%.next, which gives a new result object and forgets the array once done.
-ArrayIteratorNext(heap, ref) ==
-  LET iterator == heap.objects[ref[Ref]]
-      array == iterator.iterated
-      index == iterator.index
-      isDone == array = Undefined \\/ index >= ToLength(Get(heap, array, "length"))
-      element == Get(heap, array, ToString(index))
-      value == CASE isDone -> Undefined
-                 [] iterator.kind = "keys" -> index
-                 [] iterator.kind = "values" -> element
-                 [] OTHER -> <<index, element>>
-      stepped == [heap EXCEPT !.objects[ref[Ref]] =
-                    IF isDone THEN [@ EXCEPT !.iterated = Undefined] ELSE [@ EXCEPT !.index = index + 1]]
-      allocated == Allocate(stepped, IteratorResult(value, isDone))
-  IN IF IsHeap(ref) /\\ "iterated" \\in DOMAIN iterator
-     THEN [heap |-> allocated, value |-> Allocated(allocated), isThrown |-> FALSE]
-     ELSE Assert(FALSE, "tla-ts can't step an iterator that isn't an array's with its next")
-
 \\* The values of an array-like object at each index below its length, which Get reads, so that a
 \\* hole gives what a prototype holds there, or undefined.
 ArrayLikeValues(heap, ref) ==
@@ -1394,6 +1599,19 @@ IndexKeys(heap, ref) ==
   LET object == Lookup(heap, ref)
   IN {key \\in DOMAIN object.values : IsIndex(key)}
        \\cup IF object.prototype = Null THEN {} ELSE IndexKeys(heap, object.prototype)
+
+\\* The position that a loop over an array-like object visits after a hole, in its order: the next
+\\* index that the object or a prototype holds, as no other has a property. A typed array, a proxy,
+\\* or an object that tla-ts follows may have others.
+NextElementPosition(heap, ref, position, length, isReversed) ==
+  IF ~IsHeap(ref) \\/ IsTypedArray(heap, ref) \\/ IsProxy(heap, ref) \\/ heap.objects[ref[Ref]].isOpaque
+  THEN IF isReversed THEN position - 1 ELSE position + 1
+  ELSE LET held == {ToIndex(key) + 1 : key \\in IndexKeys(heap, ref)}
+           later == {other \\in held :
+                       IF isReversed THEN other < position ELSE other > position /\\ other <= length}
+       IN CASE later = {} -> IF isReversed THEN 0 ELSE length + 1
+            [] isReversed -> CHOOSE other \\in later : \\A more \\in later : more <= other
+            [] OTHER -> CHOOSE other \\in later : \\A more \\in later : other <= more
 
 \\* The elements that an array-like object or its prototypes hold below its length, in order, with
 \\* their indices. The array methods that skip holes visit these. A record holds the length, so TLC
@@ -1413,7 +1631,8 @@ PresentElements(heap, ref) ==
 RECURSIVE AccessorOf(_, _, _)
 AccessorOf(heap, ref, key) ==
   LET object == PropertiesOf(heap, ref, key)
-  IN CASE key \\in DOMAIN object.values ->
+  IN CASE IsTypedArray(heap, ref) /\\ TypedKey(key) # "property" -> Undefined
+       [] key \\in DOMAIN object.values ->
             IF object.attributes[key].kind = "accessor" THEN object.values[key] ELSE Undefined
        [] object.prototype = Null -> Undefined
        [] OTHER -> AccessorOf(heap, object.prototype, key)
@@ -1421,7 +1640,8 @@ AccessorOf(heap, ref, key) ==
 RECURSIVE AccessorFieldOf(_, _, _, _)
 AccessorFieldOf(heap, ref, key, field) ==
   LET object == PropertiesOf(heap, ref, key)
-  IN CASE key \\in DOMAIN object.values ->
+  IN CASE IsTypedArray(heap, ref) /\\ TypedKey(key) # "property" -> Undefined
+       [] key \\in DOMAIN object.values ->
             IF object.attributes[key].kind = "accessor"
             THEN object.values[key][field]
             ELSE Undefined
@@ -1432,11 +1652,14 @@ GetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "get")
 
 SetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "set")
 
-\\* The TypeError that a read throws where it runs a getter of a buffer or a view on another kind
-\\* of object, or "".
+\\* The TypeError that a read throws where it runs %ThrowTypeError% or a getter of a buffer or a view
+\\* on another kind of object, or "".
 ReadError(heap, ref, key) ==
   LET path == GetterPath(GetterOf(heap, ref, key))
-  IN IF path \\in ViewGetters /\\ ~ViewReceives(heap, path, ref) THEN "TypeError" ELSE ""
+  IN IF \\/ path = "get Function.prototype.arguments"
+        \\/ path \\in ViewGetters /\\ ~ViewReceives(heap, path, ref)
+     THEN "TypeError"
+     ELSE ""
 
 \\* Whether a write runs the __proto__ setter of Object.prototype.
 IsProtoWrite(heap, ref, key) == GetterPath(SetterOf(heap, ref, key)) = "set Object.prototype.__proto__"
@@ -1468,6 +1691,19 @@ IsPrototypeOf(heap, owner, ref) ==
      /\\ \\/ ToString(prototype) = ToString(owner)
         \\/ IsPrototypeOf(heap, owner, prototype)
 
+\\* The prototype of a generator object or an iterator helper, where tla-ts holds it: a generator
+\\* object starts with the Object.prototype of GeneratorObject only where tla-ts doesn't.
+GeneratorPrototype(heap, ref) ==
+  LET prototype == heap.objects[ref[Ref]].prototype
+  IN IF ToString(prototype) = ToString(GeneratorObject.prototype)
+     THEN Assert(FALSE, "tla-ts can't tell what a generator inherits from")
+     ELSE prototype
+
+\\* Whether a generator or an iterator helper inherits from a prototype.
+GeneratorInheritsFrom(heap, owner, ref) ==
+  LET prototype == GeneratorPrototype(heap, ref)
+  IN ToString(prototype) = ToString(owner) \\/ IsPrototypeOf(heap, owner, prototype)
+
 \\* Whether a value of any type inherits from a prototype, where only an object can.
 InheritsFrom(heap, owner, value) ==
   CASE IsRef(value) -> IsPrototypeOf(heap, owner, value)
@@ -1485,18 +1721,23 @@ IsInstanceOfError(heap, value, constructors, name) ==
          Assert(FALSE, "tla-ts can't tell whether this object is an instance of " \\o name)
     [] OTHER -> IsErrorOf(value, constructors)
 
+\\* A typed array's element can't be deleted, and a key that is a number and no element has nothing to
+\\* delete.
 CanDelete(heap, ref, key) ==
-  LET object == Lookup(heap, ref)
-  IN key \\notin DOMAIN object.values \\/ object.attributes[key].configurable
+  IF IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
+  THEN ~HasElement(heap, ref, key)
+  ELSE LET object == LookupKey(heap, ref, key)
+       IN key \\notin DOMAIN object.values \\/ object.attributes[key].configurable
 
 Delete(heap, ref, key) ==
-  LET object == Lookup(heap, ref)
+  LET object == LookupKey(heap, ref, key)
       kept == DOMAIN object.values \\ {key}
-  IN IF key \\in DOMAIN object.values
-     THEN Update(heap, ref, [object EXCEPT !.keys = SelectSeq(@, LAMBDA other : other # key),
-                                           !.values = [other \\in kept |-> @[other]],
-                                           !.attributes = [other \\in kept |-> @[other]]])
-     ELSE heap
+  IN CASE IsTypedArray(heap, ref) /\\ TypedKey(key) # "property" -> heap
+       [] key \\in DOMAIN object.values ->
+            Update(heap, ref, [object EXCEPT !.keys = SelectSeq(@, LAMBDA other : other # key),
+                                             !.values = [other \\in kept |-> @[other]],
+                                             !.attributes = [other \\in kept |-> @[other]]])
+       [] OTHER -> heap
 
 \\* Whether a value is one that only itself equals: anything but an object outside the heap, or an
 \\* error that a script made, whose record holds its identity.
@@ -1558,6 +1799,13 @@ StringOf(value) ==
     [] IsBigInt(value) -> ToString(value[Big])
     [] OTHER -> Assert(FALSE, "tla-ts can't convert objects to strings")
 
+\\* What Node prints for a promise that rejects with a primitive and that nothing handles, but for
+\\* the stack frames.
+UnhandledRejection(reason) ==
+  IF reason \\in {Undefined, Null} \\/ TypeOf(reason) \\in {"boolean", "string", "number", "bigint"}
+  THEN "node:internal/process/promises:392\\n      new UnhandledPromiseRejection(reason);\\n      ^\\n\\nUnhandledPromiseRejection: This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason \\"" \\o StringOf(reason) \\o "\\". {\\n  code: 'ERR_UNHANDLED_REJECTION'\\n}"
+  ELSE "A promise rejected with no handler"
+
 \\* Array.prototype.join of values that aren't all strings, which writes undefined and null as
 \\* empty strings.
 JoinValues(sequence, separator) ==
@@ -1612,6 +1860,12 @@ SequenceHasOwn(sequence, key) ==
 
 \\* Whether an object still holds a built-in function, which tla-ts runs as it compiles.
 HoldsBuiltIn(heap, ref, key, path) == SameValue(Get(heap, ref, key), Ref :> path)
+
+\\* Whether instanceof runs OrdinaryHasInstance on a function, as it does where the function's
+\\* @@hasInstance is Function.prototype's, or where it has none.
+IsOrdinaryHasInstance(heap, function) ==
+  LET handler == Get(heap, function, WellKnownSymbol("hasInstance"))
+  IN SameValue(handler, Undefined) \\/ SameValue(handler, Ref :> "Function.prototype.@@hasInstance")
 
 \\* What a symbol's toString, valueOf, or description gives, where Symbol.prototype still holds the
 \\* built-in method or getter.
@@ -1677,6 +1931,14 @@ ValueOf(heap, value, prototypes) ==
                                                  [] TypeOf(Lookup(heap, value).primitive) = "number" -> 2
                                                  [] OTHER -> 3], "valueOf")
        [] /\\ IsHeap(value)
+          /\\ "symbol" \\in DOMAIN Lookup(heap, value)
+          /\\ HoldsBuiltIn(heap, value, "valueOf", "Symbol.prototype.valueOf") ->
+            Lookup(heap, value).symbol
+       [] /\\ IsHeap(value)
+          /\\ "bigint" \\in DOMAIN Lookup(heap, value)
+          /\\ HoldsBuiltIn(heap, value, "valueOf", "BigInt.prototype.valueOf") ->
+            Lookup(heap, value).bigint
+       [] /\\ IsHeap(value)
           /\\ IsRef(Get(heap, value, "valueOf"))
           /\\ ~IsHeap(Get(heap, value, "valueOf"))
           /\\ Get(heap, value, "valueOf")[Ref] = "Object.prototype.valueOf" -> value
@@ -1695,6 +1957,24 @@ ThisNumber(value) ==
   IF TypeOf(value) = "number"
   THEN value
   ELSE Assert(FALSE, "tla-ts can't call a Number.prototype method on a value that isn't a number")
+
+\\* The symbol that Symbol.prototype.valueOf reads from the value that it calls the method on, a
+\\* symbol or a Symbol object, while Symbol.prototype holds the built-in method.
+ThisSymbol(heap, value) ==
+  CASE ~HoldsBuiltIn(heap, Ref :> "Symbol.prototype", "valueOf", "Symbol.prototype.valueOf") ->
+         Assert(FALSE, "tla-ts can't call Symbol.prototype.valueOf where a script replaced it")
+    [] IsSymbol(value) -> value
+    [] IsHeap(value) /\\ "symbol" \\in DOMAIN Lookup(heap, value) -> Lookup(heap, value).symbol
+    [] OTHER -> Assert(FALSE, "tla-ts can't call a Symbol.prototype method on a value that isn't a symbol")
+
+\\* The BigInt that BigInt.prototype.valueOf reads from a BigInt or a BigInt object, while
+\\* BigInt.prototype holds the built-in method.
+ThisBigIntObject(heap, value) ==
+  CASE ~HoldsBuiltIn(heap, Ref :> "BigInt.prototype", "valueOf", "BigInt.prototype.valueOf") ->
+         Assert(FALSE, "tla-ts can't call BigInt.prototype.valueOf where a script replaced it")
+    [] IsBigInt(value) -> value
+    [] IsHeap(value) /\\ "bigint" \\in DOMAIN Lookup(heap, value) -> Lookup(heap, value).bigint
+    [] OTHER -> Assert(FALSE, "tla-ts can't call a BigInt.prototype method on a value that isn't a BigInt")
 
 \\* The BigInt that BigInt.prototype.method.call reads from the value that it calls the method on.
 ThisBigInt(value) ==
@@ -1800,8 +2080,25 @@ EndsWith(value, search, position) ==
 \\* The characters whose codes are below 128, in order. tla-ts tells the codes of these only.
 LOCAL AsciiCharacters == ${formatString(String.fromCharCode(...Array.from({ length: 128 }, (_, code) => code)))}
 
+LOCAL AsciiCodes ==
+  [character \\in CharactersOf(AsciiCharacters) |->
+     CHOOSE code \\in 0..127 : SubSeq(AsciiCharacters, code + 1, code + 1) = character]
+
+\\* The codes of the characters of ASCII and of the code units outside it that a script's text holds,
+\\* which tla-ts tells the codes of only.
+LOCAL CharacterCodes ==
+  LET others == {Characters[position] : position \\in DOMAIN Characters}
+  IN  AsciiCodes @@ [character \\in {other.character : other \\in others} |->
+                       (CHOOSE other \\in others : other.character = character).code]
+
+\\* The code unit that a code gives, which tla-ts makes only where it can tell the code.
+LOCAL CodeUnit(code) ==
+  IF \\E character \\in DOMAIN CharacterCodes : CharacterCodes[character] = code
+  THEN CHOOSE character \\in DOMAIN CharacterCodes : CharacterCodes[character] = code
+  ELSE Assert(FALSE, "tla-ts can't make a character outside ASCII")
+
 \\* String.fromCharCode, which takes each code modulo 2^16, or String.fromCodePoint, which throws a
-\\* RangeError for a number that isn't a code point. tla-ts makes the characters of ASCII only.
+\\* RangeError for a number that isn't a code point and writes one past 2^16 as a surrogate pair.
 RECURSIVE FromCharCodes(_, _)
 FromCharCodes(codes, isCodePoint) ==
   IF codes = <<>>
@@ -1812,19 +2109,20 @@ FromCharCodes(codes, isCodePoint) ==
                       [] OTHER -> IntegerOf(code) % 65536
        IN  CASE isCodePoint /\\ (code \\in {NaN, Infinity, NegativeInfinity} \\/ IsFraction(code) \\/ point < 0 \\/ point > 1114111) ->
                   Assert(FALSE, "tla-ts can't throw the RangeError of String.fromCodePoint")
-             [] point >= 128 -> Assert(FALSE, "tla-ts can't make a character outside ASCII")
-             [] OTHER ->
-                  SubSeq(AsciiCharacters, point + 1, point + 1) \\o FromCharCodes(Tail(codes), isCodePoint)
+             [] point >= 65536 ->
+                  CodeUnit(55296 + (point - 65536) \\div 1024) \\o CodeUnit(56320 + ((point - 65536) % 1024))
+                    \\o FromCharCodes(Tail(codes), isCodePoint)
+             [] OTHER -> CodeUnit(point) \\o FromCharCodes(Tail(codes), isCodePoint)
 
-LOCAL AsciiCodes ==
-  [character \\in CharactersOf(AsciiCharacters) |->
-     CHOOSE code \\in 0..127 : SubSeq(AsciiCharacters, code + 1, code + 1) = character]
-
-\\* The code of a character, which a for-of visits and charCodeAt reads.
+\\* The code of a code unit, which charCodeAt reads.
 LOCAL CharacterCode(character) ==
-  IF character \\in DOMAIN AsciiCodes
-  THEN AsciiCodes[character]
+  IF character \\in DOMAIN CharacterCodes
+  THEN CharacterCodes[character]
   ELSE Assert(FALSE, "tla-ts can't tell the code of a character outside ASCII")
+
+LOCAL IsHighSurrogate(code) == code >= 55296 /\\ code <= 56319
+
+LOCAL IsLowSurrogate(code) == code >= 56320 /\\ code <= 57343
 
 \\* The code of the character at an index, or outside where the index is out of range.
 LOCAL CodeAt(value, index, outside) ==
@@ -1836,9 +2134,13 @@ LOCAL CodeAt(value, index, outside) ==
 
 CharCodeAt(value, index) == CodeAt(value, index, NaN)
 
-\\* String.prototype.codePointAt, which reads the code of a surrogate pair, though an ASCII
-\\* character's code point is its code.
-CodePointAt(value, index) == CodeAt(value, index, Undefined)
+\\* String.prototype.codePointAt, which reads a surrogate pair's code point, and otherwise the code.
+CodePointAt(value, index) ==
+  LET first == CodeAt(value, index, Undefined)
+      second == CodeAt(value, IntegerOf(index) + 1, Undefined)
+  IN  IF first # Undefined /\\ IsHighSurrogate(first) /\\ second # Undefined /\\ IsLowSurrogate(second)
+      THEN (first - 55296) * 1024 + second - 56320 + 65536
+      ELSE first
 
 LOCAL FirstOf(indices) == CHOOSE index \\in indices : \\A other \\in indices : index <= other
 
@@ -1865,11 +2167,7 @@ StringSplit(value, separator, limit) ==
   IN  CASE count = 0 -> <<>>
         [] separator = Undefined -> <<text>>
         [] Text(separator) = "" ->
-             [position \\in 1..Len(head) |->
-                LET character == SubSeq(head, position, position)
-                IN  IF character \\in DOMAIN AsciiCodes
-                    THEN character
-                    ELSE Assert(FALSE, "tla-ts can't split a string with a character outside ASCII")]
+             [position \\in 1..Len(head) |-> SubSeq(head, position, position)]
         [] text = "" -> <<text>>
         [] OTHER -> SplitPieces(text, separator, 0, count)
 
@@ -1982,7 +2280,9 @@ EncodeURI(text, kept) ==
   IF text = ""
   THEN ""
   ELSE LET character == SubSeq(text, 1, 1)
-           code == CharacterCode(character)
+           code == IF character \\in DOMAIN AsciiCodes
+                   THEN AsciiCodes[character]
+                   ELSE Assert(FALSE, "tla-ts can't encode a character outside ASCII")
        IN  (IF character \\in kept
             THEN character
             ELSE "%" \\o SubSeq(HexDigits, code \\div 16 + 1, code \\div 16 + 1)
@@ -2035,31 +2335,36 @@ RECURSIVE DecodeURI(_, _)
 DecodeURI(text, reserved) ==
   CASE text = "" -> ""
     [] SubSeq(text, 1, 1) # "%" -> SubSeq(text, 1, 1) \\o DecodeURI(Tail(text), reserved)
-    [] ByteAt(text, 1) >= 128 -> Assert(FALSE, "tla-ts can't make a character outside ASCII")
+    [] ByteAt(text, 1) >= 128 ->
+         LET count == UTF8Length(ByteAt(text, 1))
+             rest(index) == ByteAt(text, 3 * index - 2) - 128
+             point == CASE count = 2 -> (ByteAt(text, 1) - 192) * 64 + rest(2)
+                        [] count = 3 -> (ByteAt(text, 1) - 224) * 4096 + rest(2) * 64 + rest(3)
+                        [] OTHER ->
+                             (ByteAt(text, 1) - 240) * 262144 + rest(2) * 4096 + rest(3) * 64
+                               + rest(4)
+         IN  FromCharCodes(<<point>>, TRUE)
+               \\o DecodeURI(SubSeq(text, 3 * count + 1, Len(text)), reserved)
     [] OTHER ->
          LET character == SubSeq(AsciiCharacters, ByteAt(text, 1) + 1, ByteAt(text, 1) + 1)
          IN  (IF character \\in reserved THEN SubSeq(text, 1, 3) ELSE character)
                \\o DecodeURI(SubSeq(text, 4, Len(text)), reserved)
 
-LOCAL Lowercase == "abcdefghijklmnopqrstuvwxyz"
-
-LOCAL Uppercase == "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-
-\\* A character in another case, where from and to list the letters of each case in order.
-LOCAL Recased(character, from, to) ==
-  CASE character \\in CharactersOf(from) ->
-         LET position == CHOOSE index \\in 1..26 : SubSeq(from, index, index) = character
-         IN  SubSeq(to, position, position)
-    [] character \\in DOMAIN AsciiCodes -> character
-    [] OTHER -> Assert(FALSE, "tla-ts can't change the case of a character outside ASCII")
-
-RECURSIVE RecasedText(_, _, _)
-RecasedText(text, from, to) ==
-  IF text = "" THEN "" ELSE Recased(SubSeq(text, 1, 1), from, to) \\o RecasedText(Tail(text), from, to)
-
-ToLowerCase(value) == RecasedText(Text(value), Uppercase, Lowercase)
-
-ToUpperCase(value) == RecasedText(Text(value), Lowercase, Uppercase)
+\\* unescape, of Annex B, which decodes each escape %XX and %uXXXX and keeps any other character,
+\\* such as a % that starts neither.
+RECURSIVE Unescape(_)
+Unescape(text) ==
+  LET isLong == /\\ Len(text) >= 6
+                /\\ SubSeq(text, 1, 2) = "%u"
+                /\\ \\A position \\in 3..6 : SubSeq(text, position, position) \\in DigitsOf(16)
+      length == CASE isLong -> 6 [] IsEscapeAt(text, 1) -> 3 [] OTHER -> 1
+      code == IF isLong THEN ByteAt(text, 2) * 256 + ByteAt(text, 4) ELSE ByteAt(text, 1)
+  IN  CASE text = "" -> ""
+        [] OTHER ->
+             (CASE length = 1 -> SubSeq(text, 1, 1)
+                [] code < 128 -> SubSeq(AsciiCharacters, code + 1, code + 1)
+                [] OTHER -> CodeUnit(code))
+               \\o Unescape(SubSeq(text, length + 1, Len(text)))
 
 \\* JavaScript's < of two strings, which compares the codes of their first different characters.
 RECURSIVE StringLessThan(_, _)
@@ -2074,14 +2379,103 @@ StringLessThan(left, right) ==
 \\* sort()'s order without a comparator, which compares the strings of the elements.
 DefaultSortBefore(left, right) == StringLessThan(StringOf(left), StringOf(right))
 
-\\* The values that a for-of over a string visits, its code points, which are its characters where
-\\* each is ASCII.
+\\* The code points of a string outside ASCII, where a surrogate pair is one.
+RECURSIVE CodePoints(_)
+CodePoints(text) ==
+  LET size == IF Len(text) >= 2
+                 /\\ IsHighSurrogate(CharacterCode(SubSeq(text, 1, 1)))
+                 /\\ IsLowSurrogate(CharacterCode(SubSeq(text, 2, 2)))
+              THEN 2
+              ELSE 1
+  IN  IF text = "" THEN <<>> ELSE <<SubSeq(text, 1, size)>> \\o CodePoints(SubSeq(text, size + 1, Len(text)))
+
+\\* The values that a for-of over a string or its spread visits, its code points.
 StringCharacters(value) ==
-  [position \\in 1..Len(value) |->
-     LET character == SubSeq(value, position, position)
-     IN  IF character \\in DOMAIN AsciiCodes
-         THEN character
-         ELSE Assert(FALSE, "tla-ts can't iterate a string with a character outside ASCII")]
+  IF IsAscii(value)
+  THEN [position \\in 1..Len(value) |-> SubSeq(value, position, position)]
+  ELSE CodePoints(value)
+
+LOCAL Lowercase == "abcdefghijklmnopqrstuvwxyz"
+
+LOCAL Uppercase == "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+\\* The cases of the code points outside ASCII whose case changes, by code point.
+LOCAL CaseChanges ==
+  LET changes == {Cases[position] : position \\in DOMAIN Cases}
+  IN  [point \\in {change.point : change \\in changes} |->
+         CHOOSE change \\in changes : change.point = point]
+
+\\* A code point in upper or lower case. The compiler lists each code point that the code units it
+\\* knows make and whose case changes, so any other such code point keeps its case. A capital sigma
+\\* lowers to a final sigma at the end of a word.
+LOCAL RecasedPoint(point, isUpper) ==
+  LET from == IF isUpper THEN Lowercase ELSE Uppercase
+      to == IF isUpper THEN Uppercase ELSE Lowercase
+  IN  CASE ~isUpper /\\ point = ${formatString("\u03a3")} ->
+             Assert(FALSE, "tla-ts can't lower the case of a capital sigma")
+        [] point \\in DOMAIN CaseChanges ->
+             IF isUpper THEN CaseChanges[point].upper ELSE CaseChanges[point].lower
+        [] point \\in CharactersOf(from) ->
+             LET position == CHOOSE index \\in 1..26 : SubSeq(from, index, index) = point
+             IN  SubSeq(to, position, position)
+        [] \\A character \\in CharactersOf(point) : character \\in DOMAIN CharacterCodes -> point
+        [] OTHER -> Assert(FALSE, "tla-ts can't change the case of a character outside ASCII")
+
+RECURSIVE RecasedPoints(_, _)
+RecasedPoints(points, isUpper) ==
+  IF points = <<>> THEN "" ELSE RecasedPoint(Head(points), isUpper) \\o RecasedPoints(Tail(points), isUpper)
+
+ToLowerCase(value) == RecasedPoints(StringCharacters(Text(value)), FALSE)
+
+ToUpperCase(value) == RecasedPoints(StringCharacters(Text(value)), TRUE)
+
+\\* An iterator of a string's characters, which reads them as next steps it.
+StringIterator(heap, string, prototype) == ArrayIterator(heap, string, "string", prototype)
+
+\\* The string that String.prototype[Symbol.iterator] reads through ToString: a string, or what a
+\\* String object holds where it has no Symbol.toPrimitive and reads the built-in toString.
+IteratedString(heap, value) ==
+  CASE TypeOf(value) = "string" -> value
+    [] Get(heap, value, WellKnownSymbol("toPrimitive")) = Undefined ->
+         WrappedPrimitive(heap, value, "String", "toString")
+    [] OTHER -> Assert(FALSE, "tla-ts can't read the string of an object with a Symbol.toPrimitive")
+
+\\* A step of an array's or a string's iterator, which forgets what it iterates once done: the heap
+\\* after it, the value it gives, and whether it's done.
+BuiltInIteratorStep(heap, ref) ==
+  LET iterator == heap.objects[ref[Ref]]
+      iterated == iterator.iterated
+      index == iterator.index
+      isString == iterator.kind = "string"
+      isDone == \\/ iterated = Undefined
+                \\/ index >= IF isString
+                            THEN Len(StringCharacters(iterated))
+                            ELSE ToLength(Get(heap, iterated, "length"))
+      element == IF isString THEN StringCharacters(iterated)[index + 1] ELSE Get(heap, iterated, ToString(index))
+      value == CASE isDone -> Undefined
+                 [] iterator.kind = "keys" -> index
+                 [] iterator.kind \\in {"values", "string"} -> element
+                 [] OTHER -> <<index, element>>
+      stepped == [heap EXCEPT !.objects[ref[Ref]] =
+                    IF isDone THEN [@ EXCEPT !.iterated = Undefined] ELSE [@ EXCEPT !.index = index + 1]]
+  IN [heap |-> stepped, value |-> value, isDone |-> isDone]
+
+\\* Whether an array's or a string's iterator reads the built-in next.
+HoldsIteratorNext(heap, ref) ==
+  HoldsBuiltIn(heap, ref, "next",
+               IF heap.objects[ref[Ref]].kind = "string"
+               THEN "%StringIteratorPrototype%.next"
+               ELSE "%ArrayIteratorPrototype%.next")
+
+\\* %ArrayIteratorPrototype%.next or %StringIteratorPrototype%.next, which gives a new result object.
+BuiltInIteratorNext(heap, ref, isString) ==
+  IF /\\ IsHeap(ref)
+     /\\ "iterated" \\in DOMAIN heap.objects[ref[Ref]]
+     /\\ (heap.objects[ref[Ref]].kind = "string") = isString
+  THEN LET step == BuiltInIteratorStep(heap, ref)
+           allocated == Allocate(step.heap, IteratorResult(step.value, step.isDone))
+       IN [heap |-> allocated, value |-> Allocated(allocated), isThrown |-> FALSE]
+  ELSE Assert(FALSE, "tla-ts can't step an iterator that isn't an array's or a string's with its next")
 
 \\* A filler repeated and cut to a length.
 RECURSIVE FillTo(_, _)
@@ -2147,6 +2541,45 @@ StringTrim(value, isStart, isEnd) ==
   LET started == IF isStart THEN TrimStart(Text(value)) ELSE Text(value)
   IN  IF isEnd THEN TrimEnd(started) ELSE started
 
+RECURSIVE LowercaseHex(_, _)
+\\* A code's width lowercase hexadecimal digits.
+LowercaseHex(code, width) ==
+  IF width = 0
+  THEN ""
+  ELSE LowercaseHex(code \\div 16, width - 1)
+         \\o SubSeq("0123456789abcdef", (code % 16) + 1, (code % 16) + 1)
+
+\\* A code point's escape as a code unit's \\x or each code unit's \\u.
+LOCAL HexEscape(character) ==
+  IF Len(character) = 1 /\\ CharacterCode(character) <= 255
+  THEN "\\\\x" \\o LowercaseHex(CharacterCode(character), 2)
+  ELSE "\\\\u" \\o LowercaseHex(CharacterCode(character), 4)
+
+\\* EncodeForRegExpEscape, which escapes a code point that a pattern reads as syntax, punctuation that
+\\* some contexts do, white space, and a lone surrogate.
+LOCAL RegExpEscaped(character) ==
+  LET controls == ("\\t" :> "t") @@ ("\\n" :> "n") @@ ("\u000B" :> "v") @@ ("\\f" :> "f") @@ ("\\r" :> "r")
+  IN  CASE character \\in CharactersOf("^$\\\\.*+?()[]{}|/") -> "\\\\" \\o character
+        [] character \\in DOMAIN controls -> "\\\\" \\o controls[character]
+        [] \\/ character \\in CharactersOf(",-=<>#&!%:;@~'\`\\"")
+           \\/ character \\in Spaces
+           \\/ /\\ Len(character) = 1
+              /\\ \\/ IsHighSurrogate(CharacterCode(character))
+                 \\/ IsLowSurrogate(CharacterCode(character)) ->
+             HexEscape(character)
+        [] OTHER -> character
+
+RECURSIVE RegExpEscapedAll(_)
+RegExpEscapedAll(characters) ==
+  IF characters = <<>> THEN "" ELSE RegExpEscaped(Head(characters)) \\o RegExpEscapedAll(Tail(characters))
+
+\\* RegExp.escape, which escapes a leading decimal digit or ASCII letter too.
+RegExpEscape(value) ==
+  LET characters == StringCharacters(Text(value))
+  IN  IF characters # <<>> /\\ Head(characters) \\in CharactersOf(Alphanumerics)
+      THEN HexEscape(Head(characters)) \\o RegExpEscapedAll(Tail(characters))
+      ELSE RegExpEscapedAll(characters)
+
 \\* Regular expressions. The compiler gives a pattern as the tree of matchers that the spec's
 \\* CompilePattern makes, and RegExpStep runs a matcher with the continuation that a stack of frames
 \\* holds, backtracking where the spec's continuations fail.
@@ -2158,10 +2591,17 @@ LOCAL UppercaseOf ==
                        SubSeq("abcdefghijklmnopqrstuvwxyz", position, position) = character
      IN  SubSeq("ABCDEFGHIJKLMNOPQRSTUVWXYZ", position, position)]
 
+\\* The characters outside ASCII that simple case folding maps into it, which the u and i flags
+\\* match as the uppercase of their folding.
+LOCAL UnicodeFolds == (${formatString("\u017f")} :> "S") @@ (${formatString("\u212a")} :> "K")
+
 \\* Canonicalize of a character that a backreference compares, which is in ASCII where the other
-\\* character is, as Canonicalize maps no character outside ASCII into it.
+\\* character is, as Canonicalize maps no other character outside ASCII into it.
 LOCAL Canonical(regexp, character) ==
-  IF regexp.ignoreCase /\\ character \\in DOMAIN UppercaseOf THEN UppercaseOf[character] ELSE character
+  CASE ~regexp.ignoreCase -> character
+    [] character \\in DOMAIN UppercaseOf -> UppercaseOf[character]
+    [] regexp.unicode /\\ character \\in DOMAIN UnicodeFolds -> UnicodeFolds[character]
+    [] OTHER -> character
 
 LOCAL LineTerminators == {"\\n", "\\r", ${formatString(" ")}, ${formatString(" ")}}
 
@@ -2171,24 +2611,37 @@ LOCAL WordCharacters == CharactersOf("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOP
 LOCAL CharacterAt(text, index) ==
   IF index >= 0 /\\ index < Len(text) THEN SubSeq(text, index + 1, index + 1) ELSE ""
 
-LOCAL IsWordAt(text, index) == CharacterAt(text, index) \\in WordCharacters
+\\* Whether the character at an index is a word character, which with the u and i flags those whose
+\\* folding is are too.
+LOCAL IsWordAt(regexp, text, index) ==
+  \\/ CharacterAt(text, index) \\in WordCharacters
+  \\/ regexp.unicode /\\ regexp.ignoreCase /\\ CharacterAt(text, index) \\in DOMAIN UnicodeFolds
 
-\\* Whether a class matches a character, where the compiler lists the characters in ASCII that it
-\\* matches and, of those outside ASCII, the ones it matches where it matches none of the rest, or
-\\* the ones it doesn't where it matches all of the rest.
+\\* The code units of the character at an index that a regexp reads, where with the u flag a
+\\* surrogate pair is one character.
+LOCAL CharacterWidth(regexp, text, index) ==
+  IF /\\ regexp.unicode
+     /\\ index >= 0
+     /\\ index + 1 < Len(text)
+     /\\ IsHighSurrogate(CharacterCode(CharacterAt(text, index)))
+     /\\ IsLowSurrogate(CharacterCode(CharacterAt(text, index + 1)))
+  THEN 2
+  ELSE 1
+
+\\* Whether a class matches a character, where the compiler lists the characters that it matches
+\\* among those in ASCII and those that the script's strings may hold.
 LOCAL IsInClass(node, character) ==
   CASE character \\in node.characters -> TRUE
-    [] character \\in node.excluded \\/ character \\in DOMAIN AsciiCodes -> FALSE
-    [] node.others = "unknown" ->
-         Assert(FALSE, "tla-ts can't tell whether a class matches a character outside ASCII")
-    [] OTHER -> node.others = "all"
+    [] \\A unit \\in CharactersOf(character) : unit \\in DOMAIN CharacterCodes -> FALSE
+    [] OTHER -> Assert(FALSE, "tla-ts can't tell whether a class matches a character outside ASCII")
 
 \\* Whether a backreference's characters are the same once canonicalized, which tla-ts tells for
 \\* characters that differ only where one is an ASCII letter, digit, or underscore.
 LOCAL IsSameCharacter(regexp, left, right) ==
   CASE left = right -> TRUE
     [] ~regexp.ignoreCase -> FALSE
-    [] left \\in WordCharacters \\/ right \\in WordCharacters ->
+    [] \\E character \\in {left, right} :
+         character \\in WordCharacters \\/ (regexp.unicode /\\ character \\in DOMAIN UnicodeFolds) ->
          Canonical(regexp, left) = Canonical(regexp, right)
     [] OTHER -> Assert(FALSE, "tla-ts can't compare the case of characters that aren't ASCII letters")
 
@@ -2200,9 +2653,11 @@ RECURSIVE RegExpRepeat(_, _, _, _, _, _, _)
 \\* holds, or RegExpFailure.
 RegExpStep(regexp, text, node, state, stack) ==
   CASE node.kind = "set" ->
-         IF state.end < Len(text) /\\ IsInClass(node, CharacterAt(text, state.end))
-         THEN RegExpContinue(regexp, text, [state EXCEPT !.end = @ + 1], stack)
-         ELSE RegExpFailure
+         LET width == CharacterWidth(regexp, text, state.end)
+         IN  IF /\\ state.end < Len(text)
+                /\\ IsInClass(node, SubSeq(text, state.end + 1, state.end + width))
+             THEN RegExpContinue(regexp, text, [state EXCEPT !.end = @ + width], stack)
+             ELSE RegExpFailure
     [] node.kind = "sequence" ->
          IF node.items = <<>>
          THEN RegExpContinue(regexp, text, state, stack)
@@ -2220,17 +2675,18 @@ RegExpStep(regexp, text, node, state, stack) ==
                     <<[kind |-> "close", index |-> node.index, start |-> state.end]>> \\o stack)
     [] node.kind = "repeat" -> RegExpRepeat(regexp, text, node, node.min, node.max, state, stack)
     [] node.kind = "start" ->
-         IF state.end = 0 \\/ (regexp.multiline /\\ CharacterAt(text, state.end - 1) \\in LineTerminators)
+         IF state.end = 0 \\/ (node.multiline /\\ CharacterAt(text, state.end - 1) \\in LineTerminators)
          THEN RegExpContinue(regexp, text, state, stack)
          ELSE RegExpFailure
     [] node.kind = "end" ->
-         IF state.end = Len(text) \\/ (regexp.multiline /\\ CharacterAt(text, state.end) \\in LineTerminators)
+         IF state.end = Len(text) \\/ (node.multiline /\\ CharacterAt(text, state.end) \\in LineTerminators)
          THEN RegExpContinue(regexp, text, state, stack)
          ELSE RegExpFailure
     [] node.kind = "boundary" ->
-         IF (IsWordAt(text, state.end - 1) # IsWordAt(text, state.end)) # node.isInverted
-         THEN RegExpContinue(regexp, text, state, stack)
-         ELSE RegExpFailure
+         LET flagged == [regexp EXCEPT !.ignoreCase = node.ignoreCase]
+         IN  IF (IsWordAt(flagged, text, state.end - 1) # IsWordAt(flagged, text, state.end)) # node.isInverted
+             THEN RegExpContinue(regexp, text, state, stack)
+             ELSE RegExpFailure
     [] node.kind = "lookahead" ->
          LET found == RegExpStep(regexp, text, node.body, state, <<>>)
          IN  CASE node.isNegative /\\ found.end # -1 -> RegExpFailure
@@ -2242,8 +2698,10 @@ RegExpStep(regexp, text, node, state, stack) ==
              length == IF captured = <<>> THEN 0 ELSE captured[2] - captured[1]
          IN  IF /\\ state.end + length <= Len(text)
                 /\\ \\A offset \\in 0..(length - 1) :
-                     IsSameCharacter(regexp, CharacterAt(text, captured[1] + offset),
+                     IsSameCharacter([regexp EXCEPT !.ignoreCase = node.ignoreCase],
+                                     CharacterAt(text, captured[1] + offset),
                                      CharacterAt(text, state.end + offset))
+                /\\ length = 0 \\/ CharacterWidth(regexp, text, state.end + length - 1) = 1
              THEN RegExpContinue(regexp, text, [state EXCEPT !.end = @ + length], stack)
              ELSE RegExpFailure
 
@@ -2297,14 +2755,9 @@ RegExpSearch(regexp, text, index) ==
   IF index > Len(text)
   THEN RegExpFailure
   ELSE LET found == RegExpAt(regexp, text, index)
-       IN  IF found.end # -1 \\/ regexp.sticky THEN found ELSE RegExpSearch(regexp, text, index + 1)
-
-\\* The text that a regexp matches. A regexp with the u flag matches code points, which are the code
-\\* units of text in ASCII, where tla-ts matches it only.
-LOCAL RegExpText(regexp, value) ==
-  IF regexp.unicode /\\ ~IsAscii(Text(value))
-  THEN Assert(FALSE, "tla-ts can't match a regexp with the u flag on text outside ASCII")
-  ELSE Text(value)
+       IN  IF found.end # -1 \\/ regexp.sticky
+           THEN found
+           ELSE RegExpSearch(regexp, text, index + CharacterWidth(regexp, text, index))
 
 \\* The text of a match's capture, where 0 is the whole match, or undefined where it took no part.
 LOCAL RegExpCapture(text, match, index) ==
@@ -2318,12 +2771,15 @@ LOCAL RegExpGroups(regexp, text, match) ==
 
 RECURSIVE RegExpMatches(_, _, _)
 \\* The matches that a global regexp finds from an index on, where an empty match moves the next
-\\* search one index past it, as AdvanceStringIndex does.
+\\* search one character past it, as AdvanceStringIndex does.
 RegExpMatches(regexp, text, index) ==
   LET found == RegExpSearch(regexp, text, index)
   IN  IF found.end = -1
       THEN <<>>
-      ELSE <<found>> \\o RegExpMatches(regexp, text, IF found.end = found.start THEN found.end + 1 ELSE found.end)
+      ELSE <<found>> \\o RegExpMatches(regexp, text,
+                                         IF found.end = found.start
+                                         THEN found.end + CharacterWidth(regexp, text, found.end)
+                                         ELSE found.end)
 
 RECURSIVE RegExpSubstitute(_, _, _, _)
 \\* GetSubstitution, which writes a replacement template with each $ pattern in it replaced by the
@@ -2383,7 +2839,7 @@ RegExpSplitFrom(regexp, text, p, q) ==
   THEN <<SubSeq(text, p + 1, Len(text))>>
   ELSE LET found == RegExpAt(regexp, text, q)
        IN  IF found.end = -1 \\/ found.end = p
-           THEN RegExpSplitFrom(regexp, text, p, q + 1)
+           THEN RegExpSplitFrom(regexp, text, p, q + CharacterWidth(regexp, text, q))
            ELSE <<SubSeq(text, p + 1, q)>>
                   \\o [position \\in 1..regexp.captures |-> RegExpCapture(text, found, position)]
                   \\o RegExpSplitFrom(regexp, text, found.end, found.end)
@@ -2422,11 +2878,11 @@ RegExpElement(array, key) == IF key \\in DOMAIN array THEN array[key] ELSE Undef
 
 \\* RegExp.prototype.exec: the array of the first match, or null.
 RegExpExec(regexp, value) ==
-  LET text == RegExpText(regexp, value)
+  LET text == Text(value)
       found == RegExpFirst(regexp, text)
   IN  IF found.end = -1 THEN Null ELSE RegExpArray(regexp, text, found)
 
-RegExpTest(regexp, value) == RegExpFirst(regexp, RegExpText(regexp, value)).end # -1
+RegExpTest(regexp, value) == RegExpFirst(regexp, Text(value)).end # -1
 
 \\* The matches that RegExp.prototype[@@replace] and [@@match] read: each for a global regexp, which
 \\* leaves lastIndex at 0, or else the first.
@@ -2437,7 +2893,7 @@ LOCAL RegExpMatched(regexp, text) ==
 
 \\* String.prototype.replace through RegExp.prototype[@@replace], with a replacement template.
 RegExpReplace(regexp, value, template) ==
-  LET text == RegExpText(regexp, value)
+  LET text == Text(value)
   IN  RegExpReplaced(regexp, text, RegExpMatched(regexp, text), Text(template))
 
 \\* String.prototype.replaceAll, which throws a TypeError for a regexp that isn't global.
@@ -2450,7 +2906,7 @@ RegExpReplaceAll(regexp, value, template) ==
 RegExpMatchesOf(regexp, value, isAll) ==
   IF isAll /\\ ~regexp.global
   THEN Assert(FALSE, "tla-ts can't throw the TypeError of replaceAll with a regexp that isn't global here")
-  ELSE RegExpMatched(regexp, RegExpText(regexp, value))
+  ELSE RegExpMatched(regexp, Text(value))
 
 \\* The argument at a position that replace calls a function with for a match: the matched text,
 \\* each capture, the match's position, the text, and the named groups where the regexp has them.
@@ -2468,7 +2924,7 @@ RegExpReplaceWith(value, matches, replacements) == RegExpAssemble(Text(value), m
 \\* String.prototype.match through RegExp.prototype[@@match]: the array of the first match, or for a
 \\* global regexp an array of each match's text, or null where nothing matches.
 RegExpMatch(regexp, value) ==
-  LET text == RegExpText(regexp, value)
+  LET text == Text(value)
       matches == RegExpMatched(regexp, text)
   IN  CASE matches = <<>> -> Null
         [] regexp.global ->
@@ -2478,11 +2934,11 @@ RegExpMatch(regexp, value) ==
 
 \\* String.prototype.search through RegExp.prototype[@@search], which restores lastIndex.
 RegExpSearchIndex(regexp, value) ==
-  LET found == RegExpSearch(regexp, RegExpText(regexp, value), 0)
+  LET found == RegExpSearch(regexp, Text(value), 0)
   IN  IF found.end = -1 THEN -1 ELSE found.start
 
 \\* String.prototype.split through RegExp.prototype[@@split].
-RegExpSplit(regexp, value, limit) == RegExpPieces(regexp, RegExpText(regexp, value), limit)
+RegExpSplit(regexp, value, limit) == RegExpPieces(regexp, Text(value), limit)
 
 ToBoolean(value) ==
   CASE value \\in {Undefined, Null} -> FALSE
@@ -2590,6 +3046,17 @@ IsArray(heap, value) ==
                  \\/ IsArray(heap, target)
     [] OTHER -> IsRef(value) /\\ IsArrayObject(Lookup(heap, value))
 
+\\* The values that concat appends for an argument: the elements of an object whose
+\\* @@isConcatSpreadable property is truthy, or of an array where that property is undefined, and
+\\* otherwise the value itself.
+ConcatSpread(heap, value) ==
+  LET spreadable == IF IsRef(value)
+                    THEN Get(heap, value, WellKnownSymbol("isConcatSpreadable"))
+                    ELSE Undefined
+  IN  IF IF spreadable = Undefined THEN IsArray(heap, value) ELSE ToBoolean(spreadable)
+      THEN ArrayLike(heap, value)
+      ELSE <<value>>
+
 \\* Whether a proxy or a proxy that it reads through is revoked, so that IsArray throws a TypeError.
 RECURSIVE IsRevokedProxy(_, _)
 IsRevokedProxy(heap, value) ==
@@ -2632,14 +3099,20 @@ ForwardTarget(heap, ref, traps) ==
     [] OTHER -> Assert(FALSE, "tla-ts can't run the traps that this reads a proxy through")
 
 \\* Object.prototype.toString, which gives "[object Kind]". A value that isn't on the heap gives the
-\\* kind of object that holds it, such as Array for a sequence.
+\\* kind of object that holds it, such as Array for a sequence, or a collection the Symbol.toStringTag
+\\* of its prototype.
 ObjectToString(heap, value, kind) ==
   "[object "
     \\o (CASE value = Undefined -> "Undefined"
           [] value = Null -> "Null"
-          [] TypeOf(value) = "number" -> "Number"
-          [] TypeOf(value) = "string" -> "String"
-          [] TypeOf(value) = "boolean" -> "Boolean"
+          [] TypeOf(value) \\in {"number", "string", "boolean", "bigint", "symbol"} ->
+               LET name == CASE TypeOf(value) = "number" -> "Number"
+                             [] TypeOf(value) = "string" -> "String"
+                             [] TypeOf(value) = "boolean" -> "Boolean"
+                             [] TypeOf(value) = "bigint" -> "BigInt"
+                             [] OTHER -> "Symbol"
+               IN Tagged(heap, Ref :> (name \\o ".prototype"),
+                         IF name \\in {"BigInt", "Symbol"} THEN "Object" ELSE name)
           [] ~IsRef(value) /\\ IsError(value) ->
                Tagged(heap, Get(heap, value.constructor, "prototype"), "Error")
           [] IsProxy(heap, value) ->
@@ -2653,9 +3126,19 @@ ObjectToString(heap, value, kind) ==
                     [] OTHER -> class
           [] IsHeap(value) \\/ IsBuiltIn(value) -> Tagged(heap, value, ClassOf(heap, value))
           [] TypeOf(value) = "function" -> "Function"
+          [] kind \\in {"Map", "Set", "WeakMap", "WeakSet"} ->
+               Tagged(heap, Ref :> (kind \\o ".prototype"), "Object")
           [] kind # "" -> kind
           [] OTHER -> Assert(FALSE, "tla-ts can't tell the kind of " \\o ToString(value)))
     \\o "]"
+
+\\* An object's toString or toLocaleString, where it reads Object.prototype's, which calls the
+\\* object's toString, and that's Object.prototype's too.
+ObjectMethodString(heap, ref, method) ==
+  IF /\\ HoldsBuiltIn(heap, ref, method, "Object.prototype." \\o method)
+     /\\ HoldsBuiltIn(heap, ref, "toString", "Object.prototype.toString")
+  THEN ObjectToString(heap, ref, "")
+  ELSE Assert(FALSE, "tla-ts can't tell which method this call runs")
 
 \\* ToPrimitive of an object, which tla-ts follows where the object reads the built-in valueOf and
 \\* toString and has no Symbol.toPrimitive.
@@ -2674,6 +3157,10 @@ LOCAL LoosePrimitive(heap, ref) ==
             Assert(FALSE, "tla-ts can't convert " \\o ToString(ref) \\o " to a primitive")
        [] kind # "" /\\ isBuiltIn(valueOf, kind \\o ".prototype.valueOf") ->
             WrappedPrimitive(heap, ref, kind, "valueOf")
+       [] /\\ IsHeap(ref)
+          /\\ "bigint" \\in DOMAIN Lookup(heap, ref)
+          /\\ isBuiltIn(valueOf, "BigInt.prototype.valueOf") ->
+            Lookup(heap, ref).bigint
        [] /\\ isBuiltIn(valueOf, "Object.prototype.valueOf")
           /\\ isBuiltIn(Get(heap, ref, "toString"), "Object.prototype.toString") ->
             ObjectToString(heap, ref, "")
@@ -2694,6 +3181,8 @@ ConvertWith(heap, ref, method) ==
             NumberToString(WrappedPrimitive(heap, ref, "Number", "toString"), Undefined)
        [] path = "Boolean.prototype.toString" ->
             BooleanToString(WrappedPrimitive(heap, ref, "Boolean", "toString"))
+       [] path = "BigInt.prototype.valueOf" /\\ IsHeap(ref) /\\ "bigint" \\in DOMAIN Lookup(heap, ref) ->
+            Lookup(heap, ref).bigint
        [] OTHER -> Assert(FALSE, "tla-ts can't tell what this method gives where it converts an object")
 
 \\* ToNumber of a primitive. tla-ts can't represent a string's fraction.
@@ -2715,7 +3204,9 @@ ToNumber(value) ==
     [] IsRef(value) -> Assert(FALSE, "tla-ts can't convert this object to a number")
     [] IsBigInt(value) ->
          Assert(FALSE, "tla-ts can't throw the TypeError of converting a BigInt to a number")
-    [] OTHER -> Assert(FALSE, "tla-ts can't throw the TypeError of converting a symbol to a number")
+    [] IsSymbol(value) ->
+         Assert(FALSE, "tla-ts can't throw the TypeError of converting a symbol to a number")
+    [] OTHER -> Assert(FALSE, "tla-ts can't convert this " \\o TypeOf(value) \\o " to a number")
 
 \\* The longest start of a text made of a radix's digits.
 RECURSIVE DigitPrefix(_, _)
@@ -2886,9 +3377,9 @@ WrapperObject(prototype, primitive) ==
       extensible |-> TRUE, prototype |-> prototype, isCallable |-> FALSE, isConstructor |-> FALSE,
       isOpaque |-> FALSE, privates |-> <<>>, primitive |-> primitive]
 
-\\* The object that Object makes of a symbol, which holds the symbol in a slot of its own rather than
-\\* the primitive slot of a Boolean, Number, or String object.
-SymbolObject(prototype, symbol) == [EmptyObject EXCEPT !.prototype = prototype] @@ [symbol |-> symbol]
+\\* The object that Object makes of a symbol or a BigInt, which holds it in a slot named symbol or
+\\* bigint rather than the primitive slot of a Boolean, Number, or String object.
+SlotObject(prototype, slot, value) == [EmptyObject EXCEPT !.prototype = prototype] @@ (slot :> value)
 
 \\* The description of a property of the String object that a string converts to.
 DescribeString(text, key) == DescribeObject(WrapperObject(Null, text), key)
@@ -3109,6 +3600,11 @@ RegExpOf(heap, ref, changeable) ==
   THEN heap.objects[ref[Ref]].regexp
   ELSE Assert(FALSE, "tla-ts can't call a regexp's method where a script changed what it reads")
 
+\\* Whether exec, or test through it, runs on RegExp.prototype itself, which has no [[RegExpMatcher]],
+\\* so that exec throws a TypeError, while a script hasn't changed RegExp.prototype.
+IsRegExpPrototypeExec(heap, ref) ==
+  IsRegExpPrototype(ref) /\\ "RegExp.prototype" \\notin DOMAIN heap.changed
+
 \\* The record of a regexp literal's pattern, where a call can't observe the object that the literal
 \\* makes, while a script hasn't changed the built-in objects in changeable.
 RegExpFresh(heap, regexp, changeable) ==
@@ -3175,6 +3671,8 @@ LOCAL RegExpRun(heap, ref, regexp, text) ==
       isUpdating == regexp.global \\/ regexp.sticky
       found == CASE ~isUpdating /\\ start = start -> RegExpSearch(regexp, text, 0)
                  [] start > Len(text) -> RegExpFailure
+                 [] start > 0 /\\ CharacterWidth(regexp, text, start - 1) = 2 ->
+                      Assert(FALSE, "tla-ts can't match from a lastIndex inside a surrogate pair")
                  [] OTHER -> RegExpSearch(regexp, text, start)
   IN  [heap |-> CASE ~isUpdating -> heap
                   [] found.end = -1 -> SetLastIndex(heap, ref, 0)
@@ -3206,7 +3704,7 @@ LOCAL RegExpResult(heap, prototype, regexp, text, match) ==
 \\* RegExp.prototype.exec, as the heap after it and the array of the match it finds, or null.
 RegExpExecIn(heap, ref, value, prototype) ==
   LET regexp == RegExpOf(heap, ref, {"RegExp.prototype"})
-      text == RegExpText(regexp, value)
+      text == Text(value)
       run == RegExpRun(heap, ref, regexp, text)
       made == RegExpResult(run.heap, prototype, regexp, text, run.match)
   IN  IF run.match.end = -1
@@ -3216,14 +3714,14 @@ RegExpExecIn(heap, ref, value, prototype) ==
 \\* RegExp.prototype.test, as the heap after it and whether exec finds a match.
 RegExpTestIn(heap, ref, value) ==
   LET regexp == RegExpOf(heap, ref, {"RegExp.prototype"})
-      run == RegExpRun(heap, ref, regexp, RegExpText(regexp, value))
+      run == RegExpRun(heap, ref, regexp, Text(value))
   IN  [heap |-> run.heap, value |-> run.match.end # -1]
 
 \\* String.prototype.match through RegExp.prototype[@@match]: what exec gives for a regexp that isn't
 \\* global, and else the array of each match's text, or null, which leaves lastIndex at 0.
 RegExpMatchIn(heap, ref, value, prototype) ==
   LET regexp == RegExpOf(heap, ref, {"RegExp.prototype", "String.prototype"})
-      text == RegExpText(regexp, value)
+      text == Text(value)
       reset == SetLastIndex(heap, ref, 0)
       matches == RegExpMatches(regexp, text, 0)
       made == Allocate(reset, ArrayObject(prototype, [position \\in DOMAIN matches |->
@@ -3237,7 +3735,7 @@ RegExpMatchIn(heap, ref, value, prototype) ==
 \\* another the match that exec finds.
 RegExpMatchesIn(heap, ref, value) ==
   LET regexp == RegExpOf(heap, ref, {"RegExp.prototype", "String.prototype"})
-      text == RegExpText(regexp, value)
+      text == Text(value)
       run == RegExpRun(heap, ref, regexp, text)
   IN  IF regexp.global
       THEN [heap |-> SetLastIndex(heap, ref, 0), value |-> RegExpMatches(regexp, text, 0)]
@@ -3249,7 +3747,7 @@ RegExpReplaceIn(heap, ref, value, template) ==
   LET regexp == RegExpOf(heap, ref, {"RegExp.prototype", "String.prototype"})
       found == RegExpMatchesIn(heap, ref, value)
   IN  [heap |-> found.heap,
-       value |-> RegExpReplaced(regexp, RegExpText(regexp, value), found.value, Text(template))]
+       value |-> RegExpReplaced(regexp, Text(value), found.value, Text(template))]
 
 \\* The argument at a position that replace calls a function with where a script has objects, which
 \\* would pass the named groups as an object.
@@ -3264,7 +3762,7 @@ RegExpSearchIn(heap, ref, value) ==
   LET regexp == RegExpOf(heap, ref, {"RegExp.prototype", "String.prototype"})
       previous == LastIndexValue(heap, ref)
       reset == IF SameValue(previous, 0) THEN heap ELSE SetLastIndex(heap, ref, 0)
-      run == RegExpRun(reset, ref, regexp, RegExpText(regexp, value))
+      run == RegExpRun(reset, ref, regexp, Text(value))
       restored == IF SameValue(LastIndexValue(run.heap, ref), previous)
                   THEN run.heap
                   ELSE SetLastIndex(run.heap, ref, previous)
@@ -3274,7 +3772,7 @@ RegExpSearchIn(heap, ref, value) ==
 \\* RegExp constructor makes, so the regexp's lastIndex stays as it is.
 RegExpSplitIn(heap, ref, value, limit) ==
   LET regexp == RegExpOf(heap, ref, {"RegExp.prototype", "String.prototype", "RegExp"})
-  IN  [heap |-> heap, value |-> RegExpPieces(regexp, RegExpText(regexp, value), limit)]
+  IN  [heap |-> heap, value |-> RegExpPieces(regexp, Text(value), limit)]
 
 \\* The length that a value gives an array, or -1 where ArraySetLength throws a RangeError.
 LOCAL ArrayLengthOf(value) ==
@@ -3424,7 +3922,16 @@ IndexOfArgument(value) ==
 
 LOCAL MaxBytes == 65536
 
-LOCAL RangeError(what) == Assert(FALSE, "tla-ts can't throw the RangeError of " \\o what)
+\\* What a constructor of a buffer, a DataView, or a typed array gives where it throws: the error,
+\\* which only a statement can throw, in place of the heap with what it makes.
+LOCAL Failed(kind) == [error |-> kind]
+
+LOCAL Made(result) ==
+  IF "error" \\in DOMAIN result
+  THEN Assert(FALSE, "tla-ts can't throw the " \\o result.error \\o " of this constructor here")
+  ELSE result
+
+LOCAL ErrorOf(result) == IF "error" \\in DOMAIN result THEN result.error ELSE ""
 
 LOCAL ViewObject(prototype, buffer, offset, length) ==
   [viewed |-> buffer, byteOffset |-> offset, viewLength |-> length]
@@ -3436,15 +3943,15 @@ LOCAL BufferObject(prototype, bytes, maxLength, isShared) ==
 
 \\* The heap with a new ArrayBuffer or SharedArrayBuffer of a length, which options may make
 \\* resizable.
-NewBuffer(heap, prototype, arguments, isShared) ==
+LOCAL BufferMade(heap, prototype, arguments, isShared) ==
   LET argument(position) == IF Len(arguments) >= position THEN arguments[position] ELSE Undefined
       byteLength == IndexOfArgument(argument(1))
       options == argument(2)
       maximum == IF IsObjectIn(heap, options) THEN Get(heap, options, "maxByteLength") ELSE Undefined
       maxLength == IF maximum = Undefined THEN Undefined ELSE IndexOfArgument(maximum)
-  IN CASE byteLength = -1 -> RangeError("an invalid length")
-       [] maxLength = -1 -> RangeError("an invalid length")
-       [] maxLength # Undefined /\\ byteLength > maxLength -> RangeError("a length past the maximum")
+  IN CASE byteLength = -1 -> Failed("RangeError")
+       [] maxLength = -1 -> Failed("RangeError")
+       [] maxLength # Undefined /\\ byteLength > maxLength -> Failed("RangeError")
        [] byteLength > MaxBytes \\/ (maxLength # Undefined /\\ maxLength > MaxBytes) ->
             Assert(FALSE, "tla-ts can't make a buffer this big")
        [] OTHER ->
@@ -3452,19 +3959,19 @@ NewBuffer(heap, prototype, arguments, isShared) ==
                                         isShared))
 
 \\* The heap with a new DataView of a buffer.
-NewDataView(heap, prototype, arguments) ==
+LOCAL DataViewMade(heap, prototype, arguments) ==
   LET argument(position) == IF Len(arguments) >= position THEN arguments[position] ELSE Undefined
       buffer == argument(1)
       object == heap.objects[buffer[Ref]]
       offset == IndexOfArgument(argument(2))
       length == IF argument(3) = Undefined THEN Undefined ELSE IndexOfArgument(argument(3))
   IN CASE ~IsBuffer(heap, buffer) ->
-            Assert(FALSE, "tla-ts can't throw the TypeError of a DataView of something other than a buffer")
-       [] offset = -1 -> RangeError("an invalid offset")
-       [] object.isDetached -> Assert(FALSE, "tla-ts can't throw the TypeError of a detached buffer")
-       [] offset > Len(object.bytes) -> RangeError("an offset past the end")
-       [] length = -1 -> RangeError("an invalid length")
-       [] length # Undefined /\\ offset + length > Len(object.bytes) -> RangeError("a length past the end")
+            Failed("TypeError")
+       [] offset = -1 -> Failed("RangeError")
+       [] object.isDetached -> Failed("TypeError")
+       [] offset > Len(object.bytes) -> Failed("RangeError")
+       [] length = -1 -> Failed("RangeError")
+       [] length # Undefined /\\ offset + length > Len(object.bytes) -> Failed("RangeError")
        [] OTHER ->
             Allocate(heap, ViewObject(prototype, buffer, offset,
                                       CASE length # Undefined -> length
@@ -3472,8 +3979,9 @@ NewDataView(heap, prototype, arguments) ==
                                         [] OTHER -> Len(object.bytes) - offset))
 
 \\* The heap with a new typed array of a length, of the elements of an array or a typed array, or
-\\* viewing a buffer.
-NewTypedArray(heap, type, prototype, bufferPrototype, arguments) ==
+\\* viewing a buffer, where isIterating tells whether an array still iterates through the built-in
+\\* iterator and next.
+LOCAL TypedArrayMade(heap, type, prototype, bufferPrototype, arguments, isIterating) ==
   LET argument(position) == IF Len(arguments) >= position THEN arguments[position] ELSE Undefined
       size == ElementSize(type)
       first == argument(1)
@@ -3482,6 +3990,10 @@ NewTypedArray(heap, type, prototype, bufferPrototype, arguments) ==
       withBytes(bytes) ==
         LET allocated == Allocate(heap, BufferObject(bufferPrototype, bytes, Undefined, FALSE))
         IN view(allocated, Allocated(allocated), 0, Len(bytes) \\div size)
+      iterated(bytes) ==
+        IF isIterating
+        THEN withBytes(bytes)
+        ELSE Assert(FALSE, "tla-ts can't iterate an array whose iterator a script replaced")
       object == heap.objects[first[Ref]]
       offset == IndexOfArgument(argument(2))
       length == IF argument(3) = Undefined THEN Undefined ELSE IndexOfArgument(argument(3))
@@ -3490,36 +4002,59 @@ NewTypedArray(heap, type, prototype, bufferPrototype, arguments) ==
             Assert(FALSE, "tla-ts can't hold BigInts in a typed array")
        [] ~IsObjectIn(heap, first) ->
             LET count == IndexOfArgument(first)
-            IN CASE count = -1 -> RangeError("an invalid length")
+            IN CASE count = -1 -> Failed("RangeError")
                  [] count * size > MaxBytes -> Assert(FALSE, "tla-ts can't make a buffer this big")
                  [] OTHER -> withBytes([position \\in 1..(count * size) |-> 0])
        [] IsTypedArray(heap, first) ->
             IF IsOutOfBounds(heap, object)
-            THEN Assert(FALSE, "tla-ts can't throw the TypeError of a typed array out of bounds")
+            THEN Failed("TypeError")
             ELSE withBytes(NumbersBytes(type, [position \\in 1..ViewLength(heap, object) |->
                                                  TypedElement(heap, first, position - 1)]))
        [] IsSequenceValue(first) ->
-            withBytes(NumbersBytes(type, [position \\in DOMAIN first |-> ToNumber(first[position])]))
+            iterated(NumbersBytes(type, [position \\in DOMAIN first |-> ToNumber(first[position])]))
        [] ~IsBuffer(heap, first) /\\ IsHeap(first) ->
             LET method == Get(heap, first, WellKnownSymbol("iterator"))
                 count == ToLength(Get(heap, first, "length"))
-            IN IF \\/ method \\in {Undefined, Null}
-                  \\/ IsArray(heap, first) /\\ method = Ref :> "Array.prototype.values"
-               THEN withBytes(NumbersBytes(type, [position \\in 1..count |->
-                                                    ToNumber(Get(heap, first, ToString(position - 1)))]))
-               ELSE Assert(FALSE, "tla-ts can't make a typed array of this object")
+                bytes == NumbersBytes(type, [position \\in 1..count |->
+                                               ToNumber(Get(heap, first, ToString(position - 1)))])
+            IN CASE method \\in {Undefined, Null} -> withBytes(bytes)
+                 [] IsArray(heap, first) /\\ method = Ref :> "Array.prototype.values" -> iterated(bytes)
+                 [] OTHER -> Assert(FALSE, "tla-ts can't make a typed array of this object")
        [] ~IsBuffer(heap, first) -> Assert(FALSE, "tla-ts can't make a typed array of this object")
-       [] offset = -1 \\/ offset % size # 0 -> RangeError("an invalid offset")
-       [] length = -1 -> RangeError("an invalid length")
-       [] object.isDetached -> Assert(FALSE, "tla-ts can't throw the TypeError of a detached buffer")
+       [] offset = -1 \\/ offset % size # 0 -> Failed("RangeError")
+       [] length = -1 -> Failed("RangeError")
+       [] object.isDetached -> Failed("TypeError")
        [] length = Undefined /\\ object.maxLength # Undefined ->
-            IF offset > byteLength THEN RangeError("an offset past the end") ELSE view(heap, first, offset, -1)
+            IF offset > byteLength THEN Failed("RangeError") ELSE view(heap, first, offset, -1)
        [] length = Undefined ->
             IF byteLength % size # 0 \\/ offset > byteLength
-            THEN RangeError("an invalid offset")
+            THEN Failed("RangeError")
             ELSE view(heap, first, offset, (byteLength - offset) \\div size)
-       [] offset + length * size > byteLength -> RangeError("a length past the end")
+       [] offset + length * size > byteLength -> Failed("RangeError")
        [] OTHER -> view(heap, first, offset, length)
+
+\\* The prototype that an instance takes from the constructor that a construction names as its
+\\* newTarget, or the default where newTarget's prototype property isn't an object.
+PrototypeFromConstructor(heap, newTarget, default) ==
+  LET prototype == Get(heap, newTarget, "prototype")
+  IN IF IsObjectIn(heap, prototype) THEN prototype ELSE default
+
+\\* The heap after new of a buffer, a DataView, or a typed array, or the error, if any, that it throws.
+NewBuffer(heap, prototype, arguments, isShared) ==
+  Made(BufferMade(heap, prototype, arguments, isShared))
+
+NewBufferError(heap, prototype, arguments, isShared) ==
+  ErrorOf(BufferMade(heap, prototype, arguments, isShared))
+
+NewDataView(heap, prototype, arguments) == Made(DataViewMade(heap, prototype, arguments))
+
+NewDataViewError(heap, prototype, arguments) == ErrorOf(DataViewMade(heap, prototype, arguments))
+
+NewTypedArray(heap, type, prototype, bufferPrototype, arguments, isIterating) ==
+  Made(TypedArrayMade(heap, type, prototype, bufferPrototype, arguments, isIterating))
+
+NewTypedArrayError(heap, type, prototype, bufferPrototype, arguments, isIterating) ==
+  ErrorOf(TypedArrayMade(heap, type, prototype, bufferPrototype, arguments, isIterating))
 
 \\* Whether new of a typed array iterates an object through an @@iterator method that a script
 \\* gives, which only statements can call.
@@ -3574,6 +4109,27 @@ Resize(heap, ref, request, isShared) ==
             Returned([heap EXCEPT !.objects[ref[Ref]].bytes =
                         IF length <= Len(@) THEN SubSeq(@, 1, length)
                         ELSE @ \\o [position \\in 1..(length - Len(@)) |-> 0]], Undefined)
+
+\\* ArrayBuffer's transfer and transferToFixedLength, which move the bytes into a new ArrayBuffer of a
+\\* length, resizable where isPreserved and the receiver is, and detach the receiver.
+Transfer(heap, ref, request, isPreserved, prototype) ==
+  LET object == heap.objects[ref[Ref]]
+      length == IF request = Undefined THEN Len(object.bytes) ELSE IndexOfArgument(request)
+      maxLength == IF isPreserved THEN object.maxLength ELSE Undefined
+      bytes ==
+        IF length <= Len(object.bytes)
+        THEN SubSeq(object.bytes, 1, length)
+        ELSE object.bytes \\o [position \\in 1..(length - Len(object.bytes)) |-> 0]
+      detached ==
+        [heap EXCEPT !.objects[ref[Ref]].bytes = <<>>, !.objects[ref[Ref]].isDetached = TRUE]
+  IN CASE ~IsBuffer(heap, ref) \\/ object.isShared -> Thrown(heap, "TypeError")
+       [] length = -1 -> Thrown(heap, "RangeError")
+       [] object.isDetached -> Thrown(heap, "TypeError")
+       [] maxLength # Undefined /\\ length > maxLength -> Thrown(heap, "RangeError")
+       [] length > MaxBytes -> Assert(FALSE, "tla-ts can't make a buffer this big")
+       [] OTHER ->
+            LET made == Allocate(detached, BufferObject(prototype, bytes, maxLength, FALSE))
+            IN Returned(made, Allocated(made))
 
 \\* ArrayBuffer's and SharedArrayBuffer's slice, which copies bytes into a new buffer that the
 \\* receiver's constructor makes, where tla-ts follows only the built-in one.
@@ -3662,7 +4218,7 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
                 viewing == NewTypedArray(heap, view.elementType, Get(heap, species, "prototype"),
                                       bufferPrototype,
                                       IF isTracking THEN <<view.viewed, begin>>
-                                      ELSE <<view.viewed, begin, count>>)
+                                      ELSE <<view.viewed, begin, count>>, TRUE)
             IN CASE buffer.isDetached -> Thrown(heap, "TypeError")
                  [] begin + (IF isTracking THEN 0 ELSE count * ElementSize(view.elementType))
                       > Len(buffer.bytes) -> Thrown(heap, "RangeError")
@@ -3824,13 +4380,13 @@ ArrayDeleteFrom(heap, ref, from, to) ==
 
 \\* sort() on an array that the heap holds, which sorts the elements it has to its start, with
 \\* undefined after them and the holes last.
-ArraySort(heap, ref, IsBefore(_, _)) ==
+ArraySort(heap, ref, IsBefore(_, _), mayThrow) ==
   LET elements == OwnElements(Lookup(heap, ref))
       present == DOMAIN elements
       ordered == [position \\in 1..Cardinality(present) |->
                    elements[CHOOSE element \\in present :
                               Cardinality({other \\in present : other < element}) = position - 1]]
-      sorted == SortSequence(ordered, IsBefore)
+      sorted == SortSequence(ordered, IsBefore, mayThrow)
   IN WithOwnElements(heap, ref, [position \\in 0..(Len(sorted) - 1) |-> sorted[position + 1]],
        present # {})
 
@@ -3873,20 +4429,22 @@ LOCAL ArrayDelete(heap, ref, key) ==
 \\* A step that runs where no earlier one threw.
 LOCAL AndThen(state, Step(_)) == IF state.isThrown THEN state ELSE Step(state.heap)
 
-\\* Moves elements of an array that the heap holds by an offset, from the lowest index where the
-\\* offset is negative and from the highest otherwise, where a hole deletes the index it moves to.
-RECURSIVE ArrayMoves(_, _, _, _)
-ArrayMoves(state, ref, froms, offset) ==
+\\* Moves elements of an array that the heap holds by an offset, from the lowest index or from the
+\\* highest, where a hole deletes the index it moves to.
+RECURSIVE ArrayMoves(_, _, _, _, _)
+ArrayMoves(state, ref, froms, offset, isAscending) ==
   IF state.isThrown \\/ froms = {}
   THEN state
   ELSE LET from == CHOOSE index \\in froms :
-                     \\A other \\in froms : IF offset < 0 THEN index <= other ELSE index >= other
+                     \\A other \\in froms : IF isAscending THEN index <= other ELSE index >= other
            key == ToString(from + offset)
+           value == Get(state.heap, ref, ToString(from))
        IN ArrayMoves(
-            IF Has(state.heap, ref, ToString(from))
-            THEN ArraySet(state.heap, ref, key, Get(state.heap, ref, ToString(from)))
-            ELSE ArrayDelete(state.heap, ref, key),
-            ref, froms \\ {from}, offset)
+            CASE ~Has(state.heap, ref, ToString(from)) -> ArrayDelete(state.heap, ref, key)
+              \\* HACK: TLC reads a value only where it needs it, and Get runs before a write that
+              \\* fails, so comparing the value reads it first.
+              [] value = value -> ArraySet(state.heap, ref, key, value),
+            ref, froms \\ {from}, offset, isAscending)
 
 \\* Writes items to an array that the heap holds from an index on.
 RECURSIVE ArraySets(_, _, _, _)
@@ -3901,21 +4459,20 @@ ArraySets(state, ref, from, items) ==
 \\* elements are its own writable data properties, whose prototypes hold no elements, and that takes
 \\* new ones and a new length changes in one step. Any other changes index by index as the spec runs
 \\* it, where a move reads each index through the prototypes, and only the indices that the object or
-\\* its prototypes hold, or that a move deletes, move.
-ArrayChange(heap, ref, method, items) ==
+\\* its prototypes hold, or that a move deletes, move. The length and the element that pop or shift
+\\* gives are those it read, which a getter may have answered before the heap became this one.
+ArrayChangeFrom(heap, ref, method, items, length, first) ==
   LET object == Lookup(heap, ref)
-      length == ToLength(Get(heap, ref, "length"))
       indices == {ToIndex(key) : key \\in IndexKeys(heap, ref)}
       own == {ToIndex(key) : key \\in {key \\in DOMAIN object.values : IsIndex(key)}}
       count == Len(items)
       start == [heap |-> heap, isThrown |-> FALSE]
       setLength(state, value) == AndThen(state, LAMBDA after : ArraySet(after, ref, "length", value))
-      first == Get(heap, ref, ToString(IF method = "pop" THEN length - 1 ELSE 0))
       removed == AndThen(
                    IF method = "shift"
                    THEN ArrayMoves(start, ref,
                           {index \\in indices \\cup {index + 1 : index \\in own} :
-                             index >= 1 /\\ index < length}, -1)
+                             index >= 1 /\\ index < length}, -1, TRUE)
                    ELSE start,
                    LAMBDA after : ArrayDelete(after, ref, ToString(length - 1)))
       added == CASE method = "push" -> ArraySets(start, ref, length, items)
@@ -3923,7 +4480,7 @@ ArrayChange(heap, ref, method, items) ==
                  [] OTHER -> ArraySets(
                                ArrayMoves(start, ref,
                                  {index \\in indices \\cup {index - count : index \\in own} :
-                                    index >= 0 /\\ index < length}, count),
+                                    index >= 0 /\\ index < length}, count, FALSE),
                                ref, 0, items)
       elements == [position \\in 1..length |-> object.values[ToString(position - 1)]]
       changed == CASE method = "push" -> elements \\o items
@@ -3951,6 +4508,30 @@ ArrayChange(heap, ref, method, items) ==
                        [] length = 0 -> Undefined
                        [] OTHER -> first,
            isThrown |-> state.isThrown]
+
+ArrayChange(heap, ref, method, items) ==
+  LET length == ToLength(Get(heap, ref, "length"))
+  IN ArrayChangeFrom(heap, ref, method, items, length,
+                     Get(heap, ref, ToString(IF method = "pop" THEN length - 1 ELSE 0)))
+
+\\* copyWithin() on an array-like object that the heap holds, as the spec runs it index by index,
+\\* backward where the indices it copies to overlap the end of those it copies from, where only the
+\\* indices that the object or its prototypes hold, and those that copy over them, change. The
+\\* indices are the numbers that its arguments give, and end is Undefined where it takes the length.
+ArrayLikeCopyWithin(heap, ref, target, start, end) ==
+  LET length == ToLength(Get(heap, ref, "length"))
+      to == ClampedIndex(target, length)
+      from == ClampedIndex(start, length)
+      final == IF end = Undefined THEN length ELSE ClampedIndex(end, length)
+      count == IF final - from < length - to THEN final - from ELSE length - to
+      indices == {ToIndex(key) : key \\in IndexKeys(heap, ref)}
+      froms == {index \\in indices \\cup {index - to + from : index \\in indices} :
+                  index >= from /\\ index < from + count}
+      state == ArrayMoves([heap |-> heap, isThrown |-> FALSE], ref, froms, to - from,
+                 ~(from < to /\\ to < from + count))
+  IN IF count <= 0
+     THEN [heap |-> heap, value |-> ref, isThrown |-> FALSE]
+     ELSE [heap |-> state.heap, value |-> ref, isThrown |-> state.isThrown]
 
 \\* Swaps the elements of an array-like object at each index below the middle of its length and the
 \\* index as far from its end, from the lowest, where a hole deletes the index it swaps with.
@@ -3987,7 +4568,9 @@ ArrayLikeReverse(heap, ref) ==
       lowers == {index \\in indices \\cup {length - index - 1 : index \\in indices} :
                    index >= 0 /\\ index < length \\div 2}
       state == ArrayLikeSwaps([heap |-> heap, isThrown |-> FALSE], ref, lowers, length)
-  IN [heap |-> state.heap, value |-> ref, isThrown |-> state.isThrown]
+  IN IF length < 2
+     THEN [heap |-> heap, value |-> ref, isThrown |-> FALSE]
+     ELSE [heap |-> state.heap, value |-> ref, isThrown |-> state.isThrown]
 
 \\* A set or a map that the heap holds, so that it keeps its identity as a script changes it, with
 \\* the value that it holds as its data.
@@ -4008,8 +4591,8 @@ SetToSequence(set) ==
   ELSE LET element == CHOOSE element \\in set : TRUE
        IN <<element>> \\o SetToSequence(set \\ {element})
 
-\\* What a splice whose result nothing reads does to an array that the heap holds, which makes that
-\\* result through the array's constructor, where tla-ts follows only Array.
+\\* What a splice does to an array that the heap holds, and the elements that it removes, where it
+\\* makes the array of them through the array's constructor, which tla-ts follows only for Array.
 ArraySplice(heap, ref, start, hasCount, count, items, array) ==
   LET object == Lookup(heap, ref)
       elements == DenseElements(heap, ref)
@@ -4032,7 +4615,7 @@ ArraySplice(heap, ref, start, hasCount, count, items, array) ==
                              \\o SubSeq(elements, first + deleted + 1, length)
             IN Species(Get(heap, ref, "constructor"), array,
                        [heap |-> WithElements(heap, ref, changed, Len(changed)),
-                        value |-> Undefined,
+                        value |-> SubSeq(elements, first + 1, first + deleted),
                         isThrown |-> FALSE])
 
 RECURSIVE ApplyAll(_, _, _)
@@ -4052,11 +4635,23 @@ IsObjectArgument(value) ==
 
 \\* The values that tla-ts keeps outside the heap never read a built-in's accessors, but for an
 \\* array, which reads Array.prototype past its end. Function.prototype is the one built-in function
-\\* that inherits from Object.prototype, and only functions that the heap holds read it.
-LOCAL CanDefineOn(ref, descriptor) ==
+\\* that inherits from Object.prototype, and only functions that the heap holds read it. A primitive
+\\* reads only the built-in keys of its prototype as tla-ts compiles, and stops at any other key, so a
+\\* script may define an accessor under a string key that is neither of those nor an index. A typed
+\\* array, which the heap holds, never reads its prototypes under a key that is a number.
+LOCAL CanDefineOn(ref, key, descriptor) ==
   Assert(\\/ IsHeap(ref)
          \\/ ~descriptor.isAccessor
          \\/ BuiltInKey(ref) \\in {"Array.prototype", "Object.prototype"}
+         \\/ /\\ BuiltInKey(ref) \\in {"%Int8Array.prototype.[[Prototype]]%"} \\cup
+                {type \\o "Array.prototype" :
+                   type \\in {"Int8", "Uint8", "Uint8Clamped", "Int16", "Uint16", "Float16", "Int32",
+                            "Uint32", "Float32", "Float64", "BigInt64", "BigUint64"}}
+            /\\ TypedKey(key) # "property"
+         \\/ /\\ BuiltInKey(ref) \\in {"Boolean.prototype", "Number.prototype", "String.prototype"}
+            /\\ ~IsSymbol(key)
+            /\\ TypedKey(key) = "property"
+            /\\ key \\notin DOMAIN BuiltIns[BuiltInKey(ref)].values
          \\/ /\\ ~IsRef(ref)
             /\\ IsBuiltIn(ref)
             /\\ BuiltIns[ref].isCallable
@@ -4067,27 +4662,92 @@ LOCAL CanDefineOn(ref, descriptor) ==
 DefineConvertedAll(heap, ref, keys, descriptors) ==
   LET applied == ApplyAll(Lookup(heap, ref), keys, descriptors)
   IN IF \\A position \\in DOMAIN keys :
-          descriptors[position].isValid /\\ CanDefineOn(ref, descriptors[position])
+          descriptors[position].isValid /\\ CanDefineOn(ref, keys[position], descriptors[position])
      THEN [heap |-> Update(heap, ref, applied.object), isDone |-> applied.isDone,
            isRangeError |-> applied.isRangeError]
      ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE]
 
 DefineConverted(heap, ref, key, converted) == DefineConvertedAll(heap, ref, <<key>>, <<converted>>)
 
+\\* Object.prototype.__defineGetter__ and __defineSetter__, which define an enumerable, configurable
+\\* half of an accessor where the function is callable.
+DefineLegacyAccessor(heap, ref, key, field, function) ==
+  LET fields == {field, "enumerable", "configurable"}
+      values == [name \\in fields |-> IF name = field THEN function ELSE TRUE]
+  IN DefineConverted(heap, ref, key, FieldsDescriptor(heap, fields, values))
+
 DefineProperty(heap, ref, key, descriptor) ==
   IF IsObjectArgument(ref) /\\ IsObjectArgument(descriptor)
   THEN DefineConverted(heap, ref, key, ToDescriptor(heap, descriptor))
   ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE]
 
-\\* Reflect.defineProperty, which throws a TypeError only where its target or its descriptor isn't
-\\* an object or the descriptor isn't valid, and gives whether it defined the key otherwise.
-ReflectDefineProperty(heap, ref, key, descriptor) ==
-  IF IsObjectArgument(ref) /\\ IsObjectArgument(descriptor)
-     /\\ ToDescriptor(heap, descriptor).isValid
-  THEN LET defined == DefineConverted(heap, ref, key, ToDescriptor(heap, descriptor))
+\\* Reflect.defineProperty of the descriptor that ToPropertyDescriptor gave, which throws a TypeError
+\\* only where the descriptor isn't valid, and gives whether it defined the key otherwise.
+ReflectDefineConverted(heap, ref, key, converted) ==
+  IF converted.isValid
+  THEN LET defined == DefineConverted(heap, ref, key, converted)
        IN [heap |-> defined.heap, isDone |-> ~defined.isRangeError,
            isRangeError |-> defined.isRangeError, value |-> defined.isDone]
   ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE, value |-> FALSE]
+
+\\* Reflect.defineProperty, which also throws a TypeError where its target or its descriptor isn't an
+\\* object.
+ReflectDefineProperty(heap, ref, key, descriptor) ==
+  IF IsObjectArgument(ref) /\\ IsObjectArgument(descriptor)
+  THEN ReflectDefineConverted(heap, ref, key, ToDescriptor(heap, descriptor))
+  ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE, value |-> FALSE]
+
+\\* The setter that Reflect.set calls, where a typed array's element calls none.
+ReflectSetter(heap, ref, key) ==
+  IF IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
+  THEN Undefined
+  ELSE SetterOf(heap, ref, key)
+
+LOCAL ReflectSetGives(heap, value) ==
+  [heap |-> heap, isDone |-> TRUE, isRangeError |-> FALSE, value |-> value]
+
+\\* OrdinarySet's write of a data property, which the receiver defines on itself: a write to its own
+\\* writable data property changes the value, and a new key makes a writable one where it can.
+LOCAL ReceiverSet(heap, key, value, receiver) ==
+  CASE ~IsObjectIn(heap, receiver) -> ReflectSetGives(heap, FALSE)
+    [] \\/ ~IsHeap(receiver)
+       \\/ IsProxy(heap, receiver)
+       \\/ IsTypedArray(heap, receiver) /\\ TypedKey(key) # "property" ->
+         Assert(FALSE, "tla-ts can't set a property on this receiver")
+    [] OTHER ->
+         LET object == Lookup(heap, receiver)
+             defined == DefineOwn(object, key, WriteDescriptor(object, key, value))
+         IN CASE /\\ key \\in DOMAIN object.values
+                 /\\ \\/ object.attributes[key].kind = "accessor"
+                    \\/ ~object.attributes[key].writable ->
+                   ReflectSetGives(heap, FALSE)
+              [] defined.isRangeError ->
+                   [heap |-> heap, isDone |-> FALSE, isRangeError |-> TRUE, value |-> FALSE]
+              [] defined.isDone -> ReflectSetGives(Update(heap, receiver, defined.object), TRUE)
+              [] OTHER -> ReflectSetGives(heap, FALSE)
+
+\\* Reflect.set where no setter that the script writes runs: the heap after it, and whether it set
+\\* the key, as OrdinarySet does with a receiver. A typed array writes its own elements, and an index
+\\* past its end, or a number that is no index, sets nothing. It throws a TypeError where the target
+\\* isn't an object.
+ReflectSet(heap, ref, key, value, receiver) ==
+  LET accessor == AccessorOf(heap, ref, key)
+  IN CASE ~IsObjectIn(heap, ref) ->
+            [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE, value |-> FALSE]
+       [] ~IsHeap(ref) \\/ IsProxy(heap, ref) ->
+            Assert(FALSE, "tla-ts can't set a property of this object through Reflect.set")
+       [] IsTypedArray(heap, ref) /\\ TypedKey(key) # "property" ->
+            CASE SameValue(ref, receiver) -> ReflectSetGives(TypedSet(heap, ref, key, value), TRUE)
+              [] \\/ TypedKey(key) # "index"
+                 \\/ ToIndex(key) >= ViewLength(heap, heap.objects[ref[Ref]]) ->
+                   ReflectSetGives(heap, TRUE)
+              [] OTHER -> ReceiverSet(heap, key, value, receiver)
+       [] accessor # Undefined ->
+            CASE accessor.set = Undefined -> ReflectSetGives(heap, FALSE)
+              [] accessor.set \\in DOMAIN ConstantFunctions -> ReflectSetGives(heap, TRUE)
+              [] OTHER -> Assert(FALSE, "tla-ts can't call setters")
+       [] ~IsWritable(heap, ref, key) -> ReflectSetGives(heap, FALSE)
+       [] OTHER -> ReceiverSet(heap, key, value, receiver)
 
 DefineProperties(heap, ref, properties) ==
   LET source == Lookup(heap, properties)
@@ -4099,6 +4759,53 @@ DefineProperties(heap, ref, properties) ==
      THEN [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE]
      ELSE DefineConvertedAll(heap, ref, keys,
                              [position \\in DOMAIN keys |-> ToDescriptor(heap, values[position])])
+
+\\* The keys of an object that InternalizeJSONProperty visits: an array's indices below its length,
+\\* or another object's enumerable own string keys.
+RevivedKeys(heap, ref) ==
+  LET object == Lookup(heap, ref)
+  IN IF IsArrayObject(object)
+     THEN [position \\in 1..object.values["length"] |-> ToString(position - 1)]
+     ELSE EnumerableKeys(object)
+
+\\* What InternalizeJSONProperty does with the value a reviver gave for a key, which deletes the key
+\\* where the value is undefined and defines it otherwise, ignoring where either fails.
+Revived(heap, ref, key, value) ==
+  IF value = Undefined
+  THEN IF CanDelete(heap, ref, key) THEN Delete(heap, ref, key) ELSE heap
+  ELSE DefineConverted(heap, ref, key,
+                       [fields |-> {"value", "writable", "enumerable", "configurable"},
+                        isAccessor |-> FALSE, isData |-> TRUE, isValid |-> TRUE, value |-> value,
+                        get |-> Undefined, set |-> Undefined, writable |-> TRUE,
+                        enumerable |-> TRUE, configurable |-> TRUE]).heap
+
+\\* The descriptor of a definition of an array's length whose value is an object, which
+\\* ArraySetLength converts to a number twice, or Null where the definition converts nothing.
+LengthDescriptor(heap, ref, key, descriptor) ==
+  IF key = "length" /\\ IsRef(ref) /\\ ~IsProxy(heap, ref) /\\ IsArrayObject(Lookup(heap, ref))
+     /\\ IsRef(descriptor) /\\ ~IsProxy(heap, descriptor)
+  THEN LET converted == ToDescriptor(heap, descriptor)
+       IN IF converted.isValid /\\ IsObject(converted.value) THEN converted ELSE Null
+  ELSE Null
+
+\\* The descriptor of the length that Object.defineProperties defines where it defines only that.
+PropertiesLengthDescriptor(heap, ref, properties) ==
+  IF IsRef(properties) /\\ ~IsProxy(heap, properties)
+     /\\ EnumerableOwnKeys(Lookup(heap, properties)) = <<"length">>
+  THEN LengthDescriptor(heap, ref, "length", Value(Lookup(heap, properties), "length"))
+  ELSE Null
+
+\\* Defines an array's length with the primitives that its two conversions gave.
+DefineLength(heap, ref, descriptor, first, second) ==
+  DefineConverted(heap, ref, "length",
+                  [descriptor EXCEPT !.value =
+                     IF SameValue(first, second) THEN second
+                     ELSE Assert(FALSE, "tla-ts can't define a length that converts to two values")])
+
+ReflectDefineLength(heap, ref, descriptor, first, second) ==
+  LET defined == DefineLength(heap, ref, descriptor, first, second)
+  IN [heap |-> defined.heap, isDone |-> ~defined.isRangeError,
+      isRangeError |-> defined.isRangeError, value |-> defined.isDone]
 
 \\* The own keys of an object, with its symbols last, that Object.defineProperties visits.
 PropertyKeysOf(heap, ref) ==
@@ -4288,7 +4995,7 @@ TrappedDescriptor(heap, result) ==
 \\* The completed descriptor of an object's own property, or Undefined where it has none.
 OwnDescriptor(heap, ref, key) ==
   IF HasOwn(heap, ref, key)
-  THEN LET object == Lookup(heap, ref)
+  THEN LET object == LookupKey(heap, ref, key)
            attributes == object.attributes[key]
            fields == IF attributes.kind = "accessor"
                      THEN {"get", "set", "enumerable", "configurable"}
@@ -4351,25 +5058,36 @@ ProxyKeysOf(heap, target, keys, method) ==
        [] method = "getOwnPropertySymbols" -> SelectSeq(keys, IsSymbol)
        [] OTHER -> keys
 
-\\* Whether a code unit is a surrogate that JSON.stringify escapes, where escapes maps each code unit
-\\* that it escapes to its escape.
-LOCAL JSONSurrogate(escapes, unit) ==
-  IF unit \\in DOMAIN escapes /\\ Len(escapes[unit]) = 6 /\\ SubSeq(escapes[unit], 1, 3) = "\\\\ud"
-  THEN IF SubSeq(escapes[unit], 4, 4) \\in {"8", "9", "a", "b"} THEN "high" ELSE "low"
-  ELSE ""
+\\* The escapes of QuoteJSONString that aren't \\u and four hexadecimal digits.
+LOCAL JSONShortEscapes ==
+  ${[
+    ["\b", "\\b"],
+    ["\t", "\\t"],
+    ["\n", "\\n"],
+    ["\f", "\\f"],
+    ["\r", "\\r"],
+    ['"', '\\"'],
+    ["\\", "\\\\"],
+  ]
+    .map((entry) => `${formatString(entry[0])} :> ${formatString(entry[1])}`)
+    .join(" @@ ")}
 
-\\* QuoteJSONString, which escapes a code unit unless it's a surrogate that pairs with a neighbor.
-LOCAL QuoteJSON(text, escapes) ==
+\\* QuoteJSONString, which escapes a control and a surrogate that doesn't pair with a neighbor.
+LOCAL QuoteJSON(text) ==
   LET unit(position) == SubSeq(text, position, position)
-      kind(position) ==
-        IF position \\in 1..Len(text) THEN JSONSurrogate(escapes, unit(position)) ELSE ""
+      code(position) == IF position \\in 1..Len(text) THEN CharacterCode(unit(position)) ELSE 0
+      isSurrogate(position) == IsHighSurrogate(code(position)) \\/ IsLowSurrogate(code(position))
       isPaired(position) ==
-        \\/ kind(position) = "high" /\\ kind(position + 1) = "low"
-        \\/ kind(position) = "low" /\\ kind(position - 1) = "high"
-  IN "\\"" \\o Join([position \\in 1..Len(text) |->
-                     IF unit(position) \\in DOMAIN escapes /\\ ~isPaired(position)
-                     THEN escapes[unit(position)]
-                     ELSE unit(position)], "") \\o "\\""
+        \\/ IsHighSurrogate(code(position)) /\\ IsLowSurrogate(code(position + 1))
+        \\/ IsLowSurrogate(code(position)) /\\ IsHighSurrogate(code(position - 1))
+      digit(position, place) == ((code(position) \\div 16^(4 - place)) % 16) + 1
+      escape(position) ==
+        CASE unit(position) \\in DOMAIN JSONShortEscapes -> JSONShortEscapes[unit(position)]
+          [] code(position) < 32 \\/ (isSurrogate(position) /\\ ~isPaired(position)) ->
+               "\\\\u" \\o Join([place \\in 1..4 |->
+                                 SubSeq("0123456789abcdef", digit(position, place), digit(position, place))], "")
+          [] OTHER -> unit(position)
+  IN "\\"" \\o Join([position \\in 1..Len(text) |-> escape(position)], "") \\o "\\""
 
 \\* Which of Boolean, Number, and String an object wraps the primitive of, or "" where it wraps none.
 LOCAL JSONWrapperKind(heap, ref) ==
@@ -4430,6 +5148,9 @@ LOCAL JSONKeys(heap, replacer) ==
                           /\\ \\A earlier \\in 1..(position - 1) : items[earlier] # items[position])
   IN [position \\in DOMAIN kept |-> items[kept[position]]]
 
+\\* What SerializeJSON gives where JSON.stringify throws a TypeError, as it does for a BigInt.
+JSONTypeError == [constructor |-> Null, message |-> "", name |-> "TypeError"]
+
 \\* SerializeJSONProperty, which gives Undefined where JSON.stringify leaves a value out. A value
 \\* that isn't on the heap and prints as a sequence is an array where state.isSequence holds, as
 \\* where the script makes no Map.
@@ -4441,30 +5162,39 @@ SerializeJSON(heap, value, state, stack, indent) ==
           [] state.gap = "" -> open \\o Join(parts, ",") \\o close
           [] OTHER -> open \\o "\\n" \\o inner \\o Join(parts, ",\\n" \\o inner) \\o "\\n" \\o indent \\o close
       array(elements, seen) ==
-        wrap("[", "]", [position \\in DOMAIN elements |->
-                          LET text == SerializeJSON(heap, elements[position], state, seen, inner)
-                          IN IF text = Undefined THEN "null" ELSE text])
+        LET texts == [position \\in DOMAIN elements |->
+                        SerializeJSON(heap, elements[position], state, seen, inner)]
+        IN IF \\E position \\in DOMAIN texts : IsError(texts[position])
+           THEN JSONTypeError
+           ELSE wrap("[", "]", [position \\in DOMAIN texts |->
+                                 IF texts[position] = Undefined THEN "null" ELSE texts[position]])
       object(keys) ==
         LET texts == [position \\in DOMAIN keys |->
                         SerializeJSON(heap, Get(heap, value, keys[position]), state,
                                       stack \\cup {value}, inner)]
             present == SelectSeq([position \\in DOMAIN keys |-> position],
                                  LAMBDA position : texts[position] # Undefined)
-        IN wrap("{", "}", [position \\in DOMAIN present |->
-                             QuoteJSON(keys[present[position]], state.escapes) \\o ":"
+        IN IF \\E position \\in DOMAIN texts : IsError(texts[position]) THEN JSONTypeError ELSE
+           wrap("{", "}", [position \\in DOMAIN present |->
+                             QuoteJSON(keys[present[position]]) \\o ":"
                                \\o (IF state.gap = "" THEN "" ELSE " ") \\o texts[present[position]]])
       hasToJSON(ref) == TypeOfIn(heap, Get(heap, ref, "toJSON")) = "function"
       kind == IF IsRef(value) THEN JSONWrapperKind(heap, value) ELSE ""
   IN CASE value = Null -> "null"
        [] value = Undefined -> Undefined
        [] TypeOf(value) = "boolean" -> IF value THEN "true" ELSE "false"
-       [] TypeOf(value) = "string" -> QuoteJSON(value, state.escapes)
+       [] TypeOf(value) = "string" -> QuoteJSON(value)
        [] TypeOf(value) = "number" -> IF IsFinite(value) THEN StringOf(value) ELSE "null"
        [] TypeOf(value) = "symbol" -> Undefined
+       [] IsBigInt(value) ->
+            IF hasToJSON(Ref :> "BigInt.prototype")
+            THEN Assert(FALSE, "tla-ts can't call toJSON")
+            ELSE JSONTypeError
        [] IsProxy(heap, value) ->
             SerializeJSON(heap, ForwardTarget(heap, value, {"get", "ownKeys", "getOwnPropertyDescriptor"}),
                           state, stack, indent)
        [] IsRef(value) /\\ hasToJSON(value) -> Assert(FALSE, "tla-ts can't call toJSON")
+       [] IsHeap(value) /\\ "bigint" \\in DOMAIN Lookup(heap, value) -> JSONTypeError
        [] kind = "Number" ->
             SerializeJSON(heap, JSONPrimitive(heap, value, kind, "valueOf"), state, stack, indent)
        [] kind # "" ->
@@ -4485,14 +5215,13 @@ SerializeJSON(heap, value, state, stack, indent) ==
             ELSE array(value, stack)
        [] OTHER -> Assert(FALSE, "tla-ts can't tell what JSON.stringify writes for " \\o ToString(value))
 
-\\* JSON.stringify, which can't call a replacer function, where escapes maps each code unit that
-\\* QuoteJSONString escapes to its escape.
-JSONStringify(heap, value, replacer, space, escapes, arrayPrototype, functionPrototype, isSequence) ==
+\\* JSON.stringify, which can't call a replacer function.
+JSONStringify(heap, value, replacer, space, arrayPrototype, functionPrototype, isSequence) ==
   LET isList == IsArray(heap, replacer)
                   \\/ (isSequence /\\ ~IsRef(replacer) /\\ SubSeq(ToString(replacer), 1, 2) = "<<")
       keys == IF isList THEN JSONKeys(heap, replacer) ELSE Undefined
       gap == JSONGap(heap, space)
-      state == [keys |-> keys, gap |-> gap, escapes |-> escapes, isSequence |-> isSequence,
+      state == [keys |-> keys, gap |-> gap, isSequence |-> isSequence,
                 arrayPrototype |-> arrayPrototype, functionPrototype |-> functionPrototype]
   IN CASE TypeOfIn(heap, replacer) = "function" -> Assert(FALSE, "tla-ts can't call a replacer")
        [] /\\ ~IsRef(replacer)
@@ -4503,6 +5232,57 @@ JSONStringify(heap, value, replacer, space, escapes, arrayPrototype, functionPro
        [] keys = keys /\\ gap = gap -> SerializeJSON(heap, value, state, {}, "")
 
 ===============================================================================`;
+
+// The lines of the JavaScript module, in units that each start at a line that isn't indented or a
+// comment, such as a definition, a RECURSIVE declaration, or the header's EXTENDS and CONSTANTS.
+const MODULE_LINES = JAVASCRIPT_MODULE.split("\n");
+const getDeclaredNames = (line: string) => {
+  if (line.startsWith("RECURSIVE ")) {
+    return [...line.matchAll(/([A-Z]\w*)\(/g)].map((match) => match[1]);
+  }
+  const match = /^(?:LOCAL )?([A-Z]\w*)(?:\(| ==)/.exec(line);
+  return match === null ? [] : [match[1]];
+};
+const getReadNames = (text: string) => [...(text.match(/\b[A-Z]\w*\b/g) ?? [])];
+const UNIT_STARTS = MODULE_LINES.flatMap((line, position) =>
+  /^[^\s\\(]/.test(line) ? [position] : [],
+);
+// The last unit is the line that closes the module.
+const MODULE_UNITS = UNIT_STARTS.map((start, position) => {
+  const lines = MODULE_LINES.slice(start, UNIT_STARTS[position + 1]);
+  return {
+    lines,
+    names: getDeclaredNames(lines[0]),
+    // A RECURSIVE declaration reads nothing; the definition it declares reads what it reads.
+    reads: lines[0].startsWith("RECURSIVE ") ? [] : getReadNames(lines.join("\n")),
+  };
+});
+const UNITS_BY_NAME = Map.groupBy(
+  MODULE_UNITS.flatMap((unit) => unit.names.map((name) => ({ name, unit }))),
+  (entry) => entry.name,
+);
+// A unit that defines nothing, such as the header or an ASSUME, stays with what it reads.
+const ROOT_READS = MODULE_UNITS.filter((unit) => unit.names.length === 0).flatMap(
+  (unit) => unit.reads,
+);
+
+// The JavaScript module with only the definitions that a spec and its config read, directly or
+// through other definitions, so that a check parses and analyzes only those. Every other line is
+// blank, so each definition keeps its line.
+export const getJavaScriptModule = (text: string) => {
+  const kept = new Set<string>();
+  const keep = (name: string) => {
+    if (kept.has(name)) return;
+    kept.add(name);
+    UNITS_BY_NAME.get(name)?.forEach((entry) => entry.unit.reads.forEach(keep));
+  };
+  [...getReadNames(text), ...ROOT_READS].forEach(keep);
+  return MODULE_UNITS.flatMap((unit) =>
+    unit.names.length === 0 || unit.names.some((name) => kept.has(name))
+      ? unit.lines
+      : unit.lines.map(() => ""),
+  ).join("\n");
+};
 
 // The model values that stand for the numbers that TLA+ integers can't hold.
 export const SPECIAL_NUMBERS = ["NaN", "Infinity", "NegativeInfinity", "NegativeZero"];
@@ -4553,6 +5333,10 @@ export const translateTypeOf = (node: ts.TypeOfExpression, scope: Scope, context
   const read = ts.isParenthesizedExpression(node.expression)
     ? node.expression.expression
     : node.expression;
+  // A name that no binding has is undefined to typeof, which reads it without throwing.
+  if (ts.isIdentifier(read) && getSymbol(read, context.checker) === undefined) {
+    return string("undefined");
+  }
   // An element of an array or a string may also lie past the end.
   const kind =
     ts.isPropertyAccessExpression(read) || ts.isElementAccessExpression(read)
@@ -4561,7 +5345,17 @@ export const translateTypeOf = (node: ts.TypeOfExpression, scope: Scope, context
   const isProperty =
     kind === "object" ||
     (ts.isElementAccessExpression(read) && (kind === "sequence" || kind === "string"));
-  if (known?.length === 1 && !isProperty) return string(known[0]);
+  // A call in the operand still runs, as it may throw.
+  const hasCall = (inner: ts.Node): boolean =>
+    ts.isCallExpression(inner) ||
+    ts.isNewExpression(inner) ||
+    ts.isTaggedTemplateExpression(inner) ||
+    (!ts.isFunctionLike(inner) && ts.forEachChild(inner, hasCall) === true);
+  if (known?.length === 1 && !isProperty && !hasCall(read)) return string(known[0]);
+  if (known?.length === 1 && !isProperty) {
+    const operand = translateExpression(node.expression, scope, context);
+    return ifExpression(apply("=", [operand, operand]), string(known[0]), string(known[0]));
+  }
   if (context.modelValues.size > 0) {
     throw new TlaTypeScriptError("typeof can't tell a @symmetric value from a function", node);
   }
@@ -4664,7 +5458,9 @@ export const translateToNumber = (
   if (
     kind === "string" ||
     (context.heap !== undefined &&
-      (context.checker.getTypeAtLocation(argument).flags & ts.TypeFlags.Unknown) !== 0)
+      (context.checker.getTypeAtLocation(argument).flags &
+        (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
+        0)
   ) {
     const converted = useJavaScript("ToNumber", [value], context);
     return context.hasSpecialNumbers
@@ -4706,13 +5502,16 @@ export const translateParseInt = (node: ts.CallExpression, scope: Scope, context
 // other call.
 const URI_ALPHANUMERICS = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
-// The characters that each URI function keeps: those that encodeURI and encodeURIComponent don't
-// escape, and those whose escapes decodeURI and decodeURIComponent don't decode.
+// The characters that each URI function keeps: those that encodeURI, encodeURIComponent, and
+// escape don't escape, and those whose escapes decodeURI and decodeURIComponent don't decode.
+// unescape decodes every escape.
 const URI_FUNCTIONS = new Map([
   ["encodeURI", `${URI_ALPHANUMERICS}-_.!~*'();/?:@&=+$,#`],
   ["encodeURIComponent", `${URI_ALPHANUMERICS}-_.!~*'()`],
+  ["escape", `${URI_ALPHANUMERICS}@*_+-./`],
   ["decodeURI", ";/?:@&=+$,#"],
   ["decodeURIComponent", ""],
+  ["unescape", ""],
 ]);
 
 // A call of a URI function on a string.
@@ -4729,6 +5528,7 @@ export const getURICall = (node: ts.Node, context: Context) => {
     getKind(text, context) === "string"
     ? {
         isDecode: node.expression.text.startsWith("decode"),
+        isUnescape: node.expression.text === "unescape",
         text,
         kept: set([...kept].map(string)),
       }

@@ -1789,6 +1789,10 @@ export const generateSanySpecification = (
               `Definition of ${existing.name} has different arity than its RECURSIVE declaration.`,
             );
           }
+          // OpDefNode.setParams gives the operator the definition's parameters before SANY
+          // generates its body, so a recursive call can pass an operator to one of them. It keeps
+          // the arity of the RECURSIVE declaration.
+          if (existing.letInLevel === state.curLevel) existing.params = params;
         } else if (existing !== undefined) {
           addError(location, `Operator ${name} already defined or declared.`);
         }
@@ -1805,8 +1809,6 @@ export const generateSanySpecification = (
         !existing.isDefined &&
         existing.letInLevel === state.curLevel
       ) {
-        // OpDefNode.setParams keeps the arity of the RECURSIVE declaration.
-        existing.params = params;
         existing.weights = params.map(() => 0);
         existing.maxLevels = params.map(() => TEMPORAL_LEVEL);
         existing.isLeibnizArg = params.map(() => true);

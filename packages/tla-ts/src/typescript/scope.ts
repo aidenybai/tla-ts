@@ -5,15 +5,35 @@ import {
   type FunctionNode,
   getElement,
   getSymbol,
+  findNodes,
   getUndefined,
   share,
+  skipCasts,
 } from "./context";
+import { getWritten } from "./actions";
 import { TlaTypeScriptError } from "../errors";
-import { isIteratedPattern, isTaken, isUntypedPattern } from "./iterators";
+import {
+  getTakenValue,
+  isIteratedPattern,
+  isSteppedPattern,
+  isTaken,
+  isUntypedPattern,
+} from "./iterators";
 import type { Expression, OperatorDefinition } from "../ast";
-import { translateArrayIteration } from "./collections";
-import { translateExpression } from "./expressions";
-import { apply, define, identifier, ifExpression, number, set, string, tuple } from "./tla";
+import { getHeapElements, translateArrayIteration, translatePatternIteration } from "./collections";
+import { isNullish } from "./protocols";
+import { translateElements, translateExpression } from "./expressions";
+import {
+  apply,
+  boolean,
+  define,
+  identifier,
+  ifExpression,
+  number,
+  set,
+  string,
+  tuple,
+} from "./tla";
 import { getHeap } from "./heap";
 import { translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
@@ -43,6 +63,17 @@ export interface Scope {
   // The values that patterns destructure, which throw a TypeError where they are null or undefined
   // though nothing reads what the patterns bind, and which the next statement checks.
   destructured?: readonly Destructured[];
+  // The statement that runs where the object it first uses has the private name it uses, which
+  // translating it again doesn't check again.
+  brandChecked?: ts.Statement;
+  // The environment of the call of each async function whose body runs, which tells the closures
+  // that read its locals which call made them.
+  activations?: ReadonlyMap<ts.Node, Expression>;
+  // The function that a call entered, whose environment or factory call binds the locals it reads.
+  entered?: FunctionNode;
+  // The values that a for's let bindings had before its first iteration, for each read of them in
+  // the functions that its initializer makes.
+  initialReads?: ReadonlyMap<ts.Expression, Expression>;
 }
 
 export interface Destructured {
@@ -167,9 +198,13 @@ export const rejectBeforeDeclaration = (node: ts.Identifier, scope: Scope, conte
   ) {
     return;
   }
-  const isUninitialized = ts.isSourceFile(declaration.parent.parent.parent)
-    ? scope.uninitialized.has(symbol)
-    : node.getStart() < declaration.getStart();
+  // A function other than the one that declares the let may run after its declaration, wherever
+  // its text is.
+  const isUninitialized =
+    ts.isSourceFile(declaration.parent.parent.parent) ||
+    ts.findAncestor(node, ts.isFunctionLike) !== ts.findAncestor(declaration, ts.isFunctionLike)
+      ? scope.uninitialized.has(symbol)
+      : node.getStart() < declaration.getStart();
   if (isUninitialized) {
     throw new TlaTypeScriptError(`Inside try, use ${node.text} after its declaration`, node);
   }
@@ -189,6 +224,31 @@ export const initialize = (
       };
 };
 
+// A nested pattern's default that calls a function where it's written, which assigns a variable
+// outside it, which only a statement can do. The pattern checks that its value isn't null or
+// undefined, which evaluates the default where it runs.
+const isAssigningCall = (initializer: ts.Expression, context: Context) => {
+  const call = skipCasts(initializer);
+  const callee = ts.isCallExpression(call) ? skipCasts(call.expression) : undefined;
+  return (
+    ts.isBindingElement(initializer.parent) &&
+    !ts.isIdentifier(initializer.parent.name) &&
+    callee !== undefined &&
+    (ts.isFunctionExpression(callee) || ts.isArrowFunction(callee)) &&
+    findNodes(callee.body, (inner): inner is ts.Expression => {
+      const written = ts.isCallExpression(inner) ? undefined : getWritten(inner);
+      const target = written === undefined ? undefined : skipCasts(written);
+      const declaration =
+        target !== undefined && ts.isIdentifier(target)
+          ? getSymbol(target, context.checker)?.valueDeclaration
+          : undefined;
+      return (
+        declaration !== undefined && (declaration.pos < callee.pos || declaration.end > callee.end)
+      );
+    }).length > 0
+  );
+};
+
 export const getDefaulted = (
   part: Expression,
   initializer: ts.Expression | undefined,
@@ -200,7 +260,12 @@ export const getDefaulted = (
     : share(part, "element", context, (shared) =>
         ifExpression(
           apply("=", [shared, getUndefined(context)]),
-          translateExpression(initializer, scope, context),
+          !scope.results.has(skipCasts(initializer)) && isAssigningCall(initializer, context)
+            ? apply("Assert", [
+                boolean(false),
+                string("tla-ts can't run a default that assigns where a nested pattern takes it"),
+              ])
+            : translateExpression(initializer, scope, context),
           shared,
         ),
       );
@@ -217,6 +282,62 @@ export const getOptionalField = (value: Expression, key: string, context: Contex
   );
 };
 
+// A pattern that a catch binds, or one nested in it, whose value is what the try threw.
+const isCaughtPattern = (pattern: ts.BindingPattern): boolean => {
+  const declaration = ts.findAncestor(
+    pattern,
+    (ancestor) =>
+      !ts.isBindingElement(ancestor) &&
+      !ts.isArrayBindingPattern(ancestor) &&
+      !ts.isObjectBindingPattern(ancestor),
+  );
+  return (
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    ts.isCatchClause(declaration.parent)
+  );
+};
+
+// The elements that a catch's array pattern takes from a value of any type: an array's, where the
+// heap holds the array or it's a sequence. Null and undefined stay, for the TypeError that the
+// pattern throws, and tla-ts doesn't follow the iterator of another value.
+const getCaughtElements = (
+  value: Expression,
+  heap: Expression,
+  pattern: ts.ArrayBindingPattern,
+  context: Context,
+) =>
+  getTakenValue(
+    share(value, "caught", context, (caught) =>
+      ifExpression(
+        useJavaScript("IsRef", [caught], context),
+        ifExpression(
+          apply("/\\", [
+            apply("~", [useJavaScript("IsProxy", [heap, caught], context)]),
+            useJavaScript("IsArray", [heap, caught], context),
+          ]),
+          getHeapElements(heap, caught, pattern, context),
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't destructure an object through its iterator"),
+          ]),
+        ),
+        ifExpression(
+          isNullish(caught, context),
+          caught,
+          ifExpression(
+            useJavaScript("IsSequenceValue", [caught], context),
+            translateArrayIteration(caught, heap, pattern, context),
+            apply("Assert", [
+              boolean(false),
+              string("tla-ts can't destructure this value through its iterator"),
+            ]),
+          ),
+        ),
+      ),
+    ),
+  );
+
 // Binds the names in a destructuring pattern to parts of a value, without LET definitions.
 export const bindPatternInline = (
   pattern: ts.BindingName,
@@ -227,7 +348,11 @@ export const bindPatternInline = (
   if (ts.isIdentifier(pattern)) {
     return bindNames(scope, [{ name: value, symbol: getSymbol(pattern, context.checker) }]);
   }
-  if (ts.isArrayBindingPattern(pattern) && isIteratedPattern(pattern, context) && !isTaken(value)) {
+  if (
+    ts.isArrayBindingPattern(pattern) &&
+    (isIteratedPattern(pattern, context) || isSteppedPattern(pattern, context)) &&
+    !isTaken(value)
+  ) {
     throw new TlaTypeScriptError(
       "tla-ts can't destructure this object through its iterator",
       pattern,
@@ -245,11 +370,19 @@ export const bindPatternInline = (
     ...scope,
     destructured: [...(scope.destructured ?? []), { pattern, value }],
   };
+  const heapSymbol = context.heap;
   if (ts.isArrayBindingPattern(pattern) && isUntypedPattern(pattern, context) && !isTaken(value)) {
-    throw new TlaTypeScriptError("Give this pattern's value an array type", pattern);
+    if (heapSymbol === undefined || !isCaughtPattern(pattern)) {
+      throw new TlaTypeScriptError("Give this pattern's value an array type", pattern);
+    }
+    return bindPatternInline(
+      pattern,
+      getCaughtElements(value, getHeap(scope, pattern, context), pattern, context),
+      scope,
+      context,
+    );
   }
   const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(pattern));
-  const heapSymbol = context.heap;
   // An array pattern runs the iterator of an array, which may be one that a script replaced.
   const isIterated =
     ts.isArrayBindingPattern(pattern) &&
@@ -258,7 +391,7 @@ export const bindPatternInline = (
   const heap = heapSymbol === undefined ? undefined : getHeap(destructuring, pattern, context);
   const iterated =
     isIterated && heap !== undefined
-      ? translateArrayIteration(value, heap, pattern, context)
+      ? translatePatternIteration(value, heap, pattern, type, context)
       : value;
   const iterating =
     isIterated && heapSymbol !== undefined && heap !== undefined
@@ -395,11 +528,20 @@ export const bindPatternInline = (
       );
     }
     // A record may lack the field that a default or a nested pattern reads, which then reads
-    // undefined.
-    const part =
+    // undefined. Where objects are in the heap, a value whose type isn't an object's, such as a
+    // caught one, may still be an object, which the pattern reads as a member read does.
+    const field =
       initializer === undefined && ts.isIdentifier(element.name)
         ? getField(value, key)
         : getOptionalField(value, key, context);
+    const part =
+      heapSymbol === undefined
+        ? field
+        : ifExpression(
+            useJavaScript("IsRef", [value], context),
+            useJavaScript("Get", [getHeap(current, element, context), value, string(key)], context),
+            field,
+          );
     return bindPatternInline(element.name, withDefault(part), current, context);
   }, iterating);
   if (heapSymbol === undefined) return bound;
@@ -440,19 +582,50 @@ export const bindPattern = (
 };
 
 // Binds parameters to argument values with LET definitions, as when inlining a call.
+// The values of the arguments that a call passes, at the positions that pass values. Where the call
+// spreads arguments from a rest parameter's position on, the last value is the sequence that the
+// rest parameter takes.
+export const translateArgumentValues = (
+  parameters: readonly ts.ParameterDeclaration[],
+  argumentNodes: readonly ts.Expression[],
+  isPassed: (position: number) => boolean,
+  scope: Scope,
+  context: Context,
+) => {
+  const rest = parameters.findIndex((parameter) => parameter.dotDotDotToken !== undefined);
+  const spread = argumentNodes.findIndex(ts.isSpreadElement);
+  if (spread !== -1 && (rest === -1 || spread < rest)) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't spread arguments into the parameters before a rest parameter",
+      argumentNodes[spread],
+    );
+  }
+  const passed = (spread === -1 ? argumentNodes : argumentNodes.slice(0, rest))
+    .filter((_, position) => isPassed(position))
+    .map((argument) => translateExpression(argument, scope, context));
+  return spread === -1
+    ? { values: passed, isSpread: false }
+    : {
+        values: [...passed, translateElements(argumentNodes.slice(rest), scope, context)],
+        isSpread: true,
+      };
+};
+
 export const bindValues = (
   parameters: readonly ts.ParameterDeclaration[],
   values: Expression[],
   scope: Scope,
   context: Context,
+  restValue?: Expression,
 ) =>
   parameters.reduce<Bound>(
     (current, parameter, position) => {
-      // A rest parameter takes the values that the parameters before it don't.
+      // A rest parameter takes the values that the parameters before it don't, or the sequence
+      // that a call spreads into it.
       const value =
         parameter.dotDotDotToken === undefined
           ? values.at(position)
-          : tuple(values.slice(position));
+          : (restValue ?? tuple(values.slice(position)));
       const initializer = parameter.initializer;
       const getDefault = () =>
         initializer === undefined

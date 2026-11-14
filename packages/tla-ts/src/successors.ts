@@ -64,7 +64,7 @@ interface Run {
 
 type Continuation = (partial: State, action: string | undefined) => void;
 
-type Runner = (
+export type Runner = (
   run: Run,
   scope: Scope | undefined,
   partial: State,
@@ -79,9 +79,6 @@ type Conjunct = { expression: Expression } & (
   | { kind: "Unchanged"; indices: number[] }
   | { kind: "Branch"; runner: Runner }
 );
-
-const initRunners = new WeakMap<Expression, Runner>();
-const nextRunners = new WeakMap<Expression, Runner>();
 
 const getContext = (run: Run, scope: Scope | undefined, partial: State) =>
   run.isInit
@@ -153,7 +150,7 @@ const isAssignmentOperator = (operator: string) =>
   operator === "=" || operator === "\\in" || operator === "\\subseteq";
 
 const getRunner = (expression: Expression, environment: Environment, isInit: boolean): Runner => {
-  const runners = isInit ? initRunners : nextRunners;
+  const runners = isInit ? environment.initRunners : environment.nextRunners;
   const cached = runners.get(expression);
   if (cached) return cached;
   const runner = compileAction(expression, environment, isInit);

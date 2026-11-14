@@ -1,14 +1,23 @@
 import ts from "@typescript/typescript6";
-import { type Context, findNodes, getSymbol, getUndefined, isAssigned, share } from "./context";
+import {
+  type Context,
+  findNodes,
+  getSymbol,
+  getUndefined,
+  isAssigned,
+  share,
+  skipCasts,
+} from "./context";
 import { TlaTypeScriptError } from "../errors";
 import {
   getArrayIteratorCall,
   translateArrayIteratorPrototype,
   translateHoldsIteratorMethod,
 } from "./collections";
+import { getVarNames } from "./early-errors";
 import { getConstructor, getErrorClass, NATIVE_ERRORS } from "./exceptions";
-import { getNumberValue, translateExpression } from "./expressions";
-import { getHeap } from "./heap";
+import { getNumberValue, getRawString, translateExpression } from "./expressions";
+import { getHeap, isFunctionValue, translateFunctionObject } from "./heap";
 import { useJavaScript, WELL_KNOWN_SYMBOLS } from "./javascript";
 import type { Scope } from "./scope";
 import type { Expression } from "../ast";
@@ -16,6 +25,7 @@ import { BUILT_INS } from "./built-ins";
 import {
   apply,
   boolean,
+  field,
   functionFrom,
   identifier,
   ifExpression,
@@ -25,7 +35,7 @@ import {
   string,
   tuple,
 } from "./tla";
-import { getCollection, getKind } from "./types";
+import { getCollection, getKind, isGeneratorType } from "./types";
 
 // Built-in constructors, besides the errors, whose prototype objects tla-ts compiles to
 // constants, which compare by identity.
@@ -41,6 +51,18 @@ export const getBuiltIn = (node: ts.Expression, context: Context) => {
   return ts.isIdentifier(node) && isGlobal(node.text) && symbol !== undefined && isLibrary(symbol)
     ? node.text
     : undefined;
+};
+
+// The type of a built-in object that a global holds, such as Math's, which no other value has.
+export const isBuiltInObjectType = (type: ts.Type, context: Context) => {
+  const symbol = type.getSymbol();
+  return (
+    symbol !== undefined &&
+    isGlobal(symbol.name) &&
+    isLibrary(symbol) &&
+    (symbol.flags & ts.SymbolFlags.Value) !== 0 &&
+    context.checker.getTypeOfSymbol(symbol) === type
+  );
 };
 
 // The prototype of a built-in object, which "null" names.
@@ -80,7 +102,7 @@ const getFunctionPrototype = (type: ts.Type) => {
 
 // The object and the key that a read names, as BUILT_INS writes it: a property's name, or a
 // well-known symbol's, as "@@iterator".
-const getBuiltInKey = (node: ts.Expression, context: Context) => {
+export const getBuiltInKey = (node: ts.Expression, context: Context) => {
   if (ts.isPropertyAccessExpression(node) && !ts.isPrivateIdentifier(node.name)) {
     return { owner: node.expression, name: node.name.text };
   }
@@ -168,6 +190,112 @@ const getIteratorCall = (node: ts.Expression, context: Context) => {
       };
 };
 
+// Whether an expression is only read, where a write such as an assignment, a delete, or a pattern
+// that a destructuring assignment writes can't reach it.
+const isRead = (node: ts.Expression): boolean => {
+  const outer = node.parent;
+  if (ts.isParenthesizedExpression(outer)) return isRead(outer);
+  return !(
+    (ts.isBinaryExpression(outer) &&
+      outer.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      outer.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      outer.left === node) ||
+    ts.isDeleteExpression(outer) ||
+    ((ts.isPrefixUnaryExpression(outer) || ts.isPostfixUnaryExpression(outer)) &&
+      (outer.operator === ts.SyntaxKind.PlusPlusToken ||
+        outer.operator === ts.SyntaxKind.MinusMinusToken)) ||
+    ((ts.isForInStatement(outer) || ts.isForOfStatement(outer)) && outer.initializer === node) ||
+    ts.isArrayLiteralExpression(outer) ||
+    ts.isObjectLiteralExpression(outer) ||
+    ts.isPropertyAssignment(outer) ||
+    ts.isSpreadElement(outer) ||
+    ts.isSpreadAssignment(outer)
+  );
+};
+
+interface RegExpTexts {
+  pattern: string;
+  flags: string;
+}
+
+interface NamedGenerator {
+  name: ts.Identifier;
+  generator: ts.FunctionDeclaration | ts.FunctionExpression;
+}
+
+// The generator functions that a script declares at its top, or that a variable there holds, whose
+// prototype objects the heap holds from the start, by the place on the heap of each. A script names
+// such a function only to call it, read its prototype, check what is an instance of it, or ask for
+// its prototype, so that the function's prototype property keeps the object it starts with.
+export const findGeneratorPrototypes = (sourceFile: ts.SourceFile, context: Context) => {
+  const isGenerator = (node: ts.Node | undefined) =>
+    node !== undefined &&
+    (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) &&
+    node.asteriskToken !== undefined &&
+    node.body !== undefined &&
+    (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0;
+  const named = sourceFile.statements.flatMap<NamedGenerator>((statement) =>
+    ts.isFunctionDeclaration(statement) && statement.name !== undefined && isGenerator(statement)
+      ? [{ name: statement.name, generator: statement }]
+      : ts.isVariableStatement(statement)
+        ? statement.declarationList.declarations.flatMap((declaration) =>
+            ts.isIdentifier(declaration.name) &&
+            declaration.initializer !== undefined &&
+            ts.isFunctionExpression(declaration.initializer) &&
+            isGenerator(declaration.initializer)
+              ? [{ name: declaration.name, generator: declaration.initializer }]
+              : [],
+          )
+        : [],
+  );
+  const references = findNodes(sourceFile, ts.isIdentifier);
+  const isKept = (name: ts.Identifier) => {
+    const symbol = getSymbol(name, context.checker);
+    return references.every((reference) => {
+      const parent = reference.parent;
+      return (
+        getSymbol(reference, context.checker) !== symbol ||
+        reference === name ||
+        (ts.isCallExpression(parent) && parent.expression === reference) ||
+        (ts.isPropertyAccessExpression(parent) &&
+          parent.expression === reference &&
+          parent.name.text === "prototype" &&
+          isRead(parent)) ||
+        (ts.isBinaryExpression(parent) &&
+          parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
+          parent.right === reference) ||
+        (isPrototypeCall(parent, context) && parent.arguments[0] === reference)
+      );
+    });
+  };
+  return new Map(
+    named
+      .filter((entry) => isKept(entry.name))
+      .map((entry, position) => [entry.generator, position + 1]),
+  );
+};
+
+// The prototype object that the heap holds for a generator function that a script declares or
+// holds in a variable.
+export const getGeneratorPrototypeRef = (node: ts.Node | undefined, context: Context) => {
+  const declaration =
+    node === undefined || ts.isFunctionLike(node)
+      ? node
+      : getSymbol(node, context.checker)?.valueDeclaration;
+  const generator =
+    declaration !== undefined && ts.isVariableDeclaration(declaration)
+      ? declaration.initializer
+      : declaration;
+  const position =
+    generator !== undefined &&
+    (ts.isFunctionDeclaration(generator) || ts.isFunctionExpression(generator))
+      ? context.generatorPrototypes.get(generator)
+      : undefined;
+  return position === undefined
+    ? undefined
+    : useJavaScript(":>", [identifier("Ref"), number(position)], context);
+};
+
 // The prototype object of a generator function that a script writes in place, or declares and only
 // calls and asks for its prototype and for the prototype of that object, so that the object is the
 // one the function starts with, which inherits from the built-in one.
@@ -203,6 +331,16 @@ const getGeneratorObjectPrototype = (node: ts.Expression, context: Context) => {
     : undefined;
 };
 
+// The types of the values that aren't objects.
+const PRIMITIVE_TYPES =
+  ts.TypeFlags.NumberLike |
+  ts.TypeFlags.StringLike |
+  ts.TypeFlags.BooleanLike |
+  ts.TypeFlags.BigIntLike |
+  ts.TypeFlags.ESSymbolLike |
+  ts.TypeFlags.Undefined |
+  ts.TypeFlags.Null;
+
 // The built-in object that is the prototype of a node's value, or "null".
 const getPrototype = (node: ts.Expression, context: Context): string | undefined => {
   const name = getName(node, context);
@@ -214,7 +352,15 @@ const getPrototype = (node: ts.Expression, context: Context): string | undefined
   if (type.flags & ts.TypeFlags.StringLike) return "String.prototype";
   if (type.flags & ts.TypeFlags.BooleanLike) return "Boolean.prototype";
   if (type.flags & ts.TypeFlags.BigIntLike) return "BigInt.prototype";
-  if (getArrayIteratorCall(node, context)?.kind !== undefined && !context.hasInheritedElements) {
+  // Iterator.from's iterator is wrapped where its prototype no longer inherits from
+  // Iterator.prototype, and getIteratorCall reads a string's.
+  const arrayIteratorCall = getArrayIteratorCall(node, context);
+  if (
+    arrayIteratorCall?.kind !== undefined &&
+    arrayIteratorCall.kind !== "string" &&
+    arrayIteratorCall.isFrom !== true &&
+    !context.hasInheritedElements
+  ) {
     return "%ArrayIteratorPrototype%";
   }
   const iteratorCall = getIteratorCall(node, context);
@@ -252,23 +398,20 @@ export const translateBuiltInInstanceOf = (
   }
   const left = node.left;
   const type = context.checker.getTypeAtLocation(left);
-  const isPrimitive =
-    !type.isUnion() &&
-    (type.flags &
-      (ts.TypeFlags.NumberLike |
-        ts.TypeFlags.StringLike |
-        ts.TypeFlags.BooleanLike |
-        ts.TypeFlags.BigIntLike |
-        ts.TypeFlags.ESSymbolLike |
-        ts.TypeFlags.Undefined |
-        ts.TypeFlags.Null)) !==
-      0;
+  const isPrimitive = !type.isUnion() && (type.flags & PRIMITIVE_TYPES) !== 0;
   const isObject = getKind(left, context) === "object";
-  const parent = isPrimitive || isObject ? undefined : getPrototype(left, context);
+  const isGenerator = !isPrimitive && !isObject && isGeneratorType(left, context);
+  const parent = isPrimitive || isObject || isGenerator ? undefined : getPrototype(left, context);
   // A value of type unknown or any may be anything, which only the run can tell.
   const isUnknown =
     !isPrimitive && !isObject && (type.flags & (ts.TypeFlags.Unknown | ts.TypeFlags.Any)) !== 0;
-  if (!isPrimitive && !isObject && !isUnknown && (parent === undefined || parent === "null")) {
+  if (
+    !isPrimitive &&
+    !isObject &&
+    !isGenerator &&
+    !isUnknown &&
+    (parent === undefined || parent === "null")
+  ) {
     return undefined;
   }
   const heap = getHeap(scope, node, context);
@@ -277,6 +420,11 @@ export const translateBuiltInInstanceOf = (
   const found = (value: Expression) => {
     if (isPrimitive) return boolean(false);
     if (isObject) return useJavaScript("IsPrototypeOf", [heap, prototype, value], context);
+    if (isGenerator) {
+      // An iterator helper inherits from %IteratorHelperPrototype%, which Lookup reads.
+      context.builtIns.add("%IteratorHelperPrototype%");
+      return useJavaScript("GeneratorInheritsFrom", [heap, prototype, value], context);
+    }
     if (isUnknown) return useJavaScript("InheritsFrom", [heap, prototype, value], context);
     const inherited = translateBuiltIn(parent ?? "null", left, scope, context);
     return apply("\\/", [
@@ -423,11 +571,17 @@ const isCompared = (node: ts.Expression, context: Context): boolean => {
 };
 
 const getGlobal = (name: string, node: ts.Node, context: Context) => {
-  const symbol = context.checker
+  const named = context.checker
     .getSymbolsInScope(node.getSourceFile(), ts.SymbolFlags.Value)
-    .find((candidate) => candidate.name === name && isLibrary(candidate));
-  if (symbol === undefined) throw new TlaTypeScriptError(`Unknown built-in: ${name}`, node);
-  return symbol;
+    .find((candidate) => candidate.name === name);
+  if (named !== undefined && !isLibrary(named)) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't name the built-in ${name}, which ${name} hides`,
+      node,
+    );
+  }
+  if (named === undefined) throw new TlaTypeScriptError(`Unknown built-in: ${name}`, node);
+  return named;
 };
 
 const isGlobalFunction = (name: string) => isGlobal(name) && BUILT_INS[name][1];
@@ -460,7 +614,7 @@ export const translateBuiltInValue = (
     | "Function.prototype.bind"
     | "Array.prototype"
     | "Object.prototype"
-    | "Object.prototype.toString"
+    | `Object.prototype.${string}`
     | `Array.prototype.${string}`
     | "Array"
     | `get ${string}`
@@ -476,6 +630,10 @@ export const translateBuiltInValue = (
     | "Date.prototype"
     | "DisposableStack.prototype"
     | "AsyncDisposableStack.prototype"
+    | "DisposableStack.prototype.dispose"
+    | "DisposableStack.prototype.move"
+    | "AsyncDisposableStack.prototype.disposeAsync"
+    | "AsyncDisposableStack.prototype.move"
     | "RegExp.prototype"
     | "ArrayBuffer"
     | "SharedArrayBuffer"
@@ -483,15 +641,26 @@ export const translateBuiltInValue = (
     | `${string}Array`
     | `${string}Buffer.prototype`
     | `${string}Array.prototype`
+    | `${string}Error`
+    | `${string}Error.prototype`
     | "DataView.prototype"
     | "Symbol.prototype"
+    | "Iterator"
     | "Iterator.prototype"
+    | `Iterator.prototype.${string}`
+    | "%AsyncIteratorPrototype%.@@asyncDispose"
     | "%ArrayIteratorPrototype%"
+    | "%StringIteratorPrototype%"
     | "%GeneratorFunction%.prototype"
     | "%GeneratorFunction%.prototype.prototype"
+    | "%AsyncFunction%.prototype"
+    | "%AsyncGeneratorFunction%.prototype"
+    | "%AsyncGeneratorFunction%.prototype.prototype"
     | "Promise"
     | "Promise.prototype"
     | "JSON"
+    | "Intl"
+    | `Intl.${string}.prototype`
     | `${Collection}.prototype${string}`,
   node: ts.Node,
   context: Context,
@@ -638,8 +807,22 @@ const translateBuiltInProperty = (value: string, node: ts.Node, context: Context
   return value.startsWith("n") ? getNumberValue(Number(payload), context) : undefined;
 };
 
-// The built-in objects that a script's heap holds: those the script names, and their prototypes.
-export const translateBuiltIns = (node: ts.Node, context: Context) => {
+// The built-in objects that a script's heap holds: those the script names, their prototypes, and
+// the objects of the functions that model values stand for, with the prototype objects they start
+// with.
+export const translateBuiltIns = (node: ts.SourceFile, context: Context) => {
+  // The global object's keys that a script's top-level var or function declares, which a script
+  // that isn't a module puts on the global object, so tla-ts doesn't read them.
+  const hidden = new Set([
+    ...getVarNames(node),
+    ...node.statements.flatMap((statement) =>
+      ts.isFunctionDeclaration(statement) && statement.name !== undefined
+        ? [statement.name.text]
+        : [],
+    ),
+  ]);
+  const isHidden = (name: string, property: string[]) =>
+    name === "globalThis" && hidden.has(property[0]);
   const included = new Set<string>();
   const include = (name: string | null) => {
     const entry = name === null ? undefined : BUILT_INS[name];
@@ -652,8 +835,7 @@ export const translateBuiltIns = (node: ts.Node, context: Context) => {
   const referenced = new Set(
     [...included].flatMap((name) =>
       BUILT_INS[name][3].flatMap((property) =>
-        property
-          .slice(2)
+        (isHidden(name, property) ? [] : property.slice(2))
           .filter((value) => value.startsWith("o") && !included.has(value.slice(1)))
           .map((value) => value.slice(1)),
       ),
@@ -673,6 +855,13 @@ export const translateBuiltIns = (node: ts.Node, context: Context) => {
   ]);
   return functionFrom([
     ...stubs,
+    ...[...context.functionObjects].map((entry): [Expression, Expression] => [
+      identifier(entry[0]),
+      entry[1].object,
+    ]),
+    ...[...context.functionObjects.values()].flatMap((entry): [Expression, Expression][] =>
+      entry.prototype === undefined ? [] : [[string(entry.prototype.key), entry.prototype.object]],
+    ),
     ...[...included].map((name): [Expression, Expression] => {
       const entry = BUILT_INS[name];
       const properties = entry[3];
@@ -700,6 +889,9 @@ export const translateBuiltIns = (node: ts.Node, context: Context) => {
             },
           ]);
           return { key, value: accessor, attributes: getAttributes(flags, "accessor") };
+        }
+        if (isHidden(name, property)) {
+          return { key, value: getUndefined(context), attributes: getAttributes(flags, "hidden") };
         }
         const value =
           name === "Symbol" && WELL_KNOWN_SYMBOLS.includes(property[0])
@@ -767,11 +959,40 @@ const evaluate = (node: ts.Expression, scope: Scope, context: Context) => {
 // A built-in object, or Object.getPrototypeOf or isPrototypeOf on built-in objects, or undefined
 // for any other node.
 export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: Context) => {
+  // The prototype object of a generator function that the heap holds from the start.
+  const generatorPrototype =
+    ts.isPropertyAccessExpression(node) && node.name.text === "prototype"
+      ? getGeneratorPrototypeRef(node.expression, context)
+      : undefined;
+  if (generatorPrototype !== undefined) return generatorPrototype;
+  // The prototype of a generator object, or of a generator function's prototype object, that the
+  // heap holds.
+  const argument = isPrototypeCall(node, context) ? node.arguments[0] : undefined;
+  const ofGenerator =
+    argument !== undefined && context.heap !== undefined && isGeneratorType(argument, context)
+      ? "GeneratorPrototype"
+      : argument !== undefined &&
+          ts.isPropertyAccessExpression(argument) &&
+          argument.name.text === "prototype" &&
+          getGeneratorPrototypeRef(argument.expression, context) !== undefined
+        ? "Prototype"
+        : undefined;
+  if (argument !== undefined && ofGenerator !== undefined) {
+    return useJavaScript(
+      ofGenerator,
+      [getHeap(scope, node, context), translateExpression(argument, scope, context)],
+      context,
+    );
+  }
   // The prototype of an array iterator that a call makes, which nothing else can read.
   const iteratorCall = isPrototypeCall(node, context)
     ? getArrayIteratorCall(node.arguments[0], context)
     : undefined;
-  if (iteratorCall?.kind !== undefined) {
+  if (
+    iteratorCall?.kind !== undefined &&
+    iteratorCall.kind !== "string" &&
+    iteratorCall.isFrom !== true
+  ) {
     return share(
       translateExpression(iteratorCall.receiver, scope, context),
       "array",
@@ -788,12 +1009,15 @@ export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: C
     );
   }
   // A script's heap holds the built-in objects it names, which its statements may change.
+  // A built-in iterator that a call makes reads its prototype as getIteratorCall tells.
   const isOfObject =
     (isPrototypeOfCall(node) || isPrototypeCall(node, context)) &&
+    getIteratorCall(node.arguments[0], context) === undefined &&
     (getKind(node.arguments[0], context) === "object" ||
       (context.heap !== undefined &&
         scope.bindings.has(context.heap) &&
-        isBuiltInObject(node.arguments[0], context)));
+        (isBuiltInObject(node.arguments[0], context) ||
+          isFunctionValue(node.arguments[0], context))));
   if (isOfObject && isPrototypeOfCall(node) && ts.isPropertyAccessExpression(node.expression)) {
     const owner = node.expression.expression;
     const name = getName(owner, context);
@@ -824,22 +1048,24 @@ export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: C
     }
     return useJavaScript(
       "Prototype",
-      [
-        getHeap(scope, node, context),
-        translateBuiltInObject(node.arguments[0], scope, context) ??
-          translateExpression(node.arguments[0], scope, context),
-      ],
+      [getHeap(scope, node, context), translateFunctionObject(node.arguments[0], scope, context)],
       context,
     );
   }
   if (isPrototypeOfCall(node) && ts.isPropertyAccessExpression(node.expression)) {
     const owner = getName(node.expression.expression, context);
     if (owner === undefined) return undefined;
+    const argumentType = context.checker.getTypeAtLocation(node.arguments[0]);
+    // isPrototypeOf gives false for a value that isn't an object, before it reads this.
+    const isPrimitive = (argumentType.isUnion() ? argumentType.types : [argumentType]).every(
+      (type) => (type.flags & PRIMITIVE_TYPES) !== 0,
+    );
     const first = getPrototype(node.arguments[0], context);
-    if (first === undefined) {
+    if (first === undefined && !isPrimitive) {
       throw new TlaTypeScriptError("isPrototypeOf needs a value whose type tells", node);
     }
     evaluate(node.arguments[0], scope, context);
+    if (isPrimitive || first === undefined) return boolean(false);
     const getChain = (name: string): string[] =>
       name === "null" ? [] : [name, ...getChain(getParent(name))];
     return boolean(getChain(first).includes(owner));
@@ -876,8 +1102,11 @@ export const translateIntrinsic = (node: ts.Expression, scope: Scope, context: C
 type CharacterSet = (code: number) => boolean;
 
 // A matcher of a pattern, as the spec's CompilePattern makes it, which matches code units.
+// The matchers of a pattern, where a set, an assertion, and a backreference keep the flags that a
+// modifier group gives them.
 type Matcher =
-  | { kind: "set"; set: CharacterSet; isInverted: boolean }
+  // A set of characters, with the source of the atom that makes it where a term is one.
+  | { kind: "set"; set: CharacterSet; isInverted: boolean; source?: string; flags?: string }
   | { kind: "sequence" | "alternation"; items: Matcher[] }
   | { kind: "group"; index: number; body: Matcher }
   | {
@@ -889,10 +1118,10 @@ type Matcher =
       parenIndex: number;
       parenCount: number;
     }
-  | { kind: "start" | "end" }
-  | { kind: "boundary"; isInverted: boolean }
+  | { kind: "start" | "end"; flags: string }
+  | { kind: "boundary"; isInverted: boolean; flags: string }
   | { kind: "lookahead"; body: Matcher; isNegative: boolean }
-  | { kind: "backreference"; index: number };
+  | { kind: "backreference"; index: number; flags: string };
 
 const LINE_TERMINATORS = [0x0a, 0x0d, 0x2028, 0x2029];
 
@@ -982,7 +1211,7 @@ const getGroups = (source: string) => {
 const parsePattern = (source: string, flags: string, node: ts.Node) => {
   const isUnicode = flags.includes("u");
   const groups = getGroups(source);
-  const cursor = { position: 0, captures: 0 };
+  const cursor = { position: 0, captures: 0, flags };
   const peek = (offset = 0) => source.charAt(cursor.position + offset);
   const isAt = (text: string) => source.startsWith(text, cursor.position);
   const getRest = () => source.slice(cursor.position);
@@ -991,20 +1220,16 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
     if (peek() !== ")") throw invalid();
     cursor.position += 1;
   };
-  // A character that the pattern writes, where tla-ts reads a pattern with the u flag by code units
-  // only while it writes no surrogate, as it matches one only on text in ASCII.
-  const getCode = (code: number) => {
-    if (isUnicode && code >= 0xd800 && code <= 0xdfff) {
-      throw new TlaTypeScriptError(
-        "tla-ts can't match a character outside the Basic Multilingual Plane with the u flag",
-        node,
-      );
-    }
+  // The character that the pattern writes next, which with the u flag is a code point, so a
+  // surrogate pair is one.
+  const readCode = () => {
+    const code = isUnicode ? (source.codePointAt(cursor.position) ?? 0) : peek().charCodeAt(0);
+    cursor.position += code > 0xffff ? 2 : 1;
     return code;
   };
   const getCharacter = (code: number): Matcher => ({
     kind: "set",
-    set: getCharacterSet(getCode(code)),
+    set: getCharacterSet(code),
     isInverted: false,
   });
   const parseDisjunction = (): Matcher => {
@@ -1026,16 +1251,28 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
     const parenIndex = cursor.captures;
     if (peek() === "^" || peek() === "$") {
       cursor.position += 1;
-      return { kind: source.charAt(cursor.position - 1) === "^" ? "start" : "end" };
+      return {
+        kind: source.charAt(cursor.position - 1) === "^" ? "start" : "end",
+        flags: cursor.flags,
+      };
     }
     if (isAt("\\b") || isAt("\\B")) {
       cursor.position += 2;
-      return { kind: "boundary", isInverted: source.charAt(cursor.position - 1) === "B" };
+      return {
+        kind: "boundary",
+        isInverted: source.charAt(cursor.position - 1) === "B",
+        flags: cursor.flags,
+      };
     }
     if (isAt("(?<=") || isAt("(?<!")) {
       throw new TlaTypeScriptError("tla-ts can't match a lookbehind", node);
     }
-    const atom = isAt("(?=") || isAt("(?!") ? parseLookahead() : parseAtom();
+    const start = cursor.position;
+    const parsed = isAt("(?=") || isAt("(?!") ? parseLookahead() : parseAtom();
+    const atom =
+      parsed.kind === "set" && parsed.source === undefined
+        ? { ...parsed, source: source.slice(start, cursor.position), flags: cursor.flags }
+        : parsed;
     const bounds = parseBounds();
     if (bounds === undefined) return atom;
     const isGreedy = peek() !== "?";
@@ -1085,7 +1322,7 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
       cursor.position += 1;
       return {
         kind: "set",
-        set: flags.includes("s") ? () => true : (code) => !LINE_TERMINATORS.includes(code),
+        set: cursor.flags.includes("s") ? () => true : (code) => !LINE_TERMINATORS.includes(code),
         isInverted: false,
       };
     }
@@ -1093,13 +1330,19 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
     if (character === "[") return parseClass();
     if (character === "\\") return parseAtomEscape();
     if ("*+?)".includes(character) || /^\{\d+(,\d*)?\}/.test(getRest())) throw invalid();
-    cursor.position += 1;
-    return getCharacter(character.charCodeAt(0));
+    return getCharacter(readCode());
   };
   const parseGroup = (): Matcher => {
-    if (isAt("(?:")) {
-      cursor.position += 3;
+    // A group that adds or removes the i, m, or s flags for its body, which (?: does neither.
+    const modifiers = /^\(\?([ims]*)(?:-([ims]*))?:/.exec(getRest());
+    if (modifiers !== null) {
+      const outer = cursor.flags;
+      const removed = modifiers[2] ?? "";
+      cursor.position += modifiers[0].length;
+      cursor.flags =
+        [...outer].filter((flag) => !removed.includes(flag)).join("") + (modifiers[1] ?? "");
       const body = parseDisjunction();
+      cursor.flags = outer;
       close();
       return body;
     }
@@ -1126,23 +1369,23 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
     if (property === undefined) return undefined;
     cursor.position += property.length;
     const matcher = new RegExp(`^${property}$`, "u");
-    return (code) => matcher.test(String.fromCharCode(code));
+    return (code) => matcher.test(String.fromCodePoint(code));
   };
   const parseAtomEscape = (): Matcher => {
     const escaped = peek(1);
     const decimal = /^[1-9]\d*/.exec(source.slice(cursor.position + 1))?.[0];
     if (decimal !== undefined && Number(decimal) <= groups.count) {
       cursor.position += 1 + decimal.length;
-      return { kind: "backreference", index: Number(decimal) };
+      return { kind: "backreference", index: Number(decimal), flags: cursor.flags };
     }
     if (escaped === "k" && (isUnicode || groups.names.size > 0)) {
       const name = /^\\k<([^>]*)>/.exec(getRest())?.[1];
       const index = name === undefined ? undefined : groups.names.get(name);
       if (name === undefined || index === undefined) throw invalid();
       cursor.position += name.length + 4;
-      return { kind: "backreference", index };
+      return { kind: "backreference", index, flags: cursor.flags };
     }
-    const classEscape = getClassEscape(escaped, isUnicode && flags.includes("i"));
+    const classEscape = getClassEscape(escaped, isUnicode && cursor.flags.includes("i"));
     if (classEscape !== undefined) {
       cursor.position += 2;
       return { kind: "set", set: classEscape, isInverted: false };
@@ -1166,33 +1409,35 @@ const parsePattern = (source: string, flags: string, node: ts.Node) => {
     const octal = /^(?:[0-3][0-7]{0,2}|[4-7][0-7]?)/.exec(rest)?.[0];
     const hex = /^x([\da-fA-F]{2})|^u([\da-fA-F]{4})|^u\{([\da-fA-F]+)\}/.exec(rest);
     const point = hex?.[3] === undefined || !isUnicode ? undefined : Number.parseInt(hex[3], 16);
-    if (point !== undefined && point > 0xffff) {
-      throw new TlaTypeScriptError(
-        "tla-ts can't match a character outside the Basic Multilingual Plane with the u flag",
-        node,
-      );
-    }
+    // With the u flag, the escapes of a surrogate pair write one code point.
+    const pair = isUnicode ? /^u(d[89ab][\da-f]{2})\\u(d[c-f][\da-f]{2})/i.exec(rest) : null;
     const escape =
       control !== undefined
         ? { length: 1, code: control }
         : letter !== null
           ? { length: 2, code: letter[1].charCodeAt(0) % 32 }
-          : octal !== undefined && !(isUnicode && octal !== "0")
-            ? { length: octal.length, code: Number.parseInt(octal, 8) }
-            : hex !== null && (hex[3] === undefined || point !== undefined)
-              ? { length: hex[0].length, code: point ?? Number.parseInt(hex[1] ?? hex[2], 16) }
-              : { length: 1, code: rest.charCodeAt(0) };
+          : pair !== null
+            ? {
+                length: pair[0].length,
+                code:
+                  String.fromCharCode(
+                    Number.parseInt(pair[1], 16),
+                    Number.parseInt(pair[2], 16),
+                  ).codePointAt(0) ?? 0,
+              }
+            : octal !== undefined && !(isUnicode && octal !== "0")
+              ? { length: octal.length, code: Number.parseInt(octal, 8) }
+              : hex !== null && (hex[3] === undefined || point !== undefined)
+                ? { length: hex[0].length, code: point ?? Number.parseInt(hex[1] ?? hex[2], 16) }
+                : { length: 1, code: rest.charCodeAt(0) };
     cursor.position += 1 + escape.length;
-    return getCode(escape.code);
+    return escape.code;
   };
   const parseClassAtom = (): number | CharacterSet => {
     const character = peek();
     if (character === "") throw invalid();
-    if (character !== "\\") {
-      cursor.position += 1;
-      return getCode(character.charCodeAt(0));
-    }
-    const classEscape = getClassEscape(peek(1), isUnicode && flags.includes("i"));
+    if (character !== "\\") return readCode();
+    const classEscape = getClassEscape(peek(1), isUnicode && cursor.flags.includes("i"));
     if (classEscape !== undefined) {
       cursor.position += 2;
       return classEscape;
@@ -1260,15 +1505,27 @@ const foldCase = (code: number) =>
 
 const CODE_UNITS = Array.from({ length: 0x10000 }, (_, code) => code);
 
-// The characters outside ASCII that a class lists, where it holds most of them or few.
-const LISTED_LIMIT = 256;
+const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;
 
-// A class as the characters in ASCII that it matches once Canonicalize maps them, with those
-// outside ASCII listed where it matches few of them or all but a few, or else unknown. A pattern
-// with the u flag matches only text in ASCII.
+const isLowSurrogate = (code: number) => code >= 0xdc00 && code <= 0xdfff;
+
+// The string of a code point, where TLA+ writes a lone surrogate as a part of a pair, since its
+// strings hold only text that UTF-8 can encode.
+export const getCodePoint = (code: number) =>
+  isHighSurrogate(code)
+    ? apply("SubSeq", [string(String.fromCharCode(code, 0xdc00)), number(1), number(1)])
+    : isLowSurrogate(code)
+      ? apply("SubSeq", [string(String.fromCharCode(0xd800, code)), number(2), number(2)])
+      : string(String.fromCodePoint(code));
+
+// A class as the characters that it matches once Canonicalize maps them, among those in ASCII and
+// those that the script's strings may hold, which with the u flag are code points. With the u and i
+// flags Canonicalize is simple case folding, which tla-ts reads from the engine it runs on, matching
+// the atom's source against each character outside ASCII.
 const translateCharacters = (
-  matcher: { set: CharacterSet; isInverted: boolean },
+  matcher: { set: CharacterSet; isInverted: boolean; source?: string },
   flags: string,
+  characters: Set<number>,
 ) => {
   const isUnicode = flags.includes("u");
   const fold = flags.includes("i") ? (isUnicode ? foldCase : canonicalize) : undefined;
@@ -1283,56 +1540,65 @@ const translateCharacters = (
   const isMatched = (code: number) =>
     (folded === undefined || fold === undefined ? matcher.set(code) : folded.has(fold(code))) !==
     matcher.isInverted;
-  const outside = isUnicode ? [] : CODE_UNITS.slice(128);
-  const held = outside.filter(isMatched);
-  const missed = outside.filter((code) => !isMatched(code));
-  const isListable = (codes: number[]) =>
-    codes.length <= LISTED_LIMIT && !codes.some((code) => code >= 0xd800 && code <= 0xdfff);
-  const others = isUnicode
-    ? "unknown"
-    : missed.length === 0
-      ? "all"
-      : isListable(held)
-        ? "none"
-        : isListable(missed)
-          ? "all"
-          : "unknown";
-  const toStrings = (codes: number[]) =>
-    set(codes.map((code) => string(String.fromCharCode(code))));
+  const units = [...characters];
+  const known = [
+    ...units,
+    ...(isUnicode
+      ? units
+          .filter(isHighSurrogate)
+          .flatMap((high) =>
+            units
+              .filter(isLowSurrogate)
+              .map((low) => (high - 0xd800) * 0x400 + low - 0xdc00 + 0x10000),
+          )
+      : []),
+  ];
+  const folding =
+    isUnicode && fold !== undefined && matcher.source !== undefined
+      ? new RegExp(`^(?:${matcher.source})$`, flags.replace(/[gmy]/g, ""))
+      : undefined;
+  const isKnownMatched = (code: number) =>
+    folding === undefined
+      ? !(isUnicode && fold !== undefined) && isMatched(code)
+      : folding.test(String.fromCodePoint(code));
   return record("Record", [
     { name: "kind", value: string("set") },
     {
       name: "characters",
-      value: toStrings([
-        ...CODE_UNITS.slice(0, 128).filter(isMatched),
-        ...(others === "none" ? held : []),
-      ]),
+      value: set(
+        [...CODE_UNITS.slice(0, 128).filter(isMatched), ...known.filter(isKnownMatched)].map(
+          getCodePoint,
+        ),
+      ),
     },
-    { name: "excluded", value: toStrings(others === "all" ? missed : []) },
-    { name: "others", value: string(others) },
   ]);
 };
 
-const translateMatcher = (matcher: Matcher, flags: string): Expression => {
+const translateMatcher = (matcher: Matcher, flags: string, characters: Set<number>): Expression => {
   const kind = { name: "kind", value: string(matcher.kind) };
-  if (matcher.kind === "set") return translateCharacters(matcher, flags);
-  if (matcher.kind === "sequence" || matcher.kind === "alternation") {
+  if (matcher.kind === "set") {
+    return translateCharacters(matcher, matcher.flags ?? flags, characters);
+  }
+  if ("items" in matcher) {
     return record("Record", [
       kind,
-      { name: "items", value: tuple(matcher.items.map((item) => translateMatcher(item, flags))) },
+      {
+        name: "items",
+        value: tuple(matcher.items.map((item) => translateMatcher(item, flags, characters))),
+      },
     ]);
   }
   if (matcher.kind === "group") {
     return record("Record", [
       kind,
       { name: "index", value: number(matcher.index) },
-      { name: "body", value: translateMatcher(matcher.body, flags) },
+      { name: "body", value: translateMatcher(matcher.body, flags, characters) },
     ]);
   }
   if (matcher.kind === "repeat") {
     return record("Record", [
       kind,
-      { name: "body", value: translateMatcher(matcher.body, flags) },
+      { name: "body", value: translateMatcher(matcher.body, flags, characters) },
       { name: "min", value: number(matcher.min) },
       { name: "max", value: number(matcher.max) },
       { name: "isGreedy", value: boolean(matcher.isGreedy) },
@@ -1341,19 +1607,30 @@ const translateMatcher = (matcher: Matcher, flags: string): Expression => {
     ]);
   }
   if (matcher.kind === "boundary") {
-    return record("Record", [kind, { name: "isInverted", value: boolean(matcher.isInverted) }]);
+    return record("Record", [
+      kind,
+      { name: "isInverted", value: boolean(matcher.isInverted) },
+      { name: "ignoreCase", value: boolean(matcher.flags.includes("i")) },
+    ]);
   }
   if (matcher.kind === "lookahead") {
     return record("Record", [
       kind,
-      { name: "body", value: translateMatcher(matcher.body, flags) },
+      { name: "body", value: translateMatcher(matcher.body, flags, characters) },
       { name: "isNegative", value: boolean(matcher.isNegative) },
     ]);
   }
   if (matcher.kind === "backreference") {
-    return record("Record", [kind, { name: "index", value: number(matcher.index) }]);
+    return record("Record", [
+      kind,
+      { name: "index", value: number(matcher.index) },
+      { name: "ignoreCase", value: boolean(matcher.flags.includes("i")) },
+    ]);
   }
-  return record("Record", [kind]);
+  return record("Record", [
+    kind,
+    { name: "multiline", value: boolean(matcher.flags.includes("m")) },
+  ]);
 };
 
 // The flags that a regular expression's flags getter gives, in its order, by the property that
@@ -1387,7 +1664,7 @@ const translateRegExp = (
   const parsed = parsePattern(pattern, flags, node);
   context.prelude.add("JavaScript");
   return record("Record", [
-    { name: "pattern", value: translateMatcher(parsed.pattern, flags) },
+    { name: "pattern", value: translateMatcher(parsed.pattern, flags, context.characters) },
     { name: "captures", value: number(parsed.count) },
     {
       name: "names",
@@ -1410,8 +1687,200 @@ const translateRegExp = (
   ]);
 };
 
-// The pattern and flags of new RegExp or RegExp, where literals write them.
-const getRegExpTexts = (node: ts.Node, context: Context) => {
+// The methods whose callback takes each element of the array that they visit first.
+const ELEMENT_METHODS = new Set(["map", "forEach", "flatMap", "filter", "some", "every", "find"]);
+
+// The values that an expression may take that tla-ts finds as it compiles: the strings that
+// literals, String.raw and templates write and that + joins, and the regexps that literals and
+// RegExp make, through variables that a script never assigns, the elements that an array method
+// passes its callback or a for-of over an array literal takes, and the arguments that each call in
+// its file passes a function. A run checks what it makes against them.
+const getConstantValues = (
+  node: ts.Expression,
+  context: Context,
+  visited: ReadonlySet<ts.Node>,
+): (string | RegExpTexts)[] | undefined => {
+  const expression = skipCasts(node);
+  const getStrings = (inner: ts.Expression) => {
+    const values = getConstantValues(inner, context, visited);
+    const strings = values?.filter((value) => typeof value === "string");
+    return strings?.length === values?.length ? strings : undefined;
+  };
+  const join = (parts: (string[] | undefined)[]) =>
+    parts.reduce<string[] | undefined>(
+      (joined, part) =>
+        joined === undefined || part === undefined
+          ? undefined
+          : joined.flatMap((left) => part.map((right) => left + right)),
+      [""],
+    );
+  if (ts.isStringLiteralLike(expression)) return [expression.text];
+  if (ts.isRegularExpressionLiteral(expression)) {
+    const end = expression.text.lastIndexOf("/");
+    return [{ pattern: expression.text.slice(1, end), flags: expression.text.slice(end + 1) }];
+  }
+  const made = getRegExpTexts(expression, context, visited);
+  if (made !== undefined) return made;
+  if (ts.isTemplateExpression(expression)) {
+    return join([
+      [expression.head.text],
+      ...expression.templateSpans.flatMap((span) => [
+        getStrings(span.expression),
+        [span.literal.text],
+      ]),
+    ]);
+  }
+  if (
+    ts.isTaggedTemplateExpression(expression) &&
+    ts.isPropertyAccessExpression(expression.tag) &&
+    expression.tag.name.text === "raw" &&
+    getBuiltIn(expression.tag.expression, context) === "String"
+  ) {
+    const template = expression.template;
+    return ts.isNoSubstitutionTemplateLiteral(template)
+      ? [getRawString(template)]
+      : join([
+          [getRawString(template.head)],
+          ...template.templateSpans.flatMap((span) => [
+            getStrings(span.expression),
+            [getRawString(span.literal)],
+          ]),
+        ]);
+  }
+  if (
+    ts.isBinaryExpression(expression) &&
+    expression.operatorToken.kind === ts.SyntaxKind.PlusToken
+  ) {
+    return join([getStrings(expression.left), getStrings(expression.right)]);
+  }
+  if (
+    ts.isPropertyAccessExpression(expression) &&
+    ["source", "flags"].includes(expression.name.text)
+  ) {
+    const values = getConstantValues(expression.expression, context, visited);
+    const regexps = values?.flatMap((value) => {
+      const valid = typeof value === "string" ? undefined : getValidRegExp(value);
+      return valid === undefined
+        ? []
+        : [expression.name.text === "source" ? valid.source : valid.flags];
+    });
+    return regexps === undefined || regexps.length < (values?.length ?? 0) ? undefined : regexps;
+  }
+  const called = getCalledFunction(expression);
+  if (called !== undefined) {
+    const body = called.body;
+    const [statement] = ts.isBlock(body) ? body.statements : [];
+    const returned = !ts.isBlock(body)
+      ? body
+      : body.statements.length === 1 && statement !== undefined && ts.isReturnStatement(statement)
+        ? statement.expression
+        : undefined;
+    return returned === undefined ? undefined : getConstantValues(returned, context, visited);
+  }
+  const symbol = ts.isIdentifier(expression) ? getSymbol(expression, context.checker) : undefined;
+  const declaration = symbol?.valueDeclaration;
+  if (symbol === undefined || declaration === undefined || visited.has(declaration)) {
+    return undefined;
+  }
+  const inner = new Set([...visited, declaration]);
+  const getUnion = (nodes: readonly ts.Expression[]) => {
+    const values = nodes.map((value) => getConstantValues(value, context, inner));
+    return nodes.length === 0 || values.some((value) => value === undefined)
+      ? undefined
+      : [...new Set(values.flatMap((value) => value ?? []))];
+  };
+  if (ts.isVariableDeclaration(declaration)) {
+    const loop = declaration.parent.parent;
+    // The variable of a for-of over an array literal takes each element.
+    if (ts.isForOfStatement(loop)) {
+      const iterated = skipCasts(loop.expression);
+      return ts.isArrayLiteralExpression(iterated) &&
+        !iterated.elements.some(ts.isSpreadElement) &&
+        !isAssigned(symbol, loop.statement, context)
+        ? getUnion(iterated.elements)
+        : undefined;
+    }
+    // A let or a var holds its initializer where a script never assigns it and reads it only after
+    // the declaration, in the same function.
+    const owner = ts.findAncestor(declaration.parent, ts.isFunctionLike);
+    const isReadAfter = findNodes(declaration.getSourceFile(), ts.isIdentifier).every(
+      (reference) =>
+        reference === declaration.name ||
+        getSymbol(reference, context.checker) !== symbol ||
+        (reference.pos > declaration.end &&
+          ts.findAncestor(reference.parent, ts.isFunctionLike) === owner),
+    );
+    return declaration.initializer !== undefined &&
+      ((declaration.parent.flags & ts.NodeFlags.Const) !== 0 ||
+        (isReadAfter && !isAssigned(symbol, declaration.getSourceFile(), context)))
+      ? getConstantValues(declaration.initializer, context, inner)
+      : undefined;
+  }
+  if (
+    !ts.isParameter(declaration) ||
+    declaration.initializer !== undefined ||
+    declaration.dotDotDotToken !== undefined ||
+    isAssigned(symbol, declaration.parent, context)
+  ) {
+    return undefined;
+  }
+  const owner = declaration.parent;
+  const position = owner.parameters.indexOf(declaration);
+  const call = owner.parent;
+  // The first parameter of an array method's callback takes each element of an array literal.
+  if (
+    ts.isCallExpression(call) &&
+    call.arguments.at(0) === owner &&
+    ts.isPropertyAccessExpression(call.expression) &&
+    ELEMENT_METHODS.has(call.expression.name.text)
+  ) {
+    const receiver = skipCasts(call.expression.expression);
+    return position === 0 &&
+      ts.isArrayLiteralExpression(receiver) &&
+      !receiver.elements.some(ts.isSpreadElement)
+      ? getUnion(receiver.elements)
+      : undefined;
+  }
+  const name = ts.isFunctionDeclaration(owner)
+    ? owner.name
+    : ts.isVariableDeclaration(call) && ts.isIdentifier(call.name)
+      ? call.name
+      : undefined;
+  const callee = name && getSymbol(name, context.checker);
+  if (callee === undefined) return undefined;
+  const calls = findNodes(owner.getSourceFile(), ts.isCallExpression).filter(
+    (inner) => getSymbol(inner.expression, context.checker) === callee,
+  );
+  const values = calls.map((inner) => inner.arguments.at(position));
+  return values.every((value) => value !== undefined && !ts.isSpreadElement(value))
+    ? getUnion(values.filter((value) => value !== undefined))
+    : undefined;
+};
+
+// The function that a call without arguments makes and runs in place, where it takes no parameters
+// and is neither async nor a generator.
+const getCalledFunction = (node: ts.Expression) => {
+  const callee =
+    ts.isCallExpression(node) && node.arguments.length === 0
+      ? skipCasts(node.expression)
+      : undefined;
+  return callee !== undefined &&
+    (ts.isFunctionExpression(callee) || ts.isArrowFunction(callee)) &&
+    callee.parameters.length === 0 &&
+    callee.asteriskToken === undefined &&
+    !callee.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
+    ? callee
+    : undefined;
+};
+
+// The patterns and flags that new RegExp or RegExp may make, where its arguments are strings that
+// tla-ts finds as it compiles, or the one regexp that a pattern may be and literal flags, without
+// which new RegExp copies the regexp's flags and RegExp gives the regexp itself.
+const getRegExpTexts = (
+  node: ts.Node,
+  context: Context,
+  visited: ReadonlySet<ts.Node> = new Set(),
+): RegExpTexts[] | undefined => {
   if (
     (!ts.isNewExpression(node) && !ts.isCallExpression(node)) ||
     getBuiltIn(node.expression, context) !== "RegExp"
@@ -1419,13 +1888,70 @@ const getRegExpTexts = (node: ts.Node, context: Context) => {
     return undefined;
   }
   const values = node.arguments ?? [];
-  const texts = values.flatMap((value) => (ts.isStringLiteralLike(value) ? [value.text] : []));
-  return values.length > 2 || texts.length < values.length
+  const regexps = values[0] && getRegExpValues(values[0], context, visited);
+  if (regexps !== undefined) {
+    const [regexp] = regexps;
+    const flags = values[1];
+    const isCopied = flags === undefined || isUndefinedValue(flags, context);
+    const given =
+      flags && (ts.isStringLiteralLike(flags) ? flags.text : getPrimitiveText(flags, context));
+    return values.length > 2 ||
+      regexp === undefined ||
+      regexps.some((other) => other.pattern !== regexp.pattern || other.flags !== regexp.flags) ||
+      (isCopied && ts.isCallExpression(node)) ||
+      (!isCopied && given === undefined)
+      ? undefined
+      : [{ pattern: regexp.pattern, flags: isCopied ? regexp.flags : (given ?? "") }];
+  }
+  const texts = values.map((value) => {
+    const primitive = getPrimitiveText(value, context);
+    if (primitive !== undefined) return [primitive];
+    const constants = getConstantValues(value, context, visited);
+    const strings = constants?.filter((constant) => typeof constant === "string");
+    return getKind(value, context) === "string" && strings?.length === constants?.length
+      ? strings
+      : undefined;
+  });
+  const patterns = values.length === 0 ? [""] : texts.at(0);
+  const flags = values.length < 2 ? [""] : texts.at(1);
+  return values.length > 2 || patterns === undefined || flags === undefined
     ? undefined
-    : { pattern: texts.at(0) ?? "", flags: texts.at(1) ?? "" };
+    : patterns.flatMap((pattern) => flags.map((flag) => ({ pattern, flags: flag })));
 };
 
-const getValidRegExp = (texts: { pattern: string; flags: string }) => {
+// The regexps that an expression may be, where tla-ts finds them all as it compiles.
+const getRegExpValues = (node: ts.Expression, context: Context, visited: ReadonlySet<ts.Node>) => {
+  const values = getConstantValues(node, context, visited);
+  const regexps = values?.filter((value) => typeof value !== "string");
+  return regexps?.length === values?.length ? regexps : undefined;
+};
+
+// Whether an expression is undefined without effects: undefined itself, void of a literal, or the
+// call of a function that runs in place with an empty body.
+export const isUndefinedValue = (node: ts.Expression, context: Context) => {
+  const inner = skipCasts(node);
+  const body = getCalledFunction(inner)?.body;
+  return (
+    (ts.isIdentifier(inner) &&
+      inner.text === "undefined" &&
+      (context.checker.getTypeAtLocation(inner).flags & ts.TypeFlags.Undefined) !== 0) ||
+    (ts.isVoidExpression(inner) && ts.isLiteralExpression(inner.expression)) ||
+    (body !== undefined && ts.isBlock(body) && body.statements.length === 0)
+  );
+};
+
+// The text that RegExp takes from a primitive literal other than a string: none from undefined, and
+// what ToString gives from the others.
+const getPrimitiveText = (node: ts.Expression, context: Context) => {
+  const inner = skipCasts(node);
+  if (isUndefinedValue(inner, context)) return "";
+  if (inner.kind === ts.SyntaxKind.TrueKeyword) return "true";
+  if (inner.kind === ts.SyntaxKind.FalseKeyword) return "false";
+  if (inner.kind === ts.SyntaxKind.NullKeyword) return "null";
+  return ts.isNumericLiteral(inner) ? String(Number(inner.text)) : undefined;
+};
+
+const getValidRegExp = (texts: RegExpTexts) => {
   try {
     return new RegExp(texts.pattern, texts.flags);
   } catch {
@@ -1436,15 +1962,17 @@ const getValidRegExp = (texts: { pattern: string; flags: string }) => {
 // new RegExp or RegExp of literals that make a valid regexp, whose source the engine that tla-ts
 // runs on escapes as the spec's EscapeRegExpPattern does.
 export const getMadeRegExp = (node: ts.Node, context: Context) => {
-  const texts = getRegExpTexts(node, context);
-  const made = texts === undefined ? undefined : getValidRegExp(texts);
-  return texts === undefined || made === undefined ? undefined : { ...texts, source: made.source };
+  const made = getRegExpTexts(node, context)?.map((texts) => {
+    const valid = getValidRegExp(texts);
+    return valid === undefined ? undefined : { ...texts, source: valid.source };
+  });
+  return made?.every((texts) => texts !== undefined) ? made : undefined;
 };
 
 // new RegExp or RegExp of literals that make no valid regexp, which throws a SyntaxError.
 export const isInvalidRegExp = (node: ts.Node, context: Context) => {
   const texts = getRegExpTexts(node, context);
-  return texts !== undefined && getValidRegExp(texts) === undefined;
+  return texts?.length === 1 && getValidRegExp(texts[0]) === undefined;
 };
 
 // The regexp that search or match makes of a string literal, where the literal is a valid pattern.
@@ -1459,13 +1987,87 @@ export const getStringRegExp = (node: ts.Node) => {
 
 // A regular expression literal, a regexp that getMadeRegExp reads, or one that getStringRegExp
 // reads, as the record of its pattern, which without objects is the regexp itself, whose lastIndex
-// stays 0.
-export const translateRegExpValue = (node: ts.Node, context: Context) => {
-  const made = ts.isRegularExpressionLiteral(node)
+// stays 0. A regexp whose arguments aren't all literals is the one of the texts that they give as
+// it runs.
+export const translateRegExpValue = (node: ts.Node, scope: Scope, context: Context) => {
+  const made = getMadeRegExp(node, context);
+  if (
+    made !== undefined &&
+    (ts.isNewExpression(node) || ts.isCallExpression(node)) &&
+    !(node.arguments ?? []).every(
+      (argument) =>
+        ts.isStringLiteralLike(argument) ||
+        getPrimitiveText(argument, context) !== undefined ||
+        getRegExpValues(argument, context, new Set()) !== undefined,
+    )
+  ) {
+    const values = (node.arguments ?? []).map((argument) => {
+      const primitive = getPrimitiveText(argument, context);
+      return primitive === undefined
+        ? translateExpression(argument, scope, context)
+        : string(primitive);
+    });
+    return share(values[0], "pattern", context, (pattern) =>
+      share(values.at(1) ?? string(""), "flags", context, (flags) =>
+        made.reduceRight<Expression>(
+          (otherwise, texts) =>
+            ifExpression(
+              apply("/\\", [
+                apply("=", [pattern, string(texts.pattern)]),
+                apply("=", [flags, string(texts.flags)]),
+              ]),
+              translateRegExp(texts.pattern, texts.flags, texts.source, node, context),
+              otherwise,
+            ),
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't make a regexp of a pattern that it didn't find as it compiled"),
+          ]),
+        ),
+      ),
+    );
+  }
+  const literal = ts.isRegularExpressionLiteral(node)
     ? undefined
-    : (getMadeRegExp(node, context) ?? getStringRegExp(node));
-  if (made !== undefined) {
-    return translateRegExp(made.pattern, made.flags, made.source, node, context);
+    : (made?.[0] ?? getStringRegExp(node));
+  const copied = (ts.isNewExpression(node) || ts.isCallExpression(node)) && node.arguments?.[0];
+  if (literal !== undefined) {
+    const translated = translateRegExp(
+      literal.pattern,
+      literal.flags,
+      literal.source,
+      node,
+      context,
+    );
+    // With objects, new RegExp reads IsRegExp of the regexp that it copies, which tla-ts follows
+    // only while a script hasn't changed the regexp.
+    return copied &&
+      !ts.isRegularExpressionLiteral(skipCasts(copied)) &&
+      getRegExpValues(copied, context, new Set()) !== undefined &&
+      context.heap !== undefined
+      ? ifExpression(
+          apply("=", [
+            field(
+              useJavaScript(
+                "RegExpOf",
+                [
+                  getHeap(scope, node, context),
+                  translateExpression(copied, scope, context),
+                  set([string("RegExp.prototype")]),
+                ],
+                context,
+              ),
+              "source",
+            ),
+            string(literal.source),
+          ]),
+          translated,
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't make a regexp of a pattern that it didn't find as it compiled"),
+          ]),
+        )
+      : translated;
   }
   if (!ts.isRegularExpressionLiteral(node))
     throw new TlaTypeScriptError("Unsupported regexp", node);

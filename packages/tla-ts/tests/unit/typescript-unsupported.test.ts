@@ -37,7 +37,6 @@ const CASES: [string, string][] = [
     "an array typed as an object with other properties",
     "const descriptor: PropertyDescriptor = []; count = descriptor.enumerable === true ? 1 : 0;",
   ],
-  ["delegating a yield to a string", 'const make = function* () { yield* "ab"; }; make().next();'],
   ["a regular expression's lookbehind", 'label = label.replace(/(?<=a)b/, "c");'],
   ["a regular expression with the v flag", "count = /[a]/v.test(label) ? 1 : 0;"],
   ["calling an async function", "const run = async () => { count++; }; run();"],
@@ -63,8 +62,8 @@ const CASES: [string, string][] = [
     "try { const read = () => later; count = read(); } catch { count = 0; } let later = 1;",
   ],
   [
-    "instanceof on a value that isn't caught or an error",
-    "const value: unknown = count; if (value instanceof Error) count = 1;",
+    "instanceof on a value that isn't caught, an error, or of type unknown or any",
+    "const value: object = record; if (value instanceof Error) count = 1;",
   ],
   ["labels", "outer: { count++; }"],
   ["an increment after a comma", "count = (label, count++);"],

@@ -3,6 +3,7 @@ import type { Expression, OperatorDefinition } from "../ast";
 import {
   allocate,
   bindOnce,
+  enterClosure,
   getChanged,
   type Frame,
   inlineBody,
@@ -23,8 +24,10 @@ import {
   getCallee,
   getReturnedFunctions,
   getUndefined,
+  isClosure,
   isInertValue,
   isMethodCall,
+  getLiveMaker,
   isNestedFunction,
   skipCasts,
 } from "./context";
@@ -73,7 +76,9 @@ const getKey = (name: ts.Node): string | undefined =>
         : name.name.text
       : ts.isIdentifier(name) || ts.isStringLiteral(name)
         ? name.text
-        : undefined;
+        : ts.isNumericLiteral(name)
+          ? String(Number(name.text))
+          : undefined;
 
 const isRunnable = (node: ts.Node): node is FunctionNode =>
   (ts.isFunctionDeclaration(node) ||
@@ -130,17 +135,45 @@ export const getWrittenFunctions = (node: ts.Node, key: string, context: Context
   return found.get(key) ?? [];
 };
 
-// The methods that a script writes under a key, which are async only where the caller awaits
-// what they give.
+// The methods that a script writes under a key, or that its getters there return, which are async
+// only where the caller awaits what they give.
 export const getMethods = (node: ts.Node, key: string, context: Context, isAwaited = false) =>
-  getWrittenFunctions(node, key, context).filter(
-    (candidate) => !ts.isGetAccessorDeclaration(candidate) && (isAwaited || !isAsync(candidate)),
-  );
+  getWrittenFunctions(node, key, context)
+    .flatMap((candidate) =>
+      ts.isGetAccessorDeclaration(candidate)
+        ? findNodes(candidate, ts.isReturnStatement).flatMap((statement) =>
+            statement.expression !== undefined &&
+            ts.findAncestor(statement, ts.isFunctionLike) === candidate
+              ? getFunctionCandidates(statement.expression, context)
+              : [],
+          )
+        : [candidate],
+    )
+    .filter((candidate) => isAwaited || !isAsync(candidate));
 
 const getKeyGetters = (node: ts.Node, key: string, context: Context) => [
   ...getWrittenFunctions(node, key, context).filter(ts.isGetAccessorDeclaration),
   ...getAccessorFunctions(node, "get", context),
 ];
+
+// The keys that an object pattern's rest element leaves out: those its other properties name.
+export const getRestExcluded = (target: ts.ObjectLiteralExpression) =>
+  target.properties.flatMap((property) =>
+    property.name !== undefined && ts.isIdentifier(property.name) ? [property.name.text] : [],
+  );
+
+// The keys that an object pattern's rest element may copy through getters that the script writes,
+// which it runs where a statement assigns it.
+export const getRestGetterKeys = (target: ts.ObjectLiteralExpression) =>
+  target.properties.some(ts.isSpreadAssignment)
+    ? [...getGetterKeys(target)].filter((key) => !getRestExcluded(target).includes(key))
+    : [];
+
+// The getters that the object rests of an assignment's target copy.
+export const getRestCopyGetters = (target: ts.Node, context: Context) =>
+  findNodes(target, ts.isObjectLiteralExpression).flatMap((pattern) =>
+    getRestGetterKeys(pattern).flatMap((key) => getKeyGetters(pattern, key, context)),
+  );
 
 export const isNullish = (value: Expression, context: Context) =>
   apply("\\/", [
@@ -188,16 +221,51 @@ export const callValue = (
         const received = ts.isArrowFunction(candidate)
           ? undefined
           : { value: receiver, method: candidate };
-        return ifThenElse(
-          apply("=", [
-            useJavaScript("CodeOf", [getHeap(path.scope, site, context), value], context),
-            candidateValue,
-          ]),
+        const heap = getHeap(path.scope, site, context);
+        const call = (
+          inner: Path,
+          innerFrame: Frame,
+          after: (path: Path, value?: Expression) => Formula,
+        ) =>
           isAsync(candidate)
-            ? translateAsyncCall(site, candidate, received, path, context, frame, next)
+            ? translateAsyncCall(site, candidate, received, inner, context, innerFrame, after)
             : values.length === 0
-              ? inlineBody(site, candidate, [], received, path, context, frame, next)
-              : inlineValues(candidate, values, received, path, context, frame, next),
+              ? inlineBody(site, candidate, [], received, inner, context, innerFrame, after)
+              : inlineValues(candidate, values, received, inner, context, innerFrame, after);
+        // A method that reads the live locals of the function around it runs only in the call of
+        // that function whose environment it holds. A closure that outlives its call reads them from
+        // its environment.
+        const maker = getLiveMaker(candidate, context);
+        const environment =
+          maker !== undefined && ts.findAncestor(site, ts.isFunctionLike) === maker
+            ? path.scope.activations?.get(maker)
+            : undefined;
+        const stop = leaf(
+          apply("Assert", [
+            boolean(false),
+            string(
+              "tla-ts can't call a method here that reads the locals of the function around it",
+            ),
+          ]),
+        );
+        return ifThenElse(
+          apply("=", [useJavaScript("CodeOf", [heap, value], context), candidateValue]),
+          isClosure(candidate, context)
+            ? enterClosure(candidate, value, path, context, frame, (inner, innerFrame, leave) =>
+                call(inner, innerFrame, (after, result) => next(leave(after), result)),
+              )
+            : maker === undefined
+              ? call(path, frame, next)
+              : environment === undefined
+                ? stop
+                : ifThenElse(
+                    apply("=", [
+                      useJavaScript("EnvironmentOf", [heap, value], context),
+                      environment,
+                    ]),
+                    call(path, frame, next),
+                    stop,
+                  ),
           rest,
         );
       }, otherwise(next)),
@@ -405,6 +473,52 @@ const getRestGetter = (pattern: ts.BindingName, context: Context) => {
   return keys.length > 0 ? { element, keys } : undefined;
 };
 
+// Reads the keys that an object rest element copies through getters that the script writes, which
+// gives what it read as a function of keys to values. The rest copies a key's value, running its
+// getter, where the object has it as its own enumerable property. Where it has more than one of the
+// keys, their getters run in an order that tla-ts doesn't follow.
+export const readRestGetters = (
+  site: ts.Node,
+  keys: readonly string[],
+  value: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, read: Expression) => Formula,
+): Formula => {
+  const isOwn = (key: string) =>
+    useJavaScript(
+      "IsEnumerableOwn",
+      [getHeap(path.scope, site, context), value, string(key)],
+      context,
+    );
+  return keys.reduceRight(
+    (otherwise, key) => {
+      const others = keys.filter((other) => other !== key);
+      const copy = read(site, value, key, path, context, frame, (after, got) =>
+        continueWith(after, apply(":>", [string(key), got])),
+      );
+      return ifThenElse(
+        isOwn(key),
+        others.length === 0
+          ? copy
+          : ifThenElse(
+              junction("Or", others.map(isOwn)),
+              leaf(
+                apply("Assert", [
+                  boolean(false),
+                  string("tla-ts can't copy the properties of more than one getter in order"),
+                ]),
+              ),
+              copy,
+            ),
+        otherwise,
+      );
+    },
+    continueWith(path, tuple([])),
+  );
+};
+
 // Whether a pattern's binding runs getters that haven't run yet.
 export const isGetterPattern = (pattern: ts.BindingName, path: Path, context: Context) =>
   [...getGetterElements(pattern, context), getRestGetter(pattern, context)?.element].some(
@@ -438,40 +552,15 @@ export const readPatternGetters = (
     });
   const readFrom = (current: Path, values: readonly Expression[]): Formula => {
     const element = elements.at(values.length);
-    // The rest copies a key's value, running its getter, where the object has it as its own
-    // enumerable property. Where it has more than one of the keys, their getters run in an order
-    // that tla-ts doesn't follow.
     if (element === undefined && rest !== undefined) {
-      const isOwn = (key: string) =>
-        useJavaScript(
-          "IsEnumerableOwn",
-          [getHeap(current.scope, rest.element, context), value, string(key)],
-          context,
-        );
-      return rest.keys.reduceRight(
-        (otherwise, key) => {
-          const others = rest.keys.filter((other) => other !== key);
-          const copy = read(rest.element, value, key, current, context, frame, (after, got) =>
-            finish(after, [...values, apply(":>", [string(key), got])]),
-          );
-          return ifThenElse(
-            isOwn(key),
-            others.length === 0
-              ? copy
-              : ifThenElse(
-                  junction("Or", others.map(isOwn)),
-                  leaf(
-                    apply("Assert", [
-                      boolean(false),
-                      string("tla-ts can't copy the properties of more than one getter in order"),
-                    ]),
-                  ),
-                  copy,
-                ),
-            otherwise,
-          );
-        },
-        finish(current, [...values, tuple([])]),
+      return readRestGetters(
+        rest.element,
+        rest.keys,
+        value,
+        current,
+        context,
+        frame,
+        (after, got) => finish(after, [...values, got]),
       );
     }
     if (element === undefined) return finish(current, values);
@@ -559,13 +648,14 @@ export const getGetterKeys = (node: ts.Node) => {
   return keys;
 };
 
-// An Object.defineProperty whose descriptor may hold a getter that the script defines under one of
-// its fields, which the statement reads field by field, so that the getters run.
+// An Object.defineProperty or a Reflect.defineProperty whose descriptor may hold a getter that the
+// script defines under one of its fields, which the statement reads field by field, so that the
+// getters run.
 export const isDescriptorRead = (node: ts.Node, context: Context): node is ts.CallExpression =>
   context.heap !== undefined &&
   ts.isCallExpression(node) &&
   ts.isPropertyAccessExpression(node.expression) &&
-  node.expression.expression.getText() === "Object" &&
+  ["Object", "Reflect"].includes(node.expression.expression.getText()) &&
   node.expression.name.text === "defineProperty" &&
   node.arguments.length >= 3 &&
   DESCRIPTOR_FIELDS.some((key) => getGetterKeys(node).has(key)) &&
@@ -579,7 +669,7 @@ const getFieldGetters = (node: ts.Node, context: Context) => [
 // Whether tla-ts can run a getter's body, which makes each function expression it returns as an
 // object. A statement that might run one it can't keeps reading properties as an expression,
 // which stops only where the getter runs.
-const isRunnableGetter = (getter: FunctionNode, context: Context) =>
+export const isRunnableGetter = (getter: FunctionNode, context: Context) =>
   findNodes(getter, ts.isReturnStatement).every(
     (statement) =>
       statement.expression === undefined ||
@@ -590,10 +680,14 @@ const isRunnableGetter = (getter: FunctionNode, context: Context) =>
 // The getters that reading an array-like object's elements may run, where the script defines one
 // under an index and tla-ts can run each of them, or undefined.
 export const getElementGetters = (node: ts.Node, context: Context) => {
-  const getters = getAccessorFunctions(node, "get", context);
-  return [...getGetterKeys(node)].some((key) => /^(0|[1-9][0-9]*)$/.test(key)) &&
-    getters.length > 0 &&
-    getters.every((getter) => isRunnableGetter(getter, context))
+  const getters = [
+    ...new Set(
+      [...getGetterKeys(node)]
+        .filter((key) => /^(0|[1-9][0-9]*)$/.test(key))
+        .flatMap((key) => getKeyGetters(node, key, context)),
+    ),
+  ];
+  return getters.length > 0 && getters.every((getter) => isRunnableGetter(getter, context))
     ? getters
     : undefined;
 };
@@ -757,7 +851,8 @@ const defineAll = (
   );
 
 // Object.defineProperty, which checks that its target is an object, and then reads its
-// descriptor's fields.
+// descriptor's fields. Reflect.defineProperty gives whether it defined the key, rather than throwing
+// where it can't.
 export const readDescriptor = (
   site: ts.CallExpression,
   values: readonly Expression[],
@@ -769,16 +864,40 @@ export const readDescriptor = (
   ifThenElse(
     isObjectArgument(values[0], context),
     readFields(site, values[2], path, context, frame, (after, descriptor) =>
-      defineAll(
-        site,
-        values[0],
-        tuple([values[1]]),
-        tuple([descriptor]),
-        after,
-        context,
-        frame,
-        (defined) => continueWith(defined, values[0]),
-      ),
+      ts.isPropertyAccessExpression(site.expression) &&
+      site.expression.expression.getText() === "Reflect"
+        ? bind(
+            after,
+            "change",
+            useJavaScript(
+              "ReflectDefineConverted",
+              [getHeap(after.scope, site, context), values[0], values[1], descriptor],
+              context,
+            ),
+            context,
+            (bound, change) => {
+              const defined = withHeap(bound, field(change, "heap"), context);
+              return ifThenElse(
+                field(change, "isDone"),
+                continueWith(defined, field(change, "value")),
+                ifThenElse(
+                  field(change, "isRangeError"),
+                  throwError("RangeError", defined, site, context, frame),
+                  throwTypeError(defined, site, context, frame),
+                ),
+              );
+            },
+          )
+        : defineAll(
+            site,
+            values[0],
+            tuple([values[1]]),
+            tuple([descriptor]),
+            after,
+            context,
+            frame,
+            (defined) => continueWith(defined, values[0]),
+          ),
     ),
     throwTypeError(path, site, context, frame),
   );

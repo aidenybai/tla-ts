@@ -9,6 +9,7 @@ import { runInNewContext, Script } from "node:vm";
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../src/errors";
 import { check } from "../src/parallel";
+import { STRING_METHODS } from "../src/typescript/collections";
 import { compile } from "../src/typescript/compile";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, listFiles } from "./corpora";
 
@@ -184,6 +185,12 @@ const NULLABLE_ERRORS = new Set([2531, 2532, 2533, 2721, 2722, 18047, 18048, 180
 
 // TypeScript's error for a use of a value of type unknown.
 const UNKNOWN_VALUE_ERROR = 18046;
+const ARGUMENT_COUNT_ERROR = 2554;
+
+// The built-ins that tla-ts compiles from their values, not their declared signatures, where a test
+// calls them with fewer arguments than TypeScript's types take. Each needs a unit test of such a
+// call, since a translation that follows the signature may read the missing arguments wrongly.
+const SHORT_CALLED_BUILT_INS = new Set(["RegExp"]);
 
 const PROGRAM_PATH = "/test262.ts";
 
@@ -224,6 +231,10 @@ const applyEdits = (edits: Map<number, string>) =>
         file.text,
       ),
   );
+
+// An object that a test passes where a descriptor goes: one of another type, or one, such as Math,
+// that has none of a descriptor's properties.
+const DESCRIBED_ERRORS = new Set([2322, 2345, 2559]);
 
 const getDescriptorName = (type: ts.Type | undefined) =>
   type === undefined
@@ -380,7 +391,7 @@ const loosen = () => {
       receiver.kind !== ts.SyntaxKind.SuperKeyword &&
       !ts.isParenthesizedExpression(receiver) &&
       receiverType !== undefined &&
-      (receiverType.flags & ts.TypeFlags.Object) !== 0 &&
+      (receiverType.flags & (ts.TypeFlags.Object | ts.TypeFlags.NonPrimitive)) !== 0 &&
       !checker.isArrayType(receiverType) &&
       !checker.isTupleType(receiverType) &&
       !(
@@ -489,7 +500,7 @@ const loosen = () => {
     // extra arguments without changing the function's length.
     const count = /but got (\d+)/.exec(ts.flattenDiagnosticMessageText(diagnostic.messageText, ""));
     const called =
-      diagnostic.code === 2554 && count !== null
+      diagnostic.code === ARGUMENT_COUNT_ERROR && count !== null
         ? ts.findAncestor(
             node,
             (ancestor): ancestor is ts.CallExpression | ts.NewExpression =>
@@ -540,19 +551,22 @@ const loosen = () => {
       ts.isCallExpression(parent) && ts.isIdentifier(node)
         ? checker.getResolvedSignature(parent)?.getParameters()[parent.arguments.indexOf(node)]
         : undefined;
+    // TypeScript reports a property's value that has none of a descriptor's properties at its name.
+    const describedValue =
+      ts.isPropertyAssignment(parent) && parent.name === node ? parent.initializer : node;
     const described =
-      (diagnostic.code === 2322 || diagnostic.code === 2345) &&
+      DESCRIBED_ERRORS.has(diagnostic.code) &&
       ts.isIdentifier(node) &&
       (ts.isCallExpression(parent) || ts.isPropertyAssignment(parent))
         ? getDescriptorName(
             parameter === undefined
-              ? checker.getContextualType(node)
+              ? checker.getContextualType(describedValue)
               : checker.getTypeOfSymbolAtLocation(parameter, node),
           )
         : undefined;
     if (described !== undefined) {
-      edits.set(node.getStart(), "(");
-      edits.set(node.getEnd(), ` as unknown as ${described})`);
+      edits.set(describedValue.getStart(), "(");
+      edits.set(describedValue.getEnd(), ` as unknown as ${described})`);
     }
     const target = OPERAND_TYPE_ERRORS.has(diagnostic.code) ? getCompoundTarget(node) : undefined;
     if (target !== undefined) edits.set(target.name.getEnd(), ": any");
@@ -615,6 +629,30 @@ const readsThis = (node: ts.Node): boolean =>
   (!(ts.isFunctionLike(node) && !ts.isArrowFunction(node)) &&
     (ts.forEachChild(node, (child) => readsThis(child) || undefined) ?? false));
 
+// The operators that compare values of any type.
+const COMPARISONS = new Set([
+  ts.SyntaxKind.EqualsEqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsEqualsToken,
+  ts.SyntaxKind.EqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsToken,
+]);
+
+// The array methods that pass the array they visit to their callback.
+const ARRAY_CALLBACK_METHODS = new Set([
+  "every",
+  "filter",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+  "flatMap",
+  "forEach",
+  "map",
+  "reduce",
+  "reduceRight",
+  "some",
+]);
+
 // A function that a test declares and passes by name, once, takes the parameter types of the
 // callback it's passed as, such as an array method's (value, index, array), which usage alone
 // doesn't give.
@@ -649,11 +687,88 @@ const typeCallbacks = () => {
     ) {
       return;
     }
+    // An array method that a test calls on an object passes that object as the callback's array
+    // parameter, as reduce's fourth and the others' third, which takes the object's type.
+    const call = passed.parent;
+    const callee = call.expression;
+    const method =
+      ts.isCallExpression(call) &&
+      call.arguments[1] === passed &&
+      ts.isPropertyAccessExpression(callee) &&
+      callee.name.text === "call" &&
+      ts.isPropertyAccessExpression(callee.expression) &&
+      /^(?:Array\.prototype|\[\])$/.test(callee.expression.expression.getText())
+        ? callee.expression.name.text
+        : undefined;
+    const arrayParameter =
+      method === undefined || !ARRAY_CALLBACK_METHODS.has(method)
+        ? undefined
+        : declaration.parameters.at(method.startsWith("reduce") ? 3 : 2);
+    const receiver = ts.isCallExpression(call) ? call.arguments[0] : undefined;
+    const receiverType =
+      receiver === undefined
+        ? "any"
+        : ts.isIdentifier(receiver) &&
+            receiver.text !== "arguments" &&
+            declaration.parameters.every((parameter) => parameter.name.getText() !== receiver.text)
+          ? `typeof ${receiver.text}`
+          : checker
+              .typeToString(
+                checker.getTypeAtLocation(receiver),
+                undefined,
+                ts.TypeFormatFlags.NoTruncation,
+              )
+              // An empty object literal gets properties after it's made.
+              .replace(/^\{\}$/, "{ [key: string | symbol]: unknown }");
+    if (
+      arrayParameter !== undefined &&
+      arrayParameter.type === undefined &&
+      ts.isIdentifier(arrayParameter.name) &&
+      !/\bany\b/.test(receiverType)
+    ) {
+      edits.set(arrayParameter.name.getEnd(), `: ${receiverType}`);
+      // The method's own type takes an array there, which the object isn't.
+      edits.set(passed.getEnd(), " as (...args: unknown[]) => unknown");
+    }
+    // An element may come from a getter or a prototype, whatever the array's own type, so a value
+    // parameter that the callback only compares takes any value.
+    const calledMethod =
+      method ??
+      (ts.isCallExpression(call) &&
+      call.arguments[0] === passed &&
+      ts.isPropertyAccessExpression(callee)
+        ? callee.name.text
+        : undefined);
+    const valueParameter =
+      calledMethod === undefined || !ARRAY_CALLBACK_METHODS.has(calledMethod)
+        ? undefined
+        : declaration.parameters.at(calledMethod.startsWith("reduce") ? 1 : 0);
+    const valueSymbol =
+      valueParameter === undefined ? undefined : checker.getSymbolAtLocation(valueParameter.name);
+    const isCompared = (use: ts.Node) =>
+      ts.isTypeOfExpression(use.parent) ||
+      (ts.isBinaryExpression(use.parent) && COMPARISONS.has(use.parent.operatorToken.kind));
+    const uses: ts.Identifier[] = [];
+    const findUses = (node: ts.Node): void => {
+      if (ts.isIdentifier(node) && checker.getSymbolAtLocation(node) === valueSymbol) {
+        uses.push(node);
+      }
+      ts.forEachChild(node, findUses);
+    };
+    if (valueSymbol !== undefined && declaration.body !== undefined) findUses(declaration.body);
+    const isUnknownValue =
+      valueParameter !== undefined &&
+      valueParameter.type === undefined &&
+      ts.isIdentifier(valueParameter.name) &&
+      uses.length > 0 &&
+      uses.every(isCompared);
+    if (isUnknownValue) edits.set(valueParameter.name.getEnd(), ": unknown");
     const signatures = checker.getContextualType(passed)?.getCallSignatures() ?? [];
     if (signatures.length !== 1) return;
     declaration.parameters.forEach((parameter, position) => {
       const given = signatures[0].parameters.at(position);
       if (
+        (isUnknownValue && parameter === valueParameter) ||
         given === undefined ||
         parameter.type !== undefined ||
         parameter.initializer !== undefined ||
@@ -670,6 +785,49 @@ const typeCallbacks = () => {
       if (/\b(?:any|this)\b/.test(type)) return;
       edits.set(parameter.name.getEnd(), `: ${type}`);
     });
+    // An array method's callback that reads its arguments past its parameters, as arguments[2],
+    // reads what the method passes there: the index and the array, which take the callback
+    // parameter's type. The value, and reduce's accumulator, stay any.
+    if (
+      method !== undefined ||
+      calledMethod === undefined ||
+      !ARRAY_CALLBACK_METHODS.has(calledMethod)
+    ) {
+      return;
+    }
+    const valuePosition = calledMethod.startsWith("reduce") ? 1 : 0;
+    const findReads = (node: ts.Node): void => {
+      const argument = ts.isElementAccessExpression(node) ? node.argumentExpression : undefined;
+      const position =
+        argument !== undefined && ts.isNumericLiteral(argument) ? Number(argument.text) : undefined;
+      const given = position === undefined ? undefined : signatures[0].parameters.at(position);
+      const type =
+        given === undefined
+          ? undefined
+          : checker.typeToString(
+              checker.getTypeOfSymbol(given),
+              undefined,
+              ts.TypeFormatFlags.NoTruncation,
+            );
+      if (
+        ts.isElementAccessExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === "arguments" &&
+        checker.getSymbolAtLocation(node.expression)?.declarations === undefined &&
+        position !== undefined &&
+        position >= declaration.parameters.length &&
+        position > valuePosition &&
+        type !== undefined &&
+        !/\b(?:any|this)\b/.test(type) &&
+        !(ts.isBinaryExpression(node.parent) && node.parent.left === node)
+      ) {
+        edits.set(node.getStart(), "(");
+        edits.set(node.getEnd(), ` as ${type})`);
+      }
+      // A function other than an arrow has arguments of its own.
+      if (!ts.isFunctionLike(node) || ts.isArrowFunction(node)) ts.forEachChild(node, findReads);
+    };
+    if (declaration.body !== undefined) ts.forEachChild(declaration.body, findReads);
   });
   if (edits.size > 0) applyEdits(edits);
 };
@@ -681,6 +839,16 @@ const annotate = (text: string) => {
   setText(text);
   typeCallbacks();
   for (;;) {
+    const sourceFile = service.getProgram()?.getSourceFile(PROGRAM_PATH);
+    // A variable that an empty array literal initializes holds an array, which the fix infers as
+    // unknown where the test only destructures it.
+    const isEmptyArrayName = (node: ts.Node, position: number): boolean =>
+      (ts.isVariableDeclaration(node) &&
+        node.name.getEnd() === position &&
+        node.initializer !== undefined &&
+        ts.isArrayLiteralExpression(node.initializer) &&
+        node.initializer.elements.length === 0) ||
+      (ts.forEachChild(node, (child) => isEmptyArrayName(child, position) || undefined) ?? false);
     const fix = service
       .getSemanticDiagnostics(PROGRAM_PATH)
       .values()
@@ -697,13 +865,18 @@ const annotate = (text: string) => {
         : fix.changes
             .flatMap((change) => change.textChanges)
             .toSorted((left, right) => right.span.start - left.span.start)
-            .reduce(
-              (current, change) =>
+            .reduce((current, change) => {
+              const inferred = change.newText.replaceAll(/\bany\b/g, "unknown");
+              return (
                 current.slice(0, change.span.start) +
-                change.newText.replaceAll(/\bany\b/g, "unknown") +
-                current.slice(change.span.start + change.span.length),
-              file.text,
-            );
+                (inferred === ": unknown" &&
+                sourceFile !== undefined &&
+                isEmptyArrayName(sourceFile, change.span.start)
+                  ? ": unknown[]"
+                  : inferred) +
+                current.slice(change.span.start + change.span.length)
+              );
+            }, file.text);
     if (annotated === file.text) break;
     setText(annotated);
   }
@@ -716,10 +889,19 @@ const annotate = (text: string) => {
 // TypeScript's errors that leave each expression the type it has: a property or element that an
 // object's type lacks, which reads as any, an unused operand of a comma, and a name that no
 // declaration binds, whose read tla-ts throws a ReferenceError for.
-const UNTYPED_READ_ERRORS = new Set([2339, 2551, 7053]);
+const MISSING_PROPERTY_ERROR = 2339;
+// A value of another type than an assignment's target or a call's parameter.
+const UNASSIGNABLE_ERRORS = new Set([2322, 2345]);
+const UNTYPED_READ_ERRORS = new Set([MISSING_PROPERTY_ERROR, 2551, 7053]);
 const UNUSED_OPERAND_ERROR = 2695;
 const UNRESOLVED_NAME_ERROR = 2304;
 const NOT_ITERABLE_ERROR = 2488;
+
+// An argument of a type that a call's signatures don't take, which tla-ts converts where a string's
+// method or RegExp takes a primitive or an object.
+const CONVERTED_ARGUMENT_ERRORS = new Set([2345, 2769]);
+// A call of a value of type unknown, which tla-ts runs where a key stores a String.prototype method.
+const UNKNOWN_CALLEE_ERROR = 2571;
 
 // An operator's operand of a type that the operator doesn't take, or that is null or undefined,
 // which tla-ts converts to a primitive where it's an object that the test declares, a wrapper, or a
@@ -830,9 +1012,12 @@ const ignoreSoundErrors = () => {
     );
   };
   // An object that the test declares and a pattern or a loop iterates, whose iterator tla-ts reads
-  // from its properties or refuses to follow.
+  // from its properties or refuses to follow. An array assignment pattern's own type is the array
+  // literal's, not its value's.
   const isPlainObject = (node: ts.Node) => {
-    const type = checker.getTypeAtLocation(node);
+    const type = ts.isArrayLiteralExpression(node)
+      ? checker.getTypeOfAssignmentPattern(node)
+      : checker.getTypeAtLocation(node);
     const declarations = type.getSymbol()?.declarations ?? [];
     return (
       !type.isUnion() &&
@@ -903,9 +1088,271 @@ const ignoreSoundErrors = () => {
       !(isCondition(comparison) && (isReference(comparison.left) || isReference(comparison.right)))
     );
   };
+  // A property that a pattern destructures, which JavaScript reads whatever the value's type, and
+  // whose value, where it's null or undefined, throws the TypeError that tla-ts throws too.
+  const isPatternRead = (node: ts.Node) => {
+    const parent = node.parent;
+    const literal = ts.findAncestor(parent, ts.isObjectLiteralExpression);
+    const target =
+      literal &&
+      ts.findAncestor(
+        literal.parent,
+        (ancestor) =>
+          !ts.isObjectLiteralExpression(ancestor) &&
+          !ts.isPropertyAssignment(ancestor) &&
+          !ts.isArrayLiteralExpression(ancestor),
+      );
+    return (
+      ts.isIdentifier(node) &&
+      ((ts.isBindingElement(parent) &&
+        ts.isObjectBindingPattern(parent.parent) &&
+        (parent.propertyName ?? parent.name) === node) ||
+        ((ts.isShorthandPropertyAssignment(parent) || ts.isPropertyAssignment(parent)) &&
+          parent.name === node &&
+          target !== undefined &&
+          ((ts.isBinaryExpression(target) &&
+            target.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+            target.left.getStart() <= literal.getStart() &&
+            literal.getEnd() <= target.left.getEnd()) ||
+            ((ts.isForOfStatement(target) || ts.isForInStatement(target)) &&
+              target.initializer.getStart() <= literal.getStart() &&
+              literal.getEnd() <= target.initializer.getEnd()))))
+    );
+  };
+  // An argument for a parameter that a pattern with no type annotation declares, in a function
+  // that the test declares, whose type TypeScript infers from the pattern's defaults alone. The
+  // call passes the value whatever its type, and tla-ts destructures it as JavaScript does. An
+  // array pattern takes only an array literal, since tla-ts reads another value's iterator only
+  // where its type says it has one.
+  const isPatternArgument = (node: ts.Node) => {
+    const call = ts.findAncestor(
+      node,
+      (ancestor): ancestor is ts.CallExpression | ts.NewExpression =>
+        ts.isCallExpression(ancestor) || ts.isNewExpression(ancestor),
+    );
+    const position =
+      call?.arguments?.findIndex(
+        (argument) => argument.getStart() <= node.getStart() && node.getEnd() <= argument.getEnd(),
+      ) ?? -1;
+    const declaration = call && checker.getResolvedSignature(call)?.getDeclaration();
+    const parameter =
+      declaration !== undefined && ts.isFunctionLike(declaration)
+        ? declaration.parameters.at(position)
+        : undefined;
+    return (
+      position !== -1 &&
+      parameter !== undefined &&
+      parameter.getSourceFile() === sourceFile &&
+      parameter.type === undefined &&
+      parameter.dotDotDotToken === undefined &&
+      (ts.isObjectBindingPattern(parameter.name) ||
+        (ts.isArrayBindingPattern(parameter.name) &&
+          call?.arguments !== undefined &&
+          ts.isArrayLiteralExpression(call.arguments[position])))
+    );
+  };
+  // A nested array pattern whose value's type is an array's, or null or undefined, which
+  // TypeScript rejects where the value may be null or undefined. JavaScript then throws the
+  // TypeError that tla-ts throws too, and tla-ts reads an array as its type says.
+  const isNullableArrayPattern = (node: ts.Node) => {
+    if (!ts.isArrayBindingPattern(node)) return false;
+    const type = checker.getNonNullableType(checker.getTypeAtLocation(node));
+    return (
+      (type.flags & ts.TypeFlags.Never) !== 0 ||
+      (type.isUnion() ? type.types : [type]).every(
+        (member) => checker.isArrayType(member) || checker.isTupleType(member),
+      )
+    );
+  };
+  // An array pattern that a catch binds, or one nested in it, whose value of type unknown tla-ts
+  // destructures as an array where it is one and refuses to otherwise.
+  const isCaughtArrayPattern = (node: ts.Node) => {
+    const declaration = ts.findAncestor(
+      node,
+      (ancestor) =>
+        !ts.isBindingElement(ancestor) &&
+        !ts.isArrayBindingPattern(ancestor) &&
+        !ts.isObjectBindingPattern(ancestor),
+    );
+    return (
+      ts.isArrayBindingPattern(node) &&
+      (checker.getTypeAtLocation(node).flags & ts.TypeFlags.Unknown) !== 0 &&
+      declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      ts.isCatchClause(declaration.parent)
+    );
+  };
+  // A call of a built-in that SHORT_CALLED_BUILT_INS lists, with fewer arguments than its type
+  // takes, which passes undefined for the others as JavaScript does.
+  const isShortBuiltInCall = (node: ts.Node) => {
+    const call = ts.findAncestor(
+      node,
+      (ancestor): ancestor is ts.CallExpression | ts.NewExpression =>
+        ts.isCallExpression(ancestor) || ts.isNewExpression(ancestor),
+    );
+    const declaration = call && checker.getResolvedSignature(call)?.getDeclaration();
+    return (
+      call !== undefined &&
+      ts.isIdentifier(call.expression) &&
+      SHORT_CALLED_BUILT_INS.has(call.expression.text) &&
+      declaration !== undefined &&
+      declaration.getSourceFile().isDeclarationFile &&
+      (call.arguments?.length ?? 0) <
+        declaration.parameters.filter(
+          (parameter) =>
+            parameter.questionToken === undefined &&
+            parameter.initializer === undefined &&
+            parameter.dotDotDotToken === undefined,
+        ).length
+    );
+  };
+  const isEveryType = (node: ts.Node, flags: ts.TypeFlags) => {
+    const type = checker.getTypeAtLocation(node);
+    return (type.isUnion() ? type.types : [type]).every((member) => (member.flags & flags) !== 0);
+  };
+  // A primitive that a string's method converts for a parameter: any but a symbol or a BigInt for
+  // a string, and a number or undefined, or a string, a boolean, or null, for a number.
+  const isPrimitiveArgument = (node: ts.Node, parameter: "number" | "string" | undefined) =>
+    parameter === "string"
+      ? isEveryType(
+          node,
+          ts.TypeFlags.StringLike |
+            ts.TypeFlags.NumberLike |
+            ts.TypeFlags.BooleanLike |
+            ts.TypeFlags.Null |
+            ts.TypeFlags.Undefined,
+        )
+      : parameter === "number" &&
+        (isEveryType(node, ts.TypeFlags.NumberLike | ts.TypeFlags.Undefined) ||
+          isEveryType(
+            node,
+            ts.TypeFlags.StringLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.Null,
+          ));
+  const isGlobal = (node: ts.Identifier) =>
+    (checker.getSymbolAtLocation(node)?.declarations ?? []).every(
+      (declaration) => declaration.getSourceFile().isDeclarationFile,
+    );
+  // A literal that new RegExp and RegExp read as the text that ToString gives.
+  const isPrimitiveLiteral = (node: ts.Expression) =>
+    (ts.isIdentifier(node) && node.text === "undefined" && isGlobal(node)) ||
+    (ts.isVoidExpression(node) && ts.isLiteralExpression(node.expression)) ||
+    node.kind === ts.SyntaxKind.TrueKeyword ||
+    node.kind === ts.SyntaxKind.FalseKeyword ||
+    node.kind === ts.SyntaxKind.NullKeyword ||
+    ts.isNumericLiteral(node);
+  // A call of a string's method, or of new RegExp or RegExp, whose arguments tla-ts converts: a
+  // primitive for a string's method's parameter, an object that the test declares or a wrapper
+  // for any but padStart's and padEnd's filler, and a primitive literal for RegExp's pattern and
+  // flags. The error is the call's, at an argument or the method's name.
+  const isConvertedCall = (diagnostic: ts.Diagnostic) => {
+    const start = diagnostic.start ?? 0;
+    const end = start + (diagnostic.length ?? 0);
+    const isSpan = (inner: ts.Node) => inner.getStart() === start && inner.getEnd() === end;
+    const call = ts.findAncestor(
+      getNode(start),
+      (ancestor): ancestor is ts.CallExpression | ts.NewExpression =>
+        (ts.isCallExpression(ancestor) || ts.isNewExpression(ancestor)) &&
+        ((ancestor.arguments ?? []).some(isSpan) ||
+          (ts.isPropertyAccessExpression(ancestor.expression) && isSpan(ancestor.expression.name))),
+    );
+    const values = call?.arguments ?? [];
+    if (
+      call !== undefined &&
+      ts.isIdentifier(call.expression) &&
+      call.expression.text === "RegExp"
+    ) {
+      return (
+        isGlobal(call.expression) &&
+        values.length <= 2 &&
+        values.every(
+          (value) => isEveryType(value, ts.TypeFlags.StringLike) || isPrimitiveLiteral(value),
+        )
+      );
+    }
+    const callee = call?.expression;
+    const name =
+      callee !== undefined && ts.isPropertyAccessExpression(callee) ? callee.name : undefined;
+    const parameters =
+      name !== undefined &&
+      ts.isPropertyAccessExpression(name.parent) &&
+      isEveryType(name.parent.expression, ts.TypeFlags.StringLike)
+        ? STRING_METHODS.get(name.text)?.parameters
+        : undefined;
+    return (
+      call !== undefined &&
+      ts.isCallExpression(call) &&
+      name !== undefined &&
+      parameters !== undefined &&
+      values.length <= parameters.length &&
+      values.every(
+        (value, position) =>
+          isPrimitiveArgument(value, parameters[position]) ||
+          (checker.getTypeAtLocation(value).getSymbol()?.getName() !== "RegExp" &&
+            (isPlainObject(value) || isWrapper(value)) &&
+            !(name.text.startsWith("pad") && position === 1)),
+      )
+    );
+  };
+  // A call of a key of type unknown, as (object as unknown as { [key: string]: unknown }).slice(0)
+  // calls, where the test stores String.prototype's method of the key's name as a value, writes no
+  // function of its own under the key, and passes primitives that the method converts. tla-ts runs
+  // the method on the object.
+  const isStoredStringCall = (node: ts.Node) => {
+    const access = node.parent;
+    const call = access.parent;
+    if (
+      !ts.isPropertyAccessExpression(access) ||
+      access.expression !== node ||
+      !ts.isCallExpression(call) ||
+      call.expression !== access
+    ) {
+      return false;
+    }
+    const name = access.name.text;
+    const parameters = STRING_METHODS.get(name)?.parameters;
+    const nodes: ts.Node[] = [];
+    const collect = (inner: ts.Node) => {
+      nodes.push(inner);
+      ts.forEachChild(inner, collect);
+    };
+    collect(sourceFile);
+    const isStored = nodes.some(
+      (inner) =>
+        ts.isPropertyAccessExpression(inner) &&
+        inner.name.text === name &&
+        inner.expression.getText() === "String.prototype" &&
+        !(ts.isPropertyAccessExpression(inner.parent) && inner.parent.expression === inner) &&
+        !(ts.isCallExpression(inner.parent) && inner.parent.expression === inner),
+    );
+    const isWritten = nodes.some(
+      (inner) =>
+        ((ts.isMethodDeclaration(inner) || ts.isPropertyAssignment(inner)) &&
+          inner.name.getText() === name) ||
+        (ts.isBinaryExpression(inner) &&
+          inner.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          ts.isPropertyAccessExpression(inner.left) &&
+          inner.left.name.text === name &&
+          (ts.isFunctionExpression(inner.right) || ts.isArrowFunction(inner.right))),
+    );
+    return (
+      parameters !== undefined &&
+      isStored &&
+      !isWritten &&
+      call.arguments.length <= parameters.length &&
+      call.arguments.every((value, position) => isPrimitiveArgument(value, parameters[position]))
+    );
+  };
   const isSound = (diagnostic: ts.Diagnostic) => {
     const node = getNode(diagnostic.start ?? 0);
     return (
+      (diagnostic.code === ARGUMENT_COUNT_ERROR && isShortBuiltInCall(node)) ||
+      (diagnostic.code === MISSING_PROPERTY_ERROR && isPatternRead(node)) ||
+      ((diagnostic.code === NOT_ITERABLE_ERROR || NULLABLE_ERRORS.has(diagnostic.code)) &&
+        isNullableArrayPattern(node)) ||
+      (diagnostic.code === NOT_ITERABLE_ERROR && isCaughtArrayPattern(node)) ||
+      (UNASSIGNABLE_ERRORS.has(diagnostic.code) && isPatternArgument(node)) ||
+      (CONVERTED_ARGUMENT_ERRORS.has(diagnostic.code) && isConvertedCall(diagnostic)) ||
+      (diagnostic.code === UNKNOWN_CALLEE_ERROR && isStoredStringCall(node)) ||
       diagnostic.code === UNUSED_OPERAND_ERROR ||
       (diagnostic.code === UNINTENDED_COMPARISON_ERROR && isUnnarrowed(node, diagnostic)) ||
       (UNTYPED_READ_ERRORS.has(diagnostic.code) && isObjectRead(node)) ||

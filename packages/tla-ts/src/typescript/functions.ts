@@ -1,5 +1,5 @@
 import ts from "@typescript/typescript6";
-import type { Expression } from "../ast";
+import { type Expression, getChildren } from "../ast";
 import {
   type CalledMethod,
   type Context,
@@ -28,18 +28,23 @@ import {
   getWritten,
   isArgumentsRead,
   getWrittenRoots,
+  getImmutableWrite,
+  throwOnUnentered,
+  isValueReturn,
   translateLocalStatements,
 } from "./actions";
 import { TlaTypeScriptError } from "../errors";
+import { getUncaughtText } from "./exceptions";
 import { translateCondition, translateExpression, translateNegatedCondition } from "./expressions";
 import { type Formula, ifThenElse, letIn, render, leaf } from "./formula";
-import { getCandidateValue, getSuperLookup, translateObjectValue } from "./heap";
+import { getAllocated, getCandidateValue, getSuperLookup, translateObjectValue } from "./heap";
 import { mayBeNumber, useJavaScript } from "./javascript";
 import {
   type Bound,
   bindNames,
   bindPattern,
   bindValues,
+  translateArgumentValues,
   createStateScope,
   declareParameters,
   getArrowReceivers,
@@ -65,7 +70,8 @@ import { isBuiltInObject } from "./intrinsics";
 import { getStoredCall, translateStoredCall } from "./collections";
 import { link } from "./regions";
 import { getStackCall } from "./stacks";
-import { hasHeapType, translateUnknown } from "./types";
+import { getIteratorDisposeCall } from "./disposal";
+import { getKind, hasHeapType, translateUnknown } from "./types";
 
 // Whether a step has changed a state variable, so that helpers reading state must see the change.
 const isStateModified = (scope: Scope, context: Context) =>
@@ -99,26 +105,28 @@ export const readsState = (
   );
 };
 
+// What is visited, such as a call that a statement already ran first, throws nothing more.
 export const mayThrow = (
   node: ts.Node,
   context: Context,
   visited = new Set<ts.Node>(),
 ): boolean => {
+  if (visited.has(node)) return false;
+  visited.add(node);
   // A using declaration throws a TypeError for a value that isn't disposable, and it and a
-  // DisposableStack's methods run dispose methods.
+  // DisposableStack's methods run dispose methods. A write to a const throws a TypeError.
   if (
     ts.isThrowStatement(node) ||
     (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) ||
-    getStackCall(node, context) !== undefined
+    getStackCall(node, context) !== undefined ||
+    getIteratorDisposeCall(node, context) !== undefined ||
+    getImmutableWrite(node, context)?.isIgnored === false
   ) {
     return true;
   }
   if (ts.isCallExpression(node)) {
     const callee = getCallee(node.expression, context);
-    if (callee !== undefined && !visited.has(callee)) {
-      visited.add(callee);
-      if (mayThrow(callee, context, visited)) return true;
-    }
+    if (callee !== undefined && mayThrow(callee, context, visited)) return true;
   }
   return ts.forEachChild(node, (child) => mayThrow(child, context, visited) || undefined) ?? false;
 };
@@ -136,7 +144,7 @@ const getInitializer = (declaration: HelperDeclaration) =>
   ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
 
 // A scope that binds the parameters of the factory whose call a constant holds, for the function
-// that the factory returns to read.
+// that the factory returns to read, so it enters that function.
 export const bindFactory = (declaration: ts.Node | undefined, scope: Scope, context: Context) => {
   const factory =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
@@ -146,6 +154,7 @@ export const bindFactory = (declaration: ts.Node | undefined, scope: Scope, cont
     ? scope
     : {
         ...scope,
+        entered: factory.closure,
         bindings: new Map([
           ...scope.bindings,
           ...factory.bindings.map((binding): [ts.Symbol, Expression] => [
@@ -220,6 +229,21 @@ export const getDefinition = (declaration: HelperDeclaration, context: Context):
     bindNames(bindFactory(declaration, createStateScope(context), context), parameters),
     context,
   );
+  // What the body translates to may read the state where its code names none of it, such as the
+  // heap that an array's iterator or a typeof reads.
+  const stateNames = new Set([
+    ...[...context.variables.values()].flatMap((variable) =>
+      variable.kind === "Identifier" ? [variable.name] : [],
+    ),
+    ...[...context.definitions.values()].flatMap((defined) =>
+      defined.readsState ? [defined.name] : [],
+    ),
+  ]);
+  const isReading = (expression: Expression): boolean =>
+    (expression.kind === "Identifier" && stateNames.has(expression.name)) ||
+    (expression.kind === "Apply" && stateNames.has(expression.operator)) ||
+    getChildren(expression).some(isReading);
+  definition.readsState = definition.readsState || isReading(value);
   context.inProgress.delete(declaration);
   context.output.push(
     link(
@@ -286,7 +310,7 @@ const inlineCall = (
   called?: CalledMethod,
 ) => {
   if (callee.body === undefined) throw new TlaTypeScriptError("Give this a body", callee);
-  const callbacks = callee.parameters.flatMap(
+  const passedCallbacks = callee.parameters.flatMap(
     (parameter, position): [ts.Symbol, FunctionNode][] => {
       const argument = argumentNodes.at(position);
       const symbol = getSymbol(parameter.name, context.checker);
@@ -298,22 +322,53 @@ const inlineCall = (
         : [[symbol, callback]];
     },
   );
+  // A parameter that the call doesn't pass, whose default is an arrow function that the body only
+  // calls, calls that function as it would one that the call passes, as an expression can't make
+  // the function object that the heap would hold.
+  const body = callee.body;
+  const defaultCallbacks =
+    context.heap === undefined || argumentNodes.some(ts.isSpreadElement)
+      ? []
+      : callee.parameters
+          .slice(argumentNodes.length)
+          .flatMap((parameter): [ts.Symbol, FunctionNode][] => {
+            const initializer = parameter.initializer;
+            const symbol = getSymbol(parameter.name, context.checker);
+            const isOnlyCalled = findNodes(body, ts.isIdentifier).every(
+              (name) =>
+                getSymbol(name, context.checker) !== symbol ||
+                (ts.isCallExpression(name.parent) && name.parent.expression === name),
+            );
+            return initializer !== undefined &&
+              ts.isArrowFunction(initializer) &&
+              symbol !== undefined &&
+              isOnlyCalled &&
+              findNodes(
+                initializer,
+                (inner): inner is ts.ThisExpression => inner.kind === ts.SyntaxKind.ThisKeyword,
+              ).length === 0
+              ? [[symbol, initializer]]
+              : [];
+          });
+  const callbacks = [...passedCallbacks, ...defaultCallbacks];
   const isValue = (position: number) =>
     !callbacks.some(
       (entry) => entry[0] === getSymbol(callee.parameters[position].name, context.checker),
     );
-  const values = shareArguments(
-    argumentNodes
-      .filter((_, position) => position >= callee.parameters.length || isValue(position))
-      .map((argument) => translateExpression(argument, scope, context)),
+  const passed = translateArgumentValues(
+    callee.parameters,
+    argumentNodes,
+    (position) => position >= callee.parameters.length || isValue(position),
+    scope,
     context,
   );
+  const values = shareArguments(passed.values, context);
   const reads = getArgumentsReads(callee, context);
   // A call inside an expression holds its arguments object on a heap that only the call reads, so
   // the body may read only its length and elements.
   if (
     reads.length > 0 &&
-    (callbacks.length > 0 ||
+    (passedCallbacks.length > 0 ||
       argumentNodes.some(ts.isSpreadElement) ||
       !reads.every((read) => isArgumentsRead(read, context)) ||
       context.heap === undefined)
@@ -329,15 +384,22 @@ const inlineCall = (
   );
   const bound = bindValues(
     callee.parameters.filter((_, position) => isValue(position)),
-    values.shared,
+    passed.isSpread ? values.shared.slice(0, -1) : values.shared,
     made.scope,
     context,
+    passed.isSpread ? values.shared.at(-1) : undefined,
   );
   context.inProgress.add(callee);
+  // A statement makes the objects and runs the calls only of its own expressions, so what the scope
+  // holds for the body's nodes belongs to a call that this one runs inside.
+  const isOutside = (entry: [ts.Node, Expression]) =>
+    ts.findAncestor(entry[0], (ancestor) => ancestor === callee) === undefined;
   const value = translateBody(
-    callee.body,
+    body,
     {
       ...bound.scope,
+      allocated: new Map([...bound.scope.allocated].filter(isOutside)),
+      results: new Map([...bound.scope.results].filter(isOutside)),
       functions: new Map([...bound.scope.functions, ...callbacks]),
       receiver: getReceiver(scope, context, called),
       arrowReceivers: getArrowReceivers(callbacks, scope),
@@ -619,8 +681,8 @@ const getCaptured = (callee: FunctionNode, context: Context) => {
 
 // Whether tla-ts can compile a local function as a definition that takes the names it reads from
 // the functions around it: one that changes none of them and reads no state, which a definition
-// would read as the step began.
-export const isLiftable = (callee: FunctionNode, context: Context) => {
+// would read as the step began, unless the definition takes the state too.
+export const isLiftable = (callee: FunctionNode, context: Context, isStateTaken = false) => {
   if (ts.findAncestor(callee.parent, ts.isFunctionLike) === undefined) return false;
   const found = getCaptured(callee, context);
   const isCapturedWritten = (node: ts.Node) => {
@@ -634,7 +696,7 @@ export const isLiftable = (callee: FunctionNode, context: Context) => {
     );
   };
   return (
-    context.heap === undefined &&
+    (isStateTaken || context.heap === undefined) &&
     (ts.isArrowFunction(callee) ||
       ts.isFunctionExpression(callee) ||
       ts.isFunctionDeclaration(callee)) &&
@@ -649,7 +711,7 @@ export const isLiftable = (callee: FunctionNode, context: Context) => {
     ) &&
     found.reached.every(
       (reached) =>
-        !readsState(reached, context, new Set()) &&
+        (isStateTaken || !readsState(reached, context, new Set())) &&
         findNodes(reached, (inner): inner is ts.Node => isCapturedWritten(inner)).length === 0,
     )
   );
@@ -658,7 +720,7 @@ export const isLiftable = (callee: FunctionNode, context: Context) => {
 // A local function that a call reaches again while tla-ts inlines it, compiled once as a definition
 // beside the top-level ones. It takes the names it reads from the functions around it as
 // parameters, which a call passes as they are then, as JavaScript reads them then. It may change
-// none of them, and reads no state, which a definition would read as the step began.
+// none of them. One that reads state, or the heap, takes the state as the call reads it too.
 export const translateLiftedCall = (
   callee: FunctionNode,
   node: ts.CallExpression,
@@ -667,17 +729,22 @@ export const translateLiftedCall = (
 ) => {
   rejectCaught(node, callee, scope, context);
   const found = getCaptured(callee, context);
-  if (!isLiftable(callee, context) || callee.body === undefined) {
+  if (!isLiftable(callee, context, true) || callee.body === undefined) {
     throw new TlaTypeScriptError(
       "A local function can't call itself, so declare it at the top level",
       node,
     );
   }
+  const variables = isLiftable(callee, context) ? [] : [...context.variables];
   const existing = context.definitions.get(callee);
   if (existing !== undefined) context.recursive.add(callee);
   const definition =
     existing ??
     (() => {
+      const states = variables.map((entry) => ({
+        symbol: entry[0],
+        name: context.names.getFresh(entry[0].name),
+      }));
       const parameters = declareParameters(callee.parameters, context);
       const captured = found.captured.map((symbol) => ({
         symbol,
@@ -688,7 +755,7 @@ export const translateLiftedCall = (
         name: context.names.getFresh(
           named !== undefined && ts.isIdentifier(named) ? named.text : "local",
         ),
-        parameters: [...parameters, ...captured].map((parameter) => ({
+        parameters: [...parameters, ...captured, ...states].map((parameter) => ({
           name: parameter.name,
           arity: 0,
         })),
@@ -699,7 +766,7 @@ export const translateLiftedCall = (
       context.inProgress = new Set([callee]);
       const value = translateBody(
         callee.body,
-        bindNames(createStateScope(context), [...parameters, ...captured]),
+        bindNames(createStateScope(context), [...parameters, ...captured, ...states]),
         context,
       );
       context.inProgress = outer;
@@ -733,7 +800,13 @@ export const translateLiftedCall = (
   );
   return render(
     values.evaluate(
-      leaf(call(definition.name, [...operands, ...capturedValues])),
+      leaf(
+        call(definition.name, [
+          ...operands,
+          ...capturedValues,
+          ...variables.map((entry) => scope.bindings.get(entry[0]) ?? entry[1]),
+        ]),
+      ),
       leaf(getUndefined(context)),
     ),
   );
@@ -807,6 +880,10 @@ export const translateLocalCall = (
   }
   if (callee === undefined) {
     return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
+  }
+  // A built-in that tla-ts doesn't model has only its declaration, as eval does.
+  if (callee.body === undefined && callee.getSourceFile().isDeclarationFile) {
+    throw new TlaTypeScriptError(`tla-ts can't run ${node.expression.getText()}`, node);
   }
   rejectCaught(node, callee, scope, context);
   if (context.inProgress.has(callee)) return translateLiftedCall(callee, node, scope, context);
@@ -931,11 +1008,27 @@ const isAssigning = (node: ts.Node): boolean =>
   (!ts.isFunctionLike(node) &&
     (ts.forEachChild(node, (child) => isAssigning(child) || undefined) ?? false));
 
-// A body of loops and assignments runs as statements that change only its locals.
+// A body of loops and assignments runs as statements that change only its locals, as does one
+// that makes objects, which only statements allocate. No one reaches those objects once it
+// returns, where it returns values that hold none of them.
 export const translateBody = (body: ts.ConciseBody, scope: Scope, context: Context): Expression => {
+  const owner = body.parent;
+  throwOnUnentered(owner, scope, context);
   if (!ts.isBlock(body)) return translateExpression(body, scope, context);
+  const literal = body.statements
+    .flatMap((statement) => getAllocated(statement, context))
+    .find((node) => ts.isObjectLiteralExpression(node) && !scope.allocated.has(node));
+  const isMaking =
+    literal !== undefined && ts.isFunctionLike(owner) && isValueReturn(owner, context);
+  const isPure = body.statements.every(isPureStatement);
+  if (literal !== undefined && isPure && !isMaking) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't make objects in a function that an expression calls and that may return them",
+      literal,
+    );
+  }
   return render(
-    body.statements.every(isPureStatement)
+    isPure && !isMaking
       ? translatePure(body.statements, scope, context, () => leaf(getUndefined(context)))
       : translateLocalStatements(body, scope, context),
   );
@@ -1025,10 +1118,12 @@ const translatePure = (
 
 export const translateThrow = (statement: ts.ThrowStatement, scope: Scope, context: Context) => {
   const thrown = statement.expression;
+  // A script reports what it doesn't catch as Node does.
   const message =
-    ts.isNewExpression(thrown) && thrown.arguments?.[0] !== undefined
+    getUncaughtText(statement, scope, context) ??
+    (ts.isNewExpression(thrown) && thrown.arguments?.[0] !== undefined
       ? translateExpression(thrown.arguments[0], scope, context)
-      : string(thrown.getText());
+      : string(thrown.getText()));
   return locate(apply("Assert", [boolean(false), message]), getLocation(statement));
 };
 
@@ -1054,16 +1149,22 @@ export const translateIf = (
   );
 };
 
-// A statement that always returns or throws, as a block that ends in one does.
+// A statement that always leaves its case, as a break, a continue, a return, or a throw does, or a
+// block that ends in one.
 const isLeaving = (statement: ts.Statement): boolean => {
   if (ts.isBlock(statement)) {
     const last = statement.statements.at(-1);
     return last !== undefined && isLeaving(last);
   }
-  return ts.isReturnStatement(statement) || ts.isThrowStatement(statement);
+  return (
+    ts.isBreakStatement(statement) ||
+    ts.isContinueStatement(statement) ||
+    ts.isReturnStatement(statement) ||
+    ts.isThrowStatement(statement)
+  );
 };
 
-// A switch as nested IFs. Each clause but the last must end in break, return, or throw.
+// A switch as nested IFs. Each clause but the last must end in break, continue, return, or throw.
 export const translateSwitch = (
   statement: ts.SwitchStatement,
   scope: Scope,
@@ -1083,16 +1184,28 @@ export const translateSwitch = (
     const lastClause = group[group.length - 1];
     const body = lastClause.statements;
     const last = body.at(-1);
-    const isTerminated = last !== undefined && (ts.isBreakStatement(last) || isLeaving(last));
     const isLast = start + group.length === clauses.length;
-    if (body.length > 0 && !isTerminated && !isLast) {
-      throw new TlaTypeScriptError("End each case with break, return, or throw", lastClause);
+    if (body.length > 0 && !(last !== undefined && isLeaving(last)) && !isLast) {
+      throw new TlaTypeScriptError(
+        "End each case with break, continue, return, or throw",
+        lastClause,
+      );
     }
     const formula = translateClause(
       last !== undefined && ts.isBreakStatement(last) ? body.slice(0, -1) : body,
     );
     if (group.some(ts.isDefaultClause)) return formula;
     const conditions = group.filter(ts.isCaseClause).map((clause) => {
+      // A case compares by identity, which a sequence lacks.
+      if (
+        getKind(statement.expression, context) === "sequence" &&
+        getKind(clause.expression, context) === "sequence"
+      ) {
+        throw new TlaTypeScriptError(
+          "tla-ts can't tell whether two equal arrays are the same array",
+          clause.expression,
+        );
+      }
       const value = translateExpression(clause.expression, scope, context);
       return context.hasSpecialNumbers && mayBeNumber(statement.expression, context)
         ? useJavaScript("StrictEquals", [subject, value], context)

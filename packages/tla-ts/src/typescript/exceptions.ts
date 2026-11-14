@@ -1,22 +1,27 @@
+import { pathToFileURL } from "node:url";
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
 import {
   type Context,
+  findNodes,
+  getHasInstanceReceiver,
   getHeapClass,
   getLiteralName,
   getSymbol,
   getUndefined,
+  isModuleFile,
   isOnce,
   share,
+  skipCasts,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
 import { getEngineErrors, getHeap, translateObjectValue } from "./heap";
-import { translateBuiltInInstanceOf } from "./intrinsics";
+import { getGeneratorPrototypeRef, translateBuiltInInstanceOf } from "./intrinsics";
 import { getTypeNames, useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
-import { getKind } from "./types";
-import { apply, field, identifier, ifExpression, record, set, string } from "./tla";
+import { getKind, isGeneratorType, isHeapArray } from "./types";
+import { apply, boolean, field, identifier, ifExpression, record, set, string } from "./tla";
 
 export const NATIVE_ERRORS = new Set([
   "Error",
@@ -29,6 +34,9 @@ export const NATIVE_ERRORS = new Set([
   "SuppressedError",
   "AggregateError",
 ]);
+
+export const isNativeErrorName = (name: string): name is `${string}Error` =>
+  NATIVE_ERRORS.has(name);
 
 const isNative = (symbol: ts.Symbol) =>
   NATIVE_ERRORS.has(symbol.name) &&
@@ -54,6 +62,22 @@ const isConstClass = (node: ts.Node): node is ts.ClassExpression =>
   (ts.getCombinedNodeFlags(node.parent) & ts.NodeFlags.Const) !== 0 &&
   isOnce(node.parent);
 
+// Whether a script reads a class's prototype, which an error that's a record can't inherit from, so
+// the class makes objects on the heap.
+export const isPrototypeRead = (symbol: ts.Symbol, checker: ts.TypeChecker) => {
+  const declaration = symbol.valueDeclaration;
+  return (
+    declaration !== undefined &&
+    findNodes(
+      declaration.getSourceFile(),
+      (node): node is ts.PropertyAccessExpression =>
+        ts.isPropertyAccessExpression(node) &&
+        node.name.text === "prototype" &&
+        getSymbol(node.expression, checker) === symbol,
+    ).length > 0
+  );
+};
+
 export const getErrorClass = (
   symbol: ts.Symbol | undefined,
   checker: ts.TypeChecker,
@@ -72,12 +96,117 @@ export const getErrorClass = (
   if (
     declaration === undefined ||
     !(ts.isClassDeclaration(declaration) || isConstClass(declaration)) ||
-    declaration.members.length > 0
+    declaration.members.length > 0 ||
+    isPrototypeRead(symbol, checker)
   ) {
     return undefined;
   }
   const inherited = getErrorClass(base, checker);
   return inherited === undefined ? undefined : [symbol, ...inherited];
+};
+
+// Whether Node runs a TypeScript file as an ES module: by its extension or package.json, or as
+// its syntax needs one.
+export const isEsModule = (sourceFile: ts.SourceFile) =>
+  ts.getImpliedNodeFormatForFile(sourceFile.fileName, undefined, ts.sys, {
+    moduleResolution: ts.ModuleResolutionKind.NodeNext,
+  }) === ts.ModuleKind.ESNext || isModuleFile(sourceFile);
+
+// Where Node says a script failed: the file's real path, or its URL in an ES module, and the line,
+// then the line with a caret under the node.
+export const getNodeLocation = (node: ts.Node, isUrl: boolean) => {
+  const sourceFile = node.getSourceFile();
+  const start = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+  const lineStarts = sourceFile.getLineStarts();
+  const line = sourceFile.text
+    .slice(lineStarts[start.line], lineStarts[start.line + 1])
+    .replace(/\r?\n$/, "");
+  const path = ts.sys.realpath?.(ts.sys.resolvePath(sourceFile.fileName)) ?? sourceFile.fileName;
+  return `${isUrl ? pathToFileURL(path).href : path}:${start.line + 1}\n${line}\n${" ".repeat(start.character)}^`;
+};
+
+const PRIMITIVE_TYPES = new Set(["string", "number", "boolean", "bigint", "undefined", "null"]);
+
+const TRACE_UNCAUGHT = "\n(Use `node --trace-uncaught ...` to show where the exception was thrown)";
+
+// The name that Node gives an error of a class as it prints the error: the class's name, or that
+// and the native class's in brackets where the class's name doesn't hold it.
+const getErrorHeader = (classes: ts.Symbol[]) => {
+  const native = classes.find(isNative)?.name;
+  const declaration = classes[0].valueDeclaration;
+  const name =
+    declaration === undefined || !ts.isClassLike(declaration)
+      ? classes[0].name
+      : (declaration.name?.text ??
+        (ts.isVariableDeclaration(declaration.parent) && ts.isIdentifier(declaration.parent.name)
+          ? declaration.parent.name.text
+          : undefined));
+  if (native === undefined || name === undefined) return undefined;
+  return name === native || name.includes(native) ? name : `${name} [${native}]`;
+};
+
+// What Node prints, but for the stack frames, for a value that a script throws and doesn't
+// catch: an error that new makes, or a primitive. Node points at the throw, but at the new in an
+// ES module as it runs, and an ES module's thrown primitive at Node's own code. A function that an
+// ES module calls might run from a timer instead, so only its body's throws get Node's text.
+export const getUncaughtText = (statement: ts.ThrowStatement, scope: Scope, context: Context) => {
+  const thrown = skipCasts(statement.expression);
+  const script = context.script;
+  if (
+    script === undefined ||
+    statement.getSourceFile() !== script.sourceFile ||
+    (script.isEsModule && ts.findAncestor(statement, ts.isFunctionLike) !== undefined)
+  ) {
+    return undefined;
+  }
+  const isModule = script.isEsModule;
+  if (ts.isNewExpression(thrown)) {
+    const classes = getErrorClass(getSymbol(thrown.expression, context.checker), context.checker);
+    const header = classes === undefined ? undefined : getErrorHeader(classes);
+    const argumentNodes = thrown.arguments ?? [];
+    const message = argumentNodes.at(0);
+    if (
+      header === undefined ||
+      argumentNodes.length > 1 ||
+      header.includes("AggregateError") ||
+      header.includes("SuppressedError") ||
+      (message !== undefined &&
+        getTypeNames(context.checker.getTypeAtLocation(message), context.checker)?.every(
+          (name) => name === "string",
+        ) !== true)
+    ) {
+      return undefined;
+    }
+    const prefix = `${getNodeLocation(isModule ? thrown : statement, isModule)}\n\n${header}`;
+    return message === undefined
+      ? string(prefix)
+      : share(translateExpression(message, scope, context), "message", context, (shared) =>
+          ifExpression(
+            apply("=", [shared, string("")]),
+            string(prefix),
+            apply("\\o", [string(`${prefix}: `), shared]),
+          ),
+        );
+  }
+  const names = getTypeNames(context.checker.getTypeAtLocation(thrown), context.checker);
+  if (
+    names === undefined ||
+    names.length === 0 ||
+    !names.every((name) => PRIMITIVE_TYPES.has(name))
+  ) {
+    return undefined;
+  }
+  return apply("\\o", [
+    apply("\\o", [
+      string(
+        isModule
+          ? "\nnode:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n"
+          : `\n${getNodeLocation(statement, false)}\n`,
+      ),
+      useJavaScript("StringOf", [translateExpression(thrown, scope, context)], context),
+    ]),
+    string(TRACE_UNCAUGHT),
+  ]);
 };
 
 export const getConstructor = (
@@ -240,6 +369,15 @@ export const isCaughtRead = (node: ts.Expression, context: Context): boolean =>
     ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
       isCaughtRead(node.expression, context)));
 
+// A value of a native error's type, such as a caught one that a cast or a narrowing reads as an
+// error, which may be an object that the heap holds as well as an error that stays a record.
+export const isNativeErrorValue = (node: ts.Expression, context: Context) => {
+  const symbol = context.checker
+    .getNonNullableType(context.checker.getTypeAtLocation(node))
+    .getSymbol();
+  return symbol !== undefined && isNative(symbol);
+};
+
 const getSubclasses = (node: ts.Node, symbol: ts.Symbol, context: Context) => {
   const found = new Map<ts.Symbol, Expression>();
   const visit = (child: ts.Node) => {
@@ -256,26 +394,115 @@ const getSubclasses = (node: ts.Node, symbol: ts.Symbol, context: Context) => {
   return [...found.values()];
 };
 
-export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, context: Context) => {
-  const rightClasses = getErrorClass(getSymbol(node.right, context.checker), context.checker);
-  // An object on the heap, such as an error that it holds, is an instance where the constructor's
-  // prototype is on its chain.
+// F[Symbol.hasInstance](value) of a function that the heap holds, which runs Function.prototype's
+// @@hasInstance where F keeps it: OrdinaryHasInstance, whose F's prototype must be an object.
+export const translateHasInstanceCall = (
+  node: ts.CallExpression,
+  scope: Scope,
+  context: Context,
+) => {
+  const receiver = getHasInstanceReceiver(node, context);
+  const argument = node.arguments.at(0);
   if (
-    (getHeapClass(node.right, context) !== undefined ||
-      (rightClasses !== undefined && isNative(rightClasses[0]))) &&
-    getKind(node.left, context) === "object"
+    receiver === undefined ||
+    getHeapClass(receiver, context) === undefined ||
+    node.arguments.length !== 1 ||
+    argument === undefined ||
+    ts.isSpreadElement(argument)
   ) {
-    const heap = getHeap(scope, node, context);
-    return useJavaScript(
-      "IsPrototypeOf",
-      [
-        heap,
+    return undefined;
+  }
+  const heap = getHeap(scope, node, context);
+  const constructor = translateExpression(receiver, scope, context);
+  return share(
+    useJavaScript("Get", [heap, constructor, string("prototype")], context),
+    "prototype",
+    context,
+    (prototype) =>
+      ifExpression(
         useJavaScript(
-          "Get",
-          [heap, translateExpression(node.right, scope, context), string("prototype")],
+          "HoldsBuiltIn",
+          [
+            heap,
+            constructor,
+            useJavaScript("WellKnownSymbol", [string("hasInstance")], context),
+            string("Function.prototype.@@hasInstance"),
+          ],
           context,
         ),
-        translateObjectValue(node.left, scope, context),
+        ifExpression(
+          useJavaScript("IsRef", [prototype], context),
+          useJavaScript(
+            "InheritsFrom",
+            [heap, prototype, translateExpression(argument, scope, context)],
+            context,
+          ),
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't throw the TypeError of a prototype that isn't an object"),
+          ]),
+        ),
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't call a Symbol.hasInstance that a script defined"),
+        ]),
+      ),
+  );
+};
+
+export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, context: Context) => {
+  const rightClasses = getErrorClass(getSymbol(node.right, context.checker), context.checker);
+  const isHeapClass = getHeapClass(node.right, context) !== undefined;
+  const isObject = getKind(node.left, context) === "object";
+  // An object on the heap, such as an error that it holds, is an instance where the constructor's
+  // prototype is on its chain, and a value that may not be an object is one only where it is.
+  if (isHeapClass || (rightClasses !== undefined && isNative(rightClasses[0]) && isObject)) {
+    const heap = getHeap(scope, node, context);
+    const constructor = translateExpression(node.right, scope, context);
+    const getFound = (prototype: Expression) =>
+      isObject
+        ? useJavaScript(
+            "IsPrototypeOf",
+            [heap, prototype, translateObjectValue(node.left, scope, context)],
+            context,
+          )
+        : useJavaScript(
+            "InheritsFrom",
+            [heap, prototype, translateExpression(node.left, scope, context)],
+            context,
+          );
+    const prototype = useJavaScript("Get", [heap, constructor, string("prototype")], context);
+    if (!isHeapClass) return getFound(prototype);
+    // A script may define a heap class's @@hasInstance, or replace its prototype with a primitive,
+    // where instanceof throws a TypeError.
+    return ifExpression(
+      useJavaScript("IsOrdinaryHasInstance", [heap, constructor], context),
+      share(prototype, "prototype", context, (shared) =>
+        ifExpression(
+          useJavaScript("IsRef", [shared], context),
+          getFound(shared),
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't throw the TypeError of a prototype that isn't an object"),
+          ]),
+        ),
+      ),
+      apply("Assert", [
+        boolean(false),
+        string("tla-ts can't call a Symbol.hasInstance that a script defined"),
+      ]),
+    );
+  }
+  // A generator function whose prototype object the heap holds, and whose @@hasInstance is
+  // Function.prototype's, which a script can't change.
+  const generatorPrototype = getGeneratorPrototypeRef(node.right, context);
+  if (generatorPrototype !== undefined) {
+    return useJavaScript(
+      isGeneratorType(node.left, context) ? "GeneratorInheritsFrom" : "InheritsFrom",
+      [
+        getHeap(scope, node, context),
+        generatorPrototype,
+        translateExpression(node.left, scope, context),
       ],
       context,
     );
@@ -293,11 +520,39 @@ export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, con
   if (getErrorClass(context.checker.getTypeAtLocation(node.left).getSymbol(), context.checker)) {
     return apply("\\in", [field(value, "constructor"), subclasses]);
   }
-  if (!isCaught(node.left, context)) {
-    throw new TlaTypeScriptError("instanceof needs an error or a caught value", node);
+  // A value of type unknown or any, such as a parameter's, may be any value, as a caught one may.
+  const isAnyValue =
+    (context.checker.getTypeAtLocation(node.left).flags &
+      (ts.TypeFlags.Unknown | ts.TypeFlags.Any)) !==
+    0;
+  if (!isAnyValue && !isCaught(node.left, context)) {
+    throw new TlaTypeScriptError("instanceof needs an error or a value of any type", node);
   }
   if (context.heap === undefined) return useJavaScript("IsErrorOf", [value, subclasses], context);
-  // Every error class's prototype inherits from Error.prototype, so a caught object on the heap that
+  // An object on the heap is a native error class's instance where its prototype is on the chain.
+  if (isNative(classes[0])) {
+    const heap = getHeap(scope, node, context);
+    return share(value, "caught", context, (caught) =>
+      ifExpression(
+        useJavaScript("IsRef", [caught], context),
+        useJavaScript(
+          "IsPrototypeOf",
+          [
+            heap,
+            useJavaScript(
+              "Get",
+              [heap, translateExpression(node.right, scope, context), string("prototype")],
+              context,
+            ),
+            caught,
+          ],
+          context,
+        ),
+        useJavaScript("IsErrorOf", [caught, subclasses], context),
+      ),
+    );
+  }
+  // Every error class's prototype inherits from Error.prototype, so an object on the heap that
   // doesn't is no error's instance. tla-ts doesn't tell the class of one that does.
   return share(value, "caught", context, (caught) =>
     useJavaScript(
@@ -330,6 +585,7 @@ export const translateThrown = (node: ts.Expression, scope: Scope, context: Cont
   if (
     !isPrimitive &&
     !isHeapObject &&
+    !isHeapArray(node, context) &&
     getErrorClass(type.getSymbol(), context.checker) === undefined &&
     !isCaught(node, context)
   ) {
