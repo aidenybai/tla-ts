@@ -132,6 +132,8 @@ export interface Context {
   // finds once before it compiles the code.
   assignedNames: Map<ts.SourceFile, Set<ts.Symbol>>;
   objectArguments: Map<ts.SourceFile, Set<ts.Symbol>>;
+  // The names whose values each file's functions return or put in object literals.
+  escapedNames: Map<ts.SourceFile, Set<ts.Symbol>>;
   // What each function that a statement runs changes, with the functions that it runs in turn, by
   // the functions that the paths bind to the parameters that they call.
   changeSummaries: Map<string, Map<ts.Node, ChangeSummary>>;
@@ -302,6 +304,24 @@ export const createContext = (
             const symbol = getSymbol(skipCasts(argument), checker);
             return symbol !== undefined && isObjectArgument(argument, checker) ? [symbol] : [];
           }),
+        ),
+      ),
+    ]),
+  ),
+  escapedNames: new Map(
+    files.map((file) => [
+      file,
+      new Set(
+        findNodes(file, ts.isIdentifier).flatMap((name) =>
+          ts.isShorthandPropertyAssignment(name.parent)
+            ? (checker.getShorthandAssignmentValueSymbol(name.parent) ?? [])
+            : (ts.isReturnStatement(name.parent) && name.parent.expression === name) ||
+                (ts.isArrowFunction(name.parent) && name.parent.body === name) ||
+                (ts.isPropertyAssignment(name.parent) &&
+                  name.parent.initializer === name &&
+                  ts.isObjectLiteralExpression(name.parent.parent))
+              ? (getSymbol(name, checker) ?? [])
+              : [],
         ),
       ),
     ]),
@@ -751,7 +771,10 @@ export const getClass = (node: ts.Node | undefined, context: Context) => {
 export const isInlined = (node: ts.Node | undefined, context: Context) => {
   const found = getAnyFunction(node);
   return (
-    (found !== undefined && !isHeapFunction(found, context) && !isFunctionObject(found, context)) ||
+    (found !== undefined &&
+      !isHeapFunction(found, context) &&
+      !isFunctionObject(found, context) &&
+      !isClosure(found, context)) ||
     getFactoryCall(node, context) !== undefined ||
     (node !== undefined &&
       ts.isClassExpression(node) &&
@@ -1975,10 +1998,20 @@ const getOuterLocals = (node: ts.Node, context: Context) =>
 
 export type Closure = ts.FunctionExpression | ts.ArrowFunction;
 
+// The name of the const that holds a function.
+const getHeldName = (node: ts.Node) =>
+  ts.isVariableDeclaration(node.parent) &&
+  node.parent.initializer === node &&
+  ts.isIdentifier(node.parent.name) &&
+  (ts.getCombinedNodeFlags(node.parent) & ts.NodeFlags.Const) !== 0
+    ? node.parent.name
+    : undefined;
+
 // A function that a function makes and that outlives the call that made it, which reads the locals
 // of that call from its environment: one that the function assigns to a name declared outside it,
 // an async one that it returns, or one that an object literal or a property assignment holds, or an
-// arrow that it returns, that reads a local of the function. An arrow reads the this of the function
+// arrow that it returns, itself or by the name of the const that holds it, that reads a local of
+// the function. An arrow reads the this of the function
 // around it, which the environment doesn't hold, and an async closure that awaits would resume after
 // its call returns.
 export const isClosure = (node: ts.Node, context: Context): node is Closure => {
@@ -2024,9 +2057,33 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure => {
   ) {
     return isReadingLocals();
   }
+  const isReturnOf = (value: ts.Node) =>
+    (ts.isReturnStatement(value.parent) && value.parent.expression === value) ||
+    (ts.isArrowFunction(value.parent) && value.parent.body === value);
+  const held = getHeldName(node);
+  const heldSymbol = held === undefined ? undefined : getSymbol(held, context.checker);
+  // A const of the function holds it, and the function returns or an object literal holds the
+  // const. A factory that declares only functions stands instead for the function it returns, where
+  // a call passes it literals.
+  const block = held?.parent.parent.parent.parent;
+  const isFactory = () =>
+    block !== undefined &&
+    ts.isBlock(block) &&
+    block.parent === maker &&
+    block.statements
+      .slice(0, -1)
+      .every((statement) =>
+        ts.isVariableStatement(statement)
+          ? statement.declarationList.declarations.every(
+              (declaration) => getAnyFunction(declaration) !== undefined,
+            )
+          : ts.isFunctionDeclaration(statement),
+      );
   const isReturned =
-    (ts.isReturnStatement(node.parent) && node.parent.expression === node) ||
-    (ts.isArrowFunction(node.parent) && node.parent.body === node);
+    isReturnOf(node) ||
+    (heldSymbol !== undefined &&
+      (context.escapedNames.get(node.getSourceFile())?.has(heldSymbol) ?? false) &&
+      !isFactory());
   const declaration =
     isAssignment && ts.isIdentifier(assignment.left)
       ? getSymbol(assignment.left, context.checker)?.valueDeclaration
@@ -2070,24 +2127,58 @@ export const getCaptures = (node: Closure, context: Context) => {
     ts.findAncestor(inner, (ancestor) =>
       ancestor === maker ? "quit" : ts.isIterationStatement(ancestor, false),
     ) !== undefined;
-  const captures = findNodes(node, ts.isIdentifier).flatMap((name) => {
-    const symbol = ts.isShorthandPropertyAssignment(name.parent)
+  const getNamed = (name: ts.Identifier) =>
+    ts.isShorthandPropertyAssignment(name.parent)
       ? context.checker.getShorthandAssignmentValueSymbol(name.parent)
       : getSymbol(name, context.checker);
-    const declaration = symbol?.valueDeclaration;
-    return symbol !== undefined &&
-      declaration !== undefined &&
-      ts.findAncestor(declaration, (ancestor) => ancestor === node) === undefined &&
-      ts.findAncestor(declaration.parent, ts.isFunctionLike) !== undefined &&
-      (ts.isVariableDeclaration(declaration) ||
-        ts.isParameter(declaration) ||
-        ts.isBindingElement(declaration) ||
-        ts.isFunctionDeclaration(declaration) ||
-        ts.isFunctionExpression(declaration) ||
-        ts.isClassLike(declaration))
-      ? [{ name, symbol, declaration }]
-      : [];
-  });
+  // The functions that consts of the maker hold and that the closure runs by name, which run inside
+  // it with what they read.
+  const runs = new Set<ts.Node>([node]);
+  const pending: ts.Node[] = [node];
+  while (pending.length > 0) {
+    findNodes(pending.pop() ?? node, ts.isIdentifier).forEach((name) => {
+      const declaration = getNamed(name)?.valueDeclaration;
+      const run =
+        declaration !== undefined &&
+        ts.isVariableDeclaration(declaration) &&
+        ts.findAncestor(declaration.parent, ts.isFunctionLike) === maker
+          ? getAnyFunction(declaration.initializer)
+          : undefined;
+      if (
+        run === undefined ||
+        runs.has(run) ||
+        getHeldName(run) === undefined ||
+        isClosure(run, context)
+      ) {
+        return;
+      }
+      runs.add(run);
+      pending.push(run);
+    });
+  }
+  const isRun = (inner: ts.Node) =>
+    ts.findAncestor(inner, (ancestor) => runs.has(ancestor)) !== undefined;
+  const captures = [...runs]
+    .flatMap((run) => findNodes(run, ts.isIdentifier))
+    .flatMap((name) => {
+      const symbol = getNamed(name);
+      const declaration = symbol?.valueDeclaration;
+      return symbol !== undefined &&
+        declaration !== undefined &&
+        !isRun(declaration) &&
+        !(
+          ts.isVariableDeclaration(declaration) && runs.has(declaration.initializer ?? declaration)
+        ) &&
+        ts.findAncestor(declaration.parent, ts.isFunctionLike) !== undefined &&
+        (ts.isVariableDeclaration(declaration) ||
+          ts.isParameter(declaration) ||
+          ts.isBindingElement(declaration) ||
+          ts.isFunctionDeclaration(declaration) ||
+          ts.isFunctionExpression(declaration) ||
+          ts.isClassLike(declaration))
+        ? [{ name, symbol, declaration }]
+        : [];
+    });
   captures.forEach((capture) => {
     const declaration = capture.declaration;
     // A local that changes lives in the environment once the closure is made, so nothing but the

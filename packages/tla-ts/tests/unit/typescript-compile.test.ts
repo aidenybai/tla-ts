@@ -17729,6 +17729,68 @@ describe("errors", () => {
       if (total !== ${expected}) throw new Error("iter");
   `;
 
+  it("calls the functions that two calls of a factory return by name, with the helpers they run", async () => {
+    const getSource = (expected: string) => `
+      interface Token {
+        kind: string;
+        text: string;
+      }
+      const createLexer = (source: string, prefix: string) => {
+        const state = { offset: 0, count: 0 };
+        const makeToken = (kind: string, start: number, length: number): Token => ({
+          kind,
+          text: prefix + source.slice(start, start + length),
+        });
+        const skipSpaces = () => {
+          while (source[state.offset] === " ") state.offset++;
+        };
+        const getNextToken = (): Token | string => {
+          skipSpaces();
+          if (state.offset >= source.length) return makeToken("EOF", state.offset, 0);
+          const start = state.offset;
+          if (source[start] === "!") return \`bad at \${start}\`;
+          while (state.offset < source.length && source[state.offset] !== " ") state.offset++;
+          state.count++;
+          return makeToken("Word", start, state.offset - start);
+        };
+        return getNextToken;
+      };
+      const createCounter = (start: number) => {
+        const total = { value: start };
+        const add = (amount: number) => {
+          total.value += amount;
+          return total.value;
+        };
+        const next = () => add(1);
+        const skip = (amount: number) => add(amount);
+        return { next, skip };
+      };
+      const run = () => {
+        const readA = createLexer("ab  cd", "a:");
+        const readB = createLexer(" x !", "b:");
+        const seen: string[] = [];
+        for (let step = 0; step < 4; step++) {
+          const fromA = readA();
+          const fromB = readB();
+          seen.push(typeof fromA === "string" ? fromA : \`\${fromA.kind}=\${fromA.text}\`);
+          seen.push(typeof fromB === "string" ? fromB : \`\${fromB.kind}=\${fromB.text}\`);
+        }
+        const counter = createCounter(10);
+        const other = createCounter(0);
+        const counts = [counter.next(), other.skip(5), counter.skip(3), other.next(), counter.next()];
+        return \`\${seen.join("|")};\${counts.join(",")}\`;
+      };
+      const text = run();
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected =
+      "Word=a:ab|Word=b:x|Word=a:cd|bad at 3|EOF=a:|bad at 3|EOF=a:|bad at 3;11,5,14,6,15";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource(expected.replace("14,6", "14,5")))).failure?.message,
+    ).toContain(expected);
+  });
+
   it("calls a closure that outlives its call through the iterator protocol", async () => {
     expect((await checkModel(getEscapedNextSource(3))).failure).toBeUndefined();
   });
