@@ -110,6 +110,7 @@ import {
   share,
   isInlined,
   getFunctionOfKind,
+  getPatternRead,
   getUnresolvedRead,
   getLeadingPrivate,
   isUnresolved,
@@ -14525,15 +14526,7 @@ export const translateStatements = (
     isInertValue(evaluated.right)
       ? evaluated.left
       : undefined;
-  const unresolved = ts.isClassDeclaration(statement)
-    ? getUnresolvedRead(statement, context)
-    : evaluated === undefined
-      ? undefined
-      : (getUnresolvedRead(evaluated, context, isThrowing) ?? written);
-  if (unresolved !== undefined)
-    return throwError("ReferenceError", path, unresolved, context, frame);
-  // A statement that first uses a private name of an object that lacks it throws a TypeError. A
-  // for-of over an array written in place assigns its first element first.
+  // A for-of over an array written in place assigns its first element first.
   const loopTarget =
     ts.isForOfStatement(statement) && !ts.isVariableDeclarationList(statement.initializer)
       ? statement.initializer
@@ -14542,6 +14535,64 @@ export const translateStatements = (
     loopTarget !== undefined && ts.isForOfStatement(statement)
       ? skipCasts(statement.expression)
       : undefined;
+  const loopElement =
+    iterated !== undefined && ts.isArrayLiteralExpression(iterated)
+      ? iterated.elements.at(0)
+      : undefined;
+  const loopRead =
+    loopTarget !== undefined && loopElement !== undefined
+      ? getPatternRead(loopTarget, loopElement, context, isThrowing)
+      : undefined;
+  const unresolved = ts.isClassDeclaration(statement)
+    ? getUnresolvedRead(statement, context)
+    : evaluated === undefined
+      ? undefined
+      : (getUnresolvedRead(evaluated, context, isThrowing) ?? written ?? loopRead);
+  if (unresolved !== undefined) {
+    const thrown = throwError("ReferenceError", path, unresolved, context, frame);
+    // A pattern gets its first element through the array's iterator, or its first property
+    // through the object's prototypes, and a throw in a for-of looks up its iterator's return.
+    const getPatterns = (node: ts.Node): ts.Expression[] =>
+      node === statement || node.parent === undefined
+        ? []
+        : [
+            ...(ts.isBinaryExpression(node.parent) &&
+            node.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+            node === node.parent.left &&
+            (ts.isArrayLiteralExpression(node) || ts.isObjectLiteralExpression(node))
+              ? [node]
+              : []),
+            ...getPatterns(node.parent),
+          ];
+    const patterns = [
+      ...getPatterns(unresolved),
+      ...(unresolved === loopRead && loopTarget !== undefined ? [loopTarget] : []),
+    ];
+    const isIterating =
+      unresolved === loopRead || patterns.some((inner) => ts.isArrayLiteralExpression(inner));
+    const isReading = patterns.some((inner) => ts.isObjectLiteralExpression(inner));
+    // A script that makes no objects can't change what a pattern reads.
+    const heap = context.heap === undefined ? undefined : path.scope.bindings.get(context.heap);
+    if ((!isIterating && !isReading) || heap === undefined) return thrown;
+    const isKept = (key: string) => useJavaScript("IsKept", [heap, string(key)], context);
+    return ifThenElse(
+      junction("And", [
+        ...(isIterating ? [holdsArrayIteration(heap, statement, context)] : []),
+        ...(isReading || unresolved === loopRead ? [isKept("Object.prototype")] : []),
+        ...(unresolved === loopRead
+          ? [isKept("Iterator.prototype"), isKept("%ArrayIteratorPrototype%")]
+          : []),
+      ]),
+      thrown,
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't destructure a value where a script changed what it reads"),
+        ]),
+      ),
+    );
+  }
+  // A statement that first uses a private name of an object that lacks it throws a TypeError.
   const leadingPrivate =
     loopTarget !== undefined && iterated !== undefined
       ? ts.isArrayLiteralExpression(iterated) &&

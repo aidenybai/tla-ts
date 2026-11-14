@@ -13310,6 +13310,62 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  describe("throws the ReferenceError of a pattern that first writes or reads a let before its declaration", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const note = (run: () => void) => {
+        try {
+          run();
+          seen.push("none");
+        } catch (error) {
+          seen.push(error instanceof ReferenceError ? "reference" : "other");
+        }
+      };
+      const go = () => {
+        note(() => {
+          [x = y] = [];
+        });
+        note(() => {
+          [...x] = [];
+        });
+        note(() => {
+          ({ x: x = y } = {});
+        });
+        note(() => {
+          ({ a: x } = { a: 1 });
+        });
+        note(() => {
+          for ({ x } of [{ x: 1 }]);
+        });
+        note(() => {
+          for ([x] of [[]]);
+        });
+        let x: unknown;
+        let y: unknown;
+        ({ x = y } = { x: 2 });
+        seen.push(String(x));
+      };
+      go();
+      if (seen.join() !== "${expected}") throw new Error(seen.join());
+    `;
+
+    it("throws it", async () => {
+      const result = await checkModel(
+        getSource("reference,reference,reference,reference,reference,reference,2"),
+      );
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkModel(
+        getSource("reference,reference,reference,reference,reference,none,2"),
+      );
+      expect(result.failure?.message).toContain(
+        "reference,reference,reference,reference,reference,reference,2",
+      );
+    });
+  });
+
   it("throws the ReferenceError of a name that an object literal spreads", async () => {
     const getSource = (expected: number) => `
       let caught = 0;

@@ -449,7 +449,8 @@ export const getUnresolvedRead = (
       ? getUnresolvedRead(node.right, context, isThrowing)
       : ts.isPropertyAccessExpression(node.left) || ts.isElementAccessExpression(node.left)
         ? getUnresolvedRead(node.left.expression, context, isThrowing)
-        : undefined;
+        : (getUnresolvedRead(node.right, context, isThrowing) ??
+          getPatternRead(node.left, node.right, context, isThrowing));
   }
   const truth = getLiteralTruth(node.left);
   const isShortCircuit =
@@ -459,6 +460,98 @@ export const getUnresolvedRead = (
       node.left.kind !== ts.SyntaxKind.NullKeyword &&
       truth !== undefined);
   return isShortCircuit ? undefined : readInOrder([node.left, node.right]);
+};
+
+// The name whose read or write throws a ReferenceError first as an assignment pattern
+// destructures a literal: the first element's default, where the literal lacks that element, or
+// else the name the element writes.
+export const getPatternRead = (
+  pattern: ts.Expression,
+  value: ts.Expression,
+  context: Context,
+  isThrowing: (name: ts.Identifier) => boolean,
+): ts.Identifier | undefined => {
+  const part = !isInertValue(value)
+    ? undefined
+    : ts.isArrayLiteralExpression(pattern) && ts.isArrayLiteralExpression(value)
+      ? getArrayPatternPart(pattern, value)
+      : ts.isObjectLiteralExpression(pattern) && ts.isObjectLiteralExpression(value)
+        ? getObjectPatternPart(pattern, value)
+        : undefined;
+  if (part === undefined || !ts.isIdentifier(part.target)) return undefined;
+  const initializer = part.isPresent ? undefined : part.initializer;
+  return initializer === undefined
+    ? isThrowing(part.target)
+      ? part.target
+      : undefined
+    : (getUnresolvedRead(initializer, context, isThrowing) ??
+        (isInertValue(initializer) && isThrowing(part.target) ? part.target : undefined));
+};
+
+interface PatternPart {
+  target: ts.Expression;
+  initializer: ts.Expression | undefined;
+  isPresent: boolean;
+}
+
+// The first element of an array pattern, which an empty literal or a rest element leaves its
+// iterator done for, so that a throw doesn't close it.
+const getArrayPatternPart = (
+  pattern: ts.ArrayLiteralExpression,
+  value: ts.ArrayLiteralExpression,
+): PatternPart | undefined => {
+  const first = pattern.elements.at(0);
+  return first === undefined
+    ? undefined
+    : ts.isSpreadElement(first)
+      ? { target: first.expression, initializer: undefined, isPresent: true }
+      : value.elements.length > 0
+        ? undefined
+        : ts.isBinaryExpression(first) && first.operatorToken.kind === ts.SyntaxKind.EqualsToken
+          ? { target: first.left, initializer: first.right, isPresent: false }
+          : { target: first, initializer: undefined, isPresent: false };
+};
+
+const getObjectPatternPart = (
+  pattern: ts.ObjectLiteralExpression,
+  value: ts.ObjectLiteralExpression,
+): PatternPart | undefined => {
+  const getKey = (name: ts.PropertyName) =>
+    ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined;
+  const first = pattern.properties.at(0);
+  const key =
+    first !== undefined &&
+    (ts.isShorthandPropertyAssignment(first) || ts.isPropertyAssignment(first))
+      ? getKey(first.name)
+      : undefined;
+  // An inert literal holds only property assignments. Its __proto__ gives it another prototype,
+  // and a property whose value may be undefined takes the default.
+  const properties = value.properties.filter(ts.isPropertyAssignment);
+  const matching = properties.filter((innerProperty) => getKey(innerProperty.name) === key);
+  if (
+    first === undefined ||
+    key === undefined ||
+    properties.some((innerProperty) =>
+      [undefined, "__proto__"].includes(getKey(innerProperty.name)),
+    ) ||
+    matching.some(
+      (innerProperty) =>
+        ts.isIdentifier(innerProperty.initializer) ||
+        ts.isVoidExpression(innerProperty.initializer),
+    )
+  ) {
+    return undefined;
+  }
+  const isPresent = matching.length > 0;
+  return ts.isShorthandPropertyAssignment(first)
+    ? { target: first.name, initializer: first.objectAssignmentInitializer, isPresent }
+    : ts.isPropertyAssignment(first) &&
+        ts.isBinaryExpression(first.initializer) &&
+        first.initializer.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      ? { target: first.initializer.left, initializer: first.initializer.right, isPresent }
+      : ts.isPropertyAssignment(first)
+        ? { target: first.initializer, initializer: undefined, isPresent }
+        : undefined;
 };
 
 // TypeScript gives new.target the symbol of the function it's in, which isn't its value.
