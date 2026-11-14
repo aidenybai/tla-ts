@@ -389,6 +389,14 @@ export const getSymbol = (node: ts.Node, checker: ts.TypeChecker) => {
 export const isMethodCall = (node: ts.Node): node is MethodCall =>
   ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression);
 
+export const isSuperAccess = (
+  node: ts.Node,
+): node is (ts.PropertyAccessExpression | ts.ElementAccessExpression) & {
+  expression: ts.SuperExpression;
+} =>
+  (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+  node.expression.kind === ts.SyntaxKind.SuperKeyword;
+
 const isTopLevel = (statement: ts.Node): boolean => {
   const parent = statement.parent;
   if (ts.isSourceFile(parent)) return true;
@@ -2177,21 +2185,23 @@ export const getReturnedFunctions = (node: ts.Node, context: Context) => {
   return unique;
 };
 
+// Whether a value of one type may be used as another, which any may not where the other is a type
+// that tla-ts relies on. A value whose use has no type may be any.
+const isFitting = (from: ts.Type, to: ts.Type | undefined, checker: ts.TypeChecker) =>
+  to === undefined ||
+  (to.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+  ((from.flags & ts.TypeFlags.Any) === 0 && checker.isTypeAssignableTo(from, to));
+
 // The getters that a read can run as an expression, which take no argument, change nothing, and
 // make no function or object: those that descriptors give, that functions return, and, for a read
 // of super, which reads no getter through its own name, that a class or an object literal declares
-// under the name that the read resolves to.
+// under the name that the read resolves to. Where super reads any, as in an object literal, those
+// are the getters of object literals under its key that give the type its value is used as.
 export const getGetters = (node: ts.Node, context: Context) =>
   [
     ...getAccessorFunctions(node, "get", context),
     ...getReturnedFunctions(node, context),
-    ...((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
-    node.expression.kind === ts.SyntaxKind.SuperKeyword
-      ? (getSymbol(
-          ts.isPropertyAccessExpression(node) ? node.name : node.argumentExpression,
-          context.checker,
-        )?.declarations?.filter(ts.isGetAccessorDeclaration) ?? [])
-      : []),
+    ...(isSuperAccess(node) ? getSuperGetters(node, context) : []),
   ].filter(
     (getter) =>
       getParameters(getter).length === 0 &&
@@ -2199,6 +2209,71 @@ export const getGetters = (node: ts.Node, context: Context) =>
       !isMaking(getter.body) &&
       !changesState(getter, getter.body, context, new Set([getter])),
   );
+
+// Whether a function that super reads may run with the this of the method that reads super, which
+// is the object that method belongs to, as the function's own object literal types its this. That
+// object has each of the literal's properties, of a type that the literal's may hold, as its own
+// literal may have more, which TypeScript would take as an excess property.
+const isSuperThis = (
+  candidate: FunctionNode,
+  node: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  checker: ts.TypeChecker,
+) => {
+  const home = ts.findAncestor(
+    node.parent,
+    (ancestor) => ts.isFunctionLike(ancestor) && !ts.isArrowFunction(ancestor),
+  )?.parent;
+  const literal = ts.isPropertyAssignment(candidate.parent)
+    ? candidate.parent.parent
+    : candidate.parent;
+  return (
+    findNodes(candidate, (inner): inner is ts.Node => inner.kind === ts.SyntaxKind.ThisKeyword)
+      .length === 0 ||
+    (home !== undefined &&
+      ts.isObjectLiteralExpression(literal) &&
+      checker
+        .getTypeAtLocation(literal)
+        .getProperties()
+        .every((property) => {
+          const own = checker.getTypeAtLocation(home).getProperty(property.name);
+          return (
+            own !== undefined &&
+            checker.isTypeAssignableTo(
+              checker.getTypeOfSymbol(own),
+              checker.getTypeOfSymbol(property),
+            )
+          );
+        }))
+  );
+};
+
+const getSuperGetters = (
+  node: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  context: Context,
+) => {
+  const checker = context.checker;
+  const name = ts.isPropertyAccessExpression(node) ? node.name : node.argumentExpression;
+  const declarations = getSymbol(name, checker)?.declarations;
+  if (declarations !== undefined) return declarations.filter(ts.isGetAccessorDeclaration);
+  if (!ts.isIdentifier(name) && !ts.isStringLiteralLike(name)) return [];
+  return findNodes(node.getSourceFile(), (inner): inner is ts.GetAccessorDeclaration => {
+    if (!ts.isGetAccessorDeclaration(inner) || !ts.isObjectLiteralExpression(inner.parent)) {
+      return false;
+    }
+    const signature = checker.getSignatureFromDeclaration(inner);
+    return (
+      signature !== undefined &&
+      isSuperThis(inner, node, checker) &&
+      (ts.isIdentifier(inner.name) || ts.isStringLiteralLike(inner.name)) &&
+      inner.name.text === name.text &&
+      isFitting(
+        checker.getReturnTypeOfSignature(signature),
+        checker.getContextualType(node),
+        checker,
+      )
+    );
+  });
+};
 
 // The function whose @@hasInstance F[Symbol.hasInstance](value) calls.
 export const getHasInstanceReceiver = (node: ts.CallExpression, context: Context) =>
@@ -2966,11 +3041,42 @@ export const getFunctionCandidates = (callee: ts.Expression, context: Context) =
       );
     });
   candidates.set(sourceFile, found);
-  const type = context.checker.getTypeAtLocation(callee);
+  const checker = context.checker;
+  const type = checker.getTypeAtLocation(callee);
+  const call = callee.parent;
+  // What super reads in an object literal is any, which a call may pass anything and whose result
+  // it may use as anything, so a method it runs takes the arguments' types and gives the type that
+  // the call's value is used as.
+  const isTyped = (candidate: FunctionNode) => {
+    if (!isSuperAccess(callee) || !ts.isCallExpression(call)) return true;
+    const signature = checker.getSignatureFromDeclaration(candidate);
+    return (
+      signature !== undefined &&
+      isSuperThis(candidate, callee, checker) &&
+      !call.arguments.some(ts.isSpreadElement) &&
+      candidate.parameters.every((parameter, position) => {
+        const argument = call.arguments.at(position);
+        const parameterType = checker.getTypeAtLocation(parameter);
+        return parameter.dotDotDotToken !== undefined
+          ? argument === undefined
+          : argument === undefined
+            ? parameter.initializer !== undefined ||
+              parameter.questionToken !== undefined ||
+              checker.isTypeAssignableTo(checker.getUndefinedType(), parameterType)
+            : isFitting(checker.getTypeAtLocation(argument), parameterType, checker);
+      }) &&
+      isFitting(
+        checker.getReturnTypeOfSignature(signature),
+        checker.getContextualType(call),
+        checker,
+      )
+    );
+  };
   return found.filter(
     (candidate) =>
       isReached(candidate, context) &&
-      context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(candidate), type),
+      checker.isTypeAssignableTo(checker.getTypeAtLocation(candidate), type) &&
+      isTyped(candidate),
   );
 };
 

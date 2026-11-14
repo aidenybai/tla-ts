@@ -50,6 +50,7 @@ import {
   isHeapFunction,
   isInertValue,
   isMethodCall,
+  isSuperAccess,
   share,
   translateString,
   isNestedFunction,
@@ -786,7 +787,8 @@ export const translateCall = (
     );
   }
   const callee = isMethodCall(node) ? getCallee(node.expression, context) : undefined;
-  if (callee !== undefined && ts.isMethodDeclaration(callee)) {
+  // A call of a method that super reads where TypeScript can't tell which, as in an object literal.
+  if ((callee !== undefined && ts.isMethodDeclaration(callee)) || isSuperAccess(node.expression)) {
     return translateLocalCall(node, scope, context);
   }
   // A call of a function that a field holds.

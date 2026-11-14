@@ -19,6 +19,7 @@ import {
   isInlined,
   isLiteral,
   isPlain,
+  isSuperAccess,
   share,
   skipCasts,
 } from "./context";
@@ -826,7 +827,9 @@ export const translateLocalCall = (
     (symbol && scope.functions.get(symbol)) ??
     getCallee(node.expression, context);
   // A function that a value holds, which the call runs by matching the value against the functions
-  // of its file that it may be. One that reads its this would need the call's receiver.
+  // of its file that it may be. One that reads its this needs the call's receiver, which only a
+  // method that super reads has, as the this of the method that reads it.
+  const superReceiver = isSuperAccess(node.expression) ? node.expression.expression : undefined;
   const candidates =
     callee === undefined && context.heap !== undefined
       ? getFunctionCandidates(node.expression, context).filter(
@@ -834,6 +837,7 @@ export const translateLocalCall = (
             isPlain(candidate) &&
             !context.inProgress.has(candidate) &&
             (ts.isArrowFunction(candidate) ||
+              (superReceiver !== undefined && ts.isMethodDeclaration(candidate)) ||
               findNodes(
                 candidate,
                 (inner): inner is ts.ThisExpression => inner.kind === ts.SyntaxKind.ThisKeyword,
@@ -858,7 +862,15 @@ export const translateLocalCall = (
               ? otherwise
               : ifExpression(
                   apply("=", [value, candidateValue]),
-                  inlineCall(candidate, node.arguments, scope, context),
+                  inlineCall(
+                    candidate,
+                    node.arguments,
+                    scope,
+                    context,
+                    superReceiver !== undefined && ts.isMethodDeclaration(candidate)
+                      ? { method: candidate, receiver: superReceiver, key: "" }
+                      : undefined,
+                  ),
                   otherwise,
                 );
           },

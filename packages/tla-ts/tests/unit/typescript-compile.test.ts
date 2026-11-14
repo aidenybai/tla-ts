@@ -17972,6 +17972,130 @@ describe("errors", () => {
     ).toThrow("Unsupported expression: super");
   });
 
+  it("runs the method that super reads in an object literal with its this", async () => {
+    const getSource = (expected: string) => `
+      const proto = {
+        name: "proto",
+        greet(greeting: string) {
+          return greeting + " " + this.name;
+        },
+      };
+      const object = {
+        name: "object",
+        greet(greeting: string): string {
+          return super.greet(greeting) + "!";
+        },
+      };
+      Object.setPrototypeOf(object, proto);
+      const result = object.greet("hi") + "," + proto.greet("yo");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("hi object!,yo proto"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("hi proto!,yo proto"))).failure?.message).toContain(
+      "hi object!,yo proto",
+    );
+  });
+
+  it("runs a method that super reads in an object literal and that changes state", async () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      const proto = {
+        count: 0,
+        bump(step: number) {
+          this.count += step;
+          log.push("bump " + step);
+          return this.count;
+        },
+      };
+      const object = {
+        count: 10,
+        bump(step: number): number {
+          const value = super.bump(step * 2);
+          log.push("after " + value);
+          return value;
+        },
+      };
+      Object.setPrototypeOf(object, proto);
+      object.bump(1);
+      const result = log.join("+") + "," + object.count + "," + proto.count;
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("bump 2+after 12,12,0"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("bump 2+after 2,10,2"))).failure?.message).toContain(
+      "bump 2+after 12,12,0",
+    );
+  });
+
+  it("runs the function and the getter that super reads in an object literal", async () => {
+    const getSource = (expected: string) => `
+      let viaCall = "";
+      let viaMember = "";
+      const parent = {
+        tag: "parent",
+        getTag: function () {
+          return this.tag;
+        },
+        get Tag() {
+          return this.tag;
+        },
+      };
+      const child = {
+        tag: "child",
+        getTag: function () {
+          return "own";
+        },
+        get Tag() {
+          return "own";
+        },
+        method() {
+          viaCall = super.getTag();
+          viaMember = super.Tag;
+        },
+      };
+      Object.setPrototypeOf(child, parent);
+      child.method();
+      const result = \`\${viaCall},\${viaMember}\`;
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect((await checkModel(getSource("child,child"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("parent,parent"))).failure?.message).toContain(
+      "child,child",
+    );
+  });
+
+  it("throws the TypeError of calling what super reads where the prototype lacks it", async () => {
+    const getSource = (expected: string) => `
+      const object = {
+        run(): string {
+          return super.missing();
+        },
+      };
+      Object.setPrototypeOf(object, {});
+      let caught = "none";
+      try {
+        object.run();
+      } catch (error) {
+        caught = error instanceof TypeError ? "TypeError" : "other";
+      }
+      if (caught !== "${expected}") throw new Error(caught);
+    `;
+    expect((await checkModel(getSource("TypeError"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("none"))).failure?.message).toContain("TypeError");
+  });
+
+  it("rejects a call that super reads in an object literal whose methods take other types", () => {
+    expect(() =>
+      compile(
+        `const proto = {\n  name: "proto",\n  greet(): string {\n    return "hi " + this.name;\n  },\n};\nconst object = {\n  name: 5,\n  greet(): string {\n    return super.greet();\n  },\n};\nObject.setPrototypeOf(object, proto);\nconst greeting = object.greet();\nif (greeting !== "hi 5") throw new Error(greeting);`,
+      ),
+    ).toThrow("Unsupported");
+    expect(() =>
+      compile(
+        `let value = "";\nconst proto = {\n  m(name: string, given: string) {\n    value = name + " " + given;\n  },\n};\nconst object = {\n  set a(given: unknown) {\n    super.m("a", given);\n  },\n};\nObject.setPrototypeOf(object, proto);\nobject.a = 2;`,
+      ),
+    ).toThrow("Unsupported");
+  });
+
   it("extends an empty class that the extends clause makes", async () => {
     const result = await check(
       compile(

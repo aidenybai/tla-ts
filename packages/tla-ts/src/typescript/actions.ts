@@ -104,6 +104,7 @@ import {
   isHeapClass,
   isHeapFunction,
   isMethodCall,
+  isSuperAccess,
   type MethodCall,
   isStatementNew,
   share,
@@ -225,6 +226,7 @@ import {
   translateMemberKey,
   translateObjectChange,
   translateObjectValue,
+  getSuperLookup,
   isFunctionValue,
   getOwnFunctionKeys,
   translatePropertyKey,
@@ -3213,8 +3215,9 @@ export const translateCallStatement = (
   if (dispatched !== undefined) {
     const target = getCast(expression.expression);
     const value = translateExpression(target, path.scope, context);
-    const receiver =
-      ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)
+    const receiver = isSuperAccess(target)
+      ? getSuperLookup(target.expression, path.scope, context).receiver
+      : ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)
         ? translateObjectValue(target.expression, path.scope, context)
         : getUndefined(context);
     if (dispatched.some(isAnyGenerator)) rejectGeneratorUse(expression, context);
@@ -9680,8 +9683,9 @@ const getDispatched = (
   const assigned = symbol && functions.get(symbol);
   if (
     context.heap === undefined ||
-    // The function that a call gives may be any of them.
-    (declarations.length === 0 && !ts.isCallExpression(callee)) ||
+    // The function that a call gives may be any of them, as may the method that super reads where
+    // TypeScript can't tell which, as in an object literal.
+    (declarations.length === 0 && !ts.isCallExpression(callee) && !isSuperAccess(callee)) ||
     declarations.some((declaration) => declaration.getSourceFile().isDeclarationFile) ||
     (assigned === undefined ? getCallee(callee, context) !== undefined : isPlain(assigned)) ||
     getCalledMethod(callee, context) !== undefined ||
