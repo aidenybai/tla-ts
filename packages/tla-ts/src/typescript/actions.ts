@@ -3138,6 +3138,56 @@ export const translateCallStatement = (
       ),
     );
   }
+  // A function's call through Function.prototype.call with an object as this, where the function
+  // and Function.prototype still hold the built-in call.
+  const throughCall = getCast(expression.expression);
+  const calledFunction =
+    ts.isPropertyAccessExpression(throughCall) &&
+    throughCall.name.text === "call" &&
+    ts.isIdentifier(skipCasts(throughCall.expression))
+      ? getCallee(skipCasts(throughCall.expression), context)
+      : undefined;
+  const functionThis = expression.arguments.at(0);
+  if (
+    calledFunction !== undefined &&
+    ts.isPropertyAccessExpression(throughCall) &&
+    (ts.isFunctionDeclaration(calledFunction) || ts.isFunctionExpression(calledFunction)) &&
+    calledFunction.asteriskToken === undefined &&
+    functionThis !== undefined &&
+    !expression.arguments.some(ts.isSpreadElement) &&
+    getKind(functionThis, context) === "object"
+  ) {
+    return ifThenElse(
+      useJavaScript(
+        "CallsThroughBuiltIn",
+        [
+          getHeap(path.scope, expression, context),
+          translateExpression(throughCall.expression, path.scope, context),
+          translateBuiltInValue("Function.prototype", expression, context),
+        ],
+        context,
+      ),
+      inlineBody(
+        expression,
+        calledFunction,
+        expression.arguments.slice(1),
+        {
+          value: translateObjectValue(functionThis, path.scope, context),
+          method: calledFunction,
+        },
+        path,
+        context,
+        frame,
+        continueWith,
+      ),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't tell which function this call runs"),
+        ]),
+      ),
+    );
+  }
   const calledThrough = getCalledThrough(expression, context);
   const thisArgument = expression.arguments.at(0);
   if (calledThrough !== undefined && thisArgument !== undefined) {

@@ -24252,6 +24252,29 @@ describe("calls through values", () => {
     });
   });
 
+  describe("runs a function through call with an object as this", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0, seen: "" };
+      const o = { tag: 5 };
+      let newTarget: unknown = null;
+      function f(this: { tag: number }, add: number) {
+        newTarget = new.target;
+        box.size = this.tag + add;
+      }
+      f.call(o, 1);
+      box.seen = \`\${box.size},\${newTarget === undefined}\`;
+      if (box.seen !== "${expected}") throw new Error(box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("6,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects the call as ignoring its this", async () => {
+      expect((await checkModel(getSource("1,true"))).failure?.message).toContain("6,true");
+    });
+  });
+
   describe("reads the name and length of a built-in getter that a descriptor holds", () => {
     const getSource = (expected: string) => `
       const box = { size: 0 };

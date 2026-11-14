@@ -1935,6 +1935,15 @@ SequenceHasOwn(sequence, key) ==
 \\* Whether an object still holds a built-in function, which tla-ts runs as it compiles.
 HoldsBuiltIn(heap, ref, key, path) == SameValue(Get(heap, ref, key), Ref :> path)
 
+\\* Whether a function's call is still Function.prototype.call, which it reads from
+\\* Function.prototype where the heap holds no object of its own for it.
+CallsThroughBuiltIn(heap, function, functionPrototype) ==
+  HoldsBuiltIn(heap,
+               IF IsHeap(function) \\/ BuiltInKey(function) \\in DOMAIN BuiltIns
+               THEN function
+               ELSE functionPrototype,
+               "call", "Function.prototype.call")
+
 \\* Whether instanceof runs OrdinaryHasInstance on a function, as it does where the function's
 \\* @@hasInstance is Function.prototype's, or where it has none.
 IsOrdinaryHasInstance(heap, function) ==
