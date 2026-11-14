@@ -227,6 +227,7 @@ import {
   getOwnFunctionKeys,
   translatePropertyKey,
   translateErrorFields,
+  getSuperLookup,
 } from "./heap";
 import {
   type Collection,
@@ -14438,6 +14439,25 @@ export const translateStatements = (
   if (dropped !== undefined && droppedBuffer !== undefined) {
     return translateNewBufferStatement(dropped, droppedBuffer, path, context, frame, (after) =>
       shareHeap(after, context, continueWith),
+    );
+  }
+  // A read of super throws a TypeError where the object that holds the method has no prototype.
+  const superLookup =
+    dropped !== undefined &&
+    (ts.isPropertyAccessExpression(dropped) ||
+      (ts.isElementAccessExpression(dropped) && isLiteral(dropped.argumentExpression))) &&
+    dropped.expression.kind === ts.SyntaxKind.SuperKeyword
+      ? getSuperLookup(dropped, path.scope, context)
+      : undefined;
+  if (ts.isExpressionStatement(statement) && superLookup?.prototype !== undefined) {
+    return ifThenElse(
+      apply("=", [superLookup.prototype, identifier("Null")]),
+      throwTypeError(path, statement.expression, context, frame),
+      allocate(statement.expression, path, context, (inner) =>
+        translateExpressionStatement(statement.expression, inner, context, frame, (after) =>
+          shareHeap(after, context, continueWith),
+        ),
+      ),
     );
   }
   if (ts.isExpressionStatement(statement)) {

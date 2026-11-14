@@ -25386,4 +25386,44 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("A,1,false"))).failure?.message).toContain("A,1,true");
     });
   });
+
+  describe("throws the TypeError of reading super where the object has no prototype", () => {
+    const getSource = (expected: string) => `
+      let caught: unknown;
+      let kept = "none";
+      const obj = {
+        method() {
+          try {
+            super.x;
+          } catch (err) {
+            caught = err;
+          }
+        },
+      };
+      const other = {
+        method() {
+          try {
+            super["x"];
+          } catch (err) {
+            kept = "caught";
+          }
+        },
+      };
+      Object.setPrototypeOf(obj, null);
+      obj.method();
+      other.method();
+      const read = \`\${typeof caught},\${caught instanceof TypeError},\${kept}\`;
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("object,true,none"))).failure).toBeUndefined();
+    });
+
+    it("rejects the read as allowed", async () => {
+      expect((await checkModel(getSource("undefined,false,none"))).failure?.message).toContain(
+        "object,true,none",
+      );
+    });
+  });
 });
