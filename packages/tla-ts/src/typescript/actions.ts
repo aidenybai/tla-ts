@@ -248,7 +248,7 @@ import {
   translateErrorFields,
 } from "./heap";
 import {
-  type Collection,
+  COLLECTIONS,
   getBuiltIn,
   isBuiltInObject,
   getMadeRegExp,
@@ -9164,8 +9164,6 @@ const delegateToAsyncIterator = (
     ),
   );
 };
-
-const COLLECTIONS: readonly Collection[] = ["Set", "Map", "WeakMap", "WeakSet"];
 
 // A call of a collection's method through call, such as Set.prototype.add.call({}), on a receiver
 // that isn't that kind of collection, which the method rejects with a TypeError.

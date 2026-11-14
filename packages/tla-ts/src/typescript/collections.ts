@@ -35,6 +35,7 @@ import {
   isDescriptionOfAll,
 } from "./heap";
 import {
+  COLLECTIONS,
   getBuiltIn,
   getBuiltInKey,
   getStoredBuiltIn,
@@ -3283,7 +3284,30 @@ export const translateNew = (node: ts.NewExpression, scope: Scope, context: Cont
   const constructor = getNewName(node, context);
   const argument = node.arguments?.[0];
   const kind = constructor === "WeakSet" ? "Set" : constructor === "WeakMap" ? "Map" : constructor;
-  const made = translateNewCollection(node, kind, scope, context);
+  const collection = COLLECTIONS.find((candidate) => candidate === constructor);
+  const adder = kind === "Set" ? "add" : "set";
+  // A collection that the constructor fills calls its adder for each entry, which a script may
+  // have replaced.
+  const made =
+    argument === undefined || context.heap === undefined || collection === undefined
+      ? translateNewCollection(node, kind, scope, context)
+      : ifExpression(
+          useJavaScript(
+            "HoldsBuiltIn",
+            [
+              getHeap(scope, node, context),
+              translateBuiltInValue(`${collection}.prototype`, node, context),
+              string(adder),
+              string(`${collection}.prototype.${adder}`),
+            ],
+            context,
+          ),
+          translateNewCollection(node, kind, scope, context),
+          apply("Assert", [
+            boolean(false),
+            string(`tla-ts can't call ${collection}.prototype.${adder} where a script replaced it`),
+          ]),
+        );
   if (kind === constructor || argument === undefined) return made;
   // A weak collection throws a TypeError on a key that Symbol.for registered, which tla-ts can't
   // throw where the collection is made.

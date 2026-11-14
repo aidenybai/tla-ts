@@ -14193,6 +14193,7 @@ describe("errors", () => {
         'holder.seen = String({ a: 1 }.hasOwnProperty("a"));',
       ],
       ["Object.assign", "Object", "assign", "holder.seen = String(Object.assign({}, { a: 1 }));"],
+      ["Set.prototype.add", "Set.prototype", "add", "const set = new Set([1]);"],
     ])("stops at %s", async (path, owner, key, call) => {
       expect(
         (
