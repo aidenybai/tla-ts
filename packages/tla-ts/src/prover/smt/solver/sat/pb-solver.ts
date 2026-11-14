@@ -1,11 +1,19 @@
 // Ported from Z3 (src/sat/smt/pb_solver.h, src/sat/smt/pb_solver.cpp,
 // src/sat/smt/pb_internalize.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../../errors";
-import { type AstManager, OP_AT_LEAST_K, OP_AT_MOST_K, OP_PB_EQ, OP_PB_GE, OP_PB_LE } from "../ast";
+import {
+  type AstManager,
+  OP_AT_LEAST_K,
+  OP_AT_MOST_K,
+  OP_PB_EQ,
+  OP_PB_GE,
+  OP_PB_LE,
+  SORT_BOOL,
+} from "../ast";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
-import { getPbCoeff, getPbK, hasUnitCoefficients } from "../pb-rewriter";
+import { getPbCoeff, getPbK, hasUnitCoefficients, mkPbGe } from "../pb-rewriter";
 import { Rational } from "../rational";
-import { NULL_LITERAL } from "./clause";
+import { NULL_LITERAL, UINT_MAX } from "./clause";
 import { Card, type Constraint, type ConstraintHost, Pbc } from "./pb-constraint";
 import {
   JUSTIFICATION_BINARY,
@@ -16,7 +24,6 @@ import {
   type Solver,
 } from "./solver";
 
-const UINT_MAX = 4294967295;
 const INT_MAX = 2147483647;
 const INT_MIN = -2147483648;
 
@@ -1005,14 +1012,6 @@ export class PbSolver implements SatExtension, ConstraintHost {
       this.initWatch(constraint);
   }
 
-  private numNonlearnedBin(lit: number) {
-    const wlist = this.getWlist(lit ^ 1);
-    let count = 0;
-    for (let index = 0; index < wlist.size; index++)
-      if (wlist.isBinary(index) && !wlist.isLearned(index)) count++;
-    return count;
-  }
-
   private initUseLists() {
     const solver = this.solver;
     const arena = solver.arena;
@@ -1071,7 +1070,7 @@ export class PbSolver implements SatExtension, ConstraintHost {
       this.value(lit) !== L_UNDEF ||
       this.cnstrUseList[lit].length === 0 ||
       this.useCount(lit ^ 1) !== 0 ||
-      this.numNonlearnedBin(lit ^ 1) !== 0
+      this.getWlist(lit).numNonlearnedBin() !== 0
     )
       return false;
     this.solver.assignScoped(lit);
@@ -1323,6 +1322,33 @@ export class PbSolver implements SatExtension, ConstraintHost {
     if (isChanged) lits.splice(0, lits.length, ...members);
   }
 
+  toFormulas(lit2expr: (lit: number) => number, formulas: number[]) {
+    const manager = this.manager;
+    for (const constraint of this.constraints) {
+      const args = constraint.lits.map(lit2expr);
+      const formula =
+        constraint instanceof Pbc
+          ? mkPbGe(
+              manager,
+              constraint.coeffs.map((coeff) => Rational.fromNumber(coeff)),
+              args,
+              Rational.fromNumber(constraint.k),
+            )
+          : manager.mkApp(
+              manager.mkPbDecl(
+                OP_AT_LEAST_K,
+                [Rational.fromNumber(constraint.k)],
+                args.map(() => SORT_BOOL),
+              ),
+              args,
+              SORT_BOOL,
+            );
+      formulas.push(
+        constraint.lit === NULL_LITERAL ? formula : manager.mkEq(lit2expr(constraint.lit), formula),
+      );
+    }
+  }
+
   private active2card() {
     const wlits: { coeff: number; lit: number }[] = [];
     let sum = 0;
@@ -1450,7 +1476,7 @@ export class PbSolver implements SatExtension, ConstraintHost {
       this.addRootPbGe(wlits, bound, isSign);
       return NULL_LITERAL;
     }
-    const lit = 2 * this.solver.mkVar(true, true);
+    const lit = 2 * this.solver.mkVar(true);
     this.addPbGe(lit, wlits, bound, false);
     return isSign ? lit ^ 1 : lit;
   }
@@ -1462,7 +1488,7 @@ export class PbSolver implements SatExtension, ConstraintHost {
       this.addRootPbGe(wlits, bound, isSign);
       return NULL_LITERAL;
     }
-    const lit = 2 * this.solver.mkVar(true, true);
+    const lit = 2 * this.solver.mkVar(true);
     this.addPbGe(lit, wlits, bound, false);
     return isSign ? lit ^ 1 : lit;
   }
@@ -1472,8 +1498,8 @@ export class PbSolver implements SatExtension, ConstraintHost {
     let k = getPbK(this.manager, this.manager.decls[expr]);
     const wlits = this.convertPbWlits(expr);
     const isBaseAssert = isRoot && !isSign;
-    const lit1 = isBaseAssert ? NULL_LITERAL : 2 * solver.mkVar(true, true);
-    const lit2 = isBaseAssert ? NULL_LITERAL : 2 * solver.mkVar(true, true);
+    const lit1 = isBaseAssert ? NULL_LITERAL : 2 * solver.mkVar(true);
+    const lit2 = isBaseAssert ? NULL_LITERAL : 2 * solver.mkVar(true);
     this.addPbGe(lit1, wlits, Number(BigInt.asUintN(32, k.num)), false);
     k = k.neg();
     for (let index = 0; index < wlits.lits.length; index++) {
@@ -1481,7 +1507,7 @@ export class PbSolver implements SatExtension, ConstraintHost {
       k = k.add(Rational.of(BigInt(wlits.coeffs[index])));
     }
     if (k.isNegative()) {
-      const lit = 2 * solver.mkVar(false, true);
+      const lit = 2 * solver.mkVar(false);
       solver.assignUnit(lit ^ 1);
       this.si.cache(expr, lit);
       return isSign ? lit ^ 1 : lit;
@@ -1493,7 +1519,7 @@ export class PbSolver implements SatExtension, ConstraintHost {
 
   private mkConjunction(expr: number, lit1: number, lit2: number, isSign: boolean) {
     const solver = this.solver;
-    const lit = 2 * solver.mkVar(false, true);
+    const lit = 2 * solver.mkVar(false);
     solver.mkClause([lit ^ 1, lit1]);
     solver.mkClause([lit ^ 1, lit2]);
     solver.mkClause([lit1 ^ 1, lit2 ^ 1, lit]);
@@ -1512,7 +1538,7 @@ export class PbSolver implements SatExtension, ConstraintHost {
       this.addAtLeast(NULL_LITERAL, lits, bound, false);
       return NULL_LITERAL;
     }
-    const lit = 2 * this.solver.mkVar(true, true);
+    const lit = 2 * this.solver.mkVar(true);
     this.addAtLeast(lit, lits, bound, false);
     this.si.cache(expr, lit);
     return isSign ? lit ^ 1 : lit;
@@ -1531,7 +1557,7 @@ export class PbSolver implements SatExtension, ConstraintHost {
       this.addAtLeast(NULL_LITERAL, lits, bound, false);
       return NULL_LITERAL;
     }
-    const lit = 2 * this.solver.mkVar(true, true);
+    const lit = 2 * this.solver.mkVar(true);
     this.addAtLeast(lit, lits, bound, false);
     this.si.cache(expr, lit);
     return isSign ? lit ^ 1 : lit;
@@ -1541,8 +1567,8 @@ export class PbSolver implements SatExtension, ConstraintHost {
     const solver = this.solver;
     const lits = this.convertPbArgs(expr);
     const isBaseAssert = isRoot && !isSign;
-    const lit1 = isBaseAssert ? NULL_LITERAL : 2 * solver.mkVar(true, true);
-    const lit2 = isBaseAssert ? NULL_LITERAL : 2 * solver.mkVar(true, true);
+    const lit1 = isBaseAssert ? NULL_LITERAL : 2 * solver.mkVar(true);
+    const lit2 = isBaseAssert ? NULL_LITERAL : 2 * solver.mkVar(true);
     const bound = k.compare(Rational.of(BigInt(lits.length))) > 0 ? lits.length + 1 : Number(k.num);
     this.addAtLeast(lit1, lits, bound, false);
     for (let index = 0; index < lits.length; index++) lits[index] ^= 1;

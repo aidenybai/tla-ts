@@ -3,6 +3,7 @@
 
 export const NULL_LITERAL = -2;
 export const NULL_BOOL_VAR = -1;
+export const UINT_MAX = 4294967295;
 
 const STRENGTHENED = 1;
 const REMOVED = 2;
@@ -31,7 +32,6 @@ export class ClauseArena {
   private numIds = 0;
   start = new Int32Array(64);
   size = new Int32Array(64);
-  capacity = new Int32Array(64);
   flags = new Int32Array(64);
   approx = new Int32Array(64);
   inactRounds = new Int32Array(64);
@@ -44,7 +44,6 @@ export class ClauseArena {
       const length = this.start.length * 2;
       this.start = grow(this.start, length);
       this.size = grow(this.size, length);
-      this.capacity = grow(this.capacity, length);
       this.flags = grow(this.flags, length);
       this.approx = grow(this.approx, length);
       this.inactRounds = grow(this.inactRounds, length);
@@ -61,7 +60,6 @@ export class ClauseArena {
     this.start[id] = this.top;
     this.top += numLits;
     this.size[id] = numLits;
-    this.capacity[id] = numLits;
     this.flags[id] = isLearned ? LEARNED : 0;
     this.inactRounds[id] = 0;
     this.glue[id] = 255;

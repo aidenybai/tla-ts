@@ -3,10 +3,9 @@
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { RandomGen } from "../random-gen";
 import { Big } from "./big";
+import { UINT_MAX } from "./clause";
 import { getBool, getNumber, type SatParams } from "./config";
 import type { Solver } from "./solver";
-
-const UINT_MAX = 4294967295;
 
 export class AsymmBranch {
   private counter = 0;
@@ -68,22 +67,30 @@ export class AsymmBranch {
     clauses.sort((first, second) => solver.arena.size[second] - solver.arena.size[first]);
     this.counter -= clauses.length;
     let next = 0;
-    for (let index = 0; index < clauses.length; index++) {
-      const clause = clauses[index];
-      if (solver.isInconsistent) {
-        for (; index < clauses.length; index++) clauses[next++] = clauses[index];
-        break;
-      }
-      if (this.counter < limit || solver.arena.wasRemoved(clause)) {
+    let index = 0;
+    try {
+      for (; index < clauses.length; index++) {
+        const clause = clauses[index];
+        if (solver.isInconsistent) {
+          for (; index < clauses.length; index++) clauses[next++] = clauses[index];
+          break;
+        }
+        if (this.counter < limit || solver.arena.wasRemoved(clause)) {
+          clauses[next++] = clause;
+          continue;
+        }
+        solver.checkpoint();
+        if (big === undefined ? !this.processClause(clause) : !this.processSampled(big, clause))
+          continue;
         clauses[next++] = clause;
-        continue;
       }
-      solver.checkpoint();
-      if (big === undefined ? !this.processClause(clause) : !this.processSampled(big, clause))
-        continue;
-      clauses[next++] = clause;
+      clauses.length = next;
+    } catch (error) {
+      for (; index < clauses.length; index++) clauses[next++] = clauses[index];
+      clauses.length = next;
+      this.counter = -this.counter;
+      throw error;
     }
-    clauses.length = next;
   }
 
   run(isForced: boolean) {
@@ -101,38 +108,40 @@ export class AsymmBranch {
     const wasProbing = solver.isProbing;
     solver.isProbing = true;
     let isChanged = true;
-    for (let count = 0; isChanged && count < 2; count++) {
-      isChanged = false;
-      solver.touchIndex++;
-      if (this.isSampled && this.processBig(new Big(solver.rand), true)) isChanged = true;
-      if (this.isSampled && this.processBig(new Big(solver.rand), false)) isChanged = true;
-      if (this.isEnabled) {
-        this.counter = 0;
-        const elim = this.elimLiterals;
-        this.processClauses(undefined, solver.clauses);
-        solver.propagate(false);
-        if (this.elimLiterals > elim) isChanged = true;
-        this.counter = -this.counter;
+    try {
+      for (let count = 0; isChanged && count < 2; count++) {
+        isChanged = false;
+        solver.touchIndex++;
+        if (this.isSampled && this.processBig(new Big(solver.rand), true)) isChanged = true;
+        if (this.isSampled && this.processBig(new Big(solver.rand), false)) isChanged = true;
+        if (this.isEnabled) {
+          this.counter = 0;
+          const elim = this.elimLiterals;
+          this.processClauses(undefined, solver.clauses);
+          solver.propagate(false);
+          if (this.elimLiterals > elim) isChanged = true;
+          this.counter = -this.counter;
+        }
+        this.touchIndex = solver.touchIndex;
       }
-      this.touchIndex = solver.touchIndex;
+    } finally {
+      solver.isProbing = wasProbing;
     }
     for (let index = 0; index < savedPhase.length; index++) solver.phase[index] = savedPhase[index];
-    solver.isProbing = wasProbing;
     this.limit = Math.min(2 * this.limit, UINT_MAX);
   }
 
   private processAll(clause: number) {
     this.detachScoped(clause);
-    let result = true;
-    for (let index = this.solver.arena.size[clause]; index-- > 0;) {
-      const newSize = this.flipLiteralAt(clause, index);
-      if (newSize !== -1) {
-        result = this.cleanup(clause, index, newSize);
-        break;
+    try {
+      for (let index = this.solver.arena.size[clause]; index-- > 0;) {
+        const newSize = this.flipLiteralAt(clause, index);
+        if (newSize !== -1) return this.cleanup(clause, index, newSize);
       }
+      return true;
+    } finally {
+      this.attachScoped(clause);
     }
-    this.attachScoped(clause);
-    return result;
   }
 
   private sort(big: Big, clause: number) {
@@ -286,10 +295,12 @@ export class AsymmBranch {
 
   private processSampled(big: Big, clause: number) {
     this.detachScoped(clause);
-    this.sort(big, clause);
-    const result = this.isHiddenTautology(big) || this.eliminateHiddenLiterals(big, clause);
-    this.attachScoped(clause);
-    return result;
+    try {
+      this.sort(big, clause);
+      return this.isHiddenTautology(big) || this.eliminateHiddenLiterals(big, clause);
+    } finally {
+      this.attachScoped(clause);
+    }
   }
 
   private processClause(clause: number) {
@@ -305,10 +316,12 @@ export class AsymmBranch {
     this.counter -= size;
     if (this.isAll) return this.processAll(clause);
     this.detachScoped(clause);
-    const flipIndex = this.rand.next() % size;
-    const newSize = this.flipLiteralAt(clause, flipIndex);
-    const result = newSize === -1 || this.cleanup(clause, flipIndex, newSize);
-    this.attachScoped(clause);
-    return result;
+    try {
+      const flipIndex = this.rand.next() % size;
+      const newSize = this.flipLiteralAt(clause, flipIndex);
+      return newSize === -1 || this.cleanup(clause, flipIndex, newSize);
+    } finally {
+      this.attachScoped(clause);
+    }
   }
 }

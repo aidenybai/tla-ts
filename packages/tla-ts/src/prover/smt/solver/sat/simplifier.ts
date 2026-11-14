@@ -3,7 +3,7 @@
 // src/util/heap.h, src/util/util.h), MIT license, see z3-license.txt.
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import type { RandomGen } from "../random-gen";
-import { type ClauseArena, NULL_LITERAL } from "./clause";
+import { type ClauseArena, NULL_LITERAL, UINT_MAX } from "./clause";
 import { UseList } from "./clause-use-list";
 import { getBool, getNumber, type SatParams } from "./config";
 import { MC_ABCE, MC_ACCE, MC_BCE, MC_CCE, MC_ELIM_VAR } from "./model-converter";
@@ -16,8 +16,6 @@ const ACCE_T = 2;
 const ABCE_T = 3;
 const ATE_T = 4;
 const NO_T = 5;
-
-const UINT_MAX = 4294967295;
 
 const isApproxSubset = (first: number, second: number) => (first | second) === second;
 
@@ -606,7 +604,6 @@ class BlockedClauseElim {
       if (!this.isSelectClause(2)) continue;
       const other = wlist.getLiteral(index);
       const result = this.cceBinary(lit, other, elimType);
-      this.incBc(result);
       if (result === ATE_T) {
         wlist.setLearned(index, true);
         solver.setLearned1(other, lit, true);
@@ -633,7 +630,6 @@ class BlockedClauseElim {
       if (arena.wasRemoved(clause) || arena.isLearned(clause)) continue;
       if (!this.isSelectClause(arena.size[clause])) continue;
       const result = this.cceClause(clause, elimType);
-      this.incBc(result);
       if (result === ATE_T) {
         solver.mc.addAte(this.coveredClause);
         simplifier.setLearnedClause(clause);
@@ -644,15 +640,6 @@ class BlockedClauseElim {
       solver.checkpoint();
       if (this.isReachedMaxCost()) break;
     }
-  }
-
-  private incBc(elimType: number) {
-    const simplifier = this.simplifier;
-    if (elimType === CCE_T) simplifier.numCce++;
-    else if (elimType === ACCE_T) simplifier.numAcce++;
-    else if (elimType === ABCE_T) simplifier.numAbce++;
-    else if (elimType === ATE_T) simplifier.numAte++;
-    else if (elimType === BCE_T) simplifier.numBce++;
   }
 
   private isSelectClause(size: number) {
@@ -668,7 +655,6 @@ class BlockedClauseElim {
       if (lit !== this.blocked && this.isProcessVar(lit >> 1)) this.queue.decreased(lit ^ 1);
     }
     solver.mc.insert(entry, this.coveredClause);
-    solver.mc.setClause(entry, arena.getLits(clause));
   }
 
   private blockCoveredBinary(other: number, lit: number) {
@@ -676,7 +662,6 @@ class BlockedClauseElim {
     const entry = solver.mc.mk(this.kind, this.blocked >> 1);
     this.simplifier.setLearnedBinary(lit, other);
     solver.mc.insert(entry, this.coveredClause);
-    solver.mc.setClause(entry, [lit, other]);
     if (this.isProcessVar(other >> 1)) this.queue.decreased(other ^ 1);
   }
 }
@@ -719,15 +704,7 @@ export class Simplifier {
   private isSubsumption: boolean;
   private subsumptionLimit: number;
   readonly isElimVars: boolean;
-  numBce = 0;
-  numCce = 0;
-  numAcce = 0;
-  numAbce = 0;
-  numAte = 0;
-  numSubsumed = 0;
   numElimVars = 0;
-  numSubRes = 0;
-  numElimLits = 0;
   private isLearnedInUseLists = false;
   private oldNumElimVars = 0;
   private bsClauses: number[] = [];
@@ -1092,33 +1069,30 @@ export class Simplifier {
       const second = this.bsClauses[index];
       const lit = this.bsLits[index];
       if (!arena.wasRemoved(second) && lit === NULL_LITERAL) {
-        if (arena.isLearned(first) && !arena.isLearned(second)) this.setNotLearned(first);
+        if (arena.isLearned(first) && !arena.isLearned(second)) arena.setLearned(first, false);
         this.removeClause(second);
-        this.numSubsumed++;
       } else if (!arena.wasRemoved(second)) {
         this.elimLit(second, lit);
-        this.numSubRes++;
       }
       if (solver.isInconsistent) break;
     }
   }
 
-  private setNotLearned(clause: number) {
-    this.solver.arena.setLearned(clause, false);
-    if (clause !== this.dummy) this.useList.unblock(clause);
-  }
-
+  // tmp_clause::set computes the approximation only when it allocates the clause, so every later
+  // binary is filtered with the approximation of the first one.
   private setDummy(first: number, second: number, isLearned: boolean) {
     const arena = this.solver.arena;
-    if (this.dummyArena !== arena) {
+    const previousArena = this.dummyArena;
+    if (previousArena !== arena) {
+      const previous = this.dummy;
       this.dummyArena = arena;
       this.dummy = arena.mkClause([first, second], 2, isLearned);
+      if (previousArena !== undefined) arena.approx[this.dummy] = previousArena.approx[previous];
       return this.dummy;
     }
     arena.set(this.dummy, 0, first);
     arena.set(this.dummy, 1, second);
     arena.setLearned(this.dummy, isLearned);
-    arena.updateApprox(this.dummy);
     return this.dummy;
   }
 
@@ -1164,9 +1138,8 @@ export class Simplifier {
       }
     }
     for (const second of this.bsClauses) {
-      if (arena.isLearned(first) && !arena.isLearned(second)) this.setNotLearned(first);
+      if (arena.isLearned(first) && !arena.isLearned(second)) arena.setLearned(first, false);
       this.removeClause(second);
-      this.numSubsumed++;
     }
   }
 
@@ -1217,7 +1190,7 @@ export class Simplifier {
     const oldTrailSize = solver.trail.length;
     const numClauses = solver.clauses.length;
     solver.assignScoped(lit);
-    solver.propagateCore(false);
+    solver.propagate(false);
     if (solver.isInconsistent) return;
     const newTrailSize = solver.trail.length;
     for (let index = oldTrailSize; index < newTrailSize; index++) {
@@ -1236,7 +1209,6 @@ export class Simplifier {
     const solver = this.solver;
     const arena = solver.arena;
     this.isNeedingCleanup = true;
-    this.numElimLits++;
     this.insertElimTodo(lit >> 1);
     arena.elim(clause, lit);
     this.useList.eraseNotRemoved(lit, clause);
@@ -1298,7 +1270,6 @@ export class Simplifier {
 
   private elimDupBins() {
     const solver = this.solver;
-    let numElim = 0;
     for (const wlist of solver.watches) {
       solver.checkpoint();
       const size = wlist.size;
@@ -1315,10 +1286,7 @@ export class Simplifier {
         const val1 = data[2 * index];
         const val2 = data[2 * index + 1];
         if ((val2 & 3) === 0) {
-          if (val1 === lastLit) {
-            numElim++;
-            continue;
-          }
+          if (val1 === lastLit) continue;
           lastLit = val1;
         }
         wlist.data[2 * next] = val1;
@@ -1327,7 +1295,6 @@ export class Simplifier {
       }
       wlist.setEnd(next);
     }
-    this.numSubsumed += Math.trunc(numElim / 2);
   }
 
   private subsume() {
@@ -1390,14 +1357,6 @@ export class Simplifier {
     }
   }
 
-  private numNonlearnedBin(lit: number) {
-    const wlist = this.solver.watches[lit ^ 1];
-    let count = 0;
-    for (let index = 0; index < wlist.size; index++)
-      if (wlist.isBinary(index) && !wlist.isLearned(index)) count++;
-    return count;
-  }
-
   private orderVarsForElim() {
     const solver = this.solver;
     const sizes = this.useList.size;
@@ -1409,8 +1368,8 @@ export class Simplifier {
       if (solver.valueVar(boolVar) !== L_UNDEF) continue;
       const numPos = sizes[2 * boolVar];
       const numNeg = sizes[2 * boolVar + 1];
-      const numBinPos = this.numNonlearnedBin(2 * boolVar);
-      const numBinNeg = this.numNonlearnedBin(2 * boolVar + 1);
+      const numBinPos = solver.watches[2 * boolVar + 1].numNonlearnedBin();
+      const numBinNeg = solver.watches[2 * boolVar].numNonlearnedBin();
       costs[boolVar] =
         (Math.imul(2 * numPos, numNeg) +
           Math.imul(numPos, numBinNeg) +
@@ -1536,8 +1495,8 @@ export class Simplifier {
     if (solver.valueVar(boolVar) !== L_UNDEF) return false;
     const posLit = 2 * boolVar;
     const negLit = 2 * boolVar + 1;
-    const numBinPos = this.numNonlearnedBin(posLit);
-    const numBinNeg = this.numNonlearnedBin(negLit);
+    const numBinPos = solver.watches[negLit].numNonlearnedBin();
+    const numBinNeg = solver.watches[posLit].numNonlearnedBin();
     const numPos = this.useList.numIrredundant(posLit) + numBinPos;
     const numNeg = this.useList.numIrredundant(negLit) + numBinNeg;
     if (numPos >= this.resOccCutoff && numNeg >= this.resOccCutoff) return false;
