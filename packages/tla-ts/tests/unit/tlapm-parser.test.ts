@@ -23,6 +23,24 @@ const runTlapm = (directory: string, args: string[]) =>
   spawnSync("bun", [CLI, "tlapm", ...args], { cwd: directory, encoding: "utf8" });
 
 const PRINT_OBLIGATIONS = ["-N", "--toolbox", "0", "0", "--printallobs"];
+const PROVE = ["--toolbox", "0", "0", "--threads", "1"];
+
+const getResultLines = (stderr: string) =>
+  stderr
+    .replace(/; time-used: .*/g, "")
+    .split("\n")
+    .filter((line) =>
+      /^(@!!(status|prover|meth|already):|PROVE|Invalid|\[(INFO|ERROR)\])/.test(line),
+    );
+
+const getMethodModule = (name: string, pragma: string) => `---- MODULE ${name} ----
+EXTENDS Naturals, TLAPS
+M == TRUE (*{ by (${pragma}) }*)
+THEOREM \\A x \\in Nat : x + 0 = x
+  BY M
+====
+`;
+
 describe("tlapm reads a postfix operator applied as a nonfix one", () => {
   it("applies ', ^+, ^* and ^# to the argument in parentheses", () => {
     const directory = writeModule(
@@ -148,5 +166,68 @@ describe("tlapm reads a float as OCaml's float_of_string does", () => {
   it("accepts a --stretch with underscores", () => {
     const directory = writeModule("Empty", "---- MODULE Empty ----\n====\n");
     expect(runTlapm(directory, ["--stretch", "1_0", "-N", "Empty.tla"]).status).toBe(0);
+  });
+});
+
+describe("tlapm computes a method from a pragma", () => {
+  it("gives Cooper's method no time limit, whatever timeout the pragma sets", () => {
+    const directory = writeModule(
+      "Cooper",
+      getMethodModule("Cooper", 'prover:"cooper"; timeout:5'),
+    );
+    expect(getResultLines(runTlapm(directory, [...PROVE, "Cooper.tla"]).stderr)).toEqual([
+      "@!!status:to be proved",
+      "@!!status:to be proved",
+      "@!!status:failed",
+      "@!!prover:cooper",
+      "@!!meth:time-limit: inf",
+      "@!!already:false",
+      "@!!status:trivial",
+      "@!!prover:tlapm",
+      "@!!already:false",
+      "[ERROR]: Could not prove or check:",
+      "[ERROR]: 1/2 obligations failed.",
+    ]);
+  });
+
+  it("reads underscores in an rlimit budget", () => {
+    const directory = writeModule(
+      "Budget",
+      getMethodModule("Budget", 'prover:"smt"; timeout:"r1_0"'),
+    );
+    expect(getResultLines(runTlapm(directory, [...PROVE, "Budget.tla"]).stderr)).toEqual([
+      "@!!status:to be proved",
+      "@!!status:to be proved",
+      "@!!status:proved",
+      "@!!prover:smt",
+      "@!!meth:time-limit: inf",
+      "@!!already:false",
+      "@!!status:trivial",
+      "@!!prover:tlapm",
+      "@!!already:false",
+      "[INFO]: All 2 obligations proved.",
+    ]);
+  });
+
+  it("rejects a binary rlimit budget", () => {
+    const directory = writeModule(
+      "BinaryBudget",
+      getMethodModule("BinaryBudget", 'prover:"smt"; timeout:"r0b11"'),
+    );
+    expect(getResultLines(runTlapm(directory, [...PROVE, "BinaryBudget.tla"]).stderr)).toEqual([
+      "@!!status:to be proved",
+      "@!!status:to be proved",
+      'Invalid SMT budget "r0b11": expected a number of seconds (wall-clock timeout), or a deterministic Z3 rlimit budget of the form "rN" (e.g. "r5").',
+      "@!!status:trivial",
+      "@!!prover:tlapm",
+      "@!!already:false",
+      "@!!status:failed",
+      "@!!prover:fail",
+      "@!!meth:time-limit: inf",
+      "@!!already:false",
+      "PROVE  \\A x \\in Nat : x + 0 = x",
+      "[ERROR]: Could not prove or check:",
+      "[ERROR]: 1/2 obligations failed.",
+    ]);
   });
 });

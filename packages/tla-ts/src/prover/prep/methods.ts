@@ -77,6 +77,8 @@ const PROVERS: Record<string, { prover: Prover; seconds: number; isBudgeted?: bo
   ...Object.fromEntries([...FRONTENDS].map((name) => [name, { prover: name, seconds: 0 }])),
 };
 
+const UNTIMED_PROVERS = new Set<Prover>(["cooper", "fail", "trivial", ...FRONTENDS]);
+
 const getProverMethod = (
   name: string,
   timeout: number | undefined,
@@ -87,7 +89,10 @@ const getProverMethod = (
   if (!known) throw new TlaProverError(`Unknown prover: ${name}`);
   return {
     prover: known.prover,
-    timeLimitMs: rlimit === undefined ? (timeout ?? known.seconds) * 1000 : Infinity,
+    timeLimitMs:
+      rlimit !== undefined
+        ? Infinity
+        : ((UNTIMED_PROVERS.has(known.prover) ? undefined : timeout) ?? known.seconds) * 1000,
     ...(rlimit !== undefined && { rlimit }),
     ...(known.prover === "isabelle" && { tactic: tactic ?? "auto" }),
   };
@@ -116,8 +121,8 @@ export const parseOcamlFloat = (text: string) => {
 };
 
 const getRlimit = (budget: string, locus: Locus | undefined) => {
-  const count = Number(budget.slice(1));
-  if (!/^[rR]./.test(budget) || !Number.isFinite(count) || count <= 0)
+  const count = parseOcamlFloat(budget.slice(1));
+  if (!/^[rR]./s.test(budget) || count === undefined || !Number.isFinite(count) || count <= 0)
     throw new TlaMethodError(
       `Invalid SMT budget ${JSON.stringify(budget)}: expected ${BUDGET_FORMS}.`,
       locus,
