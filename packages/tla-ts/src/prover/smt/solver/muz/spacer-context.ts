@@ -2,6 +2,7 @@
 import { SmtTacticError, SmtUnsupportedError } from "../../../../errors";
 import { type AstManager, getSymbolName, KIND_VAR, OP_AND, OP_IMPLIES, SORT_BOOL } from "../ast";
 import { pushNotOwned } from "../ast-util";
+import { ObjHashtable, ObjMap } from "../hashtable";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import type { ProtoModel } from "../proto-model";
 import { getFreeVarSorts, VarSubst } from "../var-subst";
@@ -1088,18 +1089,23 @@ export class SpacerContext {
   }
 
   updateRules(rules: RuleSet) {
-    const rels = new Map<number, PredTransformer>();
     const manager = this.manager;
-    for (const predicate of rules.getHeadPredicates()) {
+    // decl2rel and the grouped rules are tables that Z3 walks in slot order.
+    const getHash = (decl: number) => manager.getDeclHash(decl);
+    const heads = new ObjHashtable(getHash);
+    for (const predicate of rules.getHeadPredicates()) heads.add(predicate);
+    const table = new ObjMap<PredTransformer>(getHash);
+    for (const predicate of heads) {
       const pt = new PredTransformer(this, predicate);
-      rels.set(predicate, pt);
+      table.set(predicate, pt);
       pt.rules.push(...rules.getPredicateRules(predicate));
     }
     for (const rule of rules.rules)
       for (let index = 0; index < rule.uninterpretedSize; index++) {
         const predicate = rule.getTailDecl(manager, index);
-        if (!rels.has(predicate)) rels.set(predicate, new PredTransformer(this, predicate));
+        if (!table.has(predicate)) table.set(predicate, new PredTransformer(this, predicate));
       }
+    const rels = new Map(table);
     for (const [predicate, pt] of rels)
       for (const dependency of rules.deps.getDeps(predicate)) {
         const user = rels.get(dependency) as PredTransformer;
