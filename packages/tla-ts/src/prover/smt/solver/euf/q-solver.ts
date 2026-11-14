@@ -124,6 +124,8 @@ export class QSolver extends ThSolver {
             ...data,
             kind: data.kind === QUANTIFIER_FORALL ? QUANTIFIER_EXISTS : QUANTIFIER_FORALL,
             body: manager.mkNot(data.body),
+            patterns: [],
+            noPatterns: [],
           }),
         )
       : quantifier;

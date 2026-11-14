@@ -444,13 +444,14 @@ const getEmptyReSignature = (
   kind: number,
   op: number,
   reglanName: string,
+  domain: readonly number[],
   range: number | undefined,
 ) => {
   const reglan = manager.mkReSort(manager.mkStringSort());
   const rng = range ?? reglan;
-  if (rng !== reglan) return mkSignature(op, getPsig(op).name, [], rng);
-  const matched = match(manager, getPsig(kind), [], rng);
-  return typeof matched === "string" ? matched : mkSignature(op, reglanName, [], matched);
+  if (kind === op && rng !== reglan) return mkSignature(op, getPsig(op).name, domain, rng);
+  const matched = match(manager, getPsig(kind), domain, rng);
+  return typeof matched === "string" ? matched : mkSignature(op, reglanName, domain, matched);
 };
 
 const getCharSignature = (
@@ -570,10 +571,10 @@ export const getSeqSignature = (
     }
     case OP_INTERNAL_REGEXP_FULL_CHAR:
     case OP_RE_FULL_CHAR_SET:
-      return getEmptyReSignature(manager, kind, OP_RE_FULL_CHAR_SET, "re.allchar", range);
+      return getEmptyReSignature(manager, kind, OP_RE_FULL_CHAR_SET, "re.allchar", domain, range);
     case OP_INTERNAL_REGEXP_EMPTY:
     case OP_RE_EMPTY_SET:
-      return getEmptyReSignature(manager, kind, OP_RE_EMPTY_SET, "re.none", range);
+      return getEmptyReSignature(manager, kind, OP_RE_EMPTY_SET, "re.none", domain, range);
     case OP_RE_FULL_SEQ_SET:
       return mkSignature(kind, "re.all", domain, range ?? manager.mkReSort(manager.mkStringSort()));
     case OP_RE_LOOP: {

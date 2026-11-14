@@ -79,29 +79,26 @@ export class TheorySeq extends TheorySeqRegex {
   finalCheckEh() {
     if (!this.hasSeq) return FC_DONE;
     this.isNewPropagation = false;
-    const checks = [
-      () => this.simplifyAndSolveEqs(),
-      () => this.checkEquationConflict(),
-      () => this.checkLts(),
-      () => this.solveNqs(0),
-      () => this.checkFixedLength(true, false),
-      () => this.checkFixedLength(false, false),
-      () => this.checkFixedLength(false, true),
-      () => this.checkContains(),
-      () => this.checkIntString(),
-      () => this.reduceLengthEq(),
-      () => this.branchUnitVariable(),
-      () => this.branchBinaryVariable(),
-      () => this.branchVariable(),
-      () => this.checkLengthCoherence(),
-      () => !this.checkExtensionality(),
-      () => this.branchNqs(),
-      () => this.branchItos(),
-      () => this.checkFixedLength(false, true),
-      () => this.solveRecfuns(),
-      () => this.finalCheckRegex(),
-    ];
-    if (checks.some((check) => check())) return FC_CONTINUE;
+    if (this.simplifyAndSolveEqs()) return FC_CONTINUE;
+    if (this.checkEquationConflict()) return FC_CONTINUE;
+    if (this.checkLts()) return FC_CONTINUE;
+    if (this.solveNqs(0)) return FC_CONTINUE;
+    if (this.checkFixedLength(true, false)) return FC_CONTINUE;
+    if (this.checkFixedLength(false, false)) return FC_CONTINUE;
+    if (this.checkFixedLength(false, true)) return FC_CONTINUE;
+    if (this.checkContains()) return FC_CONTINUE;
+    if (this.checkIntString()) return FC_CONTINUE;
+    if (this.reduceLengthEq()) return FC_CONTINUE;
+    if (this.branchUnitVariable()) return FC_CONTINUE;
+    if (this.branchBinaryVariable()) return FC_CONTINUE;
+    if (this.branchVariable()) return FC_CONTINUE;
+    if (this.checkLengthCoherence()) return FC_CONTINUE;
+    if (!this.checkExtensionality()) return FC_CONTINUE;
+    if (this.branchNqs()) return FC_CONTINUE;
+    if (this.branchItos()) return FC_CONTINUE;
+    if (this.checkFixedLength(false, true)) return FC_CONTINUE;
+    if (this.solveRecfuns()) return FC_CONTINUE;
+    if (this.finalCheckRegex()) return FC_CONTINUE;
     if (this.unhandledExpr !== undefined) return FC_GIVEUP;
     return this.eqs.size === 0 && this.ncs.size === 0 ? FC_DONE : FC_GIVEUP;
   }

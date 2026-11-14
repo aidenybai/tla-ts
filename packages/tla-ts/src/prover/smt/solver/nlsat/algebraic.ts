@@ -925,8 +925,7 @@ export class AlgebraicManager {
     if (anum.value instanceof Rational) return [anum.value, anum.value];
     const cell = anum.value;
     const refined = this.um.refineToPrecision(cell.p, cell.lower, cell.upper, precision * 4);
-    const lower = refined.lower.toRational();
-    return [lower, refined.isInterval ? refined.upper.toRational() : lower];
+    return [refined.lower.toRational(), refined.upper.toRational()];
   }
 
   displayRootSmt2(anum: Anum) {

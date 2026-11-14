@@ -470,7 +470,7 @@ class Interpreter {
             )
           )
             break;
-          const found = egraph.findCongruent(instr.label, args, false);
+          const found = egraph.findCongruent(instr.label, args);
           if (found === undefined || !found.isRelevant) break;
           this.updateMaxGeneration(found);
           registers[instr.oreg] = found;

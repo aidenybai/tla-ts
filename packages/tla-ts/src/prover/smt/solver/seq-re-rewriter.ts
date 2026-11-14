@@ -50,7 +50,6 @@ import {
   uniteRanges,
 } from "./seq-range-predicate";
 import { RegexBisim } from "./seq-regex-bisim";
-import { RegexWitness } from "./seq-regex-witness";
 import {
   UINT_MAX,
   canBeMember,
@@ -1169,12 +1168,5 @@ export class ReRewriter {
       : status === L_FALSE
         ? manager.falseExpr
         : undefined;
-  }
-
-  someStringInRe(regex: number) {
-    const witness = new RegexWitness(this.manager, this);
-    const result = witness.getWitness(regex);
-    witness.release();
-    return result;
   }
 }
