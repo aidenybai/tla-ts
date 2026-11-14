@@ -12186,6 +12186,43 @@ describe("errors", () => {
     });
   });
 
+  describe("reads undefined from a var that only a declaration that never runs initializes", () => {
+    const getSource = (expected: number) => `
+      const holder = { seen: 0 };
+      function outer() {
+        function inner() {
+          return x;
+        }
+        // @ts-ignore
+        return inner() === undefined && x === undefined ? 1 : 2;
+        var x = 1;
+      }
+      if (outer() !== ${expected}) throw new Error("hoisted");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource(2))).failure?.message).toContain('"hoisted"');
+    });
+
+    it("stops where a script assigns the var before its declaration", () => {
+      expect(() =>
+        compile(`
+          function outer() {
+            // @ts-ignore
+            if (x === undefined) x = 3;
+            return x;
+            var x = 1;
+          }
+          if (outer() !== 3) throw new Error("assigned");
+        `),
+      ).toThrow("Unknown name: x");
+    });
+  });
+
   it("assigns a constructor's parameter properties before its body runs", async () => {
     const getSource = (keys: string, extra: number) => `
       class Base {

@@ -2007,6 +2007,34 @@ const isSkipped = (node: ts.Node): boolean => {
   return ts.isExpression(parent) && isSkipped(parent);
 };
 
+// A statement that a return or a throw before it in the same list keeps from running.
+const isUnreachable = (statement: ts.Node) =>
+  (ts.isBlock(statement.parent) || ts.isSourceFile(statement.parent)) &&
+  statement.parent.statements
+    .slice(
+      0,
+      statement.parent.statements.findIndex((sibling) => sibling === statement),
+    )
+    .some((sibling) => ts.isReturnStatement(sibling) || ts.isThrowStatement(sibling));
+
+// A var that only declarations that never run initialize, and that nothing assigns, so that it
+// holds undefined wherever a script reads it.
+const isUnset = (symbol: ts.Symbol, context: Context) => {
+  const declarations = symbol.declarations ?? [];
+  return (
+    declarations.length > 0 &&
+    declarations.every(
+      (declaration) =>
+        ts.isVariableDeclaration(declaration) &&
+        ts.isIdentifier(declaration.name) &&
+        ts.isVariableStatement(declaration.parent.parent) &&
+        (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0 &&
+        (declaration.initializer === undefined || isUnreachable(declaration.parent.parent)),
+    ) &&
+    !isAssigned(symbol, declarations[0].getSourceFile(), context)
+  );
+};
+
 const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context) => {
   if (node.text === "undefined") return getUndefined(context);
   rejectGeneratorUse(node, context);
@@ -2095,6 +2123,7 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
     context.builtIns.add("globalThis");
     return identifier("GlobalObject");
   }
+  if (symbol !== undefined && isUnset(symbol, context)) return getUndefined(context);
   // A name that nothing declares throws a ReferenceError where a read runs, which a literal
   // condition may keep from running.
   if (symbol === undefined && isSkipped(node)) {
