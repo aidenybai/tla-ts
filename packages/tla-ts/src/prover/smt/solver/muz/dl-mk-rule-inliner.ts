@@ -213,10 +213,17 @@ export class MkRuleInliner implements RuleTransformerPlugin {
     if (this.forbidMultipleMultipliers(source, candidates))
       candidates = this.createAllowedRuleSet(source);
     for (const stratum of candidates.getStrats())
-      for (const rule of candidates.getPredicateRules(stratum.values().next().value as number))
+      for (const rule of candidates.getPredicateRules(stratum.values().next().value as number)) {
         this.transformRule(source, rule, this.inlinedRules);
+        // Z3 does not catch the has_new_quantifier that plan_inlining throws, and aborts.
+        if (this.hasNewQuantifier)
+          throw new SmtUnsupportedError("inlining a rule with a quantifier");
+      }
   }
 
+  // Deviation from Z3: transform_rule keeps a rule that has a quantifier without inlining the rest
+  // of its tail, although the rules of those predicates are dropped, so Z3 answers unreachable for
+  // a reachable query (dl_mk_rule_inliner.cpp). The rest of the tail is inlined here.
   private transformRule(source: RuleSet, original: Rule, target: RuleSet) {
     const manager = this.context.manager;
     let isModified = false;
