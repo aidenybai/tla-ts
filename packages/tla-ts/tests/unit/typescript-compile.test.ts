@@ -13919,6 +13919,26 @@ describe("errors", () => {
     });
   });
 
+  describe("compares an object on the heap with globalThis", () => {
+    const getSource = (expected: string) => `
+      class Box {}
+      const box = new Box() as unknown as { [key: string | symbol]: unknown };
+      const self = globalThis as unknown as { [key: string | symbol]: unknown };
+      const seen = [box === globalThis, self === globalThis, box !== globalThis].join();
+      if (seen !== "${expected}") throw new Error(seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("false,true,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("true,true,false"))).failure?.message).toContain(
+        "false,true,true",
+      );
+    });
+  });
+
   describe("throws the RangeError of new Array of a number that isn't a length", () => {
     const getSource = (expected: string) => `
       class Box {}

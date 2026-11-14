@@ -1794,7 +1794,12 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
     );
     return isPositive ? isEqual : not(isEqual);
   }
-  if (isEquality && !isComparable(node.left, node.right, context)) {
+  // globalThis is a ref whose key is a string, which TLC can't compare with a heap ref's number.
+  if (
+    isEquality &&
+    (!isComparable(node.left, node.right, context) ||
+      [node.left, node.right].some((side) => isGlobalObject(skipCasts(side), context)))
+  ) {
     const isSame = useJavaScript(
       "SameValue",
       [translate(node.left), translate(node.right)],
@@ -2053,6 +2058,18 @@ const isUnreachable = (statement: ts.Node) =>
 
 // A var that only declarations that never run initialize, and that nothing assigns, so that it
 // holds undefined wherever a script reads it.
+// globalThis, where a script makes objects on the heap.
+const isGlobalObject = (node: ts.Expression, context: Context) => {
+  const symbol = getSymbol(node, context.checker);
+  return (
+    ts.isIdentifier(node) &&
+    node.text === "globalThis" &&
+    context.heap !== undefined &&
+    symbol !== undefined &&
+    (symbol.flags & ts.SymbolFlags.ValueModule) !== 0
+  );
+};
+
 const isUnset = (symbol: ts.Symbol, context: Context) => {
   const declarations = symbol.declarations ?? [];
   return (
@@ -2147,12 +2164,7 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
     );
   }
   // The global object, whose standard globals' keys tla-ts reads.
-  if (
-    node.text === "globalThis" &&
-    context.heap !== undefined &&
-    symbol !== undefined &&
-    (symbol.flags & ts.SymbolFlags.ValueModule) !== 0
-  ) {
+  if (isGlobalObject(node, context)) {
     context.prelude.add("JavaScript");
     context.builtIns.add("globalThis");
     return identifier("GlobalObject");
