@@ -37,9 +37,16 @@ declare global {
   }
 }
 
+// assert.js takes a message of any type, which it converts to a string.
+function getMessage(message: unknown, fallback: string) {
+  return message === undefined ? fallback : String(message);
+}
+
 // oxlint-disable-next-line no-unused-vars
-function assert(mustBeTrue: unknown, message?: string) {
-  if (mustBeTrue !== true) throw new Test262Error(message ?? "Expected true");
+function assert(mustBeTrue: unknown, message?: unknown) {
+  if (mustBeTrue !== true) {
+    throw new Test262Error(getMessage(message, "Expected true"));
+  }
 }
 
 // compareArray.js's compareArray, whose isSameValue is Object.is.
@@ -58,47 +65,58 @@ function $DONOTEVALUATE(): never {
 }
 
 namespace assert {
-  export function sameValue(actual: unknown, expected: unknown, message?: string) {
+  export function sameValue(actual: unknown, expected: unknown, message?: unknown) {
     if (!Object.is(actual, expected)) {
-      throw new Test262Error(message ?? "Expected SameValue to be true");
+      throw new Test262Error(getMessage(message, "Expected SameValue to be true"));
     }
   }
 
-  export function notSameValue(actual: unknown, unexpected: unknown, message?: string) {
+  export function notSameValue(actual: unknown, unexpected: unknown, message?: unknown) {
     if (Object.is(actual, unexpected)) {
-      throw new Test262Error(message ?? "Expected SameValue to be false");
+      throw new Test262Error(getMessage(message, "Expected SameValue to be false"));
     }
   }
 
-  export function compareArray(
-    actual: readonly unknown[],
-    expected: readonly unknown[],
-    message?: string,
-  ) {
+  // assert.js rejects primitives, and then compares as compareArray.js does.
+  export function compareArray(actual: unknown, expected: unknown, message?: unknown) {
     if (
-      actual.length !== expected.length ||
-      actual.some((value, index) => !Object.is(value, expected[index]))
+      !actual ||
+      (typeof actual !== "object" && typeof actual !== "function") ||
+      !expected ||
+      (typeof expected !== "object" && typeof expected !== "function")
     ) {
-      throw new Test262Error(message ?? "Expected the arrays to have the same contents");
+      throw new Test262Error(getMessage(message, "Expected the arguments not to be primitives"));
+    }
+    const actualElements = actual as ArrayLike<unknown>;
+    const expectedElements = expected as ArrayLike<unknown>;
+    if (expectedElements.length !== actualElements.length) {
+      throw new Test262Error(getMessage(message, "Expected the arrays to have the same length"));
+    }
+    for (let index = 0; index < actualElements.length; index++) {
+      if (!Object.is(expectedElements[index], actualElements[index])) {
+        throw new Test262Error(
+          getMessage(message, "Expected the arrays to have the same contents"),
+        );
+      }
     }
   }
 
   export function throws(
     expectedErrorConstructor: Function,
     func: () => unknown,
-    message?: string,
+    message?: unknown,
   ) {
     try {
       func();
     } catch (thrown) {
       if (typeof thrown !== "object" || thrown === null) {
-        throw new Test262Error(message ?? "Thrown value was not an object");
+        throw new Test262Error(getMessage(message, "Thrown value was not an object"));
       }
       if (thrown.constructor !== expectedErrorConstructor) {
-        throw new Test262Error(message ?? "Expected a different error constructor");
+        throw new Test262Error(getMessage(message, "Expected a different error constructor"));
       }
       return;
     }
-    throw new Test262Error(message ?? "Expected an exception to be thrown");
+    throw new Test262Error(getMessage(message, "Expected an exception to be thrown"));
   }
 }

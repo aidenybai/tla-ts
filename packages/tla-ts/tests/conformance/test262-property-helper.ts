@@ -11,12 +11,23 @@ interface VerifyOptions {
   restore?: boolean;
 }
 
+// propertyHelper.js takes any value. {} | null | undefined is unknown, spelled out because the
+// runner infers this type for a test's untyped variable that it passes here, and then loosens
+// the variable's reads, which it doesn't for one of type unknown.
 function verifyProperty(
-  obj: object,
+  obj: {} | null | undefined,
   name: PropertyKey,
   desc: PropertyDescriptor | undefined,
   options?: VerifyOptions,
 ) {
+  // Object.getOwnPropertyDescriptor throws a TypeError for undefined and null. propertyHelper.js
+  // reads a primitive's wrapper, which this port doesn't.
+  if (obj === undefined || obj === null) {
+    throw new TypeError("Cannot convert undefined or null to object");
+  }
+  if (typeof obj !== "object" && typeof obj !== "function") {
+    throw new Test262Error("verifyProperty reads only an object's properties");
+  }
   const label =
     options === undefined || options.label === undefined || options.label === ""
       ? String(name)
@@ -120,7 +131,12 @@ function isSameValue(a: unknown, b: unknown) {
 
 // propertyHelper.js tells whether a caller gave value by arguments.length, which only
 // verifyWritable does.
-function isWritable(obj: object, name: PropertyKey, verifyProp?: string | null, value?: unknown) {
+function isWritable(
+  obj: object,
+  name: PropertyKey,
+  verifyProp?: PropertyKey | null,
+  value?: unknown,
+) {
   const properties = obj as Properties;
   // propertyHelper.js writes 2 ** 32 - 1 to an array's length, which TLC's integers can't hold,
   // and tla-ts can't read an array's properties by name, so it never verifies one.
@@ -172,7 +188,7 @@ function verifyEqualTo(obj: object, name: PropertyKey, value: unknown) {
 function verifyWritable(
   obj: object,
   name: PropertyKey,
-  verifyProp?: string | null,
+  verifyProp?: PropertyKey | null,
   value?: unknown,
 ) {
   if (verifyProp === undefined || verifyProp === null || verifyProp === "") {
@@ -191,7 +207,7 @@ function verifyWritable(
 function verifyNotWritable(
   obj: object,
   name: PropertyKey,
-  verifyProp?: string | null,
+  verifyProp?: PropertyKey | null,
   value?: unknown,
 ) {
   if (verifyProp === undefined || verifyProp === null || verifyProp === "") {
