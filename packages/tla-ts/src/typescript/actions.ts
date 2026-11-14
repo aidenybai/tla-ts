@@ -3540,6 +3540,49 @@ export const translateCallStatement = (
       ),
     );
   }
+  // A built-in method that a value holds, which call runs on a receiver it can't run on, throws a
+  // TypeError before it reads its arguments.
+  const calledMethod = getCast(expression.expression);
+  if (
+    callee === undefined &&
+    context.heap !== undefined &&
+    ts.isPropertyAccessExpression(calledMethod) &&
+    calledMethod.name.text === "call" &&
+    ts.isIdentifier(skipCasts(calledMethod.expression)) &&
+    expression.arguments.length > 0 &&
+    (isInertValue(expression.arguments[0]) ||
+      (ts.isCallExpression(expression.arguments[0]) &&
+        getBuiltIn(expression.arguments[0].expression, context) === "Symbol" &&
+        expression.arguments[0].arguments.every(ts.isStringLiteral))) &&
+    expression.arguments
+      .slice(1)
+      .every(
+        (argument) =>
+          isLiteral(argument) ||
+          (ts.isObjectLiteralExpression(argument) && argument.properties.length === 0),
+      )
+  ) {
+    return allocate(expression, path, context, (inner) =>
+      ifThenElse(
+        useJavaScript(
+          "ThrowsOnReceiver",
+          [
+            getHeap(inner.scope, expression, context),
+            translateExpression(calledMethod.expression, inner.scope, context),
+            translateExpression(expression.arguments[0], inner.scope, context),
+          ],
+          context,
+        ),
+        throwTypeError(inner, expression, context, frame),
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't tell which function this call runs"),
+          ]),
+        ),
+      ),
+    );
+  }
   if (callee?.body === undefined) {
     throw new TlaTypeScriptError(`Unsupported statement: ${expression.getText()}`, expression);
   }

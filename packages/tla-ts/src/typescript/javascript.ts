@@ -1670,7 +1670,8 @@ ThrowsWithoutReceiver(value) ==
          isUnder(prefix) == Len(path) > Len(prefix) /\\ SubSeq(path, 1, Len(prefix)) = prefix
      IN /\\ \\/ \\E name \\in {"Array", "%Int8Array", "String", "RegExp", "Number", "Boolean",
                             "Symbol", "BigInt", "Date", "Map", "Set", "WeakMap", "WeakSet",
-                            "Function", "Error", "ArrayBuffer", "DataView", "Promise", "Object"} :
+                            "Function", "Error", "ArrayBuffer", "DataView", "Promise", "Object",
+                            "WeakRef", "FinalizationRegistry"} :
                 isUnder(name \\o ".prototype.") \\/ isUnder("get " \\o name \\o ".prototype.")
            \\/ path \\in {"%Int8Array.[[Prototype]]%.from", "%Int8Array.[[Prototype]]%.of"}
         /\\ path \\notin {"Function.prototype.@@hasInstance", "Object.prototype.toString",
@@ -1690,6 +1691,33 @@ ReceiverlessValue(value) ==
   CASE value[Ref] = "Object.prototype.toString" -> "[object Undefined]"
     [] value[Ref] = "Function.prototype.@@hasInstance" -> FALSE
     [] OTHER -> Undefined
+
+\\* Whether a built-in method throws a TypeError on a receiver, as one does on undefined or null
+\\* where it needs a receiver, and as one that needs an internal slot, or a primitive of its own
+\\* type, does on another primitive or on an ordinary object or array.
+ThrowsOnReceiver(heap, value, receiver) ==
+  /\\ ThrowsWithoutReceiver(value)
+  /\\ LET path == value[Ref]
+         isUnder(name) ==
+           \\E prefix \\in {name \\o ".prototype.", "get " \\o name \\o ".prototype."} :
+             Len(path) > Len(prefix) /\\ SubSeq(path, 1, Len(prefix)) = prefix
+         isPrimitive == ~IsRef(receiver) /\\ TypeOf(receiver) \\notin {"object", "function"}
+         isOrdinary ==
+           \\/ IsSequenceValue(receiver)
+           \\/ /\\ IsHeap(receiver)
+              /\\ LET object == heap.objects[receiver[Ref]]
+                 IN /\\ DOMAIN object \\ {"isArray", "isArguments"} = DOMAIN EmptyObject
+                    /\\ ~object.isOpaque
+                    /\\ ~object.isCallable
+     IN \\/ receiver \\in {Undefined, Null}
+        \\/ /\\ ~(Len(path) >= 12 /\\ SubSeq(path, Len(path) - 11, Len(path)) = ".constructor")
+           /\\ \\/ /\\ \\E name \\in {"Map", "Set", "WeakMap", "WeakSet", "WeakRef", "FinalizationRegistry"} :
+                    isUnder(name)
+                 /\\ isPrimitive \\/ isOrdinary
+              \\/ \\E pair \\in {<<"Symbol", "symbol">>, <<"BigInt", "bigint">>, <<"Number", "number">>,
+                              <<"Boolean", "boolean">>} :
+                   /\\ isUnder(pair[1])
+                   /\\ (isPrimitive /\\ TypeOf(receiver) # pair[2]) \\/ isOrdinary
 
 \\* The TypeError that a read throws where it runs %ThrowTypeError% or a getter of a buffer or a view
 \\* on another kind of object, or "".

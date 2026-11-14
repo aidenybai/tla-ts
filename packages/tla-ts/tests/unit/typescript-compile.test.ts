@@ -24158,6 +24158,59 @@ describe("calls through values", () => {
     });
   });
 
+  describe("throws the TypeError of a built-in method that call runs on a receiver it can't use", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      const valueOf = Symbol.prototype.valueOf;
+      const bigValueOf = BigInt.prototype.valueOf;
+      const get = Map.prototype.get;
+      const toFixed = Number.prototype.toFixed;
+      const includes = Array.prototype.includes;
+      const deref = WeakRef.prototype.deref;
+      const read: string[] = [];
+      const record = (run: () => void) => {
+        try {
+          run();
+          read.push("none");
+        } catch (error) {
+          read.push(error instanceof TypeError ? "type" : "other");
+        }
+      };
+      record(() => {
+        valueOf.call({});
+      });
+      record(() => {
+        bigValueOf.call(1);
+      });
+      record(() => {
+        get.call([], 1);
+      });
+      record(() => {
+        toFixed.call("1", 2);
+      });
+      record(() => {
+        includes.call(null, 42);
+      });
+      record(() => {
+        deref.call(true);
+      });
+      box.size = read.length;
+      if (read.join() !== "${expected}") throw new Error(read.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("type,type,type,type,type,type"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a call on a string as allowed", async () => {
+      expect(
+        (await checkModel(getSource("type,type,type,none,type,type"))).failure?.message,
+      ).toContain("type,type,type,type,type,type");
+    });
+  });
+
   describe("throws the TypeError of a built-in next on an object that isn't its iterator", () => {
     const getSource = (expected: string) => `
       "use strict";
