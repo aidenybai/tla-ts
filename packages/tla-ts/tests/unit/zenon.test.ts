@@ -182,6 +182,14 @@ describe("Zenon finds no proof of a false goal", () => {
   it.each(Object.entries(FALSE_GOALS))("%s", (_, text) => {
     expect(decideZenon(text, { timeLimitMs: 1000 }).verdict).toBe("unknown");
   });
+
+  it("finds no proof where Zenon's not_subseteq_cap rule gives one that Isabelle rejects", () => {
+    const text = '$hyp "h" (TLA.subseteq a c)\n$goal (TLA.subseteq a (TLA.cap b c))';
+    const run = runZenon(text, { timeLimitMs: TIME_LIMIT_MS });
+    expect(run.proof).toBeUndefined();
+    expect(run.isar).toBeUndefined();
+    expect(run.failure).toBe("exhausted");
+  });
 });
 
 describe("Zenon's input", () => {
