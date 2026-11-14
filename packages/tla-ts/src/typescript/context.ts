@@ -328,11 +328,7 @@ const getDeclaredReads = (
         return [checker.getDeclaredTypeOfSymbol(symbol), checker.getTypeOfSymbol(symbol)];
       }
       if (hasAccessor) return [checker.getTypeAtLocation(node)];
-      if (
-        ts.isNewExpression(node) &&
-        ts.isIdentifier(node.expression) &&
-        node.expression.text === "Proxy"
-      ) {
+      if (ts.isNewExpression(node) && getBuiltIn(node.expression, { checker }) === "Proxy") {
         return [checker.getTypeAtLocation(node)];
       }
       if (
@@ -343,6 +339,9 @@ const getDeclaredReads = (
         return [];
       }
       const method = node.expression.name.text;
+      // Any object has __defineGetter__, but only Object and Reflect give the others.
+      const owner = getBuiltIn(node.expression.expression, { checker });
+      if (!method.startsWith("__") && owner !== "Object" && owner !== "Reflect") return [];
       // A null prototype without descriptors gives an object nothing to inherit an accessor from.
       const prototype = node.arguments[method === "setPrototypeOf" ? 1 : 0];
       const isBare =

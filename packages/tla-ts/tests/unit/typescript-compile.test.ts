@@ -6580,6 +6580,24 @@ describe("errors", () => {
       },
     );
 
+    it("narrows a property of what a method named create makes", async () => {
+      const getSource = (expected: number) => `
+        interface Box {
+          value: number | undefined;
+        }
+        const boxes = { create: (): Box => ({ value: 1 }) };
+        const reset = (box: Box) => {
+          box.value = undefined;
+        };
+        const read = (box: Box) => (box.value !== undefined ? box.value + 1 : 0);
+        reset(boxes.create());
+        const result = read(boxes.create());
+        if (result !== ${expected}) throw new Error(String(result));
+      `;
+      expect((await checkModel(getSource(2))).failure).toBeUndefined();
+      expect((await checkModel(getSource(3))).failure?.message).toContain("2");
+    });
+
     it.each([
       ["a call in the guard", "", 'typeof box.x === "number" && setText()', ""],
       [

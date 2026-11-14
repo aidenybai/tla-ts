@@ -48,7 +48,7 @@ const isLibrary = (symbol: ts.Symbol) =>
   (symbol.declarations ?? []).length > 0 &&
   (symbol.declarations ?? []).every((declaration) => declaration.getSourceFile().isDeclarationFile);
 
-export const getBuiltIn = (node: ts.Expression, context: Context) => {
+export const getBuiltIn = (node: ts.Expression, context: Pick<Context, "checker">) => {
   const symbol = getSymbol(node, context.checker);
   return ts.isIdentifier(node) && isGlobal(node.text) && symbol !== undefined && isLibrary(symbol)
     ? node.text
