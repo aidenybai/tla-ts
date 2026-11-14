@@ -1542,6 +1542,24 @@ describe("values", () => {
     expect((await checkModel(getSource(44, 44))).failure?.message).toContain("bytes");
   });
 
+  it("runs an assignment in a switch's expression first", async () => {
+    const getSource = (expected: number) => `
+      let count = 0;
+      let picked = "";
+      let chosen = 2;
+      switch ((count = count + 5), chosen) {
+        case 1:
+          picked = "one";
+          break;
+        default:
+          picked = "other";
+      }
+      if (count !== ${expected} || picked !== "other") throw new Error("head");
+    `;
+    expect((await checkModel(getSource(5))).failure).toBeUndefined();
+    expect((await checkModel(getSource(0))).failure?.message).toContain("head");
+  });
+
   it("runs an assignment in a computed key or an element's key first", async () => {
     const getSource = (expected: number) => `
       let x = 0;

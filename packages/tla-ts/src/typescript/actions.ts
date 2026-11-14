@@ -9651,8 +9651,6 @@ export const translateDeclarations = (
   const declaration = declarations[0];
   rejectCatchRedeclaration(declaration);
   const initializer = declaration.initializer;
-  // A declaration that a new of a function that TypeScript gives no construct signature
-  // initializes throws before it binds anything.
   if (initializer !== undefined && isForeignNew(initializer, context)) {
     const callee = context.checker.getTypeAtLocation(getCast(initializer.expression));
     if (
@@ -13326,13 +13324,7 @@ const getHoistedAssignment = (statement: ts.Statement, path: Path, context: Cont
     const hoisted = getLeadingAssignment(statement.expression, results, context);
     return hoisted === skipCasts(statement.expression) ? undefined : hoisted;
   }
-  const evaluated = ts.isVariableStatement(statement)
-    ? statement.declarationList.declarations[0]?.initializer
-    : ts.isIfStatement(statement)
-      ? statement.expression
-      : ts.isReturnStatement(statement) || ts.isThrowStatement(statement)
-        ? statement.expression
-        : undefined;
+  const evaluated = getEvaluated(statement);
   const held = evaluated === undefined ? undefined : skipCasts(evaluated);
   const defined = ts.isClassDeclaration(statement)
     ? statement
