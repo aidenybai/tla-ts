@@ -12149,6 +12149,43 @@ describe("errors", () => {
     expect((await checkModel(getSource(2))).failure?.message).toContain("held");
   });
 
+  describe("skips a name that nothing declares where a literal condition skips it", () => {
+    const getSource = (expected: boolean) => `
+      const holder = { seen: 0 };
+      // @ts-ignore
+      const left: unknown = false && missing;
+      // @ts-ignore
+      const right: unknown = true || missing;
+      // @ts-ignore
+      const chosen: unknown = true ? 1 : missing;
+      if (left !== ${expected} || right !== true || chosen !== 1) throw new Error("short");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(false))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource(true))).failure?.message).toContain('"short"');
+    });
+
+    it("stops where the read may run", () => {
+      expect(() =>
+        compile(`
+          const holder = { seen: 0 };
+          let caught = "none";
+          try {
+            // @ts-ignore
+            holder.seen = missing;
+          } catch (error) {
+            caught = (error as Error).constructor.name;
+          }
+          if (caught !== "ReferenceError") throw new Error(caught);
+        `),
+      ).toThrow("Unknown name: missing");
+    });
+  });
+
   it("assigns a constructor's parameter properties before its body runs", async () => {
     const getSource = (keys: string, extra: number) => `
       class Base {

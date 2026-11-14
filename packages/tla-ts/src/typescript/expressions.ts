@@ -1982,6 +1982,31 @@ const translateFraction = (value: number, node: ts.Node, context: Context) => {
   return fraction;
 };
 
+// An expression that a literal condition keeps from running, as x in false && x or true ? 1 : x.
+const isSkipped = (node: ts.Node): boolean => {
+  const parent = node.parent;
+  if (ts.isBinaryExpression(parent) && parent.right === node) {
+    const left = skipCasts(parent.left).kind;
+    const operator = parent.operatorToken.kind;
+    if (
+      (operator === ts.SyntaxKind.AmpersandAmpersandToken && left === ts.SyntaxKind.FalseKeyword) ||
+      (operator === ts.SyntaxKind.BarBarToken && left === ts.SyntaxKind.TrueKeyword)
+    ) {
+      return true;
+    }
+  }
+  if (ts.isConditionalExpression(parent)) {
+    const condition = skipCasts(parent.condition).kind;
+    if (
+      (parent.whenTrue === node && condition === ts.SyntaxKind.FalseKeyword) ||
+      (parent.whenFalse === node && condition === ts.SyntaxKind.TrueKeyword)
+    ) {
+      return true;
+    }
+  }
+  return ts.isExpression(parent) && isSkipped(parent);
+};
+
 const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context) => {
   if (node.text === "undefined") return getUndefined(context);
   rejectGeneratorUse(node, context);
@@ -2069,6 +2094,16 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
     context.prelude.add("JavaScript");
     context.builtIns.add("globalThis");
     return identifier("GlobalObject");
+  }
+  // A name that nothing declares throws a ReferenceError where a read runs, which a literal
+  // condition may keep from running.
+  if (symbol === undefined && isSkipped(node)) {
+    return apply("Assert", [
+      boolean(false),
+      string(
+        `tla-ts can't throw the ReferenceError of reading ${node.text}, which nothing declares`,
+      ),
+    ]);
   }
   throw new TlaTypeScriptError(`Unknown name: ${node.text}`, node);
 };
