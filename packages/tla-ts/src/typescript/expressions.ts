@@ -917,6 +917,32 @@ export const translateCall = (
       context,
     );
   }
+  // ArrayBuffer.isView tells whether a value has a [[ViewedArrayBuffer]], which only a typed array
+  // or a DataView on the heap has.
+  if (getBuiltIn(receiver, context) === "ArrayBuffer" && method === "isView") {
+    const argument = node.arguments.at(0);
+    const value =
+      argument === undefined ? undefined : translateExpression(argument, scope, context);
+    if (context.heap === undefined) return boolean(false);
+    const heap = getHeap(scope, node, context);
+    return ifExpression(
+      useJavaScript(
+        "HoldsBuiltIn",
+        [
+          heap,
+          translateBuiltInValue("ArrayBuffer", node, context),
+          string(method),
+          string("ArrayBuffer.isView"),
+        ],
+        context,
+      ),
+      value === undefined ? boolean(false) : useJavaScript("IsView", [heap, value], context),
+      apply("Assert", [
+        boolean(false),
+        string("tla-ts can't call ArrayBuffer.isView where a script replaced it"),
+      ]),
+    );
+  }
   if (global === "Array" && method === "isArray" && node.arguments.length === 1) {
     const argument = node.arguments[0];
     if (getKind(argument, context) === "object") {

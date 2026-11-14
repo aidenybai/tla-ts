@@ -746,6 +746,9 @@ IsDataView(heap, value) ==
 
 IsTypedArray(heap, value) == IsHeap(value) /\\ "elementType" \\in DOMAIN heap.objects[value[Ref]]
 
+\\* ArrayBuffer.isView, which a typed array or a DataView passes, and not a proxy of one.
+IsView(heap, value) == IsHeap(value) /\\ "viewed" \\in DOMAIN heap.objects[value[Ref]]
+
 \\* The traps that a proxy's handler may hold.
 LOCAL ProxyTraps ==
   {"getPrototypeOf", "setPrototypeOf", "isExtensible", "preventExtensions", "getOwnPropertyDescriptor",

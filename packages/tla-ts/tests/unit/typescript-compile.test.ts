@@ -27576,6 +27576,46 @@ describe("buffers", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  it("tells which values ArrayBuffer.isView takes as views", async () => {
+    const getSource = (expected: string) => `
+      const buffer = new ArrayBuffer(4);
+      const view = new DataView(buffer, 0, 0);
+      const bytes = new Uint8Array(2);
+      const proxied = new Proxy(bytes, {});
+      const result = [
+        ArrayBuffer.isView(view),
+        ArrayBuffer.isView(bytes),
+        ArrayBuffer.isView(new Float64Array(1)),
+        ArrayBuffer.isView(buffer),
+        ArrayBuffer.isView(bytes.buffer),
+        ArrayBuffer.isView(proxied),
+        ArrayBuffer.isView({}),
+        ArrayBuffer.isView([]),
+        ArrayBuffer.isView(DataView),
+        ArrayBuffer.isView(null),
+        ArrayBuffer.isView(""),
+      ].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "true,true,true,false,false,false,false,false,false,false,false";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("true,true,true,true,false,false,false,false,false,false,false")))
+        .failure?.message,
+    ).toContain(expected);
+  });
+
+  it("stops at ArrayBuffer.isView where a script replaced it", async () => {
+    const result = await checkModel(`
+      const holder = { tag: 1 };
+      (ArrayBuffer as unknown as { isView: () => boolean }).isView = () => true;
+      const isView = ArrayBuffer.isView(holder);
+    `);
+    expect(result.failure?.message).toContain(
+      "tla-ts can't call ArrayBuffer.isView where a script replaced it",
+    );
+  });
+
   it("gets and sets a DataView's numbers, in either byte order", async () => {
     const result = await checkModel(`
       const buffer = new ArrayBuffer(12, { maxByteLength: 16 });
