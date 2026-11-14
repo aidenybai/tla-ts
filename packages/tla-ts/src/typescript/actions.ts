@@ -10685,7 +10685,15 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     isHeapCall(node, path, context) ||
     getLoopCall(node, path, context) !== undefined ||
     isStateCall(node, path, context) ||
-    getDispatched(node, path.scope.functions, context) !== undefined);
+    getDispatched(node, path.scope.functions, context) !== undefined ||
+    // A call inside try of a function that may throw runs its body, so that catch takes what it
+    // throws.
+    (path.scope.isCatching && isThrowingCall(node, context)));
+
+const isThrowingCall = (node: ts.CallExpression, context: Context) => {
+  const callee = getCallee(node.expression, context);
+  return callee !== undefined && mayThrow(callee, context);
+};
 
 // The expression that parentheses and casts wrap.
 export const getCast = (node: ts.Expression): ts.Expression =>

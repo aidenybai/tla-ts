@@ -5687,6 +5687,31 @@ describe("calls", () => {
     ).toThrow("Inside try, call a function that throws as its own statement");
   });
 
+  it("catches what a function throws where a declaration or an assignment inside try calls it", async () => {
+    const getSource = (expected: string) => `
+      function fail(): number {
+        throw "boom";
+      }
+      let seen = "";
+      let assigned = 0;
+      try {
+        var declared = fail();
+        seen += "declared";
+      } catch (error) {
+        seen += String(error);
+      }
+      try {
+        assigned = fail();
+        seen += "assigned";
+      } catch (error) {
+        seen += String(error);
+      }
+      if (seen !== "${expected}") throw new Error(seen);
+    `;
+    expect((await checkModel(getSource("boomboom"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("declared"))).failure?.message).toContain("boomboom");
+  });
+
   it("ends a case with a block that returns", async () => {
     const getSource = (expected: string) => `
       const describe = (value: number): string => {
