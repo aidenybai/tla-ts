@@ -5356,11 +5356,28 @@ ArrayChange(heap, ref, method, items) ==
 LOCAL LongIndex(value, length) ==
   CASE value \\in {Undefined, NegativeZero, NegativeInfinity} -> 0
     [] value = Infinity -> length
+    \\* An integer that a double holds is beyond 2^53, so past every length.
+    [] IsDouble(value) /\\ value[Double][2] >= 0 -> IF IsNegative(value) THEN 0 ELSE length
     [] IsWide(value) \\/ IsInteger(value) ->
          CASE ~IsNegative(value) -> IF LessThan(length, value) THEN length ELSE value
            [] LessThan(Add(length, value), 0) -> 0
            [] OTHER -> Add(length, value)
-    [] OTHER -> Assert(FALSE, "tla-ts can't copy within an array-like object from this index")
+    [] OTHER -> Assert(FALSE, "tla-ts can't use this index of an array-like object")
+
+\\* slice of an array-like object whose length is past 2^31, which gives the elements from start to
+\\* end where the object or its prototypes hold each.
+LongSlice(heap, ref, start, end) ==
+  LET length == LongLength(Get(heap, ref, "length"))
+      first == LongIndex(start, length)
+      final == IF end = Undefined THEN length ELSE LongIndex(end, length)
+      count == IF LessThan(first, final) THEN Subtract(final, first) ELSE 0
+      keys == [position \\in 1..count |-> StringOf(Add(first, position - 1))]
+  IN CASE IsProxy(heap, ref) \\/ IsTypedArray(heap, ref) \\/ heap.objects[ref[Ref]].isOpaque ->
+            Assert(FALSE, "tla-ts can't slice this object")
+       [] IsBig(count) -> Assert(FALSE, "tla-ts can't slice this many elements")
+       [] \\E position \\in 1..count : ~Has(heap, ref, keys[position]) ->
+            Assert(FALSE, "tla-ts can't slice an array-like object with holes")
+       [] OTHER -> [position \\in 1..count |-> Get(heap, ref, keys[position])]
 
 \\* copyWithin on an array-like object whose length is past 2^31, which moves only the keys that the
 \\* object or its prototypes hold, and those that copy over them.

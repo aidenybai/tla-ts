@@ -2943,29 +2943,37 @@ export const translateArrayLikeCall = (
           (sequence) => operate(owner, sequence),
         );
   // A search of an object whose length is past 2^31 reads only the keys that it holds.
-  const isSearch =
-    (method === "indexOf" || method === "lastIndexOf") &&
+  const isLong =
+    (method === "indexOf" || method === "lastIndexOf" || method === "slice") &&
     methodArguments.length <= 2 &&
     methodArguments.every(isInertValue);
+  const getPassed = () =>
+    [0, 1].map((position) => {
+      const argument = methodArguments[position];
+      return argument === undefined
+        ? getUndefined(context)
+        : translateExpression(argument, scope, context);
+    });
   return share(translateExpression(object, scope, context), "object", context, (owner) =>
-    isSearch
+    isLong
       ? ifExpression(
           useJavaScript("HasLongLength", [getHeap(scope, node, context), owner], context),
-          useJavaScript(
-            "LongSearch",
-            [
-              getHeap(scope, node, context),
-              owner,
-              ...[0, 1].map((position) => {
-                const argument = methodArguments[position];
-                return argument === undefined
-                  ? getUndefined(context)
-                  : translateExpression(argument, scope, context);
-              }),
-              boolean(method === "lastIndexOf"),
-            ],
-            context,
-          ),
+          method === "slice"
+            ? useJavaScript(
+                "LongSlice",
+                [getHeap(scope, node, context), owner, ...getPassed()],
+                context,
+              )
+            : useJavaScript(
+                "LongSearch",
+                [
+                  getHeap(scope, node, context),
+                  owner,
+                  ...getPassed(),
+                  boolean(method === "lastIndexOf"),
+                ],
+                context,
+              ),
           translateElements(owner),
         )
       : translateElements(owner),

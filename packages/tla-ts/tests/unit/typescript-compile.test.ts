@@ -26059,4 +26059,30 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("slices an array-like object whose length is past 2^31", () => {
+    const getSource = (expected: string) => `
+      const like: { [key: string]: unknown } = {
+        "9007199254740988": "a",
+        "9007199254740989": "b",
+        "9007199254740990": "c",
+        length: 2 ** 53 + 2,
+      };
+      const far = 2 ** 60;
+      const read = [
+        Array.prototype.slice.call(like, 9007199254740989).join(""),
+        Array.prototype.slice.call(like, -3, -1).join(""),
+        Array.prototype.slice.call(like, 9007199254740988, far).length,
+      ].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("bc,ab,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects the length as unclamped", async () => {
+      expect((await checkModel(getSource("bc,ab,4"))).failure?.message).toContain("bc,ab,3");
+    });
+  });
 });
