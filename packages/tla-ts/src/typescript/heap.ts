@@ -4383,7 +4383,10 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         const initializer = declaration.initializer;
         nodes.push(declaration);
         return (
-          ((declaration.parent.flags & ts.NodeFlags.Const) !== 0 || holeHolders.has(symbol)) &&
+          ((declaration.parent.flags & ts.NodeFlags.Const) !== 0 ||
+            holeHolders.has(symbol) ||
+            (ts.isIdentifier(declaration.name) &&
+              isOrderedCollection(declaration.name, context))) &&
           ts.isIdentifier(declaration.name) &&
           initializer !== undefined &&
           addSource(initializer)

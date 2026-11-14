@@ -29243,6 +29243,34 @@ describe("buffers", () => {
     ).toContain(expected);
   });
 
+  it("iterates a set or a map that a let holds and a script gives another", async () => {
+    const getSource = (expected: string) => `
+      let combined = new Set<number>([]).union(new Set([1, 2]));
+      const first = [...combined].join("-");
+      combined = new Set([3]).union(new Set<number>([]));
+      const second = [...combined].join("-");
+      let map = new Map<string, number>([["a", 1]]);
+      const keys = [...map.keys()].join("-");
+      map = new Map([["b", 2]]);
+      map.set("c", 3);
+      let entries = "";
+      for (const entry of map) entries += entry[0];
+      const read = () => [...combined].join("-");
+      let loop = "";
+      for (let index = 0; index < 2; index++) {
+        combined = combined.union(new Set([index + 10]));
+        loop += read() + ";";
+      }
+      const result = [first, second, keys, entries, loop, combined instanceof Set].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "1-2,3,a,bc,3-10;3-10-11;,true";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("1-2,3,a,bc,3-10;3-11-10;,true"))).failure?.message,
+    ).toContain(expected);
+  });
+
   it("stops at iterating a set whose iterator a script replaced", async () => {
     const result = await checkModel(`
       const set = new Set<number>([1, 2]);
