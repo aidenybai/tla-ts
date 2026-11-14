@@ -1361,16 +1361,28 @@ const isNullSafe = (node: ts.ClassLikeDeclaration, context: Context) => {
   );
 };
 
+// The built-ins whose new makes their object with new.target's prototype, as tla-ts follows it.
+const isNewTargetBase = (name: string): name is BufferName | "Date" =>
+  isBufferName(name) || name === "Date";
+
 // The built-in constructor that makes the instances of a class without a constructor, which
 // extends it or extends a class that does. Its default constructor passes new's arguments on. A
 // class that extends a native error is one where it has members or the script reads its
 // prototype, as its errors are records otherwise, and its constructors may run, as super(...)
-// gives the error its message and cause. A class that extends a buffer or a typed array itself,
-// whose new makes the built-in's object with the class's prototype, adds only methods.
+// gives the error its message and cause. A class that extends a buffer, a typed array, or Date
+// itself, whose new makes the built-in's object with the class's prototype, adds only methods.
 export const getBuiltInBase = (
   node: ts.ClassLikeDeclaration,
   context: Context,
-): "Object" | "Boolean" | "Number" | "String" | `${string}Error` | BufferName | undefined => {
+):
+  | "Object"
+  | "Boolean"
+  | "Number"
+  | "String"
+  | `${string}Error`
+  | BufferName
+  | "Date"
+  | undefined => {
   const hasConstructor = node.members.some(ts.isConstructorDeclaration);
   const heritage = node.heritageClauses?.find(
     (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
@@ -1379,7 +1391,7 @@ export const getBuiltInBase = (
   if (name === "Object" || name === "Boolean" || name === "Number" || name === "String") {
     return hasConstructor ? undefined : name;
   }
-  if (name !== undefined && isBufferName(name)) {
+  if (name !== undefined && isNewTargetBase(name)) {
     return hasConstructor ||
       node.members.some(
         (member) =>
@@ -1402,7 +1414,7 @@ export const getBuiltInBase = (
   const base = getBaseClass(node, context);
   const inherited = base === undefined ? undefined : getBuiltInBase(base, context);
   return inherited !== undefined &&
-    !isBufferName(inherited) &&
+    !isNewTargetBase(inherited) &&
     (!hasConstructor || isNativeErrorName(inherited))
     ? inherited
     : undefined;
@@ -2636,8 +2648,8 @@ export interface Construction {
   newTarget: ts.Expression;
 }
 
-// The built-in that a class extends where the class is a buffer's or a typed array's, which makes
-// the class's instance as super(...args) would, with the same new.target.
+// The built-in that a class extends where the class is a buffer's, a typed array's, or Date's,
+// which makes the class's instance as super(...args) would, with the same new.target.
 const getConstructedBase = (callee: ts.Expression, context: Context) => {
   const declaration = getSymbol(skipCasts(callee), context.checker)?.valueDeclaration;
   const created =
@@ -2649,7 +2661,7 @@ const getConstructedBase = (callee: ts.Expression, context: Context) => {
   return created !== undefined &&
     ts.isClassLike(created) &&
     extended !== undefined &&
-    isBufferName(getBuiltIn(extended, context) ?? "") &&
+    isNewTargetBase(getBuiltIn(extended, context) ?? "") &&
     getBuiltInBase(created, context) !== undefined
     ? extended
     : undefined;

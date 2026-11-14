@@ -19575,6 +19575,76 @@ describe("errors", () => {
     ).toThrow("Unsupported call: Bytes.bind");
   });
 
+  it("makes a Date of a class that extends Date", async () => {
+    const getSource = (expected: string) => `
+      class Day extends Date {
+        static kind = "day";
+        label() {
+          return "day";
+        }
+      }
+      const Later = class extends Date {};
+      const day = new Day(0);
+      const now = new Day();
+      const later = new Later(2020, 1, 2);
+      const result = [
+        day instanceof Day,
+        day instanceof Date,
+        Object.getPrototypeOf(day) === Day.prototype,
+        day.label(),
+        now instanceof Day,
+        later instanceof Later,
+        Day.kind,
+        Object.getPrototypeOf(Day) === Date,
+        Object.prototype.toString.call(day),
+      ].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "true,true,true,day,true,true,day,true,[object Date]";
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("true,true,false,day,true,true,day,true,[object Date]"))).failure
+        ?.message,
+    ).toContain(expected);
+  });
+
+  it("stops where a script reads the time of a Date's subclass", async () => {
+    expect(() =>
+      compile(
+        `class Day extends Date {}\nconst day = new Day(5);\nif (day.getTime() !== 5) throw new Error("x");`,
+      ),
+    ).toThrow("Unsupported");
+    const result = await checkModel(`
+      class Day extends Date {}
+      const day = new Day(5);
+      if (+day !== 5) throw new Error("x");
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't call this Symbol.toPrimitive method");
+  });
+
+  it("stops where a script constructs a Date's subclass other than with new", () => {
+    expect(() =>
+      compile(
+        `class Day extends Date {}\nconst made: Date = Reflect.construct(Day, [5]);\nif (!(made instanceof Day)) throw new Error("x");`,
+      ),
+    ).toThrow("Unsupported call: Reflect.construct");
+    expect(() =>
+      compile(
+        `class Day extends Date {}\nconst made: Date = Reflect.construct(Date, [5], Day);\nif (!(made instanceof Day)) throw new Error("x");`,
+      ),
+    ).toThrow("Unsupported call: Reflect.construct");
+    expect(() =>
+      compile(
+        `class Day extends Date {}\nclass Later extends Day {\n  constructor() {\n    super(5);\n  }\n}\nconst made = new Later();\nif (!(made instanceof Later)) throw new Error("x");`,
+      ),
+    ).toThrow("Unsupported constructor: new Later");
+    expect(() =>
+      compile(
+        `class Day extends Date {}\nconst Bound = Day.bind(null, 5);\nconst made = new Bound();\nif (!(made instanceof Day)) throw new Error("x");`,
+      ),
+    ).toThrow("Unsupported call: Day.bind");
+  });
+
   it("extends an empty class that the extends clause makes", async () => {
     const result = await check(
       compile(

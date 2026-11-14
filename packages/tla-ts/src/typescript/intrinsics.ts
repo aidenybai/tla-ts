@@ -629,6 +629,7 @@ export const translateBuiltInValue = (
     | "Number.prototype"
     | "String.prototype"
     | `String.prototype.${string}`
+    | "Date"
     | "Date.prototype"
     | "DisposableStack.prototype"
     | "AsyncDisposableStack.prototype"

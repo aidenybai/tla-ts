@@ -1762,16 +1762,18 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
             ));
     // The constructor, which the prototype's constructor property holds.
     context.builtIns.add("Date");
+    // A class that extends Date gives its instance the class's prototype.
+    const prototype =
+      getBuiltIn(node.expression, context) === "Date"
+        ? translateBuiltInValue("Date.prototype", node, context)
+        : useJavaScript(
+            "Get",
+            [heap, translateExpression(node.expression, scope, context), string("prototype")],
+            context,
+          );
     return useJavaScript(
       "Allocate",
-      [
-        heap,
-        useJavaScript(
-          "DateObject",
-          [translateBuiltInValue("Date.prototype", node, context), time],
-          context,
-        ),
-      ],
+      [heap, useJavaScript("DateObject", [prototype, time], context)],
       context,
     );
   }
@@ -2192,10 +2194,12 @@ export const isDateType = (node: ts.Expression, context: Context) =>
 // arguments convert to numbers without running code. tla-ts doesn't read the clock or parse
 // dates.
 export const isNewDate = (node: ts.Node, context: Context): node is ts.NewExpression => {
+  const construction = getConstruction(node, context);
   if (
     context.heap === undefined ||
     !ts.isNewExpression(node) ||
-    getBuiltIn(node.expression, context) !== "Date"
+    construction === undefined ||
+    getBuiltIn(construction.callee, context) !== "Date"
   ) {
     return false;
   }

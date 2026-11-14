@@ -333,7 +333,7 @@ export const compile = (
           (type) =>
             type.expression.kind === ts.SyntaxKind.NullKeyword ||
             (ts.isIdentifier(type.expression) &&
-              ["Object", "Boolean", "Number", "String"].includes(type.expression.text)),
+              ["Object", "Boolean", "Number", "String", "Date"].includes(type.expression.text)),
         ),
       )) ||
     (ts.isPropertyAccessExpression(node) &&
