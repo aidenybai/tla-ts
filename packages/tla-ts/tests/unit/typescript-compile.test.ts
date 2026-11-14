@@ -4345,6 +4345,53 @@ describe("values", () => {
       ).toThrow("tla-ts can't read a var that names a function before its declaration runs");
     });
 
+    it("stops at a call of a var that names a function from a function that may run before its declaration", () => {
+      expect(() =>
+        compile(`
+          const run = () => {
+            const call = () => f();
+            try {
+              call();
+            } catch {}
+            var f = () => 1;
+            return call();
+          };
+          run();
+        `),
+      ).toThrow("tla-ts can't read a var that names a function before its declaration runs");
+      expect(() =>
+        compile(`
+          const run = () => {
+            try {
+              call();
+            } catch {}
+            var f = () => 1;
+            function call() {
+              return f();
+            }
+            return call();
+          };
+          run();
+        `),
+      ).toThrow("tla-ts can't read a var that names a function before its declaration runs");
+    });
+
+    it("calls a var that names a function from functions that run after its declaration", async () => {
+      const getSource = (expected: string) => `
+        const run = () => {
+          var f = () => 1;
+          const call = () => f();
+          function later() {
+            return f() + 1;
+          }
+          return [call(), later()].join();
+        };
+        if (run() !== "${expected}") throw new Error(run());
+      `;
+      expect((await checkModel(getSource("1,2"))).failure).toBeUndefined();
+      await expect(checkModel(getSource("1,1"))).rejects.toThrow("1,2");
+    });
+
     it("stops at a function that a block declares outside strict mode where code outside names it", () => {
       expect(() =>
         compile(`

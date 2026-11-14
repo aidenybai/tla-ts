@@ -14519,19 +14519,41 @@ const getHoistedVars = (statements: readonly ts.Statement[], context: Context) =
     ),
   );
   // Such a var holds undefined until its declaration runs, which a read before it can't give.
-  const getEarlyRead = (node: ts.Node): ts.Identifier | undefined => {
-    if (ts.isFunctionLike(node)) return undefined;
+  // A function written before the declaration, or a function declaration that a call before it
+  // names, may run before it too.
+  const isRunEarly = (owner: ts.Node, declaration: ts.Declaration) =>
+    owner.getStart() < declaration.getStart() ||
+    (ts.isFunctionDeclaration(owner) &&
+      owner.name !== undefined &&
+      statements.some(
+        (statement) =>
+          findNodes(
+            statement,
+            (inner): inner is ts.Identifier =>
+              ts.isIdentifier(inner) &&
+              inner.getStart() < declaration.getStart() &&
+              owner.name !== undefined &&
+              getSymbol(inner, context.checker) === getSymbol(owner.name, context.checker),
+          ).length > 0,
+      ));
+  const getEarlyRead = (node: ts.Node, outer?: ts.Node): ts.Identifier | undefined => {
+    const owner = outer ?? (ts.isFunctionLike(node) ? node : undefined);
     const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
     const declaration = symbol?.valueDeclaration;
     return ts.isIdentifier(node) &&
       symbol !== undefined &&
       declaration !== undefined &&
       inlined.includes(symbol) &&
-      node.getStart() < declaration.getStart()
+      (owner === undefined
+        ? node.getStart() < declaration.getStart()
+        : isRunEarly(owner, declaration))
       ? node
-      : ts.forEachChild(node, getEarlyRead);
+      : ts.forEachChild(node, (child) => getEarlyRead(child, owner));
   };
-  const early = inlined.length === 0 ? undefined : statements.map(getEarlyRead).find(Boolean);
+  const early =
+    inlined.length === 0
+      ? undefined
+      : statements.map((statement) => getEarlyRead(statement)).find(Boolean);
   if (early !== undefined) {
     throw new TlaTypeScriptError(
       "tla-ts can't read a var that names a function before its declaration runs",
