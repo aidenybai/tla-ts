@@ -1394,12 +1394,13 @@ const isFromAsync = (node: ts.CallExpression, context: Context) =>
   node.expression.name.text === "fromAsync" &&
   getBuiltIn(node.expression.expression, context) === "Array";
 
-// Promise.resolve(value), Promise.reject(value), or a combinator such as Promise.all(values).
+// Promise.resolve(value), Promise.reject(value), Promise.try(callback), or a combinator such as
+// Promise.all(values).
 const getPromiseFunction = (node: ts.CallExpression, context: Context) => {
   const callee = node.expression;
   return ts.isPropertyAccessExpression(callee) &&
     getBuiltIn(callee.expression, context) === "Promise" &&
-    ["resolve", "reject", ...COMBINATORS].includes(callee.name.text)
+    ["resolve", "reject", "try", ...COMBINATORS].includes(callee.name.text)
     ? callee.name.text
     : undefined;
 };
@@ -2224,6 +2225,44 @@ export const translatePromiseCall = (
   const promiseFunction = getPromiseFunction(node, context);
   if (promiseFunction !== undefined && COMBINATORS.includes(promiseFunction)) {
     return translatePromiseCombinator(node, promiseFunction, path, context, frame, continueWith);
+  }
+  // Promise.try makes a promise, then calls the callback, and settles the promise with what it
+  // gives or throws.
+  if (promiseFunction === "try") {
+    const callee =
+      argument === undefined
+        ? undefined
+        : (getCallback(getCast(argument), path, context) ??
+          getAsyncCallee(getCast(argument), path, context));
+    if (callee === undefined || node.arguments.length > 1) {
+      throw new TlaTypeScriptError("Pass Promise.try only a function that tla-ts can follow", node);
+    }
+    const runCallback = getCallbackRunner(
+      callee,
+      ts.isArrowFunction(callee) ? path.scope.receiver : undefined,
+      path,
+      context,
+      frame,
+    );
+    return guardBuiltIns(
+      node,
+      "Promise",
+      ["try"],
+      path,
+      context,
+      makePromise(path, node, context, (made, name) => {
+        const ref = getPromise(made, node, name).ref;
+        return runCallback(
+          made,
+          [],
+          (after, result) =>
+            resolve(after, node, name, result, undefined, context, (resolved) =>
+              continueWith(resolved, ref),
+            ),
+          (after, thrown) => continueWith(settle(after, node, name, thrown, true, context), ref),
+        );
+      }),
+    );
   }
   if (promiseFunction !== undefined) {
     const value =

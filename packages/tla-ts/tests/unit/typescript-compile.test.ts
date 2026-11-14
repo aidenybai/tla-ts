@@ -16819,6 +16819,34 @@ describe("errors", () => {
     });
   });
 
+  it("settles the promise of Promise.try with what its callback gives or throws", async () => {
+    const getSource = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      let log = "";
+      const thrown = Promise.try(() => {
+        log += "run;";
+        throw new RangeError("no");
+      });
+      log += "after;";
+      const given = Promise.try(function () {
+        return 7;
+      });
+      thrown.catch((error) => {
+        log += (error instanceof RangeError ? "range" : "other") + ";";
+      });
+      given.then((value) => {
+        log += value + ";";
+      });
+      setTimeout(() => {
+        if (log !== "${expected}") throw new Error(log);
+      });
+    `;
+    expect((await checkModel(getSource("run;after;range;7;"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("run;after;7;range;"))).failure?.message).toContain(
+      "A timer threw an exception",
+    );
+  });
+
   describe("delegate an async generator's yield* to an async generator", () => {
     const getSource = (expected: string) => `
       declare function setTimeout(callback: () => void): void;
