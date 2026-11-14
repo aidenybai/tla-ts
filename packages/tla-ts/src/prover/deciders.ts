@@ -21,14 +21,7 @@ const DECIDERS: Record<
 > = {
   smt: decideZ3,
   z3: decideZ3,
-  zenon: (text, options) => {
-    const decision = decideZenon(text, options);
-    return {
-      verdict: decision.verdict,
-      ...("proof" in decision && { output: decision.proof }),
-      ...("error" in decision && { errorOutput: decision.error }),
-    };
-  },
+  zenon: decideZenon,
   isabelle: (text, options) => ({ verdict: decideIsabelle(text, options) }),
   ls4: (text, options) => ({ verdict: decidePtl(text, options) }),
 };

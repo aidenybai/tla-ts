@@ -6,12 +6,18 @@ import { TlaIsabelleError } from "../../../errors";
 import { asmRl, compIncr, genAll, multiResolves, zeroVarIndexes } from "../pure/drule";
 import { chopSeq } from "../pure/seq";
 import { stripImpConcl } from "../pure/logic";
-import { fastypeOf, type Term, type Var } from "../pure/term";
+import { fastypeOf, type Var } from "../pure/term";
 import { instantiate, instantiateTypes, type Thm } from "../pure/thm";
 import { emptyTyEnv, matchTypes, substType, type TyEnv } from "../pure/type";
-import { getFact, readTerms, type IsarContext } from "./context";
+import { getFact, readTerms, varsOf, type IsarContext } from "./context";
 import { rewriteRule } from "./method";
-import { syntaxError, type AttributeSource, type FactReference, type OuterToken } from "./theory";
+import {
+  innerText,
+  syntaxError,
+  type AttributeSource,
+  type FactReference,
+  type OuterToken,
+} from "./theory";
 
 const isInnerToken = (token: OuterToken | undefined) =>
   token !== undefined &&
@@ -19,11 +25,6 @@ const isInnerToken = (token: OuterToken | undefined) =>
     token.kind === "cartouche" ||
     token.kind === "word" ||
     token.kind === "var");
-
-const innerText = (token: OuterToken) =>
-  token.kind === "cartouche"
-    ? token.text.slice("\\<open>".length, -"\\<close>".length)
-    : token.text;
 
 export const parseFactReferences = (tokens: readonly OuterToken[]): FactReference[] => {
   const references: FactReference[] = [];
@@ -64,25 +65,6 @@ export const parseFactReferences = (tokens: readonly OuterToken[]): FactReferenc
     references.push({ name: token.text, attributes });
   }
   return references;
-};
-
-// Vars.add_vars: the variables in the order they occur.
-const varsOf = (terms: readonly Term[]): Var[] => {
-  const found: Var[] = [];
-  const visit = (term: Term) => {
-    if (
-      term.kind === "Var" &&
-      !found.some((other) => other.name === term.name && other.index === term.index)
-    )
-      found.push(term);
-    if (term.kind === "Abs") visit(term.body);
-    if (term.kind === "App") {
-      visit(term.fun);
-      visit(term.arg);
-    }
-  };
-  for (const term of terms) visit(term);
-  return found;
 };
 
 const varsOfThm = (thm: Thm) => varsOf([...thm.tpairs.flat(), thm.prop]);
@@ -154,14 +136,17 @@ const parseWhere = (args: readonly OuterToken[]) => {
   const insts: { name: string; index: number; text: string }[] = [];
   let position = 0;
   while (position < args.length) {
-    if (args[position].kind === "symbol" && args[position].text === "?") position += 1;
     const variable = args[position];
-    if (variable?.kind !== "word" || variable.text.startsWith("'")) throw syntaxError(variable);
+    if ((variable.kind !== "word" && variable.kind !== "var") || variable.text.startsWith("'"))
+      throw syntaxError(variable);
     const digits = /\d*$/.exec(variable.text)?.[0] ?? "";
     if (args[position + 1]?.text !== "=" || !isInnerToken(args[position + 2]))
       throw syntaxError(args[position + 1]);
     insts.push({
-      name: variable.text.slice(0, variable.text.length - digits.length),
+      name: variable.text.slice(
+        variable.kind === "var" ? 1 : 0,
+        variable.text.length - digits.length,
+      ),
       index: Number(digits || 0),
       text: innerText(args[position + 2]),
     });
@@ -202,12 +187,17 @@ export const applyAttribute = (context: IsarContext, attribute: AttributeSource,
   }
 };
 
+// Thm.proof_attributes over a fact's theorems.
+export const applyAttributes = (
+  context: IsarContext,
+  attributes: readonly AttributeSource[],
+  thms: readonly Thm[],
+): Thm[] =>
+  thms.map((thm) =>
+    attributes.reduce((result, attribute) => applyAttribute(context, attribute, result), thm),
+  );
+
 export const getThms = (context: IsarContext, references: readonly FactReference[]): Thm[] =>
   references.flatMap((reference) =>
-    getFact(context, reference.name).map((thm) =>
-      reference.attributes.reduce(
-        (result, attribute) => applyAttribute(context, attribute, result),
-        thm,
-      ),
-    ),
+    applyAttributes(context, reference.attributes, getFact(context, reference.name)),
   );

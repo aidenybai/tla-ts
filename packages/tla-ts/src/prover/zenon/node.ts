@@ -158,18 +158,19 @@ const canInstantiate = (meta: Expr, expression: Expr): boolean => {
 };
 
 // A list cell and a node record take 3 and 6 words, and each block has a header word.
-const getNodeWords = (node: Node) =>
-  node.branches.reduce(
-    (words, branch) => words + 3 * branch.length,
+const getNodeWords = (node: Node) => {
+  let words =
     3 +
-      6 +
-      3 * node.conclusions.length +
-      1 +
-      node.rule.args.length +
-      (typeof node.priority === "object" ? 2 : 0) +
-      1 +
-      node.branches.length,
-  );
+    6 +
+    3 * node.conclusions.length +
+    1 +
+    node.rule.args.length +
+    (typeof node.priority === "object" ? 2 : 0) +
+    1 +
+    node.branches.length;
+  for (const branch of node.branches) words += 3 * branch.length;
+  return words;
+};
 
 export const insertNode = (previous: Queue, node: Node): Queue => {
   const queue = { ...previous, nodeWords: previous.nodeWords + getNodeWords(node) };

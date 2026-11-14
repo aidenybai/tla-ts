@@ -19,7 +19,7 @@ import {
 import { compareNames, flatten, getDependencies, STANDARD_MODULES, type Mule } from "./module";
 import { expandInstance, normalize, type Pipeline } from "./normalize";
 import { formatObligation, type PrinterOptions } from "./printer";
-import type { Counter, ObligationKind } from "./proof";
+import { getUnique, type Counter, type ObligationKind } from "./proof";
 import type { OldMethod } from "./pragma";
 import { createSimplifier } from "./simplify";
 import { createModuleConverter } from "./source";
@@ -297,7 +297,7 @@ export const getObligations = (
     });
   const pipeline: Pipeline = {
     anonymizer: createAnonymizer(
-      counter,
+      () => `_a${getUnique(counter)}`,
       (scope, definition) => expandInstance(pipeline, scope, definition),
       onWarning,
     ),

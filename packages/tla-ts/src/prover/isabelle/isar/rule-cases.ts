@@ -43,7 +43,6 @@ export type Cases = readonly { readonly name: string; readonly case: RuleCase | 
 
 export type CaseInfo = readonly {
   readonly name: string;
-  readonly hyps: readonly string[];
   readonly concls: readonly string[];
 }[];
 
@@ -84,20 +83,13 @@ export const getCases = (rule: CasesRule): [CaseInfo, number] => {
         }))
       : explodeArgs(names).map((name) => ({ name, concls: getCaseConcls(rule.tags, name) }));
   const hypNames = lookupTag(rule.tags, "cases_hyp_names");
-  const hyps =
-    hypNames === undefined
-      ? cases.map(() => [])
-      : explodeArgs(hypNames).map((names) => {
-          if (!names.endsWith(","))
-            throw new TlaIsabelleError("ERROR", "Malformed cases_hyp_names tag of theorem");
-          return names === "," ? [] : names.slice(0, -1).split(",");
-        });
-  if (hyps.length !== cases.length)
+  const hypGroups = hypNames === undefined ? undefined : explodeArgs(hypNames);
+  if (
+    hypGroups !== undefined &&
+    (hypGroups.length !== cases.length || hypGroups.some((group) => !group.endsWith(",")))
+  )
     throw new TlaIsabelleError("ERROR", "Malformed cases_hyp_names tag of theorem");
-  return [
-    cases.map((entry, index) => ({ name: entry.name, hyps: hyps[index], concls: entry.concls })),
-    consumes,
-  ];
+  return [cases, consumes];
 };
 
 const destConjunctions = (term: Term): Term[] =>

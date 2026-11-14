@@ -32,7 +32,7 @@ import {
 import { addUnsafeDest, withClaset } from "../provers/classical";
 import { getLogicFact, getProofContext } from "../tla/context";
 import type { ConstInfo, TlaLogic } from "../tla/logic";
-import { applyAttribute, getThms } from "./attrib";
+import { applyAttribute, applyAttributes, getThms } from "./attrib";
 import {
   addAssumptions,
   addFixes,
@@ -134,7 +134,16 @@ const define = (
   context: IsarContext,
   command: Extract<Command, { kind: "definition" }>,
 ): Theory => {
-  const [prop] = readStatement(context, [command.part], "default").props.flat();
+  const [prop] = readStatement(
+    command.name === undefined || command.type === undefined
+      ? context
+      : {
+          ...context,
+          types: new Map([...context.types, [command.name, parseType(command.type)]]),
+        },
+    [command.part],
+    "default",
+  ).props.flat();
   const [head, args, rhs] = destDef(destEquals(metaRewriteConv(theory.tactics, prop).prop)[1]);
   if (command.name !== undefined && command.name !== head.name)
     throw error(`Head of definition ${head.name} differs from declaration ${command.name}`);
@@ -156,7 +165,7 @@ const define = (
   return putTheoryFacts(
     addConst(theory, head.name, head.type),
     command.part.name ?? `${head.name}_def`,
-    [zeroVarIndexes(generalized)],
+    applyAttributes(context, command.part.attributes, [zeroVarIndexes(generalized)]),
   );
 };
 
@@ -198,7 +207,7 @@ const declare = (
 const startTheorem = (
   outer: IsarContext,
   command: Extract<Command, { kind: "theorem" }>,
-  store: (names: readonly string[], thms: readonly Thm[]) => void,
+  store: (name: string, thms: readonly Thm[]) => void,
 ): State => {
   const fixed = command.elements.reduce((context, element) => {
     if (element.kind !== "fixes") return context;
@@ -223,7 +232,11 @@ const startTheorem = (
   );
   let offset = 0;
   const named = assumes.reduce((context, part, index) => {
-    const group = prems.slice(offset, offset + assumeProps[index].length);
+    const group = applyAttributes(
+      context,
+      part.attributes,
+      prems.slice(offset, offset + assumeProps[index].length),
+    );
     offset += assumeProps[index].length;
     return part.name === undefined ? context : putFacts(context, part.name, group);
   }, assumed);
@@ -237,13 +250,11 @@ const startTheorem = (
         normHhfProtect(outer.tactics.limits, exportThm(resultContext, outer, false, result)),
       ),
     );
-    store(
-      [
-        ...command.shows.flatMap((part) => (part.name === undefined ? [] : [part.name])),
-        ...(command.name === undefined ? [] : [command.name]),
-      ],
-      normalized,
-    );
+    const part = command.shows[0];
+    const noted = applyAttributes(outer, part.attributes, normalized);
+    if (part.name !== undefined) store(part.name, noted);
+    const named = applyAttributes(outer, command.attributes, noted);
+    if (command.name !== undefined) store(command.name, named);
   });
 };
 
@@ -329,8 +340,8 @@ export const runTheory = (logic: TlaLogic, text: TheoryText, limits: Limits) => 
         };
         break;
       case "theorem":
-        state = startTheorem(initContext(logic, theory), command, (names, thms) => {
-          theory = names.reduce((current, name) => putTheoryFacts(current, name, thms), theory);
+        state = startTheorem(initContext(logic, theory), command, (name, thms) => {
+          theory = putTheoryFacts(theory, name, thms);
         });
         break;
       default:

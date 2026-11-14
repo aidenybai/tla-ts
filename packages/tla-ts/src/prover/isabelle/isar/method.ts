@@ -482,11 +482,11 @@ const allAssmTac =
           allAssmTac(limits)(index + 1),
         )(state);
 
-// Method.finish: qed's closing step, which assumptions finish when the proof is immediate.
-export const finishTac = (limits: Limits, isImmediate: boolean): Tactic =>
-  isImmediate
-    ? (state) => mapsSeq(flexflexTac(limits), allAssmTac(limits)(1)(state))
-    : flexflexTac(limits);
+// Method.finish of an immediate proof, as qed and by are: assumptions finish the closing step.
+export const finishTac =
+  (limits: Limits): Tactic =>
+  (state) =>
+    mapsSeq(flexflexTac(limits), allAssmTac(limits)(1)(state));
 
 // Seq.REPEAT, depth first.
 const repeat =
@@ -649,7 +649,5 @@ export const evaluate = (isar: IsarContext, text: MethodText): Method => {
       const method = evaluate(isar, text.texts[0]);
       return (facts) => (state) => mapsSeq(repeat(method(facts)), method(facts)(state));
     }
-    default:
-      throw new TlaIsabelleError("ERROR", `Unsupported method combinator: ${text.kind}`);
   }
 };
