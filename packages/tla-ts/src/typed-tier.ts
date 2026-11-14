@@ -2611,8 +2611,47 @@ const compileBuiltin = (
   }
   // TLC's f @@ g takes the value of f where both are defined.
   if (operator === "@@" && args.length === 2) {
+    const [left, right] = args.map((arg) => compileValue(program, arg, frame));
+    const getRecords = () =>
+      [left, right]
+        .map((side) => resolveType(side.type))
+        .filter((record): record is RecType => record.kind === "Rec" && record.shapes.length === 1);
+    const records = getRecords();
+    // TLC merges two records into a function from their field names, which equals the record.
+    if (records.length === 2) {
+      const shapes = records.map((record) => record.shapes[0]);
+      const names = [...new Set(shapes.flat())].sort((leftName, rightName) =>
+        leftName < rightName ? -1 : 1,
+      );
+      const sources = names.map((name) => {
+        const side = shapes[0].includes(name) ? 0 : 1;
+        return { side, position: shapes[side].indexOf(name) };
+      });
+      const type = createRecord(
+        names,
+        sources.map((source, index) => getFieldType(records[source.side], names[index])),
+      );
+      const sides = [getName(program, "l"), getName(program, "r")];
+      return {
+        type,
+        emit: () => {
+          const current = getRecords();
+          if (
+            current.length !== 2 ||
+            current.some((record, index) => getShapeIndex(record, shapes[index]) !== 0)
+          ) {
+            return unsupported();
+          }
+          const record = resolveType(type);
+          const tag =
+            record.kind === "Rec" && record.shapes.length > 1 ? [getShapeIndex(record, names)] : [];
+          const items = sources.map((source) => `${sides[source.side]}[${source.position}]`);
+          return `((${sides.join(", ")}) => [${[...tag, ...items].join(", ")}])(${left.emit()}, ${right.emit()})`;
+        },
+      };
+    }
     const type = createMap();
-    const [left, right] = args.map((arg) => expectType(compileValue(program, arg, frame), type));
+    [left, right].forEach((side) => unify(side.type, type));
     return {
       type,
       emit: () =>
