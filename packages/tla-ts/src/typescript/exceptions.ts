@@ -16,7 +16,7 @@ import {
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
-import { getEngineErrors, getHeap, translateObjectValue } from "./heap";
+import { getHeap, translateObjectValue } from "./heap";
 import { getGeneratorPrototypeRef, translateBuiltInInstanceOf } from "./intrinsics";
 import { getTypeNames, useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
@@ -223,10 +223,13 @@ export const getConstructor = (
   return identifier(name);
 };
 
-const getNative = (name: string, node: ts.Node, context: Context) => {
-  const symbol = context.checker
+const findNative = (name: string, node: ts.Node, context: Context) =>
+  context.checker
     .getSymbolsInScope(node.getSourceFile(), ts.SymbolFlags.Value)
     .find((candidate) => candidate.name === name && isNative(candidate));
+
+const getNative = (name: string, node: ts.Node, context: Context) => {
+  const symbol = findNative(name, node, context);
   if (symbol === undefined) throw new TlaTypeScriptError(`Unknown built-in: ${name}`, node);
   return symbol;
 };
@@ -380,14 +383,14 @@ export const isNativeErrorValue = (node: ts.Expression, context: Context) => {
 
 const getSubclasses = (node: ts.Node, symbol: ts.Symbol, context: Context) => {
   const found = new Map<ts.Symbol, Expression>();
+  const add = (created: ts.Symbol | undefined) => {
+    const classes = getErrorClass(created, context.checker);
+    if (classes?.includes(symbol)) found.set(classes[0], getConstructor(classes[0], context));
+  };
+  // JavaScript itself may throw any native error, where the script makes none.
+  NATIVE_ERRORS.forEach((name) => add(findNative(name, node, context)));
   const visit = (child: ts.Node) => {
-    [
-      ts.isNewExpression(child) ? getSymbol(child.expression, context.checker) : undefined,
-      ...getEngineErrors(child, context).map((thrown) => getNative(thrown, child, context)),
-    ].forEach((created) => {
-      const classes = getErrorClass(created, context.checker);
-      if (classes?.includes(symbol)) found.set(classes[0], getConstructor(classes[0], context));
-    });
+    if (ts.isNewExpression(child)) add(getSymbol(child.expression, context.checker));
     ts.forEachChild(child, visit);
   };
   visit(node.getSourceFile());

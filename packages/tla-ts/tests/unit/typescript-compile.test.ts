@@ -1094,6 +1094,57 @@ describe("top-level statements", () => {
     expect((await checkModel(getSource("!=="))).failure?.message).toContain("same");
   });
 
+  describe("catch an error that a built-in throws as an instance of its native class", () => {
+    const expected = "true,true,false,true,true,true,false,true,true,true,false,true";
+    const getSource = (seen: string) => `
+      const seen: boolean[] = [];
+      try {
+        new Float64Array(new ArrayBuffer(32), 1);
+      } catch (thrown) {
+        seen.push(
+          thrown instanceof RangeError,
+          thrown instanceof Error,
+          thrown instanceof TypeError,
+          (thrown as Error).constructor === RangeError,
+        );
+      }
+      const missing: unknown = undefined;
+      try {
+        (missing as () => void)();
+      } catch (thrown) {
+        seen.push(
+          thrown instanceof TypeError,
+          thrown instanceof Error,
+          thrown instanceof RangeError,
+          (thrown as Error).constructor === TypeError,
+        );
+      }
+      try {
+        JSON.parse("{");
+      } catch (thrown) {
+        seen.push(
+          thrown instanceof SyntaxError,
+          thrown instanceof Error,
+          thrown instanceof RangeError,
+          (thrown as Error).constructor === SyntaxError,
+        );
+      }
+      if (seen.join() !== "${seen}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it.each([
+      "false,true,false,true,true,true,false,true,true,true,false,true",
+      "true,false,false,true,true,true,false,true,true,true,false,true",
+      "true,true,false,true,true,true,false,true,true,true,true,true",
+    ])("rejects the expectation %s", async (wrong) => {
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
+    });
+  });
+
   it("destructure a thrown array in a catch's pattern", async () => {
     const getSource = (expected: string) => `
       let found = "";

@@ -36,7 +36,6 @@ import {
   isStatementNew,
   isMethodCall,
   type MethodCall,
-  isUnresolved,
   getBinding,
   getBaseClass,
   getBuiltInBase,
@@ -61,7 +60,6 @@ import {
 import { TlaTypeScriptError } from "../errors";
 import {
   ARRAY_LIKE_METHODS,
-  getHeapRegExpCall,
   holdsArrayIteration,
   IN_PLACE_METHODS,
   isUnheldSplice,
@@ -70,14 +68,7 @@ import {
   translateNew,
   translateNewKeys,
 } from "./collections";
-import {
-  getJsonText,
-  getReplacers,
-  getRevival,
-  isParsedObject,
-  parseJson,
-  translateParsedObjects,
-} from "./json";
+import { isParsedObject, translateParsedObjects } from "./json";
 import { getCalledError, getConstructor, getErrorClass, isNativeErrorName } from "./exceptions";
 import {
   translateElements,
@@ -96,13 +87,11 @@ import {
   translateBuiltInObject,
   translateBuiltInValue,
   getMadeRegExp,
-  isInvalidRegExp,
   isUndefinedValue,
   translateRegExpValue,
 } from "./intrinsics";
 import {
   getTypeNames,
-  getURICall,
   translateNumberString,
   translateToNumber,
   useJavaScript,
@@ -112,8 +101,6 @@ import { getReached } from "./aliasing";
 import { createStateScope, type Scope } from "./scope";
 import { getIntlOutcome, getLocalesOutcome } from "./locales";
 import { BUILT_INS } from "./built-ins";
-import { getStackCall } from "./stacks";
-import { getIteratorDisposeCall } from "./disposal";
 import {
   apply,
   ifExpression,
@@ -147,7 +134,6 @@ import {
   isWeakHolderName,
   type WeakHolderName,
   isCollectionName,
-  isArrayConstruction,
   isHoleyNewArray,
   isNewArrayOfElements,
   getArraySource,
@@ -5396,94 +5382,6 @@ export const isUnreachableChange = (node: ts.Node, context: Context) =>
   ["freeze", "seal", "preventExtensions"].includes(node.expression.name.text) &&
   node.arguments.length === 1 &&
   isQuietNew(node.arguments[0], context);
-
-// The errors that JavaScript itself may throw where a node runs, which instanceof checks for: a
-// failed definition or Reflect.construct, a new of a value that isn't a constructor, or a reduce
-// of an empty array, the RangeError of an array's invalid length, and a Date method's TypeError
-// on another receiver and toISOString's RangeError of an invalid date, replaceAll's TypeError of a
-// regexp that isn't global, the SyntaxError of a pattern that isn't valid, and the URIError of a
-// malformed URI.
-export const getEngineErrors = (node: ts.Node, context: Context) => {
-  const isDefinition =
-    isObjectChange(node, context) && node.expression.name.text.startsWith("define");
-  const isFallible =
-    isObjectChange(node, context) && FALLIBLE_CHANGES.has(node.expression.name.text);
-  if (
-    isDefinition &&
-    context.heapCollections.size > 0 &&
-    getArrayLiteral(node.arguments[0], context) !== undefined
-  ) {
-    return ["TypeError", "RangeError"];
-  }
-  if (isUnresolved(node, context)) return ["ReferenceError"];
-  // A let or a const that a function reads, or that a read comes before, may be read before its
-  // declaration runs.
-  const declaration = ts.isIdentifier(node)
-    ? getSymbol(node, context.checker)?.valueDeclaration
-    : undefined;
-  if (
-    declaration !== undefined &&
-    ts.isVariableDeclaration(declaration) &&
-    (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.BlockScoped) !== 0 &&
-    (node.getStart() < declaration.end ||
-      ts.findAncestor(node, ts.isFunctionLike) !== ts.findAncestor(declaration, ts.isFunctionLike))
-  ) {
-    return ["ReferenceError"];
-  }
-  // A using declaration throws a TypeError for a value that isn't disposable, and a SuppressedError
-  // where disposing throws after an error.
-  if (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) {
-    return ["TypeError", "SuppressedError"];
-  }
-  if (getStackCall(node, context) !== undefined) {
-    return ["TypeError", "ReferenceError", "SuppressedError"];
-  }
-  if (getIteratorDisposeCall(node, context) !== undefined) return ["TypeError"];
-  if (
-    ts.isCallExpression(node) &&
-    ts.isPropertyAccessExpression(node.expression) &&
-    node.expression.name.text === "any" &&
-    getBuiltIn(node.expression.expression, context) === "Promise"
-  ) {
-    return ["AggregateError"];
-  }
-  const jsonText = getJsonText(node, context);
-  if (jsonText !== undefined) return "error" in parseJson(jsonText) ? ["SyntaxError"] : [];
-  if (getRevival(node, context) !== undefined) return ["SyntaxError"];
-  if (getReplacers(node, context) !== undefined) return ["TypeError"];
-  const dateCall = getDateCall(node, context);
-  if (dateCall !== undefined) {
-    return [
-      ...(dateCall.callee === undefined ? [] : ["TypeError"]),
-      ...(dateCall.method === "toISOString" ? ["RangeError"] : []),
-    ];
-  }
-  if (getHeapRegExpCall(node, context)?.method === "replaceAll") {
-    return ["TypeError"];
-  }
-  if (getViewCall(node, context) !== undefined) return ["TypeError", "RangeError"];
-  if (getURICall(node, context)?.isDecode === true) return ["URIError"];
-  const intlError = getIntlError(node, context);
-  if (intlError !== undefined) return [intlError];
-  if (getGetterCall(node, context) !== undefined) return ["TypeError"];
-  if (getIntlMethodCall(node, context) !== undefined) return ["TypeError"];
-  if (getThisSymbolCall(node, context) !== undefined) return ["TypeError"];
-  if (isInvalidRegExp(node, context)) return ["SyntaxError"];
-  if (isArrayConstruction(node, context)) return ["TypeError", "RangeError"];
-  const created = getNewClass(node, context);
-  if (created !== undefined && ts.isClassLike(created) && isNullBased(created)) {
-    return ["ReferenceError"];
-  }
-  return isFallible ||
-    getPrimitiveObjectCall(node, context)?.isCoercing === true ||
-    (isObjectChange(node, context) && isConstruct(node)) ||
-    isRevocable(node, context) ||
-    ts.isNewExpression(node) ||
-    created !== undefined ||
-    (isMethodCall(node) && node.expression.name.text.startsWith("reduce"))
-    ? ["TypeError"]
-    : [];
-};
 
 // Reflect.construct of a function with an empty body, without arguments, only checks that its
 // target and its newTarget are constructors, as harness/isConstructor.js uses it.
