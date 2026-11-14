@@ -6891,6 +6891,26 @@ describe("errors", () => {
     );
   });
 
+  it("destructures an array that the heap holds through a pattern of an iterable", async () => {
+    const getSource = (expected: string) => `
+      const isSame = (left: unknown, right: unknown) => Object.is(left, right);
+      const values = [1, 2, 3];
+      let seen = "";
+      function* take([first, ...rest]: Iterable<number>) {
+        seen = \`\${first}:\${rest.join()};\${isSame(rest, values)}\`;
+        yield rest.length;
+      }
+      const iterator = take(values);
+      iterator.next();
+      const text = \`\${seen};\${isSame(values, values)}\`;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect((await checkModel(getSource("1:2,3;false;true"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("1:2,3;true;true"))).failure?.message).toContain(
+      "1:2,3;false;true",
+    );
+  });
+
   describe("holds an array on the heap where a script compares it by identity", () => {
     const source = `
       const isSame = (left: unknown, right: unknown) => Object.is(left, right);
