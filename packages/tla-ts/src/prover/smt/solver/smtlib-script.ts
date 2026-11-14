@@ -456,14 +456,7 @@ export const runSmtlibScript = (
           !hasAssumptions &&
           settings.parameters.get("opt.incremental") !== "true",
       });
-      optimizer.model?.incRef();
-      state.check = {
-        status,
-        context: undefined,
-        isOptimizing: true,
-        model: optimizer.model ?? undefined,
-        core: undefined,
-      };
+      setCheck(status, { isOptimizing: true, model: optimizer.model ?? undefined });
       print(getVerdict(status));
       return true;
     } catch (error) {
@@ -474,13 +467,7 @@ export const runSmtlibScript = (
       }
       if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;
       optimizer.release();
-      state.check = {
-        status: L_UNDEF,
-        context: undefined,
-        isOptimizing: true,
-        model: undefined,
-        core: undefined,
-      };
+      setCheck(L_UNDEF, { isOptimizing: true });
       print("unknown");
       return true;
     } finally {
@@ -559,24 +546,16 @@ export const runSmtlibScript = (
           manager.limit.inc())
           ? { ...solveWithStrategy(), core: undefined }
           : kernel;
-      solved.model?.incRef();
-      state.check = {
-        status: solved.result,
+      setCheck(solved.result, {
         context: solved.context,
         isOptimizing,
         model: solved.model,
         core: solved.core ?? solved.context?.unsatCore ?? [],
-      };
+      });
       print(getVerdict(solved.result));
     } catch (error) {
       if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;
-      state.check = {
-        status: L_UNDEF,
-        context: undefined,
-        isOptimizing,
-        model: undefined,
-        core: undefined,
-      };
+      setCheck(L_UNDEF, { isOptimizing });
       print("unknown");
     } finally {
       state.manager.limit.release();
@@ -599,6 +578,18 @@ export const runSmtlibScript = (
   const clearCheck = () => {
     script.state.check?.model?.decRef();
     script.state.check = undefined;
+  };
+  // The check holds a reference to its model until clearCheck.
+  const setCheck = (status: number, result: Partial<Omit<CheckResult, "status">> = {}) => {
+    result.model?.incRef();
+    script.state.check = {
+      status,
+      context: undefined,
+      isOptimizing: false,
+      model: undefined,
+      core: undefined,
+      ...result,
+    };
   };
   // cmd_context::mk_solver: mk_solver_for_logic makes the incremental solver the smt kernel unless
   // the logic, the default tactic or the sat parameters pick a sat solver. Under sat.euf that
@@ -960,18 +951,14 @@ export const runSmtlibScript = (
       state.manager.limit.push(settings.rlimit);
       try {
         const checked = checkSatUsing(tactic, getGoal(builder.isTrackingDependencies));
-        checked.model?.incRef();
-        state.check = {
-          status: checked.status,
-          context: undefined,
-          isOptimizing: false,
+        setCheck(checked.status, {
           model: checked.model,
           core:
             builder.isTrackingDependencies || !hasNames()
               ? getDependencyValues(checked.core)
               : undefined,
           reasonUnknown: checked.reasonUnknown,
-        };
+        });
         print(getVerdict(checked.status));
       } finally {
         state.manager.limit.pop();
@@ -1011,14 +998,7 @@ export const runSmtlibScript = (
           if (names.length > 0)
             throw new SmtUnsupportedError("the named assertions of the finite-domain solver");
           const found = getFdConsequences(manager, new Map(), state.assertions, assumptions, vars);
-          found.model?.incRef();
-          state.check = {
-            status: found.result,
-            context: undefined,
-            isOptimizing: false,
-            model: found.model,
-            core: undefined,
-          };
+          setCheck(found.result, { model: found.model });
           print(getVerdict(found.result));
           print("");
           for (const consequence of found.consequences.items) display(consequence);
@@ -1029,13 +1009,7 @@ export const runSmtlibScript = (
         if (state.kernel === undefined)
           for (const assertion of getNamedAssertions()) kernel.assertExpr(assertion);
         const found = getConsequences(kernel, [...names, ...assumptions], vars);
-        state.check = {
-          status: found.result,
-          context: kernel.context,
-          isOptimizing: false,
-          model: undefined,
-          core: kernel.context.unsatCore,
-        };
+        setCheck(found.result, { context: kernel.context, core: kernel.context.unsatCore });
         print(getVerdict(found.result));
         print("");
         for (const consequence of found.consequences.items) display(consequence);
