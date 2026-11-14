@@ -5230,6 +5230,37 @@ describe("calls", () => {
     expect((await checkModel(getSource("2,4,2,3,4,3"))).failure?.message).toContain("2,4,2,3,4,4");
   });
 
+  it("evaluates a helper's defaults in the operator that each call shares", async () => {
+    const getSource = (expected: string) => `
+      interface Box {
+        values: number[];
+        reads: number;
+      }
+      const box: Box = { values: [4, 5, 6], reads: 0 };
+      const read = (holder: Box, index: number) => {
+        let found = 0;
+        for (let position = 0; position <= index; position++) found = holder.values[position];
+        return found;
+      };
+      const isAbove = (holder: Box, column = read(holder, 1) + 1, limit = column * 2) => {
+        holder.reads += 1;
+        return \`\${column}/\${limit}\`;
+      };
+      const first = isAbove(box);
+      const second = isAbove(box, 7);
+      const third = isAbove(box, undefined, 3);
+      const text = \`\${first};\${second};\${third};\${box.reads}\`;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const printed = printModule(compile(getSource("6/12;7/14;6/3;3")).source);
+    expect(printed).toMatch(/^isAbove\(/m);
+    expect(printed.match(/found_\d+ == 0/g)).toHaveLength(1);
+    expect((await checkModel(getSource("6/12;7/14;6/3;3"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("6/12;7/14;6/12;3"))).failure?.message).toContain(
+      "6/12;7/14;6/3;3",
+    );
+  });
+
   it("runs a helper with a rest parameter as one operator that each call shares", async () => {
     const getSource = (expected: string) => `
       const run = () => {

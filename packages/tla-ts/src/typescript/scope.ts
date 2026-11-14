@@ -633,6 +633,8 @@ export const bindValues = (
   scope: Scope,
   context: Context,
   restValue?: Expression,
+  // The parameters that take what the call passes as it is, whose defaults an operator evaluates.
+  deferred: ReadonlySet<ts.ParameterDeclaration> = new Set(),
 ) =>
   parameters.reduce<Bound>(
     (current, parameter, position) => {
@@ -642,7 +644,7 @@ export const bindValues = (
         parameter.dotDotDotToken === undefined
           ? values.at(position)
           : (restValue ?? tuple(values.slice(position)));
-      const initializer = parameter.initializer;
+      const initializer = deferred.has(parameter) ? undefined : parameter.initializer;
       const getDefault = () =>
         initializer === undefined
           ? getUndefined(context)

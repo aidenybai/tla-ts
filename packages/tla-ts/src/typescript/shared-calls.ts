@@ -5,6 +5,7 @@ import {
   bindOnce,
   findChanged,
   type Frame,
+  getDeferredDefaults,
   getPassedCallbacks,
   type Path,
   type Thrown,
@@ -28,7 +29,7 @@ import {
 import { forceHeap } from "./functions";
 import { type Formula, ifThenElse, leaf, letIn, render } from "./formula";
 import { link } from "./regions";
-import { type Bound, createStateScope, type Receiver } from "./scope";
+import { type Bound, bindValues, createStateScope, type Receiver } from "./scope";
 import {
   apply,
   boolean,
@@ -460,6 +461,19 @@ const defineShared = (
       ),
     ]),
   };
+  // The defaults that the operator evaluates where its call passes undefined, in order, as each
+  // may read the parameters before it.
+  const deferred = getDeferredDefaults(callee, context);
+  const defaulted = parameters.reduce<Bound>(
+    (current, parameter) => {
+      const symbol = getSymbol(parameter.name, context.checker);
+      const passed = symbol && current.scope.bindings.get(symbol);
+      if (!deferred.has(parameter) || passed === undefined) return current;
+      const bound = bindValues([parameter], [passed], current.scope, context);
+      return { definitions: [...current.definitions, ...bound.definitions], scope: bound.scope };
+    },
+    { definitions: [], scope },
+  );
   const kinds = new Set<string>();
   const end = (
     current: Path,
@@ -480,7 +494,7 @@ const defineShared = (
     );
   };
   const inner: Path = {
-    scope,
+    scope: defaulted.scope,
     mutable: new Set([
       ...state,
       ...changed,
@@ -504,27 +518,30 @@ const defineShared = (
       : ts.isBlock(body)
         ? body.statements
         : [ts.factory.createReturnStatement(body)];
-  const translated = translateStatements(statements, inner, context, {
-    next: (current) => end(current, "return", getUndefined(context), string(""), number(0)),
-    exit: (current, returned) =>
-      returned === undefined
-        ? end(current, "return", getUndefined(context), string(""), number(0))
-        : end(current, "returnValue", returned, string(""), number(0)),
-    breakTo: undefined,
-    continueTo: undefined,
-    // The caller catches what the body throws, or stops where the body threw it.
-    throwTo: (current, thrown) =>
-      end(
-        current,
-        "throw",
-        thrown.value,
-        getThrownMessage(thrown, callee),
-        thrown.shared?.place ?? getPlace(thrown.uncaught.location, context),
-      ),
-    yieldTo: undefined,
-    awaitTo: undefined,
-    inlining: new Set([callee]),
-  });
+  const translated = letIn(
+    defaulted.definitions,
+    translateStatements(statements, inner, context, {
+      next: (current) => end(current, "return", getUndefined(context), string(""), number(0)),
+      exit: (current, returned) =>
+        returned === undefined
+          ? end(current, "return", getUndefined(context), string(""), number(0))
+          : end(current, "returnValue", returned, string(""), number(0)),
+      breakTo: undefined,
+      continueTo: undefined,
+      // The caller catches what the body throws, or stops where the body threw it.
+      throwTo: (current, thrown) =>
+        end(
+          current,
+          "throw",
+          thrown.value,
+          getThrownMessage(thrown, callee),
+          thrown.shared?.place ?? getPlace(thrown.uncaught.location, context),
+        ),
+      yieldTo: undefined,
+      awaitTo: undefined,
+      inlining: new Set([callee]),
+    }),
+  );
   shared.isReturning = [...kinds].some((kind) => kind !== "throw");
   shared.isThrowing = kinds.has("throw");
   context.inProgress = outer.inProgress;
@@ -560,109 +577,124 @@ export const translateSharedCall = (
     ...frame,
     inlining: new Set([...frame.inlining].filter((inlined) => inlined !== callee)),
   };
-  return bindCall(node, callee, argumentNodes, receiver, path, context, outside, (bound, inner) => {
-    const parameters = getParameters(callee);
-    // A parameter whose type is a function takes the function that the call passes it, which the
-    // operator runs as the inlined body would.
-    const callbacks = new Map(getPassedCallbacks(parameters, argumentNodes, path, context));
-    const shared = parameters.every((parameter) => {
-      const symbol = getSymbol(parameter.name, context.checker);
-      return (
-        symbol !== undefined &&
-        context.checker.getTypeAtLocation(parameter).getCallSignatures().length > 0 ===
-          callbacks.has(symbol)
-      );
-    })
-      ? getSharedCall(callee, callbacks, path, context)
-      : undefined;
-    if (shared === undefined) return inlineCall(bound, inner);
-    const changed = shared.changed;
-    const state = getState(context);
-    // What the call evaluated of the helper's own code, such as a default, belongs to that call,
-    // though a call inside the helper's body keeps what its caller evaluated before it.
-    const isOwn = (entry: [ts.Node, Expression], before: ReadonlyMap<ts.Node, Expression>) =>
-      !before.has(entry[0]) &&
-      ts.findAncestor(entry[0], (ancestor) => ancestor === callee) !== undefined;
-    const caller: Path = {
-      ...inner,
-      scope: {
-        ...inner.scope,
-        previous: path.scope.previous,
-        entered: path.scope.entered,
-        results: new Map(
-          [...inner.scope.results].filter((entry) => !isOwn(entry, path.scope.results)),
-        ),
-        allocated: new Map(
-          [...inner.scope.allocated].filter((entry) => !isOwn(entry, path.scope.allocated)),
-        ),
-      },
-    };
-    const result = context.names.getFresh("result");
-    const kind = index(identifier(result), [number(1)]);
-    const value = index(identifier(result), [number(2)]);
-    const message = index(identifier(result), [number(3)]);
-    const place = index(identifier(result), [number(4)]);
-    const after: Path = {
-      ...caller,
-      scope: {
-        ...caller.scope,
-        bindings: new Map([
-          ...caller.scope.bindings,
-          ...changed.map((symbol, position): [ts.Symbol, Expression] => [
-            symbol,
-            index(identifier(result), [number(position + 5)]),
-          ]),
-        ]),
-      },
-      isAssigned: caller.isAssigned || changed.some((symbol) => context.variables.has(symbol)),
-    };
-    const throwTo = frame.throwTo;
-    // Where the helper only throws, as the inlined body would, the caller doesn't go on.
-    const returned = shared.isReturning
-      ? continueWith(
-          after,
-          ifExpression(apply("=", [kind, string("returnValue")]), value, getUndefined(context)),
-        )
-      : leaf(boolean(false));
-    // The throw that nothing catches reports where the helper threw it.
-    const uncaught = getThrown(place, message, context);
-    const ended = shared.isThrowing
-      ? ifThenElse(
-          apply("=", [kind, string("throw")]),
-          throwTo === undefined
-            ? leaf(uncaught)
-            : throwTo(after, { value, uncaught, shared: { message, place } }),
-          returned,
-        )
-      : returned;
-    const operands = [
-      ...getValueParameters(callee, shared.callbacks, context).map((parameter) => {
-        const symbol = getSymbol(parameter.name, context.checker);
-        return (symbol && bound.scope.bindings.get(symbol)) ?? getUndefined(context);
-      }),
-      ...shared.captured.map((symbol) => bound.scope.bindings.get(symbol) ?? getUndefined(context)),
-      ...state.map(
-        (symbol) =>
-          bound.scope.bindings.get(symbol) ??
-          context.variables.get(symbol) ??
-          getUndefined(context),
-      ),
-    ];
-    return letIn(
-      bound.definitions,
-      throwOnDestructured(
-        bound.scope,
-        inner,
-        context,
-        frame,
-        forceHeap(
-          inner.scope,
-          bound.scope,
-          bindOnce(path, result, call(shared.name, operands), ended),
-          leaf(boolean(false)),
-          context,
-        ),
-      ),
+  const parameters = getParameters(callee);
+  // A parameter whose type is a function takes the function that the call passes it, which the
+  // operator runs as the inlined body would.
+  const callbacks = new Map(getPassedCallbacks(parameters, argumentNodes, path, context));
+  const shared = parameters.every((parameter) => {
+    const symbol = getSymbol(parameter.name, context.checker);
+    return (
+      symbol !== undefined &&
+      context.checker.getTypeAtLocation(parameter).getCallSignatures().length > 0 ===
+        callbacks.has(symbol)
     );
-  });
+  })
+    ? getSharedCall(callee, callbacks, path, context)
+    : undefined;
+  if (shared === undefined) {
+    return bindCall(node, callee, argumentNodes, receiver, path, context, outside, inlineCall);
+  }
+  // The operator evaluates the parameters' defaults, so the call passes what it has as it is.
+  return bindCall(
+    node,
+    callee,
+    argumentNodes,
+    receiver,
+    path,
+    context,
+    outside,
+    (bound, inner) => {
+      const changed = shared.changed;
+      const state = getState(context);
+      // What the call evaluated of the helper's own code, such as a default, belongs to that call,
+      // though a call inside the helper's body keeps what its caller evaluated before it.
+      const isOwn = (entry: [ts.Node, Expression], before: ReadonlyMap<ts.Node, Expression>) =>
+        !before.has(entry[0]) &&
+        ts.findAncestor(entry[0], (ancestor) => ancestor === callee) !== undefined;
+      const caller: Path = {
+        ...inner,
+        scope: {
+          ...inner.scope,
+          previous: path.scope.previous,
+          entered: path.scope.entered,
+          results: new Map(
+            [...inner.scope.results].filter((entry) => !isOwn(entry, path.scope.results)),
+          ),
+          allocated: new Map(
+            [...inner.scope.allocated].filter((entry) => !isOwn(entry, path.scope.allocated)),
+          ),
+        },
+      };
+      const result = context.names.getFresh("result");
+      const kind = index(identifier(result), [number(1)]);
+      const value = index(identifier(result), [number(2)]);
+      const message = index(identifier(result), [number(3)]);
+      const place = index(identifier(result), [number(4)]);
+      const after: Path = {
+        ...caller,
+        scope: {
+          ...caller.scope,
+          bindings: new Map([
+            ...caller.scope.bindings,
+            ...changed.map((symbol, position): [ts.Symbol, Expression] => [
+              symbol,
+              index(identifier(result), [number(position + 5)]),
+            ]),
+          ]),
+        },
+        isAssigned: caller.isAssigned || changed.some((symbol) => context.variables.has(symbol)),
+      };
+      const throwTo = frame.throwTo;
+      // Where the helper only throws, as the inlined body would, the caller doesn't go on.
+      const returned = shared.isReturning
+        ? continueWith(
+            after,
+            ifExpression(apply("=", [kind, string("returnValue")]), value, getUndefined(context)),
+          )
+        : leaf(boolean(false));
+      // The throw that nothing catches reports where the helper threw it.
+      const uncaught = getThrown(place, message, context);
+      const ended = shared.isThrowing
+        ? ifThenElse(
+            apply("=", [kind, string("throw")]),
+            throwTo === undefined
+              ? leaf(uncaught)
+              : throwTo(after, { value, uncaught, shared: { message, place } }),
+            returned,
+          )
+        : returned;
+      const operands = [
+        ...getValueParameters(callee, shared.callbacks, context).map((parameter) => {
+          const symbol = getSymbol(parameter.name, context.checker);
+          return (symbol && bound.scope.bindings.get(symbol)) ?? getUndefined(context);
+        }),
+        ...shared.captured.map(
+          (symbol) => bound.scope.bindings.get(symbol) ?? getUndefined(context),
+        ),
+        ...state.map(
+          (symbol) =>
+            bound.scope.bindings.get(symbol) ??
+            context.variables.get(symbol) ??
+            getUndefined(context),
+        ),
+      ];
+      return letIn(
+        bound.definitions,
+        throwOnDestructured(
+          bound.scope,
+          inner,
+          context,
+          frame,
+          forceHeap(
+            inner.scope,
+            bound.scope,
+            bindOnce(path, result, call(shared.name, operands), ended),
+            leaf(boolean(false)),
+            context,
+          ),
+        ),
+      );
+    },
+    getDeferredDefaults(callee, context),
+  );
 };

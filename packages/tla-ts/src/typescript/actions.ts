@@ -4115,6 +4115,26 @@ export const getPassedCallbacks = (
     return callback?.body !== undefined && symbol !== undefined ? [[symbol, callback]] : [];
   });
 
+// The defaults of a helper's parameters that its operator evaluates, once, rather than each call
+// that binds its arguments: a name's default that makes no object, assigns nothing, and isn't a
+// call, which a call may run as its own statement.
+export const getDeferredDefaults = (callee: FunctionNode, context: Context) =>
+  new Set(
+    getParameters(callee).filter((parameter) => {
+      const initializer = parameter.initializer && getCast(parameter.initializer);
+      return (
+        initializer !== undefined &&
+        ts.isIdentifier(parameter.name) &&
+        parameter.dotDotDotToken === undefined &&
+        !ts.isCallExpression(initializer) &&
+        !isUnresolved(initializer, context) &&
+        findNodes(initializer, isAssignment).length === 0 &&
+        getAllocated(parameter, context).length === 0 &&
+        context.checker.getTypeAtLocation(parameter).getCallSignatures().length === 0
+      );
+    }),
+  );
+
 export const bindCall = (
   node: ts.Node,
   callee: FunctionNode,
@@ -4124,6 +4144,8 @@ export const bindCall = (
   context: Context,
   frame: Frame,
   continueWith: (bound: Bound, path: Path) => Formula,
+  // The parameters whose defaults the operator that the call runs evaluates instead.
+  deferred: ReadonlySet<ts.ParameterDeclaration> = new Set(),
 ): Formula => {
   if (frame.inlining.has(callee)) {
     throw new TlaTypeScriptError("Functions that change state can't call themselves", node);
@@ -4168,6 +4190,7 @@ export const bindCall = (
           context,
           frame,
           continueWith,
+          deferred,
         ),
     );
   if (taken !== undefined) return taken;
@@ -4206,6 +4229,7 @@ export const bindCall = (
               context,
               frame,
               continueWith,
+              deferred,
             ),
         )
       : undefined;
@@ -4213,14 +4237,35 @@ export const bindCall = (
   const defaulted = runCertainDefault(
     parameters.map((parameter) => parameter.name),
     parameters.flatMap((parameter, position) =>
-      getKnownDefaults(parameter.name, argumentNodes.at(position), parameter.initializer, context),
+      getKnownDefaults(
+        parameter.name,
+        argumentNodes.at(position),
+        deferred.has(parameter) ? undefined : parameter.initializer,
+        context,
+      ),
     ),
-    [...argumentNodes, ...parameters.flatMap((parameter) => parameter.initializer ?? [])],
+    [
+      ...argumentNodes,
+      ...parameters.flatMap((parameter) =>
+        deferred.has(parameter) ? [] : (parameter.initializer ?? []),
+      ),
+    ],
     path,
     context,
     // A default that may call the function again runs a call that can't end.
     { ...frame, inlining: new Set([...frame.inlining, callee]) },
-    (after) => bindCall(node, callee, argumentNodes, receiver, after, context, frame, continueWith),
+    (after) =>
+      bindCall(
+        node,
+        callee,
+        argumentNodes,
+        receiver,
+        after,
+        context,
+        frame,
+        continueWith,
+        deferred,
+      ),
   );
   if (defaulted !== undefined) return defaulted;
   const defaults = parameters
@@ -4228,7 +4273,17 @@ export const bindCall = (
     .filter((allocation) => !path.scope.allocated.has(allocation));
   if (defaults.length > 0) {
     return allocateAll(defaults, path, context, (allocated) =>
-      bindCall(node, callee, argumentNodes, receiver, allocated, context, frame, continueWith),
+      bindCall(
+        node,
+        callee,
+        argumentNodes,
+        receiver,
+        allocated,
+        context,
+        frame,
+        continueWith,
+        deferred,
+      ),
     );
   }
   // A first parameter's pattern runs the getters of the properties it reads, after the call
@@ -4277,6 +4332,7 @@ export const bindCall = (
           context,
           frame,
           continueWith,
+          deferred,
         ),
       ),
     );
@@ -4366,6 +4422,7 @@ export const bindCall = (
       },
       context,
       restValue,
+      deferred,
     );
     const part = symbol && skipped.scope.bindings.get(symbol);
     if (part === undefined) throw new TlaTypeScriptError("Unsupported default", assignment);
@@ -4385,6 +4442,7 @@ export const bindCall = (
         context,
         frame,
         continueWith,
+        deferred,
       );
     // A parameter's default certainly runs where the call passes it nothing or undefined, and
     // certainly doesn't where the call passes a literal, so only the branch that runs translates.
@@ -4433,7 +4491,14 @@ export const bindCall = (
       ),
     );
   }
-  const bound = bindValues(valueParameters, plainValues, parameterScope, context, restValue);
+  const bound = bindValues(
+    valueParameters,
+    plainValues,
+    parameterScope,
+    context,
+    restValue,
+    deferred,
+  );
   if (!passed.some(ts.isSpreadElement)) {
     valueParameters.forEach((parameter, position) => {
       const argument = passed.at(position);
