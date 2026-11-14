@@ -194,7 +194,30 @@ export const readModel = (
         ts.isTypeAliasDeclaration(statement) && tags.get(statement)?.has("symmetric") === true,
     )
     .map((statement) => declareModelValues(statement, context));
-  const declarations = statements.flatMap(getDeclarations);
+  // A script's var in a block, a loop, or a try at its top level is the script's, as a var at its
+  // top level is.
+  const nestedVars = isScript(sourceFile)
+    ? statements
+        .filter((statement) => !ts.isVariableStatement(statement))
+        .flatMap((statement) =>
+          findNodes(
+            statement,
+            (inner): inner is ts.VariableStatement =>
+              ts.isVariableStatement(inner) &&
+              (inner.declarationList.flags & ts.NodeFlags.BlockScoped) === 0 &&
+              ts.findAncestor(
+                inner.parent,
+                (ancestor) =>
+                  ts.isFunctionLike(ancestor) ||
+                  ts.isClassLike(ancestor) ||
+                  ts.isClassStaticBlockDeclaration(ancestor) ||
+                  ts.isModuleDeclaration(ancestor),
+              ) === undefined,
+          ),
+        )
+        .flatMap(getDeclarations)
+    : [];
+  const declarations = [...statements.flatMap(getDeclarations), ...nestedVars];
   const changed = new Set(
     isScript(sourceFile)
       ? [sourceFile, ...imported]

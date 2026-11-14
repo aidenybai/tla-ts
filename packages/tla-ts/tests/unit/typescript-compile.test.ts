@@ -18156,6 +18156,44 @@ describe("errors", () => {
     expect(result.failure).toBeUndefined();
   });
 
+  describe("holds a script's var that a loop or a try declares after the block ends", () => {
+    const source = `
+      if (step !== undefined) throw new Error("hoisted");
+      let total = 0;
+      for (let index = 0; index < 3; index++) {
+        var step: number | undefined = index * 2;
+        total += step;
+      }
+      for (let index = 0; index < 2; index++) {
+        step = index + 10;
+        total += step;
+      }
+      if (total !== 27 || step !== 11) throw new Error("loops");
+      try {
+        var caught: string | undefined = "try";
+        throw new Error("thrown");
+      } catch {
+        caught += ",catch";
+      }
+      if (caught !== "try,catch") throw new Error("try");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["hoisted", "if (step !== undefined)", "if (step === undefined)"],
+      ["loops", "total !== 27", "total !== 26"],
+      ["loops", "step !== 11", "step !== 10"],
+      ["try", '"try,catch") throw', '"try") throw'],
+    ])("rejects a wrong %s", async (label, expected, wrong) => {
+      expect((await checkModel(source.replace(expected, wrong))).failure?.message).toContain(
+        `"${label}"`,
+      );
+    });
+  });
+
   it("gives the result of a generator method's first next", async () => {
     const result = await check(
       compile(
