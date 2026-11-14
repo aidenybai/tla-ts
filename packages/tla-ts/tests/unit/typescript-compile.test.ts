@@ -25280,4 +25280,37 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs the internal methods of a proxy without traps on its target", () => {
+    const getSource = (expected: string) => `
+      const target: { [key: string]: unknown } = { attr: 1, other: 2 };
+      const proxy = new Proxy(target, {});
+      const descriptor = Object.getOwnPropertyDescriptor(proxy, "attr")!;
+      proxy.attr = 3;
+      delete proxy.other;
+      const read = [
+        descriptor.value,
+        descriptor.enumerable,
+        Object.prototype.hasOwnProperty.call(proxy, "attr"),
+        Object.prototype.propertyIsEnumerable.call(proxy, "attr"),
+        target.attr,
+        "other" in target,
+        "attr" in proxy,
+        Object.keys(proxy).join("|"),
+      ].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("1,true,true,true,3,false,true,attr"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the write as kept on the proxy", async () => {
+      expect(
+        (await checkModel(getSource("1,true,true,true,1,false,true,attr"))).failure?.message,
+      ).toContain("1,true,true,true,3,false,true,attr");
+    });
+  });
 });

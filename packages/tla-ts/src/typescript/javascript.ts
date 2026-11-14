@@ -734,6 +734,11 @@ ProxyTarget(heap, ref) == heap.objects[ref[Ref]].target
 
 ProxyHandler(heap, ref) == heap.objects[ref[Ref]].handler
 
+\\* The object whose internal method a proxy runs where its handler has none of the traps that the
+\\* method reads, which is the object itself where it isn't a proxy.
+RECURSIVE ForwardTarget(_, _, _)
+Forward(heap, ref, traps) == IF IsProxy(heap, ref) THEN ForwardTarget(heap, ref, traps) ELSE ref
+
 \\* An ArrayBuffer holds bytes, and a DataView or a typed array views them from an offset, for a
 \\* length, or for a resizable buffer's length where that's -1. A typed array holds the type
 \\* of its elements.
@@ -1020,9 +1025,13 @@ ForInKeys(heap, ref) ==
   IN SelectSeq(OwnKeys(object), LAMBDA key : object.attributes[key].enumerable)
        \\o SelectSeq(inherited, LAMBDA key : key \\notin DOMAIN object.values)
 
-OwnPropertyNames(heap, ref) == OwnKeys(Lookup(heap, ref))
+LOCAL OwnPropertyNamesOf(heap, ref) == OwnKeys(Lookup(heap, ref))
 
-OwnPropertySymbols(heap, ref) == SelectSeq(Lookup(heap, ref).keys, IsSymbol)
+OwnPropertyNames(heap, ref) == OwnPropertyNamesOf(heap, Forward(heap, ref, {"ownKeys", "getOwnPropertyDescriptor"}))
+
+LOCAL OwnPropertySymbolsOf(heap, ref) == SelectSeq(Lookup(heap, ref).keys, IsSymbol)
+
+OwnPropertySymbols(heap, ref) == OwnPropertySymbolsOf(heap, Forward(heap, ref, {"ownKeys", "getOwnPropertyDescriptor"}))
 
 \\* Reflect.ownKeys, which gives the strings that key an object's properties and then its symbols.
 OwnPropertyKeys(heap, ref) == OwnPropertyNames(heap, ref) \\o OwnPropertySymbols(heap, ref)
@@ -1056,7 +1065,9 @@ LOCAL DescribeObject(object, key) ==
        [] isAccessor -> described
        [] OTHER -> [described EXCEPT !.attributes["value"].kind = attributes.kind]
 
-Describe(heap, ref, key) == DescribeObject(LookupKey(heap, ref, key), key)
+LOCAL DescribeOf(heap, ref, key) == DescribeObject(LookupKey(heap, ref, key), key)
+
+Describe(heap, ref, key) == DescribeOf(heap, Forward(heap, ref, {"getOwnPropertyDescriptor"}), key)
 
 \\* Object.getOwnPropertyDescriptors, which makes a description of each own property of an object,
 \\* and then the object that holds them under their keys, last, so that Allocated names it.
@@ -1069,9 +1080,11 @@ DescribeAll(heap, object) ==
                 Ref :> (first + CHOOSE position \\in DOMAIN keys : keys[position] = key)]
   IN Allocate(described, PutAll(EmptyObject, refs, keys))
 
-IsEnumerableOwn(heap, ref, key) ==
+LOCAL IsEnumerableOwnOf(heap, ref, key) ==
   LET object == LookupKey(heap, ref, key)
   IN key \\in DOMAIN object.values /\\ object.attributes[key].enumerable
+
+IsEnumerableOwn(heap, ref, key) == IsEnumerableOwnOf(heap, Forward(heap, ref, {"getOwnPropertyDescriptor"}), key)
 
 ElementSize(type) ==
   CASE type \\in {"Int8", "Uint8", "Uint8Clamped"} -> 1
@@ -1272,16 +1285,19 @@ LOCAL HasElement(heap, ref, key) ==
 
 RECURSIVE Has(_, _, _)
 Has(heap, ref, key) ==
-  IF IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
-  THEN HasElement(heap, ref, key)
-  ELSE LET object == ReadPropertiesOf(heap, ref, key)
-       IN \\/ key \\in DOMAIN object.values
-          \\/ object.prototype # Null /\\ Has(heap, object.prototype, key)
+  CASE IsProxy(heap, ref) -> Has(heap, ForwardTarget(heap, ref, {"has"}), key)
+    [] IsTypedArray(heap, ref) /\\ TypedKey(key) # "property" -> HasElement(heap, ref, key)
+    [] OTHER ->
+         LET object == ReadPropertiesOf(heap, ref, key)
+         IN \\/ key \\in DOMAIN object.values
+            \\/ object.prototype # Null /\\ Has(heap, object.prototype, key)
 
-HasOwn(heap, ref, key) ==
+LOCAL HasOwnOf(heap, ref, key) ==
   IF IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
   THEN HasElement(heap, ref, key)
   ELSE key \\in DOMAIN PropertiesOf(heap, ref, key).values
+
+HasOwn(heap, ref, key) == HasOwnOf(heap, Forward(heap, ref, {"getOwnPropertyDescriptor"}), key)
 
 \\* An error is a record of its constructor, its message and its name, an AggregateError's also of its
 \\* errors, a SuppressedError's also of its error and the error it suppressed, and one that a script
@@ -1319,7 +1335,6 @@ LOCAL RegExpGet(heap, path, receiver) ==
 \\* A read of a key from an object or its prototypes, where a getter that reads a buffer's or a view's
 \\* internal slots reads the receiver's. An array outside the heap, which a value typed only as
 \\* array-like may hold, holds its elements and its length, and reads the rest from its prototype.
-RECURSIVE ForwardTarget(_, _, _)
 RECURSIVE GetFrom(_, _, _, _)
 GetFrom(heap, ref, key, receiver) ==
   CASE IsSequenceValue(ref) ->
@@ -1416,7 +1431,9 @@ ReadKeys(heap, ref, keys) ==
 LOCAL Read(values) ==
   IF \\A position \\in DOMAIN values : values[position] = values[position] THEN values ELSE values
 
-ObjectKeys(heap, ref) == EnumerableKeys(Lookup(heap, ref))
+LOCAL ObjectKeysOf(heap, ref) == EnumerableKeys(Lookup(heap, ref))
+
+ObjectKeys(heap, ref) == ObjectKeysOf(heap, Forward(heap, ref, {"ownKeys", "getOwnPropertyDescriptor"}))
 
 ObjectValues(heap, ref) ==
   LET keys == ObjectKeys(heap, ref)
@@ -1676,7 +1693,7 @@ IsWritable(heap, ref, key) ==
 
 \\* Whether a write puts its value without a TypeError. %ThrowTypeError%, the setter of
 \\* Function.prototype's arguments and caller, always throws one.
-CanPut(heap, ref, key) ==
+LOCAL CanPutOf(heap, ref, key) ==
   LET accessor == AccessorOf(heap, ref, key)
       object == PropertiesOf(heap, ref, key)
   IN CASE IsTypedArray(heap, ref) /\\ TypedKey(key) # "property" -> TRUE
@@ -1686,6 +1703,8 @@ CanPut(heap, ref, key) ==
        [] OTHER ->
             /\\ accessor.set # Undefined
             /\\ GetterPath(accessor.set) # "get Function.prototype.arguments"
+
+CanPut(heap, ref, key) == CanPutOf(heap, Forward(heap, ref, {"set", "getOwnPropertyDescriptor", "defineProperty"}), key)
 
 RECURSIVE IsPrototypeOf(_, _, _)
 IsPrototypeOf(heap, owner, ref) ==
@@ -1726,13 +1745,15 @@ IsInstanceOfError(heap, value, constructors, name) ==
 
 \\* A typed array's element can't be deleted, and a key that is a number and no element has nothing to
 \\* delete.
-CanDelete(heap, ref, key) ==
+LOCAL CanDeleteOf(heap, ref, key) ==
   IF IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
   THEN ~HasElement(heap, ref, key)
   ELSE LET object == LookupKey(heap, ref, key)
        IN key \\notin DOMAIN object.values \\/ object.attributes[key].configurable
 
-Delete(heap, ref, key) ==
+CanDelete(heap, ref, key) == CanDeleteOf(heap, Forward(heap, ref, {"deleteProperty"}), key)
+
+LOCAL DeleteOf(heap, ref, key) ==
   LET object == LookupKey(heap, ref, key)
       kept == DOMAIN object.values \\ {key}
   IN CASE IsTypedArray(heap, ref) /\\ TypedKey(key) # "property" -> heap
@@ -1741,6 +1762,8 @@ Delete(heap, ref, key) ==
                                              !.values = [other \\in kept |-> @[other]],
                                              !.attributes = [other \\in kept |-> @[other]]])
        [] OTHER -> heap
+
+Delete(heap, ref, key) == DeleteOf(heap, Forward(heap, ref, {"deleteProperty"}), key)
 
 \\* Whether a value is one that only itself equals: anything but an object outside the heap, or an
 \\* error that a script made, whose record holds its identity.
@@ -4275,7 +4298,7 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
                 final == end(2)
             IN made(heap, IF final > first THEN SubSeq(elements, first + 1, final) ELSE <<>>)
 
-SetProperty(heap, ref, key, value) ==
+LOCAL SetPropertyOf(heap, ref, key, value) ==
   LET accessor == AccessorOf(heap, ref, key)
       object == PropertiesOf(heap, ref, key)
       written == DefineOwn(object, key, WriteDescriptor(object, key, value))
@@ -4290,6 +4313,8 @@ SetProperty(heap, ref, key, value) ==
        [] accessor = Undefined -> Update(heap, ref, Put(object, key, value))
        [] accessor.set \\in DOMAIN ConstantFunctions -> heap
        [] OTHER -> Assert(FALSE, "tla-ts can't call setters")
+
+SetProperty(heap, ref, key, value) == SetPropertyOf(heap, Forward(heap, ref, {"set", "getOwnPropertyDescriptor", "defineProperty"}), key, value)
 
 \\* The elements of an array that the heap holds, which splice reads and writes whole: each index
 \\* below its length is its own plain data property.
@@ -4662,13 +4687,15 @@ LOCAL CanDefineOn(ref, key, descriptor) ==
          "tla-ts can't define accessors on built-in objects")
 
 \\* Defines each key with the descriptor that ToPropertyDescriptor gave it, in order.
-DefineConvertedAll(heap, ref, keys, descriptors) ==
+LOCAL DefineConvertedAllOf(heap, ref, keys, descriptors) ==
   LET applied == ApplyAll(Lookup(heap, ref), keys, descriptors)
   IN IF \\A position \\in DOMAIN keys :
           descriptors[position].isValid /\\ CanDefineOn(ref, keys[position], descriptors[position])
      THEN [heap |-> Update(heap, ref, applied.object), isDone |-> applied.isDone,
            isRangeError |-> applied.isRangeError]
      ELSE [heap |-> heap, isDone |-> FALSE, isRangeError |-> FALSE]
+
+DefineConvertedAll(heap, ref, keys, descriptors) == DefineConvertedAllOf(heap, Forward(heap, ref, {"defineProperty"}), keys, descriptors)
 
 DefineConverted(heap, ref, key, converted) == DefineConvertedAll(heap, ref, <<key>>, <<converted>>)
 
