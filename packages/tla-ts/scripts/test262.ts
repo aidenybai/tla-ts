@@ -1342,8 +1342,9 @@ const ignoreSoundErrors = () => {
       )
     );
   };
-  // A call of an array's method that SEARCHING_METHODS lists, of any value to search for and a
-  // primitive index to search from, which tla-ts converts with ToNumber.
+  // A call of an array's method that SEARCHING_METHODS lists, of any value to search for and an
+  // index to search from that tla-ts converts: a primitive, an object that the test declares, or a
+  // wrapper.
   const isSearchingCall = (diagnostic: ts.Diagnostic) => {
     const call = getErroredCall(diagnostic);
     return (
@@ -1356,15 +1357,18 @@ const ignoreSoundErrors = () => {
       !call.arguments.some(ts.isSpreadElement) &&
       call.arguments
         .slice(1)
-        .every((value) =>
-          isEveryType(
-            value,
-            ts.TypeFlags.NumberLike |
-              ts.TypeFlags.StringLike |
-              ts.TypeFlags.BooleanLike |
-              ts.TypeFlags.Null |
-              ts.TypeFlags.Undefined,
-          ),
+        .every(
+          (value) =>
+            isEveryType(
+              value,
+              ts.TypeFlags.NumberLike |
+                ts.TypeFlags.StringLike |
+                ts.TypeFlags.BooleanLike |
+                ts.TypeFlags.Null |
+                ts.TypeFlags.Undefined,
+            ) ||
+            isPlainObject(value) ||
+            isWrapper(value),
         )
     );
   };
