@@ -853,6 +853,16 @@ export const BUILT_INS: Record<string, [string | null, boolean, boolean, string[
     ],
     false,
   ],
+  eval: [
+    "Function.prototype",
+    true,
+    true,
+    [
+      ["length", "c", "n1"],
+      ["name", "c", "seval"],
+    ],
+    false,
+  ],
   "%globalThis.[[Prototype]]%": [
     "Object.prototype",
     false,
@@ -8033,7 +8043,7 @@ export const BUILT_INS: Record<string, [string | null, boolean, boolean, string[
       ["encodeURIComponent", "wc", "oencodeURIComponent"],
       ["escape", "wc", "oescape"],
       ["unescape", "wc", "ounescape"],
-      ["eval", "wc", "x"],
+      ["eval", "wc", "oeval"],
       ["isFinite", "wc", "oisFinite"],
       ["isNaN", "wc", "oisNaN"],
       ["SuppressedError", "wc", "oSuppressedError"],

@@ -14378,6 +14378,27 @@ describe("errors", () => {
     });
   });
 
+  it("reads eval as a function that it can't call", async () => {
+    const getSource = (expected: number) => `
+      const desc = Object.getOwnPropertyDescriptor(globalThis, "eval");
+      const held: unknown = globalThis.eval;
+      if (desc === undefined || desc.value !== held || typeof held !== "function") {
+        throw new Error("desc");
+      }
+      if (!desc.writable || desc.enumerable || !desc.configurable) throw new Error("attributes");
+      if (eval.length !== ${expected} || eval.name !== "eval") throw new Error("unexpected");
+      let isThrown = false;
+      try {
+        new (held as new () => object)();
+      } catch (error) {
+        isThrown = error instanceof TypeError;
+      }
+      if (!isThrown) throw new Error("construct");
+    `;
+    expect((await checkModel(getSource(1))).failure).toBeUndefined();
+    expect((await checkModel(getSource(2))).failure?.message).toContain("unexpected");
+  });
+
   describe("adds, reads, and deletes the global object's properties that no name reads", () => {
     const getSource = (expected: string) => `
       const holder = { seen: "" };

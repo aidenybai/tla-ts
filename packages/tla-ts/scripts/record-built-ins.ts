@@ -68,6 +68,7 @@ const GLOBALS = [
   "decodeURIComponent",
   "escape",
   "unescape",
+  "eval",
 ];
 
 // The global object's standard properties. A host gives it others, such as Node's process, which
