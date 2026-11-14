@@ -25583,4 +25583,29 @@ describe("BigInts", () => {
     `);
     expect(division.failure?.message).toContain("tla-ts can't throw the RangeError");
   });
+
+  describe("calls a getter that a descriptor gives, which returns only a literal", () => {
+    const getSource = (expected: string) => `
+      const obj = {
+        get m() {
+          return 1234;
+        },
+      };
+      const desc = Object.getOwnPropertyDescriptor(obj, "m")!;
+
+      const other = () => 5;
+      const read = [typeof desc.get, (desc.get as () => unknown)(), other()].join();
+      if (read !== "${expected}") throw new Error(read);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("function,1234,5"))).failure).toBeUndefined();
+    });
+
+    it("rejects the getter as giving undefined", async () => {
+      expect((await checkModel(getSource("function,,5"))).failure?.message).toContain(
+        "function,1234,5",
+      );
+    });
+  });
 });

@@ -848,12 +848,19 @@ export const translateLocalCall = (
       string("tla-ts can't tell which function this call runs"),
     ]);
     // A built-in that gives a value without a receiver, such as Object.prototype.toString.
+    // A function that only returns a literal, as a getter that a descriptor gives may, gives it.
     const getUnknown = (value: Expression) =>
-      ts.isIdentifier(skipCasts(node.expression)) && node.arguments.every(isInertValue)
+      node.arguments.every(isInertValue)
         ? ifExpression(
-            useJavaScript("HasReceiverlessValue", [value], context),
-            useJavaScript("ReceiverlessValue", [value], context),
-            stop,
+            useJavaScript("IsConstantFunction", [value], context),
+            useJavaScript("ConstantResult", [value], context),
+            ts.isIdentifier(skipCasts(node.expression))
+              ? ifExpression(
+                  useJavaScript("HasReceiverlessValue", [value], context),
+                  useJavaScript("ReceiverlessValue", [value], context),
+                  stop,
+                )
+              : stop,
           )
         : stop;
     return share(

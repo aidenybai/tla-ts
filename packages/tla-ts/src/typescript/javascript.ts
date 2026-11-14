@@ -1678,6 +1678,11 @@ ThrowsWithoutReceiver(value) ==
                          "Object.prototype.isPrototypeOf"}
         /\\ ~(Len(path) >= 13 /\\ SubSeq(path, Len(path) - 12, Len(path)) = "@@toStringTag")
 
+\\* Whether a value is a function that only returns a literal, and the literal it returns.
+IsConstantFunction(value) == value \\in DOMAIN ConstantFunctions
+
+ConstantResult(value) == ConstantFunctions[value]
+
 \\* Whether a value is a built-in that gives a value where a call gives it no receiver:
 \\* Object.prototype.toString, Function.prototype[@@hasInstance], and the @@toStringTag getter of
 \\* typed arrays.
