@@ -5107,6 +5107,27 @@ describe("calls", () => {
     expect((await checkModel(getSource("2,4,2,3,4,3"))).failure?.message).toContain("2,4,2,3,4,4");
   });
 
+  it("runs a helper with a rest parameter as one operator that each call shares", async () => {
+    const getSource = (expected: string) => `
+      const run = () => {
+        const made = { count: 0 };
+        const join = (separator: string, ...parts: string[]) => {
+          made.count += parts.length;
+          return parts.join(separator);
+        };
+        const first = join("-", "a", "b", "c");
+        const second = join("+");
+        const third = join(",", "x");
+        return \`\${first};\${second};\${third};\${made.count}\`;
+      };
+      const text = run();
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect(printModule(compile(getSource("a-b-c;;x;4")).source)).toMatch(/^join\(/m);
+    expect((await checkModel(getSource("a-b-c;;x;4"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("a-b-c;;x;3"))).failure?.message).toContain("a-b-c;;x;4");
+  });
+
   it("runs a helper that passes its callback's call back into itself as a recursive operator", async () => {
     const getSource = (expected: string) => `
       interface Tree {

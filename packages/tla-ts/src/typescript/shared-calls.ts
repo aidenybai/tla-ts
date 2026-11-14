@@ -198,9 +198,7 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
         isPlain(inner) &&
         inner.body !== undefined &&
         !isClosure(inner, context) &&
-        getParameters(inner).every(
-          (parameter) => ts.isIdentifier(parameter.name) && parameter.dotDotDotToken === undefined,
-        ),
+        getParameters(inner).every((parameter) => ts.isIdentifier(parameter.name)),
     ),
   );
   const candidates = [...new Set(found)];
@@ -299,7 +297,8 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
 };
 
 // Whether a statement's call of a helper may run as the helper's operator: a call by name with no
-// more arguments than the helper takes, none of which spreads.
+// more arguments than the helper takes, but where a rest parameter takes them, none of which
+// spreads.
 export const isSharedCall = (
   node: ts.Node,
   callee: FunctionNode,
@@ -312,7 +311,8 @@ export const isSharedCall = (
   ts.isCallExpression(node) &&
   argumentNodes === node.arguments &&
   !argumentNodes.some(ts.isSpreadElement) &&
-  argumentNodes.length <= getParameters(callee).length;
+  (argumentNodes.length <= getParameters(callee).length ||
+    getParameters(callee).some((parameter) => parameter.dotDotDotToken !== undefined));
 
 // The operator that a call of a helper runs, where the helper runs as its inlined body would: where
 // the call binds each name that the helper reads from a function around it, and takes back each
