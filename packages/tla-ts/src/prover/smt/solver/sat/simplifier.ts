@@ -1092,7 +1092,7 @@ export class Simplifier {
       const second = this.bsClauses[index];
       const lit = this.bsLits[index];
       if (!arena.wasRemoved(second) && lit === NULL_LITERAL) {
-        if (arena.isLearned(first) && !arena.isLearned(second)) this.setNotLearned(first);
+        if (arena.isLearned(first) && !arena.isLearned(second)) arena.setLearned(first, false);
         this.removeClause(second);
         this.numSubsumed++;
       } else if (!arena.wasRemoved(second)) {
@@ -1101,11 +1101,6 @@ export class Simplifier {
       }
       if (solver.isInconsistent) break;
     }
-  }
-
-  private setNotLearned(clause: number) {
-    this.solver.arena.setLearned(clause, false);
-    if (clause !== this.dummy) this.useList.unblock(clause);
   }
 
   private setDummy(first: number, second: number, isLearned: boolean) {
@@ -1164,7 +1159,7 @@ export class Simplifier {
       }
     }
     for (const second of this.bsClauses) {
-      if (arena.isLearned(first) && !arena.isLearned(second)) this.setNotLearned(first);
+      if (arena.isLearned(first) && !arena.isLearned(second)) arena.setLearned(first, false);
       this.removeClause(second);
       this.numSubsumed++;
     }
