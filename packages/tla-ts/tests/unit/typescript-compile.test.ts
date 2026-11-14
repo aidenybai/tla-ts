@@ -14503,6 +14503,53 @@ describe("errors", () => {
     );
   });
 
+  it("constructs Intl's objects of literal locales and options", async () => {
+    const getSource = (expected: string) => `
+      const holder: { [key: string]: unknown } = {};
+      const names = new Intl.DisplayNames(undefined, { type: "language" });
+      const locale = new Intl.Locale("en-Latn");
+      const format = new Intl.NumberFormat(["de-DE", "en"], { maximumFractionDigits: 100 });
+      const result = [
+        Object.getPrototypeOf(names) === Intl.DisplayNames.prototype,
+        Object.prototype.toString.call(locale),
+        typeof format.format,
+      ].join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    expect(
+      (await checkModel(getSource("true,[object Intl.Locale],function"))).failure,
+    ).toBeUndefined();
+    expect(
+      (await checkModel(getSource("true,[object Object],function"))).failure?.message,
+    ).toContain("[object Intl.Locale]");
+  });
+
+  it("throws the error of Intl's literal locales and options that a constructor rejects", async () => {
+    const getSource = (made: string, expected: string) => `
+      const holder: { [key: string]: unknown } = {};
+      const make = () => ${made};
+      let name = "none";
+      try {
+        make();
+      } catch (error) {
+        name = (error as Error).name;
+      }
+      if (name !== "${expected}") throw new Error(name);
+    `;
+    const cases = [
+      ['new Intl.Collator("en-")', "RangeError"],
+      ["new Intl.NumberFormat(undefined, { maximumFractionDigits: 101 })", "RangeError"],
+      ['new Intl.NumberFormat("en", { style: "currency" })', "TypeError"],
+    ];
+    for (const [made, expected] of cases) {
+      expect((await checkModel(getSource(made, expected))).failure).toBeUndefined();
+    }
+    expect(
+      (await checkModel(getSource('new Intl.NumberFormat("en", { style: "currency" })', "none")))
+        .failure?.message,
+    ).toContain("TypeError");
+  });
+
   it("reads the prototypes of the iterators that strings, maps, sets, and regexps make", async () => {
     const result = await checkModel(`
       const holder: { [key: string]: unknown } = {};

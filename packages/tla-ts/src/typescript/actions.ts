@@ -203,7 +203,9 @@ import {
   getHeldName,
   getHeap,
   hasPrototypeArray,
+  getIntlError,
   getNewWrapper,
+  translateIntlKept,
   isAllocation,
   isArrayFromLength,
   isNewProxy,
@@ -9934,6 +9936,23 @@ const isIteratedTypedArray = (node: ts.Expression, context: Context) => {
   );
 };
 
+// new of an Intl constructor whose literals it rejects, which a statement runs, and which throws
+// where it reads what tla-ts records.
+const translateIntlError = (node: ts.Expression, path: Path, context: Context, frame: Frame) => {
+  const error = getIntlError(node, context);
+  if (error === undefined) throw new TlaTypeScriptError("Unsupported Intl constructor", node);
+  return ifThenElse(
+    translateIntlKept(node, getHeap(path.scope, node, context), context),
+    throwError(error, path, node, context, frame),
+    leaf(
+      apply("Assert", [
+        boolean(false),
+        string("tla-ts can't construct an Intl object where a script changed what it reads"),
+      ]),
+    ),
+  );
+};
+
 // new, or Reflect.construct, of a buffer, a DataView, or a typed array, which a statement runs, as
 // it may throw.
 const getBufferConstruction = (node: ts.Expression, context: Context) =>
@@ -10382,6 +10401,9 @@ export const translateDeclarations = (
     );
   }
   const made = initializer && skipCasts(initializer);
+  if (made !== undefined && getIntlError(made, context) !== undefined) {
+    return translateIntlError(made, path, context, frame);
+  }
   const madeBuffer = made && getBufferConstruction(made, context);
   if (made !== undefined && madeBuffer !== undefined) {
     return translateNewBufferStatement(made, madeBuffer, path, context, frame, (after, value) =>
@@ -14419,6 +14441,9 @@ export const translateStatements = (
     if (frame.inlining.size === 0) {
       throw new TlaTypeScriptError("Actions can't return a value", statement);
     }
+    if (getIntlError(skipCasts(returned), context) !== undefined) {
+      return translateIntlError(skipCasts(returned), path, context, frame);
+    }
     return allocate(returned, path, context, (inner) => {
       const constructed = getCast(returned);
       if (isPromiseConstruction(constructed, context)) {
@@ -14547,6 +14572,9 @@ export const translateStatements = (
       ? statement.expression
       : undefined;
   const assigned = assignment && skipCasts(assignment.right);
+  if (assigned !== undefined && getIntlError(assigned, context) !== undefined) {
+    return translateIntlError(assigned, path, context, frame);
+  }
   const assignedBuffer = assigned && getBufferConstruction(assigned, context);
   if (assignment !== undefined && assigned !== undefined && assignedBuffer !== undefined) {
     return translateNewBufferStatement(
@@ -14564,6 +14592,9 @@ export const translateStatements = (
     );
   }
   const dropped = ts.isExpressionStatement(statement) ? skipCasts(statement.expression) : undefined;
+  if (dropped !== undefined && getIntlError(dropped, context) !== undefined) {
+    return translateIntlError(dropped, path, context, frame);
+  }
   const droppedBuffer = dropped && getBufferConstruction(dropped, context);
   if (dropped !== undefined && droppedBuffer !== undefined) {
     return translateNewBufferStatement(dropped, droppedBuffer, path, context, frame, (after) =>

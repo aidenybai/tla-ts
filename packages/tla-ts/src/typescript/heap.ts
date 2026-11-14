@@ -96,6 +96,7 @@ import {
 import { isDescriptorsRead, isProxyOperation } from "./protocols";
 import { getReached } from "./aliasing";
 import { createStateScope, type Scope } from "./scope";
+import { getIntlOutcome } from "./locales";
 import { BUILT_INS } from "./built-ins";
 import { getStackCall } from "./stacks";
 import { getIteratorDisposeCall } from "./disposal";
@@ -1746,11 +1747,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     // The constructor, which the prototype's constructor property holds.
     context.builtIns.add(`Intl.${intl}`);
     return ifExpression(
-      useJavaScript(
-        "HoldsBuiltIn",
-        [heap, translateBuiltInValue("Intl", node, context), string(intl), string(`Intl.${intl}`)],
-        context,
-      ),
+      translateIntlKept(node, heap, context),
       useJavaScript(
         "Allocate",
         [
@@ -1788,7 +1785,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
       ),
       apply("Assert", [
         boolean(false),
-        string(`tla-ts can't construct Intl.${intl} where a script replaced it`),
+        string(`tla-ts can't construct Intl.${intl} where a script changed what it reads`),
       ]),
     );
   }
@@ -2183,31 +2180,106 @@ const BOUND_LENGTHS = new Map([
 // The Intl constructors that make an object when a script calls them without new.
 const CALLABLE_INTL_CONSTRUCTORS = new Set(["Collator", "DateTimeFormat", "NumberFormat"]);
 
-// The Intl constructor whose new, or call where it may run without new, takes no locales and no
-// options, so that what it makes depends on no locale data until a method reads it. Locale and
-// DisplayNames need a tag and a type.
-export const getNewIntl = (node: ts.Node, context: Context) => {
+// The value that a literal gives.
+const getLiteralValue = (node: ts.Expression, context: Context) => {
+  const inner = skipCasts(node);
+  return ts.isStringLiteralLike(inner)
+    ? { value: inner.text }
+    : ts.isNumericLiteral(inner)
+      ? { value: Number(inner.text) }
+      : ts.isPrefixUnaryExpression(inner) &&
+          inner.operator === ts.SyntaxKind.MinusToken &&
+          ts.isNumericLiteral(inner.operand)
+        ? { value: -Number(inner.operand.text) }
+        : inner.kind === ts.SyntaxKind.TrueKeyword || inner.kind === ts.SyntaxKind.FalseKeyword
+          ? { value: inner.kind === ts.SyntaxKind.TrueKeyword }
+          : isUndefinedValue(inner, context)
+            ? { value: undefined }
+            : undefined;
+};
+
+// A new of an Intl constructor, or a call of one that may run without new, whose locales and
+// options literals write, with what it throws, or "", and the object literal of its options.
+const getIntlConstruction = (node: ts.Node, context: Context) => {
   if (
     context.heap === undefined ||
     !(ts.isNewExpression(node) || ts.isCallExpression(node)) ||
     !ts.isPropertyAccessExpression(node.expression) ||
-    getBuiltIn(node.expression.expression, context) !== "Intl"
+    getBuiltIn(node.expression.expression, context) !== "Intl" ||
+    !(ts.isNewExpression(node) || CALLABLE_INTL_CONSTRUCTORS.has(node.expression.name.text))
   ) {
     return undefined;
   }
   const name = node.expression.name.text;
-  const [locales, options, ...rest] = node.arguments ?? [];
-  return BUILT_INS[`Intl.${name}`]?.[4] === true &&
-    name !== "Locale" &&
-    name !== "DisplayNames" &&
-    (ts.isNewExpression(node) || CALLABLE_INTL_CONSTRUCTORS.has(name)) &&
-    (locales === undefined ||
-      isUndefinedValue(locales, context) ||
-      (ts.isArrayLiteralExpression(locales) && locales.elements.length === 0)) &&
-    (options === undefined || isUndefinedValue(options, context)) &&
-    rest.length === 0
-    ? name
+  const [locales, options, ...rest] = (node.arguments ?? []).map(skipCasts);
+  const elements =
+    locales !== undefined && ts.isArrayLiteralExpression(locales)
+      ? locales.elements.map((element) => getLiteralValue(element, context))
+      : [locales === undefined ? { value: undefined } : getLiteralValue(locales, context)];
+  const isOptionsLiteral = options !== undefined && ts.isObjectLiteralExpression(options);
+  const entries = isOptionsLiteral
+    ? options.properties.map((property) =>
+        ts.isPropertyAssignment(property) &&
+        (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))
+          ? { key: property.name.text, literal: getLiteralValue(property.initializer, context) }
+          : undefined,
+      )
+    : [];
+  const isLiteral =
+    rest.length === 0 &&
+    elements.every((element) => element !== undefined) &&
+    (options === undefined || isUndefinedValue(options, context) || isOptionsLiteral) &&
+    entries.every((entry) => entry?.literal !== undefined);
+  const values = elements.flatMap((element) => (element === undefined ? [] : [element.value]));
+  const outcome = isLiteral
+    ? getIntlOutcome(
+        name,
+        locales !== undefined && ts.isArrayLiteralExpression(locales) ? values : values[0],
+        new Map(
+          entries.flatMap((entry) =>
+            entry?.literal === undefined ? [] : [[entry.key, entry.literal.value] as const],
+          ),
+        ),
+      )
     : undefined;
+  return outcome === undefined
+    ? undefined
+    : { name, outcome, options: isOptionsLiteral ? options : undefined };
+};
+
+// The Intl constructor whose new, or call where it may run without new, takes literal locales and
+// options that it accepts, so that what it makes depends on no locale data until a method reads it.
+export const getNewIntl = (node: ts.Node, context: Context) => {
+  const construction = getIntlConstruction(node, context);
+  return construction?.outcome === "" ? construction.name : undefined;
+};
+
+// The error that new of an Intl constructor throws where it rejects the literals of its locales or
+// options.
+export const getIntlError = (node: ts.Node, context: Context) => {
+  const outcome = getIntlConstruction(node, context)?.outcome;
+  return outcome === "" ? undefined : outcome;
+};
+
+// Whether new of an Intl constructor reads what tla-ts records: the constructor that Intl holds,
+// and Object.prototype, through which its options literal reads the options it lacks.
+export const translateIntlKept = (node: ts.Node, heap: Expression, context: Context) => {
+  const construction = getIntlConstruction(node, context);
+  if (construction === undefined)
+    throw new TlaTypeScriptError("Unsupported Intl constructor", node);
+  const held = useJavaScript(
+    "HoldsBuiltIn",
+    [
+      heap,
+      translateBuiltInValue("Intl", node, context),
+      string(construction.name),
+      string(`Intl.${construction.name}`),
+    ],
+    context,
+  );
+  return construction.options === undefined
+    ? held
+    : apply("/\\", [held, useJavaScript("IsKept", [heap, string("Object.prototype")], context)]);
 };
 
 // Whether new Date reads the clock, as new Date() and new Date(Date.now()) do.
@@ -4755,6 +4827,8 @@ export const getEngineErrors = (node: ts.Node, context: Context) => {
   }
   if (getViewCall(node, context) !== undefined) return ["TypeError", "RangeError"];
   if (getURICall(node, context)?.isDecode === true) return ["URIError"];
+  const intlError = getIntlError(node, context);
+  if (intlError !== undefined) return [intlError];
   if (getGetterCall(node, context) !== undefined) return ["TypeError"];
   if (isInvalidRegExp(node, context)) return ["SyntaxError"];
   const created = getNewClass(node, context);
