@@ -3204,7 +3204,7 @@ LOCAL IsArrayObject(object) == "isArray" \\in DOMAIN object /\\ object.isArray
 \\* object is an ordinary object.
 RECURSIVE IsArray(_, _)
 IsArray(heap, value) ==
-  CASE IsRef(value) /\\ value = GlobalObject -> FALSE
+  CASE IsRef(value) /\\ ~IsHeap(value) /\\ value = GlobalObject -> FALSE
     [] IsProxy(heap, value) ->
          IF ProxyHandler(heap, value) = Null
          THEN Assert(FALSE, "tla-ts can't throw the TypeError of a revoked proxy here")

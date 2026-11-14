@@ -13699,19 +13699,23 @@ describe("errors", () => {
     });
   });
 
-  describe("tells that the global object isn't an array", () => {
+  describe("tells that the global object and an object the heap holds aren't arrays", () => {
     const getSource = (expected: string) => `
       const holder = { seen: 0 };
-      if (Array.isArray(globalThis) !== ${expected}) throw new Error("array");
+      const object = { size: 1 };
+      object.size = 2;
+      if ([Array.isArray(globalThis), Array.isArray(object)].join() !== "${expected}") {
+        throw new Error("array");
+      }
       holder.seen = 1;
     `;
 
     it("agrees with Node", async () => {
-      expect((await checkModel(getSource("false"))).failure).toBeUndefined();
+      expect((await checkModel(getSource("false,false"))).failure).toBeUndefined();
     });
 
     it("rejects the wrong expectation", async () => {
-      expect((await checkModel(getSource("true"))).failure?.message).toContain('"array"');
+      expect((await checkModel(getSource("false,true"))).failure?.message).toContain('"array"');
     });
   });
 
