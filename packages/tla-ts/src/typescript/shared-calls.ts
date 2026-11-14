@@ -65,6 +65,8 @@ const getFixedFunction = (declaration: ts.Node) =>
 // this, arguments, or new.target of a function around it, no yield, await, or using, and no
 // function that it makes but a callback that a call takes.
 const isOwnCode = (node: ts.Node): boolean => {
+  // A type runs nothing, though an instantiation expression, which TypeScript parses as one, runs.
+  if (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) return true;
   if (
     node.kind === ts.SyntaxKind.ThisKeyword ||
     node.kind === ts.SyntaxKind.SuperKeyword ||

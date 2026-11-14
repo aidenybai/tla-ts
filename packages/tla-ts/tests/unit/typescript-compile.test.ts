@@ -4887,6 +4887,36 @@ describe("calls", () => {
     );
   });
 
+  it("runs a helper that passes a callback to a function typed to take one as an operator", async () => {
+    const getSource = (expected: string) => `
+      const run = () => {
+        const counter = { value: 0 };
+        const items: number[] = [];
+        const repeat = <Item>(times: number, step: (index: number) => Item) => {
+          const results = [step(0)];
+          while (results.length < times) results.push(step(results.length));
+          return results;
+        };
+        const bump = (by: number) => {
+          counter.value += by;
+          const made = repeat(by, (index) => counter.value * 10 + index);
+          items.push(made.length);
+          return made.join("|");
+        };
+        const first = bump(2);
+        const second = bump(3);
+        return \`\${first},\${second},\${items.join("|")},\${counter.value}\`;
+      };
+      const text = run();
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    expect(printModule(compile(getSource("20|21,50|51|52,2|3,5")).source)).toMatch(/^bump\(/m);
+    expect((await checkModel(getSource("20|21,50|51|52,2|3,5"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("20|21,50|51|52,2|2,5"))).failure?.message).toContain(
+      "20|21,50|51|52,2|3,5",
+    );
+  });
+
   it("runs helpers that call one that throws as operators, where the caller catches it", async () => {
     const getSource = (expected: string) => `
       const run = () => {
