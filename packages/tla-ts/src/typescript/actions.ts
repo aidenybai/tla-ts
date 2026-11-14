@@ -8243,8 +8243,46 @@ const throwReadError = (
     : read;
 };
 
-// The constructors that, without arguments, only make an empty object or collection.
-const EMPTY_CONSTRUCTORS = new Set(["Array", "Object", "Map", "Set", "WeakMap", "WeakSet"]);
+// The constructors that, without arguments, only make an object that nothing but the new sees.
+const EMPTY_CONSTRUCTORS = new Set([
+  "Array",
+  "Object",
+  "Map",
+  "Set",
+  "WeakMap",
+  "WeakSet",
+  "String",
+  "Boolean",
+  "Number",
+  "Date",
+  "RegExp",
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "ReferenceError",
+  "EvalError",
+  "URIError",
+  "SuppressedError",
+  "ArrayBuffer",
+  "SharedArrayBuffer",
+  "DisposableStack",
+  "AsyncDisposableStack",
+  ...TYPED_ARRAYS.keys(),
+]);
+
+// The constructors that throw a TypeError where a new passes them no arguments.
+const ARGUMENT_CONSTRUCTORS = new Set([
+  "AggregateError",
+  "DataView",
+  "FinalizationRegistry",
+  "Promise",
+  "Proxy",
+  "WeakRef",
+]);
+
+// The constructors whose new throws a TypeError whatever it passes them.
+const UNCONSTRUCTED = new Set(["BigInt", "Iterator", "Symbol"]);
 
 // Whether an expression only reads values, once the awaits in it settled: it calls, makes, and
 // changes nothing.
@@ -8709,16 +8747,31 @@ const translateExpressionStatement = (
   }
   // A new that a statement makes and drops is done once it's made, where it isn't an error, whose
   // constructor runs later, and it passes only literals, which no conversion runs code for, as is a
-  // new that only makes an empty object or collection.
+  // new that only makes an object that nothing else sees, and one that throws, of a built-in
+  // constructor that the script doesn't replace.
+  const created = ts.isNewExpression(expression) ? skipCasts(expression.expression) : undefined;
+  const createdSymbol = created === undefined ? undefined : getSymbol(created, context.checker);
+  const builtIn =
+    created === undefined ||
+    createdSymbol === undefined ||
+    isAssigned(createdSymbol, expression.getSourceFile(), context)
+      ? ""
+      : (getBuiltIn(created, context) ?? "");
+  const passed = ts.isNewExpression(expression) ? (expression.arguments ?? []) : [];
+  if (
+    (UNCONSTRUCTED.has(builtIn) && passed.every(isInertValue)) ||
+    (ARGUMENT_CONSTRUCTORS.has(builtIn) && passed.length === 0)
+  ) {
+    return throwTypeError(path, expression, context, frame);
+  }
   if (
     ts.isNewExpression(expression) &&
     ((path.scope.allocated.has(expression) &&
       !isNewError(expression, context) &&
-      (expression.arguments ?? []).every(
+      passed.every(
         (argument) => isLiteral(argument) && !ts.isRegularExpressionLiteral(argument),
       )) ||
-      ((expression.arguments ?? []).length === 0 &&
-        EMPTY_CONSTRUCTORS.has(getBuiltIn(expression.expression, context) ?? "")))
+      (EMPTY_CONSTRUCTORS.has(builtIn) && passed.length === 0))
   ) {
     return continueWith(path);
   }

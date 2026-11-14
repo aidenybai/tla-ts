@@ -23650,13 +23650,6 @@ describe("buffers", () => {
     expect(() => checkModel(caught("new AggregateError(5 as never);", "TypeError"))).toThrow(
       "Unsupported statement",
     );
-    expect(
-      (
-        await checkModel(
-          caught("new (AggregateError as unknown as new () => object)();", "TypeError"),
-        )
-      ).failure?.message,
-    ).toContain("tla-ts can't call this constructor");
     expect(() =>
       checkModel(
         caught(
@@ -23738,6 +23731,71 @@ describe("buffers", () => {
       if (made.length !== 3 || made[2] !== 3 || source.length !== 3) throw new Error("source");
     `);
     expect(result.failure).toBeUndefined();
+  });
+
+  describe("runs on past a built-in that a statement makes without arguments and drops", () => {
+    const source = (expected: number) => `
+      const holder = { done: 0 };
+      new Date();
+      new String();
+      new TypeError();
+      new Int8Array();
+      new Boolean();
+      holder.done = 1;
+      if (holder.done !== ${expected}) throw new Error("runs on");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source(1))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(source(2))).failure?.message).toContain("runs on");
+    });
+  });
+
+  describe("throws the TypeError of a built-in that new can't call with what it passes", () => {
+    const source = (expected: string) => `
+      const holder = { caught: "" };
+      try {
+        // @ts-ignore
+        new Symbol();
+      } catch (error) {
+        holder.caught += error instanceof TypeError ? "t" : "x";
+      }
+      try {
+        // @ts-ignore
+        new BigInt();
+      } catch (error) {
+        holder.caught += error instanceof TypeError ? "t" : "x";
+      }
+      try {
+        // @ts-ignore
+        new WeakRef();
+      } catch (error) {
+        holder.caught += error instanceof TypeError ? "t" : "x";
+      }
+      try {
+        // @ts-ignore
+        new AggregateError();
+      } catch (error) {
+        holder.caught += error instanceof TypeError ? "t" : "x";
+      }
+      try {
+        new (Symbol as unknown as new (description: string) => object)("1");
+      } catch (error) {
+        holder.caught += error instanceof TypeError ? "t" : "x";
+      }
+      if (holder.caught !== "${expected}") throw new Error(holder.caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(source("ttttt"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(source("tttt"))).failure?.message).toContain("ttttt");
+    });
   });
 
   it("stops at a number a typed array's float can't hold exactly", async () => {
