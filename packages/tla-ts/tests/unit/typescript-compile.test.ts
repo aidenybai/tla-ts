@@ -20864,9 +20864,21 @@ describe("errors", () => {
     await expect(
       checkModel(`if (decodeURIComponent("%41%42") !== "AC") throw new Error("wrong");`),
     ).rejects.toThrow("wrong");
+  });
+
+  it("decodes URIs into characters outside ASCII", async () => {
+    const getSource = (accented: string, emoji: string) => `
+      const accented = decodeURI("%C3" + "%A9");
+      const emoji = decodeURIComponent("%F0%9F" + "%98%80");
+      if (accented !== "${accented}" || accented.length !== 1) throw new Error("accented");
+      if (emoji !== "${emoji}" || emoji.length !== 2) throw new Error("emoji");
+    `;
+    expect((await checkModel(getSource("é", "\\ud83d\\ude00"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("è", "\\ud83d\\ude00"))).rejects.toThrow("accented");
+    await expect(checkModel(getSource("é", "\\ud83d\\ude01"))).rejects.toThrow("emoji");
     await expect(
-      checkModel(`if (decodeURI("%C3" + "%A9") === "") throw new Error("never");`),
-    ).rejects.toThrow("tla-ts can't make a character outside ASCII");
+      checkModel(`if (encodeURI(decodeURI("%C3" + "%A9")) === "") throw new Error("never");`),
+    ).rejects.toThrow("tla-ts can't encode a character outside ASCII");
   });
 
   it("escapes and unescapes strings of ASCII", async () => {
@@ -20884,9 +20896,18 @@ describe("errors", () => {
     await expect(
       checkModel(getSource("a%20b*@+-./_%2C%7E|%0A0A%\\x0000%u004zz|%U0000%zz")),
     ).rejects.toThrow("outcomes");
+  });
+
+  it("unescapes strings into characters outside ASCII", async () => {
+    const getSource = (expected: string) => `
+      const unescaped = [unescape("%u00" + "E9"), unescape("%" + "FF"), unescape("%uD83D" + "%uDE00")];
+      if (unescaped.join("|") !== "${expected}" || unescaped[2].length !== 2) throw new Error("unescaped");
+    `;
+    expect((await checkModel(getSource("é|ÿ|\\ud83d\\ude00"))).failure).toBeUndefined();
+    await expect(checkModel(getSource("é|ÿ|\\ud83d\\ude01"))).rejects.toThrow("unescaped");
     await expect(
-      checkModel(`if (unescape("%u00" + "E9") === "") throw new Error("never");`),
-    ).rejects.toThrow("tla-ts can't make a character outside ASCII");
+      checkModel(`if (unescape("%u00" + "E9").charCodeAt(0) === 0) throw new Error("never");`),
+    ).rejects.toThrow("tla-ts can't tell the code of a character outside ASCII");
   });
 
   it("names a built-in that tla-ts doesn't run where a script calls it", () => {
