@@ -3088,6 +3088,31 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
             : `(() => { const ${result} = []; ${bounds.getHeaders()} { ${result}.push(${element.emit()}); } return H.normalize(${getComparerCode(program, element.type)}, ${result}); })()`,
       };
     }
+    case "Product": {
+      const loops = expression.factors.map((factor) => ({
+        name: getName(program, "q"),
+        ...compileBound(program, factor, frame),
+      }));
+      const types = loops.map((loop) => loop.element);
+      const element: Type = createVar();
+      if (!program.plains.isTupled) unifyElements(types, element);
+      const tuple: Type = program.plains.isTupled
+        ? { kind: "Tup", elements: types, target: undefined }
+        : { kind: "Seq", element };
+      const result = getName(program, "r");
+      return {
+        type: { kind: "Set", element: tuple },
+        emit: () => {
+          const headers = loops.map((loop) => loop.header(loop.name)).join(" ");
+          const code = writeSequence(
+            program,
+            tuple,
+            `[${loops.map((loop) => loop.name).join(", ")}]`,
+          );
+          return `(() => { const ${result} = []; ${headers} { ${result}.push(${code}); } return H.normalize(${getComparerCode(program, tuple)}, ${result}); })()`;
+        },
+      };
+    }
     case "Tuple": {
       if (expression.elements.length === 0 && program.plains.isSparse) {
         const type: Type = { kind: "Empty", target: undefined };
