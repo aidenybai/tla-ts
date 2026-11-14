@@ -792,6 +792,13 @@ export const isGeneratorType = (node: ts.Node, context: Context) =>
 export const mayBeGeneratorType = (node: ts.Node, context: Context) =>
   getMembers(node, context).some(isGeneratorMember);
 
+// A generator that isn't async, which an async generator's yield* steps through an async-from-sync
+// iterator.
+export const isSyncGeneratorType = (node: ts.Node, context: Context) =>
+  getMembers(node, context).every((type) =>
+    ["Generator", "IteratorObject"].includes(type.getSymbol()?.name ?? ""),
+  );
+
 // An array written in place that an async generator's yield* yields each element of, which a
 // for await that takes a pattern from each follows.
 const isAsyncDelegated = (node: ts.ArrayLiteralExpression) => {

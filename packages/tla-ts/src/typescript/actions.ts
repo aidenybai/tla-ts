@@ -79,6 +79,7 @@ import {
   isLiteral,
   isNameRead,
   skipCasts,
+  translateString,
   isPrivateMember,
   isStatic,
   getPrivateMember,
@@ -357,6 +358,7 @@ import {
   isNumberLike,
   isBuiltInIteratorType,
   isGeneratorType,
+  isSyncGeneratorType,
   isThrownToArrayPattern,
   isPrototypeRead,
   mayBeGeneratorType,
@@ -7673,13 +7675,48 @@ const translateDelegatedYield = (
   ) {
     return delegateToGenerator(node, iterated, yieldTo, path, context, frame, continueWith);
   }
+  if (
+    yieldTo !== undefined &&
+    awaitTo !== undefined &&
+    iterated !== undefined &&
+    isSyncGeneratorType(iterated, context)
+  ) {
+    return delegateToSyncGenerator(
+      node,
+      iterated,
+      yieldTo,
+      awaitTo,
+      path,
+      context,
+      frame,
+      continueWith,
+    );
+  }
+  if (
+    yieldTo !== undefined &&
+    awaitTo !== undefined &&
+    iterated !== undefined &&
+    isGeneratorType(iterated, context)
+  ) {
+    return delegateToAsyncGenerator(
+      node,
+      iterated,
+      yieldTo,
+      awaitTo,
+      path,
+      context,
+      frame,
+      continueWith,
+    );
+  }
   const elements =
     iterated !== undefined && ts.isArrayLiteralExpression(iterated) ? iterated.elements : undefined;
   if (
     yieldTo === undefined ||
     iterated === undefined ||
     (elements === undefined
-      ? getKind(iterated, context) !== "sequence" || hasCall(iterated, context)
+      ? !ts.isStringLiteralLike(iterated) &&
+        (getKind(iterated, context) !== "sequence" || hasCall(iterated, context))
       : elements.some((element) => ts.isSpreadElement(element)))
   ) {
     throw new TlaTypeScriptError("Unsupported yield", node);
@@ -7744,7 +7781,10 @@ const translateDelegatedYield = (
   const makeGenerators = (current: Path, position: number): Formula => {
     if (elements === undefined || position === elements.length) {
       return allocate(iterated, current, context, (inner) => {
-        const translated = translateExpression(iterated, inner.scope, context);
+        // A string yields its code points.
+        const translated = ts.isStringLiteralLike(iterated)
+          ? tuple([...iterated.text].map((character) => translateString(character, context)))
+          : translateExpression(iterated, inner.scope, context);
         return letIn(
           [define(sequence, [], translated)],
           delegate(inner, 0, translated.kind === "Tuple" ? translated.elements : undefined),
@@ -7818,6 +7858,146 @@ const delegateToGenerator = (
                   throwWith,
                   { isDelegated: true, isGuarded: true, isResult },
                 ),
+        );
+  return ts.isCallExpression(iterated)
+    ? translateCallStatement(iterated, path, context, frame, (after, generator) =>
+        delegate(after, generator ?? getUndefined(context), 0),
+      )
+    : delegate(path, translateExpression(iterated, path.scope, context), 0);
+};
+
+// An async generator's yield* over a generator, which the async-from-sync iterator resumes with
+// next. It awaits each value that the generator yields, and the value it returns, a job before the
+// yield* awaits the iterator's result, as for an array. A value that rejects would close the
+// generator, which tla-ts doesn't follow.
+const delegateToSyncGenerator = (
+  node: ts.YieldExpression,
+  iterated: ts.Expression,
+  yieldTo: NonNullable<Frame["yieldTo"]>,
+  awaitTo: NonNullable<Frame["awaitTo"]>,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const uncaught = apply("Assert", [boolean(false), string(node.getText())]);
+  const throwTo = frame.throwTo;
+  const throwWith = (current: Path, value: Expression) =>
+    throwTo === undefined ? leaf(uncaught) : throwTo(current, { value, uncaught });
+  const tick = (current: Path, next: (path: Path) => Formula) =>
+    awaitTo(current, getUndefined(context), undefined, next, next);
+  const rejected = () =>
+    leaf(
+      apply("Assert", [
+        boolean(false),
+        string("tla-ts can't close a generator that yield* awaits a rejected value of"),
+      ]),
+    );
+  const delegate = (current: Path, generator: Expression, count: number): Formula =>
+    count > DELEGATION_LIMIT
+      ? leaf(
+          apply("Assert", [
+            boolean(false),
+            string(`tla-ts can't follow more than ${DELEGATION_LIMIT} values of a yield*`),
+          ]),
+        )
+      : resumeGenerator(
+          node,
+          generator,
+          "next",
+          undefined,
+          current,
+          context,
+          frame,
+          (stepped, value, isDone, isResult) => {
+            if (isResult) {
+              throw new TlaTypeScriptError(
+                "tla-ts can't await what a generator passes on through its own yield*",
+                node,
+              );
+            }
+            return awaitTo(
+              stepped,
+              value ?? getUndefined(context),
+              undefined,
+              (fulfilled, settled) =>
+                tick(fulfilled, (resumed) =>
+                  isDone
+                    ? continueWith(resumed)
+                    : yieldTo(
+                        resumed,
+                        settled,
+                        (after) => delegate(after, generator, count + 1),
+                        throwWith,
+                        { isDelegated: true, isGuarded: true },
+                      ),
+                ),
+              rejected,
+            );
+          },
+        );
+  return ts.isCallExpression(iterated)
+    ? translateCallStatement(iterated, path, context, frame, (after, generator) =>
+        delegate(after, generator ?? getUndefined(context), 0),
+      )
+    : delegate(path, translateExpression(iterated, path.scope, context), 0);
+};
+
+// An async generator's yield* over another async generator, which awaits the promise of each next
+// and yields its value without awaiting it again, until one is done. A return or a throw while it
+// delegates would call the generator's return or throw, which tla-ts doesn't follow.
+const delegateToAsyncGenerator = (
+  node: ts.YieldExpression,
+  iterated: ts.Expression,
+  yieldTo: NonNullable<Frame["yieldTo"]>,
+  awaitTo: NonNullable<Frame["awaitTo"]>,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const uncaught = apply("Assert", [boolean(false), string(node.getText())]);
+  const throwTo = frame.throwTo;
+  const throwWith = (current: Path, value: Expression) =>
+    throwTo === undefined ? leaf(uncaught) : throwTo(current, { value, uncaught });
+  const delegate = (current: Path, generator: Expression, count: number): Formula =>
+    count > DELEGATION_LIMIT
+      ? leaf(
+          apply("Assert", [
+            boolean(false),
+            string(`tla-ts can't follow more than ${DELEGATION_LIMIT} values of a yield*`),
+          ]),
+        )
+      : resumeGenerator(
+          node,
+          generator,
+          "next",
+          undefined,
+          current,
+          context,
+          frame,
+          () => {
+            throw new TlaTypeScriptError("tla-ts can't follow this async generator", node);
+          },
+          (requested, promise) =>
+            awaitTo(
+              requested,
+              promise,
+              undefined,
+              (fulfilled) => {
+                const iteration = getIteration(fulfilled, node, promise);
+                return iteration.isDone
+                  ? continueWith(fulfilled)
+                  : yieldTo(
+                      fulfilled,
+                      iteration.value,
+                      (after) => delegate(after, generator, count + 1),
+                      throwWith,
+                      { isDelegated: true, isGuarded: true },
+                    );
+              },
+              throwWith,
+            ),
         );
   return ts.isCallExpression(iterated)
     ? translateCallStatement(iterated, path, context, frame, (after, generator) =>
@@ -8269,10 +8449,14 @@ const translateExpressionStatement = (
       called !== undefined &&
       ts.isCallExpression(called) &&
       called.arguments.every((argument) => !hasCall(argument, context));
+    // A yield of an await that the statement ran first yields what the await gave.
     if (
       frame.yieldTo === undefined ||
       expression.asteriskToken !== undefined ||
-      (yielded !== undefined && !isCalled && hasCall(yielded, context))
+      (yielded !== undefined &&
+        !isCalled &&
+        !path.scope.results.has(skipCasts(yielded)) &&
+        hasCall(yielded, context))
     ) {
       throw new TlaTypeScriptError("Unsupported yield", expression);
     }
@@ -12317,6 +12501,10 @@ const getLeadingAwait = (
 ): ts.AwaitExpression | undefined => {
   if (results.has(node)) return undefined;
   if (ts.isAwaitExpression(node)) return getLeadingAwait(node.expression, results) ?? node;
+  // A yield evaluates its operand before it yields.
+  if (ts.isYieldExpression(node)) {
+    return node.expression === undefined ? undefined : getLeadingAwait(node.expression, results);
+  }
   if (
     ts.isParenthesizedExpression(node) ||
     ts.isAsExpression(node) ||

@@ -282,6 +282,12 @@ export const getUnresolvedRead = (
   if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
     return getUnresolvedRead(node.operand, context, isThrowing);
   }
+  // A yield evaluates its operand before it yields.
+  if (ts.isYieldExpression(node)) {
+    return node.expression === undefined
+      ? undefined
+      : getUnresolvedRead(node.expression, context, isThrowing);
+  }
   // delete and typeof of a name don't read it, but of a property they read the object first.
   if (ts.isDeleteExpression(node) || ts.isTypeOfExpression(node)) {
     return ts.isIdentifier(skipCasts(node.expression))

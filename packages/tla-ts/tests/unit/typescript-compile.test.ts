@@ -11855,6 +11855,185 @@ describe("errors", () => {
     });
   });
 
+  describe("delegate an async generator's yield* to a generator", () => {
+    const getSource = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      const order: string[] = [];
+      function* inner() {
+        yield 1;
+        yield Promise.resolve(2);
+        order.push("ret");
+      }
+      async function* outer() {
+        yield* inner();
+        order.push("end");
+      }
+      const iterator = outer();
+      iterator.next().then((first) => {
+        order.push(\`a\${first.value}\`);
+        iterator.next().then((second) => {
+          order.push(\`b\${second.value}\`);
+          iterator.next().then((third) => order.push(\`c\${third.done}\`));
+        });
+      });
+      Promise.resolve()
+        .then(() => order.push("t1"))
+        .then(() => order.push("t2"))
+        .then(() => order.push("t3"))
+        .then(() => order.push("t4"))
+        .then(() => order.push("t5"))
+        .then(() => order.push("t6"))
+        .then(() => order.push("t7"))
+        .then(() => order.push("t8"));
+      setTimeout(() => {
+        if (order.join() !== "${expected}") throw new Error(order.join());
+      });
+    `;
+
+    it("awaits each value a job before the yield* awaits the result", async () => {
+      expect(
+        (await checkModel(getSource("t1,t2,a1,t3,t4,t5,b2,ret,t6,t7,end,t8,ctrue"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("doesn't yield the second value a job early", async () => {
+      expect(
+        (await checkModel(getSource("t1,t2,a1,t3,t4,b2,t5,ret,t6,t7,end,t8,ctrue"))).failure,
+      ).toBeDefined();
+    });
+  });
+
+  describe("delegate an async generator's yield* to an async generator", () => {
+    const getSource = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      const order: string[] = [];
+      async function* inner() {
+        yield 1;
+        await 0;
+        yield 2;
+        order.push("ret");
+      }
+      async function* outer() {
+        yield* inner();
+        order.push("end");
+      }
+      const iterator = outer();
+      iterator.next().then((first) => {
+        order.push(\`a\${first.value}\`);
+        iterator.next().then((second) => {
+          order.push(\`b\${second.value}\`);
+          iterator.next().then((third) => order.push(\`c\${third.done}\`));
+        });
+      });
+      Promise.resolve()
+        .then(() => order.push("t1"))
+        .then(() => order.push("t2"))
+        .then(() => order.push("t3"))
+        .then(() => order.push("t4"))
+        .then(() => order.push("t5"))
+        .then(() => order.push("t6"))
+        .then(() => order.push("t7"))
+        .then(() => order.push("t8"));
+      setTimeout(() => {
+        if (order.join() !== "${expected}") throw new Error(order.join());
+      });
+    `;
+
+    it("awaits the promise of each next and yields its value", async () => {
+      expect(
+        (await checkModel(getSource("t1,t2,a1,t3,t4,t5,t6,b2,ret,t7,end,t8,ctrue"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("doesn't await the value again", async () => {
+      expect(
+        (await checkModel(getSource("t1,t2,t3,a1,t4,t5,t6,b2,ret,t7,end,t8,ctrue"))).failure,
+      ).toBeDefined();
+    });
+  });
+
+  describe("yield what an await in the yield gives", () => {
+    const getSource = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      const order: string[] = [];
+      const iterator = (async function* () {
+        yield await new Promise<string>((resolve) => {
+          order.push("made");
+          resolve("a");
+        });
+        order.push("end");
+      })();
+      iterator.next().then((first) => {
+        order.push(\`a\${first.value}\`);
+        iterator.next().then((second) => order.push(\`b\${second.done}\`));
+      });
+      Promise.resolve()
+        .then(() => order.push("t1"))
+        .then(() => order.push("t2"))
+        .then(() => order.push("t3"));
+      setTimeout(() => {
+        if (order.join() !== "${expected}") throw new Error(order.join());
+      });
+    `;
+
+    it("yields the value", async () => {
+      expect((await checkModel(getSource("made,t1,t2,aa,end,t3,btrue"))).failure).toBeUndefined();
+    });
+
+    it("doesn't yield before the await", async () => {
+      expect((await checkModel(getSource("made,t1,aa,t2,end,t3,btrue"))).failure).toBeDefined();
+    });
+  });
+
+  describe("yield* the code points of a string", () => {
+    const getSource = (expected: string) => `
+      function* letters() {
+        yield* "a😀b";
+      }
+      const iterator = letters();
+      const values: unknown[] = [];
+      values.push(iterator.next().value);
+      values.push(iterator.next().value);
+      values.push(iterator.next().value);
+      values.push(iterator.next().done);
+      if (values.join("|") !== "${expected}") throw new Error(values.join("|"));
+    `;
+
+    it("yields each code point", async () => {
+      expect((await checkModel(getSource("a|😀|b|true"))).failure).toBeUndefined();
+    });
+
+    it("doesn't yield them out of order", async () => {
+      expect((await checkModel(getSource("a|b|😀|true"))).failure?.message).toContain(
+        "a|😀|b|true",
+      );
+    });
+  });
+
+  describe("throw the ReferenceError of a yield* of a name that no declaration binds", () => {
+    const getSource = (expected: string) => `
+      let caught = "";
+      function* delegate() {
+        try {
+          // @ts-ignore
+          yield* unresolvable;
+        } catch (error) {
+          caught = error instanceof ReferenceError ? "reference" : "other";
+        }
+      }
+      const result = delegate().next();
+      if (result.done !== true || caught !== "${expected}") throw new Error(caught);
+    `;
+
+    it("throws it to the catch", async () => {
+      expect((await checkModel(getSource("reference"))).failure).toBeUndefined();
+    });
+
+    it("doesn't throw another error", async () => {
+      expect((await checkModel(getSource("other"))).failure?.message).toContain("reference");
+    });
+  });
+
   it("delegates an async generator's yield* to an object's async iterator", async () => {
     const getSource = (value: number, order: string) => `
       const log: string[] = [];
