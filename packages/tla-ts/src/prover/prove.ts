@@ -315,6 +315,7 @@ export const encodeProofTheory = (
   name: string,
   reports: ProofReport[],
   obligations: PrintedObligation[],
+  isFlattened: boolean,
 ) =>
   encodeIsabelleTheory(
     name,
@@ -324,7 +325,7 @@ export const encodeProofTheory = (
           ? [
               {
                 id: report.obligation.id,
-                sequent: shipFirstOrder(normalizeExpand(obligations[index])),
+                sequent: shipFirstOrder(normalizeExpand(obligations[index]), isFlattened),
                 proof: attempt.proof,
               },
             ]
@@ -404,13 +405,13 @@ const proveWithBackends = async (
     const prior = run.results.get(fingerprint)?.get(method.prover);
     return prior?.method.tactic === method.tactic ? prior : undefined;
   };
-  const reuse = (prior: ProofAttempt) =>
+  const reuse = (prior: ProofAttempt, shipped = "shipped" in prior ? prior.shipped : undefined) =>
     attempts.push({
       kind: "reused",
       method: prior.method,
       isProved: isProvedAttempt(prior),
       reason: getFailureReason(prior),
-      shipped: "shipped" in prior ? prior.shipped : undefined,
+      shipped,
     });
   const record = (attempt: ProofAttempt) => {
     attempts.push(attempt);
@@ -445,6 +446,25 @@ const proveWithBackends = async (
       reason: expanded.message,
       note: `${expanded.message}\nObligation:\n\n`,
     });
+    // Prep.ship: each method still answers from the fingerprints file. A stored failure prints
+    // the obligation normalize_expand left, whose goal is FALSE, when ExpandENABLED is cited.
+    for (const method of methods.provers) {
+      const prior = method === methods.provers[0] ? firstPrior : getPrior(method);
+      if (prior && isProvedAttempt(prior)) {
+        reuse(prior);
+        return getProvedReport(method.prover);
+      }
+      if (prior && getBudget(prior.method) >= getBudget(method))
+        reuse(
+          prior,
+          methods.frontends.has("expandenabled")
+            ? `${formatObligation({
+                ...normalizeSequent(expandDefs(obligation.sequent)),
+                active: { kind: "Internal", builtin: "FALSE" },
+              })}\n`
+            : undefined,
+        );
+    }
     return getUnprovedReport(
       obligation,
       "failed",

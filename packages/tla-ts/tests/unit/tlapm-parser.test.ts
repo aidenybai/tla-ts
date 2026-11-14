@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
@@ -228,6 +228,79 @@ describe("tlapm computes a method from a pragma", () => {
       "PROVE  \\A x \\in Nat : x + 0 = x",
       "[ERROR]: Could not prove or check:",
       "[ERROR]: 1/2 obligations failed.",
+    ]);
+  });
+});
+
+describe("tlapm ships an obligation whose frontend fails", () => {
+  it("still answers each method from the fingerprints file", () => {
+    const source = `---- MODULE Stored ----
+EXTENDS Naturals, TLAPS
+VARIABLE x
+A == x = 1
+THEOREM ENABLED A => 1 + 1 = 2
+  BY ExpandENABLED, Zenon, SMT
+====
+`;
+    const directory = writeModule("Stored", source);
+    runTlapm(directory, [...PROVE, "Stored.tla"]);
+    writeFileSync(join(directory, "Stored.tla"), source.replace("A == x = 1", "A == x' = 1"));
+    const result = runTlapm(directory, [...PROVE, "Stored.tla"]);
+    expect(getResultLines(result.stderr)).toEqual([
+      "@!!status:to be proved",
+      "@!!status:to be proved",
+      "@!!status:to be proved",
+      "@!!status:to be proved",
+      "@!!status:failed",
+      "@!!prover:expandenabled",
+      "@!!meth:time-limit: inf",
+      "@!!already:false",
+      "PROVE  ENABLED A => 1 + 1 = 2",
+      "@!!status:failed",
+      "@!!prover:zenon",
+      "@!!meth:time-limit: 10",
+      "@!!already:true",
+      "PROVE  FALSE",
+      "@!!status:proved",
+      "@!!prover:smt",
+      "@!!meth:time-limit: 5",
+      "@!!already:true",
+      "@!!status:trivial",
+      "@!!prover:tlapm",
+      "@!!already:false",
+      "@!!status:trivial",
+      "@!!prover:tlapm",
+      "@!!already:false",
+      "@!!status:trivial",
+      "@!!prover:tlapm",
+      "@!!already:false",
+      "[INFO]: All 4 obligations proved.",
+    ]);
+    expect(result.status).toBe(0);
+  });
+
+  it("writes the unflattened obligation to the theory under --noflatten", () => {
+    const directory = writeModule(
+      "Unflattened",
+      `---- MODULE Unflattened ----
+EXTENDS TLAPS
+THEOREM ASSUME NEW P, NEW Q, NEW R, (P /\\ Q) /\\ R PROVE (R /\\ Q) /\\ P
+  BY Zenon
+====
+`,
+    );
+    runTlapm(directory, [...PROVE, "--noflatten", "Unflattened.tla"]);
+    expect(
+      readFileSync(join(directory, ".tlacache/Unflattened.tlaps/Unflattened.thy"), "utf8")
+        .split("\n")
+        .filter((line) => /^(fixes|assumes|shows) /.test(line)),
+    ).toEqual([
+      "fixes a_CONSTANTunde_Punde_a",
+      "fixes a_CONSTANTunde_Qunde_a",
+      "fixes a_CONSTANTunde_Runde_a",
+      'assumes v\'7: "(((((a_CONSTANTunde_Punde_a) \\<and> (a_CONSTANTunde_Qunde_a))) \\<and> (a_CONSTANTunde_Runde_a)))"',
+      'assumes v\'8: "(TRUE)"',
+      'shows "(((((a_CONSTANTunde_Runde_a) \\<and> (a_CONSTANTunde_Qunde_a))) \\<and> (a_CONSTANTunde_Punde_a)))"(is "PROP ?ob\'1")',
     ]);
   });
 });

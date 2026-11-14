@@ -274,7 +274,10 @@ const proveModule = async (
     },
   });
   const theoryPath = `${directory}/${module.name}.thy`;
-  writeFileSync(theoryPath, encodeProofTheory(module.name, reports, module.obligations));
+  writeFileSync(
+    theoryPath,
+    encodeProofTheory(module.name, reports, module.obligations, settings.backends.isFlattened),
+  );
   console.log(`(* created new ${JSON.stringify(theoryPath)} *)`);
   knownResults.save(fingerprintsPath);
   console.log(`(* fingerprints written in ${JSON.stringify(fingerprintsPath)} *)`);
